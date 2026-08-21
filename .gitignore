@@ -1,4 +1,9 @@
 .next/
+
+# Kopieras dit av scripts/copy-pdf-worker.mjs vid varje install och build - se filhuvudet
+# for varfor den inte far checkas in.
+public/pdfjs/
+
 node_modules/
 .DS_Store
 .env*

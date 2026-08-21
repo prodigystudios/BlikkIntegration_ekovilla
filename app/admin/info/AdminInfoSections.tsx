@@ -7,6 +7,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { ADMIN_CARD, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, ADMIN_INSET, ADMIN_LABEL, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import AdminPromptDialog from '../components/AdminPromptDialog';
 import { normalizeBlocks, type Block } from '@/lib/domains/info-page/blocks';
+import { resolveFileKind } from '@/lib/domains/info-page/storage';
 import type { InfoGroup, InfoSection } from '@/lib/domains/info-page/queries';
 import BlockContent from '@/app/dokument-information/BlockContent';
 import { blocksToFragment, editorToBlocks } from './richText';
@@ -103,7 +104,7 @@ export default function AdminInfoSections() {
   //
   // `groups` MÅSTE ligga i deps — rutan renderas först när något är valt, så vid första valet
   // finns ingen ref att fylla förrän nästa rendering. Men en oskyddad effekt hade då fyllt om
-  // rutan vid varje reload() (bilduppladdning, omordning, ny flik) och tyst ätit upp det som
+  // rutan vid varje reload() (filuppladdning, omordning, ny flik) och tyst ätit upp det som
   // just skrivits. Vakten gör allt utom ett faktiskt byte till en no-op.
   useEffect(() => {
     const el = editorRef.current;
@@ -252,7 +253,7 @@ export default function AdminInfoSections() {
 
   const deleteSection = (section: InfoSection) => setDialog({
     title: `Ta bort "${section.title}"?`,
-    message: 'Fliken och dess bilder tas bort. Det går inte att ångra.',
+    message: 'Fliken och dess filer tas bort. Det går inte att ångra.',
     confirmLabel: 'Ta bort',
     danger: true,
     okText: 'Fliken togs bort.',
@@ -263,11 +264,11 @@ export default function AdminInfoSections() {
     },
   });
 
-  const deleteImage = (imageId: string, label: string) => setDialog({
-    title: `Ta bort bilden "${label}"?`,
+  const deleteFile = (imageId: string, label: string) => setDialog({
+    title: `Ta bort filen "${label}"?`,
     confirmLabel: 'Ta bort',
     danger: true,
-    okText: 'Bilden togs bort.',
+    okText: 'Filen togs bort.',
     run: async () => {
       await callApi(`/api/admin/info/images/${imageId}`, { method: 'DELETE' });
       await reload();
@@ -331,15 +332,21 @@ export default function AdminInfoSections() {
     }
   }, 'Sparat.');
 
-  const uploadImage = (file: File) => runTask(async () => {
+  const uploadFile = (file: File) => runTask(async () => {
     if (!selected) throw new Error('Ingen flik är vald.');
+    // Servern gatar samma sak på båda stegen — den här kontrollen finns för svarstiden: en
+    // avvisad fil ska säga varför direkt, inte efter en tur till API:et. accept-attributet
+    // nedan räcker inte, filväljaren kan ställas om till "alla filer".
+    if (resolveFileKind(file.type, file.name) === 'other') {
+      throw new Error('Bara bilder och PDF-filer kan läggas till här.');
+    }
     setUploading(true);
     try {
       // Två steg: servern reserverar sökvägen och signerar, klienten lägger filen direkt i
       // storage, och först därefter registreras raden. Filen går aldrig genom rutthanteraren.
       const signed = await callApi(`/api/admin/info/sections/${selected.id}/images/upload-url`, {
         method: 'POST',
-        body: JSON.stringify({ fileName: file.name }),
+        body: JSON.stringify({ fileName: file.name, contentType: file.type || undefined }),
       });
 
       const supabase = createClientComponentClient();
@@ -348,15 +355,22 @@ export default function AdminInfoSections() {
         .uploadToSignedUrl(signed.path, signed.token, file, { contentType: file.type || undefined });
       if (error) throw new Error(error.message);
 
+      // Samma contentType som objektet lades upp med. Sparas på raden så läsvägen slipper
+      // gissa på filändelsen när den väljer mellan <img> och den inbäddade PDF-visaren.
       await callApi(`/api/admin/info/sections/${selected.id}/images`, {
         method: 'POST',
-        body: JSON.stringify({ bucket: signed.bucket, path: signed.path, fileName: file.name }),
+        body: JSON.stringify({
+          bucket: signed.bucket,
+          path: signed.path,
+          fileName: file.name,
+          contentType: file.type || null,
+        }),
       });
       await reload();
     } finally {
       setUploading(false);
     }
-  }, 'Bilden laddades upp.');
+  }, 'Filen laddades upp.');
 
   return (
     <div className="grid gap-4 p-5">
@@ -417,7 +431,7 @@ export default function AdminInfoSections() {
                       {section.title}
                       {section.images.length > 0 && (
                         <span className={cn('ml-2 text-[11px]', section.id === selectedId ? 'text-emerald-100' : 'text-slate-400')}>
-                          {section.images.length} bild{section.images.length === 1 ? '' : 'er'}
+                          {section.images.length} fil{section.images.length === 1 ? '' : 'er'}
                         </span>
                       )}
                     </button>
@@ -473,33 +487,41 @@ export default function AdminInfoSections() {
               </div>
 
               <div className="grid gap-2">
-                <span className={ADMIN_LABEL}>Bilder</span>
-                {selected.images.length === 0 && <p className="m-0 text-[13px] text-slate-500">Inga bilder i den här fliken.</p>}
-                {selected.images.map((image) => (
-                  <div key={image.id} className={cn(ADMIN_INSET, 'flex items-center gap-3 p-2')}>
-                    {image.url
-                      // eslint-disable-next-line @next/next/no-img-element
-                      ? <img src={image.url} alt="" className="h-12 w-16 shrink-0 rounded-md border border-[#e3e9df] object-cover" />
-                      : <div className="grid h-12 w-16 shrink-0 place-items-center rounded-md border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-800">saknas</div>}
-                    <span className="min-w-0 flex-1 truncate text-[13px] text-slate-700">{image.caption?.trim() || image.fileName}</span>
-                    <button type="button" onClick={() => deleteImage(image.id, image.caption?.trim() || image.fileName)} className={cn(crm.dangerButton, 'shrink-0 px-2')}>Ta bort</button>
+                <span className={ADMIN_LABEL}>Bilder och PDF:er</span>
+                {selected.images.length === 0 && <p className="m-0 text-[13px] text-slate-500">Inga filer i den här fliken.</p>}
+                {selected.images.map((file) => (
+                  <div key={file.id} className={cn(ADMIN_INSET, 'flex items-center gap-3 p-2')}>
+                    {/* En pdf i en <img> blir en trasig bildikon — därför en egen ruta i stället
+                        för en miniatyr. Rutan säger dessutom vad raden är, vilket miniatyren
+                        aldrig gjorde. */}
+                    {file.kind === 'pdf'
+                      ? <div className="grid h-12 w-16 shrink-0 place-items-center rounded-md border border-[#e3e9df] bg-white text-[11px] font-bold text-rose-700">PDF</div>
+                      : file.url
+                        // eslint-disable-next-line @next/next/no-img-element
+                        ? <img src={file.url} alt="" className="h-12 w-16 shrink-0 rounded-md border border-[#e3e9df] object-cover" />
+                        : <div className="grid h-12 w-16 shrink-0 place-items-center rounded-md border border-dashed border-amber-300 bg-amber-50 text-[10px] text-amber-800">saknas</div>}
+                    <span className="min-w-0 flex-1 truncate text-[13px] text-slate-700">{file.caption?.trim() || file.fileName}</span>
+                    <button type="button" onClick={() => deleteFile(file.id, file.caption?.trim() || file.fileName)} className={cn(crm.dangerButton, 'shrink-0 px-2')}>Ta bort</button>
                   </div>
                 ))}
                 <input
                   ref={fileRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,application/pdf,.pdf"
                   className="hidden"
                   onChange={(e) => {
                     const file = e.target.files?.[0];
                     // Nollställs direkt så samma fil går att välja igen efter ett misslyckat försök.
                     e.target.value = '';
-                    if (file) uploadImage(file);
+                    if (file) uploadFile(file);
                   }}
                 />
                 <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className={cn(crm.formButton, 'justify-self-start')} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>
-                  {uploading ? 'Laddar upp…' : 'Ladda upp bild'}
+                  {uploading ? 'Laddar upp…' : 'Ladda upp bild eller PDF'}
                 </button>
+                <p className="m-0 text-[12px] text-slate-500">
+                  PDF:er visas inbäddade på sidan, så installatörerna kan läsa dem direkt utan att lämna appen.
+                </p>
               </div>
 
               <div className="flex flex-wrap items-center gap-2 border-t border-[#e0e8dc] pt-3">

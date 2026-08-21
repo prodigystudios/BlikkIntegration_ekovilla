@@ -7,9 +7,10 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { loadInfoPage, type InfoGroup, type InfoImage } from '@/lib/domains/info-page/queries';
 import BlockContent from './BlockContent';
+import PdfViewer from './PdfViewer';
 
 // Innehållet stod tidigare hårdkodat i den här filen och varje ändring krävde en utvecklare.
-// Nu kommer grupper, sektioner och bilder ur databasen och redigeras i /admin. Utseendet är
+// Nu kommer grupper, sektioner och filer ur databasen och redigeras i /admin. Utseendet är
 // medvetet oförändrat: samma två nivåer, samma dragspel, samma nedladdningslänk.
 
 function AccordionCard({ title, children }: { title: string; children: ReactNode }) {
@@ -26,18 +27,49 @@ function AccordionCard({ title, children }: { title: string; children: ReactNode
   );
 }
 
-function DocImage({ image }: { image: InfoImage }) {
-  const label = image.caption?.trim() || image.fileName;
+const FILE_LINK = 'text-[13px] font-semibold text-emerald-700 underline hover:text-emerald-800';
 
-  // En bild vars objekt inte gick att signera ska säga det, inte visa en trasig ruta — den
+/**
+ * En bilaga i en flik: bild eller pdf.
+ *
+ * PDF:en läses i appen, inte i en ny flik: sidan används från en installerad PWA på telefonen,
+ * och där finns ingen flikrad att ta sig tillbaka från. Visaren ritar sidorna själv — se
+ * PdfViewer.tsx för varför en <iframe> inte dög (WebKit visar bara sida 1).
+ */
+function SectionFile({ file }: { file: InfoImage }) {
+  const label = file.caption?.trim() || file.fileName;
+
+  // En fil vars objekt inte gick att signera ska säga det, inte visa en trasig ruta — den
   // som förvaltar sidan behöver se att något är fel för att kunna ladda upp den igen.
-  if (!image.url) {
+  if (!file.url) {
     return (
       <div className="grid gap-2">
         <div className="text-[13px] font-semibold text-slate-900">{label}</div>
         <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 px-3 py-4 text-[13px] text-amber-800">
-          Bilden kunde inte hämtas just nu.
+          Filen kunde inte hämtas just nu.
         </div>
+      </div>
+    );
+  }
+
+  if (file.kind === 'pdf') {
+    return (
+      <PdfViewer
+        url={file.url}
+        label={label}
+        downloadUrl={file.downloadUrl ?? file.url}
+        fileName={file.fileName}
+      />
+    );
+  }
+
+  // 'other' ska inte kunna uppstå — uppladdningen släpper bara igenom bild och pdf — men en rad
+  // som handredigerats i Supabase-editorn ska bli en länk, inte en trasig <img>.
+  if (file.kind === 'other') {
+    return (
+      <div className="grid gap-2">
+        <div className="text-[13px] font-semibold text-slate-900">{label}</div>
+        <a href={file.downloadUrl ?? file.url} download={file.fileName} className={cn('w-fit', FILE_LINK)}>Ladda ner</a>
       </div>
     );
   }
@@ -46,8 +78,8 @@ function DocImage({ image }: { image: InfoImage }) {
     <div className="grid gap-2">
       <div className="text-[13px] font-semibold text-slate-900">{label}</div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={image.url} alt={label} className="max-w-full rounded-lg border border-[#e3e9df]" />
-      <a href={image.url} download={image.fileName} className="w-fit text-[13px] font-semibold text-emerald-700 underline hover:text-emerald-800">Ladda ner</a>
+      <img src={file.url} alt={label} className="max-w-full rounded-lg border border-[#e3e9df]" />
+      <a href={file.downloadUrl ?? file.url} download={file.fileName} className={cn('w-fit', FILE_LINK)}>Ladda ner</a>
     </div>
   );
 }
@@ -94,8 +126,8 @@ export default async function DokumentInformationPage() {
           {group.sections.map((section) => (
             <AccordionCard key={section.id} title={section.title}>
               <BlockContent blocks={section.body} />
-              {section.images.map((image) => (
-                <DocImage key={image.id} image={image} />
+              {section.images.map((file) => (
+                <SectionFile key={file.id} file={file} />
               ))}
             </AccordionCard>
           ))}
