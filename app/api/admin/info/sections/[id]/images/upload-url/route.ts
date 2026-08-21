@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { uploadUrlSchema } from '@/lib/domains/info-page/schemas';
-import { requireSection } from '@/lib/domains/info-page/mutations';
+import { assertSupportedFile, requireSection } from '@/lib/domains/info-page/mutations';
 import { buildInfoImagePath, createInfoImageUploadUrl, getInfoImageBucket } from '@/lib/domains/info-page/storage';
 import { requireAdmin, readJson, toRouteError } from '../../../../_guard';
 
@@ -27,6 +27,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     // Att sektionen finns kontrolleras HÄR och inte först vid registreringen: annars kunde en
     // fil hamna i bucketen under ett id som inte finns, utan rad som pekar på den.
     await requireSection(auth.client, params.id);
+
+    // Samma skäl: en avvisad filtyp ska stoppas INNAN en uppladdning signeras, annars ligger
+    // filen i bucketen när registreringen sedan säger nej. Registreringen gatar ändå om.
+    assertSupportedFile(parsed.data.contentType, parsed.data.fileName);
 
     const admin = getOptionalSupabaseAdmin();
     if (!admin) return routeError(500, 'service_role_missing', 'service role not configured');

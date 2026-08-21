@@ -30,13 +30,19 @@ export const updateSectionSchema = z.object({
   body: z.unknown().optional(),
 });
 
+// contentType valideras bara som "en sträng" här. VAD som får laddas upp avgörs av
+// resolveFileKind i storage.ts, som är samma funktion som läsvägen väljer renderare med — en
+// lista i ett Zod-schema hade varit en andra sanning, och den som inte används vid renderingen
+// är den som glider isär.
 export const uploadUrlSchema = z.object({
   fileName: z.string().trim().min(1, 'Filnamn saknas.').max(200),
+  contentType: z.string().trim().max(200).optional(),
 });
 
 export const registerImageSchema = z.object({
   bucket: z.string().trim().min(1),
   path: z.string().trim().min(1),
   fileName: z.string().trim().min(1).max(200),
+  contentType: z.union([z.string().trim().max(200), z.null()]).optional(),
   caption: z.union([z.string().trim().max(300), z.null()]).optional(),
 });
