@@ -14,7 +14,7 @@ import {
   formatPersonalNumber,
   isValidPersonalNumber,
   PERSONAL_NUMBER_ERROR,
-  PERSONAL_NUMBER_HINT,
+  PERSONAL_NUMBER_OPTIONAL_HINT,
 } from '@/lib/domains/crm/personalNumber';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import { CreditReportSummary } from '@/app/crm/components/CreditReport';
@@ -590,7 +590,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                         <p className="mt-1 text-[11px] leading-snug text-rose-600">{PERSONAL_NUMBER_ERROR}</p>
                       ) : (
                         <p className="mt-1 text-[11px] leading-snug text-slate-400">
-                          Kan fyllas i senare, men krävs innan en order kan skapas. {PERSONAL_NUMBER_HINT}
+                          {PERSONAL_NUMBER_OPTIONAL_HINT}
                         </p>
                       )}
                     </div>
