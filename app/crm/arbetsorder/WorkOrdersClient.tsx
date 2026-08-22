@@ -351,7 +351,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                 )}
                 style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
               >
-                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-400')}>{counts[value]}</span>
+                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-500')}>{counts[value]}</span>
               </button>
             ))}
           </div>

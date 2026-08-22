@@ -9,7 +9,7 @@ import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import { documentRef } from '@/app/crm/lib/format';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
-import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
+import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
@@ -306,7 +306,9 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Offerter</h1>
-          <p className="m-0 mt-1 text-sm text-slate-500">
+          {/* Token, inte handrullad kopia — underrubriken låg på slate-500 mot sidbakgrunden
+              och mätte 3,98:1. crm.pageSubtitle bär rätt färg för just den ytan. */}
+          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>
             Skapa och följ upp offerter
             {presetProspectId ? <span className="ml-2 rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-600">Filtrerad på prospekt</span> : null}
           </p>
@@ -395,7 +397,7 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
         </div>
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
-        {loading ? <div className="text-sm text-slate-400">Laddar offerter…</div> : null}
+        {loading ? <div className="text-sm text-slate-500">Laddar offerter…</div> : null}
         {!loading && quotes.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">
             Inga offerter matchar just nu.

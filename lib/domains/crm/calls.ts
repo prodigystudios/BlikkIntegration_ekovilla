@@ -75,7 +75,12 @@ type ListCrmCallsOptions = {
   search?: string;
   prospectId?: string;
   customerId?: string;
+  limit?: number;
 };
+
+// Taket när anroparen inte ber om något. Har alltid funnits här, men var hårdkodat: CRM-översikten
+// hämtade alla 50 för att rendera fem rader.
+const CRM_CALLS_DEFAULT_LIMIT = 50;
 
 export async function listCrmCalls(supabase: SupabaseClient, search?: string) {
   let query = supabase.from('crm_calls').select(crmCallSelect).order('call_at', { ascending: false }).limit(50);
@@ -94,7 +99,7 @@ export async function createCrmCall(supabase: SupabaseClient, input: CreateCrmCa
 }
 
 export async function listCrmCallsWithFilters(supabase: SupabaseClient, options: ListCrmCallsOptions) {
-  let query = supabase.from('crm_calls').select(crmCallSelect).order('call_at', { ascending: false }).limit(50);
+  let query = supabase.from('crm_calls').select(crmCallSelect).order('call_at', { ascending: false }).limit(options.limit ?? CRM_CALLS_DEFAULT_LIMIT);
 
   if (options.search) {
     query = query.or(

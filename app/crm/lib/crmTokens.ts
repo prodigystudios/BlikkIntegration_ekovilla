@@ -147,11 +147,18 @@ export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled
 export const crm = {
   // Typography
   pageTitle: 'text-lg font-bold tracking-tight text-slate-900',
-  pageSubtitle: 'text-sm text-slate-500',
-  sectionTitle: 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400',
+  // ⚠️ slate-600, inte 500. Underrubriken ligger på SIDBAKGRUNDEN (#e5ede5), som är mörkare än
+  // kortens #f9fbf7 — mätt i Chrome gav slate-500 där 3,98:1 och föll under AA:s 4,5. Samma
+  // färg klarar sig (4,57:1) inne på ett kort, så felet syns bara på just den här ytan.
+  pageSubtitle: 'text-sm text-slate-600',
+  // ⚠️ slate-400 gav 2,46:1 mot kortbakgrunden — långt under AA:s 4,5, och den här klassen bär
+  // ETT HUNDRA kickers i 35 filer. slate-500 ger 4,57:1 och är fortfarande tydligt dämpad mot
+  // slate-900-innehållet. Hamnar en kicker någon gång direkt på sidbakgrunden räcker den inte
+  // (3,98:1) — då är det den instansen som ska bära slate-600, inte token som ska mörkna.
+  sectionTitle: 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500',
   label: 'mb-1 text-xs font-semibold text-slate-500',
   fieldValue: 'text-sm text-slate-900',
-  emptyValue: 'text-sm italic text-slate-400',
+  emptyValue: 'text-sm italic text-slate-500',
 
   // Cards
   // Use `card` for list-cards (no padding — content controls its own padding).

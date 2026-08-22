@@ -517,7 +517,7 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
                   {value === 'delegated' ? null : (
                     <span className={cn(
                       'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
-                      isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500',
+                      isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600',
                     )}>
                       {filterCounts[value as keyof typeof filterCounts]}
                     </span>

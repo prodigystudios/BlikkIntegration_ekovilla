@@ -224,11 +224,13 @@ export default function ReportsClient() {
           </div>
           <div className="flex flex-wrap items-end gap-2">
             <label className="grid gap-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Från</span>
+              {/* slate-600: de här två ligger på sidbakgrunden (#e5ede5), inte på ett kort. slate-500
+                  hade gett 3,98:1 och fortfarande fallit. */}
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">Från</span>
               <input type="date" value={from} max={to} onChange={(e) => { setActiveRangeKey(null); setFrom(e.target.value); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
             </label>
             <label className="grid gap-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">Till</span>
+              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-600">Till</span>
               <input type="date" value={to} min={from} max={today()} onChange={(e) => { setActiveRangeKey(null); setTo(e.target.value); }} className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700" />
             </label>
           </div>

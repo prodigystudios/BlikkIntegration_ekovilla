@@ -50,7 +50,11 @@ type ListCrmTasksOptions = {
   status?: CrmTaskStatus;
   prospectId?: string;
   customerId?: string;
+  limit?: number;
 };
+
+// Taket när anroparen inte ber om något. Har alltid funnits, men var hårdkodat.
+const CRM_TASKS_DEFAULT_LIMIT = 100;
 
 type RawCrmTaskRow = {
   id: string;
@@ -116,7 +120,7 @@ export function mapCrmTaskRows(rows: RawCrmTaskRow[] | null | undefined) {
 }
 
 export async function listCrmTasks(supabase: SupabaseClient, options: ListCrmTasksOptions) {
-  let query = supabase.from('dashboard_work_items').select(crmTaskSelect).eq('kind', 'note').order('status', { ascending: true }).order('due_at', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).limit(100);
+  let query = supabase.from('dashboard_work_items').select(crmTaskSelect).eq('kind', 'note').order('status', { ascending: true }).order('due_at', { ascending: true, nullsFirst: false }).order('created_at', { ascending: false }).limit(options.limit ?? CRM_TASKS_DEFAULT_LIMIT);
 
   if (options.search) {
     query = query.or(`title.ilike.%${options.search}%,body.ilike.%${options.search}%`);
