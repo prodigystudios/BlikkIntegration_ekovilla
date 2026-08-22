@@ -10,6 +10,9 @@ import { minutesToHours } from '../../../lib/domains/time/hours';
 import {
   COMPENSATION_LABELS,
   COMPENSATION_UNITS,
+  countMissingReceipts,
+  hasReceipt,
+  isReceiptMissing,
   type CompensationItem,
 } from '../../../lib/domains/time/compensations';
 import {
@@ -865,6 +868,11 @@ function PersonDays({
   const summary = detail.summary;
   if (!summary) return null;
 
+  // Vanlig const och ingen useMemo: komponenten har tidiga returer ovanför, och en hook efter dem
+  // hade brutit rules-of-hooks (npm run lint fångar det). Summeringen är en reduce över en handfull
+  // poster och kostar ingenting.
+  const missingReceipts = countMissingReceipts(detail.compensations);
+
   if (summary.rows.length === 0 && detail.compensations.length === 0) {
     // ⚠️ Loggen renderas ÄVEN här. Har en admin raderat personens alla rader ser månaden tom ut, och
     // då är raderingsraderna det enda som visar att det funnits något — att returnera tidigt hade
@@ -943,9 +951,20 @@ function PersonDays({
       {detail.compensations.length > 0 ? (
         <div className="grid gap-1">
           <p className={cn(LABEL, 'm-0')}>Ersättningar</p>
+          {/* ⚠️ SAKNADE KVITTON STÅR FÖRE LISTAN, inte bara som en märkning inne i den.
+              Detaljpanelen är det sista den attestansvariga läser innan hen låser månaden, och efter
+              låsningen kan den anställde inte längre koppla kvittot själv (periodlåset gäller
+              kvittokolumnerna precis som timmarna). Ett saknat papper som upptäcks efteråt kostar
+              alltså en återöppning — därför ska det synas innan, och inte behöva letas fram. */}
+          {missingReceipts > 0 ? (
+            <p className="m-0 text-sm font-semibold text-amber-800">
+              {missingReceipts === 1 ? '1 utlägg saknar kvitto' : `${missingReceipts} utlägg saknar kvitto`} — be om det innan du attesterar.
+            </p>
+          ) : null}
           <ul className="m-0 grid list-none gap-1 p-0 text-sm text-slate-700">
             {detail.compensations.map((item) => {
               const unit = COMPENSATION_UNITS[item.kind];
+              const vatAmount = item.vat_amount == null ? null : Number(item.vat_amount);
               return (
                 <li key={item.id} className="flex flex-wrap items-baseline gap-x-2">
                   <span className="text-slate-500">{formatDay(item.entry_date)}</span>
@@ -954,7 +973,27 @@ function PersonDays({
                     <span className="text-slate-500">{formatAmount(item.quantity)} {unit}</span>
                   ) : null}
                   <span className="font-medium">{formatAmount(item.amount)} kr</span>
+                  {/* Bokföringen behöver momsen utbruten. `!= null` och inte en sanningsprövning:
+                      0 kr moms är ett svar (utlandsköp, vidarefakturerat) och ska inte se ut som
+                      ett ouppgivet fält. */}
+                  {vatAmount != null ? (
+                    <span className="text-slate-500">varav moms {formatAmount(vatAmount)} kr</span>
+                  ) : null}
                   {item.note ? <span className="text-slate-500">· {item.note}</span> : null}
+                  {hasReceipt(item) ? (
+                    // Länk till routen och inte till en signerad URL: åtkomsten prövas om vid varje
+                    // klick, så länken inte dör i en panel som stått öppen halva förmiddagen.
+                    <a
+                      href={`/api/time/compensations/${item.id}/receipt?redirect=1`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-emerald-800 underline underline-offset-2"
+                    >
+                      Kvitto
+                    </a>
+                  ) : isReceiptMissing(item) ? (
+                    <span className="font-semibold text-amber-800">Kvitto saknas</span>
+                  ) : null}
                 </li>
               );
             })}

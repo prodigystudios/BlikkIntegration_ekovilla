@@ -121,6 +121,31 @@ export const setPeriodStatusSchema = z.object({
   note: optionalText.optional().default(null),
 });
 
+// ── Kvitton ──────────────────────────────────────────────────────────────────
+
+// Uppladdningen i tre steg, som arbetsorderfilerna: (1) be om en signerad URL, (2) ladda upp direkt
+// till lagringen, (3) skicka med sökvägen när posten sparas. Bytena passerar aldrig en route
+// handler — ett kvitto från en telefon är 2-5 MB och ska inte behöva rymmas i en request-kropp.
+//
+// Steg 1 tar `entry_date` för att kunna neka innan uppladdningen om månaden redan är inlämnad.
+// Låset i databasen fångar det ändå i steg 3, men då har användaren redan betalat för bytena över
+// mobilnätet och får sitt nej efteråt.
+export const receiptUploadUrlSchema = z.object({
+  file_name: z.string().trim().min(1, 'Filnamn krävs').max(200),
+  content_type: z.string().trim().max(120).optional().default(''),
+  size_bytes: z.coerce.number().int().min(0),
+  entry_date: isoDateSchema,
+});
+
+// ⚠️ STORLEK OCH MIMETYPE SAKNAS HÄR MED FLIT. Klientens påståenden om dem duger till att avvisa
+// det uppenbart felaktiga tidigt, men får aldrig hamna i databasen: routen läser objektets faktiska
+// storlek och typ ur lagringen i steg 3. Det enda klienten bidrar med är var filen hamnade (som
+// prövas) och vad den ska heta för ögat.
+export const receiptAttachmentSchema = z.object({
+  storage_path: z.string().trim().min(1, 'Sökväg krävs').max(400),
+  file_name: z.string().trim().min(1, 'Filnamn krävs').max(200),
+});
+
 // ── Ersättningar (traktamente, utlägg, milersättning) ────────────────────────
 
 export const createCompensationSchema = z.object({
@@ -131,7 +156,15 @@ export const createCompensationSchema = z.object({
   // Beloppet lagras alltid, även om systemet en dag räknar ut det ur en sats: räknas det vid
   // visning ändras gamla månaders underlag retroaktivt när satsen justeras.
   amount: z.coerce.number().min(0, 'Beloppet kan inte vara negativt'),
+  // Momsen i kronor. NULLBAR OCH INTE DEFAULT 0 — "moms ej ifylld" och "moms är noll kronor" är
+  // olika påståenden för den som bokför, och en default hade gjort varje utlägg till ett momsfritt
+  // sådant utan att någon sagt det. Taket (moms <= belopp) sitter i databasen, som är den enda som
+  // ser båda fälten vid en partiell uppdatering.
+  vat_amount: z.coerce.number().min(0, 'Momsen kan inte vara negativ').nullable().optional(),
   note: optionalText.optional().default(null),
+  // Kvittot, om det laddades upp innan posten sparades. Sökvägen är ett PÅSTÅENDE tills routen
+  // prövat den mot isReceiptPath — se receiptAttachmentSchema.
+  receipt: receiptAttachmentSchema.nullable().optional(),
 });
 
 export const updateCompensationSchema = createCompensationSchema.partial();
