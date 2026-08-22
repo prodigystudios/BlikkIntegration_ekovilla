@@ -126,10 +126,15 @@ const sectionLabel: Record<SectionKey, string> = {
 type Section = { ok: boolean; json: any };
 
 // Ett avvisat löfte och ett icke-ok svar är samma sak här: sektionen gick inte att läsa.
+//
+// `undefined` som sentinel, inte null: ett svar vars KROPP inte gick att tolka är lika olästbart
+// som en 500:a. Utan den skillnaden gav en 200 med trasig kropp ok:true och json:null, summeringen
+// föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" UTAN felruta —
+// exakt den okänt-som-säker-nolla grenen finns för att ta bort.
 async function readSection(result: PromiseSettledResult<Response>): Promise<Section> {
   if (result.status !== 'fulfilled') return { ok: false, json: null };
-  const json = await result.value.json().catch(() => null);
-  return { ok: result.value.ok, json };
+  const json = await result.value.json().catch(() => undefined);
+  return { ok: result.value.ok && json !== undefined, json: json ?? null };
 }
 
 function itemsOf<T>(section: Section): T[] {
@@ -215,6 +220,10 @@ const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
 // teamets mätperiod — en vecka utan ett enda loggat samtal är redan utanför målet.
 const CALL_LOG_STALE_DAYS = 7;
 
+// allSettled väntar hur länge som helst. En hängande hämtning lämnade "Uppdatera" utgråad på
+// "Uppdaterar…" resten av sessionen — samtidigt som varje felruta bad användaren trycka på den.
+const REQUEST_TIMEOUT_MS = 15_000;
+
 // Zeros while the summary is in flight or after a failed load, so the panels render their shape
 // rather than blanking. Matches what the empty lists produced before the server did the counting.
 const EMPTY_SUMMARY: CrmOverviewSummary = {
@@ -298,6 +307,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
     if (mode === 'refresh') setRefreshing(true);
     else setLoading(true);
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
     try {
       const overviewWindow = getCrmOverviewWindow();
       const summaryQuery = new URLSearchParams({
@@ -321,21 +333,24 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
       // allSettled, inte all: ETT avvisat löfte — ett nätverksglapp i en enda hämtning — avvisade
       // hela samlingen och landade i catch-grenen, som tömde sidan. Nu bärs varje utfall för sig.
-      const settled = await Promise.allSettled(SECTION_ORDER.map((key) => fetch(url[key], { cache: 'no-store' })));
+      const settled = await Promise.allSettled(SECTION_ORDER.map((key) => fetch(url[key], { cache: 'no-store', signal: controller.signal })));
       const read = await Promise.all(settled.map(readSection));
 
       if (loadId !== loadIdRef.current) return;
 
       const section = Object.fromEntries(SECTION_ORDER.map((key, index) => [key, read[index]])) as Record<SectionKey, Section>;
+      // En 200 utan data.summary i kroppen är inget svar heller — sidans alla siffror kommer
+      // därifrån, så den saknade nyttolasten flaggas som ett fel i stället för att bli nollor.
+      const summaryData = (section.summary.json?.data?.summary as CrmOverviewSummary | undefined) ?? null;
 
       setState({
-        summary: (section.summary.json?.data?.summary as CrmOverviewSummary | undefined) ?? null,
+        summary: summaryData,
         calls: itemsOf<CallItem>(section.calls),
         tasks: itemsOf<TaskItem>(section.tasks),
         quotes: itemsOf<QuoteItem>(section.quotes),
         goals: itemsOf<GoalItem>(section.goals),
         workOrders: itemsOf<WorkOrderItem>(section.workOrders),
-        failed: SECTION_ORDER.filter((key) => !section[key].ok),
+        failed: SECTION_ORDER.filter((key) => !section[key].ok || (key === 'summary' && summaryData == null)),
       });
     } catch {
       // Bakkant. allSettled avvisar inte, men getCrmOverviewWindow och URLSearchParams ligger
@@ -343,6 +358,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       if (loadId !== loadIdRef.current) return;
       setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
+      clearTimeout(timeout);
       if (loadId === loadIdRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -687,7 +703,12 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 <div className="grid gap-2">
                   {staleCallDays != null ? (
                     <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                      Ingen har loggat ett samtal på {staleCallDays} dagar.
+                      {/* Listan är RLS-filtrerad: en säljare ser bara sina egna samtal, en admin
+                          allas. Påståendet måste följa med — "ingen har loggat" är fel när det
+                          bara betyder att DU inte har det, och kollegornas samtal rensar det inte. */}
+                      {role === 'admin'
+                        ? `Ingen har loggat ett samtal på ${staleCallDays} dagar.`
+                        : `Du har inte loggat ett samtal på ${staleCallDays} dagar.`}
                     </p>
                   ) : null}
                   {recentCalls.map((call) => (
@@ -719,7 +740,11 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 den största av dem), så staplarna lästes som en FÖRDELNING — 3,8 Mkr står i offert,
                 899 tkr har blivit order. MetricCard har ingen stapel, så den läsningen finns inte
                 längre någonstans. Talen är kvar, proportionen är det inte. */}
-            <p className={cn('mb-1', crm.sectionTitle)}>Teamet</p>
+            {/* ⚠️ INTE "Teamet". /api/crm/overview kör på sessionsklienten (route.ts:66), så RLS
+                gäller: crm_calls_select_visible ger en säljare bara sina egna samtal, och
+                crm_goals_select_visible bara sitt eget mål. Siffrorna här är teamets för en admin
+                och den egna för alla andra — rubriken får inte påstå något om vilket. */}
+            <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
             <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
             <p className="m-0 mb-4 text-xs text-slate-500">{MONEY_NOTE}</p>
             {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
