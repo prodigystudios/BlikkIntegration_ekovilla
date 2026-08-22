@@ -1,15 +1,17 @@
 export const dynamic = 'force-dynamic';
 
 import { headers } from 'next/headers';
+import { getRequestOriginFromHeaders } from '@/lib/publicOrigin';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { normalizeContacts, type PublicContact } from './contacts';
 
 async function getContacts(): Promise<unknown> {
   const h = headers();
-  const host = h.get('x-forwarded-host') || h.get('host') || 'localhost:3000';
-  const proto = h.get('x-forwarded-proto') || (host.startsWith('localhost') ? 'http' : 'https');
-  const url = `${proto}://${host}/api/contacts`;
+  // Medvetet request-origin och INTE getPublicOrigin: det här är ett internt anrop till appens
+  // egen API-rutt. Den kanoniska domänen hade skickat anropet ut på internet och över till en
+  // annan host när sidan servas från den gamla adressen.
+  const url = `${getRequestOriginFromHeaders(h)}/api/contacts`;
   // Forward cookies so the authenticated Supabase session works on the internal fetch.
   const cookie = h.get('cookie') || '';
   const res = await fetch(url, { cache: 'no-store', headers: cookie ? { cookie } : undefined });

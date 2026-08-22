@@ -9,6 +9,27 @@ function normalizeOrigin(v: string): string {
   return s.replace(/\/$/, '');
 }
 
+/** Allt vi behöver av Headers. Låter server-komponenter skicka in `headers()` direkt. */
+type HeaderReader = { get(name: string): string | null };
+
+function originFromHeaders(h: HeaderReader): string {
+  // Prefer proxy headers.
+  const xfHost = (h.get('x-forwarded-host') || '').trim();
+  const host = xfHost || (h.get('host') || '').trim();
+
+  const xfProto = (h.get('x-forwarded-proto') || '').trim();
+  const proto = xfProto || (host.startsWith('localhost') ? 'http' : 'https');
+
+  return host ? `${proto}://${host}` : '';
+}
+
+/**
+ * Som `getRequestOrigin`, men för server-komponenter som bara har `headers()` och ingen Request.
+ */
+export function getRequestOriginFromHeaders(h: HeaderReader): string {
+  return originFromHeaders(h) || 'http://localhost:3000';
+}
+
 /**
  * Origin som requesten FAKTISKT kom in på — utan kanonisk override.
  *
@@ -22,16 +43,8 @@ function normalizeOrigin(v: string): string {
  * använd `getPublicOrigin`.
  */
 export function getRequestOrigin(req: Request): string {
-  const h = req.headers;
-
-  // Prefer proxy headers.
-  const xfHost = (h.get('x-forwarded-host') || '').trim();
-  const host = xfHost || (h.get('host') || '').trim();
-
-  const xfProto = (h.get('x-forwarded-proto') || '').trim();
-  const proto = xfProto || (host.startsWith('localhost') ? 'http' : 'https');
-
-  if (host) return `${proto}://${host}`;
+  const fromHeaders = originFromHeaders(req.headers);
+  if (fromHeaders) return fromHeaders;
 
   // Fallback.
   try {
