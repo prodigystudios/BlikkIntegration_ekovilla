@@ -151,7 +151,7 @@ export default function AdminDepotUsage() {
 
       {error && <div role="alert" className={ADMIN_ERROR_BOX}>{error}</div>}
       {loading ? (
-        <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>
+        <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p>
       ) : (
         <div className="grid gap-2.5">
           {filtered.map(r => (

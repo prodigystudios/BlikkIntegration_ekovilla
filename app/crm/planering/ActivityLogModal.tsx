@@ -198,19 +198,19 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Sök (jobb, åtgärd)…"
-            className="h-9 min-w-0 flex-1 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-emerald-500"
+            className="h-9 min-w-0 flex-1 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
           />
           <input
             value={actorFilter}
             onChange={(e) => setActorFilter(e.target.value)}
             placeholder="Person"
-            className="h-9 w-28 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-emerald-500"
+            className="h-9 w-28 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
           />
           <select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
             aria-label="Filtrera på åtgärd"
-            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-emerald-500"
+            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
           >
             <option value="">Alla åtgärder</option>
             {Object.entries(ACTION_LABELS).map(([key, label]) => (

@@ -886,7 +886,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 </div>
                 {isB2B ? (
                   <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-emerald-600" />
+                    <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
                     Omvänd skattskyldighet
                   </label>
                 ) : null}
@@ -923,7 +923,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
           <div className="grid gap-4 lg:sticky lg:top-6">
             <Card>
               <div className="grid gap-2">
-                <button type="button" onClick={saveEdits} disabled={saving} className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.28)] transition hover:brightness-[0.97] disabled:opacity-60">
+                <button type="button" onClick={saveEdits} disabled={saving} className={cn(crm.saveButton, 'h-11')}>
                   {saving ? 'Sparar…' : 'Spara ändringar'}
                 </button>
                 <button type="button" onClick={() => setEditing(false)} className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-300">
@@ -1183,10 +1183,10 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={contactDraft.is_primary} onChange={(e) => setContactDraft((c) => ({ ...c, is_primary: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-emerald-600" />
+                    <input type="checkbox" checked={contactDraft.is_primary} onChange={(e) => setContactDraft((c) => ({ ...c, is_primary: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
                     Primär kontakt
                   </label>
-                  <button type="button" onClick={saveContact} disabled={savingContact} className="inline-flex h-8 items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 px-3 text-xs font-semibold text-white transition hover:brightness-[0.97] disabled:opacity-60">
+                  <button type="button" onClick={saveContact} disabled={savingContact} className={cn(crm.saveButton, 'h-8 w-auto px-3 text-xs')}>
                     {savingContact ? 'Sparar…' : 'Spara'}
                   </button>
                 </div>

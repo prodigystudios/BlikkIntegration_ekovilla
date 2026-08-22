@@ -176,7 +176,7 @@ export default function WorkOrderSackReportCard({
           type="button"
           onClick={() => setOpen(true)}
           className="inline-flex h-11 w-full items-center justify-center rounded-xl text-sm font-semibold text-white transition active:scale-[0.99]"
-          style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+          style={{ backgroundColor: 'var(--ek-green)' }}
         >
           Rapportera dagens säckar
         </button>
@@ -205,7 +205,7 @@ export default function WorkOrderSackReportCard({
                     aria-pressed={on}
                     onClick={() => togglePlacement(slug)}
                     className={cn(CHIP_BASE, on ? CHIP_ON : CHIP_OFF)}
-                    style={on ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+                    style={on ? { backgroundColor: 'var(--ek-green)' } : undefined}
                   >
                     {label}
                   </button>
@@ -245,7 +245,7 @@ export default function WorkOrderSackReportCard({
                       aria-pressed={on}
                       onClick={() => setMaterial(on ? null : short)}
                       className={cn(CHIP_BASE, on ? CHIP_ON : CHIP_OFF)}
-                      style={on ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+                      style={on ? { backgroundColor: 'var(--ek-green)' } : undefined}
                     >
                       {short}
                     </button>
@@ -263,7 +263,7 @@ export default function WorkOrderSackReportCard({
               onChange={(e) => setNote(e.target.value)}
               rows={2}
               placeholder="T.ex. dålig åtkomst i norra gaveln"
-              className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+              className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
             />
           </div>
 
@@ -278,7 +278,7 @@ export default function WorkOrderSackReportCard({
               onClick={submit}
               disabled={!canSave}
               className="inline-flex h-11 items-center justify-center rounded-xl text-sm font-semibold text-white transition active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {saving ? 'Sparar…' : 'Spara rapport'}
             </button>

@@ -186,7 +186,7 @@ export default function useDocumentEmail(): {
               name="document-recipient"
               checked={picker.selected === option.email}
               onChange={() => setPicker((p) => (p ? { ...p, selected: option.email } : p))}
-              className="h-4 w-4 shrink-0 accent-emerald-600"
+              className="h-4 w-4 shrink-0 accent-[color:var(--ek-accent)]"
             />
             <span className="grid min-w-0 gap-0.5">
               <span className="truncate text-sm font-semibold text-slate-900">{option.email}</span>
@@ -207,7 +207,7 @@ export default function useDocumentEmail(): {
               name="document-recipient"
               checked={picker.selected === CUSTOM_RECIPIENT}
               onChange={() => setPicker((p) => (p ? { ...p, selected: CUSTOM_RECIPIENT } : p))}
-              className="h-4 w-4 shrink-0 accent-emerald-600"
+              className="h-4 w-4 shrink-0 accent-[color:var(--ek-accent)]"
             />
             <span className="text-sm font-semibold text-slate-900">Annan adress</span>
           </span>

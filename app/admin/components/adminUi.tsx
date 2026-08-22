@@ -20,7 +20,7 @@ export const ADMIN_ERROR_BOX = 'rounded-xl border border-rose-200 bg-rose-50 px-
 // Konsumeras från våg 3–4 (profileditorns success-ruta, Behörigheternas förklaring).
 export const ADMIN_NOTICE_BOX = 'rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900';
 export const ADMIN_EMPTY_BOX = 'rounded-2xl border border-dashed border-[#d5e0cf] bg-[#f4f8f1] px-4 py-8 text-center';
-// Laddar: <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p> (ingen hjälpare behövs)
+// Laddar: <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p> (ingen hjälpare behövs)
 
 // Native kryssruta (dokumenterat undantag — ingen primitiv finns). Medvetet BARA
 // storlek + accentfärg: `rounded`/`border-*` är verkningslöst på en native checkbox
@@ -83,7 +83,7 @@ export function AdminFilterChip({
         'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
         active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
       )}
-      style={active ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+      style={active ? { backgroundColor: 'var(--ek-green)' } : undefined}
     >
       {children}
       {count != null ? (

@@ -91,7 +91,7 @@ export default function AdminNews() {
               type="submit"
               disabled={status === 'saving' || !headline.trim() || !body.trim()}
               className={cn(crm.formButton, 'justify-self-start')}
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {status === 'saving' ? 'Sparar…' : (status === 'saved' ? 'Sparat ✓' : 'Publicera nyhet')}
             </button>
@@ -108,7 +108,7 @@ export default function AdminNews() {
                 style={{ backgroundImage: `url(${imageUrl.trim()})` }}
               />
             ) : (
-              <div className="grid aspect-video w-full place-items-center rounded-2xl border border-dashed border-slate-300 text-[13px] text-slate-400">Ingen bild vald</div>
+              <div className="grid aspect-video w-full place-items-center rounded-2xl border border-dashed border-slate-300 text-[13px] text-slate-500">Ingen bild vald</div>
             )}
             <div className="grid gap-2">
               <strong className="text-lg font-bold leading-[1.2] text-slate-900">{headline.trim() || 'Rubriken visas här'}</strong>

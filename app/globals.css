@@ -43,6 +43,25 @@
   zoom: var(--planning-zoom);
 }
 
+/* ── Ekovillas färger ──────────────────────────────────────────────────────────
+   På :root, inte på .crm-shell, eftersom de är APPENS och inte CRM:s. Hela appen ska
+   bära samma design, och de delade primitiverna i components/ui/* används i ~16 filer
+   utanför CRM — /admin, /tid och dashboarden. En CRM-scopad variabel där hade tyst
+   tagit bort fokusramen på alla de sidorna.
+
+   ⚠️ --ek-accent, INTE --ek-green, till länkar och fokus: #1a3f26 ligger för nära
+   brödtextens #0f172a för att läsas som en länk. Accenten är ljus nog att skilja sig och
+   mörk nog för AA (6,1:1 mot en ljus kortbakgrund); den mörka gröna är hovertillståndet.
+
+   Skalets egna ytor (sidopanel, innehållsbakgrund, kortbakgrund) är en annan sak och bor
+   kvar på .crm-shell nedan — CRM har en mörk skena, /tid och /admin har det inte. */
+:root {
+  --ek-green: #1a3f26;
+  --ek-green-strong: #122c1b;
+  --ek-accent: #2f6b45;
+  --ek-accent-ring: rgba(47, 107, 69, 0.20);
+}
+
 /* Melodic Frost — CRM-specific design tokens */
 .crm-shell {
   --crm-sidebar-bg: #0d2117;
@@ -55,7 +74,7 @@
   --crm-sidebar-icon-active: #6ee7b7;
   --crm-content-bg: #e5ede5;
   --crm-card-bg: #f9fbf7;
-  --crm-primary: #1a3f26;
+  --crm-primary: var(--ek-green);
 
   /* ── CRM-innehållets accentramp ─────────────────────────────────────────────
      Fyra stopp från primärfärgen till skenans aktiva ikonfärg (#6ee7b7). Ytan till
@@ -71,12 +90,22 @@
      är den enda ordning som går att läsa utan förklaring. */
   /* Stapelspår i sage i stället för slate-100, så tomma staplar hör till ytan. */
   --crm-track: #dfe7dc;
+
+  /* Interaktiv grön: länkar, fokusramar, allt som svarar på en klickning. EN roll, inte tre.
+     Ytan använde emerald-500/600/700 här — en blåare grön som inte hör till #1a3f26, och som
+     låg några pixlar från varumärkesrampen utan att vara i familj med den.
+     ⚠️ INTE --crm-primary till länkar: #1a3f26 ligger för nära brödtextens #0f172a för att
+     läsas som en länk. --crm-accent är ljus nog att skilja sig, mörk nog för AA (6,1:1 mot
+     kortbakgrunden). Primärfärgen är hovertillståndet i stället. */
+  --crm-accent: var(--ek-accent);
+  --crm-accent-strong: var(--ek-green);
+  --crm-accent-ring: var(--ek-accent-ring);
   /* Varmt värde för STAPLAR som kräver uppmärksamhet. Meddelanderutor (felbanderoll,
      påminnelser, SectionError) behåller sina egna amber och rose — där skiljer de två
      hues på allvarsgrad, varning mot fel, och är alltså inte dubblering. Statusfärgerna
      i crmTokens är en tredje sak: ett delat ordförråd över hela CRM. */
   --crm-attention: #b45309;
-  --crm-primary-hover: #122c1b;
+  --crm-primary-hover: var(--ek-green-strong);
   --crm-primary-text: #ffffff;
 }
 

@@ -761,7 +761,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </span>
                           )}
                           <div className="inline-flex items-center gap-2">
-                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-400">
+                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
                               <path fill="currentColor" d="M9 18l6-6-6-6" />
                             </svg>
                             {positionLabel && (
@@ -1076,7 +1076,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                         className={cn(
                           'rounded-full border font-semibold transition',
                           !commentsLoading && !commentsError && comments.length === 0
-                            ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400'
+                            ? 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500'
                             : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:bg-slate-100',
                           isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-[5px] text-[11px]'
                         )}

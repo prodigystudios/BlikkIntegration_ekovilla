@@ -156,7 +156,7 @@ export default function KorjournalTripModal({
         <div className={crm.cardInner}>
           <p className={cn('mb-3', crm.sectionTitle)}>Anteckning</p>
           <textarea
-            className="min-h-24 w-full resize-y appearance-none rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors placeholder:text-slate-400 hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+            className="min-h-24 w-full resize-y appearance-none rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 transition-colors placeholder:text-slate-400 hover:border-[#c8d4c3] focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
             value={form.note}
             onChange={(e) => onField({ note: e.target.value })}
             placeholder="Syfte med resan eller extra kontext"

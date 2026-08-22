@@ -153,7 +153,7 @@ export default function ConfirmModal({
         {/* Email */}
         <div className="grid gap-1.5">
           <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-700">
-            <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={loading} className="h-4 w-4 accent-emerald-600" />
+            <input type="checkbox" checked={sendEmail} onChange={(e) => setSendEmail(e.target.checked)} disabled={loading} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
             Skicka mejl
           </label>
           <input
@@ -169,7 +169,7 @@ export default function ConfirmModal({
         {/* SMS */}
         <div className="grid gap-1.5">
           <label className="flex items-center gap-2 text-[13px] font-semibold text-slate-700">
-            <input type="checkbox" checked={sendSms} onChange={(e) => setSendSms(e.target.checked)} disabled={loading} className="h-4 w-4 accent-emerald-600" />
+            <input type="checkbox" checked={sendSms} onChange={(e) => setSendSms(e.target.checked)} disabled={loading} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
             Skicka SMS
           </label>
           <input
@@ -191,7 +191,7 @@ export default function ConfirmModal({
             disabled={!sendEmail}
             rows={3}
             placeholder="Lämna tomt för standardtext."
-            className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 disabled:bg-slate-50 disabled:text-slate-400"
+            className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-[13px] text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)] disabled:bg-slate-50 disabled:text-slate-400"
           />
         </div>
       </form>

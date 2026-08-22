@@ -1012,14 +1012,14 @@ function NoteRow({ item, crmProspectName, onToggle, onRemove, onEdit, onSaveRemi
             {isMobileCard ? (
               <div className="grid gap-1">
                 {mobileDetailSummary && <span style={subtleMetaText}>{mobileDetailSummary}</span>}
-                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-emerald-700 no-underline hover:text-emerald-800">Öppna möteslänk</a>}
+                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-[color:var(--ek-accent)] no-underline transition hover:text-[color:var(--ek-green)]">Öppna möteslänk</a>}
               </div>
             ) : (
               <div className="flex flex-wrap items-center gap-2">
                 {item.kind === 'meeting' && item.startsAt && <span style={subtleMetaText}>Start {formatClockLabel(item.startsAt)}</span>}
                 {item.kind === 'meeting' && item.endsAt && <span style={subtleMetaText}>Slut {formatClockLabel(item.endsAt)}</span>}
                 {item.location && <span style={subtleMetaText}>{item.location}</span>}
-                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-emerald-700 no-underline hover:text-emerald-800">Öppna länk</a>}
+                {item.linkUrl && <a href={item.linkUrl} target="_blank" rel="noreferrer" className="text-[11.5px] text-[color:var(--ek-accent)] no-underline transition hover:text-[color:var(--ek-green)]">Öppna länk</a>}
               </div>
             )}
           </div>

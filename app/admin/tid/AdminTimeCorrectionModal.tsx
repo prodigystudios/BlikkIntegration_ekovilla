@@ -190,7 +190,7 @@ export default function AdminTimeCorrectionModal({
             onClick={() => void save()}
             disabled={busy || previewMinutes <= 0 || needsTarget || sameClock || !date}
             className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             {busy ? 'Sparar…' : 'Spara rättelse'}
           </button>
@@ -239,14 +239,14 @@ export default function AdminTimeCorrectionModal({
                 <button
                   type="button"
                   onClick={() => { setWorkOrderId(''); setChosen(null); }}
-                  className="p-0 text-sm font-semibold text-emerald-800 underline underline-offset-2"
+                  className="p-0 text-sm font-semibold text-[color:var(--ek-accent)] underline underline-offset-2 transition hover:text-[color:var(--ek-green)]"
                 >
                   Ångra
                 </button>
               </div>
             ) : null}
             <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sök ordernummer eller kund…" />
-            {searching ? <span className="text-sm text-slate-400">Söker…</span> : null}
+            {searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
             {hits.length > 0 ? (
               <div className="grid gap-1.5">
                 {hits.map((order) => (
@@ -261,7 +261,7 @@ export default function AdminTimeCorrectionModal({
                         ? 'border-transparent text-white shadow-sm'
                         : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',
                     )}
-                    style={workOrderId === order.id ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+                    style={workOrderId === order.id ? { backgroundColor: 'var(--ek-green)' } : undefined}
                   >
                     {orderLabel(order)}
                   </button>
@@ -317,7 +317,7 @@ export default function AdminTimeCorrectionModal({
               </label>
               <div className="shrink-0 text-right">
                 <div className={cn(LABEL, 'whitespace-nowrap')}>Arbetad tid</div>
-                <div className={cn('whitespace-nowrap text-xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
+                <div className={cn('whitespace-nowrap text-xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-500')}>
                   {formatHours(previewMinutes)} h
                 </div>
               </div>

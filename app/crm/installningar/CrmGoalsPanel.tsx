@@ -5,6 +5,8 @@ import Input from '../../../components/ui/Input';
 import SectionCard from '../../../components/ui/SectionCard';
 import { useToast } from '@/lib/Toast';
 import { GOAL_WEEKS_PER_MONTH, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import { cn } from '@/lib/shared/cn';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 type TeamMember = {
   id: string;
@@ -243,7 +245,7 @@ export default function CrmGoalsPanel({
               type="button"
               onClick={saveGoals}
               disabled={saving}
-              className="inline-flex min-h-11 items-center justify-center rounded-full border border-slate-900 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-950 disabled:cursor-not-allowed disabled:opacity-60"
+              className={cn(crm.saveButton, 'min-h-11 w-auto rounded-full px-4 py-2')}
             >
               {saving ? 'Sparar…' : 'Spara månadsbudget'}
             </button>

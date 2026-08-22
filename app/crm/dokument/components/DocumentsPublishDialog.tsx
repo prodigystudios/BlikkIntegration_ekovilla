@@ -112,7 +112,7 @@ export default function DocumentsPublishDialog({
             <textarea
               value={publishUi.description}
               onChange={(event) => onDescriptionChange(event.target.value)}
-              className="min-h-24 w-full resize-y rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+              className="min-h-24 w-full resize-y rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
               placeholder="Kort beskrivning eller instruktion till personalen"
             />
           </label>
@@ -120,7 +120,7 @@ export default function DocumentsPublishDialog({
           <label className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-[#f6f9f3] px-3.5 py-3 text-sm font-semibold text-slate-700">
             <input
               type="checkbox"
-              className="h-4 w-4 accent-emerald-600"
+              className="h-4 w-4 accent-[color:var(--ek-accent)]"
               checked={publishUi.requiresApproval}
               onChange={(event) => onRequiresApprovalChange(event.target.checked)}
             />
@@ -143,7 +143,7 @@ export default function DocumentsPublishDialog({
                 <label key={user.id} className="flex items-start gap-2.5 rounded-lg border border-[#e3e9df] bg-white px-2.5 py-2">
                   <input
                     type="checkbox"
-                    className="mt-0.5 h-4 w-4 accent-emerald-600"
+                    className="mt-0.5 h-4 w-4 accent-[color:var(--ek-accent)]"
                     checked={publishUi.selectedUserIds.includes(user.id)}
                     onChange={() => onToggleUser(user.id)}
                   />
@@ -168,7 +168,7 @@ export default function DocumentsPublishDialog({
             <div className="grid max-h-[260px] gap-2 overflow-auto">
               {(publishMeta?.tags || []).map((tag) => (
                 <label key={tag} className="flex items-start gap-2.5 rounded-lg border border-[#e3e9df] bg-white px-2.5 py-2">
-                  <input type="checkbox" className="mt-0.5 h-4 w-4 accent-emerald-600" checked={publishUi.selectedTags.includes(tag)} onChange={() => onToggleTag(tag)} />
+                  <input type="checkbox" className="mt-0.5 h-4 w-4 accent-[color:var(--ek-accent)]" checked={publishUi.selectedTags.includes(tag)} onChange={() => onToggleTag(tag)} />
                   <span className="text-sm font-semibold text-slate-800">{tag}</span>
                 </label>
               ))}

@@ -131,7 +131,7 @@ export default function AdminPermissions() {
     }
   }
 
-  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
+  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-500">Laddar…</p>;
 
   return (
     <div className="grid gap-4 p-5">
@@ -216,7 +216,7 @@ export default function AdminPermissions() {
           ))}
         </select>
 
-        {userLoading ? <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p> : null}
+        {userLoading ? <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p> : null}
 
         {userState ? (
           <div className="grid gap-4">

@@ -64,7 +64,7 @@ export default function AdminChangelog() {
       ) : null}
 
       {loading ? (
-        <p className="m-0 text-sm text-slate-400">Laddar…</p>
+        <p className="m-0 text-sm text-slate-500">Laddar…</p>
       ) : entries.length === 0 && !error ? (
         <div className={ADMIN_EMPTY_BOX}>
           <p className="m-0 text-sm text-slate-500">Inga egna poster ännu.</p>
@@ -168,7 +168,7 @@ function NewEntryForm({ onSaved }: { onSaved: () => void }) {
           onClick={() => submit(true)}
           disabled={saving}
           className={cn(crm.formButton)}
-          style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+          style={{ backgroundColor: 'var(--ek-green)' }}
         >
           {saving ? 'Sparar…' : 'Publicera'}
         </button>
@@ -234,7 +234,7 @@ function EntryRow({ entry, onChanged }: { entry: ChangelogDraftView; onChanged: 
         <div className="min-w-0 flex-1 grid gap-0.5">
           <span className="text-[13px] font-semibold text-slate-900">{entry.title}</span>
           {entry.body ? <span className="whitespace-pre-wrap text-[12px] text-slate-600">{entry.body}</span> : null}
-          <span className="text-[11px] text-slate-400">
+          <span className="text-[11px] text-slate-500">
             {entry.category_label} · {entry.created_by_name}
             {published ? ` · publicerad ${formatChangelogStamp(entry.published_at as string)}` : ''}
           </span>
@@ -263,7 +263,7 @@ function EntryRow({ entry, onChanged }: { entry: ChangelogDraftView; onChanged: 
             onClick={() => patch({ publish: true })}
             disabled={busy}
             className={cn(crm.formButton, 'h-8')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             Publicera
           </button>

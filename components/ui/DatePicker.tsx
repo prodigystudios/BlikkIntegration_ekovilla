@@ -144,10 +144,10 @@ export default function DatePicker({
         aria-label={ariaLabel}
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          'flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-[#dce4d8] bg-white py-2 pl-3 text-left text-sm transition-colors hover:border-[#c8d4c3] focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 disabled:cursor-not-allowed disabled:border-transparent disabled:bg-[#eef1ec] disabled:text-slate-500',
+          'flex min-h-11 w-full items-center justify-between gap-2 rounded-lg border border-[#dce4d8] bg-white py-2 pl-3 text-left text-sm transition-colors hover:border-[#c8d4c3] focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)] disabled:cursor-not-allowed disabled:border-transparent disabled:bg-[#eef1ec] disabled:text-slate-500',
           // Room on the right for the calendar icon (+ the clear button when shown).
           clearable && label && !disabled ? 'pr-14' : 'pr-9',
-          open && 'border-emerald-500 ring-2 ring-emerald-500/20',
+          open && 'border-[color:var(--ek-accent)] ring-2 ring-[color:var(--ek-accent-ring)]',
         )}
       >
         <span className={cn('truncate', label ? 'text-slate-900' : 'text-slate-400')}>{label || placeholder}</span>
@@ -165,7 +165,7 @@ export default function DatePicker({
           type="button"
           aria-label="Rensa datum"
           onClick={() => { onChange(''); triggerRef.current?.focus(); }}
-          className="absolute right-8 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-300 transition-colors hover:text-rose-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+          className="absolute right-8 top-1/2 -translate-y-1/2 rounded p-0.5 text-slate-300 transition-colors hover:text-rose-500 focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
             <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -215,11 +215,11 @@ export default function DatePicker({
                   aria-pressed={isSelected}
                   aria-current={isToday ? 'date' : undefined}
                   className={cn(
-                    'flex h-9 items-center justify-center rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500/30',
+                    'flex h-9 items-center justify-center rounded-lg text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]',
                     !inMonth && 'text-slate-300',
                     inMonth && !isSelected && 'text-slate-700 hover:bg-[#eef3ea]',
-                    isSelected && 'bg-emerald-600 font-semibold text-white hover:bg-emerald-600',
-                    !isSelected && isToday && 'font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200',
+                    isSelected && 'bg-[color:var(--ek-accent)] font-semibold text-white hover:bg-[color:var(--ek-accent)]',
+                    !isSelected && isToday && 'font-semibold text-[color:var(--ek-accent)] ring-1 ring-inset ring-[color:var(--ek-accent)]',
                   )}
                 >
                   {d.getDate()}
@@ -230,7 +230,7 @@ export default function DatePicker({
 
           {/* Footer actions */}
           <div className="mt-2 flex items-center justify-between border-t border-slate-100 pt-2">
-            <button type="button" onClick={() => commit(today)} className="rounded-lg px-2 py-1 text-xs font-semibold text-emerald-700 transition-colors hover:bg-[#eef3ea]">
+            <button type="button" onClick={() => commit(today)} className="rounded-lg px-2 py-1 text-xs font-semibold text-[color:var(--ek-accent)] transition-colors hover:bg-[#eef3ea]">
               Idag
             </button>
             {clearable && label ? (

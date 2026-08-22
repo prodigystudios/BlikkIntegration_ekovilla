@@ -574,7 +574,7 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                 <select
                   value={selectedContextId}
                   onChange={(event) => setSelectedContextId(event.target.value)}
-                  className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 transition focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                  className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
                 >
                   <option value="">Välj kontext</option>
                   {filteredContexts.map((item) => (

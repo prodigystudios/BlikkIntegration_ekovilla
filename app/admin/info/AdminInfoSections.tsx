@@ -15,7 +15,7 @@ import { blocksToFragment, editorToBlocks } from './richText';
 // Redigeraren för /dokument-information.
 //
 // ⚠️ crm.formButton BÄR INGEN BAKGRUND. Den sätter text-white och förutsätter att anroparen
-// parar ihop den med style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }} — se
+// parar ihop den med style={{ backgroundColor: 'var(--ek-green)' }} — se
 // AdminNews.tsx. Utan den blir knappen vit text på vitt kort: den finns, den går att klicka,
 // men den syns inte. Det var precis så de här fyra skapa-knapparna såg ut i första versionen,
 // och symptomet var "man kan bara redigera, inte lägga till".
@@ -389,7 +389,7 @@ export default function AdminInfoSections() {
         <div className={cn(ADMIN_CARD, 'grid gap-3 p-4')}>
           <div className="flex items-center justify-between gap-2">
             <h3 className="m-0 text-base font-bold text-slate-900">Innehåll</h3>
-            <button type="button" onClick={addGroup} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Nytt avsnitt</button>
+            <button type="button" onClick={addGroup} className={crm.formButton} style={{ backgroundColor: 'var(--ek-green)' }}>Nytt avsnitt</button>
           </div>
 
           {loading && <p className="m-0 text-sm text-slate-500">Hämtar…</p>}
@@ -397,7 +397,7 @@ export default function AdminInfoSections() {
           {!loading && groups.length === 0 && (
             <div className={cn(ADMIN_EMPTY_BOX, 'grid gap-3')}>
               <p className="m-0 text-sm text-slate-500">Inga avsnitt ännu.</p>
-              <button type="button" onClick={addGroup} className={cn(crm.formButton, 'justify-self-center')} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Skapa det första avsnittet</button>
+              <button type="button" onClick={addGroup} className={cn(crm.formButton, 'justify-self-center')} style={{ backgroundColor: 'var(--ek-green)' }}>Skapa det första avsnittet</button>
             </div>
           )}
 
@@ -430,7 +430,7 @@ export default function AdminInfoSections() {
                     >
                       {section.title}
                       {section.images.length > 0 && (
-                        <span className={cn('ml-2 text-[11px]', section.id === selectedId ? 'text-emerald-100' : 'text-slate-400')}>
+                        <span className={cn('ml-2 text-[11px]', section.id === selectedId ? 'text-emerald-100' : 'text-slate-500')}>
                           {section.images.length} fil{section.images.length === 1 ? '' : 'er'}
                         </span>
                       )}
@@ -441,7 +441,7 @@ export default function AdminInfoSections() {
                 ))}
               </ul>
 
-              <button type="button" onClick={() => addSection(group)} className={cn(crm.formButton, 'justify-self-start')} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Ny flik</button>
+              <button type="button" onClick={() => addSection(group)} className={cn(crm.formButton, 'justify-self-start')} style={{ backgroundColor: 'var(--ek-green)' }}>Ny flik</button>
             </div>
           ))}
         </div>
@@ -516,7 +516,7 @@ export default function AdminInfoSections() {
                     if (file) uploadFile(file);
                   }}
                 />
-                <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className={cn(crm.formButton, 'justify-self-start')} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>
+                <button type="button" onClick={() => fileRef.current?.click()} disabled={uploading} className={cn(crm.formButton, 'justify-self-start')} style={{ backgroundColor: 'var(--ek-green)' }}>
                   {uploading ? 'Laddar upp…' : 'Ladda upp bild eller PDF'}
                 </button>
                 <p className="m-0 text-[12px] text-slate-500">
@@ -537,7 +537,7 @@ export default function AdminInfoSections() {
                   <p className="m-0 mb-2 text-sm font-bold tracking-tight text-slate-900">{title.trim() || 'Utan rubrik'}</p>
                   <BlockContent blocks={blocks} />
                   {blocks.length === 0 && selected.images.length === 0 && (
-                    <p className="m-0 text-[13px] text-slate-400">Tom flik.</p>
+                    <p className="m-0 text-[13px] text-slate-500">Tom flik.</p>
                   )}
                 </div>
               </div>

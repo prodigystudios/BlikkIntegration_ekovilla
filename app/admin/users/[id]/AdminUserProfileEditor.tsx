@@ -186,7 +186,7 @@ export default function AdminUserProfileEditor({ userId, authEmail, profile, sen
             onClick={() => saveSection('contact')}
             disabled={savingContact}
             className={cn(crm.formButton, 'justify-self-end')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             {savingContact ? 'Sparar…' : 'Spara kontaktdel'}
           </button>
@@ -209,7 +209,7 @@ export default function AdminUserProfileEditor({ userId, authEmail, profile, sen
               onClick={() => saveSection('employment')}
               disabled={savingEmployment}
               className={cn(crm.formButton, 'justify-self-end')}
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {savingEmployment ? 'Sparar…' : 'Spara anställningsdel'}
             </button>
@@ -231,7 +231,7 @@ export default function AdminUserProfileEditor({ userId, authEmail, profile, sen
               onClick={() => saveSection('sensitive')}
               disabled={savingSensitive}
               className={cn(crm.formButton, 'justify-self-end')}
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {savingSensitive ? 'Sparar…' : 'Spara känsliga uppgifter'}
             </button>

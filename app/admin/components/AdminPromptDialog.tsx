@@ -78,7 +78,7 @@ export default function AdminPromptDialog({
                 ? 'border border-rose-600 bg-rose-600 hover:brightness-95'
                 : '',
             )}
-            style={danger ? undefined : { backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={danger ? undefined : { backgroundColor: 'var(--ek-green)' }}
           >
             {busy ? '…' : confirmLabel}
           </button>

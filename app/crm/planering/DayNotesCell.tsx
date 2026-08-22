@@ -77,7 +77,7 @@ export default function DayNotesCell({
             onKeyDown={onKey}
             onBlur={submit}
             placeholder="Notering…"
-            className="h-6 w-full rounded-md border border-emerald-300 bg-white px-1.5 text-[10px] text-slate-800 outline-none focus:ring-1 focus:ring-emerald-400"
+            className="h-6 w-full rounded-md border border-[color:var(--ek-accent)] bg-white px-1.5 text-[10px] text-slate-800 outline-none focus:ring-1 focus:ring-[color:var(--ek-accent)]"
           />
         ) : (
           <button

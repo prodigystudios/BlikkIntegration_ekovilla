@@ -128,7 +128,7 @@ export default function AdminTimeReference() {
     }
   }
 
-  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
+  if (loading) return <p role="status" className="m-0 p-5 text-sm text-slate-500">Laddar…</p>;
 
   return (
     <div className="grid gap-4 p-5">
@@ -204,7 +204,7 @@ export default function AdminTimeReference() {
                   {items.map((item) => {
                     const busy = busyKey === `${section.kind}:${item.id}`;
                     return (
-                      <tr key={item.id} className={cn('border-x-0 border-t-0 border-b border-slate-100', !item.is_active && 'text-slate-400')}>
+                      <tr key={item.id} className={cn('border-x-0 border-t-0 border-b border-slate-100', !item.is_active && 'text-slate-500')}>
                         <td className="px-3 py-2 font-medium">
                           {item.name}
                           {item.blikk_id ? <span className="ml-2 text-xs text-slate-500">Blikk #{item.blikk_id}</span> : null}
@@ -283,7 +283,7 @@ export default function AdminTimeReference() {
                 onClick={() => void addItem(section.kind)}
                 disabled={!((newName[section.kind] || '').trim()) || busyKey === `${section.kind}:new`}
                 className={crm.formButton}
-                style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+                style={{ backgroundColor: 'var(--ek-green)' }}
               >
                 Lägg till
               </button>

@@ -72,7 +72,7 @@ export default function DashboardDocumentApprovals({ compact, hideWhenEmpty, onV
         title="Dokument att kvittera"
         meta={pendingCount > 0 ? <Badge variant="accent">{pendingCount} väntar</Badge> : null}
         action={
-          <Link href="/mina-dokument" className="text-[13px] font-bold text-emerald-700 no-underline hover:text-emerald-800">
+          <Link href="/mina-dokument" className="text-[13px] font-bold text-[color:var(--ek-accent)] no-underline transition hover:text-[color:var(--ek-green)]">
             Öppna alla
           </Link>
         }

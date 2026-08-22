@@ -376,7 +376,7 @@ function TruckPanel({
               </div>
               <label className="mt-3.5 flex cursor-pointer items-center justify-between gap-3">
                 <span><span className="block text-[12.5px] font-bold text-slate-800">Aktiv</span><span className="block text-[11px] text-slate-400">Inaktiva bilar göms från tavlan</span></span>
-                <input type="checkbox" checked={truck.active} onChange={(e) => patchLocal(truck.id, { active: e.target.checked })} className="h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked={truck.active} onChange={(e) => patchLocal(truck.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
@@ -468,7 +468,7 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
               </div>
               <label className="mt-3.5 flex cursor-pointer items-center justify-between gap-3">
                 <span className="text-[12.5px] font-bold text-slate-800">Aktiv</span>
-                <input type="checkbox" checked={depot.active} onChange={(e) => patchLocal(depot.id, { active: e.target.checked })} className="h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked={depot.active} onChange={(e) => patchLocal(depot.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
@@ -549,7 +549,7 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
               </div>
               <label className="mt-3.5 flex cursor-pointer items-center justify-between gap-3">
                 <span className="text-[12.5px] font-bold text-slate-800">Aktiv</span>
-                <input type="checkbox" checked={jt.active} onChange={(e) => patchLocal(jt.id, { active: e.target.checked })} className="h-4 w-4 accent-emerald-600" />
+                <input type="checkbox" checked={jt.active} onChange={(e) => patchLocal(jt.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
