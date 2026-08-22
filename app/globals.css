@@ -60,6 +60,12 @@
   --ek-green-strong: #122c1b;
   --ek-accent: #2f6b45;
   --ek-accent-ring: rgba(47, 107, 69, 0.20);
+  /* Tonad varumärkesyta: bakgrund + kant för framhävda, INTERAKTIVA ytor — aktiv flik,
+     accent-badge, kontaktchips. Ersätter emerald-50/200, som är en blåare grön och drog åt
+     ett annat håll än #1a3f26. Statusgrönt är en ANNAN sak och bor kvar i crmTokens
+     statuskartor — "Vunnen" och "en vald flik" ska inte se likadana ut. */
+  --ek-accent-soft: #e9f1eb;
+  --ek-accent-soft-border: #c6dccd;
 }
 
 /* Melodic Frost — CRM-specific design tokens */
@@ -110,12 +116,25 @@
 }
 
 :root {
+  /* ⚠️ Det HÄR var ett helt parallellt system, och det var BLÅTT: --ui-accent låg på #2563eb
+     och kantfärgen på #dbe4ef, en blågrå. De är wire:ade in i tailwind.config.js som
+     `ui.accent`, `ui.border`, `ui.muted` och bärs av SectionCard, DialogShell, Button,
+     EmptyState, LoadingState, ErrorState, Select och Tabs — alltså syntes en blå accent och
+     blågrå kanter bredvid sagen i hela appen. Värdena pekar nu på varumärkespaletten, så
+     ⚠️ Tokenbytet ensamt RÄCKTE INTE, och jag påstod att det gjorde det. Två saker till:
+     (1) `ring-ui-accent/20` kompilerar till INGENTING i Tailwind 3 — en alfamodifierare på en
+     naken var()-färg emitterar ingen regel, så `ring-2` föll tillbaka på Tailwinds blå
+     standardring. Anropen tar en färdigalfad variabel i stället.
+     (2) Den blå som faktiskt RENDERADE låg i den äldre CSS:en längre ned i den här filen —
+     `button:focus-visible` på varenda handrullad knapp i appen, plus .btn--primary,
+     .primary-btn, .select-field, .text-field och .icon-btn. Alla åtta pekar nu på paletten.
+     --ui-surface-page/card lämnas vita med flit: de bär ytor som SKA vara papper. */
   --ui-surface-page: #ffffff;
   --ui-surface-card: #ffffff;
-  --ui-surface-muted: #f8fafc;
-  --ui-border-subtle: #dbe4ef;
-  --ui-accent: #2563eb;
-  --ui-accent-soft: #dbeafe;
+  --ui-surface-muted: #f4f7f2;
+  --ui-border-subtle: #e0e8dc;
+  --ui-accent: var(--ek-accent);
+  --ui-accent-soft: var(--ek-accent-soft);
   --ui-text-strong: #0f172a;
   --ui-text-muted: #475569;
   --ui-text-soft: #64748b;
@@ -259,7 +278,7 @@ button:focus-visible,
 input[type="button"]:focus-visible,
 input[type="submit"]:focus-visible,
 input[type="reset"]:focus-visible {
-  outline: 2px solid #2563eb; /* blue-600 */
+  outline: 2px solid var(--ek-accent);
   outline-offset: 2px;
 }
 
@@ -298,8 +317,8 @@ input[type="reset"]:focus-visible {
   color: #111827; /* gray-900 */
 }
 .btn--primary {
-  background-color: #2563eb; /* blue-600 */
-  border-color: #2563eb;
+  background-color: var(--ek-green);
+  border-color: var(--ek-green);
   color: #ffffff;
 }
 .btn--danger:hover { background-color: #b91c1c; border-color: #b91c1c; }
@@ -311,7 +330,7 @@ input[type="reset"]:focus-visible {
 .btn--success:focus-visible { outline-color: #16a34a; }
 .btn--primary:hover { background-color: #1d4ed8; border-color: #1d4ed8; }
 .btn--primary:active { background-color: #1e40af; border-color: #1e40af; }
-.btn--primary:focus-visible { outline-color: #2563eb; }
+.btn--primary:focus-visible { outline-color: var(--ek-accent); }
 
 /* Archive page responsive layout */
 .archive {
@@ -379,7 +398,7 @@ select.select-field {
   background-size: 18px 18px;
 }
 select.select-field:hover { border-color: #d1d5db; }
-select.select-field:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-color: #2563eb; }
+select.select-field:focus-visible { outline: 2px solid var(--ek-accent); outline-offset: 2px; border-color: var(--ek-accent); }
 select.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
 select.select-field option { color: #111827; background-color: #ffffff; }
 
@@ -461,9 +480,9 @@ select.select-field.status-select--lost {
 .accordion-content { padding: 0 0px 0px 0px; }
 /* Simple form controls */
 .text-field { padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 15px; }
-.text-field:focus-visible, .text-area:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-color: #2563eb; }
+.text-field:focus-visible, .text-area:focus-visible { outline: 2px solid var(--ek-accent); outline-offset: 2px; border-color: var(--ek-accent); }
 .text-area { padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 8px; font-size: 15px; resize: vertical; }
-.primary-btn { background: #2563eb; color: #fff; border: none; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
+.primary-btn { background: var(--ek-green); color: #fff; border: none; border-radius: 8px; padding: 10px 14px; font-weight: 600; cursor: pointer; }
 .primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* Mobile layout: stack rows, hide header */
@@ -560,7 +579,7 @@ select.select-field.status-select--lost {
   gap: 4px;
 }
 .icon-btn:hover { opacity: 1; background-color: #eef2ff; zoom: 102%;}
-.icon-btn:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; border-radius: 4px; }
+.icon-btn:focus-visible { outline: 2px solid var(--ek-accent); outline-offset: 2px; border-radius: 4px; }
 
 /* Dashboard quick links minimization animations */
 .dash-layout { transition: max-width .35s ease, padding .25s ease; }

@@ -82,13 +82,13 @@ export function TabsTrigger({ className, active = false, variant = 'pill', child
         }
       }}
       className={cn(
-        'rounded-2xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20',
+        'rounded-2xl border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent-ring)]',
         variant === 'card' && 'grid justify-start gap-1 px-3.5 py-3 text-left text-slate-900',
         variant === 'pill' && 'inline-flex min-h-10 items-center justify-center px-3.5 text-sm font-semibold',
-        variant === 'card' && active && 'border-emerald-200 bg-[linear-gradient(180deg,#f3f9f1_0%,#e0e8dc_100%)] shadow-[0_10px_24px_rgba(20,44,27,0.12)] hover:border-emerald-300 hover:bg-[linear-gradient(180deg,#f3f9f1_0%,#e0e8dc_100%)]',
-        variant === 'card' && !active && 'border-[#e0e8dc] bg-white hover:border-emerald-200 hover:bg-[#f9fbf7]',
-        variant === 'pill' && active && 'border-emerald-200 bg-emerald-50 text-emerald-700 shadow-[0_8px_20px_rgba(20,44,27,0.08)] hover:border-emerald-300 hover:bg-emerald-50',
-        variant === 'pill' && !active && 'border-[#e0e8dc] bg-white text-slate-700 hover:border-emerald-200 hover:bg-[#f9fbf7]',
+        variant === 'card' && active && 'border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] shadow-[0_10px_24px_rgba(20,44,27,0.12)] hover:border-[color:var(--ek-accent)]',
+        variant === 'card' && !active && 'border-[#e0e8dc] bg-white hover:border-[color:var(--ek-accent-soft-border)] hover:bg-[#f9fbf7]',
+        variant === 'pill' && active && 'border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] shadow-[0_8px_20px_rgba(20,44,27,0.08)] hover:border-[color:var(--ek-accent)]',
+        variant === 'pill' && !active && 'border-[#e0e8dc] bg-white text-slate-700 hover:border-[color:var(--ek-accent-soft-border)] hover:bg-[#f9fbf7]',
         className,
       )}
       {...props}
