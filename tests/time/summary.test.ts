@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDayRows, summarizePerson, type SummarizableEntry } from '@/lib/domains/time/summary';
+import { breakWasDeducted, buildDayRows, summarizePerson, type SummarizableEntry } from '@/lib/domains/time/summary';
 
 // Underlaget byrån bad om: en rad per pass med datum, klockslag, arbetade timmar, frånvarotimmar
 // med orsak och anteckning — plus månadssumma för arbetad tid och frånvaro.
@@ -181,5 +181,58 @@ describe('buildDayRows — sorten', () => {
       entry({ kind: 'absence', workDate: '2026-08-13', startTime: null, endTime: null, minutesWorked: 240 }),
     ]);
     expect(rows.map((row) => row.kind)).toEqual(['work_order', 'internal', 'absence']);
+  });
+});
+
+// Attestens kontrollsiffra: bruttotiden ur klockslagen minus rasten ska bli arbetad tid. Den håller
+// bara om summan räknar SAMMA rast som workedMinutes faktiskt drog av.
+describe('rastavdraget som kontrollsiffra', () => {
+  it('summerar månadens rast, och kontrollen går ihop', () => {
+    const summary = summarizePerson(
+      [
+        entry({ workDate: '2026-08-11', startTime: '08:00', endTime: '18:00', breakMinutes: 60 }),
+        entry({ workDate: '2026-08-12', startTime: '07:00', endTime: '16:00', breakMinutes: 30 }),
+      ],
+      { from: '2026-08-01', to: '2026-08-31' },
+      ANNA,
+    );
+    expect(summary.breakMinutes).toBe(90);
+    // 600 + 540 brutto − 90 rast = 1050.
+    expect(summary.workMinutes).toBe(1050);
+  });
+
+  // ⚠️ Rader utan klockslag — de gamla kontorsraderna — får sina minuter ur minutes_worked, och
+  // workedMinutes drar då ALDRIG av rasten. Räknas deras lagrade rast med i summan påstår
+  // kontrollsiffran ett avdrag som inte skett, och en korrekt rad ser överrapporterad ut med en
+  // timme. Den som "rättar" den skriver bort riktig tid.
+  it('räknar inte rast på rader där den aldrig drogs av', () => {
+    const summary = summarizePerson(
+      [entry({ startTime: null, endTime: null, minutesWorked: 480, breakMinutes: 60 })],
+      { from: '2026-08-01', to: '2026-08-31' },
+      ANNA,
+    );
+    expect(summary.workMinutes).toBe(480);
+    expect(summary.breakMinutes).toBe(0);
+  });
+
+  it('räknar inte frånvarons rast — den har inget pass att dra från', () => {
+    const summary = summarizePerson(
+      [entry({ kind: 'absence', startTime: null, endTime: null, minutesWorked: 240, breakMinutes: 30 })],
+      { from: '2026-08-01', to: '2026-08-31' },
+      ANNA,
+    );
+    expect(summary.breakMinutes).toBe(0);
+  });
+});
+
+// Samma regel som attestens cell frågar per rad. Delad, så tabellen och summan aldrig kan säga
+// olika saker om samma rast.
+describe('breakWasDeducted', () => {
+  it('är sann bara när det finns två klockslag att räkna emellan', () => {
+    expect(breakWasDeducted({ kind: 'work_order', startTime: '08:00', endTime: '18:00' })).toBe(true);
+    expect(breakWasDeducted({ kind: 'internal', startTime: '22:00', endTime: '06:00' })).toBe(true);
+    expect(breakWasDeducted({ kind: 'work_order', startTime: null, endTime: null })).toBe(false);
+    expect(breakWasDeducted({ kind: 'work_order', startTime: '08:00', endTime: null })).toBe(false);
+    expect(breakWasDeducted({ kind: 'absence', startTime: '08:00', endTime: '18:00' })).toBe(false);
   });
 });

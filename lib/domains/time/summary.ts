@@ -1,4 +1,4 @@
-import { workedMinutes, type ShiftInput } from './hours';
+import { grossMinutes, workedMinutes, type ShiftInput } from './hours';
 
 // Sammanställning av tidrader per person, dag och månad.
 //
@@ -90,6 +90,19 @@ export function buildDayRows(entries: SummarizableEntry[]): DayRow[] {
     });
 }
 
+/**
+ * Drogs rastavdraget faktiskt av från raden?
+ *
+ * ⚠️ Inte samma fråga som "har raden en rast". `workedMinutes` drar bara av rasten när det finns
+ * två klockslag att räkna emellan — saknas de faller den tillbaka på minutesWorked, och den
+ * lagrade rasten är då en siffra som aldrig påverkade någonting. De gamla kontorsraderna är precis
+ * sådana. Att visa deras rast som ett avdrag hade fått en korrekt rad att se överrapporterad ut
+ * med en timme, och den som "rättar" den skriver bort riktig tid.
+ */
+export function breakWasDeducted(row: Pick<DayRow, 'startTime' | 'endTime' | 'kind'>): boolean {
+  return row.kind !== 'absence' && grossMinutes(row.startTime, row.endTime) !== null;
+}
+
 export type PersonPeriodSummary = {
   userId: string;
   from: string;
@@ -97,6 +110,13 @@ export type PersonPeriodSummary = {
   rows: DayRow[];
   workMinutes: number;
   absenceMinutes: number;
+  /**
+   * Månadens rastavdrag — bara det som faktiskt drogs av (se breakWasDeducted).
+   *
+   * Ingen av byråns kolumner. Den finns som kontrollsiffra för attesten: bruttotiden ur
+   * klockslagen minus den här ska bli workMinutes, och stämmer det inte är någon rad fel.
+   */
+  breakMinutes: number;
   /** Frånvarotimmar per orsak — byrån behöver veta VILKEN ledighet, inte bara hur mycket. */
   absenceByReason: Array<{ reason: string; minutes: number }>;
 };
@@ -113,6 +133,7 @@ export function summarizePerson(
 
   const workMinutes = rows.reduce((sum, row) => sum + row.workMinutes, 0);
   const absenceMinutes = rows.reduce((sum, row) => sum + row.absenceMinutes, 0);
+  const breakMinutes = rows.reduce((sum, row) => sum + (breakWasDeducted(row) ? row.breakMinutes : 0), 0);
 
   const byReason = new Map<string, number>();
   for (const entry of mine) {
@@ -129,6 +150,7 @@ export function summarizePerson(
     rows,
     workMinutes,
     absenceMinutes,
+    breakMinutes,
     absenceByReason: [...byReason.entries()]
       .map(([reason, minutes]) => ({ reason, minutes }))
       .sort((a, b) => b.minutes - a.minutes || a.reason.localeCompare(b.reason, 'sv')),

@@ -4,7 +4,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '@/components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import { minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
+import { DEFAULT_BREAK_MINUTES, minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 
 // Formuläret för en tidrad. Tre sorter, samma modal: arbetsorder, intern tid, frånvaro.
@@ -101,10 +101,10 @@ export default function TimeEntryModal({
   const [date, setDate] = React.useState(entry?.work_date ?? defaultDate);
   const [start, setStart] = React.useState(toTimeInput(entry?.start_time ?? null) || '07:00');
   const [end, setEnd] = React.useState(toTimeInput(entry?.end_time ?? null) || '16:00');
-  // 60 minuter som standard (2026-08-22, Williams beslut) — samma default som arbetsorderns
-  // tidflik redan har. `??` och inte `||`: en sparad rad med rast 0 ska behålla sin nolla, annars
-  // hade varje redigering av ett rastfritt pass tyst dragit av en timme.
-  const [breakMinutes, setBreakMinutes] = React.useState(String(entry?.break_minutes ?? 60));
+  // Delad default med arbetsorderns tidflik — se DEFAULT_BREAK_MINUTES. `??` och inte `||`: en
+  // sparad rad med rast 0 ska behålla sin nolla, annars hade varje redigering av ett rastfritt pass
+  // tyst dragit av en timme.
+  const [breakMinutes, setBreakMinutes] = React.useState(String(entry?.break_minutes ?? DEFAULT_BREAK_MINUTES));
   const [absenceHours, setAbsenceHours] = React.useState(
     entry?.kind === 'absence' && entry.minutes_worked ? String(minutesToHours(entry.minutes_worked)) : '8',
   );
@@ -172,18 +172,31 @@ export default function TimeEntryModal({
     return () => { cancelled = true; };
   }, [supabase, kind, date, entry]);
 
+  // ⚠️ parseBreakMinutes, ALDRIG `Number(x) || 0` — skälet står på funktionen. Null betyder "går
+  // inte att tolka", och då ska summan visa noll och spara-knappen vara stängd. Med `|| 0` blev
+  // "0,5" i stället en rast på noll minuter: en timme extra betald tid, utan ett ord i gränssnittet
+  // och utan ett spår i ändringsloggen. Rättningsmodalen har haft spärren sedan den skrevs.
+  const parsedBreak = parseBreakMinutes(breakMinutes);
+
   const previewMinutes = React.useMemo(() => {
     if (kind === 'absence') {
       const hours = Number(String(absenceHours).replace(',', '.'));
       return Number.isFinite(hours) ? Math.round(hours * 60) : 0;
     }
+    if (parsedBreak === null) return 0;
     return workedMinutes({
       workDate: date,
       startTime: start || null,
       endTime: end || null,
-      breakMinutes: Number(breakMinutes) || 0,
+      breakMinutes: parsedBreak,
     });
-  }, [kind, absenceHours, date, start, end, breakMinutes]);
+  }, [kind, absenceHours, date, start, end, parsedBreak]);
+
+  // ⚠️ `grossMinutes` läser `end <= start` som ett pass över midnatt, så identiska klockslag ger
+  // exakt 1440 minuter — och serverns guard är `> 1440`, alltså exklusiv. Ett dubbeltryck eller ett
+  // klistrat klockslag hade skrivit ett DYGN på den egna månaden, med bara siffran i rutan som
+  // signal. Samma spärr, och samma skäl, som i rättningsmodalen.
+  const sameClock = kind !== 'absence' && !!start && start === end;
 
   // Kommentarkravet kommer från referensraden (Blikks commentRequiredWhenTimeReporting), så en
   // internpost som "Övrigt" kan tvinga fram en förklaring.
@@ -197,6 +210,7 @@ export default function TimeEntryModal({
   }, [kind, internalId, absenceId, reference]);
 
   const canSave = previewMinutes > 0
+    && !sameClock
     && (kind !== 'work_order' || !!workOrderId)
     && (kind !== 'internal' || !!internalId)
     && (kind !== 'absence' || !!absenceId)
@@ -215,7 +229,7 @@ export default function TimeEntryModal({
         absence_type_id: kind === 'absence' ? absenceId : null,
         start_time: kind === 'absence' ? null : start,
         end_time: kind === 'absence' ? null : end,
-        break_minutes: kind === 'absence' ? 0 : Number(breakMinutes) || 0,
+        break_minutes: kind === 'absence' ? 0 : (parsedBreak ?? 0),
         hours: kind === 'absence' ? Number(String(absenceHours).replace(',', '.')) : null,
         time_code_id: timeCodeId || null,
         note: note.trim() || null,
@@ -410,11 +424,16 @@ export default function TimeEntryModal({
                 </div>
               </div>
 
-              {/* Tre lägen, inte två. Ett tomt klockslag och en för lång rast ger båda noll minuter,
-                  men bara det ena handlar om rasten — och att skylla på rasten när fältet är tomt
-                  skickar folk att ändra fel sak. */}
+              {/* Fyra lägen, inte två. Tomt klockslag, samma klockslag, en otolkbar rast och en för
+                  lång rast ger alla noll minuter i summan, men bara ett av dem handlar om rasten —
+                  och att skylla på rasten när fältet är tomt skickar folk att ändra fel sak.
+                  Ordningen och orden är rättningsmodalens, så samma fel läses likadant. */}
               {!start || !end ? (
                 <p className="m-0 text-sm text-slate-500">Fyll i start- och sluttid.</p>
+              ) : sameClock ? (
+                <p className="m-0 text-sm text-rose-600">Start och slut är samma klockslag.</p>
+              ) : parsedBreak === null ? (
+                <p className="m-0 text-sm text-rose-600">Rasten måste vara ett helt antal minuter.</p>
               ) : previewMinutes <= 0 ? (
                 <p className="m-0 text-sm text-rose-600">Rasten är längre än passet.</p>
               ) : null}
