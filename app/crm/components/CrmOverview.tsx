@@ -205,6 +205,11 @@ function hasActiveGoalTarget(goal: GoalItem) {
 // without turning the overview into a list page — the cards' own "Visa alla" leads there.
 const RECENT_ITEM_LIMIT = 5;
 
+// Samma mening på båda ställena den behövs: bandet och statusbilden visar båda nettobelopp, och
+// båda utelämnar avbrutna order — stockraderna genom sina statuslistor (OPEN_/TO_INVOICE_ i
+// overviewSummary), veckoraden genom isDeadWorkOrder-vakten. Delad konstant så de inte glider isär.
+const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
+
 // Zeros while the summary is in flight or after a failed load, so the panels render their shape
 // rather than blanking. Matches what the empty lists produced before the server did the counting.
 const EMPTY_SUMMARY: CrmOverviewSummary = {
@@ -357,9 +362,6 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
     return {
       ...counted,
-      // Shared denominator for the three flow bars: the largest stock, so nothing can exceed
-      // the track and the bars stay proportional to each other.
-      flowScale: Math.max(counted.activeQuoteValue, counted.openOrderValue, counted.toInvoiceOrderValue),
       callsTarget,
       quotesTarget,
       orderValueTarget,
@@ -478,49 +480,61 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         </div>
       </div>
 
-      {/* Metric cards. Dolda när summeringen fallerat. EMPTY_SUMMARY:s nollor betyder inte
-          "noll öppna prospekt" utan "vi vet inte", och fyra nollor bredvid en röd felruta
-          läser som ett tomt CRM. */}
+      {/* Nyckeltalen. Bandet bär numera de fyra LAGER-raderna — var pengarna står just nu — och
+          statusbilden till höger är därmed ren måluppföljning. Förut visade bandet prospekt-,
+          samtals- och uppgiftstal som alla stod på noll (prospektstatus är kundstatus, inte
+          pipeline-status), samtidigt som statusbilden bredvid bar hela signalen.
+
+          ⚠️ Fortsatt dolt under 640 px, med flit: på telefon går man in för att se en offert eller
+          order och ringa en kund, inte för att läsa statistik. Det är också därför beloppen kan
+          renderas i full form — de behöver aldrig få plats på en 375 px-skärm.
+
+          Dolt när summeringen fallerat: EMPTY_SUMMARY:s nollor betyder "vi vet inte", inte "noll",
+          och fyra nollor bredvid en röd felruta läser som ett tomt CRM. */}
       {loading || !summaryFailed ? (
-        <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-          {loading ? (
-            <>
-              {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
-              ))}
-            </>
-          ) : (
-            <>
-              <MetricCard
-                label="Öppna prospekt"
-                value={summary.pipelineProspects}
-                helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`}
-                icon={<ProspectIcon />}
-                iconBg="bg-emerald-100"
-              />
-              <MetricCard
-                label="Samtal senaste 7 dagar"
-                value={summary.callsLast7Days}
-                helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot mål` : `${summary.followUpCalls} kräver nästa steg`}
-                icon={<CallIcon />}
-                iconBg="bg-blue-100"
-              />
-              <MetricCard
-                label="Öppna uppgifter"
-                value={summary.openTasks}
-                helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`}
-                icon={<TaskIcon />}
-                iconBg="bg-purple-100"
-              />
-              <MetricCard
-                label="Prospekt i offertläge"
-                value={summary.quotedProspects}
-                helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} väntar uppföljning` : 'Inga blockerande offertlägen'}
-                icon={<QuoteIcon />}
-                iconBg="bg-orange-100"
-              />
-            </>
-          )}
+        <div className="hidden sm:block">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {loading ? (
+              <>
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
+                ))}
+              </>
+            ) : (
+              <>
+                <MetricCard
+                  label="Aktiva offerter"
+                  value={formatCurrency(summary.activeQuoteValue, 'SEK')}
+                  helper={`${summary.activeQuotes} st`}
+                  icon={<QuoteIcon />}
+                  iconBg="bg-emerald-100"
+                />
+                <MetricCard
+                  label="Öppna ordrar"
+                  value={formatCurrency(summary.openOrderValue, 'SEK')}
+                  helper={`${summary.openWorkOrders} st`}
+                  icon={<OrderIcon />}
+                  iconBg="bg-teal-100"
+                />
+                <MetricCard
+                  label="Att fakturera"
+                  value={formatCurrency(summary.toInvoiceOrderValue, 'SEK')}
+                  helper={`${summary.workOrdersToInvoice} st`}
+                  icon={<InvoiceIcon />}
+                  iconBg="bg-amber-100"
+                />
+                {/* Ingen hjälprad: de tre ovan säger "N st" om sin egen stock, men fakturerat är ett
+                    flöde över veckan och summeringen bär inget antal att visa bredvid det. */}
+                <MetricCard
+                  label="Fakturerat i veckan"
+                  value={formatCurrency(summary.weekTeam.invoicedValue, 'SEK')}
+                  icon={<InvoicedIcon />}
+                  iconBg="bg-violet-100"
+                />
+              </>
+            )}
+          </div>
+          <p className="m-0 mt-2 text-xs text-slate-500">{MONEY_NOTE}</p>
         </div>
       ) : null}
 
@@ -677,20 +691,19 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
         <div className="grid gap-4">
           {/* Status strips */}
           <div className={crm.cardInner}>
-            <p className={cn('mb-1', crm.sectionTitle)}>Statusbild</p>
-            <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
-            <p className="m-0 mb-4 text-xs text-slate-400">Belopp exklusive moms. Avbrutna order räknas inte.</p>
+            {/* Kortet var "Fördelning och mål" och bar båda: fyra lagerrader ovanför en avdelare,
+                fyra målrader under. Lagerraderna sitter numera i nyckeltalsbandet högst upp, så det
+                som är kvar här är enbart måluppföljning.
+
+                🧨 Vad som gick förlorat i flytten: de tre lagerraderna delade nämnare (flowScale =
+                den största av dem), så staplarna lästes som en FÖRDELNING — 3,8 Mkr står i offert,
+                899 tkr har blivit order. MetricCard har ingen stapel, så den läsningen finns inte
+                längre någonstans. Talen är kvar, proportionen är det inte. */}
+            <p className={cn('mb-1', crm.sectionTitle)}>Teamet</p>
+            <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
+            <p className="m-0 mb-4 text-xs text-slate-500">{MONEY_NOTE}</p>
             {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
               <div className="grid gap-3">
-                {/* The three stocks in the flow share one scale, so the bars read as an actual
-                    distribution — where the money is sitting right now — instead of three
-                    unrelated bars. Fakturerat is a 7-day flow with no target to measure against,
-                    so it stays a plain figure (same convention as the leaderboard's value rows). */}
-                <StatusStrip label="Aktiva offerter" value={summary.activeQuoteValue} scale={summary.flowScale} tone="emerald" currency helper={`${summary.activeQuotes} st`} />
-                <StatusStrip label="Öppna ordrar" value={summary.openOrderValue} scale={summary.flowScale} tone="teal" currency helper={`${summary.openWorkOrders} st`} />
-                <StatusStrip label="Att fakturera" value={summary.toInvoiceOrderValue} scale={summary.flowScale} tone="amber" currency helper={`${summary.workOrdersToInvoice} st`} />
-                <StatusStrip label="Fakturerat i veckan" value={summary.weekTeam.invoicedValue} tone="violet" currency />
-                <div className="my-1 h-px bg-slate-100" />
                 {/* Everything below is measured against a WEEKLY target, so the actuals are the
                     week's — the same window the topplista under this card uses per säljare. With a
                     rolling 7 days the team row could never equal the sum of the seller rows beside
@@ -707,6 +720,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                     <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
                   </>
                 )}
+                {/* Sena uppgifter är inget mål — det är ett larm utan target. Avdelaren som förut
+                    skilde lager från mål skiljer nu mål från larm. */}
+                <div className="my-1 h-px bg-slate-100" />
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
                 {/* Only ever shows if a query hit its row cap. The point of counting server-side
                     was that a truncated read stops being silent — so it says so. */}
@@ -787,7 +803,7 @@ function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   );
 }
 
-function StatusStrip({ label, value, tone, goal, scale, helper, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; scale?: number; helper?: string; currency?: boolean }) {
+function StatusStrip({ label, value, tone, goal, helper, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; helper?: string; currency?: boolean }) {
   const toneClass = {
     slate: 'bg-slate-900',
     sky: 'bg-sky-500',
@@ -798,13 +814,12 @@ function StatusStrip({ label, value, tone, goal, scale, helper, currency = false
     violet: 'bg-violet-500',
   }[tone];
 
-  // The bar needs something to measure against: a goal, or an explicit scale shared with the
-  // sibling rows. Without either, a count keeps the old rough 16-%-per-unit fill and a money row
-  // shows a damped full bar — the same convention the leaderboard uses for a figure with no
-  // target, since a krona amount has no natural scale of its own.
+  // The bar needs something to measure against: a goal. Without one, a count keeps the old rough
+  // 16-%-per-unit fill and a money row shows a damped full bar — the same convention the
+  // leaderboard uses for a figure with no target, since a krona amount has no natural scale of
+  // its own. `scale` — den delade nämnaren för lagerraderna — togs bort med dem.
   const hasGoal = goal != null && goal > 0;
-  const hasScale = !hasGoal && scale != null && scale > 0;
-  const denominator = hasGoal ? goal! : hasScale ? scale! : null;
+  const denominator = hasGoal ? goal! : null;
   const width = denominator != null
     ? value <= 0 ? 0 : Math.min(100, (value / denominator) * 100)
     : currency
@@ -933,35 +948,44 @@ function TeamProgressRow({ label, value, target, tone, currency = false }: { lab
   );
 }
 
-function ProspectIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" />
-      <path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" />
-    </svg>
-  );
-}
 
-function CallIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2563eb" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" />
-    </svg>
-  );
-}
 
-function TaskIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-    </svg>
-  );
-}
 
+// Ikonens färg följer kortets iconBg, som i sin tur ärver tonen raden hade i statusbilden:
+// offert emerald, order teal, att fakturera amber, fakturerat violet.
 function QuoteIcon() {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" />
+    </svg>
+  );
+}
+
+function OrderIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 3h6a1 1 0 011 1v1H8V4a1 1 0 011-1z" />
+      <path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2" />
+      <path d="M8 11h8" /><path d="M8 15h5" />
+    </svg>
+  );
+}
+
+function InvoiceIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <path d="M8 13h8" /><path d="M8 17h5" />
+    </svg>
+  );
+}
+
+function InvoicedIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+      <polyline points="22 4 12 14.01 9 11.01" />
     </svg>
   );
 }

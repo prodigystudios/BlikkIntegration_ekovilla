@@ -11,11 +11,13 @@ type MetricCardProps = {
   className?: string;
 };
 
-// Minimal CRM KPI card: label kicker + prominent value, nothing else.
-// The label already says what the number means, so no helper line — kept as
-// low-profile as possible so a row of four reads as a quick summary band.
-// `helper` stays in the props for call-site compatibility but is not rendered.
-export default function MetricCard({ label, value, icon, iconBg = 'bg-emerald-100', trend, className }: MetricCardProps) {
+// Minimal CRM KPI card: label kicker, prominent value, valfri hjälprad.
+//
+// `helper` togs emot men renderades inte, medan sexton anropsställen i fyra filer räknade fram
+// strängar som kastades ("3 sena just nu", "Leads utan ägare"). De är skrivna för att visas, så
+// nu visas de. Raden är slate-500, inte slate-400: 4,57:1 mot kortbakgrunden klarar WCAG AA,
+// slate-400 landar på 2,46:1.
+export default function MetricCard({ label, value, helper, icon, iconBg = 'bg-emerald-100', trend, className }: MetricCardProps) {
   const trendUp = trend != null && trend.value >= 0;
 
   return (
@@ -41,6 +43,8 @@ export default function MetricCard({ label, value, icon, iconBg = 'bg-emerald-10
           </span>
         ) : null}
       </div>
+
+      {helper ? <p className="m-0 mt-0.5 text-[11px] leading-4 text-slate-500">{helper}</p> : null}
     </div>
   );
 }
