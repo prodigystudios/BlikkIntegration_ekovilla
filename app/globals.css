@@ -56,6 +56,25 @@
   --crm-content-bg: #e5ede5;
   --crm-card-bg: #f9fbf7;
   --crm-primary: #1a3f26;
+
+  /* ── CRM-innehållets accentramp ─────────────────────────────────────────────
+     Fyra stopp från primärfärgen till skenans aktiva ikonfärg (#6ee7b7). Ytan till
+     höger om skenan använde tidigare Tailwinds emerald/teal/sky/amber/violet, som
+     inte hör ihop med #1a3f26 — skenan såg ut som Ekovilla och allt bredvid den som
+     vilken SaaS som helst. Rampen gör paletten till information i stället för
+     bakgrund: stoppen följer flödet offert → order → fakturera → fakturerat. */
+  --crm-flow-1: #1a3f26;
+  --crm-flow-2: #2f6b45;
+  --crm-flow-3: #4aa06c;
+  /* Tre stopp, inte fyra. Skenans mint (#6ee7b7) provades som fjärde steg men läser som
+     SVAGARE än de mörka — fel signal för det steg som bär mest pengar. Djupast = starkast
+     är den enda ordning som går att läsa utan förklaring. */
+  /* Stapelspår i sage i stället för slate-100, så tomma staplar hör till ytan. */
+  --crm-track: #dfe7dc;
+  /* ETT varmt värde för allt som kräver uppmärksamhet. Rose OCH amber sida vid sida
+     var två varma hues som gjorde samma jobb. Statusfärgerna i crmTokens är en egen
+     sak — de är ett delat ordförråd över hela CRM, inte sidans möblering. */
+  --crm-attention: #b45309;
   --crm-primary-hover: #122c1b;
   --crm-primary-text: #ffffff;
 }

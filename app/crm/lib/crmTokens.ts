@@ -145,7 +145,13 @@ export const WORK_ORDER_STATUS_OPTIONS: WorkOrderStatus[] = ['draft', 'scheduled
 // ── Design Tokens ───────────────────────────────────────────────────────────
 
 export const crm = {
-  // Typography
+  // ── Typografi ───────────────────────────────────────────────────────────────
+  // Översikten mätte 22 olika kombinationer av grad och vikt: åtta grader
+  // (10/11/12/13/14/16/18/24 px) i fyra vikter, med 11 px i FEM vikter och 10 px i tre.
+  // Skillnaden mellan 10px/700-versaler och 11px/600-versaler är osynlig för en läsare
+  // men var två kicker-stilar som gjorde exakt samma jobb. Rollerna nedan är avsikten;
+  // 13 px och 10 px finns inte bland dem.
+  display: 'text-2xl font-bold leading-none tracking-tight tabular-nums text-slate-900',
   pageTitle: 'text-lg font-bold tracking-tight text-slate-900',
   // ⚠️ slate-600, inte 500. Underrubriken ligger på SIDBAKGRUNDEN (#e5ede5), som är mörkare än
   // kortens #f9fbf7 — mätt i Chrome gav slate-500 där 3,98:1 och föll under AA:s 4,5. Samma
@@ -155,7 +161,16 @@ export const crm = {
   // ETT HUNDRA kickers i 35 filer. slate-500 ger 4,57:1 och är fortfarande tydligt dämpad mot
   // slate-900-innehållet. Hamnar en kicker någon gång direkt på sidbakgrunden räcker den inte
   // (3,98:1) — då är det den instansen som ska bära slate-600, inte token som ska mörkna.
-  sectionTitle: 'text-[10px] font-bold uppercase tracking-[0.14em] text-slate-500',
+  // Den ENDA kickern. Var 10px/700/0.14em här och 11px/600/0.12em i handrullade kopior;
+  // 11 px bär versalerna bättre och gör de två stilarna till en.
+  sectionTitle: 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500',
+  cardTitle: 'text-sm font-bold text-slate-900',
+  bodyStrong: 'text-sm font-semibold text-slate-900',
+  meta: 'text-xs text-slate-600',
+  // Nionde rollen, och ett medvetet val snarare än glapp: säljarlistan packar sex rader per
+  // person och behöver en grad under meta. Överallt annars är meta rätt.
+  micro: 'text-[11px] text-slate-600',
+  metaStrong: 'text-xs font-semibold text-slate-800',
   label: 'mb-1 text-xs font-semibold text-slate-500',
   fieldValue: 'text-sm text-slate-900',
   emptyValue: 'text-sm italic text-slate-500',
