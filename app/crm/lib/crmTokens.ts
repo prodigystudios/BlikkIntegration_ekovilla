@@ -178,6 +178,12 @@ export const crm = {
   // Nionde rollen, och ett medvetet val snarare än glapp: säljarlistan packar sex rader per
   // person och behöver en grad under meta. Överallt annars är meta rätt.
   micro: 'text-[11px] text-slate-600',
+
+  // Länkar i CRM-innehållet. Var text-emerald-700 handskrivet på ~78 ställen i 38 filer — en
+  // blåare grön som inte hör till varumärkesrampen. Här på översikten som referens; svepningen
+  // av resten är egen gren, för samma klass bär BÅDE länkar och statusbadgetext och går alltså
+  // inte att byta blint.
+  link: 'font-semibold text-[color:var(--crm-accent)] no-underline transition hover:text-[color:var(--crm-accent-strong)]',
   metaStrong: 'text-xs font-semibold text-slate-800',
   label: 'mb-1 text-xs font-semibold text-slate-500',
   fieldValue: 'text-sm text-slate-900',
@@ -198,9 +204,15 @@ export const crm = {
   primaryButton:
     'inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-[0.96] active:scale-[0.98]',
 
-  // Save / confirm button used inside forms and sidebars
+  // Save / confirm button used inside forms and sidebars.
+  //
+  // ⚠️ CRM skeppade TVÅ primärknappar i två olika gröna: primaryButton i varumärkets #1a3f26
+  // (7 filer) och den här i en generisk emerald-gradient (8 filer). Samma roll, olika färg
+  // beroende på var man råkade stå. Nu samma färg och samma hover som primaryButton.
+  // Gradienten är borta med: en platt yta räcker, och lutningen var en andra sak som skulle
+  // säga "primär" utöver färgen.
   saveButton:
-    'inline-flex h-9 w-full items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.28)] transition hover:brightness-[0.97] disabled:cursor-not-allowed disabled:opacity-60',
+    'inline-flex h-9 w-full items-center justify-center rounded-xl border border-transparent bg-[color:var(--crm-primary)] text-sm font-semibold text-white shadow-[0_4px_12px_rgba(26,63,38,0.24)] transition hover:bg-[color:var(--crm-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60',
 
   // Destructive / secondary button (cancel, delete)
   ghostButton:
@@ -210,10 +222,10 @@ export const crm = {
   // Text/number/date/email input. In a flex row use it as-is; the global
   // `input { width:100% }` makes it fill — pair with a grid/flex track for sizing.
   input:
-    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15',
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-[color:var(--crm-accent)] focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]',
   // <select>
   select:
-    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-emerald-500',
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-[color:var(--crm-accent)]',
   // <input type="color"> — put it in a fixed grid track (e.g. grid-cols-[2.5rem_1fr])
   // so it fills the track instead of the global input width:100% blowing it up.
   colorInput: 'h-9 w-full cursor-pointer rounded-lg border border-[#dce4d8] bg-white p-1',

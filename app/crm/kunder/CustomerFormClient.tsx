@@ -644,7 +644,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                       type="checkbox"
                       checked={invoiceSameAsVisit}
                       onChange={(e) => toggleInvoiceSame(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-slate-300 accent-emerald-600"
+                      className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--crm-accent)]"
                     />
                     Samma som besöksadress
                   </label>
@@ -694,7 +694,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                     type="checkbox"
                     checked={draft.reverse_vat}
                     onChange={(e) => set('reverse_vat', e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                    className="h-4 w-4 rounded border-slate-300 accent-[color:var(--crm-accent)]"
                   />
                   Omvänd skattskyldighet
                 </label>
@@ -820,7 +820,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
               type="button"
               onClick={handleSubmit}
               disabled={saving}
-              className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-emerald-600 bg-gradient-to-b from-emerald-500 to-emerald-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(16,185,129,0.28)] transition hover:brightness-[0.97] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+              className={cn(crm.saveButton, 'h-11 active:scale-[0.98]')}
             >
               {saving ? 'Sparar…' : 'Skapa kund'}
             </button>

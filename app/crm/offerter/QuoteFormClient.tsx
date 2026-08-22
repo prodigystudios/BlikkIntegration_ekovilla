@@ -2570,7 +2570,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     // leave the fields empty so the seller must enter the actual job site.
                     if (!on) setDraft((d) => ({ ...d, delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
                   }}
-                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--crm-accent)]"
                 />
               </label>
 
@@ -2630,7 +2630,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     setCustomEndContact(on);
                     if (!on) setDraft((d) => ({ ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' }));
                   }}
-                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-emerald-600"
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--crm-accent)]"
                 />
               </label>
 
@@ -2748,7 +2748,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   type="checkbox"
                   checked={draft.rot_enabled}
                   onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 accent-emerald-600"
+                  className="h-4 w-4 rounded border-slate-300 accent-[color:var(--crm-accent)]"
                 />
               </label>
             ) : null}

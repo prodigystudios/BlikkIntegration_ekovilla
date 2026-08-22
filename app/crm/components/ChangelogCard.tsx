@@ -129,7 +129,7 @@ export default function ChangelogCard() {
         <button
           type="button"
           onClick={() => setModal('all')}
-          className="border-0 bg-transparent p-0 text-[12px] font-semibold text-emerald-800 underline-offset-2 hover:underline"
+          className={cn(crm.link, 'border-0 bg-transparent p-0 text-[12px] underline-offset-2 hover:underline')}
         >
           Visa alla
         </button>

@@ -701,7 +701,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                       <strong className={crm.bodyStrong}>{action.title}</strong>
                       <p className="m-0 text-xs leading-snug text-slate-500">{action.description}</p>
                     </div>
-                    <span className="mt-0.5 shrink-0 text-xs font-semibold text-emerald-700">Öppna →</span>
+                    <span className={cn('mt-0.5 shrink-0 text-xs', crm.link)}>Öppna →</span>
                   </Link>
                 ))}
               </div>
@@ -838,7 +838,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   crm_goals_insert_admin_only i RLS — länken skickade en säljare till en sida hen
                   inte kommer in på. */}
               {role === 'admin' ? (
-                <Link href="/crm/installningar" className="shrink-0 text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
+                <Link href="/crm/installningar" className={cn('shrink-0 text-xs', crm.link)}>Justera mål</Link>
               ) : null}
             </div>
             {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
@@ -929,7 +929,7 @@ function RecentCard({ title, href, loading, failed, children }: { title: string;
             rubriklista tappade annars halva sidan. Preflight nollar h2:ans grad, vikt och marginal,
             så klasserna nedan bestämmer utseendet precis som förut. */}
         <h2 className={cn('m-0', crm.cardTitle)}>{title}</h2>
-        <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
+        <Link href={href} className={cn('text-xs', crm.link)}>Visa alla</Link>
       </div>
       {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : failed ? <SectionError /> : children}
     </div>
@@ -1057,7 +1057,7 @@ function SellerGoalList({
         <button
           type="button"
           onClick={() => setShowAll((current) => !current)}
-          className="mt-2 justify-self-start text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+          className={cn('mt-2 justify-self-start text-xs', crm.link)}
         >
           {showAll ? 'Visa färre' : `Visa alla (${entries.length})`}
         </button>

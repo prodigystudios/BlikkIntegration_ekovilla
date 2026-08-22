@@ -263,7 +263,7 @@ export default function WorkOrderSackReportCard({
               onChange={(e) => setNote(e.target.value)}
               rows={2}
               placeholder="T.ex. dålig åtkomst i norra gaveln"
-              className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
+              className="w-full rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-[color:var(--crm-accent)] focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
             />
           </div>
 

@@ -71,6 +71,16 @@
      är den enda ordning som går att läsa utan förklaring. */
   /* Stapelspår i sage i stället för slate-100, så tomma staplar hör till ytan. */
   --crm-track: #dfe7dc;
+
+  /* Interaktiv grön: länkar, fokusramar, allt som svarar på en klickning. EN roll, inte tre.
+     Ytan använde emerald-500/600/700 här — en blåare grön som inte hör till #1a3f26, och som
+     låg några pixlar från varumärkesrampen utan att vara i familj med den.
+     ⚠️ INTE --crm-primary till länkar: #1a3f26 ligger för nära brödtextens #0f172a för att
+     läsas som en länk. --crm-accent är ljus nog att skilja sig, mörk nog för AA (6,1:1 mot
+     kortbakgrunden). Primärfärgen är hovertillståndet i stället. */
+  --crm-accent: #2f6b45;
+  --crm-accent-strong: #1a3f26;
+  --crm-accent-ring: rgba(47, 107, 69, 0.20);
   /* Varmt värde för STAPLAR som kräver uppmärksamhet. Meddelanderutor (felbanderoll,
      påminnelser, SectionError) behåller sina egna amber och rose — där skiljer de två
      hues på allvarsgrad, varning mot fel, och är alltså inte dubblering. Statusfärgerna
