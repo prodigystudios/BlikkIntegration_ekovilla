@@ -13,6 +13,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { buildTimeReportBody } from '@/lib/domains/time-reports/payload';
 import { toEffectiveRole, type UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
+import PushReactivationNotice from '@/components/notifications/PushReactivationNotice';
 
 // Base mapping of NAV_LINKS (contains all). We'll adapt to QuickLink shape.
 const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
@@ -291,6 +292,11 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
             Rapportera tid
           </button>
         </div>
+
+        {/* Notiser följer adressen appen körs på, och appen har bytt adress. Komponenten döljer
+            sig själv när den inte behövs — den syns bara för den som varken har notiser på eller
+            aktivt valt bort dem, och försvinner för gott när den avfärdats. */}
+        <PushReactivationNotice />
 
         {/* Installers (members) get the work schedule first — their most important view */}
         {isMember && scheduleSection}

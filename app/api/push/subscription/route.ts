@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
+import { getRequestOrigin } from '@/lib/publicOrigin';
 
 type SubscriptionPayload = {
   endpoint?: string;
@@ -71,6 +72,16 @@ export async function POST(req: NextRequest) {
   const auth = parsedBody.data.subscription.keys.auth;
   const userAgent = parsedBody.data.userAgent?.slice(0, 500) || null;
 
+  // Vilket origin står klienten på? INTE getPublicOrigin — den svarar alltid med den kanoniska
+  // domänen (NEXT_PUBLIC_SITE_URL) och skulle stämpla en prenumeration som skapats på den gamla
+  // vercel.app-adressen som om den hörde hemma på app.ekovilla.se. Prenumerationen är bunden till
+  // service workerns origin, så det är requestens verkliga host som gäller. Fetchen är relativ,
+  // alltså är hosten per definition samma origin som service workern lever på.
+  const origin = getRequestOrigin(req);
+
+  // Origin ingår i UPDATE-delen med flit: en klient som redan har en rad POST:ar om sin
+  // prenumeration vid inloggning, och det är den vägen befintliga rader får sin stämpel. Utan det
+  // hade kolumnen bara fyllts i för prenumerationer som skapas från och med nu.
   const { error } = await supabase.from('dashboard_push_subscriptions').upsert(
     {
       user_id: user.id,
@@ -78,6 +89,7 @@ export async function POST(req: NextRequest) {
       p256dh,
       auth,
       user_agent: userAgent,
+      origin,
       updated_at: new Date().toISOString(),
     },
     { onConflict: 'endpoint' },

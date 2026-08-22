@@ -8,6 +8,20 @@ import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import DashboardCardHeader from './DashboardCardHeader';
+import {
+  writeFlag,
+  PUSH_OPT_OUT_KEY,
+  PUSH_PROMPT_DISMISSED_KEY,
+} from '@/lib/domains/notifications/pushSync';
+
+// Samma lokala flaggor som components/notifications/usePushSubscription.ts. Kortet har en egen
+// av/på-logik (med diagnostikpanelen), och utan flaggorna skulle notisklockans synk se
+// "tillstånd beviljat, ingen prenumeration" efter en avstängning här och tyst prenumerera om —
+// alltså slå på det användaren just stängde av.
+function pushFlagStorage(): Storage | null {
+  if (typeof window === 'undefined') return null;
+  try { return window.localStorage; } catch { return null; }
+}
 
 interface NoteItem {
   id: string;
@@ -505,6 +519,8 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
       if (!saveRes.ok) throw new Error(saveJson?.error || 'Kunde inte aktivera push.');
       setPushDiagnostics((prev) => [...prev, 'subscription: saved']);
 
+      writeFlag(pushFlagStorage(), PUSH_OPT_OUT_KEY, false);
+      writeFlag(pushFlagStorage(), PUSH_PROMPT_DISMISSED_KEY, false);
       setPushEnabled(true);
       toast.success('Mobilnotiser aktiverade.');
     } catch (e: any) {
@@ -535,6 +551,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
         });
         await subscription.unsubscribe();
       }
+      writeFlag(pushFlagStorage(), PUSH_OPT_OUT_KEY, true);
       setPushEnabled(false);
       toast.success('Mobilnotiser avaktiverade.');
     } catch (e: any) {
