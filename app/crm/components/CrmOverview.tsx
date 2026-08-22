@@ -449,8 +449,11 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Välkommen tillbaka! Här är vad som händer i ditt CRM idag.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {/* ?log=1 öppnar formuläret direkt. Utan den landade man bara på samtalssidan och möttes
+              av en knapp med exakt samma etikett — två klick där ett räcker, på den knapp som ska
+              driva att loggen faktiskt används. */}
           <Link
-            href="/crm/samtal"
+            href="/crm/samtal?log=1"
             className={cn(crm.primaryButton, 'no-underline')}
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
@@ -749,7 +752,10 @@ function RecentCard({ title, href, loading, failed, children }: { title: string;
   return (
     <div className={crm.cardInner}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <strong className="text-sm font-bold text-slate-900">{title}</strong>
+        {/* h2, inte strong: korten är syskon till "Nästa fokus" och statusbilden, så en skärmläsares
+            rubriklista tappade annars halva sidan. Preflight nollar h2:ans grad, vikt och marginal,
+            så klasserna nedan bestämmer utseendet precis som förut. */}
+        <h2 className="m-0 text-sm font-bold text-slate-900">{title}</h2>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
       </div>
       {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : failed ? <SectionError /> : children}

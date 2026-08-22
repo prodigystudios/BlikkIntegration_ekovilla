@@ -225,6 +225,20 @@ export default function CallsClient() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetCallId, hasHandledCallPreset, loading, calls]);
 
+  // Deep-link: ?log=1 öppnar loggformuläret direkt. Översiktens "+ Logga samtal" landade förut
+  // bara på sidan, där man möttes av en knapp med exakt samma etikett och fick klicka igen.
+  // Parametern städas bort när modalen öppnats, annars öppnas den igen vid varje bakåtsteg.
+  const shouldOpenLog = searchParams.get('log') === '1';
+  useEffect(() => {
+    if (!shouldOpenLog || logOpen) return;
+    openLogModal();
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('log');
+    const query = next.toString();
+    router.replace(query ? `/crm/samtal?${query}` : '/crm/samtal', { scroll: false });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldOpenLog, logOpen]);
+
   useEffect(() => {
     if (!logOpen) return;
     const prev = document.body.style.overflow;
