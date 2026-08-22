@@ -12,7 +12,7 @@ import { cn } from '../../lib/shared/cn';
 
 // Övriga flikar lazy-laddas; fallbacken förhindrar tom-panel-blink vid flikbyte
 // (crm.card saknar padding — p-5 här matchar flikkropparnas egen padding).
-const tabLoading = () => <p className="m-0 p-5 text-sm text-slate-400">Laddar…</p>;
+const tabLoading = () => <p className="m-0 p-5 text-sm text-slate-500">Laddar…</p>;
 const AdminBlikkUsersMapping = dynamic(() => import('./blikk/AdminBlikkUsersMapping'), { ssr: false, loading: tabLoading });
 const AdminContacts = dynamic(() => import('./contacts/AdminContacts'), { ssr: false, loading: tabLoading });
 const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr: false, loading: tabLoading });

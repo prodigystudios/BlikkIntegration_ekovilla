@@ -131,7 +131,7 @@ export default function AdminBlikkUsersMapping() {
         </AdminFilterChip>
       </div>
 
-      {loading && <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>}
+      {loading && <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p>}
       {error && <div role="alert" className={ADMIN_ERROR_BOX}>{error}</div>}
       {!loading && rows.length === 0 && !error && (
         <AdminEmptyState title="Inga profiler att visa" description="När profiler finns här kan de kopplas mot rätt Blikk-användare." />

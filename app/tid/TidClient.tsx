@@ -417,7 +417,7 @@ export default function TidClient() {
         </div>
 
         {loading && selectedEntries.length === 0 ? (
-          <p className="m-0 text-sm text-slate-400">Laddar…</p>
+          <p className="m-0 text-sm text-slate-500">Laddar…</p>
         ) : selectedEntries.length === 0 ? (
           <p className="m-0 text-sm text-slate-500">Inget rapporterat den här dagen.</p>
         ) : (
@@ -553,15 +553,15 @@ function DayTile({
         isSelected
           ? 'border-solid border-transparent text-white shadow-sm'
           : loading
-            ? 'border-solid border-[#e4ebe0] bg-white text-slate-400'
+            ? 'border-solid border-[#e4ebe0] bg-white text-slate-500'
             : hasAny
               ? 'border-solid border-[#cfdcc9] bg-white text-slate-900 hover:border-slate-400'
-              : 'border-dashed border-[#d3ddce] bg-transparent text-slate-400 hover:border-slate-400',
+              : 'border-dashed border-[#d3ddce] bg-transparent text-slate-500 hover:border-slate-400',
         !isSelected && isToday ? 'ring-2 ring-emerald-300' : '',
       )}
       style={isSelected ? { backgroundColor: 'var(--crm-primary)' } : undefined}
     >
-      <span className={cn('text-[10px] font-semibold uppercase tracking-wide', isSelected ? 'text-white/70' : 'text-slate-400')}>
+      <span className={cn('text-[10px] font-semibold uppercase tracking-wide', isSelected ? 'text-white/70' : 'text-slate-500')}>
         {day.weekday}
       </span>
       <span className="text-sm font-bold tabular-nums leading-none">{day.date.getDate()}</span>
@@ -578,7 +578,7 @@ function DayTile({
         </span>
       ) : (
         // En prick, inte ett tomrum: utan den hoppar rutans höjd mellan tomma och fyllda dagar.
-        <span className={cn('text-[11px] leading-none', isSelected ? 'text-white/50' : 'text-slate-300')} aria-hidden>·</span>
+        <span className={cn('text-[11px] leading-none', isSelected ? 'text-white/50' : 'text-slate-500')} aria-hidden>·</span>
       )}
     </button>
   );
@@ -625,10 +625,10 @@ function EntryCard({
 
       <div className="text-sm text-slate-600">
         {entryLabel(entry)}
-        {entry.break_minutes > 0 ? <span className="text-slate-400"> · rast {entry.break_minutes} min</span> : null}
+        {entry.break_minutes > 0 ? <span className="text-slate-500"> · rast {entry.break_minutes} min</span> : null}
       </div>
 
-      {entry.note ? <div className="text-sm text-slate-400">{entry.note}</div> : null}
+      {entry.note ? <div className="text-sm text-slate-500">{entry.note}</div> : null}
 
       {!locked ? (
         <div className="flex justify-end gap-1 pt-0.5">
@@ -854,7 +854,7 @@ function CompensationSection({
               : `${items.length} ${items.length === 1 ? 'post' : 'poster'} · ${formatAmount(grandTotal)} kr`}
           </span>
         </span>
-        <span className="shrink-0 text-sm text-slate-400" aria-hidden>{open ? '▲' : '▼'}</span>
+        <span className="shrink-0 text-sm text-slate-500" aria-hidden>{open ? '▲' : '▼'}</span>
       </button>
 
       {open ? (

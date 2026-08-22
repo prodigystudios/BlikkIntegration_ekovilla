@@ -342,7 +342,7 @@ export default function TimeEntryModal({
               <div className="grid gap-1.5">
                 <span className={LABEL}>Jobb</span>
                 {jobsLoading ? (
-                  <span className="text-sm text-slate-400">Hämtar dagens jobb…</span>
+                  <span className="text-sm text-slate-500">Hämtar dagens jobb…</span>
                 ) : jobs.length === 0 ? (
                   // Tomt läge som går att agera på, inte bara en upplysning: knappen gör det den
                   // föreslår, i stället för att be någon leta rätt på fliken själv.
@@ -418,7 +418,7 @@ export default function TimeEntryModal({
                     räcker och lämnar rummet åt rastfältet bredvid. */}
                 <div className="shrink-0 text-right">
                   <div className={cn(LABEL, 'whitespace-nowrap')}>Arbetad tid</div>
-                  <div className={cn('whitespace-nowrap text-xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-300')}>
+                  <div className={cn('whitespace-nowrap text-xl font-bold tabular-nums leading-tight', previewMinutes > 0 ? 'text-slate-900' : 'text-slate-500')}>
                     {formatHours(previewMinutes)} h
                   </div>
                 </div>

@@ -551,7 +551,7 @@ export default function AdminTimeApprovals() {
       </div>
 
       {loading ? (
-        <p className="m-0 text-sm text-slate-400">Laddar…</p>
+        <p className="m-0 text-sm text-slate-500">Laddar…</p>
       ) : people.length === 0 ? (
         <p className="m-0 text-sm text-slate-500">Inga anställda att visa.</p>
       ) : visible.length === 0 ? (
@@ -661,12 +661,12 @@ function PersonRow({
             aria-expanded={expanded}
             className="inline-flex items-baseline justify-start gap-2 p-0 text-left min-w-[180px] flex-1"
           >
-            <span aria-hidden className={cn('shrink-0 text-slate-400 transition-transform', expanded ? 'rotate-90' : '')}>›</span>
+            <span aria-hidden className={cn('shrink-0 text-slate-500 transition-transform', expanded ? 'rotate-90' : '')}>›</span>
             <span className="min-w-0">
               <span className="block truncate font-semibold text-slate-900 underline-offset-2 hover:underline">
                 {row.full_name || '(namn saknas)'}
               </span>
-              <span className="block truncate text-xs text-slate-400">
+              <span className="block truncate text-xs text-slate-500">
                 {row.role}
                 {row.status === 'submitted' && row.submitted_at ? ` · Inlämnad ${formatStamp(row.submitted_at)}` : null}
                 {row.status === 'approved' && row.approved_at
@@ -853,7 +853,7 @@ function PersonDays({
   onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
   onDelete: (entryId: string) => Promise<boolean>;
 }) {
-  if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-400">Laddar dagar…</p>;
+  if (!detail || detail.loading) return <p className="m-0 text-sm text-slate-500">Laddar dagar…</p>;
   if (detail.error) {
     return (
       <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -1008,7 +1008,7 @@ function DayRowCells({
         {start && end ? (
           `${start}–${end}`
         ) : isAbsence ? (
-          <span className="text-slate-400">—</span>
+          <span className="text-slate-500">—</span>
         ) : (
           <span className="font-semibold text-amber-700">saknas</span>
         )}
@@ -1041,7 +1041,7 @@ function DayRowCells({
               >
                 Ja
               </button>
-              <button type="button" onClick={() => setConfirmDelete(false)} className="p-0 text-slate-400">Nej</button>
+              <button type="button" onClick={() => setConfirmDelete(false)} className="p-0 text-slate-500">Nej</button>
             </span>
           ) : (
             <span className="flex items-center justify-end gap-3 text-sm">
@@ -1052,7 +1052,7 @@ function DayRowCells({
               >
                 Rätta
               </button>
-              <button type="button" onClick={() => setConfirmDelete(true)} className="p-0 font-medium text-slate-400 hover:text-rose-600">
+              <button type="button" onClick={() => setConfirmDelete(true)} className="p-0 font-medium text-slate-500 hover:text-rose-600">
                 Ta bort
               </button>
             </span>

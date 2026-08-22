@@ -124,7 +124,7 @@ export default function AdminSupportTickets() {
       ) : null}
 
       {loading ? (
-        <p className="m-0 text-sm text-slate-400">Laddar…</p>
+        <p className="m-0 text-sm text-slate-500">Laddar…</p>
       ) : items.length === 0 && !error ? (
         <div className={ADMIN_EMPTY_BOX}>
           <p className="m-0 text-sm text-slate-500">
@@ -185,7 +185,7 @@ function TicketRow({ ticket, onOpen }: { ticket: AppTicketView; onOpen: () => vo
             </span>
           ) : null}
         </span>
-        <span className="text-[11px] text-slate-400">
+        <span className="text-[11px] text-slate-500">
           {ticket.reporter_name} · {ticket.area_label} · {formatDate(ticket.created_at)}
           {ticket.has_screenshot ? ' · Skärmbild' : ''}
         </span>
@@ -318,7 +318,7 @@ function TicketModal({
             {ticket.kind_label} · {ticket.area_label} · {ticket.reporter_name} · {formatDate(ticket.created_at)}
           </p>
           {handledName && handledAt ? (
-            <p className="m-0 text-[12px] text-slate-400">
+            <p className="m-0 text-[12px] text-slate-500">
               Senast hanterat av {handledName} · {formatDate(handledAt)}
             </p>
           ) : null}
@@ -398,10 +398,10 @@ function TicketModal({
                 className="max-h-72 rounded-lg border border-[#dce4d8] bg-white object-contain"
               />
             </a>
-            <span className="text-[11px] text-slate-400">Klicka för full storlek.</span>
+            <span className="text-[11px] text-slate-500">Klicka för full storlek.</span>
           </div>
         ) : ticket.has_screenshot ? (
-          <p className="m-0 text-[12px] text-slate-400">Skärmbilden kunde inte hämtas.</p>
+          <p className="m-0 text-[12px] text-slate-500">Skärmbilden kunde inte hämtas.</p>
         ) : null}
 
         <div className="grid gap-3 border-t border-slate-100 pt-4 sm:grid-cols-[10rem_1fr] sm:items-start">

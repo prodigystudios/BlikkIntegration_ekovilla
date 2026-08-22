@@ -162,7 +162,7 @@ export default async function AdminOffertCustomerResponsePage({ params }: { para
       </SectionCard>
 
       <div className="text-xs text-slate-500">
-        Snabböppna offert: <Link href={`/offert/kalkylator?load=${encodeURIComponent(offertId)}`} className="text-emerald-700 underline underline-offset-2">/offert/kalkylator?load=…</Link>
+        Snabböppna offert: <Link href={`/offert/kalkylator?load=${encodeURIComponent(offertId)}`} className="text-[color:var(--ek-accent)] transition hover:text-[color:var(--ek-green)] underline underline-offset-2">/offert/kalkylator?load=…</Link>
       </div>
     </PageShell>
   );

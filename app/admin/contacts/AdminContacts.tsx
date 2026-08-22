@@ -237,7 +237,7 @@ export default function AdminContacts() {
                 </tbody>
               </DataTable>
             </div>
-            {loading && <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>}
+            {loading && <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p>}
             {!loading && filteredContacts.length === 0 && !error && (
               <AdminEmptyState title="Inga kontakter matchar" description="Byt kategori eller justera sökningen för att visa fler träffar." />
             )}
@@ -303,7 +303,7 @@ export default function AdminContacts() {
               </tbody>
             </DataTable>
           </div>
-          {loading && <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>}
+          {loading && <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p>}
           {!loading && filteredAddresses.length === 0 && !error && (
             <AdminEmptyState title="Inga adresser matchar" description="Justera sökningen eller lägg till en ny adress." />
           )}
@@ -368,7 +368,7 @@ function Editable({ value, onSave, placeholder }: { value: string; onSave: (v:st
   useEffect(()=>{ setDraft(value); }, [value]);
   if (!editing) return (
     <div className="flex items-center gap-1.5">
-      <span className={cn('text-sm', value ? 'text-slate-900' : 'text-slate-400')}>{value || placeholder || '—'}</span>
+      <span className={cn('text-sm', value ? 'text-slate-900' : 'text-slate-500')}>{value || placeholder || '—'}</span>
       <button type="button" onClick={()=>setEditing(true)} className={cn(crm.ghostButton, 'shrink-0')}>Redigera</button>
     </div>
   );

@@ -154,7 +154,7 @@ export default function AdminUsers() {
             ))}
           </div>
           {loadError && <div role="alert" className={ADMIN_ERROR_BOX}>{loadError}</div>}
-          {loading && <p role="status" className="m-0 text-sm text-slate-400">Laddar…</p>}
+          {loading && <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p>}
           {!loading && users.length === 0 && !loadError && (
             <AdminEmptyState title="Inga användare hittades" description="Skapa första kontot eller uppdatera sidan igen senare." />
           )}
@@ -303,7 +303,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
           {(user.tags || []).length > 0 && user.tags!.map((tag) => (
             <span key={tag} className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>{tag}</span>
           ))}
-          {(!user.tags || user.tags.length === 0) && <span className="text-xs text-slate-400">Inga taggar ännu</span>}
+          {(!user.tags || user.tags.length === 0) && <span className="text-xs text-slate-500">Inga taggar ännu</span>}
         </div>
         <button
           type="button"

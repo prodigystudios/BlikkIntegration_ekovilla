@@ -449,7 +449,7 @@ function MyTickets({ reloadToken }: { reloadToken: number }) {
                   <span className="text-[13px] font-bold text-slate-900">{t.title}</span>
                   <span className={cn(crm.badge, ticketStatusMeta[t.status].badge)}>{t.status_label}</span>
                 </span>
-                <span className="text-[11px] text-slate-400">
+                <span className="text-[11px] text-slate-500">
                   {t.kind_label} · {t.area_label} · {formatDate(t.created_at)}
                 </span>
                 {expanded && (
@@ -457,7 +457,7 @@ function MyTickets({ reloadToken }: { reloadToken: number }) {
                     <span className="whitespace-pre-wrap text-[12px] text-slate-700">{t.description}</span>
                     {t.resolution && (
                       <span className="grid gap-0.5 rounded-lg border border-[#e0e8dc] bg-[#f9fbf7] px-2.5 py-2">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Svar</span>
+                        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500">Svar</span>
                         <span className="whitespace-pre-wrap text-[12px] text-slate-700">{t.resolution}</span>
                       </span>
                     )}

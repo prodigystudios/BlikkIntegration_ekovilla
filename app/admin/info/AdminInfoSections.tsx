@@ -430,7 +430,7 @@ export default function AdminInfoSections() {
                     >
                       {section.title}
                       {section.images.length > 0 && (
-                        <span className={cn('ml-2 text-[11px]', section.id === selectedId ? 'text-emerald-100' : 'text-slate-400')}>
+                        <span className={cn('ml-2 text-[11px]', section.id === selectedId ? 'text-emerald-100' : 'text-slate-500')}>
                           {section.images.length} fil{section.images.length === 1 ? '' : 'er'}
                         </span>
                       )}
@@ -537,7 +537,7 @@ export default function AdminInfoSections() {
                   <p className="m-0 mb-2 text-sm font-bold tracking-tight text-slate-900">{title.trim() || 'Utan rubrik'}</p>
                   <BlockContent blocks={blocks} />
                   {blocks.length === 0 && selected.images.length === 0 && (
-                    <p className="m-0 text-[13px] text-slate-400">Tom flik.</p>
+                    <p className="m-0 text-[13px] text-slate-500">Tom flik.</p>
                   )}
                 </div>
               </div>
