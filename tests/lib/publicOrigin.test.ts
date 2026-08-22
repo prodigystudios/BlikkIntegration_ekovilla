@@ -75,3 +75,35 @@ describe('getPublicOrigin', () => {
     expect(getPublicOrigin(req('https://app.ekovilla.se/x', { host: 'app.ekovilla.se' }))).toBe('https://app.ekovilla.se');
   });
 });
+
+describe('getCanonicalOrigin', () => {
+  it('läser NEXT_PUBLIC_SITE_URL när den är satt', async () => {
+    clearEnv();
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://app.ekovilla.se';
+    const { getCanonicalOrigin } = await import('@/lib/publicOrigin');
+    expect(getCanonicalOrigin()).toBe('https://app.ekovilla.se');
+  });
+
+  it('trimmar avslutande snedstreck — metadataBase ska inte ge dubbla //', async () => {
+    clearEnv();
+    process.env.NEXT_PUBLIC_SITE_URL = 'https://app.ekovilla.se/';
+    const { getCanonicalOrigin } = await import('@/lib/publicOrigin');
+    expect(getCanonicalOrigin()).toBe('https://app.ekovilla.se');
+  });
+
+  it('faller tillbaka på den kanoniska domänen i stället för att kasta i bygget', async () => {
+    clearEnv();
+    const { getCanonicalOrigin, CANONICAL_ORIGIN_FALLBACK } = await import('@/lib/publicOrigin');
+    expect(getCanonicalOrigin()).toBe(CANONICAL_ORIGIN_FALLBACK);
+    expect(CANONICAL_ORIGIN_FALLBACK).toBe('https://app.ekovilla.se');
+  });
+
+  it('ger alltid något new URL() accepterar — metadataBase kraschar annars bygget', async () => {
+    const { getCanonicalOrigin } = await import('@/lib/publicOrigin');
+    for (const value of ['', '   ', 'app.ekovilla.se', 'https://app.ekovilla.se']) {
+      clearEnv();
+      process.env.NEXT_PUBLIC_SITE_URL = value;
+      expect(() => new URL(getCanonicalOrigin())).not.toThrow();
+    }
+  });
+});

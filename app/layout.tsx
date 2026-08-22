@@ -7,15 +7,70 @@ import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
 import AppShell from './components/AppShell';
 import InstallPrompt from '../components/pwa/InstallPrompt';
 import ReportIssueLauncher from './components/ReportIssueLauncher';
+import { getCanonicalOrigin } from '../lib/publicOrigin';
+import type { Metadata, Viewport } from 'next';
 
-export const viewport = {
+export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   // Optional: restrict pinch-zoom. Consider accessibility before using.
   maximumScale: 2.0,
   userScalable: true,
   viewportFit: 'cover',
-} as const;
+  // theme-color och color-scheme skrevs tidigare för hand i <head>. I Next 14 hör de hemma i
+  // viewport-exporten, inte i metadata — samma taggar, ett ställe.
+  themeColor: '#1f7a3d',
+  colorScheme: 'light',
+};
+
+/**
+ * metadataBase låser den kanoniska domänen.
+ *
+ * Appen svarar på två adresser: app.ekovilla.se och den gamla vercel.app-adressen, som ligger kvar
+ * tills den stängs kontrollerat. Utan en bas löser Next relativa metadata-URL:er mot den host som
+ * råkade servera requesten, och en OG-bild hade fått olika absolut adress beroende på var
+ * användaren kom in. Domänen hämtas från NEXT_PUBLIC_SITE_URL via samma helper som resten av
+ * appen, så metadata och länkbyggande inte kan glida isär.
+ *
+ * SEO-värdet är noll — allt utom inloggningen ligger bakom auth. Poängen är en stabil bas.
+ */
+export const metadata: Metadata = {
+  metadataBase: new URL(getCanonicalOrigin()),
+  title: {
+    default: 'Ekovilla',
+    template: '%s · Ekovilla',
+  },
+  applicationName: 'Ekovilla',
+  description: 'Ekovillas interna app för order, planering, tid och dokument.',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: [
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/favicon-32.png', type: 'image/png', sizes: '32x32' },
+      { url: '/favicon-16.png', type: 'image/png', sizes: '16x16' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Ekovilla',
+    statusBarStyle: 'default',
+  },
+  openGraph: {
+    type: 'website',
+    siteName: 'Ekovilla',
+    title: 'Ekovilla',
+    description: 'Ekovillas interna app för order, planering, tid och dokument.',
+    // Relativ med flit: metadataBase gör den absolut mot den kanoniska domänen.
+    url: '/',
+    locale: 'sv_SE',
+  },
+  // mobile-web-app-capable har ingen egen nyckel i Next 14:s metadata-API. Den låg i <head>
+  // tidigare och behövs fortfarande för Android/Chrome.
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
+};
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Single consolidated profile fetch (includes role + name)
@@ -23,21 +78,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const role = profile?.role || null;
   const fullName = profile?.full_name || null;
   const userInitial = fullName ? fullName.charAt(0).toUpperCase() : 'U';
+  // Ingen handskriven <head> längre: allt som låg där ligger i metadata-/viewport-exporterna
+  // ovan, och Next renderar samma taggar därifrån.
   return (
     <html lang="en">
-    <head>
-      <link rel="icon" href="/favicon.ico" sizes="any" />
-      <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
-      <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
-      <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes='180x180'/>
-      <link rel="manifest" href="/manifest.webmanifest" />
-  <meta name="theme-color" content="#1f7a3d" />
-      <meta name="mobile-web-app-capable" content="yes" />
-      <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-      <meta name="apple-mobile-web-app-title" content="Ekovilla" />
-  <meta name="color-scheme" content="light" />
-    </head>
     <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
       <UserProfileProvider profile={profile}>
         <ToastProvider>

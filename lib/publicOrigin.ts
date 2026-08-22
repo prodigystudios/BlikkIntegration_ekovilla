@@ -48,12 +48,37 @@ export function getRequestOrigin(req: Request): string {
  * NEXT_PUBLIC_SITE_URL vinner över hosten med flit: den gamla vercel.app-adressen svarar
  * fortfarande, och länkar som genereras därifrån hamnar permanent i kundmejl och externa system.
  */
-export function getPublicOrigin(req: Request): string {
-  // Allow explicit override in deploy environments.
-  const override =
+// Explicit override i deploy-miljöer. En källa, så metadata och länkbyggande inte kan glida isär.
+function originOverride(): string {
+  return (
     normalizeOrigin(env('NEXT_PUBLIC_SITE_URL')) ||
     normalizeOrigin(env('SITE_URL')) ||
-    normalizeOrigin(env('PUBLIC_SITE_URL'));
+    normalizeOrigin(env('PUBLIC_SITE_URL'))
+  );
+}
+
+/**
+ * Sista utväg när ingen miljövariabel är satt.
+ *
+ * Behövs för `metadataBase`, som måste vara en giltig absolut URL redan vid bygget och därför inte
+ * kan vänta på en request. Fallbacken ska aldrig behöva träda in i drift — NEXT_PUBLIC_SITE_URL är
+ * satt i Vercel — men en `new URL(undefined)` hade kraschat bygget, och att då bygga fel domän i
+ * tysthet vore sämre än att ha den skriven på ett ställe man hittar.
+ */
+export const CANONICAL_ORIGIN_FALLBACK = 'https://app.ekovilla.se';
+
+/**
+ * Appens kanoniska origin utan en request att luta sig mot.
+ *
+ * Föredra `getPublicOrigin(req)` när det finns en request — den faller tillbaka på den host som
+ * faktiskt servade anropet i stället för på en hårdkodad sträng.
+ */
+export function getCanonicalOrigin(): string {
+  return originOverride() || CANONICAL_ORIGIN_FALLBACK;
+}
+
+export function getPublicOrigin(req: Request): string {
+  const override = originOverride();
   if (override) return override;
 
   return getRequestOrigin(req);
