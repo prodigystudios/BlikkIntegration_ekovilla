@@ -228,16 +228,23 @@ export default function CallsClient() {
   // Deep-link: ?log=1 öppnar loggformuläret direkt. Översiktens "+ Logga samtal" landade förut
   // bara på sidan, där man möttes av en knapp med exakt samma etikett och fick klicka igen.
   // Parametern städas bort när modalen öppnats, annars öppnas den igen vid varje bakåtsteg.
+  // Flaggan, inte logOpen, är vakten: stängde man modalen innan router.replace hunnit landa —
+  // eller om RSC-hämtningen aldrig landar, t.ex. offline — låg ?log=1 kvar och öppnade den igen.
+  // Nollställs när parametern ändras, som syskonet ovan, så ett nytt klick från översikten
+  // öppnar på nytt även om komponenten aldrig avmonterats.
   const shouldOpenLog = searchParams.get('log') === '1';
+  const [hasHandledLogPreset, setHasHandledLogPreset] = useState(false);
+  useEffect(() => { setHasHandledLogPreset(false); }, [shouldOpenLog]);
   useEffect(() => {
-    if (!shouldOpenLog || logOpen) return;
+    if (!shouldOpenLog || hasHandledLogPreset) return;
+    setHasHandledLogPreset(true);
     openLogModal();
     const next = new URLSearchParams(searchParams.toString());
     next.delete('log');
     const query = next.toString();
     router.replace(query ? `/crm/samtal?${query}` : '/crm/samtal', { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldOpenLog, logOpen]);
+  }, [shouldOpenLog, hasHandledLogPreset]);
 
   useEffect(() => {
     if (!logOpen) return;

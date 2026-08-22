@@ -561,7 +561,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 <p className={cn('mb-0.5', crm.sectionTitle)}>Att agera på</p>
                 <h2 className="m-0 text-base font-bold tracking-tight text-slate-900">Nästa fokus</h2>
               </div>
-              {!loading && (
+              {/* Räknaren är nextActions.length, och den listan räknas fram ur summeringen — utan
+                  summaryFailed här stod "0 prioriterade" ovanför felrutan, samma påstående som
+                  nyckeltalen och statusbilden döljs för. */}
+              {!loading && !summaryFailed && (
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
                   {nextActions.length} {nextActions.length === 1 ? 'prioriterad' : 'prioriterade'}
                 </span>
@@ -692,9 +695,18 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                     week's — the same window the topplista under this card uses per säljare. With a
                     rolling 7 days the team row could never equal the sum of the seller rows beside
                     it, and one of the two would have to be read as broken. */}
-                <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
-                <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
-                <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
+                {/* Målen kommer från /api/crm/goals, inte från summeringen. Fallerar den hämtningen
+                    blir varje target 0, hasGoal falskt, och raderna tappar sitt "/ mål" tyst — ett
+                    500-svar ser då ut som "ingen budget satt". Topplistan fick sin flagga för exakt
+                    den tvetydigheten; det här är samma sak en nivå upp. Sena uppgifter räknas av
+                    summeringen och står kvar. */}
+                {failed('goals') ? <SectionError /> : (
+                  <>
+                    <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
+                    <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
+                    <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
+                  </>
+                )}
                 <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
                 {/* Only ever shows if a query hit its row cap. The point of counting server-side
                     was that a truncated read stops being silent — so it says so. */}
