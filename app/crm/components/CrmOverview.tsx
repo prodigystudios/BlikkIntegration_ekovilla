@@ -1,7 +1,7 @@
 "use client";
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from '../../../components/ui/EmptyState';
 import MetricCard from './MetricCard';
 import ChangelogCard from './ChangelogCard';
@@ -98,7 +98,42 @@ type LoadState = {
   quotes: QuoteItem[];
   goals: GoalItem[];
   workOrders: WorkOrderItem[];
+  // Vilka hämtningar som inte gick att läsa. Varje sektion föder sin egen yta, så ett fel i en
+  // av dem släcker den ytan och inget mer. Tidigare kastade fyra av sex hämtningar och
+  // catch-grenen nollställde HELA state: en blinkande /api/crm/goals tog offertlistan,
+  // orderlistan och statusbilden med sig. Arbetsorderhämtningen hade redan undantaget — det
+  // här är samma tolerans, för alla.
+  failed: SectionKey[];
 };
+
+type SectionKey = 'summary' | 'calls' | 'tasks' | 'quotes' | 'goals' | 'workOrders';
+
+// Enda stället ordningen bestäms. Både hämtningarna och failed-listan itererar den här, så de
+// kan inte glida isär — och Record<SectionKey, string> nedan gör att en ny sektion inte kan
+// läggas till utan att också få en URL.
+const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'tasks', 'quotes', 'goals', 'workOrders'];
+
+const sectionLabel: Record<SectionKey, string> = {
+  summary: 'siffrorna',
+  calls: 'samtal',
+  tasks: 'uppgifter',
+  quotes: 'offerter',
+  goals: 'mål',
+  workOrders: 'arbetsordrar',
+};
+
+type Section = { ok: boolean; json: any };
+
+// Ett avvisat löfte och ett icke-ok svar är samma sak här: sektionen gick inte att läsa.
+async function readSection(result: PromiseSettledResult<Response>): Promise<Section> {
+  if (result.status !== 'fulfilled') return { ok: false, json: null };
+  const json = await result.value.json().catch(() => null);
+  return { ok: result.value.ok, json };
+}
+
+function itemsOf<T>(section: Section): T[] {
+  return section.ok && Array.isArray(section.json?.data?.items) ? section.json.data.items : [];
+}
 
 type GoalUser = {
   id: string;
@@ -238,79 +273,78 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
   const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
-  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    let active = true;
+  // Varje laddning får ett nummer; avmontering och nästa laddning räknar upp det. Ett svar från
+  // en överkörd omgång skriver alltså inte över en färskare. `active`-flaggan som stod här förut
+  // räckte för effektens engångskörning, men Uppdatera kan starta om medan en omgång är i luften.
+  const loadIdRef = useRef(0);
 
-    async function load() {
-      setLoading(true);
-      setError(null);
+  const load = useCallback(async (mode: 'initial' | 'refresh') => {
+    const loadId = loadIdRef.current + 1;
+    loadIdRef.current = loadId;
+    if (mode === 'refresh') setRefreshing(true);
+    else setLoading(true);
 
-      try {
-        const overviewWindow = getCrmOverviewWindow();
-        const summaryQuery = new URLSearchParams({
-          today: overviewWindow.today,
-          since: overviewWindow.since,
-          week_start: overviewWindow.weekStart,
-          week_end: overviewWindow.weekEnd,
-        });
-        const [summaryRes, callsRes, tasksRes, quotesRes, goalsRes, workOrdersRes] = await Promise.all([
-          fetch(`/api/crm/overview?${summaryQuery}`, { cache: 'no-store' }),
-          fetch('/api/crm/calls', { cache: 'no-store' }),
-          fetch('/api/crm/tasks', { cache: 'no-store' }),
-          // These two lists are now only the cards' five rows. Both sorts have to be asked for:
-          // the offer list's default order leads with drafts and lost quotes, the order board's
-          // with the earliest installation date — so a brand new order is the table's last row.
-          fetch(`/api/crm/quotes?sort=updated_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
-          fetch('/api/crm/goals?period_type=month', { cache: 'no-store' }),
-          fetch(`/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`, { cache: 'no-store' }),
-        ]);
+    try {
+      const overviewWindow = getCrmOverviewWindow();
+      const summaryQuery = new URLSearchParams({
+        today: overviewWindow.today,
+        since: overviewWindow.since,
+        week_start: overviewWindow.weekStart,
+        week_end: overviewWindow.weekEnd,
+      });
 
-        const [summaryJson, callsJson, tasksJson, quotesJson, goalsJson, workOrdersJson] = await Promise.all([
-          summaryRes.json().catch(() => ({})),
-          callsRes.json().catch(() => ({})),
-          tasksRes.json().catch(() => ({})),
-          quotesRes.json().catch(() => ({})),
-          goalsRes.json().catch(() => ({})),
-          workOrdersRes.json().catch(() => ({})),
-        ]);
+      const url: Record<SectionKey, string> = {
+        summary: `/api/crm/overview?${summaryQuery}`,
+        calls: '/api/crm/calls',
+        tasks: '/api/crm/tasks',
+        // These two lists are now only the cards' five rows. Both sorts have to be asked for:
+        // the offer list's default order leads with drafts and lost quotes, the order board's
+        // with the earliest installation date — so a brand new order is the table's last row.
+        quotes: `/api/crm/quotes?sort=updated_desc&limit=${RECENT_ITEM_LIMIT}`,
+        goals: '/api/crm/goals?period_type=month',
+        workOrders: `/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`,
+      };
 
-        if (!summaryRes.ok) throw new Error(summaryJson?.error || 'Kunde inte räkna översiktens siffror.');
-        if (!callsRes.ok) throw new Error(callsJson?.error || 'Kunde inte läsa samtal.');
-        if (!tasksRes.ok) throw new Error(tasksJson?.error || 'Kunde inte läsa uppgifter.');
-        if (!quotesRes.ok) throw new Error(quotesJson?.error || 'Kunde inte läsa offerter.');
-        if (!goalsRes.ok) throw new Error(goalsJson?.error || 'Kunde inte läsa mål.');
-        // Work orders only feed the "senaste ordrar"-card now — the numbers come from the summary
-        // — so a failure there shouldn't blank the whole overview. Same tolerance as before.
+      // allSettled, inte all: ETT avvisat löfte — ett nätverksglapp i en enda hämtning — avvisade
+      // hela samlingen och landade i catch-grenen, som tömde sidan. Nu bärs varje utfall för sig.
+      const settled = await Promise.allSettled(SECTION_ORDER.map((key) => fetch(url[key], { cache: 'no-store' })));
+      const read = await Promise.all(settled.map(readSection));
 
-        if (!active) return;
+      if (loadId !== loadIdRef.current) return;
 
-        setState({
-          summary: (summaryJson?.data?.summary as CrmOverviewSummary | undefined) ?? null,
-          calls: Array.isArray(callsJson?.data?.items) ? callsJson.data.items : [],
-          tasks: Array.isArray(tasksJson?.data?.items) ? tasksJson.data.items : [],
-          quotes: Array.isArray(quotesJson?.data?.items) ? quotesJson.data.items : [],
-          goals: Array.isArray(goalsJson?.data?.items) ? goalsJson.data.items : [],
-          workOrders: workOrdersRes.ok && Array.isArray(workOrdersJson?.data?.items) ? workOrdersJson.data.items : [],
-        });
-      } catch (loadError: any) {
-        if (!active) return;
-        setError(loadError?.message || 'Kunde inte ladda CRM-översikten.');
-        setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [] });
-      } finally {
-        if (active) setLoading(false);
+      const section = Object.fromEntries(SECTION_ORDER.map((key, index) => [key, read[index]])) as Record<SectionKey, Section>;
+
+      setState({
+        summary: (section.summary.json?.data?.summary as CrmOverviewSummary | undefined) ?? null,
+        calls: itemsOf<CallItem>(section.calls),
+        tasks: itemsOf<TaskItem>(section.tasks),
+        quotes: itemsOf<QuoteItem>(section.quotes),
+        goals: itemsOf<GoalItem>(section.goals),
+        workOrders: itemsOf<WorkOrderItem>(section.workOrders),
+        failed: SECTION_ORDER.filter((key) => !section[key].ok),
+      });
+    } catch {
+      // Bakkant. allSettled avvisar inte, men getCrmOverviewWindow och URLSearchParams ligger
+      // utanför den. Faller något där går ingenting på sidan att lita på, så allt flaggas.
+      if (loadId !== loadIdRef.current) return;
+      setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
+    } finally {
+      if (loadId === loadIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
       }
     }
-
-    void load();
-
-    return () => {
-      active = false;
-    };
   }, []);
+
+  useEffect(() => {
+    void load('initial');
+    // Räkna upp vid avmontering så ett svar som landar efteråt räknas som överkört.
+    return () => { loadIdRef.current += 1; };
+  }, [load]);
 
   // The figures are counted by /api/crm/overview; what's left here is the team's targets, which
   // come from the goals list, and the flow bars' shared scale.
@@ -339,6 +373,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
   const recentCalls = useMemo(() => state.calls.slice(0, RECENT_ITEM_LIMIT), [state.calls]);
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
+  const failed = (key: SectionKey) => state.failed.includes(key);
+  // Summeringen föder varenda siffra på sidan — nyckeltalen, statusbilden, fokusraderna och
+  // topplistans utfall. Fallerar den är EMPTY_SUMMARY:s nollor inte "noll" utan "vi vet inte".
+  const summaryFailed = failed('summary');
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
     // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against THIS
@@ -424,55 +462,81 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           >
             Öppna uppgifter
           </Link>
+          {/* Sidan hämtade en gång vid montering och låg sedan still. Den är en dagsöversikt som
+              står uppe hela arbetsdagen, så den hann bli tyst gammal. */}
+          <button
+            type="button"
+            onClick={() => void load('refresh')}
+            disabled={loading || refreshing}
+            className={cn(crm.ghostButton, 'disabled:cursor-not-allowed disabled:opacity-60')}
+          >
+            {refreshing ? 'Uppdaterar…' : 'Uppdatera'}
+          </button>
         </div>
       </div>
 
-      {/* Metric cards */}
-      <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
-        {loading ? (
-          <>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
-            ))}
-          </>
-        ) : (
-          <>
-            <MetricCard
-              label="Öppna prospekt"
-              value={summary.pipelineProspects}
-              helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`}
-              icon={<ProspectIcon />}
-              iconBg="bg-emerald-100"
-            />
-            <MetricCard
-              label="Samtal senaste 7 dagar"
-              value={summary.callsLast7Days}
-              helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot mål` : `${summary.followUpCalls} kräver nästa steg`}
-              icon={<CallIcon />}
-              iconBg="bg-blue-100"
-            />
-            <MetricCard
-              label="Öppna uppgifter"
-              value={summary.openTasks}
-              helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`}
-              icon={<TaskIcon />}
-              iconBg="bg-purple-100"
-            />
-            <MetricCard
-              label="Prospekt i offertläge"
-              value={summary.quotedProspects}
-              helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} väntar uppföljning` : 'Inga blockerande offertlägen'}
-              icon={<QuoteIcon />}
-              iconBg="bg-orange-100"
-            />
-          </>
-        )}
-      </div>
+      {/* Metric cards. Dolda när summeringen fallerat. EMPTY_SUMMARY:s nollor betyder inte
+          "noll öppna prospekt" utan "vi vet inte", och fyra nollor bredvid en röd felruta
+          läser som ett tomt CRM. */}
+      {loading || !summaryFailed ? (
+        <div className="hidden gap-4 sm:grid sm:grid-cols-2 xl:grid-cols-4">
+          {loading ? (
+            <>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
+              ))}
+            </>
+          ) : (
+            <>
+              <MetricCard
+                label="Öppna prospekt"
+                value={summary.pipelineProspects}
+                helper={`${summary.newProspects} nya · ${summary.qualifiedProspects} varma`}
+                icon={<ProspectIcon />}
+                iconBg="bg-emerald-100"
+              />
+              <MetricCard
+                label="Samtal senaste 7 dagar"
+                value={summary.callsLast7Days}
+                helper={summary.callsTarget > 0 ? `${summary.callsLast7Days}/${summary.callsTarget} mot mål` : `${summary.followUpCalls} kräver nästa steg`}
+                icon={<CallIcon />}
+                iconBg="bg-blue-100"
+              />
+              <MetricCard
+                label="Öppna uppgifter"
+                value={summary.openTasks}
+                helper={summary.overdueTasks > 0 ? `${summary.overdueTasks} sena just nu` : `${summary.todayTasks} förfaller idag`}
+                icon={<TaskIcon />}
+                iconBg="bg-purple-100"
+              />
+              <MetricCard
+                label="Prospekt i offertläge"
+                value={summary.quotedProspects}
+                helper={summary.quoteFollowUps > 0 ? `${summary.quoteFollowUps} väntar uppföljning` : 'Inga blockerande offertlägen'}
+                icon={<QuoteIcon />}
+                iconBg="bg-orange-100"
+              />
+            </>
+          )}
+        </div>
+      ) : null}
 
-      {error ? (
-        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-          <strong className="font-semibold">Kunde inte ladda översikten</strong>
-          <p className="m-0 mt-1">{error}</p>
+      {/* Rutan skiljer på grad: faller summeringen är sidans numeriska halva borta, faller en
+          lista är det ett kort. Förut var allt samma röda ruta ovanför en tömd sida. */}
+      {!loading && state.failed.length > 0 ? (
+        <div className={cn(
+          'rounded-2xl border px-4 py-3 text-sm',
+          summaryFailed ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-amber-200 bg-amber-50 text-amber-900',
+        )}>
+          <strong className="font-semibold">
+            {summaryFailed ? 'Siffrorna kunde inte räknas' : 'Delar av översikten kunde inte läsas'}
+          </strong>
+          <p className="m-0 mt-1">
+            Gick inte att läsa: {state.failed.map((key) => sectionLabel[key]).join(', ')}.{' '}
+            {summaryFailed
+              ? 'Nyckeltalen och statusbilden är dolda tills det går igen.'
+              : 'Resten av sidan visas som vanligt.'}
+          </p>
         </div>
       ) : null}
 
@@ -501,7 +565,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </div>
             {loading ? <OverviewLoadingRows /> : null}
-            {!loading && nextActions.length === 0 ? (
+            {/* "Läget är lugnt" räknas fram ur summeringens nollor. Fallerar den är listan tom av
+                fel skäl, och lugnbeskedet blir sidans farligaste påstående. */}
+            {!loading && summaryFailed ? <SectionError /> : null}
+            {!loading && !summaryFailed && nextActions.length === 0 ? (
               <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800">
                 Läget är lugnt — inget blockerande i CRM-flödet just nu.
               </div>
@@ -534,7 +601,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
                 Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
                 statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
-            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading}>
+            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading} failed={failed('quotes')}>
               {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
                   {state.quotes.map((quote) => (
@@ -550,7 +617,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading}>
+            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed('workOrders')}>
               {state.workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
                   {state.workOrders.map((order) => (
@@ -566,7 +633,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Öppna uppgifter" href="/crm/uppgifter" loading={loading}>
+            <RecentCard title="Öppna uppgifter" href="/crm/uppgifter" loading={loading} failed={failed('tasks')}>
               {nextTasks.length === 0 ? <EmptyState description="Inga öppna uppgifter just nu." /> : (
                 <div className="grid gap-2">
                   {nextTasks.map((task) => (
@@ -582,7 +649,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading}>
+            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading} failed={failed('calls')}>
               {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
                   {recentCalls.map((call) => (
@@ -607,7 +674,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <p className={cn('mb-1', crm.sectionTitle)}>Statusbild</p>
             <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Fördelning och mål</h2>
             <p className="m-0 mb-4 text-xs text-slate-400">Belopp exklusive moms. Avbrutna order räknas inte.</p>
-            {loading ? <OverviewLoadingRows /> : (
+            {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
               <div className="grid gap-3">
                 {/* The three stocks in the flow share one scale, so the bars read as an actual
                     distribution — where the money is sitting right now — instead of three
@@ -638,7 +705,9 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           </div>
 
           {/* Leaderboard */}
-          <LeaderboardPanel loading={loading} teamLeaderboard={teamLeaderboard} />
+          {/* Mål saknas och mål som inte gick att läsa ger båda en tom lista — utan flaggan
+              hade ett 500-svar renderats som "Inga veckomål satta ännu". */}
+          <LeaderboardPanel loading={loading} failed={summaryFailed || failed('goals')} teamLeaderboard={teamLeaderboard} />
         </div>
       </div>
 
@@ -666,14 +735,24 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   );
 }
 
-function RecentCard({ title, href, loading, children }: { title: string; href: string; loading: boolean; children: React.ReactNode }) {
+// En tom lista och en lista som inte gick att läsa ser likadana ut i data men betyder motsatta
+// saker. Utan den här skulle ett 500-svar renderas som "Inga offertsteg registrerade ännu."
+function SectionError() {
+  return (
+    <div className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-3 text-xs text-rose-800">
+      Kunde inte läsas just nu. Prova Uppdatera.
+    </div>
+  );
+}
+
+function RecentCard({ title, href, loading, failed, children }: { title: string; href: string; loading: boolean; failed?: boolean; children: React.ReactNode }) {
   return (
     <div className={crm.cardInner}>
       <div className="mb-3 flex items-center justify-between gap-3">
         <strong className="text-sm font-bold text-slate-900">{title}</strong>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
       </div>
-      {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : children}
+      {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : failed ? <SectionError /> : children}
     </div>
   );
 }
@@ -736,9 +815,11 @@ function StatusStrip({ label, value, tone, goal, scale, helper, currency = false
 
 function LeaderboardPanel({
   loading,
+  failed,
   teamLeaderboard,
 }: {
   loading: boolean;
+  failed: boolean;
   teamLeaderboard: Array<{
     id: string;
     userName: string;
@@ -768,12 +849,13 @@ function LeaderboardPanel({
         <Link href="/crm/installningar" className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
       </div>
       {loading ? <OverviewLoadingRows /> : null}
-      {!loading && teamLeaderboard.length === 0 ? (
+      {!loading && failed ? <SectionError /> : null}
+      {!loading && !failed && teamLeaderboard.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-xs text-slate-500">
           Inga veckomål satta ännu. Lägg in mål i Inställningar för att aktivera topplistan.
         </div>
       ) : null}
-      {!loading && teamLeaderboard.length > 0 ? (
+      {!loading && !failed && teamLeaderboard.length > 0 ? (
         <div className="grid gap-2">
           {teamLeaderboard.map((entry, index) => (
             <div key={entry.id} className="rounded-xl border border-slate-100 p-3">
