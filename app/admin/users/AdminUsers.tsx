@@ -247,7 +247,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
               onClick={saveChanges}
               disabled={saving}
               className={crm.formButton}
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {saving ? '...' : 'Spara'}
             </button>

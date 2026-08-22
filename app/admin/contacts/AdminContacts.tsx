@@ -181,7 +181,7 @@ export default function AdminContacts() {
             </div>
             <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); if(name) { (e.currentTarget as HTMLFormElement).reset(); createCategory(name);} }} className="mt-2 flex gap-2">
               <Input name="name" placeholder="Ny kategori" className="min-h-9 px-2.5 py-2 text-[13px]" />
-              <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Lägg till</button>
+              <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--ek-green)' }}>Lägg till</button>
             </form>
           </div>
 
@@ -247,7 +247,7 @@ export default function AdminContacts() {
                 <Input name="phone" placeholder="Telefon" />
                 <Input name="location" placeholder="Plats" />
                 <Input name="role" placeholder="Roll" />
-                <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Lägg till</button>
+                <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--ek-green)' }}>Lägg till</button>
               </form>
             )}
           </div>
@@ -310,7 +310,7 @@ export default function AdminContacts() {
           <form onSubmit={e=>{e.preventDefault(); const fd=new FormData(e.currentTarget); const name=String(fd.get('name')||'').trim(); const address=String(fd.get('address')||'').trim(); if(!name||!address) return; createAddress({ name, address }); (e.currentTarget as HTMLFormElement).reset(); }} className="grid items-end gap-2 [grid-template-columns:repeat(auto-fit,minmax(200px,1fr))]">
             <Input name="name" placeholder="Namn" required />
             <Input name="address" placeholder="Adress" required />
-            <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Lägg till</button>
+            <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--ek-green)' }}>Lägg till</button>
           </form>
         </div>
       )}
@@ -355,7 +355,7 @@ function CategoryButton({ active, onClick, children }: { active: boolean; onClic
         'inline-flex min-h-9 min-w-0 flex-1 basis-[140px] items-center justify-start truncate rounded-xl border px-3 text-sm font-semibold transition',
         active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:text-slate-800',
       )}
-      style={active ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+      style={active ? { backgroundColor: 'var(--ek-green)' } : undefined}
     >
       {children}
     </button>
@@ -375,7 +375,7 @@ function Editable({ value, onSave, placeholder }: { value: string; onSave: (v:st
   return (
     <form onSubmit={e=>{e.preventDefault(); onSave(draft.trim()); setEditing(false);}} className="flex gap-1.5">
       <Input autoFocus value={draft} onChange={e=>setDraft(e.target.value)} className="min-h-8 px-2 py-1.5 text-[13px]" />
-      <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}>Spara</button>
+      <button type="submit" className={crm.formButton} style={{ backgroundColor: 'var(--ek-green)' }}>Spara</button>
       <button type="button" onClick={()=>{ setEditing(false); setDraft(value); }} className={crm.ghostButton}>Avbryt</button>
     </form>
   );

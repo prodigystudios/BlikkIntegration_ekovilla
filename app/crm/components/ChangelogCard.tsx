@@ -178,7 +178,7 @@ export default function ChangelogCard() {
                   type="button"
                   onClick={closeModal}
                   className={cn(crm.formButton, 'flex-1 sm:flex-none sm:px-5')}
-                  style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+                  style={{ backgroundColor: 'var(--ek-green)' }}
                 >
                   Okej
                 </button>

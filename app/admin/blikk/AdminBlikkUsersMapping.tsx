@@ -202,7 +202,7 @@ export default function AdminBlikkUsersMapping() {
                     onClick={() => saveMapping(row.id, selectedId)}
                     disabled={saving[row.id]}
                     className={crm.formButton}
-                    style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+                    style={{ backgroundColor: 'var(--ek-green)' }}
                   >
                     {saving[row.id] ? 'Sparar…' : 'Spara koppling'}
                   </button>

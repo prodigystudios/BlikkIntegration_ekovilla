@@ -15,7 +15,9 @@ import {
 // Filfliken. Monteras av BÅDE kontorsvyn (/crm/arbetsorder) och fältvyn (/arbetsorder), därför
 // helt presentational: data och callbacks in som props, inga egna fetch-anrop, inga toasts.
 //
-// `--crm-primary` är scopad till .crm-shell och saknas i fältvyn — därför fallbacken i var().
+// Fältvyn (/arbetsorder) ligger UTANFÖR .crm-shell och saknar därför dess variabler. Knappfärgen
+// tas ur --ek-green, som bor på :root och gäller app-vitt — den lappen med hårdkodad fallback
+// behövs inte längre.
 
 type Props = {
   workOrderId: string;
@@ -103,7 +105,7 @@ export default function WorkOrderFilesTab({
             onClick={() => setComposerOpen((open) => !open)}
             disabled={uploading}
             className={cn(crm.formButton, 'px-3')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             {uploading
               ? `Laddar upp (${uploadProgress.current}/${uploadProgress.total})…`

@@ -91,7 +91,7 @@ export default function AdminNews() {
               type="submit"
               disabled={status === 'saving' || !headline.trim() || !body.trim()}
               className={cn(crm.formButton, 'justify-self-start')}
-              style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+              style={{ backgroundColor: 'var(--ek-green)' }}
             >
               {status === 'saving' ? 'Sparar…' : (status === 'saved' ? 'Sparat ✓' : 'Publicera nyhet')}
             </button>

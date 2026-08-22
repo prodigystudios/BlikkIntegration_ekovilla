@@ -168,7 +168,7 @@ function NewEntryForm({ onSaved }: { onSaved: () => void }) {
           onClick={() => submit(true)}
           disabled={saving}
           className={cn(crm.formButton)}
-          style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+          style={{ backgroundColor: 'var(--ek-green)' }}
         >
           {saving ? 'Sparar…' : 'Publicera'}
         </button>
@@ -263,7 +263,7 @@ function EntryRow({ entry, onChanged }: { entry: ChangelogDraftView; onChanged: 
             onClick={() => patch({ publish: true })}
             disabled={busy}
             className={cn(crm.formButton, 'h-8')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             Publicera
           </button>

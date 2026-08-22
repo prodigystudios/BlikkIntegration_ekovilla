@@ -283,7 +283,7 @@ export default function AdminTimeReference() {
                 onClick={() => void addItem(section.kind)}
                 disabled={!((newName[section.kind] || '').trim()) || busyKey === `${section.kind}:new`}
                 className={crm.formButton}
-                style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+                style={{ backgroundColor: 'var(--ek-green)' }}
               >
                 Lägg till
               </button>

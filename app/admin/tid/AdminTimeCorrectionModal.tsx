@@ -190,7 +190,7 @@ export default function AdminTimeCorrectionModal({
             onClick={() => void save()}
             disabled={busy || previewMinutes <= 0 || needsTarget || sameClock || !date}
             className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             {busy ? 'Sparar…' : 'Spara rättelse'}
           </button>
@@ -261,7 +261,7 @@ export default function AdminTimeCorrectionModal({
                         ? 'border-transparent text-white shadow-sm'
                         : 'border-[#dbe4d6] bg-white text-slate-700 hover:border-slate-400',
                     )}
-                    style={workOrderId === order.id ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+                    style={workOrderId === order.id ? { backgroundColor: 'var(--ek-green)' } : undefined}
                   >
                     {orderLabel(order)}
                   </button>

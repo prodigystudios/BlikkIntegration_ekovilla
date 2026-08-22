@@ -388,7 +388,7 @@ function TicketForm({ pagePath, onCreated }: { pagePath: string; onCreated: () =
         // `--crm-primary` gör den helt osynlig. Variabeln är scopad till `.crm-shell`, och den här
         // komponenten lever utanför AppShell — händelseförloppet som gjorde knappen osynlig en
         // gång. Wrappern ovan löser det, fallbacken gör att det inte kan hända igen.
-        style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+        style={{ backgroundColor: 'var(--ek-green)' }}
       >
         {submitting ? 'Skickar…' : 'Skicka rapport'}
       </button>

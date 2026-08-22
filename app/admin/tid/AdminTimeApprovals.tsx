@@ -802,7 +802,7 @@ function ReopenModal({
             }}
             disabled={busy}
             className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
-            style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+            style={{ backgroundColor: 'var(--ek-green)' }}
           >
             {busy ? 'Öppnar…' : 'Öppna igen'}
           </button>

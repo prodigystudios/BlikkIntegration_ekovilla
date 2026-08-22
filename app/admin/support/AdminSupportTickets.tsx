@@ -362,7 +362,7 @@ function TicketModal({
                 onClick={save}
                 disabled={busy}
                 className={cn(crm.formButton, 'shrink-0')}
-                style={{ backgroundColor: 'var(--crm-primary, #1a3f26)' }}
+                style={{ backgroundColor: 'var(--ek-green)' }}
               >
                 {saving ? 'Sparar…' : 'Spara'}
               </button>

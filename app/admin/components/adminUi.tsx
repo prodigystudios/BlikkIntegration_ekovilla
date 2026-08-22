@@ -83,7 +83,7 @@ export function AdminFilterChip({
         'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
         active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
       )}
-      style={active ? { backgroundColor: 'var(--crm-primary, #1a3f26)' } : undefined}
+      style={active ? { backgroundColor: 'var(--ek-green)' } : undefined}
     >
       {children}
       {count != null ? (
