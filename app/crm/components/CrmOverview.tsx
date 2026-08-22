@@ -124,16 +124,31 @@ const sectionLabel: Record<SectionKey, string> = {
 
 type Section = { ok: boolean; json: any };
 
-// Ett avvisat löfte och ett icke-ok svar är samma sak här: sektionen gick inte att läsa.
+// Hämtar EN sektion och läser dess kropp. Kastar aldrig — ett avvisat löfte, ett icke-ok svar och
+// en otolkbar kropp är samma sak här: sektionen gick inte att läsa.
 //
-// `undefined` som sentinel, inte null: ett svar vars KROPP inte gick att tolka är lika olästbart
-// som en 500:a. Utan den skillnaden gav en 200 med trasig kropp ok:true och json:null, summeringen
-// föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" UTAN felruta —
-// exakt den okänt-som-säker-nolla grenen finns för att ta bort.
-async function readSection(result: PromiseSettledResult<Response>): Promise<Section> {
-  if (result.status !== 'fulfilled') return { ok: false, json: null };
-  const json = await result.value.json().catch(() => undefined);
-  return { ok: result.value.ok && json !== undefined, json: json ?? null };
+// 🧨 Varje sektion har en EGEN AbortController och en egen timer. Med en delad controller för alla
+// sex — och kropparna lästa först efter Promise.allSettled — räckte EN hängande endpoint för att
+// avbryta de fem andras olästa kroppsströmmar: deras res.json() avvisades, alla sex flaggades, och
+// sidan tömdes. Det var precis den allt-eller-inget-släckning allSettled infördes för att ta bort.
+// Kroppen läses därför direkt efter headern, innanför sektionens egen timeout, och timern rensas
+// när sektionen är klar — annars hinner den brinna medan man väntar in en långsam granne.
+//
+// `undefined` som sentinel, inte null: en 200 med trasig kropp gav annars ok:true och json:null,
+// summeringen föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" utan
+// felruta — okänt renderat som en säker nolla.
+async function readSection(url: string): Promise<Section> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
+    const json = await res.json().catch(() => undefined);
+    return { ok: res.ok && json !== undefined, json: json ?? null };
+  } catch {
+    return { ok: false, json: null };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function itemsOf<T>(section: Section): T[] {
@@ -215,12 +230,12 @@ const RECENT_ITEM_LIMIT = 5;
 // overviewSummary), veckoraden genom isDeadWorkOrder-vakten. Delad konstant så de inte glider isär.
 const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
 
-// Efter så här många dygn utan loggat samtal säger kortet ifrån. Sju för att veckomålet är
-// teamets mätperiod — en vecka utan ett enda loggat samtal är redan utanför målet.
-const CALL_LOG_STALE_DAYS = 7;
+// Fönstret som avgör om kortet säger ifrån är summeringens egna sju dagar (window.since i
+// getCrmOverviewWindow) — inte ett tal räknat ur listan. Se staleCalls.
 
-// allSettled väntar hur länge som helst. En hängande hämtning lämnade "Uppdatera" utgråad på
-// "Uppdaterar…" resten av sessionen — samtidigt som varje felruta bad användaren trycka på den.
+// Utan tak väntar en hämtning hur länge som helst, och "Uppdatera" låg utgråad på "Uppdaterar…"
+// resten av sessionen — samtidigt som varje felruta bad användaren trycka på den. Gäller per
+// sektion, se readSection.
 const REQUEST_TIMEOUT_MS = 15_000;
 
 // Zeros while the summary is in flight or after a failed load, so the panels render their shape
@@ -299,9 +314,6 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
     if (mode === 'refresh') setRefreshing(true);
     else setLoading(true);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
     try {
       const overviewWindow = getCrmOverviewWindow();
       const summaryQuery = new URLSearchParams({
@@ -328,10 +340,9 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
         workOrders: `/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`,
       };
 
-      // allSettled, inte all: ETT avvisat löfte — ett nätverksglapp i en enda hämtning — avvisade
-      // hela samlingen och landade i catch-grenen, som tömde sidan. Nu bärs varje utfall för sig.
-      const settled = await Promise.allSettled(SECTION_ORDER.map((key) => fetch(url[key], { cache: 'no-store', signal: controller.signal })));
-      const read = await Promise.all(settled.map(readSection));
+      // readSection avvisar aldrig, så Promise.all räcker: varje sektions utfall bärs för sig och
+      // en trasig granne kan inte längre dra med sig de övriga.
+      const read = await Promise.all(SECTION_ORDER.map((key) => readSection(url[key])));
 
       if (loadId !== loadIdRef.current) return;
 
@@ -362,7 +373,6 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
         ? { ...prev, failed: [...SECTION_ORDER] }
         : { summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
-      clearTimeout(timeout);
       if (loadId === loadIdRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -402,16 +412,21 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
   // Samtalsloggen SKA användas — att den ligger stilla är säljarnas slarv, inte en död funktion.
   // Kortet visade bara absoluta datum, så två rader från juni läste som färsk aktivitet: gröna
   // "Positivt"-märken och ingenting som sa hur gammalt det var. Åldern är hela poängen med kortet.
-  const staleCallDays = useMemo(() => {
-    // ⚠️ Mät på rätt urval. crm_calls_select_visible släpper igenom MER än de egna samtalen: även
-    // samtal på prospekt man är tilldelad, oavsett vem som loggade dem. En kollegas samtal på mitt
-    // prospekt hade alltså rensat MIN påminnelse. Admin mäter på allt hen ser ("ingen har loggat"),
-    // alla andra på sina egna ("du har inte loggat") — samma delning som texten gör.
+  const staleCalls = useMemo(() => {
+    // 🧨 UTLÖSAREN får inte komma ur listan. Den är kapad till fem rader, och
+    // crm_calls_select_visible släpper igenom mer än de egna samtalen — även kollegors samtal på
+    // prospekt man är tilldelad. Fem sådana räckte för att den egna raden föll utanför urvalet,
+    // och då tystnade påminnelsen precis när den skulle ha ljudit.
+    //
+    // callsLast7Days räknas av servern på HELA det synliga urvalet. Är den noll har ingen som
+    // användaren ser loggat något på sju dagar — och för en säljare ingår hen själv i det, så
+    // båda formuleringarna nedan är sanna oavsett vem som läser.
+    if (summary.callsLast7Days > 0 || state.calls.length === 0) return null;
+    // Antalet dygn är däremot bara en detalj och får komma ur listan när det går. Ligger den egna
+    // raden utanför de fem säger kortet "över en vecka" i stället för att gissa en siffra.
     const scoped = role === 'admin' ? state.calls : state.calls.filter((call) => call.user_id === userId);
-    // Listan kommer sorterad call_at desc från rutten och filtret bevarar ordningen.
-    const days = daysSince(scoped[0]?.call_at);
-    return days != null && days >= CALL_LOG_STALE_DAYS ? days : null;
-  }, [state.calls, role, userId]);
+    return { days: daysSince(scoped[0]?.call_at) };
+  }, [summary.callsLast7Days, state.calls, role, userId]);
   // Uppgifterna kommer nu färdigfiltrerade (status=open) och färdigsorterade från rutten, som
   // redan ordnar på status, förfallodatum (null sist) och skapandedatum. Att sortera om dem här
   // hade gett två konkurrerande definitioner av samma korts ordning, med frågans parametrar
@@ -732,14 +747,13 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
             <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading} failed={blank('calls', state.calls.length)}>
               {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
-                  {staleCallDays != null ? (
+                  {staleCalls ? (
                     <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                      {/* Listan är RLS-filtrerad: en säljare ser bara sina egna samtal, en admin
-                          allas. Påståendet måste följa med — "ingen har loggat" är fel när det
-                          bara betyder att DU inte har det, och kollegornas samtal rensar det inte. */}
-                      {role === 'admin'
-                        ? `Ingen har loggat ett samtal på ${staleCallDays} dagar.`
-                        : `Du har inte loggat ett samtal på ${staleCallDays} dagar.`}
+                      {/* Urvalet är RLS-filtrerat: en admin ser allas samtal, alla andra sina egna
+                          plus kollegors på prospekt de äger. Påståendet måste följa med — "ingen
+                          har loggat" vore fel när det bara betyder att DU inte har det. */}
+                      {role === 'admin' ? 'Ingen har loggat ett samtal på ' : 'Du har inte loggat ett samtal på '}
+                      {staleCalls.days != null ? `${staleCalls.days} dagar.` : 'över en vecka.'}
                     </p>
                   ) : null}
                   {recentCalls.map((call) => (
@@ -830,10 +844,13 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   </p>
                 ) : null}
 
-                {/* Per säljare. Visas bara när listan har MER än en rad: med exakt en är den raden
-                    per definition hela summan ovanför, och kortet hade sagt samma sak två gånger —
-                    vilket är precis vad en säljare såg innan de två korten slogs ihop. */}
-                {!blank('goals', state.goals.length) && teamLeaderboard.length > 1 ? (
+                {/* Per säljare. Listan visas ÄVEN med en enda rad, till skillnad från vad jag först
+                    byggde: överlappet mot teamraderna ovanför är tre av sex — Samtal, Offerter och
+                    Ordervärde — medan Offertvärde, Antal ordrar och Fakturerat ordervärde bara finns
+                    här. Att dölja listan för en ensam säljare tog alltså bort tre uppföljningar hen
+                    inte kunde se någon annanstans. Rangordningen döljs i stället när det bara finns
+                    en rad; att sätta "#1" på ensamheten säger ingenting. */}
+                {!blank('goals', state.goals.length) && teamLeaderboard.length > 0 ? (
                   <>
                     <div className="my-1 h-px bg-slate-100" />
                     <p className={cn('m-0', crm.sectionTitle)}>Per säljare</p>
@@ -977,7 +994,9 @@ function SellerGoalList({
           <div key={entry.id} className="rounded-xl border border-slate-100 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">#{index + 1}</span>
+                {entries.length > 1 ? (
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">#{index + 1}</span>
+                ) : null}
                 <strong className="text-sm font-semibold text-slate-900">{entry.userName}</strong>
               </div>
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
