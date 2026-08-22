@@ -24,6 +24,9 @@ export const listCrmTasksQuerySchema = z.object({
   // 'delegated' = uppgifter den inloggade skapat ÅT ANDRA. Egen läsväg och inte ett filter på
   // den vanliga listan: raderna tillhör mottagaren och ligger utanför anroparens RLS.
   scope: z.enum(['own', 'delegated']).optional().default('own'),
+  // Samma form som offertrutten (quotes/_lib.ts): valfri, och utan den gäller domänens
+  // egen tak-gräns som förut.
+  limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 
 export const createCrmTaskSchema = z.object({

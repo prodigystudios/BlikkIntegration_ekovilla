@@ -256,12 +256,6 @@ function formatCurrency(value: number | string, currencyCode: string) {
   return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
 }
 
-function sortTasks(taskA: TaskItem, taskB: TaskItem) {
-  if (taskA.status !== taskB.status) return taskA.status === 'open' ? -1 : 1;
-  if (!!taskA.due_date !== !!taskB.due_date) return taskA.due_date ? -1 : 1;
-  if (taskA.due_date && taskB.due_date && taskA.due_date !== taskB.due_date) return taskA.due_date.localeCompare(taskB.due_date);
-  return taskB.updated_at.localeCompare(taskA.updated_at);
-}
 
 // Rubrikerna räknas upp i singular vid 1. Neutrum-substantiv (samtal, prospekt) har samma
 // form i båda numerus, men adjektiven och t-orden runt dem har det inte — "1 fristående
@@ -319,8 +313,13 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
 
       const url: Record<SectionKey, string> = {
         summary: `/api/crm/overview?${summaryQuery}`,
-        calls: '/api/crm/calls',
-        tasks: '/api/crm/tasks',
+        // Båda hämtningarna gick förut utan parametrar och landade på domänens tak — 50 samtal
+        // och 100 uppgifter för att rendera fem rader var. Sorteringen sker i Postgres FÖRE
+        // kapningen, så de fem var alltid rätt fem; det här är nyttolast, inte korrekthet.
+        calls: `/api/crm/calls?limit=${RECENT_ITEM_LIMIT}`,
+        // status=open serverfiltrerar det kortet ändå bara visar. Utan den hämtades även
+        // avklarade uppgifter hem för att kastas av ett klientfilter.
+        tasks: `/api/crm/tasks?status=open&limit=${RECENT_ITEM_LIMIT}`,
         // These two lists are now only the cards' five rows. Both sorts have to be asked for:
         // the offer list's default order leads with drafts and lost quotes, the order board's
         // with the earliest installation date — so a brand new order is the table's last row.
@@ -399,7 +398,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
   // competing definitions of the same card's order, with the query's parameter looking
   // authoritative. Calls and tasks come from routes without those parameters, so they are shaped
   // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
-  const recentCalls = useMemo(() => state.calls.slice(0, RECENT_ITEM_LIMIT), [state.calls]);
+  const recentCalls = state.calls;
   // Samtalsloggen SKA användas — att den ligger stilla är säljarnas slarv, inte en död funktion.
   // Kortet visade bara absoluta datum, så två rader från juni läste som färsk aktivitet: gröna
   // "Positivt"-märken och ingenting som sa hur gammalt det var. Åldern är hela poängen med kortet.
@@ -413,7 +412,11 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
     const days = daysSince(scoped[0]?.call_at);
     return days != null && days >= CALL_LOG_STALE_DAYS ? days : null;
   }, [state.calls, role, userId]);
-  const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
+  // Uppgifterna kommer nu färdigfiltrerade (status=open) och färdigsorterade från rutten, som
+  // redan ordnar på status, förfallodatum (null sist) och skapandedatum. Att sortera om dem här
+  // hade gett två konkurrerande definitioner av samma korts ordning, med frågans parametrar
+  // seende auktoritativa ut — exakt det som står i kommentaren om offert- och orderlistorna.
+  const nextTasks = state.tasks;
   const failed = (key: SectionKey) => state.failed.includes(key);
   // En sektion visar sitt FELLÄGE bara när den inte har något att visa. Efter en misslyckad
   // Uppdatera ligger förra omgångens innehåll kvar, och då är synligt-men-inte-uppdaterat bättre

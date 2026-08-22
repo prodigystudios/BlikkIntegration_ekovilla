@@ -13,6 +13,9 @@ export const listCrmCallsQuerySchema = z.object({
   q: z.string().trim().optional(),
   prospect_id: z.string().uuid('Ogiltigt prospekt').optional(),
   customer_id: z.string().uuid('Ogiltig kund').optional(),
+  // Samma form som offertrutten (quotes/_lib.ts): valfri, och utan den gäller domänens
+  // egen tak-gräns som förut.
+  limit: z.coerce.number().int().min(1).max(2000).optional(),
 });
 
 export const createCrmCallSchema = z.object({

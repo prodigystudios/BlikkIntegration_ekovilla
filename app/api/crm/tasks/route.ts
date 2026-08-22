@@ -28,6 +28,7 @@ export async function GET(req: Request) {
       prospect_id: url.searchParams.get('prospect_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
       scope: url.searchParams.get('scope') || undefined,
+      limit: url.searchParams.get('limit') || undefined,
     });
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
@@ -48,6 +49,7 @@ export async function GET(req: Request) {
       status: parsedQuery.data.status,
       prospectId: parsedQuery.data.prospect_id,
       customerId: parsedQuery.data.customer_id,
+      limit: parsedQuery.data.limit,
     });
     const { data, error } = await query;
 
