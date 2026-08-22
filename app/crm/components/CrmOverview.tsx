@@ -648,11 +648,16 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
                 Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
                 statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
+            {/* Raderna djuplänkar till posten, inte till listan. Förut gick varje rad till samma
+                mål som kortets "Visa alla", så ett klick på "Nyprod Villa HJO" landade i en lista
+                där man fick leta upp raden igen — sämst på telefon, där sidan finns för att man
+                snabbt ska nå en offert eller order. Parametrarna finns redan i respektive vy:
+                ?quote_id= (QuotesClient), ?task_id= (TasksClient), ?call_id= (CallsClient). */}
             <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading} failed={failed('quotes')}>
               {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
                   {state.quotes.map((quote) => (
-                    <Link key={quote.id} href="/crm/offerter" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
@@ -684,7 +689,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               {nextTasks.length === 0 ? <EmptyState description="Inga öppna uppgifter just nu." /> : (
                 <div className="grid gap-2">
                   {nextTasks.map((task) => (
-                    <Link key={task.id} href="/crm/uppgifter" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={task.id} href={`/crm/uppgifter?task_id=${task.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{task.title}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{formatDate(task.due_date)}</p>
@@ -710,7 +715,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                     </p>
                   ) : null}
                   {recentCalls.map((call) => (
-                    <Link key={call.id} href="/crm/samtal" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                    <Link key={call.id} href={`/crm/samtal?call_id=${call.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
                         {/* Relativ ålder i raden, exakt tidpunkt på hover. "8 juni 2026 14:27" krävde
