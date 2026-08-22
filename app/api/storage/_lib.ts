@@ -71,3 +71,24 @@ export function sanitizeStoragePath(path: string) {
 export function parseQuery<T extends z.ZodTypeAny>(req: NextRequest, schema: T, input: z.input<T>) {
   return schema.safeParse(input);
 }
+
+/**
+ * Absolut nedladdningslänk till en arkiverad fil.
+ *
+ * Byggs SERVERSIDE med avsikt. Länken skrivs in i Blikk-kommentarer och CRM-arbetsorderkommentarer
+ * — permanenta poster i system vi inte kontrollerar och inte kan gå tillbaka och rätta. Byggde
+ * klienten den av `window.location.origin` skulle varje kommentar som skapades från en gammal
+ * origin (blikk-integration-ekovilla.vercel.app lever kvar parallellt med app.ekovilla.se) bränna
+ * in fel domän för alltid. Anroparen skickar in `getPublicOrigin(req)`, som plockar upp
+ * NEXT_PUBLIC_SITE_URL och därmed ger den kanoniska domänen oavsett vilken host som servade
+ * requesten.
+ *
+ * Rutten är avsiktligt den permanenta, auth-vaktade /api/storage/download — inte den signerade
+ * URL:en, som bara lever sju dagar.
+ */
+export function buildArchiveDownloadUrl(origin: string, path: string): string {
+  const base = String(origin || '').trim().replace(/\/+$/, '');
+  const cleanPath = String(path || '').trim();
+  if (!base || !cleanPath) return '';
+  return `${base}/api/storage/download?path=${encodeURIComponent(cleanPath)}`;
+}

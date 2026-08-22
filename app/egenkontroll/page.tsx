@@ -1186,9 +1186,13 @@ export default function EgenkontrollPage() {
                   } catch {}
                   commentPieces.push(`Egenkontroll gjord ${dateStr}`);
                   try {
-                    const origin = typeof window !== 'undefined' ? window.location.origin : '';
-                    if (origin && saved?.path) {
-                      const downloadUrl = `${origin}/api/storage/download?path=${encodeURIComponent(saved.path)}`;
+                    // Länken kommer FÄRDIGBYGGD från /api/storage/save. Klienten får inte bestämma
+                    // domänen här: raden hamnar i en Blikk- eller arbetsorderkommentar och blir
+                    // permanent i ett system vi inte kan gå tillbaka och rätta. Byggdes den av
+                    // window.location.origin bar den den domän installatören råkade ha i adress-
+                    // fältet — och den gamla vercel.app-adressen svarar fortfarande.
+                    const downloadUrl = String(saved?.downloadUrl || '').trim();
+                    if (downloadUrl) {
                       commentPieces.push(`Ladda ner här: ${downloadUrl}`);
                     }
                   } catch {}
@@ -1299,7 +1303,6 @@ export default function EgenkontrollPage() {
                         // Also decrement depot stock for the effective depot of this project/segment
                         try {
                           // Build a stable idempotency key from saved archive path and date
-                          const origin = typeof window !== 'undefined' ? window.location.origin : '';
                           const reportKey = (saved?.path ? String(saved.path) : `${blikkProjectId}-${dateStr}`);
                           const resp = await fetch('/api/planning/consume-bags', {
                             method: 'POST',
