@@ -1,15 +1,17 @@
 export const dynamic = 'force-dynamic';
 import { headers } from 'next/headers';
+import { getRequestOriginFromHeaders } from '@/lib/publicOrigin';
 import nextDynamic from 'next/dynamic';
 const ArchiveList = nextDynamic(() => import('./ArchiveList'), { ssr: false });
 
 async function fetchFiles(search: string) {
   const h = headers();
-  const host = h.get('x-forwarded-host') || h.get('host');
-  const proto = h.get('x-forwarded-proto') || 'http';
-  const base = host ? `${proto}://${host}` : '';
+  // Delad host-härledning. Den handrullade varianten här defaultade proto till 'http', vilket
+  // hade byggt en http-URL mot produktionsdomänen om x-forwarded-proto någonsin saknades.
+  // Request-origin och INTE getPublicOrigin: anropet går till appens egen API-rutt.
+  const base = getRequestOriginFromHeaders(h);
   const qs = search ? (search.startsWith('?') ? search : `?${search}`) : '';
-  const url = base ? `${base}/api/storage/list-all${qs}` : `/api/storage/list-all${qs}`;
+  const url = `${base}/api/storage/list-all${qs}`;
   // IMPORTANT: Forward cookies so authenticated middleware + Supabase session works on internal fetch.
   const cookie = h.get('cookie') || '';
   const res = await fetch(url, {

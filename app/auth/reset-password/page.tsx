@@ -19,8 +19,15 @@ export default function ResetPasswordPage() {
     if (!normalizedEmail) return setError('Ange e‑post.');
     setLoading(true);
     try {
+      // Länken bakas in i ett mejl och måste bära den kanoniska domänen: den gamla vercel.app-
+      // adressen svarar fortfarande, och ett återställningsmejl som skickats därifrån hade slutat
+      // fungera den dagen adressen stängs. Faller tillbaka på window.location.origin så lokal
+      // utveckling inte skickar länkar till produktion.
+      const appOrigin =
+        (process.env.NEXT_PUBLIC_SITE_URL || '').trim().replace(/\/$/, '') ||
+        (typeof window !== 'undefined' ? window.location.origin : '');
       const { error: supaErr } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
-        redirectTo: `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/reset-password-confirm`
+        redirectTo: `${appOrigin}/auth/reset-password-confirm`
       });
       if (supaErr) throw supaErr;
       setSuccess(true);

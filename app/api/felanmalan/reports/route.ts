@@ -3,6 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCurrentUser, requireFaultReportRecipient } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email';
+import { getPublicOrigin } from '@/lib/publicOrigin';
 import { ok, routeError, validationError } from '@/lib/api/responses';
 import {
   createFaultReportSchema,
@@ -99,15 +100,10 @@ async function fanOutNewReport(report: FaultReportView, req: Request) {
   const emails = dedupeEmails([...resolved, ...envList]);
   if (emails.length === 0) return;
 
-  const origin = safeOrigin(req);
+  // Djuplänken hamnar i ett mejl och ska bära den kanoniska domänen, inte den host som råkade
+  // servera anropet. Läste tidigare NEXT_PUBLIC_APP_URL för hand — en annan variabel än resten av
+  // appen använder, vilket är precis så två domäner glider isär.
+  const origin = getPublicOrigin(req);
   const { subject, html, text } = buildFaultReportEmail(report, origin);
   await sendEmail({ to: emails, subject, html, text });
-}
-
-function safeOrigin(req: Request): string | undefined {
-  try {
-    return process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
-  } catch {
-    return undefined;
-  }
 }

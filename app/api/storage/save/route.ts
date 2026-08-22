@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { revalidateTag } from 'next/cache';
-import { getStorageAdminOrThrow, routeError, saveBodySchema } from '../_lib';
+import { getPublicOrigin } from '@/lib/publicOrigin';
+import { buildArchiveDownloadUrl, getStorageAdminOrThrow, routeError, saveBodySchema } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -94,15 +95,20 @@ export async function POST(req: NextRequest) {
 
   // Index writing removed — single folder strategy keeps listing simple and consistent
 
+    // Permanent, auth-gated download link on the canonical domain. Built here rather than on the
+    // client because the caller writes it into Blikk / CRM work order comments, which we cannot go
+    // back and correct once the wrong domain is in them.
+    const downloadUrl = buildArchiveDownloadUrl(getPublicOrigin(req), finalPath);
+
     // Get a signed URL valid for 7 days
     const { data: signed, error: sErr } = await supa.storage.from(bucket).createSignedUrl(finalPath, 60 * 60 * 24 * 7);
     if (sErr) {
-      return NextResponse.json({ path: finalPath }, { status: 201 });
+      return NextResponse.json({ path: finalPath, downloadUrl }, { status: 201 });
     }
 
   // Invalidate archive list caches across regions so the new PDF appears immediately
   try { revalidateTag('archive-list'); } catch {}
-  return NextResponse.json({ path: finalPath, url: signed?.signedUrl }, { status: 201 });
+  return NextResponse.json({ path: finalPath, url: signed?.signedUrl, downloadUrl }, { status: 201 });
   } catch (err: any) {
     return routeError(500, 'storage_save_failed', err.message);
   }

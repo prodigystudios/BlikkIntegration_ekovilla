@@ -16,8 +16,29 @@ function getClientCredentials() {
   return { clientId, clientSecret };
 }
 
+/**
+ * OAuth-callbacken. Pinnad till en miljövariabel med flit — INTE härledd ur requestens host.
+ *
+ * Fortnox kräver att `redirect_uri` är exakt identisk med den som registrerats i deras portal,
+ * både i auth-URL:en och i token-utbytet. En host-härledd adress hade gett olika värde beroende på
+ * vilken domän användaren kom in på, och appen svarar på två.
+ *
+ * Localhost-fallbacken finns kvar för utveckling, men får inte gälla i produktion: utan variabeln
+ * byggde vi tyst `http://localhost:3000/api/fortnox/auth/callback`, vilket ser ut att fungera ända
+ * fram till att Fortnox avvisar det. Ett kastat fel gör i stället saknaden synlig direkt.
+ */
 function getRedirectUri(): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+  if (!appUrl) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'NEXT_PUBLIC_APP_URL måste vara satt i produktion — Fortnox redirect_uri kan inte härledas ' +
+          'ur requesten och måste matcha den registrerade adressen exakt. Sätt den i Vercel och ' +
+          'deploya om (NEXT_PUBLIC_* bakas in vid bygget).',
+      );
+    }
+    return 'http://localhost:3000/api/fortnox/auth/callback';
+  }
   return `${appUrl}/api/fortnox/auth/callback`;
 }
 
