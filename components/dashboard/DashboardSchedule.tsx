@@ -998,7 +998,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {phoneList.length > 0 ? (
                       <div className="flex flex-wrap items-center gap-2">
                         {phoneList.map(p => (
-                          <a key={p.display} href={`tel:${p.tel}`} className={cn('rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {p.display}</a>
+                          <a key={p.display} href={`tel:${p.tel}`} className={cn('rounded-full border border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {p.display}</a>
                         ))}
                       </div>
                     ) : (
@@ -1013,10 +1013,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     {(sellerInfo.role || sellerInfo.location) && <span className={cn('text-slate-500', isDesktopModal ? 'text-[10px]' : 'text-xs')}>{[sellerInfo.role, sellerInfo.location].filter(Boolean).join(' • ')}</span>}
                     <div className="flex flex-wrap items-center gap-2">
                       {sellerInfo.tel && sellerInfo.phone && (
-                        <a href={`tel:${sellerInfo.tel}`} className={cn('rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {sellerInfo.phone}</a>
+                        <a href={`tel:${sellerInfo.tel}`} className={cn('rounded-full border border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Ring {sellerInfo.phone}</a>
                       )}
                       {sellerInfo.email && (
-                        <a href={`mailto:${sellerInfo.email}`} className={cn('rounded-full border border-slate-300 bg-slate-50 text-emerald-700 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Maila</a>
+                        <a href={`mailto:${sellerInfo.email}`} className={cn('rounded-full border border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-xs')}>Maila</a>
                       )}
                     </div>
                   </div>
@@ -1025,7 +1025,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   <div className={infoCardClass}>
                     <div className="flex flex-wrap items-center justify-between gap-2.5">
                       <span className="text-[11px] font-bold text-slate-700">Adress</span>
-                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={cn('rounded-full border border-emerald-200 bg-emerald-100 text-emerald-800 no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-[11px]')}>Öppna i Kartor</a>
+                      <a href={mapsHref} target="_blank" rel="noopener noreferrer" className={cn('rounded-full border border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] no-underline', isDesktopModal ? 'px-[7px] py-[3px] text-[9px]' : 'px-2.5 py-1 text-[11px]')}>Öppna i Kartor</a>
                     </div>
                     <span className={cn('break-words leading-[1.35] text-slate-700', isDesktopModal ? 'text-xs' : 'text-sm')}>{address}</span>
                   </div>

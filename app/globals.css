@@ -60,6 +60,12 @@
   --ek-green-strong: #122c1b;
   --ek-accent: #2f6b45;
   --ek-accent-ring: rgba(47, 107, 69, 0.20);
+  /* Tonad varumärkesyta: bakgrund + kant för framhävda, INTERAKTIVA ytor — aktiv flik,
+     accent-badge, kontaktchips. Ersätter emerald-50/200, som är en blåare grön och drog åt
+     ett annat håll än #1a3f26. Statusgrönt är en ANNAN sak och bor kvar i crmTokens
+     statuskartor — "Vunnen" och "en vald flik" ska inte se likadana ut. */
+  --ek-accent-soft: #e9f1eb;
+  --ek-accent-soft-border: #c6dccd;
 }
 
 /* Melodic Frost — CRM-specific design tokens */
@@ -110,12 +116,19 @@
 }
 
 :root {
+  /* ⚠️ Det HÄR var ett helt parallellt system, och det var BLÅTT: --ui-accent låg på #2563eb
+     och kantfärgen på #dbe4ef, en blågrå. De är wire:ade in i tailwind.config.js som
+     `ui.accent`, `ui.border`, `ui.muted` och bärs av SectionCard, DialogShell, Button,
+     EmptyState, LoadingState, ErrorState, Select och Tabs — alltså syntes en blå accent och
+     blågrå kanter bredvid sagen i hela appen. Värdena pekar nu på varumärkespaletten, så
+     varenda konsument följer med utan att någon komponent behövde röras.
+     --ui-surface-page/card lämnas vita med flit: de bär ytor som SKA vara papper. */
   --ui-surface-page: #ffffff;
   --ui-surface-card: #ffffff;
-  --ui-surface-muted: #f8fafc;
-  --ui-border-subtle: #dbe4ef;
-  --ui-accent: #2563eb;
-  --ui-accent-soft: #dbeafe;
+  --ui-surface-muted: #f4f7f2;
+  --ui-border-subtle: #e0e8dc;
+  --ui-accent: var(--ek-accent);
+  --ui-accent-soft: var(--ek-accent-soft);
   --ui-text-strong: #0f172a;
   --ui-text-muted: #475569;
   --ui-text-soft: #64748b;
