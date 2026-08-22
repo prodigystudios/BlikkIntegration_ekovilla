@@ -139,7 +139,7 @@ export default function ChangelogCard() {
         {preview.map((item) => (
           <li key={`${item.source}-${item.id}`} className="flex items-start gap-2">
             <CategoryGlyph item={item} />
-            <span className="min-w-0 flex-1 text-[13px] leading-snug text-slate-800">{item.title}</span>
+            <span className="min-w-0 flex-1 text-xs leading-snug text-slate-800">{item.title}</span>
             <span className="shrink-0 text-[11px] text-slate-500">{formatChangelogStamp(item.published_at)}</span>
           </li>
         ))}

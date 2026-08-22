@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from '../../../components/ui/EmptyState';
-import MetricCard from './MetricCard';
 import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { cn } from '@/lib/shared/cn';
@@ -230,6 +229,26 @@ const RECENT_ITEM_LIMIT = 5;
 // overviewSummary), veckoraden genom isDeadWorkOrder-vakten. Delad konstant så de inte glider isär.
 const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
 
+// De tre lagerstegen, i den ordning pengarna rör sig. Tonerna är varumärkets egen ramp
+// (globals.css): djupast först, eftersom djupare läser som mer och steg ett bär mest.
+const FLOW_STAGES: Array<{
+  label: string;
+  tone: string;
+  value: (s: CrmOverviewSummary) => number;
+  helper: (s: CrmOverviewSummary) => string;
+}> = [
+  { label: 'Offert', tone: 'var(--crm-flow-1)', value: (s) => s.activeQuoteValue, helper: (s) => `${s.activeQuotes} st` },
+  { label: 'Order', tone: 'var(--crm-flow-2)', value: (s) => s.openOrderValue, helper: (s) => `${s.openWorkOrders} st` },
+  { label: 'Att fakturera', tone: 'var(--crm-flow-3)', value: (s) => s.toInvoiceOrderValue, helper: (s) => `${s.workOrdersToInvoice} st` },
+];
+
+// Delad nämnare för de tre staplarna: den största av dem. Utan den mäter varje stapel mot sig
+// själv och fördelningen — hela poängen med remsan — går inte att läsa.
+function flowWidth(value: number, scale: number) {
+  if (scale <= 0 || value <= 0) return 0;
+  return Math.min(100, (value / scale) * 100);
+}
+
 // Fönstret som avgör om kortet säger ifrån är summeringens egna sju dagar (window.since i
 // getCrmOverviewWindow) — inte ett tal räknat ur listan. Se staleCalls.
 
@@ -397,6 +416,9 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
 
     return {
       ...counted,
+      // Delad nämnare för fördelningsremsans tre staplar — den största av lagren, så ingen kan
+      // spränga spåret och de tre förblir jämförbara med varandra.
+      flowScale: Math.max(counted.activeQuoteValue, counted.openOrderValue, counted.toInvoiceOrderValue),
       callsTarget,
       quotesTarget,
       orderValueTarget,
@@ -530,73 +552,82 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
           </Link>
           {/* Sidan hämtade en gång vid montering och låg sedan still. Den är en dagsöversikt som
               står uppe hela arbetsdagen, så den hann bli tyst gammal. */}
+          {/* Ren text, inte en tredje knapp i samma vikt som de två bredvid. Att uppdatera är en
+              verktygsåtgärd; att öppna uppgifter är navigering. De såg likadana ut. */}
           <button
             type="button"
             onClick={() => void load('refresh')}
             disabled={loading || refreshing}
-            className={cn(crm.ghostButton, 'disabled:cursor-not-allowed disabled:opacity-60')}
+            className="inline-flex h-8 items-center px-1 text-sm font-semibold text-slate-600 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {refreshing ? 'Uppdaterar…' : 'Uppdatera'}
           </button>
         </div>
       </div>
 
-      {/* Nyckeltalen. Bandet bär numera de fyra LAGER-raderna — var pengarna står just nu — och
-          statusbilden till höger är därmed ren måluppföljning. Förut visade bandet prospekt-,
-          samtals- och uppgiftstal som alla stod på noll (prospektstatus är kundstatus, inte
-          pipeline-status), samtidigt som statusbilden bredvid bar hela signalen.
+      {/* Signaturen: VAR PENGARNA STÅR.
 
-          ⚠️ Fortsatt dolt under 640 px, med flit: på telefon går man in för att se en offert eller
-          order och ringa en kund, inte för att läsa statistik. Det är också därför beloppen kan
-          renderas i full form — de behöver aldrig få plats på en 375 px-skärm.
+          Här låg fyra frikopplade nyckeltalskort. Fyra tal bredvid varandra utan gemensam
+          nämnare säger bara sina egna belopp — att 3,8 Mkr står i offert medan 899 tkr blivit
+          order är det intressanta, och det gick inte att läsa. Statusbilden hade en gång den
+          läsningen via flowScale; den försvann när lagerraderna flyttade hit i steg C, och det
+          här är den tillbaka i en form som faktiskt syns.
 
-          Dolt när summeringen fallerat: EMPTY_SUMMARY:s nollor betyder "vi vet inte", inte "noll",
-          och fyra nollor bredvid en röd felruta läser som ett tomt CRM. */}
+          De tre stegen delar nämnare (den största av dem), så staplarna är jämförbara. Färgen
+          kommer ur varumärkets egen ramp — samma gröna som sidoskenan — inte ur Tailwinds
+          emerald/teal/sky, som inte hörde ihop med något.
+
+          ⚠️ Fakturerat i veckan står AVSKILT och utan stapel, med flit: de tre till vänster är
+          lager (pengar som står någonstans just nu), fakturerat är ett FLÖDE över en vecka. Att
+          lägga det i samma nämnare hade jämfört två olika sorters tal.
+
+          Dolt under 640 px — på telefon går man in för att se en offert eller order, inte för
+          att läsa statistik — och dolt när summeringen fallerat, eftersom EMPTY_SUMMARY:s nollor
+          betyder "vi vet inte", inte "noll". */}
+      {/* Skelettets höjd är MÄTT mot det renderade kortet (135 px i Chrome). Gissade 116 gav ett
+          19 px hopp vid varje laddning och varje Uppdatera. */}
       {loading || !summaryFailed ? (
         <div className="hidden sm:block">
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {loading ? (
-              <>
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div key={i} className="h-32 animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
-                ))}
-              </>
-            ) : (
-              <>
-                <MetricCard
-                  label="Aktiva offerter"
-                  value={formatCurrency(summary.activeQuoteValue, 'SEK')}
-                  helper={`${summary.activeQuotes} st`}
-                  icon={<QuoteIcon />}
-                  iconBg="bg-emerald-100"
-                />
-                <MetricCard
-                  label="Öppna ordrar"
-                  value={formatCurrency(summary.openOrderValue, 'SEK')}
-                  helper={`${summary.openWorkOrders} st`}
-                  icon={<OrderIcon />}
-                  iconBg="bg-teal-100"
-                />
-                <MetricCard
-                  label="Att fakturera"
-                  value={formatCurrency(summary.toInvoiceOrderValue, 'SEK')}
-                  helper={`${summary.workOrdersToInvoice} st`}
-                  icon={<InvoiceIcon />}
-                  iconBg="bg-amber-100"
-                />
-                {/* Ingen hjälprad: de tre ovan säger "N st" om sin egen stock, men fakturerat är ett
-                    flöde över veckan och summeringen bär inget antal att visa bredvid det. */}
-                <MetricCard
-                  label="Fakturerat i veckan"
-                  value={formatCurrency(summary.weekTeam.invoicedValue, 'SEK')}
-                  icon={<InvoicedIcon />}
-                  iconBg="bg-violet-100"
-                />
-              </>
-            )}
-          </div>
-          {/* slate-600: den här raden ligger på sidbakgrunden, inte på ett kort. Se pageSubtitle. */}
-        <p className="m-0 mt-2 text-xs text-slate-600">{MONEY_NOTE}</p>
+          {loading ? (
+            <div className="h-[135px] animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
+          ) : (
+            <div className={crm.cardInner}>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                {/* Kortets namn ligger en nivå över kolumnetiketterna. Bar båda samma kicker-stil
+                    lästes de två nivåerna som en enda. */}
+                <h2 className={cn('m-0', crm.cardTitle)}>Var pengarna står</h2>
+                <p className={cn('m-0', crm.meta)}>{MONEY_NOTE}</p>
+              </div>
+              <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
+                {FLOW_STAGES.map((stage) => {
+                  const value = stage.value(summary);
+                  return (
+                    <div key={stage.label} className="min-w-0">
+                      <p className={cn('m-0', crm.sectionTitle)}>{stage.label}</p>
+                      <p className={cn('m-0 mt-1 truncate', crm.display)}>{formatCurrency(value, 'SEK')}</p>
+                      {/* Stapeln direkt under sitt tal. Låg den under hjälpraden lästes den som
+                          kolumnens fot i stället för som beloppets mått. */}
+                      <div className="mt-2 h-1 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
+                        <div
+                          className="h-1 rounded-full transition-all"
+                          style={{ width: `${flowWidth(value, summary.flowScale)}%`, backgroundColor: stage.tone }}
+                        />
+                      </div>
+                      <p className={cn('m-0 mt-1', crm.meta)}>{stage.helper(summary)}</p>
+                    </div>
+                  );
+                })}
+                {/* Flödet, inte lagret — därför avskilt av en linje och utan stapel. */}
+                <div className="min-w-0 xl:border-l xl:border-[#e0e8dc] xl:pl-6">
+                  <p className={cn('m-0', crm.sectionTitle)}>Fakturerat</p>
+                  <p className={cn('m-0 mt-1 truncate', crm.display)}>{formatCurrency(summary.weekTeam.invoicedValue, 'SEK')}</p>
+                  {/* Ingen stapel — se kommentaren ovan om lager mot flöde. Marginalen matchar
+                      stegens stapelhöjd så baslinjerna ligger i linje. */}
+                  <p className={cn('m-0 mt-[16px]', crm.meta)}>denna vecka</p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -635,13 +666,16 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <p className={cn('mb-0.5', crm.sectionTitle)}>Att agera på</p>
-                <h2 className="m-0 text-base font-bold tracking-tight text-slate-900">Nästa fokus</h2>
+                <h2 className={cn('m-0', crm.cardTitle)}>Nästa fokus</h2>
               </div>
               {/* Räknaren är nextActions.length, och den listan räknas fram ur summeringen — utan
                   summaryFailed här stod "0 prioriterade" ovanför felrutan, samma påstående som
                   nyckeltalen och statusbilden döljs för. */}
+              {/* Vanlig text, inget piller. Sidan bar 69 runda piller i fyra olika betydelser —
+                  status, antal, poäng och rang — alla i samma form och grad, så inget skilde dem
+                  åt. Pillret är nu reserverat för STATUS; antal och rang är text. */}
               {!loading && !summaryFailed && (
-                <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
+                <span className={cn('shrink-0', crm.meta)}>
                   {nextActions.length} {nextActions.length === 1 ? 'prioriterad' : 'prioriterade'}
                 </span>
               )}
@@ -664,7 +698,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                     className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-200 px-3.5 py-2.5 no-underline transition hover:border-slate-300 hover:bg-slate-50"
                   >
                     <div className="grid min-w-0 gap-0.5">
-                      <strong className="text-sm font-semibold text-slate-900">{action.title}</strong>
+                      <strong className={crm.bodyStrong}>{action.title}</strong>
                       <p className="m-0 text-xs leading-snug text-slate-500">{action.description}</p>
                     </div>
                     <span className="mt-0.5 shrink-0 text-xs font-semibold text-emerald-700">Öppna →</span>
@@ -701,8 +735,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                     return (
                       <Link key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                         <div className="min-w-0">
-                          <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
-                          <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
+                          <strong className={cn('block truncate', crm.bodyStrong)}>{quote.project_name}</strong>
+                          <p className={cn('m-0 truncate', crm.meta)}>{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
                         </div>
                         <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', status?.className ?? 'border-slate-200 bg-slate-50 text-slate-700')}>{status?.label ?? quote.status}</span>
                       </Link>
@@ -718,8 +752,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   {state.workOrders.map((order) => (
                     <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{order.project_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
+                        <strong className={cn('block truncate', crm.bodyStrong)}>{order.project_name}</strong>
+                        <p className={cn('m-0 truncate', crm.meta)}>{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
                       </div>
                       <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
                     </Link>
@@ -734,8 +768,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   {nextTasks.map((task) => (
                     <Link key={task.id} href={`/crm/uppgifter?task_id=${task.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{task.title}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{formatDate(task.due_date)}</p>
+                        <strong className={cn('block truncate', crm.bodyStrong)}>{task.title}</strong>
+                        <p className={cn('m-0 truncate', crm.meta)}>{formatDate(task.due_date)}</p>
                       </div>
                       <span className={`shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${taskPriorityClass[task.priority]}`}>{taskPriorityLabel[task.priority]}</span>
                     </Link>
@@ -759,10 +793,10 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   {recentCalls.map((call) => (
                     <Link key={call.id} href={`/crm/samtal?call_id=${call.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
+                        <strong className={cn('block truncate', crm.bodyStrong)}>{getCallCompanyName(call)}</strong>
                         {/* Relativ ålder i raden, exakt tidpunkt på hover. "8 juni 2026 14:27" krävde
                             att läsaren räknade dagar i huvudet, och ingen gör det. */}
-                        <p className="m-0 truncate text-xs text-slate-500" title={formatDateTime(call.call_at)}>{formatRelativeTime(call.call_at)}</p>
+                        <p className={cn('m-0 truncate', crm.meta)} title={formatDateTime(call.call_at)}>{formatRelativeTime(call.call_at)}</p>
                       </div>
                       <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
                     </Link>
@@ -785,10 +819,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                 fyra målrader under. Lagerraderna sitter numera i nyckeltalsbandet högst upp, så det
                 som är kvar här är enbart måluppföljning.
 
-                🧨 Vad som gick förlorat i flytten: de tre lagerraderna delade nämnare (flowScale =
-                den största av dem), så staplarna lästes som en FÖRDELNING — 3,8 Mkr står i offert,
-                899 tkr har blivit order. MetricCard har ingen stapel, så den läsningen finns inte
-                längre någonstans. Talen är kvar, proportionen är det inte. */}
+                Fördelningsläsningen som försvann i den flytten — de tre lagren mot en delad
+                nämnare — finns tillbaka högst upp på sidan, i fördelningsremsan. */}
             {/* ⚠️ INTE "Teamet". /api/crm/overview kör på sessionsklienten (route.ts:66), så RLS
                 gäller: crm_calls_select_visible ger en säljare bara sina egna samtal, och
                 crm_goals_select_visible bara sitt eget mål. Siffrorna här är teamets för en admin
@@ -796,8 +828,11 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
-                <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
-                <p className="m-0 mt-0.5 text-xs text-slate-500">{MONEY_NOTE}</p>
+                {/* Samma grad som de fyra syskonkorten. Var text-lg medan de gick till crm.cardTitle. */}
+                <h2 className={cn('m-0', crm.cardTitle)}>Veckans mål</h2>
+                {/* Remsan högst upp bär samma mening men är dold under 640 px — här syns den bara när
+                    remsan inte gör det, i stället för två gånger på samma skärm. */}
+                <p className={cn('m-0 mt-0.5 sm:hidden', crm.meta)}>{MONEY_NOTE}</p>
               </div>
               {/* Bara admin. /crm/installningar är rollspärrad i _lib/nav.ts och målen är
                   crm_goals_insert_admin_only i RLS — länken skickade en säljare till en sida hen
@@ -819,15 +854,15 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                     summeringen och står kvar. */}
                 {blank('goals', state.goals.length) ? <SectionError /> : (
                   <>
-                    <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
-                    <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
-                    <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="sky" />
+                    <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="progress" />
+                    <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="progress" currency />
+                    <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="progress" />
                   </>
                 )}
                 {/* Sena uppgifter är inget mål — det är ett larm utan target. Avdelaren som förut
                     skilde lager från mål skiljer nu mål från larm. */}
                 <div className="my-1 h-px bg-slate-100" />
-                <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="rose" />
+                <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="attention" />
                 {/* Only ever shows if a query hit its row cap. The point of counting server-side
                     was that a truncated read stops being silent — so it says so. */}
                 {summary.truncated.length > 0 ? (
@@ -893,7 +928,7 @@ function RecentCard({ title, href, loading, failed, children }: { title: string;
         {/* h2, inte strong: korten är syskon till "Nästa fokus" och statusbilden, så en skärmläsares
             rubriklista tappade annars halva sidan. Preflight nollar h2:ans grad, vikt och marginal,
             så klasserna nedan bestämmer utseendet precis som förut. */}
-        <h2 className="m-0 text-sm font-bold text-slate-900">{title}</h2>
+        <h2 className={cn('m-0', crm.cardTitle)}>{title}</h2>
         <Link href={href} className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Visa alla</Link>
       </div>
       {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : failed ? <SectionError /> : children}
@@ -913,21 +948,24 @@ function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   );
 }
 
-function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; currency?: boolean }) {
-  const toneClass = {
-    slate: 'bg-slate-900',
-    sky: 'bg-sky-500',
-    amber: 'bg-amber-500',
-    rose: 'bg-rose-500',
-    emerald: 'bg-emerald-500',
-    teal: 'bg-teal-500',
-    violet: 'bg-violet-500',
-  }[tone];
+// TVÅ roller, inte sju. Raderna bar emerald, teal, sky, rose, amber och violet — sex hues där
+// bara rose betydde något ("dåligt"). Resten var dekoration på rader som alla mäter samma sak:
+// utfall mot mål. Nu säger färgen antingen "framsteg" eller "kräver åtgärd", och framstegsgrönt
+// kommer ur varumärkets ramp i stället för Tailwinds palett.
+//
+// ⚠️ Ett uppnått mål färgades först i --crm-flow-1. Det gjorde samma färgruta till TVÅ saker på
+// samma sida — "Offert" i fördelningsremsan och "i mål" här — och rampens stopp är ordinala
+// (var i flödet), inte binära (uppnått eller ej). Att raden är i mål står redan i talet bredvid
+// ("17 / 15"); att säga det med färg också var en tredje röst för samma sak.
+function stripTone(tone: 'progress' | 'attention') {
+  return tone === 'attention' ? 'var(--crm-attention)' : 'var(--crm-flow-3)';
+}
 
+function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'progress' | 'attention'; goal?: number; currency?: boolean }) {
   // The bar needs something to measure against: a goal. Without one, a count keeps the old rough
   // 16-%-per-unit fill and a money row shows a damped full bar — the same convention the
   // leaderboard uses for a figure with no target, since a krona amount has no natural scale of
-  // its own. `scale` — den delade nämnaren för lagerraderna — togs bort med dem.
+  // its own.
   const hasGoal = goal != null && goal > 0;
   const denominator = hasGoal ? goal! : null;
   const width = denominator != null
@@ -949,8 +987,11 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
       {/* Staplarna bär ingen egen information: värdet och målet står i klartext på raden ovanför,
           och en skärmläsare som läser upp dem igen som progressbar hade sagt samma sak två gånger
           med sämre ord. De är dekor och deklareras som dekor. */}
-      <div className="h-1.5 rounded-full bg-slate-100" aria-hidden="true">
-        <div className={cn('h-1.5 rounded-full transition-all', toneClass, denominator == null && currency && 'opacity-40')} style={{ width: `${width}%` }} />
+      <div className="h-1.5 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
+        <div
+          className={cn('h-1.5 rounded-full transition-all', denominator == null && currency && 'opacity-40')}
+          style={{ width: `${width}%`, backgroundColor: stripTone(tone) }}
+        />
       </div>
     </div>
   );
@@ -995,21 +1036,19 @@ function SellerGoalList({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 {entries.length > 1 ? (
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">#{index + 1}</span>
+                  <span className={cn('tabular-nums', crm.metaStrong)}>{index + 1}.</span>
                 ) : null}
-                <strong className="text-sm font-semibold text-slate-900">{entry.userName}</strong>
+                <strong className={crm.bodyStrong}>{entry.userName}</strong>
               </div>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                {Math.round(entry.progressScore * 100)}%
-              </span>
+              <span className={cn('tabular-nums', crm.metaStrong)}>{Math.round(entry.progressScore * 100)} %</span>
             </div>
             <div className="mt-2 grid gap-1">
-              <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
-              <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
-              <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
-              <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} tone="amber" />
-              <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} tone="amber" currency />
-              <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} tone="violet" currency />
+              <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} />
+              <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} />
+              <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} currency />
+              <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} />
+              <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} currency />
+              <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} currency />
             </div>
           </div>
         ))}
@@ -1027,33 +1066,32 @@ function SellerGoalList({
   );
 }
 
-function TeamProgressRow({ label, value, target, tone, currency = false }: { label: string; value: number; target?: number; tone: 'sky' | 'emerald' | 'teal' | 'amber' | 'violet'; currency?: boolean }) {
-  const toneClass = {
-    sky: 'bg-sky-500',
-    emerald: 'bg-emerald-500',
-    teal: 'bg-teal-500',
-    amber: 'bg-amber-500',
-    violet: 'bg-violet-500',
-  }[tone];
-
-  // Some rows (e.g. order value) are follow-up figures without a weekly target — show the
-  // value alone and fill the bar relative to the value itself for a subtle visual.
+// Samma två roller som StatusStrip. Säljarraderna bar fem hues för sex rader som alla mäter
+// utfall mot mål — färgen skilde raderna åt, inte betydelsen.
+function TeamProgressRow({ label, value, target, currency = false }: { label: string; value: number; target?: number; currency?: boolean }) {
+  // Rader utan veckomål (t.ex. fakturerat ordervärde) visar BARA talet. De ritade förut en
+  // full stapel dämpad till 40 % opacitet — "subtle visual" enligt kommentaren, men en fylld
+  // stapel läser som ett uppnått mål, och raden har inget mål att uppnå. Nu finns ingen stapel
+  // alls där, vilket också är det enda som skiljer de två sorternas rader åt visuellt.
   const hasTarget = target != null && target > 0;
-  const width = hasTarget
-    ? value <= 0 ? 0 : Math.min(100, (value / target!) * 100)
-    : value > 0 ? 100 : 0;
+  const width = hasTarget ? (value <= 0 ? 0 : Math.min(100, (value / target!) * 100)) : 0;
   const displayValue = currency ? formatCurrency(value, 'SEK') : value;
   const displayTarget = hasTarget ? (currency ? formatCurrency(target!, 'SEK') : target) : null;
 
   return (
     <div className="grid gap-0.5">
-      <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+      <div className={cn('flex items-center justify-between gap-2', crm.micro)}>
         <span>{label}</span>
         <strong className="text-slate-700">{displayTarget != null ? `${displayValue} / ${displayTarget}` : displayValue}</strong>
       </div>
-      <div className="h-1 rounded-full bg-slate-100" aria-hidden="true">
-        <div className={`h-1 rounded-full ${toneClass} ${hasTarget ? '' : 'opacity-40'}`} style={{ width: `${width}%` }} />
-      </div>
+      {hasTarget ? (
+        <div className="h-1 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
+          <div
+            className="h-1 rounded-full"
+            style={{ width: `${width}%`, backgroundColor: stripTone('progress') }}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1061,41 +1099,6 @@ function TeamProgressRow({ label, value, target, tone, currency = false }: { lab
 
 
 
-// Ikonens färg följer kortets iconBg, som i sin tur ärver tonen raden hade i statusbilden:
-// offert emerald, order teal, att fakturera amber, fakturerat violet.
-function QuoteIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" />
-    </svg>
-  );
-}
 
-function OrderIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 3h6a1 1 0 011 1v1H8V4a1 1 0 011-1z" />
-      <path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2" />
-      <path d="M8 11h8" /><path d="M8 15h5" />
-    </svg>
-  );
-}
 
-function InvoiceIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <path d="M8 13h8" /><path d="M8 17h5" />
-    </svg>
-  );
-}
 
-function InvoicedIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  );
-}
