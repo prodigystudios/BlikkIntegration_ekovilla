@@ -140,7 +140,7 @@ export default function ChangelogCard() {
           <li key={`${item.source}-${item.id}`} className="flex items-start gap-2">
             <CategoryGlyph item={item} />
             <span className="min-w-0 flex-1 text-[13px] leading-snug text-slate-800">{item.title}</span>
-            <span className="shrink-0 text-[11px] text-slate-400">{formatChangelogStamp(item.published_at)}</span>
+            <span className="shrink-0 text-[11px] text-slate-500">{formatChangelogStamp(item.published_at)}</span>
           </li>
         ))}
       </ul>
@@ -234,7 +234,7 @@ function ChangelogList({ items }: { items: ChangelogItemView[] }) {
                   )}
                   {/* Loopen tillbaka till den som rapporterade: hen ser att just deras grej kom med. */}
                   {item.reported_by && (
-                    <span className="text-[11px] text-slate-400">Rapporterat av {item.reported_by}</span>
+                    <span className="text-[11px] text-slate-500">Rapporterat av {item.reported_by}</span>
                   )}
                 </div>
               </li>

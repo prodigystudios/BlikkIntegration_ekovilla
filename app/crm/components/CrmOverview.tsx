@@ -577,7 +577,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
               </>
             )}
           </div>
-          <p className="m-0 mt-2 text-xs text-slate-500">{MONEY_NOTE}</p>
+          {/* slate-600: den här raden ligger på sidbakgrunden, inte på ett kort. Se pageSubtitle. */}
+        <p className="m-0 mt-2 text-xs text-slate-600">{MONEY_NOTE}</p>
         </div>
       ) : null}
 
@@ -892,7 +893,7 @@ function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   );
 }
 
-function StatusStrip({ label, value, tone, goal, helper, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; helper?: string; currency?: boolean }) {
+function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'slate' | 'sky' | 'amber' | 'rose' | 'emerald' | 'teal' | 'violet'; goal?: number; currency?: boolean }) {
   const toneClass = {
     slate: 'bg-slate-900',
     sky: 'bg-sky-500',
@@ -922,10 +923,7 @@ function StatusStrip({ label, value, tone, goal, helper, currency = false }: { l
   return (
     <div className="grid gap-1">
       <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
-        <span className="min-w-0 truncate">
-          {label}
-          {helper ? <span className="text-slate-400"> · {helper}</span> : null}
-        </span>
+        <span className="min-w-0 truncate">{label}</span>
         <strong className="shrink-0 text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
       {/* Staplarna bär ingen egen information: värdet och målet står i klartext på raden ovanför,
