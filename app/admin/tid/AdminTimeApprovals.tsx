@@ -20,7 +20,7 @@ import {
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
 } from '../../../lib/domains/time/approvals';
-import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
+import { breakWasDeducted, type PersonPeriodSummary } from '../../../lib/domains/time/summary';
 import {
   auditActionLabel,
   auditWorkDate,
@@ -883,11 +883,12 @@ function PersonDays({
     <div className="grid gap-3">
       {summary.rows.length > 0 ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] border-collapse text-sm">
+          <table className="w-full min-w-[620px] border-collapse text-sm">
             <thead>
               <tr className="text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                 <th className="px-2 py-1.5">Datum</th>
                 <th className="px-2 py-1.5">Klockslag</th>
+                <th className="px-2 py-1.5 text-right">Rast</th>
                 <th className="px-2 py-1.5 text-right">Arbetat</th>
                 <th className="px-2 py-1.5 text-right">Frånvaro</th>
                 <th className="px-2 py-1.5">Orsak / jobb</th>
@@ -909,6 +910,12 @@ function PersonDays({
             <tfoot>
               <tr className="border-x-0 border-b-0 border-t-2 border-slate-300 font-semibold text-slate-900">
                 <td className="px-2 py-2" colSpan={2}>Totalt</td>
+                {/* Timmar här, minuter i kolumnen ovanför. Med flit: fältet matas in i minuter, men
+                    månadsraden läses vågrätt mot Arbetat och Frånvaro — "1260 min" bredvid
+                    "168,00 h" gör kontrollen (brutto − rast = arbetat) till en huvudräkning. */}
+                <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-slate-600">
+                  {summary.breakMinutes > 0 ? `${formatHours(summary.breakMinutes)} h` : '—'}
+                </td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatHours(summary.workMinutes)} h</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                   {summary.absenceMinutes > 0 ? `${formatHours(summary.absenceMinutes)} h` : '—'}
@@ -981,7 +988,13 @@ function DayRowCells({
 
   const start = formatClock(day.startTime);
   const end = formatClock(day.endTime);
-  const isAbsence = day.absenceMinutes > 0;
+  // Sorten, inte siffran: en frånvarorad som råkar gå ihop till noll minuter hade annars fått
+  // klockslagens gula "saknas" — en åtgärdsflagga rest mot en rad som med rätta inte har några.
+  // Samma härledning som summary.ts uttryckligen varnar för.
+  const isAbsence = day.kind === 'absence';
+  // Visa rasten bara där den faktiskt drogs av. Gamla kontorsrader saknar klockslag, och deras
+  // lagrade rast påverkade aldrig timmarna bredvid.
+  const showBreak = breakWasDeducted(day) && day.breakMinutes > 0;
 
 
   // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
@@ -999,6 +1012,11 @@ function DayRowCells({
         ) : (
           <span className="font-semibold text-amber-700">saknas</span>
         )}
+      </td>
+      {/* Minuter, inte timmar: rasten skrivs in i minuter i bägge formulären och loggas så i
+          ändringsloggen. Ett "0,50 h" här hade varit samma siffra i en annan valuta. */}
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+        {showBreak ? `${day.breakMinutes} min` : '—'}
       </td>
       <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-900">
         {day.workMinutes > 0 ? `${formatHours(day.workMinutes)} h` : '—'}

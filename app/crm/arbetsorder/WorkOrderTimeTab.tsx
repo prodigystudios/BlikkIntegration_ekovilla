@@ -6,7 +6,7 @@ import Textarea from '../../../components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatDateTime } from '@/app/crm/lib/format';
-import { minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
+import { DEFAULT_BREAK_MINUTES, minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
 
 // Kontorets Tid-flik. Den skriver i `crm_time_entries` — SAMMA tabell som löneunderlaget — och
 // därför fångar den klockslag sedan 2026-08-14. Ett timtal går inte att räkna övertid eller OB på:
@@ -42,10 +42,15 @@ function todayIso() {
 }
 
 function emptyDraft(): TimeDraft {
-  // 60 minuters rast som utgångsvärde är byråns eget exempel (08–18 med en timmes rast är nio
-  // timmar). Det är en gissning man ser och kan ändra, inte en regel — till skillnad från ett tomt
-  // fält, som tyst blir noll.
-  return { work_date: todayIso(), start_time: '', end_time: '', break_minutes: '60', note: '' };
+  // Utgångsvärdet delas med /tid — se DEFAULT_BREAK_MINUTES för varför det är en konstant och inte
+  // en literal per formulär.
+  return {
+    work_date: todayIso(),
+    start_time: '',
+    end_time: '',
+    break_minutes: String(DEFAULT_BREAK_MINUTES),
+    note: '',
+  };
 }
 
 /** Postgres `time` kommer som 'HH:MM:SS'; <input type="time"> vill ha 'HH:MM'. */
@@ -93,7 +98,7 @@ function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: T
         </label>
         <label className="grid gap-1 text-sm text-slate-600">
           <span className={crm.sectionTitle}>Rast (min)</span>
-          <Input value={draft.break_minutes} onChange={(e) => onChange({ ...draft, break_minutes: e.target.value })} inputMode="numeric" placeholder="60" />
+          <Input value={draft.break_minutes} onChange={(e) => onChange({ ...draft, break_minutes: e.target.value })} inputMode="numeric" placeholder={String(DEFAULT_BREAK_MINUTES)} />
         </label>
         <label className="grid gap-1 text-sm text-slate-600">
           <span className={crm.sectionTitle}>Starttid</span>

@@ -21,6 +21,34 @@ export type ShiftInput = {
   minutesWorked?: number | null;
 };
 
+/**
+ * Rasten som fylls i när inget annat är känt.
+ *
+ * Byråns eget exempel (08–18 med en timmes rast är nio timmar) och det värde arbetsorderns tidflik
+ * redan hade. Konstanten finns för att de två formulären skriver till SAMMA tabell: när defaulten
+ * stod som en literal på var sitt ställe gav samma pass olika betald tid beroende på vilken väg in
+ * man tog, och ingenting failade när de gled isär. Ett utgångsvärde man SER och kan ändra — till
+ * skillnad från ett tomt fält, som tyst blir noll.
+ */
+export const DEFAULT_BREAK_MINUTES = 60;
+
+/**
+ * Rast i minuter ur ett inmatningsfält, eller null när fältet inte går att tolka.
+ *
+ * ⚠️ ALDRIG `Number(x) || 0`. "30 min", "0,5" och ett klistrat blanksteg blir alla NaN, och `|| 0`
+ * gör då rastavdraget till noll — 07:00–16:00 skrivs som 540 minuter i stället för 510, alltså
+ * trettio minuter tillagda på någons lön. Fällan har slagit till två gånger: en gång på dagradens
+ * sida, en gång via inmatningen. Den bor här nu så att båda formulären delar samma tolkning.
+ *
+ * Tomt fält är noll och inte ett fel: det är så man skriver "ingen rast".
+ */
+export function parseBreakMinutes(value: string): number | null {
+  const trimmed = value.trim().replace(',', '.');
+  if (trimmed === '') return 0;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) && parsed >= 0 && Number.isInteger(parsed) ? parsed : null;
+}
+
 // 'HH:MM' (eller 'HH:MM:SS', som Postgres `time` serialiseras till) → minuter efter midnatt.
 export function parseClock(value: string | null | undefined): number | null {
   if (!value) return null;

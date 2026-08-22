@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { grossMinutes, minutesToHours, parseClock, workedMinutes } from '@/lib/domains/time/hours';
+import {
+  DEFAULT_BREAK_MINUTES,
+  grossMinutes,
+  minutesToHours,
+  parseBreakMinutes,
+  parseClock,
+  workedMinutes,
+} from '@/lib/domains/time/hours';
 
 // Arbetad tid ur klockslag. Byrån härleder övertid och OB själv ur klockslagen, så det enda vi
 // måste få rätt är summan efter rastavdrag — och den är hennes uttryckliga krav.
@@ -73,5 +80,44 @@ describe('minutesToHours', () => {
     expect(minutesToHours(510)).toBe(8.5);
     expect(minutesToHours(485)).toBe(8.08);
     expect(minutesToHours(0)).toBe(0);
+  });
+});
+
+// Regression, och den har kostat två gånger: rastfältet är fritext, och `Number(x) || 0` gjorde
+// varje otolkbar inmatning till en rast på NOLL minuter. "0,5" i ett pass 07:00–16:00 blev då 540
+// minuter i stället för 510 — betald tid som ingen arbetat, utan ett felmeddelande och utan ett
+// spår i ändringsloggen. Null måste betyda null hela vägen ut till knappen.
+describe('parseBreakMinutes', () => {
+  it('läser hela minuter, med både punkt och komma som inget avgör', () => {
+    expect(parseBreakMinutes('60')).toBe(60);
+    expect(parseBreakMinutes(' 30 ')).toBe(30);
+    expect(parseBreakMinutes('0')).toBe(0);
+  });
+
+  it('läser tomt fält som ingen rast — så skriver man "jag tog ingen"', () => {
+    expect(parseBreakMinutes('')).toBe(0);
+    expect(parseBreakMinutes('   ')).toBe(0);
+  });
+
+  it('svarar null på allt som inte ÄR ett helt antal minuter, i stället för att gissa noll', () => {
+    for (const value of ['0,5', '0.5', '30 min', '1 tim', 'sju', '-15', 'NaN', '1e3.5']) {
+      expect(parseBreakMinutes(value)).toBeNull();
+    }
+  });
+
+  // Skillnaden mot `Number(x) || 0`, uttryckt som den siffra den kostade.
+  it('gör inte "0,5" till en rastfri dag', () => {
+    const parsed = parseBreakMinutes('0,5');
+    expect(parsed).toBeNull();
+    expect(Number('0,5') || 0).toBe(0);
+  });
+});
+
+// Defaulten är en löneregel och inte en formulärdetalj: /tid och arbetsorderns tidflik skriver till
+// samma tabell, och när värdet stod som en literal i vardera filen gav samma pass olika betald tid
+// beroende på vilken väg in man tog.
+describe('DEFAULT_BREAK_MINUTES', () => {
+  it('är en timme, och delas av bägge formulären', () => {
+    expect(DEFAULT_BREAK_MINUTES).toBe(60);
   });
 });
