@@ -384,10 +384,10 @@ function TicketForm({ pagePath, onCreated }: { pagePath: string; onCreated: () =
         type="submit"
         disabled={submitting}
         className={cn(crm.formButton, 'w-full')}
-        // Fallback-färgen är ingen dekoration: knappen har vit text, så en odefinierad
-        // `--crm-primary` gör den helt osynlig. Variabeln är scopad till `.crm-shell`, och den här
-        // komponenten lever utanför AppShell — händelseförloppet som gjorde knappen osynlig en
-        // gång. Wrappern ovan löser det, fallbacken gör att det inte kan hända igen.
+        // Färgen är ingen dekoration: knappen har vit text, så en odefinierad variabel gör den
+        // helt osynlig — det hände en gång. Skyddet är att `--ek-green` bor på `:root` och därför
+        // finns överallt, även utanför `.crm-shell`. Den hårdkodade fallbacken som stod här
+        // behövdes bara medan färgen var scopad till skalet.
         style={{ backgroundColor: 'var(--ek-green)' }}
       >
         {submitting ? 'Skickar…' : 'Skicka rapport'}

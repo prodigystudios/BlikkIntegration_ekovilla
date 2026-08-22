@@ -595,7 +595,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
           <select
             value={selectedUserId}
             onChange={(event) => setSelectedUserId(event.target.value)}
-            className="min-h-9 rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--crm-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+            className="min-h-9 rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
           >
             <option value="">Ingen ägare</option>
             {users.map((user) => (
@@ -629,7 +629,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             <select
               value={importCounty}
               onChange={(e) => setImportCounty(e.target.value)}
-              className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--crm-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+              className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
             >
               <option value="">Inget specifikt län</option>
               {SWEDISH_COUNTIES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -873,7 +873,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               <select
                 value={newRuleCounty}
                 onChange={(e) => setNewRuleCounty(e.target.value)}
-                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--crm-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
               >
                 <option value="">Välj län…</option>
                 {SWEDISH_COUNTIES.map((c) => (
@@ -883,7 +883,7 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               <select
                 value={newRuleUserId}
                 onChange={(e) => setNewRuleUserId(e.target.value)}
-                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--crm-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
               >
                 <option value="">Välj säljare…</option>
                 {users.map((u) => (

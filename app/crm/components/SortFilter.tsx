@@ -36,7 +36,7 @@ export default function SortFilter<T extends string>({
         value={value}
         onChange={(e) => onChange(e.target.value as T)}
         aria-label={label}
-        className="h-[38px] w-full appearance-none rounded-lg border border-[#dce4d8] bg-white pl-3 pr-9 text-left text-sm font-medium text-slate-700 transition hover:border-[#c8d4c3] focus:border-[color:var(--crm-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+        className="h-[38px] w-full appearance-none rounded-lg border border-[#dce4d8] bg-white pl-3 pr-9 text-left text-sm font-medium text-slate-700 transition hover:border-[#c8d4c3] focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>

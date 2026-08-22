@@ -811,7 +811,7 @@ export default function PlanningClient({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Sök Fortnox-nr, kund eller adress…"
-            className="h-9 w-full rounded-lg border border-[#dce4d8] bg-white pl-9 pr-3 text-[13px] text-slate-900 outline-none transition focus:border-[color:var(--crm-accent)] focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]"
+            className="h-9 w-full rounded-lg border border-[#dce4d8] bg-white pl-9 pr-3 text-[13px] text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
           />
         </div>
 
@@ -820,7 +820,7 @@ export default function PlanningClient({
             value={salesFilter ?? ''}
             onChange={(e) => setSalesFilter(e.target.value || null)}
             aria-label="Filtrera på säljare"
-            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--crm-accent)]"
+            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
           >
             <option value="">Alla säljare</option>
             {salesOptions.map((s) => (

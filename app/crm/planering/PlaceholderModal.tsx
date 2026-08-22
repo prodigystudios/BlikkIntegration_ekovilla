@@ -56,7 +56,7 @@ export default function PlaceholderModal({
     }
   };
 
-  const field = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-700 outline-none transition focus:border-[color:var(--crm-accent)]';
+  const field = 'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-700 outline-none transition focus:border-[color:var(--ek-accent)]';
 
   return (
     <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>

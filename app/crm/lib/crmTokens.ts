@@ -183,7 +183,7 @@ export const crm = {
   // blåare grön som inte hör till varumärkesrampen. Här på översikten som referens; svepningen
   // av resten är egen gren, för samma klass bär BÅDE länkar och statusbadgetext och går alltså
   // inte att byta blint.
-  link: 'font-semibold text-[color:var(--crm-accent)] no-underline transition hover:text-[color:var(--crm-accent-strong)]',
+  link: 'font-semibold text-[color:var(--ek-accent)] no-underline transition hover:text-[color:var(--ek-green)]',
   metaStrong: 'text-xs font-semibold text-slate-800',
   label: 'mb-1 text-xs font-semibold text-slate-500',
   fieldValue: 'text-sm text-slate-900',
@@ -212,7 +212,7 @@ export const crm = {
   // Gradienten är borta med: en platt yta räcker, och lutningen var en andra sak som skulle
   // säga "primär" utöver färgen.
   saveButton:
-    'inline-flex h-9 w-full items-center justify-center rounded-xl border border-transparent bg-[color:var(--crm-primary)] text-sm font-semibold text-white shadow-[0_4px_12px_rgba(26,63,38,0.24)] transition hover:bg-[color:var(--crm-primary-hover)] disabled:cursor-not-allowed disabled:opacity-60',
+    'inline-flex h-9 w-full items-center justify-center rounded-xl border border-transparent bg-[color:var(--ek-green)] text-sm font-semibold text-white shadow-[0_4px_12px_rgba(26,63,38,0.24)] transition hover:bg-[color:var(--ek-green-strong)] disabled:cursor-not-allowed disabled:opacity-60',
 
   // Destructive / secondary button (cancel, delete)
   ghostButton:
@@ -222,10 +222,10 @@ export const crm = {
   // Text/number/date/email input. In a flex row use it as-is; the global
   // `input { width:100% }` makes it fill — pair with a grid/flex track for sizing.
   input:
-    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-[color:var(--crm-accent)] focus:ring-2 focus:ring-[color:var(--crm-accent-ring)]',
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]',
   // <select>
   select:
-    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-[color:var(--crm-accent)]',
+    'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-[color:var(--ek-accent)]',
   // <input type="color"> — put it in a fixed grid track (e.g. grid-cols-[2.5rem_1fr])
   // so it fills the track instead of the global input width:100% blowing it up.
   colorInput: 'h-9 w-full cursor-pointer rounded-lg border border-[#dce4d8] bg-white p-1',

@@ -644,7 +644,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                       type="checkbox"
                       checked={invoiceSameAsVisit}
                       onChange={(e) => toggleInvoiceSame(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--crm-accent)]"
+                      className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
                     />
                     Samma som besöksadress
                   </label>
@@ -694,7 +694,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                     type="checkbox"
                     checked={draft.reverse_vat}
                     onChange={(e) => set('reverse_vat', e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 accent-[color:var(--crm-accent)]"
+                    className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]"
                   />
                   Omvänd skattskyldighet
                 </label>

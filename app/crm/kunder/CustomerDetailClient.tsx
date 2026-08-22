@@ -886,7 +886,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 </div>
                 {isB2B ? (
                   <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--crm-accent)]" />
+                    <input type="checkbox" checked={editDraft.reverse_vat} onChange={(e) => setField('reverse_vat', e.target.checked)} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
                     Omvänd skattskyldighet
                   </label>
                 ) : null}
@@ -1183,7 +1183,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={contactDraft.is_primary} onChange={(e) => setContactDraft((c) => ({ ...c, is_primary: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--crm-accent)]" />
+                    <input type="checkbox" checked={contactDraft.is_primary} onChange={(e) => setContactDraft((c) => ({ ...c, is_primary: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
                     Primär kontakt
                   </label>
                   <button type="button" onClick={saveContact} disabled={savingContact} className={cn(crm.saveButton, 'h-8 w-auto px-3 text-xs')}>

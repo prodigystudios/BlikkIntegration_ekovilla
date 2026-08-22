@@ -357,7 +357,7 @@ export default function WorkOrderArticlesTab({ items, currencyCode, vatPercent, 
                     <div className="flex flex-wrap items-center gap-3">
                       {rotEnabled ? (
                         <label className="flex items-center gap-2 text-xs text-slate-600">
-                          <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--crm-accent)]" />
+                          <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
                           ROT-arbete
                         </label>
                       ) : null}
