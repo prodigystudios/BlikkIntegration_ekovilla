@@ -1182,7 +1182,7 @@ function DateTimeField({ value, onChange, compact, disabled, label }: { value: s
           value={timePart}
           onChange={e=>onChange(combineDateAndTimeDraft(datePart, e.target.value))}
           disabled={disabled}
-          className="min-w-0 flex-[1_1_110px] rounded-xl border border-ui-border bg-white px-3 py-2 text-sm text-ui-text-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ui-accent/20"
+          className="min-w-0 flex-[1_1_110px] rounded-xl border border-ui-border bg-white px-3 py-2 text-sm text-ui-text-strong transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent-ring)]"
         >
           <option value="">Tid</option>
           {TIME_OPTIONS.map(option => (
