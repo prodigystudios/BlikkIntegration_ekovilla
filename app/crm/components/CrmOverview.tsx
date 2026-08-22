@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from '../../../components/ui/EmptyState';
-import MetricCard from './MetricCard';
 import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { cn } from '@/lib/shared/cn';
@@ -585,10 +584,12 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
           Dolt under 640 px — på telefon går man in för att se en offert eller order, inte för
           att läsa statistik — och dolt när summeringen fallerat, eftersom EMPTY_SUMMARY:s nollor
           betyder "vi vet inte", inte "noll". */}
+      {/* Skelettets höjd är MÄTT mot det renderade kortet (135 px i Chrome). Gissade 116 gav ett
+          19 px hopp vid varje laddning och varje Uppdatera. */}
       {loading || !summaryFailed ? (
         <div className="hidden sm:block">
           {loading ? (
-            <div className="h-[116px] animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
+            <div className="h-[135px] animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
           ) : (
             <div className={crm.cardInner}>
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -827,7 +828,8 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
             <div className="mb-4 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
-                <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
+                {/* Samma grad som de fyra syskonkorten. Var text-lg medan de gick till crm.cardTitle. */}
+                <h2 className={cn('m-0', crm.cardTitle)}>Veckans mål</h2>
                 {/* Remsan högst upp bär samma mening men är dold under 640 px — här syns den bara när
                     remsan inte gör det, i stället för två gånger på samma skärm. */}
                 <p className={cn('m-0 mt-0.5 sm:hidden', crm.meta)}>{MONEY_NOTE}</p>
@@ -951,11 +953,12 @@ function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
 // utfall mot mål. Nu säger färgen antingen "framsteg" eller "kräver åtgärd", och framstegsgrönt
 // kommer ur varumärkets ramp i stället för Tailwinds palett.
 //
-// Ett uppnått mål fyller i den DJUPASTE gröna. Djupare läser som starkare, så bar man samma ton
-// hela vägen sa färgen ingenting om att man faktiskt är i mål.
-function stripTone(tone: 'progress' | 'attention', reached: boolean) {
-  if (tone === 'attention') return 'var(--crm-attention)';
-  return reached ? 'var(--crm-flow-1)' : 'var(--crm-flow-3)';
+// ⚠️ Ett uppnått mål färgades först i --crm-flow-1. Det gjorde samma färgruta till TVÅ saker på
+// samma sida — "Offert" i fördelningsremsan och "i mål" här — och rampens stopp är ordinala
+// (var i flödet), inte binära (uppnått eller ej). Att raden är i mål står redan i talet bredvid
+// ("17 / 15"); att säga det med färg också var en tredje röst för samma sak.
+function stripTone(tone: 'progress' | 'attention') {
+  return tone === 'attention' ? 'var(--crm-attention)' : 'var(--crm-flow-3)';
 }
 
 function StatusStrip({ label, value, tone, goal, currency = false }: { label: string; value: number; tone: 'progress' | 'attention'; goal?: number; currency?: boolean }) {
@@ -987,7 +990,7 @@ function StatusStrip({ label, value, tone, goal, currency = false }: { label: st
       <div className="h-1.5 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
         <div
           className={cn('h-1.5 rounded-full transition-all', denominator == null && currency && 'opacity-40')}
-          style={{ width: `${width}%`, backgroundColor: stripTone(tone, hasGoal && value >= goal!) }}
+          style={{ width: `${width}%`, backgroundColor: stripTone(tone) }}
         />
       </div>
     </div>
@@ -1085,7 +1088,7 @@ function TeamProgressRow({ label, value, target, currency = false }: { label: st
         <div className="h-1 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
           <div
             className="h-1 rounded-full"
-            style={{ width: `${width}%`, backgroundColor: stripTone('progress', value >= target!) }}
+            style={{ width: `${width}%`, backgroundColor: stripTone('progress') }}
           />
         </div>
       ) : null}
@@ -1096,41 +1099,6 @@ function TeamProgressRow({ label, value, target, currency = false }: { label: st
 
 
 
-// Ikonens färg följer kortets iconBg, som i sin tur ärver tonen raden hade i statusbilden:
-// offert emerald, order teal, att fakturera amber, fakturerat violet.
-function QuoteIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#059669" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" />
-    </svg>
-  );
-}
 
-function OrderIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#0d9488" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 3h6a1 1 0 011 1v1H8V4a1 1 0 011-1z" />
-      <path d="M16 5h2a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V7a2 2 0 012-2h2" />
-      <path d="M8 11h8" /><path d="M8 15h5" />
-    </svg>
-  );
-}
 
-function InvoiceIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-      <path d="M8 13h8" /><path d="M8 17h5" />
-    </svg>
-  );
-}
 
-function InvoicedIcon() {
-  return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
-      <polyline points="22 4 12 14.01 9 11.01" />
-    </svg>
-  );
-}

@@ -71,9 +71,10 @@
      är den enda ordning som går att läsa utan förklaring. */
   /* Stapelspår i sage i stället för slate-100, så tomma staplar hör till ytan. */
   --crm-track: #dfe7dc;
-  /* ETT varmt värde för allt som kräver uppmärksamhet. Rose OCH amber sida vid sida
-     var två varma hues som gjorde samma jobb. Statusfärgerna i crmTokens är en egen
-     sak — de är ett delat ordförråd över hela CRM, inte sidans möblering. */
+  /* Varmt värde för STAPLAR som kräver uppmärksamhet. Meddelanderutor (felbanderoll,
+     påminnelser, SectionError) behåller sina egna amber och rose — där skiljer de två
+     hues på allvarsgrad, varning mot fel, och är alltså inte dubblering. Statusfärgerna
+     i crmTokens är en tredje sak: ett delat ordförråd över hela CRM. */
   --crm-attention: #b45309;
   --crm-primary-hover: #122c1b;
   --crm-primary-text: #ffffff;

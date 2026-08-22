@@ -149,12 +149,16 @@ export const crm = {
   // Översikten mätte 22 olika kombinationer av grad och vikt: åtta grader
   // (10/11/12/13/14/16/18/24 px) i fyra vikter, med 11 px i FEM vikter och 10 px i tre.
   // Skillnaden mellan 10px/700-versaler och 11px/600-versaler är osynlig för en läsare
-  // men var två kicker-stilar som gjorde exakt samma jobb. Rollerna nedan är avsikten;
-  // 13 px och 10 px finns inte bland dem.
+  // men var två kicker-stilar som gjorde exakt samma jobb. Rollerna nedan är avsikten. 10 px
+  // finns inte bland dem; 13 px lever kvar i formButton och dangerButton längre ned och hör
+  // till knapparna, inte till textskalan.
   // 20 px, inte 24. Fördelningsremsan ligger redan överst och i full bredd — den emfasen räcker,
   // och 24 px lät talen ta över sidan i stället för att leda den. Fortfarande sidans största
   // text (rubriken är 18), vilket är rätt: det är dem man kommer hit för.
-  display: 'text-xl font-bold leading-none tracking-tight tabular-nums text-slate-900',
+  // ⚠️ leading-tight, inte leading-none: raden kombineras med truncate (overflow: hidden), och
+  // en radbox kortare än ascent+descent kapar glyfer. Siffror klarar sig, men ett tecken med
+  // underhäng hade skavts av.
+  display: 'text-xl font-bold leading-tight tracking-tight tabular-nums text-slate-900',
   pageTitle: 'text-lg font-bold tracking-tight text-slate-900',
   // ⚠️ slate-600, inte 500. Underrubriken ligger på SIDBAKGRUNDEN (#e5ede5), som är mörkare än
   // kortens #f9fbf7 — mätt i Chrome gav slate-500 där 3,98:1 och föll under AA:s 4,5. Samma
@@ -164,8 +168,9 @@ export const crm = {
   // ETT HUNDRA kickers i 35 filer. slate-500 ger 4,57:1 och är fortfarande tydligt dämpad mot
   // slate-900-innehållet. Hamnar en kicker någon gång direkt på sidbakgrunden räcker den inte
   // (3,98:1) — då är det den instansen som ska bära slate-600, inte token som ska mörkna.
-  // Den ENDA kickern. Var 10px/700/0.14em här och 11px/600/0.12em i handrullade kopior;
-  // 11 px bär versalerna bättre och gör de två stilarna till en.
+  // Den ENDA kickern. Var 10px/700/0.14em här och 11px/600/0.12em i handrullade kopior; landar
+  // på 11px/700/0.12em — den grövre vikten, som versalerna bär bättre.
+  // ⚠️ Raden syns i 102 anrop i 35 filer, inte bara på översikten.
   sectionTitle: 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500',
   cardTitle: 'text-sm font-bold text-slate-900',
   bodyStrong: 'text-sm font-semibold text-slate-900',
