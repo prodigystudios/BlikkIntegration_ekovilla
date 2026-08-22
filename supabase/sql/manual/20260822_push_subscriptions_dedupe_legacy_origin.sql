@@ -16,33 +16,46 @@
 --
 -- Forutsatter att supabase/sql/20260822_push_subscriptions_origin.sql ar kord och att appen har
 -- deployats med origin-stamplingen i app/api/push/subscription/route.ts.
+--
+--
+-- VAD `origin is null` FAKTISKT BETYDER
+-- ------------------------------------
+-- Inte "gammal doman". Det betyder "raden har inte POST:ats om sedan origin-kolumnen kom", alltsa
+-- en enhet som inte oppnat appen sedan deployen. Den kan lika garna vara en fullt levande dator pa
+-- NYA domanen som agaren bara inte anvant pa ett tag.
+--
+-- Darfor finns tva raderingar nedan, i stigande risk:
+--
+--   DEL 2  - rader stamplade med den GAMLA domanen. Otvetydiga. Rekommenderad.
+--   DEL 3  - rader utan origin. Tvetydiga. Kraver extra villkor och ett medvetet beslut.
+--
+-- En tidigare version av den har filen raderade rader utan origin sa fort samma anvandare hade en
+-- nyare stamplad rad. Det hade tagit sallan anvanda andra-enheter - en saljare vars telefon
+-- stamplats men vars dator legat orord - och tystat dem permanent utan signal. Villkoret i DEL 3
+-- ar skarpt for att inte gora det.
 
 
 -- ---------------------------------------------------------------------------
 -- DEL 1 - omfattning. Kor den har forst och las utfallet innan du gar vidare.
 -- ---------------------------------------------------------------------------
---
--- Om kolumnen tolkas: 'null' betyder att raden inte POST:ats om sedan origin-kolumnen kom, alltsa
--- en enhet som inte hort av sig pa lange. En rad som stamplats med den GAMLA adressen ar tvartom
--- en enhet som fortfarande ar aktiv dar - den ar den kansligaste gruppen, och DEL 2 ror den inte.
 
 select
   count(*) filter (where origin is null)
-    as legacy_null_rows,
+    as okand_origin_rows,
   count(*) filter (where origin = 'https://blikk-integration-ekovilla.vercel.app')
-    as legacy_old_origin_rows,
+    as gammal_doman_rows,
   count(*) filter (where origin = 'https://app.ekovilla.se')
-    as new_origin_rows,
+    as ny_doman_rows,
   count(*) filter (
     where origin is not null
       and origin not in ('https://app.ekovilla.se', 'https://blikk-integration-ekovilla.vercel.app')
-  ) as other_origin_rows,
+  ) as ovrigt_origin_rows,
   count(distinct user_id) filter (where origin is null)
-    as legacy_null_users,
+    as okand_origin_users,
   count(distinct user_id) filter (where origin = 'https://blikk-integration-ekovilla.vercel.app')
-    as legacy_old_origin_users,
+    as gammal_doman_users,
   count(distinct user_id) filter (where origin = 'https://app.ekovilla.se')
-    as new_origin_users,
+    as ny_doman_users,
   (
     select count(*)
     from (
@@ -51,73 +64,90 @@ select
       group by user_id
       having bool_or(origin is null)
          and bool_or(origin = 'https://app.ekovilla.se')
-    ) both_sides
-  ) as users_with_legacy_null_and_new,
+    ) bada
+  ) as users_med_okand_och_ny,
   count(*) as total_rows
 from public.dashboard_push_subscriptions;
 
 
 -- ---------------------------------------------------------------------------
--- DEL 2a - torrkorning. Exakt de rader som DEL 2b skulle radera.
+-- DEL 2 - rader stamplade med den GAMLA domanen. Rekommenderad radering.
 -- ---------------------------------------------------------------------------
 --
--- Jamforelsen gors pa created_at, inte updated_at: updated_at flyttas av triggern
--- set_timestamp_dashboard_push_subscriptions vid varje omPOST och sager darfor ingenting om nar
--- raden faktiskt skapades.
+-- Otvetydiga: raden har POST:ats om FRAN den gamla adressen efter att stamplingen deployats, sa
+-- enheten korde bevisligen den gamla installationen. Nar den adressen ar avstangd pekar dess
+-- service worker pa en doman som inte svarar - notisen visas men klicket leder ingenstans.
 
+-- 2a - torrkorning.
+select
+  id, user_id, user_agent, created_at, last_success_at, origin
+from public.dashboard_push_subscriptions
+where origin = 'https://blikk-integration-ekovilla.vercel.app'
+order by user_id, created_at;
+
+-- 2b - raderingen.
+delete from public.dashboard_push_subscriptions
+where origin = 'https://blikk-integration-ekovilla.vercel.app';
+
+
+-- ---------------------------------------------------------------------------
+-- DEL 3 - rader utan origin. VALFRI, och bara efter ett medvetet beslut.
+-- ---------------------------------------------------------------------------
+--
+-- Tre villkor maste halla samtidigt, och de ar med for att inte tysta en levande enhet:
+--
+--   1. Anvandaren har redan en stamplad rad pa nya domanen  -> hen blir inte helt utan notiser.
+--   2. Raden har inte levererat en enda notis sedan stamplingen deployades -> inga tecken pa liv.
+--   3. Raden skapades fore deployen -> den kan omojligt vara en ny prenumeration.
+--
+-- BYT UT DATUMET nedan mot nar appen faktiskt deployades med origin-stamplingen, pa BADA stallena.
+-- Lat helst nagra veckor ga forst, sa att enheter som anvands sallan hinner stampla sig sjalva.
+
+-- 3a - torrkorning. Granska listan rad for rad; user_agent avslojar vilken enhet det ar.
 select
   legacy.id,
   legacy.user_id,
   legacy.user_agent,
-  legacy.created_at    as legacy_created_at,
-  legacy.last_success_at as legacy_last_success_at,
-  fresh.created_at     as replacement_created_at
+  legacy.created_at,
+  legacy.last_success_at,
+  legacy.last_failure_at
 from public.dashboard_push_subscriptions as legacy
-join lateral (
-  select f.created_at
-  from public.dashboard_push_subscriptions as f
-  where f.user_id = legacy.user_id
-    and f.origin = 'https://app.ekovilla.se'
-    and f.created_at > legacy.created_at
-  order by f.created_at desc
-  limit 1
-) as fresh on true
 where legacy.origin is null
-order by legacy.user_id, legacy.created_at;
-
-
--- ---------------------------------------------------------------------------
--- DEL 2b - raderingen. Kor bara nar DEL 2a visar det du forvantar dig.
--- ---------------------------------------------------------------------------
---
--- Villkoret ar medvetet snavt: bara rader utan origin, och bara nar samma anvandare redan har en
--- NYARE rad pa den nya domanen. En anvandare som inte hunnit sla pa notiser igen behaller sin
--- gamla rad och sina notiser.
---
--- Rader stamplade med den gamla domanen ror vi inte. De tillhor enheter som bevisligen fortfarande
--- anvander den gamla installationen, och de ska fa tystna av sig sjalva nar den slutar svara -
--- eller stadas i en separat, medveten omgang.
-
-delete from public.dashboard_push_subscriptions as legacy
-where legacy.origin is null
+  and legacy.created_at < timestamptz '2026-08-22'           -- <- deploydatum
+  and (legacy.last_success_at is null
+       or legacy.last_success_at < timestamptz '2026-08-22')  -- <- deploydatum
   and exists (
     select 1
     from public.dashboard_push_subscriptions as fresh
     where fresh.user_id = legacy.user_id
       and fresh.origin = 'https://app.ekovilla.se'
-      and fresh.created_at > legacy.created_at
+  )
+order by legacy.user_id, legacy.created_at;
+
+-- 3b - raderingen. Kor bara nar 3a visar det du forvantar dig.
+delete from public.dashboard_push_subscriptions as legacy
+where legacy.origin is null
+  and legacy.created_at < timestamptz '2026-08-22'           -- <- deploydatum
+  and (legacy.last_success_at is null
+       or legacy.last_success_at < timestamptz '2026-08-22')  -- <- deploydatum
+  and exists (
+    select 1
+    from public.dashboard_push_subscriptions as fresh
+    where fresh.user_id = legacy.user_id
+      and fresh.origin = 'https://app.ekovilla.se'
   );
 
 
 -- ---------------------------------------------------------------------------
--- DEL 3 - kontroll efterat. Ska visa 0 kvarvarande null-rader for de anvandare
--- som har en ny rad.
+-- DEL 4 - kontroll efterat.
 -- ---------------------------------------------------------------------------
 
 select
-  count(*) filter (where origin is null)                   as legacy_null_rows_kvar,
-  count(*) filter (where origin = 'https://app.ekovilla.se') as new_origin_rows,
-  count(*)                                                 as total_rows
+  count(*) filter (where origin is null)                                          as okand_origin_kvar,
+  count(*) filter (where origin = 'https://blikk-integration-ekovilla.vercel.app') as gammal_doman_kvar,
+  count(*) filter (where origin = 'https://app.ekovilla.se')                       as ny_doman_rows,
+  count(distinct user_id)                                                          as users_med_notiser,
+  count(*)                                                                         as total_rows
 from public.dashboard_push_subscriptions;
 
 
@@ -125,9 +155,7 @@ from public.dashboard_push_subscriptions;
 -- BILAGA - predikatet mot fixtures. Ofarlig: ror ingen tabell, laser ingen data.
 -- ---------------------------------------------------------------------------
 --
--- Kor den har for att se att villkoret i DEL 2b gor det du tror INNAN du kor det skarpt.
--- Den bygger sina egna rader i en CTE och tillampar exakt samma villkor.
---
+-- Kor den har for att se att villkoret i DEL 3b gor det du tror INNAN du kor det skarpt.
 -- Forvantat utfall: kolumnen `ok` ska vara true pa samtliga rader.
 --
 -- Not om fixturen "tva anvandare som delar endpoint": det gar inte att konstruera. Kolumnen ar
@@ -136,40 +164,56 @@ from public.dashboard_push_subscriptions;
 -- bade gammalt och nytt origin samtidigt - push-endpoints ar per service worker-registrering,
 -- och registreringen ar origin-scopad.
 
-with fixtures (user_id, origin, created_at, note, expected_deleted) as (
+with fixtures (user_id, origin, created_at, last_success_at, note, expected_deleted) as (
   values
-    -- A: bara legacy-rad, ingen ersattare. Ska INTE raderas - anvandaren har inga notiser alls om vi tar den.
-    ('a', null::text,                                            timestamptz '2026-01-01', 'bara legacy',              false),
+    -- A: bara okand rad, ingen ersattare. Raderas inte - da hade anvandaren blivit helt utan.
+    ('a', null::text, timestamptz '2026-01-01', null::timestamptz,
+     'bara okand, ingen ny rad', false),
 
-    -- B: bara ny rad. Inte null, alltsa utanfor villkoret helt.
-    ('b', 'https://app.ekovilla.se',                       timestamptz '2026-08-01', 'bara ny',                  false),
+    -- B: bara ny rad. Inte null, utanfor villkoret helt.
+    ('b', 'https://app.ekovilla.se', timestamptz '2026-08-25', null::timestamptz,
+     'bara ny', false),
 
-    -- C: legacy + NYARE ny rad. Det enda fallet som ska raderas.
-    ('c', null::text,                                            timestamptz '2026-01-01', 'legacy med ersattare',     true),
-    ('c', 'https://app.ekovilla.se',                       timestamptz '2026-08-01', 'ersattaren',               false),
+    -- C: okand + ny rad, och den okanda visar inga tecken pa liv. Enda fallet som raderas.
+    ('c', null::text, timestamptz '2026-01-01', timestamptz '2026-02-01',
+     'okand, dod sedan deployen', true),
+    ('c', 'https://app.ekovilla.se', timestamptz '2026-08-25', null::timestamptz,
+     'ersattaren', false),
 
-    -- D: legacy + ny rad som ar ALDRE. Villkoret kraver created_at >, sa legacy-raden star kvar.
-    ('d', null::text,                                            timestamptz '2026-08-01', 'legacy nyare an "ny"',     false),
-    ('d', 'https://app.ekovilla.se',                       timestamptz '2026-01-01', 'aldre ny rad',             false),
+    -- D: okand + ny rad, MEN den okanda har levererat efter deployen. Levande andra-enhet.
+    --    Det har ar fallet den tidigare versionen av scriptet hade tystat.
+    ('d', null::text, timestamptz '2026-01-01', timestamptz '2026-09-01',
+     'okand men levande', false),
+    ('d', 'https://app.ekovilla.se', timestamptz '2026-08-25', null::timestamptz,
+     'ny rad pa annan enhet', false),
 
-    -- E: legacy + aktiv rad pa GAMLA originet. Ingen ersattare pa nya domanen finns.
-    ('e', null::text,                                            timestamptz '2026-01-01', 'legacy',                   false),
-    ('e', 'https://blikk-integration-ekovilla.vercel.app', timestamptz '2026-08-01', 'aktiv pa gamla domanen',   false)
+    -- E: okand rad SKAPAD efter deployen. Kan inte vara en gammal rad.
+    ('e', null::text, timestamptz '2026-09-01', null::timestamptz,
+     'okand men nyare an deployen', false),
+    ('e', 'https://app.ekovilla.se', timestamptz '2026-08-25', null::timestamptz,
+     'ny rad', false),
+
+    -- F: okand + aktiv rad pa GAMLA domanen, ingen rad pa den nya. DEL 2 tar den gamla, inte den har.
+    ('f', null::text, timestamptz '2026-01-01', null::timestamptz,
+     'okand utan ny rad', false),
+    ('f', 'https://blikk-integration-ekovilla.vercel.app', timestamptz '2026-08-25', null::timestamptz,
+     'aktiv pa gamla domanen', false)
 ),
 applied as (
   select
     f.user_id,
     f.note,
     f.expected_deleted,
-    -- Samma villkor som DEL 2b.
+    -- Samma villkor som DEL 3b.
     (
       f.origin is null
+      and f.created_at < timestamptz '2026-08-22'
+      and (f.last_success_at is null or f.last_success_at < timestamptz '2026-08-22')
       and exists (
         select 1
         from fixtures as fresh
         where fresh.user_id = f.user_id
           and fresh.origin = 'https://app.ekovilla.se'
-          and fresh.created_at > f.created_at
       )
     ) as would_delete
   from fixtures as f

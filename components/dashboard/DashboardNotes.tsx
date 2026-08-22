@@ -9,19 +9,19 @@ import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import DashboardCardHeader from './DashboardCardHeader';
 import {
+  browserStorage,
+  markEndpointPersisted,
+  shouldPersistEndpoint,
   writeFlag,
+  PUSH_HAD_SUBSCRIPTION_KEY,
   PUSH_OPT_OUT_KEY,
   PUSH_PROMPT_DISMISSED_KEY,
 } from '@/lib/domains/notifications/pushSync';
 
-// Samma lokala flaggor som components/notifications/usePushSubscription.ts. Kortet har en egen
-// av/på-logik (med diagnostikpanelen), och utan flaggorna skulle notisklockans synk se
-// "tillstånd beviljat, ingen prenumeration" efter en avstängning här och tyst prenumerera om —
-// alltså slå på det användaren just stängde av.
-function pushFlagStorage(): Storage | null {
-  if (typeof window === 'undefined') return null;
-  try { return window.localStorage; } catch { return null; }
-}
+// Kortet har en egen av/på-logik (med diagnostikpanelen) vid sidan av
+// components/notifications/usePushSubscription.ts. Den delar därför flaggorna och spärren med
+// hooken: utan dem skulle notisklockans synk se "tillstånd beviljat, ingen prenumeration" efter en
+// avstängning här och tyst prenumerera om — alltså slå på det användaren just stängde av.
 
 interface NoteItem {
   id: string;
@@ -101,11 +101,17 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
       const subscription = await registration.pushManager.getSubscription();
       setPushEnabled(Boolean(subscription));
       if (subscription) {
-        await fetch('/api/push/subscription', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ subscription: subscription.toJSON(), userAgent: navigator.userAgent }),
-        }).catch(() => null);
+        writeFlag(browserStorage('local'), PUSH_HAD_SUBSCRIPTION_KEY, true);
+        // Samma en-omPOST-per-session-spärr som hooken. Kortet ligger på startsidan, så utan den
+        // blir det en skrivning vid varje besök — och spärren i hooken hade varit verkningslös.
+        if (shouldPersistEndpoint(browserStorage('session'), subscription.endpoint)) {
+          const res = await fetch('/api/push/subscription', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subscription: subscription.toJSON(), userAgent: navigator.userAgent }),
+          }).catch(() => null);
+          if (res?.ok) markEndpointPersisted(browserStorage('session'), subscription.endpoint);
+        }
       }
     } catch {
       setPushEnabled(false);
@@ -519,8 +525,10 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
       if (!saveRes.ok) throw new Error(saveJson?.error || 'Kunde inte aktivera push.');
       setPushDiagnostics((prev) => [...prev, 'subscription: saved']);
 
-      writeFlag(pushFlagStorage(), PUSH_OPT_OUT_KEY, false);
-      writeFlag(pushFlagStorage(), PUSH_PROMPT_DISMISSED_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_OPT_OUT_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_PROMPT_DISMISSED_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_HAD_SUBSCRIPTION_KEY, true);
+      markEndpointPersisted(browserStorage('session'), subscription.endpoint);
       setPushEnabled(true);
       toast.success('Mobilnotiser aktiverade.');
     } catch (e: any) {
@@ -544,14 +552,17 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
       if (subscription) {
-        await fetch('/api/push/subscription', {
+        const delRes = await fetch('/api/push/subscription', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: subscription.endpoint }),
         });
-        await subscription.unsubscribe();
+        if (!delRes.ok) throw new Error('Kunde inte stänga av notiser. Försök igen.');
+        // Resolvar false vid misslyckande utan att kasta — se hooken för varför det spelar roll.
+        const removed = await subscription.unsubscribe();
+        if (!removed) throw new Error('Notiserna kunde inte stängas av i webbläsaren. Försök igen.');
       }
-      writeFlag(pushFlagStorage(), PUSH_OPT_OUT_KEY, true);
+      writeFlag(browserStorage('local'), PUSH_OPT_OUT_KEY, true);
       setPushEnabled(false);
       toast.success('Mobilnotiser avaktiverade.');
     } catch (e: any) {

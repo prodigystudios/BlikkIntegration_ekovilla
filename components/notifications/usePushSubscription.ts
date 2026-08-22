@@ -2,14 +2,16 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
+  browserStorage,
   decidePushSync,
+  markEndpointPersisted,
   readFlag,
   shouldPersistEndpoint,
   writeFlag,
+  PUSH_HAD_SUBSCRIPTION_KEY,
   PUSH_OPT_OUT_KEY,
   PUSH_PROMPT_DISMISSED_KEY,
   type PushPermission,
-  type StorageLike,
 } from '@/lib/domains/notifications/pushSync';
 
 // Shared web-push opt-in for the current device. Wraps the existing /api/push endpoints and the
@@ -37,16 +39,11 @@ export type PushSubscriptionState = {
   disable: () => Promise<void>;
 };
 
-// Storage kan saknas helt (SSR) eller kasta vid åtkomst (vissa privatlägen kastar redan på
-// `window.localStorage`). Båda fallen ska ge null, inte ett kastat fel.
-function safeStorage(kind: 'local' | 'session'): StorageLike | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    return kind === 'local' ? window.localStorage : window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
+// Notisklockan är monterad TVÅ gånger samtidigt (mobil topprad + desktopskena, båda monterade och
+// CSS-dolda — se NotificationBell.tsx), och uppmaningen i dashboarden är en tredje. Sedan synken
+// började skriva räcker det inte att den är idempotent: tre samtidiga pushManager.subscribe() kan
+// avvisas med InvalidStateError. Spärren ligger på modulnivå och delas därför av alla instanser.
+let silentResubscribeInFlight = false;
 
 async function postSubscription(subscription: PushSubscription): Promise<Response> {
   return fetch('/api/push/subscription', {
@@ -90,20 +87,28 @@ export function usePushSubscription(): PushSubscriptionState {
     const action = decidePushSync({
       hasSubscription: Boolean(subscription),
       permission: Notification.permission as PushPermission,
-      optedOut: readFlag(safeStorage('local'), PUSH_OPT_OUT_KEY),
-      promptDismissed: readFlag(safeStorage('local'), PUSH_PROMPT_DISMISSED_KEY),
+      optedOut: readFlag(browserStorage('local'), PUSH_OPT_OUT_KEY),
+      promptDismissed: readFlag(browserStorage('local'), PUSH_PROMPT_DISMISSED_KEY),
+      hadSubscription: readFlag(browserStorage('local'), PUSH_HAD_SUBSCRIPTION_KEY),
     });
 
     if (action === 'persist' && subscription) {
       setNeedsReactivation(false);
-      if (shouldPersistEndpoint(safeStorage('session'), subscription.endpoint)) {
-        await postSubscription(subscription).catch(() => null);
+      // Att vi ser en prenumeration ÄR beviset markören står för.
+      writeFlag(browserStorage('local'), PUSH_HAD_SUBSCRIPTION_KEY, true);
+      if (shouldPersistEndpoint(browserStorage('session'), subscription.endpoint)) {
+        const res = await postSubscription(subscription).catch(() => null);
+        // Kvittera först på ok. Ett 401 vid montering (utgången session) ska inte göra att
+        // stämplingen hoppas över resten av sessionen.
+        if (res?.ok) markEndpointPersisted(browserStorage('session'), subscription.endpoint);
       }
       return;
     }
 
     if (action === 'resubscribe-silently') {
       setNeedsReactivation(false);
+      if (silentResubscribeInFlight) return;
+      silentResubscribeInFlight = true;
       try {
         const keyRes = await fetch('/api/push/public-key');
         const keyJson = await keyRes.json().catch(() => null);
@@ -115,10 +120,15 @@ export function usePushSubscription(): PushSubscriptionState {
           applicationServerKey: base64ToUint8Array(publicKey),
         });
         const saveRes = await postSubscription(fresh);
-        if (saveRes.ok) setEnabled(true);
+        if (saveRes.ok) {
+          markEndpointPersisted(browserStorage('session'), fresh.endpoint);
+          setEnabled(true);
+        }
       } catch {
         // Tyst med flit: det här är en bakgrundsåtgärd användaren inte bett om, och den som
         // behöver notiser kan alltid slå på dem från notisklockan.
+      } finally {
+        silentResubscribeInFlight = false;
       }
       return;
     }
@@ -129,7 +139,7 @@ export function usePushSubscription(): PushSubscriptionState {
   useEffect(() => { void sync(); }, [sync]);
 
   const dismissReactivation = useCallback(() => {
-    writeFlag(safeStorage('local'), PUSH_PROMPT_DISMISSED_KEY, true);
+    writeFlag(browserStorage('local'), PUSH_PROMPT_DISMISSED_KEY, true);
     setNeedsReactivation(false);
   }, []);
 
@@ -145,11 +155,20 @@ export function usePushSubscription(): PushSubscriptionState {
         .getRegistration('/sw.js')
         .then((registration) => registration || navigator.serviceWorker.ready);
 
-      const keyRes = await fetch('/api/push/public-key');
-      const keyJson = await keyRes.json().catch(() => null);
-      if (!keyRes.ok) throw new Error(keyJson?.error || 'Kunde inte läsa push-nyckel.');
-      const publicKey = String(keyJson?.publicKey || '');
-      if (!publicKey) throw new Error('Push är inte konfigurerat.');
+      // Nyckeln hämtas parallellt men väntas INTE in före requestPermission(). iOS/Safari ger
+      // bara en kortlivad user activation, och ett await däremellan kan äta upp den — då avvisas
+      // prompten eller subscribe() kastar NotAllowedError. Installatörerna kör iOS-PWA, så det är
+      // just den vägen som bär migreringen.
+      const keyPromise = (async () => {
+        const keyRes = await fetch('/api/push/public-key');
+        const keyJson = await keyRes.json().catch(() => null);
+        if (!keyRes.ok) throw new Error(keyJson?.error || 'Kunde inte läsa push-nyckel.');
+        const key = String(keyJson?.publicKey || '');
+        if (!key) throw new Error('Push är inte konfigurerat.');
+        return key;
+      })();
+      // Utan detta blir ett fel i hämtningen en obehandlad rejection om prompten avbryts först.
+      keyPromise.catch(() => {});
 
       const perm = await Notification.requestPermission();
       setPermission(perm);
@@ -157,6 +176,7 @@ export function usePushSubscription(): PushSubscriptionState {
         throw new Error('Notiser måste tillåtas för att de ska nå den här enheten.');
       }
 
+      const publicKey = await keyPromise;
       const registration = await registrationPromise;
       let subscription = await registration.pushManager.getSubscription();
       if (!subscription) {
@@ -172,8 +192,10 @@ export function usePushSubscription(): PushSubscriptionState {
 
       // Ett aktivt ja rensar både av-valet och ett tidigare avfärdande, så att en framtida
       // avaktivering kan uppmana igen.
-      writeFlag(safeStorage('local'), PUSH_OPT_OUT_KEY, false);
-      writeFlag(safeStorage('local'), PUSH_PROMPT_DISMISSED_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_OPT_OUT_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_PROMPT_DISMISSED_KEY, false);
+      writeFlag(browserStorage('local'), PUSH_HAD_SUBSCRIPTION_KEY, true);
+      markEndpointPersisted(browserStorage('session'), subscription.endpoint);
       setNeedsReactivation(false);
       setEnabled(true);
     } catch (e: any) {
@@ -192,16 +214,21 @@ export function usePushSubscription(): PushSubscriptionState {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
       if (subscription) {
-        await fetch('/api/push/subscription', {
+        const delRes = await fetch('/api/push/subscription', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ endpoint: subscription.endpoint }),
         });
-        await subscription.unsubscribe();
+        if (!delRes.ok) throw new Error('Kunde inte stänga av notiser. Försök igen.');
+        // unsubscribe() KASTAR INTE vid misslyckande — den resolvar false. Utan kontrollen hade vi
+        // skrivit av-valet och visat "avstängt" med prenumerationen kvar i webbläsaren, och nästa
+        // synk hade POST:at om den och återuppväckt raden vi just raderade.
+        const removed = await subscription.unsubscribe();
+        if (!removed) throw new Error('Notiserna kunde inte stängas av i webbläsaren. Försök igen.');
       }
       // Minns av-valet. Utan det ser nästa synk "tillstånd beviljat, ingen prenumeration" och
       // skulle tyst prenumerera om — alltså slå på det användaren just stängde av.
-      writeFlag(safeStorage('local'), PUSH_OPT_OUT_KEY, true);
+      writeFlag(browserStorage('local'), PUSH_OPT_OUT_KEY, true);
       setNeedsReactivation(false);
       setEnabled(false);
     } catch (e: any) {
