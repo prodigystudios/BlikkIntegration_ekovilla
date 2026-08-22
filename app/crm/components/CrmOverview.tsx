@@ -8,7 +8,7 @@ import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
-import { crm, workOrderStatusClass, workOrderStatusLabel, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
+import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type QuoteStatus, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 
@@ -68,7 +68,7 @@ type QuoteItem = {
   project_name: string;
   amount: number | string;
   currency_code: string;
-  status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+  status: QuoteStatus;
   quote_date: string;
   follow_up_date: string | null;
   assigned_to: string;
@@ -136,14 +136,6 @@ const taskPriorityLabel: Record<TaskItem['priority'], string> = {
   low: 'Låg',
   normal: 'Normal',
   high: 'Hög',
-};
-
-const quoteStatusLabel: Record<QuoteItem['status'], string> = {
-  draft: 'Utkast',
-  sent: 'Skickad',
-  follow_up: 'Följ upp',
-  won: 'Vunnen',
-  lost: 'Förlorad',
 };
 
 function getProspectFromCall(item: CallItem) {
@@ -500,7 +492,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               </div>
               {!loading && (
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">
-                  {nextActions.length} prioriterade
+                  {nextActions.length} {nextActions.length === 1 ? 'prioriterad' : 'prioriterade'}
                 </span>
               )}
             </div>
@@ -547,7 +539,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                         <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
                         <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
                       </div>
-                      <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-semibold text-amber-700">{quoteStatusLabel[quote.status]}</span>
+                      <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[quote.status].className)}>{quoteStatusMeta[quote.status].label}</span>
                     </Link>
                   ))}
                 </div>
