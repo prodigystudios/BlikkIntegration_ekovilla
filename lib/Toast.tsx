@@ -4,7 +4,15 @@ import { cn } from '@/lib/shared/cn';
 
 type ToastKind = 'success' | 'error' | 'info';
 type ToastOptions = { ttl?: number; title?: string };
-type ToastItem = { id: string; kind: ToastKind; message: string; title?: string; ttl: number };
+type ToastItem = {
+  id: string;
+  kind: ToastKind;
+  message: string;
+  title?: string;
+  ttl: number;
+  /** Satt av kapningen nedan: notisen ska stänga nu, oavsett hur mycket tid den hade kvar. */
+  expiring?: boolean;
+};
 
 type ToastContextValue = {
   push: (kind: ToastKind, message: string, opts?: ToastOptions) => void;
@@ -34,7 +42,13 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const ttl = Math.max(1500, Math.min(10_000, opts?.ttl ?? (kind === 'error' ? 5000 : 2500)));
     seq.current += 1;
     const id = `toast-${seq.current}`;
-    setItems(list => [...list, { id, kind, message, title: opts?.title, ttl }].slice(-MAX_VISIBLE));
+    setItems(list => {
+      const next = [...list, { id, kind, message, title: opts?.title, ttl }];
+      // Kapa mjukt: de äldsta får stänga på vanligt sätt (ut-animation, samma
+      // borttagningsväg) i stället för att ryckas ur listan mitt i visningen.
+      const overflow = next.length - MAX_VISIBLE;
+      return overflow > 0 ? next.map((t, i) => (i < overflow ? { ...t, expiring: true } : t)) : next;
+    });
   }, []);
 
   const value = useMemo<ToastContextValue>(() => ({
@@ -102,8 +116,15 @@ function ToastViewport({ items, onClose }: { items: ToastItem[]; onClose: (id: s
       // höger och får inte äta klick på sidan under. Korten slår på det igen.
       className={cn(
         'pointer-events-none fixed inset-x-3 z-[4000] grid gap-2',
-        '[top:calc(env(safe-area-inset-top)+0.75rem)]',
-        'sm:left-auto sm:right-4 sm:w-[380px] sm:[top:1rem]',
+        // Två olika brytpunkter med flit. BREDDEN följer skärmen (sm): full bredd
+        // på telefon, 380 px i högerkanten därifrån. TOPPEN följer skalet (lg):
+        // under lg renderar AppSidebar en mobiltopbar på safe-area + 60 px, och
+        // den bär notisklockan och hamburgaren i just det hörn notisen landar i.
+        // Ligger notisen ovanpå dem äter den tapsen så länge den syns. 4.25rem
+        // lämnar 8 px luft under baren; från lg finns ingen bar att väja för.
+        '[top:calc(env(safe-area-inset-top)+4.25rem)]',
+        'sm:left-auto sm:right-4 sm:w-[380px]',
+        'lg:[top:1rem]',
       )}
     >
       {items.map(t => (
@@ -132,6 +153,11 @@ function ToastCard({ item, onClose }: { item: ToastItem; onClose: (id: string) =
     };
   }, [paused, closing]);
 
+  // Kapningen i providern begär stängning; kortet stänger sig som vanligt.
+  useEffect(() => {
+    if (item.expiring) setClosing(true);
+  }, [item.expiring]);
+
   // Ut-animationen äger borttagningen ur listan.
   useEffect(() => {
     if (!closing) return;
@@ -144,8 +170,13 @@ function ToastCard({ item, onClose }: { item: ToastItem; onClose: (id: string) =
       // role="alert" på fel ger dem företräde hos skärmläsare; övriga läses upp
       // av containerns aria-live="polite".
       role={item.kind === 'error' ? 'alert' : 'status'}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
+      // Pausen är ett tillgänglighetskrav (WCAG 2.2.1) och inte bara bekvämlighet:
+      // en 2,5-sekundersnotis måste gå att hålla kvar. Men den får BARA hänga på
+      // riktig hover. Touch syntetiserar mouseenter vid tap och skickar mouseleave
+      // först vid nästa tap någon annanstans — med onMouseEnter blev en tap på
+      // notisen liktydigt med att pinna den på skärmen tills vidare.
+      onPointerEnter={(e) => { if (e.pointerType === 'mouse') setPaused(true); }}
+      onPointerLeave={(e) => { if (e.pointerType === 'mouse') setPaused(false); }}
       onFocus={() => setPaused(true)}
       onBlur={() => setPaused(false)}
       className={cn(
