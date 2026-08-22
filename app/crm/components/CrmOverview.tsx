@@ -10,6 +10,7 @@ import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
 import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type QuoteStatus, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import { daysSince, formatRelativeTime } from '@/lib/shared/relativeTime';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 
 type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
@@ -210,6 +211,10 @@ const RECENT_ITEM_LIMIT = 5;
 // overviewSummary), veckoraden genom isDeadWorkOrder-vakten. Delad konstant så de inte glider isär.
 const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
 
+// Efter så här många dygn utan loggat samtal säger kortet ifrån. Sju för att veckomålet är
+// teamets mätperiod — en vecka utan ett enda loggat samtal är redan utanför målet.
+const CALL_LOG_STALE_DAYS = 7;
+
 // Zeros while the summary is in flight or after a failed load, so the panels render their shape
 // rather than blanking. Matches what the empty lists produced before the server did the counting.
 const EMPTY_SUMMARY: CrmOverviewSummary = {
@@ -374,6 +379,14 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   // authoritative. Calls and tasks come from routes without those parameters, so they are shaped
   // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
   const recentCalls = useMemo(() => state.calls.slice(0, RECENT_ITEM_LIMIT), [state.calls]);
+  // Samtalsloggen SKA användas — att den ligger stilla är säljarnas slarv, inte en död funktion.
+  // Kortet visade bara absoluta datum, så två rader från juni läste som färsk aktivitet: gröna
+  // "Positivt"-märken och ingenting som sa hur gammalt det var. Åldern är hela poängen med kortet.
+  const staleCallDays = useMemo(() => {
+    // Listan kommer sorterad call_at desc från rutten, så första raden är den färskaste.
+    const days = daysSince(state.calls[0]?.call_at);
+    return days != null && days >= CALL_LOG_STALE_DAYS ? days : null;
+  }, [state.calls]);
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const failed = (key: SectionKey) => state.failed.includes(key);
   // Summeringen föder varenda siffra på sidan — nyckeltalen, statusbilden, fokusraderna och
@@ -672,11 +685,18 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
             <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading} failed={failed('calls')}>
               {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
+                  {staleCallDays != null ? (
+                    <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                      Ingen har loggat ett samtal på {staleCallDays} dagar.
+                    </p>
+                  ) : null}
                   {recentCalls.map((call) => (
                     <Link key={call.id} href="/crm/samtal" className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
                       <div className="min-w-0">
                         <strong className="block truncate text-sm font-semibold text-slate-900">{getCallCompanyName(call)}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{formatDateTime(call.call_at)}</p>
+                        {/* Relativ ålder i raden, exakt tidpunkt på hover. "8 juni 2026 14:27" krävde
+                            att läsaren räknade dagar i huvudet, och ingen gör det. */}
+                        <p className="m-0 truncate text-xs text-slate-500" title={formatDateTime(call.call_at)}>{formatRelativeTime(call.call_at)}</p>
                       </div>
                       <span className="shrink-0 rounded-full border border-slate-200 bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600">{outcomeLabel[call.outcome]}</span>
                     </Link>
