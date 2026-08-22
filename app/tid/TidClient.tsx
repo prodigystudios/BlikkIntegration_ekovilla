@@ -1,5 +1,6 @@
 "use client";
 import React from 'react';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import PageShell from '@/components/ui/PageShell';
 import Badge from '@/components/ui/Badge';
 import Input from '@/components/ui/Input';
@@ -8,9 +9,10 @@ import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
-import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
+import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, countMissingReceipts, hasReceipt, isReceiptMissing, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
 import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
+import { uploadReceipt, type UploadedReceipt } from './uploadReceipt';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
 
 // Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
@@ -778,6 +780,7 @@ function CompensationSection({
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
+  const supabase = React.useMemo(() => createClientComponentClient(), []);
   const [open, setOpen] = React.useState(false);
   const [kind, setKind] = React.useState<CompensationKind>('travel');
   // Förifyllt datum måste ligga i den månad listan visar, annars sparas posten och FÖRSVINNER
@@ -790,19 +793,74 @@ function CompensationSection({
 
   const [quantity, setQuantity] = React.useState('');
   const [amount, setAmount] = React.useState('');
+  const [vat, setVat] = React.useState('');
   const [note, setNote] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
+  // Kvittot laddas upp SÅ FORT det valts, inte när posten sparas. Två skäl: användaren ser direkt
+  // att bilden kom fram (en tyst 4G-uppladdning bakom en spara-knapp känns som att appen hängt sig),
+  // och sparningen blir omedelbar. Priset är att ett övergivet formulär lämnar en bild utan rad i
+  // bucketen — vilket är precis den avvägning sökvägen är byggd för, se buildReceiptPath.
+  const [receipt, setReceipt] = React.useState<UploadedReceipt | null>(null);
+  // Vilken rad laddar just nu upp? Postens id, eller 'new' för formuläret. En enda variabel så två
+  // uppladdningar aldrig kan pågå samtidigt i samma sektion.
+  const [uploading, setUploading] = React.useState<string | null>(null);
+
   const unit = COMPENSATION_UNITS[kind];
+  const isExpense = kind === 'expense';
   // parseDecimal (lib/shared/number.ts) tål både "1 250" och "1250,50". Number(x.replace(',','.'))
   // ger NaN på tusentalsmellanslag, och med `|| 0` hade det tyst sparats som 0 kr.
   const parsedAmount = parseDecimal(amount, NaN);
   const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
 
+  // Momsen är FRIVILLIG, och tom betyder "inte ifylld" — inte noll. Därför NaN som fallback och en
+  // egen giltighetsflagga: `parseDecimal(vat, 0)` hade gjort varje tomt fält till ett påstående om
+  // att utlägget är momsfritt, och det påståendet går rakt in i bokföringen.
+  const parsedVat = vat.trim() === '' ? null : parseDecimal(vat, NaN);
+  const vatValid = parsedVat === null || (Number.isFinite(parsedVat) && parsedVat >= 0);
+  // Samma tak som databasen håller (crm_time_compensations_vat_amount_chk). Fångas här för att
+  // felet ska synas medan man skriver, inte efter en rundtur till servern.
+  const vatOverAmount = parsedVat !== null && Number.isFinite(parsedVat) && amountValid && parsedVat > parsedAmount;
+
   const grandTotal = totals.reduce((sum, total) => sum + total.amount, 0);
+  const missingReceipts = React.useMemo(() => countMissingReceipts(items), [items]);
+
+  async function pickForNew(file: File) {
+    setUploading('new');
+    try {
+      setReceipt(await uploadReceipt(supabase, file, date));
+    } catch (e: any) {
+      onError(e?.message || 'Kunde inte ladda upp kvittot');
+    } finally {
+      setUploading(null);
+    }
+  }
+
+  // Kvitto på en post som redan finns. Uppladdning och koppling i ett svep, för användaren är det
+  // en handling: "här är pappret till det där utlägget".
+  async function attachToExisting(item: CompensationItem, file: File) {
+    setUploading(item.id);
+    try {
+      const uploaded = await uploadReceipt(supabase, file, item.entry_date);
+      const res = await fetch(`/api/time/compensations/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ receipt: uploaded }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte spara kvittot'); return; }
+      await onChanged();
+    } catch (e: any) {
+      onError(e?.message || 'Kunde inte ladda upp kvittot');
+    } finally {
+      setUploading(null);
+    }
+  }
 
   async function add() {
     if (!amountValid) { onError('Ange ett belopp i kronor'); return; }
+    if (!vatValid) { onError('Momsen måste vara ett belopp i kronor'); return; }
+    if (vatOverAmount) { onError('Momsen kan inte vara högre än beloppet'); return; }
     setSaving(true);
     try {
       const res = await fetch('/api/time/compensations', {
@@ -813,14 +871,41 @@ function CompensationSection({
           kind,
           quantity: unit ? (parseDecimal(quantity, NaN) || null) : null,
           amount: parsedAmount,
+          // Momsen följer bara med på utlägg — servern nollar den för övriga sorter ändå, och att
+          // inte skicka den gör avsikten läsbar i nätverksfliken.
+          vat_amount: isExpense ? parsedVat : null,
+          // ⚠️ KVITTOT SKICKAS ALLTID, även när sorten bytts från utlägg till milersättning och
+          // fältet inte längre visas. Skälet är att det finns ETT UPPLADDAT OBJEKT bakom den här
+          // sökvägen: skickar vi `null` kopplas det förvisso inte till posten, men det blir också
+          // liggande kvar i bucketen utan att någon rad pekar på det, och utan väg tillbaka för
+          // vare sig användaren eller kontoret. Servern nollar kolumnen för fel sort OCH städar
+          // bort objektet — men bara om den får veta var det ligger.
+          receipt,
           note: note.trim() || null,
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { onError(json?.error || 'Kunde inte spara posten'); return; }
-      setQuantity(''); setAmount(''); setNote('');
+      if (!res.ok || !json.ok) {
+        // ⚠️ KVITTOT SLÄPPS VID VARJE MISSLYCKAD SPARNING.
+        //
+        // Servern raderar lagringsobjektet när raden inte blev skriven — annars växer bucketen med
+        // en oåtkomlig bild per misslyckande. Behåller klienten då sin "Uppladdat"-chip pekar den på
+        // något som inte finns: nästa försök svarar "Kvittot kom aldrig fram", och användaren sitter
+        // fast i en slinga hen inte kan se orsaken till. Fullt nåbart genom att skriva ett datum i en
+        // redan inlämnad månad.
+        //
+        // Pessimistiskt med flit. I två sällsynta 409-fall (kvittot bärs redan av en annan post)
+        // överlever objektet — men då hör det just den andra posten till, och chipen ljuger ändå.
+        setReceipt(null);
+        onError(json?.error || 'Kunde inte spara posten');
+        return;
+      }
+      setQuantity(''); setAmount(''); setVat(''); setNote(''); setReceipt(null);
       await onChanged();
     } catch {
+      // Samma sak här: vi vet inte om anropet nådde fram, och en chip som kanske ljuger är värre än
+      // en som ber om kvittot igen.
+      setReceipt(null);
       onError('Kunde inte spara posten — kontrollera uppkopplingen');
     } finally {
       setSaving(false);
@@ -853,6 +938,15 @@ function CompensationSection({
               ? `Inget inlagt i ${monthLabel.toLowerCase()}`
               : `${items.length} ${items.length === 1 ? 'post' : 'poster'} · ${formatAmount(grandTotal)} kr`}
           </span>
+          {/* Saknade kvitton står i RUBRIKEN, inte bara nere i listan. Sektionen är hopfälld som
+              standard just för att den är en månadssyssla — en flagga som bara syns utfälld hade
+              upptäckts först när månaden ändå skulle lämnas in, vilket är för sent för att hinna
+              leta rätt på pappret. */}
+          {missingReceipts > 0 ? (
+            <span className="text-xs font-semibold text-amber-700">
+              {missingReceipts === 1 ? '1 utlägg saknar kvitto' : `${missingReceipts} utlägg saknar kvitto`}
+            </span>
+          ) : null}
         </span>
         <span className="shrink-0 text-sm text-slate-500" aria-hidden>{open ? '▲' : '▼'}</span>
       </button>
@@ -865,6 +959,7 @@ function CompensationSection({
                 <Badge key={total.kind}>
                   {COMPENSATION_LABELS[total.kind]} {formatAmount(total.amount)} kr
                   {COMPENSATION_UNITS[total.kind] ? ` · ${total.quantity} ${COMPENSATION_UNITS[total.kind]}` : ''}
+                  {total.vat > 0 ? ` · varav moms ${formatAmount(total.vat)} kr` : ''}
                 </Badge>
               ))}
             </div>
@@ -873,24 +968,15 @@ function CompensationSection({
           {items.length > 0 ? (
             <ul className="m-0 grid list-none gap-2 p-0">
               {items.map((item) => (
-                <li key={item.id} className="grid gap-1 rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2.5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="text-sm font-semibold text-slate-900">{COMPENSATION_LABELS[item.kind]}</span>
-                    <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatAmount(Number(item.amount))} kr</span>
-                  </div>
-                  <div className="text-sm text-slate-500">
-                    <span className="tabular-nums">{shortDate(item.entry_date)}</span>
-                    {item.quantity != null ? <> · <span className="tabular-nums">{item.quantity}</span> {COMPENSATION_UNITS[item.kind] ?? ''}</> : null}
-                    {item.note ? ` · ${item.note}` : ''}
-                  </div>
-                  {!locked ? (
-                    <div className="flex justify-end">
-                      <button type="button" onClick={() => void remove(item.id)} className="px-2 py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2">
-                        Ta bort
-                      </button>
-                    </div>
-                  ) : null}
-                </li>
+                <CompensationRow
+                  key={item.id}
+                  item={item}
+                  locked={locked}
+                  uploading={uploading === item.id}
+                  disabled={uploading !== null}
+                  onAttach={(file) => void attachToExisting(item, file)}
+                  onRemove={() => void remove(item.id)}
+                />
               ))}
             </ul>
           ) : null}
@@ -927,7 +1013,53 @@ function CompensationSection({
                   <span className={LABEL}>Belopp (kr)</span>
                   <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
                 </label>
+                {isExpense ? (
+                  <label className="grid gap-1">
+                    <span className={LABEL}>Moms (kr)</span>
+                    <Input
+                      inputMode="decimal"
+                      value={vat}
+                      onChange={(e) => setVat(e.target.value)}
+                      placeholder="Valfritt"
+                      aria-invalid={vatOverAmount || !vatValid ? true : undefined}
+                    />
+                    {/* Momsen står PÅ kvittot — den ska läsas av, inte räknas ut. Ett kvitto kan bära
+                        25, 12 och 6 procent på samma papper (spik och lunch), så en procentknapp
+                        hade gissat lika ofta som den hjälpt. */}
+                    <span className="text-[11px] text-slate-500">Står på kvittot. Lämna tomt om du är osäker.</span>
+                    {vatOverAmount ? (
+                      <span className="text-[11px] font-semibold text-rose-700">Momsen kan inte vara högre än beloppet.</span>
+                    ) : null}
+                  </label>
+                ) : null}
               </div>
+
+              {isExpense ? (
+                <div className="grid gap-1">
+                  <span className={LABEL}>Kvitto</span>
+                  {receipt ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-solid border-[#cfdcc9] bg-white px-2.5 py-2">
+                      <span className="min-w-0 flex-1 truncate text-sm text-slate-700">{receipt.file_name}</span>
+                      <span className="shrink-0 text-xs font-semibold text-emerald-800">Uppladdat</span>
+                      <button
+                        type="button"
+                        onClick={() => setReceipt(null)}
+                        className="shrink-0 px-2 py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2"
+                      >
+                        Byt
+                      </button>
+                    </div>
+                  ) : (
+                    <ReceiptPicker
+                      idPrefix="ny"
+                      busy={uploading === 'new'}
+                      disabled={uploading !== null}
+                      onPick={(file) => void pickForNew(file)}
+                    />
+                  )}
+                </div>
+              ) : null}
+
               <label className="grid gap-1">
                 <span className={LABEL}>Anteckning</span>
                 <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="T.ex. parkering Uppsala" />
@@ -935,16 +1067,160 @@ function CompensationSection({
               <button
                 type="button"
                 onClick={() => void add()}
-                disabled={saving || !amountValid}
+                disabled={saving || !amountValid || !vatValid || vatOverAmount || uploading !== null}
                 className="py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Lägg till
               </button>
+              {/* Sagt RUNT knappen och inte som ett fel EFTER sparningen: ett utlägg utan kvitto går
+                  att spara med flit (den som tappat pappret ska inte rapportera utanför systemet),
+                  men hen ska veta att kontoret kommer att fråga. */}
+              {isExpense && !receipt ? (
+                <p className="m-0 text-center text-[11px] text-slate-500">
+                  Utan kvitto sparas utlägget, men markeras som ostyrkt tills kvittot kommer in.
+                </p>
+              ) : null}
             </div>
           )}
         </>
       ) : null}
     </section>
+  );
+}
+
+/**
+ * En ersättningspost i listan.
+ *
+ * Egen komponent sedan kvittot kom till: raden bär nu ett eget filväljar-par med egna refs, och de
+ * kan inte delas mellan tio rader i en map. Lyftet håller dessutom uppladdningens tillstånd per rad
+ * i stället för i en Map i föräldern.
+ */
+function CompensationRow({
+  item, locked, uploading, disabled, onAttach, onRemove,
+}: {
+  item: CompensationItem;
+  locked: boolean;
+  uploading: boolean;
+  disabled: boolean;
+  onAttach: (file: File) => void;
+  onRemove: () => void;
+}) {
+  const missing = isReceiptMissing(item);
+  const vatAmount = item.vat_amount == null ? null : Number(item.vat_amount);
+
+  return (
+    <li className="grid gap-1 rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-semibold text-slate-900">{COMPENSATION_LABELS[item.kind]}</span>
+        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatAmount(Number(item.amount))} kr</span>
+      </div>
+      <div className="text-sm text-slate-500">
+        <span className="tabular-nums">{shortDate(item.entry_date)}</span>
+        {item.quantity != null ? <> · <span className="tabular-nums">{item.quantity}</span> {COMPENSATION_UNITS[item.kind] ?? ''}</> : null}
+        {/* Noll kronor moms är ett svar, inte en avsaknad — därför `!= null` och inte en
+            sanningsprövning. Ett momsfritt utlägg (utlandsköp, vidarefakturerat) ska synas som
+            just momsfritt och inte som ouppgivet. */}
+        {vatAmount != null ? <> · moms <span className="tabular-nums">{formatAmount(vatAmount)}</span> kr</> : null}
+        {item.note ? ` · ${item.note}` : ''}
+      </div>
+
+      {hasReceipt(item) ? (
+        // Länk till routen, inte till en signerad URL: åtkomsten prövas om vid varje klick, så
+        // länken kan inte dö i en flik som legat uppe över lunchen.
+        <a
+          href={`/api/time/compensations/${item.id}/receipt?redirect=1`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="justify-self-start text-sm font-medium text-emerald-800 underline underline-offset-2"
+        >
+          Visa kvitto
+        </a>
+      ) : missing ? (
+        <div className="grid gap-1.5">
+          <span className="text-sm font-semibold text-amber-700">Kvitto saknas</span>
+          {locked ? null : (
+            <ReceiptPicker idPrefix={item.id} busy={uploading} disabled={disabled} onPick={onAttach} compact />
+          )}
+        </div>
+      ) : null}
+
+      {!locked ? (
+        <div className="flex justify-end">
+          <button type="button" onClick={onRemove} className="px-2 py-1 rounded-lg text-sm font-medium text-rose-600 underline underline-offset-2">
+            Ta bort
+          </button>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * Kamera eller fil — två vägar till samma kvitto.
+ *
+ * ⚠️ TVÅ SEPARATA <input>, inte en. `capture="environment"` öppnar kameran DIREKT på mobil, vilket
+ * är precis vad man vill när kvittot ligger i handen — men samma attribut gör det omöjligt att välja
+ * en PDF som redan finns i telefonen (en kvitto-app, ett mejl). En enda input hade tvingat fram ett
+ * val mellan de två vanligaste fallen. På desktop ignoreras `capture` och båda knapparna öppnar
+ * filväljaren, vilket är ofarligt.
+ *
+ * ⚠️ INGEN <label> RUNT KNAPPARNA. Ett <label> som omsluter en <button> aktiverar knappen vid klick
+ * på etiketten och ger dubbla öppningar av filväljaren — dolda inputs plus refs är vägen runt det.
+ *
+ * `value = ''` efter varje val: väljer man samma fil två gånger i rad (första försöket blev suddigt)
+ * utlöses ingen change-händelse alls om värdet står kvar, och knappen ser trasig ut.
+ */
+function ReceiptPicker({
+  idPrefix, busy, disabled, onPick, compact,
+}: {
+  idPrefix: string;
+  busy: boolean;
+  disabled: boolean;
+  onPick: (file: File) => void;
+  compact?: boolean;
+}) {
+  const cameraRef = React.useRef<HTMLInputElement>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  const handle = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) onPick(file);
+  };
+
+  const button = cn(
+    'rounded-lg border border-solid border-[#cfdcc9] bg-white font-semibold text-slate-800',
+    'transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60',
+    compact ? 'px-2.5 py-1.5 text-xs' : 'px-3 py-2 text-sm',
+  );
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        ref={cameraRef}
+        id={`kvitto-kamera-${idPrefix}`}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handle}
+        className="hidden"
+      />
+      <input
+        ref={fileRef}
+        id={`kvitto-fil-${idPrefix}`}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/heic,image/heif,application/pdf"
+        onChange={handle}
+        className="hidden"
+      />
+      <button type="button" onClick={() => cameraRef.current?.click()} disabled={disabled} className={button}>
+        Fotografera kvitto
+      </button>
+      <button type="button" onClick={() => fileRef.current?.click()} disabled={disabled} className={button}>
+        Välj fil
+      </button>
+      {busy ? <span className="text-xs font-medium text-slate-500">Laddar upp…</span> : null}
+    </div>
   );
 }
 

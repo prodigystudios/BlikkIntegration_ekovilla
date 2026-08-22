@@ -1,9 +1,30 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { deleteCompensation, updateCompensation } from '@/lib/domains/time/compensations';
+import {
+  compensationConstraintError,
+  deleteCompensation,
+  findCompensationByReceiptPath,
+  getCompensationReceiptRef,
+  updateCompensation,
+  EMPTY_RECEIPT,
+  type CompensationReceiptRef,
+} from '@/lib/domains/time/compensations';
+import { getReceiptBucket, isReceiptPath, removeReceiptObject, resolveReceiptAttachment } from '@/lib/domains/time/receipts';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { explainWriteMiss, invalidUuidParam, ok, periodLockError, requirePermission, routeError, updateCompensationSchema, validationError } from '../../_lib';
 
+// nodejs: kvittots objekt läses och städas med service-role-nyckeln.
+export const runtime = 'nodejs';
+
 type RouteContext = { params: { id: string } };
+
+// Kvittot på en post som redan finns — den vanligaste vägen i praktiken. Man rapporterar utlägget på
+// plats och fotograferar kvittot när man kommer in i bilen; att tvinga fram båda i samma ögonblick
+// hade gjort att det ena blev ogjort.
+//
+// ERSÄTTNING, INTE TILLÄGG: en post bär ett kvitto (se migreringens huvud). Kopplas ett nytt till en
+// post som redan har ett, tas det gamla objektet bort EFTER att raden pekat om — annars kan en
+// misslyckad skrivning lämna posten med en sökväg till en bild som just raderats.
 
 export async function PATCH(req: Request, context: RouteContext) {
   try {
@@ -21,22 +42,162 @@ export async function PATCH(req: Request, context: RouteContext) {
     // spara dem skulle nolla kolumner ingen rörde. Samma regel som pickProvidedFields i CRM.
     const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody) : [];
     const patch = Object.fromEntries(Object.entries(parsed.data).filter(([key]) => sentKeys.includes(key)));
-    if (Object.keys(patch).length === 0) return routeError(400, 'time_compensation_empty_patch', 'Inget att uppdatera');
     if ((patch as { kind?: string }).kind === 'expense') (patch as Record<string, unknown>).quantity = null;
 
     const supabase = createRouteHandlerClient({ cookies });
+
+    // Kvittot är inte ett vanligt fält: kroppens `receipt` är ett PÅSTÅENDE om ett objekt i
+    // lagringen och blir sex kolumner först efter att sökvägen prövats mot ägaren och objektet
+    // lästs. Plocka därför bort det ur patchen innan den går vidare.
+    delete (patch as Record<string, unknown>).receipt;
+    const receipt = (parsed.data as { receipt?: { storage_path: string; file_name: string } | null }).receipt;
+    const wantsReceipt = sentKeys.includes('receipt') && !!receipt;
+
+    const changesKind = sentKeys.includes('kind');
+    const leavingExpense = changesKind && (patch as { kind?: string }).kind !== 'expense';
+    const touchesExpenseOnly = sentKeys.includes('vat_amount') || sentKeys.includes('receipt');
+
+    /**
+     * ⚠️ RADEN LÄSES FÖRE SKRIVNINGEN, av två skäl som båda kräver det.
+     *
+     * 1. SORTEN. Moms och kvitto hör till utlägg och bara dit. POST kan avgöra det ur kroppen, men en
+     *    PATCH som bara skickar `{"vat_amount": 50}` säger ingenting om vilken sorts post den träffar
+     *    — utan den här läsningen hamnar momsen på en milersättning, renderas som "varav moms" i
+     *    attesten och summeras in i den sortens momstotal. Databasen har inget villkor som hindrar
+     *    det; regeln bor i routen och måste därför också kontrolleras här.
+     * 2. DET GAMLA KVITTOT. Efter skrivningen är sökvägen borta ur raden och bilden vore omöjlig att
+     *    hitta igen — den hade blivit liggande i bucketen för alltid, med kvittots personuppgifter,
+     *    utan att någon rad pekar på den.
+     *
+     * Läses BARA när något av det spelar roll: en vanlig beloppsrättelse ska inte kosta en extra
+     * rundtur till databasen.
+     */
+    let oldReceipt: CompensationReceiptRef | null = null;
+    let currentKind: string | null = null;
+    if (touchesExpenseOnly || leavingExpense) {
+      const { data: current } = await getCompensationReceiptRef(supabase, context.params.id, { userId: gate.currentUser.id });
+      oldReceipt = (current as CompensationReceiptRef | null) ?? null;
+      currentKind = (current as { kind?: string } | null)?.kind ?? null;
+    }
+
+    // Sorten posten HAMNAR på. Okänd (raden finns inte, eller är inte vår) lämnas därhän — då svarar
+    // uppdateringen 404 om en stund ändå, och att gissa här hade bara gett ett sämre felmeddelande.
+    const nextKind = changesKind ? ((patch as { kind?: string }).kind ?? null) : currentKind;
+    const notExpense = nextKind !== null && nextKind !== 'expense';
+
+    // Skickas moms ändå nollas den, precis som quantity på ett utlägg. Tyst och inte som ett fel:
+    // samma val som POST gör, och en avvikelse hade betytt två regler för samma sak.
+    if (notExpense && sentKeys.includes('vat_amount')) (patch as Record<string, unknown>).vat_amount = null;
+
+    // Byter posten sort BORT från utlägg faller moms OCH kvitto med den.
+    if (leavingExpense) {
+      (patch as Record<string, unknown>).vat_amount = null;
+      // EMPTY_RECEIPT och inte sex handskrivna nollor: alla kolumner måste falla samtidigt, annars
+      // blir raden kvar med ett receipt_name utan objekt bakom — en post som ser styrkt ut och vars
+      // "Visa kvitto" ger 404.
+      Object.assign(patch, EMPTY_RECEIPT);
+    }
+
+    const bucket = getReceiptBucket();
+    let uploadedPath: string | null = null;
+
+    if (wantsReceipt && receipt) {
+      if (notExpense) {
+        // Objektet ligger redan i bucketen. Utan städningen blir varje felriktat kvitto en oåtkomlig
+        // bild med personuppgifter — samma hantering som POST gör på sin motsvarande gren.
+        // isReceiptPath först: removeReceiptObject kör med service-role och får bara röra den egna
+        // katalogen. Sökvägen är oprövad här, eftersom resolveReceiptAttachment inte hunnit köra.
+        if (isReceiptPath(receipt.storage_path, gate.currentUser.id)) {
+          await removeReceiptObject(getSupabaseAdmin(), bucket, receipt.storage_path);
+        }
+        return routeError(400, 'time_receipt_wrong_kind', 'Bara utlägg kan bära kvitto.');
+      }
+
+      const { data: taken } = await findCompensationByReceiptPath(supabase, receipt.storage_path);
+      // Egen post, samma sökväg = ingenting att göra. Att svara 409 där hade gjort ett ofarligt
+      // omtag (dubbeltryck, tappad uppkoppling) till ett fel användaren måste tolka.
+      if (taken && taken.id !== context.params.id) {
+        return routeError(409, 'time_receipt_already_used', 'Kvittot är redan kopplat till ett annat utlägg.');
+      }
+
+      const resolved = await resolveReceiptAttachment(getSupabaseAdmin(), bucket, gate.currentUser.id, receipt);
+      if (!resolved.ok) return routeError(resolved.status, 'time_receipt_invalid', resolved.error);
+
+      uploadedPath = receipt.storage_path;
+      Object.assign(patch, resolved.columns);
+    }
+
+    /**
+     * ⚠️ VAD FÅR STÄDAS BORT OM SKRIVNINGEN MISSLYCKAS?
+     *
+     * Bara ett objekt som (a) vi själva just laddade upp och (b) ingen rad äger. Villkoret nedan är
+     * hela skillnaden, och det finns för att omtaget är tillåtet: routen godtar med flit att samma
+     * sökväg skickas igen för en post som redan bär den (dubbeltryck, tappad uppkoppling). I det
+     * läget pekar den SPARADE raden på objektet — och en misslyckad uppdatering strax efter, till
+     * exempel för att månaden hann låsas, hade då raderat kvittot ur en rad som fortfarande
+     * refererar det.
+     */
+    const orphanedOnFailure = uploadedPath !== null && uploadedPath !== oldReceipt?.receipt_path;
+
+    // ⚠️ EFTER kvittohanteringen, inte före. `receipt` är det enda fältet som lämnar patchen tommare
+    // än det kom in: en kropp som bara innehåller `{"receipt": null}` ser ut som en uppdatering på
+    // vägen in men är ingenting på vägen ut, och en `.update({})` mot PostgREST är inte något att
+    // skicka. Kontrollen här fångar båda fallen med samma rad.
+    if (Object.keys(patch).length === 0) return routeError(400, 'time_compensation_empty_patch', 'Inget att uppdatera');
+
     const { data, error } = await updateCompensation(supabase, context.params.id, gate.currentUser.id, patch);
     if (error) {
+      // 23505 = kapplöpningen mot unika indexet. Objektet bärs nu av NÅGON ANNANS rad, så det får
+      // inte städas — kontrollen måste ligga FÖRE städningen, inte efter den. Låg den efter var
+      // koden överens med sig själv i kommentaren och oense i utförandet: objektet var redan borta
+      // när grenen som säger "städa INTE" kördes.
+      const isDuplicate = (error as { code?: string }).code === '23505';
+      if (orphanedOnFailure && !isDuplicate) await removeReceiptObject(getSupabaseAdmin(), bucket, uploadedPath!);
+
       const locked = periodLockError(error);
       if (locked) return routeError(locked.status, locked.code, locked.message);
+      if (isDuplicate) {
+        return routeError(409, 'time_receipt_already_used', 'Kvittot är redan kopplat till ett annat utlägg.');
+      }
+      const constraint = compensationConstraintError(error);
+      if (constraint) return routeError(constraint.status, constraint.code, constraint.message);
       return routeError(500, 'time_compensation_update_failed', error.message);
     }
     if (!data) {
+      // Noll rader = låst period eller fel ägare. Kvittot vi just laddade upp hör då ingenstans.
+      if (orphanedOnFailure) await removeReceiptObject(getSupabaseAdmin(), bucket, uploadedPath!);
       const miss = await explainWriteMiss(supabase, {
         table: 'crm_time_compensations', dateColumn: 'entry_date', id: context.params.id, userId: gate.currentUser.id,
       });
       if (miss.locked) return routeError(409, 'time_period_locked', miss.message);
       return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
+    }
+
+    /**
+     * Först nu, när raden bevisligen slutat peka på det gamla kvittot, får objektet försvinna.
+     *
+     * ⚠️ VILLKORET MÅSTE UTTRYCKA ATT RADEN SLÄPPT BILDEN — inte att vi råkar ha läst den.
+     *
+     * Det här gick sönder en gång: när radläsningen vidgades till att också täcka sortkontrollen
+     * (`touchesExpenseOnly`) laddades `oldReceipt` plötsligt även för en ren momsrättelse. Villkoret
+     * "vi har en gammal sökväg och den skiljer sig från den nya" blev då sant för `PATCH
+     * {"vat_amount": 25}` på ett utlägg som redan hade kvitto: bilden raderades medan raden behöll
+     * sitt receipt_path. Utlägget fortsatte visa "Visa kvitto" i både /tid och attesten, länken
+     * svarade 500, och kvittot var borta för gott.
+     *
+     * `uploadedPath !== null || leavingExpense` är de ENDA två vägar som gör den gamla bilden
+     * övergiven. Allt annat läser raden av andra skäl och ska inte röra lagringen.
+     *
+     * Best-effort: en bild som blir kvar är skräp, men ett fel här får inte göra en lyckad sparning
+     * till ett misslyckande i användarens ögon.
+     */
+    const releasedOldReceipt =
+      (uploadedPath !== null || leavingExpense)
+      && !!oldReceipt?.receipt_path
+      && oldReceipt.receipt_path !== uploadedPath;
+
+    if (releasedOldReceipt && oldReceipt?.receipt_path) {
+      await removeReceiptObject(getSupabaseAdmin(), oldReceipt.receipt_bucket || bucket, oldReceipt.receipt_path);
     }
 
     return ok({ item: data });
@@ -68,7 +229,16 @@ export async function DELETE(_req: Request, context: RouteContext) {
       return routeError(404, 'time_compensation_not_found', 'Posten hittades inte');
     }
 
-    return ok({ id: data.id });
+    // Posten är borta — då ska kvittot också vara det. Utan den här raden växer bucketen med en
+    // oåtkomlig bild för varje borttaget utlägg, och personuppgifter blir kvar efter att den som
+    // äger dem raderat posten. Best-effort och efter radraderingen: lyckas den inte är resultatet
+    // skräp, inte ett fel användaren ska stoppas av.
+    const removed = data as unknown as CompensationReceiptRef;
+    if (removed.receipt_path) {
+      await removeReceiptObject(getSupabaseAdmin(), removed.receipt_bucket || getReceiptBucket(), removed.receipt_path);
+    }
+
+    return ok({ id: removed.id });
   } catch (e: any) {
     return routeError(500, 'time_compensation_delete_unexpected', e?.message || 'Kunde inte ta bort posten');
   }
