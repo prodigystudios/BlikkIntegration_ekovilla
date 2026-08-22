@@ -8,5 +8,5 @@ export default async function CrmPage() {
   const profile = await getUserProfile();
   const role = toEffectiveRole(profile?.role);
 
-  return <CrmOverview role={role} />;
+  return <CrmOverview role={role} userId={profile?.id ?? null} />;
 }

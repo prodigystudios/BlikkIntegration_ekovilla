@@ -289,7 +289,7 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
   return actions.slice(0, 3);
 }
 
-export default function CrmOverview({ role }: { role: UserRole | null }) {
+export default function CrmOverview({ role, userId }: { role: UserRole | null; userId: string | null }) {
   const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -341,20 +341,27 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
       // därifrån, så den saknade nyttolasten flaggas som ett fel i stället för att bli nollor.
       const summaryData = (section.summary.json?.data?.summary as CrmOverviewSummary | undefined) ?? null;
 
-      setState({
-        summary: summaryData,
-        calls: itemsOf<CallItem>(section.calls),
-        tasks: itemsOf<TaskItem>(section.tasks),
-        quotes: itemsOf<QuoteItem>(section.quotes),
-        goals: itemsOf<GoalItem>(section.goals),
-        workOrders: itemsOf<WorkOrderItem>(section.workOrders),
+      // Vid Uppdatera behålls föregående innehåll för de sektioner som inte gick att läsa. Ett
+      // glapp på en manuell uppdatering ska inte kasta bort ytor som stod rätt på skärmen —
+      // banderollen säger vad som inte kom in, korten visar det senast kända. Vid första
+      // laddningen finns inget att behålla, och då är tomt rätt.
+      const keep = mode === 'refresh';
+      setState((prev) => ({
+        summary: summaryData ?? (keep ? prev.summary : null),
+        calls: section.calls.ok ? itemsOf<CallItem>(section.calls) : keep ? prev.calls : [],
+        tasks: section.tasks.ok ? itemsOf<TaskItem>(section.tasks) : keep ? prev.tasks : [],
+        quotes: section.quotes.ok ? itemsOf<QuoteItem>(section.quotes) : keep ? prev.quotes : [],
+        goals: section.goals.ok ? itemsOf<GoalItem>(section.goals) : keep ? prev.goals : [],
+        workOrders: section.workOrders.ok ? itemsOf<WorkOrderItem>(section.workOrders) : keep ? prev.workOrders : [],
         failed: SECTION_ORDER.filter((key) => !section[key].ok || (key === 'summary' && summaryData == null)),
-      });
+      }));
     } catch {
       // Bakkant. allSettled avvisar inte, men getCrmOverviewWindow och URLSearchParams ligger
       // utanför den. Faller något där går ingenting på sidan att lita på, så allt flaggas.
       if (loadId !== loadIdRef.current) return;
-      setState({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
+      setState((prev) => mode === 'refresh'
+        ? { ...prev, failed: [...SECTION_ORDER] }
+        : { summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
       clearTimeout(timeout);
       if (loadId === loadIdRef.current) {
@@ -397,15 +404,24 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
   // Kortet visade bara absoluta datum, så två rader från juni läste som färsk aktivitet: gröna
   // "Positivt"-märken och ingenting som sa hur gammalt det var. Åldern är hela poängen med kortet.
   const staleCallDays = useMemo(() => {
-    // Listan kommer sorterad call_at desc från rutten, så första raden är den färskaste.
-    const days = daysSince(state.calls[0]?.call_at);
+    // ⚠️ Mät på rätt urval. crm_calls_select_visible släpper igenom MER än de egna samtalen: även
+    // samtal på prospekt man är tilldelad, oavsett vem som loggade dem. En kollegas samtal på mitt
+    // prospekt hade alltså rensat MIN påminnelse. Admin mäter på allt hen ser ("ingen har loggat"),
+    // alla andra på sina egna ("du har inte loggat") — samma delning som texten gör.
+    const scoped = role === 'admin' ? state.calls : state.calls.filter((call) => call.user_id === userId);
+    // Listan kommer sorterad call_at desc från rutten och filtret bevarar ordningen.
+    const days = daysSince(scoped[0]?.call_at);
     return days != null && days >= CALL_LOG_STALE_DAYS ? days : null;
-  }, [state.calls]);
+  }, [state.calls, role, userId]);
   const nextTasks = useMemo(() => [...state.tasks].filter((task) => task.status === 'open').sort(sortTasks).slice(0, RECENT_ITEM_LIMIT), [state.tasks]);
   const failed = (key: SectionKey) => state.failed.includes(key);
+  // En sektion visar sitt FELLÄGE bara när den inte har något att visa. Efter en misslyckad
+  // Uppdatera ligger förra omgångens innehåll kvar, och då är synligt-men-inte-uppdaterat bättre
+  // än en felruta där det nyss stod fem rader. Banderollen uppe säger ändå vad som inte kom in.
+  const blank = (key: SectionKey, count: number) => failed(key) && count === 0;
   // Summeringen föder varenda siffra på sidan — nyckeltalen, statusbilden, fokusraderna och
   // topplistans utfall. Fallerar den är EMPTY_SUMMARY:s nollor inte "noll" utan "vi vet inte".
-  const summaryFailed = failed('summary');
+  const summaryFailed = failed('summary') && state.summary == null;
   const nextActions = buildOverviewActions({ overdueTasks: summary.overdueTasks, followUpCalls: summary.followUpCalls, newProspects: summary.newProspects, standaloneCalls: summary.standaloneCalls, quoteFollowUps: summary.quoteFollowUps });
   const teamLeaderboard = useMemo(() => {
     // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against THIS
@@ -653,23 +669,31 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 där man fick leta upp raden igen — sämst på telefon, där sidan finns för att man
                 snabbt ska nå en offert eller order. Parametrarna finns redan i respektive vy:
                 ?quote_id= (QuotesClient), ?task_id= (TasksClient), ?call_id= (CallsClient). */}
-            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading} failed={failed('quotes')}>
+            <RecentCard title="Senaste offertlägen" href="/crm/offerter" loading={loading} failed={blank('quotes', state.quotes.length)}>
               {state.quotes.length === 0 ? <EmptyState description="Inga offertsteg registrerade ännu." /> : (
                 <div className="grid gap-2">
-                  {state.quotes.map((quote) => (
-                    <Link key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
-                      <div className="min-w-0">
-                        <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
-                        <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
-                      </div>
-                      <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[quote.status].className)}>{quoteStatusMeta[quote.status].label}</span>
-                    </Link>
-                  ))}
+                  {state.quotes.map((quote) => {
+                    // CHECK-villkoret i 20260526095837_crm_quotes.sql och ruttens Zod-enum gör en
+                    // okänd status omöjlig i dag. Men en oguardad uppslagning kastar under render
+                    // och släcker HELA översikten den dag någon lägger till en sjätte status utan
+                    // att unionen följer med — och den här grenen finns för att sidan inte ska
+                    // släckas. Samma försiktighet som CustomerDetailClient.tsx:669.
+                    const status = quoteStatusMeta[quote.status];
+                    return (
+                      <Link key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
+                        <div className="min-w-0">
+                          <strong className="block truncate text-sm font-semibold text-slate-900">{quote.project_name}</strong>
+                          <p className="m-0 truncate text-xs text-slate-500">{getQuoteCustomerName(quote)} · {formatCurrency(quote.amount, quote.currency_code)}</p>
+                        </div>
+                        <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', status?.className ?? 'border-slate-200 bg-slate-50 text-slate-700')}>{status?.label ?? quote.status}</span>
+                      </Link>
+                    );
+                  })}
                 </div>
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed('workOrders')}>
+            <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={blank('workOrders', state.workOrders.length)}>
               {state.workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
                 <div className="grid gap-2">
                   {state.workOrders.map((order) => (
@@ -685,7 +709,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Öppna uppgifter" href="/crm/uppgifter" loading={loading} failed={failed('tasks')}>
+            <RecentCard title="Öppna uppgifter" href="/crm/uppgifter" loading={loading} failed={blank('tasks', state.tasks.length)}>
               {nextTasks.length === 0 ? <EmptyState description="Inga öppna uppgifter just nu." /> : (
                 <div className="grid gap-2">
                   {nextTasks.map((task) => (
@@ -701,7 +725,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
               )}
             </RecentCard>
 
-            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading} failed={failed('calls')}>
+            <RecentCard title="Senaste samtal" href="/crm/samtal" loading={loading} failed={blank('calls', state.calls.length)}>
               {recentCalls.length === 0 ? <EmptyState description="Inga samtal loggade ännu." /> : (
                 <div className="grid gap-2">
                   {staleCallDays != null ? (
@@ -775,7 +799,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                     500-svar ser då ut som "ingen budget satt". Topplistan fick sin flagga för exakt
                     den tvetydigheten; det här är samma sak en nivå upp. Sena uppgifter räknas av
                     summeringen och står kvar. */}
-                {failed('goals') ? <SectionError /> : (
+                {blank('goals', state.goals.length) ? <SectionError /> : (
                   <>
                     <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="emerald" />
                     <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="teal" currency />
@@ -796,7 +820,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
 
                 {/* Mål saknas och mål som inte gick att läsa ger båda en tom lista — utan
                     failed('goals')-grenen ovan hade ett 500-svar renderats som "inga mål satta". */}
-                {!failed('goals') && teamLeaderboard.length === 0 ? (
+                {!blank('goals', state.goals.length) && teamLeaderboard.length === 0 ? (
                   <p className="m-0 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
                     Inga veckomål satta ännu. Lägg in mål i Inställningar för att aktivera uppföljningen.
                   </p>
@@ -805,7 +829,7 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 {/* Per säljare. Visas bara när listan har MER än en rad: med exakt en är den raden
                     per definition hela summan ovanför, och kortet hade sagt samma sak två gånger —
                     vilket är precis vad en säljare såg innan de två korten slogs ihop. */}
-                {!failed('goals') && teamLeaderboard.length > 1 ? (
+                {!blank('goals', state.goals.length) && teamLeaderboard.length > 1 ? (
                   <>
                     <div className="my-1 h-px bg-slate-100" />
                     <p className={cn('m-0', crm.sectionTitle)}>Per säljare</p>
