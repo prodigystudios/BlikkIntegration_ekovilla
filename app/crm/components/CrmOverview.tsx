@@ -6,7 +6,6 @@ import EmptyState from '../../../components/ui/EmptyState';
 import MetricCard from './MetricCard';
 import ChangelogCard from './ChangelogCard';
 import type { UserRole } from '@/lib/roles';
-import { getVisibleCrmNavItems } from '../_lib/nav';
 import { cn } from '@/lib/shared/cn';
 import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type QuoteStatus, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
@@ -291,7 +290,6 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
 }
 
 export default function CrmOverview({ role }: { role: UserRole | null }) {
-  const items = getVisibleCrmNavItems(role).filter((item) => item.href !== '/crm');
   const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -728,9 +726,13 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           </div>
         </div>
 
-        {/* Right column: status + leaderboard */}
-        <div className="grid gap-4">
-          {/* Status strips */}
+        {/* Höger kolumn: ETT kort. Måluppföljningen och topplistan visade samma data på två
+            aggregeringsnivåer — de tre målraderna ÄR team-summan av de rader topplistan redan
+            listade per säljare, i kortet direkt under. För en säljare var det värre än dubblering:
+            RLS ger hen bara sitt eget mål, så "Topplista" innehöll exakt EN rad, hen själv, med
+            samma siffror som stod ovanför. Nu är teamets rader kortets huvuddel och säljarna en
+            lista under dem. */}
+        <div className="grid content-start gap-4">
           <div className={crm.cardInner}>
             {/* Kortet var "Fördelning och mål" och bar båda: fyra lagerrader ovanför en avdelare,
                 fyra målrader under. Lagerraderna sitter numera i nyckeltalsbandet högst upp, så det
@@ -744,9 +746,19 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                 gäller: crm_calls_select_visible ger en säljare bara sina egna samtal, och
                 crm_goals_select_visible bara sitt eget mål. Siffrorna här är teamets för en admin
                 och den egna för alla andra — rubriken får inte påstå något om vilket. */}
-            <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
-            <h2 className="m-0 mb-1 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
-            <p className="m-0 mb-4 text-xs text-slate-500">{MONEY_NOTE}</p>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
+                <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Veckans mål</h2>
+                <p className="m-0 mt-0.5 text-xs text-slate-500">{MONEY_NOTE}</p>
+              </div>
+              {/* Bara admin. /crm/installningar är rollspärrad i _lib/nav.ts och målen är
+                  crm_goals_insert_admin_only i RLS — länken skickade en säljare till en sida hen
+                  inte kommer in på. */}
+              {role === 'admin' ? (
+                <Link href="/crm/installningar" className="shrink-0 text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
+              ) : null}
+            </div>
             {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
               <div className="grid gap-3">
                 {/* Everything below is measured against a WEEKLY target, so the actuals are the
@@ -776,14 +788,28 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
                     Räknat på ett kapat urval ({summary.truncated.join(', ')}) — siffrorna kan vara för låga.
                   </p>
                 ) : null}
+
+                {/* Mål saknas och mål som inte gick att läsa ger båda en tom lista — utan
+                    failed('goals')-grenen ovan hade ett 500-svar renderats som "inga mål satta". */}
+                {!failed('goals') && teamLeaderboard.length === 0 ? (
+                  <p className="m-0 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
+                    Inga veckomål satta ännu. Lägg in mål i Inställningar för att aktivera uppföljningen.
+                  </p>
+                ) : null}
+
+                {/* Per säljare. Visas bara när listan har MER än en rad: med exakt en är den raden
+                    per definition hela summan ovanför, och kortet hade sagt samma sak två gånger —
+                    vilket är precis vad en säljare såg innan de två korten slogs ihop. */}
+                {!failed('goals') && teamLeaderboard.length > 1 ? (
+                  <>
+                    <div className="my-1 h-px bg-slate-100" />
+                    <p className={cn('m-0', crm.sectionTitle)}>Per säljare</p>
+                    <SellerGoalList entries={teamLeaderboard} />
+                  </>
+                ) : null}
               </div>
             )}
           </div>
-
-          {/* Leaderboard */}
-          {/* Mål saknas och mål som inte gick att läsa ger båda en tom lista — utan flaggan
-              hade ett 500-svar renderats som "Inga veckomål satta ännu". */}
-          <LeaderboardPanel loading={loading} failed={summaryFailed || failed('goals')} teamLeaderboard={teamLeaderboard} />
         </div>
       </div>
 
@@ -792,21 +818,10 @@ export default function CrmOverview({ role }: { role: UserRole | null }) {
           inte finns något att visa. */}
       <ChangelogCard />
 
-      {/* Quick nav */}
-      {items.length > 0 ? (
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {items.map((item) => (
-            <Link key={item.href} href={item.href} className="no-underline">
-              <div className={cn(crm.card, 'p-4 transition hover:border-slate-300 hover:shadow-[0_4px_16px_rgba(0,0,0,0.06)]')}>
-                <p className={cn('m-0', crm.sectionTitle)}>CRM-sektion</p>
-                <strong className="mt-1 block text-base font-bold text-slate-900">{item.label}</strong>
-                <p className="m-0 mt-1 text-sm leading-5 text-slate-500">{item.description}</p>
-                <span className="mt-2 block text-sm font-semibold text-emerald-700">Öppna →</span>
-              </div>
-            </Link>
-          ))}
-        </div>
-      ) : null}
+      {/* Här låg ett rutnät med ett kort per CRM-sektion — fjorton stycken, 693 px av sidans
+          2177, som pekade exakt på raderna i sidoskenan. På desktop syns skenan alltid, så det var
+          ren dubblering; på mobil ligger den bakom hamburgaren, men två tryck där uppe slår ett
+          rutnät man måste scrolla förbi hela sidan för att nå. Borta på båda. */}
     </div>
   );
 }
@@ -891,14 +906,17 @@ function StatusStrip({ label, value, tone, goal, helper, currency = false }: { l
   );
 }
 
-function LeaderboardPanel({
-  loading,
-  failed,
-  teamLeaderboard,
+// Hur många säljare som syns innan man ber om resten. Tre räcker för att listan ska läsa som en
+// rangordning utan att kortet blir en egen sida — sex säljare à sex rader var 1 080 px, och det
+// var i praktiken hela vänsterkolumnens dödyta.
+const SELLER_PREVIEW_COUNT = 3;
+
+// Raderna som förut var kortet "Teamöversikt / Topplista". Kortchromet är borta — de bor numera
+// inne i måluppföljningskortet, under teamets rader, eftersom de är samma data en nivå ner.
+function SellerGoalList({
+  entries,
 }: {
-  loading: boolean;
-  failed: boolean;
-  teamLeaderboard: Array<{
+  entries: Array<{
     id: string;
     userName: string;
     role: string;
@@ -916,49 +934,44 @@ function LeaderboardPanel({
     progressScore: number;
   }>;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const visible = showAll ? entries : entries.slice(0, SELLER_PREVIEW_COUNT);
+
   return (
-    <div className={crm.cardInner}>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <p className={cn('mb-1', crm.sectionTitle)}>Teamöversikt</p>
-          <h2 className="m-0 text-lg font-bold tracking-tight text-slate-900">Topplista</h2>
-          <p className="m-0 mt-0.5 text-xs text-slate-400">Belopp exklusive moms</p>
-        </div>
-        <Link href="/crm/installningar" className="text-xs font-semibold text-emerald-700 no-underline hover:text-emerald-800">Justera mål</Link>
-      </div>
-      {loading ? <OverviewLoadingRows /> : null}
-      {!loading && failed ? <SectionError /> : null}
-      {!loading && !failed && teamLeaderboard.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-xs text-slate-500">
-          Inga veckomål satta ännu. Lägg in mål i Inställningar för att aktivera topplistan.
-        </div>
-      ) : null}
-      {!loading && !failed && teamLeaderboard.length > 0 ? (
-        <div className="grid gap-2">
-          {teamLeaderboard.map((entry, index) => (
-            <div key={entry.id} className="rounded-xl border border-slate-100 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">#{index + 1}</span>
-                  <strong className="text-sm font-semibold text-slate-900">{entry.userName}</strong>
-                </div>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                  {Math.round(entry.progressScore * 100)}%
-                </span>
+    <>
+      <div className="grid gap-2">
+        {visible.map((entry, index) => (
+          <div key={entry.id} className="rounded-xl border border-slate-100 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">#{index + 1}</span>
+                <strong className="text-sm font-semibold text-slate-900">{entry.userName}</strong>
               </div>
-              <div className="mt-2 grid gap-1">
-                <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
-                <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
-                <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
-                <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} tone="amber" />
-                <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} tone="amber" currency />
-                <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} tone="violet" currency />
-              </div>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                {Math.round(entry.progressScore * 100)}%
+              </span>
             </div>
-          ))}
-        </div>
+            <div className="mt-2 grid gap-1">
+              <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} tone="sky" />
+              <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} tone="emerald" />
+              <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} tone="teal" currency />
+              <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} tone="amber" />
+              <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} tone="amber" currency />
+              <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} tone="violet" currency />
+            </div>
+          </div>
+        ))}
+      </div>
+      {entries.length > SELLER_PREVIEW_COUNT ? (
+        <button
+          type="button"
+          onClick={() => setShowAll((current) => !current)}
+          className="mt-2 justify-self-start text-xs font-semibold text-emerald-700 hover:text-emerald-800"
+        >
+          {showAll ? 'Visa färre' : `Visa alla (${entries.length})`}
+        </button>
       ) : null}
-    </div>
+    </>
   );
 }
 
