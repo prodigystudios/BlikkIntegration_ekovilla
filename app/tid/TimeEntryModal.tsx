@@ -101,7 +101,10 @@ export default function TimeEntryModal({
   const [date, setDate] = React.useState(entry?.work_date ?? defaultDate);
   const [start, setStart] = React.useState(toTimeInput(entry?.start_time ?? null) || '07:00');
   const [end, setEnd] = React.useState(toTimeInput(entry?.end_time ?? null) || '16:00');
-  const [breakMinutes, setBreakMinutes] = React.useState(String(entry?.break_minutes ?? 30));
+  // 60 minuter som standard (2026-08-22, Williams beslut) — samma default som arbetsorderns
+  // tidflik redan har. `??` och inte `||`: en sparad rad med rast 0 ska behålla sin nolla, annars
+  // hade varje redigering av ett rastfritt pass tyst dragit av en timme.
+  const [breakMinutes, setBreakMinutes] = React.useState(String(entry?.break_minutes ?? 60));
   const [absenceHours, setAbsenceHours] = React.useState(
     entry?.kind === 'absence' && entry.minutes_worked ? String(minutesToHours(entry.minutes_worked)) : '8',
   );

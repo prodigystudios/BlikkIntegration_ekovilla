@@ -879,15 +879,20 @@ function PersonDays({
     );
   }
 
+  // Rastavdraget för månaden. Bärs inte av PersonPeriodSummary — den speglar byråns kolumner, och
+  // rasten är vår egen kontrollsiffra: klockslagens bruttotid minus den här ska bli "Arbetat".
+  const breakMinutes = summary.rows.reduce((sum, row) => sum + row.breakMinutes, 0);
+
   return (
     <div className="grid gap-3">
       {summary.rows.length > 0 ? (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[560px] border-collapse text-sm">
+          <table className="w-full min-w-[620px] border-collapse text-sm">
             <thead>
               <tr className="text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600">
                 <th className="px-2 py-1.5">Datum</th>
                 <th className="px-2 py-1.5">Klockslag</th>
+                <th className="px-2 py-1.5 text-right">Rast</th>
                 <th className="px-2 py-1.5 text-right">Arbetat</th>
                 <th className="px-2 py-1.5 text-right">Frånvaro</th>
                 <th className="px-2 py-1.5">Orsak / jobb</th>
@@ -909,6 +914,9 @@ function PersonDays({
             <tfoot>
               <tr className="border-x-0 border-b-0 border-t-2 border-slate-300 font-semibold text-slate-900">
                 <td className="px-2 py-2" colSpan={2}>Totalt</td>
+                <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-slate-600">
+                  {breakMinutes > 0 ? `${breakMinutes} min` : '—'}
+                </td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">{formatHours(summary.workMinutes)} h</td>
                 <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums">
                   {summary.absenceMinutes > 0 ? `${formatHours(summary.absenceMinutes)} h` : '—'}
@@ -999,6 +1007,11 @@ function DayRowCells({
         ) : (
           <span className="font-semibold text-amber-700">saknas</span>
         )}
+      </td>
+      {/* Minuter, inte timmar: rasten skrivs in i minuter i bägge formulären och loggas så i
+          ändringsloggen. Ett "0,50 h" här hade varit samma siffra i en annan valuta. */}
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+        {day.breakMinutes > 0 ? `${day.breakMinutes} min` : '—'}
       </td>
       <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-900">
         {day.workMinutes > 0 ? `${formatHours(day.workMinutes)} h` : '—'}
