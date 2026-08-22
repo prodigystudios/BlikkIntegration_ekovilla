@@ -904,7 +904,10 @@ function StatusStrip({ label, value, tone, goal, helper, currency = false }: { l
         </span>
         <strong className="shrink-0 text-slate-800">{displayGoal ? `${displayValue} / ${displayGoal}` : displayValue}</strong>
       </div>
-      <div className="h-1.5 rounded-full bg-slate-100">
+      {/* Staplarna bär ingen egen information: värdet och målet står i klartext på raden ovanför,
+          och en skärmläsare som läser upp dem igen som progressbar hade sagt samma sak två gånger
+          med sämre ord. De är dekor och deklareras som dekor. */}
+      <div className="h-1.5 rounded-full bg-slate-100" aria-hidden="true">
         <div className={cn('h-1.5 rounded-full transition-all', toneClass, denominator == null && currency && 'opacity-40')} style={{ width: `${width}%` }} />
       </div>
     </div>
@@ -1004,7 +1007,7 @@ function TeamProgressRow({ label, value, target, tone, currency = false }: { lab
         <span>{label}</span>
         <strong className="text-slate-700">{displayTarget != null ? `${displayValue} / ${displayTarget}` : displayValue}</strong>
       </div>
-      <div className="h-1 rounded-full bg-slate-100">
+      <div className="h-1 rounded-full bg-slate-100" aria-hidden="true">
         <div className={`h-1 rounded-full ${toneClass} ${hasTarget ? '' : 'opacity-40'}`} style={{ width: `${width}%` }} />
       </div>
     </div>
