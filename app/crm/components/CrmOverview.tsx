@@ -588,16 +588,16 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
       {loading || !summaryFailed ? (
         <div className="hidden sm:block">
           {loading ? (
-            <div className="h-[132px] animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
+            <div className="h-[116px] animate-pulse rounded-2xl border border-[#e0e8dc] bg-[#dfe6da]" />
           ) : (
-            <div className={cn(crm.cardInner, 'shadow-[0_2px_6px_rgba(20,44,27,0.08),0_24px_48px_-20px_rgba(20,44,27,0.30)]')}>
-              <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <div className={crm.cardInner}>
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                 {/* Kortets namn ligger en nivå över kolumnetiketterna. Bar båda samma kicker-stil
                     lästes de två nivåerna som en enda. */}
                 <h2 className={cn('m-0', crm.cardTitle)}>Var pengarna står</h2>
                 <p className={cn('m-0', crm.meta)}>{MONEY_NOTE}</p>
               </div>
-              <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
+              <div className="grid gap-x-6 gap-y-4 sm:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_auto]">
                 {FLOW_STAGES.map((stage) => {
                   const value = stage.value(summary);
                   return (
@@ -606,13 +606,13 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                       <p className={cn('m-0 mt-1 truncate', crm.display)}>{formatCurrency(value, 'SEK')}</p>
                       {/* Stapeln direkt under sitt tal. Låg den under hjälpraden lästes den som
                           kolumnens fot i stället för som beloppets mått. */}
-                      <div className="mt-2 h-1.5 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
+                      <div className="mt-2 h-1 rounded-full" style={{ backgroundColor: 'var(--crm-track)' }} aria-hidden="true">
                         <div
-                          className="h-1.5 rounded-full transition-all"
+                          className="h-1 rounded-full transition-all"
                           style={{ width: `${flowWidth(value, summary.flowScale)}%`, backgroundColor: stage.tone }}
                         />
                       </div>
-                      <p className={cn('m-0 mt-1.5', crm.meta)}>{stage.helper(summary)}</p>
+                      <p className={cn('m-0 mt-1', crm.meta)}>{stage.helper(summary)}</p>
                     </div>
                   );
                 })}
@@ -622,7 +622,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                   <p className={cn('m-0 mt-1 truncate', crm.display)}>{formatCurrency(summary.weekTeam.invoicedValue, 'SEK')}</p>
                   {/* Ingen stapel — se kommentaren ovan om lager mot flöde. Marginalen matchar
                       stegens stapelhöjd så baslinjerna ligger i linje. */}
-                  <p className={cn('m-0 mt-[18px]', crm.meta)}>denna vecka</p>
+                  <p className={cn('m-0 mt-[16px]', crm.meta)}>denna vecka</p>
                 </div>
               </div>
             </div>

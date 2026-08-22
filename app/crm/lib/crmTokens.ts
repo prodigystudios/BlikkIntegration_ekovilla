@@ -151,7 +151,10 @@ export const crm = {
   // Skillnaden mellan 10px/700-versaler och 11px/600-versaler är osynlig för en läsare
   // men var två kicker-stilar som gjorde exakt samma jobb. Rollerna nedan är avsikten;
   // 13 px och 10 px finns inte bland dem.
-  display: 'text-2xl font-bold leading-none tracking-tight tabular-nums text-slate-900',
+  // 20 px, inte 24. Fördelningsremsan ligger redan överst och i full bredd — den emfasen räcker,
+  // och 24 px lät talen ta över sidan i stället för att leda den. Fortfarande sidans största
+  // text (rubriken är 18), vilket är rätt: det är dem man kommer hit för.
+  display: 'text-xl font-bold leading-none tracking-tight tabular-nums text-slate-900',
   pageTitle: 'text-lg font-bold tracking-tight text-slate-900',
   // ⚠️ slate-600, inte 500. Underrubriken ligger på SIDBAKGRUNDEN (#e5ede5), som är mörkare än
   // kortens #f9fbf7 — mätt i Chrome gav slate-500 där 3,98:1 och föll under AA:s 4,5. Samma
