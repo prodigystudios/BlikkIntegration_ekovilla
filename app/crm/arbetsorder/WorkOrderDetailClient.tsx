@@ -859,22 +859,34 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       I redigeringsläget finns väljaren kvar; där är den kontrollen, inte en kopia. */}
                   {readField('Ansvarig', (workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name) : null) || 'Ej tilldelad')}
                   {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date))}
+                  {/* Adressen skrevs ut TVÅ gånger i läsläget — en gång som kartlänk och en gång
+                      som "Gatuadress"-fält, tecken för tecken samma sträng. Kvar står EN utskrift,
+                      och det är den användbara: den man kan trycka på för att navigera. */}
+                  <div className="grid gap-0.5 md:col-span-2">
+                    <span className={crm.sectionTitle}>Arbetsadress</span>
+                    {workAddressText ? (
+                      <AddressLink value={workAddressText} className="text-sm" />
+                    ) : (
+                      <span className={crm.emptyValue}>Ingen angiven — lägg till den under Redigera så hittar installatörerna dit.</span>
+                    )}
+                  </div>
                 </>
               )}
             </Card>
 
-            <Card className="grid gap-4">
-              {/* Adressen skrevs ut TVÅ gånger i läsläget — en gång som kartlänk uppe till höger
-                  och en gång som "Gatuadress"-fält under, tecken för tecken samma sträng. Kvar
-                  står EN utskrift, och den är den användbara: den man kan trycka på för att
-                  navigera. I redigeringsläget står länken kvar i rubriken, för då är fälten nedan
-                  inmatning och inte en kopia. */}
-              <div className="flex items-center justify-between gap-2">
-                <p className={crm.cardTitle}>Arbetsadress</p>
-                {editingOverview && workAddressText ? <AddressLink value={workAddressText} className="text-xs" /> : null}
-              </div>
-              {editingOverview ? (
-                <>
+            {/* ⚠️ Arbetsadressen har EGET kort bara i redigeringsläget.
+                I läsläget är den en rad i faktakortet ovan (vem, när, var — tre fakta som hör
+                ihop och som tillsammans är en kortkropp värd namnet). Som eget kort var den en
+                rubrik och en rad i 90 px höjd och såg oavslutad ut.
+                I redigeringsläget är den tre fält plus adressökning plus en hjälptext — då bär
+                den ett eget kort, och att blanda in den i statusväljarens kort hade gett ett
+                formulär utan tydlig gruppering. */}
+            {editingOverview ? (
+              <Card className="grid gap-4">
+                <div className="flex items-center justify-between gap-2">
+                  <p className={crm.cardTitle}>Arbetsadress</p>
+                  {workAddressText ? <AddressLink value={workAddressText} className="text-xs" /> : null}
+                </div>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Gatuadress</span>
                     <AddressAutocompleteInput
@@ -899,16 +911,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       <Input value={draft.city} onChange={(e) => setField('city', e.target.value)} placeholder="Ort" />
                     </label>
                   </div>
-                  <p className="text-[11px] leading-snug text-slate-400">Adressen där arbetet utförs. Faktura- och övriga adresser ligger på kundkortet.</p>
-                </>
-              ) : (
-                workAddressText ? (
-                  <AddressLink value={workAddressText} className="text-sm" />
-                ) : (
-                  <p className={cn(crm.emptyValue, 'm-0')}>Ingen arbetsadress angiven. Lägg till den under Redigera så hittar installatörerna dit.</p>
-                )
-              )}
-            </Card>
+                  <p className="text-[11px] leading-snug text-slate-500">Adressen där arbetet utförs. Faktura- och övriga adresser ligger på kundkortet.</p>
+              </Card>
+            ) : null}
 
             <Card className="grid gap-4">
               <p className={crm.cardTitle}>Intern handoff</p>
@@ -1111,32 +1116,47 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             )}
           >
 
-            {/* Er referens — kundens formella referens. Eget kort med flit: den ligger bredvid
-                Kundkontakt men betyder något helt annat, och den är den enda av de två som
-                kunden ser. Delade tidigare fält med kontaktpersonen, vilket gjorde att en rättad
-                telefonkontakt skrev om referensen som styr kundens faktura till rätt attestant. */}
-            {editingOverview ? (
-              <Card className="grid gap-2">
-                <p className={crm.cardTitle}>Er referens</p>
-                <Input
-                  value={draft.your_reference}
-                  onChange={(e) => setField('your_reference', e.target.value)}
-                  placeholder="Kundens referens"
-                />
-                <p className="text-xs text-slate-500">Kundens egen referens — följer med till Fortnox och syns på order och faktura.</p>
-              </Card>
-            ) : draft?.your_reference ? (
-              <Card className="grid gap-1">
-                <p className={crm.cardTitle}>Er referens</p>
-                <p className="text-sm font-semibold text-slate-900">{draft.your_reference}</p>
-              </Card>
-            ) : null}
+            {/* ─── Kontakt & referens ────────────────────────────────────────
+                ETT kort, TVÅ tydligt åtskilda avsnitt.
 
-            {/* Customer contact */}
-            {editingOverview ? (
+                ⚠️ De två är INTE samma sak och får aldrig börja läsas som det. "Er referens" är
+                kundens formella referens — den enda av de två som kunden ser, och den som styr
+                fakturan till rätt attestant. "Kundkontakt" är personen vi och installatörerna
+                ringer, och den skickas inte till Fortnox. De delade en gång FÄLT, vilket gjorde
+                att en rättad telefonkontakt skrev om referensen. Det felet är inte tillbaka —
+                utkastet har fortfarande `your_reference` skilt från `contact_*` — men kortet bär
+                med flit egen rubrik per avsnitt och en hårfin avdelare emellan, så skillnaden
+                syns även när de nu står i samma ruta.
+
+                Var två egna kort. Vart och ett blev en rubrik och en rad, och två sådana på rad
+                gav mer kantlinje än innehåll. */}
+            {editingOverview || draft?.your_reference || customerPhone || customerEmail || customerContact ? (
               <Card className="grid gap-3">
-                <p className={crm.cardTitle}>Kundkontakt</p>
-                <p className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</p>
+                <p className={crm.cardTitle}>Kontakt &amp; referens</p>
+
+                {editingOverview ? (
+                  <label className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Er referens</span>
+                    <Input
+                      value={draft.your_reference}
+                      onChange={(e) => setField('your_reference', e.target.value)}
+                      placeholder="Kundens referens"
+                    />
+                    <span className="text-xs text-slate-500">Kundens egen referens — följer med till Fortnox och syns på order och faktura.</span>
+                  </label>
+                ) : draft?.your_reference ? (
+                  <div className="grid gap-0.5">
+                    <span className={crm.sectionTitle}>Er referens</span>
+                    <p className="m-0 text-sm font-semibold text-slate-900">{draft.your_reference}</p>
+                  </div>
+                ) : null}
+
+                {editingOverview ? (
+                  <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
+                    <div className="grid gap-0.5">
+                      <span className={crm.sectionTitle}>Kundkontakt</span>
+                      <span className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</span>
+                    </div>
                 {/* Pick a different contact if the responsible person changed offer→order. */}
                 {customerContacts.length > 0 ? (
                   <Select
@@ -1166,19 +1186,23 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <span className={crm.sectionTitle}>Telefon</span>
                   <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder="070-123 45 67" inputMode="tel" />
                 </label>
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>E-post</span>
-                  <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
-                </label>
-              </Card>
-            ) : (customerPhone || customerEmail || customerContact) ? (
-              <Card className="grid gap-3">
-                <p className={crm.cardTitle}>Kundkontakt</p>
-                <p className="text-sm font-semibold text-slate-900">{customerContact || workOrder.client_name}</p>
-                <div className="grid gap-1.5 text-sm">
-                  {customerPhone ? <PhoneLink value={customerPhone} /> : null}
-                  {customerEmail ? <EmailLink value={customerEmail} /> : null}
-                </div>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>E-post</span>
+                      <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
+                    </label>
+                  </div>
+                ) : (customerPhone || customerEmail || customerContact) ? (
+                  // Avdelaren bara när BÅDA avsnitten står i kortet — annars ritar den en linje
+                  // under en rubrik som inget står ovanför.
+                  <div className={cn('grid gap-1.5', draft?.your_reference && 'border-t border-[#e0e8dc] pt-3')}>
+                    <span className={crm.sectionTitle}>Kundkontakt</span>
+                    <p className="m-0 text-sm font-semibold text-slate-900">{customerContact || workOrder.client_name}</p>
+                    <div className="grid gap-1.5 text-sm">
+                      {customerPhone ? <PhoneLink value={customerPhone} /> : null}
+                      {customerEmail ? <EmailLink value={customerEmail} /> : null}
+                    </div>
+                  </div>
+                ) : null}
               </Card>
             ) : null}
 
