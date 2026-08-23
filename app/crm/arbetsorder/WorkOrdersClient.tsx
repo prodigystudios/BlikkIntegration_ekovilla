@@ -447,11 +447,12 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
 
                       {/* Date */}
                       <div className="hidden flex-col gap-0.5 sm:flex">
-                        {/* "Installation", inte "Planerad". Kickern beskriver VAD datumet är;
-                            "Planerad" är dessutom namnet på en STATUS, och statuschippen står
-                            några centimeter till vänster på samma rad. En rad kunde alltså läsa
-                            "Ej planerad … PLANERAD –" — samma ord, två betydelser, samma rad. */}
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Installation</span>
+                        {/* "Planerad" är ett MEDVETET VAL (William, 2026-08-23) — ändra inte.
+                            Prövat som "Installation" och backat: etiketten plus datumet under
+                            läses som en enhet, och "Planerad" är ordet verksamheten använder.
+                            Att det sammanfaller med statusen `scheduled` är känt och accepterat;
+                            en rad kan alltså läsa "Ej planerad … PLANERAD –". */}
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Planerad</span>
                         <span className={cn('text-[11px] font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
                           {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
                         </span>
