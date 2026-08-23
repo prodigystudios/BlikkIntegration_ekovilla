@@ -286,8 +286,12 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className={crm.pageTitle}>Arbetsorder</h1>
+          {/* Sublinen räknade upp "översikt, ekonomi, artiklar, tid och kommentarer" — en
+              flikstruktur som inte finns längre. Ekonomi och Artiklar är INTE egna flikar — de
+              ligger i Ekonomi-kortet på översikten, och kommentarerna längst ner på samma
+              översikt. Kvarvarande flikar är Översikt, Filer och Tid. */}
           <p className={cn('mt-1', crm.pageSubtitle)}>
-            Öppna en arbetsorder för arbetsytan med översikt, ekonomi, artiklar, tid och kommentarer.
+            Öppna en order för status, ekonomi, filer, tid och kommentarer.
           </p>
         </div>
         <button
@@ -420,11 +424,18 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                               </span>
                             ) : null}
                             <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                              {(item.line_items || []).length} rader
+                              {(item.line_items || []).length} {(item.line_items || []).length === 1 ? 'rad' : 'rader'}
                             </span>
-                            <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
-                              Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
-                            </span>
+                            {/* Bara AVVIKELSEN. "Fortnox: Synkad" stod på i stort sett varje rad i
+                                listan — femtiotalet chippar som alla sa samma sak, och mitt bland
+                                dem försvann den enda som betydde något. Kvar syns de tre andra
+                                lägena: "Ej synkad", "Väntar" och "Misslyckad". Att chippen saknas
+                                betyder alltså att ordern ÄR synkad. */}
+                            {item.fortnox_order_sync_status !== 'synced' ? (
+                              <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
+                                Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
+                              </span>
+                            ) : null}
                             {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
                             <RowAssigneeChip name={sellerName} />
                           </div>
@@ -436,6 +447,11 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
 
                       {/* Date */}
                       <div className="hidden flex-col gap-0.5 sm:flex">
+                        {/* "Planerad" är ett MEDVETET VAL (William, 2026-08-23) — ändra inte.
+                            Prövat som "Installation" och backat: etiketten plus datumet under
+                            läses som en enhet, och "Planerad" är ordet verksamheten använder.
+                            Att det sammanfaller med statusen `scheduled` är känt och accepterat;
+                            en rad kan alltså läsa "Ej planerad … PLANERAD –". */}
                         <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Planerad</span>
                         <span className={cn('text-[11px] font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
                           {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
