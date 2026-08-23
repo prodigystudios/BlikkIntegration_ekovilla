@@ -29,6 +29,53 @@ describe('måttblocket', () => {
     ]);
   });
 
+  // Rader som lagts till DIREKT på arbetsordern har ingen konstruktion — där finns bara en
+  // artikelsökning. Blocket skrev då ut hela artikelnamnet, och installatören läste
+  // artikelregistret i stället för var isoleringen ska sitta.
+  it('buildMeasurementLines: härleder placeringen ur artikelnamnet NÄR anroparen ber om det', () => {
+    const items = [
+      // Det verkliga fallet från order #56.
+      { pricing_mode: 'm3', article_name: 'EKOVILLA cellulosa 0,038W/mK vägg', m2: '162', thickness_mm: '190' },
+      { pricing_mode: 'm3', article_name: 'EKOVILLA cellulosa 0,038W/mK snedtak', m2: '90', thickness_mm: '500' },
+    ];
+    expect(buildMeasurementLines(items, { inferConstruction: true })).toEqual([
+      'EKOVILLA',
+      'Vägg – 162 m² × 190 mm',
+      'Snedtak – 90 m² × 500 mm',
+    ]);
+  });
+
+  // ⚠️ Utan flaggan måste utdatan vara BYTE FÖR BYTE som förut. Offertformulärets
+  // `adoptExistingMeasurementBlock` gör `handoffNotes.startsWith(block)`; ändras en enda
+  // etikett låser sig varje redan sparad offert på inaktuella mått.
+  it('buildMeasurementLines: härleder INTE utan flaggan — offertens byte-exakta jämförelse', () => {
+    const items = [
+      { pricing_mode: 'm3', article_name: 'EKOVILLA cellulosa 0,038W/mK vägg', m2: '162', thickness_mm: '190' },
+    ];
+    expect(buildMeasurementLines(items)).toEqual([
+      'EKOVILLA',
+      'EKOVILLA cellulosa 0,038W/mK vägg – 162 m² × 190 mm',
+    ]);
+  });
+
+  it('buildMeasurementLines: radens LAGRADE konstruktion vinner över härledningen', () => {
+    // Namnet säger vägg, raden säger vind. Det lagrade värdet sattes när artikeln valdes;
+    // artikelnamnet kan ha ändrats sedan dess, så gissningen får inte köra över det.
+    const lines = buildMeasurementLines(
+      [{ pricing_mode: 'm3', construction: 'vind', article_name: 'EKOVILLA vägg', m2: '10', thickness_mm: '100' }],
+      { inferConstruction: true },
+    );
+    expect(lines).toEqual(['EKOVILLA', 'Vind – 10 m² × 100 mm']);
+  });
+
+  it('buildMeasurementLines: artikelnamnet står kvar när det inte avslöjar någon placering', () => {
+    const lines = buildMeasurementLines(
+      [{ pricing_mode: 'm3', article_name: 'Lösull special', m2: '10', thickness_mm: '100' }],
+      { inferConstruction: true },
+    );
+    expect(lines).toEqual(['Lösull special – 10 m² × 100 mm']);
+  });
+
   it('buildMeasurementLines: materialrubrik + säckantal + total', () => {
     // 100 m² × 200 mm = 20 m³ × 45 kg/m³ = 900 kg; Ekovilla 14 kg/säck → ceil(64.3)=65
     const lines = buildMeasurementLines([
@@ -173,6 +220,58 @@ describe('måttblocket', () => {
 
     it('lämnar text utan måttrader helt orörd', () => {
       expect(stripMeasurementBlock('Anteckning\nRing innan')).toBe('Anteckning\nRing innan');
+    });
+
+    // ⚠️ Verkligt fall: arbetsorder #56, vars beskrivning grupperats för hand i "Huset:" och
+    // "Garage:". En enda städningskörning stannade vid "Garage:" och lämnade måtten under kvar —
+    // det nya blocket lades ovanpå och installatören fick TVÅ uppsättningar mått, med den
+    // inaktuella sist. Ingen måttrad får överleva; prosan ska däremot stå kvar.
+    it('tar bort ALLA måttkörningar när egen text delar upp blocket', () => {
+      const notes = [
+        'Huset:',
+        'Vägg – 162 m² × 190 mm @ 52 kg/m³ – 115 säck',
+        'Vind – 100 m² × 500 mm @ 32 kg/m³ – 115 säck',
+        'Garage:',
+        'Vägg – 67,5 m² × 145 mm @ 52 kg/m³ – 37 säck',
+        '',
+        'Totalt: 451 säck',
+      ].join('\n');
+      const stripped = stripMeasurementBlock(notes);
+      expect(stripped).not.toMatch(/m²/);
+      expect(stripped).not.toMatch(/Totalt:/);
+      expect(stripped).toContain('Huset:');
+      expect(stripped).toContain('Garage:');
+    });
+
+    // ⚠️ Skräpet i datan gjorde städaren BLIND. Ett m²-fält med "162m" gav raden "… – 162m m² ×
+    // 190 mm …", som inte matchade måttmönstret — så just den raden överlevde och stod kvar som
+    // ett inaktuellt mått under det nya blocket. Nya rader kan inte få formen längre, men texten
+    // som redan skrivits gör det.
+    it('känner igen en måttrad även med en vilsen enhet i arean', () => {
+      expect(stripMeasurementBlock('Vägg – 162m m² × 190 mm @ 52 kg/m³ – 115 säck\n\nEgen text'))
+        .toBe('Egen text');
+    });
+
+    // ⚠️ mm² är kabelarea och förekommer på riktigt i en byggtext. Utan blankstegskravet i
+    // mönstret räknades raden som en måttrad — den hade låst offertens automatik och blivit
+    // uppäten av städningen.
+    it('tar INTE en mm²-rad för en måttrad', () => {
+      const notes = 'Dra kabel 2,5 mm² × 3 till fläkten';
+      expect(stripMeasurementBlock(notes)).toBe(notes);
+    });
+
+    // ⚠️ Omkörningen får bara ta text som bevisligen är genererad. Säljare skriver mått i
+    // löptext, och en glupsk omkörning åt upp meningen.
+    it('äter inte upp en egen mening som råkar innehålla ett mått', () => {
+      const notes = [
+        'Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck',
+        '',
+        'Totalt: 65 säck',
+        'Porten är låst.',
+        'OBS: garaget mättes till 30 m² × 100 mm på plats, ring Kalle innan.',
+      ].join('\n');
+      expect(stripMeasurementBlock(notes))
+        .toBe('Porten är låst.\nOBS: garaget mättes till 30 m² × 100 mm på plats, ring Kalle innan.');
     });
   });
 
