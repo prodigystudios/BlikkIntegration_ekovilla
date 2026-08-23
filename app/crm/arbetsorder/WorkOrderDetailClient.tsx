@@ -145,11 +145,20 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
   return <div className={cn(crm.cardInner, className)}>{children}</div>;
 }
 
+// En läsrad: etikett vänster, värde höger. Medvetet UTAN ram och fyllning.
+//
+// ⚠️ Rutan såg tidigare ut som ett avstängt inmatningsfält — `rounded-xl` + `#f1f5ee` + hårfin
+// kant är i praktiken samma recept som `Input`s disabled-läge (`bg-[#eef1ec]`, dämpad text).
+// Snabböversikten och "Ordernummer" lästes därför som ett formulär man inte får röra, fast de
+// är rena fakta. Separationen mellan rader ägs nu av behållaren (`divide-y`), inte av varje rad.
+//
+// Storleken sätts här och ärvs inte: raden användes både inne i en `text-sm`-behållare
+// (Snabböversikt, ROT) och utan (Fortnox order), så samma komponent renderades i två grader.
 function StatField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-2">
-      <span className="text-slate-500">{label}</span>
-      <strong className="text-slate-900">{value}</strong>
+    <div className="flex items-baseline justify-between gap-3 py-1.5">
+      <span className="text-sm text-slate-500">{label}</span>
+      <strong className="text-sm font-semibold tabular-nums text-slate-900">{value}</strong>
     </div>
   );
 }
@@ -604,8 +613,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   ];
 
   // Read-only field display used when the overview is locked.
-  const readField = (label: string, value: React.ReactNode, full = false) => (
-    <div className={cn('grid gap-0.5', full ? 'md:col-span-2' : undefined)}>
+  const readField = (label: string, value: React.ReactNode) => (
+    <div className="grid gap-0.5">
       <span className={crm.sectionTitle}>{label}</span>
       <span className="text-sm text-slate-800">{value || '–'}</span>
     </div>
@@ -613,6 +622,45 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   return (
     <div className="grid grid-cols-1 gap-6 pb-10">
+
+      {/* Klistrad åtgärdsrad under redigering.
+          ────────────────────────────────────
+          Löser två fel som båda kom av att Spara/Avbryt bara fanns i sidhuvudet:
+
+          • "Interna anteckningar" ligger ~1 500 px ner. Man skrev färdigt och fick scrolla hela
+            vägen tillbaka upp för att spara — eller trodde att det inte gick att spara alls.
+          • Bytte man flik mitt i en redigering FÖRSVANN knapparna helt, medan redigeringsläget
+            levde kvar (statusstegen förblev låsta). Utkastet fanns kvar i state, men det syntes
+            inte, och vägen tillbaka var osynlig.
+
+          Raden ligger därför utanför flikpanelerna och följer med på alla tre flikarna. Överkant,
+          inte underkant: supportwidgeten är fastnaglad nere till höger och hade legat över
+          Spara. */}
+      {editingOverview ? (
+        <div className="sticky top-2 z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#cfdcc9] bg-[#f9fbf7]/95 px-4 py-2.5 shadow-[0_10px_28px_-14px_rgba(20,44,27,0.5)] backdrop-blur">
+          <p className="m-0 text-sm text-slate-600">
+            Du redigerar översikten.
+            {activeTab !== 'overview' ? (
+              <>
+                {' '}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('overview')}
+                  className="font-semibold text-[color:var(--ek-accent)] underline-offset-2 hover:underline"
+                >
+                  Visa fälten
+                </button>
+              </>
+            ) : null}
+          </p>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={cancelOverview} disabled={saving} className={crm.ghostButton}>Avbryt</button>
+            <button type="button" onClick={saveWorkOrder} disabled={saving} className={cn(crm.saveButton, 'h-8 w-auto px-5')}>
+              {saving ? 'Sparar…' : 'Spara'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {/* Header */}
       <div>
@@ -628,7 +676,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               {workOrder.partial_invoicing_started_at && workOrder.status !== 'invoiced' && workOrder.status !== 'partially_invoiced' ? (
                 <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Delfakturerad</span>
               ) : null}
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</span>
+              {/* Numret stod som naken versaltext mellan två piller och läste som ett tredje
+                  piller som tappat sin bakgrund. Det är ett faktum i samma rad som de andra —
+                  ge det samma form, i en neutral ton så statusen fortsatt äger färgen. */}
+              <span className={cn(crm.badge, 'border-[#dbe4d6] bg-[#eef3ec] tabular-nums text-slate-600')}>
+                {documentRef(workOrder.fortnox_order_number, workOrder.order_number)}
+              </span>
               {overdue ? (
                 <span className={cn(crm.badge, 'border-rose-200 bg-rose-50 text-rose-700')}>Försenad</span>
               ) : null}
@@ -638,8 +691,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 </span>
               ) : null}
             </div>
-            <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">{workOrder.project_name}</h1>
-            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+            {/* crm.pageTitle (18 px), inte 24: detaljvyn missade den komprimering resten av CRM
+                gick igenom, och projektnamnet här är ofta "6579 - Kund - Projekt" — på 24 px tog
+                den en hel rad för sig själv och tryckte ner allt som faktiskt är arbetsytan. */}
+            <h1 className={cn(crm.pageTitle, 'm-0')}>{workOrder.project_name}</h1>
+            {/* slate-600, inte 500: raden ligger på sidbakgrunden (#e5ede5) där slate-500 mäter
+                3,98:1 och faller under AA. Se pageSubtitle-noten i crmTokens. */}
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
               <span>{workOrder.client_name}</span>
               <span>·</span>
               <span>{workOrder.quote_type === 'private' ? 'Privatkund' : 'Företag'}</span>
@@ -660,17 +718,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               ) : null}
             </div>
           </div>
-          {activeTab === 'overview' ? (
-            editingOverview ? (
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={cancelOverview} disabled={saving} className={crm.ghostButton}>Avbryt</button>
-                <button type="button" onClick={saveWorkOrder} disabled={saving} className={cn(crm.saveButton, 'h-9 w-auto px-5')}>
-                  {saving ? 'Sparar…' : 'Spara'}
-                </button>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setEditingOverview(true)} className={cn(crm.ghostButton)}>Redigera</button>
-            )
+          {/* Under redigering äger den klistrade raden längst upp Spara/Avbryt — se kommentaren
+              vid den. Här står bara ingången, i samma vikt som Filers "Ladda upp filer":
+              samma plats och samma rang ska inte ha två olika knappvikter. */}
+          {activeTab === 'overview' && !editingOverview ? (
+            <button
+              type="button"
+              onClick={() => setEditingOverview(true)}
+              className={crm.primaryButton}
+              style={{ backgroundColor: 'var(--crm-primary)' }}
+            >
+              Redigera
+            </button>
           ) : null}
         </div>
       </div>
@@ -682,9 +741,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           ett osparat utkast och tystat de övriga ändringarna. */}
       <Card className="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className={crm.sectionTitle}>Förlopp</p>
+          <p className={crm.cardTitle}>Förlopp</p>
+          {/* slate-500, inte 400: slate-400 mäter 2,46:1 mot kortbakgrunden — långt under AA.
+              Se sectionTitle-noten i crmTokens. */}
           {statusFlowEditable ? (
-            <span className="text-xs text-slate-400">Klicka på ett steg för att ändra status</span>
+            <span className="text-xs text-slate-500">Klicka på ett steg för att ändra status</span>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -792,17 +853,25 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 </>
               ) : (
                 <>
-                  {readField('Status', workOrderStatusLabel[workOrder.status])}
+                  {/* Status står redan som badge i sidhuvudet OCH som markerat steg i förloppet
+                      direkt ovanför. En tredje utskrift av samma ord tillför inget — den bara
+                      tar den plats där Ansvarig och datumet ska kunna läsas direkt.
+                      I redigeringsläget finns väljaren kvar; där är den kontrollen, inte en kopia. */}
                   {readField('Ansvarig', (workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name) : null) || 'Ej tilldelad')}
-                  {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date), true)}
+                  {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date))}
                 </>
               )}
             </Card>
 
             <Card className="grid gap-4">
+              {/* Adressen skrevs ut TVÅ gånger i läsläget — en gång som kartlänk uppe till höger
+                  och en gång som "Gatuadress"-fält under, tecken för tecken samma sträng. Kvar
+                  står EN utskrift, och den är den användbara: den man kan trycka på för att
+                  navigera. I redigeringsläget står länken kvar i rubriken, för då är fälten nedan
+                  inmatning och inte en kopia. */}
               <div className="flex items-center justify-between gap-2">
-                <p className={crm.sectionTitle}>Arbetsadress</p>
-                {workAddressText ? <AddressLink value={workAddressText} className="text-xs" /> : null}
+                <p className={crm.cardTitle}>Arbetsadress</p>
+                {editingOverview && workAddressText ? <AddressLink value={workAddressText} className="text-xs" /> : null}
               </div>
               {editingOverview ? (
                 <>
@@ -833,14 +902,16 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <p className="text-[11px] leading-snug text-slate-400">Adressen där arbetet utförs. Faktura- och övriga adresser ligger på kundkortet.</p>
                 </>
               ) : (
-                <div className="grid gap-3">
-                  {readField('Gatuadress', joinAddress([workOrder.work_address?.street_address, joinAddress([workOrder.work_address?.postal_code, workOrder.work_address?.city])]))}
-                </div>
+                workAddressText ? (
+                  <AddressLink value={workAddressText} className="text-sm" />
+                ) : (
+                  <p className={cn(crm.emptyValue, 'm-0')}>Ingen arbetsadress angiven. Lägg till den under Redigera så hittar installatörerna dit.</p>
+                )
               )}
             </Card>
 
             <Card className="grid gap-4">
-              <p className={crm.sectionTitle}>Intern handoff</p>
+              <p className={crm.cardTitle}>Intern handoff</p>
               {editingOverview ? (
                 <>
                   <label className="grid gap-1 text-sm text-slate-600">
@@ -862,14 +933,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         Hämta mått från rader
                       </button>
                     </div>
-                    <Textarea value={draft.handoff_notes} onChange={(e) => setField('handoff_notes', e.target.value)} rows={4} placeholder="Detaljer till teamet" />
+                    {/* autoGrow: "Hämta mått från rader" fyller rutinmässigt fältet med 8–12
+                        rader. I en ruta med fast höjd blev det en scrollfälla mitt på sidan —
+                        hjulet åts av fältet och sidan stod still. */}
+                    <Textarea autoGrow value={draft.handoff_notes} onChange={(e) => setField('handoff_notes', e.target.value)} placeholder="Detaljer till teamet" />
                     <p className="text-[11px] leading-snug text-slate-400">
                       Hämtar måtten från orderns artikelrader. Text du skrivit själv står kvar under dem.
                     </p>
                   </div>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Interna anteckningar</span>
-                    <Textarea value={draft.notes} onChange={(e) => setField('notes', e.target.value)} rows={4} placeholder="Internt orderunderlag" />
+                    <Textarea autoGrow value={draft.notes} onChange={(e) => setField('notes', e.target.value)} placeholder="Internt orderunderlag" />
                   </label>
                 </>
               ) : (
@@ -897,7 +971,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 redigeras, till skillnad från den sparade pricing_summary som låg här
                 förut, och bär nu även momssatsen och byggmomsen. */}
             <Card className="grid gap-4">
-              <p className={crm.sectionTitle}>Ekonomi</p>
+              <p className={crm.cardTitle}>Ekonomi</p>
 
               <WorkOrderArticlesTab
                 embedded
@@ -921,7 +995,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               {rot.enabled ? (
                 <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
                   <p className={crm.sectionTitle}>ROT-uppställning</p>
-                  <div className="grid gap-1.5 text-sm sm:grid-cols-2">
+                  <div className="grid gap-x-6 sm:grid-cols-2">
                     {rot.property_designation ? <StatField label="Fastighetsbeteckning" value={rot.property_designation} /> : null}
                     {rot.rot_percent != null ? <StatField label="Skattereduktion" value={`${rot.rot_percent}%`} /> : null}
                     {rot.max_deduction != null ? <StatField label="Max avdrag" value={formatCurrency(rot.max_deduction, workOrder.currency_code)} /> : null}
@@ -1018,8 +1092,24 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             </Card>
           </div>
 
-          {/* Sidebar */}
-          <div className="grid gap-5 lg:content-start">
+          {/* Sidebar
+              ────────
+              KLISTRAD. Vänsterspalten är på en riktig order 2–3 gånger så hög som den här —
+              Ekonomi-kortet ensamt bär ofta ett dussin artikelrader. Topplinjerad slutade
+              sidokolumnen efter en dryg tredjedel och resten av sidan scrollade förbi ~1 600 px
+              tom yta, samtidigt som det som står här (Fortnox-åtgärderna, kontakten, säck- och
+              timtalen) är precis det man vill kunna läsa av MEDAN man går igenom raderna.
+
+              max-h + overflow-auto är avsiktligt: på en kort skärm är kolumnen själv högre än
+              rutan, och utan taket hade dess nedre del aldrig gått att nå. */}
+          <div
+            className={cn(
+              'grid gap-5 lg:sticky lg:content-start lg:overflow-y-auto lg:pb-2',
+              // Går fri från den klistrade åtgärdsraden när den finns, och lägger sig tätt när
+              // den inte gör det — annars stod 64 px tomt ovanför kolumnen i läsläget.
+              editingOverview ? 'lg:top-16 lg:max-h-[calc(100vh-5rem)]' : 'lg:top-4 lg:max-h-[calc(100vh-2rem)]',
+            )}
+          >
 
             {/* Er referens — kundens formella referens. Eget kort med flit: den ligger bredvid
                 Kundkontakt men betyder något helt annat, och den är den enda av de två som
@@ -1027,7 +1117,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 telefonkontakt skrev om referensen som styr kundens faktura till rätt attestant. */}
             {editingOverview ? (
               <Card className="grid gap-2">
-                <p className={crm.sectionTitle}>Er referens</p>
+                <p className={crm.cardTitle}>Er referens</p>
                 <Input
                   value={draft.your_reference}
                   onChange={(e) => setField('your_reference', e.target.value)}
@@ -1037,7 +1127,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               </Card>
             ) : draft?.your_reference ? (
               <Card className="grid gap-1">
-                <p className={crm.sectionTitle}>Er referens</p>
+                <p className={crm.cardTitle}>Er referens</p>
                 <p className="text-sm font-semibold text-slate-900">{draft.your_reference}</p>
               </Card>
             ) : null}
@@ -1045,7 +1135,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             {/* Customer contact */}
             {editingOverview ? (
               <Card className="grid gap-3">
-                <p className={crm.sectionTitle}>Kundkontakt</p>
+                <p className={crm.cardTitle}>Kundkontakt</p>
                 <p className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</p>
                 {/* Pick a different contact if the responsible person changed offer→order. */}
                 {customerContacts.length > 0 ? (
@@ -1083,7 +1173,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               </Card>
             ) : (customerPhone || customerEmail || customerContact) ? (
               <Card className="grid gap-3">
-                <p className={crm.sectionTitle}>Kundkontakt</p>
+                <p className={crm.cardTitle}>Kundkontakt</p>
                 <p className="text-sm font-semibold text-slate-900">{customerContact || workOrder.client_name}</p>
                 <div className="grid gap-1.5 text-sm">
                   {customerPhone ? <PhoneLink value={customerPhone} /> : null}
@@ -1096,14 +1186,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             {fortnoxConnected ? (
               <Card className="grid gap-3">
                 <div className="flex items-center justify-between gap-2">
-                  <p className={crm.sectionTitle}>Fortnox order</p>
+                  <p className={crm.cardTitle}>Fortnox order</p>
                   <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_order_sync_status])}>{syncStatusLabel[workOrder.fortnox_order_sync_status]}</span>
                 </div>
                 {workOrder.fortnox_order_number ? (
                   <StatField label="Ordernummer" value={`#${workOrder.fortnox_order_number}`} />
                 ) : null}
                 {workOrder.fortnox_order_synced_at ? (
-                  <p className="text-xs text-slate-400">Synkad {formatDateTime(workOrder.fortnox_order_synced_at)}</p>
+                  <p className="text-xs text-slate-500">Synkad {formatDateTime(workOrder.fortnox_order_synced_at)}</p>
                 ) : null}
                 {workOrder.fortnox_order_sync_status !== 'synced' ? (
                   <button type="button" onClick={pushToFortnox} disabled={pushingFortnox} className={cn(crm.saveButton, 'h-10 w-full')}>
@@ -1121,7 +1211,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     <button
                       type="button"
                       onClick={() => openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                      // Handrullad kopia av ghostButton — nu delad recept, så paret får samma
+                      // höjd och samma hover som resten av sidokolumnen.
+                      className={cn(crm.ghostButton, 'h-9 w-full')}
                     >
                       Hämta PDF
                     </button>
@@ -1138,7 +1230,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         pdfUrl: `/api/crm/work-orders/${workOrder.id}/fortnox/pdf`,
                       })}
                       disabled={documentEmail.sendingId === workOrder.id}
-                      className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      // Var indigo — sidans enda färg utanför varumärkesrampen, och starkare än
+                      // "Skicka till Fortnox" som är den mer konsekvensrika åtgärden.
+                      className={cn(crm.saveButton, 'h-9')}
                     >
                       {documentEmail.sendingId === workOrder.id ? 'Mejlar…' : 'Mejla order'}
                     </button>
@@ -1150,8 +1244,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
             {/* Snapshot */}
             <Card className="grid gap-3">
-              <p className={crm.sectionTitle}>Snabböversikt</p>
-              <div className="grid gap-2 text-sm">
+              <p className={crm.cardTitle}>Snabböversikt</p>
+              {/* Hårfina avdelare i stället för fem separata rutor: raderna hör ihop och läses
+                  som en lista, inte som fem avstängda fält. */}
+              <div className="grid divide-y divide-[#e8eee4]">
                 {/* Total och Rader står i Ekonomi-kortet i spalten bredvid — här blev de bara
                     en andra uppsättning av samma siffror. Kvar står det som inte syns någon
                     annanstans på sidan. */}

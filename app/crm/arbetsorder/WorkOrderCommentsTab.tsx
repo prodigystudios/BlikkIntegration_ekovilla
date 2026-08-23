@@ -72,13 +72,15 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
 
   return (
     <div className={cn(crm.cardInner, 'grid gap-4')}>
-      <p className={crm.sectionTitle}>Projektkommentarer</p>
+      <p className={crm.cardTitle}>Projektkommentarer</p>
 
       {/* Thread first */}
       <div className="grid gap-2">
         {loading ? <div className="text-sm text-slate-500">Laddar kommentarer…</div> : null}
         {!loading && comments.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga kommentarer ännu.</div>
+          <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
+            Inga kommentarer ännu. Skriv den första nedan — skriv @ och ett namn så får personen en notis.
+          </div>
         ) : null}
         {!loading ? comments.map((item) => {
           const isOwn = !!currentUserId && item.created_by === currentUserId;

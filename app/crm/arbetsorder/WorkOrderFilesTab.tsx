@@ -98,7 +98,7 @@ export default function WorkOrderFilesTab({
   return (
     <div className={cn(crm.cardInner, 'grid gap-4')}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className={crm.sectionTitle}>Filer</p>
+        <p className={crm.cardTitle}>Filer</p>
         {canUpload ? (
           <button
             type="button"
@@ -118,7 +118,7 @@ export default function WorkOrderFilesTab({
           fliken i fält gör det för att TITTA på ritningen, och en dropzone hade tryckt ner den
           under skärmkanten på en telefon. */}
       {canUpload && composerOpen ? (
-        <div className="grid gap-3 rounded-xl border border-solid border-[#cfdcc9] bg-[#f1f5ee] p-3">
+        <div className="grid gap-3 rounded-xl border border-[#cfdcc9] bg-[#f1f5ee] p-3">
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="grid gap-1">
               <span className={crm.label}>Kategori</span>
@@ -196,7 +196,7 @@ export default function WorkOrderFilesTab({
               return (
                 <figure
                   key={file.id}
-                  className="grid overflow-hidden rounded-xl border border-solid border-[#e0e8dc] bg-white"
+                  className="grid overflow-hidden rounded-xl border border-[#e0e8dc] bg-white"
                 >
                   {/* Bilder öppnas i appens egen visare; PDF i webbläsarens. Se kommentaren på
                       FileViewer längst ner i filen för varför de två skiljer sig åt. */}
@@ -267,7 +267,7 @@ export default function WorkOrderFilesTab({
                         "Ladda ner" ligger här och inte bara i visaren: den som förbereder dagen
                         sitter ofta i bilen och har ingen täckning på plats. En ritning som ligger
                         i telefonen går att öppna ändå. */}
-                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-x-0 border-b-0 border-t border-solid border-[#eef2ec] pt-2 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-x-0 border-b-0 border-t border-[#eef2ec] pt-2 text-xs">
                       <a
                         href={`${href}&download=1`}
                         className="font-medium text-slate-500 no-underline hover:text-slate-800"
@@ -367,7 +367,7 @@ function FileViewer({
   }, [onClose]);
 
   const actionClass =
-    'inline-flex h-9 items-center rounded-lg border border-solid border-white/25 bg-white/10 px-3 text-[13px] font-semibold text-white no-underline transition hover:bg-white/20';
+    'inline-flex h-9 items-center rounded-lg border border-white/25 bg-white/10 px-3 text-[13px] font-semibold text-white no-underline transition hover:bg-white/20';
 
   return (
     <div

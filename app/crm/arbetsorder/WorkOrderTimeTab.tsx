@@ -160,22 +160,26 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
   }
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+    // Samma spaltförhållande som översikten (1.35 / 0.65) — flikarna delade tidigare inte
+    // rutnät, så sidan bytte form när man växlade mellan dem.
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)] lg:items-start">
       <div className={cn(crm.cardInner, 'grid gap-3')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className={crm.sectionTitle}>Tidrapporter</p>
+          <p className={crm.cardTitle}>Tidrapporter</p>
           <span className={cn(crm.badge, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{totalHours.toFixed(1)} h totalt</span>
         </div>
         {loading ? <div className="text-sm text-slate-500">Laddar tid…</div> : null}
         {!loading && entries.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Ingen tid rapporterad ännu.</div>
+          <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
+            Ingen tid rapporterad på det här jobbet ännu. Lägg till din första rad under “Ny tidrad”.
+          </div>
         ) : null}
         {!loading ? entries.map((item) => {
           const isOwn = !!currentUserId && item.user_id === currentUserId;
           const isEditing = editingId === item.id;
           if (isEditing) {
             return (
-              <div key={item.id} className="grid gap-2 rounded-xl border border-solid border-emerald-200 bg-[#f1f5ee] px-3 py-3">
+              <div key={item.id} className="grid gap-2 rounded-xl border border-emerald-200 bg-[#f1f5ee] px-3 py-3">
                 <DraftFields draft={editDraft} onChange={setEditDraft} />
                 <Textarea value={editDraft.note} onChange={(e) => setEditDraft((c) => ({ ...c, note: e.target.value }))} rows={2} placeholder="Vad gjordes?" />
                 <div className="flex items-center justify-end gap-2">
@@ -190,7 +194,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
           const start = toClockInput(item.start_time);
           const end = toClockInput(item.end_time);
           return (
-            <div key={item.id} className="grid gap-1 rounded-xl border border-solid border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
+            <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <strong className="text-slate-900">{item.user?.full_name || 'Medarbetare'}</strong>
                 <span className="text-slate-500">
@@ -223,7 +227,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
       </div>
 
       <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
-        <p className={crm.sectionTitle}>Ny tidrad</p>
+        <p className={crm.cardTitle}>Ny tidrad</p>
         <DraftFields draft={createDraft} onChange={setCreateDraft} />
         <label className="grid gap-1 text-sm text-slate-600">
           <span className={crm.sectionTitle}>Kommentar</span>
