@@ -38,7 +38,7 @@ export default function WorkOrderSackTrailCard({
   return (
     <div className={cn(crm.cardInner, 'grid gap-3')}>
       <div className="flex items-baseline justify-between gap-3">
-        <p className={crm.sectionTitle}>Säckrapporter</p>
+        <p className={crm.cardTitle}>Säckrapporter</p>
         {!loading && reports.length > 0 ? (
           <p className="m-0 text-sm font-semibold text-slate-900">
             {formatSacks(total)} <span className="text-xs font-medium text-slate-500">säckar totalt</span>
@@ -53,7 +53,12 @@ export default function WorkOrderSackTrailCard({
       ) : reports.length === 0 ? (
         // "Ingen har rapporterat", inte "noll säckar". Skillnaden är densamma som i
         // snabböversiktens ruta: det ena är ett påstående om jobbet, det andra om rapporteringen.
-        <p className={crm.emptyValue}>Ingen har rapporterat säckar på det här jobbet än.</p>
+        // …och säg VAR rapporten görs. Kortet är en läsvy; den som står här och undrar varför den
+        // är tom ska inte behöva leta efter skrivstället.
+        <p className={crm.emptyValue}>
+          Ingen har rapporterat säckar på det här jobbet än. Delrapporter kommer från
+          installatörens vy, slutsumman från egenkontrollen.
+        </p>
       ) : (
         <ul className="m-0 grid list-none gap-2.5 p-0">
           {reports.map((item) => {
@@ -63,7 +68,7 @@ export default function WorkOrderSackTrailCard({
               <li
                 key={item.id}
                 className={cn(
-                  'grid gap-0.5 border-l-2 border-solid pl-2.5',
+                  'grid gap-0.5 border-l-2 pl-2.5',
                   item.superseded ? 'border-[#e0e8dc]' : 'border-[#c3d4bc]',
                 )}
               >

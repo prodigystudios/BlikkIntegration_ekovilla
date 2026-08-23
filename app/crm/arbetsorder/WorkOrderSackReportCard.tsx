@@ -134,7 +134,7 @@ export default function WorkOrderSackReportCard({
         <div className="grid gap-2.5">
           {groups.map((group) => (
             <div key={group.label} className="grid gap-1">
-              <div className="flex items-baseline justify-between gap-3 border-b border-solid border-[#e8eee5] pb-1">
+              <div className="flex items-baseline justify-between gap-3 border-b border-[#e8eee5] pb-1">
                 <span className="text-sm font-semibold text-slate-800">{group.label}</span>
                 <span className="text-sm font-semibold tabular-nums text-slate-900">{formatSacks(group.total)} st</span>
               </div>
@@ -181,7 +181,7 @@ export default function WorkOrderSackReportCard({
           Rapportera dagens säckar
         </button>
       ) : (
-        <div className="grid gap-3 rounded-xl border border-solid border-[#dce4d8] bg-white p-3">
+        <div className="grid gap-3 rounded-xl border border-[#dce4d8] bg-white p-3">
           <div>
             <label className={crm.label} htmlFor="sack-report-day">Datum</label>
             <input
