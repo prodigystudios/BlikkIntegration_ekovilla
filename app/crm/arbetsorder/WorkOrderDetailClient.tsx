@@ -23,7 +23,7 @@ import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials'
 import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
-import WorkOrderArticlesTab, { type ArticleLineItem } from './WorkOrderArticlesTab';
+import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
@@ -978,7 +978,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             <Card className="grid gap-4">
               <p className={crm.cardTitle}>Ekonomi</p>
 
-              <WorkOrderArticlesTab
+              <WorkOrderArticles
                 embedded
                 items={(workOrder.line_items || []) as ArticleLineItem[]}
                 currencyCode={workOrder.currency_code}
@@ -992,6 +992,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
                 // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
                 canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
+                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
+                // canEdit=false verkligen att ordern är färdigfakturerad.
+                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
                 // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
                 // färdigfakturerad order, där det inte finns något kvar att skriva av.
                 onSave={saveArticles}
