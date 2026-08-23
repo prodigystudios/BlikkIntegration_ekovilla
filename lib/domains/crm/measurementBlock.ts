@@ -5,7 +5,7 @@
 // arbetsordern (där artiklar rättas i efterhand och beskrivningen måste kunna hämtas om).
 // Rent och sidoeffektfritt, så det kan unit-testas och importeras från klientkomponenter.
 
-import { constructionLabel } from './constructions';
+import { constructionLabel, inferConstructionFromArticle } from './constructions';
 import { inferMaterialFromArticle, lineItemSacks, MATERIAL_SHORTS } from './materials';
 
 export type MeasurementLineItem = {
@@ -22,7 +22,21 @@ export type MeasurementLineItem = {
 // can be resolved from the article, the sack count is appended:
 // "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 53 säck". Fills the work description automatically
 // as soon as a row carries measurements (and via the "Hämta mått från rader" button).
-export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
+/**
+ * `inferConstruction` — härled placeringen ur artikelnamnet när raden saknar `construction`.
+ *
+ * ⚠️ OPT-IN, och offertformuläret får ALDRIG skicka den. `adoptExistingMeasurementBlock` där
+ * jämför den sparade texten BYTE FÖR BYTE mot `buildMeasurementLines(...)`
+ * (`handoffNotes.startsWith(block)`). Ändras etiketten matchar en redan sparad offert inte
+ * längre sitt eget block: den öppnas med blocket LÅST och fryst på inaktuella mått, med
+ * motiveringen att säljaren redigerat dem. Precis det låset finns för att förhindra.
+ *
+ * Arbetsordern har ingen sådan ägarskapskontroll — `regenerateMeasurementBlock` bygger alltid om
+ * från grunden — och kan därför byta etikett riskfritt.
+ */
+export type MeasurementBlockOptions = { inferConstruction?: boolean };
+
+export function buildMeasurementLines(items: MeasurementLineItem[], options: MeasurementBlockOptions = {}): string[] {
   const qualifying = items.filter(
     (it) => (it.pricing_mode ?? 'm3') !== 'item' && (it.m2 ?? '').trim() !== '' && (it.thickness_mm ?? '').trim() !== '',
   );
@@ -34,7 +48,20 @@ export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
   let totalSacks = 0;
 
   for (const it of qualifying) {
-    const label = constructionLabel(it.construction) || it.article_name || '';
+    // Etikettkedjan, i fallande tillförlitlighet:
+    //   1. Radens lagrade konstruktion. Offertformuläret sätter den när en artikel väljs ur
+    //      Fortnox (samma härledning som steg 2, körd en gång och sparad). Den vinner alltid —
+    //      artikelnamnet kan ha ändrats sedan dess.
+    //   2. Härledd ur artikelnamnet, NÄR ANROPAREN BER OM DET. Rader som lagts till direkt på
+    //      arbetsordern saknar konstruktion, och blocket skrev då ut hela artikelnamnet:
+    //      "EKOVILLA cellulosa 0,038W/mK vägg – 162 m² × 190 mm @ 52 kg/m³ – 115 säck".
+    //      Installatören ska läsa VAR den ska blåsas, inte artikelregistret.
+    //   3. Artikelnamnet rått. Sista utvägen när namnet inte avslöjar någon placering.
+    const label =
+      constructionLabel(it.construction)
+      || (options.inferConstruction ? constructionLabel(inferConstructionFromArticle(it.article_name)) : '')
+      || it.article_name
+      || '';
     const dims = `${(it.m2 ?? '').trim()} m² × ${(it.thickness_mm ?? '').trim()} mm`;
     let row = label ? `${label} – ${dims}` : dims;
 
@@ -65,7 +92,19 @@ export function buildMeasurementLines(items: MeasurementLineItem[]): string[] {
 // Används för att avgöra om en LADDAD arbetsbeskrivning redan bär ett block vi inte känner
 // igen (säljaren har redigerat det), så automatiken kan hålla sig undan i stället för att
 // lägga en dubblett ovanpå.
-const MEASUREMENT_LINE_RE = /\d\s*m²\s*×\s*\d/;
+// ⚠️ Tål en vilsen enhet mellan talet och m². Måttfälten var fritext, och en skarp rad hade
+// "162m" i m²-fältet — den genererade raden blev då "… – 162m m² × 190 mm …". Utan `m?` matchade
+// mönstret inte, raden räknades inte som en måttrad, och städningen lämnade den kvar: ett
+// INAKTUELLT mått under det nyss omgenererade blocket. Skräpet i datan gjorde alltså städaren
+// blind för precis den rad som mest behövde städas bort.
+//
+// Nya rader kan inte få formen (måttfälten normaliseras vid blur, se normalizeDecimalInput), men
+// texten som redan skrivits ligger kvar i arbetsbeskrivningarna och fixar inte sig själv.
+//
+// ⚠️ Enheten måste följas av BLANKSTEG (`m\s+`), annars fångas `mm²` — kabelarea, en enhet som
+// faktiskt förekommer i en byggtext: "Dra kabel 2,5 mm² × 3 till fläkten" hade räknats som en
+// måttrad, låst offertformulärets automatik och blivit uppäten av städningen.
+const MEASUREMENT_LINE_RE = /\d\s*(?:m\s+)?m²\s*×\s*\d/;
 const TOTAL_LINE_RE = /^Totalt: \d+ säck$/;
 
 export function hasMeasurementBlock(notes: string): boolean {
@@ -115,6 +154,40 @@ function isBlockLine(lines: string[], i: number): boolean {
  * Allt annat är någons egen text och lämnas orört.
  */
 export function stripMeasurementBlock(notes: string): string {
+  // ⚠️ EN KÖRNING RÄCKER INTE. Städningen nedan stannar vid första raden som inte hör till
+  // blocket — med flit, så att säljarens egen text inte äts upp. Men ett block som är UPPDELAT
+  // av egen text mellan måttraderna får då bara sin första del borttagen:
+  //
+  //     Huset:                         ← egen rad, stoppar städningen
+  //     Vägg – 162 m² × 190 mm …       ← tas bort
+  //     Vind – 100 m² × 500 mm …       ← tas bort
+  //     Garage:                        ← egen rad, STOPP
+  //     Vägg – 67,5 m² × 145 mm …      ← BLEV KVAR
+  //     Totalt: 451 säck               ← BLEV KVAR
+  //
+  // Det nya blocket lades sedan ovanpå, och installatören fick två uppsättningar mått med den
+  // INAKTUELLA sist — exakt felet den här funktionen finns för att förhindra. Verkligt fall:
+  // arbetsorder #56, vars beskrivning grupperats i "Huset:" och "Garage:" för hand.
+  //
+  // ⚠️ EFTERFÖLJANDE VARV KRÄVER BEVIS. "Vi tar varje körning av måttrader" var för glupskt: en
+  // säljare skriver mått i löptext — "OBS: garaget mättes till 30 m² × 100 mm på plats, ring
+  // Kalle" — och andra varvet åt upp den raden. Första varvet gör det inte, för det stoppas av
+  // prosan ovanför; det är alltså just omkörningen som är farlig.
+  //
+  // Beviset är något bara den GENERERADE texten har: en "Totalt: N säck"-rad eller en
+  // materialrubrik. En lös mening om mått bär ingetdera och lämnas därför i fred.
+  //
+  // Loopen har ett tak; utan det hade en bugg i strykningen kunnat snurra.
+  let out = stripOneMeasurementRun(notes);
+  for (let pass = 0; pass < 20; pass += 1) {
+    const next = stripOneMeasurementRun(out, { requireBlockEvidence: true });
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
+function stripOneMeasurementRun(notes: string, opts: { requireBlockEvidence?: boolean } = {}): string {
   const lines = notes.split('\n');
   const first = lines.findIndex(isMeasurementLine);
   if (first === -1) return notes;
@@ -134,6 +207,13 @@ export function stripMeasurementBlock(notes: string): string {
       if (j < lines.length && isBlockLine(lines, j)) { i = j; continue; }
     }
     break;
+  }
+
+  // Se loopens kommentar: en omkörning får bara ta bort text som bevisligen är genererad.
+  if (opts.requireBlockEvidence) {
+    const removed = lines.slice(start, end);
+    const looksGenerated = removed.some((line, i) => TOTAL_LINE_RE.test(line.trim()) || isHeadingLine(removed, i));
+    if (!looksGenerated) return notes;
   }
 
   const before = lines.slice(0, start).join('\n').replace(/\s+$/, '');

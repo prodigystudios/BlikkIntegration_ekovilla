@@ -462,7 +462,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // staplas, och behåller det som skrivits under. Ändringen sparas med resten via Spara.
   function addMeasurementsToHandoff() {
     if (!draft) return;
-    const block = buildMeasurementLines((workOrder?.line_items || []) as MeasurementLineItem[]).join('\n');
+    // inferConstruction: rader som lagts till här saknar konstruktion, och utan härledningen
+    // skrevs hela artikelnamnet ut. Flaggan är opt-in — offertformuläret får inte skicka den,
+    // se buildMeasurementLines.
+    const block = buildMeasurementLines((workOrder?.line_items || []) as MeasurementLineItem[], { inferConstruction: true }).join('\n');
     if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
     const next = regenerateMeasurementBlock(draft.handoff_notes, block);
     setDraft((d) => (d ? { ...d, handoff_notes: next } : d));

@@ -18,6 +18,12 @@ export type ArticleLineItem = {
   article_price?: number | null;
   article_unit_name?: string | null;
   pricing_mode?: 'm3' | 'item';
+  // VAR i huset raden sitter. Sätts av offertformuläret när en artikel väljs ur Fortnox
+  // (härledd ur namnet) och följer med hit. ⚠️ Skrivs INTE här: det finns ingen väljare
+  // att rätta en felgissning med, och `construction === 'vind'` styr vilken tabell raden
+  // hamnar i på den SIGNERADE egenkontrollen (lib/domains/egenkontroll/projectSource.ts).
+  // Måttblocket härleder i stället placeringen vid visning, utan att röra datan.
+  construction?: string | null;
   quantity?: string;
   m2?: string;
   thickness_mm?: string;
