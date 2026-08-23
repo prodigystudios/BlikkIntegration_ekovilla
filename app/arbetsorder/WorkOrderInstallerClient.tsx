@@ -6,7 +6,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
-import WorkOrderArticlesTab, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticlesTab';
+import WorkOrderArticles, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticles';
 import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
 import WorkOrderSackReportCard from '@/app/crm/arbetsorder/WorkOrderSackReportCard';
@@ -267,7 +267,7 @@ export default function WorkOrderInstallerClient({
 
       {/* Articles (read-only) */}
       {activeTab === 'articles' ? (
-        <WorkOrderArticlesTab
+        <WorkOrderArticles
           items={(workOrder.line_items || []) as ArticleLineItem[]}
           currencyCode={workOrder.currency_code}
           vatPercent={workOrder.vat_percent}
