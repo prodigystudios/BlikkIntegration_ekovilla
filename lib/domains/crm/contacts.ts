@@ -88,9 +88,11 @@ export function resolveCrmContact(
   preferContact?: CrmContactRow | null,
 ): ResolvedCrmContact {
   const contact = preferContact ?? primaryCrmContact(customer);
-  // En namngiven person på ett FÖRETAG får inte ärva bolagets adress — se huvudet. Utan
-  // kontaktrad är kortets adress fortfarande rätt: den tillskrivs då ingen.
-  const borrowsCardEmail = !contact || customer.customer_type !== 'business';
+  // En namngiven person på ett FÖRETAG får inte ärva bolagets adress — se huvudet. Villkoret är
+  // NAMNET, inte att raden finns: utan namn finns ingen att felaktigt tillskriva adressen, och
+  // kortets egen är då fortfarande rätt svar.
+  const namedPerson = Boolean(contact?.name?.trim());
+  const borrowsCardEmail = !namedPerson || customer.customer_type !== 'business';
   return {
     name: contact?.name?.trim() || '',
     email: contact?.email?.trim() || (borrowsCardEmail ? customer.email?.trim() || '' : ''),

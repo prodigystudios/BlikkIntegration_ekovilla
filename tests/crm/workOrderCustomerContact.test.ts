@@ -96,6 +96,16 @@ describe('getWorkOrderCustomerContact', () => {
     expect(data).toMatchObject({ contactName: 'Anna Andersson', phone: '070-1', email: 'anna@example.se' });
   });
 
+  // ⚠️ Fångat i granskningen: byggdes orderns kontakt på namn ELLER telefon fick en snapshot med
+  // bara ett nummer tränga undan kortets primärkontakt — fältvyn visade ett naket nummer utan namn.
+  it('snapshot med bara ett nummer är ingen vald person — kortet gäller', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ contact_name: null, phone: '08-999', email: null }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ contactName: 'Anna', phone: '08-111', email: 'anna@acme.se' });
+  });
+
   it('tom snapshot (äldre order) faller tillbaka på kortets primärkontakt', async () => {
     const { data } = await getWorkOrderCustomerContact(makeSupabase({}, ACME), 'wo1');
     expect(data).toMatchObject({ contactName: 'Anna', phone: '08-111', email: 'anna@acme.se' });

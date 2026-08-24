@@ -784,10 +784,12 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
   //    och installatörerna ringer") och skrivs till snapshoten — men den här funktionen läste
   //    kundkortet direkt, så ett kontaktbyte gjort i CRM nådde aldrig dem det gjordes för.
   //    Fältvyn visade en annan person än ordern sa.
-  const orderContact: CrmContactRow | null =
-    snap && (snap.contact_name?.trim() || snap.phone?.trim() || snap.email?.trim())
-      ? { name: snap.contact_name ?? null, phone: snap.phone ?? null, email: snap.email ?? null }
-      : null;
+  //    ⚠️ NAMNET avgör att ordern har en egen kontakt. En snapshot med bara ett telefonnummer är
+  //    ingen vald person — den hade annars trängt undan kortets primärkontakt och lämnat fältvyn
+  //    med ett naket nummer utan namn, sämre än före den här ändringen.
+  const orderContact: CrmContactRow | null = snap?.contact_name?.trim()
+    ? { name: snap.contact_name, phone: snap.phone ?? null, email: snap.email ?? null }
+    : null;
 
   const fromOrderContact = () =>
     orderContact

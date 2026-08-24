@@ -143,6 +143,54 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(result.ready).toBe(true);
   });
 
+  // ⚠️ REGRESSION (fångad i granskningen): e-posten löstes upp mot kortets PRIMÄRA kontakt, medan
+  // namnet kom ur snapshoten. Valde säljaren Björn i offertens kontaktväljare fick ordern Björns
+  // namn med Annas adress — samma fel som hela ändringen finns för, fast på skrivvägen.
+  it('offertens valda kontaktperson avgör adressen, inte kortets primära', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, contact_name: 'Björn', organization_number: '556677-8899' } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'business',
+        organization_number: '556677-8899',
+        email: 'info@acme.se',
+        contacts: [
+          { name: 'Anna', email: 'anna@acme.se', is_primary: true },
+          { name: 'Björn', email: 'bjorn@acme.se' },
+        ],
+      },
+    );
+    expect(result.resolved.email).toBe('bjorn@acme.se');
+  });
+
+  it('en vald kontakt som inte står på kortet ärver ingen annans adress', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, contact_name: 'Jonas', organization_number: '556677-8899' } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'business',
+        organization_number: '556677-8899',
+        email: 'robert@acme.se',
+        contacts: [{ name: 'Anna', email: 'anna@acme.se', is_primary: true }],
+      },
+    );
+    // Varken Annas eller bolagets. Jonas finns inte på kortet — då har raden ingen adress.
+    expect(result.resolved.email).toBeNull();
+  });
+
+  it('utan valt kontaktnamn gäller kortets primärkontakt, som förut', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, contact_name: null } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'private',
+        email: 'kortet@example.se',
+        contacts: [{ name: 'Anna Andersson', email: 'anna@example.se', is_primary: true }],
+      },
+    );
+    expect(result.resolved.email).toBe('anna@example.se');
+  });
+
   it('en rättad adress på kundkortet vinner över offertens frusna', () => {
     const result = evaluateWorkOrderReadiness(
       quote({ customer_snapshot: { ...fullSnapshot, email: 'gammal@example.se' } }),

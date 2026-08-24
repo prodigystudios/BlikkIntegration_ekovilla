@@ -24,7 +24,7 @@
  * som ordern sedan inte bar.
  */
 
-import { resolveCrmContact, type CrmContactSource } from './contacts';
+import { resolveCrmContact, type CrmContactRow, type CrmContactSource } from './contacts';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 
 export type WorkOrderReadinessField =
@@ -214,7 +214,25 @@ export function evaluateWorkOrderReadiness(
   // gamla snapshot — en rundgång utan utväg.
   const personalNumber = text(customer?.personal_number) || text(snapshot.personal_number);
   const organizationNumber = text(snapshot.organization_number) || text(customer?.organization_number);
+  // Basen för TELEFONEN, medvetet oförändrad: kortets primärkontakt och därefter kortet.
+  // Numret SPÄRRAR (se punkt 5), och en smalare uppslagning här hade kunnat börja fälla ordrar
+  // som i dag går igenom. E-posten löses upp för sig strax nedan.
   const contact = customer ? resolveCrmContact(customer) : { name: '', email: '', phone: '' };
+
+  // Offertens VALDA kontaktperson. Offertformuläret låter säljaren välja vem offerten gäller
+  // (`resolveCrmContact(selectedCustomer, c)` i QuoteFormClient), och av det valet är NAMNET det
+  // enda snapshoten bär — adressen bredvid är en kopia av kortet som det såg ut den dagen. Slår vi
+  // inte upp personen igen får ordern den PRIMÄRA kontaktens adress under den valdas namn: exakt
+  // "Jonas med Roberts e-post", fast på skrivvägen.
+  //
+  // Står namnet inte på kortet (fritext, eller en kontakt som tagits bort) blir raden namn-bara.
+  // Då lånas ingen adress ut på en företagskund — det är hela regeln — medan privatkundens kort
+  // fortfarande gäller, eftersom kunden ÄR personen.
+  const snapshotContactName = text(snapshot.contact_name);
+  const chosenContact: CrmContactRow | null = snapshotContactName
+    ? ((customer?.contacts ?? []).find((c) => c.name?.trim() === snapshotContactName)
+        ?? { name: snapshotContactName, email: null, phone: null })
+    : null;
   // KUNDENS nummer — det som skrivs till ordern. Slutkundens nummer (end_contact_phone) är en
   // ANNAN person, en kontakt på plats vid sidan av kundkortet, och får aldrig hamna här: ordervyn
   // visar fältet som kundens telefon bredvid kundens kontaktnamn, seedar redigeringsfältet ur det
@@ -235,7 +253,7 @@ export function evaluateWorkOrderReadiness(
   //
   // Spärrar inte: e-post är inget krav för att skapa order, och mejldialogen listar kundens
   // aktuella adresser separat (`documentRecipients`).
-  const email = customer ? text(contact.email) : text(snapshot.email);
+  const email = customer ? text(resolveCrmContact(customer, chosenContact).email) : text(snapshot.email);
   const workAddress = resolveWorkAddress(snapshot, customer);
 
   // 1. Kundkopplingen först: den är förutsättningen för att de andra ens går att slå upp, och
