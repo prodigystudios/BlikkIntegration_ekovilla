@@ -215,8 +215,13 @@ export function evaluateWorkOrderReadiness(
   const personalNumber = text(customer?.personal_number) || text(snapshot.personal_number);
   const organizationNumber = text(snapshot.organization_number) || text(customer?.organization_number);
   // Basen för TELEFONEN, medvetet oförändrad: kortets primärkontakt och därefter kortet.
-  // Numret SPÄRRAR (se punkt 5), och en smalare uppslagning här hade kunnat börja fälla ordrar
-  // som i dag går igenom. E-posten löses upp för sig strax nedan.
+  //
+  // ⚠️ Alltså en avsiktlig asymmetri mot e-posten nedan, som löses mot den VALDA kontakten. Följden
+  // är att en order i teorin kan bära Björns namn med primärkontaktens direktnummer, när
+  // snapshoten saknar nummer. Numret SPÄRRAR (punkt 5), och en smalare uppslagning kan svara tomt
+  // där den breda hittar ett nummer — då hade ordrar som i dag går igenom börjat fällas, och
+  // besättningen stått utan nummer på plats. Kravet är att NÅGON går att nå, inte vem numret
+  // formellt tillhör; en adress läses tvärtom som en identitet.
   const contact = customer ? resolveCrmContact(customer) : { name: '', email: '', phone: '' };
 
   // Offertens VALDA kontaktperson. Offertformuläret låter säljaren välja vem offerten gäller

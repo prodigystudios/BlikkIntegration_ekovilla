@@ -599,9 +599,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // tillbaka på den här hamnade slutkundens adress under kundkontaktens namn, exakt den
   // hopblandning ändringen finns för att ta bort.
   const cardContact = customerInfo && !customerInfo.isOnSiteContact ? customerInfo : null;
-  const customerPhone: string | null = (snapshot.phone || null) ?? cardContact?.phone ?? null;
-  const customerEmail: string | null = (snapshot.email || null) ?? cardContact?.email ?? null;
-  const customerContact: string | null = (snapshot.contact_name || null) ?? cardContact?.contactName ?? null;
+  // Reserv när uppslaget svarade med slutkunden: kundkortet är redan hämtat här för väljaren, så
+  // den delade regeln kan lösa kundens egen kontakt lokalt. Utan den ritades inget Kundkontakt-kort
+  // alls på en order som har en slutkund men vars snapshot aldrig fångade kundens kontakt.
+  // Ingen hook — den här raden ligger efter komponentens tidiga returer.
+  const cardFallback = customerCard ? resolveCrmContact({ ...customerCard, contacts: customerContacts }) : null;
+  const customerPhone: string | null = (snapshot.phone || null) ?? cardContact?.phone ?? cardFallback?.phone ?? null;
+  const customerEmail: string | null = (snapshot.email || null) ?? cardContact?.email ?? cardFallback?.email ?? null;
+  const customerContact: string | null = (snapshot.contact_name || null) ?? cardContact?.contactName ?? cardFallback?.name ?? null;
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected

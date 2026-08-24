@@ -780,6 +780,10 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
   const orderContactName = snap?.contact_name?.trim() || null;
 
   let card: CrmContactSource | null = null;
+  // ⚠️ Felet sparas i stället för att returneras direkt. Slutkunden nedan besvaras utan kundkortet
+  // och gjorde det förut utan att ens läsa det — en tillfälligt trasig kundläsning får inte ta med
+  // sig den uppgift besättningen behöver mest när de står på plats.
+  let cardError: { message: string } | null = null;
   if (wo?.customer_id) {
     const { data: c, error } = await supabase
       .from('crm_customers')
@@ -789,8 +793,8 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
       .select('customer_type, phone, mobile, email, contacts:crm_customer_contacts(name, phone, email, is_primary)')
       .eq('id', wo.customer_id)
       .maybeSingle();
-    if (error) return { data: null, error };
-    card = (c as CrmContactSource) ?? null;
+    if (error) cardError = error;
+    else card = (c as CrmContactSource) ?? null;
   }
 
   // Orderns egna värden vinner, och luckorna fylls ur den kortrad NAMNET syftar på — samma
@@ -810,13 +814,17 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
   // aldrig fångade någon kontakt) faller `resolveCrmContact` tillbaka på kortets primärkontakt av
   // sig själv. Regeln avgör också om kortets e-post får lånas ut: en namngiven kontakt på en
   // företagskund ärver inte bolagets adress, medan privatkundens namn-bara-rad gör det.
-  const base = card
+  const resolved = card
     ? resolveCrmContact(card, orderContact)
     : {
         name: orderContact?.name?.trim() || '',
         email: orderContact?.email?.trim() || '',
         phone: orderContact?.phone?.trim() || '',
       };
+  // ⚠️ NUMRET på ordern gäller även när kontaktnamnet är tomt. Namnet avgör vem adressen tillhör,
+  // men ett nummer tillskrivs ingen — och rensar någon bort namnet men behåller telefonen i CRM
+  // skulle fältvyn annars kasta det enda numret ordern bär, medan CRM-kortet visade det.
+  const base = { ...resolved, phone: snap?.phone?.trim() || resolved.phone };
 
   // Steg 1: en separat slutkund på plats (fångad utanför kundkortet) är den installatörerna ska
   // nå vid jobbet och vinner över kundens kontakt. Fungerar även för en fristående order utan
@@ -841,6 +849,8 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
       error: null,
     };
   }
+
+  if (cardError) return { data: null, error: cardError };
 
   if (!base.name && !base.phone && !base.email && !card?.email?.trim()) return { data: null, error: null };
 

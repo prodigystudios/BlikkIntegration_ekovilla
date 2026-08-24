@@ -108,14 +108,16 @@ describe('getWorkOrderCustomerContact', () => {
     expect(data).toMatchObject({ contactName: 'Anna Andersson', phone: '070-1', email: 'anna@example.se' });
   });
 
-  // ⚠️ Fångat i granskningen: byggdes orderns kontakt på namn ELLER telefon fick en snapshot med
-  // bara ett nummer tränga undan kortets primärkontakt — fältvyn visade ett naket nummer utan namn.
-  it('snapshot med bara ett nummer är ingen vald person — kortet gäller', async () => {
+  // ⚠️ Två fynd möts här. En snapshot med bara ett nummer är ingen VALD PERSON — den får inte
+  // tränga undan kortets namngivna kontakt, annars visade fältvyn ett naket nummer utan namn. Men
+  // numret självt tillskrivs ingen, så orderns eget vinner ändå: rensar någon bort namnet men
+  // behåller telefonen i CRM skulle fältvyn annars kasta det enda numret ordern bär.
+  it('snapshot med bara ett nummer: kortets namn, orderns nummer', async () => {
     const { data } = await getWorkOrderCustomerContact(
       makeSupabase({ contact_name: null, phone: '08-999', email: null }, ACME),
       'wo1',
     );
-    expect(data).toMatchObject({ contactName: 'Anna', phone: '08-111', email: 'anna@acme.se' });
+    expect(data).toMatchObject({ contactName: 'Anna', phone: '08-999', email: 'anna@acme.se' });
   });
 
   // ⚠️ Fångat i granskningen: skrivvägen slog upp namnet på kortet, fältvyn gjorde det inte — så
@@ -165,6 +167,32 @@ describe('getWorkOrderCustomerContact', () => {
       'wo1',
     );
     expect(data).toMatchObject({ contactName: 'anna', email: 'anna@acme.se' });
+  });
+
+  // ⚠️ Slutkunden besvarades förut helt utan kundläsning. Efter omstruktureringen låg läsningen
+  // först — ett tillfälligt fel hade tagit med sig den uppgift besättningen behöver mest.
+  it('ett trasigt kortuppslag sväljer inte slutkunden', async () => {
+    const supabase = {
+      from(table: string) {
+        const builder: any = {
+          select: vi.fn(() => builder),
+          eq: vi.fn(() => builder),
+          maybeSingle: vi.fn(() => {
+            if (table === 'crm_work_orders') {
+              return Promise.resolve({
+                data: { customer_id: 'cust-1', customer_snapshot: { end_contact_name: 'Fastighetsskötaren', end_contact_phone: '070-9' } },
+                error: null,
+              });
+            }
+            return Promise.resolve({ data: null, error: { message: 'tillfälligt fel' } });
+          }),
+        };
+        return builder;
+      },
+    } as any;
+    const { data, error } = await getWorkOrderCustomerContact(supabase, 'wo1');
+    expect(error).toBeNull();
+    expect(data).toMatchObject({ contactName: 'Fastighetsskötaren', phone: '070-9', isOnSiteContact: true });
   });
 
   it('varken kundkoppling, kontakt eller kortadress → inget att visa', async () => {

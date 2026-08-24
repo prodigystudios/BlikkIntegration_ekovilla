@@ -46,6 +46,11 @@
 // ett nummer: slutade telefonen lånas skulle företagsordrar vars kontaktperson saknar direktnummer
 // börja fällas, alltså raka motsatsen till en städning.
 //
+// ⚠️ KÄND LUCKA: villkoret är kundtypen, inte "är raden kunden själv". En PRIVATkund som fått en
+// EXTRA kontaktrad (en maka, en förvaltare) ärver därför fortfarande kortets adress under den
+// personens namn. Att stänga den kräver kundens namn hit, till varje anropare — en större plumbing
+// än luckan är värd i dag. Privatkundens automatiska rad är fortfarande huvudfallet och rätt.
+//
 // ⚠️ Undantaget kräver att `customer_type` finns med i selecten. Saknas det (undefined) beter sig
 // funktionen som förut och lånar ut adressen — medvetet, så att en yta som inte valt ut fältet
 // inte tyst tömmer e-posten för alla privatkunder. Läser du ut en FÖRETAGSKUNDS e-post här: ta med
