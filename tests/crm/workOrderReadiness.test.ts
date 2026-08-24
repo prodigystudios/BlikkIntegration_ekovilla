@@ -86,6 +86,42 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(fields(result.blockers)).toContain('personal_number');
   });
 
+  // ⚠️ REGRESSION: spärren gick inte att ta sig förbi. Snapshoten vann över kundkortet, så en
+  // säljare som gjorde precis det felmeddelandet bad om — fyllde i det fulla numret på kortet —
+  // fälldes ändå av offertens gamla kopia. Prompten i offertformuläret sparar också på KORTET,
+  // vilket gjorde återförsöket till en rundgång utan utväg.
+  it('kundkortets rättade nummer vinner över offertens gamla tiosiffriga', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, personal_number: '8501011236' } }),
+      { ...emptyCustomer, personal_number: '198501011236' },
+    );
+    expect(fields(result.blockers)).not.toContain('personal_number');
+    // Ordern ska bära numret som faktiskt gäller — det är det Fortnox får som OrganisationNumber.
+    expect(result.resolved.personalNumber).toBe('198501011236');
+    expect(result.ready).toBe(true);
+  });
+
+  it('kundkortet vinner också över en platshållare i snapshoten', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, personal_number: '111111' } }),
+      { ...emptyCustomer, personal_number: '198501011236' },
+    );
+    expect(fields(result.blockers)).not.toContain('personal_number');
+    expect(result.resolved.personalNumber).toBe('198501011236');
+  });
+
+  it('utan kundrad att läsa faller kontrollen tillbaka på snapshoten', () => {
+    // customer_id finns (annars kortsluter kontrollen), men raden gick inte att hämta. Då är
+    // snapshoten det enda som finns — den ska fortfarande prövas, inte hoppas över.
+    expect(evaluateWorkOrderReadiness(quote(), null).ready).toBe(true);
+    expect(
+      fields(evaluateWorkOrderReadiness(
+        quote({ customer_snapshot: { ...fullSnapshot, personal_number: '8501011236' } }),
+        null,
+      ).blockers),
+    ).toContain('personal_number');
+  });
+
   it('företagskund utan org.nr spärras, privatkund berörs inte', () => {
     const business = evaluateWorkOrderReadiness(
       quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, personal_number: null, organization_number: null } }),

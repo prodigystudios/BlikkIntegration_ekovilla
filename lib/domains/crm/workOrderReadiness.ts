@@ -11,7 +11,12 @@
  * att redigera i offertformuläret — de är en ögonblicksbild av kundkortet, satt när kunden väljs.
  * Utan omläsningen hade en säljare som gör precis det spärren ber om (fyller i adressen på
  * kundkortet) blockerats ändå, av en snapshot som skrevs innan. Kundkortet vinner därför när
- * snapshoten är tom — aldrig tvärtom, en ifylld snapshot är ett medvetet val för just den offerten.
+ * snapshoten är tom — en ifylld snapshot är i övrigt ett medvetet val för just den offerten.
+ *
+ * ⚠️ MED ETT UNDANTAG: PERSONNUMRET. Där vinner kundkortet ALLTID, eftersom numret inte går att
+ * redigera per offert och det är kortet — inte snapshoten — som Fortnox läser. Se resonemanget vid
+ * `personalNumber` nedan; en snapshot som vann över ett rättat kort gjorde spärren omöjlig att ta
+ * sig förbi.
  *
  * Funktionen är ren och returnerar BÅDE fynden och de värden som lösts upp, så att
  * `createCrmWorkOrderFromQuote` bakar in exakt det som kontrollerades i ordersnapshoten. Räknade
@@ -192,7 +197,20 @@ export function evaluateWorkOrderReadiness(
   const blockers: WorkOrderReadinessIssue[] = [];
   const warnings: WorkOrderReadinessIssue[] = [];
 
-  const personalNumber = text(snapshot.personal_number) || text(customer?.personal_number);
+  // ⚠️ HÄR VINNER KUNDKORTET — tvärtom mot adressen nedan, och med flit.
+  //
+  // Personnumret går inte att redigera i offertformuläret (ROT-sektionen VISAR det, den ändrar det
+  // inte), så snapshotens värde är aldrig ett medvetet val för just den offerten — det är en
+  // kopia av kortet som det såg ut när kunden valdes. Och det är kortet Fortnox faktiskt läser:
+  // numret går dit som kundens `OrganisationNumber` via `buildFortnoxCustomerPayload`, aldrig ur
+  // offertens snapshot. Att spärra på snapshoten var alltså att pröva ett värde som ändå inte är
+  // det som skickas.
+  //
+  // Med snapshoten först fastnade en säljare som gjort precis det spärren bad om: kunden fick sitt
+  // fulla nummer på kundkortet, men offerten bar kvar det gamla tiosiffriga och spärren fällde om
+  // och om igen. Prompten i offertformuläret sparar också på KORTET, så återförsöket mötte samma
+  // gamla snapshot — en rundgång utan utväg.
+  const personalNumber = text(customer?.personal_number) || text(snapshot.personal_number);
   const organizationNumber = text(snapshot.organization_number) || text(customer?.organization_number);
   const contact = customer ? resolveCrmContact(customer) : { name: '', email: '', phone: '' };
   // KUNDENS nummer — det som skrivs till ordern. Slutkundens nummer (end_contact_phone) är en
