@@ -15,15 +15,33 @@
 // different addresses.
 //
 // One rule, everywhere: a named contact person wins when one exists, otherwise the card.
-// Resolved FIELD BY FIELD, so a contact with a name but no e-mail still falls back to the
-// card's address instead of resolving to nothing.
+// Resolved FIELD BY FIELD, so a contact with a name but no phone still falls back to the
+// card's number instead of resolving to nothing.
 //
-// The field-by-field part is now load-bearing, not just defensive: a PRIVATE customer gets an
+// The field-by-field part is load-bearing, not just defensive: a PRIVATE customer gets an
 // automatic primary contact row carrying ONLY the person's name (createCrmCustomer), precisely
 // so "Er referens" fills itself while telephone and e-mail keep coming from the card. Copying
 // the channels into that row would freeze an address that is later corrected on the card.
 // Anything reading a contact row directly must go through here — two pickers that read
 // `contact.phone` raw would otherwise blank a number the card had already supplied.
+//
+// ⚠️ MED ETT UNDANTAG: E-POSTEN LÅNAS INTE UT TILL EN NAMNGIVEN PERSON PÅ ETT FÖRETAG.
+//
+// Kortets kanaler tillhör KUNDEN. På en privatkund ÄR kunden personen på kontaktraden — vår
+// automatiska rad bär bara hens namn — så lånet är korrekt där. På ett företag är kortets adress
+// bolagets växel/inkorg, och att låna ut den åt en anställd satte en persons namn bredvid en
+// annans adress: ordern visade "Jonas" med Roberts e-post. En kontaktperson utan egen adress
+// resolvar därför till TOM på en företagskund, inte till kortets.
+//
+// Telefonen lånas fortfarande ut, med flit. Ett nummer är en väg fram — växeln kopplar — medan en
+// e-postadress läses som en identitet. Och `evaluateWorkOrderReadiness` SPÄRRAR på att det finns
+// ett nummer: slutade telefonen lånas skulle företagsordrar vars kontaktperson saknar direktnummer
+// börja fällas, alltså raka motsatsen till en städning.
+//
+// ⚠️ Undantaget kräver att `customer_type` finns med i selecten. Saknas det (undefined) beter sig
+// funktionen som förut och lånar ut adressen — medvetet, så att en yta som inte valt ut fältet
+// inte tyst tömmer e-posten för alla privatkunder. Läser du ut en FÖRETAGSKUNDS e-post här: ta med
+// `customer_type`.
 //
 // Deliberately pure and dependency-free so both server domain code and client components can
 // import it (same as `pricing.ts`).
@@ -36,6 +54,8 @@ export type CrmContactRow = {
 };
 
 export type CrmContactSource = {
+  /** Avgör om kortets e-post får lånas ut åt kontaktraden — se huvudet. Utelämnad = som förut. */
+  customer_type?: 'business' | 'private' | null;
   email?: string | null;
   phone?: string | null;
   mobile?: string | null;
@@ -68,9 +88,12 @@ export function resolveCrmContact(
   preferContact?: CrmContactRow | null,
 ): ResolvedCrmContact {
   const contact = preferContact ?? primaryCrmContact(customer);
+  // En namngiven person på ett FÖRETAG får inte ärva bolagets adress — se huvudet. Utan
+  // kontaktrad är kortets adress fortfarande rätt: den tillskrivs då ingen.
+  const borrowsCardEmail = !contact || customer.customer_type !== 'business';
   return {
     name: contact?.name?.trim() || '',
-    email: contact?.email?.trim() || customer.email?.trim() || '',
+    email: contact?.email?.trim() || (borrowsCardEmail ? customer.email?.trim() || '' : ''),
     phone: contact?.phone?.trim() || customer.phone?.trim() || customer.mobile?.trim() || '',
   };
 }

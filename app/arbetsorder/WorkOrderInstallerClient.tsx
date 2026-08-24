@@ -130,9 +130,21 @@ export default function WorkOrderInstallerClient({
   }
 
   const snapshot = workOrder.customer_snapshot || {};
-  const phone: string | null = customerInfo?.phone ?? (snapshot.phone || null);
-  const email: string | null = customerInfo?.email ?? (snapshot.email || null);
-  const contactName: string | null = customerInfo?.contactName ?? (snapshot.contact_name || null);
+  // EN KÄLLA I TAGET, aldrig fält för fält mellan två personer. Ordningen — slutkunden på plats,
+  // annars orderns egen kontakt, annars kundkortet — sätts av `getWorkOrderCustomerContact`, så
+  // fältvyn och CRM-vyn säger samma sak om samma order.
+  //
+  // Blandningen som stod här tog namnet från en källa och e-posten från nästa: en slutkund med
+  // bara namn och telefon fick kundens adress under sig. Snapshoten är kvar som HEL reserv, för
+  // det fallet att uppslaget inte svarar — aldrig som ifyllnad av enstaka fält.
+  const contact = customerInfo ?? {
+    contactName: snapshot.contact_name || null,
+    phone: snapshot.phone || null,
+    email: snapshot.email || null,
+  };
+  const phone: string | null = contact.phone;
+  const email: string | null = contact.email;
+  const contactName: string | null = contact.contactName;
   const addressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';

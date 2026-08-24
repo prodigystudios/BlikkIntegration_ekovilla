@@ -242,7 +242,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // The card's own channels come along too: a contact row without phone/e-mail (a private
   // customer's auto-created row carries only the name) must fall back to them on pick.
   const [customerContacts, setCustomerContacts] = useState<Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>>([]);
-  const [customerCard, setCustomerCard] = useState<{ email: string | null; phone: string | null; mobile: string | null } | null>(null);
+  // customer_type följer med: det avgör om kortets e-post får lånas ut åt en kontaktrad utan egen
+  // (`resolveCrmContact`). Utan fältet lånas den ut som förut — och väljaren nedan hade skrivit in
+  // bolagets adress under den anställdes namn, vilket är precis det vi slutade göra.
+  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null } | null>(null);
   useEffect(() => {
     const cid = workOrder?.customer_id;
     if (!cid) { setCustomerContacts([]); setCustomerCard(null); return; }
@@ -253,7 +256,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         if (!active) return;
         const item = json?.ok ? json.data?.item : null;
         setCustomerContacts(Array.isArray(item?.contacts) ? item.contacts : []);
-        setCustomerCard(item ? { email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
+        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
       })
       .catch(() => { if (active) { setCustomerContacts([]); setCustomerCard(null); } });
     return () => { active = false; };

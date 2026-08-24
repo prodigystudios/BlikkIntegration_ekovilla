@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { crmQuoteSelect } from './quotes';
-import { resolveCrmContact, type CrmContactSource } from './contacts';
+import { resolveCrmContact, type CrmContactRow, type CrmContactSource } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
@@ -268,7 +268,7 @@ function getClientName(source: QuoteSource) {
 // Kundkortets halva av fullständighetskontrollen. Fälten är exakt de `resolveCrmContact` och
 // `evaluateWorkOrderReadiness` läser — inget mer, eftersom raden bara används för att fylla luckor.
 const readinessCustomerSelect =
-  'organization_number, personal_number, email, phone, mobile, visit_address, contacts:crm_customer_contacts(name, phone, email, is_primary)';
+  'customer_type, organization_number, personal_number, email, phone, mobile, visit_address, contacts:crm_customer_contacts(name, phone, email, is_primary)';
 
 // ⚠️ Felet får INTE svaljas. En tillfälligt misslyckad läsning skulle annars vara omöjlig att
 // skilja från "kunden har inga uppgifter": kontrollen hade hittat på spärrar för adress, telefon
@@ -376,6 +376,11 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     personal_number: quote.quote_type === 'private' ? readiness.resolved.personalNumber : (quote.customer_snapshot?.personal_number ?? null),
     organization_number: quote.quote_type === 'business' ? readiness.resolved.organizationNumber : (quote.customer_snapshot?.organization_number ?? null),
     phone: readiness.resolved.phone,
+    // E-posten löses om ur kundkortet, till skillnad från telefonen ovan som bara fyller en tom
+    // snapshot. Skälet är att den inte går att redigera på offerten — `draft.email` sätts från
+    // kortet och renderas aldrig i formuläret — så en snapshot som vann hade burit vidare ett lån
+    // som inte längre görs: bolagets adress under en anställds namn. Se `resolved.email`.
+    email: readiness.resolved.email,
   };
 
   const orderNumber = buildWorkOrderNumber(quote.id);
@@ -748,11 +753,21 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
     .from('crm_work_orders').select('customer_id, customer_snapshot').eq('id', workOrderId).maybeSingle();
   if (woError) return { data: null, error: woError };
 
-  // A separate on-site contact (slutkund, captured outside the customer card) is who the
-  // installer should reach at the job site — prefer it over the customer-card contact. Works
-  // even for a standalone order with no linked customer.
-  const snap = (wo?.customer_snapshot ?? null) as
-    { end_contact_name?: string | null; end_contact_phone?: string | null; end_contact_email?: string | null } | null;
+  const snap = (wo?.customer_snapshot ?? null) as {
+    contact_name?: string | null;
+    phone?: string | null;
+    email?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
+  } | null;
+
+  // 1. A separate on-site contact (slutkund, captured outside the customer card) is who the
+  //    installer should reach at the job site — prefer it over the customer-card contact. Works
+  //    even for a standalone order with no linked customer.
+  //
+  //    Den lånar INGENTING från kunden: fälten som är tomma förblir tomma. Slutkunden är en annan
+  //    person, och en adress lånad hit hade stått under fel namn.
   if (snap && (snap.end_contact_name?.trim() || snap.end_contact_phone?.trim() || snap.end_contact_email?.trim())) {
     return {
       data: {
@@ -765,20 +780,48 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
     };
   }
 
-  if (!wo?.customer_id) return { data: null, error: null };
+  // 2. ORDERNS EGEN KONTAKT går före kundkortets. Den redigeras i CRM-vyn ("Kundkontakt: vem vi
+  //    och installatörerna ringer") och skrivs till snapshoten — men den här funktionen läste
+  //    kundkortet direkt, så ett kontaktbyte gjort i CRM nådde aldrig dem det gjordes för.
+  //    Fältvyn visade en annan person än ordern sa.
+  const orderContact: CrmContactRow | null =
+    snap && (snap.contact_name?.trim() || snap.phone?.trim() || snap.email?.trim())
+      ? { name: snap.contact_name ?? null, phone: snap.phone ?? null, email: snap.email ?? null }
+      : null;
+
+  const fromOrderContact = () =>
+    orderContact
+      ? {
+          data: {
+            contactName: orderContact.name || null,
+            phone: orderContact.phone || null,
+            email: orderContact.email || null,
+            isOnSiteContact: false,
+          },
+          error: null,
+        }
+      : { data: null, error: null };
+
+  if (!wo?.customer_id) return fromOrderContact();
 
   const { data: c, error } = await supabase
     .from('crm_customers')
-    .select('phone, mobile, email, contacts:crm_customer_contacts(name, phone, email, is_primary)')
+    // customer_type är inte kosmetik här: det avgör om kortets e-post får lånas ut åt
+    // kontaktraden (`resolveCrmContact`). Utan fältet lånas den ut som förut, och fältvyn hade
+    // visat bolagets adress under en anställds namn.
+    .select('customer_type, phone, mobile, email, contacts:crm_customer_contacts(name, phone, email, is_primary)')
     .eq('id', wo.customer_id)
     .maybeSingle();
   if (error) return { data: null, error };
-  if (!c) return { data: null, error: null };
+  if (!c) return fromOrderContact();
 
-  // Shared rule (resolveCrmContact): the named contact person wins, the card fills the gaps.
-  // This used to read the card first, which meant a customer with both could get the offer at
-  // one address and the order confirmation at another.
-  const contact = resolveCrmContact(c as CrmContactSource);
+  // 3. Kundkortet fyller luckorna — samma delade regel som överallt annars, med orderns egen
+  //    kontakt som den valda raden. Är snapshoten tom (äldre order som aldrig fångade någon
+  //    kontakt) faller `resolveCrmContact` tillbaka på kortets primärkontakt av sig själv.
+  //
+  //    Regeln avgör också om kortets e-post får lånas ut: en namngiven kontakt på en företagskund
+  //    ärver inte bolagets adress, medan privatkundens namn-bara-rad gör det.
+  const contact = resolveCrmContact(c as CrmContactSource, orderContact);
   return {
     data: {
       contactName: contact.name || null,

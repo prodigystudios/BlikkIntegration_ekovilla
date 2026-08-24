@@ -58,6 +58,8 @@ export type WorkOrderReadinessResolved = {
   personalNumber: string | null;
   organizationNumber: string | null;
   phone: string | null;
+  /** Kontaktens e-post ur kundkortet — se resonemanget vid uträkningen. Spärrar inte. */
+  email: string | null;
   /** Adressen installatörerna navigerar till, med kundkortet som sista utväg. */
   workAddress: AddressParts & { delivery_address: null; invoice_address: string | null };
 };
@@ -221,6 +223,19 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
+  // E-POSTEN: kundkortet vinner, aldrig snapshoten — samma skäl som personnumret ovan. Den går
+  // inte att redigera på offerten (`draft.email` sätts från kortet och renderas aldrig i
+  // formuläret), så snapshotens värde är en ren kopia.
+  //
+  // ⚠️ Och den TOMMA upplösningen måste få vinna. `resolveCrmContact` lånar inte längre ut ett
+  // företags adress åt en namngiven kontakt utan egen — det var så en order kunde visa Roberts
+  // e-post under Jonas namn. Fyllde vi luckan ur snapshoten här hade exakt det gamla lånet
+  // kommit tillbaka, fruset från den dag offerten skrevs. Snapshoten används därför bara när det
+  // inte finns någon kundrad att läsa alls.
+  //
+  // Spärrar inte: e-post är inget krav för att skapa order, och mejldialogen listar kundens
+  // aktuella adresser separat (`documentRecipients`).
+  const email = customer ? text(contact.email) : text(snapshot.email);
   const workAddress = resolveWorkAddress(snapshot, customer);
 
   // 1. Kundkopplingen först: den är förutsättningen för att de andra ens går att slå upp, och
@@ -246,6 +261,7 @@ export function evaluateWorkOrderReadiness(
         personalNumber,
         organizationNumber,
         phone,
+        email,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -325,6 +341,7 @@ export function evaluateWorkOrderReadiness(
       personalNumber,
       organizationNumber,
       phone,
+      email,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en

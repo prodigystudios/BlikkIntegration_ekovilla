@@ -46,8 +46,10 @@ describe('resolveCrmContact', () => {
       .toEqual({ name: '', email: 'info@acme.se', phone: '08-000' });
   });
 
-  // Fält för fält, inte allt-eller-inget: en kontakt utan e-post ska inte tysta kortets adress.
-  it('faller tillbaka per fält, inte per kontakt', () => {
+  // Fält för fält, inte allt-eller-inget: en kontakt utan telefon ska inte tysta kortets nummer.
+  // Utan `customer_type` i selecten lånas ÄVEN e-posten ut, precis som före e-postregeln — det är
+  // det medvetna bakåtkompatibla läget, inte en glömska.
+  it('faller tillbaka per fält när customer_type inte valts ut (bakåtkompatibelt)', () => {
     expect(resolveCrmContact({
       email: 'info@acme.se',
       phone: '08-000',
@@ -79,17 +81,63 @@ describe('resolveCrmContact', () => {
     expect(resolveCrmContact(customer, customer.contacts![1]).email).toBe('bo@acme.se');
   });
 
-  it('preferContact utan e-post faller tillbaka på kortet, inte på primärkontakten', () => {
+  it('preferContact utan e-post hämtar aldrig primärkontaktens adress', () => {
     const customer: CrmContactSource = {
+      customer_type: 'business',
       email: 'info@acme.se',
       contacts: [
         { name: 'Anna', email: 'anna@acme.se', is_primary: true },
         { name: 'Bo', email: null },
       ],
     };
+    // Varken Annas eller bolagets — Bo har ingen adress, och då har raden ingen.
     expect(resolveCrmContact(customer, customer.contacts![1])).toEqual({
-      name: 'Bo', email: 'info@acme.se', phone: '',
+      name: 'Bo', email: '', phone: '',
     });
+  });
+});
+
+// ── E-posten lånas inte ut åt en namngiven person på ett företag ──────────────────────────────
+//
+// Rapporterat i drift: ordern visade "Jonas" som kontaktperson med Roberts e-post. Kortets adress
+// tillhör KUNDEN — på ett bolag är den växeln/inkorgen, inte den anställdes. Telefonen lånas
+// fortfarande ut med flit: ett nummer är en väg fram, och orderspärren kräver att det finns ett.
+describe('resolveCrmContact — kortets e-post lånas inte ut till en annan person', () => {
+  const acme: CrmContactSource = {
+    customer_type: 'business',
+    email: 'robert@acme.se',
+    phone: '08-000',
+    contacts: [{ name: 'Jonas', email: null, phone: null, is_primary: true }],
+  };
+
+  it('företagskontakt utan egen adress får INGEN adress', () => {
+    expect(resolveCrmContact(acme).email).toBe('');
+  });
+
+  it('men numret lånas fortfarande — växeln kopplar, och orderspärren kräver ett nummer', () => {
+    expect(resolveCrmContact(acme).phone).toBe('08-000');
+    expect(resolveCrmContact(acme).name).toBe('Jonas');
+  });
+
+  it('har kontakten en egen adress används den, som förut', () => {
+    expect(resolveCrmContact({ ...acme, contacts: [{ name: 'Jonas', email: 'jonas@acme.se' }] }).email)
+      .toBe('jonas@acme.se');
+  });
+
+  it('utan kontaktrader är kortets adress fortfarande rätt — den tillskrivs ingen', () => {
+    expect(resolveCrmContact({ ...acme, contacts: [] }).email).toBe('robert@acme.se');
+  });
+
+  // ⚠️ BÄRANDE: privatkunden får en automatisk kontaktrad med BARA namnet (createCrmCustomer).
+  // Den raden ÄR kunden, så kortets adress är hens egen. Stramade vi åt här skulle varje
+  // privatkund tappa sin e-post på offert, order och i fältvyn.
+  it('privatkundens namn-bara-rad ärver kortet — den raden är kunden själv', () => {
+    expect(resolveCrmContact({
+      customer_type: 'private',
+      email: 'anna@example.se',
+      phone: '070-1',
+      contacts: [{ name: 'Anna Andersson', email: null, phone: null, is_primary: true }],
+    })).toEqual({ name: 'Anna Andersson', email: 'anna@example.se', phone: '070-1' });
   });
 });
 
