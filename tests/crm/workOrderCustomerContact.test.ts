@@ -48,7 +48,7 @@ const ACME = {
 };
 
 describe('getWorkOrderCustomerContact', () => {
-  it('slutkunden på plats vinner och lånar ingenting', async () => {
+  it('slutkunden på plats vinner och ärver ingen adress', async () => {
     const { data } = await getWorkOrderCustomerContact(
       makeSupabase({ end_contact_name: 'Fastighetsskötaren', end_contact_phone: '070-9', contact_name: 'Anna', email: 'anna@acme.se' }, ACME),
       'wo1',
@@ -61,6 +61,16 @@ describe('getWorkOrderCustomerContact', () => {
       email: null,
       isOnSiteContact: true,
     });
+  });
+
+  // ⚠️ Fångat i granskningen: en slutkund fångas ofta med BARA namn, och en helt-eller-inget-
+  // hämtning lämnade då besättningen utan nummer att ringa när de stod på plats.
+  it('slutkund utan eget nummer lånar ändå ett — någon måste gå att nå på plats', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ end_contact_name: 'Fastighetsskötaren', contact_name: 'Anna', phone: '08-111', email: 'anna@acme.se' }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ contactName: 'Fastighetsskötaren', phone: '08-111', email: null });
   });
 
   // ⚠️ REGRESSION: den här saknades helt. Fältvyn gick direkt på kundkortet, så en säljare som
@@ -104,6 +114,22 @@ describe('getWorkOrderCustomerContact', () => {
       'wo1',
     );
     expect(data).toMatchObject({ contactName: 'Anna', phone: '08-111', email: 'anna@acme.se' });
+  });
+
+  // ⚠️ Fångat i granskningen: skrivvägen slog upp namnet på kortet, fältvyn gjorde det inte — så
+  // samma order kunde svara med Björns adress på ena hållet och ingen alls på det andra.
+  it('en äldre order med bara ett namn slår upp personen på kortet', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ contact_name: 'Björn', phone: null, email: null }, {
+        ...ACME,
+        contacts: [
+          { name: 'Anna', email: 'anna@acme.se', phone: '08-111', is_primary: true },
+          { name: 'Björn', email: 'bjorn@acme.se', phone: '08-222' },
+        ],
+      }),
+      'wo1',
+    );
+    expect(data).toMatchObject({ contactName: 'Björn', phone: '08-222', email: 'bjorn@acme.se' });
   });
 
   it('tom snapshot (äldre order) faller tillbaka på kortets primärkontakt', async () => {

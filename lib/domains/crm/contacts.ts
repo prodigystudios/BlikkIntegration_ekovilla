@@ -33,6 +33,14 @@
 // annans adress: ordern visade "Jonas" med Roberts e-post. En kontaktperson utan egen adress
 // resolvar därför till TOM på en företagskund, inte till kortets.
 //
+// Villkoret är NAMNET, inte kontaktraden. Finns ingen namngiven person finns ingen att felaktigt
+// tillskriva adressen, och kortets egen är fortfarande rätt svar. ⚠️ Följden är att en
+// företagskund UTAN kontaktrader ändå tappar adressen på sin arbetsorder, eftersom offerten alltid
+// bär ett namn ("Er referens" är obligatoriskt där) och `evaluateWorkOrderReadiness` slår upp det
+// namnet som en namn-bara-rad. Det är regeln, inte ett förbiseende: adressen hade annars stått
+// under referenspersonens namn. Mejlutskicket når den ändå — `crmContactRecipients` listar den
+// separat som "Kundens adress".
+//
 // Telefonen lånas fortfarande ut, med flit. Ett nummer är en väg fram — växeln kopplar — medan en
 // e-postadress läses som en identitet. Och `evaluateWorkOrderReadiness` SPÄRRAR på att det finns
 // ett nummer: slutade telefonen lånas skulle företagsordrar vars kontaktperson saknar direktnummer
@@ -98,6 +106,25 @@ export function resolveCrmContact(
     email: contact?.email?.trim() || (borrowsCardEmail ? customer.email?.trim() || '' : ''),
     phone: contact?.phone?.trim() || customer.phone?.trim() || customer.mobile?.trim() || '',
   };
+}
+
+/**
+ * Kontaktraden ett SPARAT namn syftar på, eller null.
+ *
+ * Ett dokument (offert, order) bär bara kontaktpersonens NAMN — inte vilken rad valet gällde. Utan
+ * den här uppslagningen löses adressen mot kortets PRIMÄRA kontakt i stället, och då står den
+ * valda personens namn bredvid primärkontaktens adress: precis felet regeln finns för.
+ *
+ * Delad av `evaluateWorkOrderReadiness` (skrivvägen) och `getWorkOrderCustomerContact` (fältvyn),
+ * så samma order svarar likadant på båda hållen.
+ */
+export function contactRowByName(
+  customer: CrmContactSource,
+  name: string | null | undefined,
+): CrmContactRow | null {
+  const wanted = name?.trim();
+  if (!wanted) return null;
+  return (customer.contacts ?? []).find((c) => c.name?.trim() === wanted) ?? null;
 }
 
 /**

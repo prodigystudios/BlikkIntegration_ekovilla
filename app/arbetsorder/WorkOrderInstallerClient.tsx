@@ -131,8 +131,12 @@ export default function WorkOrderInstallerClient({
 
   const snapshot = workOrder.customer_snapshot || {};
   // EN KÄLLA I TAGET, aldrig fält för fält mellan två personer. Ordningen — slutkunden på plats,
-  // annars orderns egen kontakt, annars kundkortet — sätts av `getWorkOrderCustomerContact`, så
-  // fältvyn och CRM-vyn säger samma sak om samma order.
+  // annars orderns egen kontakt, annars kundkortet — sätts av `getWorkOrderCustomerContact`, och
+  // där avgörs också vad som får lånas mellan stegen: numret ja, adressen nej.
+  //
+  // ⚠️ Detta är INTE samma svar som CRM-vyn ger. Finns en slutkund på plats visar fältvyn hen och
+  // CRM kundens kontakt — med flit, det är olika personer för olika mottagare. Parity gäller
+  // orderns egen kontakt och kundkortet, inte slutkunden.
   //
   // Blandningen som stod här tog namnet från en källa och e-posten från nästa: en slutkund med
   // bara namn och telefon fick kundens adress under sig. Snapshoten är kvar som HEL reserv, för

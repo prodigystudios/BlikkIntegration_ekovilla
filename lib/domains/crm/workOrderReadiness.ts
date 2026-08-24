@@ -24,7 +24,7 @@
  * som ordern sedan inte bar.
  */
 
-import { resolveCrmContact, type CrmContactRow, type CrmContactSource } from './contacts';
+import { contactRowByName, resolveCrmContact, type CrmContactRow, type CrmContactSource } from './contacts';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 
 export type WorkOrderReadinessField =
@@ -230,7 +230,7 @@ export function evaluateWorkOrderReadiness(
   // fortfarande gäller, eftersom kunden ÄR personen.
   const snapshotContactName = text(snapshot.contact_name);
   const chosenContact: CrmContactRow | null = snapshotContactName
-    ? ((customer?.contacts ?? []).find((c) => c.name?.trim() === snapshotContactName)
+    ? ((customer ? contactRowByName(customer, snapshotContactName) : null)
         ?? { name: snapshotContactName, email: null, phone: null })
     : null;
   // KUNDENS nummer — det som skrivs till ordern. Slutkundens nummer (end_contact_phone) är en
