@@ -31,8 +31,14 @@ export async function GET(_req: Request, context: RouteContext) {
     if (segErr || !seg) return routeError(404, 'planning_segment_not_found', 'Segmentet kunde inte hittas');
 
     const { data: contact } = await getWorkOrderCustomerContact(supabase, (seg as { work_order_id: string }).work_order_id);
+    // ⚠️ Mottagaren är ett UTSKICK, inte en visning. `contact.email` är kontaktpersonens EGNA
+    // adress och är null när hen inte har någon — en namngiven person ärver inte någon annans (se
+    // contacts.ts). Men bekräftelsen ska till KUNDEN, och kundens egen adress tillskrivs ingen. Utan
+    // det här steget blev fältet tomt och "skicka mejl" avbockat, utan något att erbjuda i stället.
     return ok({
-      contact: contact ?? { contactName: null, phone: null, email: null },
+      contact: contact
+        ? { ...contact, email: contact.email || contact.customerEmail || null }
+        : { contactName: null, phone: null, email: null },
       start_day: (seg as { start_day: string }).start_day,
       end_day: (seg as { end_day: string }).end_day,
     });

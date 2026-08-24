@@ -747,7 +747,15 @@ export async function listWorkOrderInvoiceRounds(supabase: SupabaseClient, workO
 // Resolve just the customer contact (name/phone/email) for a work order. Pass an ADMIN
 // client: the field view (installers/member) needs to know who to call but has no CRM
 // read access to the full customer record — this exposes only the three contact fields.
-// Returns { data: null } when the work order has no linked customer.
+// Kontaktuppgifterna en arbetsorder ska VISAS med. Ordningen — slutkunden på plats, annars orderns
+// egen kontakt, annars kundkortet — är densamma för fältvyn och CRM.
+//
+// ⚠️ `email` är kontaktpersonens EGNA adress och kan vara null medan kunden har en: regeln är att
+// en namngiven person inte ärver någon annans adress (se contacts.ts). Ska något SKICKAS är det en
+// annan fråga — då duger kundens egen adress, den tillskrivs ingen. Därför följer `customerEmail`
+// med separat. Visa den aldrig som kontaktpersonens; prefilla ett mottagarfält med den.
+//
+// Returns { data: null } when there is nothing at all to show.
 export async function getWorkOrderCustomerContact(supabase: SupabaseClient, workOrderId: string) {
   const { data: wo, error: woError } = await supabase
     .from('crm_work_orders').select('customer_id, customer_snapshot').eq('id', workOrderId).maybeSingle();
@@ -827,19 +835,21 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
         contactName: onSiteName,
         phone: onSitePhone || base.phone || null,
         email: onSiteEmail,
+        customerEmail: card?.email?.trim() || null,
         isOnSiteContact: true,
       },
       error: null,
     };
   }
 
-  if (!base.name && !base.phone && !base.email) return { data: null, error: null };
+  if (!base.name && !base.phone && !base.email && !card?.email?.trim()) return { data: null, error: null };
 
   return {
     data: {
       contactName: base.name || null,
       phone: base.phone || null,
       email: base.email || null,
+      customerEmail: card?.email?.trim() || null,
       isOnSiteContact: false,
     },
     error: null,

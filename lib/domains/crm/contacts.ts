@@ -122,9 +122,13 @@ export function contactRowByName(
   customer: CrmContactSource,
   name: string | null | undefined,
 ): CrmContactRow | null {
-  const wanted = name?.trim();
+  // Skiftlägesokänslig: namnet skrevs in för hand på ett ställe och valdes ur en lista på ett
+  // annat. En bomma här tömmer adressen enligt regeln nedan, så matchningen ska inte vara
+  // strängare än nödvändigt. Ett omdöpt eller borttaget namn missar fortfarande — med flit, då
+  // VET vi inte vem personen är.
+  const wanted = name?.trim().toLocaleLowerCase('sv');
   if (!wanted) return null;
-  return (customer.contacts ?? []).find((c) => c.name?.trim() === wanted) ?? null;
+  return (customer.contacts ?? []).find((c) => c.name?.trim().toLocaleLowerCase('sv') === wanted) ?? null;
 }
 
 /**

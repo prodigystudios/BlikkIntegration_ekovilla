@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  contactRowByName,
   primaryCrmContact,
   resolveCrmContact,
   crmContactRecipients,
@@ -94,6 +95,28 @@ describe('resolveCrmContact', () => {
     expect(resolveCrmContact(customer, customer.contacts![1])).toEqual({
       name: 'Bo', email: '', phone: '',
     });
+  });
+});
+
+describe('contactRowByName', () => {
+  const acme: CrmContactSource = {
+    contacts: [{ name: 'Anna Andersson', email: 'anna@acme.se', is_primary: true }, { name: 'Björn', email: 'bjorn@acme.se' }],
+  };
+
+  it('slår upp den rad ett sparat namn syftar på', () => {
+    expect(contactRowByName(acme, 'Björn')?.email).toBe('bjorn@acme.se');
+  });
+
+  // Namnet skrivs för hand på ett ställe och väljs ur en lista på ett annat. En bomma här tömmer
+  // adressen (namn-bara-rad → inget lån), så matchningen får inte vara strängare än nödvändigt.
+  it('bryr sig inte om skiftläge eller kantmellanslag', () => {
+    expect(contactRowByName(acme, '  björn ')?.email).toBe('bjorn@acme.se');
+  });
+
+  it('okänt eller tomt namn → null, aldrig en gissning', () => {
+    expect(contactRowByName(acme, 'Jonas')).toBeNull();
+    expect(contactRowByName(acme, '   ')).toBeNull();
+    expect(contactRowByName({}, 'Anna Andersson')).toBeNull();
   });
 });
 

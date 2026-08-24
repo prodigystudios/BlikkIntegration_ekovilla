@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from 'react';
 
-export type CustomerContact = { contactName: string | null; phone: string | null; email: string | null };
+export type CustomerContact = {
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Kundens EGEN adress. Bara för utskick — visa den aldrig som kontaktpersonens. */
+  customerEmail?: string | null;
+  /** Sant när uppgifterna är slutkundens på plats, alltså en ANNAN person än kundens kontakt. */
+  isOnSiteContact?: boolean;
+};
 
 // Loads the customer contact (name/phone/email) to show on a work order. Goes through the
 // work-order-scoped endpoint (open to any signed-in user) rather than the CRM-gated

@@ -593,9 +593,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // The order's own responsible contact (snapshot) is the source of truth here — it's what the
   // picker below edits, so an edit reflects immediately. Fall back to the resolved customer
   // contact for older orders that never captured one.
-  const customerPhone: string | null = (snapshot.phone || null) ?? customerInfo?.phone ?? null;
-  const customerEmail: string | null = (snapshot.email || null) ?? customerInfo?.email ?? null;
-  const customerContact: string | null = (snapshot.contact_name || null) ?? customerInfo?.contactName ?? null;
+  //
+  // ⚠️ MEN ALDRIG PÅ SLUTKUNDEN. `useCustomerContact` svarar med hen när ordern har en, eftersom
+  // fältvyn ska visa den som står på plats — det är en ANNAN person än kundens kontakt. Föll vi
+  // tillbaka på den här hamnade slutkundens adress under kundkontaktens namn, exakt den
+  // hopblandning ändringen finns för att ta bort.
+  const cardContact = customerInfo && !customerInfo.isOnSiteContact ? customerInfo : null;
+  const customerPhone: string | null = (snapshot.phone || null) ?? cardContact?.phone ?? null;
+  const customerEmail: string | null = (snapshot.email || null) ?? cardContact?.email ?? null;
+  const customerContact: string | null = (snapshot.contact_name || null) ?? cardContact?.contactName ?? null;
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected

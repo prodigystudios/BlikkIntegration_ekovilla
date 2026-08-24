@@ -59,6 +59,8 @@ describe('getWorkOrderCustomerContact', () => {
       // ⚠️ Inte anna@acme.se. Slutkunden är en annan person — en adress lånad hit hade stått
       // under fel namn. Blandningen låg i klienten och är borta.
       email: null,
+      // Kundens egen adress följer med för utskick — men den visas aldrig som slutkundens.
+      customerEmail: 'robert@acme.se',
       isOnSiteContact: true,
     });
   });
@@ -145,7 +147,27 @@ describe('getWorkOrderCustomerContact', () => {
     expect(data).toMatchObject({ contactName: 'Björn', phone: '08-222', email: null });
   });
 
-  it('varken kundkoppling eller kontakt → inget att visa', async () => {
+  // ⚠️ Fångat i granskningen: `email` är kontaktpersonens EGNA adress och blir null när hen inte
+  // har någon. Planeringens bekräftelsemodal prefillade sin MOTTAGARE ur den — fältet blev tomt
+  // och "skicka mejl" avbockat. Kundens egen adress följer därför med separat: den tillskrivs
+  // ingen och duger för ett utskick.
+  it('kundens egen adress följer med för utskick, även när kontakten saknar egen', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ contact_name: 'Jonas' }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ contactName: 'Jonas', email: null, customerEmail: 'robert@acme.se' });
+  });
+
+  it('namnet matchas skiftlägesokänsligt — annars tömdes adressen på en bomma', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ contact_name: 'anna' }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ contactName: 'anna', email: 'anna@acme.se' });
+  });
+
+  it('varken kundkoppling, kontakt eller kortadress → inget att visa', async () => {
     const { data } = await getWorkOrderCustomerContact(makeSupabase({}, null, null), 'wo1');
     expect(data).toBeNull();
   });

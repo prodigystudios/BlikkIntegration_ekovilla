@@ -241,9 +241,12 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
-  // E-POSTEN: kundkortet vinner, aldrig snapshoten — samma skäl som personnumret ovan. Den går
-  // inte att redigera på offerten (`draft.email` sätts från kortet och renderas aldrig i
-  // formuläret), så snapshotens värde är en ren kopia.
+  // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
+  //
+  // Adressen går inte att redigera på offerten — `draft.email` renderas aldrig i formuläret. Den
+  // sätts av kontaktväljaren, via samma `resolveCrmContact`, och snapshoten bär alltså den
+  // upplösning som gällde DEN DAGEN. Där ingick det gamla lånet: en kontakt utan egen adress fick
+  // kortets. Vi slår därför upp den valda personen igen i stället för att lita på kopian.
   //
   // ⚠️ Och den TOMMA upplösningen måste få vinna. `resolveCrmContact` lånar inte längre ut ett
   // företags adress åt en namngiven kontakt utan egen — det var så en order kunde visa Roberts
