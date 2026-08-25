@@ -38,9 +38,20 @@ export type ArticleLineItem = {
   // Avskriven rad: såld men aldrig utförd. Ligger kvar (indexen bär fakturarundornas antal) men
   // räknas bort ur summan och skickas inte till Fortnox.
   written_off?: boolean;
+  // Ska raden stå i arbetsbeskrivningen? Gäller BARA antals-/meterrader — ytorna är själva jobbet
+  // och följer alltid med. Sätts från artikelregistrets standard när raden skapas och fryses här.
+  // ⚠️ Måste finnas i typen: `addArticle` skapar rader här, och utan fältet hade en rad som lagts
+  // till direkt på ordern aldrig kunnat komma med i beskrivningen.
+  include_in_description?: boolean;
 };
 
-type FortnoxArticle = { article_number: string; description: string | null; sales_price: number | null; unit: string | null };
+type FortnoxArticle = {
+  article_number: string;
+  description: string | null;
+  sales_price: number | null;
+  unit: string | null;
+  include_in_work_description?: boolean;
+};
 
 function newId() {
   try { return crypto.randomUUID(); } catch { return `row-${Date.now()}-${Math.round(Math.random() * 1e6)}`; }
@@ -208,6 +219,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
       article_unit_name: a.unit || null,
       unit_price: a.sales_price != null ? String(a.sales_price) : '',
       pricing_mode: pricingModeFromUnit(a.unit),
+      // Artikelregistrets standard, samma som i offertformuläret. Utan den hade en rad som lagts
+      // till direkt här aldrig kunnat hamna i arbetsbeskrivningen — kontoret rättar ofta artiklar
+      // först efter att ordern skapats, och offerten är låst vid det laget.
+      include_in_description: a.include_in_work_description ?? false,
       quantity: '', m2: '', thickness_mm: '', discount_percent: '', is_rot_work: false,
     }]);
   }
@@ -426,6 +441,23 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
 
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-3">
+                      {/* Bara antals-/meterrader. Ytorna är själva jobbet och står alltid i
+                          beskrivningen. ⚠️ Ändringen syns först efter "Hämta mått från rader" —
+                          artiklarna och översikten har skilda spar-cykler här. */}
+                      {(row.pricing_mode ?? 'm3') === 'item' ? (
+                        <label
+                          className="flex items-center gap-2 text-xs text-slate-600"
+                          title="Tas med som eget moment i arbetsbeskrivningen. Hämta om måtten för att uppdatera texten."
+                        >
+                          <input
+                            type="checkbox"
+                            checked={!!row.include_in_description}
+                            onChange={(e) => updateRow(row.id, { include_in_description: e.target.checked })}
+                            className="h-4 w-4 accent-[color:var(--ek-accent)]"
+                          />
+                          I arbetsbeskrivningen
+                        </label>
+                      ) : null}
                       {rotEnabled ? (
                         <label className="flex items-center gap-2 text-xs text-slate-600">
                           <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />

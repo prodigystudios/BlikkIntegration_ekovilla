@@ -501,7 +501,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     // skrevs hela artikelnamnet ut. Flaggan är opt-in — offertformuläret får inte skicka den,
     // se buildMeasurementLines.
     const block = buildMeasurementLines((workOrder?.line_items || []) as MeasurementLineItem[], { inferConstruction: true }).join('\n');
-    if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    if (!block) { toast.error('Inget att hämta — fyll i mått på en m³-rad, eller kryssa i ”I arbetsbeskrivningen” på en antalsrad'); return; }
     const next = regenerateMeasurementBlock(draft.handoff_notes, block);
     setDraft((d) => (d ? { ...d, handoff_notes: next } : d));
   }
