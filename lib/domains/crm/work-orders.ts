@@ -398,6 +398,11 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     // Och bara när adressen faktiskt kom från KORTET — annars vore skrivningen en nolloperation,
     // utom för den äldre fritextnyckeln `visit_address` som skulle byta ut gatan och lämna kvar
     // postnumret från den andra platsen.
+    //
+    // Följden är att en sådan gammal rad får ett leveransadressblock på Fortnox-orderbekräftelsen,
+    // eftersom arbetsadressens gata då skiljer sig från snapshotens. Det är RÄTT och ska inte
+    // "rättas": fältet hette "Om annan än kundadress", alltså en annan plats än kundens — precis
+    // det ett leveransadressblock finns till för.
     ...(readiness.resolved.workAddressFromCustomer && readiness.resolved.customerAddressFromCard
       ? {
           street_address: readiness.resolved.customerAddress.street_address,

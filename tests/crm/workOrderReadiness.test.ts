@@ -269,7 +269,7 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(result.blockers.find((b) => b.field === 'work_address')?.fixAt).toBe('customer_card');
   });
 
-  it('utan gata på kortet är snapshoten sista utvägen', () => {
+  it('ett HELT tomt kort gör snapshoten till sista utvägen', () => {
     const result = evaluateWorkOrderReadiness(
       quote(),
       { ...emptyCustomer, visit_address: { street: null, postal_code: null, city: null } },

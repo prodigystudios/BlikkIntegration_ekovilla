@@ -180,10 +180,17 @@ function resolveWorkAddress(
  * poängen med att kortet är sanningen — men vill man frysa en plats gör man det genom att lägga in
  * en separat ARBETSADRESS på offerten. Kundadressen går inte att låsa där.
  *
- * ⚠️ Kortet tas som en ENHET så snart det har en gata. Ett halvtömt kort (`updateCrmProspect`
- * skriver om hela `visit_address` från prospektformuläret) spärrar därför en offert vars snapshot
- * bär en komplett adress. Det är rätt svar: spärren pekar då på kundkortet, där luckan sitter.
- * Alternativet — kortets gata med snapshotens ort — är hur man skickar ett lag till fel stad.
+ * ⚠️ Kortet tas som en ENHET så snart NÅGON av de tre delarna är ifylld. Ett halvtömt kort
+ * (`updateCrmProspect` och Fortnox-synken skriver om hela `visit_address`) spärrar därför en offert
+ * vars snapshot bär en komplett adress. Det är rätt svar: spärren namnger den del som fattas och
+ * pekar på kundkortet, där luckan sitter, och varje ifyllt fält flyttar den framåt. Alternativet —
+ * kortets gata med snapshotens ort — är hur man skickar ett lag till fel stad.
+ *
+ * ⚠️ KÄLLAN ÄR `visit_address`, alltså Fortnox VisitingAddress (`fortnox/customers.ts`). Fortnox
+ * huvudadress `Address1` hamnar i `invoice_address` och läses INTE här — samma val som
+ * offertformuläret gör när det fyller i kundadressen, så de två är överens. Följden att vara
+ * medveten om: en kund vars besöksadress hos Fortnox bara har en ort får en spärr som ber om
+ * gatuadressen på kundkortet.
  */
 function resolveCustomerAddress(
   snapshot: Record<string, unknown>,
