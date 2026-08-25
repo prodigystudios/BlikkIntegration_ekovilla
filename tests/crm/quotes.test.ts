@@ -759,3 +759,30 @@ describe('article_note på offertraden', () => {
     if (parsed.success) expect(parsed.data.line_items[0].article_note).toBeNull();
   });
 });
+
+describe('include_in_description på offertraden', () => {
+  const withRows = (row: Record<string, unknown>) => createCrmQuoteSchema.safeParse({
+    ...validQuoteBase,
+    customer_snapshot: { ...validQuoteBase.customer_snapshot, contact_name: 'Anna' },
+    line_items: [{ id: 'row-1', article_name: 'Brandmatta', unit_price: '250', quantity: '4', ...row }],
+  });
+
+  it('överlever Zod-valideringen — annars faller raden ur arbetsbeskrivningen tyst', () => {
+    // Fjärde fältet som riskerar samma fälla som is_rot_work, written_off och article_note:
+    // saknas det i schemat strippas det utan felmeddelande, och säljarens val är borta så fort
+    // offerten sparats om.
+    const parsed = withRows({ include_in_description: true });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.line_items[0].include_in_description).toBe(true);
+  });
+
+  // ⛔ SPÄRREN. Måttblockets utdata jämförs byte för byte mot redan sparad text
+  // (adoptExistingMeasurementBlock). Defaultade det här till true hade varje befintlig offert med
+  // en antalsrad plötsligt fått ett ÖVRIGT-avsnitt — alltså ändrad utdata — och öppnats med
+  // blocket LÅST på inaktuella mått. En rad utan flaggan måste betyda "inte med".
+  it('defaultar till false för en rad sparad innan flaggan fanns', () => {
+    const parsed = withRows({});
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.line_items[0].include_in_description).toBe(false);
+  });
+});

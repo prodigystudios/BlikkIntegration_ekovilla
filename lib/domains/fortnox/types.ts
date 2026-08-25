@@ -118,6 +118,13 @@ export type CachedFortnoxArticle = {
   last_fetched_at: string;
   // Global favorite flag, joined from fortnox_article_favorites (not stored on the cache row).
   is_favorite?: boolean;
+  // Hör artikeln normalt hemma i arbetsbeskrivningen? Joinad från
+  // fortnox_article_work_description_defaults, av samma skäl som is_favorite inte ligger på
+  // cache-raden: den är vår egen kuratering och ska överleva varje omsynk från Fortnox.
+  //
+  // Bara en STANDARD för nya offertrader. Valet fryses på raden när artikeln väljs och läses
+  // aldrig retroaktivt — se include_in_description i quoteLineItemSchema.
+  include_in_work_description?: boolean;
 };
 
 // Valid Fortnox HouseWorkType values for ROT work (the subset relevant to our

@@ -118,6 +118,19 @@ export const quoteLineItemSchema = z.object({
   // varje sparning av artiklarna och avskrivningen försvinner tyst. Samma fälla som is_rot_work
   // gick i en gång (se FORTNOX_INTEGRATION.md brist 3).
   written_off: z.boolean().optional().default(false),
+  // Ska raden stå i arbetsbeskrivningen installatören läser? Gäller BARA antals-/meterrader
+  // (brandmatta, sarg runt lucka); ytorna är själva jobbet och följer alltid med. Vindduk är
+  // skälet valet finns: den lämnas ofta till kunden i förväg och är inget arbetsmoment.
+  // Standarden kommer ur artikelregistret när raden skapas och fryses sedan här på raden.
+  //
+  // MÅSTE finnas i schemat — annars strippar Zod flaggan vid varje sparning. Samma fälla som
+  // is_rot_work, written_off och article_note gick i.
+  //
+  // ⛔ DEFAULTEN MÅSTE VARA false. Måttblockets utdata jämförs byte för byte mot redan sparad
+  // text (adoptExistingMeasurementBlock). Med default true hade varje befintlig offert som har en
+  // antalsrad plötsligt fått ett ÖVRIGT-avsnitt, alltså ändrad utdata, och öppnats med blocket
+  // LÅST på inaktuella mått. Det här är inte Zod-hygien — det är spärren.
+  include_in_description: z.boolean().optional().default(false),
 });
 
 export const listCrmQuotesQuerySchema = z.object({

@@ -204,6 +204,21 @@ export async function listFavoriteArticleNumbers(): Promise<Set<string>> {
   return new Set((data ?? []).map((r: { article_number: string }) => r.article_number));
 }
 
+/**
+ * Artiklar som normalt hör hemma i arbetsbeskrivningen (brandmatta, sarg runt lucka) — till
+ * skillnad från vindduk, som lämnas till kunden och inte är ett arbetsmoment.
+ *
+ * Egen tabell av samma skäl som favoriterna: en kolumn på cachen hade behövt undantas för hand ur
+ * varje synkväg för att inte nollas. Ett tomt set vid fel är rätt fallback — standarden är "nej",
+ * och en trasig läsning ska inte kunna smyga in rader i installatörens beskrivning.
+ */
+export async function listWorkDescriptionArticleNumbers(): Promise<Set<string>> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.from('fortnox_article_work_description_defaults').select('article_number');
+  if (error) return new Set();
+  return new Set((data ?? []).map((r: { article_number: string }) => r.article_number));
+}
+
 export async function listCachedFortnoxArticles(opts?: {
   activeOnly?: boolean;
   search?: string;
@@ -217,7 +232,10 @@ export async function listCachedFortnoxArticles(opts?: {
   numbers?: string[];
 }): Promise<CachedFortnoxArticle[]> {
   const supabase = getSupabaseAdmin();
-  const favorites = await listFavoriteArticleNumbers();
+  const [favorites, workDescriptionDefaults] = await Promise.all([
+    listFavoriteArticleNumbers(),
+    listWorkDescriptionArticleNumbers(),
+  ]);
 
   const tokens = articleSearchTokens(opts?.search);
   // Fresh builder each call — a builder can't be reused after it's awaited.
@@ -230,7 +248,11 @@ export async function listCachedFortnoxArticles(opts?: {
     return q;
   };
   const mark = (rows: unknown[]): CachedFortnoxArticle[] =>
-    (rows as CachedFortnoxArticle[]).map((r) => ({ ...r, is_favorite: favorites.has(r.article_number) }));
+    (rows as CachedFortnoxArticle[]).map((r) => ({
+      ...r,
+      is_favorite: favorites.has(r.article_number),
+      include_in_work_description: workDescriptionDefaults.has(r.article_number),
+    }));
 
   // No limit (e.g. the register loads everything): fetch all matches, favorites floated up.
   if (!opts?.limit) {
