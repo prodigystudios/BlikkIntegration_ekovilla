@@ -388,3 +388,42 @@ describe('felkoden som routen svarar med', () => {
     ).toBe('crm_work_order_incomplete');
   });
 });
+
+// ⚠️ Ordersnapshoten måste bära samma kundadress som spärren prövade. `buildOrderDeliveryFields`
+// (fortnox/orders.ts) avgör om ett leveransadressblock ska med till Fortnox genom att jämföra
+// arbetsadressens gata med snapshotens kundadress. Glider de isär får varje order som skapats
+// efter en rättad adress en Leveransadress på orderbekräftelsen, för ett jobb på kundens egen
+// adress.
+describe('kundadressen som ordern ska bära', () => {
+  const card = { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' };
+
+  it('utan egen arbetsadress är kundadress och arbetsadress samma sträng', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, street_address: 'Gamla vägen 9', city: 'Göteborg' } }),
+      { ...emptyCustomer, visit_address: card },
+    );
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+    expect(result.resolved.workAddress.street_address).toBe(result.resolved.customerAddress.street_address);
+  });
+
+  it('med egen arbetsadress skiljer de sig — och ska göra det', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({
+        customer_snapshot: {
+          ...fullSnapshot,
+          delivery_address: 'Industrivägen 4',
+          delivery_postal_code: '54321',
+          delivery_city: 'Malmö',
+        },
+      }),
+      { ...emptyCustomer, visit_address: card },
+    );
+    expect(result.resolved.workAddress.street_address).toBe('Industrivägen 4');
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+  });
+
+  it('utan kundrad faller kundadressen tillbaka på snapshoten', () => {
+    const result = evaluateWorkOrderReadiness(quote(), null);
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+  });
+});

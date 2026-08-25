@@ -381,6 +381,14 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     // kortet och renderas aldrig i formuläret — så en snapshot som vann hade burit vidare ett lån
     // som inte längre görs: bolagets adress under en anställds namn. Se `resolved.email`.
     email: readiness.resolved.email,
+    // Kundadressen ur samma uppslagning som spärren använde. ⚠️ Inte kosmetik:
+    // `buildOrderDeliveryFields` avgör om Fortnox ska få ett leveransadressblock genom att jämföra
+    // arbetsadressens gata med DEN HÄR strängen. Lämnade vi offertens gamla kundadress kvar skulle
+    // varje order som skapats efter en rättad adress få en Leveransadress på orderbekräftelsen,
+    // för ett jobb som ligger på kundens egen adress.
+    street_address: readiness.resolved.customerAddress.street_address,
+    postal_code: readiness.resolved.customerAddress.postal_code,
+    city: readiness.resolved.customerAddress.city,
   };
 
   const orderNumber = buildWorkOrderNumber(quote.id);

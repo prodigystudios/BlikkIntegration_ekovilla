@@ -496,6 +496,14 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
       postal_code: '12345',
       city: 'Stockholm',
     });
+    // ⚠️ Och ordersnapshoten måste bära SAMMA adress. `buildOrderDeliveryFields` jämför de två
+    // strängarna för att avgöra om Fortnox ska få ett leveransadressblock — glider de isär får
+    // varje order på kundens egen adress en Leveransadress på orderbekräftelsen.
+    expect(captured.insert!.customer_snapshot).toMatchObject({
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    });
   });
 
   it('en separat arbetsadress på offerten står emot kundkortet', async () => {

@@ -60,8 +60,14 @@ export type WorkOrderReadinessResolved = {
   phone: string | null;
   /** Kontaktens e-post ur kundkortet — se resonemanget vid uträkningen. Spärrar inte. */
   email: string | null;
-  /** Adressen installatörerna navigerar till, med kundkortet som sista utväg. */
+  /** Adressen installatörerna navigerar till: offertens egna arbetsadress, annars kundens. */
   workAddress: AddressParts & { delivery_address: null; invoice_address: string | null };
+  /**
+   * Kundens adress som den gäller nu. Skrivs till ordersnapshoten så att den bär samma adress som
+   * spärren prövade — `buildOrderDeliveryFields` jämför den mot arbetsadressen för att avgöra om
+   * Fortnox ska få ett leveransadressblock.
+   */
+  customerAddress: AddressParts;
 };
 
 export type WorkOrderReadiness = {
@@ -133,6 +139,34 @@ function resolveWorkAddress(
     };
   }
 
+  // Ingen egen arbetsadress → arbetsadressen ÄR kundens adress. Samma uppslagning, så de två kan
+  // aldrig glida isär.
+  return resolveCustomerAddress(snapshot, customer);
+}
+
+/**
+ * Kundens adress som den gäller NU: kundkortet live, snapshoten som sista utväg.
+ *
+ * Egen funktion för att ordern ska kunna bära SAMMA adress som spärren prövade. Utan det skrevs
+ * offertens gamla kundadress till ordersnapshoten medan `work_address` fick kortets — och
+ * `buildOrderDeliveryFields` jämför just de två strängarna för att avgöra om en Leveransadress ska
+ * med till Fortnox. Efter en rättad adress hade de skilt sig, och varje order på kundens EGEN
+ * adress hade fått ett leveransadressblock på orderbekräftelsen som inte ska stå där.
+ *
+ * ⚠️ FÖLJD AV ATT KORTET VINNER: kortet är levande och delas av kundens alla offerter. Flyttar
+ * kunden pekas även en gammal vunnen offert om vid orderskapandet. Det är avsiktligt — det är hela
+ * poängen med att kortet är sanningen — men vill man frysa en plats gör man det genom att lägga in
+ * en separat ARBETSADRESS på offerten. Kundadressen går inte att låsa där.
+ *
+ * ⚠️ Kortet tas som en ENHET så snart det har en gata. Ett halvtömt kort (`updateCrmProspect`
+ * skriver om hela `visit_address` från prospektformuläret) spärrar därför en offert vars snapshot
+ * bär en komplett adress. Det är rätt svar: spärren pekar då på kundkortet, där luckan sitter.
+ * Alternativet — kortets gata med snapshotens ort — är hur man skickar ett lag till fel stad.
+ */
+function resolveCustomerAddress(
+  snapshot: Record<string, unknown>,
+  customer: ReadinessCustomerSource,
+): AddressParts {
   const visit = (customer?.visit_address || {}) as Record<string, string | null>;
   const cardStreet = text(visit.street) || text(visit.street_address);
   if (cardStreet) {
@@ -143,6 +177,8 @@ function resolveWorkAddress(
     };
   }
 
+  // Sista utvägen: allt ur snapshoten. `visit_address` är en äldre nyckel för samma gata — båda
+  // kommer ur SAMMA källa, så det är ingen hopblandning mellan två platser.
   return {
     street_address: text(snapshot.visit_address) || text(snapshot.street_address),
     postal_code: text(snapshot.postal_code),
@@ -263,6 +299,7 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
+  const customerAddress = resolveCustomerAddress(snapshot, customer);
   // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
   //
   // Adressen går inte att redigera på offerten — `draft.email` renderas aldrig i formuläret. Den
@@ -305,6 +342,7 @@ export function evaluateWorkOrderReadiness(
         organizationNumber,
         phone,
         email,
+        customerAddress,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -385,6 +423,7 @@ export function evaluateWorkOrderReadiness(
       organizationNumber,
       phone,
       email,
+      customerAddress,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en
