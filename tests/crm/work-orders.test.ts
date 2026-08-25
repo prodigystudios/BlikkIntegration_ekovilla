@@ -531,6 +531,13 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
       postal_code: '54321',
       city: 'Malmö',
     });
+    // ⚠️ Och kundadressen i snapshoten rörs INTE. Spärren prövade den aldrig — den mätte
+    // arbetsadressen — så ett halvtomt kundkort får inte tyst ersätta offertens kompletta adress.
+    expect(captured.insert!.customer_snapshot).toMatchObject({
+      street_address: 'Byggvägen 9',
+      postal_code: '43210',
+      city: 'Göteborg',
+    });
   });
 
   // Varningarna är Williams val 2026-08-19: en offert utan rader, datum eller arbetsbeskrivning

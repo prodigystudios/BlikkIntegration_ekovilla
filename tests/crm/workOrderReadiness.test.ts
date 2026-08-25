@@ -427,3 +427,20 @@ describe('kundadressen som ordern ska bära', () => {
     expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
   });
 });
+
+// ⚠️ Avgör om ordern får skriva om sin kundadress. Bara när spärren faktiskt prövade den — annars
+// kan ett halvtomt kundkort (gata utan ort) tyst ersätta offertens kompletta adress med nullar,
+// utan att något fångar det, eftersom adresspärren då mätte arbetsadressen.
+describe('workAddressFromCustomer', () => {
+  it('sant när offerten saknar egen arbetsadress', () => {
+    expect(evaluateWorkOrderReadiness(quote(), emptyCustomer).resolved.workAddressFromCustomer).toBe(true);
+  });
+
+  it('falskt så snart offerten bär en egen', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, delivery_address: 'Industrivägen 4', delivery_postal_code: '54321', delivery_city: 'Malmö' } }),
+      emptyCustomer,
+    );
+    expect(result.resolved.workAddressFromCustomer).toBe(false);
+  });
+});

@@ -13,10 +13,14 @@
  * kundkortet) blockerats ändå, av en snapshot som skrevs innan. Kundkortet vinner därför när
  * snapshoten är tom — en ifylld snapshot är i övrigt ett medvetet val för just den offerten.
  *
- * ⚠️ MED ETT UNDANTAG: PERSONNUMRET. Där vinner kundkortet ALLTID, eftersom numret inte går att
- * redigera per offert och det är kortet — inte snapshoten — som Fortnox läser. Se resonemanget vid
- * `personalNumber` nedan; en snapshot som vann över ett rättat kort gjorde spärren omöjlig att ta
- * sig förbi.
+ * ⚠️ MED TRE UNDANTAG: PERSONNUMRET, E-POSTEN och KUNDADRESSEN. Där vinner kundkortet ALLTID.
+ * Gemensamt för dem: de går INTE att redigera i offertformuläret, så snapshotens värde är aldrig
+ * ett medvetet val för just den offerten — det är en kopia av kortet som det såg ut när kunden
+ * valdes. Alla tre gav samma rundgång i drift: säljaren rättade uppgiften på kundkortet precis som
+ * spärren bad om, och fälldes ändå av kopian. Se resonemanget vid `personalNumber`, `email` och
+ * `resolveCustomerAddress` nedan.
+ *
+ * Den separata ARBETSADRESSEN är inte ett av dem — den går att redigera per offert och vinner.
  *
  * Funktionen är ren och returnerar BÅDE fynden och de värden som lösts upp, så att
  * `createCrmWorkOrderFromQuote` bakar in exakt det som kontrollerades i ordersnapshoten. Räknade
@@ -68,6 +72,15 @@ export type WorkOrderReadinessResolved = {
    * Fortnox ska få ett leveransadressblock.
    */
   customerAddress: AddressParts;
+  /**
+   * Sant när arbetsadressen kommer UR kundadressen, alltså när offerten saknar en egen.
+   *
+   * ⚠️ Avgör om `customerAddress` får skrivas till ordern. Bara då har spärren faktiskt prövat den:
+   * har offerten en egen arbetsadress tittar kontrollen aldrig på kundadressen, och ett halvtomt
+   * kundkort (gata utan ort — `prospects.ts` och kund-berikningen skriver om `visit_address` i sin
+   * helhet) hade då tyst ersatt offertens kompletta adress med nullar, utan att något fångade det.
+   */
+  workAddressFromCustomer: boolean;
 };
 
 export type WorkOrderReadiness = {
@@ -300,6 +313,7 @@ export function evaluateWorkOrderReadiness(
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
   const customerAddress = resolveCustomerAddress(snapshot, customer);
+  const workAddressFromCustomer = !text(snapshot.delivery_address);
   // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
   //
   // Adressen går inte att redigera på offerten — `draft.email` renderas aldrig i formuläret. Den
@@ -343,6 +357,7 @@ export function evaluateWorkOrderReadiness(
         phone,
         email,
         customerAddress,
+        workAddressFromCustomer,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -424,6 +439,7 @@ export function evaluateWorkOrderReadiness(
       phone,
       email,
       customerAddress,
+      workAddressFromCustomer,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en
