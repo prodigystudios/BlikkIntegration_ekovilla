@@ -39,6 +39,25 @@ export type MeasurementLineItem = {
  */
 export const EXTRAS_HEADING = 'ÖVRIGT';
 
+/**
+ * Punkttecknet framför varje ÖVRIGT-rad. INTE dekoration — det är det som gör raden maskinägd.
+ *
+ * 🧨 Utan det åt städningen upp säljarens egen text. "ÖVRIGT" är ett ord kontoret skriver, och
+ * blocket LÄR dessutom säljaren att skriva just det formatet. Verkligt utfall innan punkten fanns:
+ *
+ *     Totalt: 65 säck
+ *                            ← tomrad
+ *     ÖVRIGT                 ← säljarens egen rubrik
+ *     Portkod – 1234         ← åts upp
+ *     Stege finns på plats   ← allt som blev kvar
+ *
+ * och en beskrivning med bara den sektionen räknades som ett genererat block, varpå automatiken
+ * låste sig och aldrig fyllde i måtten alls.
+ *
+ * Punkten sitter inte på ett svenskt tangentbord, så en handskriven rad bär den i praktiken aldrig.
+ */
+const EXTRAS_BULLET = '•';
+
 function isExtraRow(it: MeasurementLineItem): boolean {
   return it.include_in_description === true && (it.pricing_mode ?? 'm3') === 'item';
 }
@@ -51,10 +70,17 @@ function isExtraRow(it: MeasurementLineItem): boolean {
 // (en "0 st"-rad är inget arbetsmoment).
 function buildExtraRow(it: MeasurementLineItem): string | null {
   const label = (it.article_name || it.line_note || '').replace(/\s+/g, ' ').trim();
-  const quantity = (it.quantity ?? '').trim();
-  if (!label || parseDecimal(quantity) <= 0) return null;
+  const amount = parseDecimal(it.quantity);
+  if (!label || amount <= 0) return null;
+  // 🧨 Mängden skrivs ut KANONISERAD, inte som säljaren skrev den. Måttfältens fritext överlever
+  // blur: `normalizeDecimalInput` rör inte "1 200" (tusentalsblanksteg matchar inte dess mönster),
+  // men `parseDecimal` läser det som 1200. Raden prissattes alltså men föll ur beskrivningen,
+  // eftersom "Artikel – 1 200 st" inte matchar igenkänningen — en rad säljaren uttryckligen
+  // kryssat i försvann tyst, utan rubrik och utan varning. Samma sak med "04" och "4 st".
+  const quantity = String(amount).replace('.', ',');
   const unit = (it.article_unit_name ?? '').trim();
-  const row = EXTRAS_UNIT_RE.test(unit) ? `${label} – ${quantity} ${unit}` : `${label} – ${quantity}`;
+  const body = EXTRAS_UNIT_RE.test(unit) ? `${label} – ${quantity} ${unit}` : `${label} – ${quantity}`;
+  const row = `${EXTRAS_BULLET} ${body}`;
   // Sista utvägen: skulle etiketten ändå ge en oigenkännlig rad (konstiga tecken, ett tankstreck
   // mitt i namnet som gör slutet tvetydigt) är det bättre att utelämna raden än att lämna skräp
   // som staplas. Byggare och igenkännare får aldrig glida isär.
@@ -166,17 +192,19 @@ const MEASUREMENT_LINE_RE = /\d\s*(?:m\s+)?m²\s*×\s*\d/;
 const TOTAL_LINE_RE = /^Totalt: \d+ säck$/;
 
 /**
- * En ÖVRIGT-rad: "Brandmatta – 4 st" — namn, tankstreck, mängd, valfri enhet.
+ * En ÖVRIGT-rad: "• Brandmatta – 4 st" — punkt, namn, tankstreck, mängd, valfri enhet.
  *
- * ⚠️ Mönstret är MEDVETET inte tillräckligt för att ensamt döma ut en rad som genererad.
- * "Portkod – 1234" har exakt samma form, och en säljare skriver sådant. Därför räknas en rad som
- * ÖVRIGT-rad bara när scanningen står INUTI en ÖVRIGT-körning (se `stripOneMeasurementRun`).
- * Måttraden klarar sig utan den ankringen eftersom "100 m² × 200 mm" inte är något man råkar
- * skriva; det här är det inte.
+ * ⚠️ PUNKTEN ÄR OBLIGATORISK, och det är hela skyddet. Utan den är mönstret inte tillräckligt för
+ * att döma ut en rad som genererad: "Portkod – 1234" har exakt samma form, och även säckraden
+ * "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck" matchar via sitt ANDRA tankstreck. Ingen
+ * girighetsjustering hjälper mot det — punkten gör raden entydig.
+ *
+ * Ankringen i `stripOneMeasurementRun` (rader räknas bara inuti en ÖVRIGT-körning) ligger kvar som
+ * andra försvarslinje.
  *
  * Tankstrecket är en-dash (U+2013), samma som måttraden använder — löptext bär bindestreck.
  */
-const EXTRAS_LINE_RE = /^\S.* – (?:0[.,]\d+|[1-9]\d{0,5}(?:[.,]\d+)?)(?: \p{L}[\p{L}\d²³/.]{0,9})?$/u;
+const EXTRAS_LINE_RE = /^• \S.* – (?:0[.,]\d+|[1-9]\d{0,5}(?:[.,]\d+)?)(?: \p{L}[\p{L}\d²³/.]{0,9})?$/u;
 
 /**
  * Enheten i en ÖVRIGT-rad. BYGGAREN OCH IGENKÄNNAREN DELAR MÖNSTER MED FLIT.
@@ -189,11 +217,7 @@ const EXTRAS_LINE_RE = /^\S.* – (?:0[.,]\d+|[1-9]\d{0,5}(?:[.,]\d+)?)(?: \p{L}
 const EXTRAS_UNIT_RE = /^\p{L}[\p{L}\d²³/.]{0,9}$/u;
 
 function isExtrasLine(line: string): boolean {
-  const value = line.trim();
-  // ⚠️ Måttraden vinner. "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck" matchar EXTRAS_LINE_RE via
-  // sitt ANDRA tankstreck ("… – 65 säck"), och utan den här företrädesregeln blev en säckrad
-  // tvetydigt klassad. Ingen girighetsjustering i mönstret hjälper — ordningen måste avgöra.
-  return !isMeasurementLine(value) && EXTRAS_LINE_RE.test(value);
+  return EXTRAS_LINE_RE.test(line.trim());
 }
 
 // Rubriken räknas bara när den följs av en ÖVRIGT-rad — samma regel som materialrubrikerna, och

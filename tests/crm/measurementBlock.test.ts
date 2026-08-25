@@ -139,9 +139,9 @@ describe('måttblocket', () => {
         'Totalt: 65 säck',
         '',
         'ÖVRIGT',
-        'Brandmatta – 4 st',
-        'Sarg runt lucka – 6 st',
-        'Artikel med meterenhet – 12 m',
+        '• Brandmatta – 4 st',
+        '• Sarg runt lucka – 6 st',
+        '• Artikel med meterenhet – 12 m',
       ]);
     });
 
@@ -169,7 +169,25 @@ describe('måttblocket', () => {
       expect(buildMeasurementLines([
         { pricing_mode: 'item', article_name: 'Brandmatta', quantity: '4', include_in_description: true },
         { pricing_mode: 'item', line_note: 'Extra plastning', quantity: '2', article_unit_name: 'st', include_in_description: true },
-      ])).toEqual(['ÖVRIGT', 'Brandmatta – 4', 'Extra plastning – 2 st']);
+      ])).toEqual(['ÖVRIGT', '• Brandmatta – 4', '• Extra plastning – 2 st']);
+    });
+
+    // 🧨 En rad säljaren uttryckligen kryssat i får ALDRIG försvinna tyst. Måttfältens fritext
+    // överlever blur: normalizeDecimalInput rör inte "1 200", men parseDecimal läser det som 1200.
+    // Raden prissattes alltså men föll ur beskrivningen — utan rubrik, utan varning.
+    it('skriver ut mängden kanoniserad så ingen ikryssad rad tappas', () => {
+      expect(buildMeasurementLines([
+        { pricing_mode: 'item', article_name: 'Brandmatta', quantity: '1 200', article_unit_name: 'st', include_in_description: true },
+        { pricing_mode: 'item', article_name: 'Sarg', quantity: '04', article_unit_name: 'st', include_in_description: true },
+        { pricing_mode: 'item', article_name: 'Tejp', quantity: '2,5', article_unit_name: 'st', include_in_description: true },
+        { pricing_mode: 'item', article_name: 'Lucka', quantity: '4 st', article_unit_name: 'st', include_in_description: true },
+      ])).toEqual([
+        'ÖVRIGT',
+        '• Brandmatta – 1200 st',
+        '• Sarg – 4 st',
+        '• Tejp – 2,5 st',
+        '• Lucka – 4 st',
+      ]);
     });
 
     // 🧨 Fortnox enhetsregister är fritext. Skrev byggaren ut "löpande meter" men igenkännaren
@@ -179,7 +197,7 @@ describe('måttblocket', () => {
       const lines = buildMeasurementLines([
         { pricing_mode: 'item', article_name: 'Artikel med flerordsenhet', quantity: '12', article_unit_name: 'löpande meter', include_in_description: true },
       ]);
-      expect(lines).toEqual(['ÖVRIGT', 'Artikel med flerordsenhet – 12']);
+      expect(lines).toEqual(['ÖVRIGT', '• Artikel med flerordsenhet – 12']);
       expect(stripMeasurementBlock(`${lines.join('\n')}\n\nEgen text`)).toBe('Egen text');
     });
 
@@ -194,7 +212,7 @@ describe('måttblocket', () => {
     // En offert som bara säljer moment per styck har ingen måttrad alls. Blocket måste ändå
     // byggas, kännas igen och städas — annars staplade omgenereringen dubbletter.
     describe('block med enbart ÖVRIGT-rader', () => {
-      const EXTRAS_ONLY = ['ÖVRIGT', 'Brandmatta – 4 st'];
+      const EXTRAS_ONLY = ['ÖVRIGT', '• Brandmatta – 4 st'];
       const items = [{ pricing_mode: 'item', article_name: 'Brandmatta', quantity: '4', article_unit_name: 'st', include_in_description: true }];
 
       it('byggs utan måttrader', () => {
@@ -215,15 +233,14 @@ describe('måttblocket', () => {
     });
 
     it('städar bort hela blocket inklusive ÖVRIGT och behåller egen text', () => {
-      const block = 'EKOVILLA\nVägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck\n\nTotalt: 65 säck\n\nÖVRIGT\nBrandmatta – 4 st';
+      const block = 'EKOVILLA\nVägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck\n\nTotalt: 65 säck\n\nÖVRIGT\n• Brandmatta – 4 st';
       const notes = `${block}\n\nPorten är låst, ring Kalle`;
       expect(stripMeasurementBlock(notes)).toBe('Porten är låst, ring Kalle');
       expect(regenerateMeasurementBlock(notes, block)).toBe(notes);
     });
 
-    // ⚠️ "Portkod – 1234" har exakt samma form som en ÖVRIGT-rad. Den skyddas av ankringen:
-    // en rad räknas som ÖVRIGT-rad bara inuti sin egen körning, och blocket skiljs alltid från
-    // säljarens text av en tomrad.
+    // ⚠️ "Portkod – 1234" har exakt samma form som en ÖVRIGT-rad, så länge man bortser från
+    // punkten. Punkten är skyddet; ankringen (rader räknas bara inuti sin körning) är andra linjen.
     it('äter inte egen text som råkar ha samma form som en ÖVRIGT-rad', () => {
       const own = [
         'Portkod – 1234',
@@ -232,16 +249,34 @@ describe('måttblocket', () => {
         'Faktureras enligt avtal – se bilaga 3',
         'OBS: garaget mättes till 30 m² × 100 mm',
       ].join('\n');
-      const notes = `ÖVRIGT\nBrandmatta – 4 st\n\n${own}`;
+      const notes = `ÖVRIGT\n• Brandmatta – 4 st\n\n${own}`;
       expect(stripMeasurementBlock(notes)).toBe(own);
     });
 
-    // ⚠️ Säckraden matchar ÖVRIGT-mönstret via sitt ANDRA tankstreck ("… – 65 säck"). Utan
-    // företrädesregeln (måttrad vinner) blev den tvetydigt klassad.
+    // 🧨 GRANSKNINGSFYND. Säljaren skriver en EGEN ÖVRIGT-sektion direkt under vårt block — och
+    // blocket lär dem formatet, så det är inte ett konstruerat fall. Utan punkten läste städningen
+    // deras rubrik som sin egen, vandrade rakt in i deras text och åt upp rubriken plus varje
+    // tankstrecksrad. Kvar blev bara "Stege finns på plats".
+    it('rör inte säljarens EGNA ÖVRIGT-sektion under vårt block', () => {
+      const own = 'ÖVRIGT\nPortkod – 1234\nStege finns på plats';
+      const block = 'EKOVILLA\nVägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck\n\nTotalt: 65 säck';
+      expect(stripMeasurementBlock(`${block}\n\n${own}`)).toBe(own);
+    });
+
+    // 🧨 GRANSKNINGSFYND, värre än det ovan. En handskriven ÖVRIGT-sektion räknades som ett
+    // genererat block → hasMeasurementBlock sa true → offertformuläret ansåg att säljaren ägde
+    // texten och fyllde ALDRIG i måtten. Installatören fick en beskrivning utan mått, vilket är
+    // precis vad automatiken finns för att förhindra.
+    it('räknar inte en handskriven ÖVRIGT-sektion som ett genererat block', () => {
+      expect(hasMeasurementBlock('ÖVRIGT\nPortkod – 1234\nStege finns på plats')).toBe(false);
+      expect(stripMeasurementBlock('ÖVRIGT\nPortkod – 1234')).toBe('ÖVRIGT\nPortkod – 1234');
+    });
+
+    // Säckraden "… – 65 säck" har ÖVRIGT-radens form via sitt ANDRA tankstreck. Punkten skiljer
+    // dem åt: rubriken får inte adoptera en måttrad som sin egen.
     it('klassar en säckrad som måttrad, inte som ÖVRIGT-rad', () => {
       const sackLine = 'Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck';
       expect(hasMeasurementBlock(`ÖVRIGT\n${sackLine}`)).toBe(true);
-      // Rubriken får inte adoptera måttraden som sin egen — den städas som det block den är.
       expect(stripMeasurementBlock(`ÖVRIGT\n${sackLine}\n\nEgen text`)).toBe('ÖVRIGT\n\nEgen text');
     });
 
