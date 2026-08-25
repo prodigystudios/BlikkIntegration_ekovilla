@@ -112,6 +112,16 @@ type QuoteLineItem = {
   // sparningen spärras — se splitRowLabor i lib/domains/crm/pricing.ts, som äger tolkningen.
   labor_cost: string;
   density: string;
+  /**
+   * Ska raden stå i arbetsbeskrivningen installatören läser? Gäller BARA antals-/meterrader
+   * (`pricing_mode: 'item'`) — ytorna är själva jobbet och följer alltid med. Vindduk är skälet
+   * valet finns: den lämnas ofta till kunden i förväg och är inget arbetsmoment.
+   *
+   * Standarden kommer ur artikelregistret när artikeln väljs och FRYSES sedan här på raden.
+   * ⚠️ Den läses aldrig retroaktivt: en rad sparad före flaggan fanns saknar den och behandlas som
+   * nej, så måttblocket blir byte-identiskt och offerten öppnas inte låst.
+   */
+  include_in_description: boolean;
 };
 
 type QuoteItem = {
@@ -258,6 +268,9 @@ type ArticleLite = {
   // Inköpspris ur artikelcachen, för täckningsgraden. Lagras ALDRIG på offertraden (se pricing.ts):
   // line_items följer med till fältvyn, och där har installatörerna inget med inköpspriser att göra.
   purchasePrice?: number | null;
+  // Artikelregistrets standard för "ta med i arbetsbeskrivningen". Bara ett utgångsläge för en NY
+  // rad — se include_in_description på QuoteLineItem.
+  includeInWorkDescription?: boolean;
 };
 
 type CrmCustomerLite = {
@@ -314,6 +327,7 @@ function createEmptyLineItem(): QuoteLineItem {
     house_work_type: 'CONSTRUCTION',
     labor_cost: '',
     density: '',
+    include_in_description: false,
   };
 }
 
@@ -585,7 +599,7 @@ function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice,
         .then((r) => r.json().catch(() => ({})))
         .then((json) => {
           if (!cancelled) {
-            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; purchase_price?: number | null; unit: string | null; is_favorite?: boolean }> =
+            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; purchase_price?: number | null; unit: string | null; is_favorite?: boolean; include_in_work_description?: boolean }> =
               Array.isArray(json?.data?.items) ? json.data.items : [];
             setItems(raw.map((a) => ({
               id: a.article_number,
@@ -596,6 +610,7 @@ function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice,
               isFavorite: a.is_favorite ?? false,
               note: a.note ?? null,
               purchasePrice: a.purchase_price ?? null,
+              includeInWorkDescription: a.include_in_work_description ?? false,
             })));
           }
         })
@@ -1190,6 +1205,22 @@ function LineItemRow({
       </div>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+        {/* Bara antals-/meterrader. En yta är själva jobbet och står alltid i beskrivningen — ett
+            kryss där hade varit ett dött val, eller värre: en väg att råka dölja måttet. */}
+        {!isM3 ? (
+          <label
+            className="inline-flex items-center gap-2 text-xs text-slate-500"
+            title="Tas med som eget moment i arbetsbeskrivningen installatören läser"
+          >
+            <input
+              type="checkbox"
+              checked={row.include_in_description}
+              onChange={(e) => onChange({ include_in_description: e.target.checked })}
+              className="h-3.5 w-3.5 accent-[color:var(--ek-accent)]"
+            />
+            I arbetsbeskrivningen
+          </label>
+        ) : null}
         {rotEnabled ? (
           <label className="inline-flex items-center gap-2 text-xs text-slate-500">
             <input type="checkbox" checked={row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
@@ -1599,7 +1630,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             // `unit_price`, och då prissätter `lineItemUnitPrice` den korrekt medan A-prisrutan hade
             // stått tom. Normaliseringen måste ske vid inläsningen, inte i renderingen — ett fält
             // som fyller i sig självt så fort det töms går inte att skriva om.
-            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null, unit_price: line.unit_price || (line.article_price != null ? String(line.article_price) : '') }))
+            ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null, include_in_description: line.include_in_description ?? false, unit_price: line.unit_price || (line.article_price != null ? String(line.article_price) : '') }))
             : [createEmptyLineItem()],
           project_name: item.project_name,
           description: item.description || '',
@@ -1975,7 +2006,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // ägarskapet så automatiken följer med igen.
   function addMeasurementsToHandoff() {
     const block = buildMeasurementLines(draft.items).join('\n');
-    if (!block) { toast.error('Inga m³-rader med ifyllda mått att hämta'); return; }
+    if (!block) { toast.error('Inget att hämta — fyll i mått på en m³-rad, eller kryssa i ”I arbetsbeskrivningen” på en antalsrad'); return; }
     const next = replaceMeasurementBlock(draft.handoff_notes, lastMeasurementBlockRef.current, block, { force: true });
     if (next === null) return;
     lastMeasurementBlockRef.current = block;
@@ -2946,6 +2977,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                       article_note: article.note ?? null,
                       construction: construction || item.construction,
                       pricing_mode: pricingMode,
+                      // Artikelregistrets standard skriver ovillkorligt, precis som pricing_mode och
+                      // auto_price: artikeln ÄR radens identitet, och byter man artikel ska den nya
+                      // artikelns egenskaper gälla. Följden är att ett manuellt kryss nollställs om
+                      // säljaren byter artikel på raden — medvetet, samma regel som för prisläget.
+                      include_in_description: article.includeInWorkDescription ?? false,
                       auto_price: false,
                       unit_price: article.price != null ? String(article.price) : item.unit_price,
                       quantity: pricingMode === 'item' && (!item.quantity || Number(item.quantity) <= 0) ? '1' : item.quantity,
@@ -3091,7 +3127,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   </p>
                 ) : (
                   <p className="text-[11px] leading-snug text-slate-400">
-                    Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Text du skriver själv står kvar under dem.
+                    Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Antals- och meterrader du kryssat i hamnar under ÖVRIGT. Text du skriver själv står kvar under dem.
                   </p>
                 )}
               </div>
