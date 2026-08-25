@@ -242,7 +242,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // The card's own channels come along too: a contact row without phone/e-mail (a private
   // customer's auto-created row carries only the name) must fall back to them on pick.
   const [customerContacts, setCustomerContacts] = useState<Array<{ id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean }>>([]);
-  const [customerCard, setCustomerCard] = useState<{ email: string | null; phone: string | null; mobile: string | null } | null>(null);
+  // customer_type följer med: det avgör om kortets e-post får lånas ut åt en kontaktrad utan egen
+  // (`resolveCrmContact`). Utan fältet lånas den ut som förut — och väljaren nedan hade skrivit in
+  // bolagets adress under den anställdes namn, vilket är precis det vi slutade göra.
+  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null } | null>(null);
   useEffect(() => {
     const cid = workOrder?.customer_id;
     if (!cid) { setCustomerContacts([]); setCustomerCard(null); return; }
@@ -253,7 +256,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
         if (!active) return;
         const item = json?.ok ? json.data?.item : null;
         setCustomerContacts(Array.isArray(item?.contacts) ? item.contacts : []);
-        setCustomerCard(item ? { email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
+        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
       })
       .catch(() => { if (active) { setCustomerContacts([]); setCustomerCard(null); } });
     return () => { active = false; };
@@ -590,9 +593,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // The order's own responsible contact (snapshot) is the source of truth here — it's what the
   // picker below edits, so an edit reflects immediately. Fall back to the resolved customer
   // contact for older orders that never captured one.
-  const customerPhone: string | null = (snapshot.phone || null) ?? customerInfo?.phone ?? null;
-  const customerEmail: string | null = (snapshot.email || null) ?? customerInfo?.email ?? null;
-  const customerContact: string | null = (snapshot.contact_name || null) ?? customerInfo?.contactName ?? null;
+  //
+  // ⚠️ MEN ALDRIG PÅ SLUTKUNDEN. `useCustomerContact` svarar med hen när ordern har en, eftersom
+  // fältvyn ska visa den som står på plats — det är en ANNAN person än kundens kontakt. Föll vi
+  // tillbaka på den här hamnade slutkundens adress under kundkontaktens namn, exakt den
+  // hopblandning ändringen finns för att ta bort.
+  const cardContact = customerInfo && !customerInfo.isOnSiteContact ? customerInfo : null;
+  // Reserv när uppslaget svarade med slutkunden: kundkortet är redan hämtat här för väljaren, så
+  // den delade regeln kan lösa kundens egen kontakt lokalt. Utan den ritades inget Kundkontakt-kort
+  // alls på en order som har en slutkund men vars snapshot aldrig fångade kundens kontakt.
+  // Ingen hook — den här raden ligger efter komponentens tidiga returer.
+  const cardFallback = customerCard ? resolveCrmContact({ ...customerCard, contacts: customerContacts }) : null;
+  const customerPhone: string | null = (snapshot.phone || null) ?? cardContact?.phone ?? cardFallback?.phone ?? null;
+  const customerEmail: string | null = (snapshot.email || null) ?? cardContact?.email ?? cardFallback?.email ?? null;
+  const customerContact: string | null = (snapshot.contact_name || null) ?? cardContact?.contactName ?? cardFallback?.name ?? null;
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected

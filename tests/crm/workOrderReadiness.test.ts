@@ -122,6 +122,91 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     ).toContain('personal_number');
   });
 
+  // ── E-posten: kundkortet vinner, och en TOM upplösning måste få vinna också ──
+  //
+  // Rapporterat i drift: ordern visade Roberts e-post under Jonas namn. `resolveCrmContact` lånar
+  // inte längre ut ett företags adress åt en kontakt utan egen — men lånet låg redan fruset i
+  // offertens snapshot, så fyllde vi luckan därifrån hade det kommit tillbaka.
+  it('företagskontakt utan egen adress ger ingen e-post — snapshotens gamla lån fyller inte luckan', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, organization_number: '556677-8899', email: 'robert@acme.se' } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'business',
+        organization_number: '556677-8899',
+        email: 'robert@acme.se',
+        contacts: [{ name: 'Jonas', email: null, phone: null, is_primary: true }],
+      },
+    );
+    expect(result.resolved.email).toBeNull();
+    // Spärrar inte — e-post är inget krav för att skapa order.
+    expect(result.ready).toBe(true);
+  });
+
+  // ⚠️ REGRESSION (fångad i granskningen): e-posten löstes upp mot kortets PRIMÄRA kontakt, medan
+  // namnet kom ur snapshoten. Valde säljaren Björn i offertens kontaktväljare fick ordern Björns
+  // namn med Annas adress — samma fel som hela ändringen finns för, fast på skrivvägen.
+  it('offertens valda kontaktperson avgör adressen, inte kortets primära', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, contact_name: 'Björn', organization_number: '556677-8899' } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'business',
+        organization_number: '556677-8899',
+        email: 'info@acme.se',
+        contacts: [
+          { name: 'Anna', email: 'anna@acme.se', is_primary: true },
+          { name: 'Björn', email: 'bjorn@acme.se' },
+        ],
+      },
+    );
+    expect(result.resolved.email).toBe('bjorn@acme.se');
+  });
+
+  it('en vald kontakt som inte står på kortet ärver ingen annans adress', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, contact_name: 'Jonas', organization_number: '556677-8899' } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'business',
+        organization_number: '556677-8899',
+        email: 'robert@acme.se',
+        contacts: [{ name: 'Anna', email: 'anna@acme.se', is_primary: true }],
+      },
+    );
+    // Varken Annas eller bolagets. Jonas finns inte på kortet — då har raden ingen adress.
+    expect(result.resolved.email).toBeNull();
+  });
+
+  it('utan valt kontaktnamn gäller kortets primärkontakt, som förut', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, contact_name: null } }),
+      {
+        ...emptyCustomer,
+        customer_type: 'private',
+        email: 'kortet@example.se',
+        contacts: [{ name: 'Anna Andersson', email: 'anna@example.se', is_primary: true }],
+      },
+    );
+    expect(result.resolved.email).toBe('anna@example.se');
+  });
+
+  it('en rättad adress på kundkortet vinner över offertens frusna', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, email: 'gammal@example.se' } }),
+      { ...emptyCustomer, customer_type: 'private', email: 'ny@example.se' },
+    );
+    expect(result.resolved.email).toBe('ny@example.se');
+  });
+
+  it('utan kundrad att läsa är snapshoten det enda som finns', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, email: 'fran.offerten@example.se' } }),
+      null,
+    );
+    expect(result.resolved.email).toBe('fran.offerten@example.se');
+  });
+
   it('företagskund utan org.nr spärras, privatkund berörs inte', () => {
     const business = evaluateWorkOrderReadiness(
       quote({ quote_type: 'business', customer_snapshot: { ...fullSnapshot, personal_number: null, organization_number: null } }),

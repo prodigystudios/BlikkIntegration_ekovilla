@@ -15,15 +15,46 @@
 // different addresses.
 //
 // One rule, everywhere: a named contact person wins when one exists, otherwise the card.
-// Resolved FIELD BY FIELD, so a contact with a name but no e-mail still falls back to the
-// card's address instead of resolving to nothing.
+// Resolved FIELD BY FIELD, so a contact with a name but no phone still falls back to the
+// card's number instead of resolving to nothing.
 //
-// The field-by-field part is now load-bearing, not just defensive: a PRIVATE customer gets an
+// The field-by-field part is load-bearing, not just defensive: a PRIVATE customer gets an
 // automatic primary contact row carrying ONLY the person's name (createCrmCustomer), precisely
 // so "Er referens" fills itself while telephone and e-mail keep coming from the card. Copying
 // the channels into that row would freeze an address that is later corrected on the card.
 // Anything reading a contact row directly must go through here — two pickers that read
 // `contact.phone` raw would otherwise blank a number the card had already supplied.
+//
+// ⚠️ MED ETT UNDANTAG: E-POSTEN LÅNAS INTE UT TILL EN NAMNGIVEN PERSON PÅ ETT FÖRETAG.
+//
+// Kortets kanaler tillhör KUNDEN. På en privatkund ÄR kunden personen på kontaktraden — vår
+// automatiska rad bär bara hens namn — så lånet är korrekt där. På ett företag är kortets adress
+// bolagets växel/inkorg, och att låna ut den åt en anställd satte en persons namn bredvid en
+// annans adress: ordern visade "Jonas" med Roberts e-post. En kontaktperson utan egen adress
+// resolvar därför till TOM på en företagskund, inte till kortets.
+//
+// Villkoret är NAMNET, inte kontaktraden. Finns ingen namngiven person finns ingen att felaktigt
+// tillskriva adressen, och kortets egen är fortfarande rätt svar. ⚠️ Följden är att en
+// företagskund UTAN kontaktrader ändå tappar adressen på sin arbetsorder, eftersom offerten alltid
+// bär ett namn ("Er referens" är obligatoriskt där) och `evaluateWorkOrderReadiness` slår upp det
+// namnet som en namn-bara-rad. Det är regeln, inte ett förbiseende: adressen hade annars stått
+// under referenspersonens namn. Mejlutskicket når den ändå — `crmContactRecipients` listar den
+// separat som "Kundens adress".
+//
+// Telefonen lånas fortfarande ut, med flit. Ett nummer är en väg fram — växeln kopplar — medan en
+// e-postadress läses som en identitet. Och `evaluateWorkOrderReadiness` SPÄRRAR på att det finns
+// ett nummer: slutade telefonen lånas skulle företagsordrar vars kontaktperson saknar direktnummer
+// börja fällas, alltså raka motsatsen till en städning.
+//
+// ⚠️ KÄND LUCKA: villkoret är kundtypen, inte "är raden kunden själv". En PRIVATkund som fått en
+// EXTRA kontaktrad (en maka, en förvaltare) ärver därför fortfarande kortets adress under den
+// personens namn. Att stänga den kräver kundens namn hit, till varje anropare — en större plumbing
+// än luckan är värd i dag. Privatkundens automatiska rad är fortfarande huvudfallet och rätt.
+//
+// ⚠️ Undantaget kräver att `customer_type` finns med i selecten. Saknas det (undefined) beter sig
+// funktionen som förut och lånar ut adressen — medvetet, så att en yta som inte valt ut fältet
+// inte tyst tömmer e-posten för alla privatkunder. Läser du ut en FÖRETAGSKUNDS e-post här: ta med
+// `customer_type`.
 //
 // Deliberately pure and dependency-free so both server domain code and client components can
 // import it (same as `pricing.ts`).
@@ -36,6 +67,8 @@ export type CrmContactRow = {
 };
 
 export type CrmContactSource = {
+  /** Avgör om kortets e-post får lånas ut åt kontaktraden — se huvudet. Utelämnad = som förut. */
+  customer_type?: 'business' | 'private' | null;
   email?: string | null;
   phone?: string | null;
   mobile?: string | null;
@@ -68,11 +101,39 @@ export function resolveCrmContact(
   preferContact?: CrmContactRow | null,
 ): ResolvedCrmContact {
   const contact = preferContact ?? primaryCrmContact(customer);
+  // En namngiven person på ett FÖRETAG får inte ärva bolagets adress — se huvudet. Villkoret är
+  // NAMNET, inte att raden finns: utan namn finns ingen att felaktigt tillskriva adressen, och
+  // kortets egen är då fortfarande rätt svar.
+  const namedPerson = Boolean(contact?.name?.trim());
+  const borrowsCardEmail = !namedPerson || customer.customer_type !== 'business';
   return {
     name: contact?.name?.trim() || '',
-    email: contact?.email?.trim() || customer.email?.trim() || '',
+    email: contact?.email?.trim() || (borrowsCardEmail ? customer.email?.trim() || '' : ''),
     phone: contact?.phone?.trim() || customer.phone?.trim() || customer.mobile?.trim() || '',
   };
+}
+
+/**
+ * Kontaktraden ett SPARAT namn syftar på, eller null.
+ *
+ * Ett dokument (offert, order) bär bara kontaktpersonens NAMN — inte vilken rad valet gällde. Utan
+ * den här uppslagningen löses adressen mot kortets PRIMÄRA kontakt i stället, och då står den
+ * valda personens namn bredvid primärkontaktens adress: precis felet regeln finns för.
+ *
+ * Delad av `evaluateWorkOrderReadiness` (skrivvägen) och `getWorkOrderCustomerContact` (fältvyn),
+ * så samma order svarar likadant på båda hållen.
+ */
+export function contactRowByName(
+  customer: CrmContactSource,
+  name: string | null | undefined,
+): CrmContactRow | null {
+  // Skiftlägesokänslig: namnet skrevs in för hand på ett ställe och valdes ur en lista på ett
+  // annat. En bomma här tömmer adressen enligt regeln nedan, så matchningen ska inte vara
+  // strängare än nödvändigt. Ett omdöpt eller borttaget namn missar fortfarande — med flit, då
+  // VET vi inte vem personen är.
+  const wanted = name?.trim().toLocaleLowerCase('sv');
+  if (!wanted) return null;
+  return (customer.contacts ?? []).find((c) => c.name?.trim().toLocaleLowerCase('sv') === wanted) ?? null;
 }
 
 /**

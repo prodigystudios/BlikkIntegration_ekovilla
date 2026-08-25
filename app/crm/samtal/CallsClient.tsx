@@ -25,7 +25,7 @@ type EntitySearchResult = {
 type LinkedCustomer = {
   id: string;
   customer_stage: string;
-  customer_type: string;
+  customer_type: 'business' | 'private';
   company_name: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -130,7 +130,12 @@ function getLinkedEntityFromCall(item: CallItem): { company_name: string | null;
     const c = item.customer;
     // Shared rule (resolveCrmContact): a call list without phone numbers is useless, and
     // reading the contact rows alone showed nothing for card-only customers.
-    const contact = resolveCrmContact(c);
+    //
+    // ⚠️ `customer_type` lämnas UTANFÖR med flit, så kortets e-post lånas ut som förut. Raden här
+    // är BOLAGETS — företagsnamnet är rubriken och kontaktpersonen står bredvid — så adressen
+    // tillskrivs ingen enskild person. Stramar vi åt även här försvinner bolagets e-post ur
+    // samtalslistan utan att något tar dess plats. Eget beslut, inte en följd av orderfixen.
+    const contact = resolveCrmContact({ ...c, customer_type: undefined });
     const name = c.customer_type === 'business' ? c.company_name : [c.first_name, c.last_name].filter(Boolean).join(' ');
     return { company_name: name || null, contact_name: contact.name || null, phone: contact.phone || null, email: contact.email || null, city: null, source: null, stage: c.customer_stage };
   }

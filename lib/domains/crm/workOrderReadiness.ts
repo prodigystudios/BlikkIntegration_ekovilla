@@ -24,7 +24,7 @@
  * som ordern sedan inte bar.
  */
 
-import { resolveCrmContact, type CrmContactSource } from './contacts';
+import { contactRowByName, resolveCrmContact, type CrmContactRow, type CrmContactSource } from './contacts';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 
 export type WorkOrderReadinessField =
@@ -58,6 +58,8 @@ export type WorkOrderReadinessResolved = {
   personalNumber: string | null;
   organizationNumber: string | null;
   phone: string | null;
+  /** Kontaktens e-post ur kundkortet — se resonemanget vid uträkningen. Spärrar inte. */
+  email: string | null;
   /** Adressen installatörerna navigerar till, med kundkortet som sista utväg. */
   workAddress: AddressParts & { delivery_address: null; invoice_address: string | null };
 };
@@ -212,7 +214,30 @@ export function evaluateWorkOrderReadiness(
   // gamla snapshot — en rundgång utan utväg.
   const personalNumber = text(customer?.personal_number) || text(snapshot.personal_number);
   const organizationNumber = text(snapshot.organization_number) || text(customer?.organization_number);
+  // Basen för TELEFONEN, medvetet oförändrad: kortets primärkontakt och därefter kortet.
+  //
+  // ⚠️ Alltså en avsiktlig asymmetri mot e-posten nedan, som löses mot den VALDA kontakten. Följden
+  // är att en order i teorin kan bära Björns namn med primärkontaktens direktnummer, när
+  // snapshoten saknar nummer. Numret SPÄRRAR (punkt 5), och en smalare uppslagning kan svara tomt
+  // där den breda hittar ett nummer — då hade ordrar som i dag går igenom börjat fällas, och
+  // besättningen stått utan nummer på plats. Kravet är att NÅGON går att nå, inte vem numret
+  // formellt tillhör; en adress läses tvärtom som en identitet.
   const contact = customer ? resolveCrmContact(customer) : { name: '', email: '', phone: '' };
+
+  // Offertens VALDA kontaktperson. Offertformuläret låter säljaren välja vem offerten gäller
+  // (`resolveCrmContact(selectedCustomer, c)` i QuoteFormClient), och av det valet är NAMNET det
+  // enda snapshoten bär — adressen bredvid är en kopia av kortet som det såg ut den dagen. Slår vi
+  // inte upp personen igen får ordern den PRIMÄRA kontaktens adress under den valdas namn: exakt
+  // "Jonas med Roberts e-post", fast på skrivvägen.
+  //
+  // Står namnet inte på kortet (fritext, eller en kontakt som tagits bort) blir raden namn-bara.
+  // Då lånas ingen adress ut på en företagskund — det är hela regeln — medan privatkundens kort
+  // fortfarande gäller, eftersom kunden ÄR personen.
+  const snapshotContactName = text(snapshot.contact_name);
+  const chosenContact: CrmContactRow | null = snapshotContactName
+    ? ((customer ? contactRowByName(customer, snapshotContactName) : null)
+        ?? { name: snapshotContactName, email: null, phone: null })
+    : null;
   // KUNDENS nummer — det som skrivs till ordern. Slutkundens nummer (end_contact_phone) är en
   // ANNAN person, en kontakt på plats vid sidan av kundkortet, och får aldrig hamna här: ordervyn
   // visar fältet som kundens telefon bredvid kundens kontaktnamn, seedar redigeringsfältet ur det
@@ -221,6 +246,22 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
+  // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
+  //
+  // Adressen går inte att redigera på offerten — `draft.email` renderas aldrig i formuläret. Den
+  // sätts av kontaktväljaren, via samma `resolveCrmContact`, och snapshoten bär alltså den
+  // upplösning som gällde DEN DAGEN. Där ingick det gamla lånet: en kontakt utan egen adress fick
+  // kortets. Vi slår därför upp den valda personen igen i stället för att lita på kopian.
+  //
+  // ⚠️ Och den TOMMA upplösningen måste få vinna. `resolveCrmContact` lånar inte längre ut ett
+  // företags adress åt en namngiven kontakt utan egen — det var så en order kunde visa Roberts
+  // e-post under Jonas namn. Fyllde vi luckan ur snapshoten här hade exakt det gamla lånet
+  // kommit tillbaka, fruset från den dag offerten skrevs. Snapshoten används därför bara när det
+  // inte finns någon kundrad att läsa alls.
+  //
+  // Spärrar inte: e-post är inget krav för att skapa order, och mejldialogen listar kundens
+  // aktuella adresser separat (`documentRecipients`).
+  const email = customer ? text(resolveCrmContact(customer, chosenContact).email) : text(snapshot.email);
   const workAddress = resolveWorkAddress(snapshot, customer);
 
   // 1. Kundkopplingen först: den är förutsättningen för att de andra ens går att slå upp, och
@@ -246,6 +287,7 @@ export function evaluateWorkOrderReadiness(
         personalNumber,
         organizationNumber,
         phone,
+        email,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -325,6 +367,7 @@ export function evaluateWorkOrderReadiness(
       personalNumber,
       organizationNumber,
       phone,
+      email,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en
