@@ -1013,7 +1013,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               reports={sackReports.reports}
               loading={sackReports.loading}
               loadError={sackReports.loadError}
-              removingId={sackReports.removingId}
+              isRemoving={sackReports.isRemoving}
               onDelete={removeSackReport}
             />
 

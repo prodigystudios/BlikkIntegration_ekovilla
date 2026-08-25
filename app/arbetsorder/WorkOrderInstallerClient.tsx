@@ -247,7 +247,7 @@ export default function WorkOrderInstallerClient({
             loadError={sackReports.loadError}
             materialOptions={materialOptions}
             onCreate={sackReports.create}
-            removingId={sackReports.removingId}
+            isRemoving={sackReports.isRemoving}
             onDelete={sackReports.remove}
           />
 

@@ -37,12 +37,21 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
   return { ...actual, getEffectivePermissions: vi.fn() };
 });
 
+// Besättningsfrågan går till samma SECURITY DEFINER-funktion som RLS-policyn kallar. Mockas för
+// att kunna pröva den KONTORSANVÄNDARE som skrivit en delrapport och sedan tappat sin
+// planning.schedule.write — hen äger raden, ser den, men är inte besättning.
+vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/crm/work-orders')>();
+  return { ...actual, isUserOnWorkOrder: vi.fn() };
+});
+
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
 vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
+import { isUserOnWorkOrder } from '@/lib/domains/crm/work-orders';
 import {
   createSackReports,
   deleteSackReport,
@@ -64,6 +73,7 @@ const mockDelete = vi.mocked(deleteSackReportsByIds);
 const mockGetOne = vi.mocked(getSackReport);
 const mockDeleteOne = vi.mocked(deleteSackReport);
 const mockPerms = vi.mocked(getEffectivePermissions);
+const mockOnJob = vi.mocked(isUserOnWorkOrder);
 
 const WORK_ORDER_ID = '55555555-5555-4555-8555-555555555555';
 const SEGMENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -111,6 +121,7 @@ beforeEach(() => {
   mockGetOne.mockResolvedValue({ data: row(), error: null } as never);
   mockDeleteOne.mockResolvedValue({ data: { id: 'r1' }, error: null } as never);
   mockPerms.mockImplementation(async () => effectivePermissionsForRole((await mockUser())?.role));
+  mockOnJob.mockResolvedValue({ data: true, error: null } as never);
 });
 
 describe('GET /sack-reports', () => {
@@ -192,6 +203,28 @@ describe('GET /sack-reports — vem som får ta bort raden', () => {
       error: null,
     } as never);
     expect(await canDelete()).toEqual([['f1', false], ['p1', true]]);
+  });
+
+  // Den som skrev raden med planning.schedule.write och sedan fått nyckeln indragen läser den
+  // fortfarande (planning.schedule.read) och äger den — men är inte besättning, och policyns
+  // tredje villkor nekar. Utan kollen hade knappen ritats åt just hen.
+  it('ägarskap räcker inte: den som inte längre är besättning på jobbet får ingen knapp', async () => {
+    mockOnJob.mockResolvedValue({ data: false, error: null } as never);
+    mockList.mockResolvedValue({ data: [row({ id: 'min' })], error: null } as never);
+    expect(await canDelete()).toEqual([['min', false]]);
+  });
+
+  it('kontoret betalar inget uppslag — nyckeln räcker', async () => {
+    mockUser.mockResolvedValue(salesUser);
+    mockList.mockResolvedValue({ data: [row({ created_by: 'någon-annan' })], error: null } as never);
+    await canDelete();
+    expect(mockOnJob).not.toHaveBeenCalled();
+  });
+
+  it('frågar inte heller när läsaren inte äger någon delrapport på jobbet', async () => {
+    mockList.mockResolvedValue({ data: [row({ created_by: 'kollegan' })], error: null } as never);
+    await canDelete();
+    expect(mockOnJob).not.toHaveBeenCalled();
   });
 
   it('raderna rapportören just skrev bär flaggan direkt — dubbeltrycket ska gå att ta tillbaka på plats', async () => {

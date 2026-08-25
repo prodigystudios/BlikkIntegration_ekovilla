@@ -31,9 +31,14 @@ export function useSackReports(workOrderId: string) {
   const [hasFinal, setHasFinal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  // Id:t på raden som just nu tas bort — inte en boolean. Båda korten visar flera rader med varsin
-  // knapp, och en delad flagga hade låst allihop medan en av dem sparade.
-  const [removingId, setRemovingId] = useState<string | null>(null);
+  // ⚠️ En MÄNGD, inte ett id. Båda korten visar flera rader med varsin knapp, och kontoret som
+  // städar två dubbletter i rad hinner mycket väl trycka på nästa medan den förra är i luften. Med
+  // ett enda id skrev den andra borttagningen över den första — och när den första svarade
+  // nollställdes fältet, alltså låstes den ANDRA radens knapp upp mitt i sin egen begäran. Ett
+  // extra klick där svarar 404 på en rad som faktiskt togs bort, vilket läser som att något gick
+  // fel när ingenting gjorde det.
+  const [removingIds, setRemovingIds] = useState<ReadonlySet<string>>(() => new Set());
+  const isRemoving = useCallback((id: string) => removingIds.has(id), [removingIds]);
   // ⚠️ Ett misslyckat anrop får ALDRIG se ut som en tom bok. Utan den här flaggan renderar båda
   // korten "ingen har rapporterat" — ett påstående om JOBBET — när sanningen är att vi inte vet.
   // Det är exakt samma förväxling som "Ej rapporterat" kontra "0 st", och i fältvyn bjuder den
@@ -102,7 +107,7 @@ export function useSackReports(workOrderId: string) {
    */
   const remove = useCallback(
     async (id: string): Promise<boolean> => {
-      setRemovingId(id);
+      setRemovingIds((current) => new Set(current).add(id));
       try {
         const res = await fetch(`/api/crm/work-orders/${workOrderId}/sack-reports/${id}`, { method: 'DELETE' });
         const json = await res.json().catch(() => ({}));
@@ -119,12 +124,16 @@ export function useSackReports(workOrderId: string) {
         toast.error('Kunde inte ta bort rapporten');
         return false;
       } finally {
-        setRemovingId(null);
+        setRemovingIds((current) => {
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
       }
     },
     [workOrderId, refresh, toast],
   );
 
-  return { reports, hasFinal, loading, saving, loadError, removingId, create, remove, refresh };
+  return { reports, hasFinal, loading, saving, loadError, isRemoving, create, remove, refresh };
 }
 

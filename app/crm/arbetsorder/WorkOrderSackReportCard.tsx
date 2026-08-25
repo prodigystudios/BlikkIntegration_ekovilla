@@ -55,8 +55,8 @@ type Props = {
   /** Distinkta materialkortnamn på ordern. Väljaren visas bara när de är fler än ett. */
   materialOptions: string[];
   onCreate: (input: { reportDay: string; note: string | null; entries: NewSackReportEntry[] }) => Promise<boolean>;
-  /** Raden som just nu tas bort, så bara dess egen knapp låses. */
-  removingId: string | null;
+  /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
+  isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
 };
 
@@ -74,7 +74,7 @@ export default function WorkOrderSackReportCard({
   loadError,
   materialOptions,
   onCreate,
-  removingId,
+  isRemoving,
   onDelete,
 }: Props) {
   const [open, setOpen] = useState(false);
@@ -183,15 +183,15 @@ export default function WorkOrderSackReportCard({
                         <button
                           type="button"
                           onClick={() => onDelete(item.id)}
-                          disabled={removingId === item.id}
+                          disabled={isRemoving(item.id)}
                           className="inline-flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-rose-600 transition active:scale-[0.98] disabled:opacity-60"
                         >
-                          {removingId === item.id ? 'Tar bort…' : 'Ja, ta bort'}
+                          {isRemoving(item.id) ? 'Tar bort…' : 'Ja, ta bort'}
                         </button>
                         <button
                           type="button"
                           onClick={() => setConfirmId(null)}
-                          disabled={removingId === item.id}
+                          disabled={isRemoving(item.id)}
                           className="inline-flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-slate-500 transition active:scale-[0.98] disabled:opacity-60"
                         >
                           Avbryt

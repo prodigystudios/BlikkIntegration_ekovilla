@@ -38,15 +38,15 @@ export default function WorkOrderSackTrailCard({
   reports,
   loading,
   loadError,
-  removingId,
+  isRemoving,
   onDelete,
 }: {
   reports: SackReportView[];
   loading: boolean;
   /** Hämtningen misslyckades — säg det, i stället för att påstå att boken är tom. */
   loadError: boolean;
-  /** Raden som just nu tas bort, så bara dess egen knapp låses. */
-  removingId: string | null;
+  /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
+  isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
 }) {
   const total = totalReportedSacks(reports);
@@ -121,15 +121,15 @@ export default function WorkOrderSackTrailCard({
                           <button
                             type="button"
                             onClick={() => onDelete(item.id)}
-                            disabled={removingId === item.id}
+                            disabled={isRemoving(item.id)}
                             className="font-semibold text-rose-600 transition hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
                           >
-                            {removingId === item.id ? 'Tar bort…' : 'Ja'}
+                            {isRemoving(item.id) ? 'Tar bort…' : 'Ja'}
                           </button>
                           <button
                             type="button"
                             onClick={() => setConfirmId(null)}
-                            disabled={removingId === item.id}
+                            disabled={isRemoving(item.id)}
                             className="text-slate-400 transition hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             Nej
