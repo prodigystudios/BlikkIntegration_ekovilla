@@ -38,6 +38,7 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
   const [search, setSearch] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [favBusy, setFavBusy] = useState<string | null>(null);
+  const [workDescBusy, setWorkDescBusy] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return articles;
@@ -63,6 +64,34 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
       toast.error(e instanceof Error ? e.message : 'Kunde inte uppdatera favorit');
     } finally {
       setFavBusy(null);
+    }
+  }
+
+  /**
+   * Växla om artikeln normalt hör hemma i installatörens arbetsbeskrivning. Optimistisk, som
+   * favoriten — men utan omsortering: det här är en egenskap hos artikeln, inte en prioritering.
+   *
+   * Bara en STANDARD för nya offertrader. Redan sparade offerter rörs inte: deras val är fryst på
+   * raden, och en retroaktiv ändring hade låst deras måttblock på inaktuella mått.
+   */
+  async function toggleWorkDescription(articleNumber: string, next: boolean) {
+    setWorkDescBusy(articleNumber);
+    const apply = (value: boolean) =>
+      setArticles((prev) =>
+        prev.map((a) => (a.article_number === articleNumber ? { ...a, include_in_work_description: value } : a)),
+      );
+    apply(next);
+    try {
+      const res = await fetch(`/api/fortnox/articles/${encodeURIComponent(articleNumber)}/work-description`, {
+        method: next ? 'POST' : 'DELETE',
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) throw new Error(json?.error || 'Kunde inte uppdatera inställningen');
+    } catch (e) {
+      apply(!next);
+      toast.error(e instanceof Error ? e.message : 'Kunde inte uppdatera inställningen');
+    } finally {
+      setWorkDescBusy(null);
     }
   }
 
@@ -158,6 +187,12 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
                   <th className="py-2 pr-3 text-right">Försäljn.</th>
                   <th className="py-2 pr-3 text-right">Inköp</th>
                   <th className="py-2 pr-3">Status</th>
+                  <th
+                    className="py-2 pr-3 text-center"
+                    title="Antals- och meterartiklar som normalt ska stå i installatörens arbetsbeskrivning. Ytor (m³) står alltid med."
+                  >
+                    I arbetsbeskr.
+                  </th>
                   <th className="py-2 pr-3 text-right">Åtgärder</th>
                 </tr>
               </thead>
@@ -185,6 +220,18 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
                     <td className="py-2.5 pr-3 text-right tabular-nums text-slate-700">{formatPrice(a.purchase_price)}</td>
                     <td className="py-2.5 pr-3">
                       {a.active ? <Badge variant="accent">Aktiv</Badge> : <Badge variant="neutral">Inaktiv</Badge>}
+                    </td>
+                    <td className="py-2.5 pr-3 text-center">
+                      {/* Naken kryssruta: `border-*` är verkningslöst på en native checkbox
+                          (preflight nollar den), så storlek + accentfärg är hela receptet. */}
+                      <input
+                        type="checkbox"
+                        checked={Boolean(a.include_in_work_description)}
+                        disabled={workDescBusy === a.article_number}
+                        onChange={(e) => toggleWorkDescription(a.article_number, e.target.checked)}
+                        aria-label={`Ta med ${a.description ?? a.article_number} i arbetsbeskrivningen`}
+                        className="h-4 w-4 accent-[color:var(--ek-accent)] disabled:opacity-50"
+                      />
                     </td>
                     <td className="py-2.5 pr-3 text-right">
                       <Link
