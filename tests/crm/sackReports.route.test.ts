@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { memberUser } from './helpers/supabase';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { effectivePermissionsForRole, memberUser, salesUser } from './helpers/supabase';
 import { parseSackInput } from '@/app/crm/lib/format';
 
 // Säckrapporteringens rutt. Det som prövas här är inte att en insert går igenom, utan att routen
@@ -22,7 +24,17 @@ vi.mock('@/lib/domains/planning/reports', async (importOriginal) => {
     createSackReports: vi.fn(),
     listWorkOrderSegments: vi.fn(),
     deleteSackReportsByIds: vi.fn(),
+    getSackReport: vi.fn(),
+    deleteSackReport: vi.fn(),
   };
+});
+
+// Behörigheterna avgör om LÄSAREN är kontoret (planning.schedule.write). Mockas explicit:
+// getEffectivePermissions faller tillbaka på en tom mängd vid fel, så utan den här mocken hade
+// varje läsare sett ut som fältet och kontorets can_delete aldrig prövats.
+vi.mock('@/lib/auth/permissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/permissions')>();
+  return { ...actual, getEffectivePermissions: vi.fn() };
 });
 
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
@@ -30,21 +42,28 @@ vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.f
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   createSackReports,
+  deleteSackReport,
   deleteSackReportsByIds,
+  getSackReport,
   listSackReports,
   listWorkOrderSegments,
 } from '@/lib/domains/planning/reports';
 
 const { GET, POST } = await import('@/app/api/crm/work-orders/[id]/sack-reports/route');
 const { POST: POST_FINAL } = await import('@/app/api/crm/work-orders/[id]/sack-reports/final/route');
+const { DELETE } = await import('@/app/api/crm/work-orders/[id]/sack-reports/[reportId]/route');
 
 const mockUser = vi.mocked(getCurrentUser);
 const mockList = vi.mocked(listSackReports);
 const mockCreate = vi.mocked(createSackReports);
 const mockSegments = vi.mocked(listWorkOrderSegments);
 const mockDelete = vi.mocked(deleteSackReportsByIds);
+const mockGetOne = vi.mocked(getSackReport);
+const mockDeleteOne = vi.mocked(deleteSackReport);
+const mockPerms = vi.mocked(getEffectivePermissions);
 
 const WORK_ORDER_ID = '55555555-5555-4555-8555-555555555555';
 const SEGMENT_ID = '11111111-1111-4111-8111-111111111111';
@@ -89,6 +108,9 @@ beforeEach(() => {
   mockSegments.mockResolvedValue([{ id: SEGMENT_ID, start_day: '2026-08-17', end_day: '2026-08-19' }]);
   mockCreate.mockResolvedValue({ data: [row()], error: null } as never);
   mockDelete.mockResolvedValue({ error: null } as never);
+  mockGetOne.mockResolvedValue({ data: row(), error: null } as never);
+  mockDeleteOne.mockResolvedValue({ data: { id: 'r1' }, error: null } as never);
+  mockPerms.mockImplementation(async () => effectivePermissionsForRole((await mockUser())?.role));
 });
 
 describe('GET /sack-reports', () => {
@@ -127,6 +149,54 @@ describe('GET /sack-reports', () => {
     mockList.mockResolvedValue({ data: [row({ created_by_name: null })], error: null } as never);
     const body = await (await GET(getReq(), ctx)).json();
     expect(body.data.items[0].created_by_name).toBe('Okänd');
+  });
+});
+
+// ── can_delete ──────────────────────────────────────────────────────────────
+// Flaggan MÅSTE spegla de två DELETE-policyerna (kontoret via planning.schedule.write, rapportören
+// via ops_segment_reports_delete_own_partial). Glider de isär ritar korten en knapp som svarar
+// 403 — och att inte rita den där borttagning faktiskt är tillåten är lika illa: då står
+// dubbletten kvar och kontoret får gå till databasen, vilket är hela problemet som skulle bort.
+describe('GET /sack-reports — vem som får ta bort raden', () => {
+  const canDelete = async () => (await (await GET(getReq(), ctx)).json()).data.items.map((i: any) => [i.id, i.can_delete]);
+
+  it('rapportören får ta bort sin EGEN delrapport, men inte kollegans', async () => {
+    mockList.mockResolvedValue({
+      data: [row({ id: 'min' }), row({ id: 'kollegans', created_by: 'user-annan-installatör' })],
+      error: null,
+    } as never);
+    expect(await canDelete()).toEqual([['min', true], ['kollegans', false]]);
+  });
+
+  // Den här är hela skälet till att villkoret står i policyn och inte bara i routen: dörr 1
+  // skriver finalerna med installatörens eget created_by, så ägarskapet ensamt hade gett hen
+  // delete på sin egen egenkontroll. Försvinner orderns sista final släpps delrapporterna fram
+  // som total igen — borttagningen hade HÖJT siffran.
+  it('inte ens sin egen egenkontrollrad — den rättas genom att lämnas in på nytt', async () => {
+    mockList.mockResolvedValue({ data: [row({ id: 'f1', kind: 'final' })], error: null } as never);
+    expect(await canDelete()).toEqual([['f1', false]]);
+  });
+
+  it('kontoret får ta bort vilken delrapport som helst på jobbet', async () => {
+    mockUser.mockResolvedValue(salesUser);
+    mockList.mockResolvedValue({
+      data: [row({ id: 'p1', created_by: 'någon-helt-annan' }), row({ id: 'f1', kind: 'final' })],
+      error: null,
+    } as never);
+    expect(await canDelete()).toEqual([['p1', true], ['f1', false]]);
+  });
+
+  it('en ersatt delrapport går fortfarande att ta bort — regeln är om RADEN, inte om totalen', async () => {
+    mockList.mockResolvedValue({
+      data: [row({ id: 'f1', kind: 'final', created_by: 'någon-annan' }), row({ id: 'p1' })],
+      error: null,
+    } as never);
+    expect(await canDelete()).toEqual([['f1', false], ['p1', true]]);
+  });
+
+  it('raderna rapportören just skrev bär flaggan direkt — dubbeltrycket ska gå att ta tillbaka på plats', async () => {
+    const body = await (await POST(postReq(BODY), ctx)).json();
+    expect(body.data.items.every((i: any) => i.can_delete)).toBe(true);
   });
 });
 
@@ -463,4 +533,101 @@ describe('parseSackInput', () => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+// ── DELETE /sack-reports/[reportId] ─────────────────────────────────────────
+// Rättningen av en dubbelrapporterad dag. Boken kunde bara växa (en ny rad ADDERAR, kolumnen har
+// `check (sacks_blown >= 0)`), så innan den här vägen fanns var manuell radering i Supabase enda
+// utvägen när två installatörer med dålig mottagning tryckte Spara två gånger.
+//
+// Det som prövas är inte att en delete går igenom, utan att routen ger RÄTT NEJ: en final ska
+// avvisas med ett skäl, och en delete som RLS nekade får aldrig rapporteras som lyckad.
+
+const reportCtx = { params: { id: WORK_ORDER_ID, reportId: '99999999-9999-4999-8999-999999999999' } };
+const delReq = () => new Request('http://localhost/api/crm/work-orders/x/sack-reports/y', { method: 'DELETE' });
+
+describe('DELETE /sack-reports/[reportId]', () => {
+  it('kräver inloggning', async () => {
+    mockUser.mockResolvedValue(null);
+    expect((await DELETE(delReq(), reportCtx)).status).toBe(401);
+    expect(mockDeleteOne).not.toHaveBeenCalled();
+  });
+
+  it('avvisar ogiltiga id:n innan något läses', async () => {
+    const res = await DELETE(delReq(), { params: { id: WORK_ORDER_ID, reportId: 'inte-ett-uuid' } });
+    expect(res.status).toBe(400);
+    expect(mockGetOne).not.toHaveBeenCalled();
+  });
+
+  it('tar bort raden och svarar med id:t', async () => {
+    const res = await DELETE(delReq(), reportCtx);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.id).toBe(reportCtx.params.reportId);
+  });
+
+  // Radens adress är BÅDE ordern och raden. Utan orderfiltret kan en rad på en annan arbetsorder
+  // tas bort genom den här orderns adress.
+  it('läser och raderar på arbetsordern OCH raden, aldrig bara raden', async () => {
+    await DELETE(delReq(), reportCtx);
+    expect(mockGetOne.mock.calls[0].slice(1)).toEqual([reportCtx.params.reportId, WORK_ORDER_ID]);
+    expect(mockDeleteOne.mock.calls[0].slice(1)).toEqual([reportCtx.params.reportId, WORK_ORDER_ID]);
+  });
+
+  it('en rad som inte finns är 404, inte ett tyst 200', async () => {
+    mockGetOne.mockResolvedValue({ data: null, error: null } as never);
+    expect((await DELETE(delReq(), reportCtx)).status).toBe(404);
+    expect(mockDeleteOne).not.toHaveBeenCalled();
+  });
+
+  // Egenkontrollen är jobbets slutsumma. Försvinner orderns sista final vinner delrapporterna
+  // igen, och en borttagning som skulle sänka siffran höjer den (30 + 25 där svaret var 91).
+  it('nekar egenkontrollens rader med 409 och ett skäl — och rör dem inte', async () => {
+    mockGetOne.mockResolvedValue({ data: row({ kind: 'final' }), error: null } as never);
+    const res = await DELETE(delReq(), reportCtx);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/egenkontrollen/i);
+    expect(mockDeleteOne).not.toHaveBeenCalled();
+  });
+
+  // 🧨 PostgREST svarar `error: null` på en DELETE som inte träffar någon rad — den ser exakt ut
+  // som en lyckad borttagning. Utan raden tillbaka hade kollegans misslyckade försök gett ett 200,
+  // kortet tagit bort raden ur listan, och nästa laddning visat den igen.
+  it('en delete som RLS nekade är 403, aldrig ett 200 på noll rader', async () => {
+    mockDeleteOne.mockResolvedValue({ data: null, error: null } as never);
+    const res = await DELETE(delReq(), reportCtx);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/skrev rapporten|kontoret/i);
+  });
+
+  it('ett riktigt databasfel är 500, inte 403', async () => {
+    mockDeleteOne.mockResolvedValue({ data: null, error: { message: 'boom' } } as never);
+    expect((await DELETE(delReq(), reportCtx)).status).toBe(500);
+  });
+});
+
+// ⚠️ can_delete i routen och DELETE-policyn i databasen är SAMMA REGEL skriven två gånger — den
+// ena i TypeScript, den andra i SQL som typsystemet inte når. Glider de isär ritar korten en
+// knapp som svarar 403 (eller, värre, döljer en knapp som skulle ha fungerat och skickar kontoret
+// till Supabase igen). Testet läser migreringsfilen och kräver att de tre villkoren står kvar.
+describe('paritet med DELETE-policyn i databasen', () => {
+  const policy = (() => {
+    const sql = readFileSync(
+      resolve(process.cwd(), 'supabase/sql/20260825_ops_segment_reports_delete_own_partial.sql'),
+      'utf8',
+    );
+    return sql.match(/create policy ops_segment_reports_delete_own_partial[\s\S]*?using \(([\s\S]*?)\n  \);/)?.[1] ?? '';
+  })();
+
+  it('hittade policyn i migreringsfilen', () => {
+    expect(policy).not.toBe('');
+  });
+
+  it('nekar finaler — villkoret som hindrar att en borttagning HÖJER jobbets total', () => {
+    expect(policy).toMatch(/kind = 'partial'/);
+  });
+
+  it('bara rapportörens egen rad, och bara på ett jobb hen är besättning på', () => {
+    expect(policy).toMatch(/created_by = auth\.uid\(\)/);
+    expect(policy).toMatch(/is_user_on_work_order\(auth\.uid\(\), work_order_id\)/);
+  });
 });

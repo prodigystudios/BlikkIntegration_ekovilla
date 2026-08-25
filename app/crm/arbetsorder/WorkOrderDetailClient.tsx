@@ -212,7 +212,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // `reportedSacks === null` betyder "ingen rapport", inte "noll säckar" — se
   // getWorkOrderReportedSacks. Skillnaden bärs hela vägen ut i rutan.
   const [reportedSacks, setReportedSacks] = useState<number | null>(null);
-  // Spåret bakom snabböversiktens tal. Läsvy — kortet skriver inget, dörr 1 och 2 gör det.
+  // Spåret bakom snabböversiktens tal. Skriver inga rapporter — dörr 1 och 2 gör det — men kan ta
+  // bort en felrapporterad delrapport, se removeSackReport.
   const sackReports = useSackReports(workOrderId);
   const [sourceQuote, setSourceQuote] = useState<{ quote_number: string | null; fortnox_offer_number: string | null } | null>(null);
   const [showPartialModal, setShowPartialModal] = useState(false);
@@ -227,6 +228,29 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       else next.add(id);
       return next;
     });
+  }
+
+  // Tar bort en felrapporterad delrapport ur spåret — och hämtar om snabböversiktens tal.
+  //
+  // ⚠️ Den andra halvan är inte kosmetik. `reportedSacks` kommer från GET:ens `reported_sacks`
+  // (getWorkOrderReportedSacks på servern), inte från spårets rader. Utan omhämtningen står
+  // rubriktalet kvar på den dubbelrapporterade summan tills sidan laddas om — alltså precis det
+  // fel borttagningen finns för att rätta, kvar på den mest lästa ytan.
+  //
+  // Bara talet plockas ur svaret. Hela arbetsordern skrivs medvetet INTE om: en pågående
+  // redigering av adress eller kontakt hade fått sitt utkast överskrivet av en åtgärd som inte har
+  // med de fälten att göra.
+  async function removeSackReport(id: string) {
+    const removed = await sackReports.remove(id);
+    if (!removed) return;
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (json?.ok) setReportedSacks((json.data?.reported_sacks as number | null | undefined) ?? null);
+    } catch {
+      // Spåret är redan rätt; rubriktalet rättar sig vid nästa laddning. Ingen toast — raden ÄR
+      // borttagen, och ett felmeddelande här hade lästs som att borttagningen misslyckades.
+    }
   }
   // Order-confirmation e-mail (own mail client, with recipient resolution).
   const documentEmail = useDocumentEmail();
@@ -985,7 +1009,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
             {/* Spåret bakom snabböversiktens "Säckar (rapporterat)". Ligger efter handoffen
                 (som säger vad teamet SKULLE göra) och före Ekonomi. */}
-            <WorkOrderSackTrailCard reports={sackReports.reports} loading={sackReports.loading} loadError={sackReports.loadError} />
+            <WorkOrderSackTrailCard
+              reports={sackReports.reports}
+              loading={sackReports.loading}
+              loadError={sackReports.loadError}
+              removingId={sackReports.removingId}
+              onDelete={removeSackReport}
+            />
 
             {/* ─── Ekonomi ────────────────────────────────────────────────────
                 Artiklar, summering och fakturering i ETT kort (var två egna flikar).

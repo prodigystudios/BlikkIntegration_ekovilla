@@ -68,11 +68,17 @@ const SALES_KEYS: PermissionKey[] = [
   'crm.report.read', 'crm.coach.read', 'crm.goal.read', 'crm.routingrule.read',
   'fortnox.offer.push', 'fortnox.workorder.push', 'fortnox.invoice.create', 'fortnox.customer.sync', 'fortnox.read',
   'crm.access', 'crm.write',
+  // Planeringen (20260611_planning_permissions.sql) delar ut schemat till admin OCH sales. Utan de
+  // här raderna mätte route-testerna en säljare som inte når planeringen — och därmed inte heller
+  // kontorets vägar in i ops_*-tabellerna, som gatar på just planning.schedule.write.
+  'planning.schedule.read', 'planning.schedule.write',
 ];
 const KONSULT_KEYS: PermissionKey[] = [
   'crm.prospect.read', 'crm.call.read', 'crm.customer.read', 'crm.contact.read',
   'crm.opportunity.read', 'crm.offer.read', 'crm.workorder.read', 'crm.task.read',
   'crm.report.read', 'crm.coach.read', 'crm.goal.read', 'fortnox.read', 'crm.access',
+  // konsult ser planeringen men skriver inte i den — samma seed som ovan.
+  'planning.schedule.read',
 ];
 // Tid & lön (20260811_time_permissions.sql). `time.entry.write` är den FÖRSTA nyckel `member` har,
 // och den enda tid-nyckel sales har — attest, allas tid och referensdata är admin. konsult får

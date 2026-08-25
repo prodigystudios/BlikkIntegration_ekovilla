@@ -55,6 +55,19 @@ export type SackReportView = {
   created_by_name: string;
   created_at: string;
   superseded: boolean;
+  /**
+   * Får DEN HÄR användaren ta bort raden?
+   *
+   * ⚠️ Avgörs av SERVERN, aldrig av klienten — av exakt samma skäl som `has_final`. Regeln bor i
+   * RLS (kontoret via planning.schedule.write, rapportören via ops_segment_reports_delete_own_
+   * partial), och en klient som räknade ut den själv hade fått en andra kopia som glider isär:
+   * knappen syns, DELETE:n träffar noll rader, och användaren står med ett 403 på en rad hen
+   * redan sett försvinna ur listan.
+   *
+   * `created_by` skickas MEDVETET inte med i stället. Kortet skulle bara ha jämfört det med sitt
+   * eget id och gissat resten av regeln (kind, behörighet) — det är den kopian vi undviker.
+   */
+  can_delete: boolean;
 };
 
 const SACK_REPORT_SELECT =
@@ -168,4 +181,53 @@ export async function reportedSacksByWorkOrder(
     .select('work_order_id, sacks_blown, kind')
     .in('work_order_id', workOrderIds);
   return sumSacksByWorkOrder((data ?? []) as SackLedgerRow[]);
+}
+
+/**
+ * EN rapportrad på ordern, läst för sig.
+ *
+ * Finns för borttagningen, som måste kunna skilja "raden finns inte" från "raden är en
+ * egenkontroll". Ett DELETE som inte träffar något svarar `error: null` från PostgREST — utan den
+ * här läsningen hade båda fallen sett likadana ut och användaren fått fel besked om det ena.
+ *
+ * ⚠️ `work_order_id` är inte överflödigt trots att id:t är unikt: utan det kan en rad på en ANNAN
+ * order läsas (och raderas) genom den här orderns adress. Samma skäl som i deleteCrmWorkOrderFile.
+ */
+export async function getSackReport(supabase: SupabaseClient, id: string, workOrderId: string) {
+  return supabase
+    .from('ops_segment_reports')
+    .select(SACK_REPORT_SELECT)
+    .eq('id', id)
+    .eq('work_order_id', workOrderId)
+    .maybeSingle();
+}
+
+/**
+ * Tar bort EN delrapport — kontorets rättning av en dag som rapporterats två gånger.
+ *
+ * Boken är append-only FRÅN FÄLTET, inte från kontoret: ops_segment_reports_delete (20260611)
+ * finns sedan tabellen skapades och gatar på planning.schedule.write. Den här funktionen är därför
+ * en ny väg till en rättighet som redan är utdelad — ingen ny policy, ingen migrering.
+ *
+ * ⚠️ `kind = 'partial'` står i SATSEN, inte bara i routens kontroll. Regeln är "finns en final är
+ * den jobbets sanning; annars summan av partial" — raderas orderns enda final SLÄPPS alltså
+ * delrapporterna fram som total igen, och en borttagning som skulle sänka siffran HÖJER den i
+ * stället. Filtret gör den felmoden omöjlig även om routen någon gång slutar kontrollera.
+ *
+ * ⚠️ Går genom SESSIONSKLIENTEN, aldrig admin. Det är RLS som auktoriserar, precis som på
+ * skrivvägen — med admin-klienten hade routens egen kontroll varit den enda spärren.
+ *
+ * ⚠️ `.select().maybeSingle()`: en DELETE som inte träffar någon rad svarar `error: null`. Utan
+ * raden tillbaka hade en RLS-nekad borttagning sett ut som en lyckad, och kortet hade tagit bort
+ * en rad ur listan som ligger kvar i databasen.
+ */
+export async function deleteSackReport(supabase: SupabaseClient, id: string, workOrderId: string) {
+  return supabase
+    .from('ops_segment_reports')
+    .delete()
+    .eq('id', id)
+    .eq('work_order_id', workOrderId)
+    .eq('kind', 'partial')
+    .select('id')
+    .maybeSingle();
 }

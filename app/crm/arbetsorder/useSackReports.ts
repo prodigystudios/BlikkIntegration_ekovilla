@@ -14,6 +14,10 @@ import type { SackReportView } from '@/lib/domains/planning/reports';
 // spärren MÅSTE vara samma på båda ställena: routen avvisar en delrapport när egenkontrollen är
 // inlämnad, och kortet ska dölja knappen av exakt samma anledning. Räknade klienten ut det själv
 // kunde de två glida isär, och installatören hade mötts av ett 409 efter att ha stått och skrivit.
+//
+// Radens `can_delete` bär samma ansvar och kommer av samma skäl från servern: regeln bor i två
+// RLS-policyer (kontoret respektive rapportören), och en klient som gissade sig till den hade
+// ritat en knapp som svarar 403.
 
 export type NewSackReportEntry = {
   construction: string;
@@ -27,6 +31,9 @@ export function useSackReports(workOrderId: string) {
   const [hasFinal, setHasFinal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Id:t på raden som just nu tas bort — inte en boolean. Båda korten visar flera rader med varsin
+  // knapp, och en delad flagga hade låst allihop medan en av dem sparade.
+  const [removingId, setRemovingId] = useState<string | null>(null);
   // ⚠️ Ett misslyckat anrop får ALDRIG se ut som en tom bok. Utan den här flaggan renderar båda
   // korten "ingen har rapporterat" — ett påstående om JOBBET — när sanningen är att vi inte vet.
   // Det är exakt samma förväxling som "Ej rapporterat" kontra "0 st", och i fältvyn bjuder den
@@ -84,6 +91,40 @@ export function useSackReports(workOrderId: string) {
     [workOrderId, refresh, toast],
   );
 
-  return { reports, hasFinal, loading, saving, loadError, create, refresh };
+  /**
+   * Tar bort en felrapporterad delrapport — kontorets rättning, och rapportörens egen ångerknapp
+   * för dubbeltrycket i dålig täckning.
+   *
+   * Listan hämtas OM efter borttagningen i stället för att raden plockas ur klientens array.
+   * Skälet är supersede-regeln: totalen i kortets rubrik beror på vilka rader som finns kvar och
+   * vilken sorts rader de är, och den räkningen görs av servern. En lokal filtrering hade visat
+   * rätt lista med fel summa tills sidan laddades om.
+   */
+  const remove = useCallback(
+    async (id: string): Promise<boolean> => {
+      setRemovingId(id);
+      try {
+        const res = await fetch(`/api/crm/work-orders/${workOrderId}/sack-reports/${id}`, { method: 'DELETE' });
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok || !json.ok) {
+          // Routens `error` är skriven för att läsas: 409 förklarar att egenkontrollen rättas på
+          // annat sätt, 403 att det är rapportören eller kontoret som får ta bort.
+          toast.error(json?.error || 'Kunde inte ta bort rapporten');
+          return false;
+        }
+        toast.success('Rapporten borttagen');
+        await refresh();
+        return true;
+      } catch {
+        toast.error('Kunde inte ta bort rapporten');
+        return false;
+      } finally {
+        setRemovingId(null);
+      }
+    },
+    [workOrderId, refresh, toast],
+  );
+
+  return { reports, hasFinal, loading, saving, loadError, removingId, create, remove, refresh };
 }
 

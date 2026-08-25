@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatSacks } from '@/app/crm/lib/format';
@@ -9,8 +10,9 @@ import type { SackReportView } from '@/lib/domains/planning/reports';
 
 // Spåret på arbetsordern — vem rapporterade vad, när.
 //
-// Snabböversiktens ruta säger HUR MÅNGA. Det här kortet säger var talet kommer ifrån. Huvudboken är
-// append-only, så ingenting försvinner ur den; kortet är hela historiken i tidsordning.
+// Snabböversiktens ruta säger HUR MÅNGA. Det här kortet säger var talet kommer ifrån: hela
+// historiken i tidsordning. Ingenting skrivs om — en rad står som den skrevs — men en
+// felrapporterad delrapport kan tas bort, se BORTTAGNINGEN nedan.
 //
 // ── KRONOLOGISKT, INTE GRUPPERAT ─────────────────────────────────────────────
 // Medvetet en annan läsning än fältvyns kort, som grupperar per placering. Fältet frågar "hur långt
@@ -22,18 +24,36 @@ import type { SackReportView } from '@/lib/domains/planning/reports';
 // total plus de överstrukna raderna är tillsammans förklaringen — det är precis samma felklass som
 // "Ej rapporterat" kontra "0 st", och den löses på samma sätt: skriv ut skillnaden i stället för att
 // låta läsaren gissa.
+//
+// ── BORTTAGNINGEN ────────────────────────────────────────────────────────────
+// Kortet är inte längre bara en läsvy: en dubbelrapporterad dag går att ta bort härifrån. Det är
+// den enda rättning som finns, för en ny rad kan bara addera (kolumnen har `check (sacks_blown >=
+// 0)`), och innan knappen fanns var manuell radering i Supabase enda vägen.
+//
+// ⚠️ VILKA rader som får tas bort avgörs av `can_delete` FRÅN SERVERN, aldrig av en koll här. Se
+// SackReportView.can_delete — regeln bor i RLS, och en andra kopia i klienten hade ritat knappar
+// som svarar 403. Egenkontrollens rader bär den aldrig.
 
 export default function WorkOrderSackTrailCard({
   reports,
   loading,
   loadError,
+  removingId,
+  onDelete,
 }: {
   reports: SackReportView[];
   loading: boolean;
   /** Hämtningen misslyckades — säg det, i stället för att påstå att boken är tom. */
   loadError: boolean;
+  /** Raden som just nu tas bort, så bara dess egen knapp låses. */
+  removingId: string | null;
+  onDelete: (id: string) => void;
 }) {
   const total = totalReportedSacks(reports);
+  // Bekräftelsen är inline och per rad, inte en modal. Samma mönster som kommentarerna och
+  // filerna på ordern: frågan ställs där raden står, så man ser VILKEN rad man tar bort medan man
+  // svarar på frågan.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
 
   return (
     <div className={cn(crm.cardInner, 'grid gap-3')}>
@@ -92,6 +112,39 @@ export default function WorkOrderSackTrailCard({
                   ) : null}
                   {item.superseded ? (
                     <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-500')}>Ersatt</span>
+                  ) : null}
+                  {item.can_delete ? (
+                    <span className="ml-auto flex items-center gap-2 text-xs">
+                      {confirmId === item.id ? (
+                        <>
+                          <span className="text-slate-500">Ta bort?</span>
+                          <button
+                            type="button"
+                            onClick={() => onDelete(item.id)}
+                            disabled={removingId === item.id}
+                            className="font-semibold text-rose-600 transition hover:text-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {removingId === item.id ? 'Tar bort…' : 'Ja'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmId(null)}
+                            disabled={removingId === item.id}
+                            className="text-slate-400 transition hover:text-slate-600 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Nej
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmId(item.id)}
+                          className="font-medium text-slate-400 transition hover:text-rose-500"
+                        >
+                          Ta bort
+                        </button>
+                      )}
+                    </span>
                   ) : null}
                 </div>
                 {item.note ? (
