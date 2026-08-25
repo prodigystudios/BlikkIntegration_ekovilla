@@ -5,6 +5,7 @@
 // arbetsordern (där artiklar rättas i efterhand och beskrivningen måste kunna hämtas om).
 // Rent och sidoeffektfritt, så det kan unit-testas och importeras från klientkomponenter.
 
+import { parseDecimal } from '@/lib/shared/number';
 import { constructionLabel, inferConstructionFromArticle } from './constructions';
 import { inferMaterialFromArticle, lineItemSacks, MATERIAL_SHORTS } from './materials';
 
@@ -15,13 +16,59 @@ export type MeasurementLineItem = {
   thickness_mm?: string | null;
   pricing_mode?: string | null;
   density?: string | null;
+  // Antals- och meterrader (`pricing_mode: 'item'`) — brandmatta, sarg runt lucka. De har inga
+  // mått och hamnar därför i en egen ÖVRIGT-grupp sist, inte bland måttraderna.
+  quantity?: string | null;
+  article_unit_name?: string | null;
+  line_note?: string | null;
+  /**
+   * Ska raden stå i arbetsbeskrivningen? Gäller BARA antals-/meterrader; ytorna är själva jobbet
+   * och följer alltid med.
+   *
+   * ⚠️ Saknat värde betyder NEJ, och får aldrig tolkas som "läs artikelns standard". Rader sparade
+   * före flaggan fanns saknar den, och skulle de plockas in ändrades utdatan för varje befintlig
+   * offert — vilket låser blocket, se `adoptExistingMeasurementBlock`. Standarden ur
+   * artikelregistret läses därför bara när raden SKAPAS och persisteras på raden.
+   */
+  include_in_description?: boolean | null;
 };
+
+/**
+ * Rubriken över antals-/meterraderna. Exporterad för att den är en del av det format `isBlockLine`
+ * känner igen — den som ändrar strängen måste ändra båda.
+ */
+export const EXTRAS_HEADING = 'ÖVRIGT';
+
+function isExtraRow(it: MeasurementLineItem): boolean {
+  return it.include_in_description === true && (it.pricing_mode ?? 'm3') === 'item';
+}
+
+// "Brandmatta – 4 st". Samma anatomi som måttraden (namn – mängd) så blocket läses som en enhet.
+//
+// Raden måste kunna kännas igen av `isExtrasLine` igen efteråt, annars blir den en föräldralös
+// rest vid nästa omgenerering. Därför: etiketten plattas till en rad, enheten skrivs bara ut när
+// den är ett enkelt token, och rader utan namn eller utan positiv mängd hoppas över helt
+// (en "0 st"-rad är inget arbetsmoment).
+function buildExtraRow(it: MeasurementLineItem): string | null {
+  const label = (it.article_name || it.line_note || '').replace(/\s+/g, ' ').trim();
+  const quantity = (it.quantity ?? '').trim();
+  if (!label || parseDecimal(quantity) <= 0) return null;
+  const unit = (it.article_unit_name ?? '').trim();
+  const row = EXTRAS_UNIT_RE.test(unit) ? `${label} – ${quantity} ${unit}` : `${label} – ${quantity}`;
+  // Sista utvägen: skulle etiketten ändå ge en oigenkännlig rad (konstiga tecken, ett tankstreck
+  // mitt i namnet som gör slutet tvetydigt) är det bättre att utelämna raden än att lämna skräp
+  // som staplas. Byggare och igenkännare får aldrig glida isär.
+  return isExtrasLine(row) ? row : null;
+}
 
 // Build "Vägg – 100 m² × 200 mm" lines for the m³-priced rows that have both an area
 // and a thickness. When the seller has entered a density AND the material's bag weight
 // can be resolved from the article, the sack count is appended:
 // "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 53 säck". Fills the work description automatically
 // as soon as a row carries measurements (and via the "Hämta mått från rader" button).
+//
+// Antals- och meterrader som säljaren valt in (`include_in_description`) hamnar sist under
+// rubriken ÖVRIGT: "Brandmatta – 4 st". De har inga mått och ingår inte i säckberäkningen.
 /**
  * `inferConstruction` — härled placeringen ur artikelnamnet när raden saknar `construction`.
  *
@@ -40,7 +87,10 @@ export function buildMeasurementLines(items: MeasurementLineItem[], options: Mea
   const qualifying = items.filter(
     (it) => (it.pricing_mode ?? 'm3') !== 'item' && (it.m2 ?? '').trim() !== '' && (it.thickness_mm ?? '').trim() !== '',
   );
-  if (qualifying.length === 0) return [];
+  // Antals-/meterrader som säljaren valt in. Byggs här uppe så tomma rader (utan namn eller
+  // mängd) faller bort innan vi avgör om blocket blir tomt.
+  const extraRows = items.filter(isExtraRow).map(buildExtraRow).filter((row): row is string => row !== null);
+  if (qualifying.length === 0 && extraRows.length === 0) return [];
 
   // Group rows under their material's short headline (e.g. "EKOVILLA"); rows whose
   // material can't be resolved fall in an unlabelled group. Sum sacks for the total.
@@ -85,6 +135,14 @@ export function buildMeasurementLines(items: MeasurementLineItem[], options: Mea
     lines.push(...g.rows);
   });
   if (totalSacks > 0) lines.push('', `Totalt: ${totalSacks} säck`);
+
+  // ÖVRIGT läggs SIST, efter säcksumman. Dels läser det bättre (ytorna är jobbet, tillbehören
+  // kommer efter), dels låter det städningens tomrads-lookahead nå rubriken utan att `Totalt`
+  // byter plats i redan sparad text.
+  if (extraRows.length) {
+    if (lines.length) lines.push('');
+    lines.push(EXTRAS_HEADING, ...extraRows);
+  }
   return lines;
 }
 
@@ -107,8 +165,51 @@ export function buildMeasurementLines(items: MeasurementLineItem[], options: Mea
 const MEASUREMENT_LINE_RE = /\d\s*(?:m\s+)?m²\s*×\s*\d/;
 const TOTAL_LINE_RE = /^Totalt: \d+ säck$/;
 
+/**
+ * En ÖVRIGT-rad: "Brandmatta – 4 st" — namn, tankstreck, mängd, valfri enhet.
+ *
+ * ⚠️ Mönstret är MEDVETET inte tillräckligt för att ensamt döma ut en rad som genererad.
+ * "Portkod – 1234" har exakt samma form, och en säljare skriver sådant. Därför räknas en rad som
+ * ÖVRIGT-rad bara när scanningen står INUTI en ÖVRIGT-körning (se `stripOneMeasurementRun`).
+ * Måttraden klarar sig utan den ankringen eftersom "100 m² × 200 mm" inte är något man råkar
+ * skriva; det här är det inte.
+ *
+ * Tankstrecket är en-dash (U+2013), samma som måttraden använder — löptext bär bindestreck.
+ */
+const EXTRAS_LINE_RE = /^\S.* – (?:0[.,]\d+|[1-9]\d{0,5}(?:[.,]\d+)?)(?: \p{L}[\p{L}\d²³/.]{0,9})?$/u;
+
+/**
+ * Enheten i en ÖVRIGT-rad. BYGGAREN OCH IGENKÄNNAREN DELAR MÖNSTER MED FLIT.
+ *
+ * 🧨 `article_unit_name` kommer från Fortnox enhetsregister och kan vara vad som helst — "löpande
+ * meter" med blanksteg i. Hade byggaren skrivit ut den men igenkännaren krävt ett ensamt token
+ * hade raden blivit en föräldralös rest vid varje omgenerering: städningen ser den inte, det nya
+ * blocket läggs ovanpå. Enheten skrivs därför bara ut när den matchar det HÄR mönstret.
+ */
+const EXTRAS_UNIT_RE = /^\p{L}[\p{L}\d²³/.]{0,9}$/u;
+
+function isExtrasLine(line: string): boolean {
+  const value = line.trim();
+  // ⚠️ Måttraden vinner. "Vägg – 100 m² × 200 mm @ 45 kg/m³ – 65 säck" matchar EXTRAS_LINE_RE via
+  // sitt ANDRA tankstreck ("… – 65 säck"), och utan den här företrädesregeln blev en säckrad
+  // tvetydigt klassad. Ingen girighetsjustering i mönstret hjälper — ordningen måste avgöra.
+  return !isMeasurementLine(value) && EXTRAS_LINE_RE.test(value);
+}
+
+// Rubriken räknas bara när den följs av en ÖVRIGT-rad — samma regel som materialrubrikerna, och
+// av samma skäl: ordet "ÖVRIGT" ensamt i säljarens egen text får inte dra med sig raden under.
+function isExtrasHeadingLine(lines: string[], i: number): boolean {
+  return lines[i].trim() === EXTRAS_HEADING
+    && i + 1 < lines.length && isExtrasLine(lines[i + 1]);
+}
+
 export function hasMeasurementBlock(notes: string): boolean {
-  return MEASUREMENT_LINE_RE.test(notes);
+  // ⚠️ Måste känna igen ÖVRIGT också. En offert med BARA antalsrader har inget "m² ×" alls, och
+  // utan det här hade låset aldrig slagit till: automatiken hade skrivit över säljarens egen
+  // redigering av beskrivningen vid varje radändring.
+  if (MEASUREMENT_LINE_RE.test(notes)) return true;
+  const lines = notes.split('\n');
+  return lines.some((_, i) => isExtrasHeadingLine(lines, i));
 }
 
 /**
@@ -150,8 +251,8 @@ function isBlockLine(lines: string[], i: number): boolean {
  * kvar under det nya, och installatören fick två uppsättningar mått med den inaktuella sist.
  *
  * Strukturen matchar exakt vad `buildMeasurementLines` producerar: måttrader,
- * "Totalt: N säck", materialrubriker, samt tomrader som har fler blockrader efter sig.
- * Allt annat är någons egen text och lämnas orört.
+ * "Totalt: N säck", materialrubriker, ÖVRIGT-rubriken med sina rader, samt tomrader som har fler
+ * blockrader efter sig. Allt annat är någons egen text och lämnas orört.
  */
 export function stripMeasurementBlock(notes: string): string {
   // ⚠️ EN KÖRNING RÄCKER INTE. Städningen nedan stannar vid första raden som inte hör till
@@ -189,7 +290,10 @@ export function stripMeasurementBlock(notes: string): string {
 
 function stripOneMeasurementRun(notes: string, opts: { requireBlockEvidence?: boolean } = {}): string {
   const lines = notes.split('\n');
-  const first = lines.findIndex(isMeasurementLine);
+  // ⚠️ Starten måste kunna vara ÖVRIGT-rubriken också. En offert med bara antalsrader har ingen
+  // måttrad alls, och med enbart `findIndex(isMeasurementLine)` blev svaret -1: blocket städades
+  // aldrig, och varje omgenerering la ett nytt ovanpå det gamla.
+  const first = lines.findIndex((_, i) => isMeasurementLine(lines[i]) || isExtrasHeadingLine(lines, i));
   if (first === -1) return notes;
 
   // Bakåt: ta med materialrubriken direkt ovanför måttraden.
@@ -199,20 +303,29 @@ function stripOneMeasurementRun(notes: string, opts: { requireBlockEvidence?: bo
   // mellan materialgrupperna och före "Totalt"). Första raden som inte hör till blocket stoppar.
   let end = first;
   let i = first;
+  // ÖVRIGT-rader känns igen bara INUTI sin egen körning — se EXTRAS_LINE_RE. En tomrad avslutar
+  // körningen, och eftersom `prependBlock` alltid lägger en tomrad mellan blocket och säljarens
+  // egen text kan prosa med samma form ("Portkod – 1234") inte råka hamna innanför.
+  let inExtras = isExtrasHeadingLine(lines, first);
   while (i < lines.length) {
+    if (isExtrasHeadingLine(lines, i)) { inExtras = true; i += 1; end = i; continue; }
+    if (inExtras && isExtrasLine(lines[i])) { i += 1; end = i; continue; }
     if (isBlockLine(lines, i)) { i += 1; end = i; continue; }
     if (lines[i].trim() === '') {
       let j = i;
       while (j < lines.length && lines[j].trim() === '') j += 1;
-      if (j < lines.length && isBlockLine(lines, j)) { i = j; continue; }
+      if (j < lines.length && (isBlockLine(lines, j) || isExtrasHeadingLine(lines, j))) { inExtras = false; i = j; continue; }
     }
     break;
   }
 
   // Se loopens kommentar: en omkörning får bara ta bort text som bevisligen är genererad.
+  // ÖVRIGT-rubriken duger som bevis av samma skäl som materialrubriken: den skrivs bara av oss.
   if (opts.requireBlockEvidence) {
     const removed = lines.slice(start, end);
-    const looksGenerated = removed.some((line, i) => TOTAL_LINE_RE.test(line.trim()) || isHeadingLine(removed, i));
+    const looksGenerated = removed.some(
+      (line, i) => TOTAL_LINE_RE.test(line.trim()) || isHeadingLine(removed, i) || isExtrasHeadingLine(removed, i),
+    );
     if (!looksGenerated) return notes;
   }
 
