@@ -240,6 +240,46 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(result.resolved.workAddress.city).toBe('Stockholm');
   });
 
+  // ⚠️ REGRESSION, rapporterad i drift 2026-08-24: adressen rättades på kundkortet, men offerten
+  // bar kvar den gamla ofullständiga och spärren fällde igen. Ankaret var bara GATAN, så en
+  // snapshot med gata men utan ort svarade "ort saknas" utan att någonsin titta på kortet där
+  // orten stod. Ingen väg förbi — samma rundgång som personnumret och e-posten.
+  it('kundkortets adress vinner när offerten inte har någon egen arbetsadress', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, street_address: 'Gamla vägen 9', postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+    expect(result.resolved.workAddress).toMatchObject({
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    });
+  });
+
+  // Som en ENHET, aldrig fält för fält: en gata från kortet med en ort ur snapshoten pekar ut fel
+  // plats, och det är installatörerna som kör dit.
+  it('kortets adress tas hel — ingen ort lånas ur snapshoten', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, city: 'Göteborg' } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: null } },
+    );
+    expect(result.resolved.workAddress.city).toBeNull();
+    // Och spärren pekar på kundkortet, där luckan faktiskt sitter.
+    expect(result.blockers.find((b) => b.field === 'work_address')?.fixAt).toBe('customer_card');
+  });
+
+  it('utan gata på kortet är snapshoten sista utvägen', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote(),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: null, city: null } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+    expect(result.resolved.workAddress.street_address).toBe('Storgatan 1');
+  });
+
+  // Företagsfallet: fakturaadressen är bolagets, arbetet sker någon annanstans. Den separata
+  // arbetsadressen är ett medvetet val i offerten och måste stå emot ett ifyllt kundkort.
   it('en separat arbetsadress vinner över kundadressen och lånar inte dess ort', () => {
     const result = evaluateWorkOrderReadiness(
       quote({
@@ -250,7 +290,7 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
           delivery_city: 'Göteborg',
         },
       }),
-      emptyCustomer,
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
     );
     expect(result.resolved.workAddress).toMatchObject({
       street_address: 'Industrivägen 4',

@@ -95,13 +95,30 @@ function text(value: unknown): string | null {
 }
 
 /**
- * Adressen som ordern ska bära.
+ * Adressen som ordern ska bära. Löses som en ENHET, aldrig fält för fält mellan två källor — en
+ * gata från ett håll och en ort från ett annat pekar ut fel plats, och det är installatörerna som
+ * kör dit.
  *
- * Gatan är ankaret, precis som i `buildCustomerSnapshot`: en separat arbetsadress lagras bara när
- * gatan är ifylld och skiljer sig från kundadressen, och då gäller dess postnummer/ort SOM IFYLLDA
- * (de lånas aldrig från kundadressen — det skulle ge fel ort). Saknas allt på offerten faller vi
- * tillbaka på kundkortets besöksadress, vilket räddar gamla offerter vars snapshot skrevs innan
- * adressen fanns på kortet.
+ * TVÅ FALL, och skillnaden är om jobbet ligger någon annanstans än hos kunden:
+ *
+ * 1. Offerten bär en EGEN arbetsadress. Den är ett medvetet val för just det här jobbet och går
+ *    att redigera i offertformuläret, så den vinner. Dess postnummer/ort gäller SOM IFYLLDA — de
+ *    lånas aldrig från kundadressen, det skulle ge fel ort när jobbet ligger i en annan stad.
+ *    Vanligast på företag: fakturaadressen är bolagets, arbetet sker någon annanstans.
+ *
+ * 2. Ingen egen arbetsadress → jobbet ligger på KUNDENS adress, och den bor på kundkortet. Då
+ *    läses kortet LIVE. Vanligast på privatkund, där kundadressen i praktiken är arbetsplatsen.
+ *
+ * ⚠️ VARFÖR KORTET VINNER I FALL 2, tvärtom mot hur det var: kundadressen går inte att redigera i
+ * offertformuläret — `street_address`/`postal_code`/`city` sätts från kortet och renderas aldrig
+ * som fält. Snapshotens kopia är alltså aldrig ett medvetet val för offerten. Med den först
+ * fastnade en säljare som gjorde precis det spärren bad om: adressen rättades på kundkortet,
+ * offerten bar kvar den gamla ofullständiga, och spärren fällde igen. Ankaret var dessutom bara
+ * GATAN, så en snapshot med gata men utan ort svarade "ort saknas" utan att någonsin titta på
+ * kortet där orten stod. Ingen väg förbi. Samma rundgång som personnumret och e-posten.
+ *
+ * Snapshoten är kvar som sista utväg för offerter som inte har någon kundrad att läsa — och för
+ * en kund vars adress tömts på kortet efter att offerten skrevs.
  */
 function resolveWorkAddress(
   snapshot: Record<string, unknown>,
@@ -116,20 +133,20 @@ function resolveWorkAddress(
     };
   }
 
-  const snapshotStreet = text(snapshot.visit_address) || text(snapshot.street_address);
-  if (snapshotStreet) {
+  const visit = (customer?.visit_address || {}) as Record<string, string | null>;
+  const cardStreet = text(visit.street) || text(visit.street_address);
+  if (cardStreet) {
     return {
-      street_address: snapshotStreet,
-      postal_code: text(snapshot.postal_code),
-      city: text(snapshot.city),
+      street_address: cardStreet,
+      postal_code: text(visit.postal_code),
+      city: text(visit.city),
     };
   }
 
-  const visit = (customer?.visit_address || {}) as Record<string, string | null>;
   return {
-    street_address: text(visit.street) || text(visit.street_address),
-    postal_code: text(visit.postal_code),
-    city: text(visit.city),
+    street_address: text(snapshot.visit_address) || text(snapshot.street_address),
+    postal_code: text(snapshot.postal_code),
+    city: text(snapshot.city),
   };
 }
 

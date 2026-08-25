@@ -466,7 +466,13 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
 
   // Regression: offertens egna värden är ett medvetet val för just den affären och får aldrig
   // skrivas över av kundkortet — bara fylla luckor.
-  it('offertens snapshot vinner över kundkortet', async () => {
+  //
+  // ⚠️ SMALNAD 2026-08-25: gäller de fält offerten faktiskt kan ändra. KUNDADRESSEN kan den inte —
+  // `street_address`/`postal_code`/`city` sätts från kortet och renderas aldrig som fält i
+  // formuläret — så där är snapshoten en ren kopia och kortet vinner. Utan den skillnaden gick det
+  // inte att ta sig förbi adress-spärren: säljaren rättade adressen på kundkortet och fälldes ändå.
+  // En separat ARBETSadress (`delivery_address`) är fortfarande offertens val och står emot kortet.
+  it('offertens snapshot vinner över kundkortet — utom för kundadressen', async () => {
     const { supabase, captured } = makeSupabase(
       wonQuote({
         customer_snapshot: {
@@ -484,7 +490,39 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
     await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
 
     expect(captured.insert!.customer_snapshot.phone).toBe('070-000 11 22');
-    expect(captured.insert!.work_address.city).toBe('Göteborg');
+    // Kundadressen: kortets, inte snapshotens Göteborg.
+    expect(captured.insert!.work_address).toMatchObject({
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    });
+  });
+
+  it('en separat arbetsadress på offerten står emot kundkortet', async () => {
+    const { supabase, captured } = makeSupabase(
+      wonQuote({
+        customer_snapshot: {
+          company_name: 'Test AB',
+          organization_number: '556677-8899',
+          contact_name: 'Kalle Kund',
+          phone: '070-000 11 22',
+          street_address: 'Byggvägen 9',
+          postal_code: '43210',
+          city: 'Göteborg',
+          delivery_address: 'Industrivägen 4',
+          delivery_postal_code: '54321',
+          delivery_city: 'Malmö',
+        },
+      }),
+      COMPLETE_CUSTOMER,
+    );
+    await createCrmWorkOrderFromQuote(supabase as any, 'q1', 'user-1');
+
+    expect(captured.insert!.work_address).toMatchObject({
+      street_address: 'Industrivägen 4',
+      postal_code: '54321',
+      city: 'Malmö',
+    });
   });
 
   // Varningarna är Williams val 2026-08-19: en offert utan rader, datum eller arbetsbeskrivning
