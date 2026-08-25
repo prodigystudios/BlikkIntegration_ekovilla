@@ -8,6 +8,8 @@ import {
   type SackReportRow,
 } from '@/lib/domains/planning/reports';
 import { markSupersededReports, resolveSegmentForDay, sackReportKind } from '@/lib/domains/planning/sackLedger';
+import { isUserOnWorkOrder } from '@/lib/domains/crm/work-orders';
+import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   createSackReportSchema,
@@ -40,14 +42,25 @@ type RouteContext = {
   };
 };
 
+// Vem som läser. Bärs med i mappningen för att `can_delete` ska kunna avgöras på servern — se
+// SackReportView.can_delete för varför den frågan inte får ställas i klienten.
+type Viewer = {
+  userId: string;
+  /** planning.schedule.write — samma nyckel som kontorets DELETE-policy gatar på. */
+  isOffice: boolean;
+  /** is_user_on_work_order — tredje villkoret i rapportörens DELETE-policy. */
+  isCrew: boolean;
+};
+
 // Rå rad → det klienten får. `sacks_blown` är numeric(10,2) och kommer tillbaka som STRÄNG från
 // PostgREST; skickas den vidare orörd blir "30" + "25" en strängkonkatenering någonstans i UI:t.
-function mapSackReportRow(row: SackReportRow & { superseded: boolean }) {
+function mapSackReportRow(row: SackReportRow & { superseded: boolean }, viewer: Viewer) {
+  const kind = sackReportKind(row);
   return {
     id: row.id,
     report_day: row.report_day,
     sacks_blown: Number(row.sacks_blown),
-    kind: sackReportKind(row),
+    kind,
     material: row.material,
     construction: row.construction,
     note: row.note,
@@ -59,6 +72,17 @@ function mapSackReportRow(row: SackReportRow & { superseded: boolean }) {
     // ⚠️ Efter en final ligger delrapporterna kvar i boken. Listas de omärkta läser kontoret
     // 30 + 25 + 91 = 146 och tror att talen inte går ihop.
     superseded: row.superseded,
+    // Speglar de två DELETE-policyerna, och ingenting annat: kontoret (planning.schedule.write)
+    // eller den som skrev raden OCH fortfarande är besättning på jobbet — aldrig en final. Håll
+    // den identisk med 20260825_ops_segment_reports_delete_own_partial.sql; glider de isär visar
+    // kortet en knapp som svarar 403.
+    //
+    // ⚠️ `isCrew` är inte överflödigt bara för att en member måste vara besättning för att se
+    // raden alls. En kontorsanvändare kan ha SKRIVIT en delrapport med planning.schedule.write och
+    // sedan fått nyckeln indragen: hen läser fortfarande raden (planning.schedule.read), äger den,
+    // och är inte besättning. Utan villkoret ritas knappen åt just hen.
+    can_delete:
+      kind === 'partial' && (viewer.isOffice || (row.created_by === viewer.userId && viewer.isCrew)),
   };
 }
 
@@ -79,8 +103,24 @@ export async function GET(_req: Request, context: RouteContext) {
     const rows = (data || []) as unknown as SackReportRow[];
     const marked = markSupersededReports(rows);
 
+    // Kontoret känns igen på samma nyckel som kontorets DELETE-policy kräver, inte på rollen.
+    // Härleddes den ur rollen svarade routen ja där databasen svarar nej så fort en nyckel dras
+    // in i adminytan.
+    const userId = currentUser.currentUser.id;
+    const isOffice = can(await getEffectivePermissions(), 'planning.schedule.write');
+    // Besättningsfrågan ställs till SAMMA funktion som policyn kallar (se isUserOnWorkOrder), och
+    // bara när svaret kan spela roll: kontoret behöver den inte, och den som inte äger någon
+    // delrapport på jobbet har ändå ingenting att ta bort. Fältvyn betalar alltså ett RPC per
+    // öppnat jobb, kontoret noll.
+    let isCrew = false;
+    if (!isOffice && marked.some((r) => r.created_by === userId && sackReportKind(r) === 'partial')) {
+      const { data: onJob } = await isUserOnWorkOrder(supabase, userId, context.params.id);
+      isCrew = onJob === true;
+    }
+    const viewer = { userId, isOffice, isCrew };
+
     return ok({
-      items: marked.map(mapSackReportRow),
+      items: marked.map((row) => mapSackReportRow(row, viewer)),
       // Dörr 2 spärras när en final finns — se POST. Flaggan följer med listan så knappen kan vara
       // borta i stället för att svara 409 efter att någon skrivit in en dagsrapport.
       has_final: marked.some((row) => sackReportKind(row) === 'final'),
@@ -180,7 +220,18 @@ export async function POST(req: Request, context: RouteContext) {
     // Nyskrivna rader kan inte vara ersatta: spärren ovan har redan avvisat submiten om en final
     // fanns. superseded sätts ändå av samma funktion som listan, så de två aldrig kan säga olika.
     const created = markSupersededReports((data || []) as unknown as SackReportRow[]);
-    return ok({ items: created.map(mapSackReportRow) }, 201);
+    // Rapportören äger raderna hen just skrev, så knappen finns direkt — vilket är hela poängen
+    // med den: det är dubbeltrycket i dålig täckning som ska gå att ta tillbaka på plats.
+    //
+    // `isCrew: true` utan uppslag är inte en gissning: insert-policyn ovan SLÄPPTE IGENOM raderna,
+    // och den kräver besättning eller planning.schedule.write. Databasen har alltså just svarat på
+    // frågan, och ett RPC till hade bara ställt den en gång till.
+    const viewer = {
+      userId: currentUser.currentUser.id,
+      isOffice: can(await getEffectivePermissions(), 'planning.schedule.write'),
+      isCrew: true,
+    };
+    return ok({ items: created.map((row) => mapSackReportRow(row, viewer)) }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_work_order_sack_report_unexpected', e?.message || 'Failed to create sack report');
   }

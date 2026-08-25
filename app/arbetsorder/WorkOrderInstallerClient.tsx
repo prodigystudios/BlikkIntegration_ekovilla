@@ -247,6 +247,8 @@ export default function WorkOrderInstallerClient({
             loadError={sackReports.loadError}
             materialOptions={materialOptions}
             onCreate={sackReports.create}
+            isRemoving={sackReports.isRemoving}
+            onDelete={sackReports.remove}
           />
 
           {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked

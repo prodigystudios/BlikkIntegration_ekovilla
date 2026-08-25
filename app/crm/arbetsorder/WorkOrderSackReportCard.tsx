@@ -28,6 +28,17 @@ import type { NewSackReportEntry } from './useSackReports';
 // Ett "av 130 planerade" bredvid inmatningsrutan hade bjudit in installatören att få talen att gå
 // ihop. Det planerade talet hör hemma på kontorets order, inte här.
 //
+// ── ÅNGERKNAPPEN, OCH VARFÖR DEN SITTER HÄR ─────────────────────────────────
+// 2026-08-24 rapporterade två installatörer med dålig mottagning samma dag två gånger: Spara såg
+// ut att inte göra något, så de tryckte igen. Båda raderna landade och jobbets total blev dubbel.
+// Boken kan inte rättas med en ny rad (en rad kan bara ADDERA — kolumnen har
+// `check (sacks_blown >= 0)`), så utan den här knappen var enda vägen manuell radering i
+// databasen.
+//
+// ⚠️ `can_delete` kommer FRÅN SERVERN, per rad. Kortet får inte gissa regeln: den bor i två
+// RLS-policyer (kontoret respektive den som skrev raden), och egenkontrollens rader bär den
+// aldrig — de rättas genom att egenkontrollen lämnas in på nytt.
+//
 // ── VAD MATERIALVALET GÖR HÄR ────────────────────────────────────────────────
 // Frågan ställs BARA när ordern har mer än ett material — alltså precis det fall kolumnen finns
 // för att lösa (depåhärledningen debiterar annars allt på orderns första igenkända material). Har
@@ -44,6 +55,9 @@ type Props = {
   /** Distinkta materialkortnamn på ordern. Väljaren visas bara när de är fler än ett. */
   materialOptions: string[];
   onCreate: (input: { reportDay: string; note: string | null; entries: NewSackReportEntry[] }) => Promise<boolean>;
+  /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
+  isRemoving: (id: string) => boolean;
+  onDelete: (id: string) => void;
 };
 
 const CHIP_BASE =
@@ -60,8 +74,14 @@ export default function WorkOrderSackReportCard({
   loadError,
   materialOptions,
   onCreate,
+  isRemoving,
+  onDelete,
 }: Props) {
   const [open, setOpen] = useState(false);
+  // Bekräftelsen ställs på raden, inte i en dialog: den som står i ett kryputrymme ska se VILKEN
+  // dag hen tar bort medan hen svarar på frågan. Knapparna är 44 px höga av samma skäl som
+  // placeringschipsen.
+  const [confirmId, setConfirmId] = useState<string | null>(null);
   // ⚠️ Tomt initialvärde och datumet först i en effekt. Komponenten serverrenderas innan den
   // hydrerar, och servern går på UTC — mellan 00:00 och 02:00 svensk tid står de två klockorna på
   // olika kalenderdagar, vilket ger en hydreringsmiss och ett synligt hopp i datumrutan.
@@ -156,6 +176,39 @@ export default function WorkOrderSackReportCard({
                   {/* Noteringen hör till RADEN. En not per grupp hade tappat allt utom den första —
                       och den är skriven till nästa team, alltså det enda på kortet någon behöver ordagrant. */}
                   {item.note ? <p className="m-0 pl-0.5 italic leading-relaxed">{item.note}</p> : null}
+                  {item.can_delete ? (
+                    confirmId === item.id ? (
+                      <div className="flex items-center justify-end gap-2 pt-0.5">
+                        <span className="text-slate-500">Ta bort raden?</span>
+                        <button
+                          type="button"
+                          onClick={() => onDelete(item.id)}
+                          disabled={isRemoving(item.id)}
+                          className="inline-flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-rose-600 transition active:scale-[0.98] disabled:opacity-60"
+                        >
+                          {isRemoving(item.id) ? 'Tar bort…' : 'Ja, ta bort'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmId(null)}
+                          disabled={isRemoving(item.id)}
+                          className="inline-flex h-11 items-center rounded-xl px-3 text-sm font-semibold text-slate-500 transition active:scale-[0.98] disabled:opacity-60"
+                        >
+                          Avbryt
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setConfirmId(item.id)}
+                          className="inline-flex h-11 items-center rounded-xl px-2 text-sm font-medium text-slate-400 transition active:scale-[0.98]"
+                        >
+                          Ta bort
+                        </button>
+                      </div>
+                    )
+                  ) : null}
                 </div>
               ))}
             </div>
