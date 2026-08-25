@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useToast } from '@/lib/Toast';
 import type { TimeEntryItem, TimeDraft } from './WorkOrderTimeTab';
 import type { CommentItem } from './WorkOrderCommentsTab';
@@ -47,6 +47,27 @@ export function useWorkOrderActivity(workOrderId: string, options?: { includeTim
     load();
     return () => { active = false; };
   }, [workOrderId, includeTimeEntries]);
+
+  // Namnregister för KOLLEGORS rader.
+  //
+  // `profiles` är self-read-only (profiles_select_self i auth_roles_setup.sql:71 är enda
+  // SELECT-policyn). Kommentarerna och tidraderna läses med SESSIONSKLIENTEN, så de joinade
+  // profilerna i selecten (`author:profiles(...)`, `user:profiles(...)` i lib/domains/crm/
+  // work-orders.ts) är null för varje rad utom ens egna — kollegans namn föll tillbaka på
+  // etiketterna "Kommentar" respektive "Medarbetare".
+  //
+  // @-omnämnandelistan hämtas däremot ELEVERAT (mention-users-rutten) och innehåller varje
+  // namngiven anställd, installatörer inkluderade. Den är alltså redan det register som saknades —
+  // den låg i samma svar, den användes bara inte. Samma grepp som assigneeNameById i
+  // arbetsorderlistan och offertlistan.
+  //
+  // ⚠️ Det här är en LAPP på self-read-RLS, inte en lösning. Den riktiga fixen är en smal
+  // employee_directory-vy; se minnet project_profiles_rls_rebuild.
+  const namesById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const u of mentionUsers) if (u.full_name) map.set(u.id, u.full_name);
+    return map;
+  }, [mentionUsers]);
 
   // Klockslagen är obligatoriska sedan 2026-08-14: raden är löneunderlag, och lönen härleder OB och
   // övertid ur start och slut. Timmarna räknas på servern och skickas aldrig härifrån.
@@ -149,7 +170,7 @@ export function useWorkOrderActivity(workOrderId: string, options?: { includeTim
   }
 
   return {
-    timeEntries, comments, mentionUsers, timeEntriesLoading, commentsLoading,
+    timeEntries, comments, mentionUsers, namesById, timeEntriesLoading, commentsLoading,
     createTimeEntry, updateTimeEntry, deleteTimeEntry, createComment, updateComment, deleteComment,
   };
 }

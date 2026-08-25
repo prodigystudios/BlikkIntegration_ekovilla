@@ -306,7 +306,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Time entries, comments and @-mention targets + their CRUD live in a shared hook
   // (also used by the installer field view) so the write logic isn't duplicated.
   const {
-    timeEntries, comments, mentionUsers, timeEntriesLoading, commentsLoading,
+    timeEntries, comments, mentionUsers, namesById, timeEntriesLoading, commentsLoading,
     createTimeEntry, updateTimeEntry, deleteTimeEntry, createComment, updateComment, deleteComment,
   } = useWorkOrderActivity(workOrderId);
 
@@ -1373,6 +1373,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           loading={commentsLoading}
           currentUserId={currentUserId}
           mentionUsers={mentionUsers}
+          namesById={namesById}
           onCreate={createComment}
           onUpdate={updateComment}
           onDelete={deleteComment}
@@ -1402,6 +1403,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           loading={timeEntriesLoading}
           totalHours={totalLoggedHours}
           currentUserId={currentUserId}
+          namesById={namesById}
           onCreate={createTimeEntry}
           onUpdate={updateTimeEntry}
           onDelete={deleteTimeEntry}

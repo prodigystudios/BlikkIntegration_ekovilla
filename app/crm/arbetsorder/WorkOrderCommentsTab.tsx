@@ -20,12 +20,14 @@ type Props = {
   loading: boolean;
   currentUserId: string | null;
   mentionUsers: MentionUser[];
+  /** Namn per användar-id, från useWorkOrderActivity — `author` är null för kollegors rader. */
+  namesById: Map<string, string>;
   onCreate: (body: string, mentionedUserIds: string[]) => Promise<boolean>;
   onUpdate: (id: string, body: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
 };
 
-export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, onCreate, onUpdate, onDelete }: Props) {
+export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, namesById, onCreate, onUpdate, onDelete }: Props) {
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   // Ids picked from the @-autocomplete for the new comment (id → full_name). The id is otherwise
@@ -100,7 +102,9 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
           return (
             <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <strong className="text-slate-900">{item.author?.full_name || 'Kommentar'}</strong>
+                {/* Registret först, den joinade profilen som reserv: joinen bär bara ens EGET
+                    namn (profiles är self-read-only), registret bär allas. */}
+                <strong className="text-slate-900">{namesById.get(item.created_by) || item.author?.full_name || 'Okänd medarbetare'}</strong>
                 <span className="text-xs text-slate-400">{formatDateTime(item.created_at)}</span>
               </div>
               <div className="text-slate-600">{item.body}</div>
