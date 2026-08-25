@@ -240,6 +240,46 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
     expect(result.resolved.workAddress.city).toBe('Stockholm');
   });
 
+  // ⚠️ REGRESSION, rapporterad i drift 2026-08-24: adressen rättades på kundkortet, men offerten
+  // bar kvar den gamla ofullständiga och spärren fällde igen. Ankaret var bara GATAN, så en
+  // snapshot med gata men utan ort svarade "ort saknas" utan att någonsin titta på kortet där
+  // orten stod. Ingen väg förbi — samma rundgång som personnumret och e-posten.
+  it('kundkortets adress vinner när offerten inte har någon egen arbetsadress', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, street_address: 'Gamla vägen 9', postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+    expect(result.resolved.workAddress).toMatchObject({
+      street_address: 'Storgatan 1',
+      postal_code: '12345',
+      city: 'Stockholm',
+    });
+  });
+
+  // Som en ENHET, aldrig fält för fält: en gata från kortet med en ort ur snapshoten pekar ut fel
+  // plats, och det är installatörerna som kör dit.
+  it('kortets adress tas hel — ingen ort lånas ur snapshoten', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, city: 'Göteborg' } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: null } },
+    );
+    expect(result.resolved.workAddress.city).toBeNull();
+    // Och spärren pekar på kundkortet, där luckan faktiskt sitter.
+    expect(result.blockers.find((b) => b.field === 'work_address')?.fixAt).toBe('customer_card');
+  });
+
+  it('ett HELT tomt kort gör snapshoten till sista utvägen', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote(),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: null, city: null } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+    expect(result.resolved.workAddress.street_address).toBe('Storgatan 1');
+  });
+
+  // Företagsfallet: fakturaadressen är bolagets, arbetet sker någon annanstans. Den separata
+  // arbetsadressen är ett medvetet val i offerten och måste stå emot ett ifyllt kundkort.
   it('en separat arbetsadress vinner över kundadressen och lånar inte dess ort', () => {
     const result = evaluateWorkOrderReadiness(
       quote({
@@ -250,7 +290,7 @@ describe('fullständighetskontroll offert → arbetsorder', () => {
           delivery_city: 'Göteborg',
         },
       }),
-      emptyCustomer,
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
     );
     expect(result.resolved.workAddress).toMatchObject({
       street_address: 'Industrivägen 4',
@@ -346,5 +386,101 @@ describe('felkoden som routen svarar med', () => {
         { field: 'contact_phone', label: '', message: '', fixAt: 'customer_card' },
       ]),
     ).toBe('crm_work_order_incomplete');
+  });
+});
+
+// ⚠️ Ordersnapshoten måste bära samma kundadress som spärren prövade. `buildOrderDeliveryFields`
+// (fortnox/orders.ts) avgör om ett leveransadressblock ska med till Fortnox genom att jämföra
+// arbetsadressens gata med snapshotens kundadress. Glider de isär får varje order som skapats
+// efter en rättad adress en Leveransadress på orderbekräftelsen, för ett jobb på kundens egen
+// adress.
+describe('kundadressen som ordern ska bära', () => {
+  const card = { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' };
+
+  it('utan egen arbetsadress är kundadress och arbetsadress samma sträng', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, street_address: 'Gamla vägen 9', city: 'Göteborg' } }),
+      { ...emptyCustomer, visit_address: card },
+    );
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+    expect(result.resolved.workAddress.street_address).toBe(result.resolved.customerAddress.street_address);
+  });
+
+  it('med egen arbetsadress skiljer de sig — och ska göra det', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({
+        customer_snapshot: {
+          ...fullSnapshot,
+          delivery_address: 'Industrivägen 4',
+          delivery_postal_code: '54321',
+          delivery_city: 'Malmö',
+        },
+      }),
+      { ...emptyCustomer, visit_address: card },
+    );
+    expect(result.resolved.workAddress.street_address).toBe('Industrivägen 4');
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+  });
+
+  it('utan kundrad faller kundadressen tillbaka på snapshoten', () => {
+    const result = evaluateWorkOrderReadiness(quote(), null);
+    expect(result.resolved.customerAddress.street_address).toBe('Storgatan 1');
+  });
+});
+
+// ⚠️ Avgör om ordern får skriva om sin kundadress. Bara när spärren faktiskt prövade den — annars
+// kan ett halvtomt kundkort (gata utan ort) tyst ersätta offertens kompletta adress med nullar,
+// utan att något fångar det, eftersom adresspärren då mätte arbetsadressen.
+describe('workAddressFromCustomer', () => {
+  it('sant när offerten saknar egen arbetsadress', () => {
+    expect(evaluateWorkOrderReadiness(quote(), emptyCustomer).resolved.workAddressFromCustomer).toBe(true);
+  });
+
+  it('falskt så snart offerten bär en egen', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, delivery_address: 'Industrivägen 4', delivery_postal_code: '54321', delivery_city: 'Malmö' } }),
+      emptyCustomer,
+    );
+    expect(result.resolved.workAddressFromCustomer).toBe(false);
+  });
+});
+
+// ⚠️ REGRESSION: återvändsgränden fanns kvar i en gren till. Med GATAN som villkor för att kortet
+// skulle gälla stod en kund vars besöksadress är tom (Fortnox-importer bär ofta ingen) still: hen
+// fyllde i exakt det postnummer och den ort spärren namngav, och ingenting hände.
+describe('kortet gäller så snart NÅGON adressdel är ifylld', () => {
+  it('postnummer och ort på kortet flyttar spärren framåt, även utan gata där', () => {
+    const utan = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: null, city: null } },
+    );
+    expect(utan.blockers.find((b) => b.field === 'work_address')?.message).toContain('postnummer och ort');
+
+    // Säljaren fyller i postnummer och ort på kundkortet. Spärren MÅSTE svara något annat nu.
+    const efter = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: '12345', city: 'Stockholm' } },
+    );
+    const kvar = efter.blockers.find((b) => b.field === 'work_address');
+    expect(kvar?.message).toContain('gatuadress');
+    expect(kvar?.message).not.toContain('postnummer');
+    expect(kvar?.fixAt).toBe('customer_card');
+  });
+
+  it('och en komplett gata på kortet släpper igenom', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+  });
+
+  // Kom adressen ur snapshoten skrivs den aldrig tillbaka: `visit_address` är en äldre FRITEXT-
+  // nyckel och kan peka på en annan plats än postnumret bredvid.
+  it('snapshotens adress markeras som INTE från kortet', () => {
+    const result = evaluateWorkOrderReadiness(quote(), emptyCustomer);
+    expect(result.resolved.customerAddressFromCard).toBe(false);
+    expect(evaluateWorkOrderReadiness(quote(), { ...emptyCustomer, visit_address: { street: 'Storgatan 1' } })
+      .resolved.customerAddressFromCard).toBe(true);
   });
 });

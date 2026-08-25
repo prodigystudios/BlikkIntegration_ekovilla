@@ -368,8 +368,12 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
   // frysningen vid orderskapandet skulle en rättad kontaktperson skriva om kundens fakturareferens.
   //
   // De upplösta värdena bakas in i snapshoten: kontrollen ovan godkände dem, och skrev vi något
-  // annat till ordern hade spärren prövat en uppgift ordern sedan inte bar. Snapshotens egna
-  // värden vinner alltid — `resolved` faller bara tillbaka på kundkortet när fältet är tomt.
+  // annat till ordern hade spärren prövat en uppgift ordern sedan inte bar.
+  //
+  // ⚠️ Vem som vinner varierar per fält, och det är HELA poängen — se huvudet i
+  // workOrderReadiness.ts. För telefon och org.nr fyller kortet bara en tom snapshot. För
+  // personnummer, e-post och kundadress vinner kortet, eftersom de tre inte går att redigera i
+  // offertformuläret och kopian därför aldrig är ett medvetet val.
   const orderSnapshot: Record<string, unknown> = {
     ...(quote.customer_snapshot || {}),
     your_reference: quote.customer_snapshot?.your_reference ?? quote.customer_snapshot?.contact_name ?? null,
@@ -381,6 +385,31 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     // kortet och renderas aldrig i formuläret — så en snapshot som vann hade burit vidare ett lån
     // som inte längre görs: bolagets adress under en anställds namn. Se `resolved.email`.
     email: readiness.resolved.email,
+    // Kundadressen ur samma uppslagning som spärren använde. ⚠️ Inte kosmetik:
+    // `buildOrderDeliveryFields` avgör om Fortnox ska få ett leveransadressblock genom att jämföra
+    // arbetsadressens gata med DEN HÄR strängen. Lämnade vi offertens gamla kundadress kvar skulle
+    // varje order som skapats efter en rättad adress få en Leveransadress på orderbekräftelsen,
+    // för ett jobb som ligger på kundens egen adress.
+    //
+    // ⚠️ BARA när spärren faktiskt prövade den, alltså när offerten saknar egen arbetsadress. Har
+    // den en egen tittar kontrollen aldrig på kundadressen, och ett halvtomt kundkort (gata utan
+    // ort) hade då tyst ersatt offertens kompletta adress med nullar — utan att något fångade det,
+    // eftersom adresspärren mätte arbetsadressen. Då behåller snapshoten sitt eget värde.
+    // Och bara när adressen faktiskt kom från KORTET — annars vore skrivningen en nolloperation,
+    // utom för den äldre fritextnyckeln `visit_address` som skulle byta ut gatan och lämna kvar
+    // postnumret från den andra platsen.
+    //
+    // Följden är att en sådan gammal rad får ett leveransadressblock på Fortnox-orderbekräftelsen,
+    // eftersom arbetsadressens gata då skiljer sig från snapshotens. Det är RÄTT och ska inte
+    // "rättas": fältet hette "Om annan än kundadress", alltså en annan plats än kundens — precis
+    // det ett leveransadressblock finns till för.
+    ...(readiness.resolved.workAddressFromCustomer && readiness.resolved.customerAddressFromCard
+      ? {
+          street_address: readiness.resolved.customerAddress.street_address,
+          postal_code: readiness.resolved.customerAddress.postal_code,
+          city: readiness.resolved.customerAddress.city,
+        }
+      : {}),
   };
 
   const orderNumber = buildWorkOrderNumber(quote.id);

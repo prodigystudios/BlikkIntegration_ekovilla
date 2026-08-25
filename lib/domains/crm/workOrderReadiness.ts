@@ -13,10 +13,14 @@
  * kundkortet) blockerats ändå, av en snapshot som skrevs innan. Kundkortet vinner därför när
  * snapshoten är tom — en ifylld snapshot är i övrigt ett medvetet val för just den offerten.
  *
- * ⚠️ MED ETT UNDANTAG: PERSONNUMRET. Där vinner kundkortet ALLTID, eftersom numret inte går att
- * redigera per offert och det är kortet — inte snapshoten — som Fortnox läser. Se resonemanget vid
- * `personalNumber` nedan; en snapshot som vann över ett rättat kort gjorde spärren omöjlig att ta
- * sig förbi.
+ * ⚠️ MED TRE UNDANTAG: PERSONNUMRET, E-POSTEN och KUNDADRESSEN. Där vinner kundkortet ALLTID.
+ * Gemensamt för dem: de går INTE att redigera i offertformuläret, så snapshotens värde är aldrig
+ * ett medvetet val för just den offerten — det är en kopia av kortet som det såg ut när kunden
+ * valdes. Alla tre gav samma rundgång i drift: säljaren rättade uppgiften på kundkortet precis som
+ * spärren bad om, och fälldes ändå av kopian. Se resonemanget vid `personalNumber`, `email` och
+ * `resolveCustomerAddress` nedan.
+ *
+ * Den separata ARBETSADRESSEN är inte ett av dem — den går att redigera per offert och vinner.
  *
  * Funktionen är ren och returnerar BÅDE fynden och de värden som lösts upp, så att
  * `createCrmWorkOrderFromQuote` bakar in exakt det som kontrollerades i ordersnapshoten. Räknade
@@ -60,8 +64,32 @@ export type WorkOrderReadinessResolved = {
   phone: string | null;
   /** Kontaktens e-post ur kundkortet — se resonemanget vid uträkningen. Spärrar inte. */
   email: string | null;
-  /** Adressen installatörerna navigerar till, med kundkortet som sista utväg. */
+  /** Adressen installatörerna navigerar till: offertens egna arbetsadress, annars kundens. */
   workAddress: AddressParts & { delivery_address: null; invoice_address: string | null };
+  /**
+   * Kundens adress som den gäller nu. Skrivs till ordersnapshoten så att den bär samma adress som
+   * spärren prövade — `buildOrderDeliveryFields` jämför den mot arbetsadressen för att avgöra om
+   * Fortnox ska få ett leveransadressblock.
+   */
+  customerAddress: AddressParts;
+  /**
+   * Sant när arbetsadressen kommer UR kundadressen, alltså när offerten saknar en egen.
+   *
+   * ⚠️ Ett av två villkor för att `customerAddress` får skrivas till ordern. Bara då har spärren
+   * faktiskt prövat den: har offerten en egen arbetsadress tittar kontrollen aldrig på
+   * kundadressen, och ett halvtomt kundkort (gata utan ort — `prospects.ts` och kund-berikningen
+   * skriver om `visit_address` i sin helhet) hade då tyst ersatt offertens kompletta adress med
+   * nullar, utan att något fångade det.
+   */
+  workAddressFromCustomer: boolean;
+  /**
+   * Sant när `customerAddress` kom från KUNDKORTET, falskt när den lästes ur snapshoten.
+   *
+   * ⚠️ Det andra villkoret för att skriva tillbaka. Kom adressen ur snapshoten vore skrivningen en
+   * nolloperation — utom för den äldre fritextnyckeln `visit_address`, som skulle ersätta
+   * `street_address` och lämna kvar postnumret från den andra platsen.
+   */
+  customerAddressFromCard: boolean;
 };
 
 export type WorkOrderReadiness = {
@@ -95,13 +123,30 @@ function text(value: unknown): string | null {
 }
 
 /**
- * Adressen som ordern ska bära.
+ * Adressen som ordern ska bära. Löses som en ENHET, aldrig fält för fält mellan två källor — en
+ * gata från ett håll och en ort från ett annat pekar ut fel plats, och det är installatörerna som
+ * kör dit.
  *
- * Gatan är ankaret, precis som i `buildCustomerSnapshot`: en separat arbetsadress lagras bara när
- * gatan är ifylld och skiljer sig från kundadressen, och då gäller dess postnummer/ort SOM IFYLLDA
- * (de lånas aldrig från kundadressen — det skulle ge fel ort). Saknas allt på offerten faller vi
- * tillbaka på kundkortets besöksadress, vilket räddar gamla offerter vars snapshot skrevs innan
- * adressen fanns på kortet.
+ * TVÅ FALL, och skillnaden är om jobbet ligger någon annanstans än hos kunden:
+ *
+ * 1. Offerten bär en EGEN arbetsadress. Den är ett medvetet val för just det här jobbet och går
+ *    att redigera i offertformuläret, så den vinner. Dess postnummer/ort gäller SOM IFYLLDA — de
+ *    lånas aldrig från kundadressen, det skulle ge fel ort när jobbet ligger i en annan stad.
+ *    Vanligast på företag: fakturaadressen är bolagets, arbetet sker någon annanstans.
+ *
+ * 2. Ingen egen arbetsadress → jobbet ligger på KUNDENS adress, och den bor på kundkortet. Då
+ *    läses kortet LIVE. Vanligast på privatkund, där kundadressen i praktiken är arbetsplatsen.
+ *
+ * ⚠️ VARFÖR KORTET VINNER I FALL 2, tvärtom mot hur det var: kundadressen går inte att redigera i
+ * offertformuläret — `street_address`/`postal_code`/`city` sätts från kortet och renderas aldrig
+ * som fält. Snapshotens kopia är alltså aldrig ett medvetet val för offerten. Med den först
+ * fastnade en säljare som gjorde precis det spärren bad om: adressen rättades på kundkortet,
+ * offerten bar kvar den gamla ofullständiga, och spärren fällde igen. Ankaret var dessutom bara
+ * GATAN, så en snapshot med gata men utan ort svarade "ort saknas" utan att någonsin titta på
+ * kortet där orten stod. Ingen väg förbi. Samma rundgång som personnumret och e-posten.
+ *
+ * Snapshoten är kvar som sista utväg för offerter som inte har någon kundrad att läsa — och för
+ * en kund vars adress tömts på kortet efter att offerten skrevs.
  */
 function resolveWorkAddress(
   snapshot: Record<string, unknown>,
@@ -116,20 +161,74 @@ function resolveWorkAddress(
     };
   }
 
-  const snapshotStreet = text(snapshot.visit_address) || text(snapshot.street_address);
-  if (snapshotStreet) {
+  // Ingen egen arbetsadress → arbetsadressen ÄR kundens adress. Samma uppslagning, så de två kan
+  // aldrig glida isär.
+  return resolveCustomerAddress(snapshot, customer).address;
+}
+
+/**
+ * Kundens adress som den gäller NU: kundkortet live, snapshoten som sista utväg.
+ *
+ * Egen funktion för att ordern ska kunna bära SAMMA adress som spärren prövade. Utan det skrevs
+ * offertens gamla kundadress till ordersnapshoten medan `work_address` fick kortets — och
+ * `buildOrderDeliveryFields` jämför just de två strängarna för att avgöra om en Leveransadress ska
+ * med till Fortnox. Efter en rättad adress hade de skilt sig, och varje order på kundens EGEN
+ * adress hade fått ett leveransadressblock på orderbekräftelsen som inte ska stå där.
+ *
+ * ⚠️ FÖLJD AV ATT KORTET VINNER: kortet är levande och delas av kundens alla offerter. Flyttar
+ * kunden pekas även en gammal vunnen offert om vid orderskapandet. Det är avsiktligt — det är hela
+ * poängen med att kortet är sanningen — men vill man frysa en plats gör man det genom att lägga in
+ * en separat ARBETSADRESS på offerten. Kundadressen går inte att låsa där.
+ *
+ * ⚠️ Kortet tas som en ENHET så snart NÅGON av de tre delarna är ifylld. Ett halvtömt kort
+ * (`updateCrmProspect` och Fortnox-synken skriver om hela `visit_address`) spärrar därför en offert
+ * vars snapshot bär en komplett adress. Det är rätt svar: spärren namnger den del som fattas och
+ * pekar på kundkortet, där luckan sitter, och varje ifyllt fält flyttar den framåt. Alternativet —
+ * kortets gata med snapshotens ort — är hur man skickar ett lag till fel stad.
+ *
+ * ⚠️ KÄLLAN ÄR `visit_address`, alltså Fortnox VisitingAddress (`fortnox/customers.ts`). Fortnox
+ * huvudadress `Address1` hamnar i `invoice_address` och läses INTE här — samma val som
+ * offertformuläret gör när det fyller i kundadressen, så de två är överens. Följden att vara
+ * medveten om: en kund vars besöksadress hos Fortnox bara har en ort får en spärr som ber om
+ * gatuadressen på kundkortet.
+ */
+function resolveCustomerAddress(
+  snapshot: Record<string, unknown>,
+  customer: ReadinessCustomerSource,
+): { address: AddressParts; fromCard: boolean } {
+  const visit = (customer?.visit_address || {}) as Record<string, string | null>;
+  const cardStreet = text(visit.street) || text(visit.street_address);
+  const cardPostal = text(visit.postal_code);
+  const cardCity = text(visit.city);
+
+  // ⚠️ VILKEN DEL SOM HELST räcker för att kortet ska vara källan, inte bara gatan.
+  //
+  // Med gatan som villkor fanns återvändsgränden kvar i en gren till: en kund vars `visit_address`
+  // är tom (Fortnox-importer bär ofta ingen besöksadress) medan offerten bär en gata. Spärren sa
+  // "saknar postnummer och ort", säljaren fyllde i exakt det på kundkortet — och ingenting hände,
+  // eftersom kortet fortfarande saknade gata och snapshoten därför vann. Samma dödläge som resten
+  // av den här ändringen finns för att ta bort.
+  //
+  // Nu flyttar varje ifyllt fält på kortet spärren framåt: saknas gatan säger den "saknar
+  // gatuadress" och pekar på kundkortet, där gatan faktiskt ska stå.
+  if (cardStreet || cardPostal || cardCity) {
     return {
-      street_address: snapshotStreet,
-      postal_code: text(snapshot.postal_code),
-      city: text(snapshot.city),
+      address: { street_address: cardStreet, postal_code: cardPostal, city: cardCity },
+      fromCard: true,
     };
   }
 
-  const visit = (customer?.visit_address || {}) as Record<string, string | null>;
+  // Sista utvägen: kortet är helt tomt, snapshoten är allt som finns. `visit_address` är en äldre
+  // FRITEXT-nyckel ("Om annan än kundadress") och alltså inte nödvändigtvis samma plats som
+  // postnumret bredvid — den läses här för att gamla rader ska ge en adress alls, men `fromCard`
+  // är falskt så att den aldrig skrivs tillbaka till ordern och fryser ihop två platser.
   return {
-    street_address: text(visit.street) || text(visit.street_address),
-    postal_code: text(visit.postal_code),
-    city: text(visit.city),
+    address: {
+      street_address: text(snapshot.visit_address) || text(snapshot.street_address),
+      postal_code: text(snapshot.postal_code),
+      city: text(snapshot.city),
+    },
+    fromCard: false,
   };
 }
 
@@ -246,6 +345,8 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
+  const { address: customerAddress, fromCard: customerAddressFromCard } = resolveCustomerAddress(snapshot, customer);
+  const workAddressFromCustomer = !text(snapshot.delivery_address);
   // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
   //
   // Adressen går inte att redigera på offerten — `draft.email` renderas aldrig i formuläret. Den
@@ -288,6 +389,9 @@ export function evaluateWorkOrderReadiness(
         organizationNumber,
         phone,
         email,
+        customerAddress,
+        workAddressFromCustomer,
+        customerAddressFromCard,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -368,6 +472,9 @@ export function evaluateWorkOrderReadiness(
       organizationNumber,
       phone,
       email,
+      customerAddress,
+      workAddressFromCustomer,
+      customerAddressFromCard,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en
