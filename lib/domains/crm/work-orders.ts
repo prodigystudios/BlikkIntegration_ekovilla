@@ -395,7 +395,10 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
     // den en egen tittar kontrollen aldrig på kundadressen, och ett halvtomt kundkort (gata utan
     // ort) hade då tyst ersatt offertens kompletta adress med nullar — utan att något fångade det,
     // eftersom adresspärren mätte arbetsadressen. Då behåller snapshoten sitt eget värde.
-    ...(readiness.resolved.workAddressFromCustomer
+    // Och bara när adressen faktiskt kom från KORTET — annars vore skrivningen en nolloperation,
+    // utom för den äldre fritextnyckeln `visit_address` som skulle byta ut gatan och lämna kvar
+    // postnumret från den andra platsen.
+    ...(readiness.resolved.workAddressFromCustomer && readiness.resolved.customerAddressFromCard
       ? {
           street_address: readiness.resolved.customerAddress.street_address,
           postal_code: readiness.resolved.customerAddress.postal_code,

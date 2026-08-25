@@ -444,3 +444,43 @@ describe('workAddressFromCustomer', () => {
     expect(result.resolved.workAddressFromCustomer).toBe(false);
   });
 });
+
+// ⚠️ REGRESSION: återvändsgränden fanns kvar i en gren till. Med GATAN som villkor för att kortet
+// skulle gälla stod en kund vars besöksadress är tom (Fortnox-importer bär ofta ingen) still: hen
+// fyllde i exakt det postnummer och den ort spärren namngav, och ingenting hände.
+describe('kortet gäller så snart NÅGON adressdel är ifylld', () => {
+  it('postnummer och ort på kortet flyttar spärren framåt, även utan gata där', () => {
+    const utan = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: null, city: null } },
+    );
+    expect(utan.blockers.find((b) => b.field === 'work_address')?.message).toContain('postnummer och ort');
+
+    // Säljaren fyller i postnummer och ort på kundkortet. Spärren MÅSTE svara något annat nu.
+    const efter = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: null, postal_code: '12345', city: 'Stockholm' } },
+    );
+    const kvar = efter.blockers.find((b) => b.field === 'work_address');
+    expect(kvar?.message).toContain('gatuadress');
+    expect(kvar?.message).not.toContain('postnummer');
+    expect(kvar?.fixAt).toBe('customer_card');
+  });
+
+  it('och en komplett gata på kortet släpper igenom', () => {
+    const result = evaluateWorkOrderReadiness(
+      quote({ customer_snapshot: { ...fullSnapshot, postal_code: null, city: null } }),
+      { ...emptyCustomer, visit_address: { street: 'Storgatan 1', postal_code: '12345', city: 'Stockholm' } },
+    );
+    expect(fields(result.blockers)).not.toContain('work_address');
+  });
+
+  // Kom adressen ur snapshoten skrivs den aldrig tillbaka: `visit_address` är en äldre FRITEXT-
+  // nyckel och kan peka på en annan plats än postnumret bredvid.
+  it('snapshotens adress markeras som INTE från kortet', () => {
+    const result = evaluateWorkOrderReadiness(quote(), emptyCustomer);
+    expect(result.resolved.customerAddressFromCard).toBe(false);
+    expect(evaluateWorkOrderReadiness(quote(), { ...emptyCustomer, visit_address: { street: 'Storgatan 1' } })
+      .resolved.customerAddressFromCard).toBe(true);
+  });
+});

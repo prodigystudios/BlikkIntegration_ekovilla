@@ -75,12 +75,21 @@ export type WorkOrderReadinessResolved = {
   /**
    * Sant när arbetsadressen kommer UR kundadressen, alltså när offerten saknar en egen.
    *
-   * ⚠️ Avgör om `customerAddress` får skrivas till ordern. Bara då har spärren faktiskt prövat den:
-   * har offerten en egen arbetsadress tittar kontrollen aldrig på kundadressen, och ett halvtomt
-   * kundkort (gata utan ort — `prospects.ts` och kund-berikningen skriver om `visit_address` i sin
-   * helhet) hade då tyst ersatt offertens kompletta adress med nullar, utan att något fångade det.
+   * ⚠️ Ett av två villkor för att `customerAddress` får skrivas till ordern. Bara då har spärren
+   * faktiskt prövat den: har offerten en egen arbetsadress tittar kontrollen aldrig på
+   * kundadressen, och ett halvtomt kundkort (gata utan ort — `prospects.ts` och kund-berikningen
+   * skriver om `visit_address` i sin helhet) hade då tyst ersatt offertens kompletta adress med
+   * nullar, utan att något fångade det.
    */
   workAddressFromCustomer: boolean;
+  /**
+   * Sant när `customerAddress` kom från KUNDKORTET, falskt när den lästes ur snapshoten.
+   *
+   * ⚠️ Det andra villkoret för att skriva tillbaka. Kom adressen ur snapshoten vore skrivningen en
+   * nolloperation — utom för den äldre fritextnyckeln `visit_address`, som skulle ersätta
+   * `street_address` och lämna kvar postnumret från den andra platsen.
+   */
+  customerAddressFromCard: boolean;
 };
 
 export type WorkOrderReadiness = {
@@ -154,7 +163,7 @@ function resolveWorkAddress(
 
   // Ingen egen arbetsadress → arbetsadressen ÄR kundens adress. Samma uppslagning, så de två kan
   // aldrig glida isär.
-  return resolveCustomerAddress(snapshot, customer);
+  return resolveCustomerAddress(snapshot, customer).address;
 }
 
 /**
@@ -179,23 +188,40 @@ function resolveWorkAddress(
 function resolveCustomerAddress(
   snapshot: Record<string, unknown>,
   customer: ReadinessCustomerSource,
-): AddressParts {
+): { address: AddressParts; fromCard: boolean } {
   const visit = (customer?.visit_address || {}) as Record<string, string | null>;
   const cardStreet = text(visit.street) || text(visit.street_address);
-  if (cardStreet) {
+  const cardPostal = text(visit.postal_code);
+  const cardCity = text(visit.city);
+
+  // ⚠️ VILKEN DEL SOM HELST räcker för att kortet ska vara källan, inte bara gatan.
+  //
+  // Med gatan som villkor fanns återvändsgränden kvar i en gren till: en kund vars `visit_address`
+  // är tom (Fortnox-importer bär ofta ingen besöksadress) medan offerten bär en gata. Spärren sa
+  // "saknar postnummer och ort", säljaren fyllde i exakt det på kundkortet — och ingenting hände,
+  // eftersom kortet fortfarande saknade gata och snapshoten därför vann. Samma dödläge som resten
+  // av den här ändringen finns för att ta bort.
+  //
+  // Nu flyttar varje ifyllt fält på kortet spärren framåt: saknas gatan säger den "saknar
+  // gatuadress" och pekar på kundkortet, där gatan faktiskt ska stå.
+  if (cardStreet || cardPostal || cardCity) {
     return {
-      street_address: cardStreet,
-      postal_code: text(visit.postal_code),
-      city: text(visit.city),
+      address: { street_address: cardStreet, postal_code: cardPostal, city: cardCity },
+      fromCard: true,
     };
   }
 
-  // Sista utvägen: allt ur snapshoten. `visit_address` är en äldre nyckel för samma gata — båda
-  // kommer ur SAMMA källa, så det är ingen hopblandning mellan två platser.
+  // Sista utvägen: kortet är helt tomt, snapshoten är allt som finns. `visit_address` är en äldre
+  // FRITEXT-nyckel ("Om annan än kundadress") och alltså inte nödvändigtvis samma plats som
+  // postnumret bredvid — den läses här för att gamla rader ska ge en adress alls, men `fromCard`
+  // är falskt så att den aldrig skrivs tillbaka till ordern och fryser ihop två platser.
   return {
-    street_address: text(snapshot.visit_address) || text(snapshot.street_address),
-    postal_code: text(snapshot.postal_code),
-    city: text(snapshot.city),
+    address: {
+      street_address: text(snapshot.visit_address) || text(snapshot.street_address),
+      postal_code: text(snapshot.postal_code),
+      city: text(snapshot.city),
+    },
+    fromCard: false,
   };
 }
 
@@ -312,7 +338,7 @@ export function evaluateWorkOrderReadiness(
   // Kravet är att NÅGON går att nå på plats, och där duger slutkundens nummer — det är ofta det
   // enda som finns när beställaren är en förvaltare. Prövas alltså bredare än det som lagras.
   const reachablePhone = phone || text(snapshot.end_contact_phone);
-  const customerAddress = resolveCustomerAddress(snapshot, customer);
+  const { address: customerAddress, fromCard: customerAddressFromCard } = resolveCustomerAddress(snapshot, customer);
   const workAddressFromCustomer = !text(snapshot.delivery_address);
   // E-POSTEN löses om mot kundkortet i stället för att ärvas ur snapshoten.
   //
@@ -358,6 +384,7 @@ export function evaluateWorkOrderReadiness(
         email,
         customerAddress,
         workAddressFromCustomer,
+        customerAddressFromCard,
         workAddress: { ...workAddress, delivery_address: null, invoice_address: text(snapshot.invoice_address) },
       },
     };
@@ -440,6 +467,7 @@ export function evaluateWorkOrderReadiness(
       email,
       customerAddress,
       workAddressFromCustomer,
+      customerAddressFromCard,
       workAddress: {
         ...workAddress,
         // Primäradressen bär redan arbetsplatsen när en sådan finns — dubblera den inte som en
