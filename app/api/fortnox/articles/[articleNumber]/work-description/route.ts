@@ -19,9 +19,17 @@ export async function POST(_req: Request, context: RouteContext) {
 
     const articleNumber = decodeURIComponent(context.params.articleNumber);
     const supabase = createRouteHandlerClient({ cookies });
+    // 🧨 `ignoreDuplicates` → ON CONFLICT DO NOTHING, inte DO UPDATE. En vanlig upsert kräver
+    // UPDATE-rättighet och en UPDATE-policy, och migreringen ger med flit bara select/insert/delete
+    // — att kryssa i en redan ikryssad artikel hade då gett 500 och en tillbakarullad kryssruta.
+    // Närvaron ÄR hela värdet, så "finns redan" är ett lyckat utfall. Första skribenten står kvar
+    // som created_by, vilket är informationellt.
     const { error } = await supabase
       .from('fortnox_article_work_description_defaults')
-      .upsert({ article_number: articleNumber, created_by: crmUser.currentUser.id }, { onConflict: 'article_number' });
+      .upsert(
+        { article_number: articleNumber, created_by: crmUser.currentUser.id },
+        { onConflict: 'article_number', ignoreDuplicates: true },
+      );
 
     if (error) return routeError(500, 'fortnox_article_work_description_failed', error.message);
     return ok({ article_number: articleNumber, include_in_work_description: true });
