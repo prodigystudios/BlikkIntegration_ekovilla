@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
@@ -212,6 +212,8 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // `reportedSacks === null` betyder "ingen rapport", inte "noll säckar" — se
   // getWorkOrderReportedSacks. Skillnaden bärs hela vägen ut i rutan.
   const [reportedSacks, setReportedSacks] = useState<number | null>(null);
+  // Ordningsräknare för omräkningen efter en borttagning — se removeSackReport.
+  const reportedSacksSeq = useRef(0);
   // Spåret bakom snabböversiktens tal. Skriver inga rapporter — dörr 1 och 2 gör det — men kan ta
   // bort en felrapporterad delrapport, se removeSackReport.
   const sackReports = useSackReports(workOrderId);
@@ -243,9 +245,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   async function removeSackReport(id: string) {
     const removed = await sackReports.remove(id);
     if (!removed) return;
+    // ⚠️ Samma ordningsfälla som i hookens refresh: två borttagningar i rad ger två omräkningar,
+    // och landar den första sist skriver den tillbaka summan FÖRE den andra raden togs bort. Talet
+    // hade då stått kvar på den dubbelrapporterade siffran — alltså precis det borttagningen
+    // gjordes för att rätta, på ordersidans mest lästa ruta.
+    const seq = ++reportedSacksSeq.current;
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
+      if (seq !== reportedSacksSeq.current) return;
       if (json?.ok) setReportedSacks((json.data?.reported_sacks as number | null | undefined) ?? null);
     } catch {
       // Spåret är redan rätt; rubriktalet rättar sig vid nästa laddning. Ingen toast — raden ÄR

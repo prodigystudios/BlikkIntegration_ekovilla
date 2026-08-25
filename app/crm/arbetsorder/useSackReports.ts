@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '@/lib/Toast';
 import { formatSacks } from '@/app/crm/lib/format';
 import type { SackReportView } from '@/lib/domains/planning/reports';
@@ -45,17 +45,31 @@ export function useSackReports(workOrderId: string) {
   // dessutom in till en dubblettrapport i en bok man inte kan städa därifrån.
   const [loadError, setLoadError] = useState(false);
 
+  // ⚠️ Svaren kommer inte nödvändigtvis i frågornas ordning. Två borttagningar i rad ger två
+  // omhämtningar, och landar den FÖRSTA sist skriver den tillbaka en lista där den andra raden
+  // fortfarande finns. Nästa klick på den svarar då 404 på en rad som faktiskt är borta — samma
+  // felaktiga besked som mängden av pågående borttagningar ovan finns för att slippa.
+  //
+  // Räknaren är en ref och inte state: den ska inte rendera om något, och en state-uppdatering
+  // hade dessutom kommit för sent för svaret som just landat.
+  const refreshSeq = useRef(0);
+
   const refresh = useCallback(async () => {
+    const seq = ++refreshSeq.current;
+    const isLatest = () => seq === refreshSeq.current;
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrderId}/sack-reports`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
+      if (!isLatest()) return;
       if (!res.ok || !json.ok) { setLoadError(true); return; }
       setReports((json.data?.items || []) as SackReportView[]);
       setHasFinal(Boolean(json.data?.has_final));
       setLoadError(false);
     } catch {
-      setLoadError(true);
+      if (isLatest()) setLoadError(true);
     } finally {
+      // Ovillkorligt: `loading` går bara från true till false, och den första hämtningen ska
+      // släppa skelettet även om en nyare redan hunnit förbi den.
       setLoading(false);
     }
   }, [workOrderId]);
