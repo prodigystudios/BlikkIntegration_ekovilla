@@ -82,6 +82,8 @@ type Props = {
   loading: boolean;
   totalHours: number;
   currentUserId: string | null;
+  /** Namn per användar-id, från useWorkOrderActivity — `user` är null för kollegors rader. */
+  namesById: Map<string, string>;
   onCreate: (data: TimeDraft) => Promise<boolean>;
   onUpdate: (id: string, data: TimeDraft) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
@@ -118,7 +120,7 @@ function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: T
   );
 }
 
-export default function WorkOrderTimeTab({ entries, loading, totalHours, currentUserId, onCreate, onUpdate, onDelete }: Props) {
+export default function WorkOrderTimeTab({ entries, loading, totalHours, currentUserId, namesById, onCreate, onUpdate, onDelete }: Props) {
   const [createDraft, setCreateDraft] = useState<TimeDraft>(emptyDraft);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -196,7 +198,9 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
           return (
             <div key={item.id} className="grid gap-1 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <strong className="text-slate-900">{item.user?.full_name || 'Medarbetare'}</strong>
+                {/* Registret först, den joinade profilen som reserv: joinen bär bara ens EGET
+                    namn (profiles är self-read-only), registret bär allas. */}
+                <strong className="text-slate-900">{namesById.get(item.user_id) || item.user?.full_name || 'Okänd medarbetare'}</strong>
                 <span className="text-slate-500">
                   {/* Rader från före klockslagskravet har bara ett timtal. De visas som de är i
                       stället för att gömmas — de ska rättas, inte försvinna. */}

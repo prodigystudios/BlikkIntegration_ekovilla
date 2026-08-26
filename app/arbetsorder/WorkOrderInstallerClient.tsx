@@ -276,6 +276,7 @@ export default function WorkOrderInstallerClient({
             loading={activity.commentsLoading}
             currentUserId={currentUserId}
             mentionUsers={activity.mentionUsers}
+            namesById={activity.namesById}
             onCreate={activity.createComment}
             onUpdate={activity.updateComment}
             onDelete={activity.deleteComment}
@@ -323,6 +324,7 @@ export default function WorkOrderInstallerClient({
           loading={activity.timeEntriesLoading}
           totalHours={totalLoggedHours}
           currentUserId={currentUserId}
+          namesById={activity.namesById}
           onCreate={activity.createTimeEntry}
           onUpdate={activity.updateTimeEntry}
           onDelete={activity.deleteTimeEntry}
