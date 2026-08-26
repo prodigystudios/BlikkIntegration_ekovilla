@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Modulen importerar getSupabaseAdmin på toppnivå. Rörs inte här, men måste finnas för importen.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => null }));
 
-import { mergeWorkOrderSnapshotOverrides } from '@/lib/domains/crm/work-orders';
+import { mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails } from '@/lib/domains/crm/work-orders';
 
 // Arbetsorderns customer_snapshot bär tre olika personer/värden som redigeras i samma formulär:
 //
@@ -218,5 +218,59 @@ describe('mergeWorkOrderSnapshotOverrides — flera överlagringar i samma PATCH
     expect(merged.contact_name).toBe('Rätt Kontakt');
     expect(merged.end_contact_name).toBeNull();
     expect(merged.end_contact_phone).toBeNull();
+  });
+});
+
+// ── ROT-uppgifterna på arbetsordern ──────────────────────────────────────────
+//
+// Ordern äger dem (resolveOrderRotDetails): offerten är vad kunden bad om, ordern är sanningen om
+// vad vi fakturerar — och offerten är låst så fort ordern finns.
+describe('mergeWorkOrderRotDetails', () => {
+  // 🧨 PERSONNUMRET FÅR ALDRIG FÖRSVINNA. Det redigeras inte här (det bor på kundkortet) och står
+  // varken i klientens payload eller i Zod-schemat — så det kan bara överleva genom att kopieras
+  // vidare. Ett tappat nummer dödar ROT-avdraget TYST i Fortnox.
+  const CURRENT = {
+    enabled: true,
+    applicant_name: 'Anna Andersson',
+    personal_number: '199001011234',
+    property_designation: 'Haggården 6:3',
+    rot_percent: 30,
+    max_deduction: 50000,
+    brf_org_number: null,
+  };
+
+  it('bevarar applicant_name och personal_number', () => {
+    const merged = mergeWorkOrderRotDetails(CURRENT, { property_designation: 'Nytorp 1:12' });
+    expect(merged.personal_number).toBe('199001011234');
+    expect(merged.applicant_name).toBe('Anna Andersson');
+    expect(merged.property_designation).toBe('Nytorp 1:12');
+  });
+
+  it('rör bara nycklar som faktiskt skickats', () => {
+    // En sparning som bara ändrar procenten får inte nolla beteckningen.
+    const merged = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50 });
+    expect(merged.rot_percent).toBe(50);
+    expect(merged.property_designation).toBe('Haggården 6:3');
+    expect(merged.enabled).toBe(true);
+  });
+
+  it('null skriver — en tömd beteckning ska bli tömd', () => {
+    const merged = mergeWorkOrderRotDetails(CURRENT, { property_designation: null });
+    expect(merged.property_designation).toBeNull();
+  });
+
+  it('enabled: false skrivs, inte tolkat som "rör inte"', () => {
+    expect(mergeWorkOrderRotDetails(CURRENT, { enabled: false }).enabled).toBe(false);
+  });
+
+  it('tom nuvarande går igenom utan att kasta', () => {
+    expect(mergeWorkOrderRotDetails(null, { enabled: true })).toEqual({ enabled: true });
+    expect(mergeWorkOrderRotDetails({}, {})).toEqual({});
+  });
+
+  it('muterar inte indatan', () => {
+    const current = { ...CURRENT };
+    mergeWorkOrderRotDetails(current, { rot_percent: 50 });
+    expect(current.rot_percent).toBe(30);
   });
 });

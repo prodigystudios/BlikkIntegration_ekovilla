@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides } from '@/lib/domains/crm/work-orders';
-import { syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails } from '@/lib/domains/crm/work-orders';
+import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
@@ -94,13 +94,28 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Read before the merges below strip `contact`/`your_reference` off updateInput.
     const touchesFortnox = FORTNOX_MIRRORED_FIELDS.some((field) => field in updateInput);
 
+    // ⚠️ ROT går INTE header-vägen. Uppgifterna delar sig i två halvor på dokumentet:
+    // fastighetsbeteckningen blir headerns YourOrderNumber för en VILLA, men för en BOSTADSRÄTT
+    // (BRF org.nr ifyllt) blir båda i stället en TEXTRAD — och header-synken släpper medvetet
+    // radhalvan. Dessutom styr `enabled` husarbetesflaggan på varje artikelrad.
+    //
+    // Alltså full push. Ett villkor på "bara header när BRF saknas" hade varit en regel till att
+    // hålla i synk med resolveRotReference, och den som glömmer den får en ändring som ser
+    // sparad ut men aldrig når kundens dokument.
+    const touchesRot = 'rot_details' in updateInput;
+
     // Load the current row once — the snapshot merges and the status guard all need it.
-    type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
+    type WoCurrent = {
+      status?: string | null;
+      customer_snapshot?: Record<string, unknown> | null;
+      rot_details?: Record<string, unknown> | null;
+      fortnox_order_number?: string | null;
+    };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
       Boolean(updateInput.contact) || updateInput.your_reference !== undefined
       || Boolean(updateInput.end_contact) || updateInput.label !== undefined;
-    if (touchesSnapshot || updateInput.status) {
+    if (touchesSnapshot || touchesRot || updateInput.status) {
       const currentRead = await getCrmWorkOrder(supabase, context.params.id);
       // 🧨 FAIL-CLOSED PÅ LÄSFELET. Snapshoten skrivs read-merge-write, så en misslyckad läsning
       // gav `null` → merge mot `{}` → kolumnen ersattes av BARA överlagringarna. Personnummer,
@@ -143,6 +158,25 @@ export async function PATCH(req: Request, context: RouteContext) {
       delete (updateInput as { label?: unknown }).label;
     }
 
+    // ROT-uppgifterna, samma read-merge-write. Regeln bor i domänen och bevarar applicant_name och
+    // personal_number, som kommer ur kundkortet och inte redigeras här.
+    //
+    // 🧨 ROT-REGIMEN ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. `TaxReductionType` sätts bara vid
+    // create, och ett icke-ROT-dokument avvisar varje husarbetesfält med 2004021 — så att slå PÅ
+    // ROT här hade sänkt varje efterföljande radsynk. Klienten döljer reglaget då, men spärren
+    // måste stå här också: den som skickar en handskriven PATCH ska inte kunna låsa sin egen order.
+    if (touchesRot && updateInput.rot_details) {
+      const currentRot = (current?.rot_details ?? {}) as Record<string, unknown>;
+      const turningRotOn = updateInput.rot_details.enabled === true && currentRot.enabled !== true;
+      if (turningRotOn && current?.fortnox_order_number) {
+        return routeError(409, 'crm_work_order_rot_locked',
+          'ROT kan inte slås på för en order som redan skickats till Fortnox — dokumentets ROT-läge sätts när ordern skapas. Skapa en ny order, eller lägg till avdraget i Fortnox.');
+      }
+      (updateInput as Record<string, unknown>).rot_details = mergeWorkOrderRotDetails(
+        currentRot, updateInput.rot_details,
+      );
+    }
+
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends
     // the current status alongside a contact/address/notes edit; re-sending it is a no-op, so
     // those edits still work on a billed order (they'd otherwise be wrongly rejected).
@@ -179,13 +213,18 @@ export async function PATCH(req: Request, context: RouteContext) {
     // The reason is handed back so the UI can say the save landed but the sync didn't.
     let fortnoxError: string | null = null;
     let synced = false;
-    if (touchesFortnox) {
+    if (touchesRot || touchesFortnox) {
       try {
-        synced = (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
+        // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
+        // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
+        // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
+        synced = touchesRot
+          ? Boolean(await updateWorkOrderInFortnox(context.params.id))
+          : (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
       } catch (e) {
         if (!(e instanceof FortnoxNotConnectedError)) {
           fortnoxError = friendlyFortnoxMessage(e);
-          console.error('[fortnox] Arbetsorder-headersynk misslyckades:', (e as Error)?.message);
+          console.error('[fortnox] Arbetsordersynk misslyckades:', (e as Error)?.message);
         }
       }
     }

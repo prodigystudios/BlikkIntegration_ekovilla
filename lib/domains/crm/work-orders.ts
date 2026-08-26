@@ -693,6 +693,37 @@ export function mergeWorkOrderSnapshotOverrides(
   return merged;
 }
 
+/**
+ * ROT-uppgifterna på arbetsordern, read-merge-write.
+ *
+ * Ordern äger dem (se `resolveOrderRotDetails` i fortnox/orders.ts): offerten är vad kunden bad om,
+ * ordern är sanningen om vad vi fakturerar — och offerten är låst så fort ordern finns.
+ *
+ * ⚠️ `applicant_name` och `personal_number` REDIGERAS INTE HÄR och måste överleva varje sparning.
+ * De kommer ur kundkortet, och personnumret är det Fortnox knyter ROT-avdraget till — ett
+ * tiosiffrigt eller saknat nummer dödar avdraget tyst hos dem. Klienten skickar dem aldrig, och
+ * schemat bär dem inte, så de kan bara bevaras genom att kopieras vidare härifrån.
+ *
+ * Bara nycklar anroparen faktiskt skickade skrivs: `undefined` betyder "rör inte", så en sparning
+ * som bara ändrar procenten inte nollar fastighetsbeteckningen.
+ */
+export function mergeWorkOrderRotDetails(
+  current: Record<string, unknown> | null | undefined,
+  overrides: {
+    enabled?: boolean;
+    property_designation?: string | null;
+    rot_percent?: number;
+    max_deduction?: number;
+    brf_org_number?: string | null;
+  },
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...(current ?? {}) };
+  for (const key of ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const) {
+    if (overrides[key] !== undefined) merged[key] = overrides[key];
+  }
+  return merged;
+}
+
 export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: Partial<WorkOrderUpdateInput>) {
   return supabase.from('crm_work_orders').update(input).eq('id', id).select(crmWorkOrderSelect).single();
 }

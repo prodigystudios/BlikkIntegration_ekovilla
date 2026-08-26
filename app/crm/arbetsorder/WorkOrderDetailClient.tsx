@@ -128,6 +128,13 @@ type WorkOrderDraft = {
   your_reference: string;
   // Märkning → Fortnox YourOrderNumber. Bara företagskund, som i offerten.
   label: string;
+  // ROT-uppgifterna. Arbetsordern ÄGER dem — offerten är låst när ordern finns, och ordern är
+  // sanningen om vad vi fakturerar (resolveOrderRotDetails).
+  rot_enabled: boolean;
+  rot_property_designation: string;
+  rot_percent: string;
+  rot_max_deduction: string;
+  rot_brf_org_number: string;
   work_scope: string;
   handoff_notes: string;
   notes: string;
@@ -402,6 +409,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       // därifrån, annars ser fältet tomt ut fast Fortnox har ett värde.
       your_reference: item.customer_snapshot?.your_reference ?? item.customer_snapshot?.contact_name ?? '',
       label: item.customer_snapshot?.label || '',
+      rot_enabled: item.rot_details?.enabled === true,
+      rot_property_designation: item.rot_details?.property_designation || '',
+      // Tomt fält när värdet saknas, ALDRIG en påhittad default. En ruta som visar "30" på en order
+      // vars rot_details aldrig burit någon procent påstår ett värde vi inte har.
+      rot_percent: item.rot_details?.rot_percent != null ? String(item.rot_details.rot_percent) : '',
+      rot_max_deduction: item.rot_details?.max_deduction != null ? String(item.rot_details.max_deduction) : '',
+      rot_brf_org_number: item.rot_details?.brf_org_number || '',
       work_scope: item.internal_handoff?.work_scope || '',
       handoff_notes: item.internal_handoff?.handoff_notes || '',
       notes: item.notes || '',
@@ -442,6 +456,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   async function saveWorkOrder() {
     if (!workOrder || !draft) return;
+    // 🧨 ROT-REGIMEN ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. `TaxReductionType` sätts bara när
+    // dokumentet skapas, och ett icke-ROT-dokument avvisar varje husarbetesfält med 2004021 — så
+    // ett påslag i efterhand hade sänkt varje efterföljande radsynk. Samma villkor som reglaget
+    // i formuläret; servern gör om kontrollen.
+    const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
     setSaving(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}`, {
@@ -469,6 +488,24 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           // fastighetsbeteckningen samma Fortnox-fält (resolveRotReference), och en märkning
           // därifrån hade antingen varit död data eller trängt undan den.
           ...(workOrder.quote_type === 'business' ? { label: draft.label || null } : {}),
+          // ROT: bara privatkund, som i offerten. Skickas bara när den faktiskt kan ändras här —
+          // annars hade varje sparning av en företagsorder utlöst en full Fortnox-push i onödan,
+          // eftersom routen behandlar rot_details som "rör raderna".
+          //
+          // ⚠️ `enabled` skickas ALDRIG med när ordern redan ligger i Fortnox: dokumentets ROT-läge
+          // sätts vid create (TaxReductionType) och går inte att ändra. Routen nekar det med 409,
+          // och att inte skicka fältet är hur ett osparat reglagevärde undviker att trigga den.
+          ...(workOrder.quote_type === 'private'
+            ? {
+                rot_details: {
+                  ...(rotToggleLocked ? {} : { enabled: draft.rot_enabled }),
+                  property_designation: draft.rot_property_designation || null,
+                  brf_org_number: draft.rot_brf_org_number || null,
+                  ...(draft.rot_percent.trim() ? { rot_percent: parseDecimal(draft.rot_percent, 30) } : {}),
+                  ...(draft.rot_max_deduction.trim() ? { max_deduction: parseDecimal(draft.rot_max_deduction, 50000) } : {}),
+                },
+              }
+            : {}),
           // Kundkontakten: vem vi och installatörerna ringer. Rör aldrig Fortnox.
           contact: {
             contact_name: draft.contact_name,
@@ -689,6 +726,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const labelClearPending = Boolean(snapshot.label_cleared) && Boolean(workOrder.fortnox_order_number);
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
+  // 🧨 ROT-regimen sätts av Fortnox när ordern SKAPAS (TaxReductionType) och går inte att ändra
+  // efteråt — ett icke-ROT-dokument avvisar varje husarbetesfält med 2004021. Reglaget låses
+  // därför så fort ordern har ett Fortnox-nummer. Uppgifterna (beteckning, BRF, procent, maxbelopp)
+  // rör inte regimen och är fritt redigerbara. Servern gör om kontrollen.
+  const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
   // from the computed VAT (robust even if the work order's vat_percent column drifted to 25 — the
   // pricing/Fortnox document are still 0), so the economy card reads "Omvänd skattskyldighet"
@@ -1103,7 +1145,80 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 onSave={saveArticles}
               />
 
-              {rot.enabled ? (
+              {/* ─── ROT-uppställning ───────────────────────────────────────
+                  Redigerbar sedan arbetsordern äger ROT-uppgifterna (resolveOrderRotDetails).
+                  Offerten är låst när ordern finns, och en fastighetsbeteckning som visar sig fel
+                  gick fram till nu bara att rätta i Fortnox för hand.
+
+                  Visas för PRIVATKUND i redigeringsläget även när ROT är av — annars går reglaget
+                  inte att nå. I läsläget bara när ROT faktiskt gäller. */}
+              {editingOverview && workOrder.quote_type === 'private' ? (
+                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
+                  <p className={crm.sectionTitle}>ROT-avdrag</p>
+
+                  {/* 🧨 REGLAGET ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. Dokumentets ROT-läge
+                      (TaxReductionType) sätts när ordern skapas och går inte att ändra; ett
+                      icke-ROT-dokument avvisar varje husarbetesfält med 2004021, så ett påslag
+                      här hade sänkt varje efterföljande radsynk. Låset ska SYNAS med sitt skäl —
+                      ett utgråat kryss utan förklaring läses som en bugg. */}
+                  {rotToggleLocked ? (
+                    <div className="grid gap-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                        <span className={cn(crm.badge, rot.enabled
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-slate-200 bg-white text-slate-600')}>
+                          {rot.enabled ? 'På' : 'Av'}
+                        </span>
+                      </div>
+                      <span className="text-[11px] leading-snug text-slate-500">
+                        Låst — ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Uppgifterna nedan går fortfarande att rätta.
+                      </span>
+                    </div>
+                  ) : (
+                    <label className="flex cursor-pointer select-none items-center justify-between gap-3">
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
+                        <span className="text-[11px] text-slate-500">Slår på ROT-uppgifterna och arbetskostnad per rad.</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={draft.rot_enabled}
+                        onChange={(e) => setField('rot_enabled', e.target.checked)}
+                        className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                      />
+                    </label>
+                  )}
+
+                  {draft.rot_enabled ? (
+                    <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
+                      <label className="grid gap-1 text-sm text-slate-600">
+                        <span className={crm.sectionTitle}>Fastighetsbeteckning</span>
+                        <Input value={draft.rot_property_designation} onChange={(e) => setField('rot_property_designation', e.target.value)} placeholder="Ex. Haggården 6:3" />
+                      </label>
+                      <label className="grid gap-1 text-sm text-slate-600">
+                        <span className={crm.sectionTitle}>BRF org.nr</span>
+                        <Input value={draft.rot_brf_org_number} onChange={(e) => setField('rot_brf_org_number', e.target.value)} placeholder="Om bostadsrätt" />
+                      </label>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1 text-sm text-slate-600">
+                          <span className={crm.sectionTitle}>Skattereduktion %</span>
+                          <Input value={draft.rot_percent} onChange={(e) => setField('rot_percent', e.target.value)} inputMode="decimal" placeholder="30" />
+                        </label>
+                        <label className="grid gap-1 text-sm text-slate-600">
+                          <span className={crm.sectionTitle}>Max avdrag</span>
+                          <Input value={draft.rot_max_deduction} onChange={(e) => setField('rot_max_deduction', e.target.value)} inputMode="decimal" placeholder="50000" />
+                        </label>
+                      </div>
+                      {/* Samma upplysning som i offerten: procenten styr bara VÅR preliminära
+                          "Att betala". Fortnox räknar det faktiska avdraget vid fakturering. */}
+                      <p className="text-[11px] leading-snug text-slate-500">
+                        Fastighetsbeteckning och BRF org.nr följer med till Fortnox. Skattereduktionen är preliminär — det faktiska avdraget räknas av Fortnox vid fakturering.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : rot.enabled ? (
                 <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
                   <p className={crm.sectionTitle}>ROT-uppställning</p>
                   <div className="grid gap-x-6 sm:grid-cols-2">
