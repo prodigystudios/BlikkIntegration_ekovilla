@@ -280,11 +280,11 @@ export function resolveYourReference(
  *                             Fortnox behåller sitt — rätt för en order vi inte har någon åsikt om)
  *   tömning BEGÄRD          → `null`
  *
- * ⚠️ `null` OCH INTE `''`. Uppmätt i drift 2026-08-20 (FORTNOX_TEXT_ROW i helpers.ts): `''`
- * accepteras men rensar INTE, `null` rensar. De mätningarna gjordes på radfält, och headerfält
- * antas följa samma regel — dokumentationen där säger uttryckligen att raderna uppdateras "precis
- * som med header-fälten". Går antagandet fel svarar Fortnox 400: header-synken är icke-fatal, så
- * sparningen ligger kvar, säljaren får en toast och statusen blir 'failed' — inget tyst fel.
+ * ⚠️ `null` OCH INTE `''`. Uppmätt i drift 2026-08-26 på ett HEADERFÄLT: `YourOrderNumber: null`
+ * rensar "Ert referensnummer" på Fortnox-ordern. Det bekräftar att headerfält följer samma regel
+ * som radfälten (uppmätta 2026-08-20, se FORTNOX_TEXT_ROW i helpers.ts): `null` rensar, `''`
+ * accepteras men rensar inte. Undantaget `Unit` — som avvisar null med 2000699 — gäller alltjämt
+ * bara det fältet.
  *
  * ⛔ RENSNINGEN LÄSES UR `label_cleared`, ALDRIG UR ATT MÄRKNINGEN ÄR TOM. En tom märkning är
  * normalläget: `buildCustomerSnapshot` skriver alltid nyckeln, så "tomt" gäller i stort sett varje

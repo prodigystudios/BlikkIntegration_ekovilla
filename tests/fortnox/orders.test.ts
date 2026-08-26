@@ -321,18 +321,20 @@ describe('orderReferenceNumberField', () => {
     expect(orderReferenceNumberField(null, { label: null } as any)).toEqual({});
   });
 
-  // 🧨 null, INTE ''. Uppmätt i drift 2026-08-20: '' accepteras men rensar inte, null rensar.
-  // Ett '' här hade sett ut att blanka kundens referensnummer utan att göra det.
+  // 🧨 null, INTE ''. Uppmätt mot skarp Fortnox 2026-08-26 på just det HÄR headerfältet:
+  // YourOrderNumber: null rensar "Ert referensnummer". Samma regel som radfälten (2026-08-20):
+  // null rensar, '' accepteras men rensar inte. Ett '' här hade sett ut att blanka kundens
+  // referensnummer utan att göra det.
   it('en registrerad tömning skickar null', () => {
     expect(orderReferenceNumberField(null, { label_cleared: true })).toEqual({ YourOrderNumber: null });
     expect(orderReferenceNumberField('', { label_cleared: true })).toEqual({ YourOrderNumber: null });
   });
 
   // 🧨 Anroparen stänger av rensningen genom att skicka null i stället för snapshoten. Det är så
-  // skapandevägen och radsynken hålls utanför: `null` är uppmätt för RADfält, inte för headerfält,
-  // och skulle Fortnox avvisa det hade varje artikelredigering och varje "Synka om" kastat — med
-  // ordern kvar på 'failed' och faktureringen spärrad av assertOrderRowsSynced. Kvar blir en enda
-  // väg som kan misslyckas, och den är icke-fatal.
+  // skapandevägen och radsynken hålls utanför: skapandet har inget att rensa, och radsynken får
+  // inte bära ett anrop som kan fastna — minnet av rensningen ligger kvar tills den lyckas, så ett
+  // återkommande fel där hade lämnat ordern på 'failed' med faktureringen spärrad av
+  // assertOrderRowsSynced. Kvar blir en enda väg som kan misslyckas, och den är icke-fatal.
   it('rensning stängs av genom att snapshoten inte skickas med', () => {
     expect(orderReferenceNumberField(null, null)).toEqual({});
   });

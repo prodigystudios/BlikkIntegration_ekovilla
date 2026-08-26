@@ -1295,9 +1295,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     // Rensningen är begärd men ännu inte bekräftad av Fortnox. Flaggan släcks först
                     // när PUT:en gått igenom, så står den kvar betyder det att borttagningen INTE
                     // nått kundens dokument — och det får inte se ut som att den gjort det.
-                    // ⚠️ Här landar man också om Fortnox visar sig avvisa `YourOrderNumber: null`
-                    // (rensningen är uppmätt för radfält, inte för headerfält). Då är det här
-                    // beskedet skillnaden mellan ett synligt och ett tyst fel.
+                    // ⚠️ Rensningen i sig fungerar — `YourOrderNumber: null` är uppmätt mot skarp
+                    // Fortnox 2026-08-26. Det här beskedet gäller alltså den PUT som inte gick
+                    // fram: nätet, en nertid, en utgången token. Nästa header-synk tar om den,
+                    // och tills dess får raden inte se ut som att fältet är rensat hos kunden.
                     <div className="grid gap-0.5">
                       <span className={crm.sectionTitle}>Märkning</span>
                       <p className="m-0 text-sm text-amber-700">
