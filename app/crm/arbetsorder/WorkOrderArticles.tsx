@@ -2,11 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Input from '../../../components/ui/Input';
+import Select from '../../../components/ui/Select';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { computePricing, lineItemRowTotal, lineItemUnitPrice, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
+import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
+import { ROT_HOUSE_WORK_TYPES, ROT_HOUSE_WORK_LABELS } from '@/lib/domains/fortnox/types';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
 
@@ -30,6 +32,9 @@ export type ArticleLineItem = {
   density?: string;
   unit_price?: string;
   discount_percent?: string;
+  // Fritext under artikelraden. Går till Fortnox: som radens Description när artikelnamn saknas,
+  // annars som en egen textrad under den (buildOrderRows). Alltså KUNDVÄND text.
+  line_note?: string;
   is_rot_work?: boolean;
   house_work_type?: string;
   // Labour carved out of a material row for ROT, as kr PER UNIT — ett à-pris som räknas mot
@@ -183,6 +188,14 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   const totalSacks = useMemo(
     () => source.filter((it) => !it.written_off).reduce((sum, it) => sum + sackInfo(it).sacks, 0),
     [source],
+  );
+
+  // Det SPARADE artikelnamnet per rad, för att kunna varna när en omdöpning slår sönder
+  // materialhärledningen (se materialRenameEffect). `items` byts bara ut vid omladdning, alltså
+  // efter en sparning — precis den referenspunkt jämförelsen behöver.
+  const savedNameById = useMemo(
+    () => new Map(items.map((it) => [it.id, it.article_name ?? null])),
+    [items],
   );
 
   // Bekräftelse innan en prissatt rad försvinner. Samma inline-mönster som grannflikarna
@@ -361,6 +374,15 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const rowTotal = lineItemRowTotal(row as PricingLineItem);
               const rowSacks = sackInfo(row).sacks;
               const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
+              // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
+              const renameEffect = materialRenameEffect(savedNameById.get(row.id), row.article_name);
+              // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
+              // volym vars namn inte ger något material räknar noll säckar, och noll säckar SER UT
+              // som ett svar ("inget material gick åt") fast det bara betyder att namnet inte gick
+              // att tyda. Måste vara tillståndsbaserat — en jämförelse mot det sparade namnet tystnar
+              // i samma stund den trasiga omdöpningen sparas.
+              const noMaterialOnVolumeRow =
+                mode === 'm3' && !sackInfo(row).material && lineItemQuantity(row as PricingLineItem) > 0;
               const laborSplit = splitRowLabor({
                 laborCostPerUnit: row.labor_cost,
                 // Samma priskälla som rowTotal ovan, computePricing i den här fliken och pushen:
@@ -406,6 +428,47 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       )}
                     </div>
                   </div>
+
+                  {/* Benämningen på dokumentet. Samma fält som offertens "Benämning på offerten" —
+                      en generisk "Övrigt"-artikel behöver ofta ett begripligt namn — och det gick
+                      fram till nu bara att sätta i offerten, som låses vid orderskapandet.
+
+                      ⚠️ VILLKORAT PÅ ATT RADEN HAR ETT NAMN, precis som i offerten. En ren
+                      TEXTRAD (bara radtext, ingen artikel, inget pris) är tillåten och pushas som
+                      textrad — men ger man den ett namn blir den `isConfiguredLineItem` utan att
+                      bli prissatt, och `assertLineItemsArePriced` kastar 409 inne i
+                      Fortnox-synken. Sparningen har då redan gått igenom, så raden ligger i
+                      databasen medan ordern stämplas 'failed' med gamla rader kvar i Fortnox.
+
+                      🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens
+                      material, och materialet ger säckvikten. Tappas varumärkesordet blir
+                      säckantalet NOLL — tyst. Därför de två raderna under fältet. */}
+                  {row.article_name ? (
+                    <label className="grid gap-1">
+                      <span className={crm.sectionTitle}>Benämning på ordern</span>
+                      <Input
+                        value={row.article_name}
+                        onChange={(e) => updateRow(row.id, { article_name: e.target.value })}
+                        placeholder="Namn som visas på ordern"
+                      />
+                      {/* Två olika påståenden, aldrig samtidigt:
+                          • gult = du håller på att ändra något (jämfört med det SPARADE namnet)
+                          • grått = radens nuvarande tillstånd, och det står kvar efter sparning
+                          Bara det gula räcker inte: sparar man den trasiga omdöpningen försvinner
+                          jämförelsepunkten, och varningen med den — just i det läge den gäller. */}
+                      {renameEffect ? (
+                        <span className="text-[11px] leading-snug text-amber-700">
+                          {renameEffect.kind === 'lost'
+                            ? `Namnet känns inte längre igen som ${renameEffect.from} — raden ger inga säckar och materialrubriken faller ur arbetsbeskrivningen. Behåll materialnamnet i benämningen.`
+                            : `Materialet läses nu som ${renameEffect.to} i stället för ${renameEffect.from} — säckvikten skiljer, så antalet säckar ändras.`}
+                        </span>
+                      ) : noMaterialOnVolumeRow ? (
+                        <span className="text-[11px] leading-snug text-slate-500">
+                          Inget material känns igen i benämningen, så raden ger inga säckar.
+                        </span>
+                      ) : null}
+                    </label>
+                  ) : null}
 
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {mode === 'm3' ? (
@@ -464,6 +527,26 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           ROT-arbete
                         </label>
                       ) : null}
+                      {/* Typen av husarbete — det Skatteverket får veta att arbetet VAR
+                          (HouseWorkType på Fortnox-raden). Visas bara när raden är ROT-arbete, av
+                          samma skäl som i offerten: utan flaggan läses fältet aldrig.
+
+                          ⚠️ Låst av validateLineItemEdit när raden gått ut på faktura — typen är
+                          ROT-identiteten, och den får inte skilja sig från vad fakturan sa. */}
+                      {rotEnabled && row.is_rot_work ? (
+                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                          Typ
+                          <Select
+                            value={row.house_work_type || 'CONSTRUCTION'}
+                            onChange={(e) => updateRow(row.id, { house_work_type: e.target.value })}
+                            className="h-8 py-0 text-xs"
+                          >
+                            {ROT_HOUSE_WORK_TYPES.map((type) => (
+                              <option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>
+                            ))}
+                          </Select>
+                        </label>
+                      ) : null}
                       {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
                           till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
                           förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
@@ -515,6 +598,19 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       )}
                     </label>
                   ) : null}
+
+                  {/* Radtext — fritext under artikelraden, samma fält som offertens. KUNDVÄND:
+                      buildOrderRows lägger den som en egen textrad under artikeln (och som radens
+                      Description när artikelnamn saknas), så den står på orderbekräftelsen.
+                      Gick fram till nu bara att sätta i offerten. */}
+                  <label className="grid gap-1">
+                    <span className={crm.sectionTitle}>Radtext</span>
+                    <Input
+                      value={row.line_note || ''}
+                      onChange={(e) => updateRow(row.id, { line_note: e.target.value })}
+                      placeholder="Fritext för raden"
+                    />
+                  </label>
                 </div>
               );
             })}

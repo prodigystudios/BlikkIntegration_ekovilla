@@ -4,6 +4,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, rotRowHouseWork } from './helpers';
+import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox } from './orders';
 
 // Delfakturering (partial invoicing). Appen ÄGER det per-artikel fakturerade läget — en
@@ -171,8 +172,33 @@ export function validateLineItemEdit(
     // egen rad. Samma sak för husarbete: halva raden kan inte vara ROT och andra halvan inte.
     const cur = (currentItems ?? [])[index];
     const changed = (field: keyof PartialInvoiceLineItem) => String(cur?.[field] ?? '') !== String(next[field] ?? '');
-    if (changed('unit_price') || changed('discount_percent') || changed('article_number') || changed('is_rot_work')) {
+    // ⚠️ `is_rot_work` jämförs som BOOLESKT och inte via `changed()`. Flaggan är en bool med
+    // schemadefault `false`, och en rad sparad innan fältet fanns saknar den helt — rå
+    // strängjämförelse läste då '' ≠ 'false' som en ändring och NEKADE en helt legitim
+    // antalssänkning på en gammal delfakturerad order. Reproducerat mot den riktiga funktionen.
+    // Samma normalisering som ROT-typen nedan, och av exakt samma skäl.
+    const rotFlag = (item: PartialInvoiceLineItem | undefined) => item?.is_rot_work === true;
+    if (changed('unit_price') || changed('discount_percent') || changed('article_number')
+      || rotFlag(cur) !== rotFlag(next)) {
       return { ok: false, message: `Rad ${index + 1} är fakturerad — pris, rabatt, artikel och ROT-markering kan inte ändras. Lägg det som skiljer på en ny rad.` };
+    }
+    // ROT-TYPEN hör till samma lås, men den kan inte prövas med `changed()` ovan.
+    //
+    // Låset tillkom när fältet blev redigerbart på arbetsordern — förut gick det bara att sätta i
+    // offerten, som låses vid orderskapandet. Typen ÄR ROT-identiteten: den säger Skatteverket
+    // vilket slags husarbete som utförts, så en ändring på en rad som redan gått ut på faktura
+    // låter underlaget säga en sak och den utställda fakturan en annan.
+    //
+    // ⚠️ Två skäl till den egna jämförelsen, båda skulle ge FALSKA blockeringar i `changed()`:
+    //   • En rad sparad innan fältet fanns saknar det helt. Rå strängjämförelse hade läst
+    //     '' ≠ 'CONSTRUCTION' som en ändring och låst en helt legitim antalssänkning. Båda sidor
+    //     normaliseras därför mot defaulten.
+    //   • På en rad som inte är ROT-arbete LÄSES typen aldrig (`rotRowHouseWork` returnerar null
+    //     utan flaggan), så där ändrar den ingenting och ska inte spärra något.
+    const houseWorkType = (item: PartialInvoiceLineItem | undefined) =>
+      String(item?.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE);
+    if (cur?.is_rot_work === true && houseWorkType(cur) !== houseWorkType(next)) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad — typen av husarbete kan inte ändras. Lägg det som skiljer på en ny rad.` };
     }
     // Avskrivning betyder "utfördes aldrig". Det kan inte gälla en rad som redan står på en
     // utställd faktura — pengarna är krävda. Sänk antalet till det levererade i stället.

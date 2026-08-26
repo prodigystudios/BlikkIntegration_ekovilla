@@ -45,19 +45,7 @@ import {
   hasMeasurementBlock,
   replaceMeasurementBlock,
 } from '@/lib/domains/crm/measurementBlock';
-import { ROT_HOUSE_WORK_TYPES, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
-
-// Swedish labels for the Fortnox ROT HouseWorkType codes shown in the ROT section.
-const ROT_HOUSE_WORK_LABELS: Record<(typeof ROT_HOUSE_WORK_TYPES)[number], string> = {
-  CONSTRUCTION: 'Bygg',
-  ELECTRICITY: 'El',
-  GLASSMETALWORK: 'Glas/plåt',
-  GROUNDDRAINAGEWORK: 'Mark/dränering',
-  HVAC: 'VVS',
-  MASONRY: 'Murning',
-  PAINTINGWALLPAPERING: 'Måleri/tapetsering',
-  OTHERCOSTS: 'Övrigt',
-};
+import { ROT_HOUSE_WORK_TYPES, ROT_HOUSE_WORK_LABELS, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

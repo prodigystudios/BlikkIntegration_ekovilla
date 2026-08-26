@@ -137,6 +137,20 @@ export const ROT_HOUSE_WORK_TYPES = [
 export type RotHouseWorkType = typeof ROT_HOUSE_WORK_TYPES[number];
 export const DEFAULT_ROT_HOUSE_WORK_TYPE: RotHouseWorkType = 'CONSTRUCTION';
 
+// Svenska etiketter för koderna ovan. Bor HÄR, hos koderna, och inte i en vy: fältet redigeras nu
+// på två ställen (offertformuläret och arbetsorderns artikelrader), och två kopior av listan hade
+// kunnat glida isär så att samma kod läses som olika arbete beroende på var man står.
+export const ROT_HOUSE_WORK_LABELS: Record<RotHouseWorkType, string> = {
+  CONSTRUCTION: 'Bygg',
+  ELECTRICITY: 'El',
+  GLASSMETALWORK: 'Glas/plåt',
+  GROUNDDRAINAGEWORK: 'Mark/dränering',
+  HVAC: 'VVS',
+  MASONRY: 'Murning',
+  PAINTINGWALLPAPERING: 'Måleri/tapetsering',
+  OTHERCOSTS: 'Övrigt',
+};
+
 // Customer from Fortnox /3/customers
 export type FortnoxCustomer = {
   CustomerNumber: string;
