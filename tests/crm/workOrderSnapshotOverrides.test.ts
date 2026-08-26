@@ -288,6 +288,24 @@ describe('mergeWorkOrderRotDetails', () => {
     });
   });
 
+  // 🧨 `documentChanged` är smalare än `changed` och styr PUSHEN. Procent och maxavdrag läses bara
+  // av pricing.ts för vår egen preliminära "Att betala" — Fortnox räknar avdraget själv och får
+  // aldrig siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad
+  // rad-PUT, med assertLineItemsArePriced som kan stämpla 'failed' och spärra faktureringen.
+  describe('documentChanged', () => {
+    it('är false för fält Fortnox aldrig ser', () => {
+      const res = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50, max_deduction: 75000 });
+      expect(res.changed).toBe(true);
+      expect(res.documentChanged).toBe(false);
+    });
+
+    it('är true för fälten dokumentet bär', () => {
+      expect(mergeWorkOrderRotDetails(CURRENT, { property_designation: 'Nytorp 1:12' }).documentChanged).toBe(true);
+      expect(mergeWorkOrderRotDetails(CURRENT, { brf_org_number: '769600-1234' }).documentChanged).toBe(true);
+      expect(mergeWorkOrderRotDetails({ enabled: false }, { enabled: true }).documentChanged).toBe(true);
+    });
+  });
+
   // 🧨 Regimen är låst ÅT BÅDA HÅLLEN när dokumentet finns. Påslag är omöjligt (2004021), och
   // avslag river husarbetesflaggorna ur ett ROT-dokument — avdraget försvinner tyst från fakturan.
   describe('enabledChanged', () => {

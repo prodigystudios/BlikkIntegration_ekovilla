@@ -183,11 +183,24 @@ export async function PATCH(req: Request, context: RouteContext) {
           'ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Övriga ROT-uppgifter går att rätta.');
       }
 
+      // 🧨 ROT UTAN IDENTIFIERAD FASTIGHET GÅR INTE ATT DEKLARERA. Samma spärr som
+      // `evaluateWorkOrderReadiness` ställer INNAN ordern får skapas (punkt 6) — utan den gick
+      // invarianten att kringgå i efterhand genom att bara tömma fälten på ordern. Värre än så:
+      // en tömd beteckning armerar rensningen, så pushen hade AKTIVT raderat den ur Fortnox och
+      // ändå inte skickat någon ROT-textrad. Den som slutför fakturan hade då inget att skriva in.
+      const nextRot = rot.merged as { enabled?: unknown; property_designation?: unknown; brf_org_number?: unknown };
+      if (nextRot.enabled === true
+        && !String(nextRot.property_designation ?? '').trim()
+        && !String(nextRot.brf_org_number ?? '').trim()) {
+        return routeError(422, 'crm_work_order_rot_property_required',
+          'Fastighetsbeteckning (eller BRF org.nr för bostadsrätt) krävs när ROT är påslaget — utan den går avdraget inte att deklarera.');
+      }
+
       // Skriv bara när något faktiskt skiljer. Klienten skickar ROT-blocket vid varje sparning av
       // en privatorder, och en oförändrad sparning får varken röra kolumnen eller — viktigare —
       // dra igång den fulla Fortnox-pushen nedan.
-      rotChanged = rot.changed;
-      if (rotChanged) {
+      rotChanged = rot.documentChanged;
+      if (rot.changed) {
         (updateInput as Record<string, unknown>).rot_details = rot.merged;
         // En borttagen fastighetsbeteckning är en borttagen "Ert referensnummer" på en villa-order.
         // Samma minne som märkningen använder, av samma skäl: utan ett uttryckligt null står den
@@ -202,6 +215,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       } else {
         delete (updateInput as { rot_details?: unknown }).rot_details;
       }
+      // ⚠️ `rotChanged` styr PUSHEN och `rot.changed` styr SKRIVNINGEN — de är inte samma sak.
+      // Procent och maxavdrag sparas men når aldrig Fortnox (se ROT_DOCUMENT_KEYS), så de ska
+      // inte kosta en full positionsbaserad rad-PUT.
     }
 
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends

@@ -709,6 +709,17 @@ export function mergeWorkOrderSnapshotOverrides(
  */
 export const ROT_EDITABLE_KEYS = ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const;
 
+/**
+ * De ROT-fält som faktiskt NÅR FORTNOX-DOKUMENTET.
+ *
+ * ⚠️ `rot_percent` och `max_deduction` står medvetet UTANFÖR. De läses bara av `pricing.ts` för
+ * vår egen preliminära "Att betala" — Fortnox räknar det verkliga avdraget själv och får aldrig
+ * siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT
+ * (plus `assertLineItemsArePriced`, som kan stämpla 'failed' och spärra faktureringen) för en
+ * ändring dokumentet aldrig ser.
+ */
+export const ROT_DOCUMENT_KEYS = ['enabled', 'property_designation', 'brf_org_number'] as const;
+
 export function mergeWorkOrderRotDetails(
   current: Record<string, unknown> | null | undefined,
   overrides: {
@@ -718,16 +729,26 @@ export function mergeWorkOrderRotDetails(
     max_deduction?: number | null;
     brf_org_number?: string | null;
   },
-): { merged: Record<string, unknown>; changed: boolean; enabledChanged: boolean; propertyCleared: boolean } {
+): {
+  merged: Record<string, unknown>;
+  changed: boolean;
+  documentChanged: boolean;
+  enabledChanged: boolean;
+  propertyCleared: boolean;
+} {
   const base = (current ?? {}) as Record<string, unknown>;
   const merged: Record<string, unknown> = { ...base };
   let changed = false;
+  let documentChanged = false;
   for (const key of ROT_EDITABLE_KEYS) {
     if (overrides[key] === undefined) continue;
     merged[key] = overrides[key];
     // Jämför som sträng: procenten kan ligga som tal i kolumnen och komma tillbaka som tal ur
     // schemat, men `null` och `undefined` måste läsas som samma tomhet.
-    if (String(base[key] ?? '') !== String(overrides[key] ?? '')) changed = true;
+    if (String(base[key] ?? '') !== String(overrides[key] ?? '')) {
+      changed = true;
+      if ((ROT_DOCUMENT_KEYS as readonly string[]).includes(key)) documentChanged = true;
+    }
   }
   return {
     merged,
@@ -736,6 +757,9 @@ export function mergeWorkOrderRotDetails(
     // FULLA pushen (rader + header). Utan den här skillnaden hade en rättad telefon på en
     // fakturerad order PUT:at om alla rader mot ett stängt Fortnox-dokument.
     changed,
+    // …och `documentChanged` avgör om FORTNOX behöver höra av sig. Bara de tre fälten dokumentet
+    // faktiskt bär räknas; procent och maxavdrag är våra egna och ska inte kosta en rad-PUT.
+    documentChanged,
     // Regimen (`enabled`) är låst så fort dokumentet finns — se routen. Åt BÅDA hållen.
     enabledChanged: overrides.enabled !== undefined && Boolean(base.enabled) !== Boolean(overrides.enabled),
     // Fastighetsbeteckningen ÄR "Ert referensnummer" på en villa-ROT-order. Tas den bort måste

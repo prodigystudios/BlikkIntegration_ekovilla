@@ -857,11 +857,33 @@ async function putOrderHeaderAndRows(
   // syncWorkOrderHeaderToFortnox. Utan den här raden hade radvägen rensat referensnumret vid VARJE
   // framtida synk och därmed blankat ett värde ekonomi senare skrivit in för hand i Fortnox.
   if ('YourOrderNumber' in header && header.YourOrderNumber === null) {
-    await supabase
-      .from('crm_work_orders')
-      .update({ customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), label_cleared: false } })
-      .eq('id', workOrder.id);
+    await clearReferenceMemory(supabase, workOrder.id);
   }
+}
+
+/**
+ * Släck minnet av en genomförd referensrensning.
+ *
+ * ⚠️ LÄSER OM SNAPSHOTEN FÖRST. Den kopia anroparen har i handen lästes FÖRE Fortnox-anropet, och
+ * en samtidig PATCH (kontaktperson, Er referens, arbetsadress) kan ha skrivit kolumnen under tiden
+ * — ett återskrivet helobjekt hade då tyst rullat tillbaka den redigeringen. Fönstret går inte att
+ * stänga helt utan `jsonb_set` i en RPC, men det krymper från "hela Fortnox-anropet" till
+ * "två närliggande satser".
+ */
+async function clearReferenceMemory(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrderId: string,
+): Promise<void> {
+  const { data } = await supabase
+    .from('crm_work_orders')
+    .select('customer_snapshot')
+    .eq('id', workOrderId)
+    .maybeSingle();
+  const snapshot = (data?.customer_snapshot ?? {}) as Record<string, unknown>;
+  await supabase
+    .from('crm_work_orders')
+    .update({ customer_snapshot: { ...snapshot, label_cleared: false } })
+    .eq('id', workOrderId);
 }
 
 // Re-sync an already-synced Fortnox order: header AND article rows (PUT:en styr radlistans längd,
@@ -982,10 +1004,7 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     // och om igen hade blankat ett "Ert referensnummer" som ekonomi senare skrivit in för hand i
     // Fortnox, vid nästa bästa adress- eller referensändring. Rensningen ska ske en gång.
     if (clearedReference) {
-      await supabase
-        .from('crm_work_orders')
-        .update({ customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), label_cleared: false } })
-        .eq('id', workOrderId);
+      await clearReferenceMemory(supabase, workOrderId);
     }
 
     // ⚠️ INGEN 'synced'-stämpel här. Statusen betyder "Fortnox-ordern motsvarar HELA vårt underlag",

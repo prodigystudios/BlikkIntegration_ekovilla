@@ -461,6 +461,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     // ett påslag i efterhand hade sänkt varje efterföljande radsynk. Samma villkor som reglaget
     // i formuläret; servern gör om kontrollen.
     const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
+  // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
+  // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
+  const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
     setSaving(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}`, {
@@ -733,6 +736,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // därför så fort ordern har ett Fortnox-nummer. Uppgifterna (beteckning, BRF, procent, maxbelopp)
   // rör inte regimen och är fritt redigerbara. Servern gör om kontrollen.
   const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
+  // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
+  // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
+  const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
   // from the computed VAT (robust even if the work order's vat_percent column drifted to 25 — the
   // pricing/Fortnox document are still 0), so the economy card reads "Omvänd skattskyldighet"
@@ -1174,7 +1180,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         </span>
                       </div>
                       <span className="text-[11px] leading-snug text-slate-500">
-                        Låst — ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Uppgifterna nedan går fortfarande att rätta.
+                        Låst — ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Uppgifterna nedan går fortfarande att rätta{fortnoxClosed ? ' i CRM' : ''}.
                       </span>
                     </div>
                   ) : (
@@ -1214,8 +1220,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       </div>
                       {/* Samma upplysning som i offerten: procenten styr bara VÅR preliminära
                           "Att betala". Fortnox räknar det faktiska avdraget vid fakturering. */}
+                      {/* ⚠️ Löftet om synk måste följa vad som FAKTISKT händer. En fakturerad
+                          order är stängd hos Fortnox: routen hoppar över pushen och svaret bär
+                          inget fel, så en sparning hade sett helt lyckad ut medan dokumentet stod
+                          kvar oförändrat. Samma villkor som Märkning-fältet ovan. */}
                       <p className="text-[11px] leading-snug text-slate-500">
-                        Fastighetsbeteckning och BRF org.nr följer med till Fortnox. Skattereduktionen är preliminär — det faktiska avdraget räknas av Fortnox vid fakturering.
+                        {fortnoxClosed
+                          ? 'Ordern är fakturerad — ändringar här sparas i CRM men når inte Fortnox. Rätta ROT-uppgifterna i Fortnox innan fakturan slutförs.'
+                          : 'Fastighetsbeteckning och BRF org.nr följer med till Fortnox. Skattereduktionen är preliminär — det faktiska avdraget räknas av Fortnox vid fakturering.'}
                       </p>
                     </div>
                   ) : null}
@@ -1381,8 +1393,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     ⚠️ BARA FÖRETAGSKUND, som i offerten. På en privat ROT-order äger
                     fastighetsbeteckningen samma Fortnox-fält (resolveRotReference), så ett fält
                     här hade lovat något det inte kan hålla. */}
-                {workOrder.quote_type === 'business' ? (
-                  editingOverview ? (
+                {/* ⚠️ Märkningsfältet är företagskundens, men VÄNTANDE RENSNING gäller båda: ROT-vägen
+                    delar samma minne (en tömd fastighetsbeteckning ÄR en tömd "Ert referensnummer").
+                    Villkoret nedan måste därför släppa igenom privatordern när rensningen hänger,
+                    annars öppnades ett helt tomt "Kontakt & referens"-kort. */}
+                {workOrder.quote_type === 'business' || labelClearPending ? (
+                  editingOverview && workOrder.quote_type === 'business' ? (
                     <label className="grid gap-1 text-sm text-slate-600">
                       <span className={crm.sectionTitle}>Märkning</span>
                       <Input
@@ -1398,7 +1414,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       <span className="text-xs text-slate-500">
                         Kundens eget referensnummer — visas som ”Ert referensnummer” på order och faktura.
                         {!workOrder.fortnox_order_number ? ''
-                          : (workOrder.fortnox_invoice_number || workOrder.status === 'invoiced')
+                          : fortnoxClosed
                             ? ' Ordern är fakturerad — ändringar här når inte Fortnox och behöver göras där.'
                             : ' Ändringar synkas till Fortnox.'}
                       </span>
