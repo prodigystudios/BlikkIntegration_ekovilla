@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOrderRows, buildOrderDeliveryFields, resolveYourReference, orderReferenceNumberField } from '@/lib/domains/fortnox/orders';
+import { buildOrderRows, buildOrderDeliveryFields, resolveYourReference, orderReferenceNumberField, resolveOrderRotDetails } from '@/lib/domains/fortnox/orders';
 import { ROT_LABOR_ARTICLE_NUMBER } from '@/lib/domains/fortnox/helpers';
 
 describe('buildOrderRows', () => {
@@ -344,5 +344,55 @@ describe('orderReferenceNumberField', () => {
   it('referensnumret vinner alltid över en registrerad tömning', () => {
     expect(orderReferenceNumberField('Haggården 6:3', { label_cleared: true }))
       .toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+});
+
+// ── Vems ROT-uppgifter gäller? ────────────────────────────────────────────────
+//
+// ⚖️ ARBETSORDERNS. Verksamhetsregeln (William 2026-08-26): offerten är vad kunden BAD om och
+// tackade ja till, arbetsordern är den faktiska sanningen om vad vi fakturerar. Ändras något under
+// arbetets gång ändras ordern, aldrig offerten — som dessutom är låst så fort ordern skapats.
+//
+// Pushen läste offertens rot_details medan CRM-vyn läste orderns. Identiska kopior, alltså ingen
+// drift — tills ROT blev redigerbart på ordern.
+describe('resolveOrderRotDetails', () => {
+  const quoteRot = { enabled: true, property_designation: 'Haggården 6:3', rot_percent: 30 };
+
+  it('arbetsorderns uppgifter vinner över offertens', () => {
+    const orderRot = { enabled: true, property_designation: 'Nytorp 1:12', rot_percent: 30 };
+    expect(resolveOrderRotDetails({ rot_details: orderRot }, { rot_details: quoteRot }))
+      .toEqual(orderRot);
+  });
+
+  // 🧨 HELOBJEKT, INTE PER FÄLT — samma regel som customer_snapshot. En per-fält-reserv hade
+  // återuppväckt ett värde säljaren medvetet tömt: tar man bort fastighetsbeteckningen på ordern
+  // ska offertens gamla inte komma tillbaka och hamna på kundens dokument.
+  it('ett tömt fält på ordern hämtas INTE tillbaka från offerten', () => {
+    const orderRot = { enabled: true, property_designation: null };
+    const resolved = resolveOrderRotDetails({ rot_details: orderRot }, { rot_details: quoteRot });
+    expect(resolved?.property_designation).toBeNull();
+  });
+
+  // Kolumnen är not null default '{}' — en tom sådan bär ingen åsikt och får falla tillbaka.
+  it('tom rot_details faller tillbaka på offerten', () => {
+    expect(resolveOrderRotDetails({ rot_details: {} }, { rot_details: quoteRot })).toEqual(quoteRot);
+    expect(resolveOrderRotDetails({ rot_details: null }, { rot_details: quoteRot })).toEqual(quoteRot);
+    expect(resolveOrderRotDetails({}, { rot_details: quoteRot })).toEqual(quoteRot);
+  });
+
+  // Fristående order utan offert: ingenting att falla tillbaka på, och det är rätt svar.
+  it('utan offert svarar den orderns egna, annars null', () => {
+    const orderRot = { enabled: true };
+    expect(resolveOrderRotDetails({ rot_details: orderRot }, null)).toEqual(orderRot);
+    expect(resolveOrderRotDetails({ rot_details: {} }, null)).toBeNull();
+    expect(resolveOrderRotDetails({}, undefined)).toBeNull();
+  });
+
+  // 🧨 ROT AVSTÄNGT PÅ ORDERN MÅSTE VINNA. Ett `enabled: false` är en åsikt, inte en tomhet — och
+  // faller den tillbaka på offertens `true` skickas husarbetesrader till ett dokument säljaren
+  // stängt av ROT på.
+  it('avstängd ROT på ordern faller inte tillbaka på offertens påslagna', () => {
+    const resolved = resolveOrderRotDetails({ rot_details: { enabled: false } }, { rot_details: quoteRot });
+    expect(resolved?.enabled).toBe(false);
   });
 });

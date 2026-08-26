@@ -53,6 +53,8 @@ type WorkOrderRow = {
   vat_percent: number | null;
   currency_code: string;
   fortnox_order_number: string | null;
+  // Orderns EGNA ROT-uppgifter — det är de som gäller för dokumentet, se resolveOrderRotDetails.
+  rot_details?: RotDetails | null;
   line_items: Array<{
     article_number?: string | null;
     article_name?: string | null;
@@ -316,6 +318,8 @@ type OrderHeaderWorkOrder = {
   assigned_to: string | null;
   customer_snapshot: CustomerSnapshot | null;
   work_address: WorkOrderAddress | null;
+  // ⚠️ ORDERNS EGNA ROT-uppgifter, och det är DE som gäller. Se resolveOrderRotDetails.
+  rot_details?: RotDetails | null;
 };
 
 type OrderHeaderQuote = {
@@ -323,6 +327,35 @@ type OrderHeaderQuote = {
   customer_snapshot?: CustomerSnapshot | null;
   rot_details?: RotDetails | null;
 } | null;
+
+/**
+ * Vems ROT-uppgifter gäller för dokumentet — arbetsorderns eller offertens?
+ *
+ * ⚖️ ARBETSORDERNS. Regeln kommer från verksamheten (William 2026-08-26): offerten är vad kunden
+ * BAD om och tackade ja till, arbetsordern är den faktiska sanningen om vad vi fakturerar. Ändras
+ * något under arbetets gång ändras arbetsordern, aldrig offerten — offerten är dessutom låst så
+ * fort ordern skapats.
+ *
+ * Fram till nu läste pushen offertens `rot_details` medan CRM-vyn (WorkOrderArticles,
+ * ordersidans ROT-kort) läste ORDERNS. Två källor till samma fakta. De var identiska kopior och
+ * offerten låst, så inget kunde glida — men i samma stund ROT blev redigerbart på ordern hade
+ * dokumentet och skärmen börjat säga olika saker.
+ *
+ * Helobjekts-fallback, inte per fält — exakt som `customer_snapshot` en rad ovanför, och av samma
+ * skäl: en per-fält-reserv hade återuppväckt ett värde säljaren medvetet tömt (en borttagen
+ * fastighetsbeteckning hade kommit tillbaka från offerten).
+ *
+ * Reserven finns för rader vars `rot_details` är tom `{}` — kolumnen är `not null default '{}'`,
+ * och en fristående order utan offert har ingenting att falla tillbaka på ändå.
+ */
+export function resolveOrderRotDetails(
+  workOrder: { rot_details?: RotDetails | null },
+  linkedQuote: { rot_details?: RotDetails | null } | null | undefined,
+): RotDetails | null {
+  const own = workOrder.rot_details;
+  if (own && Object.keys(own).length > 0) return own;
+  return linkedQuote?.rot_details ?? null;
+}
 
 // Builds the order header (and the ROT text-row note that belongs with it) from the work order.
 //
@@ -357,7 +390,8 @@ async function buildOrderHeader(
 ): Promise<{ header: FortnoxOrderHeaderFields; rotPropertyNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
-  const { referenceNumber, propertyNote } = resolveRotReference(linkedQuote?.rot_details, snapshot?.label, rotEnabled);
+  const { referenceNumber, propertyNote } = resolveRotReference(
+    resolveOrderRotDetails(workOrder, linkedQuote), snapshot?.label, rotEnabled);
 
   const yourReference = resolveYourReference(snapshot);
 
@@ -435,7 +469,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -567,7 +601,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         workOrder.customer_snapshot?.reverse_vat ?? linkedQuote?.customer_snapshot?.reverse_vat,
         linkedQuote?.customer_id ?? workOrder.customer_id,
       );
-      const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+      const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
+      // ⛔ INGEN rensning här. Dokumentet skapas i det här anropet — det finns ingenting att rensa,
+      // och `createorder` är den enda Fortnox-skrivningen utan dedup-skydd.
       const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
       const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
@@ -794,7 +830,7 @@ async function putOrderHeaderAndRows(
   // Reverse charge (byggmoms) must be honoured here too, else re-sending rows silently re-PUTs the
   // order at 25 % VAT and un-does the 0 %-rate push. ROT is excluded then.
   const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
-  const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+  const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
   // Radlistans LÄNGD är auktoritativ: skickar vi färre rader än dokumentet har raderas de
   // överskjutande (mätt 2026-08-20 — offert 10047 gick 11 → 8 rader på en push). En ROT-not som
   // rider som en text-RAD (bostadsrätt) skulle alltså WIPAS om vi inte regenererade den här.
@@ -805,10 +841,49 @@ async function putOrderHeaderAndRows(
   // skickar ärvs från raden som låg där förut. Se FORTNOX_TEXT_ROW i helpers.ts. Det biter extra
   // hårt här: efter `createorder` bär Fortnox-ordern OFFERTENS rader, inklusive mätrader som
   // buildOrderRows aldrig skapar, så positionerna är förskjutna redan vid första omsynken.
-  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+  // Rensning tillåten här sedan `YourOrderNumber: null` är uppmätt (2026-08-26). Det var
+  // osäkerheten som höll radvägen utanför: hade Fortnox avvisat null skulle varje artikelredigering
+  // och varje "Synka om" ha kastat, med ordern kvar på 'failed' och faktureringen spärrad av
+  // assertOrderRowsSynced. Nu är det den ENDA vägen som levererar båda halvorna av en ROT-ändring
+  // (referensnumret i headern, ROT-noten som rad), så den måste kunna rensa.
+  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
+    allowReferenceClear: true,
+  });
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
   await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
+
+  // Minnet av rensningen släcks när PUT:en gått igenom — samma regel och samma skäl som i
+  // syncWorkOrderHeaderToFortnox. Utan den här raden hade radvägen rensat referensnumret vid VARJE
+  // framtida synk och därmed blankat ett värde ekonomi senare skrivit in för hand i Fortnox.
+  if ('YourOrderNumber' in header && header.YourOrderNumber === null) {
+    await clearReferenceMemory(supabase, workOrder.id);
+  }
+}
+
+/**
+ * Släck minnet av en genomförd referensrensning.
+ *
+ * ⚠️ LÄSER OM SNAPSHOTEN FÖRST. Den kopia anroparen har i handen lästes FÖRE Fortnox-anropet, och
+ * en samtidig PATCH (kontaktperson, Er referens, arbetsadress) kan ha skrivit kolumnen under tiden
+ * — ett återskrivet helobjekt hade då tyst rullat tillbaka den redigeringen. Fönstret går inte att
+ * stänga helt utan `jsonb_set` i en RPC, men det krymper från "hela Fortnox-anropet" till
+ * "två närliggande satser".
+ */
+async function clearReferenceMemory(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrderId: string,
+): Promise<void> {
+  const { data } = await supabase
+    .from('crm_work_orders')
+    .select('customer_snapshot')
+    .eq('id', workOrderId)
+    .maybeSingle();
+  const snapshot = (data?.customer_snapshot ?? {}) as Record<string, unknown>;
+  await supabase
+    .from('crm_work_orders')
+    .update({ customer_snapshot: { ...snapshot, label_cleared: false } })
+    .eq('id', workOrderId);
 }
 
 // Re-sync an already-synced Fortnox order: header AND article rows (PUT:en styr radlistans längd,
@@ -823,7 +898,7 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, fortnox_order_number, line_items')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, fortnox_order_number, line_items, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -892,7 +967,7 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number, rot_details')
     .eq('id', workOrderId)
     .single<HeaderSyncRow>();
 
@@ -905,7 +980,7 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     // ROT only decides which of the two "Ert referensnummer" values the header carries; the note
     // half of resolveRotReference is a ROW and belongs to the row path, so it's dropped here.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
-    const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
+    const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
     // Enda vägen som får försöka rensa "Ert referensnummer" — se buildOrderHeader.
     const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
       allowReferenceClear: true,
@@ -929,10 +1004,7 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     // och om igen hade blankat ett "Ert referensnummer" som ekonomi senare skrivit in för hand i
     // Fortnox, vid nästa bästa adress- eller referensändring. Rensningen ska ske en gång.
     if (clearedReference) {
-      await supabase
-        .from('crm_work_orders')
-        .update({ customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), label_cleared: false } })
-        .eq('id', workOrderId);
+      await clearReferenceMemory(supabase, workOrderId);
     }
 
     // ⚠️ INGEN 'synced'-stämpel här. Statusen betyder "Fortnox-ordern motsvarar HELA vårt underlag",

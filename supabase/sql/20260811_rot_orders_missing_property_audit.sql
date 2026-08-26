@@ -5,9 +5,23 @@
 -- eller BRF org.nr är ifyllt, så den som slutför fakturan i Fortnox har inget att skriva in i
 -- husarbete-dialogen (fältet går inte att sätta via API:t — se FORTNOX_INTEGRATION.md 4b).
 --
--- Läs `källa`: pushen läser ROT-uppgifterna från den KOPPLADE OFFERTEN (`linkedQuote.rot_details` i
--- orders.ts), inte från ordern. En order vars egen kopia är tom men vars offert har beteckningen är
--- alltså i sin ordning — därför särskiljs de.
+-- ⚠️ PREMISSEN NEDAN GÄLLER INTE LÄNGRE (ändrat 2026-08-26).
+--
+-- Frågan skrevs när pushen läste ROT-uppgifterna från den KOPPLADE OFFERTEN. Numera äger
+-- ARBETSORDERN dem (`resolveOrderRotDetails` i orders.ts): ordern leder och offerten är
+-- helobjekts-fallback, eftersom ordern är sanningen om vad vi fakturerar och offerten låses så
+-- fort ordern skapats. ROT-uppgifterna går dessutom att redigera direkt på ordern.
+--
+-- Följder för hur `källa` ska läsas:
+--   • "offert" betyder numera bara att orderns EGEN rot_details är tom ({}) — då, och bara då,
+--     faller pushen tillbaka på offerten. Raden är fortfarande i sin ordning.
+--   • "ingen" (fristående order utan offert) sa förut "ROT pushas aldrig". Det är FALSKT nu:
+--     en fristående order kan ha ROT påslaget på sin egen rot_details och pushas med det.
+--     Hoppa alltså inte över de raderna.
+--
+-- Åtgärden är också enklare än när frågan skrevs: beteckningen fylls i på ARBETSORDERN
+-- (Redigera → ROT-avdrag), inte på offerten. Routen kräver numera beteckning eller BRF org.nr så
+-- fort ROT är påslaget, så nya hål av det här slaget kan inte uppstå.
 --
 -- Åtgärd per rad: fyll i beteckningen på offerten och spara om den (då re-synkas Fortnox-offerten),
 -- eller skriv in den för hand i Fortnox innan fakturan slutförs. Ordrar som redan är fakturerade är

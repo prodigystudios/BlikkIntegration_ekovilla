@@ -220,6 +220,26 @@ export const updateCrmWorkOrderSchema = z.object({
   // Som `your_reference`: optional UTAN default, så `undefined` betyder "rör inte" och `null`
   // betyder "töm". Ett default här hade skrivit kolumnen vid varje statusändring.
   label: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+  // ROT-uppgifterna på ARBETSORDERN, som äger dem — se resolveOrderRotDetails. Offerten är låst
+  // när ordern finns, och ordern är sanningen om vad vi fakturerar.
+  //
+  // ⚠️ BARA den redigerbara delmängden. `applicant_name` och `personal_number` står INTE här med
+  // flit: de kommer ur kundkortet (det är numret Fortnox knyter avdraget till) och bevaras av
+  // read-merge-write i mergeWorkOrderRotDetails. Ett fält som saknas i schemat strippas av Zod —
+  // hade de legat här som optional utan värde hade varje sparning tömt dem.
+  rot_details: z.object({
+    enabled: z.boolean().optional(),
+    property_designation: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+    // NULLBARA: ett tömt fält måste kunna SPARAS som tomt. Utan null hade klienten fått utelämna
+    // nyckeln, och merge-regeln läser en saknad nyckel som "rör inte" — fälten hade gått att ändra
+    // men aldrig att tömma, med en sparning som rapporterade lyckat och det gamla värdet kvar.
+    // (pricing.ts tål null: `rot_percent ?? 30`.)
+    rot_percent: z.preprocess((value) => (value == null || value === '' ? null : value),
+      z.coerce.number().finite('Ogiltig ROT-procent').min(0).max(100).nullable()).optional(),
+    max_deduction: z.preprocess((value) => (value == null || value === '' ? null : value),
+      z.coerce.number().finite('Ogiltigt maxavdrag').min(0).nullable()).optional(),
+    brf_org_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+  }).optional(),
   // Kundkontakten — vem vi och installatörerna ringer. Merged into customer_snapshot by the route.
   // Når ALDRIG Fortnox; se FORTNOX_MIRRORED_FIELDS i routen.
   contact: z.object({
