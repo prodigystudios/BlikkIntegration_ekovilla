@@ -297,25 +297,52 @@ describe('buildOrderRows — avskrivna rader', () => {
 // ── "Ert referensnummer" på orderhuvudet ──────────────────────────────────────
 //
 // Fältet bärs av två olika uppgifter som aldrig gäller samtidigt: företagskundens MÄRKNING och
-// privatkundens FASTIGHETSBETECKNING (resolveRotReference väljer). Märkningen blev redigerbar på
-// arbetsordern, vilket gör regeln nedan skarp: ett NYTT värde speglas, men en TÖMNING går inte att
-// göra utan att veta vilket tomvärde Fortnox rensar på — och det är inte mätt för headerfält.
+// privatkundens FASTIGHETSBETECKNING (resolveRotReference väljer).
+//
+// Tre lägen sedan märkningen blev redigerbar på arbetsordern. Rensningen läses ur `label_cleared`
+// — ett TILLSTÅND som mergeWorkOrderSnapshotOverrides skriver när den ser övergången — och aldrig
+// ur att märkningen är tom, vilket är normalläget för i stort sett varje order.
 describe('orderReferenceNumberField', () => {
   it('skriver referensnumret när det finns', () => {
-    expect(orderReferenceNumberField('Projekt 4711')).toEqual({ YourOrderNumber: 'Projekt 4711' });
-    expect(orderReferenceNumberField('Haggården 6:3')).toEqual({ YourOrderNumber: 'Haggården 6:3' });
+    expect(orderReferenceNumberField('Projekt 4711', null)).toEqual({ YourOrderNumber: 'Projekt 4711' });
+    expect(orderReferenceNumberField('Haggården 6:3', null)).toEqual({ YourOrderNumber: 'Haggården 6:3' });
   });
 
-  // 🧨 UTELÄMNAS när det inte finns något — fältet får ALDRIG skickas som ''.
-  //
-  // Uppmätt (FORTNOX_TEXT_ROW, 2026-08-20): '' rensar INTE. Ett tomvärde här hade alltså sett ut
-  // att blanka kundens "Ert referensnummer" utan att göra det, och CRM hade visat tomt medan
-  // dokumentet bar kvar det gamla numret. Dessutom är headern tom-skippad i
-  // syncWorkOrderHeaderToFortnox — en alltid närvarande nyckel hade gjort varje speglad PATCH till
-  // en Fortnox-PUT i onödan.
-  it('utelämnar fältet helt när referensnumret saknas', () => {
-    expect(orderReferenceNumberField(null)).toEqual({});
-    expect(orderReferenceNumberField('')).toEqual({});
-    expect(orderReferenceNumberField('   ')).toEqual({ YourOrderNumber: '   ' });
+  // Ingen begäran att rensa → nyckeln UTELÄMNAS. En PUT rör bara fält den bär, så Fortnox behåller
+  // sitt värde — rätt för en order vi inte har någon åsikt om, och det som håller headern tom så
+  // syncWorkOrderHeaderToFortnox kan hoppa över PUT:en helt.
+  it('utelämnar fältet när inget värde finns och ingenting rensats', () => {
+    expect(orderReferenceNumberField(null, null)).toEqual({});
+    expect(orderReferenceNumberField('', {})).toEqual({});
+    expect(orderReferenceNumberField(null, { label_cleared: false })).toEqual({});
+    // ⚠️ TOM MÄRKNING RÄCKER INTE. Det är normalläget för i stort sett varje order
+    // (buildCustomerSnapshot skriver alltid nyckeln) — bara det uttryckliga minnet av en
+    // tömning rensar, annars hade referensnummer satta för hand i Fortnox blankats i klump.
+    expect(orderReferenceNumberField(null, { label: null } as any)).toEqual({});
+  });
+
+  // 🧨 null, INTE ''. Uppmätt mot skarp Fortnox 2026-08-26 på just det HÄR headerfältet:
+  // YourOrderNumber: null rensar "Ert referensnummer". Samma regel som radfälten (2026-08-20):
+  // null rensar, '' accepteras men rensar inte. Ett '' här hade sett ut att blanka kundens
+  // referensnummer utan att göra det.
+  it('en registrerad tömning skickar null', () => {
+    expect(orderReferenceNumberField(null, { label_cleared: true })).toEqual({ YourOrderNumber: null });
+    expect(orderReferenceNumberField('', { label_cleared: true })).toEqual({ YourOrderNumber: null });
+  });
+
+  // 🧨 Anroparen stänger av rensningen genom att skicka null i stället för snapshoten. Det är så
+  // skapandevägen och radsynken hålls utanför: skapandet har inget att rensa, och radsynken får
+  // inte bära ett anrop som kan fastna — minnet av rensningen ligger kvar tills den lyckas, så ett
+  // återkommande fel där hade lämnat ordern på 'failed' med faktureringen spärrad av
+  // assertOrderRowsSynced. Kvar blir en enda väg som kan misslyckas, och den är icke-fatal.
+  it('rensning stängs av genom att snapshoten inte skickas med', () => {
+    expect(orderReferenceNumberField(null, null)).toEqual({});
+  });
+
+  // 🧨 På en ROT-order ÄR referensnumret fastighetsbeteckningen. En tömd märkning får aldrig
+  // blanka den — de två delar Fortnox-fält, och bara den ena av dem är det säljaren tog bort.
+  it('referensnumret vinner alltid över en registrerad tömning', () => {
+    expect(orderReferenceNumberField('Haggården 6:3', { label_cleared: true }))
+      .toEqual({ YourOrderNumber: 'Haggården 6:3' });
   });
 });

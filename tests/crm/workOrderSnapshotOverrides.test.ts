@@ -104,21 +104,47 @@ describe('mergeWorkOrderSnapshotOverrides — märkningen', () => {
     expect(merged.organization_number).toBe('556677-8899');
   });
 
-  // 🧨 NYCKELN MÅSTE SKRIVAS ÄVEN NÄR VÄRDET ÄR null. `'label' in snapshot` är hur
-  // buildOrderHeader skiljer "säljaren tömde märkningen" från "den här ordern har aldrig haft
-  // någon" — och bara det första blankar YourOrderNumber på kundens dokument.
-  it('tömning skriver nyckeln, inte bara värdet', () => {
+  // ── Minnet av en tömning ────────────────────────────────────────────────────
+  //
+  // 🧨 Att TA BORT märkningen måste nå kundens dokument, och det kräver att Fortnox-headern
+  // skickar `null` — ett utelämnat fält lämnar deras värde orört. Men "tom märkning" duger inte
+  // som signal: buildCustomerSnapshot skriver alltid nyckeln, så tomt är normalläget för i stort
+  // sett varje order. Bara ÖVERGÅNGEN betyder att en människa tog bort något, och bara den här
+  // funktionen ser den.
+  it('tömning av en satt märkning sätter label_cleared', () => {
     const merged = mergeWorkOrderSnapshotOverrides({ ...BASE, label: 'Projekt 4711' }, { label: null });
     expect(merged.label).toBeNull();
-    expect('label' in merged).toBe(true);
+    expect(merged.label_cleared).toBe(true);
   });
 
-  it('utelämnad märkning lämnar nyckeln som den var', () => {
-    // Äldre order utan nyckeln: en statusändring får inte skapa den, för då hade Fortnox-headern
-    // läst det som en medveten tömning och blankat ett fält någon satt för hand.
+  // 🧨 Utan det här skulle rensningen begäras på VARENDA order utan märkning — inklusive de vars
+  // referensnummer någon satt för hand i Fortnox.
+  it('spara med tom märkning på en order som aldrig haft någon sätter inget', () => {
+    const merged = mergeWorkOrderSnapshotOverrides({ ...BASE, label: null }, { label: null });
+    expect(merged.label_cleared).toBe(false);
+  });
+
+  // 🧨 TILLSTÅND, INTE ENGÅNGSSIGNAL. Går PUT:en inte fram måste nästa synk kunna ta om den —
+  // annars stämplar nästa artikelredigering 'synced' medan Fortnox bär den gamla märkningen.
+  it('minnet överlever en sparning som inte rör märkningen', () => {
+    const cleared = { ...BASE, label: null, label_cleared: true };
+    expect(mergeWorkOrderSnapshotOverrides(cleared, { your_reference: 'Ref' }).label_cleared).toBe(true);
+    // …och en ny tom sparning håller det vid liv tills en märkning sätts igen.
+    expect(mergeWorkOrderSnapshotOverrides(cleared, { label: null }).label_cleared).toBe(true);
+  });
+
+  it('ett nytt värde upphäver minnet', () => {
+    const cleared = { ...BASE, label: null, label_cleared: true };
+    const merged = mergeWorkOrderSnapshotOverrides(cleared, { label: 'Projekt 9000' });
+    expect(merged.label).toBe('Projekt 9000');
+    expect(merged.label_cleared).toBe(false);
+  });
+
+  it('utelämnad märkning rör varken värdet eller minnet', () => {
     const legacy = { customer_name: 'Gammal AB' };
-    expect('label' in mergeWorkOrderSnapshotOverrides(legacy, { your_reference: 'Ref' })).toBe(false);
-    // Och en order som HAR den behåller sitt värde.
+    const merged = mergeWorkOrderSnapshotOverrides(legacy, { your_reference: 'Ref' });
+    expect('label' in merged).toBe(false);
+    expect('label_cleared' in merged).toBe(false);
     expect(mergeWorkOrderSnapshotOverrides({ ...BASE, label: 'P-1' }, {}).label).toBe('P-1');
   });
 });
