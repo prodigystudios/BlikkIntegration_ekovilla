@@ -21,6 +21,9 @@ type CustomerSnapshot = {
   end_contact_phone?: string | null;
   end_contact_email?: string | null;
   label?: string | null;
+  // Minnet av att märkningen tömts på arbetsordern. Sätts av mergeWorkOrderSnapshotOverrides, som
+  // ser övergången; läses av orderReferenceNumberField för att faktiskt blanka YourOrderNumber.
+  label_cleared?: boolean | null;
 };
 
 // The work order's OWN address column — what the order detail page edits, and (since
@@ -194,7 +197,8 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
 export type FortnoxOrderHeaderFields = {
   OurReference?: string;
   YourReference?: string;
-  YourOrderNumber?: string;
+  // Nullbar: `null` är hur fältet RENSAS (uppmätt — `''` rensar inte). Se orderReferenceNumberField.
+  YourOrderNumber?: string | null;
   Remarks?: string;
   DeliveryAddress1?: string;
   DeliveryZipCode?: string;
@@ -269,31 +273,43 @@ export function resolveYourReference(
  * `referenceNumber` kommer ur `resolveRotReference` och bärs av två uppgifter som aldrig gäller
  * samtidigt: företagskundens MÄRKNING och privatkundens FASTIGHETSBETECKNING.
  *
- * ⚠️ TÖMNING GÅR INTE ATT GÖRA HÄRIFRÅN, och det är ett medvetet val — inte ett förbiseende.
+ * Tre lägen:
  *
- * En PUT rör bara de fält den bär, så en utelämnad nyckel lämnar Fortnox värde orört. Att i
- * stället skicka ett tomvärde för att blanka fältet kräver att man vet VILKET tomvärde som biter,
- * och det uppmätta svaret (FORTNOX_TEXT_ROW i helpers.ts, mätt 2026-08-20) är att `''` INTE rensar
- * medan `null` gör det — utom för `Unit`, som svarar 400 på null. De mätningarna gjordes på
- * RADFÄLT; motsvarande mätning på ett headerfält finns inte, och `YourOrderNumber: null` kan lika
- * gärna vara ett 400 som en rensning.
+ *   värde                   → skriv det
+ *   inget värde, ingen tömning begärd → UTELÄMNA nyckeln (en PUT rör bara fält den bär, så
+ *                             Fortnox behåller sitt — rätt för en order vi inte har någon åsikt om)
+ *   tömning BEGÄRD          → `null`
  *
- * ⛔ Gissa inte. Ett `''` här ser ut att rensa och gör det inte — CRM hade visat tomt medan kundens
- * dokument bar kvar det gamla numret, alltså exakt den tysta drift speglingen finns för att stoppa.
+ * ⚠️ `null` OCH INTE `''`. Uppmätt i drift 2026-08-20 (FORTNOX_TEXT_ROW i helpers.ts): `''`
+ * accepteras men rensar INTE, `null` rensar. De mätningarna gjordes på radfält, och headerfält
+ * antas följa samma regel — dokumentationen där säger uttryckligen att raderna uppdateras "precis
+ * som med header-fälten". Går antagandet fel svarar Fortnox 400: header-synken är icke-fatal, så
+ * sparningen ligger kvar, säljaren får en toast och statusen blir 'failed' — inget tyst fel.
  *
- * ⛔ Och villkora INTE på `'label' in snapshot`. Det ser ut att skilja "tömd med flit" från "har
- * aldrig haft någon", men gör det inte: `buildCustomerSnapshot` skriver ALLTID nyckeln (null när
- * den är tom), så villkoret är sant för i stort sett varje offertskapad order. Följden hade blivit
- * ett rensningsförsök på varenda order utan märkning — plus att den tomma headern nedan aldrig mer
- * blir tom, så varje speglad PATCH hade kostat en Fortnox-PUT i onödan.
+ * ⛔ RENSNINGEN LÄSES UR `label_cleared`, ALDRIG UR ATT MÄRKNINGEN ÄR TOM. En tom märkning är
+ * normalläget: `buildCustomerSnapshot` skriver alltid nyckeln, så "tomt" gäller i stort sett varje
+ * order. Rensade vi på det hade referensnumret blankats även där någon satt det för hand i
+ * Fortnox — plus att headern aldrig mer blivit tom, så varje speglad PATCH kostat en PUT i onödan.
  *
- * Tills tömningen är MÄTT mot skarp Fortnox är regeln därför: ett nytt värde går fram, en tömning
- * gör det inte. Ordervyn säger det rakt ut i stället för att låtsas.
+ * `label_cleared` sätts bara av `mergeWorkOrderSnapshotOverrides`, som ser ÖVERGÅNGEN (fältet hade
+ * ett värde, klienten skickade tomt). Att det lagras som ett TILLSTÅND är hela poängen: en
+ * misslyckad PUT kan då tas om. Bars rensningen bara av den PATCH som begärde den, hade nästa
+ * artikelredigering eller "Synka om" byggt headern utan att veta något, lyckats, och stämplat
+ * 'synced' medan Fortnox fortfarande bar den gamla märkningen.
+ *
+ * ⚠️ Och det släcks av `syncWorkOrderHeaderToFortnox` när PUT:en gått igenom. Ett minne som låg
+ * kvar för alltid hade blankat ett "Ert referensnummer" som ekonomi senare skrivit in för hand i
+ * Fortnox, vid nästa bästa adress- eller referensändring — samma fel som regeln ovan finns för att
+ * undvika, bara nedsmalnat i stället för borta.
  */
 export function orderReferenceNumberField(
   referenceNumber: string | null,
-): { YourOrderNumber?: string } {
-  return referenceNumber ? { YourOrderNumber: referenceNumber } : {};
+  snapshot: { label_cleared?: boolean | null } | null | undefined,
+): { YourOrderNumber?: string | null } {
+  if (referenceNumber) return { YourOrderNumber: referenceNumber };
+  // ⚠️ Referensnumret vinner alltid över rensningen: på en ROT-order ÄR numret
+  // fastighetsbeteckningen, och en märkning som töms där får inte blanka den.
+  return snapshot?.label_cleared === true ? { YourOrderNumber: null } : {};
 }
 
 type OrderHeaderWorkOrder = {
@@ -325,6 +341,19 @@ async function buildOrderHeader(
   linkedQuote: OrderHeaderQuote,
   rotEnabled: boolean,
   supabase: ReturnType<typeof getSupabaseAdmin>,
+  // Får den här pushen försöka RENSA "Ert referensnummer" (`YourOrderNumber: null`)?
+  //
+  // ⛔ Standard false, och bara header-synken sätter true. Två skäl:
+  //   • SKAPANDEVÄGEN har inget att rensa — dokumentet finns inte än — så ett null där vore ren
+  //     risk på det enda anrop som saknar dedup-skydd.
+  //   • RADSYNKEN och "Synka om" måste förbli körbara. Skulle Fortnox avvisa null (som den redan
+  //     gör för `Unit`, 2000699) hade varje artikelredigering och varje omsynk kastat, ordern
+  //     legat kvar på 'failed', och assertOrderRowsSynced spärrat faktureringen — permanent, för
+  //     minnet av rensningen ligger kvar tills den lyckas.
+  //
+  // Kvar blir en enda väg som kan misslyckas, och den är icke-fatal: sparningen har redan landat
+  // och säljaren får felet i en toast.
+  opts?: { allowReferenceClear?: boolean },
 ): Promise<{ header: FortnoxOrderHeaderFields; rotPropertyNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
@@ -338,8 +367,9 @@ async function buildOrderHeader(
       ...(yourReference ? { YourReference: yourReference } : {}),
       // "Ert referensnummer" — the order field is YourOrderNumber (the offer uses
       // YourReferenceNumber; sending the wrong one is a 2001399 "Felaktigt fältnamn").
-      // ⚠️ En tömd märkning går INTE fram härifrån — se orderReferenceNumberField.
-      ...orderReferenceNumberField(referenceNumber),
+      // Tre lägen, inklusive rensningen — se orderReferenceNumberField. Rensningen bara på den
+      // väg som får försöka den (opts ovan).
+      ...orderReferenceNumberField(referenceNumber, opts?.allowReferenceClear ? snapshot : null),
       // No Remarks: it is Fortnox's own per-document body text (it rewrites it on createorder
       // anyway), and the customer contact is deliberately CRM-internal — see the removal of
       // buildEndContactNote.
@@ -876,7 +906,11 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     // half of resolveRotReference is a ROW and belongs to the row path, so it's dropped here.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
     const rotEnabled = linkedQuote?.rot_details?.enabled === true && !reverseVat;
-    const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+    // Enda vägen som får försöka rensa "Ert referensnummer" — se buildOrderHeader.
+    const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
+      allowReferenceClear: true,
+    });
+    const clearedReference = 'YourOrderNumber' in header && header.YourOrderNumber === null;
 
     // An empty header would be a PUT that says nothing — skip the round trip. null, not a result:
     // nothing was sent, so the caller must not report a completed sync (and must not re-read the
@@ -884,6 +918,22 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     if (Object.keys(header).length === 0) return null;
 
     await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: header });
+
+    // ⚠️ MINNET SLÄCKS FÖRST NÄR PUT:EN GÅTT IGENOM, och det är hela skälet till att det finns.
+    //
+    // Går den inte fram ligger `label_cleared` kvar och nästa header-synk försöker igen — annars
+    // hade en misslyckad rensning tvättats bort av nästa lyckade synk medan Fortnox bar kvar den
+    // gamla märkningen.
+    //
+    // Och den släcks FAKTISKT, i stället för att ligga kvar för alltid: en rensning som skickas om
+    // och om igen hade blankat ett "Ert referensnummer" som ekonomi senare skrivit in för hand i
+    // Fortnox, vid nästa bästa adress- eller referensändring. Rensningen ska ske en gång.
+    if (clearedReference) {
+      await supabase
+        .from('crm_work_orders')
+        .update({ customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), label_cleared: false } })
+        .eq('id', workOrderId);
+    }
 
     // ⚠️ INGEN 'synced'-stämpel här. Statusen betyder "Fortnox-ordern motsvarar HELA vårt underlag",
     // och den här vägen skickar medvetet inga rader — den kan inte gå i god för dem. Stämplade den

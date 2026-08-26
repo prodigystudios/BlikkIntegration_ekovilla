@@ -682,6 +682,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const onSitePhone: string | null = snapshot.end_contact_phone || null;
   const onSiteEmail: string | null = snapshot.end_contact_email || null;
   const hasOnSiteContact = Boolean(onSiteName || onSitePhone || onSiteEmail);
+  // Märkningen är borttagen hos oss men rensningen ännu inte bekräftad av Fortnox. Flaggan sätts
+  // när säljaren tömmer fältet och släcks först av en genomförd header-PUT — så länge den står kvar
+  // bär kundens dokument fortfarande det gamla referensnumret. Bara meningsfull för en order som
+  // faktiskt finns i Fortnox.
+  const labelClearPending = Boolean(snapshot.label_cleared) && Boolean(workOrder.fortnox_order_number);
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
@@ -1231,7 +1236,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
                 Var två egna kort. Vart och ett blev en rubrik och en rad, och två sådana på rad
                 gav mer kantlinje än innehåll. */}
-            {editingOverview || draft?.your_reference || draft?.label || customerPhone || customerEmail || customerContact || hasOnSiteContact ? (
+            {editingOverview || draft?.your_reference || draft?.label || labelClearPending || customerPhone || customerEmail || customerContact || hasOnSiteContact ? (
               <Card className="grid gap-3">
                 <p className={crm.cardTitle}>Kontakt &amp; referens</p>
 
@@ -1268,20 +1273,36 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         onChange={(e) => setField('label', e.target.value)}
                         placeholder="Ex. projekt-/beställningsnr hos kunden"
                       />
-                      {/* ⚠️ Tömningen nämns med flit. Ett nytt värde speglas till Fortnox, men en
-                          TOM märkning går inte fram: headern skickar bara fält den har ett värde
-                          för, och vilket tomvärde Fortnox rensar på är inte uppmätt för headerfält
-                          (se orderReferenceNumberField). Hellre säga det rakt ut än låta säljaren
-                          tro att fältet är borta från kundens dokument när det inte är det. */}
+                      {/* ⚠️ Texten måste följa vad synken FAKTISKT gör. En fakturerad order
+                          returnerar null före varje PUT (syncWorkOrderHeaderToFortnox), men
+                          översikten går fortfarande att redigera — så ett löfte om synk hade
+                          varit falskt just där, och säljaren hade trott att kundens dokument
+                          rättats. */}
                       <span className="text-xs text-slate-500">
                         Kundens eget referensnummer — visas som ”Ert referensnummer” på order och faktura.
-                        {workOrder.fortnox_order_number ? ' Ett ändrat värde synkas till Fortnox; för att ta bort det helt behöver det rensas i Fortnox.' : ''}
+                        {!workOrder.fortnox_order_number ? ''
+                          : (workOrder.fortnox_invoice_number || workOrder.status === 'invoiced')
+                            ? ' Ordern är fakturerad — ändringar här når inte Fortnox och behöver göras där.'
+                            : ' Ändringar synkas till Fortnox.'}
                       </span>
                     </label>
                   ) : draft?.label ? (
                     <div className="grid gap-0.5">
                       <span className={crm.sectionTitle}>Märkning</span>
                       <p className="m-0 text-sm font-semibold text-slate-900">{draft.label}</p>
+                    </div>
+                  ) : labelClearPending ? (
+                    // Rensningen är begärd men ännu inte bekräftad av Fortnox. Flaggan släcks först
+                    // när PUT:en gått igenom, så står den kvar betyder det att borttagningen INTE
+                    // nått kundens dokument — och det får inte se ut som att den gjort det.
+                    // ⚠️ Här landar man också om Fortnox visar sig avvisa `YourOrderNumber: null`
+                    // (rensningen är uppmätt för radfält, inte för headerfält). Då är det här
+                    // beskedet skillnaden mellan ett synligt och ett tyst fel.
+                    <div className="grid gap-0.5">
+                      <span className={crm.sectionTitle}>Märkning</span>
+                      <p className="m-0 text-sm text-amber-700">
+                        Borttagen här, men ännu inte i Fortnox. Nästa synk försöker igen — står det kvar behöver ”Ert referensnummer” rensas i Fortnox.
+                      </p>
                     </div>
                   ) : null
                 ) : null}

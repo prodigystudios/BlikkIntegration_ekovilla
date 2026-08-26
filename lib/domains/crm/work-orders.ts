@@ -649,10 +649,37 @@ export function mergeWorkOrderSnapshotOverrides(
   // Uttryckligen skickad (null inkluderat) → vinner över frysningen ovan.
   if (overrides.your_reference !== undefined) merged.your_reference = overrides.your_reference;
 
-  // Märkningen. ⚠️ NYCKELN SKRIVS ÄVEN NÄR VÄRDET ÄR null, och det är bärande: `'label' in
-  // snapshot` är hur Fortnox-headern skiljer "säljaren tömde märkningen" (töm fältet på
-  // dokumentet) från "den här ordern har aldrig haft någon" (rör inte fältet). Se buildOrderHeader.
-  if (overrides.label !== undefined) merged.label = overrides.label;
+  // ── Märkningen, och minnet av att den tömts ────────────────────────────────
+  //
+  // 🧨 EN TÖMNING ÄR EN ÖVERGÅNG, MEN FORTNOX-SYNKEN BEHÖVER ETT TILLSTÅND.
+  //
+  // Att ta bort märkningen måste nå kundens dokument (`YourOrderNumber`), och det kräver att vi
+  // SKICKAR ett `null` — ett utelämnat fält lämnar Fortnox värde orört. Men "skicka null när
+  // märkningen är tom" går inte att avgöra ur snapshoten ensam: `buildCustomerSnapshot` skriver
+  // alltid nyckeln, så tom märkning är normalläget för i stort sett varje order, och en rensning
+  // på det hade blankat referensnumret även där någon satt det för hand i Fortnox.
+  //
+  // Här — och bara här — syns övergången: `current` är det som stod innan. Den skrivs därför ner
+  // som ett tillstånd, `label_cleared`, som ALLA synkvägar sedan kan läsa.
+  //
+  // ⚠️ Ett tillstånd och inte en engångssignal, med flit. Bars tömningen bara av just den PATCH
+  // som gjorde den, kunde en misslyckad PUT aldrig tas om: nästa artikelredigering eller "Synka
+  // om" bygger headern utan att veta något om saken, lyckas, och stämplar 'synced' medan Fortnox
+  // fortfarande bär den gamla märkningen. Tyst drift, och statusen intygar motsatsen.
+  //
+  // ⚠️ Men det är inte permanent: `syncWorkOrderHeaderToFortnox` släcker flaggan när PUT:en gått
+  // igenom. Ett minne som låg kvar hade skickat rensningen om och om igen och därmed blankat ett
+  // referensnummer som ekonomi senare skrivit in för hand i Fortnox. Rensningen ska ske en gång.
+  if (overrides.label !== undefined) {
+    const hadLabel = Boolean(current.label);
+    merged.label = overrides.label;
+    merged.label_cleared = overrides.label
+      // Ett nytt värde upphäver minnet — referensnumret vinner ändå över rensningen, men att låta
+      // flaggan ligga kvar vore ett påstående som inte längre gäller.
+      ? false
+      // Tömd nu, eller redan tömd tidigare utan att synken bekräftats.
+      : (hadLabel || current.label_cleared === true);
+  }
 
   // Alla tre nycklarna skrivs när objektet finns, null inkluderat: att skicka tomma fält är hur
   // krysset i ordervyn stängs av. Ett "skriv bara när det finns ett värde" hade gjort en slutkund
