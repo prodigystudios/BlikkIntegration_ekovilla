@@ -16,6 +16,9 @@ type BacklogProps = {
   filter: BacklogFilter;
   onFilterChange: (f: BacklogFilter) => void;
   counts: { unplanned: number; planned: number; all: number };
+  // Set when the list failed to load. Without it an empty panel is indistinguishable from a panel
+  // whose fetch died, and the empty state would tell you to go create a work order you already have.
+  loadError: string | null;
   // The backlog owns its own search + sales filter. Both live here rather than in the toolbar
   // because they scope this list alone — the schedule beside it has its own search box.
   search: string;
@@ -43,25 +46,32 @@ function shortDate(value: string | null): string | null {
 }
 
 export default function Backlog({
-  items, loading, canWrite, selectedId, filter, onFilterChange, counts,
+  items, loading, canWrite, selectedId, filter, onFilterChange, counts, loadError,
   search, onSearchChange, salesFilter, onSalesFilterChange, salesOptions,
   onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
 }: BacklogProps) {
-  // A filtered list is empty for a different reason than an unfiltered one, and "skapa en order i
-  // CRM:et" is the wrong instruction when the orders exist but the search hid them. Say which it is.
+  // An empty panel has four different meanings and only one instruction fits each. Ordered by which
+  // outranks which:
   //
-  // The counts come from the already search/sales-filtered set, so counts.all === 0 is precisely
-  // "the filter matched nothing" — and the guard matters: with matches that all sit under a
-  // different tab (search hits 3 jobs, all of them planned, while the Oplanerade tab is open) the
-  // panel would otherwise claim nothing matched while the badge beside it reads "Planerade 3".
+  // 1. The load failed — the orders may well exist, we just don't have them. This has to come first:
+  //    "skapa en order i CRM:et" here would send you off to create a duplicate of one you own.
+  // 2. A filter matched nothing. counts.all comes from the already search/sales-filtered set, so
+  //    counts.all === 0 is precisely that — and the zero check matters, because with matches that
+  //    all sit under another tab (a search hits 3 jobs, every one of them planned, while Oplanerade
+  //    is open) the panel would otherwise claim nothing matched while the badge beside it reads
+  //    "Planerade 3".
+  // 3. Everything is scheduled — the good outcome, worth saying so.
+  // 4. There is genuinely nothing to plan.
   const filtered = search.trim().length > 0 || salesFilter !== null;
-  const emptyText = filtered && counts.all === 0
-    ? 'Ingen arbetsorder matchar sökningen eller vald säljare. Rensa filtret för att se alla.'
-    : filter === 'planned'
-      ? 'Inga inplanerade jobb än.'
-      : filter === 'unplanned' && counts.planned > 0
-        ? 'Alla jobb är inplanerade. 🎉'
-        : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.';
+  const emptyText = loadError
+    ? `${loadError}. Ladda om sidan för att försöka igen.`
+    : filtered && counts.all === 0
+      ? 'Ingen arbetsorder matchar sökningen eller vald säljare. Rensa filtret för att se alla.'
+      : filter === 'planned'
+        ? 'Inga inplanerade jobb än.'
+        : filter === 'unplanned' && counts.planned > 0
+          ? 'Alla jobb är inplanerade. 🎉'
+          : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.';
   return (
     <section
       className={cn(

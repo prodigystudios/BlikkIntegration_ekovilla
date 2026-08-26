@@ -39,6 +39,59 @@ type DragData =
 
 const API = '/api/crm/planering';
 
+// A ticket dispenser that lets a loader tell whether its response is still the one we want.
+//
+// Several board loads can be in flight at once — a realtime event lands mid-load, you step periods
+// quickly, or (the case that actually bit) the range widens right after mount. The network makes no
+// promise about the order answers come back in, so without this the OLDER, narrower answer can land
+// last and overwrite rows the newer one had already filled: the board renders a month of columns
+// holding a single week of cards, with no error anywhere because both responses were `ok`.
+//
+// start() takes the next ticket; isCurrent() says whether it is still the newest.
+//
+// ⚠️ Held in a ref, NOT a useMemo. Every loader below lists its dispenser in a useCallback dep
+// array, and those loaders are themselves effect dependencies — so a fresh object each render would
+// give every loader a new identity, re-run the effects depending on them, and hammer the API in an
+// endless reload loop. React documents useMemo as a performance hint it is free to discard, which
+// makes it the wrong tool when the identity is load-bearing for correctness. A ref is guaranteed.
+type LoadTicket = { start: () => number; isCurrent: (ticket: number) => boolean };
+
+function useLoadTicket(): LoadTicket {
+  const seq = useRef(0);
+  const dispenser = useRef<LoadTicket | null>(null);
+  if (dispenser.current === null) {
+    dispenser.current = {
+      start: () => (seq.current += 1),
+      isCurrent: (ticket: number) => ticket === seq.current,
+    };
+  }
+  return dispenser.current;
+}
+
+// Fetch under a ticket: resolves the payload while this is still the newest load, or null once a
+// newer one has overtaken it.
+//
+// The guard wraps the WHOLE call, not just the parsed body. A superseded request that dies at the
+// network or parse level — the connection drops, an HTML error page comes back where JSON was
+// expected — must be dropped just as quietly as a superseded success: we no longer want its answer,
+// so we have no business raising its failure over the board that replaced it.
+async function fetchLatest<T>(ticketer: LoadTicket, url: string, fallbackMessage: string): Promise<T | null> {
+  const ticket = ticketer.start();
+  try {
+    const response = await fetch(url, { cache: 'no-store' });
+    // Parsed defensively: the routes answer their own failures as JSON with a Swedish message, but
+    // a gateway 502 or a redirect to the login page returns HTML, and letting that hit .json()
+    // unguarded put a raw English SyntaxError in the banner instead of the message written for it.
+    const body = await response.json().catch(() => null);
+    if (!ticketer.isCurrent(ticket)) return null;
+    if (!body || !body.ok) throw new Error(body?.error || fallbackMessage);
+    return body.data as T;
+  } catch (e) {
+    if (!ticketer.isCurrent(ticket)) return null;
+    throw e;
+  }
+}
+
 export default function PlanningClient({
   canWrite,
   canManageTrucks,
@@ -56,6 +109,8 @@ export default function PlanningClient({
   const [monthOffset, setMonthOffset] = useState(0);
   const [showWeekend, setShowWeekend] = useState(false);
   const [stackWeeks, setStackWeeks] = useState(false);
+  // Whether the persisted view preferences have been read yet — see the effect that sets it.
+  const [prefsLoaded, setPrefsLoaded] = useState(false);
 
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
@@ -67,8 +122,14 @@ export default function PlanningClient({
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
+  const [backlogLoaded, setBacklogLoaded] = useState(false);
   const [boardLoaded, setBoardLoaded] = useState(false);
+  // Two error slots, not one. The schedule and the backlog fail independently, and a successful
+  // schedule load clears its own banner — sharing a single slot let that success wipe a live backlog
+  // error, leaving the panel showing "Skapa en order i CRM:et…" over a list that had failed to load
+  // rather than a list that is genuinely empty.
   const [error, setError] = useState<string | null>(null);
+  const [backlogError, setBacklogError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Two searches, deliberately separate. One box used to filter both the schedule and the backlog,
@@ -137,67 +198,100 @@ export default function PlanningClient({
   }, [view, weekDaysList, monthWeeks]);
 
   // ── data ──────────────────────────────────────────────────────────────────
+  // One ticket dispenser per loader, never shared: they read different endpoints, so a day-notes
+  // load must not invalidate an in-flight segments load. Each checks its ticket BEFORE inspecting
+  // the payload — a superseded response's error is as moot as its data, and surfacing it would put
+  // a red banner over a board that had just loaded fine.
+  const backlogLoad = useLoadTicket();
+  const segmentsLoad = useLoadTicket();
+  const dayNotesLoad = useLoadTicket();
+  const truckCrewLoad = useLoadTicket();
+  const defaultCrewLoad = useLoadTicket();
+  const depotStockLoad = useLoadTicket();
+
+  // The backlog spinner is cleared HERE rather than by the effect that raised it, so that whichever
+  // load is current owns it. Clearing it on a superseded response would drop the panel to its empty
+  // state ("Skapa en order i CRM:et…") while a newer request is still in flight — reading as "you
+  // have no work orders" — and leaving it to the mount effect alone would strand it spinning over
+  // data that had already arrived, because the overtaking caller never touches it.
   const loadBacklog = useCallback(async () => {
-    const r = await fetch(`${API}/backlog`, { cache: 'no-store' });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta arbetsordrar');
-    setBacklog(j.data.items as SchedulableWorkOrder[]);
-  }, []);
+    try {
+      const data = await fetchLatest<{ items: SchedulableWorkOrder[] }>(backlogLoad, `${API}/backlog`, 'Kunde inte hämta arbetsordrar');
+      if (!data) return; // superseded — the load that overtook this one owns the spinner now
+      setBacklog(data.items);
+      setBacklogError(null);
+      setBacklogLoaded(true);
+      setLoadingBacklog(false);
+    } catch (e) {
+      // fetchLatest only throws while current, so reaching here means this load still owns it.
+      setLoadingBacklog(false);
+      throw e;
+    }
+  }, [backlogLoad]);
 
   const loadSegments = useCallback(async (from: string, to: string) => {
-    const r = await fetch(`${API}/segments?from=${from}&to=${to}`, { cache: 'no-store' });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta schemat');
-    setSegments(j.data.segments as OpsSegment[]);
-    setTrucks(j.data.trucks as OpsTruck[]);
+    const data = await fetchLatest<{ segments: OpsSegment[]; trucks: OpsTruck[] }>(
+      segmentsLoad,
+      `${API}/segments?from=${from}&to=${to}`,
+      'Kunde inte hämta schemat',
+    );
+    if (!data) return;
+    setSegments(data.segments);
+    setTrucks(data.trucks);
     setBoardLoaded(true);
-  }, []);
+    // A good load clears a stale banner. Nothing else in this component ever resets `error`, so
+    // without this one transient blip would leave the red box up for the rest of the session while
+    // every reload behind it quietly succeeded.
+    setError(null);
+  }, [segmentsLoad]);
 
   const loadDayNotes = useCallback(async (from: string, to: string) => {
-    const r = await fetch(`${API}/day-notes?from=${from}&to=${to}`, { cache: 'no-store' });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta noteringar');
-    setDayNotes(j.data.notes as DayNote[]);
-  }, []);
+    const data = await fetchLatest<{ notes: DayNote[] }>(dayNotesLoad, `${API}/day-notes?from=${from}&to=${to}`, 'Kunde inte hämta noteringar');
+    if (data) setDayNotes(data.notes);
+  }, [dayNotesLoad]);
 
   const loadTruckCrew = useCallback(async (from: string, to: string) => {
-    const r = await fetch(`${API}/truck-crew?from=${from}&to=${to}`, { cache: 'no-store' });
-    const j = await r.json();
-    if (!j.ok) throw new Error(j.error || 'Kunde inte hämta bilbesättning');
-    setTruckCrew(j.data.crew as TruckCrewMember[]);
-  }, []);
+    const data = await fetchLatest<{ crew: TruckCrewMember[] }>(truckCrewLoad, `${API}/truck-crew?from=${from}&to=${to}`, 'Kunde inte hämta bilbesättning');
+    if (data) setTruckCrew(data.crew);
+  }, [truckCrewLoad]);
 
   // Default crew (standardbemanning) is range-independent — every truck's standing team. The board
   // falls back to it on weeks with no explicit truck crew.
   const loadDefaultCrew = useCallback(async () => {
-    const r = await fetch(`${API}/default-crew`, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.ok) setDefaultCrew(j.data.crew as DefaultCrewMember[]);
-  }, []);
+    const data = await fetchLatest<{ crew: DefaultCrewMember[] }>(defaultCrewLoad, `${API}/default-crew`, 'Kunde inte hämta standardbemanning');
+    if (data) setDefaultCrew(data.crew);
+  }, [defaultCrewLoad]);
 
   // Depot stock + planned demand — range-independent (all open booked jobs vs current stock). Drives
   // the "lager räcker inte"-banner so planners catch a shortfall before over-committing.
   const loadDepotStock = useCallback(async () => {
-    const r = await fetch(`${API}/depot-stock`, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.ok) setDepotStock(j.data.depots as DepotBalance[]);
-  }, []);
+    const data = await fetchLatest<{ depots: DepotBalance[] }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
+    if (data) setDepotStock(data.depots);
+  }, [depotStockLoad]);
 
   useEffect(() => {
     setLoadingBacklog(true);
-    loadBacklog()
-      .catch((e) => setError(e?.message || 'Något gick fel'))
-      .finally(() => setLoadingBacklog(false));
+    // loadBacklog owns clearing the spinner — see its comment.
+    loadBacklog().catch((e) => setBacklogError(e?.message || 'Kunde inte hämta arbetsordrar'));
   }, [loadBacklog]);
 
-  // "Visa helg" preference, persisted across visits (weekends hidden by default for width).
+  // "Visa helg" + "Hela månaden" preferences, persisted across visits (weekends hidden by default
+  // for width). Read after mount, not in a lazy useState initializer: this component is
+  // server-rendered first and localStorage doesn't exist there, so seeding from it would make the
+  // server and client markup disagree.
+  //
+  // prefsLoaded gates the range-driven load below. "Hela månaden" widens the range, so before this
+  // ran the board fetched TWICE on every visit — once for the single week the server rendered, then
+  // again for the month — and the two answers raced. Waiting one render costs nothing visible (the
+  // skeleton is already up) and means only the correct range is ever asked for.
   useEffect(() => {
     try {
       setShowWeekend(localStorage.getItem('crm-planning-show-weekend') === '1');
       setStackWeeks(localStorage.getItem('crm-planning-stack-weeks') === '1');
     } catch {
-      /* ignore */
+      /* ignore — a blocked localStorage just means the defaults stand */
     }
+    setPrefsLoaded(true);
   }, []);
   const toggleWeekend = useCallback(() => {
     setShowWeekend((v) => {
@@ -246,12 +340,15 @@ export default function PlanningClient({
   }, [loadJobTypes]);
 
   useEffect(() => {
+    // Hold until the persisted "Hela månaden" preference is in, so the first request already asks
+    // for the range the board is about to render.
+    if (!prefsLoaded) return;
     loadSegments(range.from, range.to).catch((e) => setError(e?.message || 'Något gick fel'));
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
     loadDepotStock().catch(() => {});
-  }, [range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock]);
+  }, [prefsLoaded, range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -260,12 +357,25 @@ export default function PlanningClient({
   const [supabase] = useState(() => createClientComponentClient());
   const reloadBoardRef = useRef<() => void>(() => {});
   reloadBoardRef.current = () => {
-    loadSegments(range.from, range.to).catch(() => {});
+    // A failed reload normally costs nothing visible — the board keeps the segments it already has,
+    // so a red banner over a perfectly usable schedule would be pure noise, and these fire often
+    // with ten planners on the board. The one case that must speak is a failure while nothing has
+    // ever loaded: this reload supersedes whatever was in flight, so the response it displaced is
+    // already discarded, and staying quiet would leave the "Laddar schema…" skeleton up for good
+    // with no data and nothing to press.
+    loadSegments(range.from, range.to).catch((e) => {
+      if (!boardLoaded) setError(e?.message || 'Kunde inte hämta schemat');
+    });
     loadDayNotes(range.from, range.to).catch(() => {});
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
     loadDepotStock().catch(() => {});
-    loadBacklog().catch(() => {});
+    // Same rule as the schedule above: quiet while a list is already on screen, but a failure that
+    // supersedes the only load that ever succeeded has to speak — otherwise the panel shows its
+    // "Skapa en order i CRM:et…" empty state over orders that had in fact loaded.
+    loadBacklog().catch((e) => {
+      if (!backlogLoaded) setBacklogError(e?.message || 'Kunde inte hämta arbetsordrar');
+    });
     loadJobTypes().catch(() => {});
   };
 
@@ -907,6 +1017,8 @@ export default function PlanningClient({
         </div>
       </div>
 
+      {/* Schedule errors only. A backlog failure is reported inside the backlog panel itself, where
+          the empty list it explains actually is — see its loadError prop. */}
       {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
 
       {/* Depot stock shortfall — the booked work needs more sacks than the depot has in stock. */}
@@ -950,6 +1062,7 @@ export default function PlanningClient({
           filter={backlogFilter}
           onFilterChange={setBacklogFilter}
           counts={backlogCounts}
+          loadError={backlogError}
           search={backlogSearch}
           onSearchChange={setBacklogSearch}
           salesFilter={salesFilter}
@@ -1138,7 +1251,12 @@ export default function PlanningClient({
           canWrite={canWrite}
           onClose={() => setAdminOpen(false)}
           onChanged={() => {
-            loadSegments(range.from, range.to).catch(() => {});
+            // Same rule as the realtime reload: quiet unless nothing has loaded yet. "Administrera"
+            // sits above the skeleton, so a change made while the first load is still in flight
+            // supersedes it — and a silent failure here would strand that skeleton for good.
+            loadSegments(range.from, range.to).catch((e) => {
+              if (!boardLoaded) setError(e?.message || 'Kunde inte hämta schemat');
+            });
             loadJobTypes().catch(() => {});
           }}
         />
