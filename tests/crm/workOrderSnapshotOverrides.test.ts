@@ -240,37 +240,79 @@ describe('mergeWorkOrderRotDetails', () => {
   };
 
   it('bevarar applicant_name och personal_number', () => {
-    const merged = mergeWorkOrderRotDetails(CURRENT, { property_designation: 'Nytorp 1:12' });
+    const { merged } = mergeWorkOrderRotDetails(CURRENT, { property_designation: 'Nytorp 1:12' });
     expect(merged.personal_number).toBe('199001011234');
     expect(merged.applicant_name).toBe('Anna Andersson');
     expect(merged.property_designation).toBe('Nytorp 1:12');
   });
 
   it('rör bara nycklar som faktiskt skickats', () => {
-    // En sparning som bara ändrar procenten får inte nolla beteckningen.
-    const merged = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50 });
+    const { merged } = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50 });
     expect(merged.rot_percent).toBe(50);
     expect(merged.property_designation).toBe('Haggården 6:3');
     expect(merged.enabled).toBe(true);
   });
 
-  it('null skriver — en tömd beteckning ska bli tömd', () => {
-    const merged = mergeWorkOrderRotDetails(CURRENT, { property_designation: null });
+  it('null skriver — tömda fält ska bli tömda', () => {
+    const { merged } = mergeWorkOrderRotDetails(CURRENT, { property_designation: null, rot_percent: null });
     expect(merged.property_designation).toBeNull();
-  });
-
-  it('enabled: false skrivs, inte tolkat som "rör inte"', () => {
-    expect(mergeWorkOrderRotDetails(CURRENT, { enabled: false }).enabled).toBe(false);
-  });
-
-  it('tom nuvarande går igenom utan att kasta', () => {
-    expect(mergeWorkOrderRotDetails(null, { enabled: true })).toEqual({ enabled: true });
-    expect(mergeWorkOrderRotDetails({}, {})).toEqual({});
+    expect(merged.rot_percent).toBeNull();
   });
 
   it('muterar inte indatan', () => {
     const current = { ...CURRENT };
     mergeWorkOrderRotDetails(current, { rot_percent: 50 });
     expect(current.rot_percent).toBe(30);
+  });
+
+  // 🧨 `changed` är spärren mot en full Fortnox-push i onödan. Klienten skickar ROT-blocket vid
+  // VARJE sparning av en privatorder, och routen låter en ROT-ändring gå den fulla vägen (rader +
+  // header). Utan skillnaden hade en rättad telefon på en FAKTURERAD order PUT:at om alla rader
+  // mot ett stängt dokument — och på en order utan Fortnox-nummer SKAPAT dokumentet.
+  describe('changed', () => {
+    it('är false när inget skiljer', () => {
+      const same = { enabled: true, property_designation: 'Haggården 6:3', rot_percent: 30, max_deduction: 50000, brf_org_number: null };
+      expect(mergeWorkOrderRotDetails(CURRENT, same).changed).toBe(false);
+    });
+
+    it('läser tal och sträng som samma värde', () => {
+      // Kolumnen bär talet 30; schemat ger tillbaka talet 30. Men null vs undefined vs '' är alla
+      // tomhet och får inte räknas som en ändring.
+      expect(mergeWorkOrderRotDetails({ brf_org_number: null }, { brf_org_number: null }).changed).toBe(false);
+      expect(mergeWorkOrderRotDetails({}, { brf_org_number: null }).changed).toBe(false);
+    });
+
+    it('är true för en verklig ändring', () => {
+      expect(mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50 }).changed).toBe(true);
+      expect(mergeWorkOrderRotDetails(CURRENT, { property_designation: null }).changed).toBe(true);
+    });
+  });
+
+  // 🧨 Regimen är låst ÅT BÅDA HÅLLEN när dokumentet finns. Påslag är omöjligt (2004021), och
+  // avslag river husarbetesflaggorna ur ett ROT-dokument — avdraget försvinner tyst från fakturan.
+  describe('enabledChanged', () => {
+    it('fångar både på och av', () => {
+      expect(mergeWorkOrderRotDetails({ enabled: false }, { enabled: true }).enabledChanged).toBe(true);
+      expect(mergeWorkOrderRotDetails({ enabled: true }, { enabled: false }).enabledChanged).toBe(true);
+      // Saknad flagga på en äldre rad läses som av — inte som en ändring när man skickar false.
+      expect(mergeWorkOrderRotDetails({}, { enabled: false }).enabledChanged).toBe(false);
+    });
+
+    it('är false när flaggan inte skickas', () => {
+      expect(mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50 }).enabledChanged).toBe(false);
+    });
+  });
+
+  // 🧨 Fastighetsbeteckningen ÄR "Ert referensnummer" på en villa-ROT-order. Tas den bort krävs ett
+  // uttryckligt null till Fortnox, annars står den gamla kvar på kundens dokument.
+  describe('propertyCleared', () => {
+    it('är true bara när ett satt värde tas bort', () => {
+      expect(mergeWorkOrderRotDetails(CURRENT, { property_designation: null }).propertyCleared).toBe(true);
+      expect(mergeWorkOrderRotDetails(CURRENT, { property_designation: 'Nytorp 1:12' }).propertyCleared).toBe(false);
+      // Aldrig satt → inget att rensa, och ett rensningsförsök hade blankat ett referensnummer
+      // som satts för hand i Fortnox.
+      expect(mergeWorkOrderRotDetails({ property_designation: null }, { property_designation: null }).propertyCleared).toBe(false);
+      expect(mergeWorkOrderRotDetails({}, { property_designation: null }).propertyCleared).toBe(false);
+    });
   });
 });

@@ -230,8 +230,14 @@ export const updateCrmWorkOrderSchema = z.object({
   rot_details: z.object({
     enabled: z.boolean().optional(),
     property_designation: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
-    rot_percent: z.coerce.number().finite('Ogiltig ROT-procent').min(0).max(100).optional(),
-    max_deduction: z.coerce.number().finite('Ogiltigt maxavdrag').min(0).optional(),
+    // NULLBARA: ett tömt fält måste kunna SPARAS som tomt. Utan null hade klienten fått utelämna
+    // nyckeln, och merge-regeln läser en saknad nyckel som "rör inte" — fälten hade gått att ändra
+    // men aldrig att tömma, med en sparning som rapporterade lyckat och det gamla värdet kvar.
+    // (pricing.ts tål null: `rot_percent ?? 30`.)
+    rot_percent: z.preprocess((value) => (value == null || value === '' ? null : value),
+      z.coerce.number().finite('Ogiltig ROT-procent').min(0).max(100).nullable()).optional(),
+    max_deduction: z.preprocess((value) => (value == null || value === '' ? null : value),
+      z.coerce.number().finite('Ogiltigt maxavdrag').min(0).nullable()).optional(),
     brf_org_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
   }).optional(),
   // Kundkontakten — vem vi och installatörerna ringer. Merged into customer_snapshot by the route.

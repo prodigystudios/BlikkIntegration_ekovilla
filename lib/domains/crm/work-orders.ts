@@ -707,21 +707,44 @@ export function mergeWorkOrderSnapshotOverrides(
  * Bara nycklar anroparen faktiskt skickade skrivs: `undefined` betyder "rör inte", så en sparning
  * som bara ändrar procenten inte nollar fastighetsbeteckningen.
  */
+export const ROT_EDITABLE_KEYS = ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const;
+
 export function mergeWorkOrderRotDetails(
   current: Record<string, unknown> | null | undefined,
   overrides: {
     enabled?: boolean;
     property_designation?: string | null;
-    rot_percent?: number;
-    max_deduction?: number;
+    rot_percent?: number | null;
+    max_deduction?: number | null;
     brf_org_number?: string | null;
   },
-): Record<string, unknown> {
-  const merged: Record<string, unknown> = { ...(current ?? {}) };
-  for (const key of ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const) {
-    if (overrides[key] !== undefined) merged[key] = overrides[key];
+): { merged: Record<string, unknown>; changed: boolean; enabledChanged: boolean; propertyCleared: boolean } {
+  const base = (current ?? {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...base };
+  let changed = false;
+  for (const key of ROT_EDITABLE_KEYS) {
+    if (overrides[key] === undefined) continue;
+    merged[key] = overrides[key];
+    // Jämför som sträng: procenten kan ligga som tal i kolumnen och komma tillbaka som tal ur
+    // schemat, men `null` och `undefined` måste läsas som samma tomhet.
+    if (String(base[key] ?? '') !== String(overrides[key] ?? '')) changed = true;
   }
-  return merged;
+  return {
+    merged,
+    // ⚠️ `changed` är hela skälet att funktionen svarar med mer än objektet. Klienten skickar
+    // ROT-blocket vid VARJE sparning av en privatorder, och routen låter en ROT-ändring gå den
+    // FULLA pushen (rader + header). Utan den här skillnaden hade en rättad telefon på en
+    // fakturerad order PUT:at om alla rader mot ett stängt Fortnox-dokument.
+    changed,
+    // Regimen (`enabled`) är låst så fort dokumentet finns — se routen. Åt BÅDA hållen.
+    enabledChanged: overrides.enabled !== undefined && Boolean(base.enabled) !== Boolean(overrides.enabled),
+    // Fastighetsbeteckningen ÄR "Ert referensnummer" på en villa-ROT-order. Tas den bort måste
+    // Fortnox få ett uttryckligt null, annars står den gamla kvar på kundens dokument.
+    propertyCleared:
+      overrides.property_designation !== undefined
+      && !overrides.property_designation
+      && Boolean(base.property_designation),
+  };
 }
 
 export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: Partial<WorkOrderUpdateInput>) {

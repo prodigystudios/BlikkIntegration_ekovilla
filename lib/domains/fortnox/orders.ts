@@ -602,6 +602,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         linkedQuote?.customer_id ?? workOrder.customer_id,
       );
       const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
+      // ⛔ INGEN rensning här. Dokumentet skapas i det här anropet — det finns ingenting att rensa,
+      // och `createorder` är den enda Fortnox-skrivningen utan dedup-skydd.
       const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
       const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
@@ -839,10 +841,27 @@ async function putOrderHeaderAndRows(
   // skickar ärvs från raden som låg där förut. Se FORTNOX_TEXT_ROW i helpers.ts. Det biter extra
   // hårt här: efter `createorder` bär Fortnox-ordern OFFERTENS rader, inklusive mätrader som
   // buildOrderRows aldrig skapar, så positionerna är förskjutna redan vid första omsynken.
-  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+  // Rensning tillåten här sedan `YourOrderNumber: null` är uppmätt (2026-08-26). Det var
+  // osäkerheten som höll radvägen utanför: hade Fortnox avvisat null skulle varje artikelredigering
+  // och varje "Synka om" ha kastat, med ordern kvar på 'failed' och faktureringen spärrad av
+  // assertOrderRowsSynced. Nu är det den ENDA vägen som levererar båda halvorna av en ROT-ändring
+  // (referensnumret i headern, ROT-noten som rad), så den måste kunna rensa.
+  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
+    allowReferenceClear: true,
+  });
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
 
   await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
+
+  // Minnet av rensningen släcks när PUT:en gått igenom — samma regel och samma skäl som i
+  // syncWorkOrderHeaderToFortnox. Utan den här raden hade radvägen rensat referensnumret vid VARJE
+  // framtida synk och därmed blankat ett värde ekonomi senare skrivit in för hand i Fortnox.
+  if ('YourOrderNumber' in header && header.YourOrderNumber === null) {
+    await supabase
+      .from('crm_work_orders')
+      .update({ customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), label_cleared: false } })
+      .eq('id', workOrder.id);
+  }
 }
 
 // Re-sync an already-synced Fortnox order: header AND article rows (PUT:en styr radlistans längd,

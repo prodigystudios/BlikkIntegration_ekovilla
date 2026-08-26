@@ -110,6 +110,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       customer_snapshot?: Record<string, unknown> | null;
       rot_details?: Record<string, unknown> | null;
       fortnox_order_number?: string | null;
+      fortnox_invoice_number?: string | null;
     };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
@@ -165,16 +166,42 @@ export async function PATCH(req: Request, context: RouteContext) {
     // create, och ett icke-ROT-dokument avvisar varje husarbetesfält med 2004021 — så att slå PÅ
     // ROT här hade sänkt varje efterföljande radsynk. Klienten döljer reglaget då, men spärren
     // måste stå här också: den som skickar en handskriven PATCH ska inte kunna låsa sin egen order.
+    let rotChanged = false;
     if (touchesRot && updateInput.rot_details) {
       const currentRot = (current?.rot_details ?? {}) as Record<string, unknown>;
-      const turningRotOn = updateInput.rot_details.enabled === true && currentRot.enabled !== true;
-      if (turningRotOn && current?.fortnox_order_number) {
+      const rot = mergeWorkOrderRotDetails(currentRot, updateInput.rot_details);
+
+      // 🧨 ROT-REGIMEN ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX — ÅT BÅDA HÅLLEN.
+      //
+      // `TaxReductionType` sätts bara vid create. Att slå PÅ ROT efteråt är omöjligt (dokumentet är
+      // 'none' och avvisar varje husarbetesfält med 2004021), och att slå AV det river
+      // husarbetesflaggorna ur ett dokument som ÄR ett ROT-dokument — avdraget försvinner tyst från
+      // kundens faktura. Formuläret döljer reglaget, men en flik som stod öppen innan ordern
+      // pushades har det kvar, så spärren måste stå här.
+      if (rot.enabledChanged && current?.fortnox_order_number) {
         return routeError(409, 'crm_work_order_rot_locked',
-          'ROT kan inte slås på för en order som redan skickats till Fortnox — dokumentets ROT-läge sätts när ordern skapas. Skapa en ny order, eller lägg till avdraget i Fortnox.');
+          'ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Övriga ROT-uppgifter går att rätta.');
       }
-      (updateInput as Record<string, unknown>).rot_details = mergeWorkOrderRotDetails(
-        currentRot, updateInput.rot_details,
-      );
+
+      // Skriv bara när något faktiskt skiljer. Klienten skickar ROT-blocket vid varje sparning av
+      // en privatorder, och en oförändrad sparning får varken röra kolumnen eller — viktigare —
+      // dra igång den fulla Fortnox-pushen nedan.
+      rotChanged = rot.changed;
+      if (rotChanged) {
+        (updateInput as Record<string, unknown>).rot_details = rot.merged;
+        // En borttagen fastighetsbeteckning är en borttagen "Ert referensnummer" på en villa-order.
+        // Samma minne som märkningen använder, av samma skäl: utan ett uttryckligt null står den
+        // gamla beteckningen kvar på kundens dokument. Flaggan släcks av en genomförd PUT.
+        if (rot.propertyCleared) {
+          (updateInput as Record<string, unknown>).customer_snapshot = {
+            ...((updateInput as { customer_snapshot?: Record<string, unknown> }).customer_snapshot
+              ?? current?.customer_snapshot ?? {}),
+            label_cleared: true,
+          };
+        }
+      } else {
+        delete (updateInput as { rot_details?: unknown }).rot_details;
+      }
     }
 
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends
@@ -213,12 +240,23 @@ export async function PATCH(req: Request, context: RouteContext) {
     // The reason is handed back so the UI can say the save landed but the sync didn't.
     let fortnoxError: string | null = null;
     let synced = false;
-    if (touchesRot || touchesFortnox) {
+    // ⚠️ Den fulla pushen bara för en order som REDAN ligger i Fortnox och inte är fakturerad.
+    //
+    //  • Utan nummer skulle `updateWorkOrderInFortnox` falla tillbaka på create och alltså SKAPA
+    //    dokumentet — en redigering på ordersidan får aldrig göra det (header-synken svarar null
+    //    just därför). En order som ännu inte pushats får sin ROT vid create ändå.
+    //  • En fakturerad order är stängd hos Fortnox: en rad-PUT avvisas, och statusen hade
+    //    stämplats 'failed' av en sparning som egentligen bara rörde CRM.
+    const rotPush = rotChanged
+      && Boolean(current?.fortnox_order_number)
+      && !current?.fortnox_invoice_number
+      && current?.status !== 'invoiced';
+    if (rotPush || touchesFortnox) {
       try {
         // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
         // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
         // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
-        synced = touchesRot
+        synced = rotPush
           ? Boolean(await updateWorkOrderInFortnox(context.params.id))
           : (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
       } catch (e) {

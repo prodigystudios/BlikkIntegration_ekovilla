@@ -501,8 +501,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   ...(rotToggleLocked ? {} : { enabled: draft.rot_enabled }),
                   property_designation: draft.rot_property_designation || null,
                   brf_org_number: draft.rot_brf_org_number || null,
-                  ...(draft.rot_percent.trim() ? { rot_percent: parseDecimal(draft.rot_percent, 30) } : {}),
-                  ...(draft.rot_max_deduction.trim() ? { max_deduction: parseDecimal(draft.rot_max_deduction, 50000) } : {}),
+                  // null och inte utelämnat: merge-regeln läser en saknad nyckel som "rör inte",
+                  // så ett tömt fält hade gått att ändra men aldrig att tömma.
+                  rot_percent: draft.rot_percent.trim() ? parseDecimal(draft.rot_percent, 30) : null,
+                  max_deduction: draft.rot_max_deduction.trim() ? parseDecimal(draft.rot_max_deduction, 50000) : null,
                 },
               }
             : {}),
