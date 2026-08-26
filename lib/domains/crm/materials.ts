@@ -37,6 +37,40 @@ export function inferMaterialFromArticle(articleName: string | null | undefined)
 // material identity used by depot deliveries + consumption so stock reconciles.
 export const MATERIAL_SHORTS: string[] = [...new Set(Object.values(MATERIALS).map((m) => m.short))];
 
+/**
+ * Vad en omdöpning av artikelnamnet gör med materialhärledningen.
+ *
+ * 🧨 ARTIKELNAMNET ÄR BÄRANDE, INTE EN ETIKETT. Namnet är enda källan till vilket material raden
+ * är, och materialet bestämmer säckvikten. Ur det faller:
+ *
+ *   • säckantalet på ordern och i planeringen (`sacksFor` via bag weight)
+ *   • depålagrets materialavdrag (`materialShortFromLineItems`)
+ *   • materialrubriken i arbetsbeskrivningen (`buildMeasurementLines`)
+ *
+ * Ett namn som tappar varumärkesordet — "Ekovilla lösull vind" → "Lösull vind" — härleder alltså
+ * inget material längre, och säckantalet blir NOLL utan att något säger ifrån. Ett namn som byter
+ * varumärke byter säckvikt (Ekovilla 14 kg → Knauf 15,5 kg) och därmed antalet.
+ *
+ * Fältet ska gå att redigera — en generisk "Övrigt"-artikel behöver ofta ett begripligt namn på
+ * dokumentet — men följden får inte vara tyst. Returnerar null när ingenting går förlorat, alltså
+ * också när raden aldrig härledde något material från början (en fraktrad byter ingenting).
+ */
+export type MaterialRenameEffect =
+  | { kind: 'lost'; from: string }
+  | { kind: 'changed'; from: string; to: string };
+
+export function materialRenameEffect(
+  previousName: string | null | undefined,
+  nextName: string | null | undefined,
+): MaterialRenameEffect | null {
+  const before = inferMaterialFromArticle(previousName);
+  if (!before) return null;
+  const after = inferMaterialFromArticle(nextName);
+  if (!after) return { kind: 'lost', from: before.short };
+  if (after.key !== before.key) return { kind: 'changed', from: before.short, to: after.short };
+  return null;
+}
+
 // The material `short` of the first line item whose article resolves to a known material, else null.
 // Attributes a work order's blown sacks to a depot material (depot stock consumption).
 export function materialShortFromLineItems(lineItems: unknown[] | null | undefined): string | null {

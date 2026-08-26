@@ -314,6 +314,65 @@ describe('validateLineItemEdit', () => {
   it('tillåter att antalet höjs på en fakturerad rad', () => {
     expect(validateLineItemEdit([a, b], [a, { ...b, quantity: '9' }], rounds).ok).toBe(true);
   });
+
+  // 🧨 REGRESSION, reproducerad i granskningen: `is_rot_work` jämfördes som sträng. En rad sparad
+  // innan flaggan fanns saknar den, schemat fyller i `false` vid nästa sparning, och '' ≠ 'false'
+  // lästes som en ändring — alltså NEKADES en helt legitim antalssänkning på en gammal
+  // delfakturerad order, med ett meddelande om att priset inte får ändras.
+  it('äldre rad utan is_rot_work spärras inte av schemats default', () => {
+    const legacy = { id: 'line-b', pricing_mode: 'item', unit_price: '200', quantity: '5' };
+    const saved = { ...legacy, is_rot_work: false, quantity: '2' };
+    expect(validateLineItemEdit([a, legacy], [a, saved], rounds).ok).toBe(true);
+  });
+
+  it('en verklig ändring av ROT-markeringen nekas fortfarande', () => {
+    const rot = { ...b, is_rot_work: true };
+    expect(validateLineItemEdit([a, b], [a, rot], rounds).ok).toBe(false);
+    expect(validateLineItemEdit([a, rot], [a, b], rounds).ok).toBe(false);
+  });
+
+  // ── ROT-typen ──────────────────────────────────────────────────────────────
+  //
+  // Låstes när `house_work_type` blev redigerbart på arbetsordern. Typen ÄR ROT-identiteten — den
+  // säger Skatteverket vilket slags husarbete som utförts — så en ändring på en rad som redan gått
+  // ut på faktura låter underlaget säga en sak och den utställda fakturan en annan.
+  describe('typen av husarbete på en fakturerad rad', () => {
+    const rotB = { ...b, is_rot_work: true, house_work_type: 'CONSTRUCTION' };
+
+    it('nekas när raden är ROT-arbete', () => {
+      const res = validateLineItemEdit([a, rotB], [a, { ...rotB, house_work_type: 'HVAC' }], rounds);
+      expect(res.ok).toBe(false);
+      expect((res as any).message).toMatch(/typen av husarbete kan inte ändras/);
+    });
+
+    it('oförändrad typ släpps igenom', () => {
+      expect(validateLineItemEdit([a, rotB], [a, { ...rotB, quantity: '9' }], rounds).ok).toBe(true);
+    });
+
+    // 🧨 FALSK BLOCKERING 1: en rad sparad innan fältet fanns saknar det helt, och schemat fyller
+    // i defaulten vid nästa sparning. En rå strängjämförelse hade läst '' ≠ 'CONSTRUCTION' som en
+    // ändring och nekat en helt legitim antalssänkning på en gammal order.
+    it('äldre rad utan fältet får defaulten utan att det räknas som ändring', () => {
+      const legacy = { ...b, is_rot_work: true };
+      const saved = { ...legacy, house_work_type: 'CONSTRUCTION', quantity: '2' };
+      expect(validateLineItemEdit([a, legacy], [a, saved], rounds).ok).toBe(true);
+    });
+
+    // 🧨 FALSK BLOCKERING 2: utan ROT-flaggan läses typen aldrig (rotRowHouseWork returnerar null),
+    // så där ändrar den ingenting och får inte spärra något.
+    it('rad som inte är ROT-arbete spärras inte av typen', () => {
+      const plain = { ...b, is_rot_work: false, house_work_type: 'CONSTRUCTION' };
+      expect(validateLineItemEdit([a, plain], [a, { ...plain, house_work_type: 'HVAC' }], rounds).ok).toBe(true);
+    });
+  });
+
+  // Benämning och radtext är MEDVETET olåsta: de är dokumenttext, inte radens identitet
+  // (`article_number`) och inte vad den kostade. Att rätta ett namn på en pågående order är
+  // vardag; att ändra pris eller artikel är det som skulle spräcka bokföringen.
+  it('tillåter att benämning och radtext ändras på en fakturerad rad', () => {
+    const dopt = { ...b, article_name: 'Ekovilla lösull – snedtak', line_note: 'Etapp 2' };
+    expect(validateLineItemEdit([a, b], [a, dopt], rounds).ok).toBe(true);
+  });
 });
 
 // ── Regressionsvakter från kodgranskningen ────────────────────────────────────
