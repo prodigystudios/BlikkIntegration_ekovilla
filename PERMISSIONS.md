@@ -333,6 +333,19 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 - **Not all access is a permission key.** Crew access to work orders is derived from the planning
   tables (see above), so "member has no CRM keys" does *not* mean "member cannot read a work
   order". Grep for `is_user_on_work_order` before reasoning about who can see what.
+- **`profiles` is self-read-only, and no permission key changes that.** `profiles_select_self`
+  (`auth_roles_setup.sql:71`) is the *only* SELECT policy: `USING (auth.uid() = id)`. It predates
+  this model and is unrelated to it — a leftover from a recursion bugfix, not a privacy decision.
+  Two consequences that surprise people: a PostgREST embed such as `author:profiles(full_name)`
+  silently returns `null` for every row but your own (it reads as a missing name, not as an error),
+  and ~17 files therefore elevate to service-role just to resolve a colleague's name. **A granted
+  permission key does not help here** — the policy never consults one. The rebuild plan, including
+  why the fix is to move `profiles`' private columns rather than to add a directory view, is
+  `PROFILES_DIRECTORY_PLAN.md`.
+- **Signed in ≠ employee.** `/auth/create-account` is open self-signup and issues `role = 'member'`,
+  the same role an installer has. Any guard that is only `requireSignedInUser` is therefore reachable
+  by a stranger who finds the URL — `/api/crm/work-orders/mention-users` currently answers such a
+  caller with the full staff list. Verify the Supabase sign-up setting before widening any read.
 
 ---
 

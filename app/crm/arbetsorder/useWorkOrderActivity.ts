@@ -61,8 +61,10 @@ export function useWorkOrderActivity(workOrderId: string, options?: { includeTim
   // den låg i samma svar, den användes bara inte. Samma grepp som assigneeNameById i
   // arbetsorderlistan och offertlistan.
   //
-  // ⚠️ Det här är en LAPP på self-read-RLS, inte en lösning. Den riktiga fixen är en smal
-  // employee_directory-vy; se minnet project_profiles_rls_rebuild.
+  // ⚠️ Det här är en LAPP på self-read-RLS, inte en lösning — registret bakom kartan hämtas
+  // fortfarande med service-role. Den riktiga fixen är att flytta de privata kolumnerna av
+  // `profiles`, så joinen i selecten kan leverera namnet själv och den här kartan kan tas bort.
+  // Planen står i PROFILES_DIRECTORY_PLAN.md.
   const namesById = useMemo(() => {
     const map = new Map<string, string>();
     for (const u of mentionUsers) if (u.full_name) map.set(u.id, u.full_name);
