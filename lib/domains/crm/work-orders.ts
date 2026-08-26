@@ -624,6 +624,8 @@ export function mergeWorkOrderSnapshotOverrides(
     contact?: { contact_name?: string | null; email?: string | null; phone?: string | null };
     /** `undefined` = rör inte kolumnen. `null` = rensa den. */
     your_reference?: string | null;
+    /** Märkning → Fortnox YourOrderNumber. Samma undefined/null-semantik som your_reference. */
+    label?: string | null;
     end_contact?: {
       end_contact_name?: string | null;
       end_contact_phone?: string | null;
@@ -646,6 +648,11 @@ export function mergeWorkOrderSnapshotOverrides(
 
   // Uttryckligen skickad (null inkluderat) → vinner över frysningen ovan.
   if (overrides.your_reference !== undefined) merged.your_reference = overrides.your_reference;
+
+  // Märkningen. ⚠️ NYCKELN SKRIVS ÄVEN NÄR VÄRDET ÄR null, och det är bärande: `'label' in
+  // snapshot` är hur Fortnox-headern skiljer "säljaren tömde märkningen" (töm fältet på
+  // dokumentet) från "den här ordern har aldrig haft någon" (rör inte fältet). Se buildOrderHeader.
+  if (overrides.label !== undefined) merged.label = overrides.label;
 
   // Alla tre nycklarna skrivs när objektet finns, null inkluderat: att skicka tomma fält är hur
   // krysset i ordervyn stängs av. Ett "skriv bara när det finns ett värde" hade gjort en slutkund

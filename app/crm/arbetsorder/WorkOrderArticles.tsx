@@ -433,21 +433,30 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       en generisk "Övrigt"-artikel behöver ofta ett begripligt namn — och det gick
                       fram till nu bara att sätta i offerten, som låses vid orderskapandet.
 
-                      ⚠️ VILLKORAT PÅ ATT RADEN HAR ETT NAMN, precis som i offerten. En ren
-                      TEXTRAD (bara radtext, ingen artikel, inget pris) är tillåten och pushas som
-                      textrad — men ger man den ett namn blir den `isConfiguredLineItem` utan att
-                      bli prissatt, och `assertLineItemsArePriced` kastar 409 inne i
-                      Fortnox-synken. Sparningen har då redan gått igenom, så raden ligger i
-                      databasen medan ordern stämplas 'failed' med gamla rader kvar i Fortnox.
+                      ⚠️ VILLKORAT PÅ DET SPARADE NAMNET, inte på utkastets. En ren TEXTRAD (bara
+                      radtext, ingen artikel, inget pris) är tillåten och pushas som textrad — men
+                      ger man den ett namn blir den `isConfiguredLineItem` utan att bli prissatt,
+                      och `assertLineItemsArePriced` kastar 409 inne i Fortnox-synken. Sparningen
+                      har då redan gått igenom, så raden ligger i databasen medan ordern stämplas
+                      'failed' med gamla rader kvar i Fortnox. Därför visas fältet aldrig för en rad
+                      som sparats utan namn.
+
+                      Att villkora på `row.article_name` (utkastet) stängde hålet men gjorde fältet
+                      självförstörande: fältet redigerar samma värde det villkoras på, så en
+                      backspace till tomt AVMONTERADE inputen mitt i skrivandet och namnet gick inte
+                      att skriva tillbaka. Enda vägen ut var Avbryt, som kastar alla andra
+                      radändringar. `savedNameById` ändras bara vid omladdning och är därför en
+                      stabil grund. `has()`-grenen håller nytillagda rader (som ännu inte finns i
+                      kartan) redigerbara — de får alltid ett namn av addArticle.
 
                       🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens
                       material, och materialet ger säckvikten. Tappas varumärkesordet blir
                       säckantalet NOLL — tyst. Därför de två raderna under fältet. */}
-                  {row.article_name ? (
+                  {savedNameById.get(row.id) || (!savedNameById.has(row.id) && row.article_name) ? (
                     <label className="grid gap-1">
                       <span className={crm.sectionTitle}>Benämning på ordern</span>
                       <Input
-                        value={row.article_name}
+                        value={row.article_name || ''}
                         onChange={(e) => updateRow(row.id, { article_name: e.target.value })}
                         placeholder="Namn som visas på ordern"
                       />

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildOrderRows, buildOrderDeliveryFields, resolveYourReference } from '@/lib/domains/fortnox/orders';
+import { buildOrderRows, buildOrderDeliveryFields, resolveYourReference, orderReferenceNumberField } from '@/lib/domains/fortnox/orders';
 import { ROT_LABOR_ARTICLE_NUMBER } from '@/lib/domains/fortnox/helpers';
 
 describe('buildOrderRows', () => {
@@ -291,5 +291,31 @@ describe('buildOrderRows — avskrivna rader', () => {
     expect(rows).toHaveLength(2);
     expect((rows[1] as any).ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
     expect((rows[1] as any).Price).toBe(8000);
+  });
+});
+
+// ── "Ert referensnummer" på orderhuvudet ──────────────────────────────────────
+//
+// Fältet bärs av två olika uppgifter som aldrig gäller samtidigt: företagskundens MÄRKNING och
+// privatkundens FASTIGHETSBETECKNING (resolveRotReference väljer). Märkningen blev redigerbar på
+// arbetsordern, vilket gör regeln nedan skarp: ett NYTT värde speglas, men en TÖMNING går inte att
+// göra utan att veta vilket tomvärde Fortnox rensar på — och det är inte mätt för headerfält.
+describe('orderReferenceNumberField', () => {
+  it('skriver referensnumret när det finns', () => {
+    expect(orderReferenceNumberField('Projekt 4711')).toEqual({ YourOrderNumber: 'Projekt 4711' });
+    expect(orderReferenceNumberField('Haggården 6:3')).toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+
+  // 🧨 UTELÄMNAS när det inte finns något — fältet får ALDRIG skickas som ''.
+  //
+  // Uppmätt (FORTNOX_TEXT_ROW, 2026-08-20): '' rensar INTE. Ett tomvärde här hade alltså sett ut
+  // att blanka kundens "Ert referensnummer" utan att göra det, och CRM hade visat tomt medan
+  // dokumentet bar kvar det gamla numret. Dessutom är headern tom-skippad i
+  // syncWorkOrderHeaderToFortnox — en alltid närvarande nyckel hade gjort varje speglad PATCH till
+  // en Fortnox-PUT i onödan.
+  it('utelämnar fältet helt när referensnumret saknas', () => {
+    expect(orderReferenceNumberField(null)).toEqual({});
+    expect(orderReferenceNumberField('')).toEqual({});
+    expect(orderReferenceNumberField('   ')).toEqual({ YourOrderNumber: '   ' });
   });
 });
