@@ -120,6 +120,11 @@ type WorkOrderDraft = {
   contact_name: string;
   contact_phone: string;
   contact_email: string;
+  // Slutkunden på plats — en ANNAN person än kundens kontakt, fångad utanför kundkortet.
+  // Vinner över kundkontakten i det installatörerna ser (getWorkOrderCustomerContact).
+  end_contact_name: string;
+  end_contact_phone: string;
+  end_contact_email: string;
   your_reference: string;
   work_scope: string;
   handoff_notes: string;
@@ -263,6 +268,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Order-confirmation e-mail (own mail client, with recipient resolution).
   const documentEmail = useDocumentEmail();
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
+  // Speglar offertformulärets toggle: en slutkund på plats är undantaget, inte normalfallet, och
+  // tre alltid synliga fält hade läst som att de förväntas fyllas i. Seedas ur ordern i
+  // applyWorkOrder — så Avbryt återställer även den, inte bara fälten.
+  const [endContactOpen, setEndContactOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<WorkOrderTab>('overview');
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
@@ -384,6 +393,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       contact_name: item.customer_snapshot?.contact_name || '',
       contact_phone: item.customer_snapshot?.phone || '',
       contact_email: item.customer_snapshot?.email || '',
+      end_contact_name: item.customer_snapshot?.end_contact_name || '',
+      end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
+      end_contact_email: item.customer_snapshot?.end_contact_email || '',
       // Ordrar skapade innan Er referens blev ett eget fält har den kvar i contact_name — visa den
       // därifrån, annars ser fältet tomt ut fast Fortnox har ett värde.
       your_reference: item.customer_snapshot?.your_reference ?? item.customer_snapshot?.contact_name ?? '',
@@ -391,6 +403,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       handoff_notes: item.internal_handoff?.handoff_notes || '',
       notes: item.notes || '',
     });
+    setEndContactOpen(Boolean(
+      item.customer_snapshot?.end_contact_name
+      || item.customer_snapshot?.end_contact_phone
+      || item.customer_snapshot?.end_contact_email,
+    ));
   }
 
   const totalLoggedHours = useMemo(
@@ -451,6 +468,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             phone: draft.contact_phone,
             email: draft.contact_email,
           },
+          // Slutkunden på plats. Rör inte heller Fortnox.
+          //
+          // ⚠️ Avstängd toggle skickar TOMMA fält, inte ett utelämnat objekt: routen skriver alla
+          // tre nycklarna när objektet finns, och det är enda vägen att faktiskt RENSA en slutkund
+          // som lagts in fel. Utelämnat objekt = "rör inte", vilket hade gjort krysset enkelriktat.
+          end_contact: endContactOpen
+            ? {
+                end_contact_name: draft.end_contact_name,
+                end_contact_phone: draft.end_contact_phone,
+                end_contact_email: draft.end_contact_email,
+              }
+            : { end_contact_name: null, end_contact_phone: null, end_contact_email: null },
         }),
       });
       const json = await res.json().catch(() => ({}));
@@ -639,6 +668,13 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const customerPhone: string | null = (snapshot.phone || null) ?? cardContact?.phone ?? cardFallback?.phone ?? null;
   const customerEmail: string | null = (snapshot.email || null) ?? cardContact?.email ?? cardFallback?.email ?? null;
   const customerContact: string | null = (snapshot.contact_name || null) ?? cardContact?.contactName ?? cardFallback?.name ?? null;
+  // Slutkunden på plats, RAKT ur snapshoten och utan reserv mot kundkortet. Kortet vet inget om
+  // hen — hen står per definition utanför det — och en reserv hade lagt kundens uppgifter under
+  // slutkundens namn, samma hopblandning som `cardContact` ovan finns till för att undvika.
+  const onSiteName: string | null = snapshot.end_contact_name || null;
+  const onSitePhone: string | null = snapshot.end_contact_phone || null;
+  const onSiteEmail: string | null = snapshot.end_contact_email || null;
+  const hasOnSiteContact = Boolean(onSiteName || onSitePhone || onSiteEmail);
   const workAddressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const rot = workOrder.rot_details || {};
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
@@ -1188,7 +1224,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
                 Var två egna kort. Vart och ett blev en rubrik och en rad, och två sådana på rad
                 gav mer kantlinje än innehåll. */}
-            {editingOverview || draft?.your_reference || customerPhone || customerEmail || customerContact ? (
+            {editingOverview || draft?.your_reference || customerPhone || customerEmail || customerContact || hasOnSiteContact ? (
               <Card className="grid gap-3">
                 <p className={crm.cardTitle}>Kontakt &amp; referens</p>
 
@@ -1258,6 +1294,79 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     <div className="grid gap-1.5 text-sm">
                       {customerPhone ? <PhoneLink value={customerPhone} /> : null}
                       {customerEmail ? <EmailLink value={customerEmail} /> : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* ─── Kontakt på plats (slutkund) ───────────────────────────
+                    TREDJE avsnittet, och en TREDJE person. En byggare beställer jobbet, arbetet
+                    utförs åt fastighetsägaren — hen står utanför kundkortet och är den besättningen
+                    ringer när de står på adressen.
+
+                    ⚠️ Eget avsnitt med eget namn, aldrig sammanslaget med Kundkontakt ovan. Det är
+                    hela poängen: `getWorkOrderCustomerContact` låter slutkunden VINNA över kundens
+                    kontakt i det installatörerna ser, så de två måste gå att skilja åt här — annars
+                    rättar man den ena i tron att man rättar den andra. Fram till nu gick hen inte
+                    att se eller ändra alls på ordern, bara i offerten, som är låst. */}
+                {editingOverview ? (
+                  <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
+                    <label className="flex cursor-pointer select-none items-center justify-between gap-3">
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className={crm.sectionTitle}>Kontakt på plats</span>
+                        <span className="text-xs text-slate-500">Slutkund utanför kundkortet. Går före kundkontakten för installatören.</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={endContactOpen}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setEndContactOpen(on);
+                          // Tömmer utkastet direkt när krysset släcks, så det som sparas är det som
+                          // syns. Sparningen skickar null oavsett (se saveWorkOrder) — det här är
+                          // för att fälten inte ska ligga kvar ifyllda om man kryssar i igen.
+                          if (!on) {
+                            setDraft((d) => (d ? { ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' } : d));
+                          }
+                        }}
+                        className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                      />
+                    </label>
+                    {endContactOpen ? (
+                      <div className="grid gap-3">
+                        <label className="grid gap-1 text-sm text-slate-600">
+                          <span className={crm.sectionTitle}>Namn</span>
+                          <Input value={draft.end_contact_name} onChange={(e) => setField('end_contact_name', e.target.value)} placeholder="T.ex. fastighetsägaren" />
+                        </label>
+                        <label className="grid gap-1 text-sm text-slate-600">
+                          <span className={crm.sectionTitle}>Telefon</span>
+                          <Input value={draft.end_contact_phone} onChange={(e) => setField('end_contact_phone', e.target.value)} placeholder="070-123 45 67" inputMode="tel" />
+                        </label>
+                        <label className="grid gap-1 text-sm text-slate-600">
+                          <span className={crm.sectionTitle}>E-post</span>
+                          <Input value={draft.end_contact_email} onChange={(e) => setField('end_contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
+                        </label>
+                        {/* ⚠️ Orderbekräftelsen MÅSTE stå här. Planeringens bekräftelse hämtar sin
+                            mottagare ur samma uppslag (getWorkOrderCustomerContact), där slutkunden
+                            vinner — så det som fylls i här blir förifylld mejl-/SMS-mottagare för ett
+                            KUNDVÄNT utskick. Utan raden ser fältet ut som en ren fältanteckning. */}
+                        <p className="text-[11px] leading-snug text-slate-500">
+                          Visas för installatören på arbetsordern och blir förifylld mottagare av orderbekräftelsen från planeringen. Skickas inte till Fortnox — ordergivaren står kvar som Er referens.
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : hasOnSiteContact ? (
+                  // Avdelaren bara när något faktiskt står ovanför — samma regel som
+                  // Kundkontakt-blocket. Annars ritas en linje rakt under korttiteln.
+                  <div className={cn(
+                    'grid gap-1.5',
+                    (draft?.your_reference || customerPhone || customerEmail || customerContact) && 'border-t border-[#e0e8dc] pt-3',
+                  )}>
+                    <span className={crm.sectionTitle}>Kontakt på plats</span>
+                    <p className="m-0 text-sm font-semibold text-slate-900">{onSiteName || 'Namn saknas'}</p>
+                    <div className="grid gap-1.5 text-sm">
+                      {onSitePhone ? <PhoneLink value={onSitePhone} /> : null}
+                      {onSiteEmail ? <EmailLink value={onSiteEmail} /> : null}
                     </div>
                   </div>
                 ) : null}

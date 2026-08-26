@@ -62,6 +62,8 @@ describe('getWorkOrderCustomerContact', () => {
       // Kundens egen adress följer med för utskick — men den visas aldrig som slutkundens.
       customerEmail: 'robert@acme.se',
       isOnSiteContact: true,
+      // Numret är slutkundens eget, alltså inget lån att upplysa om.
+      phoneFromCustomer: false,
     });
   });
 
@@ -73,6 +75,26 @@ describe('getWorkOrderCustomerContact', () => {
       'wo1',
     );
     expect(data).toMatchObject({ contactName: 'Fastighetsskötaren', phone: '08-111', email: null });
+    // 🧨 …och lånet MÅSTE gå att se. Utan flaggan skriver fältvyn "Kontakt på plats ·
+    // Fastighetsskötaren" rakt över kundens växelnummer, och besättningen ringer och frågar efter
+    // en person som inte sitter där. Numret ska lånas — vem det tillhör får bara inte gå förlorat.
+    expect(data?.phoneFromCustomer).toBe(true);
+  });
+
+  it('slutkund med eget nummer flaggar inget lån', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ end_contact_name: 'Ulla', end_contact_phone: '070-333', contact_name: 'Anna', phone: '08-111' }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ phone: '070-333', phoneFromCustomer: false });
+  });
+
+  it('kundens egen kontakt flaggar aldrig lån — numret är redan kundens', async () => {
+    const { data } = await getWorkOrderCustomerContact(
+      makeSupabase({ contact_name: 'Anna', phone: '08-111', email: 'anna@acme.se' }, ACME),
+      'wo1',
+    );
+    expect(data).toMatchObject({ isOnSiteContact: false, phoneFromCustomer: false });
   });
 
   // ⚠️ REGRESSION: den här saknades helt. Fältvyn gick direkt på kundkortet, så en säljare som

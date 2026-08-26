@@ -2693,8 +2693,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                       />
                     </Field>
                   </div>
+                  {/* ⚠️ Texten lovade en gång "notering på Fortnox-dokumenten". Det stämmer inte
+                      längre: buildEndContactNote är borttagen och Remarks skickas inte alls, så
+                      slutkunden är helt CRM-intern. Ett löfte om vad kunden ser på sitt dokument får
+                      inte stå kvar när det inte gäller. */}
                   <p className="text-[11px] leading-snug text-slate-400">
-                    Visas för installatören på arbetsordern och som notering på Fortnox-dokumenten. Ordergivaren står kvar som Er referens.
+                    Visas för installatören på arbetsordern och blir förifylld mottagare av orderbekräftelsen. Går att ändra på arbetsordern. Skickas inte till Fortnox — ordergivaren står kvar som Er referens.
                   </p>
                 </div>
               ) : null}

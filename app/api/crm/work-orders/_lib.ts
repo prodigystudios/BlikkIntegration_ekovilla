@@ -220,5 +220,20 @@ export const updateCrmWorkOrderSchema = z.object({
     email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
     phone: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   }).optional(),
+  // Slutkunden på plats — en ANNAN person än kundens kontakt (en byggare beställer jobbet, arbetet
+  // utförs åt fastighetsägaren). Fångas i offertformuläret och kunde fram till nu inte rättas efter
+  // att ordern skapats, trots att den är den besättningen ringer när de står på adressen:
+  // `getWorkOrderCustomerContact` låter den vinna över kundens kontakt.
+  //
+  // Når ALDRIG Fortnox — lika lite som `contact`. Noteringen som en gång bar den till dokumenten
+  // (buildEndContactNote) är borttagen och `Remarks` skickas inte alls, så fältet står medvetet
+  // UTANFÖR FORTNOX_MIRRORED_FIELDS.
+  //
+  // Alla tre nycklarna skrivs när objektet skickas, null inkluderat: det är så toggeln stängs av.
+  end_contact: z.object({
+    end_contact_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+    end_contact_phone: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+    end_contact_email: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  }).optional(),
 });
 

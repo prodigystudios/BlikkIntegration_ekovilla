@@ -10,6 +10,12 @@ export type CustomerContact = {
   customerEmail?: string | null;
   /** Sant när uppgifterna är slutkundens på plats, alltså en ANNAN person än kundens kontakt. */
   isOnSiteContact?: boolean;
+  /**
+   * Sant när `phone` är LÅNAT av kunden för att slutkunden saknar eget nummer. Numret går att
+   * ringa — det är hela poängen med lånet — men det tillhör någon annan än `contactName`, och en
+   * vy som skriver namnet över numret utan att säga det skickar besättningen till fel person.
+   */
+  phoneFromCustomer?: boolean;
 };
 
 // Loads the customer contact (name/phone/email) to show on a work order. Goes through the
