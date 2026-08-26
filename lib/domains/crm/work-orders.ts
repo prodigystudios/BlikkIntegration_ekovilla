@@ -602,6 +602,63 @@ export async function getCrmWorkOrderFilterCounts(
   return Object.fromEntries(entries) as Record<CrmWorkOrderBoardFilter, number>;
 }
 
+// ── Snapshot-överlagringarna från ordervyn ───────────────────────────────────
+//
+// Tre olika personer/värden bor i samma jsonb-kolumn och redigeras i samma formulär:
+//
+//   • your_reference — kundens FORMELLA referens. Enda av de tre som når Fortnox
+//     (YourReference) och som styr fakturan till rätt attestant hos kunden.
+//   • contact        — kundkontakten: vem vi och installatörerna ringer.
+//   • end_contact    — slutkunden på plats: en ANNAN person, utanför kundkortet.
+//
+// ⚠️ EN read-merge-write, inte tre. Kolumnen bär också personnummer, org.nr, adresser och
+// reverse_vat — allt som INTE nämns här måste överleva — och en PATCH som bär flera av
+// överlagringarna får inte låta den sista skriva bort de föregående.
+//
+// Ren funktion med flit: det här är den sortens sammanslagning där ett tyst fel (ett bortglömt
+// fält, en överlagring som äter en annan) inte syns förrän någon läser fel telefonnummer på en
+// arbetsplats. Routen resolvar auth och läser raden; regeln bor här och är testad.
+export function mergeWorkOrderSnapshotOverrides(
+  snapshot: Record<string, unknown> | null | undefined,
+  overrides: {
+    contact?: { contact_name?: string | null; email?: string | null; phone?: string | null };
+    /** `undefined` = rör inte kolumnen. `null` = rensa den. */
+    your_reference?: string | null;
+    end_contact?: {
+      end_contact_name?: string | null;
+      end_contact_phone?: string | null;
+      end_contact_email?: string | null;
+    };
+  },
+): Record<string, unknown> {
+  const current = (snapshot ?? {}) as Record<string, unknown>;
+  const merged: Record<string, unknown> = { ...current };
+
+  if (overrides.contact) {
+    // Frys det gamla contact_name som Er referens på en order skapad INNAN de två blev skilda
+    // fält. Utan det skulle en rättad kontaktperson på en sådan order fortfarande ändra vad
+    // Fortnox-headern faller tillbaka på — precis den bugg uppdelningen finns för att ta bort.
+    if (merged.your_reference == null) merged.your_reference = current.contact_name ?? null;
+    merged.contact_name = overrides.contact.contact_name ?? null;
+    merged.email = overrides.contact.email ?? null;
+    merged.phone = overrides.contact.phone ?? null;
+  }
+
+  // Uttryckligen skickad (null inkluderat) → vinner över frysningen ovan.
+  if (overrides.your_reference !== undefined) merged.your_reference = overrides.your_reference;
+
+  // Alla tre nycklarna skrivs när objektet finns, null inkluderat: att skicka tomma fält är hur
+  // krysset i ordervyn stängs av. Ett "skriv bara när det finns ett värde" hade gjort en slutkund
+  // som lagts in fel omöjlig att rensa.
+  if (overrides.end_contact) {
+    merged.end_contact_name = overrides.end_contact.end_contact_name ?? null;
+    merged.end_contact_phone = overrides.end_contact.end_contact_phone ?? null;
+    merged.end_contact_email = overrides.end_contact.end_contact_email ?? null;
+  }
+
+  return merged;
+}
+
 export async function updateCrmWorkOrder(supabase: SupabaseClient, id: string, input: Partial<WorkOrderUpdateInput>) {
   return supabase.from('crm_work_orders').update(input).eq('id', id).select(crmWorkOrderSelect).single();
 }
@@ -874,6 +931,12 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
         email: onSiteEmail,
         customerEmail: card?.email?.trim() || null,
         isOnSiteContact: true,
+        // Numret ovan är LÅNAT av kunden — slutkunden har inget eget. Lånet är rätt (någon måste
+        // gå att nå på plats), men vem numret TILLHÖR måste följa med: en vy som skriver
+        // "Kontakt på plats · Ulla" över byggarens nummer får besättningen att ringa och fråga
+        // efter Ulla hos fel person. Samma skillnad som adressen redan gör — ett nummer är en väg
+        // fram, inte en identitet — men den skillnaden går bara att visa om den syns i svaret.
+        phoneFromCustomer: !onSitePhone && Boolean(base.phone),
       },
       error: null,
     };
@@ -890,6 +953,9 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
       email: base.email || null,
       customerEmail: card?.email?.trim() || null,
       isOnSiteContact: false,
+      // Kundens egen kontakt — numret är per definition redan kundens, så det finns inget lån att
+      // upplysa om.
+      phoneFromCustomer: false,
     },
     error: null,
   };

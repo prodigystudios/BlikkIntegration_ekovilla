@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -20,10 +20,12 @@ const TERMINAL_WO_STATUSES: string[] = ['invoiced'];
 // work address → delivery address, ansvarig → OurReference. Gating on these keeps a status-only
 // PATCH — the board sends one on every drag — from becoming a Fortnox write.
 //
-// `contact` is deliberately ABSENT. The customer contact is who we and the installers call; it may
-// be re-pointed at a site foreman mid-job and must never touch the customer's document. It used to
-// share a field with Er referens, which meant fixing a phone number silently rewrote the reference
-// that routes the customer's invoice for approval.
+// `contact` and `end_contact` are deliberately ABSENT. Both are who we and the installers call —
+// the customer's contact may be re-pointed at a site foreman mid-job, and the on-site end customer
+// is a private person outside the customer card. Neither belongs on the customer's document.
+// `contact` used to share a field with Er referens, which meant fixing a phone number silently
+// rewrote the reference that routes the customer's invoice for approval. `end_contact` once rode
+// along as a Remarks note (buildEndContactNote); that was removed, and Remarks isn't sent at all.
 const FORTNOX_MIRRORED_FIELDS = ['your_reference', 'work_address', 'assigned_to'] as const;
 
 type RouteContext = {
@@ -91,32 +93,30 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Load the current row once — the snapshot merges and the status guard all need it.
     type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
     let current: WoCurrent | null = null;
-    if (updateInput.contact || updateInput.your_reference !== undefined || updateInput.status) {
+    const touchesSnapshot =
+      Boolean(updateInput.contact) || updateInput.your_reference !== undefined || Boolean(updateInput.end_contact);
+    if (touchesSnapshot || updateInput.status) {
       current = (await getCrmWorkOrder(supabase, context.params.id)).data as WoCurrent | null;
     }
 
-    // Both overrides merge into the (jsonb) customer_snapshot with a read-merge-write so the other
-    // snapshot fields (personnummer, addresses, reverse_vat) survive. Built as one object so a PATCH
-    // carrying both doesn't have the second merge drop the first.
-    if (updateInput.contact || updateInput.your_reference !== undefined) {
-      const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
-      const merged: Record<string, unknown> = { ...snapshot };
-
-      if (updateInput.contact) {
-        // Freeze the pre-edit contact_name as Er referens on any order created before the two were
-        // split. Without this, editing the customer contact on such an order would still change what
-        // the Fortnox header falls back to — the exact bug the split exists to remove.
-        if (merged.your_reference == null) merged.your_reference = snapshot.contact_name ?? null;
-        merged.contact_name = updateInput.contact.contact_name ?? null;
-        merged.email = updateInput.contact.email ?? null;
-        merged.phone = updateInput.contact.phone ?? null;
-      }
-      // Sent explicitly (including null to clear) → wins over the freeze above.
-      if (updateInput.your_reference !== undefined) merged.your_reference = updateInput.your_reference;
-
-      (updateInput as Record<string, unknown>).customer_snapshot = merged;
+    // Every snapshot override merges into the (jsonb) customer_snapshot with a read-merge-write so
+    // the other snapshot fields (personnummer, addresses, reverse_vat) survive. The rule itself
+    // lives in the domain (mergeWorkOrderSnapshotOverrides) — one merged object, so a PATCH
+    // carrying several overrides doesn't have the later one drop the earlier.
+    if (touchesSnapshot) {
+      (updateInput as Record<string, unknown>).customer_snapshot = mergeWorkOrderSnapshotOverrides(
+        current?.customer_snapshot,
+        {
+          contact: updateInput.contact,
+          // Skickas bara vidare när klienten faktiskt sände fältet: `undefined` betyder "rör inte",
+          // och `pickProvidedFields` har redan avgjort det åt oss.
+          ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+          end_contact: updateInput.end_contact,
+        },
+      );
       delete (updateInput as { contact?: unknown }).contact;
       delete (updateInput as { your_reference?: unknown }).your_reference;
+      delete (updateInput as { end_contact?: unknown }).end_contact;
     }
 
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends

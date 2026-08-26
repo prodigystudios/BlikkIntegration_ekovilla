@@ -149,6 +149,10 @@ export default function WorkOrderInstallerClient({
   const phone: string | null = contact.phone;
   const email: string | null = contact.email;
   const contactName: string | null = contact.contactName;
+  // Slutkunden på plats är en ANNAN person än kundens kontakt, och kortet nedan byter både rubrik
+  // och namnfallback på det. Reserven ovan (snapshoten, när uppslaget inte svarar) bär kundens
+  // kontakt, alltså aldrig en slutkund — därför läses flaggan ur `customerInfo` och inte `contact`.
+  const onSite = customerInfo?.isOnSiteContact === true;
   const addressText = joinAddress([workOrder.work_address?.street_address, workOrder.work_address?.postal_code, workOrder.work_address?.city]);
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
@@ -209,12 +213,30 @@ export default function WorkOrderInstallerClient({
         <div className="grid gap-4">
           {(phone || email || contactName) ? (
             <div className={cn(crm.cardInner, 'grid gap-3')}>
-              <p className={crm.sectionTitle}>Kundkontakt</p>
-              <p className="text-sm font-semibold text-slate-900">{contactName || workOrder.client_name}</p>
+              {/* ⚠️ RUBRIKEN MÅSTE FÖLJA VEM UPPGIFTERNA GÄLLER. `getWorkOrderCustomerContact`
+                  svarar med slutkunden när ordern har en, och hen är en ANNAN person än kundens
+                  kontakt — en byggare beställer, fastighetsägaren står på plats. Kortet skrev
+                  "Kundkontakt" över båda, så besättningen kunde ringa och presentera sig för fel
+                  person, eller lämna ett meddelande hos någon som inte beställt jobbet. */}
+              <p className={crm.sectionTitle}>{onSite ? 'Kontakt på plats' : 'Kundkontakt'}</p>
+              {/* ⚠️ Kundnamnet får INTE fylla i för en namnlös SLUTKUND. Både offerten och ordervyn
+                  släpper igenom en slutkund med bara telefon, och då skrev kortet ut byggarens
+                  bolagsnamn över fastighetsägarens nummer — alltså en påhittad identitet, inte en
+                  saknad. För kundens egen kontakt är fallbacken däremot rätt: där ÄR kunden den
+                  personen när ingen kontakt fångats. */}
+              <p className="text-sm font-semibold text-slate-900">
+                {contactName || (onSite ? 'Namn saknas' : workOrder.client_name)}
+              </p>
               <div className="grid gap-1.5 text-sm">
                 {phone ? <PhoneLink value={phone} /> : null}
                 {email ? <EmailLink value={email} /> : null}
               </div>
+              {/* Lånat nummer måste säga vems det är. Slutkunden fångas ofta med bara namn, och då
+                  lånar uppslaget kundens nummer så att besättningen kan nå NÅGON — men utan den här
+                  raden läses det som slutkundens, och man ringer och frågar efter fel person. */}
+              {onSite && customerInfo?.phoneFromCustomer && phone ? (
+                <p className="text-xs text-slate-500">Numret går till kundens kontakt – kontakten på plats har inget eget.</p>
+              ) : null}
             </div>
           ) : null}
 
