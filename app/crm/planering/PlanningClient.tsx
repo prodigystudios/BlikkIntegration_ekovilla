@@ -8,6 +8,7 @@ import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
@@ -19,6 +20,7 @@ import {
   startOfWeek, stockholmToday, swedishMonthYear,
 } from './planningDates';
 import Backlog from './Backlog';
+import SearchField from './SearchField';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
@@ -68,7 +70,13 @@ export default function PlanningClient({
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  // Two searches, deliberately separate. One box used to filter both the schedule and the backlog,
+  // which broke the one workflow it was meant to serve: searching the backlog for a job to place
+  // simultaneously emptied the board, so you could no longer see what was already booked on the
+  // days you were placing it into. The board box scopes the board; the backlog box (rendered
+  // inside <Backlog>) scopes the backlog.
+  const [boardSearch, setBoardSearch] = useState('');
+  const [backlogSearch, setBacklogSearch] = useState('');
   const [salesFilter, setSalesFilter] = useState<string | null>(null);
   const [backlogFilter, setBacklogFilter] = useState<'unplanned' | 'planned' | 'all'>('unplanned');
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
@@ -654,12 +662,8 @@ export default function PlanningClient({
   );
 
   // ── filters ───────────────────────────────────────────────────────────────
-  const q = search.trim().toLowerCase();
-  const matchJob = useCallback(
-    (j: { ref: string; client_name: string; project_name: string; address: string | null }) =>
-      !q || [j.ref, j.client_name, j.project_name, j.address].some((v) => (v ?? '').toLowerCase().includes(q)),
-    [q],
-  );
+  const matchBoard = useCallback((j: JobDisplay) => matchesJobSearch(j, boardSearch), [boardSearch]);
+  const matchBacklog = useCallback((j: JobDisplay) => matchesJobSearch(j, backlogSearch), [backlogSearch]);
   // Sales-responsible options for the backlog filter: assignees present in the backlog, named via
   // the people list (profiles are self-read-only, so we can't join names server-side).
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p.full_name])), [people]);
@@ -673,8 +677,8 @@ export default function PlanningClient({
   // Search + sales-filtered set, then split by whether the job is already placed (segment_count): the
   // backlog defaults to showing only unplanned jobs so it doesn't fill up with scheduled work.
   const backlogBase = useMemo(
-    () => backlog.filter((b) => matchJob(b) && (!salesFilter || b.assigned_to === salesFilter)),
-    [backlog, matchJob, salesFilter],
+    () => backlog.filter((b) => matchBacklog(b) && (!salesFilter || b.assigned_to === salesFilter)),
+    [backlog, matchBacklog, salesFilter],
   );
   const backlogCounts = useMemo(() => {
     const planned = backlogBase.reduce((n, b) => n + (b.segment_count > 0 ? 1 : 0), 0);
@@ -688,8 +692,8 @@ export default function PlanningClient({
     [backlogBase, backlogFilter],
   );
   const visibleSegments = useMemo(
-    () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchJob(s.job) : true)),
-    [segments, hiddenTrucks, matchJob],
+    () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
+    [segments, hiddenTrucks, matchBoard],
   );
   const visibleTrucks = useMemo(() => trucks.filter((t) => !hiddenTrucks.has(t.id)), [trucks, hiddenTrucks]);
 
@@ -803,31 +807,15 @@ export default function PlanningClient({
 
       {/* Filters */}
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="relative max-w-[280px] flex-1">
-          <svg className="pointer-events-none absolute left-3 top-1/2 h-[15px] w-[15px] -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" />
-          </svg>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Sök Fortnox-nr, kund eller adress…"
-            className="h-9 w-full rounded-lg border border-[#dce4d8] bg-white pl-9 pr-3 text-[13px] text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
-          />
-        </div>
+        {/* Scopes the schedule only — the backlog has its own box. */}
+        <SearchField
+          value={boardSearch}
+          onChange={setBoardSearch}
+          placeholder="Sök i schemat…"
+          ariaLabel="Sök bland inplanerade jobb"
+          className="max-w-[280px] flex-1"
+        />
 
-        {salesOptions.length > 0 && (
-          <select
-            value={salesFilter ?? ''}
-            onChange={(e) => setSalesFilter(e.target.value || null)}
-            aria-label="Filtrera på säljare"
-            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
-          >
-            <option value="">Alla säljare</option>
-            {salesOptions.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-        )}
         <div className="flex flex-wrap items-center gap-1.5">
           {trucks.map((t) => {
             const off = hiddenTrucks.has(t.id);
@@ -921,6 +909,11 @@ export default function PlanningClient({
           filter={backlogFilter}
           onFilterChange={setBacklogFilter}
           counts={backlogCounts}
+          search={backlogSearch}
+          onSearchChange={setBacklogSearch}
+          salesFilter={salesFilter}
+          onSalesFilterChange={setSalesFilter}
+          salesOptions={salesOptions}
           onSelect={onSelect}
           onDragStartItem={onBacklogDragStart}
           onDropUnschedule={onBacklogDrop}

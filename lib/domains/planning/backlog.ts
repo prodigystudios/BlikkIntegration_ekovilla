@@ -39,6 +39,15 @@ const WORK_ORDER_BACKLOG_SELECT =
 
 // List CRM work orders eligible for scheduling, annotated with how many ops_segments already
 // cover them. RLS applies to both reads (planner needs crm.workorder.read + planning.schedule.read).
+//
+// Newest order first (created_at desc). The planner's working rhythm is "an order just came in —
+// where does it go", so the job they are about to place is the one they just heard about. The list
+// was previously ordered by desired_installation_date, which buried a brand-new order among the
+// dates and put every order without a wished date last. The wished date is still shown on the card
+// ("Önskat"), it just doesn't decide the order any more.
+//
+// Not order_number: its format is AO-YYYYMMDD-XXXXXX where the tail is a random UUID slice, so
+// orders created the same day would sort arbitrarily against each other.
 export async function listSchedulableWorkOrders(
   supabase: SupabaseClient,
 ): Promise<{ data: SchedulableWorkOrder[]; error: { message: string } | null }> {
@@ -46,7 +55,7 @@ export async function listSchedulableWorkOrders(
     .from('crm_work_orders')
     .select(WORK_ORDER_BACKLOG_SELECT)
     .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[])
-    .order('desired_installation_date', { ascending: true, nullsFirst: false });
+    .order('created_at', { ascending: false });
 
   if (error) return { data: [], error };
 
