@@ -17,9 +17,10 @@ import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  startOfWeek, stockholmToday, swedishMonthYear,
+  sectionStart, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
+import BoardSectionNav from './BoardSectionNav';
 import SearchField from './SearchField';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
@@ -709,6 +710,46 @@ export default function PlanningClient({
   const goPrev = () => (view === 'week' ? setWeekOffset((o) => o - 1) : setMonthOffset((o) => o - 1));
   const goNext = () => (view === 'week' ? setWeekOffset((o) => o + 1) : setMonthOffset((o) => o + 1));
 
+  // ── bottom pager ───────────────────────────────────────────────────────────
+  // Moves a whole section — the chunk you just finished reading — rather than the header's single
+  // week. In "Hela månaden" a section is a month's stack, and sectionStart owns where a step lands
+  // (see planningDates): anchored on the month, NOT on how many weeks the current stack holds,
+  // since August has five Mondays and September four and stepping by the stack's own width leaves
+  // a week unreachable.
+  //
+  // The header's ‹ › keep their one-week step on purpose, for fine adjustment across a boundary.
+  const stepNoun = view === 'month' || stackWeeks ? 'månad' : 'vecka';
+  // Sits on the board COLUMN, not the two-column wrapper: below lg the grid collapses to a single
+  // column with the backlog first, so anchoring on the wrapper would scroll to the backlog panel
+  // instead of the schedule — the very scrolling the pager exists to avoid.
+  const boardTopRef = useRef<HTMLDivElement>(null);
+
+  // Land at the start of the new period. Without this you keep the scroll position you pressed at —
+  // the bottom — and arrive looking at the end of the period you just moved into.
+  const scrollToBoardTop = useCallback(() => {
+    boardTopRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, []);
+
+  const goSection = useCallback(
+    (dir: -1 | 1) => {
+      if (view === 'month') setMonthOffset((o) => o + dir);
+      else if (stackWeeks) {
+        // weekOffset counts weeks from today's Monday, so convert the section target back into a
+        // week delta.
+        const delta = weeksBetweenMondays(weekMonday, sectionStart(weekMonday, dir));
+        setWeekOffset((o) => o + delta);
+      } else setWeekOffset((o) => o + dir);
+      scrollToBoardTop();
+    },
+    [view, stackWeeks, weekMonday, scrollToBoardTop],
+  );
+
+  const goSectionToday = useCallback(() => {
+    if (view === 'week') setWeekOffset(0);
+    else setMonthOffset(0);
+    scrollToBoardTop();
+  }, [view, scrollToBoardTop]);
+
   const navLabel = view === 'week' ? swedishMonthYear(weekMonday) : swedishMonthYear(monthAnchor);
   const placing = canWrite && !!selectedId;
   const selected = backlog.find((b) => b.id === selectedId) ?? null;
@@ -939,65 +980,79 @@ export default function PlanningClient({
             </div>
             <div className="mt-2.5 text-center text-[11px] text-slate-400">Laddar schema…</div>
           </div>
-        ) : view === 'week' ? (
-          <div className="grid gap-4">
-            {weekMondays.map((m, i) => {
-              const wd = weekDaysList[i];
-              return (
-                <div key={wd[0].iso}>
-                  {weekMondays.length > 1 && (
-                    <div className="mb-1.5 flex items-center gap-2 px-1">
-                      <span className="rounded-lg border border-[#e0e8dc] bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">v.{isoWeek(m)}</span>
-                      <span className="text-[12px] font-semibold tabular-nums text-slate-500">{wd[0].dayLabel}–{wd[6].dayLabel}</span>
-                    </div>
-                  )}
-                  <WeekBoard
-                    weekDays={wd}
-                    showWeekend={showWeekend}
-                    trucks={visibleTrucks}
-                    segments={visibleSegments}
-                    todayISO={todayISO}
-                    canWrite={canWrite}
-                    placing={placing}
-                    people={people}
-                    jobTypes={jobTypes}
-                    onCellClick={onWeekCellClick}
-                    onCellDrop={onCellDrop}
-                    onSegDragStart={onSegDragStart}
-                    onSegClick={onSegClick}
-                    actions={actions}
-                    dayNotes={dayNotes}
-                    onAddNote={addDayNote}
-                    onRemoveNote={removeDayNote}
-                    truckCrew={truckCrew}
-                    defaultCrew={defaultCrew}
-                    onAddTruckCrew={addTruckCrew}
-                    onRemoveTruckCrew={removeTruckCrew}
-                    onCopyTruckCrew={copyTruckCrew}
-                    onForkWeek={forkWeek}
-                    onRestoreWeek={restoreWeek}
-                  />
-                </div>
-              );
-            })}
-          </div>
         ) : (
-          <MonthGrid
-            weeks={monthWeeks}
-            trucks={trucks}
-            segments={visibleSegments}
-            todayISO={todayISO}
-            canWrite={canWrite}
-            placing={placing}
-            people={people}
-            jobTypes={jobTypes}
-            onDayClick={onMonthDayClick}
-            onDayDrop={onMonthDayDrop}
-            onSegDragStart={onSegDragStart}
-            onSegClick={onSegClick}
-            actions={actions}
-            dayNotes={dayNotes}
-          />
+          <div ref={boardTopRef} className="grid scroll-mt-3 gap-3">
+            {view === 'week' ? (
+              <div className="grid gap-4">
+                {weekMondays.map((m, i) => {
+                  const wd = weekDaysList[i];
+                  return (
+                    <div key={wd[0].iso}>
+                      {weekMondays.length > 1 && (
+                        <div className="mb-1.5 flex items-center gap-2 px-1">
+                          <span className="rounded-lg border border-[#e0e8dc] bg-white px-2 py-0.5 text-[11px] font-bold tabular-nums text-slate-600">v.{isoWeek(m)}</span>
+                          <span className="text-[12px] font-semibold tabular-nums text-slate-500">{wd[0].dayLabel}–{wd[6].dayLabel}</span>
+                        </div>
+                      )}
+                      <WeekBoard
+                        weekDays={wd}
+                        showWeekend={showWeekend}
+                        trucks={visibleTrucks}
+                        segments={visibleSegments}
+                        todayISO={todayISO}
+                        canWrite={canWrite}
+                        placing={placing}
+                        people={people}
+                        jobTypes={jobTypes}
+                        onCellClick={onWeekCellClick}
+                        onCellDrop={onCellDrop}
+                        onSegDragStart={onSegDragStart}
+                        onSegClick={onSegClick}
+                        actions={actions}
+                        dayNotes={dayNotes}
+                        onAddNote={addDayNote}
+                        onRemoveNote={removeDayNote}
+                        truckCrew={truckCrew}
+                        defaultCrew={defaultCrew}
+                        onAddTruckCrew={addTruckCrew}
+                        onRemoveTruckCrew={removeTruckCrew}
+                        onCopyTruckCrew={copyTruckCrew}
+                        onForkWeek={forkWeek}
+                        onRestoreWeek={restoreWeek}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <MonthGrid
+                weeks={monthWeeks}
+                trucks={trucks}
+                segments={visibleSegments}
+                todayISO={todayISO}
+                canWrite={canWrite}
+                placing={placing}
+                people={people}
+                jobTypes={jobTypes}
+                onDayClick={onMonthDayClick}
+                onDayDrop={onMonthDayDrop}
+                onSegDragStart={onSegDragStart}
+                onSegClick={onSegClick}
+                actions={actions}
+                dayNotes={dayNotes}
+              />
+            )}
+
+            {/* Navigation at the end of the board, so reaching the end of a period doesn't mean
+                scrolling back to the top to step past it. Moves a whole section, not a week. */}
+            <BoardSectionNav
+              label={navLabel}
+              stepNoun={stepNoun}
+              onPrev={() => goSection(-1)}
+              onToday={goSectionToday}
+              onNext={() => goSection(1)}
+            />
+          </div>
         )}
       </div>
 
