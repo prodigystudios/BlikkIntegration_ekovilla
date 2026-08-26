@@ -126,6 +126,8 @@ type WorkOrderDraft = {
   end_contact_phone: string;
   end_contact_email: string;
   your_reference: string;
+  // Märkning → Fortnox YourOrderNumber. Bara företagskund, som i offerten.
+  label: string;
   work_scope: string;
   handoff_notes: string;
   notes: string;
@@ -399,6 +401,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       // Ordrar skapade innan Er referens blev ett eget fält har den kvar i contact_name — visa den
       // därifrån, annars ser fältet tomt ut fast Fortnox har ett värde.
       your_reference: item.customer_snapshot?.your_reference ?? item.customer_snapshot?.contact_name ?? '',
+      label: item.customer_snapshot?.label || '',
       work_scope: item.internal_handoff?.work_scope || '',
       handoff_notes: item.internal_handoff?.handoff_notes || '',
       notes: item.notes || '',
@@ -462,6 +465,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           },
           // Er referens — kundens formella referens, det ENDA kontaktvärdet som når Fortnox.
           your_reference: draft.your_reference || null,
+          // Märkning → YourOrderNumber. Skickas BARA för företagskund: på en privatorder äger
+          // fastighetsbeteckningen samma Fortnox-fält (resolveRotReference), och en märkning
+          // därifrån hade antingen varit död data eller trängt undan den.
+          ...(workOrder.quote_type === 'business' ? { label: draft.label || null } : {}),
           // Kundkontakten: vem vi och installatörerna ringer. Rör aldrig Fortnox.
           contact: {
             contact_name: draft.contact_name,
@@ -1224,7 +1231,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
                 Var två egna kort. Vart och ett blev en rubrik och en rad, och två sådana på rad
                 gav mer kantlinje än innehåll. */}
-            {editingOverview || draft?.your_reference || customerPhone || customerEmail || customerContact || hasOnSiteContact ? (
+            {editingOverview || draft?.your_reference || draft?.label || customerPhone || customerEmail || customerContact || hasOnSiteContact ? (
               <Card className="grid gap-3">
                 <p className={crm.cardTitle}>Kontakt &amp; referens</p>
 
@@ -1243,6 +1250,40 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     <span className={crm.sectionTitle}>Er referens</span>
                     <p className="m-0 text-sm font-semibold text-slate-900">{draft.your_reference}</p>
                   </div>
+                ) : null}
+
+                {/* Märkning — kundens eget projekt-/beställningsnummer, "Ert referensnummer" på
+                    Fortnox-dokumenten. Står här hos Er referens: båda är kundens egna referenser,
+                    båda når Fortnox, och båda är sådant kundens ekonomiavdelning letar efter.
+
+                    ⚠️ BARA FÖRETAGSKUND, som i offerten. På en privat ROT-order äger
+                    fastighetsbeteckningen samma Fortnox-fält (resolveRotReference), så ett fält
+                    här hade lovat något det inte kan hålla. */}
+                {workOrder.quote_type === 'business' ? (
+                  editingOverview ? (
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Märkning</span>
+                      <Input
+                        value={draft.label}
+                        onChange={(e) => setField('label', e.target.value)}
+                        placeholder="Ex. projekt-/beställningsnr hos kunden"
+                      />
+                      {/* ⚠️ Tömningen nämns med flit. Ett nytt värde speglas till Fortnox, men en
+                          TOM märkning går inte fram: headern skickar bara fält den har ett värde
+                          för, och vilket tomvärde Fortnox rensar på är inte uppmätt för headerfält
+                          (se orderReferenceNumberField). Hellre säga det rakt ut än låta säljaren
+                          tro att fältet är borta från kundens dokument när det inte är det. */}
+                      <span className="text-xs text-slate-500">
+                        Kundens eget referensnummer — visas som ”Ert referensnummer” på order och faktura.
+                        {workOrder.fortnox_order_number ? ' Ett ändrat värde synkas till Fortnox; för att ta bort det helt behöver det rensas i Fortnox.' : ''}
+                      </span>
+                    </label>
+                  ) : draft?.label ? (
+                    <div className="grid gap-0.5">
+                      <span className={crm.sectionTitle}>Märkning</span>
+                      <p className="m-0 text-sm font-semibold text-slate-900">{draft.label}</p>
+                    </div>
+                  ) : null
                 ) : null}
 
                 {editingOverview ? (
@@ -1288,7 +1329,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 ) : (customerPhone || customerEmail || customerContact) ? (
                   // Avdelaren bara när BÅDA avsnitten står i kortet — annars ritar den en linje
                   // under en rubrik som inget står ovanför.
-                  <div className={cn('grid gap-1.5', draft?.your_reference && 'border-t border-[#e0e8dc] pt-3')}>
+                  <div className={cn('grid gap-1.5', (draft?.your_reference || draft?.label) && 'border-t border-[#e0e8dc] pt-3')}>
                     <span className={crm.sectionTitle}>Kundkontakt</span>
                     <p className="m-0 text-sm font-semibold text-slate-900">{customerContact || workOrder.client_name}</p>
                     <div className="grid gap-1.5 text-sm">
@@ -1360,7 +1401,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   // Kundkontakt-blocket. Annars ritas en linje rakt under korttiteln.
                   <div className={cn(
                     'grid gap-1.5',
-                    (draft?.your_reference || customerPhone || customerEmail || customerContact) && 'border-t border-[#e0e8dc] pt-3',
+                    (draft?.your_reference || draft?.label || customerPhone || customerEmail || customerContact) && 'border-t border-[#e0e8dc] pt-3',
                   )}>
                     <span className={crm.sectionTitle}>Kontakt på plats</span>
                     <p className="m-0 text-sm font-semibold text-slate-900">{onSiteName || 'Namn saknas'}</p>

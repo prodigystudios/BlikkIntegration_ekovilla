@@ -213,6 +213,13 @@ export const updateCrmWorkOrderSchema = z.object({
   // (YourReference). Skilt från `contact` nedan med flit: den som rättar en kundkontakt ska inte
   // råka skriva om referensen som styr kundens faktura till rätt attestant.
   your_reference: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+  // "Märkning" — kundens eget projekt-/beställningsnummer. Går till Fortnox som YourOrderNumber
+  // ("Ert referensnummer") och står på orderbekräftelsen och fakturan. Företagskundens motsvarighet
+  // till privatkundens fastighetsbeteckning; de två delar Fortnox-fält (resolveRotReference).
+  //
+  // Som `your_reference`: optional UTAN default, så `undefined` betyder "rör inte" och `null`
+  // betyder "töm". Ett default här hade skrivit kolumnen vid varje statusändring.
+  label: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
   // Kundkontakten — vem vi och installatörerna ringer. Merged into customer_snapshot by the route.
   // Når ALDRIG Fortnox; se FORTNOX_MIRRORED_FIELDS i routen.
   contact: z.object({

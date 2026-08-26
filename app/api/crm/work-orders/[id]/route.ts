@@ -26,7 +26,11 @@ const TERMINAL_WO_STATUSES: string[] = ['invoiced'];
 // `contact` used to share a field with Er referens, which meant fixing a phone number silently
 // rewrote the reference that routes the customer's invoice for approval. `end_contact` once rode
 // along as a Remarks note (buildEndContactNote); that was removed, and Remarks isn't sent at all.
-const FORTNOX_MIRRORED_FIELDS = ['your_reference', 'work_address', 'assigned_to'] as const;
+//
+// `label` (Märkning) hör hit: den blir YourOrderNumber på Fortnox-ordern och står på kundens
+// orderbekräftelse och faktura, så en rättning som stannar i CRM är precis den tysta drift som
+// speglingen finns för att hindra.
+const FORTNOX_MIRRORED_FIELDS = ['your_reference', 'work_address', 'assigned_to', 'label'] as const;
 
 type RouteContext = {
   params: {
@@ -94,9 +98,27 @@ export async function PATCH(req: Request, context: RouteContext) {
     type WoCurrent = { status?: string | null; customer_snapshot?: Record<string, unknown> | null };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
-      Boolean(updateInput.contact) || updateInput.your_reference !== undefined || Boolean(updateInput.end_contact);
+      Boolean(updateInput.contact) || updateInput.your_reference !== undefined
+      || Boolean(updateInput.end_contact) || updateInput.label !== undefined;
     if (touchesSnapshot || updateInput.status) {
-      current = (await getCrmWorkOrder(supabase, context.params.id)).data as WoCurrent | null;
+      const currentRead = await getCrmWorkOrder(supabase, context.params.id);
+      // 🧨 FAIL-CLOSED PÅ LÄSFELET. Snapshoten skrivs read-merge-write, så en misslyckad läsning
+      // gav `null` → merge mot `{}` → kolumnen ersattes av BARA överlagringarna. Personnummer,
+      // org.nr, adresser och reverse_vat försvann alltså vid en tillfälligt trasig läsning, med
+      // 200 tillbaka och ingenting i loggen. Personnumret är det som bär ROT hela vägen till
+      // Fortnox, och byggmomsflaggan avgör 0 %-regimen — de får inte kunna tappas av en nätverksdipp.
+      //
+      // "Noll rader" är inte ett läsfel utan en saknad order — samma 404 som update-vägen nedan
+      // svarar, så beteendet för en borttagen order är oförändrat.
+      if (currentRead.error) {
+        if (isNoRowsError(currentRead.error)) {
+          return routeError(404, 'crm_work_order_not_found', 'Arbetsorder hittades inte.');
+        }
+        console.error('[crm] Arbetsorderläsning före snapshot-merge misslyckades:', currentRead.error.message);
+        return routeError(503, 'crm_work_order_read_failed',
+          'Kunde inte läsa arbetsordern just nu. Försök igen — ingenting har ändrats.');
+      }
+      current = currentRead.data as WoCurrent | null;
     }
 
     // Every snapshot override merges into the (jsonb) customer_snapshot with a read-merge-write so
@@ -111,12 +133,14 @@ export async function PATCH(req: Request, context: RouteContext) {
           // Skickas bara vidare när klienten faktiskt sände fältet: `undefined` betyder "rör inte",
           // och `pickProvidedFields` har redan avgjort det åt oss.
           ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+          ...('label' in updateInput ? { label: updateInput.label } : {}),
           end_contact: updateInput.end_contact,
         },
       );
       delete (updateInput as { contact?: unknown }).contact;
       delete (updateInput as { your_reference?: unknown }).your_reference;
       delete (updateInput as { end_contact?: unknown }).end_contact;
+      delete (updateInput as { label?: unknown }).label;
     }
 
     // System-managed status guard — only a real TRANSITION is blocked. The client always sends

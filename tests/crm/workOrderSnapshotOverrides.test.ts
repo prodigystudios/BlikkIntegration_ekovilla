@@ -96,6 +96,33 @@ describe('mergeWorkOrderSnapshotOverrides — Er referens vs kundkontakt', () =>
   });
 });
 
+describe('mergeWorkOrderSnapshotOverrides — märkningen', () => {
+  it('sätts och rör inget annat', () => {
+    const merged = mergeWorkOrderSnapshotOverrides(BASE, { label: 'Projekt 4711' });
+    expect(merged.label).toBe('Projekt 4711');
+    expect(merged.your_reference).toBe('Birgitta Ling');
+    expect(merged.organization_number).toBe('556677-8899');
+  });
+
+  // 🧨 NYCKELN MÅSTE SKRIVAS ÄVEN NÄR VÄRDET ÄR null. `'label' in snapshot` är hur
+  // buildOrderHeader skiljer "säljaren tömde märkningen" från "den här ordern har aldrig haft
+  // någon" — och bara det första blankar YourOrderNumber på kundens dokument.
+  it('tömning skriver nyckeln, inte bara värdet', () => {
+    const merged = mergeWorkOrderSnapshotOverrides({ ...BASE, label: 'Projekt 4711' }, { label: null });
+    expect(merged.label).toBeNull();
+    expect('label' in merged).toBe(true);
+  });
+
+  it('utelämnad märkning lämnar nyckeln som den var', () => {
+    // Äldre order utan nyckeln: en statusändring får inte skapa den, för då hade Fortnox-headern
+    // läst det som en medveten tömning och blankat ett fält någon satt för hand.
+    const legacy = { customer_name: 'Gammal AB' };
+    expect('label' in mergeWorkOrderSnapshotOverrides(legacy, { your_reference: 'Ref' })).toBe(false);
+    // Och en order som HAR den behåller sitt värde.
+    expect(mergeWorkOrderSnapshotOverrides({ ...BASE, label: 'P-1' }, {}).label).toBe('P-1');
+  });
+});
+
 describe('mergeWorkOrderSnapshotOverrides — slutkunden på plats', () => {
   it('sätts utan att röra kundens kontakt', () => {
     const merged = mergeWorkOrderSnapshotOverrides(BASE, {

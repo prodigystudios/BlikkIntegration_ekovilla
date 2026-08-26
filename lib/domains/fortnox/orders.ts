@@ -263,6 +263,39 @@ export function resolveYourReference(
   return snapshot?.your_reference?.trim() || snapshot?.contact_name?.trim() || null;
 }
 
+/**
+ * "Ert referensnummer" på orderhuvudet.
+ *
+ * `referenceNumber` kommer ur `resolveRotReference` och bärs av två uppgifter som aldrig gäller
+ * samtidigt: företagskundens MÄRKNING och privatkundens FASTIGHETSBETECKNING.
+ *
+ * ⚠️ TÖMNING GÅR INTE ATT GÖRA HÄRIFRÅN, och det är ett medvetet val — inte ett förbiseende.
+ *
+ * En PUT rör bara de fält den bär, så en utelämnad nyckel lämnar Fortnox värde orört. Att i
+ * stället skicka ett tomvärde för att blanka fältet kräver att man vet VILKET tomvärde som biter,
+ * och det uppmätta svaret (FORTNOX_TEXT_ROW i helpers.ts, mätt 2026-08-20) är att `''` INTE rensar
+ * medan `null` gör det — utom för `Unit`, som svarar 400 på null. De mätningarna gjordes på
+ * RADFÄLT; motsvarande mätning på ett headerfält finns inte, och `YourOrderNumber: null` kan lika
+ * gärna vara ett 400 som en rensning.
+ *
+ * ⛔ Gissa inte. Ett `''` här ser ut att rensa och gör det inte — CRM hade visat tomt medan kundens
+ * dokument bar kvar det gamla numret, alltså exakt den tysta drift speglingen finns för att stoppa.
+ *
+ * ⛔ Och villkora INTE på `'label' in snapshot`. Det ser ut att skilja "tömd med flit" från "har
+ * aldrig haft någon", men gör det inte: `buildCustomerSnapshot` skriver ALLTID nyckeln (null när
+ * den är tom), så villkoret är sant för i stort sett varje offertskapad order. Följden hade blivit
+ * ett rensningsförsök på varenda order utan märkning — plus att den tomma headern nedan aldrig mer
+ * blir tom, så varje speglad PATCH hade kostat en Fortnox-PUT i onödan.
+ *
+ * Tills tömningen är MÄTT mot skarp Fortnox är regeln därför: ett nytt värde går fram, en tömning
+ * gör det inte. Ordervyn säger det rakt ut i stället för att låtsas.
+ */
+export function orderReferenceNumberField(
+  referenceNumber: string | null,
+): { YourOrderNumber?: string } {
+  return referenceNumber ? { YourOrderNumber: referenceNumber } : {};
+}
+
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
   customer_snapshot: CustomerSnapshot | null;
@@ -305,7 +338,8 @@ async function buildOrderHeader(
       ...(yourReference ? { YourReference: yourReference } : {}),
       // "Ert referensnummer" — the order field is YourOrderNumber (the offer uses
       // YourReferenceNumber; sending the wrong one is a 2001399 "Felaktigt fältnamn").
-      ...(referenceNumber ? { YourOrderNumber: referenceNumber } : {}),
+      // ⚠️ En tömd märkning går INTE fram härifrån — se orderReferenceNumberField.
+      ...orderReferenceNumberField(referenceNumber),
       // No Remarks: it is Fortnox's own per-document body text (it rewrites it on createorder
       // anyway), and the customer contact is deliberately CRM-internal — see the removal of
       // buildEndContactNote.
