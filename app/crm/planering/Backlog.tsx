@@ -4,6 +4,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
+import SearchField from './SearchField';
 
 type BacklogFilter = 'unplanned' | 'planned' | 'all';
 
@@ -15,6 +16,13 @@ type BacklogProps = {
   filter: BacklogFilter;
   onFilterChange: (f: BacklogFilter) => void;
   counts: { unplanned: number; planned: number; all: number };
+  // The backlog owns its own search + sales filter. Both live here rather than in the toolbar
+  // because they scope this list alone — the schedule beside it has its own search box.
+  search: string;
+  onSearchChange: (value: string) => void;
+  salesFilter: string | null;
+  onSalesFilterChange: (value: string | null) => void;
+  salesOptions: ReadonlyArray<{ id: string; name: string }>;
   onSelect: (id: string) => void;
   onDragStartItem: (e: React.DragEvent, item: SchedulableWorkOrder) => void;
   onDropUnschedule: (e: React.DragEvent) => void;
@@ -35,15 +43,24 @@ function shortDate(value: string | null): string | null {
 }
 
 export default function Backlog({
-  items, loading, canWrite, selectedId, filter, onFilterChange, counts, onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
+  items, loading, canWrite, selectedId, filter, onFilterChange, counts,
+  search, onSearchChange, salesFilter, onSalesFilterChange, salesOptions,
+  onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
 }: BacklogProps) {
-  const emptyText =
-    filter === 'planned'
+  // A filtered list is empty for a different reason than an unfiltered one, and "skapa en order i
+  // CRM:et" is the wrong instruction when the orders exist but the search hid them. Say which it is.
+  //
+  // The counts come from the already search/sales-filtered set, so counts.all === 0 is precisely
+  // "the filter matched nothing" — and the guard matters: with matches that all sit under a
+  // different tab (search hits 3 jobs, all of them planned, while the Oplanerade tab is open) the
+  // panel would otherwise claim nothing matched while the badge beside it reads "Planerade 3".
+  const filtered = search.trim().length > 0 || salesFilter !== null;
+  const emptyText = filtered && counts.all === 0
+    ? 'Ingen arbetsorder matchar sökningen eller vald säljare. Rensa filtret för att se alla.'
+    : filter === 'planned'
       ? 'Inga inplanerade jobb än.'
-      : filter === 'unplanned'
-        ? counts.planned > 0
-          ? 'Alla jobb är inplanerade. 🎉'
-          : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.'
+      : filter === 'unplanned' && counts.planned > 0
+        ? 'Alla jobb är inplanerade. 🎉'
         : 'Inga arbetsordrar att planera. Skapa en order i CRM:et så dyker den upp här.';
   return (
     <section
@@ -60,6 +77,30 @@ export default function Backlog({
       <div className="flex items-center justify-between px-3.5 pb-2 pt-3.5">
         <h2 className={crm.sectionTitle}>Att planera</h2>
         <span className="text-[11px] tabular-nums text-slate-400">{items.length} st</span>
+      </div>
+
+      {/* Search + sales filter, scoped to this list only. Both sit outside the scrolling area
+          below, so they stay put while the cards scroll under them. */}
+      <div className="grid gap-1.5 px-3.5 pb-2.5">
+        <SearchField
+          value={search}
+          onChange={onSearchChange}
+          placeholder="Sök i backloggen…"
+          ariaLabel="Sök bland arbetsordrar att planera"
+        />
+        {salesOptions.length > 0 && (
+          <select
+            value={salesFilter ?? ''}
+            onChange={(e) => onSalesFilterChange(e.target.value || null)}
+            aria-label="Filtrera backloggen på säljare"
+            className={cn(crm.select, 'text-[12.5px]')}
+          >
+            <option value="">Alla säljare</option>
+            {salesOptions.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Filter — defaults to "Oplanerade" so scheduled jobs don't clutter the backlog. */}

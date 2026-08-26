@@ -82,6 +82,21 @@ export function materialLabelFromLineItems(lineItems: unknown[] | null | undefin
   return null;
 }
 
+// Free-text match over the fields a planning card actually shows. Shared by the board's search box
+// and the backlog's, so the same term hits the same way in both places — the two boxes are separate
+// on purpose (searching for a job to place must not blank out the schedule you're placing it into),
+// but they should never disagree about what counts as a match.
+//
+// An empty query matches everything: a blank box is "no filter", not "nothing found".
+export function matchesJobSearch(
+  job: Pick<JobDisplay, 'ref' | 'client_name' | 'project_name' | 'address'>,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return [job.ref, job.client_name, job.project_name, job.address].some((v) => (v ?? '').toLowerCase().includes(q));
+}
+
 // Map a crm_work_orders row to the shared display fields shown on a planning card.
 export function mapWorkOrderJob(row: WorkOrderJobRow): JobDisplay {
   const { ref, isFortnox } = workOrderRef(row.fortnox_order_number, row.order_number);
