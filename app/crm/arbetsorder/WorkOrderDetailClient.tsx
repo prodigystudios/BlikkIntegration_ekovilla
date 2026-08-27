@@ -11,7 +11,7 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
-import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import { contactRowByName, resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
   regenerateMeasurementBlock,
@@ -592,6 +592,32 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   async function saveArticles(lineItems: ArticleLineItem[]): Promise<boolean> {
     if (!workOrder) return false;
+    // 🧨 RADERNAS ROT-VAL FÅR INTE SPARAS MOT EN ORDER SOM INTE HAR ROT PÅSLAGET.
+    //
+    // Radernas ROT-kontroller gatar på översiktens UTKAST (se `articleRotDetails`) så att man
+    // slipper en mellansparning — men artiklarna sparas mot en EGEN rutt. Kryssade man i
+    // "ROT-arbete" medan påslaget bara fanns i utkastet, och påslaget sedan aldrig sparades, låg
+    // flaggorna kvar på en order vars `rot_details.enabled` är false. Inert i stunden — både
+    // `computePricing` och pushen gatar på `enabled` — men de vaknar tyst den dag någon slår på
+    // ROT, och då kommer avdraget ur val ingen minns att ha gjort.
+    //
+    // ⚠️ VILLKORET FÅR INTE VARA `editingOverview`. Första versionen var det, och då räckte det att
+    // avbryta översikten FÖRST: artikelredigeraren behåller sina egna rader (dess resync-effekt är
+    // gatead på sitt eget `editing`, som fortfarande är sant), så flaggorna låg kvar och sparades
+    // ändå — genom spärren som fanns för att stoppa dem. Frågan är inte om något redigeras, utan om
+    // raderna bär ett ROT-val den SPARADE ordern saknar regim för.
+    const rotSavedOn = workOrder.quote_type === 'private' && workOrder.rot_details?.enabled === true;
+    const rotChoiceOnRow = (row: { is_rot_work?: boolean; labor_cost?: string | null }) =>
+      Boolean(row.is_rot_work) || parseDecimal(row.labor_cost, 0) > 0;
+    // Rader som REDAN bär ett val släpps igenom. En order där ROT en gång varit påslaget och sedan
+    // stängts av hade annars aldrig gått att spara igen — och de flaggorna är inget nytt påstående.
+    const savedRotChoice = new Map(
+      ((workOrder.line_items || []) as ArticleLineItem[]).map((row) => [row.id, rotChoiceOnRow(row)]),
+    );
+    if (!rotSavedOn && lineItems.some((row) => rotChoiceOnRow(row) && !savedRotChoice.get(row.id))) {
+      toast.error('ROT är inte påslaget på den sparade ordern. Slå på ROT i översikten och spara det först — då går radernas ROT-val att spara.');
+      return false;
+    }
     setSavingArticles(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/line-items`, {
@@ -720,6 +746,46 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Slutkunden på plats, RAKT ur snapshoten och utan reserv mot kundkortet. Kortet vet inget om
   // hen — hen står per definition utanför det — och en reserv hade lagt kundens uppgifter under
   // slutkundens namn, samma hopblandning som `cardContact` ovan finns till för att undvika.
+  // Vad KUNDKORTET fyller i när snapshoten är tom.
+  //
+  // 🧨 Läsläget visar redan det värdet — `customerPhone`/`customerEmail`/`customerContact` ovan
+  // faller tillbaka hit — men utkastet läser BARA snapshoten. Fältet stod alltså tomt i
+  // redigeringsläget bredvid en läsrad som just visat en adress, och det såg ut som att uppgiften
+  // försvann när man tryckte Redigera. (Uppmätt på en företagsorder: läsläget visade
+  // pphus.bygg@outlook.com, e-postfältet var tomt.)
+  //
+  // ⚠️ Lånet är AVSIKTLIGT och får inte bli en kopia. Skrevs värdet in i snapshoten slutade det
+  // följa kundkortet, och en rättad adress där hade inte längre nått ordern. Placeholdern säger
+  // därför var värdet kommer ifrån utan att skriva någonting.
+  //
+  // 🧨 INTE `cardContact`. Uppslaget bakom den (`getWorkOrderCustomerContact`) låter ORDERNS
+  // SNAPSHOT vinna över kortet — det är hela dess poäng. Läste placeholdern därifrån visade den, i
+  // det ögonblick man rensade ett förifyllt fält, exakt det värde man just raderade, och påstod att
+  // det kom från kundkortet. Sparade man sedan var det kortets värde — ett ANNAT — som gällde.
+  //
+  // 🧨 OCH INTE HELLER `cardFallback`, som löser mot kortets PRIMÄRA kontakt. Ordern ärver mot den
+  // kontakt namnet PEKAR UT (`contactRowByName`), så på en order som namnger Jonas hade
+  // placeholdern visat primärkontaktens adress under Jonas namn — exakt den hopblandning
+  // `resolveCrmContact` finns för att förhindra. Uppställningen nedan speglar serverns väg fält för
+  // fält, med snapshotens egna värden tomma: det är per definition läget när en placeholder syns.
+  const draftContactName = draft.contact_name.trim();
+  const contactCardSource = customerCard ? { ...customerCard, contacts: customerContacts } : null;
+  const draftNamedRow = contactCardSource ? contactRowByName(contactCardSource, draftContactName) : null;
+  const inheritedContactSource = contactCardSource
+    ? resolveCrmContact(
+        contactCardSource,
+        // ⚠️ Objektet byggs så fort ett NAMN finns, även när kortet inte känner igen det — precis
+        // som servern. Ett namngivet fält på en företagskund ärver då INTE bolagets adress
+        // (`borrowsCardEmail` gatar på namnet), och placeholdern måste säga samma sak.
+        draftContactName
+          ? { name: draftContactName, phone: draftNamedRow?.phone ?? null, email: draftNamedRow?.email ?? null }
+          : null,
+      )
+    : null;
+  const inheritedContactName: string | null = inheritedContactSource?.name || null;
+  const inheritedContactPhone: string | null = inheritedContactSource?.phone || null;
+  const inheritedContactEmail: string | null = inheritedContactSource?.email || null;
+  const hasInheritedContact = Boolean(inheritedContactName || inheritedContactPhone || inheritedContactEmail);
   const onSiteName: string | null = snapshot.end_contact_name || null;
   const onSitePhone: string | null = snapshot.end_contact_phone || null;
   const onSiteEmail: string | null = snapshot.end_contact_email || null;
@@ -739,6 +805,32 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
   // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
   const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
+  // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
+  //
+  // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
+  // "Varav arbetskostnad". Läste den bara `workOrder.rot_details` krävde ett påslag TVÅ sparningar
+  // innan raderna gick att flagga — slog man på ROT och gick direkt till artiklarna fanns kryssen
+  // inte, och inget sa varför. De två redigeringslägena är oberoende, så ordningen var inte ens
+  // given.
+  //
+  // Summeringen räknar på samma objekt, alltså förhandsvisas avdraget med exakt de tal sparningen
+  // kommer att skicka (uttrycken speglar `saveWorkOrder`). Samma regel som säcktalet redan följer:
+  // det som räknas medan man redigerar ska räknas på det man redigerar.
+  //
+  // ⚠️ `enabled` tas från utkastet BARA när reglaget går att ändra. Ligger ordern i Fortnox är
+  // regimen låst (TaxReductionType sätts vid create), utkastvärdet skickas aldrig med i PATCH:en,
+  // och då är det sparade värdet sanningen — annars hade raderna följt ett reglage vars ändring
+  // aldrig når fram.
+  const articleRotDetails = editingOverview && workOrder.quote_type === 'private'
+    ? {
+        ...rot,
+        enabled: rotToggleLocked ? rot.enabled === true : draft.rot_enabled,
+        property_designation: draft.rot_property_designation || null,
+        brf_org_number: draft.rot_brf_org_number || null,
+        rot_percent: draft.rot_percent.trim() ? parseDecimal(draft.rot_percent, 30) : null,
+        max_deduction: draft.rot_max_deduction.trim() ? parseDecimal(draft.rot_max_deduction, 50000) : null,
+      }
+    : workOrder.rot_details;
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
   // from the computed VAT (robust even if the work order's vat_percent column drifted to 25 — the
   // pricing/Fortnox document are still 0), so the economy card reads "Omvänd skattskyldighet"
@@ -1131,38 +1223,26 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             <Card className="grid gap-4">
               <p className={crm.cardTitle}>Ekonomi</p>
 
-              <WorkOrderArticles
-                embedded
-                items={(workOrder.line_items || []) as ArticleLineItem[]}
-                currencyCode={workOrder.currency_code}
-                vatPercent={workOrder.vat_percent}
-                quoteType={workOrder.quote_type}
-                rotDetails={workOrder.rot_details}
-                reverseCharge={reverseCharge}
-                saving={savingArticles}
-                fortnoxConnected={fortnoxConnected}
-                // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
-                // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
-                // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
-                canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
-                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
-                // canEdit=false verkligen att ordern är färdigfakturerad.
-                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
-                // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
-                // färdigfakturerad order, där det inte finns något kvar att skriva av.
-                onSave={saveArticles}
-              />
-
               {/* ─── ROT-uppställning ───────────────────────────────────────
                   Redigerbar sedan arbetsordern äger ROT-uppgifterna (resolveOrderRotDetails).
                   Offerten är låst när ordern finns, och en fastighetsbeteckning som visar sig fel
                   gick fram till nu bara att rätta i Fortnox för hand.
 
                   Visas för PRIVATKUND i redigeringsläget även när ROT är av — annars går reglaget
-                  inte att nå. I läsläget bara när ROT faktiskt gäller. */}
+                  inte att nå. I läsläget bara när ROT faktiskt gäller.
+
+                  📌 FÖRE raderna, inte efter. Blocket låg tidigare under summeringen — alltså under
+                  raden "Avgår ROT" som det självt styr, och på en order med ett dussin rader i
+                  redigeringsläget drygt en och en halv skärm under sitt eget resultat. Läsordningen
+                  är nu den man faktiskt arbetar i: gäller ROT och för vilken fastighet → vilka rader
+                  är arbete → vad avdraget blir. */}
               {editingOverview && workOrder.quote_type === 'private' ? (
                 <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
-                  <p className={crm.sectionTitle}>ROT-avdrag</p>
+                  {/* Rubriken hette "ROT-avdrag" och stod direkt ovanför reglaget som OCKSÅ heter
+                      "ROT-avdrag" — samma ord två gånger, stackade. Kortrubrik och fältetikett får
+                      inte vara samma sträng. "ROT-uppställning" är dessutom vad läsläget kallar
+                      samma ruta, så de två lägena talar nu samma språk. */}
+                  <p className={crm.sectionTitle}>ROT-uppställning</p>
 
                   {/* 🧨 REGLAGET ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. Dokumentets ROT-läge
                       (TaxReductionType) sätts när ordern skapas och går inte att ändra; ett
@@ -1235,14 +1315,44 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               ) : rot.enabled ? (
                 <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
                   <p className={crm.sectionTitle}>ROT-uppställning</p>
-                  <div className="grid gap-x-6 sm:grid-cols-2">
+                  {/* EN spalt med avdelare, inte två utan. `StatField` sätter etiketten vänster och
+                      värdet höger, så i två spalter slutade vänsterspaltens VÄRDE en decimeter från
+                      högerspaltens ETIKETT — "be 3;10   Skattereduktion" lästes som en mening.
+                      Samma lösning som Snabböversikten: behållaren äger avdelarna.
+                      ⚠️ `#e0e8dc` och inte Snabböversiktens ljusare `#e8eee4` — rutan här ligger på
+                      `#f1f5ee`, där den ljusare inte syns alls. */}
+                  <div className="grid divide-y divide-[#e0e8dc]">
                     {rot.property_designation ? <StatField label="Fastighetsbeteckning" value={rot.property_designation} /> : null}
+                    {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
                     {rot.rot_percent != null ? <StatField label="Skattereduktion" value={`${rot.rot_percent}%`} /> : null}
                     {rot.max_deduction != null ? <StatField label="Max avdrag" value={formatCurrency(rot.max_deduction, workOrder.currency_code)} /> : null}
-                    {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
                   </div>
                 </div>
               ) : null}
+
+              <WorkOrderArticles
+                embedded
+                items={(workOrder.line_items || []) as ArticleLineItem[]}
+                currencyCode={workOrder.currency_code}
+                vatPercent={workOrder.vat_percent}
+                quoteType={workOrder.quote_type}
+                // Utkastets ROT medan översikten redigeras — se articleRotDetails. Annars kunde
+                // raderna inte flaggas förrän påslaget sparats, utan att något sa det.
+                rotDetails={articleRotDetails}
+                reverseCharge={reverseCharge}
+                saving={savingArticles}
+                fortnoxConnected={fortnoxConnected}
+                // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
+                // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
+                // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
+                canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
+                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
+                // canEdit=false verkligen att ordern är färdigfakturerad.
+                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
+                // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
+                // färdigfakturerad order, där det inte finns något kvar att skriva av.
+                onSave={saveArticles}
+              />
 
               {fortnoxConnected ? (
                 <div className="grid gap-3 border-t border-[#e0e8dc] pt-4">
@@ -1445,7 +1555,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
                     <div className="grid gap-0.5">
                       <span className={crm.sectionTitle}>Kundkontakt</span>
-                      <span className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</span>
+                      <span className="text-xs text-slate-500">
+                        För er och installatörerna. Skickas inte till Fortnox.
+                        {hasInheritedContact ? ' Grå text i ett tomt fält ärvs från kundkortet.' : ''}
+                      </span>
                     </div>
                 {/* Pick a different contact if the responsible person changed offer→order. */}
                 {customerContacts.length > 0 ? (
@@ -1468,17 +1581,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     ))}
                   </Select>
                 ) : null}
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Namn</span>
-                  <Input value={draft.contact_name} onChange={(e) => setField('contact_name', e.target.value)} placeholder="Kontaktperson" />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Telefon</span>
-                  <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder="070-123 45 67" inputMode="tel" />
-                </label>
+                    {/* Placeholdern visar det ÄRVDA värdet när fältet är tomt — se
+                        inheritedContact* ovan. Exempeltexten står kvar som reserv för en kund vars
+                        kort inte har något att låna ut. */}
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Namn</span>
+                      <Input value={draft.contact_name} onChange={(e) => setField('contact_name', e.target.value)} placeholder={inheritedContactName || 'Kontaktperson'} />
+                    </label>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Telefon</span>
+                      <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder={inheritedContactPhone || '070-123 45 67'} inputMode="tel" />
+                    </label>
                     <label className="grid gap-1 text-sm text-slate-600">
                       <span className={crm.sectionTitle}>E-post</span>
-                      <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
+                      <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder={inheritedContactEmail || 'namn@exempel.se'} type="email" />
                     </label>
                   </div>
                 ) : (customerPhone || customerEmail || customerContact) ? (
@@ -1503,14 +1619,21 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     hela poängen: `getWorkOrderCustomerContact` låter slutkunden VINNA över kundens
                     kontakt i det installatörerna ser, så de två måste gå att skilja åt här — annars
                     rättar man den ena i tron att man rättar den andra. Fram till nu gick hen inte
-                    att se eller ändra alls på ordern, bara i offerten, som är låst. */}
+                    att se eller ändra alls på ordern, bara i offerten, som är låst.
+
+                    📌 EGEN INRAMAD RUTA, inte bara en avdelare. Avsnittet bär exakt samma tre
+                    etiketter som Kundkontakt ovanför — Namn, Telefon, E-post — i samma bredd och
+                    samma typografi, med en hårfin linje emellan. Två identiska tripplar trettio
+                    pixlar isär är precis den förväxling avsnittet finns för att förhindra. Rutan
+                    (samma recept som ROT-uppställningen) gör slutkunden till ett eget objekt i
+                    stället för fler fält i samma lista.
+
+                    Krysset står FÖRE sin etikett, inte vid kortets högerkant: kastat längst ut
+                    hörde det inte synligt ihop med texten, och det är den kontroll som avgör om
+                    avsnittet finns. */}
                 {editingOverview ? (
-                  <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
-                    <label className="flex cursor-pointer select-none items-center justify-between gap-3">
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className={crm.sectionTitle}>Kontakt på plats</span>
-                        <span className="text-xs text-slate-500">Slutkund utanför kundkortet. Går före kundkontakten för installatören.</span>
-                      </span>
+                  <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
+                    <label className="flex cursor-pointer select-none items-start gap-2.5">
                       <input
                         type="checkbox"
                         checked={endContactOpen}
@@ -1524,8 +1647,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                             setDraft((d) => (d ? { ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' } : d));
                           }
                         }}
-                        className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
                       />
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className={crm.sectionTitle}>Kontakt på plats</span>
+                        <span className="text-xs text-slate-500">Slutkund utanför kundkortet. Går före kundkontakten för installatören.</span>
+                      </span>
                     </label>
                     {endContactOpen ? (
                       <div className="grid gap-3">
@@ -1552,12 +1679,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     ) : null}
                   </div>
                 ) : hasOnSiteContact ? (
-                  // Avdelaren bara när något faktiskt står ovanför — samma regel som
-                  // Kundkontakt-blocket. Annars ritas en linje rakt under korttiteln.
-                  <div className={cn(
-                    'grid gap-1.5',
-                    (draft?.your_reference || draft?.label || customerPhone || customerEmail || customerContact) && 'border-t border-[#e0e8dc] pt-3',
-                  )}>
+                  // Samma inramade ruta som i redigeringsläget, och av samma skäl: slutkunden ska
+                  // läsas som ett eget objekt, inte som ytterligare ett par kontaktrader under
+                  // kundens. Rutan ersätter den villkorade avdelaren — en behållare behöver inte
+                  // veta vad som råkar stå ovanför den.
+                  <div className="grid gap-1.5 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3">
                     <span className={crm.sectionTitle}>Kontakt på plats</span>
                     <p className="m-0 text-sm font-semibold text-slate-900">{onSiteName || 'Namn saknas'}</p>
                     <div className="grid gap-1.5 text-sm">

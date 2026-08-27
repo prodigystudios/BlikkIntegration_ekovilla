@@ -376,6 +376,18 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedNameById.get(row.id), row.article_name);
+              // Har raden ett redigerbart namn? Villkoret är det SPARADE namnet, ALDRIG utkastets —
+              // se den långa noten vid fältet. Utbrutet hit eftersom radrubriken behöver samma svar.
+              //
+              // 🧨 En nytillagd rad (finns inte i kartan) svarar alltid ja, utan att titta på
+              // utkastet. Villkorade den på `row.article_name` avmonterades inputen mitt i
+              // skrivandet av en backspace till tomt — samma självförstörande fält som noten vid
+              // fältet beskriver, bara på den gren som slapp igenom förra gången. Ofarligt: enda
+              // vägen att lägga till en rad är `addArticle`, som alltid sätter ett namn OCH ett
+              // artikelnummer, så en ny rad är aldrig den namnlösa textrad 409-risken gäller.
+              const nameEditable = savedNameById.has(row.id)
+                ? Boolean(savedNameById.get(row.id))
+                : true;
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
               // volym vars namn inte ger något material räknar noll säckar, och noll säckar SER UT
               // som ett svar ("inget material gick åt") fast det bara betyder att namnet inte gick
@@ -396,8 +408,16 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               return (
                 <div key={row.id} className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3">
                   <div className="flex items-start justify-between gap-2">
+                    {/* Rubriken skrev ut `row.article_name` — samma sträng som fältet "Benämning på
+                        ordern" tjugo pixlar längre ner redigerar, live och tecken för tecken. En
+                        rubrik som speglar sitt eget fält säger ingenting; fältet ÄR radens namn här.
+                        Kvar står artikelnumret, som är radens stabila identitet.
+                        Rader UTAN redigerbart namn (rena textrader) behåller rubriken — där finns
+                        inget fält som bär namnet. */}
                     <div className="min-w-0">
-                      <strong className="block truncate text-sm text-slate-900">{row.article_name || 'Namnlös rad'}</strong>
+                      {nameEditable ? null : (
+                        <strong className="block truncate text-sm text-slate-900">{row.article_name || 'Namnlös rad'}</strong>
+                      )}
                       {row.article_number ? <span className="text-xs text-slate-400">{row.article_number}</span> : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
@@ -452,7 +472,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens
                       material, och materialet ger säckvikten. Tappas varumärkesordet blir
                       säckantalet NOLL — tyst. Därför de två raderna under fältet. */}
-                  {savedNameById.get(row.id) || (!savedNameById.has(row.id) && row.article_name) ? (
+                  {nameEditable ? (
                     <label className="grid gap-1">
                       <span className={crm.sectionTitle}>Benämning på ordern</span>
                       <Input
@@ -511,6 +531,14 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                     </label>
                   </div>
 
+                  {/* 🧨 `w-auto` PÅ VARJE ETIKETT HÄR — utan den staplar raden vertikalt.
+                      `app/globals.css` sätter `:where(label) { width: 100% }` så att ett fält kan
+                      fylla sin etikett. Selektorn har noll specificitet, men ingen klass sätter
+                      bredd på de här inline-etiketterna, alltså vinner 100 % ändå över `auto`.
+                      Varje etikett fyllde då sin rad, och `flex-wrap`-föräldern krympte till
+                      max-content (~239 px) i stället för att lägga dem sida vid sida. En klass
+                      slår `:where()`, så `w-auto` räcker. Samma felfamilj som knapparnas
+                      preflight-krock — kolla alltid om ett element-selektor rör samma property. */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-3">
                       {/* Bara antals-/meterrader. Ytorna är själva jobbet och står alltid i
@@ -518,7 +546,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           artiklarna och översikten har skilda spar-cykler här. */}
                       {(row.pricing_mode ?? 'm3') === 'item' ? (
                         <label
-                          className="flex items-center gap-2 text-xs text-slate-600"
+                          className="flex w-auto items-center gap-2 text-xs text-slate-600"
                           title="Tas med som eget moment i arbetsbeskrivningen. Hämta om måtten för att uppdatera texten."
                         >
                           <input
@@ -531,7 +559,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                         </label>
                       ) : null}
                       {rotEnabled ? (
-                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                           <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
                           ROT-arbete
                         </label>
@@ -543,7 +571,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           ⚠️ Låst av validateLineItemEdit när raden gått ut på faktura — typen är
                           ROT-identiteten, och den får inte skilja sig från vad fakturan sa. */}
                       {rotEnabled && row.is_rot_work ? (
-                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                           Typ
                           <Select
                             value={row.house_work_type || 'CONSTRUCTION'}
@@ -559,7 +587,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
                           till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
                           förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
-                      <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                         <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-4 w-4 accent-slate-500" />
                         Avskriven (utförs ej)
                       </label>
