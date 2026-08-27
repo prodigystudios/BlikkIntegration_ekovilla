@@ -720,6 +720,21 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Slutkunden på plats, RAKT ur snapshoten och utan reserv mot kundkortet. Kortet vet inget om
   // hen — hen står per definition utanför det — och en reserv hade lagt kundens uppgifter under
   // slutkundens namn, samma hopblandning som `cardContact` ovan finns till för att undvika.
+  // Vad KUNDKORTET fyller i när snapshoten är tom.
+  //
+  // 🧨 Läsläget visar redan det värdet — `customerPhone`/`customerEmail`/`customerContact` ovan
+  // faller tillbaka hit — men utkastet läser BARA snapshoten. Fältet stod alltså tomt i
+  // redigeringsläget bredvid en läsrad som just visat en adress, och det såg ut som att uppgiften
+  // försvann när man tryckte Redigera. (Uppmätt på en företagsorder: läsläget visade
+  // pphus.bygg@outlook.com, e-postfältet var tomt.)
+  //
+  // ⚠️ Lånet är AVSIKTLIGT och får inte bli en kopia. Skrevs värdet in i snapshoten slutade det
+  // följa kundkortet, och en rättad adress där hade inte längre nått ordern. Placeholdern säger
+  // därför var värdet kommer ifrån utan att skriva någonting.
+  const inheritedContactName: string | null = cardContact?.contactName ?? cardFallback?.name ?? null;
+  const inheritedContactPhone: string | null = cardContact?.phone ?? cardFallback?.phone ?? null;
+  const inheritedContactEmail: string | null = cardContact?.email ?? cardFallback?.email ?? null;
+  const hasInheritedContact = Boolean(inheritedContactName || inheritedContactPhone || inheritedContactEmail);
   const onSiteName: string | null = snapshot.end_contact_name || null;
   const onSitePhone: string | null = snapshot.end_contact_phone || null;
   const onSiteEmail: string | null = snapshot.end_contact_email || null;
@@ -1489,7 +1504,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
                     <div className="grid gap-0.5">
                       <span className={crm.sectionTitle}>Kundkontakt</span>
-                      <span className="text-xs text-slate-500">För er och installatörerna. Skickas inte till Fortnox.</span>
+                      <span className="text-xs text-slate-500">
+                        För er och installatörerna. Skickas inte till Fortnox.
+                        {hasInheritedContact ? ' Grå text i ett tomt fält ärvs från kundkortet.' : ''}
+                      </span>
                     </div>
                 {/* Pick a different contact if the responsible person changed offer→order. */}
                 {customerContacts.length > 0 ? (
@@ -1512,17 +1530,20 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     ))}
                   </Select>
                 ) : null}
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Namn</span>
-                  <Input value={draft.contact_name} onChange={(e) => setField('contact_name', e.target.value)} placeholder="Kontaktperson" />
-                </label>
-                <label className="grid gap-1 text-sm text-slate-600">
-                  <span className={crm.sectionTitle}>Telefon</span>
-                  <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder="070-123 45 67" inputMode="tel" />
-                </label>
+                    {/* Placeholdern visar det ÄRVDA värdet när fältet är tomt — se
+                        inheritedContact* ovan. Exempeltexten står kvar som reserv för en kund vars
+                        kort inte har något att låna ut. */}
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Namn</span>
+                      <Input value={draft.contact_name} onChange={(e) => setField('contact_name', e.target.value)} placeholder={inheritedContactName || 'Kontaktperson'} />
+                    </label>
+                    <label className="grid gap-1 text-sm text-slate-600">
+                      <span className={crm.sectionTitle}>Telefon</span>
+                      <Input value={draft.contact_phone} onChange={(e) => setField('contact_phone', e.target.value)} placeholder={inheritedContactPhone || '070-123 45 67'} inputMode="tel" />
+                    </label>
                     <label className="grid gap-1 text-sm text-slate-600">
                       <span className={crm.sectionTitle}>E-post</span>
-                      <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder="namn@exempel.se" type="email" />
+                      <Input value={draft.contact_email} onChange={(e) => setField('contact_email', e.target.value)} placeholder={inheritedContactEmail || 'namn@exempel.se'} type="email" />
                     </label>
                   </div>
                 ) : (customerPhone || customerEmail || customerContact) ? (
@@ -1547,14 +1568,21 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     hela poängen: `getWorkOrderCustomerContact` låter slutkunden VINNA över kundens
                     kontakt i det installatörerna ser, så de två måste gå att skilja åt här — annars
                     rättar man den ena i tron att man rättar den andra. Fram till nu gick hen inte
-                    att se eller ändra alls på ordern, bara i offerten, som är låst. */}
+                    att se eller ändra alls på ordern, bara i offerten, som är låst.
+
+                    📌 EGEN INRAMAD RUTA, inte bara en avdelare. Avsnittet bär exakt samma tre
+                    etiketter som Kundkontakt ovanför — Namn, Telefon, E-post — i samma bredd och
+                    samma typografi, med en hårfin linje emellan. Två identiska tripplar trettio
+                    pixlar isär är precis den förväxling avsnittet finns för att förhindra. Rutan
+                    (samma recept som ROT-uppställningen) gör slutkunden till ett eget objekt i
+                    stället för fler fält i samma lista.
+
+                    Krysset står FÖRE sin etikett, inte vid kortets högerkant: kastat längst ut
+                    hörde det inte synligt ihop med texten, och det är den kontroll som avgör om
+                    avsnittet finns. */}
                 {editingOverview ? (
-                  <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
-                    <label className="flex cursor-pointer select-none items-center justify-between gap-3">
-                      <span className="grid min-w-0 gap-0.5">
-                        <span className={crm.sectionTitle}>Kontakt på plats</span>
-                        <span className="text-xs text-slate-500">Slutkund utanför kundkortet. Går före kundkontakten för installatören.</span>
-                      </span>
+                  <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
+                    <label className="flex cursor-pointer select-none items-start gap-2.5">
                       <input
                         type="checkbox"
                         checked={endContactOpen}
@@ -1568,8 +1596,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                             setDraft((d) => (d ? { ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' } : d));
                           }
                         }}
-                        className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                        className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
                       />
+                      <span className="grid min-w-0 gap-0.5">
+                        <span className={crm.sectionTitle}>Kontakt på plats</span>
+                        <span className="text-xs text-slate-500">Slutkund utanför kundkortet. Går före kundkontakten för installatören.</span>
+                      </span>
                     </label>
                     {endContactOpen ? (
                       <div className="grid gap-3">
@@ -1596,12 +1628,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     ) : null}
                   </div>
                 ) : hasOnSiteContact ? (
-                  // Avdelaren bara när något faktiskt står ovanför — samma regel som
-                  // Kundkontakt-blocket. Annars ritas en linje rakt under korttiteln.
-                  <div className={cn(
-                    'grid gap-1.5',
-                    (draft?.your_reference || draft?.label || customerPhone || customerEmail || customerContact) && 'border-t border-[#e0e8dc] pt-3',
-                  )}>
+                  // Samma inramade ruta som i redigeringsläget, och av samma skäl: slutkunden ska
+                  // läsas som ett eget objekt, inte som ytterligare ett par kontaktrader under
+                  // kundens. Rutan ersätter den villkorade avdelaren — en behållare behöver inte
+                  // veta vad som råkar stå ovanför den.
+                  <div className="grid gap-1.5 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3">
                     <span className={crm.sectionTitle}>Kontakt på plats</span>
                     <p className="m-0 text-sm font-semibold text-slate-900">{onSiteName || 'Namn saknas'}</p>
                     <div className="grid gap-1.5 text-sm">
