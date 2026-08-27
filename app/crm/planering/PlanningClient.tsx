@@ -182,6 +182,27 @@ export default function PlanningClient({
   const [salesFilter, setSalesFilter] = useState<string | null>(null);
   const [backlogFilter, setBacklogFilter] = useState<'unplanned' | 'planned' | 'all'>('unplanned');
   const [hiddenTrucks, setHiddenTrucks] = useState<Set<string>>(new Set());
+  // 🧨 EN SKRIVNING MOT EN BORTVALD BIL AVDÖLJER DEN. Bortvalet är en avdammning av vyn, inte ett
+  // förbud mot att planera på bilen — men ett jobb som hamnar på en dold bil filtreras bort ur
+  // `visibleSegments` och SYNS INTE. Förut avslöjade nästa omladdning det; nu när bortvalet sitter
+  // kvar gör den inte det, och planeraren som tror att placeringen misslyckades gör om den →
+  // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
+  // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
+  // kvar, och resultatet går alltid att se.
+  //
+  // 📐 Anropas från SKRIVVÄGARNA (`place`, `copyToTruck`, `createPlaceholder`) och först efter en
+  // lyckad skrivning — inte från knapparna. Alla tre bilväljarna går genom dem, och en nekad
+  // placering ska inte tyst ändra planerarens filter. Ligger här uppe för att alla tre ska kunna
+  // ha den i sin beroendelista; stabil identitet och funktionell uppdatering av samma skäl.
+  const revealTruck = useCallback((id: string) => {
+    setHiddenTrucks((prev) => {
+      if (!prev.has(id)) return prev; // oförändrad mängd → ingen onödig omrendering
+      const next = new Set(prev);
+      next.delete(id);
+      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
+      return next;
+    });
+  }, []);
   const [backlogDropActive, setBacklogDropActive] = useState(false);
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
   const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
@@ -489,6 +510,7 @@ export default function PlanningClient({
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte placera ordern');
+      revealTruck(truckId); // se noten vid revealTruck — annars hamnar jobbet utanför synfältet
       toast.success('Order placerad');
       // Append the created segment locally instead of refetching the whole board; bump the source
       // job's backlog count so its badge stays in sync.
@@ -499,7 +521,7 @@ export default function PlanningClient({
         refresh();
       }
     },
-    [refresh, toast],
+    [refresh, toast, revealTruck],
   );
 
   const move = useCallback(
@@ -811,36 +833,14 @@ export default function PlanningClient({
       const j = await r.json();
       setCopySeg(null);
       if (!j.ok) return toast.error(j.error || 'Kunde inte kopiera jobbet');
+      revealTruck(truckId); // se noten vid revealTruck — en kopia på en dold bil är osynlig
       toast.success('Jobbet kopierat');
       await refresh();
     },
-    [copySeg, refresh, toast],
+    [copySeg, refresh, toast, revealTruck],
   );
 
   // Create a placeholder card (booked slot before the real work order exists).
-  // 🧨 ATT VÄLJA EN DOLD BIL AVDÖLJER DEN. Bortvalet är en avdammning av vyn, inte ett förbud mot
-  // att planera på bilen — men ett jobb som läggs på en dold bil filtreras bort ur
-  // `visibleSegments` och SYNS INTE. Förut avslöjade nästa omladdning det; nu när bortvalet sitter
-  // kvar gör den inte det, och planeraren som tror att placeringen misslyckades gör om den →
-  // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
-  // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
-  // kvar, och resultatet går alltid att se.
-  //
-  // ⚠️ Gäller ALLA TRE bilväljarna — "Välj bil" (månadsplacering), "Kopiera till bil" och
-  // platshållarmodalen, vars förval är `trucks[0]` och alltså mycket väl kan vara en dold bil.
-  //
-  // Stabil identitet (`useCallback` utan beroenden) och funktionell uppdatering, eftersom
-  // `createPlaceholder` nedan har den i sin beroendelista.
-  const revealTruck = useCallback((id: string) => {
-    setHiddenTrucks((prev) => {
-      if (!prev.has(id)) return prev; // oförändrad mängd → ingen onödig omrendering
-      const next = new Set(prev);
-      next.delete(id);
-      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
-      return next;
-    });
-  }, []);
-
   const createPlaceholder = useCallback(
     async (input: PlaceholderInput) => {
       const r = await fetch(`${API}/placeholders`, {
@@ -1352,7 +1352,7 @@ export default function PlanningClient({
               {trucks.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => { revealTruck(t.id); pickTruck(t.id); }}
+                  onClick={() => pickTruck(t.id)}
                   className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
@@ -1379,7 +1379,7 @@ export default function PlanningClient({
               {trucks.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => { revealTruck(t.id); copyToTruck(t.id); }}
+                  onClick={() => copyToTruck(t.id)}
                   className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
