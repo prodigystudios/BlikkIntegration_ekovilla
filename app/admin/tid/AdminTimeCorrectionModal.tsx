@@ -2,6 +2,7 @@
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '../../../components/ui/Input';
+import Select from '@/components/ui/Select';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
 import { minutesToHours, parseBreakMinutes, workedMinutes } from '../../../lib/domains/time/hours';
@@ -38,7 +39,6 @@ const KINDS: Array<{ key: Kind; label: string }> = [
   { key: 'absence', label: 'Frånvaro' },
 ];
 
-const FIELD = 'w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
 const LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 
 function formatHours(minutes: number): string {
@@ -272,22 +272,22 @@ export default function AdminTimeCorrectionModal({
         ) : kind === 'internal' ? (
           <label className="w-auto grid gap-1">
             <span className={LABEL}>Internprojekt</span>
-            <select value={internalId} onChange={(e) => setInternalId(e.target.value)} className={FIELD}>
+            <Select value={internalId} onChange={(e) => setInternalId(e.target.value)} aria-label="Internprojekt">
               <option value="">{kindChanged ? 'Välj…' : 'Oförändrat'}</option>
               {reference.internal_project.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : (
           <label className="w-auto grid gap-1">
             <span className={LABEL}>Frånvaroorsak</span>
-            <select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} className={FIELD}>
+            <Select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} aria-label="Frånvaroorsak">
               <option value="">{kindChanged ? 'Välj…' : 'Oförändrad'}</option>
               {reference.absence_type.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
-            </select>
+            </Select>
           </label>
         )}
 
