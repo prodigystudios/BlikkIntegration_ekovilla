@@ -8,6 +8,9 @@ import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
 import { stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
+// Husets select — `crm.select` nollställer inte `appearance`, så macOS/Safari ritar sin egen
+// kontroll. `min-h-9`, inte `h-9`: se noten i komponenten om tailwind-merge-grupperna.
+import Select from '@/components/ui/Select';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
@@ -243,10 +246,10 @@ function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: st
       <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Bilens stående team. Tavlan visar det varje vecka tills veckan ändras.</p>
 
       <span className={LABEL}>Teamledare</span>
-      <select value={leaderId} onChange={(e) => setLeaderId(e.target.value)} className={crm.select} aria-label="Teamledare">
+      <Select value={leaderId} onChange={(e) => setLeaderId(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Teamledare">
         <option value="">Ingen teamledare</option>
         {people.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-      </select>
+      </Select>
 
       <span className={cn(LABEL, 'mt-3.5')}>Personal</span>
       <div className="flex flex-wrap gap-1.5">
@@ -262,18 +265,23 @@ function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: st
         ))}
       </div>
       {available.length > 0 && (
-        <select
-          value=""
-          onChange={(e) => {
-            const p = people.find((x) => x.id === e.target.value);
-            if (p) setMembers((prev) => [...prev, { member_id: p.id, member_name: p.full_name }]);
-          }}
-          className={cn(crm.select, 'mt-2')}
-          aria-label="Lägg till personal"
-        >
-          <option value="">+ Lägg till personal…</option>
-          {available.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-        </select>
+        // ⚠️ Marginalen på en OMSLUTANDE div, inte på fältet. `<Select>` positionerar sin chevron
+        // mot sin egen `relative`-behållare, så en `mt-*` på själva fältet hade flyttat rutan men
+        // låtit pilen ligga kvar.
+        <div className="mt-2">
+          <Select
+            value=""
+            onChange={(e) => {
+              const p = people.find((x) => x.id === e.target.value);
+              if (p) setMembers((prev) => [...prev, { member_id: p.id, member_name: p.full_name }]);
+            }}
+            className="min-h-9 py-0 text-[13px]"
+            aria-label="Lägg till personal"
+          >
+            <option value="">+ Lägg till personal…</option>
+            {available.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
+          </Select>
+        </div>
       )}
 
       <button onClick={save} disabled={saving} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>
@@ -384,10 +392,10 @@ function TruckPanel({
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Depåkoppling</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Vilken depå bilen drar säckar från (styr förbrukning).</p>
-              <select value={truck.depot_id ?? ''} onChange={(e) => patchLocal(truck.id, { depot_id: e.target.value || null })} className={crm.select} aria-label="Depå">
+              <Select value={truck.depot_id ?? ''} onChange={(e) => patchLocal(truck.id, { depot_id: e.target.value || null })} className="min-h-9 py-0 text-[13px]" aria-label="Depå">
                 <option value="">Ingen depå</option>
                 {activeDepots.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
+              </Select>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara depå</button>
             </div>
 
@@ -637,15 +645,15 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
             <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Saldot = levererat − förbrukat (förbrukning härleds från blåsta säckar).</p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
-                <select value={depotId} onChange={(e) => setDepotId(e.target.value)} className={crm.select} aria-label="Depå">
+                <Select value={depotId} onChange={(e) => setDepotId(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Depå">
                   {depots.length === 0 && <option value="">Ingen depå</option>}
                   {depots.map((d) => <option key={d.depot_id} value={d.depot_id}>{d.depot_name}</option>)}
-                </select>
+                </Select>
               </div>
               <div><span className={LABEL}>Material</span>
-                <select value={material} onChange={(e) => setMaterial(e.target.value)} className={crm.select} aria-label="Material">
+                <Select value={material} onChange={(e) => setMaterial(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Material">
                   {MATERIAL_SHORTS.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
+                </Select>
               </div>
               <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
               <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>

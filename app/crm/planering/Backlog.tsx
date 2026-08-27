@@ -5,6 +5,7 @@ import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
 import SearchField from './SearchField';
+import Select from '@/components/ui/Select';
 
 type BacklogFilter = 'unplanned' | 'planned' | 'all';
 
@@ -99,17 +100,21 @@ export default function Backlog({
           ariaLabel="Sök bland arbetsordrar att planera"
         />
         {salesOptions.length > 0 && (
-          <select
+          // Husets `<Select>`, inte `crm.select`: tokenet nollställer inte `appearance`, så Safari
+          // och macOS ritar sin egen kontroll — en systemgrå ruta mitt i sagepanelen, med annan
+          // höjd än sökfältet ovanför. Komponenten ritar egen chevron och ser likadan ut i alla
+          // webbläsare. `min-h-9` (inte `h-9`) för att matcha sökfältet — se noten i komponenten.
+          <Select
             value={salesFilter ?? ''}
             onChange={(e) => onSalesFilterChange(e.target.value || null)}
             aria-label="Filtrera backloggen på säljare"
-            className={cn(crm.select, 'text-[12.5px]')}
+            className="min-h-9 py-0 text-[12.5px]"
           >
             <option value="">Alla säljare</option>
             {salesOptions.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}
-          </select>
+          </Select>
         )}
       </div>
 

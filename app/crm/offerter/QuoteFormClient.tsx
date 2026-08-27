@@ -1218,7 +1218,7 @@ function LineItemRow({
         {rotEnabled && row.is_rot_work ? (
           <label className="inline-flex items-center gap-2 text-xs text-slate-500">
             Typ
-            <Select value={row.house_work_type} onChange={(e) => onChange({ house_work_type: e.target.value })} className="h-8 py-0 text-xs">
+            <Select value={row.house_work_type} onChange={(e) => onChange({ house_work_type: e.target.value })} className="min-h-8 py-0 text-xs">
               {ROT_HOUSE_WORK_TYPES.map((type) => (<option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>))}
             </Select>
           </label>
