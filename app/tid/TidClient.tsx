@@ -4,6 +4,7 @@ import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import PageShell from '@/components/ui/PageShell';
 import Badge from '@/components/ui/Badge';
 import Input from '@/components/ui/Input';
+import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
@@ -989,15 +990,15 @@ function CompensationSection({
               <div className="grid gap-2 sm:grid-cols-2">
                 <label className="grid gap-1">
                   <span className={LABEL}>Typ</span>
-                  <select
+                  <Select
                     value={kind}
                     onChange={(e) => setKind(e.target.value as CompensationKind)}
-                    className="w-full rounded-lg border border-solid border-slate-200 bg-white px-2.5 py-2 text-sm"
+                    aria-label="Typ av ersättning"
                   >
                     {COMPENSATION_KINDS.map((option) => (
                       <option key={option} value={option}>{COMPENSATION_LABELS[option]}</option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label className="grid gap-1">
                   <span className={LABEL}>Datum</span>
