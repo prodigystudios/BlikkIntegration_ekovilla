@@ -184,19 +184,34 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [tagsDraft, setTagsDraft] = React.useState((user.tags || []).join(', '));
 
-  async function saveChanges() {
+  // 🧨 `nextRole` finns för att rollväljaren sparar vid VAL, inte vid blur. Anropas den som
+  // `setRoleDraft(v); saveChanges()` läser closuren fortfarande FÖRRA `roleDraft` — rolländringen
+  // hade då aldrig hamnat i payloaden, och tyst: svaret är 200 och kortet ser uppdaterat ut tills
+  // sidan laddas om. Det valda värdet måste alltså skickas med.
+  async function saveChanges(nextRole: string = roleDraft) {
     setSaving(true);
     const tags = tagsDraft.split(',').map(s=>s.trim()).filter(Boolean);
     const payload: any = {};
     if (nameDraft !== user.full_name) payload.full_name = nameDraft;
     if (phoneDraft !== (user.phone || '')) payload.phone = phoneDraft;
-    if (roleDraft !== user.role) payload.role = roleDraft;
+    if (nextRole !== user.role) payload.role = nextRole;
     payload.tags = tags; // always send tags from this input
     const res = await fetch(`/api/admin/users/${user.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!res.ok) {
       try { const j = await res.json(); console.warn('saveChanges failed', j); } catch {}
+      // 🧨 Adoptera INTE ett värde servern nekade. `onChanged` skriver `user.role`, och nästa spar
+      // jämför `nextRole !== user.role` — hade vi adopterat här blev jämförelsen falsk och `role`
+      // utelämnades ur payloaden för all framtid. Rollen gick då inte att rätta från gränssnittet
+      // igen, tyst.
+      // 🧨 Utkastet måste dessutom BACKA till serverns värde. Låter vi väljaren stå kvar på den
+      // nekade rollen är omvalet av samma roll inte längre en ändring, och `SelectMenu` är tyst vid
+      // omval av det redan valda — det självklara omförsöket hade alltså inte skickat något alls.
+      // Att värdet hoppar tillbaka är samtidigt den enda återkoppling ytan ger att sparandet sprack.
+      setRoleDraft(user.role);
+      setSaving(false);
+      return;
     }
-    onChanged({ ...user, full_name: nameDraft || null, phone: phoneDraft || null, role: roleDraft, tags });
+    onChanged({ ...user, full_name: nameDraft || null, phone: phoneDraft || null, role: nextRole, tags });
     setEditingName(false);
     setSaving(false);
   }
@@ -244,7 +259,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
             />
             <button
               type="button"
-              onClick={saveChanges}
+              onClick={() => saveChanges()}
               disabled={saving}
               className={crm.formButton}
               style={{ backgroundColor: 'var(--ek-green)' }}
@@ -273,14 +288,19 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
         <Input
           value={phoneDraft}
           onChange={e=>setPhoneDraft(e.target.value)}
-          onBlur={saveChanges}
+          onBlur={() => saveChanges()}
           placeholder="070-123 45 67"
           className="min-h-9 min-w-0 px-2.5 py-2 text-[13px]"
         />
         </AdminField>
 
         <AdminField label="Roll">
-        <Select value={roleDraft} onChange={e=>setRoleDraft(e.target.value)} onBlur={saveChanges} className="min-h-9 px-2.5 py-2 text-[13px]">
+        {/* Sparar vid VAL, inte vid blur: <Select> är numera knapp + portal, och fokus flyttas IN i
+            listan när den öppnas — blur hade alltså sparat mitt i valet. Värdet skickas med, se
+            noten i saveChanges. */}
+        {/* `disabled={saving}` är inte kosmetik: sparandet ligger på VALET, så två snabba val hade
+            skickat två PATCH:ar samtidigt och den som råkade svara sist skrivit sin roll i listan. */}
+        <Select value={roleDraft} onChange={e=>{ setRoleDraft(e.target.value); saveChanges(e.target.value); }} disabled={saving} className="min-h-9 px-2.5 py-2 text-[13px]">
           {ROLES.map((r) => (
             <option key={r.id} value={r.id}>{r.label}</option>
           ))}
@@ -291,7 +311,7 @@ function UserCard({ user, onChanged, onDeleted }: { user: AdminUserRow; onChange
         <Input
           value={tagsDraft}
           onChange={e=>setTagsDraft(e.target.value)}
-          onBlur={saveChanges}
+          onBlur={() => saveChanges()}
           placeholder="t.ex. crew, trainee"
           className="min-h-9 min-w-0 px-2.5 py-2 text-[13px]"
         />

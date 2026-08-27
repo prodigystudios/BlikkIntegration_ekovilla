@@ -17,6 +17,9 @@ type SelectMenuProps = {
   /** Visas när inget värde matchar — motsvarar en tom förstarad i en <select>. */
   placeholder?: string;
   'aria-label'?: string;
+  /** Sätts på KNAPPEN, så ett `<label htmlFor>` utanför fortsätter para ihop sig. En knapp är ett
+   *  labelable element, så etikettklicket landar på den precis som på en `<select>`. */
+  id?: string;
   className?: string;
   disabled?: boolean;
   /** Bredd på listan. Följer knappen som standard. */
@@ -42,6 +45,14 @@ type SelectMenuProps = {
 // 📐 z-index 3000: CrmModal ligger på 2800 och måste passeras, notisen på 4000 och får inte skymmas.
 // Se z-index-noten i [project_crm_toast_redesign].
 //
+// ⚠️ KÄND BEGRÄNSNING, medvetet vald: portalen hamnar UTANFÖR `CrmModal`s `aria-modal="true"`, och
+// en skärmläsare beskär allt utanför den öppna dialogen — listan kan alltså bli osynlig för
+// hjälpmedel i modaler. Den självklara motfixen (portalera in i dialogen i stället för i `<body>`)
+// GÅR INTE: `.crm-sheet-in` animeras med `animation: … both`, så sluttillståndets `transform:
+// translateY(0)` ligger kvar för alltid — och en transformerad förfader gör `position: fixed`
+// relativ mot förfadern i stället för fönstret. Placeringen hade då spruckit permanent, inte bara
+// under animationen. Rätt lösning är `aria-owns`/inert-hantering, inte ett byte av portalmål.
+//
 // ⚠️ CSS `zoom` på en förfader spräcker `fixed`-placeringen: WebKit räknar `getBoundingClientRect`
 // utan zoom medan `position: fixed` är visuell, så listan hamnar fel. Planeringstavlan har en
 // `.planning-density`-zoom (`--planning-zoom`, i dag 1) och backloggens väljare står inuti den —
@@ -57,6 +68,7 @@ export default function SelectMenu({
   onChange,
   options,
   placeholder = 'Välj…',
+  id,
   className,
   menuClassName,
   disabled,
@@ -173,10 +185,15 @@ export default function SelectMenu({
     if (focusTrigger) triggerRef.current?.focus();
   }
 
+  // 🧨 Att välja om det REDAN valda får inte anropa onChange. En `<select>` skickar `change` bara
+  // vid en verklig ändring, och anropare litar på det: arbetsorderns kontaktväljare kör
+  // `resolveCrmContact` i sin onChange och skriver över telefon/e-post — så ett omval av samma
+  // kontakt hade tyst raderat en handredigerad uppgift. Kundkortets kundansvarig hade på samma sätt
+  // skickat en onödig PATCH. Stäng, men var tyst.
   function pick(index: number) {
     const opt = options[index];
     if (!opt || opt.disabled) return;
-    onChange(opt.value);
+    if (opt.value !== value) onChange(opt.value);
     close();
   }
 
@@ -207,7 +224,9 @@ export default function SelectMenu({
       const o = options[i];
       if (!o.disabled && o.label.toLocaleLowerCase('sv').startsWith(q)) {
         setActiveIndex(i);
-        if (!open) onChange(o.value);
+        // Stängd lista = typeahead ändrar värdet direkt, som en `<select>`. Samma tysthetsregel som
+        // i `pick`: landar den på det redan valda är det ingen ändring.
+        if (!open && o.value !== value) onChange(o.value);
         return;
       }
     }
@@ -226,6 +245,12 @@ export default function SelectMenu({
     switch (e.key) {
       case 'Escape':
         e.preventDefault();
+        // 🧨 stopPropagation, inte bara preventDefault. `CrmModal` stänger sig på ett
+        // `keydown`-lyssnare på `document`, och listan ligger i en portal under `<body>` — utan den
+        // här raden stängde Escape i dropdownen HELA modalen och kastade utkastet ("Ny uppgift",
+        // Rapportera). En `<select>`s OS-lista svalde tangenten åt oss; vår gör det inte.
+        // React vidarebefordrar anropet till det native-eventet, så det når aldrig `document`.
+        e.stopPropagation();
         close();
         break;
       case 'Tab':
@@ -269,6 +294,7 @@ export default function SelectMenu({
     <>
       <button
         ref={triggerRef}
+        id={id}
         type="button"
         role="combobox"
         aria-haspopup="listbox"
