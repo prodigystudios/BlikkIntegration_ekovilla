@@ -818,6 +818,29 @@ export default function PlanningClient({
   );
 
   // Create a placeholder card (booked slot before the real work order exists).
+  // 🧨 ATT VÄLJA EN DOLD BIL AVDÖLJER DEN. Bortvalet är en avdammning av vyn, inte ett förbud mot
+  // att planera på bilen — men ett jobb som läggs på en dold bil filtreras bort ur
+  // `visibleSegments` och SYNS INTE. Förut avslöjade nästa omladdning det; nu när bortvalet sitter
+  // kvar gör den inte det, och planeraren som tror att placeringen misslyckades gör om den →
+  // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
+  // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
+  // kvar, och resultatet går alltid att se.
+  //
+  // ⚠️ Gäller ALLA TRE bilväljarna — "Välj bil" (månadsplacering), "Kopiera till bil" och
+  // platshållarmodalen, vars förval är `trucks[0]` och alltså mycket väl kan vara en dold bil.
+  //
+  // Stabil identitet (`useCallback` utan beroenden) och funktionell uppdatering, eftersom
+  // `createPlaceholder` nedan har den i sin beroendelista.
+  const revealTruck = useCallback((id: string) => {
+    setHiddenTrucks((prev) => {
+      if (!prev.has(id)) return prev; // oförändrad mängd → ingen onödig omrendering
+      const next = new Set(prev);
+      next.delete(id);
+      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
+      return next;
+    });
+  }, []);
+
   const createPlaceholder = useCallback(
     async (input: PlaceholderInput) => {
       const r = await fetch(`${API}/placeholders`, {
@@ -828,10 +851,14 @@ export default function PlanningClient({
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte skapa platshållaren');
       setPlaceholderOpen(false);
+      // Platshållarmodalen är den TREDJE bilväljaren, och dess förval är `trucks[0]` — som mycket
+      // väl kan vara en bortvald bil. Samma regel som de andra två: en placering på en dold bil
+      // avdöljer den, annars skapas något som inte syns. Se noten vid `revealTruck`.
+      revealTruck(input.truck_id);
       toast.success('Platshållare skapad');
       await refresh();
     },
-    [refresh, toast],
+    [refresh, toast, revealTruck],
   );
 
   // ── filters ───────────────────────────────────────────────────────────────
@@ -883,6 +910,9 @@ export default function PlanningClient({
   // på skärmen. Den hade dessutom blinkat förbi vid varje laddning: inställningarna läses efter
   // mount, medan `trucks` kommer med första hämtningen.
   const hiddenTruckCount = useMemo(() => trucks.filter((t) => hiddenTrucks.has(t.id)).length, [trucks, hiddenTrucks]);
+  // Tavlan är tom för att filtret tömt den — inte för att inga bilar finns. `trucks.length > 0`
+  // är det som skiljer de två, och skillnaden avgör vilket besked som är sant.
+  const allTrucksHidden = trucks.length > 0 && visibleTrucks.length === 0;
 
   const toggleTruck = (id: string) =>
     setHiddenTrucks((prev) => {
@@ -908,15 +938,7 @@ export default function PlanningClient({
   // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
   // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
   // kvar, och resultatet går alltid att se.
-  const revealTruck = (id: string) => {
-    if (!hiddenTrucks.has(id)) return;
-    setHiddenTrucks((prev) => {
-      const next = new Set(prev);
-      next.delete(id);
-      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
-      return next;
-    });
-  };
+  // (`revealTruck` bor högre upp — `createPlaceholder` behöver den i sin beroendelista.)
 
   const goToday = () => (view === 'week' ? setWeekOffset(0) : setMonthOffset(0));
   const goPrev = () => (view === 'week' ? setWeekOffset((o) => o - 1) : setMonthOffset((o) => o - 1));
@@ -1205,6 +1227,23 @@ export default function PlanningClient({
             </div>
             <div className="mt-2.5 text-center text-[11px] text-slate-400">Laddar schema…</div>
           </div>
+        ) : allTrucksHidden ? (
+          // ⚠️ Beskedet bor HÄR, inte i vyerna. Filtret ägs av den här komponenten, och båda
+          // brädena är tomma av samma skäl: WeekBoard hade annars skrivit "Inga bilar upplagda än"
+          // (som skickar planeraren till administrationen för att lägga upp bilar som redan finns)
+          // och MonthGrid har ingen tomtext alls — en blank kalender utan förklaring. Sedan
+          // bortvalet sparas står bägge kvar efter en omladdning. Ett tomt läge måste säga VARFÖR.
+          <div className={cn(crm.card, 'grid justify-items-center gap-2 p-8')}>
+            <p className="m-0 text-sm text-slate-500">
+              Alla {hiddenTruckCount} bilar är bortvalda i filterraden, så det finns inget att visa.
+            </p>
+            <button
+              onClick={showAllTrucks}
+              className="rounded-full border border-[#e0e8dc] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+            >
+              Visa alla bilar
+            </button>
+          </div>
         ) : (
           <div ref={boardTopRef} className="grid scroll-mt-3 gap-3">
             {view === 'week' ? (
@@ -1223,8 +1262,6 @@ export default function PlanningClient({
                         weekDays={wd}
                         showWeekend={showWeekend}
                         trucks={visibleTrucks}
-                        hiddenTruckCount={hiddenTruckCount}
-                        onShowAllTrucks={showAllTrucks}
                         segments={visibleSegments}
                         todayISO={todayISO}
                         canWrite={canWrite}
