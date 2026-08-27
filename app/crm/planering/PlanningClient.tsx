@@ -889,7 +889,9 @@ export default function PlanningClient({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      writePref(PREF_KEYS.hiddenTrucks, JSON.stringify([...next]));
+      // Tom mängd → ta bort nyckeln i stället för att spara "[]". Samma regel som showAllTrucks och
+      // revealTruck, så "inget dolt" alltid ser likadant ut i lagret.
+      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
       return next;
     });
   // ⚠️ Nollställningen finns FÖR att valet numera sitter kvar. Förut räckte en omladdning för att
@@ -898,6 +900,22 @@ export default function PlanningClient({
   const showAllTrucks = () => {
     setHiddenTrucks(new Set());
     writePref(PREF_KEYS.hiddenTrucks, null);
+  };
+  // 🧨 ATT VÄLJA EN DOLD BIL AVDÖLJER DEN. Bortvalet är en avdammning av vyn, inte ett förbud mot
+  // att planera på bilen — men ett jobb som läggs på en dold bil filtreras bort ur
+  // `visibleSegments` och SYNS INTE. Förut avslöjade nästa omladdning det; nu när bortvalet sitter
+  // kvar gör den inte det, och planeraren som tror att placeringen misslyckades gör om den →
+  // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
+  // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
+  // kvar, och resultatet går alltid att se.
+  const revealTruck = (id: string) => {
+    if (!hiddenTrucks.has(id)) return;
+    setHiddenTrucks((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      writePref(PREF_KEYS.hiddenTrucks, next.size ? JSON.stringify([...next]) : null);
+      return next;
+    });
   };
 
   const goToday = () => (view === 'week' ? setWeekOffset(0) : setMonthOffset(0));
@@ -1205,6 +1223,8 @@ export default function PlanningClient({
                         weekDays={wd}
                         showWeekend={showWeekend}
                         trucks={visibleTrucks}
+                        hiddenTruckCount={hiddenTruckCount}
+                        onShowAllTrucks={showAllTrucks}
                         segments={visibleSegments}
                         todayISO={todayISO}
                         canWrite={canWrite}
@@ -1289,21 +1309,18 @@ export default function PlanningClient({
         <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
           <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-3 text-[13px] font-bold text-slate-900">Välj bil</h3>
-            {/* 🧨 BARA SYNLIGA BILAR. Placerar man ett jobb på en bortvald bil filtreras segmentet
-                bort ur `visibleSegments` och försvinner — och sedan bortvalet sitter kvar mellan
-                besöken kommer det aldrig tillbaka av sig självt. Planeraren tror att placeringen
-                misslyckades och gör om den: en dubbelbokning, precis det realtidslyssnaren finns
-                för att förhindra. Gäller kopieringsväljaren nedan av samma skäl. */}
+            {/* Alla bilar listas, även bortvalda — se `revealTruck`. En dold bil märks ut och
+                avdöljs av valet, så jobbet aldrig hamnar utanför synfältet. */}
             <div className="grid gap-1.5">
-              {visibleTrucks.length === 0 && <p className="text-[12px] text-slate-500">Alla bilar är dolda. Tryck “Visa alla” i filterraden först.</p>}
-              {visibleTrucks.map((t) => (
+              {trucks.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => pickTruck(t.id)}
+                  onClick={() => { revealTruck(t.id); pickTruck(t.id); }}
                   className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
                   {t.name}
+                  {hiddenTrucks.has(t.id) && <span className="ml-auto text-[10px] font-normal text-slate-400">dold – visas igen</span>}
                 </button>
               ))}
             </div>
@@ -1321,17 +1338,20 @@ export default function PlanningClient({
               Skapar en kopia av <strong>{copySeg.job?.ref ?? 'jobbet'}</strong> på vald bil ({copySeg.start_day === copySeg.end_day ? copySeg.start_day : `${copySeg.start_day}–${copySeg.end_day}`}).
             </p>
             <div className="grid gap-1.5">
-              {/* Se noten vid "Välj bil" — en kopia på en dold bil är en osynlig kopia. */}
-              {visibleTrucks.length === 0 && <p className="text-[12px] text-slate-500">Alla bilar är dolda. Tryck “Visa alla” i filterraden först.</p>}
-              {visibleTrucks.map((t) => (
+              {/* Se noten vid `revealTruck` — en kopia på en dold bil är en osynlig kopia. */}
+              {trucks.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => copyToTruck(t.id)}
+                  onClick={() => { revealTruck(t.id); copyToTruck(t.id); }}
                   className="flex items-center gap-2.5 rounded-xl border border-[#e0e8dc] bg-white px-3 py-2 text-left text-[13px] font-semibold text-slate-700 transition hover:border-emerald-400 hover:bg-emerald-50"
                 >
                   <span className="h-3 w-3 rounded-full" style={{ backgroundColor: t.color || '#94a3b8' }} />
                   {t.name}
-                  {t.id === copySeg.truck_id && <span className="ml-auto text-[10px] font-normal text-slate-400">nuvarande</span>}
+                  {t.id === copySeg.truck_id ? (
+                    <span className="ml-auto text-[10px] font-normal text-slate-400">nuvarande</span>
+                  ) : hiddenTrucks.has(t.id) ? (
+                    <span className="ml-auto text-[10px] font-normal text-slate-400">dold – visas igen</span>
+                  ) : null}
                 </button>
               ))}
             </div>

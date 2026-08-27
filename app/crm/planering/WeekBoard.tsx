@@ -19,6 +19,13 @@ type WeekBoardProps = {
   weekDays: WeekDay[];
   showWeekend: boolean;
   trucks: OpsTruck[];
+  /**
+   * Hur många bilar som är bortvalda i filterraden. `trucks` är redan filtrerad, så utan det här
+   * kan tomma listan inte skilja "inga bilar upplagda" från "alla bortvalda" — och sedan bortvalet
+   * sparas mellan besöken står det felaktiga beskedet kvar även efter en omladdning.
+   */
+  hiddenTruckCount: number;
+  onShowAllTrucks: () => void;
   segments: OpsSegment[];
   todayISO: string;
   canWrite: boolean;
@@ -69,7 +76,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 }
 
 export default function WeekBoard({
-  weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
+  weekDays, showWeekend, trucks, hiddenTruckCount, onShowAllTrucks, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
   dayNotes, onAddNote, onRemoveNote, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
@@ -201,8 +208,26 @@ export default function WeekBoard({
         </div>
 
         {/* Truck lanes */}
+        {/* ⚠️ Tomt av två helt olika skäl, och de får inte dela besked. "Inga bilar upplagda än"
+            över en tavla där planeraren själv valt bort varenda bil skickar hen till
+            administrationen för att lägga upp bilar som redan finns — och sedan bortvalet sparas
+            mellan besöken står det kvar efter en omladdning också. */}
         {trucks.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
+          hiddenTruckCount > 0 ? (
+            <div className="grid justify-items-center gap-2 py-8">
+              <p className="m-0 text-sm text-slate-400">
+                Alla bilar är bortvalda i filterraden{hiddenTruckCount > 1 ? ` (${hiddenTruckCount} st)` : ''}.
+              </p>
+              <button
+                onClick={onShowAllTrucks}
+                className="rounded-full border border-[#e0e8dc] bg-white px-3 py-1 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+              >
+                Visa alla bilar
+              </button>
+            </div>
+          ) : (
+            <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
+          )
         ) : (
           trucks.map((truck, ti) => {
             // Sorted, not just filtered: rendering in raw array order let an unrelated UPDATE
