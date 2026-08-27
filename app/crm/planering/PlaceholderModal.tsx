@@ -18,12 +18,20 @@ export type PlaceholderInput = {
 // Create a placeholder card — a booked truck/day slot before the real CRM work order exists.
 export default function PlaceholderModal({
   trucks,
+  hiddenTruckIds,
   jobTypes,
   defaultDay,
   onClose,
   onCreate,
 }: {
   trucks: OpsTruck[];
+  /**
+   * Bilar som är bortvalda i filterraden. Listan visar dem — man ska kunna boka på en bil man
+   * dammat av vyn från — men de MÅSTE märkas: förvalet är `trucks[0]`, som mycket väl är en dold
+   * bil, och en sparning avdöljer den (se `revealTruck` i PlanningClient). Utan märkningen ändras
+   * planerarens filter utan att något sagt det. De andra två bilväljarna märker på samma sätt.
+   */
+  hiddenTruckIds?: Set<string>;
   jobTypes: JobType[];
   defaultDay: string;
   onClose: () => void;
@@ -77,7 +85,9 @@ export default function PlaceholderModal({
             <span className="text-[11px] font-semibold text-slate-500">Bil</span>
             <select value={truckId} onChange={(e) => setTruckId(e.target.value)} className={field}>
               {trucks.map((t) => (
-                <option key={t.id} value={t.id}>{t.name}</option>
+                <option key={t.id} value={t.id}>
+                  {t.name}{hiddenTruckIds?.has(t.id) ? ' (dold – visas igen)' : ''}
+                </option>
               ))}
             </select>
           </label>

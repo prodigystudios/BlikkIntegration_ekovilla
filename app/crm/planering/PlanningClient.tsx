@@ -931,14 +931,8 @@ export default function PlanningClient({
     setHiddenTrucks(new Set());
     writePref(PREF_KEYS.hiddenTrucks, null);
   };
-  // 🧨 ATT VÄLJA EN DOLD BIL AVDÖLJER DEN. Bortvalet är en avdammning av vyn, inte ett förbud mot
-  // att planera på bilen — men ett jobb som läggs på en dold bil filtreras bort ur
-  // `visibleSegments` och SYNS INTE. Förut avslöjade nästa omladdning det; nu när bortvalet sitter
-  // kvar gör den inte det, och planeraren som tror att placeringen misslyckades gör om den →
-  // dubbelbokning. Att i stället utelämna dolda bilar ur väljarna var första försöket, men det
-  // gjorde en avdammning till en permanent spärr utan förklaring. Det här får båda: målet finns
-  // kvar, och resultatet går alltid att se.
-  // (`revealTruck` bor högre upp — `createPlaceholder` behöver den i sin beroendelista.)
+  // (`revealTruck` bor uppe vid bilfiltrets state — `createPlaceholder` behöver den i sin
+  // beroendelista. Noten om varför den finns står där, i ETT exemplar.)
 
   const goToday = () => (view === 'week' ? setWeekOffset(0) : setMonthOffset(0));
   const goPrev = () => (view === 'week' ? setWeekOffset((o) => o - 1) : setMonthOffset((o) => o - 1));
@@ -1227,25 +1221,30 @@ export default function PlanningClient({
             </div>
             <div className="mt-2.5 text-center text-[11px] text-slate-400">Laddar schema…</div>
           </div>
-        ) : allTrucksHidden ? (
-          // ⚠️ Beskedet bor HÄR, inte i vyerna. Filtret ägs av den här komponenten, och båda
-          // brädena är tomma av samma skäl: WeekBoard hade annars skrivit "Inga bilar upplagda än"
-          // (som skickar planeraren till administrationen för att lägga upp bilar som redan finns)
-          // och MonthGrid har ingen tomtext alls — en blank kalender utan förklaring. Sedan
-          // bortvalet sparas står bägge kvar efter en omladdning. Ett tomt läge måste säga VARFÖR.
-          <div className={cn(crm.card, 'grid justify-items-center gap-2 p-8')}>
-            <p className="m-0 text-sm text-slate-500">
-              Alla {hiddenTruckCount} bilar är bortvalda i filterraden, så det finns inget att visa.
-            </p>
-            <button
-              onClick={showAllTrucks}
-              className="rounded-full border border-[#e0e8dc] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
-            >
-              Visa alla bilar
-            </button>
-          </div>
         ) : (
           <div ref={boardTopRef} className="grid scroll-mt-3 gap-3">
+            {/* ⚠️ En BANDEROLL ovanför brädet — den får inte ersätta det.
+                Beskedet bor här och inte i vyerna: filtret ägs av den här komponenten och båda
+                brädena är tomma av samma skäl, så ett ställe kan inte glida isär. Men första
+                versionen renderade banderollen I STÄLLET FÖR brädet, och då försvann sådant som
+                inte har med bilar att göra: dagsanteckningarna (WeekBoard ritar noteringsraden
+                OVANFÖR sin bil-loop, MonthGrid ritar hela kalendern oavsett bilar) blev omöjliga
+                att läsa, lägga till och ta bort. Månadsvyn var alltså aldrig "blank" — den var en
+                fungerande kalender utan jobbkort. Ett tomt läge måste säga varför det är tomt,
+                inte ta med sig det som fortfarande fungerar. */}
+            {allTrucksHidden && (
+              <div className={cn(crm.card, 'flex flex-wrap items-center justify-between gap-3 px-4 py-3')}>
+                <p className="m-0 text-[13px] text-slate-600">
+                  Alla {hiddenTruckCount} bilar är bortvalda i filterraden, så inga jobb visas.
+                </p>
+                <button
+                  onClick={showAllTrucks}
+                  className="rounded-full border border-[#e0e8dc] bg-white px-3.5 py-1.5 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+                >
+                  Visa alla bilar
+                </button>
+              </div>
+            )}
             {view === 'week' ? (
               <div className="grid gap-4">
                 {weekMondays.map((m, i) => {
@@ -1262,6 +1261,7 @@ export default function PlanningClient({
                         weekDays={wd}
                         showWeekend={showWeekend}
                         trucks={visibleTrucks}
+                        allTrucksHidden={allTrucksHidden}
                         segments={visibleSegments}
                         todayISO={todayISO}
                         canWrite={canWrite}
@@ -1428,6 +1428,7 @@ export default function PlanningClient({
       {placeholderOpen && (
         <PlaceholderModal
           trucks={trucks}
+          hiddenTruckIds={hiddenTrucks}
           jobTypes={jobTypes}
           defaultDay={todayISO}
           onClose={() => setPlaceholderOpen(false)}
