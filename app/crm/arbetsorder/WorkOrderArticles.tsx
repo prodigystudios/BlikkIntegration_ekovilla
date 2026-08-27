@@ -376,6 +376,9 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedNameById.get(row.id), row.article_name);
+              // Har raden ett redigerbart namn? Villkoret är det SPARADE namnet, aldrig utkastets —
+              // se den långa noten vid fältet. Utbrutet hit eftersom radrubriken behöver samma svar.
+              const nameEditable = Boolean(savedNameById.get(row.id) || (!savedNameById.has(row.id) && row.article_name));
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
               // volym vars namn inte ger något material räknar noll säckar, och noll säckar SER UT
               // som ett svar ("inget material gick åt") fast det bara betyder att namnet inte gick
@@ -396,8 +399,16 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               return (
                 <div key={row.id} className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3">
                   <div className="flex items-start justify-between gap-2">
+                    {/* Rubriken skrev ut `row.article_name` — samma sträng som fältet "Benämning på
+                        ordern" tjugo pixlar längre ner redigerar, live och tecken för tecken. En
+                        rubrik som speglar sitt eget fält säger ingenting; fältet ÄR radens namn här.
+                        Kvar står artikelnumret, som är radens stabila identitet.
+                        Rader UTAN redigerbart namn (rena textrader) behåller rubriken — där finns
+                        inget fält som bär namnet. */}
                     <div className="min-w-0">
-                      <strong className="block truncate text-sm text-slate-900">{row.article_name || 'Namnlös rad'}</strong>
+                      {nameEditable ? null : (
+                        <strong className="block truncate text-sm text-slate-900">{row.article_name || 'Namnlös rad'}</strong>
+                      )}
                       {row.article_number ? <span className="text-xs text-slate-400">{row.article_number}</span> : null}
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
@@ -452,7 +463,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens
                       material, och materialet ger säckvikten. Tappas varumärkesordet blir
                       säckantalet NOLL — tyst. Därför de två raderna under fältet. */}
-                  {savedNameById.get(row.id) || (!savedNameById.has(row.id) && row.article_name) ? (
+                  {nameEditable ? (
                     <label className="grid gap-1">
                       <span className={crm.sectionTitle}>Benämning på ordern</span>
                       <Input
