@@ -8,9 +8,10 @@ import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
 import { stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
-// Husets select — `crm.select` nollställer inte `appearance`, så macOS/Safari ritar sin egen
-// kontroll. `min-h-9`, inte `h-9`: se noten i komponenten om tailwind-merge-grupperna.
-import Select from '@/components/ui/Select';
+// Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
+// operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
+// `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
+import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
@@ -246,10 +247,13 @@ function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: st
       <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Bilens stående team. Tavlan visar det varje vecka tills veckan ändras.</p>
 
       <span className={LABEL}>Teamledare</span>
-      <Select value={leaderId} onChange={(e) => setLeaderId(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Teamledare">
-        <option value="">Ingen teamledare</option>
-        {people.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-      </Select>
+      <SelectMenu
+        value={leaderId}
+        onChange={setLeaderId}
+        className="min-h-9 py-0 text-[13px]"
+        aria-label="Teamledare"
+        options={[{ value: '', label: 'Ingen teamledare' }, ...people.map((p) => ({ value: p.id, label: p.full_name || 'Namnlös' }))]}
+      />
 
       <span className={cn(LABEL, 'mt-3.5')}>Personal</span>
       <div className="flex flex-wrap gap-1.5">
@@ -265,22 +269,20 @@ function StandardCrewEditor({ truckId, initial, people, onSaved }: { truckId: st
         ))}
       </div>
       {available.length > 0 && (
-        // ⚠️ Marginalen på en OMSLUTANDE div, inte på fältet. `<Select>` positionerar sin chevron
-        // mot sin egen `relative`-behållare, så en `mt-*` på själva fältet hade flyttat rutan men
-        // låtit pilen ligga kvar.
+        // Värdet är alltid tomt — fältet är en ÅTGÄRD (lägg till), inte ett tillstånd. Därför
+        // står platshållaren kvar efter varje val.
         <div className="mt-2">
-          <Select
+          <SelectMenu
             value=""
-            onChange={(e) => {
-              const p = people.find((x) => x.id === e.target.value);
+            onChange={(v) => {
+              const p = people.find((x) => x.id === v);
               if (p) setMembers((prev) => [...prev, { member_id: p.id, member_name: p.full_name }]);
             }}
             className="min-h-9 py-0 text-[13px]"
             aria-label="Lägg till personal"
-          >
-            <option value="">+ Lägg till personal…</option>
-            {available.map((p) => <option key={p.id} value={p.id}>{p.full_name}</option>)}
-          </Select>
+            placeholder="+ Lägg till personal…"
+            options={available.map((p) => ({ value: p.id, label: p.full_name || 'Namnlös' }))}
+          />
         </div>
       )}
 
@@ -392,10 +394,13 @@ function TruckPanel({
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Depåkoppling</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Vilken depå bilen drar säckar från (styr förbrukning).</p>
-              <Select value={truck.depot_id ?? ''} onChange={(e) => patchLocal(truck.id, { depot_id: e.target.value || null })} className="min-h-9 py-0 text-[13px]" aria-label="Depå">
-                <option value="">Ingen depå</option>
-                {activeDepots.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </Select>
+              <SelectMenu
+                value={truck.depot_id ?? ''}
+                onChange={(v) => patchLocal(truck.id, { depot_id: v || null })}
+                className="min-h-9 py-0 text-[13px]"
+                aria-label="Depå"
+                options={[{ value: '', label: 'Ingen depå' }, ...activeDepots.map((d) => ({ value: d.id, label: d.name }))]}
+              />
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara depå</button>
             </div>
 
@@ -645,15 +650,23 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
             <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Saldot = levererat − förbrukat (förbrukning härleds från blåsta säckar).</p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
-                <Select value={depotId} onChange={(e) => setDepotId(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Depå">
-                  {depots.length === 0 && <option value="">Ingen depå</option>}
-                  {depots.map((d) => <option key={d.depot_id} value={d.depot_id}>{d.depot_name}</option>)}
-                </Select>
+                <SelectMenu
+                  value={depotId}
+                  onChange={setDepotId}
+                  className="min-h-9 py-0 text-[13px]"
+                  aria-label="Depå"
+                  placeholder="Ingen depå"
+                  options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+                />
               </div>
               <div><span className={LABEL}>Material</span>
-                <Select value={material} onChange={(e) => setMaterial(e.target.value)} className="min-h-9 py-0 text-[13px]" aria-label="Material">
-                  {MATERIAL_SHORTS.map((m) => <option key={m} value={m}>{m}</option>)}
-                </Select>
+                <SelectMenu
+                  value={material}
+                  onChange={setMaterial}
+                  className="min-h-9 py-0 text-[13px]"
+                  aria-label="Material"
+                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                />
               </div>
               <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
               <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
