@@ -5,6 +5,7 @@ import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
 import SearchField from './SearchField';
+import SelectMenu from '@/components/ui/SelectMenu';
 
 type BacklogFilter = 'unplanned' | 'planned' | 'all';
 
@@ -99,17 +100,18 @@ export default function Backlog({
           ariaLabel="Sök bland arbetsordrar att planera"
         />
         {salesOptions.length > 0 && (
-          <select
+          // `SelectMenu`, inte `crm.select` och inte heller `<Select>`: båda är i grunden en
+          // `<select>`, och LISTAN som fälls ut ur en sådan ritas av operativsystemet. På macOS är
+          // den grå och fyrkantig mitt i sagepanelen, och ingen CSS når den — `appearance: none`
+          // stylar bara den stängda rutan. `SelectMenu` ritar även listan.
+          // `min-h-9` (inte `h-9`) för att matcha sökfältet — se noten i Select.tsx.
+          <SelectMenu
             value={salesFilter ?? ''}
-            onChange={(e) => onSalesFilterChange(e.target.value || null)}
+            onChange={(v) => onSalesFilterChange(v || null)}
             aria-label="Filtrera backloggen på säljare"
-            className={cn(crm.select, 'text-[12.5px]')}
-          >
-            <option value="">Alla säljare</option>
-            {salesOptions.map((s) => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
+            className="min-h-9 py-0 text-[12.5px]"
+            options={[{ value: '', label: 'Alla säljare' }, ...salesOptions.map((s) => ({ value: s.id, label: s.name }))]}
+          />
         )}
       </div>
 

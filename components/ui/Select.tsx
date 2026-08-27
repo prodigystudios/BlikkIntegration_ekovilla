@@ -6,6 +6,19 @@ type SelectProps = React.SelectHTMLAttributes<HTMLSelectElement>;
 // Native <select> styling differs heavily across browsers (Safari renders its own
 // control chrome unless `appearance` is reset). We reset it and draw our own chevron
 // so the field looks identical in Chrome, Safari and Firefox and matches <Input>.
+//
+// ⚠️ DEN HÄR STYLAR BARA DEN STÄNGDA RUTAN. Listan som fälls ut ritas av operativsystemet och når
+// ingen CSS — på macOS är den grå och fyrkantig, helt utanför appens formspråk. Behöver även
+// listan se ut som vår, använd `components/ui/SelectMenu` (riktig listbox: knapp + egen lista,
+// tangentnavigering, typeahead, portal). SelectMenu är riktningen; den här finns kvar för de
+// ytor som ännu inte bytt.
+//
+// 🧨 EN LÄGRE VARIANT SKRIVS `min-h-*`, ALDRIG `h-*`. Basen sätter `min-h-11` (44 px, touchmål),
+// och `cn` är tailwind-merge: `h-8` hamnar i en ANNAN grupp än `min-h-11`, så båda överlever och
+// min-height vinner. Fältet blir 44 px och överstyrningen försvinner tyst — varken type-check
+// eller lint säger något. Två anropare hade den buggen (offertens och arbetsorderns
+// ROT-typväljare) och stod 44 px höga i en rad byggd för 32. `<Input>` har samma bas och samma
+// regel; alla dess anropare skriver redan `min-h-*`.
 const Select = React.forwardRef<HTMLSelectElement, SelectProps>(function Select({ className, children, ...props }, ref) {
   return (
     <div className="relative">

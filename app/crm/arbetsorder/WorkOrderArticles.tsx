@@ -576,7 +576,8 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           <Select
                             value={row.house_work_type || 'CONSTRUCTION'}
                             onChange={(e) => updateRow(row.id, { house_work_type: e.target.value })}
-                            className="h-8 py-0 text-xs"
+                            // min-h-8, inte h-8 — se noten i components/ui/Select.tsx.
+                            className="min-h-8 py-0 text-xs"
                           >
                             {ROT_HOUSE_WORK_TYPES.map((type) => (
                               <option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>

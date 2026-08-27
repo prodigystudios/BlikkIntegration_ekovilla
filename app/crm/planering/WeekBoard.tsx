@@ -19,6 +19,14 @@ type WeekBoardProps = {
   weekDays: WeekDay[];
   showWeekend: boolean;
   trucks: OpsTruck[];
+  /**
+   * Sant när `trucks` är tom BARA för att varje bil är bortvald i filterraden. `trucks` är redan
+   * filtrerad, så utan flaggan hade tomtexten nedan påstått att inga bilar är upplagda — och
+   * skickat planeraren till administrationen för att lägga upp bilar som redan finns.
+   * Förklaringen står i en banderoll ovanför brädet (PlanningClient äger filtret), så här ska
+   * lane-ytan bara tiga.
+   */
+  allTrucksHidden?: boolean;
   segments: OpsSegment[];
   todayISO: string;
   canWrite: boolean;
@@ -69,7 +77,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 }
 
 export default function WeekBoard({
-  weekDays, showWeekend, trucks, segments, todayISO, canWrite, placing, people, jobTypes,
+  weekDays, showWeekend, trucks, allTrucksHidden, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
   dayNotes, onAddNote, onRemoveNote, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
@@ -202,7 +210,7 @@ export default function WeekBoard({
 
         {/* Truck lanes */}
         {trucks.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
+          allTrucksHidden ? null : <p className="py-8 text-center text-sm text-slate-400">Inga bilar upplagda än.</p>
         ) : (
           trucks.map((truck, ti) => {
             // Sorted, not just filtered: rendering in raw array order let an unrelated UPDATE
