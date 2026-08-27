@@ -39,6 +39,40 @@ type DragData =
 
 const API = '/api/crm/planering';
 
+// ── Vy-inställningar som överlever ett besök ──────────────────────────────────
+//
+// Planeraren ställer in samma sak varje gång annars: vilka bilar som ska synas, vilken säljares
+// ordrar backloggen visar, vilken flik i backloggen. Alla fyra är RENA VYVAL — de filtrerar data
+// som redan är hämtad och rör varken `range` eller någon fråga. Det är avgörande: en sparad
+// inställning som påverkar ett INTERVALL vidgar det efter mount och får två hämtningar att
+// kapplöpa, vilket är precis buggen "Hela månaden" orsakade (se `prefsLoaded` nedan). Lägger du
+// till en inställning här som styr vad som HÄMTAS måste den gatas på samma sätt.
+const PREF_KEYS = {
+  showWeekend: 'crm-planning-show-weekend',
+  stackWeeks: 'crm-planning-stack-weeks',
+  hiddenTrucks: 'crm-planning-hidden-trucks',
+  salesFilter: 'crm-planning-sales-filter',
+  backlogFilter: 'crm-planning-backlog-filter',
+} as const;
+
+// ⚠️ `localStorage` KASTAR i privat läge och när kakor är blockerade — den är inte bara tom. Ett
+// blockerat lager ska betyda att standardvärdena står, aldrig att tavlan inte renderar.
+function readPref(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writePref(key: string, value: string | null) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, value);
+  } catch {
+    /* ignorera — inställningen gäller sessionen ut, den överlever bara inte */
+  }
+}
+
 // A ticket dispenser that lets a loader tell whether its response is still the one we want.
 //
 // Several board loads can be in flight at once — a realtime event lands mid-load, you step periods
@@ -285,35 +319,57 @@ export default function PlanningClient({
   // again for the month — and the two answers raced. Waiting one render costs nothing visible (the
   // skeleton is already up) and means only the correct range is ever asked for.
   useEffect(() => {
-    try {
-      setShowWeekend(localStorage.getItem('crm-planning-show-weekend') === '1');
-      setStackWeeks(localStorage.getItem('crm-planning-stack-weeks') === '1');
-    } catch {
-      /* ignore — a blocked localStorage just means the defaults stand */
+    setShowWeekend(readPref(PREF_KEYS.showWeekend) === '1');
+    setStackWeeks(readPref(PREF_KEYS.stackWeeks) === '1');
+
+    // Dolda bilar sparas som de DOLDA id:na, aldrig som de synliga. En bil som läggs till i
+    // administrationen efteråt syns då av sig själv; hade vi sparat de synliga hade den varit
+    // osynlig för alla som någon gång rört filtret, utan att någon förstod varför.
+    // Ett id för en borttagen bil matchar ingenting och är ofarligt.
+    const storedTrucks = readPref(PREF_KEYS.hiddenTrucks);
+    if (storedTrucks) {
+      try {
+        const parsed: unknown = JSON.parse(storedTrucks);
+        if (Array.isArray(parsed)) {
+          setHiddenTrucks(new Set(parsed.filter((v): v is string => typeof v === 'string')));
+        }
+      } catch {
+        /* trasigt värde: standardläget (inga dolda) är rätt svar */
+      }
     }
+
+    setSalesFilter(readPref(PREF_KEYS.salesFilter) || null);
+
+    // Validera mot de tillåtna värdena. Ett okänt värde skulle annars ge en backlogg där INGEN
+    // flik är markerad och listan filtrerar på något som inte går att välja bort.
+    const storedBacklog = readPref(PREF_KEYS.backlogFilter);
+    if (storedBacklog === 'unplanned' || storedBacklog === 'planned' || storedBacklog === 'all') {
+      setBacklogFilter(storedBacklog);
+    }
+
     setPrefsLoaded(true);
   }, []);
   const toggleWeekend = useCallback(() => {
     setShowWeekend((v) => {
       const next = !v;
-      try {
-        localStorage.setItem('crm-planning-show-weekend', next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
+      writePref(PREF_KEYS.showWeekend, next ? '1' : '0');
       return next;
     });
   }, []);
   const toggleStackWeeks = useCallback(() => {
     setStackWeeks((v) => {
       const next = !v;
-      try {
-        localStorage.setItem('crm-planning-stack-weeks', next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
+      writePref(PREF_KEYS.stackWeeks, next ? '1' : '0');
       return next;
     });
+  }, []);
+  const chooseSalesFilter = useCallback((id: string | null) => {
+    setSalesFilter(id);
+    writePref(PREF_KEYS.salesFilter, id);
+  }, []);
+  const chooseBacklogFilter = useCallback((next: 'unplanned' | 'planned' | 'all') => {
+    setBacklogFilter(next);
+    writePref(PREF_KEYS.backlogFilter, next);
   }, []);
 
   // Assignable crew (every named employee) — fetched once; a failure just leaves the picker empty.
@@ -780,10 +836,19 @@ export default function PlanningClient({
   const peopleById = useMemo(() => new Map(people.map((p) => [p.id, p.full_name])), [people]);
   const salesOptions = useMemo(() => {
     const ids = [...new Set(backlog.map((b) => b.assigned_to).filter((v): v is string => Boolean(v)))];
+    // 🧨 DEN AKTIVA SÄLJAREN MÅSTE ALLTID FINNAS SOM VAL. Listan härleds ur den backlogg som är
+    // laddad just nu, och sedan filtret sparas mellan besök är det fullt normalt att den sparade
+    // säljaren inte har någon order kvar att planera. Saknas värdet bland optionerna matchar
+    // `<select value>` ingenting, webbläsaren visar den FÖRSTA raden ("Alla säljare") — och
+    // backloggen står tom, filtrerad på en säljare rutan påstår att man inte valt. Samma fälla som
+    // arbetsorderns statusväljare redan bär en kommentar om.
+    // Bonusen: villkoret `salesOptions.length > 0` i Backlog kan annars dölja hela väljaren, så
+    // filtret hade inte ens gått att stänga av.
+    if (salesFilter && !ids.includes(salesFilter)) ids.push(salesFilter);
     return ids
       .map((id) => ({ id, name: peopleById.get(id) ?? 'Okänd säljare' }))
       .sort((a, b) => a.name.localeCompare(b.name, 'sv'));
-  }, [backlog, peopleById]);
+  }, [backlog, peopleById, salesFilter]);
 
   // Search + sales-filtered set, then split by whether the job is already placed (segment_count): the
   // backlog defaults to showing only unplanned jobs so it doesn't fill up with scheduled work.
@@ -813,8 +878,16 @@ export default function PlanningClient({
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
+      writePref(PREF_KEYS.hiddenTrucks, JSON.stringify([...next]));
       return next;
     });
+  // ⚠️ Nollställningen finns FÖR att valet numera sitter kvar. Förut räckte en omladdning för att
+  // få tillbaka alla bilar; nu gör den inte det, och en tavla där varje bil är bortvald är tom
+  // utan att se trasig ut. Knappen visas bara när något faktiskt är dolt.
+  const showAllTrucks = () => {
+    setHiddenTrucks(new Set());
+    writePref(PREF_KEYS.hiddenTrucks, null);
+  };
 
   const goToday = () => (view === 'week' ? setWeekOffset(0) : setMonthOffset(0));
   const goPrev = () => (view === 'week' ? setWeekOffset((o) => o - 1) : setMonthOffset((o) => o - 1));
@@ -984,6 +1057,16 @@ export default function PlanningClient({
               </button>
             );
           })}
+          {hiddenTrucks.size > 0 && (
+            <button
+              onClick={showAllTrucks}
+              title="Visa alla bilar igen"
+              className="inline-flex h-[30px] items-center rounded-full border border-[#e0e8dc] bg-white px-3 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
+            >
+              {/* "1 dolda" är fel svenska — samma numerusfel som listvyns "1 rader". */}
+              Visa alla ({hiddenTrucks.size} {hiddenTrucks.size === 1 ? 'dold' : 'dolda'})
+            </button>
+          )}
           <button
             onClick={() => setAdminOpen(true)}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
@@ -1060,13 +1143,13 @@ export default function PlanningClient({
           canWrite={canWrite}
           selectedId={selectedId}
           filter={backlogFilter}
-          onFilterChange={setBacklogFilter}
+          onFilterChange={chooseBacklogFilter}
           counts={backlogCounts}
           loadError={backlogError}
           search={backlogSearch}
           onSearchChange={setBacklogSearch}
           salesFilter={salesFilter}
-          onSalesFilterChange={setSalesFilter}
+          onSalesFilterChange={chooseSalesFilter}
           salesOptions={salesOptions}
           onSelect={onSelect}
           onDragStartItem={onBacklogDragStart}
