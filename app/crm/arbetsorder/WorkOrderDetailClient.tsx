@@ -592,6 +592,25 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   async function saveArticles(lineItems: ArticleLineItem[]): Promise<boolean> {
     if (!workOrder) return false;
+    // 🧨 RADERNAS ROT-VAL FÅR INTE SPARAS MOT ETT OSPARAT ROT-PÅSLAG.
+    //
+    // Radernas ROT-kontroller gatar på översiktens UTKAST (se `articleRotDetails`) så att man
+    // slipper en mellansparning — men artiklarna sparas mot en EGEN rutt. Kryssade man i
+    // "ROT-arbete" på raderna medan påslaget bara fanns i utkastet, sparade artiklarna och sedan
+    // avbröt översikten, låg flaggorna kvar på en order vars `rot_details.enabled` är false.
+    // Inert i stunden — både `computePricing` och pushen gatar på `enabled` — men de vaknar tyst
+    // den dag någon slår på ROT, och då kommer avdraget ur val ingen minns att ha gjort.
+    //
+    // Blockerat åt BÅDA hållen: ett osparat avslag DÖLJER kryssen i stället för att visa dem, så
+    // det som sparas är inte heller där det som syns.
+    const rotToggleUnsaved = draft != null
+      && workOrder.quote_type === 'private'
+      && !workOrder.fortnox_order_number
+      && draft.rot_enabled !== (workOrder.rot_details?.enabled === true);
+    if (editingOverview && rotToggleUnsaved) {
+      toast.error('Spara översikten först — ROT-påslaget är ändrat men inte sparat, och radernas ROT-val hör ihop med det.');
+      return false;
+    }
     setSavingArticles(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/line-items`, {
@@ -731,9 +750,16 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // ⚠️ Lånet är AVSIKTLIGT och får inte bli en kopia. Skrevs värdet in i snapshoten slutade det
   // följa kundkortet, och en rättad adress där hade inte längre nått ordern. Placeholdern säger
   // därför var värdet kommer ifrån utan att skriva någonting.
-  const inheritedContactName: string | null = cardContact?.contactName ?? cardFallback?.name ?? null;
-  const inheritedContactPhone: string | null = cardContact?.phone ?? cardFallback?.phone ?? null;
-  const inheritedContactEmail: string | null = cardContact?.email ?? cardFallback?.email ?? null;
+  //
+  // 🧨 `cardFallback`, ALDRIG `cardContact`. Uppslaget bakom `cardContact`
+  // (`getWorkOrderCustomerContact`) låter ORDERNS SNAPSHOT vinna över kortet — det är hela dess
+  // poäng. Läste placeholdern därifrån visade den, i det ögonblick man rensade ett förifyllt fält,
+  // exakt det värde man just raderade, och påstod att det kom från kundkortet. Sparade man sedan
+  // var det kortets värde — ett ANNAT — som faktiskt gällde. `cardFallback` löser kortet utan
+  // orderkontakt och svarar därför på den fråga placeholdern faktiskt ställer.
+  const inheritedContactName: string | null = cardFallback?.name || null;
+  const inheritedContactPhone: string | null = cardFallback?.phone || null;
+  const inheritedContactEmail: string | null = cardFallback?.email || null;
   const hasInheritedContact = Boolean(inheritedContactName || inheritedContactPhone || inheritedContactEmail);
   const onSiteName: string | null = snapshot.end_contact_name || null;
   const onSitePhone: string | null = snapshot.end_contact_phone || null;

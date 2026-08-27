@@ -376,9 +376,18 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedNameById.get(row.id), row.article_name);
-              // Har raden ett redigerbart namn? Villkoret är det SPARADE namnet, aldrig utkastets —
+              // Har raden ett redigerbart namn? Villkoret är det SPARADE namnet, ALDRIG utkastets —
               // se den långa noten vid fältet. Utbrutet hit eftersom radrubriken behöver samma svar.
-              const nameEditable = Boolean(savedNameById.get(row.id) || (!savedNameById.has(row.id) && row.article_name));
+              //
+              // 🧨 En nytillagd rad (finns inte i kartan) svarar alltid ja, utan att titta på
+              // utkastet. Villkorade den på `row.article_name` avmonterades inputen mitt i
+              // skrivandet av en backspace till tomt — samma självförstörande fält som noten vid
+              // fältet beskriver, bara på den gren som slapp igenom förra gången. Ofarligt: enda
+              // vägen att lägga till en rad är `addArticle`, som alltid sätter ett namn OCH ett
+              // artikelnummer, så en ny rad är aldrig den namnlösa textrad 409-risken gäller.
+              const nameEditable = savedNameById.has(row.id)
+                ? Boolean(savedNameById.get(row.id))
+                : true;
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
               // volym vars namn inte ger något material räknar noll säckar, och noll säckar SER UT
               // som ett svar ("inget material gick åt") fast det bara betyder att namnet inte gick
