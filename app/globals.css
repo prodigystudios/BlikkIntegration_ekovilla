@@ -150,7 +150,12 @@ input, select, textarea { font-size: 16px; }
    class specificity beats the element rule above, so force 16px on iOS with !important.
    Scoped to iOS via @supports so desktop/Android keep the compact 14px controls. */
 @supports (-webkit-touch-callout: none) {
-  input:not([type='checkbox']):not([type='radio']), select, textarea { font-size: 16px !important; }
+  /* 🧨 `button[role="combobox"]` = SelectMenus knapp. Ytorna var `<select>` fram till PR #142/#143
+     och träffades då av regeln; som knappar föll de ur den och stod kvar på 14 px bredvid 16 px
+     inmatningsfält i samma formulär. Syns tydligast på /tid, som är telefonytan. Raden återställer
+     alltså paritet, den inför inget nytt. (Zoomskälet gäller inte en knapp — den tar ingen text —
+     men storleksmatchningen gör det.) */
+  input:not([type='checkbox']):not([type='radio']), select, textarea, button[role='combobox'] { font-size: 16px !important; }
   /* Native <input type="date|time"> have a fixed intrinsic width on iOS/WebKit that ignores
      width/max-width/min-width — they overflow narrow containers so the page scrolls sideways.
      appearance:none drops the native sizing so width:100% applies; the picker still opens on

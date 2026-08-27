@@ -3,6 +3,8 @@ import React from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '@/components/ui/Input';
+import Select from '@/components/ui/Select';
+import Textarea from '@/components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { DEFAULT_BREAK_MINUTES, minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
@@ -59,7 +61,6 @@ const KINDS: Array<{ key: TimeEntryKind; label: string }> = [
 ];
 
 // Fältstil på ett ställe.
-const FIELD = 'w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900';
 
 /**
  * Etikett för ETT FÄLT — medvetet inte `crm.sectionTitle`.
@@ -317,12 +318,17 @@ export default function TimeEntryModal({
           <>
             <label className="grid gap-1">
               <span className={LABEL}>Frånvaroorsak</span>
-              <select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} className={FIELD}>
+              {/* aria-label MÅSTE ordagrant innehålla den synliga etiketten. `role="combobox"`
+                  förbjuder namn från innehåll, så namnet kommer från det omslutande `<label>` —
+                  men sätter vi ändå en aria-label vinner den, och avviker den från etiketten faller
+                  WCAG 2.5.3 (Label in Name): rösstyrning letar efter det man SER. Den står kvar som
+                  garanti för att fältet aldrig blir namnlöst, inte för att etiketten inte når fram. */}
+              <Select value={absenceId} onChange={(e) => setAbsenceId(e.target.value)} aria-label="Frånvaroorsak">
                 <option value="">Välj…</option>
                 {reference.absence_type.map((item) => (
                   <option key={item.id} value={item.id}>{item.name}</option>
                 ))}
-              </select>
+              </Select>
             </label>
             {/* Ingen summering här: talet man skriver ÄR summan. Att eka det i en egen ruta hade
                 sett ut som en uträkning utan att vara en. */}
@@ -381,12 +387,12 @@ export default function TimeEntryModal({
             ) : (
               <label className="grid gap-1">
                 <span className={LABEL}>Internprojekt</span>
-                <select value={internalId} onChange={(e) => setInternalId(e.target.value)} className={FIELD}>
+                <Select value={internalId} onChange={(e) => setInternalId(e.target.value)} aria-label="Internprojekt">
                   <option value="">Välj…</option>
                   {reference.internal_project.map((item) => (
                     <option key={item.id} value={item.id}>{item.name}</option>
                   ))}
-                </select>
+                </Select>
               </label>
             )}
 
@@ -444,22 +450,27 @@ export default function TimeEntryModal({
         {reference.time_code.length > 0 ? (
           <label className="grid gap-1">
             <span className={LABEL}>Tidkod (valfri)</span>
-            <select value={timeCodeId} onChange={(e) => setTimeCodeId(e.target.value)} className={FIELD}>
+            <Select value={timeCodeId} onChange={(e) => setTimeCodeId(e.target.value)} aria-label="Tidkod (valfri)">
               <option value="">—</option>
               {reference.time_code.map((item) => (
                 <option key={item.id} value={item.id}>{item.name}</option>
               ))}
-            </select>
+            </Select>
           </label>
         ) : null}
 
         <label className="grid gap-1">
           <span className={LABEL}>Anteckning{requiresNote ? ' (krävs)' : ''}</span>
-          <textarea
+          {/* `min-h-0` upphäver hus-basens `min-h-[120px]` — samma tailwind-merge-grupp, så den
+              vinner, och `rows={2}` får bestämma höjden. Rutan ska vara låg: modalen måste rymmas
+              på en telefonskärm. (Det är den lagliga varianten av överstyrningen — `h-*` hade
+              hamnat i en ANNAN grupp och min-height hade vunnit tyst.) Bytet från en handskriven
+              klass ger hover, grön fokusring och disabled-läge som fälten runt omkring. */}
+          <Textarea
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={2}
-            className={FIELD}
+            className="min-h-0"
             placeholder="Valfri information om dagen"
           />
         </label>
