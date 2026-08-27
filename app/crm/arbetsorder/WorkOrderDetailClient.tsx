@@ -11,7 +11,7 @@ import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderS
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
-import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import { contactRowByName, resolveCrmContact } from '@/lib/domains/crm/contacts';
 import {
   buildMeasurementLines,
   regenerateMeasurementBlock,
@@ -592,23 +592,30 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
 
   async function saveArticles(lineItems: ArticleLineItem[]): Promise<boolean> {
     if (!workOrder) return false;
-    // 🧨 RADERNAS ROT-VAL FÅR INTE SPARAS MOT ETT OSPARAT ROT-PÅSLAG.
+    // 🧨 RADERNAS ROT-VAL FÅR INTE SPARAS MOT EN ORDER SOM INTE HAR ROT PÅSLAGET.
     //
     // Radernas ROT-kontroller gatar på översiktens UTKAST (se `articleRotDetails`) så att man
     // slipper en mellansparning — men artiklarna sparas mot en EGEN rutt. Kryssade man i
-    // "ROT-arbete" på raderna medan påslaget bara fanns i utkastet, sparade artiklarna och sedan
-    // avbröt översikten, låg flaggorna kvar på en order vars `rot_details.enabled` är false.
-    // Inert i stunden — både `computePricing` och pushen gatar på `enabled` — men de vaknar tyst
-    // den dag någon slår på ROT, och då kommer avdraget ur val ingen minns att ha gjort.
+    // "ROT-arbete" medan påslaget bara fanns i utkastet, och påslaget sedan aldrig sparades, låg
+    // flaggorna kvar på en order vars `rot_details.enabled` är false. Inert i stunden — både
+    // `computePricing` och pushen gatar på `enabled` — men de vaknar tyst den dag någon slår på
+    // ROT, och då kommer avdraget ur val ingen minns att ha gjort.
     //
-    // Blockerat åt BÅDA hållen: ett osparat avslag DÖLJER kryssen i stället för att visa dem, så
-    // det som sparas är inte heller där det som syns.
-    const rotToggleUnsaved = draft != null
-      && workOrder.quote_type === 'private'
-      && !workOrder.fortnox_order_number
-      && draft.rot_enabled !== (workOrder.rot_details?.enabled === true);
-    if (editingOverview && rotToggleUnsaved) {
-      toast.error('Spara översikten först — ROT-påslaget är ändrat men inte sparat, och radernas ROT-val hör ihop med det.');
+    // ⚠️ VILLKORET FÅR INTE VARA `editingOverview`. Första versionen var det, och då räckte det att
+    // avbryta översikten FÖRST: artikelredigeraren behåller sina egna rader (dess resync-effekt är
+    // gatead på sitt eget `editing`, som fortfarande är sant), så flaggorna låg kvar och sparades
+    // ändå — genom spärren som fanns för att stoppa dem. Frågan är inte om något redigeras, utan om
+    // raderna bär ett ROT-val den SPARADE ordern saknar regim för.
+    const rotSavedOn = workOrder.quote_type === 'private' && workOrder.rot_details?.enabled === true;
+    const rotChoiceOnRow = (row: { is_rot_work?: boolean; labor_cost?: string | null }) =>
+      Boolean(row.is_rot_work) || parseDecimal(row.labor_cost, 0) > 0;
+    // Rader som REDAN bär ett val släpps igenom. En order där ROT en gång varit påslaget och sedan
+    // stängts av hade annars aldrig gått att spara igen — och de flaggorna är inget nytt påstående.
+    const savedRotChoice = new Map(
+      ((workOrder.line_items || []) as ArticleLineItem[]).map((row) => [row.id, rotChoiceOnRow(row)]),
+    );
+    if (!rotSavedOn && lineItems.some((row) => rotChoiceOnRow(row) && !savedRotChoice.get(row.id))) {
+      toast.error('ROT är inte påslaget på den sparade ordern. Slå på ROT i översikten och spara det först — då går radernas ROT-val att spara.');
       return false;
     }
     setSavingArticles(true);
@@ -751,15 +758,33 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // följa kundkortet, och en rättad adress där hade inte längre nått ordern. Placeholdern säger
   // därför var värdet kommer ifrån utan att skriva någonting.
   //
-  // 🧨 `cardFallback`, ALDRIG `cardContact`. Uppslaget bakom `cardContact`
-  // (`getWorkOrderCustomerContact`) låter ORDERNS SNAPSHOT vinna över kortet — det är hela dess
-  // poäng. Läste placeholdern därifrån visade den, i det ögonblick man rensade ett förifyllt fält,
-  // exakt det värde man just raderade, och påstod att det kom från kundkortet. Sparade man sedan
-  // var det kortets värde — ett ANNAT — som faktiskt gällde. `cardFallback` löser kortet utan
-  // orderkontakt och svarar därför på den fråga placeholdern faktiskt ställer.
-  const inheritedContactName: string | null = cardFallback?.name || null;
-  const inheritedContactPhone: string | null = cardFallback?.phone || null;
-  const inheritedContactEmail: string | null = cardFallback?.email || null;
+  // 🧨 INTE `cardContact`. Uppslaget bakom den (`getWorkOrderCustomerContact`) låter ORDERNS
+  // SNAPSHOT vinna över kortet — det är hela dess poäng. Läste placeholdern därifrån visade den, i
+  // det ögonblick man rensade ett förifyllt fält, exakt det värde man just raderade, och påstod att
+  // det kom från kundkortet. Sparade man sedan var det kortets värde — ett ANNAT — som gällde.
+  //
+  // 🧨 OCH INTE HELLER `cardFallback`, som löser mot kortets PRIMÄRA kontakt. Ordern ärver mot den
+  // kontakt namnet PEKAR UT (`contactRowByName`), så på en order som namnger Jonas hade
+  // placeholdern visat primärkontaktens adress under Jonas namn — exakt den hopblandning
+  // `resolveCrmContact` finns för att förhindra. Uppställningen nedan speglar serverns väg fält för
+  // fält, med snapshotens egna värden tomma: det är per definition läget när en placeholder syns.
+  const draftContactName = draft.contact_name.trim();
+  const contactCardSource = customerCard ? { ...customerCard, contacts: customerContacts } : null;
+  const draftNamedRow = contactCardSource ? contactRowByName(contactCardSource, draftContactName) : null;
+  const inheritedContactSource = contactCardSource
+    ? resolveCrmContact(
+        contactCardSource,
+        // ⚠️ Objektet byggs så fort ett NAMN finns, även när kortet inte känner igen det — precis
+        // som servern. Ett namngivet fält på en företagskund ärver då INTE bolagets adress
+        // (`borrowsCardEmail` gatar på namnet), och placeholdern måste säga samma sak.
+        draftContactName
+          ? { name: draftContactName, phone: draftNamedRow?.phone ?? null, email: draftNamedRow?.email ?? null }
+          : null,
+      )
+    : null;
+  const inheritedContactName: string | null = inheritedContactSource?.name || null;
+  const inheritedContactPhone: string | null = inheritedContactSource?.phone || null;
+  const inheritedContactEmail: string | null = inheritedContactSource?.email || null;
   const hasInheritedContact = Boolean(inheritedContactName || inheritedContactPhone || inheritedContactEmail);
   const onSiteName: string | null = snapshot.end_contact_name || null;
   const onSitePhone: string | null = snapshot.end_contact_phone || null;
