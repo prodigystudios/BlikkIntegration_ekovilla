@@ -739,6 +739,32 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
   // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
   const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
+  // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
+  //
+  // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
+  // "Varav arbetskostnad". Läste den bara `workOrder.rot_details` krävde ett påslag TVÅ sparningar
+  // innan raderna gick att flagga — slog man på ROT och gick direkt till artiklarna fanns kryssen
+  // inte, och inget sa varför. De två redigeringslägena är oberoende, så ordningen var inte ens
+  // given.
+  //
+  // Summeringen räknar på samma objekt, alltså förhandsvisas avdraget med exakt de tal sparningen
+  // kommer att skicka (uttrycken speglar `saveWorkOrder`). Samma regel som säcktalet redan följer:
+  // det som räknas medan man redigerar ska räknas på det man redigerar.
+  //
+  // ⚠️ `enabled` tas från utkastet BARA när reglaget går att ändra. Ligger ordern i Fortnox är
+  // regimen låst (TaxReductionType sätts vid create), utkastvärdet skickas aldrig med i PATCH:en,
+  // och då är det sparade värdet sanningen — annars hade raderna följt ett reglage vars ändring
+  // aldrig når fram.
+  const articleRotDetails = editingOverview && workOrder.quote_type === 'private'
+    ? {
+        ...rot,
+        enabled: rotToggleLocked ? rot.enabled === true : draft.rot_enabled,
+        property_designation: draft.rot_property_designation || null,
+        brf_org_number: draft.rot_brf_org_number || null,
+        rot_percent: draft.rot_percent.trim() ? parseDecimal(draft.rot_percent, 30) : null,
+        max_deduction: draft.rot_max_deduction.trim() ? parseDecimal(draft.rot_max_deduction, 50000) : null,
+      }
+    : workOrder.rot_details;
   // Reverse charge (omvänd skattskyldighet / byggmoms): a business order whose VAT is 0. Detected
   // from the computed VAT (robust even if the work order's vat_percent column drifted to 25 — the
   // pricing/Fortnox document are still 0), so the economy card reads "Omvänd skattskyldighet"
@@ -1131,35 +1157,19 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             <Card className="grid gap-4">
               <p className={crm.cardTitle}>Ekonomi</p>
 
-              <WorkOrderArticles
-                embedded
-                items={(workOrder.line_items || []) as ArticleLineItem[]}
-                currencyCode={workOrder.currency_code}
-                vatPercent={workOrder.vat_percent}
-                quoteType={workOrder.quote_type}
-                rotDetails={workOrder.rot_details}
-                reverseCharge={reverseCharge}
-                saving={savingArticles}
-                fortnoxConnected={fortnoxConnected}
-                // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
-                // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
-                // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
-                canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
-                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
-                // canEdit=false verkligen att ordern är färdigfakturerad.
-                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
-                // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
-                // färdigfakturerad order, där det inte finns något kvar att skriva av.
-                onSave={saveArticles}
-              />
-
               {/* ─── ROT-uppställning ───────────────────────────────────────
                   Redigerbar sedan arbetsordern äger ROT-uppgifterna (resolveOrderRotDetails).
                   Offerten är låst när ordern finns, och en fastighetsbeteckning som visar sig fel
                   gick fram till nu bara att rätta i Fortnox för hand.
 
                   Visas för PRIVATKUND i redigeringsläget även när ROT är av — annars går reglaget
-                  inte att nå. I läsläget bara när ROT faktiskt gäller. */}
+                  inte att nå. I läsläget bara när ROT faktiskt gäller.
+
+                  📌 FÖRE raderna, inte efter. Blocket låg tidigare under summeringen — alltså under
+                  raden "Avgår ROT" som det självt styr, och på en order med ett dussin rader i
+                  redigeringsläget drygt en och en halv skärm under sitt eget resultat. Läsordningen
+                  är nu den man faktiskt arbetar i: gäller ROT och för vilken fastighet → vilka rader
+                  är arbete → vad avdraget blir. */}
               {editingOverview && workOrder.quote_type === 'private' ? (
                 <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
                   {/* Rubriken hette "ROT-avdrag" och stod direkt ovanför reglaget som OCKSÅ heter
@@ -1253,6 +1263,30 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   </div>
                 </div>
               ) : null}
+
+              <WorkOrderArticles
+                embedded
+                items={(workOrder.line_items || []) as ArticleLineItem[]}
+                currencyCode={workOrder.currency_code}
+                vatPercent={workOrder.vat_percent}
+                quoteType={workOrder.quote_type}
+                // Utkastets ROT medan översikten redigeras — se articleRotDetails. Annars kunde
+                // raderna inte flaggas förrän påslaget sparats, utan att något sa det.
+                rotDetails={articleRotDetails}
+                reverseCharge={reverseCharge}
+                saving={savingArticles}
+                fortnoxConnected={fortnoxConnected}
+                // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
+                // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
+                // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
+                canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
+                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
+                // canEdit=false verkligen att ordern är färdigfakturerad.
+                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
+                // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
+                // färdigfakturerad order, där det inte finns något kvar att skriva av.
+                onSave={saveArticles}
+              />
 
               {fortnoxConnected ? (
                 <div className="grid gap-3 border-t border-[#e0e8dc] pt-4">
