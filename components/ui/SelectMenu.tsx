@@ -41,6 +41,12 @@ type SelectMenuProps = {
 //
 // 📐 z-index 3000: CrmModal ligger på 2800 och måste passeras, notisen på 4000 och får inte skymmas.
 // Se z-index-noten i [project_crm_toast_redesign].
+//
+// ⚠️ CSS `zoom` på en förfader spräcker `fixed`-placeringen: WebKit räknar `getBoundingClientRect`
+// utan zoom medan `position: fixed` är visuell, så listan hamnar fel. Planeringstavlan har en
+// `.planning-density`-zoom (`--planning-zoom`, i dag 1) och backloggens väljare står inuti den —
+// ofarligt så länge värdet är 1, men skruvas det måste placeringen räknas om mot zoomfaktorn.
+// Samma familj som resize-handtaget i WeekBoard, som därför använder `elementFromPoint`.
 
 const MENU_Z = 3000;
 const MENU_MARGIN = 6; // luft mellan knapp och lista
@@ -94,7 +100,11 @@ export default function SelectMenu({
     // Flippa bara när det är MÄRKBART bättre över — annars hoppar listan omkring vid små
     // storleksändringar medan den är öppen.
     const flipped = below < 160 && above > below;
-    const maxHeight = Math.max(120, Math.min(288, flipped ? above : below));
+    // 🧨 Taket får ALDRIG överstiga utrymmet på den valda sidan. Första versionen hade
+    // `Math.max(120, …)` som golv, vilket upphävde klampningen: i ett lågt fönster räknades en
+    // uppfälld lista till y = -26 och blev, eftersom den är `fixed`, omöjlig att nå. Hellre en
+    // kort scrollande lista än en som ligger utanför skärmen.
+    const maxHeight = Math.min(288, Math.max(flipped ? above : below, 0));
     setPos({
       left: Math.max(VIEWPORT_PAD, Math.min(r.left, window.innerWidth - r.width - VIEWPORT_PAD)),
       top: flipped ? r.top - MENU_MARGIN : r.bottom + MENU_MARGIN,
@@ -119,9 +129,19 @@ export default function SelectMenu({
 
   // Fokus in i listan när den öppnas, tillbaka till knappen när den stängs — annars tappar
   // tangentbordet sin plats i formuläret.
+  //
+  // 🧨 `pos` MÅSTE ligga i beroendelistan. Portalen renderas först när placeringen är uträknad, och
+  // den räknas ut i en layouteffekt EFTER renderingen där `open` slog om — så i renderingen då
+  // `open` blev sant finns listan inte i DOM:en och `listRef.current` är null. Med bara `[open]`
+  // körde effekten aldrig om, och tangentbordet var dött ända tills man stängde med musen och
+  // öppnade igen.
   React.useEffect(() => {
-    if (open) listRef.current?.focus();
-  }, [open]);
+    if (!open) return;
+    const el = listRef.current;
+    // Bara när fokus inte redan är i listan: `pos` räknas om vid varje scroll, och att stjäla
+    // tillbaka fokus då hade avbrutit den som just skrev.
+    if (el && !el.contains(document.activeElement)) el.focus();
+  }, [open, pos]);
 
   React.useEffect(() => {
     if (!open) return;
@@ -167,11 +187,23 @@ export default function SelectMenu({
     const t = typeahead.current;
     t.buffer = now - t.at > 700 ? key : t.buffer + key;
     t.at = now;
-    const q = t.buffer.toLocaleLowerCase('sv');
+    // 📐 SAMMA TECKEN UPPREPAT = STEGA, inte söka. Trycker man "a" två gånger snabbt menar man
+    // "nästa som börjar på a", inte "något som börjar på aa" — det är vad en riktig `<select>` gör
+    // (och vad ARIA-mönstret för listbox föreskriver). Utan regeln fastnade markören så fort man
+    // tryckte samma bokstav två gånger inom bufferttiden.
+    const repeated = t.buffer.length > 1 && [...t.buffer].every((c) => c === t.buffer[0]);
+    const q = (repeated ? t.buffer[0] : t.buffer).toLocaleLowerCase('sv');
     const from = activeIndex >= 0 ? activeIndex : 0;
-    // Sök framåt från nuvarande position och runt, så upprepade tryck stegar mellan träffar.
-    for (let n = 1; n <= options.length; n++) {
-      const i = (from + (t.buffer.length > 1 ? 0 : n)) % options.length;
+    // ⚠️ Startpunkten skiljer sig mellan de två fallen, och det är hela skillnaden mellan en
+    // fungerande typeahead och en som bara läser första tecknet:
+    //   • EN bokstav upprepad ska STEGA mellan träffar ("a", "a" → Anders, Anna) → börja på from+1.
+    //   • En VÄXANDE buffert ska förfina på plats ("an" → "ann") → börja på from, annars hoppar den
+    //     över den enda kandidat som fortfarande matchar.
+    // Första versionen låste `i` till `from` för fleteckensfallet, så "ann" aldrig kunde lämna
+    // "Anders" — i praktiken enteckens-typeahead.
+    const start = t.buffer.length > 1 && !repeated ? from : from + 1;
+    for (let n = 0; n < options.length; n++) {
+      const i = (start + n) % options.length;
       const o = options[i];
       if (!o.disabled && o.label.toLocaleLowerCase('sv').startsWith(q)) {
         setActiveIndex(i);
@@ -197,9 +229,11 @@ export default function SelectMenu({
         close();
         break;
       case 'Tab':
-        // Låt fokus lämna som vanligt, men stäng listan — en öppen meny bakom nästa fält
-        // är kvarglömd UI.
-        close(false);
+        // Stäng och lämna tillbaka fokus till KNAPPEN — utan preventDefault, så webbläsarens
+        // egen tabbning fortsätter därifrån till nästa fält.
+        // 🧨 `close(false)` var fel: portalen avmonteras, och eftersom fokus låg i den hamnade det
+        // på <body>. Nästa Tab började då om från sidans topp.
+        close(true);
         break;
       case 'ArrowDown': {
         e.preventDefault();

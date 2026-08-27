@@ -1235,7 +1235,7 @@ export default function PlanningClient({
             {allTrucksHidden && (
               <div className={cn(crm.card, 'flex flex-wrap items-center justify-between gap-3 px-4 py-3')}>
                 <p className="m-0 text-[13px] text-slate-600">
-                  Alla {hiddenTruckCount} bilar är bortvalda i filterraden, så inga jobb visas.
+                  {hiddenTruckCount === 1 ? 'Bilen är bortvald' : `Alla ${hiddenTruckCount} bilar är bortvalda`} i filterraden, så inga jobb visas.
                 </p>
                 <button
                   onClick={showAllTrucks}
