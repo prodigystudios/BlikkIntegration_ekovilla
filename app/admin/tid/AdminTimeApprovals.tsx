@@ -3,6 +3,7 @@ import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
 import AdminTimeCorrectionModal, { type CorrectionReference } from './AdminTimeCorrectionModal';
 import Input from '../../../components/ui/Input';
+import Select from '@/components/ui/Select';
 import { crm } from '../../crm/lib/crmTokens';
 import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
 import { cn } from '../../../lib/shared/cn';
@@ -506,15 +507,25 @@ export default function AdminTimeApprovals() {
         <div className="flex flex-wrap items-center gap-2">
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <span className={LABEL}>Sortera</span>
-            <select
+            {/* 🧨 `min-w-*` är inte kosmetik. En `<select>` bredder sig efter sitt LÄNGSTA alternativ
+                och står därför stilla; vår knapp visar bara det VALDA, så utan spärren krympte
+                kontrollen från "Timmar, lägst först" till "Namn" och hela verktygsraden till höger
+                hoppade i sidled när man bytte sortering. Måttet är satt efter det LÄNGSTA
+                alternativet ("Timmar, lägst först") vid 16 px — den storlek iOS tvingar fram via
+                `button[role='combobox']` — plus padding, mellanrum och chevron. Räknat på 14 px
+                hade det kapats på telefon. Ändras alternativen: kontrollera måttet.
+                📐 Höjden skrivs `min-h-0`, ALDRIG `h-*`: basen sätter `min-h-11` och `h-*` hamnar i
+                en annan tailwind-merge-grupp, så båda hade överlevt och 44 px vunnit tyst. */}
+            <Select
               value={sort}
               onChange={(e) => setSort(e.target.value as Sort)}
-              className="rounded-lg border border-[#dbe4d6] bg-white px-2.5 py-1.5 text-sm"
+              aria-label="Sortera"
+              className="min-h-0 min-w-[210px] px-2.5 py-1.5"
             >
               <option value="name">Namn</option>
               <option value="hours_asc">Timmar, lägst först</option>
               <option value="hours_desc">Timmar, högst först</option>
-            </select>
+            </Select>
           </label>
 
           {/* ⚠️ Bara när periodens data faktiskt är hämtad. `people` töms inte vid månadsbyte, så
