@@ -511,6 +511,14 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                     </label>
                   </div>
 
+                  {/* 🧨 `w-auto` PÅ VARJE ETIKETT HÄR — utan den staplar raden vertikalt.
+                      `app/globals.css` sätter `:where(label) { width: 100% }` så att ett fält kan
+                      fylla sin etikett. Selektorn har noll specificitet, men ingen klass sätter
+                      bredd på de här inline-etiketterna, alltså vinner 100 % ändå över `auto`.
+                      Varje etikett fyllde då sin rad, och `flex-wrap`-föräldern krympte till
+                      max-content (~239 px) i stället för att lägga dem sida vid sida. En klass
+                      slår `:where()`, så `w-auto` räcker. Samma felfamilj som knapparnas
+                      preflight-krock — kolla alltid om ett element-selektor rör samma property. */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-3">
                       {/* Bara antals-/meterrader. Ytorna är själva jobbet och står alltid i
@@ -518,7 +526,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           artiklarna och översikten har skilda spar-cykler här. */}
                       {(row.pricing_mode ?? 'm3') === 'item' ? (
                         <label
-                          className="flex items-center gap-2 text-xs text-slate-600"
+                          className="flex w-auto items-center gap-2 text-xs text-slate-600"
                           title="Tas med som eget moment i arbetsbeskrivningen. Hämta om måtten för att uppdatera texten."
                         >
                           <input
@@ -531,7 +539,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                         </label>
                       ) : null}
                       {rotEnabled ? (
-                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                           <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
                           ROT-arbete
                         </label>
@@ -543,7 +551,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                           ⚠️ Låst av validateLineItemEdit när raden gått ut på faktura — typen är
                           ROT-identiteten, och den får inte skilja sig från vad fakturan sa. */}
                       {rotEnabled && row.is_rot_work ? (
-                        <label className="flex items-center gap-2 text-xs text-slate-600">
+                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                           Typ
                           <Select
                             value={row.house_work_type || 'CONSTRUCTION'}
@@ -559,7 +567,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
                           till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
                           förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
-                      <label className="flex items-center gap-2 text-xs text-slate-600">
+                      <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
                         <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-4 w-4 accent-slate-500" />
                         Avskriven (utförs ej)
                       </label>

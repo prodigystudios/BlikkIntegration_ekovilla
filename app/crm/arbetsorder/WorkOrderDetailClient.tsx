@@ -1162,7 +1162,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   inte att nå. I läsläget bara när ROT faktiskt gäller. */}
               {editingOverview && workOrder.quote_type === 'private' ? (
                 <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
-                  <p className={crm.sectionTitle}>ROT-avdrag</p>
+                  {/* Rubriken hette "ROT-avdrag" och stod direkt ovanför reglaget som OCKSÅ heter
+                      "ROT-avdrag" — samma ord två gånger, stackade. Kortrubrik och fältetikett får
+                      inte vara samma sträng. "ROT-uppställning" är dessutom vad läsläget kallar
+                      samma ruta, så de två lägena talar nu samma språk. */}
+                  <p className={crm.sectionTitle}>ROT-uppställning</p>
 
                   {/* 🧨 REGLAGET ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. Dokumentets ROT-läge
                       (TaxReductionType) sätts när ordern skapas och går inte att ändra; ett
@@ -1235,11 +1239,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               ) : rot.enabled ? (
                 <div className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] p-3.5">
                   <p className={crm.sectionTitle}>ROT-uppställning</p>
-                  <div className="grid gap-x-6 sm:grid-cols-2">
+                  {/* EN spalt med avdelare, inte två utan. `StatField` sätter etiketten vänster och
+                      värdet höger, så i två spalter slutade vänsterspaltens VÄRDE en decimeter från
+                      högerspaltens ETIKETT — "be 3;10   Skattereduktion" lästes som en mening.
+                      Samma lösning som Snabböversikten: behållaren äger avdelarna.
+                      ⚠️ `#e0e8dc` och inte Snabböversiktens ljusare `#e8eee4` — rutan här ligger på
+                      `#f1f5ee`, där den ljusare inte syns alls. */}
+                  <div className="grid divide-y divide-[#e0e8dc]">
                     {rot.property_designation ? <StatField label="Fastighetsbeteckning" value={rot.property_designation} /> : null}
+                    {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
                     {rot.rot_percent != null ? <StatField label="Skattereduktion" value={`${rot.rot_percent}%`} /> : null}
                     {rot.max_deduction != null ? <StatField label="Max avdrag" value={formatCurrency(rot.max_deduction, workOrder.currency_code)} /> : null}
-                    {rot.brf_org_number ? <StatField label="BRF org.nr" value={rot.brf_org_number} /> : null}
                   </div>
                 </div>
               ) : null}
