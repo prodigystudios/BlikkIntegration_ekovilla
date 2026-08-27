@@ -42,11 +42,17 @@ const API = '/api/crm/planering';
 // ── Vy-inställningar som överlever ett besök ──────────────────────────────────
 //
 // Planeraren ställer in samma sak varje gång annars: vilka bilar som ska synas, vilken säljares
-// ordrar backloggen visar, vilken flik i backloggen. Alla fyra är RENA VYVAL — de filtrerar data
-// som redan är hämtad och rör varken `range` eller någon fråga. Det är avgörande: en sparad
-// inställning som påverkar ett INTERVALL vidgar det efter mount och får två hämtningar att
-// kapplöpa, vilket är precis buggen "Hela månaden" orsakade (se `prefsLoaded` nedan). Lägger du
-// till en inställning här som styr vad som HÄMTAS måste den gatas på samma sätt.
+// ordrar backloggen visar, vilken flik i backloggen.
+//
+// 🧨 NYCKLARNA HÄR ÄR AV TVÅ OLIKA SLAG, och skillnaden är hela poängen med `prefsLoaded`:
+//
+//   • `hiddenTrucks`, `salesFilter`, `backlogFilter`, `showWeekend` är RENA VYVAL — de filtrerar
+//     eller döljer data som redan är hämtad och rör varken `range` eller någon fråga.
+//   • `stackWeeks` ("Hela månaden") STYR INTERVALLET. Det är den som gav buggen: den vidgar
+//     `range` efter mount, så tavlan hämtade två gånger och svaren kapplöpte (PR #135).
+//
+// `prefsLoaded` finns för den andra sorten och FÅR INTE tas bort så länge någon nyckel här styr
+// vad som hämtas. Lägger du till en sådan nyckel gäller samma grind.
 const PREF_KEYS = {
   showWeekend: 'crm-planning-show-weekend',
   stackWeeks: 'crm-planning-stack-weeks',
@@ -872,6 +878,11 @@ export default function PlanningClient({
     [segments, hiddenTrucks, matchBoard],
   );
   const visibleTrucks = useMemo(() => trucks.filter((t) => !hiddenTrucks.has(t.id)), [trucks, hiddenTrucks]);
+  // ⚠️ Räknat på BILARNA, inte på `hiddenTrucks.size`. Mängden bär sparade id:n, och ett id för en
+  // borttagen bil hade då hållit "Visa alla" uppe för alltid med ett tal som inte motsvarar något
+  // på skärmen. Den hade dessutom blinkat förbi vid varje laddning: inställningarna läses efter
+  // mount, medan `trucks` kommer med första hämtningen.
+  const hiddenTruckCount = useMemo(() => trucks.filter((t) => hiddenTrucks.has(t.id)).length, [trucks, hiddenTrucks]);
 
   const toggleTruck = (id: string) =>
     setHiddenTrucks((prev) => {
@@ -1057,14 +1068,14 @@ export default function PlanningClient({
               </button>
             );
           })}
-          {hiddenTrucks.size > 0 && (
+          {hiddenTruckCount > 0 && (
             <button
               onClick={showAllTrucks}
               title="Visa alla bilar igen"
               className="inline-flex h-[30px] items-center rounded-full border border-[#e0e8dc] bg-white px-3 text-[12px] font-semibold text-emerald-700 transition hover:border-emerald-400 hover:bg-emerald-50"
             >
               {/* "1 dolda" är fel svenska — samma numerusfel som listvyns "1 rader". */}
-              Visa alla ({hiddenTrucks.size} {hiddenTrucks.size === 1 ? 'dold' : 'dolda'})
+              Visa alla ({hiddenTruckCount} {hiddenTruckCount === 1 ? 'dold' : 'dolda'})
             </button>
           )}
           <button
@@ -1278,8 +1289,14 @@ export default function PlanningClient({
         <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4" onClick={() => setTruckPicker(null)}>
           <div className="w-full max-w-xs rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 shadow-xl" onClick={(e) => e.stopPropagation()}>
             <h3 className="mb-3 text-[13px] font-bold text-slate-900">Välj bil</h3>
+            {/* 🧨 BARA SYNLIGA BILAR. Placerar man ett jobb på en bortvald bil filtreras segmentet
+                bort ur `visibleSegments` och försvinner — och sedan bortvalet sitter kvar mellan
+                besöken kommer det aldrig tillbaka av sig självt. Planeraren tror att placeringen
+                misslyckades och gör om den: en dubbelbokning, precis det realtidslyssnaren finns
+                för att förhindra. Gäller kopieringsväljaren nedan av samma skäl. */}
             <div className="grid gap-1.5">
-              {trucks.map((t) => (
+              {visibleTrucks.length === 0 && <p className="text-[12px] text-slate-500">Alla bilar är dolda. Tryck “Visa alla” i filterraden först.</p>}
+              {visibleTrucks.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => pickTruck(t.id)}
@@ -1304,7 +1321,9 @@ export default function PlanningClient({
               Skapar en kopia av <strong>{copySeg.job?.ref ?? 'jobbet'}</strong> på vald bil ({copySeg.start_day === copySeg.end_day ? copySeg.start_day : `${copySeg.start_day}–${copySeg.end_day}`}).
             </p>
             <div className="grid gap-1.5">
-              {trucks.map((t) => (
+              {/* Se noten vid "Välj bil" — en kopia på en dold bil är en osynlig kopia. */}
+              {visibleTrucks.length === 0 && <p className="text-[12px] text-slate-500">Alla bilar är dolda. Tryck “Visa alla” i filterraden först.</p>}
+              {visibleTrucks.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => copyToTruck(t.id)}
