@@ -108,6 +108,44 @@ export function sumSacksByWorkOrder(rows: SackLedgerRow[]): Map<string, number> 
   return map;
 }
 
+/** Summan OCH varifrån den kommer, per arbetsorder. */
+export type SackTotal = {
+  sacks: number;
+  /**
+   * Jobbet har minst en final-rad, alltså är summan egenkontrollens och inte delrapporternas.
+   *
+   * ⚠️ `false` betyder "vi vet inte", INTE "egenkontroll saknas". En egenkontroll vars etapprader
+   * saknar säckantal skriver inga final-rader alls, och skrivningen till huvudboken kan misslyckas
+   * medan PDF:en ändå arkiveras och kommenteras på ordern. Rita därför bara ut det positiva
+   * märket — ett "EK saknas" byggt på den här flaggan hade ibland ljugit.
+   */
+  hasFinal: boolean;
+};
+
+/**
+ * Som sumSacksByWorkOrder, men bär också om summan är egenkontrollens.
+ *
+ * Finns för planeringstavlan, där skillnaden ÄNDRAR VAD SIFFRAN BETYDER: utan egenkontroll läses
+ * "kvar 36 / 564" som trettiosex säckar kvar att blåsa, med egenkontroll som ett avräknat jobb som
+ * gick åt trettiosex mindre än planerat. Samma tal, motsatt innebörd.
+ *
+ * Delar rader med sumSacksByWorkOrder med flit — en andra fråga mot ops_segment_reports bara för
+ * flaggan hade varit en extra rundtur, och två frågor kan dessutom se olika tillstånd.
+ */
+export function sackTotalsByWorkOrder(rows: SackLedgerRow[]): Map<string, SackTotal> {
+  const sums = sumSacksByWorkOrder(rows);
+  const finals = new Set<string>();
+  for (const row of rows) {
+    if (sackReportKind(row) === 'final') finals.add(row.work_order_id);
+  }
+
+  const map = new Map<string, SackTotal>();
+  for (const [workOrderId, sacks] of sums) {
+    map.set(workOrderId, { sacks, hasFinal: finals.has(workOrderId) });
+  }
+  return map;
+}
+
 // ── Segmentupplösning ────────────────────────────────────────────────────────
 
 export type ResolvableSegment = {

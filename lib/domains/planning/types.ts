@@ -65,6 +65,14 @@ export type OpsSegment = {
   job: JobDisplay | null;
   // Total sacks blown for this job across all its segments' reports (per-day sack reporting).
   sacks_reported: number;
+  // Whether that total comes from the egenkontroll (a `final` row) rather than from partial
+  // day reports. Changes what the number MEANS on the card: without it "kvar 36 / 564" reads as
+  // thirty-six sacks left to blow, with it as a settled job that used thirty-six fewer than
+  // planned.
+  //
+  // ⚠️ `false` means "not recorded", NOT "no egenkontroll" — see SackTotal.hasFinal. Only the
+  // positive state may be drawn.
+  sacks_final: boolean;
   // The crew (besättning) assigned to this specific placement; shown as initials on the card.
   crew: CrewMember[];
   // Whether the customer has been sent an order confirmation (per work order); drives the badge.

@@ -47,20 +47,85 @@ export function SackBadge({ sacks }: { sacks: number }) {
   );
 }
 
+// Bocken som säger att säcksiffran är egenkontrollens. Ligger INNE i säckbadgen och inte som ett
+// eget chip: badge-raden delar bredd med besättningens namn, och ett chip till hade tryckt ut det
+// eller radbrutit kortet på smala kolumner.
+function FinalCheck() {
+  return (
+    <svg
+      width="9"
+      height="9"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+      focusable="false"
+      className="-ml-0.5 shrink-0"
+    >
+      <path d="M20 6 9 17l-5-5" />
+    </svg>
+  );
+}
+
 // Sack progress: once any sacks are reported as blown it switches to an amber "kvar X / Y" plus
 // the blown count; otherwise it shows the planned total.
-export function SackProgress({ planned, reported }: { planned: number; reported: number }) {
+//
+// ── EGENKONTROLLEN BYTER INTE BARA FÄRG, DEN BYTER INNEBÖRD ──────────────────
+// `final` säger att talet kommer från egenkontrollen och inte från delrapporter. Utan den läses
+// "kvar 36 / 564" som trettiosex säckar kvar att blåsa — ett jobb som pågår. Med den betyder exakt
+// samma tal att jobbet är AVRÄKNAT och gick åt trettiosex mindre än planerat. Gult säger "pågår",
+// grönt "klart"; utan skillnaden såg de två lägena identiska ut på tavlan, vilket var hela skälet
+// till att kortet inte gick att lita på för den frågan.
+//
+// ⚠️ BARA DET POSITIVA LÄGET RITAS. `final === false` betyder "ej registrerat", inte "egenkontroll
+// saknas" — en egenkontroll utan säckantal på etappraderna skriver inga final-rader alls, och
+// skrivningen till huvudboken kan misslyckas medan PDF:en ändå arkiveras. Ett "EK saknas" byggt på
+// den här flaggan hade alltså ibland skickat kontoret att jaga en rapport som redan är inlämnad.
+//
+// Överdraget behåller sitt röda läge även med egenkontroll: att jobbet är avräknat gör inte
+// överförbrukningen mindre sann, och det är den kortet ska larma om.
+export function SackProgress({
+  planned,
+  reported,
+  final = false,
+}: {
+  planned: number;
+  reported: number;
+  final?: boolean;
+}) {
   if (!(planned > 0) && !(reported > 0)) return null;
   if (reported > 0) {
     const over = sacksOverrun(planned, reported);
-    const title = `Blåsta ${reported} av ${planned} planerade säckar`;
+    const source = final ? 'Egenkontroll inlämnad' : 'Delrapporterat';
+    const title = `${source} — blåsta ${reported} av ${planned} planerade säckar`;
     if (over > 0) {
       return (
         <span
           title={title}
-          className="whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[10px] font-bold tabular-nums text-rose-700"
+          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[10px] font-bold tabular-nums text-rose-700"
         >
+          {final && <FinalCheck />}
           över {over} / {planned}
+        </span>
+      );
+    }
+    if (final) {
+      return (
+        <span
+          title={title}
+          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px text-[10px] font-bold tabular-nums text-emerald-700"
+        >
+          <FinalCheck />
+          {/* "N av M", inte "kvar N / M" och inte bara "N säck".
+              Två fällor låg i vägen. Ett naket tal i snedstreckform ("5 / 243") säger inte VILKET
+              tal som är vilket — det gula lägets "kvar" bär den upplysningen, och utan ordet ärvs
+              den inte. Och bara antalet ("280 säck") kolliderar med SackBadge, som ritar PLANERAT
+              antal i exakt samma bleka gröna: två motsatta betydelser skilda bara av en bock.
+              "238 av 243" kan inte förväxlas med någondera. */}
+          {reported} av {planned}
         </span>
       );
     }
@@ -747,7 +812,7 @@ export function SegmentCardBody({
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} />
+            <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} final={seg.sacks_final} />
             <ConfirmationBadge confirmation={seg.confirmation} />
             <CreatorBadge name={seg.created_by_name} />
             <div className="ml-auto flex items-center gap-1">

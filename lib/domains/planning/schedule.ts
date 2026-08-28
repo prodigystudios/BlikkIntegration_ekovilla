@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, workOrderRef, type WorkOrderJobRow } from './display';
-import { reportedSacksByWorkOrder } from './reports';
+import { sackTotalsForWorkOrders } from './reports';
 import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
 import type { OpsSegment } from './types';
@@ -59,6 +59,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
     updated_at: row.updated_at,
     job: wo ? mapWorkOrderJob(wo) : null,
     sacks_reported: 0,
+    sacks_final: false,
     crew: [],
     confirmation: { ...EMPTY_CONFIRMATION },
   };
@@ -90,12 +91,16 @@ export async function listSegments(
   // order, so they contribute no ids here.
   const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))].filter((id): id is string => id != null);
   const [reported, crewBySegment, confirmations] = await Promise.all([
-    reportedSacksByWorkOrder(supabase, workOrderIds),
+    // Summan OCH om den är egenkontrollens. `kind` hämtas ändå av supersede-regeln, så flaggan
+    // följer med gratis — en egen fråga bara för den hade varit en extra rundtur mot samma tabell.
+    sackTotalsForWorkOrders(supabase, workOrderIds),
     listCrewBySegment(supabase, segs.map((s) => s.id)),
     confirmationsByWorkOrder(supabase, workOrderIds),
   ]);
   for (const s of segs) {
-    s.sacks_reported = s.work_order_id ? reported.get(s.work_order_id) ?? 0 : 0;
+    const total = s.work_order_id ? reported.get(s.work_order_id) : undefined;
+    s.sacks_reported = total?.sacks ?? 0;
+    s.sacks_final = total?.hasFinal ?? false;
     s.crew = crewBySegment.get(s.id) ?? [];
     s.confirmation = (s.work_order_id && confirmations.get(s.work_order_id)) || { ...EMPTY_CONFIRMATION };
   }

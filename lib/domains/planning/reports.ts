@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  sackTotalsByWorkOrder,
   sumSacksByWorkOrder,
   type ResolvableSegment,
   type SackLedgerRow,
   type SackReportKind,
+  type SackTotal,
 } from './sackLedger';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -181,6 +183,28 @@ export async function reportedSacksByWorkOrder(
     .select('work_order_id, sacks_blown, kind')
     .in('work_order_id', workOrderIds);
   return sumSacksByWorkOrder((data ?? []) as SackLedgerRow[]);
+}
+
+/**
+ * Samma fråga, men svaret bär också om summan är egenkontrollens (`hasFinal`).
+ *
+ * Planeringstavlan använder den här och inte reportedSacksByWorkOrder: `kind` hämtas ändå — regeln
+ * kräver det — så flaggan kostar ingenting extra att bära med, medan en separat fråga bara för
+ * den hade varit en extra rundtur mot samma tabell.
+ *
+ * ⚠️ Samma sak som ovan gäller: ett jobb utan rapportrader SAKNAS i kartan i stället för att stå
+ * som noll. "Ej rapporterat" och "0 säckar" är olika svar på olika frågor.
+ */
+export async function sackTotalsForWorkOrders(
+  supabase: SupabaseClient,
+  workOrderIds: string[],
+): Promise<Map<string, SackTotal>> {
+  if (workOrderIds.length === 0) return new Map<string, SackTotal>();
+  const { data } = await supabase
+    .from('ops_segment_reports')
+    .select('work_order_id, sacks_blown, kind')
+    .in('work_order_id', workOrderIds);
+  return sackTotalsByWorkOrder((data ?? []) as SackLedgerRow[]);
 }
 
 /**
