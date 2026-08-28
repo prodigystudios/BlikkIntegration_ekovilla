@@ -5,6 +5,7 @@ import Input from '../../../components/ui/Input';
 import MetricCard from '../components/MetricCard';
 import Textarea from '../../../components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
+import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 
 type ProspectItem = {
@@ -571,16 +572,19 @@ export default function CoachClient({ userName }: { userName: string | null }) {
                   placeholder="Sök i vald kontext"
                 />
 
-                <select
+                {/* Ingen synlig etikett finns — fältet var helt namnlöst för skärmläsare förut.
+                    Ingen breddspärr: griditemet sträcks, så knappen kan inte krympa efter sitt val. */}
+                <Select
                   value={selectedContextId}
                   onChange={(event) => setSelectedContextId(event.target.value)}
-                  className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
+                  aria-label="Välj kontext"
+                  className="text-slate-700"
                 >
                   <option value="">Välj kontext</option>
                   {filteredContexts.map((item) => (
                     <option key={item.id} value={item.id}>{item.label}</option>
                   ))}
-                </select>
+                </Select>
 
                 {selectedContext ? (
                   <div className="grid gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">

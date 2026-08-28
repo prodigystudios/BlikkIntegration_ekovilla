@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { cn } from '@/lib/shared/cn';
+import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsTruck } from '@/lib/domains/planning/types';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
@@ -83,13 +84,22 @@ export default function PlaceholderModal({
           </label>
           <label className="grid gap-1">
             <span className="text-[11px] font-semibold text-slate-500">Bil</span>
-            <select value={truckId} onChange={(e) => setTruckId(e.target.value)} className={field}>
+            {/* `field` delas med modalens fyra <input> och blir därför kvar. Här behövs bara
+                skillnaderna mot SelectMenus bas — `crm.selectMenu` bär höjden (och `min-h-0`, utan
+                vilken `h-9` tyst förlorar mot basens `min-h-11`), textstorleken kommer hit.
+                Ingen breddspärr: etiketten är ett `grid` och full bredd, så omslaget sträcks. */}
+            <Select
+              value={truckId}
+              onChange={(e) => setTruckId(e.target.value)}
+              aria-label="Bil"
+              className={cn(crm.selectMenu, 'text-[12.5px]')}
+            >
               {trucks.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.name}{hiddenTruckIds?.has(t.id) ? ' (dold – visas igen)' : ''}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="grid gap-1">
@@ -103,12 +113,17 @@ export default function PlaceholderModal({
           </div>
           <label className="grid gap-1">
             <span className="text-[11px] font-semibold text-slate-500">Jobbtyp (valfritt)</span>
-            <select value={jobType} onChange={(e) => setJobType(e.target.value)} className={field}>
+            <Select
+              value={jobType}
+              onChange={(e) => setJobType(e.target.value)}
+              aria-label="Jobbtyp (valfritt)"
+              className={cn(crm.selectMenu, 'text-[12.5px]')}
+            >
               <option value="">—</option>
               {jobTypes.map((t) => (
                 <option key={t.key} value={t.key}>{t.label}</option>
               ))}
-            </select>
+            </Select>
           </label>
         </div>
 
