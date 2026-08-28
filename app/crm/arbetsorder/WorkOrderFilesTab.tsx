@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import Select from '@/components/ui/Select';
 import { formatDate } from '@/app/crm/lib/format';
 import {
   WORK_ORDER_FILE_CATEGORIES,
@@ -122,15 +123,18 @@ export default function WorkOrderFilesTab({
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
             <label className="grid gap-1">
               <span className={crm.label}>Kategori</span>
-              <select
+              {/* Ingen breddspärr: etiketten är ett griditem i `minmax(0,1fr)`, så kolumnen
+                  bestämmer bredden och knappen kan inte krympa efter sitt valda värde. */}
+              <Select
                 value={category}
                 onChange={(e) => setCategory(e.target.value as WorkOrderFileCategory)}
-                className={crm.select}
+                aria-label="Kategori"
+                className={crm.selectMenu}
               >
                 {WORK_ORDER_FILE_CATEGORIES.map((key) => (
                   <option key={key} value={key}>{workOrderFileCategoryLabel[key]}</option>
                 ))}
-              </select>
+              </Select>
             </label>
 
             {canMarkInternal ? (

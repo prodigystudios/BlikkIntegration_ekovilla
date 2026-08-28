@@ -224,8 +224,20 @@ export const crm = {
   input:
     'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-[color:var(--ek-accent)] focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]',
   // <select>
+  // ⚠️ `select` är den NAKNA `<select>`-varianten och ritar sin utfällda lista med operativsystemets
+  // grå fyrkant. Nya ytor ska använda `components/ui/Select` + `selectMenu` nedan. Kvar för
+  // Blikks tidrapportering, som inte får röras.
   select:
     'h-9 w-full rounded-lg border border-[#dce4d8] bg-white px-2.5 text-sm text-slate-700 outline-none transition focus:border-[color:var(--ek-accent)]',
+  // Motsvarigheten för `components/ui/Select`. Resten av receptet (rundning, kant, bakgrund,
+  // textstorlek, fokusring) ligger redan i SelectMenus bas — bara skillnaderna står här.
+  //
+  // 🧨 `min-h-0` FÅR INTE TAS BORT. SelectMenus bas sätter `min-h-11` (44 px touchmål), och `h-9`
+  // hamnar i en ANNAN tailwind-merge-grupp än `min-h-*`. Utan `min-h-0` överlever alltså BÅDA,
+  // min-height vinner, och kontrollen blir 44 px i stället för 36 — tyst, utan att vare sig
+  // type-check eller lint säger något. (Ordningen mellan dem spelar däremot ingen roll: de tillhör
+  // skilda grupper, så tailwind-merge behåller båda oavsett hur de står.)
+  selectMenu: 'min-h-0 h-9 px-2.5 text-slate-700',
   // <input type="color"> — put it in a fixed grid track (e.g. grid-cols-[2.5rem_1fr])
   // so it fills the track instead of the global input width:100% blowing it up.
   colorInput: 'h-9 w-full cursor-pointer rounded-lg border border-[#dce4d8] bg-white p-1',

@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { crm } from "@/app/crm/lib/crmTokens";
+import { cn } from "@/lib/shared/cn";
+import Select from "@/components/ui/Select";
 
 type FileEntry = { path: string; name: string; url?: string; size?: number; updatedAt?: string };
 
@@ -94,11 +96,18 @@ export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
         <div className="flex items-center gap-2">
           <label className="flex items-center gap-2 text-[13px] text-slate-600">
             <span>Sortera:</span>
-            <select className={crm.select} value={sort} onChange={(e) => setSort(e.target.value as any)}>
+            {/* `min-w` så sorteringspilen bredvid inte flyttar sig: knappen visar det VALDA, och
+                "Datum" är kortare än "Storlek". Måttet rymmer det längsta vid 16px (iOS). */}
+            <Select
+              className={cn(crm.selectMenu, 'min-w-[110px]')}
+              aria-label="Sortera"
+              value={sort}
+              onChange={(e) => setSort(e.target.value as any)}
+            >
               <option value="date">Datum</option>
               <option value="name">Namn</option>
               <option value="size">Storlek</option>
-            </select>
+            </Select>
           </label>
           <button className={ghostBtn} type="button" onClick={() => setDir((d) => (d === "asc" ? "desc" : "asc"))}>
             {dir === "asc" ? "⬆️" : "⬇️"}
