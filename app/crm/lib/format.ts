@@ -47,6 +47,32 @@ export function documentRef(
   return internalNumber || '–';
 }
 
+// Samma två tal som documentRef, samma ordning — men RÅA. Den här är numret man SLÅR UPP med,
+// inte numret man visar.
+//
+// 🧨 SKILLNADEN ÄR HELA POÄNGEN MED ATT DE STÅR BREDVID VARANDRA. documentRef sätter '#' framför
+// Fortnox-numret, och uppslaget matchar exakt (`.eq` i lookupCrmWorkOrderByNumber) — '#6579' hittar
+// ingenting. Ett rimligt `?orderId=${documentRef(...)}` ger alltså "Ordern hittades inte" på precis
+// de ordrar som HAR hunnit synkas, alltså de flesta. Läser du den här filen för att bygga en länk
+// eller ett API-anrop: det är den här funktionen, aldrig documentRef.
+//
+// Precedensen är inte fri: den speglar mapCrmWorkOrderToEgenkontrollProject, som svarar med samma
+// val av nummer. Gick de isär skulle egenkontrollen slås upp på ett nummer och sedan skriva ett
+// annat i sitt filnamn.
+//
+// null, inte '–' eller '': anroparen ska kunna se skillnad på "här är numret" och "det finns inget
+// nummer att slå upp på" utan att jämföra mot en visningssträng. Utan nummer ska ingen länk
+// renderas alls.
+export function orderLookupRef(
+  fortnoxNumber: string | null | undefined,
+  internalNumber: string | null | undefined,
+): string | null {
+  const fortnox = String(fortnoxNumber ?? '').trim();
+  if (fortnox) return fortnox;
+  const internal = String(internalNumber ?? '').trim();
+  return internal || null;
+}
+
 // A work order is overdue when its desired date has passed and it isn't done/closed.
 export function isWorkOrderOverdue(date: string | null | undefined, status: string): boolean {
   if (!date || status === 'completed' || status === 'invoiced' || status === 'cancelled') return false;

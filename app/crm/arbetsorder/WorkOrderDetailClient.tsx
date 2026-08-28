@@ -20,6 +20,7 @@ import {
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemEffectiveUnitPrice } from '@/lib/domains/crm/pricing';
 import { inferMaterialFromArticle, sacksFor } from '@/lib/domains/crm/materials';
+import { findLatestEgenkontrollLink } from '@/lib/domains/crm/egenkontrollLink';
 import { parseDecimal } from '@/lib/shared/number';
 import WorkOrderTimeTab from './WorkOrderTimeTab';
 import WorkOrderCommentsTab from './WorkOrderCommentsTab';
@@ -327,6 +328,16 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     timeEntries, comments, mentionUsers, namesById, timeEntriesLoading, commentsLoading,
     createTimeEntry, updateTimeEntry, deleteTimeEntry, createComment, updateComment, deleteComment,
   } = useWorkOrderActivity(workOrderId);
+
+  // Den inlämnade egenkontrollens PDF, utläst ur kommentarerna (findLatestEgenkontrollLink — där
+  // står skälen till att kommentaren är källan och varför prefixet krävs). Kommentarerna hämtas
+  // ändå när ordern öppnas, så raden kostar ingen extra rundtur.
+  //
+  // ⚠️ Hooken måste ligga här, före de tidiga returerna längre ner (`if (loading)`, `if (error)`).
+  // Deklarerad nere vid kortet hade den bara körts i den render som INTE gick ut genom
+  // laddningsgrenen — "Rendered more hooks than during the previous render", alltså en krasch för
+  // alla som öppnar en order. Samma regel som noten i fältvyns klient.
+  const egenkontrollUrl = useMemo(() => findLatestEgenkontrollLink(comments), [comments]);
 
   // Ritningar och bilder på jobbet. Egen hook — fältvyn monterar samma flik med samma hook.
   // Hämtas först när fliken öppnats: listsvaret signerar en URL per bild på servern, och en order
@@ -1213,6 +1224,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               loadError={sackReports.loadError}
               isRemoving={sackReports.isRemoving}
               onDelete={removeSackReport}
+              egenkontrollUrl={egenkontrollUrl}
             />
 
             {/* ─── Ekonomi ────────────────────────────────────────────────────

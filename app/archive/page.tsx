@@ -35,13 +35,20 @@ export default async function ArchivePage({ searchParams }: { searchParams: Reco
     }
   }
   const { files } = await fetchFiles(sp.toString());
+  // ?q= förifyller sökrutan. Arbetsordern i fältvyn länkar hit med sitt ordernummer, som ligger i
+  // egenkontrollens filnamn (Egenkontroll_<kund>_<ordernummer>.pdf).
+  //
+  // Parametern följer med i anropet till /api/storage/list-all ovan utan att göra något där:
+  // listAllQuerySchema är ett vanligt z.object och strippar okända nycklar tyst i stället för att
+  // avvisa dem. Filtreringen är och förblir klientsidig, i ArchiveList.
+  const initialQuery = typeof searchParams?.q === 'string' ? searchParams.q : '';
   return (
     <div className="mx-auto grid w-full max-w-[900px] grid-cols-1 gap-4">
       <div>
         <h1 className="m-0 text-lg font-bold tracking-tight text-slate-900">Egenkontroller</h1>
         <p className="m-0 mt-1 text-sm text-slate-500">Arkiverade egenkontroller — sök och ladda ned.</p>
       </div>
-      <ArchiveList initial={files as any} />
+      <ArchiveList initial={files as any} initialQuery={initialQuery} />
     </div>
   );
 }

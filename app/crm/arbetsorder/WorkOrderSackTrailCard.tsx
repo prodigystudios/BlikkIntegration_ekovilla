@@ -40,6 +40,7 @@ export default function WorkOrderSackTrailCard({
   loadError,
   isRemoving,
   onDelete,
+  egenkontrollUrl = null,
 }: {
   reports: SackReportView[];
   loading: boolean;
@@ -48,6 +49,11 @@ export default function WorkOrderSackTrailCard({
   /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
   isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
+  /**
+   * Nedladdningslänk till den inlämnade egenkontrollen, utläst ur orderns kommentarer
+   * (findLatestEgenkontrollLink). null när ordern saknar en — då ritas ingen knapp.
+   */
+  egenkontrollUrl?: string | null;
 }) {
   const total = totalReportedSacks(reports);
   // Bekräftelsen är inline och per rad, inte en modal. Samma mönster som kommentarerna och
@@ -164,6 +170,39 @@ export default function WorkOrderSackTrailCard({
           Egenkontrollen är jobbets slutsumma. Delrapporter som lämnats innan den räknas inte med i
           totalen — de står kvar som historik.
         </p>
+      ) : null}
+
+      {/* Själva egenkontrollen, en klickning bort.
+
+          Kortet pekar redan ut den som jobbets slutsumma; innan den här raden fanns var enda vägen
+          dit att leta upp kommentaren längst ner på ordern och kopiera adressen ur löptexten för
+          hand.
+
+          ⚠️ RENDERAS BARA NÄR VI FAKTISKT HAR EN LÄNK. En knapp som alltid syns skulle behöva
+          svara något när ordern saknar egenkontroll, och varje sådant svar är en gissning: en
+          egenkontroll UTAN säckrader skriver inga final-rader, och en kommentar kan ha nekats av
+          RLS. Ingen länk = ingen rad, och kortets egen tomtext säger redan var rapporten görs.
+
+          Länken går till /api/storage/download, som är permanent och auth-vaktad — inte den
+          signerade URL:en, som dör efter sju dagar.
+
+          ⚠️ "LADDA NED", INTE "ÖPPNA", OCH INGET target="_blank". Rutten svarar med
+          `Content-Disposition: attachment` (app/api/storage/download/route.ts), så filen KAN inte
+          öppnas i en flik — etiketten "Öppna" lovade något webbläsaren inte gör, och den nya
+          fliken blev antingen omedelbart stängd (Chrome) eller lämnad blank (Safari, Firefox).
+          Samma ord och samma form som arkivets egen knapp för exakt samma rutt.
+
+          `download` fungerar bara för samma ursprung — vilket adressen numera alltid är, eftersom
+          findLatestEgenkontrollLink bygger den mot vår egen origin i stället för att lita på
+          kommentarens värdnamn. */}
+      {egenkontrollUrl ? (
+        <a
+          href={egenkontrollUrl}
+          download
+          className="inline-flex min-h-11 w-fit items-center gap-1.5 text-sm font-semibold text-emerald-700 no-underline transition hover:text-emerald-800 hover:underline"
+        >
+          Ladda ned egenkontrollen (PDF) →
+        </a>
       ) : null}
     </div>
   );

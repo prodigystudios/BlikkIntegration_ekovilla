@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { crm } from "@/app/crm/lib/crmTokens";
 import { cn } from "@/lib/shared/cn";
 import Select from "@/components/ui/Select";
@@ -27,13 +27,38 @@ function formatDateUTC(iso?: string) {
 const ghostBtn =
   'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50';
 
-export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
+export default function ArchiveList({ initial, initialQuery }: { initial?: FileEntry[]; initialQuery?: string }) {
   const [files, setFiles] = useState<FileEntry[]>(initial ?? []);
   const [loading, setLoading] = useState(!initial);
-  const [query, setQuery] = useState("");
+  // Förifylld sökning från ?q= — arbetsordern länkar hit med sitt ordernummer så installatören
+  // slipper skriva av det. Kommer som PROP och inte ur useSearchParams: komponenten laddas med
+  // ssr:false från en server-komponent som redan har searchParams i handen, och useSearchParams
+  // hade krävt en egen Suspense-gräns för Next:s CSR-bailout utan att ge något.
+  //
+  // Rutan är fritt redigerbar efteråt, och den som tömmer den får hela arkivet — ett filter man
+  // inte kan ta bort hade varit ett arkiv som ljuger om hur mycket det innehåller.
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [sort, setSort] = useState<"name" | "date" | "size">("date");
   const [dir, setDir] = useState<"desc" | "asc">("desc");
   const [refreshing, setRefreshing] = useState(false);
+
+  // 🧨 STARTVÄRDET RÄCKER INTE. useState läser sitt argument bara vid montering, och en navigering
+  // mellan /archive?q=77 och /archive byter inte komponent — Next återanvänder instansen, alltså
+  // överlever filtret. Kontoret klickar "Sparade egenkontroller" i menyn, får en URL utan ?q= och
+  // ett arkiv som visar fem filer av flera hundra, utan något som förklarar varför. Ett filter som
+  // ljuger om hur mycket arkivet innehåller är samma felklass som ett sparat planeringsfilter vars
+  // val försvunnit.
+  //
+  // Jämförelsen mot föregående prop och inte mot `query`: det som ska styra är att ADRESSEN ändrats,
+  // inte att de råkar skilja sig åt. Utan ref:en hade varje tecken man skrev i rutan bytts tillbaka
+  // mot ?q= igen — effekten skulle slå på sin egen ändring och rutan bli oskrivbar.
+  const lastInitialQuery = useRef(initialQuery ?? "");
+  useEffect(() => {
+    const next = initialQuery ?? "";
+    if (next === lastInitialQuery.current) return;
+    lastInitialQuery.current = next;
+    setQuery(next);
+  }, [initialQuery]);
 
   useEffect(() => {
     let cancelled = false;
