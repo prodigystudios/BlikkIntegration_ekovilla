@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/crmTokens';
@@ -14,7 +15,7 @@ import { useSackReports } from '@/app/crm/arbetsorder/useSackReports';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
-import { formatDate, joinAddress, documentRef } from '@/app/crm/lib/format';
+import { formatDate, joinAddress, documentRef, orderLookupRef } from '@/app/crm/lib/format';
 import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
 const CRM_PRIMARY = '#1a3f26'; // brand green; --crm-primary is scoped to /crm so hardcode here
@@ -157,6 +158,12 @@ export default function WorkOrderInstallerClient({
   const workScope = workOrder.internal_handoff?.work_scope || '';
   const handoffNotes = workOrder.internal_handoff?.handoff_notes || '';
 
+  // Numret egenkontrollen slås upp med — RÅTT, aldrig documentRef. Se orderLookupRef i
+  // app/crm/lib/format.ts: visningsvarianten sätter en brädgård framför Fortnox-numret och
+  // /api/crm/work-orders/lookup matchar exakt, så '#6579' hade gett "Ordern hittades inte" på just
+  // de ordrar som HAR synkats. null = ingenting att slå upp på, och då renderas ingen länk.
+  const lookupNumber = orderLookupRef(workOrder.fortnox_order_number, workOrder.order_number);
+
   // Comments render at the bottom of the Info tab (not a separate tab) so an @-mention notification
   // lands straight on the thread.
   //
@@ -272,6 +279,63 @@ export default function WorkOrderInstallerClient({
             isRemoving={sackReports.isRemoving}
             onDelete={sackReports.remove}
           />
+
+          {/* Egenkontroll — de två vägarna till pappersarbetet, båda med ordernumret ifyllt.
+              Ligger efter säckrapporten med flit: det är samma ögonblick i dagen, och sambandet
+              står redan skrivet på kortet ovanför (egenkontrollens säckar ERSÄTTER
+              delrapporterna). Innan detta fanns fick installatören lämna ordern, leta upp
+              Egenkontroll i menyn och skriva av numret hen just tittade på.
+
+              ⚠️ LÄNKAR, INTE KNAPPAR. Båda navigerar. En <button onClick={router.push}> hade
+              sett likadan ut men tappat mittenklick, "öppna i ny flik" och skärmläsarens
+              länkroll — och den som fyller i en egenkontroll vill ofta ha arbetsordern kvar i
+              en flik bredvid.
+
+              ⚠️ var(--ek-green), INTE var(--crm-primary). Den senare är scopad till CRM-skalet
+              och når inte hit — samma skäl som CRM_PRIMARY-konstanten högst upp i filen. */}
+          <div className={cn(crm.cardInner, 'grid gap-3')}>
+            <p className={crm.sectionTitle}>Egenkontroll</p>
+            {lookupNumber ? (
+              <>
+                <p className="m-0 text-sm leading-relaxed text-slate-700">
+                  Formuläret öppnas med order{' '}
+                  <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong>{' '}
+                  ifyllt — kund, adress, datum och etapper hämtas automatiskt.
+                </p>
+                <Link
+                  href={`/egenkontroll?orderId=${encodeURIComponent(lookupNumber)}`}
+                  // min-h-11 och inte h-11: etiketten radbryts på en smal telefon i stående läge,
+                  // och en fast höjd hade kapat andra raden. 44 px är golvet för en hand i handske.
+                  className="inline-flex min-h-11 w-full items-center justify-center rounded-xl px-4 py-2 text-center text-sm font-semibold text-white no-underline transition active:scale-[0.99]"
+                  style={{ backgroundColor: 'var(--ek-green)' }}
+                >
+                  Skapa egenkontroll
+                </Link>
+                {/* ⚠️ "Sök i arkivet", inte "egenkontrollen för den här ordern". Arkivet filtrerar
+                    på FILNAMNET, som bär det nummer installatören skrev in när rapporten lämnades
+                    — med knappen ovan blir det alltid det här numret, men äldre filer kan bära det
+                    andra (internt kontra Fortnox). Länken får inte lova en exakthet den inte har.
+
+                    Den visas ALLTID, aldrig gömd bakom sackReports.hasFinal: en egenkontroll utan
+                    säckrader skriver inga final-rader alls, så hasFinal === false bevisar inte att
+                    ingen egenkontroll finns. Arkivet svarar självt "Inga matchande resultat". */}
+                <Link
+                  href={`/archive?q=${encodeURIComponent(lookupNumber)}`}
+                  className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-slate-600 no-underline transition hover:text-slate-900"
+                >
+                  Sök i arkivet efter den här ordern →
+                </Link>
+              </>
+            ) : (
+              // Utan nummer skulle båda länkarna garanterat landa på "Ordern hittades inte"
+              // respektive ett tomt arkiv. Säg det i stället för att erbjuda en väg som inte finns.
+              <p className="m-0 text-sm leading-relaxed text-slate-600">
+                Ordern saknar ordernummer, så egenkontrollen kan inte hämta jobbet automatiskt.
+                Öppna <strong className="font-semibold">Ny egenkontroll</strong> i menyn och fyll i
+                uppgifterna för hand.
+              </p>
+            )}
+          </div>
 
           {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
               in /tidrapport the usual way — without this the crew opens the job, finds no time tab

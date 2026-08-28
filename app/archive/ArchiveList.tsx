@@ -27,10 +27,17 @@ function formatDateUTC(iso?: string) {
 const ghostBtn =
   'inline-flex items-center justify-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800 disabled:opacity-50';
 
-export default function ArchiveList({ initial }: { initial?: FileEntry[] }) {
+export default function ArchiveList({ initial, initialQuery }: { initial?: FileEntry[]; initialQuery?: string }) {
   const [files, setFiles] = useState<FileEntry[]>(initial ?? []);
   const [loading, setLoading] = useState(!initial);
-  const [query, setQuery] = useState("");
+  // Förifylld sökning från ?q= — arbetsordern länkar hit med sitt ordernummer så installatören
+  // slipper skriva av det. Kommer som PROP och inte ur useSearchParams: komponenten laddas med
+  // ssr:false från en server-komponent som redan har searchParams i handen, och useSearchParams
+  // hade krävt en egen Suspense-gräns för Next:s CSR-bailout utan att ge något.
+  //
+  // Bara startvärde. Rutan är fritt redigerbar efteråt, och den som tömmer den får hela arkivet —
+  // ett filter man inte kan ta bort hade varit ett arkiv som ljuger om hur mycket det innehåller.
+  const [query, setQuery] = useState(initialQuery ?? "");
   const [sort, setSort] = useState<"name" | "date" | "size">("date");
   const [dir, setDir] = useState<"desc" | "asc">("desc");
   const [refreshing, setRefreshing] = useState(false);
