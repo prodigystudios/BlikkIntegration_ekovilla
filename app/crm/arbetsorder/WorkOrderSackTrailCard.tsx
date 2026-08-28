@@ -184,15 +184,24 @@ export default function WorkOrderSackTrailCard({
           RLS. Ingen länk = ingen rad, och kortets egen tomtext säger redan var rapporten görs.
 
           Länken går till /api/storage/download, som är permanent och auth-vaktad — inte den
-          signerade URL:en, som dör efter sju dagar. */}
+          signerade URL:en, som dör efter sju dagar.
+
+          ⚠️ "LADDA NED", INTE "ÖPPNA", OCH INGET target="_blank". Rutten svarar med
+          `Content-Disposition: attachment` (app/api/storage/download/route.ts), så filen KAN inte
+          öppnas i en flik — etiketten "Öppna" lovade något webbläsaren inte gör, och den nya
+          fliken blev antingen omedelbart stängd (Chrome) eller lämnad blank (Safari, Firefox).
+          Samma ord och samma form som arkivets egen knapp för exakt samma rutt.
+
+          `download` fungerar bara för samma ursprung — vilket adressen numera alltid är, eftersom
+          findLatestEgenkontrollLink bygger den mot vår egen origin i stället för att lita på
+          kommentarens värdnamn. */}
       {egenkontrollUrl ? (
         <a
           href={egenkontrollUrl}
-          target="_blank"
-          rel="noopener noreferrer"
+          download
           className="inline-flex min-h-11 w-fit items-center gap-1.5 text-sm font-semibold text-emerald-700 no-underline transition hover:text-emerald-800 hover:underline"
         >
-          Öppna egenkontrollen (PDF) →
+          Ladda ned egenkontrollen (PDF) →
         </a>
       ) : null}
     </div>
