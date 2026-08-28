@@ -2,6 +2,7 @@
 import React from 'react';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
+import Select from '@/components/ui/Select';
 import { ADMIN_CARD, ADMIN_CHECKBOX, ADMIN_ERROR_BOX, ADMIN_LABEL, ADMIN_NOTICE_BOX, AdminFilterChip } from '../components/adminUi';
 
 
@@ -203,10 +204,12 @@ export default function AdminPermissions() {
       {/* ── Per-user overrides ───────────────────────────────────── */}
       <section className="grid gap-3">
         <h3 className="m-0 text-base font-bold text-slate-900">Per användare</h3>
-        <select
+        {/* Ingen breddspärr behövs: `w-full max-w-md` ger en fast bredd oavsett vem som är vald. */}
+        <Select
           value={selectedUserId}
           onChange={(e) => loadUser(e.target.value)}
-          className={cn(crm.select, 'max-w-md')}
+          aria-label="Välj användare"
+          className={cn(crm.selectMenu, 'max-w-md')}
         >
           <option value="">Välj användare…</option>
           {users.map((u) => (
@@ -214,7 +217,7 @@ export default function AdminPermissions() {
               {(u.full_name || u.email || u.id)} — {u.role}
             </option>
           ))}
-        </select>
+        </Select>
 
         {userLoading ? <p role="status" className="m-0 text-sm text-slate-500">Laddar…</p> : null}
 

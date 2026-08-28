@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useUserProfile } from "@/lib/UserProfileContext";
 import { cn } from "@/lib/shared/cn";
 import { crm } from "@/app/crm/lib/crmTokens";
+import Select from "@/components/ui/Select";
 import { buildOrderSummary, type SectionState } from "./order";
 
 const SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL"] as const;
@@ -102,12 +103,24 @@ export default function BestallningKladerPage() {
                 <div key={sec.key} className="grid gap-1.5 rounded-xl border border-[#e3e9df] bg-white px-3 py-2.5">
                   <span className="text-[13px] font-semibold text-slate-900">{sec.title}</span>
                   <div className="flex items-center gap-2">
-                    <select className={cn(crm.select, 'flex-1')} value={picked} onChange={(e) => setSectionSelectedSize(si, e.target.value)}>
+                    {/* 🧨 `flex-1` på OMSLAGET, inte på knappen. Knappen är inte flex-itemet — hade
+                        klassen skickats via `className` hade den inte gjort någonting, och
+                        kontrollen krympt till bredden av "M" bredvid sin Rensa-knapp. */}
+                    <Select
+                      wrapperClassName="flex-1"
+                      className={crm.selectMenu}
+                      // Plaggets namn står i ett syskon-<span> utan koppling till kontrollen, så
+                      // utan det här hade alla sex väljarna hetat exakt "Storlek" för en
+                      // skärmläsare — och fel plagg blivit beställt.
+                      aria-label={`Storlek – ${sec.title}`}
+                      value={picked}
+                      onChange={(e) => setSectionSelectedSize(si, e.target.value)}
+                    >
                       <option value="">Välj storlek…</option>
                       {sec.rows.map((r) => (
                         <option key={`${sec.key}-${r.size}`} value={r.size}>{r.size}</option>
                       ))}
-                    </select>
+                    </Select>
                     {picked && (
                       <button type="button" onClick={() => setSectionSelectedSize(si, '')} className="shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-800">
                         Rensa

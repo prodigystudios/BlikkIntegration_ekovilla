@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import SelectMenu, { type SelectMenuOption } from './SelectMenu';
+import { cn } from '@/lib/shared/cn';
 
 // `<Select>` ÄR numera `SelectMenu` — den tar bara emot `<option>`-barn i stället för en
 // `options`-array, så de anropsplatser som redan fanns kunde stå kvar orörda.
@@ -25,7 +26,17 @@ export type SelectProps = {
   value?: string | number | null;
   onChange?: (event: SelectChangeEvent) => void;
   children?: React.ReactNode;
+  /** Hamnar på KNAPPEN. Utseende och storlek hör hemma här. */
   className?: string;
+  /**
+   * Hamnar på OMSLAGSDIVEN — det element som möter layouten utanför.
+   *
+   * 🧨 Klasser som placerar kontrollen i sin förälder (`flex-1`, `basis-*`, `grow`, `col-span-*`,
+   * `self-*`) MÅSTE hit. Skickas de via `className` landar de på knappen, som inte är flex- eller
+   * griditemet — och då gör de ingenting alls, tyst. Beställningssidans storleksväljare hade
+   * `flex-1` och kollapsat till bredden av "M" bredvid sin Rensa-knapp.
+   */
+  wrapperClassName?: string;
   disabled?: boolean;
   id?: string;
   'aria-label'?: string;
@@ -64,7 +75,7 @@ function collectOptions(children: React.ReactNode, out: SelectMenuOption[]) {
   });
 }
 
-export default function Select({ value, onChange, children, placeholder, ...rest }: SelectProps) {
+export default function Select({ value, onChange, children, placeholder, wrapperClassName, ...rest }: SelectProps) {
   const options = React.useMemo(() => {
     const out: SelectMenuOption[] = [];
     collectOptions(children, out);
@@ -85,7 +96,7 @@ export default function Select({ value, onChange, children, placeholder, ...rest
   // modellen identisk med förut på samtliga anropsplatser. Portalen bryr sig inte — den går till
   // `<body>` oavsett var i JSX:en den står.
   return (
-    <div className="relative">
+    <div className={cn('relative', wrapperClassName)}>
       <SelectMenu
         {...rest}
         value={resolved}

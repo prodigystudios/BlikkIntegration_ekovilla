@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import Select from '@/components/ui/Select';
 import {
   aggregateBuckets,
   buildBatchCsvLines,
@@ -98,10 +99,19 @@ export default function MaterialKvalitetPage() {
         </label>
         <label className="grid gap-1.5">
           <span className={crm.label}>Gruppering</span>
-          <select className={crm.select} value={group} onChange={(e) => setGroup(e.target.value as any)}>
+          {/* Ingen breddspärr: etiketten är ett `grid`, och `:where(label){width:100%}` i globals
+              gör den full bredd — omslaget sträcks alltså av etiketten och knappen kan inte krympa
+              efter sitt valda värde. (Jämför `/archive`, där etiketten är `flex` i en rad och
+              omslaget därför krymper till innehållet — där behövs spärren.) */}
+          <Select
+            className={crm.selectMenu}
+            aria-label="Gruppering"
+            value={group}
+            onChange={(e) => setGroup(e.target.value as any)}
+          >
             <option value="batch">Per batch</option>
             <option value="date">Per installationsdatum</option>
-          </select>
+          </Select>
         </label>
         <button
           type="button"
