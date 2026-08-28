@@ -129,14 +129,23 @@ export default function WorkOrderAfterCalculation({
         ) : null}
       </div>
 
-      {loading ? (
+      {loading && !result ? (
         <p className="text-[11px] leading-4 text-slate-500">Räknar…</p>
-      ) : loadError || !result ? (
+      ) : !result ? (
         <p className="text-[11px] leading-4 text-slate-500">
-          Efterkalkylen kunde inte hämtas. Ladda om sidan — talen står kvar orörda så länge.
+          Efterkalkylen kunde inte hämtas. Ladda om sidan.
         </p>
       ) : (
         <>
+          {/* ⚠️ EN MISSLYCKAD OMHÄMTNING KASTAR INTE BORT TALEN. Kortet räknar om efter varje
+              sparad artikelrad och varje borttagen delrapport; föll den omräkningen ersattes en
+              fullt läsbar uppställning av en felrad — och beskedet ska säga att talen är gamla,
+              inte radera dem. */}
+          {loadError ? (
+            <p className="mb-1 text-[11px] leading-snug text-amber-800">
+              Senaste uppdateringen misslyckades. Talen nedan är från förra hämtningen.
+            </p>
+          ) : null}
           <div className="grid divide-y divide-[#e0e8dc]">
             <LedgerRow label="Intäkt (ex moms)" amount={result.revenue} />
 

@@ -76,6 +76,36 @@ describe('materialkostnaden', () => {
   });
 });
 
+describe('noll rapporterade säckar är ett svar, inte en avsaknad', () => {
+  // Delrapportens schema tillåter 0 med flit: "vi var här, inget gick åt". Skillnaden mot att
+  // inte rapportera alls är hela poängen — den ena är känd kostnad 0 kr, den andra okänd kostnad.
+  it('en nollrapport ger materialkostnad 0 kr — och märker inte kalkylen som preliminär', () => {
+    const result = calc({ sackRows: [final(0)], timeRows: [{ minutes_worked: 480 }] });
+    expect(result.materialCost).toBe(0);
+    expect(result.tb1).toBe(100_000);
+    expect(result.gaps).toEqual([]);
+    expect(result.isPreliminary).toBe(false);
+  });
+
+  it('nollrapporten kräver ingen kostnadsartikel — noll säckar kostar noll oavsett pris', () => {
+    const result = calc({ sackRows: [final(0, 'PAROC')], timeRows: [{ minutes_worked: 480 }] });
+    expect(result.materialCost).toBe(0);
+    expect(result.gaps.map((g) => g.kind)).not.toContain('missing_cost_article');
+  });
+
+  it('nollrapporten syns som en rad — den försvinner inte ur uppställningen', () => {
+    const result = calc({ sackRows: [final(0)] });
+    expect(result.materialLines).toHaveLength(1);
+    expect(result.materialLines[0]).toMatchObject({ material: 'EKOVILLA', sacks: 0, cost: 0 });
+  });
+
+  it('noll säckar utan material flaggas inte som oprissatta säckar', () => {
+    const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(0, null)] });
+    expect(result.materialCost).toBe(5_000);
+    expect(result.gaps.map((g) => g.kind)).not.toContain('sacks_without_material');
+  });
+});
+
 describe('"ej rapporterat" är inte noll kronor', () => {
   it('jobb utan säckrapport ger materialkostnad null — aldrig 0 kr', () => {
     const result = calc({ sackRows: [] });

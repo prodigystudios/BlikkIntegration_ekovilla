@@ -170,7 +170,7 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
   const sacksByMaterial = new Map<string | null, number>();
   for (const row of effective) {
     const sacks = Number(row.sacks_blown ?? 0);
-    if (!Number.isFinite(sacks) || sacks === 0) continue;
+    if (!Number.isFinite(sacks)) continue;
     const key = materialKey(row);
     sacksByMaterial.set(key, (sacksByMaterial.get(key) ?? 0) + sacks);
   }
@@ -192,6 +192,26 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
 
   for (const key of orderedKeys) {
     const sacks = sacksByMaterial.get(key) ?? 0;
+    const article = key === null ? undefined : priceByMaterial.get(key);
+
+    // ⚠️ NOLL RAPPORTERADE SÄCKAR ÄR ETT SVAR, INTE EN AVSAKNAD. Delrapportens schema tillåter 0
+    // med flit — "vi var här, inget gick åt" är ett påstående om jobbet, till skillnad från att
+    // inte rapportera alls. Kostnaden är då 0 kr med SÄKERHET, oavsett material och prislapp, och
+    // raden ska därför varken kräva en kostnadsartikel eller märka kalkylen som preliminär.
+    // Utan den här grenen föll ett nollrapporterat jobb igenom: ingen materialrad, ingen lucka,
+    // och ett kort som visade "–" utan att säga varför.
+    if (sacks === 0) {
+      pricedLines += 1;
+      materialLines.push({
+        material: key,
+        sacks: 0,
+        articleNumber: article?.articleNumber ?? null,
+        purchasePrice: article?.purchasePrice ?? null,
+        cost: 0,
+      });
+      continue;
+    }
+
     if (key === null) {
       // Rapporten bär inga material — egenkontrollen kunde inte lösa etappradens artikelnamn.
       // Säckarna RÄKNAS i huvudboken (de blåstes ju) men går inte att prissätta.
@@ -200,7 +220,6 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
       continue;
     }
 
-    const article = priceByMaterial.get(key);
     if (!article) {
       missingArticle.push(key);
       materialLines.push({ material: key, sacks, articleNumber: null, purchasePrice: null, cost: null });

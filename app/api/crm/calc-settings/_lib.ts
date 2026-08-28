@@ -11,10 +11,14 @@ export { ok, routeError, validationError, requireCrmUser, requireCrmAdmin } from
  * ut — talet är fortfarande ett rimligt tal. 10 000 kr/h är långt över allt verkligt och fångar
  * ändå fingerfelet.
  */
+// ⚠️ STRIKT STÖRRE ÄN NOLL, inte min(0). Ett tomt fält blir `Number('') === 0`, vilket passerade
+// min(0) och sparades — och `mapLaborCostPerHour` behandlar 0 som "inte satt", så TB2 försvann från
+// VARJE arbetsorder medan sparningen sa att den lyckades. En nollsats finns inte i verkligheten;
+// vägen till "ingen sats" är att aldrig ha satt någon.
 export const updateCalcSettingsSchema = z.object({
   labor_cost_per_hour: z.coerce
     .number()
-    .min(0, 'Timkostnaden kan inte vara negativ')
+    .gt(0, 'Timkostnaden måste vara större än noll')
     .max(10_000, 'Timkostnaden ser orimlig ut — kontrollera siffran'),
 });
 

@@ -121,9 +121,13 @@ export default function CalcSettingsClient({
   }
 
   async function saveRate() {
-    const parsed = Number(rate.replace(',', '.').trim());
-    if (!Number.isFinite(parsed) || parsed < 0) {
-      toast.error('Skriv timkostnaden som ett tal, till exempel 650');
+    // ⚠️ Ett TOMT fält blir `Number('') === 0`, inte NaN. Utan den första kontrollen sparades en
+    // nolla — och en nollsats läses som "ingen sats", alltså försvann TB2 från varje arbetsorder
+    // medan notisen sa att timkostnaden var sparad.
+    const raw = rate.replace(',', '.').trim();
+    const parsed = Number(raw);
+    if (!raw || !Number.isFinite(parsed) || parsed <= 0) {
+      toast.error('Skriv timkostnaden som ett tal större än noll, till exempel 650');
       return;
     }
     setSavingRate(true);
@@ -155,23 +159,39 @@ export default function CalcSettingsClient({
           method: 'DELETE',
         });
       }
-      await refresh();
-      setDrafts((prev) => {
-        const next = { ...prev };
-        delete next[material];
-        return next;
-      });
-      toast.success(draft ? `Kostnadsartikel sparad för ${material}` : `Kopplingen för ${material} borttagen`);
     } catch (e: any) {
       toast.error(e?.message || 'Kunde inte spara kostnadsartikeln');
+      setBusyMaterial(null);
+      return;
+    }
+
+    // ⚠️ OMHÄMTNINGEN LIGGER UTANFÖR SKRIVNINGENS try. Låg den innanför blev ett misslyckat
+    // omläsningsanrop till "Kunde inte spara kostnadsartikeln" — om en ändring som FAKTISKT
+    // sparades. Skrivningen är klar här; det som kan fela nu är bara bilden av den.
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[material];
+      return next;
+    });
+    toast.success(draft ? `Kostnadsartikel sparad för ${material}` : `Kopplingen för ${material} borttagen`);
+    try {
+      await refresh();
+    } catch {
+      toast.error('Ändringen är sparad, men listan kunde inte uppdateras. Ladda om sidan.');
     } finally {
       setBusyMaterial(null);
     }
   }
 
   const rateDirty = (() => {
-    const parsed = Number(rate.replace(',', '.').trim());
-    if (!Number.isFinite(parsed)) return rate.trim().length > 0;
+    const raw = rate.replace(',', '.').trim();
+    // Ett tomt fält är inte en ändring utan ett oskrivet fält — och `Number('')` är 0, som annars
+    // hade sett ut som "ändrad från 650 till 0" och gjort Spara tryckbar.
+    if (!raw) return false;
+    const parsed = Number(raw);
+    // Skräp gör knappen tryckbar med flit: felet ska sägas när man trycker, inte döljas som en
+    // knapp som inte går att använda.
+    if (!Number.isFinite(parsed)) return true;
     return parsed !== savedRate;
   })();
 
@@ -204,7 +224,10 @@ export default function CalcSettingsClient({
         </p>
 
         <div className="flex flex-wrap items-end gap-3">
-          <label className="grid gap-1">
+          {/* ⚠️ `w-auto` KRÄVS. globals.css:200 sätter `:where(label){width:100%}` på varje label i
+              appen, och som 100 %-bred flex-post trycker den Spara-knappen ned på egen rad. Samma
+              fälla som de inline-staplade kryssrutorna på arbetsordern. */}
+          <label className="grid w-auto gap-1">
             <span className={crm.sectionTitle}>Kronor per man-timme</span>
             <div className="flex items-center gap-2">
               <Input
