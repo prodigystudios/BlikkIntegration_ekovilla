@@ -4,6 +4,7 @@ import {
   markSupersededReports,
   resolveSegmentForDay,
   sackReportKind,
+  sackTotalsByWorkOrder,
   sumSacksByWorkOrder,
   type ResolvableSegment,
 } from '@/lib/domains/planning/sackLedger';
@@ -87,6 +88,52 @@ describe('supersede-regeln', () => {
 
   it('tom lista ger tom karta', () => {
     expect(sumSacksByWorkOrder([]).size).toBe(0);
+  });
+});
+
+// Planeringstavlan ritar gult eller grönt på den här flaggan, och färgen ändrar vad talet BETYDER:
+// "kvar 36 / 564" är trettiosex säckar kvar att blåsa utan egenkontroll, och ett avräknat jobb som
+// gick åt trettiosex mindre med den. Fel flagga är alltså inte en färg fel utan en mening fel.
+describe('sackTotalsByWorkOrder', () => {
+  it('bär summan OCH att den är egenkontrollens', () => {
+    const rows = [partial('wo1', 30), partial('wo1', 25), final('wo1', 91)];
+    expect(sackTotalsByWorkOrder(rows).get('wo1')).toEqual({ sacks: 91, hasFinal: true });
+  });
+
+  it('bara delrapporter → samma summa, men inte final', () => {
+    expect(sackTotalsByWorkOrder([partial('wo1', 30), partial('wo1', 25)]).get('wo1')).toEqual({
+      sacks: 55,
+      hasFinal: false,
+    });
+  });
+
+  it('summan är exakt sumSacksByWorkOrder:s — supersede-regeln får inte gaffla', () => {
+    const rows = [partial('wo1', 30), final('wo1', 60), final('wo1', 31), partial('wo2', 12)];
+    const totals = sackTotalsByWorkOrder(rows);
+    const sums = sumSacksByWorkOrder(rows);
+    for (const [id, sum] of sums) expect(totals.get(id)?.sacks).toBe(sum);
+  });
+
+  it('håller isär jobben', () => {
+    const rows = [final('wo1', 91), partial('wo2', 40)];
+    const totals = sackTotalsByWorkOrder(rows);
+    expect(totals.get('wo1')?.hasFinal).toBe(true);
+    expect(totals.get('wo2')?.hasFinal).toBe(false);
+  });
+
+  // 🧨 Ett jobb utan rapportrader SAKNAS i kartan, det står inte som noll. "Ej rapporterat" och
+  // "0 säckar" är olika svar, och kortet ritar olika saker för dem.
+  it('jobb utan rapporter saknas i kartan i stället för att stå som noll', () => {
+    expect(sackTotalsByWorkOrder([]).get('wo1')).toBeUndefined();
+    expect(sackTotalsByWorkOrder([partial('wo2', 5)]).get('wo1')).toBeUndefined();
+  });
+
+  // Kolumnen är `not null default 'partial'`, men rader skrivna innan den fanns bär null. De ska
+  // räknas MED som delrapporter och absolut inte tolkas som egenkontroll — en falsk final släcker
+  // jobbets alla andra rader.
+  it('rader utan kind räknas som delrapport, aldrig som egenkontroll', () => {
+    const rows = [{ work_order_id: 'wo1', kind: null, sacks_blown: 30 }];
+    expect(sackTotalsByWorkOrder(rows).get('wo1')).toEqual({ sacks: 30, hasFinal: false });
   });
 });
 
