@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import Input from '../../../components/ui/Input';
+import Select from '@/components/ui/Select';
 import MetricCard from '../components/MetricCard';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -569,17 +570,22 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
               ))}
             </div>
 
-            {/* Status select */}
-            <select
+            {/* Status select.
+                🧨 `min-w-*` krävs i varje flex-rad: en `<select>` bredder sig efter sitt LÄNGSTA
+                alternativ och står stilla, medan vår knapp visar det VALDA — utan spärren krympte
+                pillret från "Alla statusar" till "Ny" och antalsräknaren till höger hoppade.
+                Måttet rymmer "Alla statusar" vid 16px, storleken iOS tvingar fram. */}
+            <Select
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="rounded-full border border-[#dce4d8] bg-white px-3 py-1.5 text-sm font-semibold text-slate-600 outline-none transition hover:border-[#c8d4c3]"
+              aria-label="Status"
+              className="min-h-0 min-w-[160px] rounded-full px-3 py-1.5 font-semibold text-slate-600"
             >
               <option value="all">Alla statusar</option>
               {Object.entries(statusLabel).map(([value, label]) => (
                 <option key={value} value={value}>{label}</option>
               ))}
-            </select>
+            </Select>
 
             <span className="text-xs text-slate-400 sm:ml-auto">{visibleProspects.length} i vy</span>
           </div>
@@ -592,16 +598,20 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
             Markera alla i vyn
           </label>
 
-          <select
+          {/* Bredden kan inte räknas ur alternativen — de är säljarnas namn och alltså okända här.
+              Måttet är satt så att knappen inte hoppar mellan vanliga namnlängder; ett ovanligt
+              långt namn kapas av `truncate` i stället för att flytta knappen bredvid. */}
+          <Select
             value={selectedUserId}
             onChange={(event) => setSelectedUserId(event.target.value)}
-            className="min-h-9 rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
+            aria-label="Tilldela ägare"
+            className="min-h-9 min-w-[200px] px-3 py-1.5 text-slate-700"
           >
             <option value="">Ingen ägare</option>
             {users.map((user) => (
               <option key={user.id} value={user.id}>{user.full_name || 'Okänd användare'}</option>
             ))}
-          </select>
+          </Select>
 
           <button
             type="button"
@@ -626,14 +636,16 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
         {importRows.length > 0 ? (
           <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-amber-50/40 px-4 py-2.5">
             <span className={crm.sectionTitle}>Vilket län gäller denna import?</span>
-            <select
+            {/* Måttet rymmer "Inget specifikt län" (längre än varje länsnamn) vid 16px. */}
+            <Select
               value={importCounty}
               onChange={(e) => setImportCounty(e.target.value)}
-              className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm text-slate-700 transition focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
+              aria-label="Län för importen"
+              className="min-h-0 min-w-[210px] px-3 py-1.5 text-slate-700"
             >
               <option value="">Inget specifikt län</option>
               {SWEDISH_COUNTIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            </Select>
             {importCounty ? (() => {
               const rule = rules.find((r) => r.county === importCounty);
               const user = rule ? usersById.get(rule.user_id) : null;
@@ -870,26 +882,31 @@ export default function RingListsClient({ adminName }: { adminName: string | nul
           <div className="mt-4 grid gap-4">
             {/* New rule */}
             <div className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50/60 p-4 sm:grid-cols-[1fr_1fr_auto]">
-              <select
+              {/* Inget `min-w` här, till skillnad från väljarna ovan: raden är ett grid
+                  (`sm:grid-cols-[1fr_1fr_auto]`), så kolumnen bestämmer bredden och knappen kan
+                  inte krympa efter sitt valda värde. */}
+              <Select
                 value={newRuleCounty}
                 onChange={(e) => setNewRuleCounty(e.target.value)}
-                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
+                aria-label="Län"
+                className="text-slate-700"
               >
                 <option value="">Välj län…</option>
                 {SWEDISH_COUNTIES.map((c) => (
                   <option key={c} value={c}>{c}</option>
                 ))}
-              </select>
-              <select
+              </Select>
+              <Select
                 value={newRuleUserId}
                 onChange={(e) => setNewRuleUserId(e.target.value)}
-                className="min-h-11 rounded-lg border border-[#dce4d8] bg-white px-3 py-2 text-sm text-slate-700 focus:border-[color:var(--ek-accent)] focus:outline-none focus:ring-2 focus:ring-[color:var(--ek-accent-ring)]"
+                aria-label="Säljare"
+                className="text-slate-700"
               >
                 <option value="">Välj säljare…</option>
                 {users.map((u) => (
                   <option key={u.id} value={u.id}>{u.full_name || 'Okänd'}</option>
                 ))}
-              </select>
+              </Select>
               <button
                 type="button"
                 onClick={saveRoutingRule}

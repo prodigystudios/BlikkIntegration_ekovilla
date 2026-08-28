@@ -13,7 +13,8 @@ export type SelectMenuOption = {
 type SelectMenuProps = {
   value: string;
   onChange: (value: string) => void;
-  options: SelectMenuOption[];
+  /** Readonly: komponenten läser bara listan, och anropare bygger den ofta ur en `as const`. */
+  options: ReadonlyArray<SelectMenuOption>;
   /** Visas när inget värde matchar — motsvarar en tom förstarad i en <select>. */
   placeholder?: string;
   'aria-label'?: string;
@@ -77,13 +78,20 @@ export default function SelectMenu({
   const ariaLabel = rest['aria-label'];
   const [open, setOpen] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
-  const [pos, setPos] = React.useState<{ left: number; top: number; width: number; maxHeight: number; flipped: boolean } | null>(null);
+  const [pos, setPos] = React.useState<{ left: number; top: number; width: number; maxWidth: number; maxHeight: number; flipped: boolean } | null>(null);
   const [mounted, setMounted] = React.useState(false);
 
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const typeahead = React.useRef<{ buffer: string; at: number }>({ buffer: '', at: 0 });
   const listId = React.useId();
+  // 🧨 `aria-label` ENSAMT på en `role="combobox"` tappar det VALDA VÄRDET ur uppläsningen: rollen
+  // förbjuder namn från innehåll, så knappens text (= valet) räknas inte in. En `<select
+  // aria-label>` läste upp både etiketten OCH värdet. APG:s mönster för en select-only combobox
+  // löser det med en `aria-labelledby` som pekar på etiketten OCH på kontrollen själv — den
+  // självreferensen är vad som släpper in innehållet i namnet igen.
+  const triggerId = id ?? `${listId}-trigger`;
+  const labelId = `${listId}-label`;
 
   // Portalen får inte renderas under serverrenderingen — `document` finns inte där.
   React.useEffect(() => setMounted(true), []);
@@ -117,10 +125,17 @@ export default function SelectMenu({
     // uppfälld lista till y = -26 och blev, eftersom den är `fixed`, omöjlig att nå. Hellre en
     // kort scrollande lista än en som ligger utanför skärmen.
     const maxHeight = Math.min(288, Math.max(flipped ? above : below, 0));
+    const left = Math.max(VIEWPORT_PAD, Math.min(r.left, window.innerWidth - r.width - VIEWPORT_PAD));
     setPos({
-      left: Math.max(VIEWPORT_PAD, Math.min(r.left, window.innerWidth - r.width - VIEWPORT_PAD)),
+      left,
       top: flipped ? r.top - MENU_MARGIN : r.bottom + MENU_MARGIN,
       width: r.width,
+      // 🧨 Listan får VÄXA förbi knappen — `width: r.width` kapade alternativ som var längre än
+      // kontrollen, och en `<select>`s OS-lista gör tvärtom: den bredder sig efter innehållet.
+      // Sorteringen på /crm/arbetsorder är 180px bred medan "Närmast installation" behöver mer, så
+      // texten stod avkapad i den ÖPPNA listan trots att den stängda rutan såg rätt ut.
+      // Taket räknas ur `left`, inte ur fönstret, så listan aldrig kan sträcka sig ut till höger.
+      maxWidth: Math.max(r.width, window.innerWidth - left - VIEWPORT_PAD),
       maxHeight,
       flipped,
     });
@@ -292,15 +307,19 @@ export default function SelectMenu({
 
   return (
     <>
+      {/* Bär etiketten åt `aria-labelledby` ovan. Osynlig, men måste finnas i DOM:en — ett
+          `aria-labelledby` som pekar på ingenting ger ett namnlöst fält. Utelämnas när anroparen i
+          stället har ett riktigt `<label htmlFor>`, för då namnger den redan kontrollen. */}
+      {ariaLabel ? <span id={labelId} className="sr-only">{ariaLabel}</span> : null}
       <button
         ref={triggerRef}
-        id={id}
+        id={triggerId}
         type="button"
         role="combobox"
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        aria-label={ariaLabel}
+        aria-labelledby={ariaLabel ? `${labelId} ${triggerId}` : undefined}
         disabled={disabled}
         onClick={() => (open ? close() : openMenu())}
         onKeyDown={onTriggerKeyDown}
@@ -339,7 +358,9 @@ export default function SelectMenu({
                 left: pos.left,
                 top: pos.flipped ? undefined : pos.top,
                 bottom: pos.flipped ? window.innerHeight - pos.top : undefined,
-                width: pos.width,
+                minWidth: pos.width,
+                maxWidth: pos.maxWidth,
+                width: 'max-content',
                 maxHeight: pos.maxHeight,
                 zIndex: MENU_Z,
               }}
