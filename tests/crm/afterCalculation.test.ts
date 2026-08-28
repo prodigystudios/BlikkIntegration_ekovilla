@@ -35,6 +35,7 @@ const base: AfterCalculationInput = {
   sackRows: [],
   timeRows: [],
   costArticles: [{ material: 'EKOVILLA', articleNumber: '2410508', purchasePrice: 100 }],
+  otherMaterialRows: [],
   laborCostPerHour: 650,
 };
 
@@ -143,6 +144,63 @@ describe('"ej rapporterat" är inte noll kronor', () => {
     const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(20, 'PAROC')] });
     expect(result.materialCost).toBe(5_000);
     expect(result.isPreliminary).toBe(true);
+  });
+});
+
+describe('sålda rader utanför säckrapporten', () => {
+  // Order #13, 2026-08-28: fyra paket EKOVILLA LEVY 30MM såldes för 2 309 kr med inköpspris
+  // 499,89/pkt. Utan de här raderna blev TB2 +1 655 kr i stället för −345 kr — vinst i stället för
+  // förlust, på ett kort som inte ens flaggade sig som preliminärt.
+  const levy = { label: 'EKOVILLA LEVY 30MM', articleNumber: '2410528', quantity: 4, purchasePrice: 499.89, revenue: 2_309 };
+
+  it('räknas in i materialkostnaden tillsammans med säckarna', () => {
+    const result = calc({ sackRows: [final(43)], otherMaterialRows: [levy] });
+    expect(result.materialCost).toBeCloseTo(4_300 + 1_999.56, 6);
+  });
+
+  it('order #13 genomräknad: TB2 vänder från vinst till förlust', () => {
+    const result = calc({
+      revenue: 16_028,
+      sackRows: [final(43)],
+      costArticles: [{ material: 'EKOVILLA', articleNumber: '2410508', purchasePrice: 92.4 }],
+      otherMaterialRows: [levy, { label: 'Etableringskostnad', articleNumber: '1010', quantity: 1, purchasePrice: 0, revenue: 3_900 }],
+      timeRows: [{ minutes_worked: 960 }],
+    });
+    expect(result.materialCost).toBeCloseTo(3_973.2 + 1_999.56, 6);
+    expect(result.tb2).toBeLessThan(0);
+    expect(result.tb2).toBeCloseTo(16_028 - 5_972.76 - 10_400, 6);
+  });
+
+  it('inköpspris 0 är ett SVAR — etableringsraden kostar noll och flaggas inte', () => {
+    const result = calc({
+      sackRows: [final(43)],
+      timeRows: [{ minutes_worked: 480 }],
+      otherMaterialRows: [{ label: 'Etableringskostnad', articleNumber: '1010', quantity: 1, purchasePrice: 0, revenue: 3_900 }],
+    });
+    expect(result.materialCost).toBe(4_300);
+    expect(result.gaps).toEqual([]);
+    expect(result.isPreliminary).toBe(false);
+  });
+
+  it('inköpspris null är OKUNSKAP — raden hålls utanför kostnaden och redovisas', () => {
+    const result = calc({
+      sackRows: [final(43)],
+      timeRows: [{ minutes_worked: 480 }],
+      otherMaterialRows: [{ label: 'Vindduk', articleNumber: '13310', quantity: 2, purchasePrice: null, revenue: 4_800 }],
+    });
+    // Oprissatt rad räknas ALDRIG som gratis — det är den farligt optimistiska riktningen.
+    expect(result.materialCost).toBe(4_300);
+    const gap = result.gaps.find((g) => g.kind === 'unpriced_rows');
+    expect(gap && 'revenue' in gap ? gap.revenue : 0).toBe(4_800);
+    expect(gap?.message).toContain('Vindduk');
+  });
+
+  it('en oprissatt rad ensam ger okänd materialkostnad, inte 0 kr', () => {
+    const result = calc({
+      sackRows: [],
+      otherMaterialRows: [{ label: 'Vindduk', articleNumber: '13310', quantity: 2, purchasePrice: null, revenue: 4_800 }],
+    });
+    expect(result.materialCost).toBeNull();
   });
 });
 

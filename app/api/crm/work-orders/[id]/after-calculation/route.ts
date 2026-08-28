@@ -1,7 +1,10 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { listSackReports } from '@/lib/domains/planning/reports';
-import { computePricing, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { computePricing, lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
+import { parseDecimal } from '@/lib/shared/number';
 import {
   calculateAfterCalculation,
   type AfterCalculationSackRow,
@@ -100,13 +103,6 @@ export async function GET(_req: Request, context: RouteContext) {
       );
     }
 
-    const mappings = (mappingResult.data || []) as MaterialCostArticleRow[];
-    const articleNumbers = [...new Set(mappings.map((row) => row.article_number))];
-    const priceResult = articleNumbers.length > 0 ? await listCostArticlePrices(supabase, articleNumbers) : { data: [], error: null };
-    if (priceResult.error) {
-      return routeError(500, 'crm_after_calculation_article_prices_failed', priceResult.error.message);
-    }
-
     // ⚠️ INTÄKTEN RÄKNAS UR RADERNA, INTE UR DEN SPARADE pricing_summary. Skälet är samma regel som
     // MarginRow.revenue bär i pricing.ts: det belopp som bedöms måste vara det som VISAS. Ekonomi-
     // kortets Delsumma är `computePricing(...)` över samma rader (avskrivna bortfiltrerade), så
@@ -117,8 +113,59 @@ export async function GET(_req: Request, context: RouteContext) {
     // Avskrivna rader är ute ur BÅDA leden: de utförs aldrig, alltså faktureras de inte och det går
     // ingen lösull åt. Samma filter som artikelfliken och säckbadgen redan använder.
     const lineItems = Array.isArray(workOrder.line_items) ? (workOrder.line_items as Array<Record<string, unknown>>) : [];
-    const billableItems = lineItems.filter((item) => !item.written_off) as PricingLineItem[];
-    const pricing = computePricing(billableItems, (workOrder as { vat_percent?: number | string | null }).vat_percent ?? null);
+    const billableItems = lineItems.filter((item) => !item.written_off) as Array<Record<string, unknown>>;
+    const pricing = computePricing(billableItems as PricingLineItem[], (workOrder as { vat_percent?: number | string | null }).vat_percent ?? null);
+
+    // ── Raderna som INTE rapporteras i säckar ─────────────────────────────
+    // Skivor, duk, brandmatta, etablering. Säckrapporten täcker bara lösullen, och utan de här
+    // raderna bidrar allt annat vi säljer med intäkt och noll kostnad — TB blir systematiskt för
+    // högt.
+    //
+    // ⚠️ VARUMÄRKESNAMNET RÄCKER INTE SOM FILTER. Första versionen hoppade över varje rad vars
+    // artikelnamn löste ut ett känt material — men `inferMaterialFromArticle` matchar på
+    // varumärket, och halva sortimentet heter "EKOVILLA" utan att vara lösull: EKOVILLA LEVY 30MM
+    // (styva skivor), VINDSKYDDSDUK EKOVILLA, ÅNGBROMS EKOVILLA. Följden var att order #13:s fyra
+    // paket skivor à 499,89 kr föll ur kalkylen igen — precis det hål den här ändringen finns för
+    // att täppa till.
+    //
+    // Rätt fråga är inte "vilket varumärke" utan "blåses den här raden och räknas den därmed i
+    // säckrapporten": ett känt material SÅLT PER VOLYM. Samma m³-test som `lineItemQuantity` gör.
+    // En lösullsrad utan ifylld densitet hoppas alltså fortfarande över — dess säckar kan mycket
+    // väl vara rapporterade ändå, och dubbelräkning är värre än att missa.
+    const isBlownInsulationRow = (item: Record<string, unknown>) =>
+      Boolean(inferMaterialFromArticle(item.article_name as string | null))
+      && ((item.pricing_mode as string | null) ?? 'm3') !== 'item';
+
+    const otherRows = billableItems
+      .filter((item) => !isBlownInsulationRow(item))
+      .map((item) => ({
+        item,
+        quantity: lineItemQuantity(item as PricingLineItem),
+        revenue: lineItemRowTotal(item as PricingLineItem),
+        articleNumber: ((item.article_number as string | null) ?? '').trim() || null,
+      }))
+      // En tom rad i utkastet är varken intäkt eller kostnad — den ska inte synas i uppställningen.
+      .filter((row) => row.quantity > 0 || row.revenue > 0);
+
+    const mappings = (mappingResult.data || []) as MaterialCostArticleRow[];
+    // ETT uppslag för båda behoven: kostnadsartiklarna och orderns egna rader.
+    const articleNumbers = [
+      ...new Set([
+        ...mappings.map((row) => row.article_number),
+        ...otherRows.map((row) => row.articleNumber).filter((n): n is string => Boolean(n)),
+      ]),
+    ];
+    const priceResult = articleNumbers.length > 0 ? await listCostArticlePrices(supabase, articleNumbers) : { data: [], error: null };
+    if (priceResult.error) {
+      return routeError(500, 'crm_after_calculation_article_prices_failed', priceResult.error.message);
+    }
+
+    const priceByArticle = new Map(
+      ((priceResult.data || []) as Array<{ article_number: string; purchase_price?: number | string | null }>).map((row) => [
+        row.article_number,
+        row.purchase_price,
+      ]),
+    );
 
     const result = calculateAfterCalculation({
       // ⚠️ subtotal, ALDRIG total — `total` bär moms, och moms är inte vår intäkt.
@@ -126,6 +173,18 @@ export async function GET(_req: Request, context: RouteContext) {
       sackRows: (sackResult.data || []) as unknown as AfterCalculationSackRow[],
       timeRows: (timeResult.data || []) as AfterCalculationTimeRow[],
       costArticles: mapMaterialCostArticles(mappings, (priceResult.data || []) as any[]),
+      otherMaterialRows: otherRows.map((row) => {
+        const raw = row.articleNumber ? priceByArticle.get(row.articleNumber) : undefined;
+        return {
+          label: ((row.item.article_name as string | null) ?? '').trim() || row.articleNumber || 'Rad utan artikel',
+          articleNumber: row.articleNumber,
+          quantity: row.quantity,
+          // ⚠️ `undefined` (artikeln finns inte i cachen) och `null` (aldrig prissatt) blir båda
+          // null = OKÄNT. En nolla ur Fortnox är däremot ett svar — se OtherMaterialRow.
+          purchasePrice: raw == null ? null : parseDecimal(raw, 0),
+          revenue: row.revenue,
+        };
+      }),
       laborCostPerHour: mapLaborCostPerHour(settingsResult.data as CalcSettingsRow | null),
     });
 

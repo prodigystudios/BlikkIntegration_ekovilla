@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { formatCurrency, formatSacks } from '@/app/crm/lib/format';
+import { formatCurrency, formatQuantity, formatSacks } from '@/app/crm/lib/format';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 
 // Efterkalkylen i Ekonomi-kortet: vad jobbet FAKTISKT gav.
@@ -180,6 +180,23 @@ export default function WorkOrderAfterCalculation({
                 );
               })
             )}
+
+            {/* Sålda rader utanför säckrapporten — skivor, duk, brandmatta, etablering. Utan dem
+                bidrar allt vi säljer som inte är lösull med intäkt och noll kostnad, och TB blir
+                systematiskt för högt. Etableringsraden hamnar här med 0 kr, vilket är sant: den
+                artikeln har inköpspris 0 i Fortnox. */}
+            {result.otherMaterialLines.map((line, index) => (
+              <LedgerRow
+                key={`${line.articleNumber ?? line.label}-${index}`}
+                label={line.label}
+                detail={[
+                  formatQuantity(line.quantity),
+                  line.purchasePrice != null ? `× ${formatUnitPrice(line.purchasePrice)}` : 'inköpspris saknas',
+                ].join(' ')}
+                amount={line.cost}
+                negative
+              />
+            ))}
 
             <LedgerRow
               label="Arbete"

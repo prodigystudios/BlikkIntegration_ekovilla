@@ -64,12 +64,48 @@ export type MaterialCostArticle = {
   purchasePrice: number | null;
 };
 
+/**
+ * En såld rad som INTE rapporteras i säckar — skivor, duk, brandmatta, etablering.
+ *
+ * ⚠️ UTAN DEN HÄR HALVAN ÄR TB SYSTEMATISKT FÖR HÖGT. Säckrapporten täcker bara lösullen; allt
+ * annat vi säljer bidrar med intäkt och noll kostnad. Belagt på order #13 (2026-08-28): fyra paket
+ * EKOVILLA LEVY 30MM såldes för 2 309 kr med ett inköpspris på 499,89 kr/pkt — 1 999 kr verklig
+ * kostnad som föll utanför. TB2 gick från +1 655 kr till −345 kr när den räknades med, alltså från
+ * vinst till förlust.
+ *
+ * För de här raderna finns ingen mätning att göra och behöver ingen: antalet vi sålde ÄR antalet
+ * som gick åt. Priset kommer ur artikelns `purchase_price`, precis som offertens TG hämtar det.
+ */
+export type OtherMaterialRow = {
+  /** Artikelnamnet, för uppställningen. */
+  label: string;
+  articleNumber: string | null;
+  quantity: number;
+  /**
+   * Inköpspris per enhet.
+   *
+   * ⚠️ 0 OCH null BETYDER OLIKA SAKER HÄR, till skillnad från `hasPurchasePrice` i pricing.ts som
+   * slår ihop dem. 0 är ett SVAR: Etableringskostnad (1010) har inköpspris 0 i Fortnox och kostar
+   * oss faktiskt ingenting. null är okunskap: artikeln saknas i cachen eller har aldrig prissatts.
+   *
+   * Skillnaden är inte akademisk. Slogs de ihop hade varje order med en etableringsrad — alltså
+   * praktiskt taget alla — flaggats som preliminär, och en flagga som alltid lyser slutar läsas.
+   * Priset att betala är att en artikel någon glömt prissätta räknas som gratis; det är samma
+   * risk offerten redan bär, och den syns i artikelregistret.
+   */
+  purchasePrice: number | null;
+  /** Radens intäkt — bara för att kunna säga hur stor del av ordern som inte gick att bedöma. */
+  revenue: number;
+};
+
 export type AfterCalculationInput = {
   /** Intäkt ex moms. ⚠️ ALLTID `subtotal` — `amount` är brutto inkl. moms. */
   revenue: number | null;
   sackRows: AfterCalculationSackRow[];
   timeRows: AfterCalculationTimeRow[];
   costArticles: MaterialCostArticle[];
+  /** Sålda rader som inte täcks av säckrapporten. Se OtherMaterialRow. */
+  otherMaterialRows: OtherMaterialRow[];
   /** Kronor per MAN-timme. null när inställningen saknas. */
   laborCostPerHour: number | null;
 };
@@ -83,6 +119,7 @@ export type AfterCalculationGap =
   | { kind: 'sacks_without_material'; message: string; sacks: number }
   | { kind: 'missing_cost_article'; message: string; materials: string[] }
   | { kind: 'missing_purchase_price'; message: string; materials: string[] }
+  | { kind: 'unpriced_rows'; message: string; revenue: number; labels: string[] }
   | { kind: 'no_time'; message: string }
   | { kind: 'no_labor_rate'; message: string };
 
@@ -98,11 +135,23 @@ export type MaterialCostLine = {
   cost: number | null;
 };
 
+/** En såld rad utanför säckrapporten, prissatt. */
+export type OtherMaterialCostLine = {
+  label: string;
+  articleNumber: string | null;
+  quantity: number;
+  purchasePrice: number | null;
+  /** null när artikeln saknar inköpspris — då ingår raden inte i materialCost. */
+  cost: number | null;
+};
+
 export type AfterCalculation = {
   revenue: number | null;
-  /** Summan av de materialrader som gick att prissätta. null när INGENTING går att prissätta. */
+  /** Summan av allt som gick att prissätta: säckarna PLUS raderna utanför dem. */
   materialCost: number | null;
   materialLines: MaterialCostLine[];
+  /** Raderna som inte rapporteras i säckar. Tom när ordern bara säljer lösull. */
+  otherMaterialLines: OtherMaterialCostLine[];
   /** Man-timmar, summerade över alla personer. null när ingen tid är rapporterad. */
   laborHours: number | null;
   laborCost: number | null;
@@ -275,6 +324,38 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     });
   }
 
+  // ── Sålda rader utanför säckrapporten ────────────────────────────────────
+  // Skivor, duk, brandmatta, etablering. Antalet vi sålde är antalet som gick åt — det finns
+  // ingen mätning att invänta. Se OtherMaterialRow för varför halvan är nödvändig.
+  const otherMaterialLines: OtherMaterialCostLine[] = [];
+  const unpricedLabels: string[] = [];
+  let unpricedRevenue = 0;
+
+  for (const row of input.otherMaterialRows) {
+    const price = row.purchasePrice;
+    if (price == null || !Number.isFinite(price) || price < 0) {
+      // Okänt, inte gratis. Raden hålls utanför kostnaden och redovisas i stället — samma
+      // disciplin som quoteMargin: att räkna en oprissatt rad som kostnadsfri hade blåst upp TB.
+      unpricedLabels.push(row.label);
+      unpricedRevenue += row.revenue;
+      otherMaterialLines.push({ ...row, cost: null });
+      continue;
+    }
+    const cost = price * row.quantity;
+    pricedCost += cost;
+    pricedLines += 1;
+    otherMaterialLines.push({ ...row, cost });
+  }
+
+  if (unpricedLabels.length > 0) {
+    gaps.push({
+      kind: 'unpriced_rows',
+      message: `${unpricedLabels.join(', ')} saknar inköpspris i Fortnox — ${Math.round(unpricedRevenue).toLocaleString('sv-SE')} kr av intäkten är inte bedömd.`,
+      revenue: unpricedRevenue,
+      labels: unpricedLabels,
+    });
+  }
+
   // Noll prissatta rader ger null, inte 0 kr — samma skäl som "ej rapporterat" ovan.
   const materialCost = pricedLines > 0 ? pricedCost : null;
 
@@ -311,6 +392,7 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     revenue,
     materialCost,
     materialLines,
+    otherMaterialLines,
     laborHours,
     laborCost,
     laborCostPerHour,
