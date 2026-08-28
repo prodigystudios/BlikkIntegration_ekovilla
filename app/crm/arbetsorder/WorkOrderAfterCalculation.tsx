@@ -67,8 +67,10 @@ function LedgerRow({
         <span className="text-sm text-slate-600">{label}</span>
         {detail ? <span className="block text-[11px] leading-snug text-slate-500">{detail}</span> : null}
       </span>
+      {/* Minustecknet bara när det finns något att dra av. En nollrapport är en giltig rad
+          ("vi var här, inget gick åt") och "−0 kr" läser som ett räknefel. */}
       <span className={cn('shrink-0 text-sm tabular-nums', amount == null ? 'text-slate-400' : 'text-slate-900')}>
-        {amount == null ? '–' : `${negative ? '−' : ''}${formatCurrency(amount, 'SEK')}`}
+        {amount == null ? '–' : `${negative && amount !== 0 ? '−' : ''}${formatCurrency(amount, 'SEK')}`}
       </span>
     </div>
   );
