@@ -5,6 +5,43 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDateTime } from '@/app/crm/lib/format';
 import MentionTextarea, { type MentionUser } from '@/app/crm/components/MentionTextarea';
+import { splitLinkParts } from '@/lib/shared/linkify';
+
+// Kommentarstexten, med adresserna klickbara och radbrytningarna kvar.
+//
+// Båda halvorna löser ett riktigt fel, inte en finess. Egenkontrollen skriver in en permanent
+// nedladdningslänk i en kommentar på ordern när rapporten lämnas in — den renderades som ren text,
+// så kontoret fick markera och kopiera den för hand. Och kommentaren är fyrradig (RAPPORTERING →
+// antal säckar → datum → länk), medan default-CSS:en kollapsar radbrytningar: hela stycket lades
+// ut som en enda löpande rad.
+//
+// ⚠️ DELAR, INTE HTML-STRÄNG. splitLinkParts returnerar bitar som React renderar som element, så
+// texten escapas av React. Bygg aldrig om det här till dangerouslySetInnerHTML — kommentarerna är
+// användarskriven text.
+//
+// target="_blank": den som öppnar en egenkontroll vill ha kvar arbetsordern bakom sig. rel bär
+// noopener av säkerhetsskäl (den öppnade sidan får inte nå window.opener).
+function CommentBody({ body }: { body: string }) {
+  return (
+    <div className="whitespace-pre-wrap break-words text-slate-600">
+      {splitLinkParts(body).map((part, i) =>
+        part.type === 'link' ? (
+          <a
+            key={i}
+            href={part.value}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-emerald-700 underline underline-offset-2 transition hover:text-emerald-800"
+          >
+            {part.value}
+          </a>
+        ) : (
+          part.value
+        ),
+      )}
+    </div>
+  );
+}
 
 export type CommentItem = {
   id: string;
@@ -107,7 +144,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
                 <strong className="text-slate-900">{namesById.get(item.created_by) || item.author?.full_name || 'Okänd medarbetare'}</strong>
                 <span className="text-xs text-slate-400">{formatDateTime(item.created_at)}</span>
               </div>
-              <div className="text-slate-600">{item.body}</div>
+              <CommentBody body={item.body} />
               {isOwn ? (
                 <div className="flex items-center justify-end gap-3 pt-0.5">
                   {confirmDeleteId === item.id ? (
