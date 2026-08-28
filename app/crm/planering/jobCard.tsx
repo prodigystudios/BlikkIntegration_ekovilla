@@ -9,7 +9,7 @@ import {
   type WorkOrderStatus,
 } from '@/app/crm/lib/crmTokens';
 import type { JobDisplay } from '@/lib/domains/planning/display';
-import { sacksRemaining, sacksOverrun } from '@/lib/domains/planning/reports';
+import { sacksRemaining, sacksOverrun, sackProgressState } from '@/lib/domains/planning/reports';
 import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from '@/lib/domains/planning/crew';
 import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/planning/confirmations';
 import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
@@ -96,49 +96,50 @@ export function SackProgress({
   reported: number;
   final?: boolean;
 }) {
-  if (!(planned > 0) && !(reported > 0)) return null;
-  if (reported > 0) {
-    const over = sacksOverrun(planned, reported);
-    const source = final ? 'Egenkontroll inlämnad' : 'Delrapporterat';
-    const title = `${source} — blåsta ${reported} av ${planned} planerade säckar`;
-    if (over > 0) {
-      return (
-        <span
-          title={title}
-          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[10px] font-bold tabular-nums text-rose-700"
-        >
-          {final && <FinalCheck />}
-          över {over} / {planned}
-        </span>
-      );
-    }
-    if (final) {
-      return (
-        <span
-          title={title}
-          className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-200 bg-emerald-50 px-2 py-px text-[10px] font-bold tabular-nums text-emerald-700"
-        >
-          <FinalCheck />
-          {/* "N av M", inte "kvar N / M" och inte bara "N säck".
-              Två fällor låg i vägen. Ett naket tal i snedstreckform ("5 / 243") säger inte VILKET
-              tal som är vilket — det gula lägets "kvar" bär den upplysningen, och utan ordet ärvs
-              den inte. Och bara antalet ("280 säck") kolliderar med SackBadge, som ritar PLANERAT
-              antal i exakt samma bleka gröna: två motsatta betydelser skilda bara av en bock.
-              "238 av 243" kan inte förväxlas med någondera. */}
-          {reported} av {planned}
-        </span>
-      );
-    }
+  // Grenvalet är en REGEL och bor därför i domänen (sackProgressState) — se noten där om varför
+  // egenkontrollen måste prövas före `reported > 0`. Här återstår bara att rita lägena.
+  const state = sackProgressState(planned, reported, final);
+  if (state === 'hidden') return null;
+  if (state === 'planned') return <SackBadge sacks={planned} />;
+
+  const over = sacksOverrun(planned, reported);
+  const source = final ? 'Egenkontroll inlämnad' : 'Delrapporterat';
+  const title = `${source} — blåsta ${reported} av ${planned} planerade säckar`;
+  const pill = 'whitespace-nowrap rounded-full border px-2 py-px text-[10px] font-bold tabular-nums';
+  const withCheck = 'inline-flex items-center gap-1';
+
+  // Överdraget behåller sitt röda läge även med egenkontroll: att jobbet är avräknat gör inte
+  // överförbrukningen mindre sann, och det är den kortet ska larma om. Bocken säger bara varifrån
+  // talet kommer.
+  if (state === 'overrun' || state === 'final-overrun') {
     return (
-      <span
-        title={title}
-        className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold tabular-nums text-amber-700"
-      >
-        kvar {sacksRemaining(planned, reported)} / {planned}
+      <span title={title} className={cn(pill, 'border-rose-200 bg-rose-50 text-rose-700', state === 'final-overrun' && withCheck)}>
+        {state === 'final-overrun' && <FinalCheck />}
+        över {over} / {planned}
       </span>
     );
   }
-  return <SackBadge sacks={planned} />;
+
+  if (state === 'final') {
+    return (
+      <span title={title} className={cn(pill, withCheck, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>
+        <FinalCheck />
+        {/* "N av M", inte "kvar N / M" och inte bara "N säck".
+            Två fällor låg i vägen. Ett naket tal i snedstreckform ("5 / 243") säger inte VILKET tal
+            som är vilket — det gula lägets "kvar" bär den upplysningen, och utan ordet ärvs den
+            inte. Och bara antalet ("280 säck") kolliderar med SackBadge, som ritar PLANERAT antal i
+            exakt samma bleka gröna: två motsatta betydelser skilda bara av en bock.
+            "238 av 243" kan inte förväxlas med någondera. */}
+        {reported} av {planned}
+      </span>
+    );
+  }
+
+  return (
+    <span title={title} className={cn(pill, 'border-amber-200 bg-amber-50 text-amber-700')}>
+      kvar {sacksRemaining(planned, reported)} / {planned}
+    </span>
+  );
 }
 
 export function MaterialChip({ material }: { material: string | null }) {

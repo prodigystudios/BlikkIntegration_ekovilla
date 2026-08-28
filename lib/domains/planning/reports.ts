@@ -28,6 +28,42 @@ export function sacksOverrun(planned: number, blown: number): number {
   return Math.max(0, blown - planned);
 }
 
+/** Vilket läge planeringskortets säckbadge ska rita. */
+export type SackProgressState =
+  /** Ingenting att säga — inget planerat, inget rapporterat, ingen egenkontroll. */
+  | 'hidden'
+  /** Bara planen finns. */
+  | 'planned'
+  /** Delrapporterat, jobbet pågår. */
+  | 'remaining'
+  /** Delrapporterat och redan över planen. */
+  | 'overrun'
+  /** Egenkontrollen inlämnad — talet är jobbets slutsumma. */
+  | 'final'
+  /** Egenkontrollen inlämnad, och den går över planen. */
+  | 'final-overrun';
+
+/**
+ * Badgens läge, som ren funktion. Bor här och inte i komponenten för att EN av grenarna är en
+ * regel och inte en stilfråga:
+ *
+ * 🧨 `final` MÅSTE prövas före `reported > 0`. En ifylld NOLLA i egenkontrollen är ett svar — "vi
+ * var här, inget gick åt" — och finalSackEntriesFromEtappRows behåller den med flit (en TOM ruta
+ * hoppas över, en nolla behålls). Ligger final-prövningen inuti `reported > 0` faller det fallet
+ * ut som 'planned' och ser exakt likadant ut som ett jobb ingen rapporterat något på. Då raderar
+ * kortet skillnaden mellan "inget gick åt" och "vi vet inte". Granskningen fångade det en gång;
+ * testet finns för att det inte ska gå att återinföra.
+ *
+ * Överdraget behåller sitt eget läge även med egenkontroll: att jobbet är avräknat gör inte
+ * överförbrukningen mindre sann.
+ */
+export function sackProgressState(planned: number, reported: number, final: boolean): SackProgressState {
+  if (!(planned > 0) && !(reported > 0) && !final) return 'hidden';
+  if (final) return sacksOverrun(planned, reported) > 0 ? 'final-overrun' : 'final';
+  if (reported > 0) return sacksOverrun(planned, reported) > 0 ? 'overrun' : 'remaining';
+  return 'planned';
+}
+
 // En rad i huvudboken, som den läses tillbaka.
 export type SackReportRow = {
   id: string;
@@ -164,37 +200,17 @@ export async function deleteSackReportsByIds(admin: SupabaseClient, ids: string[
   return { error };
 }
 
-// Blåsta säckar per arbetsorder. Betjänar BÅDE planeringstavlan och arbetsorderns
-// snabböversikt.
+// Blåsta säckar per arbetsorder, plus om summan är egenkontrollens. Betjänar BÅDE
+// planeringstavlan (som ritar skillnaden) och arbetsorderns snabböversikt (som bara vill ha talet,
+// via reportedSacksByWorkOrder nedan). ENDA frågan mot ops_segment_reports i den här modulen.
 //
 // ⚠️ `kind` MÅSTE med i select:en. Utan den läser sumSacksByWorkOrder varje rad som 'partial'
 // och adderar delrapporterna ovanpå egenkontrollen — 30 + 25 + 91 = 146 där svaret är 91.
-// Felet syns inte som ett fel, bara som ett för högt tal.
+// Felet syns inte som ett fel, bara som ett för högt tal. Kolumnen bär dessutom `hasFinal`, så en
+// borttagning härifrån släcker två saker samtidigt.
 //
 // Ett jobb utan rapportrader SAKNAS i kartan i stället för att stå som 0 — anropsstället måste
 // skilja "ej rapporterat" från "noll säckar".
-export async function reportedSacksByWorkOrder(
-  supabase: SupabaseClient,
-  workOrderIds: string[],
-): Promise<Map<string, number>> {
-  if (workOrderIds.length === 0) return new Map<string, number>();
-  const { data } = await supabase
-    .from('ops_segment_reports')
-    .select('work_order_id, sacks_blown, kind')
-    .in('work_order_id', workOrderIds);
-  return sumSacksByWorkOrder((data ?? []) as SackLedgerRow[]);
-}
-
-/**
- * Samma fråga, men svaret bär också om summan är egenkontrollens (`hasFinal`).
- *
- * Planeringstavlan använder den här och inte reportedSacksByWorkOrder: `kind` hämtas ändå — regeln
- * kräver det — så flaggan kostar ingenting extra att bära med, medan en separat fråga bara för
- * den hade varit en extra rundtur mot samma tabell.
- *
- * ⚠️ Samma sak som ovan gäller: ett jobb utan rapportrader SAKNAS i kartan i stället för att stå
- * som noll. "Ej rapporterat" och "0 säckar" är olika svar på olika frågor.
- */
 export async function sackTotalsForWorkOrders(
   supabase: SupabaseClient,
   workOrderIds: string[],
@@ -205,6 +221,26 @@ export async function sackTotalsForWorkOrders(
     .select('work_order_id, sacks_blown, kind')
     .in('work_order_id', workOrderIds);
   return sackTotalsByWorkOrder((data ?? []) as SackLedgerRow[]);
+}
+
+/**
+ * Bara summorna — för anropare som inte bryr sig om varifrån talet kommer (arbetsorderns
+ * snabböversikt).
+ *
+ * ⚠️ HÄRLEDD, INTE EN EGEN FRÅGA. Frågan ovan är den enda mot ops_segment_reports i den här
+ * modulen, och det är med flit: `kind`-kravet i kommentaren är lastbärande, och en andra kopia av
+ * select:en hade kunnat tappa kolumnen utan att den varningen stod bredvid. Då läser
+ * sumSacksByWorkOrder varje rad som 'partial' och adderar delrapporterna ovanpå egenkontrollen —
+ * 30 + 25 + 91 = 146 där svaret är 91, och felet syns bara som ett för högt tal.
+ */
+export async function reportedSacksByWorkOrder(
+  supabase: SupabaseClient,
+  workOrderIds: string[],
+): Promise<Map<string, number>> {
+  const totals = await sackTotalsForWorkOrders(supabase, workOrderIds);
+  const map = new Map<string, number>();
+  for (const [workOrderId, total] of totals) map.set(workOrderId, total.sacks);
+  return map;
 }
 
 /**
