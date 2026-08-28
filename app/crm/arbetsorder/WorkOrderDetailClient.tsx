@@ -27,6 +27,8 @@ import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
+import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
+import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
@@ -232,6 +234,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Spåret bakom snabböversiktens tal. Skriver inga rapporter — dörr 1 och 2 gör det — men kan ta
   // bort en felrapporterad delrapport, se removeSackReport.
   const sackReports = useSackReports(workOrderId);
+  // Efterkalkylen går sin egen väg med flit — kostnadsdata får aldrig ligga i den nyttolast
+  // fältvyn läser. Se app/api/crm/work-orders/[id]/after-calculation/route.ts.
+  const afterCalculation = useAfterCalculation(workOrderId);
   const [sourceQuote, setSourceQuote] = useState<{ quote_number: string | null; fortnox_offer_number: string | null } | null>(null);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [confirmInvoiceOpen, setConfirmInvoiceOpen] = useState(false);
@@ -260,6 +265,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   async function removeSackReport(id: string) {
     const removed = await sackReports.remove(id);
     if (!removed) return;
+    // Materialkostnaden räknas på samma rader. Utan omhämtningen står efterkalkylen kvar på den
+    // dubbelrapporterade summan medan spåret ovanför redan visar den rättade.
+    void afterCalculation.refresh();
     // ⚠️ Samma ordningsfälla som i hookens refresh: två borttagningar i rad ger två omräkningar,
     // och landar den första sist skriver den tillbaka summan FÖRE den andra raden togs bort. Talet
     // hade då stått kvar på den dubbelrapporterade siffran — alltså precis det borttagningen
@@ -638,6 +646,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara artiklar'); return false; }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem, { keepDraft: editingOverview });
+      // Efterkalkylens intäkt räknas på ordens rader, alltså på precis det som just sparades.
+      // Utan omhämtningen står TB kvar på priserna före ändringen, en handsbredd under Delsumman
+      // som redan visar de nya — två tal om samma sak, i samma kort, som inte går ihop.
+      void afterCalculation.refresh();
       if (json.data?.fortnox_error) {
         toast.error(`Artiklar sparade men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
       } else {
@@ -1364,6 +1376,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
                 // färdigfakturerad order, där det inte finns något kvar att skriva av.
                 onSave={saveArticles}
+              />
+
+              {/* ─── Efterkalkyl ───────────────────────────────────────────
+                  Efter raderna och deras summering, före faktureringen: det är den ordning
+                  frågorna ställs i. Vad sålde vi → vad kostade jobbet → vad blev kvar → fakturera.
+                  Blocket räknar på RAPPORTERAT utfall, inte på offertens antaganden. */}
+              <WorkOrderAfterCalculation
+                result={afterCalculation.result}
+                loading={afterCalculation.loading}
+                loadError={afterCalculation.loadError}
+                forbidden={afterCalculation.forbidden}
               />
 
               {fortnoxConnected ? (

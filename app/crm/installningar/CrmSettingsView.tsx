@@ -130,6 +130,7 @@ export default function CrmSettingsView({
               {[
                 { href: '/crm/ringlistor', title: 'Ringlistor', description: 'Importera leads och håll kön ren.' },
                 { href: '/crm/prospekt', title: 'Prospekt', description: 'Granska den bredare pipen.' },
+                { href: '/crm/installningar/kalkyl', title: 'Kalkyl', description: 'Timkostnad och materialens kostnadsartiklar.' },
                 { href: '/admin?tab=blikk', title: 'Blikk-koppling', description: 'Matcha profiler mot rätt Blikk-användare.' },
               ].map((item) => (
                 <Link
