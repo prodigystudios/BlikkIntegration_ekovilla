@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
+import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { ActivityEvent } from '@/lib/domains/planning/activity';
 
@@ -206,17 +207,23 @@ export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
             placeholder="Person"
             className="h-9 w-28 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
           />
-          <select
+          {/* 🧨 `min-w` behövs: filterraden är flex och omslaget krymper till innehållet, så utan
+              spärren hade kontrollen ändrat bredd vid varje val och sökfältets `flex-1` andats med.
+              Måttet rymmer det längsta alternativet ("Bilbesättning kopierad") vid 16px, storleken
+              iOS tvingar fram. ⚠️ Det gör kontrollen ~55px bredare än den gamla `<select>` var på
+              DESKTOP, där texten är 12.5px — en medveten avvägning: sökfältets `flex-1` ger ifrån
+              sig utrymmet, och alternativet vore avkapad text på telefon. */}
+          <Select
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
             aria-label="Filtrera på åtgärd"
-            className="h-9 rounded-lg border border-[#dce4d8] bg-white px-2.5 text-[12.5px] text-slate-600 outline-none transition focus:border-[color:var(--ek-accent)]"
+            className={cn(crm.selectMenu, 'min-w-[225px] text-[12.5px] text-slate-600')}
           >
             <option value="">Alla åtgärder</option>
             {Object.entries(ACTION_LABELS).map(([key, label]) => (
               <option key={key} value={key}>{label}</option>
             ))}
-          </select>
+          </Select>
         </div>
 
         {/* Feed */}
