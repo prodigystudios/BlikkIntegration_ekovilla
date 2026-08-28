@@ -70,18 +70,22 @@ function FinalCheck() {
   );
 }
 
-// Sack progress: once any sacks are reported as blown it switches to an amber "kvar X / Y" plus
-// the blown count; otherwise it shows the planned total.
+// Säckbadgen. Fyra lägen, valda av sackProgressState:
 //
-// ── EGENKONTROLLEN BYTER INTE BARA FÄRG, DEN BYTER INNEBÖRD ──────────────────
-// `final` säger att talet kommer från egenkontrollen och inte från delrapporter. Utan den läses
-// "kvar 36 / 564" som trettiosex säckar kvar att blåsa — ett jobb som pågår. Med den betyder exakt
-// samma tal att jobbet är AVRÄKNAT och gick åt trettiosex mindre än planerat. Gult säger "pågår",
-// grönt "klart"; utan skillnaden såg de två lägena identiska ut på tavlan, vilket var hela skälet
-// till att kortet inte gick att lita på för den frågan.
+//   planerat        "280 säck"        blekt grönt   inget rapporterat än
+//   pågår           "kvar 36 / 564"   gult          delrapporterat, räknar ned mot planen
+//   överdrag        "över 6 / 168"    rött          mer blåst än planerat
+//   egenkontroll    "528 av 564"      grönt + bock  jobbets slutsumma
+//
+// ── EGENKONTROLLEN BYTER INTE BARA FÄRG, DEN BYTER FRÅGA ─────────────────────
+// `final` säger att talet kommer från egenkontrollen och inte från delrapporter. Utan den svarar
+// badgen på "hur mycket är kvar" och räknar ned mot planen; med den svarar den på "hur mycket gick
+// åt" och anger utfallet. Därför byter både färgen OCH talet — "kvar 36 / 564" och "528 av 564" är
+// samma jobb sett från två håll. Utan skillnaden såg lägena identiska ut på tavlan, vilket var hela
+// skälet till att kortet inte gick att lita på för den frågan.
 //
 // ⚠️ BARA DET POSITIVA LÄGET RITAS. `final === false` betyder "ej registrerat", inte "egenkontroll
-// saknas" — en egenkontroll utan säckantal på etappraderna skriver inga final-rader alls, och
+// saknas" — en egenkontroll vars etapprader saknar säckantal skriver inga final-rader alls, och
 // skrivningen till huvudboken kan misslyckas medan PDF:en ändå arkiveras. Ett "EK saknas" byggt på
 // den här flaggan hade alltså ibland skickat kontoret att jaga en rapport som redan är inlämnad.
 //

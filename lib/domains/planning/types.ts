@@ -65,10 +65,11 @@ export type OpsSegment = {
   job: JobDisplay | null;
   // Total sacks blown for this job across all its segments' reports (per-day sack reporting).
   sacks_reported: number;
-  // Whether that total comes from the egenkontroll (a `final` row) rather than from partial
-  // day reports. Changes what the number MEANS on the card: without it "kvar 36 / 564" reads as
-  // thirty-six sacks left to blow, with it as a settled job that used thirty-six fewer than
-  // planned.
+  // Whether that total comes from the egenkontroll (a `final` row) rather than from partial day
+  // reports. It decides which QUESTION the card's badge answers: without it the badge counts down
+  // toward the plan ("kvar 36 / 564" — what is left to blow), with it the badge states the settled
+  // result ("528 av 564" — what actually went). Colour and wording both change; see
+  // sackProgressState for the branching rule.
   //
   // ⚠️ `false` means "not recorded", NOT "no egenkontroll" — see SackTotal.hasFinal. Only the
   // positive state may be drawn.

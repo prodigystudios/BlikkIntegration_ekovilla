@@ -125,9 +125,10 @@ export type SackTotal = {
 /**
  * Som sumSacksByWorkOrder, men bär också om summan är egenkontrollens.
  *
- * Finns för planeringstavlan, där skillnaden ÄNDRAR VAD SIFFRAN BETYDER: utan egenkontroll läses
- * "kvar 36 / 564" som trettiosex säckar kvar att blåsa, med egenkontroll som ett avräknat jobb som
- * gick åt trettiosex mindre än planerat. Samma tal, motsatt innebörd.
+ * Finns för planeringstavlan, där flaggan avgör VILKEN FRÅGA kortets badge svarar på: utan
+ * egenkontroll räknar den ned mot planen ("kvar 36 / 564" — vad som är kvar att blåsa), med
+ * egenkontroll anger den utfallet ("528 av 564" — vad som faktiskt gick åt). Grenarna står i
+ * sackProgressState.
  *
  * Delar rader med sumSacksByWorkOrder med flit — en andra fråga mot ops_segment_reports bara för
  * flaggan hade varit en extra rundtur, och två frågor kan dessutom se olika tillstånd.
