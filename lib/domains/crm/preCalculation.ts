@@ -16,10 +16,13 @@ import { constructionLabel, type ConstructionSlug } from '@/lib/domains/crm/cons
 // arbetsbeskrivningen och i planeringen. Att räkna om dem här hade gett ett tredje tal för samma
 // sak.
 //
-// ⚠️ DET LÖSER DENSITETSBLINDHETEN PÅ KÖPET. Offertens befintliga TG (quoteMargin) multiplicerar
-// artikelns kr/m³ med volymen, och ett fast m³-pris kan bara stämma vid EN densitet — belagt på
+// ⚠️ DET LÖSER DENSITETSBLINDHETEN. Ett fast kr/m³-pris kan bara stämma vid EN densitet — belagt på
 // order #27, där 54 kg/m³ gjorde artikelns pris 14 % för lågt. Säckantalet tar hänsyn till
 // densiteten, så vägen via säckar är rätt oavsett hur tätt det blåses.
+//
+// Offertens TÄCKNINGSGRAD räknar sedan 2026-08-29 på samma underlag: `marginCostBasis` nedan är den
+// delade regeln, och `quoteMargin` får säckar som `quantity` och kr/säck som `purchasePrice`. Två
+// tal om samma sak i samma panel, räknade på olika sätt, lär läsaren att lita på fel siffra.
 //
 // ── ⚠️ TEAM-TIMMAR OCH MAN-TIMMAR ÄR OLIKA SAKER ────────────────────────────
 // Produktivitetstalen är per TEAM ("22 m³ i timmen" är vad ett lag hinner), timkostnaden är per
@@ -107,6 +110,36 @@ export function isBlownRow(item: PreCalculationLineItem): boolean {
   return parseDecimal(item.density, 0) > 0;
 }
 
+/**
+ * Underlaget en rads KOSTNAD ska räknas på — det som `quoteMargin` multiplicerar ihop.
+ *
+ * ⚠️ FÖR LÖSULL ÄR DET SÄCKAR × KR/SÄCK, INTE M³ × ARTIKELPRIS. Ett fast kr/m³-pris kan bara stämma
+ * vid EN densitet: artikel 2410509 står i 190 kr/m³, vilket motsvarar 28,8 kg/m³. På ett tätt
+ * snedtak (54 kg/m³, order #27) är den verkliga kostnaden 14 % högre, och täckningsgraden alltså
+ * för optimistisk — precis på de jobb där marginalen är tunnast.
+ *
+ * Funktionen finns för att offertens TG och dess uppskattade TB2 ska räkna radens kostnad på EXAKT
+ * samma sätt. Två tal om samma sak, en decimeter isär i samma panel, lär läsaren att lita på fel
+ * siffra — och det är den optimistiska som är lättast att tro på.
+ *
+ * `purchasePrice: null` betyder "går inte att kostnadsbedöma", och `quoteMargin` håller då raden
+ * utanför både täljare och nämnare. Det gäller även en lösullsrad utan densitet: den ger noll
+ * säckar, och noll säckar är inte noll kronor.
+ */
+export function marginCostBasis(
+  item: PreCalculationLineItem,
+  sackPrices: MaterialSackPrice[],
+): { quantity: number; purchasePrice: number | null } {
+  if (!isBlownRow(item)) {
+    return { quantity: lineItemQuantity(item), purchasePrice: item.purchasePrice ?? null };
+  }
+  const material = inferMaterialFromArticle(item.article_name)?.short ?? null;
+  const sacks = lineItemSacks(item);
+  if (material == null || sacks <= 0) return { quantity: sacks, purchasePrice: null };
+  const price = sackPrices.find((p) => p.material === material)?.purchasePrice ?? null;
+  return { quantity: sacks, purchasePrice: price != null && price > 0 ? price : null };
+}
+
 /** Etikett för en lucka: "Vägg × PAROC". */
 function combinationLabel(construction: string | null, material: string | null): string {
   const left = construction
@@ -130,18 +163,33 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
   const items = input.items.filter(
     (item) => !item.written_off && (lineItemQuantity(item) > 0 || (Number.isFinite(item.revenue) && item.revenue > 0)),
   );
-  const revenue = items.reduce((sum, item) => sum + (Number.isFinite(item.revenue) ? item.revenue : 0), 0);
 
   let materialCost = 0;
-  let materialComplete = true;
   const missingSackPrice = new Set<string>();
   const unpricedLabels: string[] = [];
   let unpricedRevenue = 0;
+  let assessedRevenue = 0;
 
   let teamHours = 0;
   let hoursComplete = true;
   const missingRates = new Set<string>();
   const missingDensity = new Set<string>();
+
+  // ── En rad som inte går att kostnadsbedöma lämnar BÅDA leden ─────────────
+  //
+  // ⚠️ Samma disciplin som `quoteMargin`, och det är avsiktligt: de två talen står i SAMMA panel
+  // och måste räkna på samma population. Skulle en oprissatt rad i stället göra hela TB okänt hade
+  // TB2 stått på "–" på nästan varje riktig offert — 61 av 289 artiklar saknar inköpspris, och en
+  // transport- eller etableringsrad utan pris är vardag. En funktion som aldrig visar något är inte
+  // försiktig, den är oanvänd.
+  //
+  // Det motsäger inte efterkalkylens hårdare regel. Där finns ingen delmängd att dra sig tillbaka
+  // till: en arbetsorders intäkt är hela orderns, och "vi bedömde 60 % av jobbet" är inget svar.
+  // Här FINNS begreppet redan på skärmen, och hur mycket som lämnats utanför skrivs ut.
+  const excludeRow = (label: string, revenue: number) => {
+    unpricedLabels.push(label);
+    unpricedRevenue += revenue;
+  };
 
   for (const item of items) {
     if (isBlownRow(item)) {
@@ -149,53 +197,55 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
       const material = inferMaterialFromArticle(item.article_name)?.short ?? null;
       const sacks = lineItemSacks(item);
       const construction = constructionOf(item);
+      const label = (item.article_name ?? '').trim() || combinationLabel(construction, material);
 
       if (material == null) {
         // Materialet går inte att härleda (omdöpt artikel), alltså vet vi varken pris eller takt.
-        materialComplete = false;
-        hoursComplete = false;
-        missingRates.add(combinationLabel(construction, null));
-      } else if (sacks <= 0) {
+        excludeRow(label, item.revenue);
+        continue;
+      }
+      if (sacks <= 0) {
         // ⚠️ NOLL SÄCKAR PÅ EN RAD SOM SKA BLÅSAS ÄR INTE NOLL KRONOR. `lineItemSacks` ger 0 när
         // densiteten saknas — och densiteten är fritext som aldrig valideras, så gamla offerter
-        // och halvfyllda rader har den tom. Utan den här grenen kostade raden 0 kr och räknades som
-        // KOMPLETT: "Uppskattat TB1 100 000 kr · 100,0 %" på en offert där hela lösullen var
-        // oprissatt. Exakt samma fel som efterkalkylen visade på 28 av 76 ordrar.
-        materialComplete = false;
-        hoursComplete = false;
-        missingDensity.add((item.article_name ?? '').trim() || combinationLabel(construction, material));
-      } else {
-        const price = priceByMaterial.get(material);
-        if (price == null || !(price > 0)) {
-          materialComplete = false;
-          missingSackPrice.add(material);
-        } else {
-          materialCost += sacks * price;
-        }
+        // och halvfyllda rader har den tom. Räknades raden med hade den kostat 0 kr och gjort
+        // täckningsgraden 100 % på just den delen.
+        missingDensity.add(label);
+        excludeRow(label, item.revenue);
+        continue;
+      }
+      const price = priceByMaterial.get(material);
+      if (price == null || !(price > 0)) {
+        missingSackPrice.add(material);
+        excludeRow(label, item.revenue);
+        continue;
+      }
 
-        const rate = construction ? rateByKey.get(`${construction}|${material}`) : undefined;
-        if (rate == null || !(rate > 0)) {
-          hoursComplete = false;
-          missingRates.add(combinationLabel(construction, material));
-        } else {
-          // Volymen, inte säckarna: produktivitetstalen är m³ per timme.
-          teamHours += lineItemQuantity(item) / rate;
-        }
+      assessedRevenue += item.revenue;
+      materialCost += sacks * price;
+
+      // ⚠️ TIDEN ÄR EN EGEN AXEL. En rad kan vara fullt kostnadsbedömd men sakna produktivitetstal,
+      // och då är TIMMARNA okända medan materialet är känt — TB1 står alltså kvar medan TB2 faller.
+      // Att låta en saknad takt lyfta ut raden ur intäkten hade förvanskat TB1.
+      const rate = construction ? rateByKey.get(`${construction}|${material}`) : undefined;
+      if (rate == null || !(rate > 0)) {
+        hoursComplete = false;
+        missingRates.add(combinationLabel(construction, material));
+      } else {
+        // Volymen, inte säckarna: produktivitetstalen är m³ per timme.
+        teamHours += lineItemQuantity(item) / rate;
       }
       continue;
     }
 
     // ── Övriga rader: skivor, duk, etablering ───────────────────────────────
     // Ingen tid uppskattas för dem — modellens produktivitet gäller blåsningen, och ett moment vi
-    // inte kan tidsätta ska inte tyst tidsättas till noll. Det är en känd begränsning i
-    // uppskattningen och står i luckelistan bara när raden har en okänd KOSTNAD.
+    // inte kan tidsätta ska inte tyst tidsättas till noll.
     const price = item.purchasePrice;
     if (price == null || !Number.isFinite(price) || price < 0) {
-      materialComplete = false;
-      unpricedLabels.push((item.article_name ?? '').trim() || 'Rad utan artikel');
-      unpricedRevenue += item.revenue;
+      excludeRow((item.article_name ?? '').trim() || 'Rad utan artikel', item.revenue);
       continue;
     }
+    assessedRevenue += item.revenue;
     materialCost += price * lineItemQuantity(item);
   }
 
@@ -239,26 +289,28 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
 
   const teamSize = input.teamSize != null && Number.isFinite(input.teamSize) && input.teamSize > 0 ? input.teamSize : 1;
 
-  // ⚠️ En ofullständig materialsumma är en UNDRE GRÄNS, inte ett svar. Samma regel som
-  // efterkalkylen landade i efter att 28 av 76 ordrar visat TG1 100 %.
-  const resolvedMaterialCost = materialComplete ? materialCost : null;
+  // Ingen bedömbar rad alls → ingenting att uttala sig om.
+  const resolvedMaterialCost = assessedRevenue > 0 ? materialCost : null;
   const resolvedTeamHours = hoursComplete ? teamHours : null;
   // ⚠️ TEAM-TIMMAR × TEAMSTORLEK = MAN-TIMMAR. Faktorn är hela skillnaden mellan rätt och dubbelt.
   const laborCost =
     resolvedTeamHours != null && laborCostPerHour != null ? resolvedTeamHours * teamSize * laborCostPerHour : null;
 
-  const tb1 = resolvedMaterialCost != null ? revenue - resolvedMaterialCost : null;
+  // ⚠️ MOT DEN BEDÖMDA INTÄKTEN, inte mot hela offerten. Rader som lyfts ut ur kostnaden måste
+  // lyftas ut ur intäkten också — annars räknas deras pris som ren vinst, och TB blir för högt med
+  // exakt deras belopp.
+  const tb1 = resolvedMaterialCost != null ? assessedRevenue - resolvedMaterialCost : null;
   const tb2 = tb1 != null && laborCost != null ? tb1 - laborCost : null;
 
   return {
-    revenue,
+    revenue: assessedRevenue,
     materialCost: resolvedMaterialCost,
     teamHours: resolvedTeamHours,
     laborCost,
     tb1,
     tb2,
-    tg1: tb1 != null && revenue > 0 ? (tb1 / revenue) * 100 : null,
-    tg2: tb2 != null && revenue > 0 ? (tb2 / revenue) * 100 : null,
+    tg1: tb1 != null && assessedRevenue > 0 ? (tb1 / assessedRevenue) * 100 : null,
+    tg2: tb2 != null && assessedRevenue > 0 ? (tb2 / assessedRevenue) * 100 : null,
     gaps,
   };
 }

@@ -14,7 +14,7 @@ import {
   rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
-import { calculatePreCalculation } from '@/lib/domains/crm/preCalculation';
+import { calculatePreCalculation, marginCostBasis } from '@/lib/domains/crm/preCalculation';
 import { useCalcSettings } from './useCalcSettings';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatQuantity } from '@/app/crm/lib/format';
@@ -2373,12 +2373,29 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // en offert där ROT stängts av ska inte tyst ge raden full TG — och att den genererade
   // arbetskostnadsraden visas exakt när pushen faktiskt skickar den.
   const rotActive = draft.quote_type === 'private' && draft.rot_enabled;
-  const marginRows: MarginRow[] = effectiveRows.map((r) => ({
-    revenue: r.rowTotal,
-    quantity: r.amount,
-    purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
-    isLabor: rotActive && Boolean(r.is_rot_work),
-  }));
+  // ⚠️ LÖSULLENS KOSTNAD RÄKNAS PÅ SÄCKAR, INTE PÅ M³ × ARTIKELPRIS. `marginCostBasis` är samma
+  // regel som den uppskattade TB2:an använder, så de två talen i panelen inte kan säga olika om
+  // samma rad. Skälet står där: ett fast kr/m³-pris stämmer bara vid en enda densitet, och på ett
+  // tätt jobb blir täckningsgraden för optimistisk — precis där marginalen är tunnast.
+  //
+  // Utan lästa kalkylinställningar faller vi tillbaka på artikelpriset. Det är exakt det beteende
+  // som gällde före den här ändringen, och en täckningsgrad som försvinner hade varit värre: den
+  // gatar säljchefens godkännande.
+  const marginRows: MarginRow[] = effectiveRows.map((r) => {
+    const fallback = { quantity: r.amount, purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null };
+    const basis = calcSettings
+      ? marginCostBasis(
+          { ...r, revenue: r.rowTotal, purchasePrice: fallback.purchasePrice },
+          calcSettings.sackPrices,
+        )
+      : fallback;
+    return {
+      revenue: r.rowTotal,
+      quantity: basis.quantity,
+      purchasePrice: basis.purchasePrice,
+      isLabor: rotActive && Boolean(r.is_rot_work),
+    };
+  });
   const quoteMarginResult = quoteMargin(marginRows);
   const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
 
@@ -3313,8 +3330,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                           // Utan den här upplysningen ser TG:n ut att gälla hela offerten, och en
                           // grön siffra kan dölja att halva beloppet aldrig bedömdes.
                           <p className="m-0 text-[11px] leading-snug text-slate-400">
-                            {quoteMarginResult.unpricedRows} {quoteMarginResult.unpricedRows === 1 ? 'rad' : 'rader'} saknar
-                            inköpspris ({formatCurrency(quoteMarginResult.unpricedRevenue, 'SEK')}) och ingår inte i siffran.
+                            {/* "går inte att kostnadsbedöma" och inte "saknar inköpspris": sedan
+                                lösullen räknas via säckar kan orsaken också vara att densiteten
+                                saknas, och då är det den man ska fylla i — inte ett pris. */}
+                            {quoteMarginResult.unpricedRows} {quoteMarginResult.unpricedRows === 1 ? 'rad' : 'rader'} går
+                            inte att kostnadsbedöma ({formatCurrency(quoteMarginResult.unpricedRevenue, 'SEK')}) och ingår
+                            inte i siffran.
                           </p>
                         ) : null}
                         {quoteMarginTier === 'bad' ? (
@@ -3339,19 +3360,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
 
                         ⚠️ Inga trösklar och ingen färg utom på förlust — samma hållning som på
                         arbetsordern. Offertens 25/40 gäller TG ovanför och inte de här talen. */}
-                    {preCalc && (preCalc.tb1 != null || preCalc.tb2 != null) ? (
+                    {preCalc && preCalc.revenue > 0 ? (
                       <div className="mt-2.5 grid gap-1 border-t border-slate-100 pt-2.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-500">Uppskattat TB1</span>
-                          {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
-                              offert utan intäkt har inget att räkna procenten mot — och ett `!`
-                              här hade blivit en krasch mitt i formuläret. */}
-                          <span className="font-semibold tabular-nums text-slate-900">
-                            {preCalc.tb1 == null
-                              ? '–'
-                              : `${formatCurrency(preCalc.tb1, 'SEK')}${preCalc.tg1 != null ? ` · ${preCalc.tg1.toFixed(1).replace('.', ',')} %` : ''}`}
-                          </span>
-                        </div>
                         <div className="flex items-center justify-between text-xs">
                           <span className="text-slate-500">
                             Uppskattat TB2
@@ -3359,6 +3369,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                               <span className="text-slate-400"> · {preCalc.teamHours.toFixed(1).replace('.', ',')} h</span>
                             ) : null}
                           </span>
+                          {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
+                              offert utan intäkt har inget att räkna procenten mot — och ett `!`
+                              här hade blivit en krasch mitt i formuläret. */}
                           <span className={cn('font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
                             {preCalc.tb2 == null
                               ? '–'
@@ -3377,6 +3390,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                         ) : null}
                         {preCalc.gaps
                           .filter((gap) => gap.kind !== 'missing_rate' || calcSettings?.productivityAvailable !== false)
+                          // `unpriced_rows` säger samma sak som raden under täckningsgraden ovan.
+                          // Två formuleringar av samma brist läses som två olika problem.
+                          .filter((gap) => gap.kind !== 'unpriced_rows')
                           .map((gap) => (
                             <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
                               {gap.message}
