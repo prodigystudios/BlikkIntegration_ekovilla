@@ -96,6 +96,19 @@ describe('buildProfitability', () => {
     expect(result.tg2).toBeCloseTo(-10, 10);
   });
 
+  it('en trasig kalkyl flaggas — skilt från "inga kompletta jobb"', () => {
+    // Utan flaggan fick läsaren beskedet att fältet inte lämnat in sina egenkontroller, när
+    // sanningen kunde vara att migreringen inte var körd.
+    const result = buildProfitability([order('a', '2026-08-10')], new Map(), ['2026-08'], { unavailable: true });
+    expect(result.unavailable).toBe(true);
+    expect(result.jobs).toBe(1);
+  });
+
+  it('normalfallet är inte flaggat', () => {
+    const result = buildProfitability([order('a', '2026-08-10')], new Map([['a', calc(100_000, 25_000, null)]]), ['2026-08']);
+    expect(result.unavailable).toBe(false);
+  });
+
   it('en order utan id kan inte slås upp och räknas inte med', () => {
     const anonymous = { ...order('a', '2026-08-10'), id: undefined };
     const result = buildProfitability([anonymous], new Map([['a', calc(100_000, 25_000, null)]]), ['2026-08']);

@@ -59,21 +59,37 @@ export async function GET(req: Request) {
       .map((order) => order.id)
       .filter((id): id is string => Boolean(id));
 
-    let afterCalculations = new Map<string, AfterCalculation>();
+    const afterCalculations = new Map<string, AfterCalculation>();
+    let profitabilityUnavailable = false;
     if (invoicedIds.length > 0) {
       try {
-        const { data: orderRows, error } = await admin
-          .from('crm_work_orders')
-          .select('id, line_items, vat_percent')
-          .in('id', invoicedIds);
-        if (error) throw new Error(error.message);
-        afterCalculations = await computeAfterCalculations(admin, (orderRows || []) as AfterCalculationOrderRow[]);
+        // ⚠️ KLUMPAR, INTE HELA LISTAN. `.in()` blir en query-sträng, och tolv månaders fakturerade
+        // ordrar kan vara hundratals uuid:n à 37 tecken — långt förbi vad mellanled garanterar, med
+        // ett 414 som svar. Klumparna håller dessutom varje svar under PostgRESTs radtak, som
+        // annars kapar tyst: de tappade ordrarna hade försvunnit ur täckningsgraden men räknats
+        // kvar i "av N jobb". Samma tak som listrutten delar på.
+        const CHUNK = 100;
+        for (let i = 0; i < invoicedIds.length; i += CHUNK) {
+          const chunk = invoicedIds.slice(i, i + CHUNK);
+          const { data: orderRows, error } = await admin
+            .from('crm_work_orders')
+            .select('id, line_items, vat_percent')
+            .in('id', chunk);
+          if (error) throw new Error(error.message);
+          const computed = await computeAfterCalculations(admin, (orderRows || []) as AfterCalculationOrderRow[]);
+          for (const [id, result] of computed) afterCalculations.set(id, result);
+        }
       } catch (e: any) {
+        // ⚠️ FLAGGAN MÅSTE MED I SVARET. Bara en logg här gjorde att klienten renderade "inget jobb
+        // har komplett underlag än" — ett påstående om att fältet inte lämnat in sina
+        // egenkontroller, när sanningen kunde vara att migreringen inte var körd. Orsaken får inte
+        // stanna i serverloggen.
+        profitabilityUnavailable = true;
         console.warn(`[Rapport] Lönsamheten kunde inte räknas: ${e?.message || e}`);
       }
     }
 
-    const report = composeSalesReport(data, range, afterCalculations);
+    const report = composeSalesReport(data, range, afterCalculations, { profitabilityUnavailable });
 
     return ok(report);
   } catch (e: any) {

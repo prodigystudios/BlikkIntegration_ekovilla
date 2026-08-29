@@ -303,12 +303,22 @@ export type Profitability = {
   jobsTb1: number;
   jobsTb2: number;
   overTime: ProfitabilityPoint[];
+  /**
+   * Kalkylen kunde inte köras alls — inställningstabellerna eller artikelcachen svarade inte.
+   *
+   * ⚠️ MÅSTE SKILJAS FRÅN "inga kompletta jobb". Utan flaggan fick varje läsare beskedet att
+   * fältet inte lämnat in sina egenkontroller, medan sanningen var att migreringen inte var körd —
+   * ett påstående om PERSONALEN när felet låg i systemet, och det enda spåret av orsaken låg i
+   * serverloggen.
+   */
+  unavailable: boolean;
 };
 
 export function buildProfitability(
   ordersInvoiced: ReportOrderRow[],
   afterCalculations: Map<string, { revenue: number | null; tb1: number | null; tb2: number | null }>,
   months: string[],
+  opts?: { unavailable?: boolean },
 ): Profitability {
   type Bucket = { revenueTb1: number; tb1: number; revenueTb2: number; tb2: number };
   const empty = (): Bucket => ({ revenueTb1: 0, tb1: 0, revenueTb2: 0, tb2: 0 });
@@ -354,6 +364,7 @@ export function buildProfitability(
     jobs: ordersInvoiced.length,
     jobsTb1,
     jobsTb2,
+    unavailable: Boolean(opts?.unavailable),
     overTime: months.map((period) => {
       const bucket = byMonth.get(period) ?? empty();
       return {
@@ -379,6 +390,7 @@ export function composeSalesReport(
   range: ReportRange,
   /** Efterkalkylen per arbetsorder. Tom karta ger en lönsamhetsdel utan tal — inte ett fel. */
   afterCalculations: Map<string, { revenue: number | null; tb1: number | null; tb2: number | null }> = new Map(),
+  opts?: { profitabilityUnavailable?: boolean },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
   const orders = partitionOrders(data.orders, range);
@@ -388,7 +400,9 @@ export function composeSalesReport(
     perSeller: buildPerSeller(data.quotes, orders.created, orders.invoiced, data.calls, data.sellers),
     funnel: buildFunnel(data.quotes, orders.created),
     perCustomer: buildPerCustomer(orders.created, orders.invoiced),
-    profitability: buildProfitability(orders.invoiced, afterCalculations, months),
+    profitability: buildProfitability(orders.invoiced, afterCalculations, months, {
+      unavailable: opts?.profitabilityUnavailable,
+    }),
   };
 }
 

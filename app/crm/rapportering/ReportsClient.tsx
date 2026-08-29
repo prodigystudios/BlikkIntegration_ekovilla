@@ -32,6 +32,8 @@ type Profitability = {
   jobsTb1: number;
   jobsTb2: number;
   overTime: ProfitabilityPoint[];
+  /** Kalkylen kunde inte köras alls — skilt från "inga kompletta jobb". */
+  unavailable: boolean;
 };
 type SalesReport = {
   range: { from: string; to: string };
@@ -128,7 +130,12 @@ function MarginStat({ label, percent, amount, jobs, total, color }: {
       <div className={cn('mt-1 text-2xl font-bold tabular-nums', percent == null ? 'text-slate-400' : percent < 0 ? 'text-rose-700' : 'text-slate-900')}>
         {percent == null ? '–' : `${percent.toFixed(1).replace('.', ',')} %`}
       </div>
-      <div className="mt-0.5 text-sm tabular-nums text-slate-600">{formatCurrency(amount)}</div>
+      {/* ⚠️ KRONORNA BARA NÄR DET FINNS EN PROCENT. Utan villkoret stod "0 kr" under strecket på en
+          period där ingen tid rapporterats — ett påstående om att täckningsbidraget VAR noll, när
+          sanningen är att det inte går att räkna. Samma fel som "ej rapporterat" kontra "0 st". */}
+      {percent == null ? null : (
+        <div className="mt-0.5 text-sm tabular-nums text-slate-600">{formatCurrency(amount)}</div>
+      )}
       <div className="mt-1 text-[11px] text-slate-500">
         {jobs} av {total} fakturerade jobb
       </div>
@@ -361,10 +368,22 @@ export default function ReportsClient() {
               ]),
             )} />}
           >
-            {report.profitability.jobsTb1 === 0 && report.profitability.jobsTb2 === 0 ? (
+            {/* Tre olika tomma lägen, med tre olika svar. Att slå ihop dem gör beskedet till ett
+                påstående om personalen även när felet ligger i systemet eller när det helt enkelt
+                inte fanns något att mäta. */}
+            {report.profitability.unavailable ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-8 text-center text-sm text-amber-800">
+                Täckningsgraden kunde inte räknas. Kontrollera att kalkylinställningarna finns —
+                övriga siffror på sidan är opåverkade.
+              </div>
+            ) : report.profitability.jobs === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
-                Inget jobb i perioden har komplett underlag än. Täckningsgraden kräver att
-                egenkontrollen är inlämnad och tiden rapporterad.
+                Inga jobb fakturerades i perioden.
+              </div>
+            ) : report.profitability.jobsTb1 === 0 && report.profitability.jobsTb2 === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                Inget av periodens {report.profitability.jobs} fakturerade jobb har komplett underlag
+                än. Täckningsgraden kräver att egenkontrollen är inlämnad och tiden rapporterad.
               </div>
             ) : (
               <div className="grid gap-5">
