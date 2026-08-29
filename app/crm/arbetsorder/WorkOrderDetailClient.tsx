@@ -177,14 +177,9 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
  * "–" när talet inte går att räkna — aldrig 0 %, som hade påstått att jobbet gick jämnt ut när
  * sanningen är att underlaget saknas. Samma regel som uppställningen i Ekonomi-kortet följer.
  */
-function TbStat({ percent, partial }: { percent: number | null; partial: boolean }) {
+function TbStat({ percent }: { percent: number | null }) {
   if (percent == null) return <span className="font-normal text-slate-400">–</span>;
-  return (
-    <span className="inline-flex items-baseline gap-1">
-      <span className={percent < 0 ? 'text-rose-700' : undefined}>{`${percent.toFixed(1).replace('.', ',')} %`}</span>
-      {partial ? <span className="text-[10px] font-normal text-slate-400">prel.</span> : null}
-    </span>
-  );
+  return <span className={percent < 0 ? 'text-rose-700' : undefined}>{`${percent.toFixed(1).replace('.', ',')} %`}</span>;
 }
 
 function StatField({ label, value }: { label: string; value: React.ReactNode }) {
@@ -1841,15 +1836,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     offertens TG-trösklar, så 25/40 hade lyst rött på varje jobb. Ett NEGATIVT tal
                     färgas — förlust är sant utan att någon behöver dra en gräns.
 
-                    ⚠️ "prel." sätts på materialCostIsPartial, INTE på isPreliminary. Ett jobb utan
-                    rapporterad tid har ett exakt TB1 (bara TB2 saknas, och det syns som "–"), och
-                    en märkning där hade gjort märkningen till brus på varje pågående jobb. Märket
-                    betyder alltså EN sak: något material gick inte att prissätta, så talet är för
-                    högt. */}
+                    ⚠️ INGEN "prel."-MÄRKNING. Talen räknas bara när materialkostnaden är KOMPLETT —
+                    går någon del inte att prissätta blir de null och raden visar "–". En märkning
+                    hade alltså bara kunnat sitta på ett tal som ändå stämmer. Skälet till att det
+                    är så strikt står i afterCalculation.ts: en delsumma är inte ett svar utan en
+                    undre gräns, och 28 av 76 ordrar visade en gång TG1 100 % på grund av det. */}
                 {afterCalculation.result && !afterCalculation.forbidden ? (
                   <>
-                    <StatField label="TB1" value={<TbStat percent={afterCalculation.result.tg1} partial={afterCalculation.result.materialCostIsPartial} />} />
-                    <StatField label="TB2" value={<TbStat percent={afterCalculation.result.tg2} partial={afterCalculation.result.materialCostIsPartial} />} />
+                    <StatField label="TB1" value={<TbStat percent={afterCalculation.result.tg1} />} />
+                    <StatField label="TB2" value={<TbStat percent={afterCalculation.result.tg2} />} />
                   </>
                 ) : null}
                 <StatField label="Kommentarer" value={comments.length} />
