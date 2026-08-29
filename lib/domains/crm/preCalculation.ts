@@ -55,8 +55,16 @@ export type PreCalculationLineItem = SackLineItem & {
   written_off?: boolean | null;
   /** Radens intäkt efter rabatt — skickas in, härleds inte. Se nedan. */
   revenue: number;
-  /** Artikelns inköpspris per enhet, för rader som inte är lösull. null = okänt. */
+  /** Artikelns inköpspris per enhet. null = okänt. */
   purchasePrice?: number | null;
+  /**
+   * ROT-flaggad arbetsrad utan inköpspris — intäkt utan materialkostnad.
+   *
+   * ⚠️ MÅSTE SPEGLA `quoteMargin`s `isCostlessLabor`. Utan den räknades en sådan rad som obedömbar
+   * här men med full marginal där, och de två talen i samma panel stod på intäktsunderlag tiotusen-
+   * tals kronor isär utan att något förklarade varför.
+   */
+  isLabor?: boolean;
 };
 
 export type PreCalculationInput = {
@@ -126,18 +134,39 @@ export function isBlownRow(item: PreCalculationLineItem): boolean {
  * utanför både täljare och nämnare. Det gäller även en lösullsrad utan densitet: den ger noll
  * säckar, och noll säckar är inte noll kronor.
  */
-export function marginCostBasis(
-  item: PreCalculationLineItem,
-  sackPrices: MaterialSackPrice[],
-): { quantity: number; purchasePrice: number | null } {
-  if (!isBlownRow(item)) {
-    return { quantity: lineItemQuantity(item), purchasePrice: item.purchasePrice ?? null };
-  }
+export type MarginCostBasis = {
+  quantity: number;
+  purchasePrice: number | null;
+  /**
+   * Vad talet vilar på.
+   *
+   * `sacks`   säckar × kostnadsartikelns pris — det riktiga svaret, densitetskänsligt.
+   * `article` artikelns eget kr/m³ — reserven, densitetsblind men bättre än ingenting.
+   * `none`    går inte att kostnadsbedöma.
+   */
+  basis: 'sacks' | 'article' | 'none';
+};
+
+export function marginCostBasis(item: PreCalculationLineItem, sackPrices: MaterialSackPrice[]): MarginCostBasis {
+  const articleBasis: MarginCostBasis = {
+    quantity: lineItemQuantity(item),
+    purchasePrice: item.purchasePrice ?? null,
+    basis: item.purchasePrice == null ? 'none' : 'article',
+  };
+  if (!isBlownRow(item)) return articleBasis;
+
   const material = inferMaterialFromArticle(item.article_name)?.short ?? null;
   const sacks = lineItemSacks(item);
-  if (material == null || sacks <= 0) return { quantity: sacks, purchasePrice: null };
-  const price = sackPrices.find((p) => p.material === material)?.purchasePrice ?? null;
-  return { quantity: sacks, purchasePrice: price != null && price > 0 ? price : null };
+  const sackPrice = material ? sackPrices.find((p) => p.material === material)?.purchasePrice ?? null : null;
+
+  // ⚠️ RESERVEN ÄR INTE FRIVILLIG. Bara tre material har kostnadsartikel i dag (EKOVILLA, KNAUF
+  // SUPAFIL, ROCKWOOL) — Isocell, Hunton och PAROC saknar den. Utan reserven hade en offert på
+  // PAROC tappat sin täckningsgrad HELT, och med den säljchefsspärren vid 25 %: en fungerande
+  // kontroll som tyst slutar gälla för vissa material. Artikelns m³-pris är densitetsblint men är
+  // exakt det talet ytan visade före den här ändringen, alltså aldrig en försämring.
+  if (sacks <= 0 || sackPrice == null || !(sackPrice > 0)) return articleBasis;
+
+  return { quantity: sacks, purchasePrice: sackPrice, basis: 'sacks' };
 }
 
 /** Etikett för en lucka: "Vägg × PAROC". */
@@ -192,61 +221,55 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
   };
 
   for (const item of items) {
-    if (isBlownRow(item)) {
-      // ── Lösull: kostnad via säckar, tid via produktivitet ────────────────
-      const material = inferMaterialFromArticle(item.article_name)?.short ?? null;
-      const sacks = lineItemSacks(item);
-      const construction = constructionOf(item);
-      const label = (item.article_name ?? '').trim() || combinationLabel(construction, material);
+    const material = inferMaterialFromArticle(item.article_name)?.short ?? null;
+    const construction = constructionOf(item);
+    const label = (item.article_name ?? '').trim() || combinationLabel(construction, material) || 'Rad utan artikel';
+    const blown = isBlownRow(item);
 
-      if (material == null) {
-        // Materialet går inte att härleda (omdöpt artikel), alltså vet vi varken pris eller takt.
-        excludeRow(label, item.revenue);
-        continue;
-      }
-      if (sacks <= 0) {
-        // ⚠️ NOLL SÄCKAR PÅ EN RAD SOM SKA BLÅSAS ÄR INTE NOLL KRONOR. `lineItemSacks` ger 0 när
-        // densiteten saknas — och densiteten är fritext som aldrig valideras, så gamla offerter
-        // och halvfyllda rader har den tom. Räknades raden med hade den kostat 0 kr och gjort
-        // täckningsgraden 100 % på just den delen.
-        missingDensity.add(label);
-        excludeRow(label, item.revenue);
-        continue;
-      }
-      const price = priceByMaterial.get(material);
-      if (price == null || !(price > 0)) {
-        missingSackPrice.add(material);
-        excludeRow(label, item.revenue);
-        continue;
-      }
-
+    // ⚠️ ARBETSRAD UTAN INKÖPSPRIS ÄR BEDÖMD, INTE OBEDÖMBAR — hela intäkten är kvar. Exakt samma
+    // undantag som `isCostlessLabor` i quoteMargin gör, och det MÅSTE vara samma: talen står
+    // bredvid varandra i panelen.
+    if (item.isLabor && item.purchasePrice == null) {
       assessedRevenue += item.revenue;
-      materialCost += sacks * price;
-
-      // ⚠️ TIDEN ÄR EN EGEN AXEL. En rad kan vara fullt kostnadsbedömd men sakna produktivitetstal,
-      // och då är TIMMARNA okända medan materialet är känt — TB1 står alltså kvar medan TB2 faller.
-      // Att låta en saknad takt lyfta ut raden ur intäkten hade förvanskat TB1.
-      const rate = construction ? rateByKey.get(`${construction}|${material}`) : undefined;
-      if (rate == null || !(rate > 0)) {
-        hoursComplete = false;
-        missingRates.add(combinationLabel(construction, material));
-      } else {
-        // Volymen, inte säckarna: produktivitetstalen är m³ per timme.
-        teamHours += lineItemQuantity(item) / rate;
-      }
       continue;
     }
 
-    // ── Övriga rader: skivor, duk, etablering ───────────────────────────────
-    // Ingen tid uppskattas för dem — modellens produktivitet gäller blåsningen, och ett moment vi
-    // inte kan tidsätta ska inte tyst tidsättas till noll.
-    const price = item.purchasePrice;
-    if (price == null || !Number.isFinite(price) || price < 0) {
-      excludeRow((item.article_name ?? '').trim() || 'Rad utan artikel', item.revenue);
+    // EN kostnadsregel för både täckningsgraden och TB — se marginCostBasis.
+    const basis = marginCostBasis(item, input.sackPrices);
+    if (basis.basis === 'none' || basis.purchasePrice == null) {
+      // ⚠️ NOLL SÄCKAR PÅ EN RAD SOM SKA BLÅSAS ÄR INTE NOLL KRONOR. `lineItemSacks` ger 0 när
+      // densiteten saknas, och densiteten är fritext som aldrig valideras.
+      if (blown && lineItemSacks(item) <= 0) missingDensity.add(label);
+      excludeRow(label, item.revenue);
+      // ⚠️ EN BORTLYFT LÖSULLSRAD GÖR OCKSÅ TIDEN OKÄND. Raden blåses ju — arbetet finns, vi kan
+      // bara inte sätta siffror på det. Utan den här raden visade panelen "0,0 h" på en offert
+      // vars enda isolerrad saknade densitet, alltså ett påstående om att jobbet inte tar tid.
+      if (blown) hoursComplete = false;
       continue;
     }
+    if (blown && basis.basis === 'article' && material) {
+      // Räknad på artikelns m³-pris i brist på kostnadsartikel. Talet finns, men det är
+      // densitetsblint — och det ska stå i luckelistan, inte tigas ihjäl.
+      missingSackPrice.add(material);
+    }
+
     assessedRevenue += item.revenue;
-    materialCost += price * lineItemQuantity(item);
+    materialCost += basis.purchasePrice * basis.quantity;
+
+    // ── Tiden: en egen axel ─────────────────────────────────────────────────
+    // Bara blåsning tidsätts — modellens produktivitet gäller den, och ett moment vi inte kan
+    // tidsätta ska inte tyst tidsättas till noll. En rad kan vara fullt kostnadsbedömd och ändå
+    // sakna takt: då är TIMMARNA okända medan materialet är känt, alltså står TB1 kvar och TB2
+    // faller.
+    if (!blown) continue;
+    const rate = construction && material ? rateByKey.get(`${construction}|${material}`) : undefined;
+    if (rate == null || !(rate > 0)) {
+      hoursComplete = false;
+      missingRates.add(combinationLabel(construction, material));
+    } else {
+      // Volymen, inte säckarna: produktivitetstalen är m³ per timme.
+      teamHours += lineItemQuantity(item) / rate;
+    }
   }
 
   if (missingDensity.size > 0) {
@@ -259,7 +282,7 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
   if (missingSackPrice.size > 0) {
     gaps.push({
       kind: 'missing_sack_price',
-      message: `Kostnadsartikel saknas för ${[...missingSackPrice].join(', ')} — sätt den under Inställningar → Kalkyl.`,
+      message: `Kostnadsartikel saknas för ${[...missingSackPrice].join(', ')} — räknat på artikelns m³-pris, som inte tar hänsyn till densiteten. Sätt artikeln under Inställningar → Kalkyl.`,
       materials: [...missingSackPrice],
     });
   }

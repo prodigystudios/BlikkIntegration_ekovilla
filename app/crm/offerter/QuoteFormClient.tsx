@@ -2381,19 +2381,27 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // Utan lästa kalkylinställningar faller vi tillbaka på artikelpriset. Det är exakt det beteende
   // som gällde före den här ändringen, och en täckningsgrad som försvinner hade varit värre: den
   // gatar säljchefens godkännande.
-  const marginRows: MarginRow[] = effectiveRows.map((r) => {
-    const fallback = { quantity: r.amount, purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null };
-    const basis = calcSettings
-      ? marginCostBasis(
-          { ...r, revenue: r.rowTotal, purchasePrice: fallback.purchasePrice },
-          calcSettings.sackPrices,
-        )
-      : fallback;
+  // Radens artikelpris — visningen i radkortet använder det här, INTE marginalunderlaget nedan.
+  const articlePriceFor = (articleNumber: string | null | undefined) =>
+    articleNumber ? purchasePrices[articleNumber] ?? null : null;
+
+  const preCalcItems = effectiveRows.map((r) => ({
+    ...r,
+    revenue: r.rowTotal,
+    purchasePrice: articlePriceFor(r.article_number),
+    isLabor: rotActive && Boolean(r.is_rot_work),
+  }));
+
+  const marginRows: MarginRow[] = preCalcItems.map((item) => {
+    // Utan lästa kalkylinställningar finns ingen säckprislista — `marginCostBasis` faller då
+    // tillbaka på artikelpriset av sig själv, alltså precis det underlag ytan använde före den här
+    // ändringen.
+    const basis = marginCostBasis(item, calcSettings?.sackPrices ?? []);
     return {
-      revenue: r.rowTotal,
+      revenue: item.revenue,
       quantity: basis.quantity,
       purchasePrice: basis.purchasePrice,
-      isLabor: rotActive && Boolean(r.is_rot_work),
+      isLabor: item.isLabor,
     };
   });
   const quoteMarginResult = quoteMargin(marginRows);
@@ -2410,17 +2418,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const preCalc = useMemo(() => {
     if (!calcSettings) return null;
     return calculatePreCalculation({
-      items: effectiveRows.map((r) => ({
-        ...r,
-        revenue: r.rowTotal,
-        purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
-      })),
+      items: preCalcItems,
       laborCostPerHour: calcSettings.laborCostPerHour,
       teamSize: calcSettings.teamSize,
       rates: calcSettings.rates,
       sackPrices: calcSettings.sackPrices,
     });
-  }, [calcSettings, effectiveRows, purchasePrices]);
+  }, [calcSettings, preCalcItems]);
 
   if (loading) {
     return (
@@ -2988,7 +2992,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
                 marginPercent={rowMarginPercent(marginRows[index])}
-                purchasePrice={marginRows[index].purchasePrice ?? null}
+                // ⚠️ ARTIKELNS pris, inte marginalunderlagets. Sedan lösull kostnadssätts per SÄCK
+                // hade "Inköp 92,40 kr" stått bredvid ett m³-pris på 700 och lästs som 87 %
+                // marginal, där den verkliga kostnaden är ~297 kr/m³.
+                purchasePrice={articlePriceFor(row.article_number)}
                 expanded={expandedRowId === row.id}
                 onToggle={(next) => setExpandedRowId(next ? row.id : null)}
                 onChange={(patch) => setDraft((d) => ({ ...d, items: d.items.map((item) => item.id === row.id ? { ...item, ...patch } : item) }))}
@@ -3390,9 +3397,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                         ) : null}
                         {preCalc.gaps
                           .filter((gap) => gap.kind !== 'missing_rate' || calcSettings?.productivityAvailable !== false)
-                          // `unpriced_rows` säger samma sak som raden under täckningsgraden ovan.
-                          // Två formuleringar av samma brist läses som två olika problem.
-                          .filter((gap) => gap.kind !== 'unpriced_rows')
+                          // `unpriced_rows` säger samma sak som raden under täckningsgraden — men
+                          // BARA när den raden faktiskt ritas. Utan villkoret försvann beskedet
+                          // helt på en offert där täckningsgraden inte gick att räkna alls, och en
+                          // omdöpt lösullsrad kunde falla ur uppskattningen utan ett ord.
+                          .filter((gap) => gap.kind !== 'unpriced_rows'
+                            || !(quoteMarginResult.marginPercent != null && quoteMarginResult.unpricedRows > 0))
                           .map((gap) => (
                             <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
                               {gap.message}

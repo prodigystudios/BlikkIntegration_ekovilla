@@ -213,12 +213,18 @@ export async function upsertCalcSettings(
     .select('*')
     .single();
 
+  // ⚠️ SNÄVT VILLKOR. Ett andra försök ska bara göras när felet är just den saknade kolumnen —
+  // PGRST204 med kolumnnamnet i texten. Ett bredare villkor ("meddelandet nämner team_size") hade
+  // svalt riktiga fel och tyst sparat halva ändringen.
   const missingColumn =
-    withTeam.error
-    && (withTeam.error.code === 'PGRST204' || /team_size/.test(withTeam.error.message ?? ''));
-  if (!missingColumn) return withTeam;
+    withTeam.error?.code === 'PGRST204' && /team_size/.test(withTeam.error.message ?? '');
+  if (!missingColumn) return { ...withTeam, teamSizeSaved: true as const };
 
-  return supabase.from('crm_calc_settings').upsert(base, { onConflict: 'id' }).select('*').single();
+  const retry = await supabase.from('crm_calc_settings').upsert(base, { onConflict: 'id' }).select('*').single();
+  // ⚠️ ANROPAREN MÅSTE FÅ VETA. Utan flaggan sa ytan "Timkostnaden sparad" och visade kvar det
+  // inskrivna lagantalet — medan databasen inte fått det. Ett tyst halvsparat värde är värre än
+  // ett fel, för nästa omladdning motsäger det man just såg.
+  return { ...retry, teamSizeSaved: false as const };
 }
 
 /**

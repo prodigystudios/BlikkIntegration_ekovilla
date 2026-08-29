@@ -95,11 +95,12 @@ export async function PUT(req: Request) {
 
     // Sessionsklienten med flit: RLS (crm.admin) är garantin, gaten ovan är det läsbara felet.
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await upsertCalcSettings(supabase, {
+    const result = await upsertCalcSettings(supabase, {
       laborCostPerHour: parsedBody.data.labor_cost_per_hour,
       teamSize: parsedBody.data.team_size,
       userId: crmAdmin.currentUser.id,
     });
+    const { data, error } = result;
     if (error || !data) {
       return routeError(500, 'crm_calc_settings_update_failed', error?.message || 'Kunde inte spara timkostnaden.');
     }
@@ -107,6 +108,8 @@ export async function PUT(req: Request) {
     return ok({
       labor_cost_per_hour: mapLaborCostPerHour(data as CalcSettingsRow),
       team_size: mapTeamSize(data as CalcSettingsRow),
+      // false = kolumnen finns inte än (migreringen okörd). Timkostnaden sparades, lagantalet inte.
+      team_size_saved: result.teamSizeSaved,
       updated_at: (data as CalcSettingsRow).updated_at,
     });
   } catch (e: any) {

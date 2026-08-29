@@ -168,13 +168,21 @@ export default function CalcSettingsClient({
     }
     setSavingRate(true);
     try {
-      await apiRequest('/api/crm/calc-settings', {
+      const saved = await apiRequest<{ team_size: number; team_size_saved?: boolean }>('/api/crm/calc-settings', {
         method: 'PUT',
         body: JSON.stringify({ labor_cost_per_hour: parsed, team_size: parsedTeam }),
       });
       setSavedRate(parsed);
-      setSavedTeamSize(parsedTeam);
-      toast.success('Timkostnaden sparad');
+      // ⚠️ SVARET, INTE DET INSKRIVNA. Går kolumnen inte att skriva (migreringen okörd) sparas bara
+      // timkostnaden — och att då visa det inskrivna lagantalet som sparat är en tyst halvsanning
+      // som nästa omladdning motsäger.
+      setTeamSize(String(saved.team_size));
+      setSavedTeamSize(saved.team_size);
+      if (saved.team_size_saved === false) {
+        toast.error('Timkostnaden sparad, men lagantalet kunde inte sparas — kör 20260829_crm_productivity_rates.sql.');
+      } else {
+        toast.success('Timkostnaden sparad');
+      }
     } catch (e: any) {
       toast.error(e?.message || 'Kunde inte spara timkostnaden');
     } finally {

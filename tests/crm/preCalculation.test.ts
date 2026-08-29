@@ -52,7 +52,18 @@ describe('marginCostBasis — underlaget offertens TG räknar på', () => {
   it('lösull kostnadsbedöms på SÄCKAR, inte på m³ × artikelpris', () => {
     // 20 m³ × 45 kg/m³ = 900 kg / 14 = 64,3 → 65 säck à 92,40.
     const basis = marginCostBasis(losull() as any, priser);
-    expect(basis).toEqual({ quantity: 65, purchasePrice: 92.4 });
+    expect(basis).toEqual({ quantity: 65, purchasePrice: 92.4, basis: 'sacks' });
+  });
+
+  it('utan kostnadsartikel faller den tillbaka på artikelns pris — inte på ingenting', () => {
+    // Bara tre material har kostnadsartikel i dag. Utan reserven hade en PAROC-offert tappat sin
+    // täckningsgrad HELT, och med den säljchefsspärren vid 25 %.
+    const basis = marginCostBasis(losull({ purchasePrice: 190 }) as any, []);
+    expect(basis).toEqual({ quantity: 20, purchasePrice: 190, basis: 'article' });
+  });
+
+  it('varken säckpris eller artikelpris ger "none"', () => {
+    expect(marginCostBasis(losull() as any, []).basis).toBe('none');
   });
 
   it('densiteten slår igenom — det är hela skälet till att gå via säckar', () => {
@@ -63,14 +74,14 @@ describe('marginCostBasis — underlaget offertens TG räknar på', () => {
 
   it('övriga rader behåller antal × artikelns inköpspris', () => {
     const levy = { article_name: 'EKOVILLA LEVY 30MM', pricing_mode: 'item', quantity: '4', revenue: 2_309, purchasePrice: 499.89 };
-    expect(marginCostBasis(levy as any, priser)).toEqual({ quantity: 4, purchasePrice: 499.89 });
+    expect(marginCostBasis(levy as any, priser)).toEqual({ quantity: 4, purchasePrice: 499.89, basis: 'article' });
   });
 
   it('lösull utan densitet går inte att kostnadsbedöma — noll säckar är inte noll kronor', () => {
     expect(marginCostBasis(losull({ density: '' }) as any, priser).purchasePrice).toBeNull();
   });
 
-  it('saknad kostnadsartikel ger null, inte artikelpriset som reserv', () => {
+  it('saknas BÅDE kostnadsartikel och artikelpris finns inget att falla tillbaka på', () => {
     expect(marginCostBasis(losull() as any, []).purchasePrice).toBeNull();
   });
 });
@@ -88,10 +99,11 @@ describe('materialet räknas via planerade säckar', () => {
     expect(result.materialCost).toBe(86 * 100);
   });
 
-  it('saknad kostnadsartikel ger okänd materialkostnad, inte en delsumma', () => {
-    const result = calc({ items: [losull() as any], sackPrices: [] });
-    expect(result.materialCost).toBeNull();
-    expect(result.tb1).toBeNull();
+  it('saknad kostnadsartikel faller tillbaka på artikelpriset — och det REDOVISAS', () => {
+    // Reserven är densitetsblind, men ett tal som säger sitt är bättre än ingen täckningsgrad
+    // alls: den senare tar med sig säljchefsspärren i fallet.
+    const result = calc({ items: [losull({ purchasePrice: 190 }) as any], sackPrices: [] });
+    expect(result.materialCost).toBe(20 * 190);
     expect(result.gaps.map((g) => g.kind)).toContain('missing_sack_price');
   });
 
