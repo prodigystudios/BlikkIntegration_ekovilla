@@ -51,10 +51,21 @@ export type AfterCalculationOrderRow = {
  * säckar kan mycket väl vara rapporterade ändå, och dubbelräkning är värre än att missa.
  */
 export function isBlownInsulationRow(item: Record<string, unknown>): boolean {
-  return (
-    Boolean(inferMaterialFromArticle(item.article_name as string | null))
-    && ((item.pricing_mode as string | null) ?? 'm3') !== 'item'
-  );
+  // Såld per volym. Samma m³-test som lineItemQuantity gör, med samma default.
+  if (((item.pricing_mode as string | null) ?? 'm3') === 'item') return false;
+  // Varumärket i artikelnamnet är det vanliga kännetecknet …
+  if (inferMaterialFromArticle(item.article_name as string | null)) return true;
+  // … men det räcker inte ensamt. ⚠️ ARTIKELNAMNET GÅR ATT REDIGERA, och ett namn som tappar
+  // varumärkesordet ("Ekovilla lösull vind" → "Lösull vind") härleder inget material längre — en
+  // känd och tillåten redigering, se materialRenameEffect i materials.ts. En sådan rad hade
+  // klassats som tjänst: ingen väntad säckrapport, ingen lucka, och raden prissatt mot sin egen
+  // artikel i stället för mot de rapporterade säckarna. Resultatet blev en komplett-märkt TG på ett
+  // jobb där lösullen aldrig mättes.
+  //
+  // Densiteten är det andra kännetecknet och det ärligare: den fylls i per rad, driver
+  // säckberäkningen (lineItemSacks) och finns BARA på rader som faktiskt blåses. En saneringsrad
+  // säljs också per m³ men bär ingen densitet, och ska fortsatt räknas som tjänst.
+  return parseDecimal(item.density as string | number | null | undefined, 0) > 0;
 }
 
 /**

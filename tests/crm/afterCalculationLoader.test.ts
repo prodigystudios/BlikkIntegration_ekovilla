@@ -52,6 +52,23 @@ describe('isBlownInsulationRow', () => {
   it('saknad pricing_mode betyder m³ — samma default som lineItemQuantity', () => {
     expect(isBlownInsulationRow({ article_name: 'Knauf Supafil vind' })).toBe(true);
   });
+
+  // ⚠️ Artikelnamnet går att redigera, och ett namn som tappar varumärkesordet härleder inget
+  // material längre (materialRenameEffect finns just för den redigeringen). Utan densiteten som
+  // andra kännetecken hade en sådan rad klassats som tjänst: ingen väntad säckrapport, ingen
+  // lucka, och en komplett-märkt TG på ett jobb där lösullen aldrig mättes.
+  it('en omdöpt lösullsrad känns igen på densiteten, inte på varumärket', () => {
+    expect(isBlownInsulationRow({ article_name: 'Lösull vind', pricing_mode: 'm3', density: '45' })).toBe(true);
+  });
+
+  it('sanering säljs också per m³ men bär ingen densitet — den är en tjänst', () => {
+    expect(isBlownInsulationRow({ article_name: 'Sanering av befintlig isolering/m3', pricing_mode: 'm3' })).toBe(false);
+    expect(isBlownInsulationRow({ article_name: 'Sanering av befintlig isolering/m3', pricing_mode: 'm3', density: '' })).toBe(false);
+  });
+
+  it('densitet på en styckprissatt rad gör den inte till lösull', () => {
+    expect(isBlownInsulationRow({ article_name: 'Lösull i lösvikt', pricing_mode: 'item', density: '45' })).toBe(false);
+  });
 });
 
 describe('buildOrderInput', () => {

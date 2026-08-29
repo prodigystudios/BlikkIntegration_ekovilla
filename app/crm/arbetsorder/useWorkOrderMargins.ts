@@ -7,6 +7,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Egen rutt av samma skäl som på arbetsordern: kostnadsdata får inte ligga i den nyttolast andra
 // ytor läser. Svaret är dessutom smalt — bara procenten, inte uppställningen.
 
+/** Id:n per begäran. Under ruttens tak (200) med marginal, och lika med listans sidstorlek. */
+const CHUNK = 100;
+
 export type WorkOrderMargin = {
   tg1: number | null;
   tg2: number | null;
@@ -83,8 +86,22 @@ export function useWorkOrderMargins(workOrderIds: string[]) {
     const ids = idsKey ? idsKey.split(',') : [];
     const missing = ids.filter((id) => id && !requestedRef.current.has(id));
     if (missing.length === 0) return;
-    for (const id of missing) requestedRef.current.add(id);
-    void load(missing);
+
+    // ⚠️ FÖRDRÖJT. Sökfältet skriver rakt in i listans filter utan debounce, så en tioteckens
+    // sökning byter träfflista tio gånger. Utan pausen hade var och en av dem startat en egen
+    // mängdberäkning — sex frågor över upp till hundra ordrar, med service-role — för ett
+    // mellanläge ingen hinner läsa. Pausen gör att bara den lista man stannar på räknas.
+    const timer = setTimeout(() => {
+      for (const id of missing) requestedRef.current.add(id);
+      // ⚠️ DELAS I KLUMPAR. Rutten avvisar fler än 200 id:n, och `missing` kan växa förbi det:
+      // varje misslyckat anrop lämnar tillbaka sina id:n, och två sådana plus en "Visa fler" hade
+      // gett en begäran som ALLTID svarar 400 — alltså chip som aldrig kommer tillbaka under
+      // sessionen. Klumpar gör den gränsen onåbar i stället för osannolik.
+      for (let i = 0; i < missing.length; i += CHUNK) {
+        void load(missing.slice(i, i + CHUNK));
+      }
+    }, 250);
+    return () => clearTimeout(timer);
   }, [idsKey, load]);
 
   return { margins, forbidden };

@@ -22,8 +22,9 @@ import { ok, requirePermission, routeError, validationError } from '../_lib';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-// Taket speglar listans sidstorlek. Utan det kan en handskriven begäran be om tiotusen ordrar och
-// dra hela huvudboken genom paginatorn.
+// Taket ligger över listans sidstorlek (CRM_WORK_ORDERS_PAGE_SIZE = 100) med marginal — klienten
+// delar upp i klumpar om 100. Utan taket kan en handskriven begäran be om tiotusen ordrar och dra
+// hela huvudboken genom paginatorn.
 const bodySchema = z.object({
   work_order_ids: z.array(z.string().uuid('Ogiltigt id')).min(1, 'Minst ett id krävs').max(200, 'För många ordrar i samma begäran'),
 });
