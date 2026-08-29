@@ -19,12 +19,24 @@ import type { MaterialCostArticleView } from '@/lib/domains/crm/calcSettings';
 // efterkalkylen ibland säger "kostnadsartikel saknas". Statusraden under varje fält är alltså inte
 // dekoration, den är svaret på varför kalkylen ser ut som den gör.
 
+type ProductivityRate = { construction: string; material: string; m3PerHour: number };
+type ConstructionOption = { slug: string; label: string };
+
 type CalcSettingsClientProps = {
   tablesMissing: boolean;
+  productivityMissing: boolean;
   initialLaborCostPerHour: number | null;
+  initialTeamSize: number;
   initialMaterials: MaterialCostArticleView[];
+  initialRates: ProductivityRate[];
   knownMaterials: string[];
+  constructions: ConstructionOption[];
 };
+
+/** Nyckeln en ruta i produktivitetsrutnätet bor på. */
+function rateKey(construction: string, material: string): string {
+  return `${construction}|${material}`;
+}
 
 type MaterialRow = {
   material: string;
@@ -83,15 +95,34 @@ function ArticleStatus({ view }: { view: MaterialCostArticleView | null }) {
 
 export default function CalcSettingsClient({
   tablesMissing,
+  productivityMissing,
   initialLaborCostPerHour,
+  initialTeamSize,
   initialMaterials,
+  initialRates,
   knownMaterials,
+  constructions,
 }: CalcSettingsClientProps) {
   const toast = useToast();
   const [materials, setMaterials] = useState<MaterialCostArticleView[]>(initialMaterials);
   const [rate, setRate] = useState(initialLaborCostPerHour != null ? String(initialLaborCostPerHour).replace('.', ',') : '');
   const [savedRate, setSavedRate] = useState(initialLaborCostPerHour);
+  const [teamSize, setTeamSize] = useState(String(initialTeamSize));
+  const [savedTeamSize, setSavedTeamSize] = useState(initialTeamSize);
   const [savingRate, setSavingRate] = useState(false);
+
+  // Produktivitetsrutnätet: en ruta per konstruktion och material, som text tills den sparas.
+  const [rates, setRates] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const row of initialRates) initial[rateKey(row.construction, row.material)] = String(row.m3PerHour).replace('.', ',');
+    return initial;
+  });
+  const [savedRates, setSavedRates] = useState<Record<string, string>>(() => {
+    const initial: Record<string, string> = {};
+    for (const row of initialRates) initial[rateKey(row.construction, row.material)] = String(row.m3PerHour).replace('.', ',');
+    return initial;
+  });
+  const [savingRates, setSavingRates] = useState(false);
 
   // Utkast per material. Tomt fält = kopplingen tas bort.
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -130,13 +161,19 @@ export default function CalcSettingsClient({
       toast.error('Skriv timkostnaden som ett tal större än noll, till exempel 650');
       return;
     }
+    const parsedTeam = Number(teamSize.trim());
+    if (!Number.isInteger(parsedTeam) || parsedTeam < 1) {
+      toast.error('Teamstorleken anges i hela personer, minst 1');
+      return;
+    }
     setSavingRate(true);
     try {
       await apiRequest('/api/crm/calc-settings', {
         method: 'PUT',
-        body: JSON.stringify({ labor_cost_per_hour: parsed }),
+        body: JSON.stringify({ labor_cost_per_hour: parsed, team_size: parsedTeam }),
       });
       setSavedRate(parsed);
+      setSavedTeamSize(parsedTeam);
       toast.success('Timkostnaden sparad');
     } catch (e: any) {
       toast.error(e?.message || 'Kunde inte spara timkostnaden');
@@ -183,6 +220,46 @@ export default function CalcSettingsClient({
     }
   }
 
+  /**
+   * Sparar rutnätet — en begäran per ÄNDRAD ruta.
+   *
+   * ⚠️ En tömd ruta skickas som `null`, alltså en borttagning. Att hoppa över tomma rutor hade
+   * gjort det omöjligt att ta bort ett tal man ångrat: det gamla värdet hade legat kvar i databasen
+   * medan rutan såg tom ut.
+   */
+  async function saveRates() {
+    const changed = Object.keys({ ...rates, ...savedRates }).filter((key) => (rates[key] ?? '') !== (savedRates[key] ?? ''));
+    if (changed.length === 0) return;
+
+    for (const key of changed) {
+      const raw = (rates[key] ?? '').replace(',', '.').trim();
+      if (raw && !(Number(raw) > 0)) {
+        toast.error('Takterna anges som tal större än noll, till exempel 22');
+        return;
+      }
+    }
+
+    setSavingRates(true);
+    try {
+      for (const key of changed) {
+        const [construction, material] = key.split('|');
+        const raw = (rates[key] ?? '').replace(',', '.').trim();
+        await apiRequest('/api/crm/calc-settings/productivity', {
+          method: 'PUT',
+          body: JSON.stringify({ construction, material, m3_per_hour: raw ? Number(raw) : null }),
+        });
+      }
+      setSavedRates({ ...rates });
+      toast.success(changed.length === 1 ? 'Takten sparad' : `${changed.length} takter sparade`);
+    } catch (e: any) {
+      toast.error(e?.message || 'Kunde inte spara produktiviteten');
+    } finally {
+      setSavingRates(false);
+    }
+  }
+
+  const ratesDirty = Object.keys({ ...rates, ...savedRates }).some((key) => (rates[key] ?? '') !== (savedRates[key] ?? ''));
+
   const rateDirty = (() => {
     const raw = rate.replace(',', '.').trim();
     // Ett tomt fält är inte en ändring utan ett oskrivet fält — och `Number('')` är 0, som annars
@@ -192,7 +269,7 @@ export default function CalcSettingsClient({
     // Skräp gör knappen tryckbar med flit: felet ska sägas när man trycker, inte döljas som en
     // knapp som inte går att använda.
     if (!Number.isFinite(parsed)) return true;
-    return parsed !== savedRate;
+    return parsed !== savedRate || Number(teamSize.trim()) !== savedTeamSize;
   })();
 
   return (
@@ -239,6 +316,23 @@ export default function CalcSettingsClient({
                 className="w-32"
               />
               <span className="text-sm text-slate-500">kr/h</span>
+            </div>
+          </label>
+          {/* ⚠️ TEAMSTORLEKEN ÄR FAKTOR 2, GJORD SYNLIG. Produktivitetstalen nedan är per LAG, den
+              här satsen per PERSON. Man-timmar = team-timmar × antal personer. Låg tvåan implicit i
+              en formel var det precis så felet uppstod i modellen. */}
+          <label className="grid w-auto gap-1">
+            <span className={crm.sectionTitle}>Personer i laget</span>
+            <div className="flex items-center gap-2">
+              <Input
+                value={teamSize}
+                onChange={(e) => setTeamSize(e.target.value)}
+                inputMode="numeric"
+                placeholder="2"
+                aria-label="Personer i laget"
+                className="w-20"
+              />
+              <span className="text-sm text-slate-500">st</span>
             </div>
           </label>
           <button
@@ -331,6 +425,89 @@ export default function CalcSettingsClient({
           Töm fältet och spara för att koppla bort ett material. Priset läses ur artikelns inköpspris i Fortnox och antas
           gälla per säck.
         </p>
+      </div>
+
+      {/* ─── Produktivitet ───────────────────────────────────────────────── */}
+      <div className={cn(crm.card, 'p-5')}>
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="m-0 mb-1 text-base font-bold text-slate-900">Produktivitet</h2>
+            <p className="m-0 text-sm text-slate-500">
+              Hur många kubik laget hinner på en timme. Offerten använder talen för att uppskatta arbetstiden och därmed
+              TB2 — arbetsordern räknar på rapporterad tid och rör dem inte.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={saveRates}
+            disabled={savingRates || !ratesDirty || productivityMissing}
+            className={cn(crm.saveButton, 'h-11 w-auto px-4')}
+          >
+            {savingRates ? 'Sparar…' : 'Spara tabellen'}
+          </button>
+        </div>
+
+        {productivityMissing ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Produktivitetstabellen saknas i databasen. Kör{' '}
+            <code className="font-mono text-xs">20260829_crm_productivity_rates.sql</code> i Supabase.
+          </div>
+        ) : (
+          <>
+            {/* Rutnät: en rad per placering, en kolumn per material. Vågrät scroll på smal skärm —
+                tabellen får inte tryckas ihop till oläsliga rutor. */}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead>
+                  <tr>
+                    <th className="w-40 px-2 py-2 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                      Placering
+                    </th>
+                    {knownMaterials.map((material) => (
+                      <th key={material} className="px-2 py-2 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+                        {material}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {constructions.map((construction) => (
+                    <tr key={construction.slug} className="border-t border-slate-100">
+                      <th scope="row" className="px-2 py-2 text-left text-sm font-semibold text-slate-900">
+                        {construction.label}
+                      </th>
+                      {knownMaterials.map((material) => {
+                        const key = rateKey(construction.slug, material);
+                        return (
+                          <td key={material} className="px-2 py-2">
+                            <Input
+                              value={rates[key] ?? ''}
+                              onChange={(e) => setRates((prev) => ({ ...prev, [key]: e.target.value }))}
+                              inputMode="decimal"
+                              placeholder="–"
+                              aria-label={`Kubik per timme, ${construction.label} med ${material}`}
+                              className="w-24"
+                            />
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* ⚠️ TOM RUTA ÄR INTE NOLL. Utan den här meningen läses ett tomt fält som "går på
+                nolltid", och en säljare undrar varför TB2 saknas i stället för att fylla i talet. */}
+            <p className="m-0 mt-3 text-[11px] leading-snug text-slate-500">
+              Kubik per timme och lag. En tom ruta betyder att vi inte har någon uppskattning — offerten säger då att
+              arbetstiden inte går att räkna för den kombinationen, i stället för att gissa.
+            </p>
+            <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">
+              Talen är lagets takt, inte en persons. Antalet personer sätts i Timkostnad ovan och multipliceras in.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

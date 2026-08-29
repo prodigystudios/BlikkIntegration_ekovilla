@@ -19,8 +19,16 @@ export const CALC_SETTINGS_SINGLETON_ID = true;
 
 export type CalcSettingsRow = {
   labor_cost_per_hour: number | string | null;
+  /** Antal personer i laget. Produktivitetstalen är per team, timkostnaden per person. */
+  team_size?: number | string | null;
   updated_at: string | null;
   updated_by: string | null;
+};
+
+export type ProductivityRateRow = {
+  construction: string;
+  material: string;
+  m3_per_hour: number | string;
 };
 
 export type MaterialCostArticleRow = {
@@ -47,12 +55,37 @@ export type MaterialCostArticleView = {
 
 // ── Läsning ──────────────────────────────────────────────────────────────────
 
+/**
+ * Kalkylinställningarna.
+ *
+ * ⚠️ `select('*')` ÄR AVSIKTLIGT, inte slarv. `team_size` kom i en senare migrering (20260829) än
+ * tabellen själv (20260828), och en namngiven kolumnlista hade gjort koden BEROENDE av att
+ * migreringen körts först: PostgREST svarar med ett fel på en okänd kolumn, felet bubblar genom
+ * computeAfterCalculations, och EFTERKALKYLEN PÅ VARJE ARBETSORDER hade slutat fungera i drift
+ * tills någon körde SQL:en. Verifierat lokalt 2026-08-29 — den kedjan är inte teoretisk.
+ *
+ * Med `*` faller en saknad kolumn i stället tillbaka på `mapTeamSize`s default. Tabellen är en rad
+ * med fyra fält, så bredden kostar ingenting.
+ */
 export async function getCalcSettings(supabase: SupabaseClient) {
   return supabase
     .from('crm_calc_settings')
-    .select('labor_cost_per_hour, updated_at, updated_by')
+    .select('*')
     .eq('id', CALC_SETTINGS_SINGLETON_ID)
     .maybeSingle();
+}
+
+/**
+ * Produktivitetstalen, m³ per timme och TEAM.
+ *
+ * En saknad rad betyder INGEN UPPSKATTNING, inte noll — offerten ska säga "produktivitet saknas för
+ * Vägg × PAROC" i stället för att tidsätta momentet till ingenting.
+ */
+export async function listProductivityRates(supabase: SupabaseClient) {
+  return supabase
+    .from('crm_productivity_rates')
+    .select('construction, material, m3_per_hour')
+    .order('construction', { ascending: true });
 }
 
 export async function listMaterialCostArticles(supabase: SupabaseClient) {
@@ -88,6 +121,27 @@ export function mapLaborCostPerHour(row: CalcSettingsRow | null | undefined): nu
   if (!row || row.labor_cost_per_hour == null) return null;
   const value = parseDecimal(row.labor_cost_per_hour, 0);
   return value > 0 ? value : null;
+}
+
+/**
+ * Teamstorleken, med 2 som fallback.
+ *
+ * ⚠️ Fallbacken är modellens antagande (1 300 kr/h = 2 × 650) och databasens default. Att låta den
+ * bli 1 vid en saknad rad hade HALVERAT varje uppskattad arbetskostnad — tyst, och åt det
+ * optimistiska hållet.
+ */
+export function mapTeamSize(row: CalcSettingsRow | null | undefined): number {
+  const value = parseDecimal(row?.team_size ?? null, 0);
+  return value >= 1 ? Math.round(value) : 2;
+}
+
+/** Rå rad → förkalkylens form. numeric kommer som STRÄNG ur PostgREST. */
+export function mapProductivityRates(rows: ProductivityRateRow[] | null | undefined) {
+  return (rows ?? []).map((row) => ({
+    construction: row.construction,
+    material: row.material,
+    m3PerHour: parseDecimal(row.m3_per_hour, 0),
+  }));
 }
 
 type CachedPriceRow = {
@@ -135,7 +189,7 @@ export function mapMaterialCostArticles(
 
 export async function upsertCalcSettings(
   supabase: SupabaseClient,
-  input: { laborCostPerHour: number; userId: string },
+  input: { laborCostPerHour: number; teamSize: number; userId: string },
 ) {
   return supabase
     .from('crm_calc_settings')
@@ -143,13 +197,50 @@ export async function upsertCalcSettings(
       {
         id: CALC_SETTINGS_SINGLETON_ID,
         labor_cost_per_hour: input.laborCostPerHour,
+        team_size: input.teamSize,
         updated_at: new Date().toISOString(),
         updated_by: input.userId,
       },
       { onConflict: 'id' },
     )
-    .select('labor_cost_per_hour, updated_at, updated_by')
+    .select('labor_cost_per_hour, team_size, updated_at, updated_by')
     .single();
+}
+
+/**
+ * Sätter eller tar bort ett produktivitetstal.
+ *
+ * ⚠️ Att TÖMMA en ruta är en DELETE, inte en nolla. `m3_per_hour > 0` i databasen skulle avvisa
+ * nollan ändå, men skillnaden är begreppslig: raden ska försvinna så att offerten säger "saknas"
+ * i stället för att räkna med en takt på noll och dela med den.
+ */
+export async function upsertProductivityRate(
+  supabase: SupabaseClient,
+  input: { construction: string; material: string; m3PerHour: number; userId: string },
+) {
+  return supabase
+    .from('crm_productivity_rates')
+    .upsert(
+      {
+        construction: input.construction,
+        material: input.material,
+        m3_per_hour: input.m3PerHour,
+        updated_at: new Date().toISOString(),
+        updated_by: input.userId,
+      },
+      { onConflict: 'construction,material' },
+    )
+    .select('construction, material, m3_per_hour')
+    .single();
+}
+
+export async function deleteProductivityRate(supabase: SupabaseClient, construction: string, material: string) {
+  return supabase
+    .from('crm_productivity_rates')
+    .delete()
+    .eq('construction', construction)
+    .eq('material', material)
+    .select('construction');
 }
 
 export async function upsertMaterialCostArticle(

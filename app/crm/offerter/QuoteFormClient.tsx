@@ -14,6 +14,8 @@ import {
   rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
   type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
+import { calculatePreCalculation } from '@/lib/domains/crm/preCalculation';
+import { useCalcSettings } from './useCalcSettings';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatQuantity } from '@/app/crm/lib/format';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
@@ -2305,6 +2307,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // och de följer med offert → arbetsorder → fältvyn (redactWorkOrderForField plockar bara bort
   // amount/pricing_summary). Ett inköpspris på raden hade alltså hamnat i installatörernas payload.
   const [purchasePrices, setPurchasePrices] = useState<Record<string, number | null>>({});
+  // Kalkylinställningarna för förkalkylen — timkostnad, teamstorlek, produktivitet, säckpriser.
+  const calcSettings = useCalcSettings();
 
   // Vid redigering bär raderna artikelnummer men inget inköpspris (det är ju aldrig sparat). Slå
   // upp priserna för just de artiklar offerten använder — inte hela registret.
@@ -2377,6 +2381,29 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   }));
   const quoteMarginResult = quoteMargin(marginRows);
   const quoteMarginTier = marginTier(quoteMarginResult.marginPercent);
+
+  // ── Förkalkyl: uppskattat TB1/TB2 ────────────────────────────────────────
+  // Samma matte som arbetsorderns efterkalkyl, men på PLANERAT underlag: säckantalet raden räknar
+  // fram (lineItemSacks — samma tal som arbetsbeskrivningen skriver) och en uppskattad arbetstid ur
+  // produktivitetstabellen.
+  //
+  // ⚠️ Det här är INTE samma siffra som Täckningsgrad ovan, och de ska inte förväxlas. TG räknar
+  // artikelns kr/m³ mot volymen; TB1 går via säckar och tar därmed hänsyn till densiteten. På ett
+  // tätt snedtak skiljer de sig mätbart, och det är TB-vägen som är rätt.
+  const preCalc = useMemo(() => {
+    if (!calcSettings) return null;
+    return calculatePreCalculation({
+      items: effectiveRows.map((r) => ({
+        ...r,
+        revenue: r.rowTotal,
+        purchasePrice: r.article_number ? purchasePrices[r.article_number] ?? null : null,
+      })),
+      laborCostPerHour: calcSettings.laborCostPerHour,
+      teamSize: calcSettings.teamSize,
+      rates: calcSettings.rates,
+      sackPrices: calcSettings.sackPrices,
+    });
+  }, [calcSettings, effectiveRows, purchasePrices]);
 
   if (loading) {
     return (
@@ -3299,6 +3326,45 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                             Grönt kräver över {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
                           </p>
                         ) : null}
+                      </div>
+                    ) : null}
+
+                    {/* ─── Uppskattad lönsamhet ─────────────────────────────
+                        TB1 och TB2 räknade som på arbetsordern, fast på planerat underlag: säckarna
+                        raden själv räknar fram och en arbetstid ur produktivitetstabellen.
+
+                        ⚠️ Visas bara när det finns något att visa. Ett block som alltid står där
+                        med två streck lär säljaren att hoppa över det, och då syns det inte heller
+                        den dagen talen finns.
+
+                        ⚠️ Inga trösklar och ingen färg utom på förlust — samma hållning som på
+                        arbetsordern. Offertens 25/40 gäller TG ovanför och inte de här talen. */}
+                    {preCalc && (preCalc.tb1 != null || preCalc.tb2 != null) ? (
+                      <div className="mt-2.5 grid gap-1 border-t border-slate-100 pt-2.5">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">Uppskattat TB1</span>
+                          <span className="font-semibold tabular-nums text-slate-900">
+                            {preCalc.tb1 == null ? '–' : `${formatCurrency(preCalc.tb1, 'SEK')} · ${preCalc.tg1!.toFixed(1).replace('.', ',')} %`}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-slate-500">
+                            Uppskattat TB2
+                            {preCalc.teamHours != null ? (
+                              <span className="text-slate-400"> · {preCalc.teamHours.toFixed(1).replace('.', ',')} h</span>
+                            ) : null}
+                          </span>
+                          <span className={cn('font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
+                            {preCalc.tb2 == null ? '–' : `${formatCurrency(preCalc.tb2, 'SEK')} · ${preCalc.tg2!.toFixed(1).replace('.', ',')} %`}
+                          </span>
+                        </div>
+                        {/* Luckorna säger VAD som fattas — "produktivitet saknas för Vind ×
+                            EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte. */}
+                        {preCalc.gaps.map((gap) => (
+                          <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
+                            {gap.message}
+                          </p>
+                        ))}
                       </div>
                     ) : null}
                   </div>

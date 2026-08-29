@@ -20,6 +20,28 @@ export const updateCalcSettingsSchema = z.object({
     .number()
     .gt(0, 'Timkostnaden måste vara större än noll')
     .max(10_000, 'Timkostnaden ser orimlig ut — kontrollera siffran'),
+  // Produktivitetstalen är per team, timkostnaden per person — teamstorleken är faktorn mellan dem.
+  // Taket är godtyckligt men fångar en felskrivning som annars mångdubblar varje arbetskostnad.
+  team_size: z.coerce
+    .number()
+    .int('Teamstorleken anges i hela personer')
+    .min(1, 'Ett lag är minst en person')
+    .max(20, 'Teamstorleken ser orimlig ut — kontrollera siffran'),
+});
+
+/**
+ * Ett produktivitetstal: m³ per timme och team, för en konstruktion och ett material.
+ *
+ * `m3_per_hour: null` betyder TA BORT raden. En nolla vore inget svar — den skulle dessutom bli en
+ * division med noll i tidsuppskattningen.
+ */
+export const upsertProductivityRateSchema = z.object({
+  construction: z.enum(['vagg', 'snedtak', 'vind', 'golv', 'mellanbjalklag']),
+  material: z.string().trim().min(1, 'Material krävs').max(64, 'Materialkoden är för lång'),
+  m3_per_hour: z.union([
+    z.null(),
+    z.coerce.number().gt(0, 'Takten måste vara större än noll').max(1_000, 'Takten ser orimlig ut — kontrollera siffran'),
+  ]),
 });
 
 /**
