@@ -1,7 +1,9 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
-import { composeSalesReport, fetchReportData, type ReportRange } from '@/lib/domains/crm/reports';
+import { composeSalesReport, fetchReportData, partitionOrders, type ReportRange } from '@/lib/domains/crm/reports';
+import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
+import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -44,7 +46,34 @@ export async function GET(req: Request) {
     // with a session client — same rationale as the goals route).
     const admin = getSupabaseAdmin();
     const data = await fetchReportData(admin, range);
-    const report = composeSalesReport(data, range);
+
+    // ── Lönsamheten ──────────────────────────────────────────────────────────
+    // Bara de FAKTURERADE ordrarna efterkalkyleras. Populationen är densamma som "Fakturerat" i
+    // serien, och det håller nere arbetet: `line_items` hämtas för en handfull ordrar i stället för
+    // tolv månaders hela orderstock.
+    //
+    // ⚠️ Lönsamheten får inte kunna sänka rapporten. Kalkylen vilar på två inställningstabeller och
+    // artikelcachen; felar någon av dem ska säljsiffrorna fortfarande visas, och lönsamhetsdelen
+    // stå tom. Det är skillnaden mellan en del av sidan som saknas och en sida som inte laddar.
+    const invoicedIds = partitionOrders(data.orders, range).invoiced
+      .map((order) => order.id)
+      .filter((id): id is string => Boolean(id));
+
+    let afterCalculations = new Map<string, AfterCalculation>();
+    if (invoicedIds.length > 0) {
+      try {
+        const { data: orderRows, error } = await admin
+          .from('crm_work_orders')
+          .select('id, line_items, vat_percent')
+          .in('id', invoicedIds);
+        if (error) throw new Error(error.message);
+        afterCalculations = await computeAfterCalculations(admin, (orderRows || []) as AfterCalculationOrderRow[]);
+      } catch (e: any) {
+        console.warn(`[Rapport] Lönsamheten kunde inte räknas: ${e?.message || e}`);
+      }
+    }
+
+    const report = composeSalesReport(data, range, afterCalculations);
 
     return ok(report);
   } catch (e: any) {

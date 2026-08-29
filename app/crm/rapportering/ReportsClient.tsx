@@ -19,18 +19,39 @@ type SellerReportRow = { userId: string; userName: string; calls: number; quotes
 type FunnelStage = { count: number; value: number };
 type SalesFunnel = { quotes: FunnelStage; won: FunnelStage; orders: FunnelStage; invoiced: FunnelStage };
 type CustomerReportRow = { customer: string; orderValue: number; invoicedValue: number; orderCount: number };
+type ProfitabilityPoint = { period: string; tg1: number | null; tg2: number | null };
+type Profitability = {
+  tg1: number | null;
+  tg2: number | null;
+  tb1: number;
+  tb2: number;
+  revenueTb1: number;
+  revenueTb2: number;
+  /** Fakturerade jobb i perioden, och hur många av dem som gick att räkna. */
+  jobs: number;
+  jobsTb1: number;
+  jobsTb2: number;
+  overTime: ProfitabilityPoint[];
+};
 type SalesReport = {
   range: { from: string; to: string };
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
   perCustomer: CustomerReportRow[];
+  profitability: Profitability;
 };
 
 // ── Series colours (match the leaderboard tones) ──
 const COLOR_QUOTE = '#0d9488'; // teal — offertvärde
 const COLOR_ORDER = '#f59e0b'; // amber — ordervärde
 const COLOR_INVOICED = '#8b5cf6'; // violet — fakturerat
+// Lönsamhetens två serier. Egna hues, inte återbruk av de tre ovan: teal betyder offertvärde på
+// samma sida, och samma färg för två olika saker i samma vy är hur man bygger in en felläsning.
+// Paret är kontrollerat mot kortytan (#f9fbf7) — ΔE 19,7 i deuteranopi, 20,7 i normalseende, båda
+// över 3:1 i kontrast.
+const COLOR_TG1 = '#0284c7'; // sky — täckningsgrad efter material
+const COLOR_TG2 = '#15803d'; // green — täckningsgrad efter arbete
 
 // ── Formatting ──
 const sekFormatter = new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', maximumFractionDigits: 0 });
@@ -81,6 +102,37 @@ function ExportButton({ onClick }: { onClick: () => void }) {
     <button type="button" onClick={onClick} className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300">
       Exportera CSV
     </button>
+  );
+}
+
+/**
+ * Periodens täckningsgrad som ett tal, med kronorna och täckningen under.
+ *
+ * ⚠️ TÄCKNINGEN STÅR ALLTID UTSKRIVEN ("14 av 19 fakturerade jobb"). Ett procenttal utan den raden
+ * läses som hela perioden, och de jobb som saknar underlag försvinner tyst ur bedömningen. TG1 och
+ * TG2 har dessutom olika täckning — materialet är ofta klart medan tiden inte är rapporterad — så
+ * de två raderna säger sällan samma sak.
+ *
+ * ⚠️ INGA TRÖSKLAR, av samma skäl som på arbetsordern: offertens 25/40 gäller förkalkylen och TG2
+ * ligger per definition lägre. Bara ett negativt tal färgas.
+ */
+function MarginStat({ label, percent, amount, jobs, total, color }: {
+  label: string; percent: number | null; amount: number; jobs: number; total: number; color: string;
+}) {
+  return (
+    <div className="rounded-xl border border-[#e0e8dc] bg-white p-4">
+      <div className="flex items-center gap-2">
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{label}</span>
+      </div>
+      <div className={cn('mt-1 text-2xl font-bold tabular-nums', percent == null ? 'text-slate-400' : percent < 0 ? 'text-rose-700' : 'text-slate-900')}>
+        {percent == null ? '–' : `${percent.toFixed(1).replace('.', ',')} %`}
+      </div>
+      <div className="mt-0.5 text-sm tabular-nums text-slate-600">{formatCurrency(amount)}</div>
+      <div className="mt-1 text-[11px] text-slate-500">
+        {jobs} av {total} fakturerade jobb
+      </div>
+    </div>
   );
 }
 
@@ -158,6 +210,16 @@ export default function ReportsClient() {
     () => (report?.salesOverTime || []).map((p) => ({
       ...p,
       label: report && report.salesOverTime.length === 1
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    })),
+    [report],
+  );
+  // Samma etikettregel som försäljningsserien, så de två kurvorna går att läsa mot varandra.
+  const marginChartData = useMemo(
+    () => (report?.profitability.overTime || []).map((p) => ({
+      ...p,
+      label: report && report.profitability.overTime.length === 1
         ? formatRangeLabel(report.range.from, report.range.to)
         : formatMonth(p.period),
     })),
@@ -282,6 +344,77 @@ export default function ReportsClient() {
                     <Line type="monotone" dataKey="invoicedValue" name="Fakturerat" stroke={COLOR_INVOICED} strokeWidth={2} dot={singlePoint} />
                   </LineChart>
                 </ResponsiveContainer>
+              </div>
+            )}
+          </SectionCard>
+
+          {/* 1b. Lönsamhet — vad som blev kvar av det som fakturerades */}
+          <SectionCard
+            title="Lönsamhet"
+            subtitle="Täckningsgrad på jobb som fakturerades i perioden, räknad på rapporterade säckar och rapporterad tid. Bara jobb med komplett underlag räknas."
+            action={<ExportButton onClick={() => downloadCsv(
+              `lonsamhet_${report.range.from}_${report.range.to}.csv`,
+              [singlePoint ? 'Period' : 'Månad', 'TG1 efter material (%)', 'TG2 efter arbete (%)'],
+              report.profitability.overTime.map((p) => [
+                singlePoint ? `${report.range.from} – ${report.range.to}` : p.period,
+                p.tg1 ?? '', p.tg2 ?? '',
+              ]),
+            )} />}
+          >
+            {report.profitability.jobsTb1 === 0 && report.profitability.jobsTb2 === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                Inget jobb i perioden har komplett underlag än. Täckningsgraden kräver att
+                egenkontrollen är inlämnad och tiden rapporterad.
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                {/* Talen först, kurvan sedan: det är periodens siffra man kommer hit för, och
+                    månadsserien är hur den blev till. */}
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <MarginStat
+                    label="TG1 efter material"
+                    percent={report.profitability.tg1}
+                    amount={report.profitability.tb1}
+                    jobs={report.profitability.jobsTb1}
+                    total={report.profitability.jobs}
+                    color={COLOR_TG1}
+                  />
+                  <MarginStat
+                    label="TG2 efter arbete"
+                    percent={report.profitability.tg2}
+                    amount={report.profitability.tb2}
+                    jobs={report.profitability.jobsTb2}
+                    total={report.profitability.jobs}
+                    color={COLOR_TG2}
+                  />
+                </div>
+
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    {/* EN axel, båda serierna i procent. Två y-skalor hade gjort det omöjligt att
+                        se att TG2 alltid ligger under TG1 — vilket är hela poängen med att visa
+                        dem tillsammans. */}
+                    <LineChart data={marginChartData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" />
+                      <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} />
+                      <YAxis tickFormatter={(v) => `${v} %`} tick={{ fontSize: 12, fill: '#64748b' }} width={56} />
+                      <Tooltip
+                        formatter={(value) => `${Number(value).toFixed(1).replace('.', ',')} %`}
+                        labelStyle={{ color: '#0f172a' }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 12 }} />
+                      {/* connectNulls={false}: en månad utan räknebara jobb ska bryta linjen, inte
+                          dras rakt igenom som om täckningsgraden gick jämnt däremellan.
+
+                          ⚠️ PUNKTER ALLTID, till skillnad från försäljningsserien som bara sätter
+                          dem när hela intervallet är en månad. Här är luckorna normala — TG2 kan ha
+                          data i EN månad av tolv — och en linje genom en ensam punkt ritar
+                          ingenting. Serien fanns i legenden men syntes inte i diagrammet. */}
+                      <Line type="monotone" dataKey="tg1" name="TG1 efter material" stroke={COLOR_TG1} strokeWidth={2} dot={{ r: 4 }} connectNulls={false} />
+                      <Line type="monotone" dataKey="tg2" name="TG2 efter arbete" stroke={COLOR_TG2} strokeWidth={2} dot={{ r: 4 }} connectNulls={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
             )}
           </SectionCard>
