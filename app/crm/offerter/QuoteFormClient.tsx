@@ -3343,8 +3343,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                       <div className="mt-2.5 grid gap-1 border-t border-slate-100 pt-2.5">
                         <div className="flex items-center justify-between text-xs">
                           <span className="text-slate-500">Uppskattat TB1</span>
+                          {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
+                              offert utan intäkt har inget att räkna procenten mot — och ett `!`
+                              här hade blivit en krasch mitt i formuläret. */}
                           <span className="font-semibold tabular-nums text-slate-900">
-                            {preCalc.tb1 == null ? '–' : `${formatCurrency(preCalc.tb1, 'SEK')} · ${preCalc.tg1!.toFixed(1).replace('.', ',')} %`}
+                            {preCalc.tb1 == null
+                              ? '–'
+                              : `${formatCurrency(preCalc.tb1, 'SEK')}${preCalc.tg1 != null ? ` · ${preCalc.tg1.toFixed(1).replace('.', ',')} %` : ''}`}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-xs">
@@ -3355,16 +3360,28 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                             ) : null}
                           </span>
                           <span className={cn('font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
-                            {preCalc.tb2 == null ? '–' : `${formatCurrency(preCalc.tb2, 'SEK')} · ${preCalc.tg2!.toFixed(1).replace('.', ',')} %`}
+                            {preCalc.tb2 == null
+                              ? '–'
+                              : `${formatCurrency(preCalc.tb2, 'SEK')}${preCalc.tg2 != null ? ` · ${preCalc.tg2.toFixed(1).replace('.', ',')} %` : ''}`}
                           </span>
                         </div>
                         {/* Luckorna säger VAD som fattas — "produktivitet saknas för Vind ×
-                            EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte. */}
-                        {preCalc.gaps.map((gap) => (
-                          <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
-                            {gap.message}
+                            EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte.
+
+                            ⚠️ Men be aldrig någon fylla i en tabell som inte finns. Saknas
+                            migreringen byts radernas uppmaning mot orsaken. */}
+                        {calcSettings?.productivityAvailable === false ? (
+                          <p className="m-0 text-[11px] leading-snug text-slate-400">
+                            Produktivitetstabellen är inte uppsatt än, så arbetstiden går inte att uppskatta.
                           </p>
-                        ))}
+                        ) : null}
+                        {preCalc.gaps
+                          .filter((gap) => gap.kind !== 'missing_rate' || calcSettings?.productivityAvailable !== false)
+                          .map((gap) => (
+                            <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
+                              {gap.message}
+                            </p>
+                          ))}
                       </div>
                     ) : null}
                   </div>

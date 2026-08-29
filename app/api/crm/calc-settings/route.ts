@@ -70,6 +70,10 @@ export async function GET() {
       updated_at: settings?.updated_at ?? null,
       // Rå rader: inställningssidan fyller ett rutnät och behöver dem per kombination.
       productivity_rates: mapProductivityRates(ratesResult.data as ProductivityRateRow[] | null),
+      // ⚠️ SKILJ "TABELLEN FINNS INTE" FRÅN "INGA TAL IFYLLDA". Utan flaggan blev en saknad tabell
+      // till en tom lista, och offertens panel sa "produktivitet saknas för Vind × EKOVILLA — fyll
+      // i talen" om något ingen kan fylla i förrän migreringen körts.
+      productivity_available: !ratesResult.error,
       constructions: CONSTRUCTION_SLUGS.map((slug) => ({ slug, label: constructionLabel(slug) })),
       materials: mapMaterialCostArticleViews(mappings, (priceResult.data || []) as any[]),
       // Vokabulären kommer från koden, inte från databasen — samma lista som fältets rapport

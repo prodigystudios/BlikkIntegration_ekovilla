@@ -67,6 +67,7 @@ export type PreCalculationInput = {
 };
 
 export type PreCalculationGap =
+  | { kind: 'missing_density'; message: string; labels: string[] }
   | { kind: 'missing_rate'; message: string; combinations: string[] }
   | { kind: 'missing_sack_price'; message: string; materials: string[] }
   | { kind: 'unpriced_rows'; message: string; revenue: number; labels: string[] }
@@ -121,7 +122,14 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
   const priceByMaterial = new Map(input.sackPrices.map((p) => [p.material, p.purchasePrice]));
 
   // Avskrivna rader är ute ur båda leden — de utförs aldrig.
-  const items = input.items.filter((item) => !item.written_off);
+  //
+  // ⚠️ TOMMA UTKASTRADER OCKSÅ. `createEmptyLineItem()` seedar en rad på varje ny offert och lägger
+  // tillbaka en när den sista raderas. Utan filtret hamnade den bland "övriga rader", räknades som
+  // oprissatt, och gjorde hela materialsumman okänd — alltså försvann panelen så fort någon tryckte
+  // "+ rad". Samma filter som quoteMargin och efterkalkylens laddare redan använder.
+  const items = input.items.filter(
+    (item) => !item.written_off && (lineItemQuantity(item) > 0 || (Number.isFinite(item.revenue) && item.revenue > 0)),
+  );
   const revenue = items.reduce((sum, item) => sum + (Number.isFinite(item.revenue) ? item.revenue : 0), 0);
 
   let materialCost = 0;
@@ -133,6 +141,7 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
   let teamHours = 0;
   let hoursComplete = true;
   const missingRates = new Set<string>();
+  const missingDensity = new Set<string>();
 
   for (const item of items) {
     if (isBlownRow(item)) {
@@ -146,6 +155,15 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
         materialComplete = false;
         hoursComplete = false;
         missingRates.add(combinationLabel(construction, null));
+      } else if (sacks <= 0) {
+        // ⚠️ NOLL SÄCKAR PÅ EN RAD SOM SKA BLÅSAS ÄR INTE NOLL KRONOR. `lineItemSacks` ger 0 när
+        // densiteten saknas — och densiteten är fritext som aldrig valideras, så gamla offerter
+        // och halvfyllda rader har den tom. Utan den här grenen kostade raden 0 kr och räknades som
+        // KOMPLETT: "Uppskattat TB1 100 000 kr · 100,0 %" på en offert där hela lösullen var
+        // oprissatt. Exakt samma fel som efterkalkylen visade på 28 av 76 ordrar.
+        materialComplete = false;
+        hoursComplete = false;
+        missingDensity.add((item.article_name ?? '').trim() || combinationLabel(construction, material));
       } else {
         const price = priceByMaterial.get(material);
         if (price == null || !(price > 0)) {
@@ -181,6 +199,13 @@ export function calculatePreCalculation(input: PreCalculationInput): PreCalculat
     materialCost += price * lineItemQuantity(item);
   }
 
+  if (missingDensity.size > 0) {
+    gaps.push({
+      kind: 'missing_density',
+      message: `${[...missingDensity].join(', ')} saknar densitet — utan den går varken säckantal eller tid att räkna.`,
+      labels: [...missingDensity],
+    });
+  }
   if (missingSackPrice.size > 0) {
     gaps.push({
       kind: 'missing_sack_price',

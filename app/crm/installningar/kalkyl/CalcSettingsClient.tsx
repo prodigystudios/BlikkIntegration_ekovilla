@@ -261,6 +261,9 @@ export default function CalcSettingsClient({
   const ratesDirty = Object.keys({ ...rates, ...savedRates }).some((key) => (rates[key] ?? '') !== (savedRates[key] ?? ''));
 
   const rateDirty = (() => {
+    // ⚠️ TEAMSTORLEKEN PRÖVAS FÖRST. Låg den efter den tomma-fält-grenen nedan gick den aldrig att
+    // ändra på egen hand när timkostnadsrutan råkade vara tom — Spara satt kvar avstängd.
+    if (Number(teamSize.trim()) !== savedTeamSize) return true;
     const raw = rate.replace(',', '.').trim();
     // Ett tomt fält är inte en ändring utan ett oskrivet fält — och `Number('')` är 0, som annars
     // hade sett ut som "ändrad från 650 till 0" och gjort Spara tryckbar.

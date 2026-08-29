@@ -19,6 +19,13 @@ export type QuoteCalcSettings = {
   teamSize: number;
   rates: ProductivityRate[];
   sackPrices: MaterialSackPrice[];
+  /**
+   * Produktivitetstabellen finns i databasen.
+   *
+   * ⚠️ Skilt från "inga tal ifyllda". Är den false ska panelen inte be någon fylla i en ruta som
+   * inte går att fylla i — då är det migreringen som saknas, inte talen.
+   */
+  productivityAvailable: boolean;
 };
 
 export function useCalcSettings() {
@@ -36,6 +43,7 @@ export function useCalcSettings() {
           laborCostPerHour: data.labor_cost_per_hour ?? null,
           teamSize: Number(data.team_size ?? 2) || 2,
           rates: (data.productivity_rates ?? []) as ProductivityRate[],
+          productivityAvailable: data.productivity_available !== false,
           sackPrices: ((data.materials ?? []) as Array<{ material: string; purchase_price: number | null }>).map((m) => ({
             material: m.material,
             purchasePrice: m.purchase_price,

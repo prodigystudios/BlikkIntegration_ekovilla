@@ -146,6 +146,35 @@ describe('arbetstiden uppskattas ur produktiviteten', () => {
   });
 });
 
+describe('rader som inte går att räkna på', () => {
+  it('en tom utkastrad tar inte ned hela panelen', () => {
+    // createEmptyLineItem() seedar en rad på varje ny offert och lägger tillbaka en när den sista
+    // raderas. Utan filtret räknades den som oprissatt och gjorde TB1 okänt — panelen försvann
+    // alltså så fort någon tryckte "+ rad".
+    const tom = { article_name: '', pricing_mode: 'm3', m2: '', thickness_mm: '', revenue: 0, purchasePrice: null };
+    const result = calc({ items: [losull() as any, tom as any] });
+    expect(result.materialCost).toBe(65 * 100);
+    expect(result.tb1).not.toBeNull();
+  });
+
+  it('en lösullsrad utan densitet kostar INTE noll — den gör summan okänd', () => {
+    // lineItemSacks ger 0 när densiteten saknas, och densiteten är fritext som aldrig valideras.
+    // Utan grenen blev raden gratis och kalkylen "komplett": TB1 100 % på en offert där hela
+    // lösullen var oprissatt. Samma fel som efterkalkylen visade på 28 av 76 ordrar.
+    const result = calc({ items: [losull({ density: '' }) as any] });
+    expect(result.materialCost).toBeNull();
+    expect(result.tb1).toBeNull();
+    expect(result.tg1).toBeNull();
+    expect(result.gaps.map((g) => g.kind)).toContain('missing_density');
+  });
+
+  it('densitetsluckan pekar ut raden', () => {
+    const result = calc({ items: [losull({ density: '0' }) as any] });
+    const gap = result.gaps.find((g) => g.kind === 'missing_density');
+    expect(gap?.message).toContain('EKOVILLA cellulosa');
+  });
+});
+
 describe('TB och TG', () => {
   it('fullständigt underlag ger båda talen', () => {
     const result = calc({ items: [losull() as any] });

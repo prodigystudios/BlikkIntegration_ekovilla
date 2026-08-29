@@ -187,24 +187,38 @@ export function mapMaterialCostArticles(
 
 // ── Skrivning ────────────────────────────────────────────────────────────────
 
+/**
+ * Sparar timkostnaden och teamstorleken.
+ *
+ * ⚠️ SKRIVNINGEN MÅSTE OCKSÅ TÅLA ATT `team_size` INTE FINNS. Läsvägen härdades med `select('*')`,
+ * men en skrivning som nämner en okänd kolumn avvisas av PostgREST (PGRST204) — och då hade
+ * admin inte kunnat spara ens TIMKOSTNADEN i fönstret mellan deploy och migrering, alltså ett
+ * befintligt fungerande fält som slutar fungera. Faller skrivningen på just den kolumnen görs ett
+ * andra försök utan den; teamstorleken hamnar då i databasen när migreringen körts.
+ */
 export async function upsertCalcSettings(
   supabase: SupabaseClient,
   input: { laborCostPerHour: number; teamSize: number; userId: string },
 ) {
-  return supabase
+  const base = {
+    id: CALC_SETTINGS_SINGLETON_ID,
+    labor_cost_per_hour: input.laborCostPerHour,
+    updated_at: new Date().toISOString(),
+    updated_by: input.userId,
+  };
+
+  const withTeam = await supabase
     .from('crm_calc_settings')
-    .upsert(
-      {
-        id: CALC_SETTINGS_SINGLETON_ID,
-        labor_cost_per_hour: input.laborCostPerHour,
-        team_size: input.teamSize,
-        updated_at: new Date().toISOString(),
-        updated_by: input.userId,
-      },
-      { onConflict: 'id' },
-    )
-    .select('labor_cost_per_hour, team_size, updated_at, updated_by')
+    .upsert({ ...base, team_size: input.teamSize }, { onConflict: 'id' })
+    .select('*')
     .single();
+
+  const missingColumn =
+    withTeam.error
+    && (withTeam.error.code === 'PGRST204' || /team_size/.test(withTeam.error.message ?? ''));
+  if (!missingColumn) return withTeam;
+
+  return supabase.from('crm_calc_settings').upsert(base, { onConflict: 'id' }).select('*').single();
 }
 
 /**
