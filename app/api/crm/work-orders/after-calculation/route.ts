@@ -56,12 +56,11 @@ export async function POST(req: Request) {
     //
     // Ordrar som inte gick att räkna SAKNAS i svaret i stället för att stå som noll — samma regel
     // som huvudbokens summering: anropsstället ska kunna skilja "vet inte" från "inget".
-    const items: Record<string, { tg1: number | null; tg2: number | null; materialCostIsPartial: boolean; isPreliminary: boolean }> = {};
+    const items: Record<string, { tg1: number | null; tg2: number | null; isPreliminary: boolean }> = {};
     for (const [id, result] of results) {
       items[id] = {
         tg1: result.tg1,
         tg2: result.tg2,
-        materialCostIsPartial: result.materialCostIsPartial,
         isPreliminary: result.isPreliminary,
       };
     }

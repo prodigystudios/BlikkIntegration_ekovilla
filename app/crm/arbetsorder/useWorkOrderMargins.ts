@@ -10,8 +10,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 export type WorkOrderMargin = {
   tg1: number | null;
   tg2: number | null;
-  /** Något material gick inte att prissätta, alltså är talet för högt. */
-  materialCostIsPartial: boolean;
+  /**
+   * Något saknas i underlaget — typiskt att tiden inte är rapporterad än.
+   *
+   * ⚠️ Betyder INTE att talen ovan är osäkra. De räknas bara när materialkostnaden är komplett;
+   * går någon del inte att prissätta blir de null.
+   */
   isPreliminary: boolean;
 };
 

@@ -173,19 +173,15 @@ export type AfterCalculation = {
   tg1: number | null;
   tg2: number | null;
   gaps: AfterCalculationGap[];
-  /** true så fort något saknas. Kortet märker sig som preliminärt då. */
-  isPreliminary: boolean;
   /**
-   * Materialkostnaden är räknad, men något gick inte att prissätta — alltså är TB1 (och därmed TB2)
-   * FÖR HÖGT med ett okänt belopp.
+   * true så fort något saknas. Kortet märker sig som preliminärt då.
    *
-   * ⚠️ Skild från `isPreliminary`, som också är sann när bara TIDEN saknas. Den skillnaden är hela
-   * skälet till att flaggan finns: ett jobb utan rapporterad tid har ett EXAKT TB1 — det är bara
-   * TB2 som inte går att räkna — och att märka TB1 som osäker där hade gjort märkningen till brus.
-   * Ytor som visar TB1 utanför kortets luckelista (snabböversikten) behöver just den här frågan,
-   * inte den bredare.
+   * ⚠️ Betyder INTE att talen som visas är osäkra. TB1 visas bara när materialkostnaden är komplett
+   * (se materialCostIsComplete), så en preliminär kalkyl har antingen ett streck där talet inte går
+   * att räkna, eller ett tal som stämmer men saknar sin fortsättning — typiskt TB1 klart medan
+   * tiden inte är rapporterad.
    */
-  materialCostIsPartial: boolean;
+  isPreliminary: boolean;
 };
 
 // ── Räkningen ────────────────────────────────────────────────────────────────
@@ -381,24 +377,33 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     });
   }
 
-  // Noll prissatta rader ger null, inte 0 kr — samma skäl som "ej rapporterat" ovan.
-  const materialCost = pricedLines > 0 ? pricedCost : null;
-
-  // Något gick inte att prissätta men något annat gjorde det: summan finns, men den är för låg och
-  // TB alltså för högt. Se materialCostIsPartial.
+  // ── MATERIALKOSTNADEN ÄR ANTINGEN KOMPLETT ELLER OKÄND ────────────────────
   //
-  // ⚠️ `missingSackReports` MÅSTE vara med. En etableringsrad med inköpspris 0 finns på i princip
-  // varje order, och den ensam räcker för att materialCost ska bli 0 i stället för null. Ett
-  // pågående jobb med rapporterad tid men utan inlämnad egenkontroll fick då ett omärkt "TG2 85 %"
-  // i listan — med HELA lösullskostnaden oräknad — samtidigt som kortet på ordern skrev ut att
-  // materialkostnaden är okänd. Två ytor, två olika svar på samma fråga.
-  const materialCostIsPartial =
-    materialCost != null
-    && (missingSackReports
-      || sacksWithoutMaterial > 0
-      || missingArticle.length > 0
-      || missingPrice.length > 0
-      || unpricedLabels.length > 0);
+  // ⚠️ EN DELSUMMA ÄR INTE ETT SVAR, DEN ÄR EN UNDRE GRÄNS. Belagt i drift 2026-08-29: 28 av 76
+  // ordrar visade TG1 100 %. Två varianter av samma fel, båda med en etableringsrad som har
+  // inköpspris 0 i Fortnox:
+  //
+  //   * jobbet saknade säckrapport helt — hela lösullen omätt, men tjänsteraden ensam gjorde
+  //     `pricedLines > 0`, så summan blev 0 kr i stället för okänd. Ett jobb med 89 428 kr i
+  //     intäkt fick 100 % täckningsgrad.
+  //   * jobbet HADE en rapport på 163 säckar, men raderna saknade material och gick därför inte
+  //     att prissätta. Samma utfall.
+  //
+  // I båda fallen skrev luckelistan på samma kort "materialkostnaden är okänd, inte noll" medan
+  // talet bredvid sa 0. Talet var det som lästes.
+  //
+  // Regeln är därför: går NÅGON del av materialet inte att prissätta är summan okänd, och okänt
+  // ritas som ett streck. Luckelistan säger vad som fattas och är fullt åtgärdbar — lämna in
+  // egenkontrollen, sätt kostnadsartikeln. Ett tal man inte kan lita på är värt mindre än inget
+  // tal: det lär läsaren att strunta i kolumnen.
+  const materialCostIsComplete =
+    !missingSackReports
+    && sacksWithoutMaterial === 0
+    && missingArticle.length === 0
+    && missingPrice.length === 0
+    && unpricedLabels.length === 0;
+  const materialCost = materialCostIsComplete && pricedLines > 0 ? pricedCost : null;
+
 
   // ── Arbete ────────────────────────────────────────────────────────────────
   const workedMinutes = sumWorkedMinutes(input.timeRows);
@@ -443,6 +448,5 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     tg2,
     gaps,
     isPreliminary: gaps.length > 0,
-    materialCostIsPartial,
   };
 }

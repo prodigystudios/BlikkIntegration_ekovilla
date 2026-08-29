@@ -82,21 +82,21 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
  * lägre — återanvänds de lyser varje rad rött. Bara förlust färgas, för den är sann utan att någon
  * behöver dra en gräns.
  *
- * "prel." betyder EN sak: något material gick inte att prissätta, alltså är talet för högt. Det
- * gäller BÅDA talen, eftersom materialet ingår i båda.
+ * ⚠️ INGEN "prel."-MÄRKNING BEHÖVS. Talen räknas bara när materialkostnaden är KOMPLETT — går någon
+ * del inte att prissätta blir den null och chippet uteblir. Ett tal som syns är alltså ett tal som
+ * stämmer, och det är hela skälet till att kolumnen går att lita på.
  */
-function MarginChip({ label, percent, partial }: { label: string; percent: number; partial: boolean }) {
+function MarginChip({ label, percent }: { label: string; percent: number }) {
   const loss = percent < 0;
   return (
     <span
-      title={`${label === 'TG1' ? 'Täckningsgrad efter material' : 'Täckningsgrad efter material och arbete'}${partial ? ' — preliminär, allt material kunde inte prissättas' : ''}`}
+      title={label === 'TG1' ? 'Täckningsgrad efter material' : 'Täckningsgrad efter material och arbete'}
       className={cn(
         'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
         loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
     >
       {label} {percent.toFixed(1).replace('.', ',')} %
-      {partial ? <span className="font-normal text-slate-400">prel.</span> : null}
     </span>
   );
 }
@@ -106,8 +106,8 @@ function MarginChips({ margin }: { margin: WorkOrderMargin | undefined }) {
   if (!margin) return null;
   return (
     <>
-      {margin.tg1 != null ? <MarginChip label="TG1" percent={margin.tg1} partial={margin.materialCostIsPartial} /> : null}
-      {margin.tg2 != null ? <MarginChip label="TG2" percent={margin.tg2} partial={margin.materialCostIsPartial} /> : null}
+      {margin.tg1 != null ? <MarginChip label="TG1" percent={margin.tg1} /> : null}
+      {margin.tg2 != null ? <MarginChip label="TG2" percent={margin.tg2} /> : null}
     </>
   );
 }

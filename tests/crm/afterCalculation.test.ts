@@ -133,17 +133,14 @@ describe('"ej rapporterat" är inte noll kronor', () => {
     expect(result.gaps.map((g) => g.kind)).not.toContain('missing_cost_article');
   });
 
-  it('rader utan material räknas i säckarna men prissätts inte — och det syns', () => {
+  it('rader utan material syns i uppställningen men gör summan okänd', () => {
     const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(10, null)] });
-    expect(result.materialCost).toBe(5_000);
+    // Raden finns kvar — de säckarna blåstes, och att dölja dem hade sett ut som färre säckar.
+    expect(result.materialLines).toHaveLength(2);
     const gap = result.gaps.find((g) => g.kind === 'sacks_without_material');
     expect(gap && 'sacks' in gap ? gap.sacks : 0).toBe(10);
-  });
-
-  it('ett prissatt material räcker för en summa — de oprissatta drar inte ned den till null', () => {
-    const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(20, 'PAROC')] });
-    expect(result.materialCost).toBe(5_000);
-    expect(result.isPreliminary).toBe(true);
+    // Men summan går inte att uttala sig om: 10 oprissatta säckar är inte 0 kr.
+    expect(result.materialCost).toBeNull();
   });
 });
 
@@ -188,8 +185,9 @@ describe('sålda rader utanför säckrapporten', () => {
       timeRows: [{ minutes_worked: 480 }],
       otherMaterialRows: [{ label: 'Vindduk', articleNumber: '13310', quantity: 2, purchasePrice: null, revenue: 4_800 }],
     });
-    // Oprissatt rad räknas ALDRIG som gratis — det är den farligt optimistiska riktningen.
-    expect(result.materialCost).toBe(4_300);
+    // Oprissatt rad räknas ALDRIG som gratis — det är den farligt optimistiska riktningen. Och den
+    // gör hela summan okänd: en delsumma hade varit en undre gräns utgiven för ett svar.
+    expect(result.materialCost).toBeNull();
     const gap = result.gaps.find((g) => g.kind === 'unpriced_rows');
     expect(gap && 'revenue' in gap ? gap.revenue : 0).toBe(4_800);
     expect(gap?.message).toContain('Vindduk');
@@ -306,12 +304,25 @@ describe('jobb utan säckrapport får aldrig ett omärkt tal', () => {
   // medan kortet på samma order skrev att materialkostnaden är okänd.
   const etablering = { label: 'Etableringskostnad', articleNumber: '1010', quantity: 1, purchasePrice: 0, revenue: 3_900 };
 
-  it('ingen säckrapport + en kostnadsfri tjänsterad → talet finns men är MÄRKT', () => {
+  it('ingen säckrapport + en kostnadsfri tjänsterad → INGET tal alls, inte 100 %', () => {
+    // Fanns i drift: etableringsraden ensam gjorde materialkostnaden till 0 kr i stället för
+    // okänd, och ett jobb med 89 428 kr i intäkt visade TG1 100 % medan luckelistan på samma kort
+    // skrev att materialkostnaden är okänd.
     const result = calc({ sackRows: [], timeRows: [{ minutes_worked: 480 }], otherMaterialRows: [etablering] });
-    expect(result.materialCost).toBe(0);
-    expect(result.tg2).not.toBeNull();
-    expect(result.materialCostIsPartial).toBe(true);
+    expect(result.materialCost).toBeNull();
+    expect(result.tg1).toBeNull();
+    expect(result.tg2).toBeNull();
     expect(result.gaps.map((g) => g.kind)).toContain('no_sack_reports');
+  });
+
+  it('inte heller när en RIKTIG kostnad gick att prissätta — den mätta delen är fortfarande omätt', () => {
+    const result = calc({
+      sackRows: [],
+      timeRows: [{ minutes_worked: 480 }],
+      otherMaterialRows: [{ label: 'EKOVILLA LEVY 30MM', articleNumber: '2410528', quantity: 4, purchasePrice: 499.89, revenue: 2_309 }],
+    });
+    expect(result.materialCost).toBeNull();
+    expect(result.tg1).toBeNull();
   });
 
   it('en ren tjänsteorder saknar ingenting — den väntar sig ingen säckrapport', () => {
@@ -322,7 +333,7 @@ describe('jobb utan säckrapport får aldrig ett omärkt tal', () => {
       hasBlownInsulationRows: false,
     });
     expect(result.gaps).toEqual([]);
-    expect(result.materialCostIsPartial).toBe(false);
+    expect(result.materialCost).toBe(0);
     expect(result.isPreliminary).toBe(false);
   });
 
@@ -332,39 +343,44 @@ describe('jobb utan säckrapport får aldrig ett omärkt tal', () => {
   });
 });
 
-describe('materialCostIsPartial — skild från isPreliminary', () => {
-  // Snabböversikten visar TB-procenten utanför kortets luckelista och behöver veta om just
-  // MATERIALET är ofullständigt. Saknad tid gör inte TB1 osäkert — bara TB2 oräknelig.
-  it('bara saknad tid: TB1 är exakt, alltså inte partiellt', () => {
+describe('materialkostnaden är antingen komplett eller okänd', () => {
+  // En DELSUMMA är inte ett svar utan en undre gräns. Visades den ändå — märkt — blev talet
+  // systematiskt för högt på precis de jobb där det spelade mest roll.
+  it('bara saknad tid: materialet är komplett, alltså står TB1 skarpt', () => {
     const result = calc({ sackRows: [final(91)], timeRows: [] });
     expect(result.isPreliminary).toBe(true);
-    expect(result.materialCostIsPartial).toBe(false);
+    expect(result.materialCost).toBe(9_100);
+    expect(result.tg1).not.toBeNull();
+    expect(result.tg2).toBeNull();
   });
 
-  it('ett oprissatt material vid sidan av ett prissatt: TB1 är för högt', () => {
+  it('ett oprissatt material vid sidan av ett prissatt ger INGEN summa', () => {
     const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(20, 'PAROC')], timeRows: [{ minutes_worked: 480 }] });
-    expect(result.materialCostIsPartial).toBe(true);
+    expect(result.materialCost).toBeNull();
+    expect(result.tg1).toBeNull();
   });
 
-  it('en oprissatt rad utanför säckrapporten räknas också som partiellt', () => {
+  it('en oprissatt rad utanför säckrapporten stoppar summan lika hårt', () => {
     const result = calc({
       sackRows: [final(50)],
       timeRows: [{ minutes_worked: 480 }],
       otherMaterialRows: [{ label: 'Vindduk', articleNumber: '13310', quantity: 2, purchasePrice: null, revenue: 4_800 }],
     });
-    expect(result.materialCostIsPartial).toBe(true);
-  });
-
-  it('inget prissatt alls ger null, inte "partiellt" — det finns ingen siffra att märka', () => {
-    const result = calc({ sackRows: [final(20, 'PAROC')] });
     expect(result.materialCost).toBeNull();
-    expect(result.materialCostIsPartial).toBe(false);
   });
 
-  it('fullständigt underlag: varken preliminärt eller partiellt', () => {
+  it('säckar utan material stoppar den också — 163 rapporterade säckar är inte 0 kr', () => {
+    const result = calc({ sackRows: [final(163, null)], timeRows: [{ minutes_worked: 480 }], otherMaterialRows: [] });
+    expect(result.materialCost).toBeNull();
+    expect(result.tg1).toBeNull();
+  });
+
+  it('fullständigt underlag ger både summa och båda täckningsgraderna', () => {
     const result = calc({ sackRows: [final(91)], timeRows: [{ minutes_worked: 480 }] });
     expect(result.isPreliminary).toBe(false);
-    expect(result.materialCostIsPartial).toBe(false);
+    expect(result.materialCost).toBe(9_100);
+    expect(result.tg1).not.toBeNull();
+    expect(result.tg2).not.toBeNull();
   });
 });
 
