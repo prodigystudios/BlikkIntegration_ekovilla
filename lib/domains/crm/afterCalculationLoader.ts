@@ -146,7 +146,12 @@ async function fetchAllForWorkOrders<T>(
       .range(from, from + PAGE - 1);
     if (refine) query = refine(query);
     const { data, error } = await query;
-    if (error) break;
+    // ⚠️ KASTA, ALDRIG `break`. Ett avbrott här hade gett kalkylen en TOM eller HALV radmängd, som
+    // den inte kan skilja från "ingenting rapporterat" — alltså blir ett läsfel till påståendet
+    // "ingen tid är rapporterad på jobbet" och arbetskostnaden noll. Exakt den riktning
+    // pagineringen finns för att förhindra. Anroparen ska svara med ett fel, inte med en
+    // glädjekalkyl.
+    if (error) throw new Error(`Kunde inte läsa ${table}: ${error.message}`);
     const page = (data ?? []) as T[];
     rows.push(...page);
     if (page.length < PAGE) break;
@@ -228,6 +233,7 @@ export async function computeAfterCalculations(
 
   for (const order of orders) {
     const { revenue, otherMaterialRows } = buildOrderInput(order, priceByArticle);
+    const lineItems = Array.isArray(order.line_items) ? (order.line_items as Array<Record<string, unknown>>) : [];
     result.set(
       order.id,
       calculateAfterCalculation({
@@ -236,6 +242,9 @@ export async function computeAfterCalculations(
         timeRows: timeByOrder.get(order.id) ?? [],
         costArticles,
         otherMaterialRows,
+        // Säljer ordern lösull väntar vi oss en säckrapport, och avsaknaden är en lucka. En ren
+        // tjänsteorder ska inte sakna en egenkontroll som aldrig kommer.
+        hasBlownInsulationRows: lineItems.some((item) => !item.written_off && isBlownInsulationRow(item)),
         laborCostPerHour,
       }),
     );

@@ -106,6 +106,17 @@ export type AfterCalculationInput = {
   costArticles: MaterialCostArticle[];
   /** Sålda rader som inte täcks av säckrapporten. Se OtherMaterialRow. */
   otherMaterialRows: OtherMaterialRow[];
+  /**
+   * Ordern säljer lösull som ska blåsas, alltså VÄNTAR vi oss en säckrapport.
+   *
+   * ⚠️ Utan den här frågan blir "inga säckar rapporterade" en lucka även på en ren tjänsteorder —
+   * en etableringsrad utan lösull ska inte kräva en egenkontroll som aldrig kommer.
+   *
+   * Standard är `true`, alltså den försiktiga sidan: en anropare som inte vet ska få luckan, inte
+   * slippa den. Det är kostnaden som saknas när det är fel, och den riktningen får aldrig vara den
+   * tysta.
+   */
+  hasBlownInsulationRows?: boolean;
   /** Kronor per MAN-timme. null när inställningen saknas. */
   laborCostPerHour: number | null;
 };
@@ -305,7 +316,10 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     });
   }
 
-  if (effective.length === 0) {
+  // Bara en order som faktiskt säljer lösull väntar sig en säckrapport. En ren tjänsteorder ska
+  // inte stå och sakna en egenkontroll som aldrig kommer.
+  const missingSackReports = effective.length === 0 && (input.hasBlownInsulationRows ?? true);
+  if (missingSackReports) {
     // ⚠️ Ingen rapport betyder INTE noll säckar. Ett tal här hade sett ut som ett fullt jobb utan
     // materialåtgång, vilket är den mest optimistiska siffra kalkylen kan visa.
     gaps.push({
@@ -372,9 +386,19 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
 
   // Något gick inte att prissätta men något annat gjorde det: summan finns, men den är för låg och
   // TB alltså för högt. Se materialCostIsPartial.
+  //
+  // ⚠️ `missingSackReports` MÅSTE vara med. En etableringsrad med inköpspris 0 finns på i princip
+  // varje order, och den ensam räcker för att materialCost ska bli 0 i stället för null. Ett
+  // pågående jobb med rapporterad tid men utan inlämnad egenkontroll fick då ett omärkt "TG2 85 %"
+  // i listan — med HELA lösullskostnaden oräknad — samtidigt som kortet på ordern skrev ut att
+  // materialkostnaden är okänd. Två ytor, två olika svar på samma fråga.
   const materialCostIsPartial =
     materialCost != null
-    && (sacksWithoutMaterial > 0 || missingArticle.length > 0 || missingPrice.length > 0 || unpricedLabels.length > 0);
+    && (missingSackReports
+      || sacksWithoutMaterial > 0
+      || missingArticle.length > 0
+      || missingPrice.length > 0
+      || unpricedLabels.length > 0);
 
   // ── Arbete ────────────────────────────────────────────────────────────────
   const workedMinutes = sumWorkedMinutes(input.timeRows);

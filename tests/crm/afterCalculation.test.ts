@@ -299,6 +299,39 @@ describe('TB och TG', () => {
   });
 });
 
+describe('jobb utan säckrapport får aldrig ett omärkt tal', () => {
+  // Fyndet som fanns i drift: en etableringsrad med inköpspris 0 finns på i princip varje order,
+  // och den ensam gör materialCost till 0 i stället för null. Ett pågående jobb med rapporterad tid
+  // men utan egenkontroll visade då ett omärkt TG2 i listan — med hela lösullskostnaden oräknad —
+  // medan kortet på samma order skrev att materialkostnaden är okänd.
+  const etablering = { label: 'Etableringskostnad', articleNumber: '1010', quantity: 1, purchasePrice: 0, revenue: 3_900 };
+
+  it('ingen säckrapport + en kostnadsfri tjänsterad → talet finns men är MÄRKT', () => {
+    const result = calc({ sackRows: [], timeRows: [{ minutes_worked: 480 }], otherMaterialRows: [etablering] });
+    expect(result.materialCost).toBe(0);
+    expect(result.tg2).not.toBeNull();
+    expect(result.materialCostIsPartial).toBe(true);
+    expect(result.gaps.map((g) => g.kind)).toContain('no_sack_reports');
+  });
+
+  it('en ren tjänsteorder saknar ingenting — den väntar sig ingen säckrapport', () => {
+    const result = calc({
+      sackRows: [],
+      timeRows: [{ minutes_worked: 480 }],
+      otherMaterialRows: [etablering],
+      hasBlownInsulationRows: false,
+    });
+    expect(result.gaps).toEqual([]);
+    expect(result.materialCostIsPartial).toBe(false);
+    expect(result.isPreliminary).toBe(false);
+  });
+
+  it('standarden är den försiktiga sidan: utan besked väntas en säckrapport', () => {
+    const result = calc({ sackRows: [], timeRows: [{ minutes_worked: 480 }] });
+    expect(result.gaps.map((g) => g.kind)).toContain('no_sack_reports');
+  });
+});
+
 describe('materialCostIsPartial — skild från isPreliminary', () => {
   // Snabböversikten visar TB-procenten utanför kortets luckelista och behöver veta om just
   // MATERIALET är ofullständigt. Saknad tid gör inte TB1 osäkert — bara TB2 oräknelig.

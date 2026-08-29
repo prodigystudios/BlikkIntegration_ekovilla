@@ -39,6 +39,14 @@ export function useWorkOrderMargins(workOrderIds: string[]) {
   const idsKey = workOrderIds.join(',');
 
   const load = useCallback(async (ids: string[]) => {
+    // ⚠️ ETT MISSLYCKAT ANROP MÅSTE SLÄPPA ID:NA IGEN. De märks som frågade INNAN svaret kommer
+    // (annars hade en andra rendering skickat samma begäran en gång till), men glappar nätet vid
+    // första sidladdningen hade de hundra första radernas märke aldrig kommit tillbaka under
+    // sessionen — även när rutten svarar normalt igen. Ingen loop: effekten körs bara om när
+    // listans id-nyckel ändras.
+    const forget = () => {
+      for (const id of ids) requestedRef.current.delete(id);
+    };
     try {
       const res = await fetch('/api/crm/work-orders/after-calculation', {
         method: 'POST',
@@ -46,18 +54,23 @@ export function useWorkOrderMargins(workOrderIds: string[]) {
         body: JSON.stringify({ work_order_ids: ids }),
       });
       if (res.status === 403) {
+        // Behörigheten saknas — det är ett svar, inte ett glapp. Fråga inte igen.
         forbiddenRef.current = true;
         setForbidden(true);
         return;
       }
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) return;
+      if (!res.ok || !json.ok) {
+        forget();
+        return;
+      }
       const items = (json.data?.items || {}) as Record<string, WorkOrderMargin>;
       // Slås ihop, aldrig ersätts: tidigare sidor ska stå kvar.
       setMargins((prev) => ({ ...prev, ...items }));
     } catch {
-      // Tyst. Ett uteblivet märke är ett tomt utrymme i listan, inte ett fel som ska larmas om —
-      // och listan i övrigt fungerar.
+      // Tyst mot användaren — ett uteblivet märke är ett tomt utrymme i listan, inte ett fel som
+      // ska larmas om. Men id:na släpps, så nästa filtrering eller sida försöker igen.
+      forget();
     }
   }, []);
 
