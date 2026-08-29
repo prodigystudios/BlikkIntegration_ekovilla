@@ -70,34 +70,45 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
 
 
 /**
- * Jobbets täckningsgrad efter arbete, som ett chip i radens märkesrad.
+ * Ett täckningsgradschip i radens märkesrad.
  *
- * ⚠️ ETT TAL, EN BETYDELSE. Chippet visar ALLTID TG2 — aldrig TG1 när TG2 saknas. Ett fält som är
- * täckningsgrad efter material på en rad och efter arbete på nästa är oläsbart i en lista man
- * skannar, och två jobb hade jämförts som om talen mätte samma sak. Saknas TG2 ritas inget chip:
- * ett tomt utrymme säger "vet inte", vilket är sant.
+ * ⚠️ VARJE CHIP BÄR SITT EGET NAMN. De två talen mäter olika saker — TG1 vad som är kvar efter
+ * materialet, TG2 vad som är kvar efter arbetet också — och etiketten är det som gör dem
+ * jämförbara mellan rader. Det som INTE får hända är en tyst reserv: samma plats får aldrig betyda
+ * TG1 på en rad och TG2 på nästa, för då jämförs två jobb som om talen mätte samma sak. Med
+ * utskrivna namn finns den tvetydigheten inte, och saknas ett av talen uteblir bara dess chip.
  *
  * ⚠️ INGA TRÖSKLAR. Offertens 25/40 är satta för förkalkylens TG och TB2 ligger per definition
  * lägre — återanvänds de lyser varje rad rött. Bara förlust färgas, för den är sann utan att någon
  * behöver dra en gräns.
  *
  * "prel." betyder EN sak: något material gick inte att prissätta, alltså är talet för högt. Det
- * sätts inte på saknad tid — då finns ju inget TG2 att visa.
+ * gäller BÅDA talen, eftersom materialet ingår i båda.
  */
-function MarginChip({ margin }: { margin: WorkOrderMargin | undefined }) {
-  if (!margin || margin.tg2 == null) return null;
-  const loss = margin.tg2 < 0;
+function MarginChip({ label, percent, partial }: { label: string; percent: number; partial: boolean }) {
+  const loss = percent < 0;
   return (
     <span
-      title={`Täckningsgrad efter material och arbete${margin.materialCostIsPartial ? ' — preliminär, allt material kunde inte prissättas' : ''}`}
+      title={`${label === 'TG1' ? 'Täckningsgrad efter material' : 'Täckningsgrad efter material och arbete'}${partial ? ' — preliminär, allt material kunde inte prissättas' : ''}`}
       className={cn(
         'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
         loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
     >
-      TG2 {margin.tg2.toFixed(1).replace('.', ',')} %
-      {margin.materialCostIsPartial ? <span className="font-normal text-slate-400">prel.</span> : null}
+      {label} {percent.toFixed(1).replace('.', ',')} %
+      {partial ? <span className="font-normal text-slate-400">prel.</span> : null}
     </span>
+  );
+}
+
+/** Radens täckningsgrader. Båda visas när de finns; ingen ersätter den andra. */
+function MarginChips({ margin }: { margin: WorkOrderMargin | undefined }) {
+  if (!margin) return null;
+  return (
+    <>
+      {margin.tg1 != null ? <MarginChip label="TG1" percent={margin.tg1} partial={margin.materialCostIsPartial} /> : null}
+      {margin.tg2 != null ? <MarginChip label="TG2" percent={margin.tg2} partial={margin.materialCostIsPartial} /> : null}
+    </>
   );
 }
 
@@ -471,7 +482,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                                 Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
                               </span>
                             ) : null}
-                            <MarginChip margin={workOrderMargins[item.id]} />
+                            <MarginChips margin={workOrderMargins[item.id]} />
                             {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
                             <RowAssigneeChip name={sellerName} />
                           </div>
