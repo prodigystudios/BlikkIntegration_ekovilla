@@ -5,13 +5,18 @@ import {
   getCalcSettings,
   listCostArticlePrices,
   listMaterialCostArticles,
+  listProductivityRates,
   mapLaborCostPerHour,
   mapMaterialCostArticleViews,
+  mapProductivityRates,
+  mapTeamSize,
   upsertCalcSettings,
   type CalcSettingsRow,
   type MaterialCostArticleRow,
+  type ProductivityRateRow,
 } from '@/lib/domains/crm/calcSettings';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
+import { CONSTRUCTION_SLUGS, constructionLabel } from '@/lib/domains/crm/constructions';
 import { ok, requireCrmAdmin, requireCrmUser, routeError, updateCalcSettingsSchema, validationError } from './_lib';
 
 // Efterkalkylens inställningar: timkostnaden och (via GET) materialens kostnadsartiklar.
@@ -30,10 +35,14 @@ export async function GET() {
     if (crmUser.response) return crmUser.response;
 
     const supabase = createRouteHandlerClient({ cookies });
-    const [settingsResult, mappingResult] = await Promise.all([
+    const [settingsResult, mappingResult, ratesResult] = await Promise.all([
       getCalcSettings(supabase),
       listMaterialCostArticles(supabase),
+      listProductivityRates(supabase),
     ]);
+    // ⚠️ `ratesResult.error` fäller INTE hela svaret. Produktivitetstabellen kom i en senare
+    // migrering, och en saknad tabell där ska inte ta med sig timkostnaden, kostnadsartiklarna och
+    // offertens hela panel i fallet. Rutnätet har sin egen flagga på sidan.
     if (settingsResult.error || mappingResult.error) {
       return routeError(
         500,
@@ -57,7 +66,15 @@ export async function GET() {
     const settings = settingsResult.data as CalcSettingsRow | null;
     return ok({
       labor_cost_per_hour: mapLaborCostPerHour(settings),
+      team_size: mapTeamSize(settings),
       updated_at: settings?.updated_at ?? null,
+      // Rå rader: inställningssidan fyller ett rutnät och behöver dem per kombination.
+      productivity_rates: mapProductivityRates(ratesResult.data as ProductivityRateRow[] | null),
+      // ⚠️ SKILJ "TABELLEN FINNS INTE" FRÅN "INGA TAL IFYLLDA". Utan flaggan blev en saknad tabell
+      // till en tom lista, och offertens panel sa "produktivitet saknas för Vind × EKOVILLA — fyll
+      // i talen" om något ingen kan fylla i förrän migreringen körts.
+      productivity_available: !ratesResult.error,
+      constructions: CONSTRUCTION_SLUGS.map((slug) => ({ slug, label: constructionLabel(slug) })),
       materials: mapMaterialCostArticleViews(mappings, (priceResult.data || []) as any[]),
       // Vokabulären kommer från koden, inte från databasen — samma lista som fältets rapport
       // skriver. Skickas med så inställningssidan kan erbjuda exakt de kortkoder som kan matcha.
@@ -78,16 +95,21 @@ export async function PUT(req: Request) {
 
     // Sessionsklienten med flit: RLS (crm.admin) är garantin, gaten ovan är det läsbara felet.
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error } = await upsertCalcSettings(supabase, {
+    const result = await upsertCalcSettings(supabase, {
       laborCostPerHour: parsedBody.data.labor_cost_per_hour,
+      teamSize: parsedBody.data.team_size,
       userId: crmAdmin.currentUser.id,
     });
+    const { data, error } = result;
     if (error || !data) {
       return routeError(500, 'crm_calc_settings_update_failed', error?.message || 'Kunde inte spara timkostnaden.');
     }
 
     return ok({
       labor_cost_per_hour: mapLaborCostPerHour(data as CalcSettingsRow),
+      team_size: mapTeamSize(data as CalcSettingsRow),
+      // false = kolumnen finns inte än (migreringen okörd). Timkostnaden sparades, lagantalet inte.
+      team_size_saved: result.teamSizeSaved,
       updated_at: (data as CalcSettingsRow).updated_at,
     });
   } catch (e: any) {

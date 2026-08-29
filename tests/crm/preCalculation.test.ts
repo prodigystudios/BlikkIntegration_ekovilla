@@ -1,0 +1,255 @@
+import { describe, it, expect } from 'vitest';
+import { calculatePreCalculation, isBlownRow, marginCostBasis, type PreCalculationInput } from '@/lib/domains/crm/preCalculation';
+
+// Förkalkylen på offerten. Tre saker kan gå tyst fel, och alla tre åt samma håll — ett jobb som ser
+// lönsammare ut än det är:
+//
+//   1. team-timmar förväxlas med man-timmar (faktor teamSize)
+//   2. ett saknat produktivitetstal tolkas som noll timmar
+//   3. en ofullständig materialsumma visas som ett svar i stället för som en undre gräns
+
+// 100 m² × 200 mm = 20 m³ Ekovilla vid 45 kg/m³ → 900 kg / 14 kg = 65 säck (Math.ceil).
+const losull = (over: Record<string, unknown> = {}) => ({
+  article_name: 'EKOVILLA cellulosa 0,038W/mK vind',
+  article_number: '2410510',
+  pricing_mode: 'm3',
+  m2: '100',
+  thickness_mm: '200',
+  density: '45',
+  construction: 'vind',
+  revenue: 100_000,
+  ...over,
+});
+
+const base: PreCalculationInput = {
+  items: [],
+  laborCostPerHour: 650,
+  teamSize: 2,
+  rates: [{ construction: 'vind', material: 'EKOVILLA', m3PerHour: 20 }],
+  sackPrices: [{ material: 'EKOVILLA', purchasePrice: 100 }],
+};
+
+const calc = (over: Partial<PreCalculationInput> = {}) => calculatePreCalculation({ ...base, ...over });
+
+describe('isBlownRow', () => {
+  it('lösull såld per volym blåses', () => {
+    expect(isBlownRow(losull() as any)).toBe(true);
+  });
+
+  it('en omdöpt rad känns igen på densiteten — samma regel som efterkalkylen', () => {
+    expect(isBlownRow({ article_name: 'Lösull vind', pricing_mode: 'm3', density: '45', revenue: 0 } as any)).toBe(true);
+  });
+
+  it('skivor och etablering blåses inte', () => {
+    expect(isBlownRow({ article_name: 'EKOVILLA LEVY 30MM', pricing_mode: 'item', revenue: 0 } as any)).toBe(false);
+    expect(isBlownRow({ article_name: 'Etableringskostnad', pricing_mode: 'item', revenue: 0 } as any)).toBe(false);
+  });
+});
+
+describe('marginCostBasis — underlaget offertens TG räknar på', () => {
+  const priser = [{ material: 'EKOVILLA', purchasePrice: 92.4 }];
+
+  it('lösull kostnadsbedöms på SÄCKAR, inte på m³ × artikelpris', () => {
+    // 20 m³ × 45 kg/m³ = 900 kg / 14 = 64,3 → 65 säck à 92,40.
+    const basis = marginCostBasis(losull() as any, priser);
+    expect(basis).toEqual({ quantity: 65, purchasePrice: 92.4, basis: 'sacks' });
+  });
+
+  it('utan kostnadsartikel faller den tillbaka på artikelns pris — inte på ingenting', () => {
+    // Bara tre material har kostnadsartikel i dag. Utan reserven hade en PAROC-offert tappat sin
+    // täckningsgrad HELT, och med den säljchefsspärren vid 25 %.
+    const basis = marginCostBasis(losull({ purchasePrice: 190 }) as any, []);
+    expect(basis).toEqual({ quantity: 20, purchasePrice: 190, basis: 'article' });
+  });
+
+  it('varken säckpris eller artikelpris ger "none"', () => {
+    expect(marginCostBasis(losull() as any, []).basis).toBe('none');
+  });
+
+  it('densiteten slår igenom — det är hela skälet till att gå via säckar', () => {
+    // Samma volym, 60 kg/m³: 1 200 kg / 14 = 85,7 → 86 säck. Ett fast kr/m³-pris hade gett samma
+    // kostnad som vid 45 kg/m³ och alltså en för optimistisk täckningsgrad.
+    expect(marginCostBasis(losull({ density: '60' }) as any, priser).quantity).toBe(86);
+  });
+
+  it('övriga rader behåller antal × artikelns inköpspris', () => {
+    const levy = { article_name: 'EKOVILLA LEVY 30MM', pricing_mode: 'item', quantity: '4', revenue: 2_309, purchasePrice: 499.89 };
+    expect(marginCostBasis(levy as any, priser)).toEqual({ quantity: 4, purchasePrice: 499.89, basis: 'article' });
+  });
+
+  it('lösull utan densitet går inte att kostnadsbedöma — noll säckar är inte noll kronor', () => {
+    expect(marginCostBasis(losull({ density: '' }) as any, priser).purchasePrice).toBeNull();
+  });
+
+  it('saknas BÅDE kostnadsartikel och artikelpris finns inget att falla tillbaka på', () => {
+    expect(marginCostBasis(losull() as any, []).purchasePrice).toBeNull();
+  });
+});
+
+describe('materialet räknas via planerade säckar', () => {
+  it('säckar × kr/säck — samma antal som arbetsbeskrivningen skriver', () => {
+    const result = calc({ items: [losull() as any] });
+    // 20 m³ × 45 kg/m³ = 900 kg / 14 kg per säck = 64,29 → 65 hela säckar.
+    expect(result.materialCost).toBe(65 * 100);
+  });
+
+  it('densiteten slår igenom — det är hela poängen med att gå via säckar', () => {
+    // Samma volym, tätare blåsning: 20 m³ × 60 kg/m³ = 1 200 kg / 14 = 85,7 → 86 säck.
+    const result = calc({ items: [losull({ density: '60' }) as any] });
+    expect(result.materialCost).toBe(86 * 100);
+  });
+
+  it('saknad kostnadsartikel faller tillbaka på artikelpriset — och det REDOVISAS', () => {
+    // Reserven är densitetsblind, men ett tal som säger sitt är bättre än ingen täckningsgrad
+    // alls: den senare tar med sig säljchefsspärren i fallet.
+    const result = calc({ items: [losull({ purchasePrice: 190 }) as any], sackPrices: [] });
+    expect(result.materialCost).toBe(20 * 190);
+    expect(result.gaps.map((g) => g.kind)).toContain('missing_sack_price');
+  });
+
+  it('övriga rader kostar inköpspris × antal', () => {
+    const levy = { article_name: 'EKOVILLA LEVY 30MM', pricing_mode: 'item', quantity: '4', revenue: 2_309, purchasePrice: 499.89 };
+    const result = calc({ items: [losull() as any, levy as any] });
+    expect(result.materialCost).toBeCloseTo(65 * 100 + 4 * 499.89, 6);
+  });
+
+  it('en rad utan inköpspris lämnar BÅDA leden och redovisas — som quoteMargin gör', () => {
+    // Rader utan inköpspris är vardag (61 av 289 artiklar saknar det). Skulle en sådan rad göra
+    // hela TB okänt hade TB2 stått på "–" på nästan varje riktig offert. Den lyfts i stället ut ur
+    // både intäkt och kostnad, precis som täckningsgraden i samma panel gör.
+    const duk = { article_name: 'Vindduk', pricing_mode: 'item', quantity: '2', revenue: 4_800, purchasePrice: null };
+    const result = calc({ items: [losull() as any, duk as any] });
+    expect(result.materialCost).toBe(65 * 100);
+    // ⚠️ Intäkten är den BEDÖMDA. Låg dukens 4 800 kr kvar i täljaren hade de räknats som ren
+    // vinst, och TB1 blivit för högt med exakt det beloppet.
+    expect(result.revenue).toBe(100_000);
+    expect(result.tb1).toBe(100_000 - 6_500);
+    const gap = result.gaps.find((g) => g.kind === 'unpriced_rows');
+    expect(gap && 'revenue' in gap ? gap.revenue : 0).toBe(4_800);
+  });
+
+  it('en oprissatt rad får aldrig räknas som ren vinst', () => {
+    // Mutationsskydd: lämnas raden i intäkten men ute ur kostnaden blir TB1 4 800 kr för högt.
+    const duk = { article_name: 'Vindduk', pricing_mode: 'item', quantity: '2', revenue: 4_800, purchasePrice: null };
+    const utan = calc({ items: [losull() as any] });
+    const med = calc({ items: [losull() as any, duk as any] });
+    expect(med.tb1).toBe(utan.tb1);
+  });
+
+  it('inköpspris 0 är ett svar — etableringen kostar inget och stoppar ingenting', () => {
+    const etablering = { article_name: 'Etableringskostnad', pricing_mode: 'item', quantity: '1', revenue: 4_500, purchasePrice: 0 };
+    const result = calc({ items: [losull() as any, etablering as any] });
+    expect(result.materialCost).toBe(65 * 100);
+    expect(result.gaps.map((g) => g.kind)).not.toContain('unpriced_rows');
+  });
+});
+
+describe('arbetstiden uppskattas ur produktiviteten', () => {
+  it('team-timmar × TEAMSTORLEK × timkostnad — inte team-timmar rakt av', () => {
+    // 20 m³ / 20 m³ per timme = 1 team-timme = 2 man-timmar × 650 = 1 300 kr.
+    const result = calc({ items: [losull() as any] });
+    expect(result.teamHours).toBeCloseTo(1, 10);
+    expect(result.laborCost).toBeCloseTo(1_300, 10);
+  });
+
+  it('ett lag om tre kostar mer per team-timme', () => {
+    const result = calc({ items: [losull() as any], teamSize: 3 });
+    expect(result.laborCost).toBeCloseTo(1 * 3 * 650, 10);
+  });
+
+  it('produktiviteten slås upp per KOMBINATION — vind och vägg kan ha olika takt', () => {
+    const result = calc({
+      items: [losull({ construction: 'vagg' }) as any],
+      rates: [
+        { construction: 'vind', material: 'EKOVILLA', m3PerHour: 20 },
+        { construction: 'vagg', material: 'EKOVILLA', m3PerHour: 10 },
+      ],
+    });
+    expect(result.teamHours).toBeCloseTo(2, 10);
+  });
+
+  it('saknat produktivitetstal ger okänd tid, ALDRIG noll timmar', () => {
+    const result = calc({ items: [losull() as any], rates: [] });
+    expect(result.teamHours).toBeNull();
+    expect(result.laborCost).toBeNull();
+    expect(result.tb2).toBeNull();
+    // TB1 står kvar — materialet går ju att räkna.
+    expect(result.tb1).toBe(100_000 - 6_500);
+    const gap = result.gaps.find((g) => g.kind === 'missing_rate');
+    expect(gap?.message).toContain('Vind × EKOVILLA');
+  });
+
+  it('en rad utan placering kan inte tidsättas — och luckan säger vilken', () => {
+    const result = calc({ items: [losull({ construction: '' }) as any] });
+    expect(result.teamHours).toBeNull();
+    const gap = result.gaps.find((g) => g.kind === 'missing_rate');
+    expect(gap?.message).toContain('Ospecificerad placering');
+  });
+
+  it('ETT moment utan takt gör hela tiden okänd — inte en delsumma', () => {
+    const result = calc({
+      items: [losull() as any, losull({ construction: 'vagg' }) as any],
+      // Bara vind har en takt.
+    });
+    expect(result.teamHours).toBeNull();
+  });
+
+  it('utan timkostnad går TB2 inte att räkna men TB1 står kvar', () => {
+    const result = calc({ items: [losull() as any], laborCostPerHour: null });
+    expect(result.tb1).toBe(100_000 - 6_500);
+    expect(result.tb2).toBeNull();
+    expect(result.gaps.map((g) => g.kind)).toContain('no_labor_rate');
+  });
+});
+
+describe('rader som inte går att räkna på', () => {
+  it('en tom utkastrad tar inte ned hela panelen', () => {
+    // createEmptyLineItem() seedar en rad på varje ny offert och lägger tillbaka en när den sista
+    // raderas. Utan filtret räknades den som oprissatt och gjorde TB1 okänt — panelen försvann
+    // alltså så fort någon tryckte "+ rad".
+    const tom = { article_name: '', pricing_mode: 'm3', m2: '', thickness_mm: '', revenue: 0, purchasePrice: null };
+    const result = calc({ items: [losull() as any, tom as any] });
+    expect(result.materialCost).toBe(65 * 100);
+    expect(result.tb1).not.toBeNull();
+  });
+
+  it('en lösullsrad utan densitet kostar INTE noll — den gör summan okänd', () => {
+    // lineItemSacks ger 0 när densiteten saknas, och densiteten är fritext som aldrig valideras.
+    // Utan grenen blev raden gratis och kalkylen "komplett": TB1 100 % på en offert där hela
+    // lösullen var oprissatt. Samma fel som efterkalkylen visade på 28 av 76 ordrar.
+    const result = calc({ items: [losull({ density: '' }) as any] });
+    expect(result.materialCost).toBeNull();
+    expect(result.tb1).toBeNull();
+    expect(result.tg1).toBeNull();
+    expect(result.gaps.map((g) => g.kind)).toContain('missing_density');
+  });
+
+  it('densitetsluckan pekar ut raden', () => {
+    const result = calc({ items: [losull({ density: '0' }) as any] });
+    const gap = result.gaps.find((g) => g.kind === 'missing_density');
+    expect(gap?.message).toContain('EKOVILLA cellulosa');
+  });
+});
+
+describe('TB och TG', () => {
+  it('fullständigt underlag ger båda talen', () => {
+    const result = calc({ items: [losull() as any] });
+    expect(result.revenue).toBe(100_000);
+    expect(result.tb1).toBe(93_500);
+    expect(result.tb2).toBe(93_500 - 1_300);
+    expect(result.tg1).toBeCloseTo(93.5, 10);
+    expect(result.tg2).toBeCloseTo(92.2, 10);
+    expect(result.gaps).toEqual([]);
+  });
+
+  it('avskrivna rader är ute ur både intäkt och kostnad', () => {
+    const result = calc({ items: [losull() as any, losull({ written_off: true, revenue: 50_000 }) as any] });
+    expect(result.revenue).toBe(100_000);
+    expect(result.materialCost).toBe(65 * 100);
+  });
+
+  it('en offert kan gå med förlust — TB2 får bli negativ', () => {
+    const result = calc({ items: [losull({ revenue: 5_000 }) as any] });
+    expect(result.tb2).toBeLessThan(0);
+  });
+});
