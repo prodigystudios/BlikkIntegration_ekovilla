@@ -27,6 +27,8 @@ import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
+import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
+import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
@@ -169,6 +171,22 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
 //
 // Storleken sätts här och ärvs inte: raden användes både inne i en `text-sm`-behållare
 // (Snabböversikt, ROT) och utan (Fortnox order), så samma komponent renderades i två grader.
+/**
+ * Täckningsbidraget i procent, för snabböversiktens rader.
+ *
+ * "–" när talet inte går att räkna — aldrig 0 %, som hade påstått att jobbet gick jämnt ut när
+ * sanningen är att underlaget saknas. Samma regel som uppställningen i Ekonomi-kortet följer.
+ */
+function TbStat({ percent, partial }: { percent: number | null; partial: boolean }) {
+  if (percent == null) return <span className="font-normal text-slate-400">–</span>;
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className={percent < 0 ? 'text-rose-700' : undefined}>{`${percent.toFixed(1).replace('.', ',')} %`}</span>
+      {partial ? <span className="text-[10px] font-normal text-slate-400">prel.</span> : null}
+    </span>
+  );
+}
+
 function StatField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -232,6 +250,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Spåret bakom snabböversiktens tal. Skriver inga rapporter — dörr 1 och 2 gör det — men kan ta
   // bort en felrapporterad delrapport, se removeSackReport.
   const sackReports = useSackReports(workOrderId);
+  // Efterkalkylen går sin egen väg med flit — kostnadsdata får aldrig ligga i den nyttolast
+  // fältvyn läser. Se app/api/crm/work-orders/[id]/after-calculation/route.ts.
+  const afterCalculation = useAfterCalculation(workOrderId);
   const [sourceQuote, setSourceQuote] = useState<{ quote_number: string | null; fortnox_offer_number: string | null } | null>(null);
   const [showPartialModal, setShowPartialModal] = useState(false);
   const [confirmInvoiceOpen, setConfirmInvoiceOpen] = useState(false);
@@ -260,6 +281,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   async function removeSackReport(id: string) {
     const removed = await sackReports.remove(id);
     if (!removed) return;
+    // Materialkostnaden räknas på samma rader. Utan omhämtningen står efterkalkylen kvar på den
+    // dubbelrapporterade summan medan spåret ovanför redan visar den rättade.
+    void afterCalculation.refresh();
     // ⚠️ Samma ordningsfälla som i hookens refresh: två borttagningar i rad ger två omräkningar,
     // och landar den första sist skriver den tillbaka summan FÖRE den andra raden togs bort. Talet
     // hade då stått kvar på den dubbelrapporterade siffran — alltså precis det borttagningen
@@ -638,6 +662,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara artiklar'); return false; }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem, { keepDraft: editingOverview });
+      // Efterkalkylens intäkt räknas på ordens rader, alltså på precis det som just sparades.
+      // Utan omhämtningen står TB kvar på priserna före ändringen, en handsbredd under Delsumman
+      // som redan visar de nya — två tal om samma sak, i samma kort, som inte går ihop.
+      void afterCalculation.refresh();
       if (json.data?.fortnox_error) {
         toast.error(`Artiklar sparade men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
       } else {
@@ -1366,6 +1394,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 onSave={saveArticles}
               />
 
+              {/* ─── Efterkalkyl ───────────────────────────────────────────
+                  Efter raderna och deras summering, före faktureringen: det är den ordning
+                  frågorna ställs i. Vad sålde vi → vad kostade jobbet → vad blev kvar → fakturera.
+                  Blocket räknar på RAPPORTERAT utfall, inte på offertens antaganden. */}
+              <WorkOrderAfterCalculation
+                result={afterCalculation.result}
+                loading={afterCalculation.loading}
+                loadError={afterCalculation.loadError}
+                forbidden={afterCalculation.forbidden}
+              />
+
               {fortnoxConnected ? (
                 <div className="grid gap-3 border-t border-[#e0e8dc] pt-4">
                   <div className="flex items-center justify-between gap-2">
@@ -1793,6 +1832,26 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   />
                 ) : null}
                 <StatField label="Loggade timmar" value={`${totalLoggedHours.toFixed(1)} h`} />
+                {/* ─── TB i procent ──────────────────────────────────────────
+                    Efterkalkylens uppställning är ihopfälld i Ekonomi-kortet, så de två talen man
+                    vill fånga i förbifarten står här i stället. Bara procenten: kronorna hör till
+                    härledningen, och den bor ett klick bort.
+
+                    ⚠️ Ingen färg, av samma skäl som i kortet: TB2 ligger per definition under
+                    offertens TG-trösklar, så 25/40 hade lyst rött på varje jobb. Ett NEGATIVT tal
+                    färgas — förlust är sant utan att någon behöver dra en gräns.
+
+                    ⚠️ "prel." sätts på materialCostIsPartial, INTE på isPreliminary. Ett jobb utan
+                    rapporterad tid har ett exakt TB1 (bara TB2 saknas, och det syns som "–"), och
+                    en märkning där hade gjort märkningen till brus på varje pågående jobb. Märket
+                    betyder alltså EN sak: något material gick inte att prissätta, så talet är för
+                    högt. */}
+                {afterCalculation.result && !afterCalculation.forbidden ? (
+                  <>
+                    <StatField label="TB1" value={<TbStat percent={afterCalculation.result.tg1} partial={afterCalculation.result.materialCostIsPartial} />} />
+                    <StatField label="TB2" value={<TbStat percent={afterCalculation.result.tg2} partial={afterCalculation.result.materialCostIsPartial} />} />
+                  </>
+                ) : null}
                 <StatField label="Kommentarer" value={comments.length} />
                 {/* Dokumentreferens enligt husets standard: Fortnox-numret när det finns, vårt
                     eget dessförinnan. Stod tidigare som ett avhugget uuid ("Offert a1b2c3d4…") —
