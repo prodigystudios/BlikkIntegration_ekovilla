@@ -3369,22 +3369,37 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                         arbetsordern. Offertens 25/40 gäller TG ovanför och inte de här talen. */}
                     {preCalc && preCalc.revenue > 0 ? (
                       <div className="mt-2.5 grid gap-1 border-t border-slate-100 pt-2.5">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-500">
-                            Uppskattat TB2
-                            {preCalc.teamHours != null ? (
-                              <span className="text-slate-400"> · {preCalc.teamHours.toFixed(1).replace('.', ',')} h</span>
-                            ) : null}
-                          </span>
+                        {/* ⚠️ FYRA UPPGIFTER FICK INTE PLATS PÅ EN RAD. Namnet, timmarna, kronorna
+                            och procenten låg i två textnoder i en smal sidokolumn, och radbrytningen
+                            föll mitt i enheterna: "Uppskattat TB2 · 0,9" / "h" och "5 762 kr · 43,7"
+                            / "%". Ett tal vars enhet hamnat på nästa rad är inte bara fult — det är
+                            oläsbart, för siffran och det den mäter hör ihop.
+
+                            Nu bär raden BARA namnet och talen, och varje tal är en egen odelbar
+                            enhet: bryts kolumnen faller procenten ned som helhet i stället för att
+                            kapas. Timmarna är en förutsättning, inte en del av talets namn, och står
+                            därför på egen rad under. */}
+                        <div className="flex items-baseline justify-between gap-2 text-xs">
+                          <span className="text-slate-500">Uppskattat TB2</span>
                           {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
                               offert utan intäkt har inget att räkna procenten mot — och ett `!`
                               här hade blivit en krasch mitt i formuläret. */}
-                          <span className={cn('font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
-                            {preCalc.tb2 == null
-                              ? '–'
-                              : `${formatCurrency(preCalc.tb2, 'SEK')}${preCalc.tg2 != null ? ` · ${preCalc.tg2.toFixed(1).replace('.', ',')} %` : ''}`}
+                          <span className="flex flex-wrap items-baseline justify-end gap-x-1.5 text-right">
+                            <span className={cn('whitespace-nowrap font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
+                              {preCalc.tb2 == null ? '–' : formatCurrency(preCalc.tb2, 'SEK')}
+                            </span>
+                            {preCalc.tb2 != null && preCalc.tg2 != null ? (
+                              <span className="whitespace-nowrap tabular-nums text-slate-500">
+                                {preCalc.tg2.toFixed(1).replace('.', ',')} %
+                              </span>
+                            ) : null}
                           </span>
                         </div>
+                        {preCalc.teamHours != null ? (
+                          <p className="m-0 text-[11px] leading-snug text-slate-400">
+                            Uppskattad arbetstid {preCalc.teamHours.toFixed(1).replace('.', ',')} h
+                          </p>
+                        ) : null}
                         {/* Luckorna säger VAD som fattas — "produktivitet saknas för Vind ×
                             EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte.
 
