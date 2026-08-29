@@ -18,6 +18,8 @@ export type ReportQuoteRow = NetAmountRow & {
 };
 
 export type ReportOrderRow = NetAmountRow & {
+  /** Behövs för att kunna slå upp orderns efterkalkyl — se buildProfitability. */
+  id?: string;
   status: string | null;
   created_at: string;
   fortnox_invoiced_at: string | null;
@@ -265,15 +267,131 @@ export function buildPerCustomer(
     .slice(0, topN);
 }
 
+// ── Lönsamhet (efterkalkyl per period) ──
+//
+// TG över en period, räknad på VERKLIGT utfall: rapporterade säckar och rapporterad tid. Underlaget
+// kommer från lib/domains/crm/afterCalculation.ts, en order i taget; det här slår ihop dem.
+//
+// ⚠️ POPULATIONEN ÄR ORDRAR FAKTURERADE I PERIODEN, samma mängd som "Fakturerat" i serien ovanför.
+// Skälet är att talen ska gå att läsa tillsammans: ett jobb hör lönsamhetsmässigt till den period
+// det slutfördes i, inte den det såldes i, och en order skapad i mars men fakturerad i juni har sin
+// kostnad i juni.
+//
+// ⚠️ BARA KOMPLETTA JOBB RÄKNAS (Williams beslut 2026-08-29). Ett jobb vars material eller tid inte
+// går att räkna hålls UTANFÖR både täljare och nämnare — det är samma disciplin som quoteMargin
+// använder för oprissatta rader, och av samma skäl: ett halvt underlag som räknas med ger en siffra
+// med decimal som ser exakt ut och är för hög. Hur många som ingår står alltid utskrivet.
+//
+// ⚠️ SUMMERA INTÄKT OCH KOSTNAD VAR FÖR SIG — medelvärdesbilda ALDRIG jobbens procenttal. Ett ovägt
+// snitt låter ett jobb på 5 000 kr väga lika tungt som ett på 500 000 och svarar därför fel på
+// frågan "tjänade vi pengar den här månaden".
+
+export type ProfitabilityPoint = { period: string; tg1: number | null; tg2: number | null };
+
+export type Profitability = {
+  /** Täckningsgrad efter material respektive efter material och arbete, för hela perioden. */
+  tg1: number | null;
+  tg2: number | null;
+  /** Kronorna bakom procenten. */
+  tb1: number;
+  tb2: number;
+  /** Intäkten i respektive underlag — de skiljer sig, för de två talen har olika täckning. */
+  revenueTb1: number;
+  revenueTb2: number;
+  /** Fakturerade jobb i perioden, och hur många av dem som gick att räkna. */
+  jobs: number;
+  jobsTb1: number;
+  jobsTb2: number;
+  overTime: ProfitabilityPoint[];
+  /**
+   * Kalkylen kunde inte köras alls — inställningstabellerna eller artikelcachen svarade inte.
+   *
+   * ⚠️ MÅSTE SKILJAS FRÅN "inga kompletta jobb". Utan flaggan fick varje läsare beskedet att
+   * fältet inte lämnat in sina egenkontroller, medan sanningen var att migreringen inte var körd —
+   * ett påstående om PERSONALEN när felet låg i systemet, och det enda spåret av orsaken låg i
+   * serverloggen.
+   */
+  unavailable: boolean;
+};
+
+export function buildProfitability(
+  ordersInvoiced: ReportOrderRow[],
+  afterCalculations: Map<string, { revenue: number | null; tb1: number | null; tb2: number | null }>,
+  months: string[],
+  opts?: { unavailable?: boolean },
+): Profitability {
+  type Bucket = { revenueTb1: number; tb1: number; revenueTb2: number; tb2: number };
+  const empty = (): Bucket => ({ revenueTb1: 0, tb1: 0, revenueTb2: 0, tb2: 0 });
+  const total = empty();
+  const byMonth = new Map<string, Bucket>();
+
+  let jobsTb1 = 0;
+  let jobsTb2 = 0;
+
+  for (const order of ordersInvoiced) {
+    const calc = order.id ? afterCalculations.get(order.id) : undefined;
+    if (!calc || calc.revenue == null) continue;
+    const key = monthKey(invoicedAt(order));
+    const bucket = key ? byMonth.get(key) ?? empty() : null;
+    if (key && bucket) byMonth.set(key, bucket);
+
+    // TG1 och TG2 har OLIKA täckning: materialet är ofta klart medan tiden inte är rapporterad än.
+    // Därför sin egen intäktssumma per tal — annars hade TG2 räknats mot en nämnare som innehöll
+    // jobb vars arbetskostnad aldrig drogs av, alltså systematiskt för högt.
+    if (calc.tb1 != null) {
+      jobsTb1 += 1;
+      total.revenueTb1 += calc.revenue;
+      total.tb1 += calc.tb1;
+      if (bucket) { bucket.revenueTb1 += calc.revenue; bucket.tb1 += calc.tb1; }
+    }
+    if (calc.tb2 != null) {
+      jobsTb2 += 1;
+      total.revenueTb2 += calc.revenue;
+      total.tb2 += calc.tb2;
+      if (bucket) { bucket.revenueTb2 += calc.revenue; bucket.tb2 += calc.tb2; }
+    }
+  }
+
+  const percent = (value: number, base: number): number | null => (base > 0 ? (value / base) * 100 : null);
+
+  return {
+    tg1: percent(total.tb1, total.revenueTb1),
+    tg2: percent(total.tb2, total.revenueTb2),
+    tb1: total.tb1,
+    tb2: total.tb2,
+    revenueTb1: total.revenueTb1,
+    revenueTb2: total.revenueTb2,
+    jobs: ordersInvoiced.length,
+    jobsTb1,
+    jobsTb2,
+    unavailable: Boolean(opts?.unavailable),
+    overTime: months.map((period) => {
+      const bucket = byMonth.get(period) ?? empty();
+      return {
+        period,
+        tg1: percent(bucket.tb1, bucket.revenueTb1),
+        tg2: percent(bucket.tb2, bucket.revenueTb2),
+      };
+    }),
+  };
+}
+
 export type SalesReport = {
   range: ReportRange;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
   perCustomer: CustomerReportRow[];
+  profitability: Profitability;
 };
 
-export function composeSalesReport(data: ReportData, range: ReportRange): SalesReport {
+export function composeSalesReport(
+  data: ReportData,
+  range: ReportRange,
+  /** Efterkalkylen per arbetsorder. Tom karta ger en lönsamhetsdel utan tal — inte ett fel. */
+  afterCalculations: Map<string, { revenue: number | null; tb1: number | null; tb2: number | null }> = new Map(),
+  opts?: { profitabilityUnavailable?: boolean },
+): SalesReport {
   const months = monthsInRange(range.from, range.to);
   const orders = partitionOrders(data.orders, range);
   return {
@@ -282,6 +400,9 @@ export function composeSalesReport(data: ReportData, range: ReportRange): SalesR
     perSeller: buildPerSeller(data.quotes, orders.created, orders.invoiced, data.calls, data.sellers),
     funnel: buildFunnel(data.quotes, orders.created),
     perCustomer: buildPerCustomer(orders.created, orders.invoiced),
+    profitability: buildProfitability(orders.invoiced, afterCalculations, months, {
+      unavailable: opts?.profitabilityUnavailable,
+    }),
   };
 }
 
@@ -298,7 +419,10 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
     // revenue from every order billed later than the period it was won in — see
     // partitionOrders. The rows are split back apart there.
     admin.from('crm_work_orders')
-      .select('amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, assigned_to, client_name')
+      // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
+      // INTE här — de behövs bara för de fakturerade ordrarna, och tolv månaders rader hade varit
+      // en tung nyttolast att dra hem för att sedan kasta det mesta.
+      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, assigned_to, client_name')
       .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`),
     admin.from('crm_calls').select('user_id, call_at').gte('call_at', range.from).lte('call_at', toEnd),
     admin.from('profiles').select('id, full_name, role').in('role', ['sales', 'admin', 'konsult']),
