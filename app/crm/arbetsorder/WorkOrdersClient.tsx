@@ -14,6 +14,7 @@ import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
+import { useWorkOrderMargins, type WorkOrderMargin } from './useWorkOrderMargins';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
@@ -68,11 +69,45 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
 
 
 
+/**
+ * Jobbets täckningsgrad efter arbete, som ett chip i radens märkesrad.
+ *
+ * ⚠️ ETT TAL, EN BETYDELSE. Chippet visar ALLTID TG2 — aldrig TG1 när TG2 saknas. Ett fält som är
+ * täckningsgrad efter material på en rad och efter arbete på nästa är oläsbart i en lista man
+ * skannar, och två jobb hade jämförts som om talen mätte samma sak. Saknas TG2 ritas inget chip:
+ * ett tomt utrymme säger "vet inte", vilket är sant.
+ *
+ * ⚠️ INGA TRÖSKLAR. Offertens 25/40 är satta för förkalkylens TG och TB2 ligger per definition
+ * lägre — återanvänds de lyser varje rad rött. Bara förlust färgas, för den är sann utan att någon
+ * behöver dra en gräns.
+ *
+ * "prel." betyder EN sak: något material gick inte att prissätta, alltså är talet för högt. Det
+ * sätts inte på saknad tid — då finns ju inget TG2 att visa.
+ */
+function MarginChip({ margin }: { margin: WorkOrderMargin | undefined }) {
+  if (!margin || margin.tg2 == null) return null;
+  const loss = margin.tg2 < 0;
+  return (
+    <span
+      title={`Täckningsgrad efter material och arbete${margin.materialCostIsPartial ? ' — preliminär, allt material kunde inte prissättas' : ''}`}
+      className={cn(
+        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
+        loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+    >
+      TG2 {margin.tg2.toFixed(1).replace('.', ',')} %
+      {margin.materialCostIsPartial ? <span className="font-normal text-slate-400">prel.</span> : null}
+    </span>
+  );
+}
+
 export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
   const router = useRouter();
   const toast = useToast();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
+  // Täckningsgraden per order — egen rutt, se useWorkOrderMargins.
+  const { margins: workOrderMargins } = useWorkOrderMargins(workOrders.map((item) => item.id));
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<Record<WorkOrderFilter, number>>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
@@ -436,6 +471,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                                 Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
                               </span>
                             ) : null}
+                            <MarginChip margin={workOrderMargins[item.id]} />
                             {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
                             <RowAssigneeChip name={sellerName} />
                           </div>
