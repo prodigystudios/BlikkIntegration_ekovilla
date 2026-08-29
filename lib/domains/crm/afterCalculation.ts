@@ -164,6 +164,17 @@ export type AfterCalculation = {
   gaps: AfterCalculationGap[];
   /** true så fort något saknas. Kortet märker sig som preliminärt då. */
   isPreliminary: boolean;
+  /**
+   * Materialkostnaden är räknad, men något gick inte att prissätta — alltså är TB1 (och därmed TB2)
+   * FÖR HÖGT med ett okänt belopp.
+   *
+   * ⚠️ Skild från `isPreliminary`, som också är sann när bara TIDEN saknas. Den skillnaden är hela
+   * skälet till att flaggan finns: ett jobb utan rapporterad tid har ett EXAKT TB1 — det är bara
+   * TB2 som inte går att räkna — och att märka TB1 som osäker där hade gjort märkningen till brus.
+   * Ytor som visar TB1 utanför kortets luckelista (snabböversikten) behöver just den här frågan,
+   * inte den bredare.
+   */
+  materialCostIsPartial: boolean;
 };
 
 // ── Räkningen ────────────────────────────────────────────────────────────────
@@ -359,6 +370,12 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
   // Noll prissatta rader ger null, inte 0 kr — samma skäl som "ej rapporterat" ovan.
   const materialCost = pricedLines > 0 ? pricedCost : null;
 
+  // Något gick inte att prissätta men något annat gjorde det: summan finns, men den är för låg och
+  // TB alltså för högt. Se materialCostIsPartial.
+  const materialCostIsPartial =
+    materialCost != null
+    && (sacksWithoutMaterial > 0 || missingArticle.length > 0 || missingPrice.length > 0 || unpricedLabels.length > 0);
+
   // ── Arbete ────────────────────────────────────────────────────────────────
   const workedMinutes = sumWorkedMinutes(input.timeRows);
   const laborHours = workedMinutes > 0 ? workedMinutes / 60 : null;
@@ -402,5 +419,6 @@ export function calculateAfterCalculation(input: AfterCalculationInput): AfterCa
     tg2,
     gaps,
     isPreliminary: gaps.length > 0,
+    materialCostIsPartial,
   };
 }

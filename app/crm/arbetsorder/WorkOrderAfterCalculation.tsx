@@ -1,5 +1,6 @@
 "use client";
 
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -26,6 +27,42 @@ import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 // dem mot, och det underlaget är dagsfärskt. Tills dess färgas bara det som inte kräver en
 // tröskel: ett NEGATIVT TB2 betyder att jobbet gick med förlust, vilket är sant oavsett var någon
 // senare drar gränsen.
+
+const OPEN_STORAGE_KEY = 'crm.workOrder.afterCalculation.open';
+
+/**
+ * Om uppställningen är utfälld, ihågkommet mellan arbetsordrar.
+ *
+ * Standard är HOPFÄLLD, men den som faktiskt följer lönsamheten öppnar den på varje order — och ett
+ * val man måste göra om på varje sida är ett val som slutar användas.
+ *
+ * ⚠️ localStorage läses i en EFFEKT, aldrig under första renderingen. Servern har ingen
+ * localStorage, så ett värde därifrån i initialstaten hade gett olika HTML på server och klient och
+ * en hydreringsvarning. Läsningen är dessutom try/catch:ad: i privat läge kan själva åtkomsten
+ * kasta, och en kraschad Ekonomi-yta vore ett dyrt pris för en ihågkommen fällning.
+ */
+function useAfterCalculationOpen(): [boolean, (next: boolean) => void] {
+  const [open, setOpenState] = useState(false);
+
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(OPEN_STORAGE_KEY) === '1') setOpenState(true);
+    } catch {
+      // Ingen lagring att läsa — standarden gäller.
+    }
+  }, []);
+
+  const setOpen = useCallback((next: boolean) => {
+    setOpenState(next);
+    try {
+      window.localStorage.setItem(OPEN_STORAGE_KEY, next ? '1' : '0');
+    } catch {
+      // Valet gäller den här sidvisningen även när det inte går att spara.
+    }
+  }, []);
+
+  return [open, setOpen];
+}
 
 function formatPercent(value: number | null): string {
   if (value == null) return '–';
@@ -92,8 +129,13 @@ function ResultRow({
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
       <span className={cn('text-sm', emphasis ? 'font-semibold text-slate-900' : 'text-slate-700')}>{label}</span>
+      {/* Går talet inte att räkna skrivs ETT streck, inte två. Procenten är null i exakt samma
+          lägen som beloppet, och "–  –" bredvid varandra läser som ett renderingsfel snarare än
+          som ett svar. */}
       <span className="flex shrink-0 items-baseline gap-2">
-        <span className={cn('text-xs tabular-nums text-slate-500')}>{formatPercent(percent)}</span>
+        {amount == null ? null : (
+          <span className="text-xs tabular-nums text-slate-500">{formatPercent(percent)}</span>
+        )}
         <span
           className={cn(
             'tabular-nums',
@@ -119,19 +161,47 @@ export default function WorkOrderAfterCalculation({
   loadError: boolean;
   forbidden: boolean;
 }) {
+  // ⚠️ Hooken står FÖRE varje villkorlig retur. `forbidden` avgörs av ett svar som landar efter
+  // första renderingen, så en tidig retur ovanför hade ändrat antalet hooks mellan två renderingar
+  // och kraschat hela sidan (react-hooks/rules-of-hooks).
+  const [open, setOpen] = useAfterCalculationOpen();
+
   // Utan nyckeln finns blocket inte — inte ett tomt kort med en förklaring om behörighet.
   if (forbidden) return null;
 
   return (
     <div className="grid gap-1 border-t border-[#e0e8dc] pt-4">
-      <div className="flex items-center justify-between gap-2">
-        <p className={crm.sectionTitle}>Efterkalkyl</p>
+      {/* ⚠️ IHOPFÄLLD SOM STANDARD. Ekonomi-kortet bär redan ett dussin artikelrader plus
+          summering och fakturering; uppställningen nedan är ytterligare en halv skärm, och långt
+          ifrån alla som öppnar en arbetsorder är där för lönsamheten. Talen som ändå ska gå att
+          fånga i förbifarten (TB1 och TB2 i procent) står i Snabböversikten till höger — därför
+          upprepas de INTE i den hopfällda rubriken, som annars hade visat samma siffra tre gånger
+          i samma vy. */}
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="-mx-1 flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-left transition-colors hover:bg-[#f1f5ee]"
+      >
+        <span className="flex items-center gap-1.5">
+          <svg
+            className={cn('shrink-0 text-slate-400 transition-transform', open && 'rotate-90')}
+            width="11"
+            height="11"
+            viewBox="0 0 12 12"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          <span className={crm.sectionTitle}>Efterkalkyl</span>
+        </span>
         {result?.isPreliminary ? (
           <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-800')}>Preliminär</span>
         ) : null}
-      </div>
+      </button>
 
-      {loading && !result ? (
+      {!open ? null : loading && !result ? (
         <p className="text-[11px] leading-4 text-slate-500">Räknar…</p>
       ) : !result ? (
         <p className="text-[11px] leading-4 text-slate-500">

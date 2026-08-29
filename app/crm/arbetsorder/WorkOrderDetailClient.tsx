@@ -171,6 +171,22 @@ function Card({ children, className }: { children: React.ReactNode; className?: 
 //
 // Storleken sätts här och ärvs inte: raden användes både inne i en `text-sm`-behållare
 // (Snabböversikt, ROT) och utan (Fortnox order), så samma komponent renderades i två grader.
+/**
+ * Täckningsbidraget i procent, för snabböversiktens rader.
+ *
+ * "–" när talet inte går att räkna — aldrig 0 %, som hade påstått att jobbet gick jämnt ut när
+ * sanningen är att underlaget saknas. Samma regel som uppställningen i Ekonomi-kortet följer.
+ */
+function TbStat({ percent, partial }: { percent: number | null; partial: boolean }) {
+  if (percent == null) return <span className="font-normal text-slate-400">–</span>;
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span className={percent < 0 ? 'text-rose-700' : undefined}>{`${percent.toFixed(1).replace('.', ',')} %`}</span>
+      {partial ? <span className="text-[10px] font-normal text-slate-400">prel.</span> : null}
+    </span>
+  );
+}
+
 function StatField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1.5">
@@ -1816,6 +1832,26 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                   />
                 ) : null}
                 <StatField label="Loggade timmar" value={`${totalLoggedHours.toFixed(1)} h`} />
+                {/* ─── TB i procent ──────────────────────────────────────────
+                    Efterkalkylens uppställning är ihopfälld i Ekonomi-kortet, så de två talen man
+                    vill fånga i förbifarten står här i stället. Bara procenten: kronorna hör till
+                    härledningen, och den bor ett klick bort.
+
+                    ⚠️ Ingen färg, av samma skäl som i kortet: TB2 ligger per definition under
+                    offertens TG-trösklar, så 25/40 hade lyst rött på varje jobb. Ett NEGATIVT tal
+                    färgas — förlust är sant utan att någon behöver dra en gräns.
+
+                    ⚠️ "prel." sätts på materialCostIsPartial, INTE på isPreliminary. Ett jobb utan
+                    rapporterad tid har ett exakt TB1 (bara TB2 saknas, och det syns som "–"), och
+                    en märkning där hade gjort märkningen till brus på varje pågående jobb. Märket
+                    betyder alltså EN sak: något material gick inte att prissätta, så talet är för
+                    högt. */}
+                {afterCalculation.result && !afterCalculation.forbidden ? (
+                  <>
+                    <StatField label="TB1" value={<TbStat percent={afterCalculation.result.tg1} partial={afterCalculation.result.materialCostIsPartial} />} />
+                    <StatField label="TB2" value={<TbStat percent={afterCalculation.result.tg2} partial={afterCalculation.result.materialCostIsPartial} />} />
+                  </>
+                ) : null}
                 <StatField label="Kommentarer" value={comments.length} />
                 {/* Dokumentreferens enligt husets standard: Fortnox-numret när det finns, vårt
                     eget dessförinnan. Stod tidigare som ett avhugget uuid ("Offert a1b2c3d4…") —

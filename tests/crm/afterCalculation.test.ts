@@ -299,6 +299,42 @@ describe('TB och TG', () => {
   });
 });
 
+describe('materialCostIsPartial — skild från isPreliminary', () => {
+  // Snabböversikten visar TB-procenten utanför kortets luckelista och behöver veta om just
+  // MATERIALET är ofullständigt. Saknad tid gör inte TB1 osäkert — bara TB2 oräknelig.
+  it('bara saknad tid: TB1 är exakt, alltså inte partiellt', () => {
+    const result = calc({ sackRows: [final(91)], timeRows: [] });
+    expect(result.isPreliminary).toBe(true);
+    expect(result.materialCostIsPartial).toBe(false);
+  });
+
+  it('ett oprissatt material vid sidan av ett prissatt: TB1 är för högt', () => {
+    const result = calc({ sackRows: [final(50, 'EKOVILLA'), final(20, 'PAROC')], timeRows: [{ minutes_worked: 480 }] });
+    expect(result.materialCostIsPartial).toBe(true);
+  });
+
+  it('en oprissatt rad utanför säckrapporten räknas också som partiellt', () => {
+    const result = calc({
+      sackRows: [final(50)],
+      timeRows: [{ minutes_worked: 480 }],
+      otherMaterialRows: [{ label: 'Vindduk', articleNumber: '13310', quantity: 2, purchasePrice: null, revenue: 4_800 }],
+    });
+    expect(result.materialCostIsPartial).toBe(true);
+  });
+
+  it('inget prissatt alls ger null, inte "partiellt" — det finns ingen siffra att märka', () => {
+    const result = calc({ sackRows: [final(20, 'PAROC')] });
+    expect(result.materialCost).toBeNull();
+    expect(result.materialCostIsPartial).toBe(false);
+  });
+
+  it('fullständigt underlag: varken preliminärt eller partiellt', () => {
+    const result = calc({ sackRows: [final(91)], timeRows: [{ minutes_worked: 480 }] });
+    expect(result.isPreliminary).toBe(false);
+    expect(result.materialCostIsPartial).toBe(false);
+  });
+});
+
 describe('preliminärmärkningen', () => {
   it('säger VAD som saknas, inte bara att något gör det', () => {
     const result = calc({ sackRows: [], timeRows: [] });
