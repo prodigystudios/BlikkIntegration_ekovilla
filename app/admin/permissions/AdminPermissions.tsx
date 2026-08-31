@@ -15,6 +15,7 @@ const ROLE_LABELS: Record<string, string> = {
   member: 'Member (installatör)',
   sales: 'Sales (säljare)',
   konsult: 'Konsult (läsbehörig)',
+  ekonomi: 'Ekonomi (lönebyrån)',
   admin: 'Admin',
 };
 

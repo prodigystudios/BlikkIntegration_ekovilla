@@ -123,8 +123,19 @@ orders via the `assigned_to` ownership branch, not via a role/permission).
 **`time.entry.write` is the first key `member` has ever held**, and the first that isn't about the
 CRM at all — every employee reports their own time. `konsult` gets nothing here: they are external
 and time is personal data. If a supervisor (who is a `member`) ever needs to approve, grant the
-override rather than inventing a role:
-`select public.set_user_permission('<uuid>', 'time.approve', 'grant');`
+override rather than inventing a role — **both keys, not just `time.approve`**:
+
+```sql
+select public.set_user_permission('<uuid>', 'time.approve', 'grant');
+select public.set_user_permission('<uuid>', 'time.entry.read.all', 'grant');
+```
+
+⚠️ The approval surface is two reads behind two different guards: the month overview goes through
+`time_approval_overview` (`time.approve`), and expanding a person goes through
+`/api/admin/time/entries` (`time.entry.read.all` — that is the key the RLS policies open other
+people's rows on). With only the first, the list loads and every expanded person answers
+"Forbidden". `/ekonomi` therefore requires both and redirects otherwise, rather than rendering a
+half-working page.
 
 ### `ekonomi` — the payroll bureau (2026-08-31)
 

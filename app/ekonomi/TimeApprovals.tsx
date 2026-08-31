@@ -148,6 +148,13 @@ const EMPTY_DETAIL: PersonDetail = {
 export default function TimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
   const [people, setPeople] = React.useState<TimeApprovalOverviewRow[]>([]);
+  // Får den HÄR användaren rätta någon ANNANS timmar (`time.entry.write.all`)? Följer med
+  // översikten, eftersom en klient inte kan fråga efter sina egna behörigheter.
+  //
+  // ⚠️ Inte samma sak som att få attestera. Lönebyrån (rollen `ekonomi`) har time.approve men
+  // aldrig write.all: hon rapporterar avvikelser, den anställde rättar själv. Defaulten är false
+  // — fail-closed, så en misslyckad hämtning aldrig kan rita fram knapparna.
+  const [canCorrectOthers, setCanCorrectOthers] = React.useState(false);
   // Skelettet härleds ur VILKEN PERIOD som faktiskt är hämtad, det sätts inte för hand.
   //
   // Förut satte varje load() `loading = true`, även omladdningen efter en rättelse. Då byttes hela
@@ -197,6 +204,7 @@ export default function TimeApprovals() {
       if (seq !== loadSeq.current) return;
       if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
       setPeople(body.data.people || []);
+      setCanCorrectOthers(body.data.can_correct === true);
     } catch (e) {
       if (seq === loadSeq.current) {
         setError((e as Error).message);
@@ -204,6 +212,10 @@ export default function TimeApprovals() {
         // den NYA perioden utifrån den GAMLA månadens siffror — och setStatus rensar felrutan
         // först, så det sista som varnade försvinner i samma klick.
         setPeople([]);
+        // Samma regel som statusen: ett tillstånd som styr knappar måste skrivas i FELGRENEN
+        // också. Annars låg föregående lyckade hämtnings `true` kvar och ritade rättaknappar
+        // ovanpå en tom lista.
+        setCanCorrectOthers(false);
       }
     } finally {
       // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
@@ -418,10 +430,15 @@ export default function TimeApprovals() {
     <div className="grid gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Attest</h2>
+        {/* Sista meningen gäller bara den som HAR `time.entry.write.all`. Lönebyrån attesterar men
+            rättar aldrig — hade texten stått kvar för henne hade den lovat en knapp som inte finns,
+            och skickat henne att leta efter den. */}
         <p className="m-0 text-sm text-slate-600">
           Lås en kalendermånad per person. Inlämnad och attesterad tid går inte att ändra — öppna
-          perioden med en anledning först, så kan den anställde rätta själv. Du kan också rätta
-          raderna härifrån när perioden är öppen; varje sådan ändring loggas med ditt namn.
+          perioden med en anledning först, så kan den anställde rätta själv.
+          {canCorrectOthers
+            ? ' Du kan också rätta raderna härifrån när perioden är öppen; varje sådan ändring loggas med ditt namn.'
+            : ' Hittar du ett fel: öppna perioden med en anledning, så rättar den anställde själv.'}
         </p>
       </div>
 
@@ -580,6 +597,7 @@ export default function TimeApprovals() {
               expanded={expandedId === row.user_id}
               detail={expandedId === row.user_id ? detail : null}
               busy={busyId === row.user_id || bulkBusy}
+              canCorrectOthers={canCorrectOthers}
               onToggle={() => toggleDetail(row.user_id)}
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
@@ -638,13 +656,15 @@ export default function TimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen, onEdit, onDelete,
+  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, onToggle, onApprove, onReopen, onEdit, onDelete,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
   expanded: boolean;
   detail: PersonDetail | null;
   busy: boolean;
+  /** `time.entry.write.all` — se kommentaren vid tillståndet i TimeApprovals. */
+  canCorrectOthers: boolean;
   onToggle: () => void;
   onApprove: () => void;
   onReopen: () => void;
@@ -751,9 +771,18 @@ function PersonRow({
 
       {expanded ? (
         <div className="border-x-0 border-b-0 border-t border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
-          {/* Rättelse bara i en öppen period. Är månaden inlämnad eller attesterad avvisar databasen
-              ändringen ändå — knappen döljs för att slippa be någon trycka på något som inte går. */}
-          <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onEdit={onEdit} onDelete={onDelete} />
+          {/* TVÅ villkor, och båda är "be ingen trycka på något som inte går":
+              1. Perioden måste vara ÖPPEN — låstriggern avvisar annars ändringen ändå.
+              2. Användaren måste ha `time.entry.write.all`. Sedan rollen `ekonomi` finns är det
+                 inte längre samma personer som får attestera: lönebyrån låser månaden men ändrar
+                 aldrig någons timmar. Utan villkoret fick hon knappar vars enda utfall är 403. */}
+          <PersonDays
+            detail={detail}
+            name={row.full_name}
+            canCorrect={!locked && canCorrectOthers}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
         </div>
       ) : null}
     </li>

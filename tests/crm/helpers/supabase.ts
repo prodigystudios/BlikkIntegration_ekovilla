@@ -56,6 +56,7 @@ export const salesUser: CurrentUser = { id: 'user-sales-1', role: 'sales' };
 export const adminUser: CurrentUser = { id: 'user-admin-1', role: 'admin' };
 export const memberUser: CurrentUser = { id: 'user-member-1', role: 'member' };
 export const konsultUser: CurrentUser = { id: 'user-konsult-1', role: 'konsult' };
+export const ekonomiUser: CurrentUser = { id: 'user-ekonomi-1', role: 'ekonomi' };
 
 // Mirrors the role seed in supabase/sql/20260608_permissions_model.sql. Route guards now
 // resolve effective permissions instead of reading the role directly, so route tests mock
@@ -85,6 +86,11 @@ const KONSULT_KEYS: PermissionKey[] = [
 // ingenting: extern roll, och tid är personuppgift. Utan de här raderna hade route-testerna på
 // tid-ytan mätt en installatör som inte får rapportera sin egen tid, vilket inte är verkligheten.
 const MEMBER_KEYS: PermissionKey[] = ['time.entry.write'];
+// Lönebyrån (20260831_ekonomi_role_seed.sql). Tre nycklar, alla under time.*, och INGA andra —
+// framför allt inte `time.entry.write.all`: hon attesterar men rättar aldrig någons timmar.
+// Skillnaden mot admin är hela poängen med rollen, så seeden måste bära den för att route-testerna
+// ska mäta henne och inte en admin i förklädnad.
+const EKONOMI_KEYS: PermissionKey[] = ['time.entry.read.all', 'time.approve', 'time.payroll.read'];
 
 export function effectivePermissionsForRole(role: string | undefined | null): Set<PermissionKey> {
   switch (role) {
@@ -92,6 +98,7 @@ export function effectivePermissionsForRole(role: string | undefined | null): Se
     case 'sales': return new Set([...SALES_KEYS, 'time.entry.write' as PermissionKey]);
     case 'konsult': return new Set(KONSULT_KEYS);
     case 'member': return new Set(MEMBER_KEYS);
+    case 'ekonomi': return new Set(EKONOMI_KEYS);
     default: return new Set();
   }
 }

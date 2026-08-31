@@ -2,6 +2,9 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { getCurrentUser } from '@/lib/auth/route';
+import PageShell from '@/components/ui/PageShell';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { cn } from '@/lib/shared/cn';
 import TimeApprovals from './TimeApprovals';
 
 export const dynamic = 'force-dynamic';
@@ -34,10 +37,32 @@ export default async function EkonomiPage() {
   const { data: permissions } = await supabase.rpc('effective_permissions');
   // Fail-closed: ett fel ger `null`, som inte är en array, som blir false. Ett trasigt RPC-anrop
   // ska stänga dörren — inte lämna den på glänt.
-  const canApprove = Array.isArray(permissions)
-    && permissions.some((row) => (typeof row === 'string' ? row : String(row)) === 'time.approve');
+  const held = new Set(
+    Array.isArray(permissions) ? permissions.map((row) => (typeof row === 'string' ? row : String(row))) : [],
+  );
 
-  if (!canApprove) redirect('/');
+  // ⚠️ BÅDA NYCKLARNA, inte bara time.approve. Ytan är två läsningar med var sin vakt:
+  // månadsöversikten går genom RPC:n time_approval_overview (time.approve), och att fälla ut en
+  // person går genom /api/admin/time/entries (time.entry.read.all, eftersom det är den nyckeln RLS
+  // öppnar andras rader på). Med bara den ena laddar listan men varje utfälld person svarar
+  // "Forbidden" — en halvtrasig sida i stället för ett tydligt nekande.
+  //
+  // Rollerna `ekonomi` och `admin` har båda nycklarna seedade, så villkoret biter bara den som fått
+  // en enstaka nyckel via set_user_permission. Recepten i PERMISSIONS.md och TIME_AND_PAYROLL.md
+  // ger därför båda.
+  if (!held.has('time.approve') || !held.has('time.entry.read.all')) redirect('/');
 
-  return <TimeApprovals />;
+  return (
+    // Samma skal som AdminTabsClient ger fliken: PageShell + `crm.card`. Komponenten bär sin egen
+    // padding (p-5) med flit och förutsätter ett kort att sitta i — utan det ligger den direkt på
+    // sidans sage-bakgrund utan avgränsning och utan maxbredd.
+    <PageShell className="max-w-[1460px]">
+      <section className={cn(crm.cardInner, 'grid gap-4')}>
+        <h1 className={cn('m-0', crm.pageTitle)}>Tid &amp; lön</h1>
+      </section>
+      <section className={crm.card}>
+        <TimeApprovals />
+      </section>
+    </PageShell>
+  );
 }
