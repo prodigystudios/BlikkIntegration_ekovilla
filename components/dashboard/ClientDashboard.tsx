@@ -88,6 +88,15 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M19.4 15a1 1 0 0 0 .2-1l-.6-1.1a7 7 0 0 0 0-1.8l.6-1.1a1 1 0 0 0-.2-1l-1.2-1.2a1 1 0 0 0-1-.2l-1.1.6a7 7 0 0 0-1.8 0l-1.1-.6a1 1 0 0 0-1 .2L9.6 7a1 1 0 0 0-.2 1l.6 1.1a7 7 0 0 0 0 1.8L9.4 12a1 1 0 0 0 .2 1l1.2 1.2a1 1 0 0 0 1 .2l1.1-.6a7 7 0 0 0 1.8 0l1.1.6a1 1 0 0 0 1-.2Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ) },
+  // Sedeln speglar sidomenyns /ekonomi-ikon. Beskrivningen säger vad man GÖR där ("kontrollera och
+  // attestera"), inte vad ytan heter — kortet är det enda hon ser på startsidan.
+  '/ekonomi': { desc: 'Kontrollera och attestera arbetstid', icon: (
+    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M6 12h.01M18 12h.01" strokeLinecap="round" />
+    </svg>
+  ) },
   '/offert/kalkylator': { desc: 'Kalkylera offert (ROT, marginal, etablering)', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <path d="M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
@@ -183,6 +192,14 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   };
 
   const links: QuickLink[] = useMemo(() => {
+    // Lönebyrån. Egen gren FÖRE de andra: utan den föll `ekonomi` igenom till defaulten längst ned,
+    // som erbjuder "Egenkontroll" — en yta hon varken når eller har med att göra.
+    if (role === 'ekonomi') {
+      // ⚠️ EN länk, och det är avsiktligt att det inte är tre. Grenen hade Kontakt och Felanmälan
+      // med — exakt de ospärrade raderna som EXPLICIT_ONLY_ROLES i appNav.ts finns för att hålla
+      // borta från henne. Andra försvarslinjen får inte dela ut det första linjen gömmer.
+      return [{ href: '/ekonomi', title: 'Tid & lön', ...baseExtra['/ekonomi'] }];
+    }
     if (role === 'konsult') {
       return [
         { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
@@ -255,7 +272,14 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   }, []);
 
   const isMember = effectiveRole === 'member';
-  const scheduleSection = effectiveRole !== 'sales' ? (
+
+  // Lönebyrån rapporterar ingen tid och planerar inga jobb. Villkoret nedan var skrivet som "alla
+  // utom sales", vilket är formen som tyst släpper in varje NY roll — schemat hade visat henne
+  // jobb och kundnamn, och "Rapportera tid" hade öppnat Blikk-modalen som hon varken har
+  // behörighet till eller ska använda.
+  const isPayrollOnly = effectiveRole === 'ekonomi';
+
+  const scheduleSection = effectiveRole !== 'sales' && !isPayrollOnly ? (
     <section className={cardClass}>
       <DashboardSchedule
         compact={isSmall}
@@ -282,15 +306,17 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
             <h1 className={cn('m-0', crm.pageTitle)}>Startsida</h1>
             <p className={cn('m-0 mt-1', crm.pageSubtitle)}>{todayMeta.greeting} · {todayMeta.date}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => { setTimePrefill(null); setTimeModalOpen(true); }}
-            className={crm.primaryButton}
-            style={{ backgroundColor: 'var(--crm-primary)' }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            Rapportera tid
-          </button>
+          {isPayrollOnly ? null : (
+            <button
+              type="button"
+              onClick={() => { setTimePrefill(null); setTimeModalOpen(true); }}
+              className={crm.primaryButton}
+              style={{ backgroundColor: 'var(--crm-primary)' }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Rapportera tid
+            </button>
+          )}
         </div>
 
         {/* Notiser följer adressen appen körs på, och appen har bytt adress. Komponenten döljer

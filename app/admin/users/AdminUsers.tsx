@@ -5,6 +5,7 @@ import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import { crm } from '../../crm/lib/crmTokens';
 import { cn } from '../../../lib/shared/cn';
+import type { UserRole } from '@/lib/roles';
 import AdminPromptDialog from '../components/AdminPromptDialog';
 import { ADMIN_CARD, ADMIN_ERROR_BOX, ADMIN_INSET, ADMIN_LABEL, AdminEmptyState, AdminField, AdminFilterChip, roleBadgeClass } from '../components/adminUi';
 
@@ -19,14 +20,21 @@ interface AdminUserRow {
 }
 
 // En källa för rollistan — chips och båda rollväljarna deriverar härifrån.
-const ROLES: Array<{ id: 'member' | 'sales' | 'konsult' | 'admin'; label: string }> = [
+//
+// `ekonomi` är lönebyrån: hennes enda yta är /ekonomi. Etiketten skriver ut vad rollen ÄR i stället
+// för att bara upprepa nyckelordet — den som sätter rollen på fel person ger en extern part varje
+// anställds klockslag, frånvaroorsaker och kvittobilder.
+const ROLES = [
   { id: 'member', label: 'Member' },
   { id: 'sales', label: 'Sales' },
   { id: 'konsult', label: 'Konsult' },
+  { id: 'ekonomi', label: 'Ekonomi (lön)' },
   { id: 'admin', label: 'Admin' },
-];
+] as const satisfies ReadonlyArray<{ id: UserRole; label: string }>;
 
-const ROLE_FILTERS: Array<{ id: 'all' | (typeof ROLES)[number]['id']; label: string }> = [
+type RoleId = (typeof ROLES)[number]['id'];
+
+const ROLE_FILTERS: Array<{ id: 'all' | RoleId; label: string }> = [
   { id: 'all', label: 'Alla' },
   ...ROLES,
 ];
@@ -37,13 +45,13 @@ export default function AdminUsers() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'member' | 'sales' | 'admin' | 'konsult'>('all');
+  const [roleFilter, setRoleFilter] = useState<'all' | RoleId>('all');
 
   // Form state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<'member' | 'sales' | 'admin' | 'konsult'>('member');
+  const [role, setRole] = useState<RoleId>('member');
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {

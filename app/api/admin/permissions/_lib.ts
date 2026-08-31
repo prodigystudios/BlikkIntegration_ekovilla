@@ -6,7 +6,7 @@ import { requireAdminUser } from '@/lib/auth/route';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { PERMISSION_KEYS } from '@/lib/auth/permissions';
 
-export const PERMISSION_ROLES = ['member', 'sales', 'admin', 'konsult'] as const;
+export const PERMISSION_ROLES = ['member', 'sales', 'admin', 'konsult', 'ekonomi'] as const;
 
 export function ok<T>(data: T, status = 200) {
   return NextResponse.json({ ok: true, data }, { status, headers: { 'Cache-Control': 'no-store' } });

@@ -103,6 +103,35 @@ export function breakWasDeducted(row: Pick<DayRow, 'startTime' | 'endTime' | 'ki
   return row.kind !== 'absence' && grossMinutes(row.startTime, row.endTime) !== null;
 }
 
+/**
+ * Innehållet i dagvyns kolumn "Orsak / jobb".
+ *
+ * ⚠️ FINNS FÖR ATT ETT TANKSTRECK LJUGER PÅ EN ARBETSORDERRAD.
+ *
+ * Tidraderna hämtas med en embed av `crm_work_orders` (lib/domains/time/entries.ts), och SELECT-
+ * policyn på den tabellen kräver crm.workorder.read, assigned_to eller besättning. Lönebyrån
+ * (rollen `ekonomi`) har inget av det — hon ska inte se kundnamn per arbetad timme — så embedden
+ * svarar null och `label` blir null på VARJE arbetsorderrad hon tittar på.
+ *
+ * Det är rätt gräns men fel besked. Den här ytans dyraste felklass är fel som ser ut som tomma
+ * värden i stället för som gränser: ett "—" läses som "ingen uppgift finns", och den som granskar
+ * hör av sig om trasig data i stället för att läsa vidare. `kind` vet att raden hör till ett jobb
+ * även när namnet inte gick att hämta, så vi säger det i klartext.
+ *
+ * CHECK:en på crm_time_entries binder `kind` till vilket mål som är ifyllt, så en work_order-rad
+ * HAR alltid en arbetsorder. En null-label på en sådan rad betyder därför exakt en sak: läsaren
+ * saknar åtkomst till ordern. Signalen är entydig.
+ */
+export function reasonOrJobLabel(
+  row: Pick<DayRow, 'absenceReasons' | 'label' | 'kind'>,
+): string {
+  if (row.absenceReasons.length > 0) return row.absenceReasons.join(', ');
+  if (row.label) return row.label;
+  if (row.kind === 'work_order') return 'Arbetsorder';
+  if (row.kind === 'internal') return 'Internprojekt';
+  return '—';
+}
+
 export type PersonPeriodSummary = {
   userId: string;
   from: string;

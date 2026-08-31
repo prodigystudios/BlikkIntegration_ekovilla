@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { forbidIfReadonly } from '@/lib/auth/route';
 
 type Body = {
   projectId: string;
@@ -17,14 +16,13 @@ type Body = {
 export async function POST(req: NextRequest) {
   try {
     // This route uses service role, so enforce role-based authorization explicitly.
-    const authClient = createRouteHandlerClient({ cookies });
-    const { data: { user } } = await authClient.auth.getUser();
-    if (!user) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-    const { data: prof } = await authClient.from('profiles').select('role').eq('id', user.id).maybeSingle();
-    const role = (prof as any)?.role as string | null | undefined;
-    if (role === 'konsult' || role === 'readonly') {
-      return NextResponse.json({ ok: false, error: 'forbidden' }, { status: 403 });
-    }
+    //
+    // ⚠️ DELAD HELPER, INTE EN EGEN KOPIA. Rollistan låg handskriven här och drev isär från
+    // lib/auth/route.ts i samma stund en ny roll tillkom: `ekonomi` (lönebyrån) stoppades av den
+    // delade listan men slapp igenom den här — på en route som sedan skriver med getSupabaseAdmin(),
+    // alltså helt förbi RLS. Lägg aldrig tillbaka en lokal rollkontroll här.
+    const forbidden = await forbidIfReadonly();
+    if (forbidden) return forbidden;
 
     const json = (await req.json()) as Body;
     const projectId = String(json.projectId || '').trim();

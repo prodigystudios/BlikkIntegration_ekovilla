@@ -96,11 +96,39 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     ],
   },
 
+  // Tid & lön — lönebyråns enda yta, och admins genväg till attesten utan omvägen via /admin.
+  //
+  // Rollgatad som alla andra rader, men ÅTKOMSTEN till sidan avgörs av behörigheten time.approve
+  // (app/ekonomi/page.tsx). Raden och grinden svarar alltså på olika frågor med flit: den som får
+  // nyckeln per användarundantag når sidan via adressen men får ingen rad här. Samma medvetna glapp
+  // som /tid har.
+  //
+  // Platt och näst sist: för `ekonomi` är den hela hennes app, och för admin är den en destination
+  // man går till, inte något man letar upp i en grupp.
+  { href: '/ekonomi', label: 'Tid & lön', roles: ['ekonomi', 'admin'] },
+
   // Admin
   { href: '/admin', label: 'Admin', roles: ['admin'] },
 ];
 
+// ⚠️ ROLLER SOM BARA SER DET DE UTTRYCKLIGEN FÅTT.
+//
+// En rad utan `roles` har hittills betytt "alla" — men vad den EGENTLIGEN betyder är "alla
+// anställda": Start, Dokument & information, Kontakt & adresser och Felanmälan är internt material
+// för folk som jobbar här. `ekonomi` är lönebyrån, extern, och fick dem alla gratis bara genom att
+// existera.
+//
+// Det är samma felklass som redan bitit två gånger i den här ändringen: startsidans schema var
+// villkorat "alla utom sales", och "Rapportera tid" hade ingen rollspärr alls. **Utelämnad spärr =
+// öppen dörr för varje NY roll.** Vändningen är att göra det opt-in i stället: en roll här ser bara
+// rader som nämner den vid namn, så nästa externa roll ärver ingenting av misstag.
+//
+// Rör INTE de andra rollerna. `null` (okänd roll) ser fortfarande de ospärrade raderna — ett test
+// vaktar det, och att logga in och se en tom meny är ett sämre fel än att se Start.
+const EXPLICIT_ONLY_ROLES: UserRole[] = ['ekonomi'];
+
 function isItemVisible(item: AppNavItem, role: UserRole | null) {
+  if (role && EXPLICIT_ONLY_ROLES.includes(role)) return !!item.roles?.includes(role);
   return !item.roles || (!!role && item.roles.includes(role));
 }
 

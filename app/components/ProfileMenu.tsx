@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useToast } from '@/lib/Toast';
 import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
+import type { UserRole } from '@/lib/roles';
 
 function IconUser(props: React.SVGProps<SVGSVGElement>) {
   return (
@@ -14,7 +15,7 @@ function IconUser(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-export default function ProfileMenu({ fullName, role, placement = 'down' }: { fullName: string | null, role: 'member' | 'sales' | 'admin' | 'konsult' | null, placement?: 'down' | 'up' }) {
+export default function ProfileMenu({ fullName, role, placement = 'down' }: { fullName: string | null, role: UserRole | null, placement?: 'down' | 'up' }) {
   const [open, setOpen] = useState(false);
   // Popover position is computed in viewport coords and rendered through a portal,
   // so it escapes the sidebar's transform/overflow (which would otherwise clip it).

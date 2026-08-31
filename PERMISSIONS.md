@@ -101,19 +101,20 @@ caught at compile time).
 The seed reproduces the pre-migration role behavior exactly. (Parity is asserted by
 `supabase/sql/20260608_permissions_parity_assert.sql` — every row must show `ok = true`.)
 
-| | member | sales | konsult | admin |
-| --- | :-: | :-: | :-: | :-: |
-| `crm.*.read` (all resources) + `crm.report.read` + `crm.coach.read` + `crm.goal.read` | – | ✓ | ✓ | ✓ |
-| `crm.*.write` (all resources) | – | ✓ | – | ✓ |
-| `crm.routingrule.read` | – | ✓ | **–** | ✓ |
-| `crm.aiprospect.*` + every `.manage` key | – | – | – | ✓ |
-| `fortnox.offer.push` / `workorder.push` / `invoice.create` / `customer.sync` | – | ✓ | – | ✓ |
-| `fortnox.read` | – | ✓ | ✓ | ✓ |
-| meta `crm.access` | – | ✓ | ✓ | ✓ |
-| meta `crm.write` | – | ✓ | – | ✓ |
-| meta `crm.admin` | – | – | – | ✓ |
-| `time.entry.write` | **✓** | **✓** | – | ✓ |
-| `time.entry.read.all` / `time.approve` / `time.payroll.read` / `time.reference.manage` / `time.entry.write.all` | – | – | – | ✓ |
+| | member | sales | konsult | ekonomi | admin |
+| --- | :-: | :-: | :-: | :-: | :-: |
+| `crm.*.read` (all resources) + `crm.report.read` + `crm.coach.read` + `crm.goal.read` | – | ✓ | ✓ | – | ✓ |
+| `crm.*.write` (all resources) | – | ✓ | – | – | ✓ |
+| `crm.routingrule.read` | – | ✓ | **–** | – | ✓ |
+| `crm.aiprospect.*` + every `.manage` key | – | – | – | – | ✓ |
+| `fortnox.offer.push` / `workorder.push` / `invoice.create` / `customer.sync` | – | ✓ | – | – | ✓ |
+| `fortnox.read` | – | ✓ | ✓ | – | ✓ |
+| meta `crm.access` | – | ✓ | ✓ | – | ✓ |
+| meta `crm.write` | – | ✓ | – | – | ✓ |
+| meta `crm.admin` | – | – | – | – | ✓ |
+| `time.entry.write` | **✓** | **✓** | – | – | ✓ |
+| `time.entry.read.all` / `time.approve` / `time.payroll.read` | – | – | – | **✓** | ✓ |
+| `time.reference.manage` / `time.entry.write.all` | – | – | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work
@@ -121,9 +122,70 @@ orders via the `assigned_to` ownership branch, not via a role/permission).
 
 **`time.entry.write` is the first key `member` has ever held**, and the first that isn't about the
 CRM at all — every employee reports their own time. `konsult` gets nothing here: they are external
-and time is personal data. Approval sits on `admin` alone; if a supervisor (who is a `member`) ever
-needs it, grant the override rather than inventing a role:
-`select public.set_user_permission('<uuid>', 'time.approve', 'grant');`
+and time is personal data. If a supervisor (who is a `member`) ever needs to approve, grant the
+override rather than inventing a role — **both keys, not just `time.approve`**:
+
+```sql
+select public.set_user_permission('<uuid>', 'time.approve', 'grant');
+select public.set_user_permission('<uuid>', 'time.entry.read.all', 'grant');
+```
+
+⚠️ The approval surface is two reads behind two different guards: the month overview goes through
+`time_approval_overview` (`time.approve`), and expanding a person goes through
+`/api/admin/time/entries` (`time.entry.read.all` — that is the key the RLS policies open other
+people's rows on). With only the first, the list loads and every expanded person answers
+"Forbidden". `/ekonomi` therefore requires both and redirects otherwise, rather than rendering a
+half-working page.
+
+### `ekonomi` — the payroll bureau (2026-08-31)
+
+The external payroll clerk who checks and locks the month. Her only surface is `/ekonomi`; her menu
+has exactly one row, `/` redirects her straight to it, and she writes nothing.
+
+⚠️ **"Sees no customer" holds for everything the menu offers — but not for two URLs typed by hand,
+and that gap is older than this role.** `planning_segments_select` /
+`planning_project_meta_select` are `auth.role() = 'authenticated'`
+(`20251002_planning_schedule.sql:51`), and neither `/plannering` nor `/archive` has a server-side
+role gate — `/plannering` is a pure client page. Any signed-in account can therefore read the legacy
+planning board (customer name, email, phone) and the self-check archive. **This is unchanged by the
+`ekonomi` role: every `member` has the same access today.** It is listed here because it is the one
+claim about this role that the code does not fully enforce, and because adding an external party
+raises the stakes on a pre-existing gap. Closing it is its own decision — it also determines what
+installers should see.
+
+⚠️ **"Writes nothing" is enforced in two places that must agree.** A role added to only one of them
+is still able to write through the other:
+
+| Guard | Covers |
+| --- | --- |
+| `isReadonlyRole` in `lib/auth/route.ts` (via `forbidIfReadonly`) | The six routes that reach for `getSupabaseAdmin()` and so bypass RLS entirely: planning `truck-assignments` create/update/delete, `day-notes`, `consume-bags`, and `work-orders/lookup` |
+| `public.is_konsult_user()` in SQL (`NOT …` in the write policies) | The direct client path to `planning_segments`, `planning_project_meta` and their neighbours. `/plannering` is a pure client page with **no server-side role gate**, so this predicate is the only thing standing there |
+
+The SQL function's name is historical — read it as "may not write". It is owned by
+`20260831_ekonomi_role_seed.sql`, which added `ekonomi`; re-running the older
+`20260121_add_readonly_role_and_planning_write_guard.sql` after it silently drops her from the list.
+
+**Why a role and not the documented per-user override.** That recipe assumes a role that already
+fits, with one key added on top. Here none fit, and they disagreed on the two axes that mattered:
+
+| | in her own approval list? | reaches the CRM? |
+| --- | :-: | :-: |
+| `member` | **yes** — `time_approval_overview` only filters out `konsult`, so she'd be a permanent 0-hour row in the "nothing reported" filter | no |
+| `konsult` | no | **yes, all of it** — `toEffectiveRole` maps konsult→sales and `app/crm/layout.tsx` admits sales |
+| `admin` | yes | yes, plus user management and the permission editor |
+
+The role also carries the **menu** (`app/_lib/appNav.ts` gates on role), which an override cannot.
+
+**Role and key answer different questions, deliberately.** `/ekonomi` gates on `time.approve`, not
+on the role — so admin reaches it without switching roles, and a supervisor with the per-user grant
+above reaches it too. The consequence: someone granted the key without the role reaches the page by
+URL but gets no menu row. Same deliberate gap `/tid` has.
+
+⚠️ **She is an external party reading personal data.** Every employee's clock times, absence reasons
+(sick leave, VAB, parental leave) and expense **receipt images**. That is a data-processing-agreement
+question with the bureau, and it belongs settled before the account is created. Create her account
+in Supabase and set the role in Admin → Användare — `/auth/create-account` is open self-signup and
+issues `member`.
 
 ---
 
@@ -292,6 +354,10 @@ fail-closed is a safety property, not a grace period. Later additions, each SQL-
 
 - `20260611_planning_permissions.sql` — planning (Wave 7)
 - `20260811_time_permissions.sql` — time & payroll (fas 4)
+- `20260831_ekonomi_role.sql` **then, as a separate run**, `20260831_ekonomi_role_seed.sql` — the
+  payroll role. ⚠️ Two files is not a formatting choice: `role_permissions.role` is typed
+  `public.user_role`, and PostgreSQL refuses to *use* an enum value in the same transaction that
+  added it. Run them together and the seed fails.
 
 ---
 
@@ -360,6 +426,7 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
 | App layer | `lib/auth/permissions.ts` (catalog + resolver), `lib/auth/guards.ts` (`requirePermission`, `requireSignedInUser`), `app/api/crm/_shared.ts` (re-export + legacy CRM wrappers) |
 | Time & payroll keys | `supabase/sql/20260811_time_permissions.sql` |
+| Payroll role (`ekonomi`) | `supabase/sql/20260831_ekonomi_role.sql` + `…_seed.sql`, `app/ekonomi/page.tsx` (the `time.approve` gate), `app/_lib/appNav.ts` (the menu row) |
 | Time approval (fas 4.4) | `supabase/sql/20260812_time_approvals.sql` — no new keys, but `time.approve` gains teeth: the transition RPC `set_time_period_status` and the `security definer` read model `time_approval_overview` both check it internally, and the write policies on `crm_time_entries` / `crm_time_compensations` gain `not is_time_locked(...)` |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 

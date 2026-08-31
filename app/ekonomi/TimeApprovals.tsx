@@ -1,13 +1,13 @@
 "use client";
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
-import AdminTimeCorrectionModal, { type CorrectionReference } from './AdminTimeCorrectionModal';
-import Input from '../../../components/ui/Input';
+import TimeCorrectionModal, { type CorrectionReference } from './TimeCorrectionModal';
+import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
-import { crm } from '../../crm/lib/crmTokens';
-import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
-import { cn } from '../../../lib/shared/cn';
-import { minutesToHours } from '../../../lib/domains/time/hours';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX, AdminFilterChip } from '@/app/admin/components/adminUi';
+import { cn } from '@/lib/shared/cn';
+import { minutesToHours } from '@/lib/domains/time/hours';
 import {
   COMPENSATION_LABELS,
   COMPENSATION_UNITS,
@@ -15,7 +15,7 @@ import {
   hasReceipt,
   isReceiptMissing,
   type CompensationItem,
-} from '../../../lib/domains/time/compensations';
+} from '@/lib/domains/time/compensations';
 import {
   isPeriodLocked,
   periodLabel,
@@ -23,14 +23,14 @@ import {
   TIME_PERIOD_STATUS_LABELS,
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
-} from '../../../lib/domains/time/approvals';
-import { breakWasDeducted, type PersonPeriodSummary } from '../../../lib/domains/time/summary';
+} from '@/lib/domains/time/approvals';
+import { breakWasDeducted, reasonOrJobLabel, type PersonPeriodSummary } from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
   auditWorkDate,
   describeAuditChange,
   type TimeEntryAuditRow,
-} from '../../../lib/domains/time/audit';
+} from '@/lib/domains/time/audit';
 
 // Admin → Attest. En kalendermånad per person, och knappen som fryser den.
 //
@@ -145,9 +145,16 @@ const EMPTY_DETAIL: PersonDetail = {
   loading: true, error: null, summary: null, compensations: [], audit: [], auditFailed: false,
 };
 
-export default function AdminTimeApprovals() {
+export default function TimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
   const [people, setPeople] = React.useState<TimeApprovalOverviewRow[]>([]);
+  // Får den HÄR användaren rätta någon ANNANS timmar (`time.entry.write.all`)? Följer med
+  // översikten, eftersom en klient inte kan fråga efter sina egna behörigheter.
+  //
+  // ⚠️ Inte samma sak som att få attestera. Lönebyrån (rollen `ekonomi`) har time.approve men
+  // aldrig write.all: hon rapporterar avvikelser, den anställde rättar själv. Defaulten är false
+  // — fail-closed, så en misslyckad hämtning aldrig kan rita fram knapparna.
+  const [canCorrectOthers, setCanCorrectOthers] = React.useState(false);
   // Skelettet härleds ur VILKEN PERIOD som faktiskt är hämtad, det sätts inte för hand.
   //
   // Förut satte varje load() `loading = true`, även omladdningen efter en rättelse. Då byttes hela
@@ -197,6 +204,7 @@ export default function AdminTimeApprovals() {
       if (seq !== loadSeq.current) return;
       if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
       setPeople(body.data.people || []);
+      setCanCorrectOthers(body.data.can_correct === true);
     } catch (e) {
       if (seq === loadSeq.current) {
         setError((e as Error).message);
@@ -204,6 +212,10 @@ export default function AdminTimeApprovals() {
         // den NYA perioden utifrån den GAMLA månadens siffror — och setStatus rensar felrutan
         // först, så det sista som varnade försvinner i samma klick.
         setPeople([]);
+        // Samma regel som statusen: ett tillstånd som styr knappar måste skrivas i FELGRENEN
+        // också. Annars låg föregående lyckade hämtnings `true` kvar och ritade rättaknappar
+        // ovanpå en tom lista.
+        setCanCorrectOthers(false);
       }
     } finally {
       // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
@@ -418,10 +430,15 @@ export default function AdminTimeApprovals() {
     <div className="grid gap-4 p-5">
       <div className="grid gap-1">
         <h2 className="m-0 text-lg font-bold text-slate-900">Attest</h2>
+        {/* Sista meningen gäller bara den som HAR `time.entry.write.all`. Lönebyrån attesterar men
+            rättar aldrig — hade texten stått kvar för henne hade den lovat en knapp som inte finns,
+            och skickat henne att leta efter den. */}
         <p className="m-0 text-sm text-slate-600">
           Lås en kalendermånad per person. Inlämnad och attesterad tid går inte att ändra — öppna
-          perioden med en anledning först, så kan den anställde rätta själv. Du kan också rätta
-          raderna härifrån när perioden är öppen; varje sådan ändring loggas med ditt namn.
+          perioden med en anledning först, så kan den anställde rätta själv.
+          {canCorrectOthers
+            ? ' Du kan också rätta raderna härifrån när perioden är öppen; varje sådan ändring loggas med ditt namn.'
+            : ' Hittar du ett fel: öppna perioden med en anledning, så rättar den anställde själv.'}
         </p>
       </div>
 
@@ -484,23 +501,23 @@ export default function AdminTimeApprovals() {
           inte rapporterat något. Ett filter utan träffar visas ändå, med sin nolla — att listan är
           tom är svaret man letade efter. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Husets chip, inte en egen. Den här raden var handkodad med `bg-slate-900` i aktivt läge —
+            Tailwinds slate-skala är blåviolett (#0f172a), så mot skalets varma sage läste den som
+            LILA bredvid en app som annars är grön. AdminFilterChip bär redan var(--ek-green) och
+            används av fyra systerytor (användare, behörigheter, Blikk-koppling, ärenden). */}
         <div className="flex flex-wrap gap-1.5">
           {(Object.keys(FILTER_LABELS) as Filter[]).map((key) => (
-            <button
+            <AdminFilterChip
               key={key}
-              type="button"
+              active={filter === key}
               onClick={() => setFilter(key)}
-              aria-pressed={filter === key}
-              className={cn(
-                'px-3 py-1.5 rounded-full border text-sm font-semibold transition',
-                filter === key
-                  ? 'border-transparent bg-slate-900 text-white'
-                  : 'border-[#dbe4d6] bg-white text-slate-600 hover:border-slate-400',
-                key === 'empty' && filterCount.empty > 0 && filter !== key ? 'text-amber-800' : '',
-              )}
+              count={filterCount[key]}
+              // "Inget rapporterat" gulmarkeras när den har träffar: en tom rad är precis det man
+              // öppnar attesten för, och signalen ska synas utan att man klickar på filtret.
+              tone={key === 'empty' && filterCount.empty > 0 ? 'attention' : 'default'}
             >
-              {FILTER_LABELS[key]} <span className="tabular-nums opacity-70">{filterCount[key]}</span>
-            </button>
+              {FILTER_LABELS[key]}
+            </AdminFilterChip>
           ))}
         </div>
 
@@ -580,6 +597,7 @@ export default function AdminTimeApprovals() {
               expanded={expandedId === row.user_id}
               detail={expandedId === row.user_id ? detail : null}
               busy={busyId === row.user_id || bulkBusy}
+              canCorrectOthers={canCorrectOthers}
               onToggle={() => toggleDetail(row.user_id)}
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
@@ -595,7 +613,7 @@ export default function AdminTimeApprovals() {
       )}
 
       {correcting ? (
-        <AdminTimeCorrectionModal
+        <TimeCorrectionModal
           day={correcting}
           reference={reference}
           onClose={() => setCorrecting(null)}
@@ -638,13 +656,15 @@ export default function AdminTimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, onToggle, onApprove, onReopen, onEdit, onDelete,
+  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, onToggle, onApprove, onReopen, onEdit, onDelete,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
   expanded: boolean;
   detail: PersonDetail | null;
   busy: boolean;
+  /** `time.entry.write.all` — se kommentaren vid tillståndet i TimeApprovals. */
+  canCorrectOthers: boolean;
   onToggle: () => void;
   onApprove: () => void;
   onReopen: () => void;
@@ -751,9 +771,18 @@ function PersonRow({
 
       {expanded ? (
         <div className="border-x-0 border-b-0 border-t border-[#e4ebe0] bg-[#f9fbf7] px-4 py-3">
-          {/* Rättelse bara i en öppen period. Är månaden inlämnad eller attesterad avvisar databasen
-              ändringen ändå — knappen döljs för att slippa be någon trycka på något som inte går. */}
-          <PersonDays detail={detail} name={row.full_name} canCorrect={!locked} onEdit={onEdit} onDelete={onDelete} />
+          {/* TVÅ villkor, och båda är "be ingen trycka på något som inte går":
+              1. Perioden måste vara ÖPPEN — låstriggern avvisar annars ändringen ändå.
+              2. Användaren måste ha `time.entry.write.all`. Sedan rollen `ekonomi` finns är det
+                 inte längre samma personer som får attestera: lönebyrån låser månaden men ändrar
+                 aldrig någons timmar. Utan villkoret fick hon knappar vars enda utfall är 403. */}
+          <PersonDays
+            detail={detail}
+            name={row.full_name}
+            canCorrect={!locked && canCorrectOthers}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
         </div>
       ) : null}
     </li>
@@ -1046,6 +1075,9 @@ function DayRowCells({
   // lagrade rast påverkade aldrig timmarna bredvid.
   const showBreak = breakWasDeducted(day) && day.breakMinutes > 0;
 
+  // Bär "Orsak / jobb" ett riktigt namn, eller den neutrala sortmarkören? Se reasonOrJobLabel:
+  // en läsare utan åtkomst till arbetsordern får aldrig jobbets namn, och skillnaden ska synas.
+  const hasResolvedLabel = day.absenceReasons.length > 0 || !!day.label;
 
   // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
   // hellre ingen knapp än en som svarar 404.
@@ -1074,8 +1106,11 @@ function DayRowCells({
       <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
         {day.absenceMinutes > 0 ? `${formatHours(day.absenceMinutes)} h` : '—'}
       </td>
-      <td className="px-2 py-1.5 text-slate-600">
-        {day.absenceReasons.length > 0 ? day.absenceReasons.join(', ') : day.label || '—'}
+      {/* "Orsak / jobb". Kursivt när namnet inte gick att hämta: markören säger vilken SORT raden är
+          ("Arbetsorder"), och kursiven säger att det inte är jobbets namn. Utan den skillnaden hade
+          en läsare med full åtkomst kunnat tro att ordern faktiskt HETER så. Se reasonOrJobLabel. */}
+      <td className={cn('px-2 py-1.5 text-slate-600', !hasResolvedLabel && 'italic text-slate-400')}>
+        {reasonOrJobLabel(day)}
       </td>
       <td className="px-2 py-1.5 text-slate-500">{day.note || ''}</td>
       {canCorrect ? (

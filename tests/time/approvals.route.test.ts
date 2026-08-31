@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { adminUser, memberUser, konsultUser, effectivePermissionsForRole } from '../crm/helpers/supabase';
+import { adminUser, memberUser, konsultUser, ekonomiUser, effectivePermissionsForRole } from '../crm/helpers/supabase';
 
 // Route-tester för attesten (fas 4.4).
 //
@@ -271,5 +271,27 @@ describe('GET /api/admin/time/approvals', () => {
   it('avvisar en period som inte är en månad', async () => {
     mockUser.mockResolvedValue(adminUser);
     expect((await overviewGET(req('/api/admin/time/approvals?period=2026-08-14'))).status).toBe(400);
+  });
+
+  // `can_correct` styr om vyn ritar "Rätta"/"Ta bort" på dagraderna. Klienten kan inte fråga efter
+  // sina egna behörigheter, så flaggan följer med underlaget — och den måste svara på RÄTT nyckel.
+  //
+  // Före rollen `ekonomi` var attest och rättelse samma personer och skillnaden syntes aldrig. Nu
+  // gör den det: lönebyrån låser månaden men ändrar aldrig någons timmar, och en knapp vars enda
+  // utfall är ett 403 får henne att tro att systemet är trasigt.
+  describe('can_correct — attestera och rätta är två skilda nycklar', () => {
+    it('är true för admin, som har time.entry.write.all', async () => {
+      mockUser.mockResolvedValue(adminUser);
+      const json = await (await overviewGET(req('/api/admin/time/approvals?period=2026-08'))).json();
+      expect(json.data.can_correct).toBe(true);
+    });
+
+    it('är false för lönebyrån, som attesterar men inte rättar', async () => {
+      mockUser.mockResolvedValue(ekonomiUser);
+      const res = await overviewGET(req('/api/admin/time/approvals?period=2026-08'));
+      // Hon SKA komma in — det är inte ett behörighetsfel, bara en snävare förmåga.
+      expect(res.status).toBe(200);
+      expect((await res.json()).data.can_correct).toBe(false);
+    });
   });
 });
