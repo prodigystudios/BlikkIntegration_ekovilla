@@ -24,7 +24,7 @@ import {
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
 } from '@/lib/domains/time/approvals';
-import { breakWasDeducted, type PersonPeriodSummary } from '@/lib/domains/time/summary';
+import { breakWasDeducted, reasonOrJobLabel, type PersonPeriodSummary } from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
   auditWorkDate,
@@ -1046,6 +1046,9 @@ function DayRowCells({
   // lagrade rast påverkade aldrig timmarna bredvid.
   const showBreak = breakWasDeducted(day) && day.breakMinutes > 0;
 
+  // Bär "Orsak / jobb" ett riktigt namn, eller den neutrala sortmarkören? Se reasonOrJobLabel:
+  // en läsare utan åtkomst till arbetsordern får aldrig jobbets namn, och skillnaden ska synas.
+  const hasResolvedLabel = day.absenceReasons.length > 0 || !!day.label;
 
   // Rättelse kräver att raden går att peka ut. Saknas id:t är den läsbar men inte ändringsbar —
   // hellre ingen knapp än en som svarar 404.
@@ -1074,8 +1077,11 @@ function DayRowCells({
       <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
         {day.absenceMinutes > 0 ? `${formatHours(day.absenceMinutes)} h` : '—'}
       </td>
-      <td className="px-2 py-1.5 text-slate-600">
-        {day.absenceReasons.length > 0 ? day.absenceReasons.join(', ') : day.label || '—'}
+      {/* "Orsak / jobb". Kursivt när namnet inte gick att hämta: markören säger vilken SORT raden är
+          ("Arbetsorder"), och kursiven säger att det inte är jobbets namn. Utan den skillnaden hade
+          en läsare med full åtkomst kunnat tro att ordern faktiskt HETER så. Se reasonOrJobLabel. */}
+      <td className={cn('px-2 py-1.5 text-slate-600', !hasResolvedLabel && 'italic text-slate-400')}>
+        {reasonOrJobLabel(day)}
       </td>
       <td className="px-2 py-1.5 text-slate-500">{day.note || ''}</td>
       {canCorrect ? (

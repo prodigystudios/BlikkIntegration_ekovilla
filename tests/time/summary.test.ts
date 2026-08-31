@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { breakWasDeducted, buildDayRows, summarizePerson, type SummarizableEntry } from '@/lib/domains/time/summary';
+import { breakWasDeducted, buildDayRows, reasonOrJobLabel, summarizePerson, type SummarizableEntry } from '@/lib/domains/time/summary';
 
 // Underlaget byrån bad om: en rad per pass med datum, klockslag, arbetade timmar, frånvarotimmar
 // med orsak och anteckning — plus månadssumma för arbetad tid och frånvaro.
@@ -234,5 +234,33 @@ describe('breakWasDeducted', () => {
     expect(breakWasDeducted({ kind: 'work_order', startTime: null, endTime: null })).toBe(false);
     expect(breakWasDeducted({ kind: 'work_order', startTime: '08:00', endTime: null })).toBe(false);
     expect(breakWasDeducted({ kind: 'absence', startTime: '08:00', endTime: '18:00' })).toBe(false);
+  });
+});
+
+// Kolumnen "Orsak / jobb". Finns som egen funktion därför att den ska svara RÄTT för en läsare som
+// inte når arbetsordern — lönebyrån (rollen `ekonomi`) har ingen crm.workorder.read, embedden i
+// listTimeEntries svarar då null, och ett tankstreck hade läst som "ingen uppgift finns" på en rad
+// där det bevisligen finns ett jobb.
+describe('reasonOrJobLabel', () => {
+  it('frånvaroorsakerna vinner, och flera samma dag listas var för sig', () => {
+    expect(reasonOrJobLabel({ kind: 'absence', absenceReasons: ['VAB'], label: null })).toBe('VAB');
+    expect(reasonOrJobLabel({ kind: 'absence', absenceReasons: ['VAB', 'Semester'], label: null }))
+      .toBe('VAB, Semester');
+  });
+
+  it('visar jobbets namn när det gick att hämta', () => {
+    expect(reasonOrJobLabel({ kind: 'work_order', absenceReasons: [], label: '#12345 · Villa Ek' }))
+      .toBe('#12345 · Villa Ek');
+  });
+
+  // Kärnfallet. Utan den här raden ser lönebyråns hela dagvy ut som saknad data.
+  it('säger vilken SORT raden är när namnet inte gick att hämta — aldrig ett tankstreck', () => {
+    expect(reasonOrJobLabel({ kind: 'work_order', absenceReasons: [], label: null })).toBe('Arbetsorder');
+    expect(reasonOrJobLabel({ kind: 'internal', absenceReasons: [], label: null })).toBe('Internprojekt');
+  });
+
+  // Frånvaro utan orsak är det ENDA fallet där tankstrecket är sant: raden pekar inte på något jobb.
+  it('lämnar tankstrecket kvar åt frånvaro utan orsak', () => {
+    expect(reasonOrJobLabel({ kind: 'absence', absenceReasons: [], label: null })).toBe('—');
   });
 });
