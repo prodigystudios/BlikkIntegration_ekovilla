@@ -1,0 +1,39 @@
+-- Rollen `ekonomi` — STEG 1 AV 2: bara enum-värdet.
+--
+-- Lönebyrån ska hämta arbetstiden här i stället för i Blikk, och personen som gör lönerna behöver
+-- därför ett konto. Ingen befintlig roll passar henne:
+--
+--   member   -> hon hamnar i SIN EGEN attestlista varje månad (time_approval_overview filtrerar
+--               bara bort konsult), och får time.entry.write som hon inte har någon användning för.
+--   konsult  -> toEffectiveRole() mappar konsult till sales (lib/roles.ts), så CRM-grinden i
+--               app/crm/layout.tsx släpper in henne i hela kundregistret.
+--   admin    -> användarhantering, behörighetseditorn, hela CRM, Fortnox-push och fakturaskapande.
+--
+-- PERMISSIONS.md:s regel "uppfinn ingen ny roll" gäller en ARBETSLEDARE som redan är anställd och
+-- behöver en nyckel till — ett per-användarundantag ovanpå en roll som passar. Här passar ingen
+-- roll, och rollen bär dessutom menyn (app/_lib/appNav.ts gatar på roll, inte på nyckel).
+--
+-- ⚠️ VARFÖR DEN HÄR FILEN ÄR TOM SÅ NÄR SOM PÅ EN RAD:
+-- PostgreSQL vägrar ANVÄNDA ett nyss tillagt enum-värde i samma transaktion som la till det
+-- ("unsafe use of new value of enum type"). role_permissions.role är typad public.user_role
+-- (20260608_permissions_model.sql), så seeden KAN inte ligga här. Den ligger i
+-- 20260831_ekonomi_role_seed.sql och körs som en EGEN omgång, efter att den här committat.
+--
+-- ADDITIV. Inget befintligt rörs, ingen profil byter roll. Precedens för samma sats:
+-- auth_roles_setup.sql (som la till 'konsult' på samma vis).
+--
+-- Kör i Supabase SQL-editorn.
+
+alter type public.user_role add value if not exists 'ekonomi';
+
+-- ── Verifiering (kör efter applicering, som EGEN fråga) ──────────────────────
+-- Förväntat: member, sales, admin, konsult, ekonomi.
+--
+--   select e.enumlabel
+--   from pg_type t join pg_enum e on e.enumtypid = t.oid
+--   where t.typname = 'user_role'
+--   order by e.enumsortorder;
+--
+-- Ingen profil ska ha hunnit få rollen än:
+--
+--   select role, count(*) from public.profiles group by role order by role;
