@@ -10,16 +10,15 @@ import EntityCombobox, { type EntityResult } from '../components/EntityCombobox'
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+// Delad med offertpanelens snabbformulär: bägge fryser etiketten i metadata.related_label, och
+// två kopior hade tyst börjat producera olika text för samma offert.
+import { quoteLabel } from '@/app/crm/lib/quoteDisplay';
 
 type QuoteLite = {
   id: string;
   project_name: string;
   quote_number: string | null;
 };
-
-function quoteLabel(q: QuoteLite): string {
-  return q.quote_number ? `${q.project_name} (#${q.quote_number})` : q.project_name;
-}
 
 type CrmRelatedType = 'crm_prospect' | 'crm_customer' | 'crm_quote';
 

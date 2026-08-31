@@ -91,7 +91,7 @@ function formatDate(value: string | null | undefined) {
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
-export default function QuotesClient({ currentUserId }: { currentUserId: string | null }) {
+export default function QuotesClient({ currentUserId, canWrite }: { currentUserId: string | null; canWrite: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -515,6 +515,8 @@ export default function QuotesClient({ currentUserId }: { currentUserId: string 
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
           documentEmail={documentEmail}
+          currentUserId={currentUserId}
+          canWrite={canWrite}
           onClose={() => setDetailPanelOpen(false)}
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));

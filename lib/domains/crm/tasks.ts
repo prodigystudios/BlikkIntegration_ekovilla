@@ -179,6 +179,75 @@ export async function listCrmTasksDelegatedBy(
     .limit(100);
 }
 
+/**
+ * Alla uppgifter som hör till en offert — oavsett vem de ligger på.
+ *
+ * Kräver en elevated klient, av samma skäl som listCrmTasksDelegatedBy ovan: tabellens
+ * SELECT-policy är egen-bara, så med sessionsklienten hade två säljare sett olika flöden på
+ * SAMMA offert. Policyn lämnas medvetet orörd — se huvudkommentaren i
+ * 20260817_dashboard_work_items_created_by.sql för varför en vidgad policy hade läckt in i
+ * allas personliga dashboard.
+ *
+ * Elevationen är trygg av tre skäl, och alla tre måste hålla:
+ *
+ * 1. Behörigheten kommer från OFFERTEN, inte från uppgiften. Anroparen (rutten) måste ha läst
+ *    offerten med sessionsklienten först — syns den inte, körs den här frågan aldrig.
+ * 2. Urvalet kan inte råka träffa en privat anteckning. `related_type` skrivs bara av
+ *    createCrmTask/updateCrmTask här i CRM-domänen; dashboardens egen composer
+ *    (components/dashboard/DashboardNotes.tsx) sätter aldrig kolumnen. En rad med
+ *    related_type='crm_quote' ÄR per konstruktion en CRM-uppgift.
+ * 3. `kind='note'` håller möten utanför.
+ *
+ * ⚠️ related_id är en TEXT-kolumn, inte uuid. quoteId skickas som sträng.
+ */
+export async function listCrmQuoteTasks(admin: SupabaseClient, quoteId: string) {
+  return admin
+    .from('dashboard_work_items')
+    .select(crmTaskSelect)
+    .eq('kind', 'note')
+    .eq('related_type', 'crm_quote')
+    .eq('related_id', quoteId)
+    // Samma ordning som listCrmTasks: öppna före klara, närmast förfallodatum först.
+    .order('status', { ascending: true })
+    .order('due_at', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: false })
+    .limit(CRM_TASKS_DEFAULT_LIMIT);
+}
+
+/**
+ * Sätter namn på den uppgiften ligger på, och på den som lade dit den.
+ *
+ * Kräver elevated klient: profiles-RLS är self-only, så varken klienten eller sessionsrutten kan
+ * slå upp en kollegas namn. Samma skäl som notisrutten redan slår upp avsändaren elevated
+ * (app/api/crm/tasks/route.ts). Utan det här steget hade offertens flöde visat rå uuid:n för allt
+ * som ligger på någon annan.
+ *
+ * Ett misslyckat uppslag är inte fatalt — raderna kommer tillbaka med null-namn, och UI:t visar
+ * dem som "En kollega". En uppgiftslista utan namn är sämre, men en tom lista är värre.
+ */
+export async function attachCrmTaskParticipantNames<T extends { user_id: string; created_by: string | null }>(
+  admin: SupabaseClient,
+  tasks: T[]
+): Promise<Array<T & { assignee_name: string | null; creator_name: string | null }>> {
+  const ids = Array.from(new Set(
+    tasks.flatMap((task) => [task.user_id, task.created_by]).filter((id): id is string => Boolean(id))
+  ));
+
+  const names = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data } = await admin.from('profiles').select('id, full_name').in('id', ids);
+    for (const row of (data || []) as Array<{ id: string; full_name: string | null }>) {
+      if (row.full_name) names.set(row.id, row.full_name);
+    }
+  }
+
+  return tasks.map((task) => ({
+    ...task,
+    assignee_name: names.get(task.user_id) ?? null,
+    creator_name: task.created_by ? names.get(task.created_by) ?? null : null,
+  }));
+}
+
 export async function createCrmTask(supabase: SupabaseClient, input: CreateCrmTaskInput) {
   const result = await supabase.from('dashboard_work_items').insert({
     user_id: input.user_id,

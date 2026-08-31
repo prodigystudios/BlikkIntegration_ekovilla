@@ -25,6 +25,27 @@ export function quoteCustomerName(item: QuoteNameFields): string {
     || 'Okänd kund';
 }
 
+export type QuoteLabelFields = {
+  project_name: string;
+  quote_number: string | null;
+};
+
+/**
+ * Hur en offert HETER när den nämns någon annanstans än på sig själv — i en kopplingsväljare, på
+ * en uppgift, i en lista över relaterade poster.
+ *
+ * Bor här och inte lokalt i den som råkar behöva den: etiketten fryses i `metadata.related_label`
+ * när en uppgift kopplas till en offert, och det finns numera två ställen som skapar sådana
+ * kopplingar (uppgiftssidans väljare och offertpanelens snabbformulär). Två kopior av den här
+ * raden hade tyst börjat producera två olika etiketter för samma offert.
+ *
+ * `quote_number` är genererat ur id:t ('OFF-' + åtta tecken, 20260603_crm_quotes_quote_number.sql)
+ * och saknas därför bara på rader som inte hämtat kolumnen.
+ */
+export function quoteLabel(item: QuoteLabelFields): string {
+  return item.quote_number ? `${item.project_name} (#${item.quote_number})` : item.project_name;
+}
+
 export type QuoteOverdueFields = {
   follow_up_date: string | null;
   status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';

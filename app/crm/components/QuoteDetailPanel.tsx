@@ -9,7 +9,8 @@ import { quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
-import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
+import { quoteCustomerName, isQuoteOverdue, quoteLabel } from '@/app/crm/lib/quoteDisplay';
+import QuoteTasksCard from '@/app/crm/components/QuoteTasksCard';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -107,6 +108,8 @@ export default function QuoteDetailPanel({
   onClose,
   onQuoteChanged,
   documentEmail,
+  currentUserId,
+  canWrite,
 }: {
   quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
@@ -125,6 +128,17 @@ export default function QuoteDetailPanel({
    * the panel, silently dropping a half-finished send.
    */
   documentEmail: { sendingId: string | null; start: (doc: EmailableDocument) => void };
+  /**
+   * Vem som tittar. Uppgiftsflödet visar ALLA uppgifter på offerten, även kollegornas, och bara
+   * egna rader får bockas av — utan det här går den skillnaden inte att göra.
+   */
+  currentUserId: string | null;
+  /**
+   * crm.write. Styr uppgiftsformuläret. Läses i sidan (app/crm/lib/pagePermissions.ts) och skickas
+   * hit av BÅDA ytor som öppnar panelen — utelämnas den från en av dem beter sig panelen olika
+   * beroende på vilken väg man kom in.
+   */
+  canWrite: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -404,6 +418,15 @@ export default function QuoteDetailPanel({
                 <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{quote.notes}</p>
               </div>
             ) : null}
+
+            {/* Uppgifter — ligger före dokumentkorten med flit: panelen läses uppifrån och ned som
+                arbetet går, alltså vad offerten är → vad som ska göras → vilka dokument som finns. */}
+            <QuoteTasksCard
+              quoteId={quote.id}
+              quoteLabel={quoteLabel(quote)}
+              currentUserId={currentUserId}
+              canWrite={canWrite}
+            />
 
             {/* Action cards */}
             <div className="grid gap-3">
