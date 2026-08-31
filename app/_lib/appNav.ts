@@ -96,6 +96,17 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     ],
   },
 
+  // Tid & lön — lönebyråns enda yta, och admins genväg till attesten utan omvägen via /admin.
+  //
+  // Rollgatad som alla andra rader, men ÅTKOMSTEN till sidan avgörs av behörigheten time.approve
+  // (app/ekonomi/page.tsx). Raden och grinden svarar alltså på olika frågor med flit: den som får
+  // nyckeln per användarundantag når sidan via adressen men får ingen rad här. Samma medvetna glapp
+  // som /tid har.
+  //
+  // Platt och näst sist: för `ekonomi` är den hela hennes app, och för admin är den en destination
+  // man går till, inte något man letar upp i en grupp.
+  { href: '/ekonomi', label: 'Tid & lön', roles: ['ekonomi', 'admin'] },
+
   // Admin
   { href: '/admin', label: 'Admin', roles: ['admin'] },
 ];
