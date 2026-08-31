@@ -110,6 +110,7 @@ export default function QuoteDetailPanel({
   documentEmail,
   currentUserId,
   canWrite,
+  canDelegate,
 }: {
   quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
@@ -139,6 +140,11 @@ export default function QuoteDetailPanel({
    * beroende på vilken väg man kom in.
    */
   canWrite: boolean;
+  /**
+   * crm.admin. Får uppgiften läggas på någon ANNAN än en själv — vägen som skickar notis.
+   * Samma nyckel och samma validering mot säljarkatalogen som uppgiftssidan använder.
+   */
+  canDelegate: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -426,6 +432,7 @@ export default function QuoteDetailPanel({
               quoteLabel={quoteLabel(quote)}
               currentUserId={currentUserId}
               canWrite={canWrite}
+              canDelegate={canDelegate}
             />
 
             {/* Action cards */}

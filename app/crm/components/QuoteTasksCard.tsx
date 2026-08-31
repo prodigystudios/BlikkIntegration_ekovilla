@@ -1,39 +1,28 @@
 "use client";
 import { useEffect, useState } from 'react';
-import Input from '@/components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
+import TaskFormModal from '@/app/crm/components/TaskFormModal';
+import { buildTaskStatusTogglePayload, type TaskItem } from '@/app/crm/lib/taskForm';
 
-// Uppgiftsflödet på en offert — läsning av ALLA uppgifter som hör till offerten, plus ett
-// snabbformulär som lägger en ny på en själv.
+// Uppgiftsflödet på en offert — läsning av ALLA uppgifter som hör till offerten, plus knappen som
+// öppnar uppgiftsformuläret med offerten som given koppling.
 //
 // Egen fil och inte inline i QuoteDetailPanel: panelen är redan 600+ rader och handlar om
 // offertens status och dokument. Det här är en självständig yta med egen hämtning, egen
-// felhantering och egen optimistiska uppdatering.
+// felhantering och egen optimistisk uppdatering.
 //
 // ⚠️ Skrivningen går genom de BEFINTLIGA uppgiftsrutterna (POST /api/crm/tasks,
-// PATCH /api/crm/tasks/[id]). Ingen ny skrivväg, ingen ny behörighetslogik. Läsningen har en egen
-// route eftersom den betyder något annat än "mina uppgifter" — se
-// app/api/crm/quotes/[id]/tasks/route.ts.
+// PATCH /api/crm/tasks/[id]) och genom SAMMA formulär som uppgiftssidan — mottagarväljaren,
+// notisen, påminnelsen och beskrivningen följer med gratis. Ingen ny skrivväg, ingen ny
+// behörighetslogik. Läsningen har en egen route eftersom den betyder något annat än "mina
+// uppgifter" — se app/api/crm/quotes/[id]/tasks/route.ts.
 
-export type QuoteTask = {
-  id: string;
-  user_id: string;
-  created_by: string | null;
-  delegated: boolean;
+// Uppgiften som uppgiftsrutterna returnerar, plus de två namnen som BARA offertens läsrutt
+// lägger på (profiles-RLS är self-only, så klienten kan inte slå upp dem själv).
+export type QuoteTask = TaskItem & {
   assignee_name: string | null;
   creator_name: string | null;
-  related_type: 'crm_prospect' | 'crm_customer' | 'crm_quote' | null;
-  related_id: string | null;
-  related_label: string | null;
-  title: string;
-  details: string | null;
-  status: 'open' | 'done' | 'cancelled';
-  priority: 'low' | 'normal' | 'high';
-  due_date: string | null;
-  remind_at: string | null;
-  source: string | null;
-  created_at: string;
 };
 
 const priorityMeta: Record<QuoteTask['priority'], { label: string; className: string }> = {
@@ -86,14 +75,17 @@ export default function QuoteTasksCard({
   quoteLabel,
   currentUserId,
   canWrite,
+  canDelegate,
 }: {
   quoteId: string;
   /** Etiketten som fryses på uppgiften. Byggs av den delade quoteLabel() i quoteDisplay.ts. */
   quoteLabel: string;
   /** Avgör vad som är MIN uppgift. Utan den blir varje rad läsvy — inte fel, bara sämre. */
   currentUserId: string | null;
-  /** crm.write. konsult ser flödet men får inget formulär. */
+  /** crm.write. konsult ser flödet men får ingen knapp. */
   canWrite: boolean;
+  /** crm.admin. Skickas vidare till formuläret, som äger mottagarväljaren. */
+  canDelegate: boolean;
 }) {
   const toast = useToast();
 
@@ -101,10 +93,12 @@ export default function QuoteTasksCard({
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [updatingIds, setUpdatingIds] = useState<string[]>([]);
+  // Bumpas när listan måste hämtas om — se applySavedTask.
+  const [reloadKey, setReloadKey] = useState(0);
 
-  const [title, setTitle] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [creating, setCreating] = useState(false);
+  // Formuläret är SAMMA modal som uppgiftssidan öppnar. Ett eget litet snabbformulär här hade
+  // saknat mottagarväljaren (och därmed notisen), påminnelsen och beskrivningen.
+  const [formOpen, setFormOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -122,7 +116,7 @@ export default function QuoteTasksCard({
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [quoteId]);
+  }, [quoteId, reloadKey]);
 
   /**
    * Bockar av / återöppnar.
@@ -132,8 +126,8 @@ export default function QuoteTasksCard({
    * och rutten svarar 500 med ett obegripligt meddelande. Lös det aldrig genom att elevera PATCH:
    * det vore skrivrätt i någon annans personliga dashboard, medvetet inte byggt.
    *
-   * PATCH-schemat är samma som vid skapandet, alltså hela uppgiften — därför skickas fälten
-   * tillbaka oförändrade. Utelämnat fält = överskrivet med schemats default.
+   * Nyttolasten byggs av buildTaskStatusTogglePayload — delad med uppgiftssidan, och den bär
+   * normaliseringen av `remind_at` som gör att en uppgift med påminnelse går att bocka av alls.
    */
   async function toggleStatus(task: QuoteTask) {
     const nextStatus = task.status === 'done' ? 'open' : 'done';
@@ -144,18 +138,7 @@ export default function QuoteTasksCard({
       const res = await fetch(`/api/crm/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          related_type: task.related_type,
-          related_id: task.related_id,
-          related_label: task.related_label,
-          title: task.title,
-          details: task.details,
-          priority: task.priority,
-          due_date: task.due_date,
-          remind_at: task.remind_at,
-          source: task.source,
-          status: nextStatus,
-        }),
+        body: JSON.stringify(buildTaskStatusTogglePayload(task, nextStatus)),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Kunde inte uppdatera uppgiften');
@@ -169,43 +152,27 @@ export default function QuoteTasksCard({
     }
   }
 
-  async function createTask(e: React.FormEvent) {
-    e.preventDefault();
-    const trimmed = title.trim();
-    if (!trimmed || creating) return;
-
-    setCreating(true);
-    try {
-      const res = await fetch('/api/crm/tasks', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          related_type: 'crm_quote',
-          related_id: quoteId,
-          related_label: quoteLabel,
-          title: trimmed,
-          due_date: dueDate || null,
-          priority: 'normal',
-          status: 'open',
-          source: 'crm_quote',
-        }),
+  /**
+   * Den sparade uppgiften tillbaka från formuläret.
+   *
+   * ⚠️ En uppgift man lagt på NÅGON ANNAN kommer tillbaka utan namn — modalen anropar den vanliga
+   * skrivrutten, och namnen sätts bara av offertens läsrutt. Raden skulle alltså stå som "Ligger på
+   * en kollega" tills panelen öppnas om. Därför läses listan om i stället för att raden läggs till
+   * för hand: en extra hämtning är billigare än en rad som ljuger om vem som ska göra jobbet.
+   */
+  function applySavedTask(item: TaskItem, { isEditing }: { isEditing: boolean }) {
+    const isMine = Boolean(currentUserId) && item.user_id === currentUserId;
+    if (isMine) {
+      setTasks((current) => {
+        const withNames: QuoteTask = { ...item, assignee_name: null, creator_name: null };
+        return sortTasks(isEditing
+          ? current.map((t) => (t.id === item.id ? { ...t, ...withNames } : t))
+          : [...current, withNames]);
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) throw new Error(json?.error || 'Kunde inte skapa uppgiften');
-
-      // Rutten svarar med den mappade uppgiften, men utan namnen (de sätts bara i läsrutten).
-      // Den här är per definition min egen, så namnen behövs inte för att rendera raden rätt.
-      const created = json.data?.item as QuoteTask | undefined;
-      if (created) {
-        setTasks((current) => sortTasks([...current, { ...created, assignee_name: null, creator_name: null }]));
-      }
-      setTitle('');
-      setDueDate('');
-    } catch (e) {
-      toast.error((e as Error)?.message || 'Kunde inte skapa uppgiften');
-    } finally {
-      setCreating(false);
+    } else {
+      setReloadKey((key) => key + 1);
     }
+    toast.success(item.delegated ? 'Uppgift skapad och notis skickad' : isEditing ? 'Uppgift uppdaterad' : 'Uppgift skapad');
   }
 
   const openCount = tasks.filter((task) => task.status === 'open').length;
@@ -257,7 +224,10 @@ export default function QuoteTasksCard({
             // `isMine` ensamt räcker inte: PATCH-rutten gatar på requireCrmWriter(), så en läsroll
             // som råkar äga en gammal uppgift (en säljare som blivit konsult) hade fått en ruta
             // som bockar av sig optimistiskt, 403:ar och rullar tillbaka igen.
-            const canToggle = isMine && canWrite;
+            // `cancelled` utesluts: toggeln skriver 'done', så ett klick hade gjort en AVBRUTEN
+            // uppgift till en klar — och rutan står redan ibockad, så etiketten "Markera som klar"
+            // hade ljugit också. Avbrutna uppgifter är läsvy.
+            const canToggle = isMine && canWrite && task.status !== 'cancelled';
             const busy = updatingIds.includes(task.id);
             const done = task.status === 'done';
             // Avbruten är inte klar, men den är avslutad. Att rita den som en öppen punkt hade
@@ -349,32 +319,34 @@ export default function QuoteTasksCard({
       ) : null}
 
       {canWrite ? (
-        <form onSubmit={createTask} className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e3e9df] pt-3">
-          <Input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Ny uppgift på offerten…"
-            aria-label="Ny uppgift"
-            className="min-w-0 flex-1 basis-48"
-          />
-          <Input
-            type="date"
-            value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
-            aria-label="Förfallodatum"
-            className="w-auto shrink-0"
-          />
+        <div className="mt-3 border-t border-[#e3e9df] pt-3">
           <button
-            type="submit"
-            disabled={creating || title.trim().length === 0}
-            className="shrink-0 rounded-lg px-3 py-2 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-50"
+            type="button"
+            onClick={() => setFormOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-white transition hover:brightness-95"
             // --crm-primary bor på .crm-shell, inte :root. Panelen renderas bara innanför skalet
             // (offertlistan och Säljtavlan), samma som panelens egen "Redigera offert"-knapp.
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
-            {creating ? 'Lägger till…' : 'Lägg till'}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            Lägg till uppgift
           </button>
-        </form>
+        </div>
+      ) : null}
+
+      {/* Samma formulär som uppgiftssidan, med offerten som LÅST koppling: man står redan på
+          offerten, och att kunna peka om uppgiften härifrån vore ett sätt att tappa bort den.
+          Modalen ligger inuti offertpanelen i DOM:en och målas därför ovanpå den. */}
+      {formOpen ? (
+        <TaskFormModal
+          task={null}
+          lockedRelation={{ type: 'crm_quote', id: quoteId, label: quoteLabel }}
+          canDelegate={canDelegate}
+          onClose={() => setFormOpen(false)}
+          onSaved={applySavedTask}
+        />
       ) : null}
     </div>
   );

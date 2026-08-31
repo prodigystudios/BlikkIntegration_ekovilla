@@ -20,12 +20,30 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
  * försvinner den här vägen igen.
  */
 export async function hasCrmPermission(key: string): Promise<boolean> {
+  return (await hasCrmPermissions([key]))[key];
+}
+
+/**
+ * Flera nycklar på EN rundtur till databasen.
+ *
+ * Offertlistan och Säljtavlan behöver två (`crm.write` för att få skapa uppgifter alls,
+ * `crm.admin` för att få lägga dem på någon annan). Två anrop till hasCrmPermission hade blivit
+ * två `effective_permissions`-anrop per sidladdning för samma svar.
+ *
+ * Returnerar alltid en post per efterfrågad nyckel, så en uppslagning aldrig ger `undefined`.
+ */
+export async function hasCrmPermissions<K extends string>(keys: readonly K[]): Promise<Record<K, boolean>> {
+  const out = Object.fromEntries(keys.map((key) => [key, false])) as Record<K, boolean>;
+
   try {
     const supabase = createServerComponentClient({ cookies });
     const { data: permissions } = await supabase.rpc('effective_permissions');
-    return Array.isArray(permissions)
-      && permissions.some((row) => (typeof row === 'string' ? row : String(row)) === key);
+    if (!Array.isArray(permissions)) return out;
+
+    const granted = new Set(permissions.map((row) => (typeof row === 'string' ? row : String(row))));
+    for (const key of keys) out[key] = granted.has(key);
+    return out;
   } catch {
-    return false;
+    return out;
   }
 }

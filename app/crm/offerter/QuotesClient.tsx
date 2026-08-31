@@ -91,7 +91,7 @@ function formatDate(value: string | null | undefined) {
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
-export default function QuotesClient({ currentUserId, canWrite }: { currentUserId: string | null; canWrite: boolean }) {
+export default function QuotesClient({ currentUserId, canWrite, canDelegate }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -517,6 +517,7 @@ export default function QuotesClient({ currentUserId, canWrite }: { currentUserI
           documentEmail={documentEmail}
           currentUserId={currentUserId}
           canWrite={canWrite}
+          canDelegate={canDelegate}
           onClose={() => setDetailPanelOpen(false)}
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
