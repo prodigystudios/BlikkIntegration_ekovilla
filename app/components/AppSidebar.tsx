@@ -413,7 +413,9 @@ export default function AppSidebar({
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [peeking, endPeek]);
 
-  const brandSub = inCrm ? 'CRM' : 'Arbetsyta';
+  // Etiketten under logotypen säger VILKEN app man står i. "Arbetsyta" är startsidans namn, och
+  // lönebyrån har ingen startsida — hennes app är Tid & lön och inget annat.
+  const brandSub = inCrm ? 'CRM' : effRole === 'ekonomi' ? 'Tid & lön' : 'Arbetsyta';
 
   const renderLink = (node: NavNode, active: boolean, isChild: boolean) => {
     const pending = pendingHref === node.href && !active;

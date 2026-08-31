@@ -93,6 +93,23 @@ describe('getVisibleAppNavItems', () => {
       }
     });
 
+    // ⚠️ KÄRNAN I EXPLICIT_ONLY_ROLES. En rad UTAN `roles` betyder "alla anställda", inte "alla som
+    // råkar vara inloggade" — och lönebyrån är inte anställd. Utan opt-in-regeln fick hon Start,
+    // Dokument & information, Kontakt & adresser och Felanmälan gratis bara genom att existera,
+    // och varje FRAMTIDA ospärrad rad hade tillkommit på samma sätt, tyst.
+    it('ser INGA ospärrade rader — bara det som nämner ekonomi vid namn', () => {
+      expect(flatten(getVisibleAppNavItems('ekonomi')).map((i) => i.href)).toEqual(['/ekonomi']);
+    });
+
+    // Regeln får inte läcka till någon annan. `null` ser fortfarande de ospärrade raderna: att
+    // logga in och mötas av en tom meny är ett sämre fel än att se Start.
+    it('rör inte de andra rollerna', () => {
+      for (const role of ['member', 'sales', 'admin', null] as Array<UserRole | null>) {
+        expect(flatten(getVisibleAppNavItems(role)).map((i) => i.href)).toContain('/');
+      }
+      expect(flatten(getVisibleAppNavItems('member')).map((i) => i.href)).toContain('/felanmalan');
+    });
+
     // 🚫 Blikk-spärren: hon ska inte rapportera tid alls, och /tidrapport är dessutom Blikk-vägen.
     it('ser inte Blikks tidrapport', () => {
       expect(flatten(getVisibleAppNavItems('ekonomi')).map((i) => i.href)).not.toContain('/tidrapport');
