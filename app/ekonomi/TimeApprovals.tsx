@@ -5,7 +5,7 @@ import TimeCorrectionModal, { type CorrectionReference } from './TimeCorrectionM
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '@/app/admin/components/adminUi';
+import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX, AdminFilterChip } from '@/app/admin/components/adminUi';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
 import {
@@ -501,23 +501,23 @@ export default function TimeApprovals() {
           inte rapporterat något. Ett filter utan träffar visas ändå, med sin nolla — att listan är
           tom är svaret man letade efter. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
+        {/* Husets chip, inte en egen. Den här raden var handkodad med `bg-slate-900` i aktivt läge —
+            Tailwinds slate-skala är blåviolett (#0f172a), så mot skalets varma sage läste den som
+            LILA bredvid en app som annars är grön. AdminFilterChip bär redan var(--ek-green) och
+            används av fyra systerytor (användare, behörigheter, Blikk-koppling, ärenden). */}
         <div className="flex flex-wrap gap-1.5">
           {(Object.keys(FILTER_LABELS) as Filter[]).map((key) => (
-            <button
+            <AdminFilterChip
               key={key}
-              type="button"
+              active={filter === key}
               onClick={() => setFilter(key)}
-              aria-pressed={filter === key}
-              className={cn(
-                'px-3 py-1.5 rounded-full border text-sm font-semibold transition',
-                filter === key
-                  ? 'border-transparent bg-slate-900 text-white'
-                  : 'border-[#dbe4d6] bg-white text-slate-600 hover:border-slate-400',
-                key === 'empty' && filterCount.empty > 0 && filter !== key ? 'text-amber-800' : '',
-              )}
+              count={filterCount[key]}
+              // "Inget rapporterat" gulmarkeras när den har träffar: en tom rad är precis det man
+              // öppnar attesten för, och signalen ska synas utan att man klickar på filtret.
+              tone={key === 'empty' && filterCount.empty > 0 ? 'attention' : 'default'}
             >
-              {FILTER_LABELS[key]} <span className="tabular-nums opacity-70">{filterCount[key]}</span>
-            </button>
+              {FILTER_LABELS[key]}
+            </AdminFilterChip>
           ))}
         </div>
 

@@ -70,12 +70,22 @@ export function AdminFilterChip({
   onClick,
   children,
   count,
+  tone = 'default',
 }: {
   active: boolean;
   onClick: () => void;
   children: ReactNode;
   count?: number;
+  /**
+   * `attention` färgar det INAKTIVA läget gult — "det finns något här du bör titta på".
+   *
+   * Gäller bara inaktivt med flit: ett aktivt filter är redan svaret på frågan, och två
+   * signalfärger samtidigt (grön "vald" + gul "obs") gör att ingen av dem betyder något. Standard
+   * är `default`, så de fyra befintliga anropsplatserna är oförändrade.
+   */
+  tone?: 'default' | 'attention';
 }) {
+  const attention = tone === 'attention' && !active;
   return (
     <button
       type="button"
@@ -84,7 +94,11 @@ export function AdminFilterChip({
       aria-pressed={active}
       className={cn(
         'inline-flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
-        active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+        active
+          ? 'border-transparent text-white'
+          : attention
+            ? 'border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-400'
+            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
       )}
       style={active ? { backgroundColor: 'var(--ek-green)' } : undefined}
     >
@@ -93,7 +107,7 @@ export function AdminFilterChip({
         <span
           className={cn(
             'rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums',
-            active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500',
+            active ? 'bg-white/20 text-white' : attention ? 'bg-amber-200/70 text-amber-900' : 'bg-slate-100 text-slate-500',
           )}
         >
           {count}
