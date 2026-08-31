@@ -5,7 +5,7 @@ import { cn } from '../../../lib/shared/cn';
 // primitiver utanför admin (CLAUDE.md: inga förtida delade abstraktioner).
 
 // AA-säker fältetikett — samma recept och samma skäl som TidClient.tsx:139-143 /
-// AdminTimeApprovals.tsx:71. Medvetet inte `crm.sectionTitle` (slate-400 @10px är
+// app/ekonomi/TimeApprovals.tsx (`LABEL`). Medvetet inte `crm.sectionTitle` (slate-400 @10px är
 // under WCAG AA som instruerande text).
 export const ADMIN_LABEL = 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-600';
 

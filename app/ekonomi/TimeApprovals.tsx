@@ -1,13 +1,13 @@
 "use client";
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
-import AdminTimeCorrectionModal, { type CorrectionReference } from './AdminTimeCorrectionModal';
-import Input from '../../../components/ui/Input';
+import TimeCorrectionModal, { type CorrectionReference } from './TimeCorrectionModal';
+import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
-import { crm } from '../../crm/lib/crmTokens';
-import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '../components/adminUi';
-import { cn } from '../../../lib/shared/cn';
-import { minutesToHours } from '../../../lib/domains/time/hours';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { ADMIN_ERROR_BOX, ADMIN_NOTICE_BOX } from '@/app/admin/components/adminUi';
+import { cn } from '@/lib/shared/cn';
+import { minutesToHours } from '@/lib/domains/time/hours';
 import {
   COMPENSATION_LABELS,
   COMPENSATION_UNITS,
@@ -15,7 +15,7 @@ import {
   hasReceipt,
   isReceiptMissing,
   type CompensationItem,
-} from '../../../lib/domains/time/compensations';
+} from '@/lib/domains/time/compensations';
 import {
   isPeriodLocked,
   periodLabel,
@@ -23,14 +23,14 @@ import {
   TIME_PERIOD_STATUS_LABELS,
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
-} from '../../../lib/domains/time/approvals';
-import { breakWasDeducted, type PersonPeriodSummary } from '../../../lib/domains/time/summary';
+} from '@/lib/domains/time/approvals';
+import { breakWasDeducted, type PersonPeriodSummary } from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
   auditWorkDate,
   describeAuditChange,
   type TimeEntryAuditRow,
-} from '../../../lib/domains/time/audit';
+} from '@/lib/domains/time/audit';
 
 // Admin → Attest. En kalendermånad per person, och knappen som fryser den.
 //
@@ -145,7 +145,7 @@ const EMPTY_DETAIL: PersonDetail = {
   loading: true, error: null, summary: null, compensations: [], audit: [], auditFailed: false,
 };
 
-export default function AdminTimeApprovals() {
+export default function TimeApprovals() {
   const [period, setPeriod] = React.useState(currentPeriod);
   const [people, setPeople] = React.useState<TimeApprovalOverviewRow[]>([]);
   // Skelettet härleds ur VILKEN PERIOD som faktiskt är hämtad, det sätts inte för hand.
@@ -595,7 +595,7 @@ export default function AdminTimeApprovals() {
       )}
 
       {correcting ? (
-        <AdminTimeCorrectionModal
+        <TimeCorrectionModal
           day={correcting}
           reference={reference}
           onClose={() => setCorrecting(null)}

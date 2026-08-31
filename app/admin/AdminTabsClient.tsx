@@ -19,7 +19,9 @@ const AdminDepotUsage = dynamic(() => import('./depots/AdminDepotUsage'), { ssr:
 const AdminNews = dynamic(() => import('./news/AdminNews'), { ssr: false, loading: tabLoading });
 const AdminPermissions = dynamic(() => import('./permissions/AdminPermissions'), { ssr: false, loading: tabLoading });
 const AdminTimeReference = dynamic(() => import('./tid/AdminTimeReference'), { ssr: false, loading: tabLoading });
-const AdminTimeApprovals = dynamic(() => import('./tid/AdminTimeApprovals'), { ssr: false, loading: tabLoading });
+// Attestvyn bor i app/ekonomi/ sedan lönebyrån fick en egen ingång (/ekonomi). Admin-fliken och
+// den ytan renderar SAMMA komponent — två kopior hade blivit två sanningar om ett löneunderlag.
+const AdminTimeApprovals = dynamic(() => import('../ekonomi/TimeApprovals'), { ssr: false, loading: tabLoading });
 const AdminSupportTickets = dynamic(() => import('./support/AdminSupportTickets'), { ssr: false, loading: tabLoading });
 const AdminChangelog = dynamic(() => import('./changelog/AdminChangelog'), { ssr: false, loading: tabLoading });
 const AdminInfoSections = dynamic(() => import('./info/AdminInfoSections'), { ssr: false, loading: tabLoading });

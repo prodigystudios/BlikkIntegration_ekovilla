@@ -1,13 +1,13 @@
 "use client";
 import React from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
-import Input from '../../../components/ui/Input';
+import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
-import { crm } from '../../crm/lib/crmTokens';
-import { cn } from '../../../lib/shared/cn';
-import { minutesToHours, parseBreakMinutes, workedMinutes } from '../../../lib/domains/time/hours';
-import type { TimeReferenceItem } from '../../../lib/domains/time/reference';
-import type { PersonPeriodSummary } from '../../../lib/domains/time/summary';
+import { crm } from '@/app/crm/lib/crmTokens';
+import { cn } from '@/lib/shared/cn';
+import { minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
+import type { TimeReferenceItem } from '@/lib/domains/time/reference';
+import type { PersonPeriodSummary } from '@/lib/domains/time/summary';
 
 // Adminrättelse av en tidrad, i en modal.
 //
@@ -51,7 +51,7 @@ function orderLabel(order: WorkOrderHit): string {
   return [ref, order.project_name || order.client_name].filter(Boolean).join(' · ') || 'Arbetsorder';
 }
 
-export default function AdminTimeCorrectionModal({
+export default function TimeCorrectionModal({
   day, reference, onClose, onSave,
 }: {
   day: PersonPeriodSummary['rows'][number];

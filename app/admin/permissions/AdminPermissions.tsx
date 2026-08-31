@@ -248,7 +248,7 @@ export default function AdminPermissions() {
                         </span>
                         {/* Segmenterad trestatuskontroll — strukturen behålls med flit
                             (Ärv/Ge/Neka är ett val, inte tre knappar); precedent i
-                            AdminTimeCorrectionModal:s kind-väljare. */}
+                            app/ekonomi/TimeCorrectionModal:s kind-väljare. */}
                         <div className="flex overflow-hidden rounded-lg border border-[#e0e8dc]">
                           {(['inherit', 'grant', 'revoke'] as const).map((mode) => (
                             <button
