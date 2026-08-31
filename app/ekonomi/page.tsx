@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { getUserProfile } from '@/lib/getUserProfile';
 import PageShell from '@/components/ui/PageShell';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
@@ -53,7 +54,32 @@ export default async function EkonomiPage() {
   // Rollerna `ekonomi` och `admin` har båda nycklarna seedade, så villkoret biter bara den som fått
   // en enstaka nyckel via set_user_permission. Recepten i PERMISSIONS.md och TIME_AND_PAYROLL.md
   // ger därför båda.
-  if (!held.has('time.approve') || !held.has('time.entry.read.all')) redirect('/');
+  if (!held.has('time.approve') || !held.has('time.entry.read.all')) {
+    // ⚠️ RENDERA, INTE `redirect('/')` — FÖR ROLLEN `ekonomi`.
+    //
+    // app/page.tsx skickar varje ekonomi-användare hit. Ett nekande som skickar tillbaka till `/`
+    // blir därför en OÄNDLIG LOOP: ERR_TOO_MANY_REDIRECTS, utan en enda nåbar sida — inte ens för
+    // att logga ut. Tre vardagliga vägar dit: seed-SQL:en inte körd i miljön (rollen går att välja
+    // så fort enum-värdet finns), en admin som bockar ur nyckeln i Admin -> Behörigheter, eller ett
+    // tillfälligt fel i effective_permissions — som failar closed och alltså ser likadant ut.
+    //
+    // För alla ANDRA roller är redirect kvar: `/` skickar inte tillbaka dem, så ingen cykel kan
+    // uppstå, och husets konvention är att bounca den som inte har på en yta att göra.
+    const profile = await getUserProfile();
+    if (profile?.role !== 'ekonomi') redirect('/');
+
+    return (
+      <PageShell className="max-w-[720px]">
+        <section className={cn(crm.card, 'grid gap-2 p-6')}>
+          <h1 className={cn('m-0', crm.pageTitle)}>Tid &amp; lön</h1>
+          <p className="m-0 text-sm text-slate-600">
+            Ditt konto saknar behörighet till löneunderlaget just nu. Kontakta din kontaktperson på
+            Ekovilla, så kan de återställa den.
+          </p>
+        </section>
+      </PageShell>
+    );
+  }
 
   return (
     // Samma skal som AdminTabsClient ger fliken: PageShell + `crm.card`. Komponenten bär sin egen

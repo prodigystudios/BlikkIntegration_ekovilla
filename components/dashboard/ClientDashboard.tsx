@@ -195,11 +195,10 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     // Lönebyrån. Egen gren FÖRE de andra: utan den föll `ekonomi` igenom till defaulten längst ned,
     // som erbjuder "Egenkontroll" — en yta hon varken når eller har med att göra.
     if (role === 'ekonomi') {
-      return [
-        { href: '/ekonomi', title: 'Tid & lön', ...baseExtra['/ekonomi'] },
-        { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
-        { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
-      ];
+      // ⚠️ EN länk, och det är avsiktligt att det inte är tre. Grenen hade Kontakt och Felanmälan
+      // med — exakt de ospärrade raderna som EXPLICIT_ONLY_ROLES i appNav.ts finns för att hålla
+      // borta från henne. Andra försvarslinjen får inte dela ut det första linjen gömmer.
+      return [{ href: '/ekonomi', title: 'Tid & lön', ...baseExtra['/ekonomi'] }];
     }
     if (role === 'konsult') {
       return [

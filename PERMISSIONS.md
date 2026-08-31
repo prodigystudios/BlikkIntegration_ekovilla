@@ -139,8 +139,19 @@ half-working page.
 
 ### `ekonomi` — the payroll bureau (2026-08-31)
 
-The external payroll clerk who checks and locks the month. Her only surface is `/ekonomi`; she sees
-no customer, no price, no administration, and writes nothing.
+The external payroll clerk who checks and locks the month. Her only surface is `/ekonomi`; her menu
+has exactly one row, `/` redirects her straight to it, and she writes nothing.
+
+⚠️ **"Sees no customer" holds for everything the menu offers — but not for two URLs typed by hand,
+and that gap is older than this role.** `planning_segments_select` /
+`planning_project_meta_select` are `auth.role() = 'authenticated'`
+(`20251002_planning_schedule.sql:51`), and neither `/plannering` nor `/archive` has a server-side
+role gate — `/plannering` is a pure client page. Any signed-in account can therefore read the legacy
+planning board (customer name, email, phone) and the self-check archive. **This is unchanged by the
+`ekonomi` role: every `member` has the same access today.** It is listed here because it is the one
+claim about this role that the code does not fully enforce, and because adding an external party
+raises the stakes on a pre-existing gap. Closing it is its own decision — it also determines what
+installers should see.
 
 ⚠️ **"Writes nothing" is enforced in two places that must agree.** A role added to only one of them
 is still able to write through the other:
