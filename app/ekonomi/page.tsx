@@ -1,7 +1,6 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
-import { getCurrentUser } from '@/lib/auth/route';
 import PageShell from '@/components/ui/PageShell';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
@@ -30,10 +29,14 @@ export const dynamic = 'force-dynamic';
 // route-handler-klient som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma i en
 // server-komponent. Samma skäl och samma mönster som app/arbetsorder/[id]/page.tsx.
 export default async function EkonomiPage() {
-  const user = await getCurrentUser();
+  // EN klient för både sessionen och behörigheterna. Att kalla getCurrentUser() här hade byggt en
+  // route-handler-klient — precis det kommentaren ovan säger att man inte får göra i en
+  // server-komponent — och en cookie-skrivning vid tokenförnyelse hade kastat mitt i renderingen,
+  // så sidan svarat 500 i stället för att skicka någon till inloggningen.
+  const supabase = createServerComponentClient({ cookies });
+  const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/sign-in');
 
-  const supabase = createServerComponentClient({ cookies });
   const { data: permissions } = await supabase.rpc('effective_permissions');
   // Fail-closed: ett fel ger `null`, som inte är en array, som blir false. Ett trasigt RPC-anrop
   // ska stänga dörren — inte lämna den på glänt.

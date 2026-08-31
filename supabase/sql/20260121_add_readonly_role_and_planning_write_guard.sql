@@ -32,6 +32,12 @@ BEGIN
 END$$;
 
 -- 2) Helper predicates
+--
+-- ⚠️ SUPERSEDED: `is_konsult_user()` ÄGS NUMERA AV 20260831_ekonomi_role_seed.sql, som lade till
+-- 'ekonomi' i rollistan. Körs DEN HÄR filen om efteråt försvinner lönebyråns skrivspärr TYST —
+-- funktionen ser fortfarande rätt ut, den släpper bara igenom en roll till på planeringens
+-- write-policyer. Kör alltid 20260831-filen sist. Samma fälla, och samma regel, som
+-- 20260812_time_approvals.sql och tid-RLS:en.
 CREATE OR REPLACE FUNCTION public.is_konsult_user()
 RETURNS boolean
 LANGUAGE sql

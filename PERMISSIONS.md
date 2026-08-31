@@ -140,9 +140,19 @@ half-working page.
 ### `ekonomi` — the payroll bureau (2026-08-31)
 
 The external payroll clerk who checks and locks the month. Her only surface is `/ekonomi`; she sees
-no customer, no price, no administration, and writes nothing (`isReadonlyRole` in
-`lib/auth/route.ts` lists her, because five planning routes are guarded by that helper alone before
-they reach for `getSupabaseAdmin()`).
+no customer, no price, no administration, and writes nothing.
+
+⚠️ **"Writes nothing" is enforced in two places that must agree.** A role added to only one of them
+is still able to write through the other:
+
+| Guard | Covers |
+| --- | --- |
+| `isReadonlyRole` in `lib/auth/route.ts` (via `forbidIfReadonly`) | The six routes that reach for `getSupabaseAdmin()` and so bypass RLS entirely: planning `truck-assignments` create/update/delete, `day-notes`, `consume-bags`, and `work-orders/lookup` |
+| `public.is_konsult_user()` in SQL (`NOT …` in the write policies) | The direct client path to `planning_segments`, `planning_project_meta` and their neighbours. `/plannering` is a pure client page with **no server-side role gate**, so this predicate is the only thing standing there |
+
+The SQL function's name is historical — read it as "may not write". It is owned by
+`20260831_ekonomi_role_seed.sql`, which added `ekonomi`; re-running the older
+`20260121_add_readonly_role_and_planning_write_guard.sql` after it silently drops her from the list.
 
 **Why a role and not the documented per-user override.** That recipe assumes a role that already
 fits, with one key added on top. Here none fit, and they disagreed on the two axes that mattered:

@@ -132,7 +132,37 @@ $$;
 revoke all on function public.time_approval_overview(date) from public;
 grant execute on function public.time_approval_overview(date) to authenticated;
 
--- ── 3. Om den tomma jobbkolumnen ─────────────────────────────────────────────
+-- ── 3. Skrivspärren i RLS måste känna till rollen ────────────────────────────
+-- ⚠️ DET HÄR ÄR HÄLFTEN AV SKRIVSPÄRREN. Den andra halvan är isReadonlyRole() i lib/auth/route.ts,
+-- och de MÅSTE ha samma rollista — de vaktar olika vägar till samma tabeller.
+--
+-- is_konsult_user() bär `NOT ...` i write-policyerna på planning_segments, planning_project_meta
+-- och deras grannar (20260121_add_readonly_role_and_planning_write_guard.sql). Den listade bara
+-- konsult och readonly, alltså: varje NY roll fick skriva i planeringen som default. Gamla
+-- /plannering är dessutom en ren klientsida utan serverrollgrind, så en `ekonomi`-användare som
+-- skrev adressen hade fått en fullt redigerbar planeringstavla — med kundnamn, adresser och
+-- telefonnummer.
+--
+-- Funktionsnamnet är historiskt och beskriver inte längre urvalet. Det byts INTE här: namnet står i
+-- tio policyer, och en omdöpning i samma ändring som en behörighetsfix gör bägge svårare att
+-- granska. Läs det som "får inte skriva".
+--
+-- `p.role::text` behålls med flit — textjämförelsen är just det som gör att den här satsen kan ligga
+-- i samma fil som seeden ovan, trots att 'ekonomi' är ett nytt enum-värde.
+create or replace function public.is_konsult_user()
+returns boolean
+language sql
+stable
+as $$
+  select exists (
+    select 1
+    from public.profiles p
+    where p.id = auth.uid()
+      and p.role::text in ('konsult', 'readonly', 'ekonomi')
+  );
+$$;
+
+-- ── 4. Om den tomma jobbkolumnen ─────────────────────────────────────────────
 -- Noterat här därför att det ser ut som en bugg och är ett beslut: dagvyns tidrader embeddar
 -- crm_work_orders (lib/domains/time/entries.ts), och SELECT-policyn på den tabellen kräver
 -- crm.workorder.read, assigned_to eller besättning. `ekonomi` har inget av det, så embedden svarar
