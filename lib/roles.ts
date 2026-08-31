@@ -1,4 +1,8 @@
-export type UserRole = 'member' | 'sales' | 'admin' | 'konsult';
+// `ekonomi` är lönebyrån: extern, ser ingen kund och inget pris, och har inget att göra i CRM:et.
+// Rollen finns därför att ingen befintlig passade — `member` hade satt henne i sin egen attestlista
+// och `konsult` mappas till sales nedan, vilket släpper in henne i hela kundregistret. Hennes enda
+// yta är /ekonomi, och det som gör den nåbar är BEHÖRIGHETEN time.approve; rollen bär bara menyn.
+export type UserRole = 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
 
 export interface RoleAwareLink {
   href: string;

@@ -20,7 +20,7 @@ function optionalDateSchema() {
   );
 }
 
-const roleSchema = z.enum(['member', 'sales', 'admin', 'konsult', 'readonly']).transform((role) => (role === 'readonly' ? 'konsult' : role));
+const roleSchema = z.enum(['member', 'sales', 'admin', 'konsult', 'ekonomi', 'readonly']).transform((role) => (role === 'readonly' ? 'konsult' : role));
 
 const tagsSchema = z.preprocess(
   (value) => {

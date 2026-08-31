@@ -37,6 +37,9 @@ export function roleBadgeClass(role: string): string {
   if (role === 'admin') return 'border-red-200 bg-red-50 text-red-800';
   if (role === 'sales') return 'border-emerald-200 bg-emerald-50 text-emerald-700';
   if (role === 'konsult') return 'border-amber-200 bg-amber-50 text-amber-800';
+  // Ekonomi delar amber med konsult: båda är EXTERNA parter, och den likheten är det som spelar
+  // roll när man ögnar användarlistan. Att de gör olika saker syns på etiketten.
+  if (role === 'ekonomi') return 'border-amber-200 bg-amber-50 text-amber-800';
   return 'border-slate-200 bg-slate-50 text-slate-600';
 }
 

@@ -3,7 +3,7 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 
 export interface UserProfile {
   id: string;
-  role: 'member' | 'sales' | 'admin' | 'konsult';
+  role: 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
   full_name: string | null;
   phone?: string | null;
 }

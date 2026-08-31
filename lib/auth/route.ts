@@ -2,7 +2,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 
-export type UserRole = 'member' | 'sales' | 'admin' | 'konsult';
+export type UserRole = 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
 
 export type CurrentUser = {
   id: string;
@@ -10,8 +10,15 @@ export type CurrentUser = {
   name?: string | null;
 };
 
+// ⚠️ Den här listan är enda vakten på fem planeringsroutes som sedan kör getSupabaseAdmin()
+// (truck-assignments create/update/delete, day-notes, work-orders/lookup) — service-role, alltså
+// helt förbi RLS. Det som INTE står här får skriva.
+//
+// `ekonomi` (lönebyrån) står därför här: hon är extern och ska inte skriva någonting i appen. Den
+// enda skrivning hon gör alls är attesten, och den går genom set_time_period_status() som prövar
+// time.approve internt — aldrig genom den här helpern.
 function isReadonlyRole(role: unknown) {
-  return role === 'konsult' || role === 'readonly';
+  return role === 'konsult' || role === 'readonly' || role === 'ekonomi';
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
