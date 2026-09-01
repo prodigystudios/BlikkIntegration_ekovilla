@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import Textarea from '@/components/ui/Textarea';
@@ -28,6 +29,21 @@ import {
 //
 // Modalen äger sitt eget utkast, sin egen säljarkatalog och sin egen sparning. Konsumenten säger
 // bara VAD som ska redigeras och tar emot resultatet.
+//
+// 📐 PORTALERAS TILL `body`. Offertpanelens uppgiftskort ligger inuti en `overflow-y-auto`-kropp
+// under en förälder med `backdrop-filter` — och en förfader med filter eller transform gör
+// `position: fixed` relativ mot FÖRFADERN i stället för fönstret, varpå varje scrollande mellanled
+// klipper dialogen. Samma läxa står redan i SelectMenu.tsx, som nämner CrmModal vid namn.
+//
+// 📐 z-index: CrmModal bär 2800 och portalen hamnar efter offertpanelens överlägg i `body`, alltså
+// ovanpå den. SelectMenu ligger på 3000 och syns därför inuti formuläret, notisen på 4000 och skyms
+// inte.
+//
+// 🧨 `crm-shell`-svepet är INTE dekoration. `--crm-primary` är scopad till DEN klassen, inte till
+// :root — en portal till `body` hamnar utanför skalet, variabeln blir odefinierad och
+// "Skapa uppgift" blir vit text på ingen bakgrund. Osynlig knapp, inget felmeddelande, inget i
+// konsolen. Exakt samma fälla och samma motmedel som ReportIssueLauncher.tsx; klassen bär bara
+// variabler, ingen layout.
 
 export default function TaskFormModal({
   task,
@@ -52,6 +68,11 @@ export default function TaskFormModal({
 }) {
   const toast = useToast();
   const isEditing = Boolean(task);
+
+  // Portalen får inte finnas vid serverrenderingen — `document` saknas då. Samma vakt som
+  // ProfileMenu och NotificationBell använder.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
   const [draft, setDraft] = useState<TaskDraft>(() =>
     task ? draftFromTask(task) : draftForNewTask(lockedRelation));
@@ -146,7 +167,11 @@ export default function TaskFormModal({
     }
   }
 
-  return (
+  // Efter alla hookar — rules-of-hooks.
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="crm-shell">
     <CrmModal
       onClose={onClose}
       ariaLabel={isEditing ? 'Redigera uppgift' : 'Ny uppgift'}
@@ -317,5 +342,7 @@ export default function TaskFormModal({
         </div>
       </div>
     </CrmModal>
+    </div>,
+    document.body,
   );
 }

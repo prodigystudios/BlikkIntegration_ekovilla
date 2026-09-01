@@ -164,16 +164,22 @@ export default function QuoteTasksCard({
   function applySavedTask(item: TaskItem, { isEditing }: { isEditing: boolean }) {
     const isMine = Boolean(currentUserId) && item.user_id === currentUserId;
     if (isMine) {
-      setTasks((current) => {
-        const withNames: QuoteTask = { ...item, assignee_name: null, creator_name: null };
-        return sortTasks(isEditing
-          ? current.map((t) => (t.id === item.id ? { ...t, ...withNames } : t))
-          : [...current, withNames]);
-      });
+      setTasks((current) => sortTasks(isEditing
+        // ⚠️ `item` spreds ÖVER den befintliga raden och bär inga namn — de sätts bara av
+        // offertens läsrutt. Skulle raden ersättas helt tappade en uppgift man fått av en
+        // kollega sitt "Från Anna" och blev "Från en kollega" tills panelen öppnades om.
+        ? current.map((t) => (t.id === item.id ? { ...t, ...item } : t))
+        : [...current, { ...item, assignee_name: null, creator_name: null }]));
     } else {
       setReloadKey((key) => key + 1);
     }
-    toast.success(item.delegated ? 'Uppgift skapad och notis skickad' : isEditing ? 'Uppgift uppdaterad' : 'Uppgift skapad');
+    // isEditing FÖRST: en uppgift man fått av chefen har delegated=true för alltid, så en
+    // titelrättning på den hade annars kvitterats med "skapad och notis skickad".
+    toast.success(
+      isEditing ? 'Uppgift uppdaterad'
+        : item.delegated ? 'Uppgift skapad och notis skickad'
+        : 'Uppgift skapad',
+    );
   }
 
   const openCount = tasks.filter((task) => task.status === 'open').length;

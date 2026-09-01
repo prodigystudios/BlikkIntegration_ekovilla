@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import type { PermissionKey } from '@/lib/auth/permissions';
 
 /**
  * Har den inloggade en viss behörighetsnyckel? Läses i en SERVER-KOMPONENT.
@@ -19,7 +20,7 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
  * den samma svar. När nycklarna en dag trädas in i AppShell (project_full_rbac_frontend)
  * försvinner den här vägen igen.
  */
-export async function hasCrmPermission(key: string): Promise<boolean> {
+export async function hasCrmPermission(key: PermissionKey): Promise<boolean> {
   return (await hasCrmPermissions([key]))[key];
 }
 
@@ -31,8 +32,11 @@ export async function hasCrmPermission(key: string): Promise<boolean> {
  * två `effective_permissions`-anrop per sidladdning för samma svar.
  *
  * Returnerar alltid en post per efterfrågad nyckel, så en uppslagning aldrig ger `undefined`.
+ *
+ * ⚠️ Nyckeln är typad `PermissionKey`, inte `string`. En felstavning kompilerar annars och failar
+ * closed — knappen renderas bara aldrig, och ingenting säger varför.
  */
-export async function hasCrmPermissions<K extends string>(keys: readonly K[]): Promise<Record<K, boolean>> {
+export async function hasCrmPermissions<K extends PermissionKey>(keys: readonly K[]): Promise<Record<K, boolean>> {
   const out = Object.fromEntries(keys.map((key) => [key, false])) as Record<K, boolean>;
 
   try {
