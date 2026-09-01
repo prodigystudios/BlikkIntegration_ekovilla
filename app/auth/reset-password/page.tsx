@@ -1,10 +1,41 @@
 "use client";
-import { useState } from "react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { useMemo, useState } from "react";
+import { createClient } from "@supabase/supabase-js";
 import { useToast } from "@/lib/Toast";
 
 export default function ResetPasswordPage() {
-  const supabase = createClientComponentClient();
+  // EGEN klient, med flit — inte `createClientComponentClient`.
+  //
+  // auth-helpers hårdkodar `flowType: "pkce"` och gör det EFTER att den spridit anroparens
+  // options, så det går inte att överrida (@supabase/auth-helpers-shared/dist/index.js:385).
+  // Under PKCE skickar `resetPasswordForEmail` ett `code_challenge` (auth-js GoTrueClient.js:1244),
+  // och då gör GoTrue två saker vi inte vill ha:
+  //
+  //   1. `{{ .TokenHash }}` i mejlmallen får prefixet `pkce_` och kan inte lösas in med `verifyOtp`.
+  //   2. Hemligheten som krävs för att lösa in länken — `code_verifier` — hamnar i webbläsarens
+  //      lagring HÄR, på den origin där återställningen begärdes. Öppnas mejlet på en annan enhet,
+  //      i en annan webbläsare eller på den andra domänen finns den inte, och länken dör.
+  //
+  // Implicit flöde skickar inget challenge. Då blir token en ren engångshemlighet i mejlet, precis
+  // som återställningslänkar ska vara, och den fungerar oavsett var den öppnas.
+  //
+  // Klienten rör aldrig sessionen: den skickar ett mejl och inget annat.
+  const supabase = useMemo(
+    () =>
+      createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY as string,
+        {
+          auth: {
+            flowType: 'implicit',
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false,
+          },
+        }
+      ),
+    []
+  );
   const toast = useToast();
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
