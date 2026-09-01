@@ -347,17 +347,21 @@ export default function QuoteTasksCard({
         </div>
       ) : null}
 
+      {/* SEKUNDÄR med flit, och samma recept som panelens "Hämta PDF"/"Skicka igen".
+          Med --crm-primary hade den vägt lika tungt som "Redigera offert" i sidfoten och tyngre
+          än "Skapa arbetsorder" — och att lägga upp en uppgift är en hjälphandling, inte det man
+          kom till offerten för. Panelen har redan tillräckligt många fyllda knappar.
+
+          Avdelaren visas bara när det finns rader ovanför att skilja knappen FRÅN; i tomma läget
+          hängde den i luften under en enda mening. */}
       {canWrite ? (
-        <div className="mt-3 border-t border-[#e3e9df] pt-3">
+        <div className={cn('mt-3', tasks.length > 0 && 'border-t border-[#e3e9df] pt-3')}>
           <button
             type="button"
             onClick={() => setFormTarget({ task: null })}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-white transition hover:brightness-95"
-            // --crm-primary bor på .crm-shell, inte :root. Panelen renderas bara innanför skalet
-            // (offertlistan och Säljtavlan), samma som panelens egen "Redigera offert"-knapp.
-            style={{ backgroundColor: 'var(--crm-primary)' }}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[13px] font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
               <path d="M12 5v14M5 12h14" />
             </svg>
             Lägg till uppgift
