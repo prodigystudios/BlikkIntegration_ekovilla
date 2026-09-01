@@ -1,3 +1,5 @@
+import { documentRef } from '@/app/crm/lib/format';
+
 // Presentation helpers shared by every surface that shows a quote: the offer list, the Säljtavla
 // board and the detail panel they both open. Pure and side-effect free, so they're unit-tested and
 // can't drift between the three places a quote is rendered.
@@ -23,6 +25,32 @@ export function quoteCustomerName(item: QuoteNameFields): string {
     || item.customer_snapshot?.company_name
     || item.customer_name
     || 'Okänd kund';
+}
+
+export type QuoteLabelFields = {
+  project_name: string;
+  quote_number: string | null;
+  fortnox_offer_number?: string | null;
+};
+
+/**
+ * Hur en offert HETER när den nämns någon annanstans än på sig själv — i en kopplingsväljare, på
+ * en uppgift, i en lista över relaterade poster.
+ *
+ * 🧨 Numret MÅSTE gå via documentRef, alltså Fortnox-numret först. `quote_number` är genererat ur
+ * id:t ('OFF-' + åtta tecken, 20260603_crm_quotes_quote_number.sql) och är bara en reserv för
+ * offerter som ännu inte synkats. Offertlistan, panelens rubrik och arbetsordern visar alla
+ * '#10144'; en etikett som säger 'OFF-3AA74887' pekar på samma offert med ett nummer ingen känner
+ * igen — och etiketten FRYSES i metadata.related_label, så uppgiften bär det felaktiga numret för
+ * alltid.
+ *
+ * Bor här och inte lokalt i den som råkar behöva den: det finns tre ställen som skapar sådana
+ * kopplingar (uppgiftssidans väljare, offertpanelens formulär och den automatiska
+ * uppföljningsuppgiften). Tre kopior hade tyst börjat producera olika etiketter för samma offert.
+ */
+export function quoteLabel(item: QuoteLabelFields): string {
+  const ref = documentRef(item.fortnox_offer_number, item.quote_number);
+  return ref === '–' ? item.project_name : `${item.project_name} (${ref})`;
 }
 
 export type QuoteOverdueFields = {

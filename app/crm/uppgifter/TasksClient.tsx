@@ -3,69 +3,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
-import Select from '../../../components/ui/Select';
-import Textarea from '../../../components/ui/Textarea';
-import CrmModal from '../components/CrmModal';
-import EntityCombobox, { type EntityResult } from '../components/EntityCombobox';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-
-type QuoteLite = {
-  id: string;
-  project_name: string;
-  quote_number: string | null;
-};
-
-function quoteLabel(q: QuoteLite): string {
-  return q.quote_number ? `${q.project_name} (#${q.quote_number})` : q.project_name;
-}
-
-type CrmRelatedType = 'crm_prospect' | 'crm_customer' | 'crm_quote';
-
-const relatedTypeLabel: Record<CrmRelatedType, string> = {
-  crm_prospect: 'Prospekt',
-  crm_customer: 'Kund',
-  crm_quote: 'Offert',
-};
-
-type TaskItem = {
-  id: string;
-  related_type: CrmRelatedType | null;
-  related_id: string | null;
-  related_label: string | null;
-  prospect_id: string | null;
-  user_id: string;
-  created_by: string | null;
-  // Härleds i domänlagret: skaparen är inte den som ska göra uppgiften.
-  delegated: boolean;
-  title: string;
-  details: string | null;
-  status: 'open' | 'done';
-  priority: 'low' | 'normal' | 'high';
-  due_date: string | null;
-  remind_at: string | null;
-  source: string | null;
-  completed_at: string | null;
-  created_at: string;
-  updated_at: string;
-};
-
-type TaskDraft = {
-  related_type: '' | CrmRelatedType;
-  related_id: string;
-  related_label: string;
-  title: string;
-  details: string;
-  priority: TaskItem['priority'];
-  due_date: string;
-  remind_at: string;
-  source: string;
-  status: TaskItem['status'];
-  // Vem uppgiften ska ligga på. Tom sträng = jag själv. Sätts bara vid skapandet — en befintlig
-  // uppgift flyttas inte mellan personer.
-  user_id: string;
-};
+import TaskFormModal from '@/app/crm/components/TaskFormModal';
+// Formuläret och dess typer är delade med offertpanelens uppgiftskort — ETT formulär, två
+// ingångar. Se app/crm/lib/taskForm.ts.
+import { buildTaskStatusTogglePayload, relatedTypeLabel, type TaskItem } from '@/app/crm/lib/taskForm';
 
 // 'delegated' är inte ett filter på samma lista utan en egen hämtning: uppgifterna tillhör
 // mottagaren och ligger utanför den inloggades RLS-vy.
@@ -85,20 +29,6 @@ const stripClass: Record<string, string> = {
   low: 'bg-slate-300',
 };
 
-const initialDraft: TaskDraft = {
-  related_type: '',
-  related_id: '',
-  related_label: '',
-  title: '',
-  details: '',
-  priority: 'normal',
-  due_date: '',
-  remind_at: '',
-  source: '',
-  status: 'open',
-  user_id: '',
-};
-
 function formatDate(value: string | null | undefined) {
   if (!value) return 'Ingen deadline';
   const date = new Date(`${value}T00:00:00`);
@@ -113,25 +43,6 @@ function formatDateTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium', timeStyle: 'short' }).format(date);
 }
 
-function toDateTimeLocalValue(value: string | null | undefined) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
-}
-
-function toIsoDateTime(value: string | null | undefined) {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
-}
-
 function isOverdue(task: TaskItem) {
   if (task.status === 'done' || !task.due_date) return false;
   const today = new Date();
@@ -144,18 +55,17 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
   const searchParams = useSearchParams();
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
   const [updatingTaskIds, setUpdatingTaskIds] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<TaskFilter>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<TaskDraft>(initialDraft);
-  // Säljarkatalogen bakom mottagarväljaren — och bakom "Från: X" på en uppgift man FÅTT.
-  // Hämtas därför av alla, inte bara den som får delegera: det är mottagaren som mest behöver
-  // veta vem som lagt uppgiften på hen, och utan katalogen hade hen bara sett ett uuid.
+  // null = stängd. `{ task: null }` = skapa, `{ task }` = redigera. Formuläret bor i
+  // TaskFormModal och äger sitt eget utkast — den här sidan säger bara VAD som ska redigeras.
+  const [formTarget, setFormTarget] = useState<{ task: TaskItem | null } | null>(null);
+  // Säljarkatalogen bakom "Från: X" på en uppgift man FÅTT. Hämtas av alla: det är mottagaren
+  // som mest behöver veta vem som lagt uppgiften på hen, och utan katalogen hade hen bara sett
+  // ett uuid. (Modalen hämtar sin egen katalog till mottagarväljaren, och bara när den öppnas.)
   const [sellers, setSellers] = useState<{ id: string; full_name: string | null }[]>([]);
   const [sellersLoaded, setSellersLoaded] = useState(false);
 
@@ -177,42 +87,6 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
     for (const seller of sellers) if (seller.full_name) map.set(seller.id, seller.full_name);
     return map;
   }, [sellers]);
-
-  // Debounced server-side search for the relation picker — scales to any table size
-  // (vs. preloading every customer/quote into a <select>).
-  async function searchRelated(query: string): Promise<EntityResult[]> {
-    if (draft.related_type === 'crm_customer') {
-      const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-      const json = await res.json().catch(() => ({}));
-      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-      return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
-        id: c.id,
-        label: c.display_name || 'Okänd kund',
-        sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
-      }));
-    }
-    if (draft.related_type === 'crm_quote') {
-      const res = await fetch(`/api/crm/quotes?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-      const json = await res.json().catch(() => ({}));
-      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-      return items.map((q: QuoteLite & { customer_name: string | null }) => ({
-        id: q.id,
-        label: quoteLabel(q),
-        sublabel: q.customer_name || undefined,
-      }));
-    }
-    if (draft.related_type === 'crm_prospect') {
-      const res = await fetch(`/api/crm/prospects?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-      const json = await res.json().catch(() => ({}));
-      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-      return items.map((p: { id: string; company_name: string; contact_name: string | null; city: string | null }) => ({
-        id: p.id,
-        label: p.company_name,
-        sublabel: [p.contact_name, p.city].filter(Boolean).join(' · ') || undefined,
-      }));
-    }
-    return [];
-  }
 
   useEffect(() => {
     let active = true;
@@ -274,15 +148,6 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetTaskId, hasHandledTaskPreset, loading, tasks]);
 
-  useEffect(() => {
-    if (!modalOpen) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [modalOpen]);
-
   const visibleTasks = useMemo(() => {
     // 'delegated' har redan hämtat exakt de rader som ska visas — ett klientfilter här hade
     // filtrerat bort dem allihop, eftersom de per definition inte är den inloggades egna.
@@ -305,85 +170,32 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
   const activeFilterCount = filter !== 'all' ? 1 : 0;
 
   function openCreateModal() {
-    setEditingTaskId(null);
-    setDraft(initialDraft);
-    setModalOpen(true);
+    setFormTarget({ task: null });
   }
 
   function openEditModal(task: TaskItem) {
-    setEditingTaskId(task.id);
-    setDraft({
-      related_type: task.related_type || '',
-      related_id: task.related_id || '',
-      related_label: task.related_label || '',
-      title: task.title,
-      details: task.details || '',
-      priority: task.priority,
-      due_date: task.due_date || '',
-      remind_at: toDateTimeLocalValue(task.remind_at),
-      source: task.source || '',
-      status: task.status,
-      // Ägaren är låst efter skapandet — väljaren visas inte i redigeringsläget, och fältet
-      // skickas inte med i PATCH:en. Bärs ändå med så draften speglar raden.
-      user_id: task.user_id,
-    });
-    setModalOpen(true);
+    setFormTarget({ task });
   }
 
-  async function saveTask() {
-    if (!draft.title.trim()) {
-      toast.error('Uppgiftstitel krävs');
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      const isEditing = Boolean(editingTaskId);
-      const res = await fetch(isEditing ? `/api/crm/tasks/${editingTaskId}` : '/api/crm/tasks', {
-        method: isEditing ? 'PATCH' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...draft,
-          remind_at: toIsoDateTime(draft.remind_at),
-          // Mottagaren sätts BARA när uppgiften skapas. En befintlig uppgift flyttas inte
-          // mellan personer, och att skicka fältet vid PATCH hade gett rutten ett värde den
-          // ändå ignorerar — bättre att inte påstå något.
-          user_id: !isEditing && canDelegate && draft.user_id ? draft.user_id : undefined,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok || !json.ok) {
-        toast.error(json?.error || 'Kunde inte spara uppgift');
-        return;
-      }
-
-      const item = json?.data?.item as TaskItem | undefined;
-      // Den nya raden läggs bara till om den hör hemma i den lista som visas. En uppgift man
-      // lagt på någon annan tillhör MOTTAGAREN — hade den prependats i den egna listan skulle
-      // den räknats bland ens egna öppna uppgifter och märkts "Från: <sig själv>" tills nästa
-      // omladdning. Samma sak omvänt: en egen uppgift hör inte hemma i "Jag har lagt ut".
-      const belongsInView = item ? (filter === 'delegated' ? item.delegated : !item.delegated) : false;
-      if (item) {
-        setTasks((current) => {
-          if (isEditing) return current.map((entry) => (entry.id === item.id ? item : entry));
-          return belongsInView ? [item, ...current] : current;
-        });
-      }
-
-      setModalOpen(false);
-      setEditingTaskId(null);
-      setDraft(initialDraft);
-      toast.success(
-        isEditing ? 'Uppgift uppdaterad'
-          : item?.delegated ? 'Uppgift skapad och notis skickad — finns under "Jag har lagt ut"'
-          : 'Uppgift skapad',
-      );
-    } catch {
-      toast.error('Fel vid sparande av uppgift');
-    } finally {
-      setSubmitting(false);
-    }
+  /**
+   * Den sparade raden tillbaka från formuläret.
+   *
+   * ⚠️ Den nya raden läggs bara till om den hör hemma i den lista som visas. En uppgift man lagt
+   * på någon annan tillhör MOTTAGAREN — hade den lagts först i den egna listan skulle den räknats
+   * bland ens egna öppna uppgifter och märkts "Från: <sig själv>" tills nästa omladdning. Samma
+   * sak omvänt: en egen uppgift hör inte hemma i "Jag har lagt ut".
+   */
+  function applySavedTask(item: TaskItem, { isEditing }: { isEditing: boolean }) {
+    const belongsInView = filter === 'delegated' ? item.delegated : !item.delegated;
+    setTasks((current) => {
+      if (isEditing) return current.map((entry) => (entry.id === item.id ? item : entry));
+      return belongsInView ? [item, ...current] : current;
+    });
+    toast.success(
+      isEditing ? 'Uppgift uppdaterad'
+        : item.delegated ? 'Uppgift skapad och notis skickad — finns under "Jag har lagt ut"'
+        : 'Uppgift skapad',
+    );
   }
 
   async function toggleTaskStatus(task: TaskItem) {
@@ -394,18 +206,9 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
       const res = await fetch(`/api/crm/tasks/${task.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          related_type: task.related_type,
-          related_id: task.related_id,
-          related_label: task.related_label,
-          title: task.title,
-          details: task.details,
-          priority: task.priority,
-          due_date: task.due_date,
-          remind_at: task.remind_at,
-          source: task.source,
-          status: nextStatus,
-        }),
+        // Delad med offertpanelens uppgiftskort. Bär normaliseringen av `remind_at` — utan den
+        // gick en uppgift med påminnelse inte att bocka av härifrån heller.
+        body: JSON.stringify(buildTaskStatusTogglePayload(task, nextStatus)),
       });
       const json = await res.json().catch(() => ({}));
 
@@ -425,12 +228,6 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
     } finally {
       setUpdatingTaskIds((current) => current.filter((id) => id !== task.id));
     }
-  }
-
-  function closeModal() {
-    setModalOpen(false);
-    setEditingTaskId(null);
-    setDraft(initialDraft);
   }
 
   return (
@@ -659,169 +456,17 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
         </div>
       </div>
 
-      {/* ── Modal ── */}
-      {modalOpen && (
-        <CrmModal
-          onClose={closeModal}
-          ariaLabel={editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}
-          maxWidth="sm:max-w-[720px]"
-          header={
-            <>
-              <h2 className="text-lg font-bold text-slate-900">{editingTaskId ? 'Redigera uppgift' : 'Ny uppgift'}</h2>
-              <p className={cn('mt-0.5', crm.pageSubtitle)}>Fånga uppföljningar utan att lämna CRM-flödet.</p>
-            </>
-          }
-          footer={
-            <>
-              <button
-                type="button"
-                onClick={closeModal}
-                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
-              >
-                Avbryt
-              </button>
-              <button
-                type="button"
-                onClick={saveTask}
-                disabled={submitting}
-                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-                style={{ backgroundColor: 'var(--crm-primary)' }}
-              >
-                {submitting ? 'Sparar…' : editingTaskId ? 'Spara ändringar' : 'Skapa uppgift'}
-              </button>
-            </>
-          }
-        >
-          {/* Form fields */}
-          <div className="grid gap-4">
-              <div>
-                <p className={cn('mb-1.5', crm.sectionTitle)}>Titel</p>
-                <Input
-                  value={draft.title}
-                  onChange={(e) => setDraft((c) => ({ ...c, title: e.target.value }))}
-                  placeholder="Titel på uppgiften"
-                />
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Koppling</p>
-                  <Select
-                    value={draft.related_type}
-                    onChange={(e) => setDraft((c) => ({ ...c, related_type: e.target.value as TaskDraft['related_type'], related_id: '', related_label: '' }))}
-                  >
-                    <option value="">Ingen koppling</option>
-                    <option value="crm_customer">Kund</option>
-                    <option value="crm_quote">Offert</option>
-                    <option value="crm_prospect">Prospekt</option>
-                  </Select>
-                </div>
-
-                <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>
-                    {draft.related_type ? relatedTypeLabel[draft.related_type] : 'Post'}
-                  </p>
-                  <EntityCombobox
-                    value={draft.related_id}
-                    valueLabel={draft.related_label}
-                    onChange={(id, label) => setDraft((c) => ({ ...c, related_id: id, related_label: label }))}
-                    onClear={() => setDraft((c) => ({ ...c, related_id: '', related_label: '' }))}
-                    search={searchRelated}
-                    disabled={!draft.related_type}
-                    placeholder={draft.related_type ? `Sök ${relatedTypeLabel[draft.related_type].toLowerCase()}…` : 'Välj koppling först'}
-                  />
-                </div>
-              </div>
-
-              <div>
-                <p className={cn('mb-1.5', crm.sectionTitle)}>Status</p>
-                <Select
-                  value={draft.status}
-                  onChange={(e) => setDraft((c) => ({ ...c, status: e.target.value as TaskItem['status'] }))}
-                >
-                  <option value="open">Öppen</option>
-                  <option value="done">Klar</option>
-                </Select>
-              </div>
-
-              {/* Mottagare — bara vid skapandet, och bara för den som får delegera. En befintlig
-                  uppgift flyttas inte mellan personer, så väljaren döljs i redigeringsläget i
-                  stället för att stå där utan verkan.
-
-                  Riktig <label> och inte crm.sectionTitle som fälten ovan: den är ett <p> och
-                  binder alltså inte till kontrollen, vilket bryter mot WCAG. De befintliga fälten
-                  har samma brist men rättas inte här — det är en egen städning. */}
-              {canDelegate && !editingTaskId ? (
-                <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
-                  <label htmlFor="task-owner" className={cn('mb-1.5 block', crm.sectionTitle)}>Ansvarig</label>
-                  <Select
-                    id="task-owner"
-                    value={draft.user_id}
-                    onChange={(e) => setDraft((c) => ({ ...c, user_id: e.target.value }))}
-                  >
-                    <option value="">Jag själv</option>
-                    {sellers.map((seller) => (
-                      <option key={seller.id} value={seller.id}>{seller.full_name || seller.id}</option>
-                    ))}
-                  </Select>
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    {draft.user_id
-                      ? 'Uppgiften hamnar hos säljaren, som får en notis. Du hittar den under "Jag har lagt ut".'
-                      : 'Lägg uppgiften på en säljare i stället för dig själv.'}
-                  </p>
-                </div>
-              ) : null}
-
-              <div className="grid gap-4 rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4 sm:grid-cols-3">
-                <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Prioritet</p>
-                  <Select
-                    value={draft.priority}
-                    onChange={(e) => setDraft((c) => ({ ...c, priority: e.target.value as TaskItem['priority'] }))}
-                  >
-                    <option value="low">Låg</option>
-                    <option value="normal">Normal</option>
-                    <option value="high">Hög</option>
-                  </Select>
-                </div>
-                <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Deadline</p>
-                  <Input
-                    value={draft.due_date}
-                    onChange={(e) => setDraft((c) => ({ ...c, due_date: e.target.value }))}
-                    type="date"
-                  />
-                </div>
-                <div>
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Påminnelse</p>
-                  <Input
-                    value={draft.remind_at}
-                    onChange={(e) => setDraft((c) => ({ ...c, remind_at: e.target.value }))}
-                    type="datetime-local"
-                  />
-                </div>
-                <div className="sm:col-span-3">
-                  <p className={cn('mb-1.5', crm.sectionTitle)}>Källa</p>
-                  <Input
-                    value={draft.source}
-                    onChange={(e) => setDraft((c) => ({ ...c, source: e.target.value }))}
-                    placeholder="t.ex. samtal eller manuell"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <p className={cn('mb-1.5', crm.sectionTitle)}>Beskrivning</p>
-                <Textarea
-                  value={draft.details}
-                  onChange={(e) => setDraft((c) => ({ ...c, details: e.target.value }))}
-                  placeholder="Vad ska följas upp och varför?"
-                  className="min-h-[120px]"
-                />
-              </div>
-          </div>
-        </CrmModal>
-      )}
+      {/* ── Formulär ──
+          Delas med offertpanelens uppgiftskort (app/crm/components/TaskFormModal.tsx). Den här
+          sidan lägger ingen låst koppling: härifrån ska man kunna peka uppgiften vart som helst. */}
+      {formTarget ? (
+        <TaskFormModal
+          task={formTarget.task}
+          canDelegate={canDelegate}
+          onClose={() => setFormTarget(null)}
+          onSaved={applySavedTask}
+        />
+      ) : null}
     </div>
   );
 }

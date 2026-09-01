@@ -261,3 +261,44 @@ export function mergeUntouchedCustomerFields(
   }
   return out;
 }
+
+// ── Uppföljningsuppgiften ────────────────────────────────────────────────────
+
+export type FollowUpQuoteFields = {
+  id: string;
+  project_name: string;
+  quote_number: string | null;
+  notes: string | null;
+  description: string | null;
+};
+
+/**
+ * Nyttolasten till POST /api/crm/tasks för uppgiften "Följ upp offert: …" som skapas när en NY
+ * offert sparas med uppföljningsdatum och kryssrutan i.
+ *
+ * 🧨 Den här funktionen finns därför att den tidigare varianten var trasig i över ett år utan att
+ * någon märkte det. Den skickade `prospect_id`, en nyckel som inte finns i `createCrmTaskSchema` —
+ * och Zod strippar okända nycklar TYST. Uppgiften skapades utan koppling: `related_type` blev null,
+ * och det enda spåret av offerten var titeln. Den gick alltså inte att hitta från offerten, vilket
+ * är precis vad offertens uppgiftsflöde behöver.
+ *
+ * Nu bryts nyttolasten ut som en ren funktion just för att kunna prövas mot schemat i ett test, så
+ * att ett framtida felstavat fältnamn faller på ett rött test i stället för att försvinna i det
+ * tysta. Se tests/crm/quoteTasks.test.ts.
+ *
+ * ⚠️ Etiketten fryses i `metadata.related_label` och uppdateras inte om offerten byter namn — det
+ * är en avsiktlig ögonblicksbild, samma som uppgiftssidans kopplingsväljare gör.
+ */
+export function buildFollowUpTaskPayload(quote: FollowUpQuoteFields, followUpDate: string, label: string) {
+  return {
+    related_type: 'crm_quote' as const,
+    related_id: quote.id,
+    related_label: label,
+    title: `Följ upp offert: ${quote.project_name}`,
+    details: quote.notes || quote.description || `Uppföljning för offert ${quote.project_name}`,
+    priority: 'high' as const,
+    due_date: followUpDate,
+    source: 'crm_quote',
+    status: 'open' as const,
+  };
+}

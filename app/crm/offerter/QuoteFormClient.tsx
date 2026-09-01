@@ -34,10 +34,12 @@ import {
   matchedValidityPreset,
   mergeUntouchedCustomerFields,
   pickCustomerDerived,
+  buildFollowUpTaskPayload,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
   type CustomerDerivedValues,
 } from './quoteSerializers';
+import { quoteLabel } from '@/app/crm/lib/quoteDisplay';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -2068,15 +2070,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     const res = await fetch('/api/crm/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prospect_id: quote.prospect_id,
-        title: `Följ upp offert: ${quote.project_name}`,
-        details: quote.notes || quote.description || `Uppföljning för offert ${quote.project_name}`,
-        priority: 'high',
-        due_date: draft.follow_up_date,
-        source: 'crm_quote',
-        status: 'open',
-      }),
+      body: JSON.stringify(buildFollowUpTaskPayload(quote, draft.follow_up_date, quoteLabel(quote))),
     });
     const json = await res.json().catch(() => ({}));
     return res.ok && json.ok;

@@ -74,7 +74,7 @@ const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent:
 
 // ─── SaljtavlaClient ───────────────────────────────────────────────────────────
 
-export default function SaljtavlaClient({ currentUserId }: { currentUserId: string | null }) {
+export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean }) {
   const toast = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -348,6 +348,9 @@ export default function SaljtavlaClient({ currentUserId }: { currentUserId: stri
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/saljtavla?quote_id=${detailQuote.id}`}
           documentEmail={documentEmail}
+          currentUserId={currentUserId}
+          canWrite={canWrite}
+          canDelegate={canDelegate}
           onClose={() => setDetailQuoteId(null)}
           onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
         />
