@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  carriesAmount,
   compensationConstraintError,
   countMissingReceipts,
   hasReceipt,
@@ -21,6 +22,26 @@ const item = (over: Partial<CompensationItem> = {}): CompensationItem => ({
 // om den härledningen någonsin byter fält ska testerna gå sönder på ett ställe.
 const withReceipt = (over: Partial<CompensationItem> = {}): CompensationItem =>
   item({ receipt_name: 'kvitto.jpg', receipt_content_type: 'image/jpeg', receipt_size_bytes: 12345, ...over });
+
+// Regeln bakom att beloppsfältet bara finns på utlägg (William 2026-09-01: traktamente och
+// milersättning ersätts med fasta satser som lönebyrån äger). Den läses av formuläret, båda routerna
+// och båda vyerna — går den isär får man en ruta som går att fylla i på ett ställe och ignoreras på
+// ett annat, vilket är precis det missförstånd ändringen tog bort.
+describe('carriesAmount', () => {
+  it('är sant bara för utlägg', () => {
+    expect(carriesAmount('expense')).toBe(true);
+    expect(carriesAmount('travel')).toBe(false);
+    expect(carriesAmount('per_diem')).toBe(false);
+  });
+
+  // ⚠️ Speglar enheterna, men får inte HÄRLEDAS ur dem. Att utlägg saknar enhet och bär belopp är
+  // två separata fakta om samma sort; en `!COMPENSATION_UNITS[kind]` hade kopplat ihop dem så att en
+  // framtida sort med både enhet och belopp (timersättning?) tyst blev beloppslös.
+  it('är motsatsen till att ha en enhet — i dag, men inte per definition', () => {
+    expect(carriesAmount('expense')).toBe(COMPENSATION_UNITS.expense === null);
+    expect(carriesAmount('travel')).toBe(COMPENSATION_UNITS.travel === null);
+  });
+});
 
 describe('summarizeCompensations', () => {
   it('summerar belopp och antal per sort', () => {

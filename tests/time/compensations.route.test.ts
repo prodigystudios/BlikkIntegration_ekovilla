@@ -137,13 +137,57 @@ describe('POST /api/time/compensations', () => {
     mockUser.mockResolvedValue(memberUser);
     const res = await POST(req('/api/time/compensations', jsonReq('POST', { ...TRAVEL, user_id: adminUser.id })));
     expect(res.status).toBe(201);
-    expect(mockCreate).toHaveBeenCalledWith(expect.anything(), memberUser.id, expect.objectContaining({ kind: 'travel', amount: 306.25 }));
+    expect(mockCreate).toHaveBeenCalledWith(expect.anything(), memberUser.id, expect.objectContaining({ kind: 'travel' }));
   });
 
   it('nollar kvantitet på utlägg — beloppet är hela sanningen där', async () => {
     mockUser.mockResolvedValue(memberUser);
     await POST(req('/api/time/compensations', jsonReq('POST', { entry_date: '2026-08-14', kind: 'expense', quantity: 3, amount: 89 })));
     expect(mockCreate.mock.calls[0][2]).toMatchObject({ quantity: null });
+  });
+
+  /**
+   * ⚠️ BELOPPET ÄR UTLÄGGETS ENSAK sedan 2026-09-01 (William: traktamente och milersättning ersätts
+   * med FASTA SATSER som lönebyrån äger). Fältet är borta ur formuläret, men regeln måste hålla i
+   * routen också — annars räcker ett handskrivet anrop för att sätta kronor på en milersättning som
+   * lönen redan ersätter, och personen får betalt två gånger.
+   *
+   * TRAVEL-fixturen bär med flit fortfarande ett belopp: det är just det som ska nollas.
+   */
+  it('nollar beloppet på milersättning och traktamente — de har fast sats', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    await POST(req('/api/time/compensations', jsonReq('POST', TRAVEL)));
+    expect(mockCreate.mock.calls[0][2]).toMatchObject({ kind: 'travel', amount: 0, quantity: 12.5 });
+
+    mockCreate.mockClear();
+    await POST(req('/api/time/compensations', jsonReq('POST', { entry_date: '2026-08-14', kind: 'per_diem', quantity: 3, amount: 780 })));
+    expect(mockCreate.mock.calls[0][2]).toMatchObject({ kind: 'per_diem', amount: 0, quantity: 3 });
+  });
+
+  it('släpper igenom beloppet på ett utlägg', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    await POST(req('/api/time/compensations', jsonReq('POST', EXPENSE)));
+    expect(mockCreate.mock.calls[0][2]).toMatchObject({ kind: 'expense', amount: 249 });
+  });
+
+  /**
+   * Varje post måste BÄRA något. Utlägget säger det med sitt belopp, milersättningen med sitt antal
+   * — och utan sitt fält är posten en rad som bara säger "en milersättning, någon gång".
+   *
+   * Kvantitetskravet är nytt och kom med att beloppsfältet försvann: innan dess bar en milersättning
+   * utan antal åtminstone ett belopp.
+   */
+  it('kräver antal på de fasta sorterna och belopp på utlägg', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    const { quantity, ...travelUtanAntal } = TRAVEL;
+    expect((await POST(req('/api/time/compensations', jsonReq('POST', travelUtanAntal)))).status).toBe(400);
+    expect((await POST(req('/api/time/compensations', jsonReq('POST', { ...TRAVEL, quantity: 0 })))).status).toBe(400);
+
+    const { amount, ...utlaggUtanBelopp } = EXPENSE;
+    expect((await POST(req('/api/time/compensations', jsonReq('POST', utlaggUtanBelopp)))).status).toBe(400);
+    expect((await POST(req('/api/time/compensations', jsonReq('POST', { ...EXPENSE, amount: 0 })))).status).toBe(400);
+
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   it('avvisar negativt belopp, okänd sort och trasigt datum', async () => {
@@ -543,9 +587,12 @@ describe('PATCH /api/time/compensations/[id] — sortbyte bort från utlägg', (
 
   // Ett sortbyte TILL utlägg rör inte kvittofälten — posten hade inget, och nollningen hör bara
   // till vägen ut.
+  //
+  // ⚠️ Beloppet kom med i kroppen 2026-09-01: ett sortbyte måste ta med sig den nya sortens bärande
+  // fält, annars svarar routen 400 innan den hinner till kvittofälten. Testets ärende är oförändrat.
   it('lämnar kvittofälten i fred vid byte till utlägg', async () => {
     mockUser.mockResolvedValue(memberUser);
-    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { kind: 'expense' })), { params: { id: ITEM_ID } });
+    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { kind: 'expense', amount: 249 })), { params: { id: ITEM_ID } });
 
     const patch = mockUpdate.mock.calls[0][3] as Record<string, unknown>;
     expect('receipt_path' in patch).toBe(false);
@@ -681,11 +728,100 @@ describe('granskningsfynd — städningen får aldrig röra andras objekt', () =
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  // En vanlig beloppsrättelse rör varken moms eller kvitto och ska inte kosta en extra rundtur.
-  it('läser inte raden i onödan vid en ren beloppsrättelse', async () => {
+  /**
+   * ⚠️ DEN HÄR REGELN VÄNDE 2026-09-01, och det är avsiktligt.
+   *
+   * Testet hette "läser inte raden i onödan vid en ren beloppsrättelse" och vaktade att en
+   * `PATCH {amount}` slapp en extra rundtur — riktigt så länge beloppet var gemensamt för alla
+   * sorter. Sedan beloppet blev utläggets ensak (carriesAmount) är det samma sorts fält som momsen,
+   * och sorten måste läsas: annars sätter ett handskrivet `PATCH {"amount": 500}` kronor på en
+   * milersättning som lönen redan ersätter med fast sats.
+   *
+   * Den billiga vägen finns kvar för det som inte är sortberoende — datum, antal, anteckning.
+   */
+  it('läser raden vid en beloppsrättelse — beloppet är sortberoende', async () => {
     mockUser.mockResolvedValue(memberUser);
     await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { amount: 100 })), { params: { id: ITEM_ID } });
+    expect(mockReceiptRef).toHaveBeenCalled();
+  });
+
+  it('läser inte raden när patchen inte rör något sortberoende fält', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { note: 'Parkering Uppsala' })), { params: { id: ITEM_ID } });
     expect(mockReceiptRef).not.toHaveBeenCalled();
+  });
+
+  it('nollar ett belopp som patchas på en post som inte är utlägg', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'travel', receipt_path: null }, error: null } as any);
+
+    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { amount: 500 })), { params: { id: ITEM_ID } });
+
+    expect((mockUpdate.mock.calls[0][3] as Record<string, unknown>).amount).toBe(0);
+  });
+
+  it('släpper igenom ett belopp på ett utlägg', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'expense', receipt_path: null }, error: null } as any);
+
+    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { amount: 500 })), { params: { id: ITEM_ID } });
+
+    expect((mockUpdate.mock.calls[0][3] as Record<string, unknown>).amount).toBe(500);
+  });
+
+  // En post ska inte kunna patchas TOM på det den bär. Prövas bara när sorten är känd, alltså när
+  // raden ändå lästs — se noten i routen om varför en ensam `{quantity: 0}` släpps igenom.
+  it('avvisar en patch som lämnar posten utan det den bär', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'expense', receipt_path: null }, error: null } as any);
+
+    const res = await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { amount: 0 })), { params: { id: ITEM_ID } });
+
+    expect(res.status).toBe(400);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ Ett sortbyte utan den nya sortens fält är den korta vägen till en tom post, och den går åt
+   * BÅDA hållen: `{kind:'travel'}` på ett utlägg nollar beloppet och ärver kvantiteten null,
+   * `{kind:'expense'}` på en milersättning nollar kvantiteten och ärver beloppet 0.
+   */
+  it('kräver den nya sortens bärande fält vid ett sortbyte', async () => {
+    mockUser.mockResolvedValue(memberUser);
+
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'expense', receipt_path: null }, error: null } as any);
+    expect((await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { kind: 'travel' })), { params: { id: ITEM_ID } })).status).toBe(400);
+
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'travel', receipt_path: null }, error: null } as any);
+    expect((await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { kind: 'expense' })), { params: { id: ITEM_ID } })).status).toBe(400);
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // Kvittokopplingen är den enda PATCH gränssnittet faktiskt gör — den får inte fångas av kravet
+  // ovan bara för att posten är ett utlägg som inte skickar sitt belopp igen.
+  it('rör inte en ren kvittokoppling', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'expense', receipt_path: null }, error: null } as any);
+
+    const body = jsonReq('PATCH', { receipt: { storage_path: ownPath(), file_name: 'kvitto.jpg' } });
+    const res = await PATCH(req(`/api/time/compensations/${ITEM_ID}`, body), { params: { id: ITEM_ID } });
+
+    expect(res.status).toBe(200);
+    expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  // Byter posten sort bort från utlägg måste beloppet falla med momsen och kvittot — annars blir
+  // raden en milersättning som bär utläggets kronor och ersätts två gånger.
+  it('släpper beloppet när posten byter sort bort från utlägg', async () => {
+    mockUser.mockResolvedValue(memberUser);
+    mockReceiptRef.mockResolvedValue({ data: { id: ITEM_ID, kind: 'expense', receipt_path: null }, error: null } as any);
+
+    await PATCH(req(`/api/time/compensations/${ITEM_ID}`, jsonReq('PATCH', { kind: 'travel', quantity: 10 })), { params: { id: ITEM_ID } });
+
+    const patch = mockUpdate.mock.calls[0][3] as Record<string, unknown>;
+    expect(patch.amount).toBe(0);
+    expect(patch.vat_amount).toBeNull();
   });
 });
 

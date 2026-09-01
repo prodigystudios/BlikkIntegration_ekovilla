@@ -12,8 +12,10 @@ import {
   COMPENSATION_LABELS,
   COMPENSATION_UNITS,
   countMissingReceipts,
+  formatQuantity,
   hasReceipt,
   isReceiptMissing,
+  summarizeCompensations,
   type CompensationItem,
 } from '@/lib/domains/time/compensations';
 import {
@@ -725,8 +727,19 @@ function PersonRow({
               <span className="whitespace-nowrap text-slate-500">
                 <span className="tabular-nums">{row.entry_count}</span> {row.entry_count === 1 ? 'rad' : 'rader'}
               </span>
+              {/* ⚠️ ANTALET POSTER FÖRST, kronorna bara när det finns några.
+                  Kolumnen visade rakt av `compensation_amount` kr. Sedan traktamente och
+                  milersättning ersätts med fasta satser bär de inget belopp, så en person med bara
+                  resor och traktamenten hade stått som "0,00 kr" — vilket läser som att hon inte
+                  ska ha någon ersättning alls. Summan är fortfarande sann (den är kronorna på
+                  posterna, i praktiken utläggen); det som saknades var att posterna finns.
+                  Mil och dagar står per post i detaljpanelen, som är där satserna tillämpas. */}
               {row.compensation_count > 0 ? (
-                <span className="whitespace-nowrap text-slate-500"><span className="tabular-nums">{formatAmount(row.compensation_amount)}</span> kr</span>
+                <span className="whitespace-nowrap text-slate-500">
+                  <span className="tabular-nums">{row.compensation_count}</span>{' '}
+                  {row.compensation_count === 1 ? 'ersättning' : 'ersättningar'}
+                  {row.compensation_amount > 0 ? <> · <span className="tabular-nums">{formatAmount(row.compensation_amount)}</span> kr</> : null}
+                </span>
               ) : null}
             </span>
           </div>
@@ -912,6 +925,10 @@ function PersonDays({
   // hade brutit rules-of-hooks (npm run lint fångar det). Summeringen är en reduce över en handfull
   // poster och kostar ingenting.
   const missingReceipts = countMissingReceipts(detail.compensations);
+  // Summa per sort. Byrån tillämpar de fasta satserna på ANTALEN (mil, dagar) och ska slippa lägga
+  // ihop enskilda rader för hand — det var den räkningen som gjorde beloppsfältet frestande att
+  // fylla i från början.
+  const compensationTotals = summarizeCompensations(detail.compensations);
 
   if (summary.rows.length === 0 && detail.compensations.length === 0) {
     // ⚠️ Loggen renderas ÄVEN här. Har en admin raderat personens alla rader ser månaden tom ut, och
@@ -1001,6 +1018,23 @@ function PersonDays({
               {missingReceipts === 1 ? '1 utlägg saknar kvitto' : `${missingReceipts} utlägg saknar kvitto`} — be om det innan du attesterar.
             </p>
           ) : null}
+          {/* Summan per sort, före listan: mil och dagar är det satserna räknas på, kronorna är
+              utläggen. Samma form som /tid visar för den anställde, så båda läser samma siffror. */}
+          <p className="m-0 flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-slate-600">
+            {compensationTotals.map((total) => {
+              const totalUnit = COMPENSATION_UNITS[total.kind];
+              const parts = [
+                totalUnit ? `${formatQuantity(total.quantity)} ${totalUnit}` : null,
+                total.amount > 0 ? `${formatAmount(total.amount)} kr` : null,
+              ].filter(Boolean);
+              return (
+                <span key={total.kind} className="whitespace-nowrap">
+                  {COMPENSATION_LABELS[total.kind]}{' '}
+                  <strong className="tabular-nums text-slate-900">{parts.join(' · ')}</strong>
+                </span>
+              );
+            })}
+          </p>
           <ul className="m-0 grid list-none gap-1 p-0 text-sm text-slate-700">
             {detail.compensations.map((item) => {
               const unit = COMPENSATION_UNITS[item.kind];
@@ -1010,9 +1044,15 @@ function PersonDays({
                   <span className="text-slate-500">{formatDay(item.entry_date)}</span>
                   <span className="font-medium">{COMPENSATION_LABELS[item.kind] || item.kind}</span>
                   {unit && item.quantity != null ? (
-                    <span className="text-slate-500">{formatAmount(item.quantity)} {unit}</span>
+                    <span className="text-slate-500">{formatQuantity(item.quantity)} {unit}</span>
                   ) : null}
-                  <span className="font-medium">{formatAmount(item.amount)} kr</span>
+                  {/* ⚠️ Kronor bara när posten bär några. Traktamente och milersättning ersätts med
+                      FASTA SATSER som byrån äger — "0,00 kr" här hade sett ut som ett påstående om
+                      att resan är gratis, mitt i det underlag satsen ska tillämpas på.
+                      `> 0` och inte sorten: rader från före 2026-09-01 kan bära ett riktigt belopp. */}
+                  {Number(item.amount) > 0 ? (
+                    <span className="font-medium">{formatAmount(item.amount)} kr</span>
+                  ) : null}
                   {/* Bokföringen behöver momsen utbruten. `!= null` och inte en sanningsprövning:
                       0 kr moms är ett svar (utlandsköp, vidarefakturerat) och ska inte se ut som
                       ett ouppgivet fält. */}
