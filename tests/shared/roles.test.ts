@@ -32,7 +32,7 @@ describe('toEffectiveRole', () => {
 describe('filterLinks', () => {
   it('ger ekonomi inga CRM-länkar', () => {
     const hrefs = filterLinks('ekonomi').map((link) => link.href);
-    for (const forbidden of ['/crm', '/crm/dokument', '/crm/korjournal', '/crm/planering', '/plannering', '/mina-jobb', '/tidrapport']) {
+    for (const forbidden of ['/crm', '/crm/dokument', '/crm/korjournal', '/crm/planering', '/plannering', '/mina-jobb', '/tid']) {
       expect(hrefs).not.toContain(forbidden);
     }
   });

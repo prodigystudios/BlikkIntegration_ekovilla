@@ -4,9 +4,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-import TimeReportModal, { TimeReportModalProps } from "../../components/dashboard/TimeReportModal";
-import { useToast } from "@/lib/Toast";
-import { buildTimeReportBody } from "@/lib/domains/time-reports/payload";
 import { mergeMyJobs, type BlikkJobRow, type CrmJobRow, type MyJob } from "@/lib/domains/planning/myJobs";
 import { crm, workOrderStatusLabel, workOrderStatusClass, type WorkOrderStatus } from "@/app/crm/lib/crmTokens";
 import { cn } from "@/lib/shared/cn";
@@ -49,9 +46,6 @@ export default function MinaJobbPage() {
   // A partial failure must not blank the feed: if one planning world is unreachable the other
   // still renders, with a note saying what is missing.
   const [missingSource, setMissingSource] = useState<string | null>(null);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [prefill, setPrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
-  const toast = useToast();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
@@ -109,10 +103,13 @@ export default function MinaJobbPage() {
           <h1 className={cn('m-0', crm.pageTitle)}>Mina jobb</h1>
           <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Dina planerade jobb de närmaste 30 dagarna.</p>
         </div>
-        <button type="button" onClick={() => { setPrefill(null); setModalOpen(true); }} className={primaryBtn} style={{ backgroundColor: 'var(--crm-primary)' }}>
+        {/* Öppnade förut Blikk-modalen på plats. Sedan cutovern 2026-09-01 leder den till vår egen
+            tidrapport — och då ska den vara en länk, inte en knapp: mittenklick och "öppna i ny
+            flik" hör till en navigering. */}
+        <Link href="/tid" className={cn(primaryBtn, 'no-underline')} style={{ backgroundColor: 'var(--crm-primary)' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
           Rapportera tid
-        </button>
+        </Link>
       </div>
 
       {loading && <div className="text-sm text-slate-400">Laddar…</div>}
@@ -151,43 +148,11 @@ export default function MinaJobbPage() {
                   if (!job.projectId) return;
                   setExpanded((prev) => ({ ...prev, [job.projectId!]: !prev[job.projectId!] }));
                 }}
-                onReportTime={() => {
-                  setPrefill({
-                    project: job.ref || job.projectName || job.projectId || undefined,
-                    projectId: job.projectId || undefined,
-                    date: job.day,
-                  });
-                  setModalOpen(true);
-                }}
               />
             ),
           )}
         </section>
       ))}
-
-      <TimeReportModal
-        open={modalOpen}
-        onClose={() => setModalOpen(false)}
-        initialProject={prefill?.project || null}
-        initialProjectId={prefill?.projectId || null}
-        initialDate={prefill?.date || null}
-        onSubmit={async (payload: Parameters<NonNullable<TimeReportModalProps['onSubmit']>>[0]) => {
-          try {
-            const body = buildTimeReportBody(payload as any);
-            const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
-            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const json = await res.json().catch(() => ({}));
-            if (!res.ok || !json.ok) {
-              toast.error(json?.error || 'Misslyckades att spara tid');
-            } else {
-              toast.success('Tidrapport sparad');
-              setModalOpen(false);
-            }
-          } catch {
-            toast.error('Fel vid sparande av tid');
-          }
-        }}
-      />
     </div>
   );
 }
@@ -238,17 +203,29 @@ function CrmJobCard({ job }: { job: MyJob }) {
       <div className="text-[12px] text-slate-500">{[job.customer, job.ref].filter(Boolean).join(' • ')}</div>
       {job.address && <div className="text-[12px] text-slate-600">{job.address}</div>}
       <JobMeta job={job} />
-      {job.workOrderId && (
-        <div className="mt-2 flex flex-wrap gap-2">
+      {/* Arbetsordern är primär — det är där dagens arbete görs (säckrapport, egenkontroll,
+          kommentarer). Tidgenvägen står bredvid som andrahandsval, med jobbets dag i adressen:
+          det är PÅ CRM-jobben /tid faktiskt kan välja ordern, så det är här genvägen är värd mest.
+
+          Tidlänken hänger inte på workOrderId — den behöver bara dagen, och ett jobb utan
+          arbetsorder-id ska inte tappa sin väg till tidrapporten. */}
+      <div className="mt-2 flex flex-wrap gap-2">
+        {job.workOrderId && (
           <Link
             href={`/arbetsorder/${job.workOrderId}`}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-white transition hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-white no-underline transition hover:opacity-90"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
             Öppna arbetsorder
           </Link>
-        </div>
-      )}
+        )}
+        <Link
+          href={`/tid?datum=${encodeURIComponent(job.day)}`}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-solid border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 no-underline transition hover:border-slate-300 hover:text-slate-800"
+        >
+          Rapportera tid
+        </Link>
+      </div>
     </JobCardShell>
   );
 }
@@ -257,12 +234,10 @@ function BlikkJobCard({
   job,
   expanded,
   onToggleComments,
-  onReportTime,
 }: {
   job: MyJob;
   expanded: boolean;
   onToggleComments: () => void;
-  onReportTime: () => void;
 }) {
   return (
     <JobCardShell accentClass="bg-slate-300">
@@ -275,14 +250,17 @@ function BlikkJobCard({
       <div className="text-[12px] text-slate-500">{[job.customer, job.ref].filter(Boolean).join(' • ')}</div>
       <JobMeta job={job} />
       <div className="mt-2 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onReportTime}
-          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-white transition hover:opacity-90"
+        {/* Jobbets DAG följer med, inte projektet: /tid väljer arbetsorder ur personens egna
+            schemalagda CRM-jobb för dagen, och ett Blikk-projekt finns inte i den listan. Dagen är
+            det som går att bära över — och den behövs, annars öppnar sidan på idag och passet förs
+            in på fel dygn. */}
+        <Link
+          href={`/tid?datum=${encodeURIComponent(job.day)}`}
+          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-white no-underline transition hover:opacity-90"
           style={{ backgroundColor: 'var(--crm-primary)' }}
         >
           Rapportera tid
-        </button>
+        </Link>
         {job.projectId && (
           <button
             type="button"
