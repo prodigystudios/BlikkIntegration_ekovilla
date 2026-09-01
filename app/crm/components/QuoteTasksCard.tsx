@@ -98,7 +98,8 @@ export default function QuoteTasksCard({
 
   // Formuläret är SAMMA modal som uppgiftssidan öppnar. Ett eget litet snabbformulär här hade
   // saknat mottagarväljaren (och därmed notisen), påminnelsen och beskrivningen.
-  const [formOpen, setFormOpen] = useState(false);
+  // null = stängd. `{ task: null }` = ny uppgift, `{ task }` = redigera den befintliga.
+  const [formTarget, setFormTarget] = useState<{ task: TaskItem | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -193,7 +194,7 @@ export default function QuoteTasksCard({
                 ? 'Hämtar…'
                 : tasks.length === 0
                   ? loadFailed ? 'Listan kunde inte hämtas.' : 'Inga uppgifter kopplade till offerten.'
-                  : `${openCount} öppna av ${tasks.length}.`}
+                  : `${openCount} ${openCount === 1 ? 'öppen' : 'öppna'} av ${tasks.length}.`}
             </span>
             {/* Hämtningen misslyckades MEN det står rader i listan — alltså en uppgift som just
                 skapades ovanpå en trasig läsning. Felet får inte ligga kvar som rubrik då: det
@@ -228,6 +229,9 @@ export default function QuoteTasksCard({
             // uppgift till en klar — och rutan står redan ibockad, så etiketten "Markera som klar"
             // hade ljugit också. Avbrutna uppgifter är läsvy.
             const canToggle = isMine && canWrite && task.status !== 'cancelled';
+            // Redigering kräver samma sak minus undantaget för avbrutna: draftFromTask klämmer
+            // status till öppen, så en avbruten uppgift går utmärkt att öppna och rätta.
+            const canEdit = isMine && canWrite;
             const busy = updatingIds.includes(task.id);
             const done = task.status === 'done';
             // Avbruten är inte klar, men den är avslutad. Att rita den som en öppen punkt hade
@@ -274,18 +278,30 @@ export default function QuoteTasksCard({
 
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    {/* Djuplänken slår upp uppgiften i uppgiftssidans egen lista, som är egen-bara.
-                        På en kollegas rad hade klicket lett till en sida där ingenting händer. */}
-                    {isMine ? (
-                      <a
-                        href={`/crm/uppgifter?task_id=${task.id}`}
+                    {/* Redigering sker HÄR, inte på uppgiftssidan. En djuplänk till /crm/uppgifter
+                        kastade ut en ur offerten man höll på med — och tillbaka fanns ingen väg
+                        utom bakåtknappen. Samma modal, samma offert, panelen kvar bakom.
+
+                        Bara egna rader: PATCH kör på sessionsklienten mot en tabell med egen-bara
+                        RLS, så ett formulär över en kollegas uppgift hade gått att fylla i och
+                        sedan fallit på 500 vid spara. Kollegans text går ändå att LÄSA nedan. */}
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        onClick={() => setFormTarget({ task })}
+                        // ⚠️ `inline` är inte kosmetik. globals.css ger VARJE <button>
+                        // `display:inline-flex; justify-content:center; padding:10px 14px;
+                        // border:1px solid transparent` på elementspecificitet — utan de här
+                        // klasserna centreras titeln, får knappstoppning och bryter inte som
+                        // grannraden. Klasser vinner över elementregeln, men bara de som faktiskt
+                        // skrivs ut. Samma familj som knapp-padding-fällan i FRONTEND_SYSTEM.md.
                         className={cn(
-                          'min-w-0 break-words text-sm no-underline transition hover:underline',
+                          'inline min-w-0 break-words border-0 bg-transparent p-0 text-left text-sm transition hover:underline',
                           closed ? 'text-slate-400 line-through' : 'text-slate-800',
                         )}
                       >
                         {task.title}
-                      </a>
+                      </button>
                     ) : (
                       <span className={cn('min-w-0 break-words text-sm', closed ? 'text-slate-400 line-through' : 'text-slate-800')}>
                         {task.title}
@@ -298,7 +314,20 @@ export default function QuoteTasksCard({
                     ) : null}
                   </div>
 
-                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
+                  {/* Beskrivningen i KLARTEXT, inte bara i redigeringsläget. Den bär oftast själva
+                      poängen med uppgiften ("ring om taket innan vi prisar"), och att behöva öppna
+                      ett formulär för att läsa den gjorde flödet till en innehållsförteckning.
+                      Ingen radbegränsning: texten är det man kom hit för, och panelen skrollar. */}
+                  {task.details ? (
+                    <p className={cn(
+                      'm-0 mt-1 whitespace-pre-wrap break-words text-[13px] leading-5',
+                      closed ? 'text-slate-400' : 'text-slate-600',
+                    )}>
+                      {task.details}
+                    </p>
+                  ) : null}
+
+                  <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-slate-400">
                     {task.due_date ? (
                       <span className={cn(overdue && 'font-semibold text-amber-700')}>
                         {overdue ? '⚠ ' : ''}Förfaller {formatDueDate(task.due_date)}
@@ -322,7 +351,7 @@ export default function QuoteTasksCard({
         <div className="mt-3 border-t border-[#e3e9df] pt-3">
           <button
             type="button"
-            onClick={() => setFormOpen(true)}
+            onClick={() => setFormTarget({ task: null })}
             className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-semibold text-white transition hover:brightness-95"
             // --crm-primary bor på .crm-shell, inte :root. Panelen renderas bara innanför skalet
             // (offertlistan och Säljtavlan), samma som panelens egen "Redigera offert"-knapp.
@@ -339,12 +368,12 @@ export default function QuoteTasksCard({
       {/* Samma formulär som uppgiftssidan, med offerten som LÅST koppling: man står redan på
           offerten, och att kunna peka om uppgiften härifrån vore ett sätt att tappa bort den.
           Modalen ligger inuti offertpanelen i DOM:en och målas därför ovanpå den. */}
-      {formOpen ? (
+      {formTarget ? (
         <TaskFormModal
-          task={null}
+          task={formTarget.task}
           lockedRelation={{ type: 'crm_quote', id: quoteId, label: quoteLabel }}
           canDelegate={canDelegate}
-          onClose={() => setFormOpen(false)}
+          onClose={() => setFormTarget(null)}
           onSaved={applySavedTask}
         />
       ) : null}

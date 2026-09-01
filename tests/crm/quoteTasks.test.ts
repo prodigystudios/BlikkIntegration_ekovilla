@@ -155,6 +155,7 @@ describe('buildFollowUpTaskPayload', () => {
     id: QUOTE_ID,
     project_name: 'Vindsisolering Storgatan 1',
     quote_number: 'OFF-A1B2C3D4',
+    fortnox_offer_number: '10144',
     notes: null,
     description: null,
   };
@@ -164,7 +165,7 @@ describe('buildFollowUpTaskPayload', () => {
 
     expect(payload.related_type).toBe('crm_quote');
     expect(payload.related_id).toBe(QUOTE_ID);
-    expect(payload.related_label).toBe('Vindsisolering Storgatan 1 (#OFF-A1B2C3D4)');
+    expect(payload.related_label).toBe('Vindsisolering Storgatan 1 (#10144)');
     expect(payload.due_date).toBe('2026-09-15');
   });
 
@@ -180,7 +181,7 @@ describe('buildFollowUpTaskPayload', () => {
     if (!parsed.success) return;
     expect(parsed.data.related_type).toBe('crm_quote');
     expect(parsed.data.related_id).toBe(QUOTE_ID);
-    expect(parsed.data.related_label).toBe('Vindsisolering Storgatan 1 (#OFF-A1B2C3D4)');
+    expect(parsed.data.related_label).toBe('Vindsisolering Storgatan 1 (#10144)');
   });
 
   it('mutationstest: den gamla formen passerar schemat men tappar kopplingen', () => {
@@ -208,11 +209,20 @@ describe('buildFollowUpTaskPayload', () => {
 // ---------------------------------------------------------------------------
 
 describe('quoteLabel', () => {
-  it('sätter offertnumret inom parentes', () => {
-    expect(quoteLabel({ project_name: 'Vind', quote_number: 'OFF-1' })).toBe('Vind (#OFF-1)');
+  // 🧨 Fortnox-numret vinner, precis som documentRef gör överallt annars. Etiketten FRYSES på
+  // uppgiften — säger den 'OFF-3AA74887' medan hela appen kallar offerten '#10144' bär uppgiften
+  // ett nummer ingen känner igen, för alltid.
+  it('leder med Fortnox-numret när det finns', () => {
+    expect(quoteLabel({ project_name: 'Vind', quote_number: 'OFF-3AA74887', fortnox_offer_number: '10144' }))
+      .toBe('Vind (#10144)');
   });
 
-  it('klarar sig utan offertnummer', () => {
+  it('faller tillbaka på det interna numret innan offerten synkats', () => {
+    expect(quoteLabel({ project_name: 'Vind', quote_number: 'OFF-3AA74887', fortnox_offer_number: null }))
+      .toBe('Vind (OFF-3AA74887)');
+  });
+
+  it('klarar sig utan nummer alls', () => {
     expect(quoteLabel({ project_name: 'Vind', quote_number: null })).toBe('Vind');
   });
 });
