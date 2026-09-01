@@ -50,6 +50,48 @@ Miljövariabler:
 - NEXT_PUBLIC_APP_URL — **krävs i produktion.** Bygger Fortnox `redirect_uri`, som måste vara tecken-för-tecken identisk med den registrerade adressen och därför inte kan härledas ur requesten. Saknas den kastar `lib/domains/fortnox/auth.ts` i stället för att tyst bygga en localhost-adress.
 - Båda är `NEXT_PUBLIC_*` och **bakas in vid bygget** — en ändring i Vercel kräver ny deploy.
 
+### Lösenordsåterställning: mejlmallen i Supabase ⚠️
+
+Mallen är en **dashboard-inställning** (Authentication → Emails → Reset Password) och kan alltså inte
+committas. Den står här för att den hör ihop med koden i `app/auth/reset-password-confirm/` — ändras
+den ena utan den andra kan ingen byta lösenord.
+
+Länken i mallen **ska** vara:
+
+```
+{{ .SiteURL }}/auth/reset-password-confirm?token_hash={{ .TokenHash }}&type=recovery
+```
+
+**Använd inte `{{ .ConfirmationURL }}`** (Supabases standard). Den skickar via `/auth/v1/verify`, som
+svarar med PKCE-formen `?code=…`. Ett kodutbyte kräver en `code_verifier` som supabase-js lade i en
+cookie **på den origin där återställningen begärdes** — och den finns inte om mejlet öppnas
+
+* på en annan enhet eller i en annan webbläsare (vanligast), eller
+* efter att `redirectTo` hårdkodats till den kanoniska domänen medan gamla
+  `blikk-integration-ekovilla.vercel.app` fortfarande serverar samma deployment.
+
+`token_hash` bär ingen hemlighet i webbläsaren och löses in med `verifyOtp`, alltså fungerar den
+oavsett enhet, webbläsare och domän. `{{ .SiteURL }}` (inte `{{ .RedirectTo }}`) gör dessutom att
+länken pekar rätt även för återställningsmejl som skickas från Supabase-panelen, där `RedirectTo` är
+tom. Lokal utveckling får länkar till produktion — `http://localhost:3000` är medvetet inte
+allow-listad under Authentication → URL Configuration.
+
+⚠️ **Mallen hänger ihop med klienten i `app/auth/reset-password/page.tsx`.** Den sidan skapar en egen
+supabase-klient med `flowType: 'implicit'` i stället för att använda `createClientComponentClient`,
+som hårdkodar `pkce` och inte går att överrida. Skälet är just `{{ .TokenHash }}`: under PKCE skickar
+`resetPasswordForEmail` ett `code_challenge`, och då prefixar GoTrue token med `pkce_` — en sådan
+token kan inte lösas in med `verifyOtp`. Byter någon tillbaka till auth-helpers-klienten där slutar
+alltså mallen ovan att fungera, tyst.
+
+**Deployordning: koden FÖRST, mallen sedan.** Koden hanterar båda formerna — `?token_hash=` och den
+implicita `#access_token=` som `{{ .ConfirmationURL }}` producerar — så mellanläget är ofarligt.
+Tvärtom hade det inte varit: en mall som skickar `token_hash` till gammal kod ger "ogiltig länk" för
+alla. Länkar som redan ligger i inkorgar med den gamla PKCE-formen `?code=` fungerar fortfarande om
+de öppnas i samma webbläsare som begärde dem (verifierarkakan lever kvar länge); öppnas de någon
+annanstans får de ett eget, ärligt felmeddelande i stället för ett generiskt "ogiltig". Rate limit på
+återställningsmejl är **2** (Supabases standard), så en användare som klickar sig fast blir låst i en
+timme.
+
 Felanmälan-uppsättning (efter migrationer): kör `supabase/sql/20260703_notifications.sql` och sedan `supabase/sql/20260703_fault_reports.sql`, och seeda arbetsledarna i `fault_report_recipients` (se seed-blocket i slutet av fault_reports-filen, eller lägg till via admin senare).
 
 Supabase migrering:
