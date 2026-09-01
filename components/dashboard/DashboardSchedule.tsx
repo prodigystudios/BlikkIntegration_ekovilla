@@ -739,10 +739,17 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           )}
                         </div>
                         <div className="grid justify-items-end gap-2">
-                          {/* The time button prefills a Blikk project — a CRM job has none, so it
-                              would open an empty form. CRM rows lead to the work order instead;
-                              their time is reported as internal time in Blikk (see the field view). */}
-                          {onReportTime && !isCrmItem(it) && (
+                          {/* ⚠️ Knappen satt tidigare BARA på äldre rader (`!isCrmItem`), för att
+                              den då förifyllde ett Blikk-projekt som ett CRM-jobb inte har. Sedan
+                              cutovern 2026-09-01 leder den till vår egen /tid, och då är regeln
+                              precis omvänd: /tid väljer arbetsorder ur personens schemalagda
+                              CRM-jobb, alltså är det just CRM-raderna knappen fungerar bäst för.
+                              Den visas på båda sorterna — på en äldre rad finns ingen order att
+                              välja, men dagen stämmer och tiden förs in som intern.
+
+                              `stopPropagation` är bärande: kortets eget klick navigerar till
+                              arbetsordern för en CRM-rad, och utan det hade knappen gjort båda. */}
+                          {onReportTime && (
                             <button
                               type="button"
                               onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}

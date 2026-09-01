@@ -155,7 +155,9 @@ const navIcons: Record<string, JSX.Element> = {
       <rect x="3" y="3" width="18" height="4" rx="1" /><path d="M5 7v12a2 2 0 002 2h10a2 2 0 002-2V7" /><path d="M9 12h6" />
     </svg>
   ),
-  '/tidrapport': (
+  // Klockan följde med från /tidrapport när menyraden pekades om till vår egen tidrapport: samma
+  // rad, samma ikon, ny adress — den som letar efter tiden med ögat ska inte behöva leta om.
+  '/tid': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" />
     </svg>
@@ -200,7 +202,7 @@ const navIcons: Record<string, JSX.Element> = {
       <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
     </svg>
   ),
-  // Sedel, inte klocka: /tidrapport ÄR redan klockan, och på det ihopfällda 68px-spåret är ikonen
+  // Sedel, inte klocka: /tid ÄR redan klockan, och på det ihopfällda 68px-spåret är ikonen
   // det enda som skiljer raderna åt. En kalender med bock var också upptagen (/mina-jobb).
   '/ekonomi': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

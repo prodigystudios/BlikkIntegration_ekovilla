@@ -62,10 +62,22 @@ describe('getVisibleAppNavItems', () => {
     }
   });
 
-  it('keeps the Blikk time report reachable and unrenamed for member and admin', () => {
+  // Cutovern 2026-09-01: raden "Tidrapport" pekar på vår egen /tid, och Blikks /tidrapport har
+  // ingen rad alls. Båda halvorna prövas — en rad som pekar rätt är värdelös om den gamla ligger
+  // kvar bredvid och delar besättningen mellan två system mitt i en löneperiod.
+  it('leder tidrapporten till /tid för member och admin, utan en Blikk-rad kvar', () => {
     for (const role of ['member', 'admin'] as UserRole[]) {
-      const entry = flatten(getVisibleAppNavItems(role)).find((i) => i.href === '/tidrapport');
-      expect(entry?.label).toBe('Tidrapport');
+      const hrefs = flatten(getVisibleAppNavItems(role)).map((i) => i.href);
+      expect(hrefs).toContain('/tid');
+      expect(hrefs).not.toContain('/tidrapport');
+      expect(flatten(getVisibleAppNavItems(role)).find((i) => i.href === '/tid')?.label).toBe('Tidrapport');
+    }
+  });
+
+  // Ingen annan roll fick raden på köpet av bytet.
+  it('ger ingen ny roll tidrapporten genom bytet', () => {
+    for (const role of ['sales', 'ekonomi', null] as Array<UserRole | null>) {
+      expect(flatten(getVisibleAppNavItems(role)).map((i) => i.href)).not.toContain('/tid');
     }
   });
 
@@ -110,9 +122,11 @@ describe('getVisibleAppNavItems', () => {
       expect(flatten(getVisibleAppNavItems('member')).map((i) => i.href)).toContain('/felanmalan');
     });
 
-    // 🚫 Blikk-spärren: hon ska inte rapportera tid alls, och /tidrapport är dessutom Blikk-vägen.
-    it('ser inte Blikks tidrapport', () => {
-      expect(flatten(getVisibleAppNavItems('ekonomi')).map((i) => i.href)).not.toContain('/tidrapport');
+    // 🚫 Hon ska inte rapportera tid alls — varken i vår egen tidrapport eller i Blikks gamla.
+    it('ser ingen tidrapport, ny eller gammal', () => {
+      const hrefs = flatten(getVisibleAppNavItems('ekonomi')).map((i) => i.href);
+      expect(hrefs).not.toContain('/tid');
+      expect(hrefs).not.toContain('/tidrapport');
     });
 
     // Raden är rollgatad, sidan är behörighetsgatad. Admin måste få BÅDA, annars är attesten bara

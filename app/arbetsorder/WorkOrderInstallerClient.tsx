@@ -337,22 +337,34 @@ export default function WorkOrderInstallerClient({
             )}
           </div>
 
-          {/* Where to report time. A CRM-planned job has no Blikk project, so it cannot be picked
-              in /tidrapport the usual way — without this the crew opens the job, finds no time tab
-              and no matching project, and guesses. Says the convention plainly until fas 4 brings
-              time into CRM.
+          {/* Var tiden rapporteras. Besättningen har ingen Tid-flik här (den är öppen bara för
+              attestansvariga), så utan den här rutan öppnar de jobbet, hittar ingen tidyta och
+              gissar.
+
+              Texten sa tidigare "rapportera som INTERNT PROJEKT och skriv ordernumret i
+              kommentaren" — Blikk-omvägen, som fanns för att ett CRM-planerat jobb inte gick att
+              välja där. Den omvägen är borta sedan genvägarna pekar på vår egen tidrapport: /tid
+              listar personens egna schemalagda CRM-jobb för dagen, alltså den här ordern.
 
               Döljs för den som HAR Tid-fliken: två anvisningar som pekar åt olika håll är värre än
-              ingen alls, och den som testar den nya vägen ska inte samtidigt läsa att tiden hör
-              hemma i Blikk. Besättningen ser rutan oförändrad. */}
+              ingen alls. */}
           {!canReportTime ? (
-            <div className="grid gap-1.5 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
+            <div className="grid gap-2 rounded-2xl border border-solid border-amber-200 bg-amber-50 p-3.5">
               <p className={cn(crm.sectionTitle, 'text-amber-700')}>Tidrapportering</p>
-              <p className="text-sm leading-relaxed text-amber-900">
-                Rapportera tiden i <strong className="font-semibold">Tidrapport</strong> som <strong className="font-semibold">internt projekt</strong>, och skriv ordernumret{' '}
-                <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong> i kommentaren.
+              <p className="m-0 text-sm leading-relaxed text-amber-900">
+                Rapportera tiden i <strong className="font-semibold">Tidrapport</strong>. Ordern{' '}
+                <strong className="font-semibold">{documentRef(workOrder.fortnox_order_number, workOrder.order_number)}</strong>{' '}
+                går att välja direkt där, på den dag du är schemalagd på jobbet.
               </p>
-              <p className="text-xs text-amber-700">Tidrapporteringen flyttar hit när Blikk kopplas bort.</p>
+              {/* ⚠️ var(--ek-green) finns inte i den här rutan att luta sig mot — länken ärver
+                  bärnstensfärgen och står kvar som text, understruken. Samma skäl som
+                  egenkontrollänkarna ovan: en <button> med router.push hade tappat mittenklick. */}
+              <Link
+                href="/tid"
+                className="inline-flex min-h-11 w-fit items-center text-sm font-semibold text-amber-900 underline underline-offset-2 transition hover:text-amber-700"
+              >
+                Öppna Tidrapport →
+              </Link>
             </div>
           ) : null}
 

@@ -9,15 +9,15 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
-import { addDays, buildWeekDays, fmtISO, isoWeek, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
+import { addDays, buildWeekDays, fmtISO, isoWeek, parseISO, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
 import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, countMissingReceipts, hasReceipt, isReceiptMissing, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
 import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { uploadReceipt, type UploadedReceipt } from './uploadReceipt';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
 
-// Tidrapporten, CRM-versionen. Ligger på /tid bredvid gamla /tidrapport (som fortsätter mot Blikk)
-// tills cutovern i fas 4.6 — två levande vägar, precis som "Planering" och "Planering (äldre)".
+// Tidrapporten, CRM-versionen. Sedan 2026-09-01 är det HIT menyn och startsidans genvägar pekar —
+// Blikks /tidrapport lever kvar som rutt men länkas inte längre från något håll.
 //
 // ⚠️ VECKAN ÄR REMSAN, DAGEN ÄR SIDAN (omdesign 2026-08-14).
 //
@@ -151,11 +151,21 @@ const STATUS_TONE: Record<TimePeriodStatus, string> = {
   approved: 'border-emerald-200 bg-emerald-50 text-emerald-800',
 };
 
-export default function TidClient() {
-  const [weekOffset, setWeekOffset] = React.useState(0);
-  const monday = React.useMemo(() => addDays(startOfWeek(stockholmToday()), weekOffset * 7), [weekOffset]);
-  const weekDays = React.useMemo(() => buildWeekDays(monday), [monday]);
+export default function TidClient({ initialDate = null }: { initialDate?: string | null }) {
   const todayIso = React.useMemo(() => fmtISO(stockholmToday()), []);
+
+  // ⚠️ VECKAN ANKRAS I ETT DATUM, inte i ett antal veckor från idag.
+  //
+  // Det var en `weekOffset`-räknare så länge sidan alltid öppnade på dagens vecka. Med `?datum=` i
+  // adressen (genvägarna från startsidan och Mina jobb) hade offseten först måst räknas fram ur
+  // avståndet mellan två måndagar — och just den divisionen är där sommartiden biter: en svensk
+  // vecka är 167 eller 169 timmar två gånger om året, så en rå ms-division ger 0,994 respektive
+  // 1,006 veckor. Ett ankardatum har ingen sådan uträkning alls: `addDays` flyttar sju
+  // KALENDERdagar och `startOfWeek` hittar måndagen, båda i lokal tid.
+  const [anchorIso, setAnchorIso] = React.useState(initialDate ?? todayIso);
+  const monday = React.useMemo(() => startOfWeek(parseISO(anchorIso)), [anchorIso]);
+  const weekDays = React.useMemo(() => buildWeekDays(monday), [monday]);
+  const thisMondayIso = React.useMemo(() => fmtISO(startOfWeek(stockholmToday())), []);
 
   // Månaden som veckans måndag ligger i — det är den perioden lönen räknar på.
   const monthAnchor = React.useMemo(() => ({ year: monday.getFullYear(), month: monday.getMonth() }), [monday]);
@@ -196,7 +206,8 @@ export default function TidClient() {
   const [modalDate, setModalDate] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
-  const [pickedIso, setPickedIso] = React.useState(todayIso);
+  // Vald dag: den som stod i adressen om sidan öppnades från en genväg, annars idag.
+  const [pickedIso, setPickedIso] = React.useState(initialDate ?? todayIso);
 
   const loading = loadedKey !== `${fetchRange.from}:${fetchRange.to}`;
 
@@ -348,7 +359,7 @@ export default function TidClient() {
   }
 
   function goToWeek(delta: number) {
-    setWeekOffset((value) => value + delta);
+    setAnchorIso((iso) => fmtISO(addDays(parseISO(iso), delta * 7)));
   }
 
   const selectedEntries = byDate.get(selectedIso) ?? [];
@@ -391,10 +402,10 @@ export default function TidClient() {
           ))}
         </div>
 
-        {weekOffset !== 0 ? (
+        {fmtISO(monday) !== thisMondayIso ? (
           <button
             type="button"
-            onClick={() => setWeekOffset(0)}
+            onClick={() => setAnchorIso(todayIso)}
             className="py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
           >
             Gå till denna vecka

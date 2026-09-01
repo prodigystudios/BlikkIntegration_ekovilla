@@ -25,7 +25,8 @@ export const NAV_LINKS: RoleAwareLink[] = [
   { href: '/crm/planering', label: 'Planering', roles: ['sales','admin'] },
   { href: '/plannering', label: 'Planering (äldre)', roles: ['sales','admin'] },
   { href: '/mina-jobb', label: 'Mina jobb', roles: ['member','admin'] },
-  { href: '/tidrapport', label: 'Tidrapport', roles: ['member','admin'] },
+  // Vår egen tidrapport sedan cutovern 2026-09-01 — Blikks /tidrapport länkas inte längre.
+  { href: '/tid', label: 'Tidrapport', roles: ['member','admin'] },
   // Future admin-only examples:
   // { href: '/admin/users', label: 'Användare', roles: ['admin'] },
 ];

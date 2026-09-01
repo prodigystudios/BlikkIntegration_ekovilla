@@ -1,16 +1,15 @@
 "use client";
 import React, { useMemo, useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { QuickLinksGrid, QuickLink } from './QuickLinks';
 import DashboardNotes from './DashboardNotes';
 const DashboardSchedule = dynamic(() => import('./DashboardSchedule'));
 import DashboardTasks from './DashboardTasks';
 import DashboardDocumentApprovals from './DashboardDocumentApprovals';
-import TimeReportModal from './TimeReportModal';
-import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { buildTimeReportBody } from '@/lib/domains/time-reports/payload';
 import { toEffectiveRole, type UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 import PushReactivationNotice from '@/components/notifications/PushReactivationNotice';
@@ -105,7 +104,9 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <line x1="8" y1="14" x2="12" y2="14"/>
     </svg>
   ) },
-  '/tidrapport': { desc: 'Veckovy & rapportera tid', icon: (
+  // Vår egen tidrapport sedan cutovern 2026-09-01. Ikonen och beskrivningen följde med från
+  // Blikk-kortet med flit: samma plats i rutnätet, samma utseende, ny adress.
+  '/tid': { desc: 'Veckovy & rapportera tid', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
       <rect x="3" y="3" width="18" height="18" rx="2.5" />
       <path d="M8 3v4M16 3v4" strokeLinecap="round" />
@@ -151,6 +152,7 @@ const STOCKHOLM_HEADER_PARTS = new Intl.DateTimeFormat('sv-SE', {
 
 export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
+  const router = useRouter();
 
   // konsult should have the same viewing permissions as sales.
   const effectiveRole: UserRole | null = toEffectiveRole(role);
@@ -213,7 +215,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/egenkontroll', title: 'Skapa egenkontroll', ...baseExtra['/egenkontroll'] },
         { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
         { href: '/bestallning-klader', title: 'Beställ kläder & annat', ...baseExtra['/bestallning-klader'] },
-        { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
+        { href: '/tid', title: 'Tidrapport', ...baseExtra['/tid'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/dokument-information', title: 'Dokument & information', ...baseExtra['/dokument-information'] },
@@ -239,7 +241,7 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/archive', title: 'Egenkontroll arkiv', ...baseExtra['/archive'] },
         { href: '/crm/korjournal', title: 'Körjournal', ...baseExtra['/crm/korjournal'] },
         { href: '/plannering', title: 'Planering', ...baseExtra['/planering'] },
-        { href: '/tidrapport', title: 'Tidrapport', ...baseExtra['/tidrapport'] },
+        { href: '/tid', title: 'Tidrapport', ...baseExtra['/tid'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
@@ -253,13 +255,10 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     ];
   }, [effectiveRole, role]);
 
-  const [timeModalOpen, setTimeModalOpen] = useState(false);
-  const [timePrefill, setTimePrefill] = useState<{ project?: string; projectId?: string; date?: string } | null>(null);
   // Hide the approvals / tasks cards entirely when there's nothing to show (the widgets
   // report visibility = loading || error || has-items). Start true so they mount and report.
   const [approvalsVisible, setApprovalsVisible] = useState(true);
   const [tasksVisible, setTasksVisible] = useState(true);
-  const toast = useToast();
 
   const todayMeta = useMemo(() => {
     const parts = STOCKHOLM_HEADER_PARTS.formatToParts(new Date());
@@ -279,14 +278,19 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   // behörighet till eller ska använda.
   const isPayrollOnly = effectiveRole === 'ekonomi';
 
+  // "Rapportera tid" på ett jobb i schemat öppnade förut Blikk-modalen med projektet ifyllt. Sedan
+  // cutovern leder den till vår egen tidrapport, med JOBBETS DAG i adressen — den som trycker på
+  // gårdagens jobb ska inte landa på idag och föra in passet på fel dygn.
+  //
+  // ⚠️ Projektet följer INTE med. /tid väljer arbetsorder ur personens egna schemalagda CRM-jobb
+  // för dagen (get_my_crm_jobs), inte ur en fritextetikett — ett Blikk-projektnamn hade inte kunnat
+  // matchas mot något där. Dagen är det som faktiskt går att bära över, och den bär den.
   const scheduleSection = effectiveRole !== 'sales' && !isPayrollOnly ? (
     <section className={cardClass}>
       <DashboardSchedule
         compact={isSmall}
         onReportTime={(info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => {
-          const label = info.orderNumber ? `#${info.orderNumber}` : (info.projectName || info.projectId || '');
-          setTimePrefill({ project: label, projectId: info.projectId, date: info.day });
-          setTimeModalOpen(true);
+          router.push(info.day ? `/tid?datum=${encodeURIComponent(info.day)}` : '/tid');
         }}
       />
     </section>
@@ -306,16 +310,19 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
             <h1 className={cn('m-0', crm.pageTitle)}>Startsida</h1>
             <p className={cn('m-0 mt-1', crm.pageSubtitle)}>{todayMeta.greeting} · {todayMeta.date}</p>
           </div>
+          {/* ⚠️ LÄNK, INTE KNAPP. Den öppnade förut Blikk-modalen på plats; sedan cutovern navigerar
+              den till vår egen tidrapport, och då ska den bete sig som en länk: mittenklick, "öppna
+              i ny flik" och skärmläsarens länkroll. Samma resonemang som egenkontrollknapparna på
+              arbetsordern. */}
           {isPayrollOnly ? null : (
-            <button
-              type="button"
-              onClick={() => { setTimePrefill(null); setTimeModalOpen(true); }}
-              className={crm.primaryButton}
+            <Link
+              href="/tid"
+              className={cn(crm.primaryButton, 'no-underline')}
               style={{ backgroundColor: 'var(--crm-primary)' }}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none" aria-hidden><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round" /></svg>
               Rapportera tid
-            </button>
+            </Link>
           )}
         </div>
 
@@ -355,28 +362,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         </section>
       </div>
 
-      <TimeReportModal
-        open={timeModalOpen}
-        onClose={() => setTimeModalOpen(false)}
-        initialProject={timePrefill?.project || null}
-        initialProjectId={timePrefill?.projectId || null}
-        initialDate={timePrefill?.date || null}
-        onSubmit={async (payload) => {
-          try {
-            const body = buildTimeReportBody(payload as any);
-            const url = process.env.NODE_ENV !== 'production' ? '/api/blikk/time-reports?debug=1' : '/api/blikk/time-reports';
-            const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-            const json = await res.json().catch(() => ({}));
-            if (!res.ok || !json.ok) {
-              toast.error(json?.error || 'Misslyckades att spara tid');
-            } else {
-              toast.success('Tidrapport sparad');
-            }
-          } catch {
-            try { toast.error('Fel vid sparande av tid'); } catch { /* ignore */ }
-          }
-        }}
-      />
     </>
   );
 }

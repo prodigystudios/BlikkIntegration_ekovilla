@@ -58,19 +58,17 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
       { href: '/archive', label: 'Sparade egenkontroller', roles: ['member', 'sales', 'admin'] },
     ],
   },
-  // ⚠️ TIDRAPPORTEN PEKAR PÅ BLIKK OCH SKA FORTSÄTTA GÖRA DET.
-  // Blikk är lönens system of record tills något annat uttryckligen beslutats. Den som av vana
-  // klickar "Tidrapport" ska landa där hen alltid landat — att flytta folk därifrån ger samma
-  // resultat som att stänga vägen: timmar som aldrig når lönekörningen. Byt inte namn, ta inte bort,
-  // peka inte om. Den ligger kvar platt av samma skäl: en grupp är ett extra steg.
-  { href: '/tidrapport', label: 'Tidrapport', roles: ['member', 'admin'] },
-
-  // Den nya CRM-tidrapporten (/tid) ligger MEDVETET INTE i menyn under piloten. Rutten fungerar och
-  // nås genom att skriva adressen — det räcker för att testa, och en halvtestad väg i menyn är en
-  // inbjudan att rapportera fel av misstag. Lägg tillbaka den här först när piloten är avstämd mot
-  // Blikk och cutovern är beslutad:
-  //   { href: '/tid', label: 'Tidrapport', roles: ['member', 'sales', 'admin'] },
-  // (och flytta då den gamla till "Tidrapport (Blikk)" eller ta bort den, på uttrycklig instruktion).
+  // ⚠️ TIDRAPPORTEN PEKAR PÅ VÅR EGEN /tid — bytet gjordes 2026-09-01 på Williams uttryckliga
+  // instruktion, och det är den enda sortens beslut som får flytta den här raden.
+  //
+  // Blikks /tidrapport ligger kvar OFÖRÄNDRAD som rutt (bokmärken och gamla länkar fungerar), men
+  // den har ingen rad här längre. Det är hela poängen: menyn är det som styr var folk rapporterar,
+  // och två rader med samma namn hade delat besättningen mellan två system mitt i en löneperiod.
+  // Lägg inte tillbaka en "Tidrapport (Blikk)"-rad utan att fråga.
+  //
+  // Rollerna är MEDVETET oförändrade. Bytet gällde adressen, inte vem som ser raden — sälj och
+  // kontor når /tid via adressen precis som förut. Den ligger kvar platt: en grupp är ett extra steg.
+  { href: '/tid', label: 'Tidrapport', roles: ['member', 'admin'] },
 
   // Shared — the long tail, grouped.
   {
