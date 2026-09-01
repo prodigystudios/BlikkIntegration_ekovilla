@@ -5,10 +5,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // Lönebyrån bad om "traktamenten, utlägg, milersättning med belopp och datum" (2026-08-11). De har
 // egna datum och hör inte till ett visst arbetspass: ett utlägg kan finnas en dag man inte jobbat.
 //
-// `quantity` (mil eller dagar) och `amount` (kronor) lagras BÅDA. Vem som fyller i beloppet är en
-// fråga om formuläret; i dag skriver den anställde det själv och ingen sats finns i koden. Skulle
-// systemet en dag räkna ut milersättningen ur en sats ska beloppet ändå lagras — annars ändras
-// gamla månaders underlag retroaktivt när satsen justeras.
+// `quantity` (mil eller dagar) och `amount` (kronor) lagras BÅDA, men de fylls inte i av samma sort
+// — se carriesAmount nedan. Skulle systemet en dag räkna ut milersättningen ur en sats ska beloppet
+// ändå LAGRAS på raden och inte räknas fram vid visning: annars ändras gamla månaders underlag
+// retroaktivt när satsen justeras.
 //
 // KVITTO OCH MOMS (2026-08-22) hör till UTLÄGG och bara dit. Kvittot är kolumner på posten och inte
 // en sidotabell — skälet står i supabase/sql/20260822_time_compensation_receipts.sql, kort: bara så
@@ -31,6 +31,47 @@ export const COMPENSATION_UNITS: Record<CompensationKind, string | null> = {
   per_diem: 'dagar',
   expense: null,
 };
+
+/**
+ * Bär sorten ett BELOPP som den anställde skriver in?
+ *
+ * **Bara utlägg.** Traktamente och milersättning ersätts med FASTA SATSER som lönebyrån äger
+ * (Williams besked 2026-09-01: *"dom summorna är fasta summor som dom får ersättning av"*).
+ * Beloppsfältet på dem var en ruta man skulle gissa i, och gissningen gick rakt in i löneunderlaget.
+ * Det som rapporteras på dem är ANTALET — mil respektive dagar — och satsen tillämpas i lönekörningen.
+ *
+ * ⚠️ Regeln är härledd HÄR och ingen annanstans. Formuläret, POST, PATCH, /tid och attesten måste
+ * svara likadant; en ruta som går att fylla i på ett ställe och ignoreras på ett annat är precis det
+ * missförstånd ändringen finns för att ta bort.
+ *
+ * ⚠️ Det här handlar om vad som får SKRIVAS, inte om vad som får visas. Rader som skapades före
+ * 2026-09-01 kan bära ett belopp på traktamente och milersättning, och de ska fortsätta visa det —
+ * de är riktigt löneunderlag från den tid då fältet fanns. Visningen frågar därför alltid
+ * `amount > 0`, aldrig `carriesAmount`.
+ */
+export function carriesAmount(kind: CompensationKind): boolean {
+  return kind === 'expense';
+}
+
+const QUANTITY_FORMAT = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 });
+
+/**
+ * Ett antal mil eller dagar i svensk form: "12,5", "3", "11,2".
+ *
+ * ⚠️ ANTALET FÅR INTE INTERPOLERAS RÅTT. Två skäl, och båda har bitit:
+ *
+ * 1. Det SUMMERAS i flyttal (summarizeCompensations), så 8,3 + 2,9 blir 11.200000000000001 — och
+ *    det skrevs ut i klartext i /tid:s chip. Kolumnen är numeric(8,1) och kan aldrig bära mer än en
+ *    decimal, så precisionen är påhittad.
+ * 2. PostgREST returnerar numeric som STRÄNG, alltså måste Number() till före formateringen.
+ *
+ * Egen formatterare och inte kronornas: `formatAmount` tvingar två decimaler, vilket gör "3 dagar"
+ * till "3,00 dagar" och påstår en precision fältet inte har. Delad mellan /tid och attesten så att
+ * den anställde och lönebyrån bevisligen läser samma siffra.
+ */
+export function formatQuantity(value: number | string | null | undefined): string {
+  return QUANTITY_FORMAT.format(Number(value ?? 0));
+}
 
 // ⚠️ INGEN `receipt_bucket`/`receipt_path` HÄR. Lagringens koordinater är serverns ensak: klienten
 // har ingen användning för dem (kvittot öppnas via /api/time/compensations/<id>/receipt, som gatar

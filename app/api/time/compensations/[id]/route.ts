@@ -55,22 +55,29 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     const changesKind = sentKeys.includes('kind');
     const leavingExpense = changesKind && (patch as { kind?: string }).kind !== 'expense';
-    const touchesExpenseOnly = sentKeys.includes('vat_amount') || sentKeys.includes('receipt');
+    // ⚠️ `amount` KOM MED HIT 2026-09-01, när beloppsfältet blev utläggets ensak (carriesAmount).
+    // Innan dess var beloppet gemensamt för alla sorter och en ren beloppsrättelse behövde ingen
+    // radläsning. Nu är det samma sorts fält som momsen, och lämnas det utanför räcker ett
+    // handskrivet `PATCH {"amount": 500}` för att sätta ett belopp på en milersättning som lönen
+    // redan ersätter med fast sats — dubbel ersättning, och inget i databasen som hindrar det.
+    const touchesExpenseOnly =
+      sentKeys.includes('vat_amount') || sentKeys.includes('amount') || sentKeys.includes('receipt');
 
     /**
      * ⚠️ RADEN LÄSES FÖRE SKRIVNINGEN, av två skäl som båda kräver det.
      *
-     * 1. SORTEN. Moms och kvitto hör till utlägg och bara dit. POST kan avgöra det ur kroppen, men en
-     *    PATCH som bara skickar `{"vat_amount": 50}` säger ingenting om vilken sorts post den träffar
-     *    — utan den här läsningen hamnar momsen på en milersättning, renderas som "varav moms" i
-     *    attesten och summeras in i den sortens momstotal. Databasen har inget villkor som hindrar
-     *    det; regeln bor i routen och måste därför också kontrolleras här.
+     * 1. SORTEN. Belopp, moms och kvitto hör till utlägg och bara dit. POST kan avgöra det ur
+     *    kroppen, men en PATCH som bara skickar `{"vat_amount": 50}` säger ingenting om vilken sorts
+     *    post den träffar — utan den här läsningen hamnar momsen på en milersättning, renderas som
+     *    "varav moms" i attesten och summeras in i den sortens momstotal. Databasen har inget
+     *    villkor som hindrar det; regeln bor i routen och måste därför också kontrolleras här.
      * 2. DET GAMLA KVITTOT. Efter skrivningen är sökvägen borta ur raden och bilden vore omöjlig att
      *    hitta igen — den hade blivit liggande i bucketen för alltid, med kvittots personuppgifter,
      *    utan att någon rad pekar på den.
      *
-     * Läses BARA när något av det spelar roll: en vanlig beloppsrättelse ska inte kosta en extra
-     * rundtur till databasen.
+     * Läses BARA när något av det spelar roll — en patch som bara flyttar datum eller anteckning
+     * ska inte kosta en extra rundtur till databasen. Beloppet låg i den billiga kategorin fram
+     * till 2026-09-01; se noten vid touchesExpenseOnly för varför det inte längre går.
      */
     let oldReceipt: CompensationReceiptRef | null = null;
     let currentKind: string | null = null;
@@ -85,13 +92,20 @@ export async function PATCH(req: Request, context: RouteContext) {
     const nextKind = changesKind ? ((patch as { kind?: string }).kind ?? null) : currentKind;
     const notExpense = nextKind !== null && nextKind !== 'expense';
 
-    // Skickas moms ändå nollas den, precis som quantity på ett utlägg. Tyst och inte som ett fel:
-    // samma val som POST gör, och en avvikelse hade betytt två regler för samma sak.
+    // Skickas moms eller belopp ändå nollas de, precis som quantity på ett utlägg. Tyst och inte som
+    // ett fel: samma val som POST gör, och en avvikelse hade betytt två regler för samma sak.
+    //
+    // Beloppet nollas till 0 och inte till null — kolumnen är `not null` i databasen.
     if (notExpense && sentKeys.includes('vat_amount')) (patch as Record<string, unknown>).vat_amount = null;
+    if (notExpense && sentKeys.includes('amount')) (patch as Record<string, unknown>).amount = 0;
 
-    // Byter posten sort BORT från utlägg faller moms OCH kvitto med den.
+    // Byter posten sort BORT från utlägg faller belopp, moms OCH kvitto med den.
     if (leavingExpense) {
       (patch as Record<string, unknown>).vat_amount = null;
+      // ⚠️ Måste falla SAMTIDIGT med momsen. Villkoret crm_time_compensations_vat_amount_chk kräver
+      // moms <= belopp, så ett kvarlämnat belopp med nollad moms är förvisso lagligt — men raden
+      // hade blivit en milersättning som bär utläggets kronor och ersätts två gånger.
+      (patch as Record<string, unknown>).amount = 0;
       // EMPTY_RECEIPT och inte sex handskrivna nollor: alla kolumner måste falla samtidigt, annars
       // blir raden kvar med ett receipt_name utan objekt bakom — en post som ser styrkt ut och vars
       // "Visa kvitto" ger 404.
@@ -144,6 +158,50 @@ export async function PATCH(req: Request, context: RouteContext) {
     // vägen in men är ingenting på vägen ut, och en `.update({})` mot PostgREST är inte något att
     // skicka. Kontrollen här fångar båda fallen med samma rad.
     if (Object.keys(patch).length === 0) return routeError(400, 'time_compensation_empty_patch', 'Inget att uppdatera');
+
+    /**
+     * Samma två krav som POST ställer: en post måste BÄRA något — utlägget sitt belopp, de fasta
+     * sorterna sitt antal. Här gäller det bara de fält patchen faktiskt skickade, så en post inte
+     * kan patchas tom på det som är hela dess innehåll.
+     *
+     * ⚠️ Prövas BARA när sorten är känd, alltså när raden lästs (se touchesExpenseOnly). En patch
+     * som bara skickar `{"quantity": 0}` rör inget sortberoende fält, raden läses inte, och då vet vi
+     * inte om nollan landar på en milersättning eller ett utlägg — den släpps igenom. Vägen finns
+     * inte i något gränssnitt, och att läsa raden för varje kvantitetsändring vore en rundtur för
+     * ett fall ingen kan nå av misstag. Databasen håller ändå `quantity >= 0`.
+     *
+     * ⚠️ STÄDAR KVITTOT SJÄLV. PATCH har inget `finally` som POST — varje felgren ansvarar för det
+     * objekt den lämnar bakom sig, och `orphanedOnFailure` säger vilket som får röras.
+     */
+    const sentAmount = sentKeys.includes('amount') ? Number((patch as { amount?: unknown }).amount) : null;
+    const sentQuantity = sentKeys.includes('quantity') ? Number((patch as { quantity?: unknown }).quantity) : null;
+
+    /**
+     * ⚠️ ETT SORTBYTE MÅSTE TA MED SIG DEN NYA SORTENS BÄRANDE FÄLT.
+     *
+     * Ett skickat värde prövas alltid, men bytet ställer ett krav till: att fältet över huvud taget
+     * kommer med. Utan det landar posten tom, och båda vägarna dit är korta —
+     * `PATCH {"kind":"travel"}` på ett utlägg nollar beloppet (leavingExpense) och ärver
+     * kvantiteten `null` som utlägg alltid har, och `PATCH {"kind":"expense"}` på en milersättning
+     * nollar kvantiteten och ärver beloppet 0. Båda ger en rad POST hade avvisat.
+     *
+     * Kravet kostar ingen extra läsning: sorten posten HAMNAR på står i kroppen vid ett byte.
+     */
+    const wantsAmount = nextKind === 'expense';
+    const amountMissing = wantsAmount && (sentAmount === null ? changesKind : !(sentAmount > 0));
+    const quantityMissing = notExpense && (sentQuantity === null ? changesKind : !(sentQuantity > 0));
+    const bearingError = amountMissing
+      ? { code: 'time_compensation_amount_required', message: 'Ange ett belopp i kronor för utlägget.' }
+      : quantityMissing
+        ? {
+            code: 'time_compensation_quantity_required',
+            message: nextKind === 'travel' ? 'Ange antal mil.' : 'Ange antal dagar.',
+          }
+        : null;
+    if (bearingError) {
+      if (orphanedOnFailure) await removeReceiptObject(getSupabaseAdmin(), bucket, uploadedPath!);
+      return routeError(400, bearingError.code, bearingError.message);
+    }
 
     const { data, error } = await updateCompensation(supabase, context.params.id, gate.currentUser.id, patch);
     if (error) {

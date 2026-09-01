@@ -153,9 +153,13 @@ export const createCompensationSchema = z.object({
   kind: z.enum(['travel', 'per_diem', 'expense']),
   // Mil eller dagar. Utlägg har ingen kvantitet — där är beloppet hela sanningen.
   quantity: z.coerce.number().min(0).nullable().optional(),
-  // Beloppet lagras alltid, även om systemet en dag räknar ut det ur en sats: räknas det vid
-  // visning ändras gamla månaders underlag retroaktivt när satsen justeras.
-  amount: z.coerce.number().min(0, 'Beloppet kan inte vara negativt'),
+  // Beloppet hör till UTLÄGGET och bara dit — se carriesAmount i lib/domains/time/compensations.ts.
+  //
+  // VALFRITT I SCHEMAT, obligatoriskt i routen. Zod ser bara ett fält i taget och kan inte säga
+  // "krävs när kind är expense" utan en superRefine som skulle behöva upprepas i den partiella
+  // PATCH-varianten nedan. Routen äger regeln i stället: den kräver ett belopp > 0 på utlägg och
+  // nollar det på övriga sorter, precis som den redan gör med quantity och vat_amount.
+  amount: z.coerce.number().min(0, 'Beloppet kan inte vara negativt').optional(),
   // Momsen i kronor. NULLBAR OCH INTE DEFAULT 0 — "moms ej ifylld" och "moms är noll kronor" är
   // olika påståenden för den som bokför, och en default hade gjort varje utlägg till ett momsfritt
   // sådant utan att någon sagt det. Taket (moms <= belopp) sitter i databasen, som är den enda som

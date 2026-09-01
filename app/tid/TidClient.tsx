@@ -10,7 +10,7 @@ import { cn } from '@/lib/shared/cn';
 import { minutesToHours } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, parseISO, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
-import { COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, countMissingReceipts, hasReceipt, isReceiptMissing, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
+import { carriesAmount, formatQuantity, COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, countMissingReceipts, hasReceipt, isReceiptMissing, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
 import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprovalRow, type TimePeriodStatus } from '@/lib/domains/time/approvals';
 import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { uploadReceipt, type UploadedReceipt } from './uploadReceipt';
@@ -820,19 +820,36 @@ function CompensationSection({
 
   const unit = COMPENSATION_UNITS[kind];
   const isExpense = kind === 'expense';
+  // Beloppsfältet finns BARA på utlägg. Traktamente och milersättning ersätts med fasta satser som
+  // lönebyrån äger — en ruta att skriva kronor i på dem var en ruta man skulle gissa i, och
+  // gissningen gick rakt in i löneunderlaget. Se carriesAmount.
+  const showsAmount = carriesAmount(kind);
   // parseDecimal (lib/shared/number.ts) tål både "1 250" och "1250,50". Number(x.replace(',','.'))
   // ger NaN på tusentalsmellanslag, och med `|| 0` hade det tyst sparats som 0 kr.
   const parsedAmount = parseDecimal(amount, NaN);
-  const amountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const amountValid = !showsAmount || (Number.isFinite(parsedAmount) && parsedAmount > 0);
+  // ⚠️ ANTALET ÄR NU DET ENDA POSTEN BÄR på de fasta sorterna, alltså måste det krävas. Förut var
+  // det frivilligt eftersom beloppet stod bredvid; en milersättning utan antal hade nu blivit en rad
+  // som säger "en milersättning, någon gång" — omöjlig att ersätta och omöjlig att ifrågasätta.
+  const parsedQuantity = parseDecimal(quantity, NaN);
+  const quantityValid = !unit || (Number.isFinite(parsedQuantity) && parsedQuantity > 0);
 
   // Momsen är FRIVILLIG, och tom betyder "inte ifylld" — inte noll. Därför NaN som fallback och en
   // egen giltighetsflagga: `parseDecimal(vat, 0)` hade gjort varje tomt fält till ett påstående om
   // att utlägget är momsfritt, och det påståendet går rakt in i bokföringen.
   const parsedVat = vat.trim() === '' ? null : parseDecimal(vat, NaN);
-  const vatValid = parsedVat === null || (Number.isFinite(parsedVat) && parsedVat >= 0);
+  // ⚠️ BÅDA MOMSFLAGGORNA ÄR SORTBUNDNA, precis som fälten de vaktar.
+  //
+  // Momsrutan har alltid varit utläggets, och sedan beloppsrutan blev det också kan ingen av dem
+  // synas på en milersättning. Utan `isExpense` här överlevde ett gammalt formulärvärde sortbytet:
+  // skriv Belopp 100 och Moms 500 på ett utlägg, byt till Milersättning, och `vatOverAmount` blev
+  // kvar sant — "Lägg till" satt låst utan att ett enda av de två fälten fanns på skärmen att rätta
+  // i. Servern nollar ändå momsen på fel sort, så det fanns heller inget att skydda.
+  const vatValid = !isExpense || parsedVat === null || (Number.isFinite(parsedVat) && parsedVat >= 0);
   // Samma tak som databasen håller (crm_time_compensations_vat_amount_chk). Fångas här för att
   // felet ska synas medan man skriver, inte efter en rundtur till servern.
-  const vatOverAmount = parsedVat !== null && Number.isFinite(parsedVat) && amountValid && parsedVat > parsedAmount;
+  const vatOverAmount =
+    isExpense && parsedVat !== null && Number.isFinite(parsedVat) && amountValid && parsedVat > parsedAmount;
 
   const grandTotal = totals.reduce((sum, total) => sum + total.amount, 0);
   const missingReceipts = React.useMemo(() => countMissingReceipts(items), [items]);
@@ -870,6 +887,7 @@ function CompensationSection({
   }
 
   async function add() {
+    if (!quantityValid) { onError(`Ange ${kind === 'travel' ? 'antal mil' : 'antal dagar'}`); return; }
     if (!amountValid) { onError('Ange ett belopp i kronor'); return; }
     if (!vatValid) { onError('Momsen måste vara ett belopp i kronor'); return; }
     if (vatOverAmount) { onError('Momsen kan inte vara högre än beloppet'); return; }
@@ -881,8 +899,10 @@ function CompensationSection({
         body: JSON.stringify({
           entry_date: date,
           kind,
-          quantity: unit ? (parseDecimal(quantity, NaN) || null) : null,
-          amount: parsedAmount,
+          quantity: unit ? parsedQuantity : null,
+          // Skickas bara på utlägg. Servern nollar det för övriga sorter ändå — att inte skicka det
+          // gör avsikten läsbar i nätverksfliken, precis som med momsen nedan.
+          amount: showsAmount ? parsedAmount : undefined,
           // Momsen följer bara med på utlägg — servern nollar den för övriga sorter ändå, och att
           // inte skicka den gör avsikten läsbar i nätverksfliken.
           vat_amount: isExpense ? parsedVat : null,
@@ -946,9 +966,11 @@ function CompensationSection({
         <span className="grid gap-0.5">
           <span className="text-sm font-bold text-slate-900">Utlägg och ersättning</span>
           <span className="text-xs text-slate-500">
+            {/* Kronorna hängs bara på när det finns några: en månad med bara mil och traktamenten
+                summerar till noll kronor, och "3 poster · 0,00 kr" hade sett ut som ett fel. */}
             {items.length === 0
               ? `Inget inlagt i ${monthLabel.toLowerCase()}`
-              : `${items.length} ${items.length === 1 ? 'post' : 'poster'} · ${formatAmount(grandTotal)} kr`}
+              : `${items.length} ${items.length === 1 ? 'post' : 'poster'}${grandTotal > 0 ? ` · ${formatAmount(grandTotal)} kr` : ''}`}
           </span>
           {/* Saknade kvitton står i RUBRIKEN, inte bara nere i listan. Sektionen är hopfälld som
               standard just för att den är en månadssyssla — en flagga som bara syns utfälld hade
@@ -967,13 +989,24 @@ function CompensationSection({
         <>
           {totals.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {totals.map((total) => (
-                <Badge key={total.kind}>
-                  {COMPENSATION_LABELS[total.kind]} {formatAmount(total.amount)} kr
-                  {COMPENSATION_UNITS[total.kind] ? ` · ${total.quantity} ${COMPENSATION_UNITS[total.kind]}` : ''}
-                  {total.vat > 0 ? ` · varav moms ${formatAmount(total.vat)} kr` : ''}
-                </Badge>
-              ))}
+              {/* ⚠️ KRONOR VISAS BARA NÄR DET FINNS NÅGRA. En milersättning bär inget belopp längre
+                  (fast sats), så den gamla formen hade skrivit "Milersättning 0,00 kr · 12 mil" —
+                  vilket läser som att resan inte ersätts. Antalet är sanningen på de sorterna, och
+                  det står först. Äldre rader som faktiskt bär ett belopp visar det fortfarande. */}
+              {totals.map((total) => {
+                const totalUnit = COMPENSATION_UNITS[total.kind];
+                const parts = [
+                  totalUnit ? `${formatQuantity(total.quantity)} ${totalUnit}` : null,
+                  total.amount > 0 ? `${formatAmount(total.amount)} kr` : null,
+                  total.vat > 0 ? `varav moms ${formatAmount(total.vat)} kr` : null,
+                ].filter(Boolean);
+                return (
+                  <Badge key={total.kind}>
+                    {COMPENSATION_LABELS[total.kind]}
+                    {parts.length > 0 ? ` ${parts.join(' · ')}` : ''}
+                  </Badge>
+                );
+              })}
             </div>
           ) : null}
 
@@ -1019,12 +1052,18 @@ function CompensationSection({
                   <label className="grid gap-1">
                     <span className={LABEL}>Antal ({unit})</span>
                     <Input inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+                    {/* Sagt RUNT fältet, inte bara underförstått av att beloppsrutan saknas: den som
+                        är van vid att fylla i kronor ska förstå VARFÖR den är borta, inte undra om
+                        den glömts bort och skriva summan i anteckningen i stället. */}
+                    <span className="text-[11px] text-slate-500">Ersätts med fast sats — fyll bara i antalet.</span>
                   </label>
                 ) : null}
-                <label className="grid gap-1">
-                  <span className={LABEL}>Belopp (kr)</span>
-                  <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-                </label>
+                {showsAmount ? (
+                  <label className="grid gap-1">
+                    <span className={LABEL}>Belopp (kr)</span>
+                    <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+                  </label>
+                ) : null}
                 {isExpense ? (
                   <label className="grid gap-1">
                     <span className={LABEL}>Moms (kr)</span>
@@ -1079,7 +1118,7 @@ function CompensationSection({
               <button
                 type="button"
                 onClick={() => void add()}
-                disabled={saving || !amountValid || !vatValid || vatOverAmount || uploading !== null}
+                disabled={saving || !quantityValid || !amountValid || !vatValid || vatOverAmount || uploading !== null}
                 className="py-2.5 w-full rounded-xl border border-solid border-[#cfdcc9] bg-white text-sm font-semibold text-slate-800 transition hover:border-slate-400 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Lägg till
@@ -1119,16 +1158,30 @@ function CompensationRow({
 }) {
   const missing = isReceiptMissing(item);
   const vatAmount = item.vat_amount == null ? null : Number(item.vat_amount);
+  const amount = Number(item.amount);
+  const unit = COMPENSATION_UNITS[item.kind];
+
+  // Postens VÄRDE, till höger där beloppet alltid stått: kronor när posten bär några, annars antalet.
+  // En milersättning ersätts med fast sats och har inget belopp — då är "12,5 mil" det som svarar på
+  // frågan raden ställer, och en nolla i kronor hade svarat fel.
+  //
+  // `amount > 0` och inte `carriesAmount(item.kind)`: rader från före 2026-09-01 kan bära ett belopp
+  // på en milersättning, och det är riktigt löneunderlag som ska fortsätta synas.
+  const value = amount > 0
+    ? `${formatAmount(amount)} kr`
+    : item.quantity != null && unit ? `${formatQuantity(item.quantity)} ${unit}` : null;
 
   return (
     <li className="grid gap-1 rounded-xl border border-solid border-[#e4ebe0] bg-white px-3 py-2.5">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-semibold text-slate-900">{COMPENSATION_LABELS[item.kind]}</span>
-        <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{formatAmount(Number(item.amount))} kr</span>
+        {value ? <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-700">{value}</span> : null}
       </div>
       <div className="text-sm text-slate-500">
         <span className="tabular-nums">{shortDate(item.entry_date)}</span>
-        {item.quantity != null ? <> · <span className="tabular-nums">{item.quantity}</span> {COMPENSATION_UNITS[item.kind] ?? ''}</> : null}
+        {/* Antalet står här bara när det INTE redan står som radens värde till höger — annars hade
+            "12,5 mil" ekat två gånger på samma rad. */}
+        {item.quantity != null && amount > 0 ? <> · <span className="tabular-nums">{formatQuantity(item.quantity)}</span> {unit ?? ''}</> : null}
         {/* Noll kronor moms är ett svar, inte en avsaknad — därför `!= null` och inte en
             sanningsprövning. Ett momsfritt utlägg (utlandsköp, vidarefakturerat) ska synas som
             just momsfritt och inte som ouppgivet. */}

@@ -62,6 +62,12 @@ export async function POST(req: Request) {
     // Utlägg har ingen kvantitet — beloppet är hela sanningen där. Skickas en ändå nollas den, så
     // "3 utlägg" inte råkar bli en siffra någon summerar.
     const quantity = isExpense ? null : (parsed.data.quantity ?? null);
+    // Beloppet är utläggets, precis som kvantiteten är milersättningens. Traktamente och
+    // milersättning ersätts med fasta satser lönebyrån äger, så ett belopp på dem vore en gissning
+    // som går rakt in i löneunderlaget — det nollas i stället för att sparas. Samma tysta nollning
+    // som ovan: ett fält som inte betyder något på sorten ska inte gå att fylla i via API:et heller.
+    const amount = isExpense ? (parsed.data.amount ?? 0) : 0;
+
     // Moms och kvitto hör till utlägget och bara dit: traktamente räknas i dagar och milersättning i
     // mil, och ingen av dem bär moms eller papper. Samma nollning som quantity, av samma skäl — ett
     // fält som inte betyder något på sorten ska inte gå att fylla i via API:et heller.
@@ -95,9 +101,30 @@ export async function POST(req: Request) {
       await removeReceiptObject(getSupabaseAdmin(), bucket, receipt.storage_path);
     }
 
+    // Två krav som gör att en post alltid BÄR något. De speglar varandra: det utlägget säger med
+    // sitt belopp säger milersättningen med sitt antal, och utan sitt fält är posten tom.
+    //
+    // ⚠️ Kvantitetskravet är NYTT (2026-09-01) och kom med att beloppsfältet försvann. Innan dess
+    // bar en milersättning utan antal åtminstone ett belopp; nu hade den varit en rad som bara säger
+    // "en milersättning, någon gång" — omöjlig att ersätta och omöjlig att ifrågasätta.
+    //
+    // ⚠️ LIGGER EFTER KVITTOBLOCKET, INTE FÖRE. Ovanför har `uploadedPath` satts (eller objektet
+    // redan städats av grenen för fel sort), så städningen i `finally` täcker de här utgångarna.
+    // Låg kontrollerna före — vilket de gjorde i första utkastet — lämnade ett avvisat anrop med
+    // bifogat kvitto en bild i bucketen som ingen rad pekar på och ingen kan nå, med kvittots
+    // personuppgifter kvar. Samma fälla som filens rubrikkommentar varnar för.
+    if (isExpense && !(amount > 0)) {
+      return routeError(400, 'time_compensation_amount_required', 'Ange ett belopp i kronor för utlägget.');
+    }
+    if (!isExpense && !(Number(quantity) > 0)) {
+      const unit = parsed.data.kind === 'travel' ? 'antal mil' : 'antal dagar';
+      return routeError(400, 'time_compensation_quantity_required', `Ange ${unit}.`);
+    }
+
     const { data, error } = await createCompensation(supabase, gate.currentUser.id, {
       ...input,
       quantity,
+      amount,
       vat_amount: vatAmount,
       ...receiptColumns,
     });
