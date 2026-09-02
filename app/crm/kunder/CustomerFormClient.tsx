@@ -121,10 +121,15 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className={crm.label}>{children}</p>;
 }
 
-function CardSection({ title, children }: { title: string; children: React.ReactNode }) {
+// `action` hamnar till höger i kortets rubrikrad. Kontroller som gäller HELA kortet hör hemma
+// där — inte i en enskild kolumns rubrik, se noten i AddressColumn.
+function CardSection({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className={crm.cardInner}>
-      <p className={cn('mb-4', crm.sectionTitle)}>{title}</p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className={crm.sectionTitle}>{title}</p>
+        {action}
+      </div>
       {children}
     </div>
   );
@@ -133,15 +138,21 @@ function CardSection({ title, children }: { title: string; children: React.React
 function AddressColumn({
   label, street, postalCode, city, email,
   onStreet, onPostal, onCity, onEmail,
-  disabled, headerControl,
+  disabled,
 }: {
   label: string;
   street: string; postalCode: string; city: string; email?: string;
   onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
   onEmail?: (v: string) => void;
   disabled?: boolean;
-  headerControl?: React.ReactNode;
 }) {
+  // Kolumnrubriken bär BARA namnet. Den tog förut emot en kontroll också ("Samma som
+  // besöksadress"), och då blev rubrikraden olika hög i olika kolumner: under ~1200 px fick
+  // fakturakolumnens rubrik två rader och sköt hela dess fältstapel ~22 px under de andra
+  // tvås. En kontroll som gäller kortet ligger nu i KORTETS rubrik (`CardSection action`),
+  // där den inte kan förskjuta någon kolumn. `w-auto` räckte inte: den botade bara
+  // `:where(label){width:100%}`, inte att raden faktiskt tar slut på smala skärmar.
+  //
   // 🧨 `content-start` är inte kosmetik. Kolumnerna är griditems i en `lg:grid-cols-3` och
   // sträcks till radens höjd; med `align-content: stretch` (default) fördelas den extra höjden
   // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
@@ -149,10 +160,7 @@ function AddressColumn({
   // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
   return (
     <div className="grid content-start gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <p className={crm.groupTitle}>{label}</p>
-        {headerControl}
-      </div>
+      <p className={crm.groupTitle}>{label}</p>
       <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" disabled={disabled} />
       <div className="grid grid-cols-2 gap-2">
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
@@ -597,7 +605,23 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
           </div>
 
           {/* Row 2: Adresser – 3 columns on desktop */}
-          <CardSection title="Adresser">
+          <CardSection
+            title="Adresser"
+            action={
+              // 🧨 `w-auto` — `:where(label){display:block;width:100%}` i globals.css gör annars
+              // etiketten 100 % bred, och då knuffar den sig själv till en egen rad. `flex` slår
+              // display, men bredden står kvar tills en klass tar över den.
+              <label className="flex w-auto cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={invoiceSameAsVisit}
+                  onChange={(e) => toggleInvoiceSame(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                />
+                Fakturaadress samma som besöksadress
+              </label>
+            }
+          >
             <div className="grid gap-5 lg:grid-cols-3">
               <AddressColumn
                 label="Besöksadress"
@@ -616,21 +640,6 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                 onStreet={(v) => set('invoice_street', v)} onPostal={(v) => set('invoice_postal_code', v)} onCity={(v) => set('invoice_city', v)}
                 onEmail={(v) => set('invoice_email', v)}
                 disabled={invoiceSameAsVisit}
-                headerControl={
-                  // 🧨 `w-auto` — utan den tar rutan hela rubrikraden och trycks ner på en egen
-                  // rad, så fakturakolumnens fält hamnar 20 px lägre än de andra tvås. Skälet är
-                  // `:where(label){display:block;width:100%}` i globals.css: `flex` slår display,
-                  // men bredden står kvar tills en klass tar över den.
-                  <label className="flex w-auto cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
-                    <input
-                      type="checkbox"
-                      checked={invoiceSameAsVisit}
-                      onChange={(e) => toggleInvoiceSame(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                    />
-                    Samma som besöksadress
-                  </label>
-                }
               />
             </div>
           </CardSection>

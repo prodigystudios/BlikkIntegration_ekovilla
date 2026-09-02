@@ -911,9 +911,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 ("Hämta företagsdata" i läsvyn) och skrivs sällan för hand. Utfällda låg åtta
                 nyckeltal — soliditet, rörelsemarginal, totala tillgångar, räkenskapsår … — som
                 vanliga formulärfält på samma nivå som företagsnamnet, och utgjorde nästan halva
-                editorn. Samma hopfällning som registreringsformuläret redan gör. */}
+                editorn. Samma hopfällning som registreringsformuläret redan gör.
+
+                Ledtexten säger vad som LIGGER i sektionen, inget annat — samma ord som
+                registreringsformulärets. "hämtas från tic.io" stod här först och var fel jobb
+                för etiketten: det här är den enda ytan där fälten går att skriva för hand, och
+                en ledtext om datans ursprung fick dem att läsas som låsta. */}
             {isB2B ? (
-              <CollapsibleCardSection title="Företagsinformation" hint="hämtas från tic.io">
+              <CollapsibleCardSection title="Företagsinformation" hint="ekonomi, bransch & risk">
                 <div className="grid gap-5">
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div><FieldLabel>Bolagsform</FieldLabel><Input value={editDraft.legal_entity_type} onChange={(e) => setField('legal_entity_type', e.target.value)} placeholder="Aktiebolag" /></div>
