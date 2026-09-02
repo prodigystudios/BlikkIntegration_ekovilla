@@ -7,6 +7,7 @@ import {
   createCrmCustomerSchema,
   listCrmCustomersQuerySchema,
   ok,
+  pickProvidedFields,
   requireCrmUser,
   requirePermission,
   routeError,
@@ -71,17 +72,29 @@ export async function POST(req: Request) {
     const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const parsedBody = createCrmCustomerSchema.safeParse(await req.json().catch(() => null));
+    const rawBody = await req.json().catch(() => null);
+    const parsedBody = createCrmCustomerSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const { create_in_fortnox, ...customerData } = parsedBody.data;
 
-    const supabase = createRouteHandlerClient({ cookies });
     // Momsnumret härleds ur org.numret när ett sådant sätts (SE + tio siffror + 01). Regeln
     // låg förut bara i formulärets `onChange` och missade därför varje väg som inte gick via
-    // tangentbordet — uppslaget, importen, API:t. Se noten i deriveVatNumberForWrite.
+    // tangentbordet — uppslaget, importen, API:t.
+    //
+    // 🧨 Regeln matas med de FAKTISKT skickade fälten, inte `customerData`: Zod defaultar
+    // `vat_number` till null även när nyckeln saknades, och då hade "anroparen tömde fältet
+    // med flit" sett likadant ut som "anroparen nämnde det aldrig". Skillnaden är hela
+    // spärren mot att hitta på ett momsnummer åt ett bolag som inte är momsregistrerat.
+    const derivedVat = deriveVatNumberForWrite(
+      pickProvidedFields(parsedBody.data, rawBody),
+      null,
+    ).vat_number;
+
+    const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await createCrmCustomer(supabase, {
-      ...deriveVatNumberForWrite(customerData, null),
+      ...customerData,
+      ...(derivedVat ? { vat_number: derivedVat } : {}),
       created_by: crmUser.currentUser.id,
       assigned_to: crmUser.currentUser.id,
     });

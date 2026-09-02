@@ -79,6 +79,13 @@ export async function POST(_req: Request, context: RouteContext) {
     // eftersom "Hämta företagsdata" är den knapp man trycker på just när uppgifter saknas: det
     // är också vägen att laga de kunder vars org.nr kom från Fortnox-importen, där momsnumret
     // aldrig härleddes. Skriver aldrig över ett ifyllt värde.
+    //
+    // ⏳ KÄND DIVERGENS: `vat_number` är ett Fortnox-synkat fält (se fortnoxCustomerFieldsChanged),
+    // men den här routen skriver med adminklienten och pushar ALDRIG. Någon senare PATCH gör det
+    // heller inte — den jämför bara sitt eget before/after, och där bär båda redan det berikade
+    // värdet. CRM visar alltså ett momsnummer som Fortnox saknar tills någon redigerar just det
+    // fältet. Gäller sedan tidigare även company_name och adresserna; att låta enrich pusha är
+    // ett eget beslut eftersom det är en utåtriktad skrivning.
     if (isEmptyStr(existing.vat_number)) {
       const derivedVat = vatFromOrgNumber(existing.organization_number);
       if (derivedVat) update.vat_number = derivedVat;

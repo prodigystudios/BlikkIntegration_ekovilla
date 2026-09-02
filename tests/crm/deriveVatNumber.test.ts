@@ -20,8 +20,12 @@ type Draft = {
 
 const derive = (input: Draft, before: Draft | null): Draft => deriveVatNumberForWrite(input, before);
 
+// ⚠️ `input` bär bara de fält anroparen FAKTISKT skickade (routerna filtrerar med
+// pickProvidedFields). Att `vat_number` saknas som nyckel betyder alltså "ingen åsikt" —
+// inte "tomt". Skillnaden är hela regeln, så testerna nedan är noga med vilken form de använder.
+
 describe('deriveVatNumberForWrite — vid skapande (before = null)', () => {
-  it('härleder momsnumret ur ett nytt org.nr', () => {
+  it('härleder momsnumret när anroparen inte nämnt fältet', () => {
     const out = derive({ ...business, organization_number: VALID_ORG }, null);
     expect(out.vat_number).toBe(VALID_VAT);
   });
@@ -31,7 +35,14 @@ describe('deriveVatNumberForWrite — vid skapande (before = null)', () => {
     expect(out.vat_number).toBe(VALID_VAT);
   });
 
-  it('rör inte ett momsnummer som redan är ifyllt', () => {
+  // 🧨 Spärren mot att hitta på ett momsnummer. Alla företag är inte momsregistrerade, och
+  // värdet pushas till Fortnox som VATNumber — ett påhittat nummer når alltså faktureringen.
+  it('rör inte fältet när anroparen skickat det TOMT med flit', () => {
+    const out = derive({ ...business, organization_number: VALID_ORG, vat_number: null }, null);
+    expect(out.vat_number).toBeNull();
+  });
+
+  it('rör inte ett momsnummer som anroparen fyllt i själv', () => {
     const out = derive(
       { ...business, organization_number: VALID_ORG, vat_number: 'SE556000000102' },
       null,
@@ -45,10 +56,7 @@ describe('deriveVatNumberForWrite — vid skapande (before = null)', () => {
   });
 
   it('härleder inget för en privatkund', () => {
-    const out = derive(
-      { customer_type: 'private' as const, organization_number: VALID_ORG },
-      null,
-    );
+    const out = derive({ customer_type: 'private', organization_number: VALID_ORG }, null);
     expect(out.vat_number).toBeUndefined();
   });
 
@@ -59,9 +67,9 @@ describe('deriveVatNumberForWrite — vid skapande (before = null)', () => {
 });
 
 describe('deriveVatNumberForWrite — vid uppdatering', () => {
-  it('härleder när org.numret ÄNDRAS och momsnumret är tomt', () => {
+  it('härleder när org.numret ÄNDRAS och raden saknar momsnummer', () => {
     const out = derive(
-      { organization_number: VALID_ORG, vat_number: null },
+      { organization_number: VALID_ORG },
       { customer_type: 'business', organization_number: OTHER_ORG, vat_number: null },
     );
     expect(out.vat_number).toBe(VALID_VAT);
@@ -69,34 +77,42 @@ describe('deriveVatNumberForWrite — vid uppdatering', () => {
 
   it('härleder när org.numret SÄTTS på en kund som saknade det', () => {
     const out = derive(
-      { organization_number: VALID_ORG, vat_number: null },
+      { organization_number: VALID_ORG },
       { customer_type: 'business', organization_number: null, vat_number: null },
     );
     expect(out.vat_number).toBe(VALID_VAT);
   });
 
-  // 🧨 Spärren som gör det möjligt att tömma momsnumret. Editorn skickar med org.numret i
-  // VARJE PATCH, så utan den här regeln hade ett tömt fält fyllts i igen direkt och en kund
-  // som inte är momsregistrerad aldrig kunnat sparas utan momsnummer.
-  it('härleder INTE när org.numret står stilla — även om momsnumret töms', () => {
+  // 🧨 Spärren som gör det möjligt att TÖMMA momsnumret. Editorn skickar med både org.numret
+  // och momsfältet i varje PATCH, så utan den här regeln hade ett tömt fält fyllts i igen
+  // direkt och en kund som inte är momsregistrerad aldrig kunnat sparas utan momsnummer.
+  it('rör inte fältet när editorn skickar det tomt — även om org.numret ändras', () => {
     const out = derive(
       { organization_number: VALID_ORG, vat_number: null },
-      { customer_type: 'business', organization_number: VALID_ORG, vat_number: VALID_VAT },
+      { customer_type: 'business', organization_number: OTHER_ORG, vat_number: VALID_VAT },
     );
     expect(out.vat_number).toBeNull();
+  });
+
+  // 🧨 Spärren mot att en delvis PATCH får en bieffekt: byter man bara kundansvarig ska
+  // momsnumret inte plötsligt fyllas i.
+  it('härleder INTE när org.numret står stilla', () => {
+    const out = derive(
+      { organization_number: VALID_ORG },
+      { customer_type: 'business', organization_number: VALID_ORG, vat_number: null },
+    );
+    expect(out.vat_number).toBeUndefined();
   });
 
   it('räknar bindestreck som samma nummer — formatering är ingen ändring', () => {
     const out = derive(
-      { organization_number: '5560000001', vat_number: null },
+      { organization_number: '5560000001' },
       { customer_type: 'business', organization_number: VALID_ORG, vat_number: null },
     );
-    expect(out.vat_number).toBeNull();
+    expect(out.vat_number).toBeUndefined();
   });
 
-  // Ett utelämnat fält betyder "rör inte" i en partiell PATCH — då är det gamla värdet kvar,
-  // och det får inte skrivas över.
-  it('rör inte ett befintligt momsnummer när fältet utelämnas ur PATCHen', () => {
+  it('rör inte ett befintligt momsnummer på raden', () => {
     const out = derive(
       { organization_number: OTHER_ORG },
       { customer_type: 'business', organization_number: VALID_ORG, vat_number: VALID_VAT },
@@ -104,37 +120,30 @@ describe('deriveVatNumberForWrite — vid uppdatering', () => {
     expect(out.vat_number).toBeUndefined();
   });
 
-  it('härleder när momsfältet utelämnas men raden saknar momsnummer', () => {
-    const out = derive(
-      { organization_number: OTHER_ORG },
-      { customer_type: 'business', organization_number: VALID_ORG, vat_number: null },
-    );
-    expect(out.vat_number).toBe('SE556894551201');
-  });
-
   it('härleder inget när bara andra fält ändras', () => {
     const out = derive(
-      { vat_number: null },
+      { company_name: 'AB Test' },
       { customer_type: 'business', organization_number: VALID_ORG, vat_number: null },
     );
-    expect(out.vat_number).toBeNull();
+    expect(out.vat_number).toBeUndefined();
   });
 
   // Typen tas från raden när PATCHen inte skickar med den.
   it('härleder inget för en privatkund vars typ bara finns på raden', () => {
     const out = derive(
-      { organization_number: VALID_ORG, vat_number: null },
+      { organization_number: VALID_ORG },
       { customer_type: 'private', organization_number: null, vat_number: null },
     );
-    expect(out.vat_number).toBeNull();
+    expect(out.vat_number).toBeUndefined();
   });
 
   it('lämnar övriga fält orörda', () => {
     const out = derive(
-      { ...business, organization_number: VALID_ORG, vat_number: null, company_name: 'AB Test' },
+      { organization_number: VALID_ORG, company_name: 'AB Test' },
       { customer_type: 'business', organization_number: null, vat_number: null },
     );
     expect(out.company_name).toBe('AB Test');
     expect(out.organization_number).toBe(VALID_ORG);
+    expect(out.vat_number).toBe(VALID_VAT);
   });
 });

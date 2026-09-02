@@ -62,13 +62,22 @@ type VatWriteFields = {
  * men tomt momsnummer när regeln flyttades hit (2026-09-02). Nu gäller den på skrivvägen och
  * omfattar därmed varje yta: formuläret, editorn, uppslaget och API:t.
  *
- * Tre spärrar, alla avsiktliga:
+ * Fyra spärrar, alla avsiktliga:
  *  1. Bara företagskunder — privatpersoner har inget momsnummer.
- *  2. ALDRIG ovanpå ett ifyllt momsnummer. Suffixet 01 är standard men inte givet
+ *  2. 🧨 ALDRIG när anroparen skickade med `vat_number` — inte ens när värdet är TOMT. Ett
+ *     tomt fält som någon uttryckligen skickar betyder "den här kunden har inget
+ *     momsnummer", och alla företag är inte momsregistrerade. Att fylla i ett påhittat
+ *     SE…01 igen vore att skriva över ett medvetet val — och värdet pushas vidare till
+ *     Fortnox som VATNumber, så felet skulle nå faktureringen. Formulären härleder redan
+ *     själva medan man skriver; den här funktionen finns för vägarna där ingen skriver.
+ *  3. Aldrig ovanpå ett ifyllt momsnummer på raden. Suffixet 01 är standard men inte givet
  *     (koncernregistreringar), så ett värde någon satt för hand vinner alltid.
- *  3. Bara när org.numret är NYTT eller ÄNDRAT i just den här skrivningen. Utan den spärren
- *     kunde man aldrig tömma momsnumret på en kund som inte är momsregistrerad — editorn
- *     skickar med org.numret i varje PATCH, så det hade fyllts i igen direkt.
+ *  4. Bara när org.numret är NYTT eller ÄNDRAT i just den här skrivningen — annars hade en
+ *     delvis PATCH som bara byter kundansvarig fyllt i momsnumret som bieffekt.
+ *
+ * ⚠️ `input` MÅSTE bara innehålla de fält anroparen faktiskt skickade, annars faller spärr 2.
+ * PATCH-routen filtrerar med `pickProvidedFields`; POST-routen gör detsamma, för Zod defaultar
+ * `vat_number` till null även när nyckeln saknades och den skillnaden är precis vad regeln bär.
  *
  * `before` är raden som den ser ut före skrivningen (null vid skapande).
  */
@@ -79,13 +88,11 @@ export function deriveVatNumberForWrite<T extends VatWriteFields>(
   const type = input.customer_type ?? before?.customer_type ?? null;
   if (type !== 'business') return input;
 
-  const orgProvided = 'organization_number' in input;
-  const org = orgProvided ? input.organization_number : before?.organization_number;
-  if (isBlank(org)) return input;
+  if ('vat_number' in input) return input;
+  if (!isBlank(before?.vat_number)) return input;
 
-  // Momsnumret EFTER skrivningen — utelämnat fält betyder "rör inte", alltså det gamla värdet.
-  const vatAfter = 'vat_number' in input ? input.vat_number : before?.vat_number;
-  if (!isBlank(vatAfter)) return input;
+  const org = 'organization_number' in input ? input.organization_number : before?.organization_number;
+  if (isBlank(org)) return input;
 
   const orgIsNewOrChanged = !before || digitsOf(org) !== digitsOf(before.organization_number);
   if (!orgIsNewOrChanged) return input;
