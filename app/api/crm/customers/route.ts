@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmCustomer, getCrmCustomer, listCrmCustomers, getCrmCustomerStageCounts, CRM_CUSTOMERS_PAGE_SIZE } from '@/lib/domains/crm/customers';
+import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { createFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import {
   createCrmCustomerSchema,
@@ -76,8 +77,11 @@ export async function POST(req: Request) {
     const { create_in_fortnox, ...customerData } = parsedBody.data;
 
     const supabase = createRouteHandlerClient({ cookies });
+    // Momsnumret härleds ur org.numret när ett sådant sätts (SE + tio siffror + 01). Regeln
+    // låg förut bara i formulärets `onChange` och missade därför varje väg som inte gick via
+    // tangentbordet — uppslaget, importen, API:t. Se noten i deriveVatNumberForWrite.
     const { data, error } = await createCrmCustomer(supabase, {
-      ...customerData,
+      ...deriveVatNumberForWrite(customerData, null),
       created_by: crmUser.currentUser.id,
       assigned_to: crmUser.currentUser.id,
     });

@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer, type UpdateCrmCustomerInput } from '@/lib/domains/crm/customers';
+import { vatFromOrgNumber } from '@/lib/domains/crm/orgNumber';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getTicCompanyByOrgNumber } from '@/lib/domains/tic/companies';
 import { ticRouteErrorInfo } from '@/lib/domains/tic/client';
@@ -72,6 +73,15 @@ export async function POST(_req: Request, context: RouteContext) {
     if (existing.financial_year == null && company.financial_year != null) update.financial_year = company.financial_year;
     if ((!existing.risk_indicators || existing.risk_indicators.length === 0) && company.risk_indicators && company.risk_indicators.length > 0) {
       update.risk_indicators = company.risk_indicators;
+    }
+    // Momsnumret kommer inte från tic — det HÄRLEDS ur org.numret (SE + tio siffror + 01), och
+    // org.numret finns garanterat här (kontrollerat ovan). Med i samma fyll-tomma-fält-runda
+    // eftersom "Hämta företagsdata" är den knapp man trycker på just när uppgifter saknas: det
+    // är också vägen att laga de kunder vars org.nr kom från Fortnox-importen, där momsnumret
+    // aldrig härleddes. Skriver aldrig över ett ifyllt värde.
+    if (isEmptyStr(existing.vat_number)) {
+      const derivedVat = vatFromOrgNumber(existing.organization_number);
+      if (derivedVat) update.vat_number = derivedVat;
     }
 
     const filled = Object.keys(update).length;

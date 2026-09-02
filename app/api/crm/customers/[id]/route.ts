@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
+import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
 import { invalidUuidParam, ok, pickProvidedFields, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
@@ -72,7 +73,15 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
     }
 
-    const { data, error } = await updateCrmCustomer(supabase, context.params.id, updateInput);
+    // Momsnumret härleds ur org.numret när ett sådant SÄTTS eller ÄNDRAS (SE + tio siffror +
+    // 01). Aldrig ovanpå ett ifyllt momsnummer, och aldrig när org.numret står stilla — annars
+    // gick det inte att tömma fältet på en kund som inte är momsregistrerad, eftersom editorn
+    // skickar med org.numret i varje PATCH. Se noten i deriveVatNumberForWrite.
+    const { data, error } = await updateCrmCustomer(
+      supabase,
+      context.params.id,
+      deriveVatNumberForWrite(updateInput, before ?? null),
+    );
 
     if (error) {
       return routeError(500, 'crm_customer_update_failed', error.message);
