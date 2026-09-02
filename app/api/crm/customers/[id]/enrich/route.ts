@@ -1,6 +1,8 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer, type UpdateCrmCustomerInput } from '@/lib/domains/crm/customers';
+import { vatFromOrgNumber } from '@/lib/domains/crm/orgNumber';
+import { fortnoxCustomerFieldsChanged, updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getTicCompanyByOrgNumber } from '@/lib/domains/tic/companies';
 import { ticRouteErrorInfo } from '@/lib/domains/tic/client';
@@ -73,6 +75,15 @@ export async function POST(_req: Request, context: RouteContext) {
     if ((!existing.risk_indicators || existing.risk_indicators.length === 0) && company.risk_indicators && company.risk_indicators.length > 0) {
       update.risk_indicators = company.risk_indicators;
     }
+    // Momsnumret kommer inte från tic — det HÄRLEDS ur org.numret (SE + tio siffror + 01), och
+    // org.numret finns garanterat här (kontrollerat ovan). Med i samma fyll-tomma-fält-runda
+    // eftersom "Hämta företagsdata" är den knapp man trycker på just när uppgifter saknas: det
+    // är också vägen att laga de kunder vars org.nr kom från Fortnox-importen, där momsnumret
+    // aldrig härleddes. Skriver aldrig över ett ifyllt värde.
+    if (isEmptyStr(existing.vat_number)) {
+      const derivedVat = vatFromOrgNumber(existing.organization_number);
+      if (derivedVat) update.vat_number = derivedVat;
+    }
 
     const filled = Object.keys(update).length;
     if (filled === 0) {
@@ -83,6 +94,34 @@ export async function POST(_req: Request, context: RouteContext) {
     const { data: updated, error: saveError } = await updateCrmCustomer(admin, context.params.id, update);
     if (saveError || !updated) {
       return routeError(500, 'crm_customer_enrich_save_failed', saveError?.message || 'Kunde inte spara företagsdata.');
+    }
+
+    // Fortnox-synk, samma mönster som PATCH-routen.
+    //
+    // ⚠️ Utan den här pushen visade CRM uppgifter som Fortnox saknade, och ingen senare
+    // redigering rättade det: `fortnoxCustomerFieldsChanged` jämför bara sin EGEN begärans
+    // before/after, och där bär båda redan det berikade värdet. Fältet hade alltså synkats
+    // först om någon råkade redigera just det. Gällde company_name och adresserna sedan
+    // tidigare; momsnumret gjorde luckan tydlig nog att stänga (Williams beslut 2026-09-02).
+    //
+    // Misslyckad push är en VARNING, inte ett fel — raden är redan sparad.
+    if (updated.fortnox_customer_id && fortnoxCustomerFieldsChanged(existing, updated)) {
+      try {
+        await updateFortnoxCustomer(context.params.id);
+        const { data: synced } = await getCrmCustomer(supabase, context.params.id);
+        return ok({ item: synced ?? updated, filled });
+      } catch (fortnoxErr: any) {
+        // ⚠️ Läs om raden — `updateFortnoxCustomer` har redan satt sync_status='failed', och
+        // `updated` är hämtad FÖRE pushen. Returneras den skriver klienten tillbaka en rad som
+        // säger "Synkad" trots att synken just misslyckades. PATCH-routen läser om av exakt
+        // det skälet; den detaljen tappades när mönstret kopierades hit.
+        const { data: latest } = await getCrmCustomer(supabase, context.params.id);
+        return ok({
+          item: latest ?? updated,
+          filled,
+          fortnox_error: fortnoxErr?.message || 'Kunde inte uppdatera kund i Fortnox',
+        });
+      }
     }
 
     return ok({ item: updated, filled });

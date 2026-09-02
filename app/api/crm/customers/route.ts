@@ -1,11 +1,13 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmCustomer, getCrmCustomer, listCrmCustomers, getCrmCustomerStageCounts, CRM_CUSTOMERS_PAGE_SIZE } from '@/lib/domains/crm/customers';
+import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { createFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import {
   createCrmCustomerSchema,
   listCrmCustomersQuerySchema,
   ok,
+  pickProvidedFields,
   requireCrmUser,
   requirePermission,
   routeError,
@@ -70,14 +72,33 @@ export async function POST(req: Request) {
     const crmUser = await requirePermission('crm.customer.write');
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const parsedBody = createCrmCustomerSchema.safeParse(await req.json().catch(() => null));
+    const rawBody = await req.json().catch(() => null);
+    const parsedBody = createCrmCustomerSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const { create_in_fortnox, ...customerData } = parsedBody.data;
 
+    // Momsnumret härleds ur org.numret när ett sådant sätts (SE + tio siffror + 01). Regeln
+    // låg förut bara i formulärets `onChange` och utlöstes därför bara när någon SKREV numret.
+    //
+    // ⚠️ Regeln gäller API-vägarna (den här routen, PATCH och enrich). Fortnox-IMPORTEN går
+    // inte via någon route — `syncFortnoxCustomers` skriver rader direkt — så en nyimporterad
+    // företagskund landar fortfarande utan momsnummer. Den lagas av backfillen och av att
+    // importen inte längre nollställer ett härlett nummer, inte av den här raden.
+    //
+    // 🧨 Regeln matas med de FAKTISKT skickade fälten, inte `customerData`: Zod defaultar
+    // `vat_number` till null även när nyckeln saknades, och då hade "anroparen tömde fältet
+    // med flit" sett likadant ut som "anroparen nämnde det aldrig". Skillnaden är hela
+    // spärren mot att hitta på ett momsnummer åt ett bolag som inte är momsregistrerat.
+    const derivedVat = deriveVatNumberForWrite(
+      pickProvidedFields(parsedBody.data, rawBody),
+      null,
+    ).vat_number;
+
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await createCrmCustomer(supabase, {
       ...customerData,
+      ...(derivedVat ? { vat_number: derivedVat } : {}),
       created_by: crmUser.currentUser.id,
       assigned_to: crmUser.currentUser.id,
     });

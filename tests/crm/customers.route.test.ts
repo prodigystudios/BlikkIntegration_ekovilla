@@ -407,6 +407,11 @@ describe('PATCH /api/crm/customers/[id]', () => {
 
   it('uppdaterar kund och returnerar 200', async () => {
     mockGetCurrentUser.mockResolvedValue(salesUser);
+    // Raden FÖRE skrivningen mockas uttryckligen. Testet lutade sig tidigare på att en
+    // tidigare testfil-rad råkat lämna kvar ett värde på mockGet — `vi.clearAllMocks()`
+    // nollställer anrop men inte implementationer. Routen kräver numera raden (404 utan),
+    // och ett test som beror på ordningen mellan tester är ändå inget test.
+    mockGet.mockResolvedValue({ data: { id: CUSTOMER_ID, customer_type: 'business' }, error: null } as any);
     const updated = { id: 'c1', status: 'inactive' };
     mockUpdate.mockResolvedValue({ data: updated, error: null } as any);
 
@@ -422,6 +427,94 @@ describe('PATCH /api/crm/customers/[id]', () => {
     expect(res.status).toBe(200);
     expect(body.data.item).toEqual(updated);
     expect(mockUpdate).toHaveBeenCalledWith(expect.anything(), CUSTOMER_ID, expect.objectContaining({ status: 'inactive' }));
+  });
+
+  // ⚠️ Utan raden faller varje spärr i routen till sin tillåtande gren — identitetslåset,
+  // momshärledningen och Fortnox-jämförelsen. En UPDATE som inte matchar någon rad svarar
+  // dessutom `error: null` under RLS, så felet hade blivit tyst.
+  it('returnerar 404 och skriver INTE när kunden inte går att läsa', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockResolvedValue({ data: null, error: null } as any);
+
+    const res = await PATCH(
+      makeRequest(
+        '/api/crm/customers/c1',
+        { method: 'PATCH', body: JSON.stringify({ status: 'inactive' }) }
+      ),
+      ctx
+    );
+
+    expect(res.status).toBe(404);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // Regressionsvakt för momshärledningen på PATCH-vägen: sätts ett org.nr på en kund som
+  // saknar momsnummer ska SE + tio siffror + 01 skrivas med, utan att klienten bett om det.
+  it('härleder momsnumret när org.numret sätts på en kund utan momsnummer', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockResolvedValue({
+      data: { id: CUSTOMER_ID, customer_type: 'business', organization_number: null, vat_number: null },
+      error: null,
+    } as any);
+    mockUpdate.mockResolvedValue({ data: { id: CUSTOMER_ID }, error: null } as any);
+
+    await PATCH(
+      makeRequest(
+        '/api/crm/customers/c1',
+        { method: 'PATCH', body: JSON.stringify({ organization_number: '556000-0001' }) }
+      ),
+      ctx
+    );
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      CUSTOMER_ID,
+      expect.objectContaining({ organization_number: '556000-0001', vat_number: 'SE556000000101' }),
+    );
+  });
+
+  // 🧨 …men aldrig när klienten själv skickat med fältet tomt. Editorn gör det i varje PATCH,
+  // och alla bolag är inte momsregistrerade.
+  it('härleder INTE när klienten skickat momsfältet tomt', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    mockGet.mockResolvedValue({
+      data: { id: CUSTOMER_ID, customer_type: 'business', organization_number: null, vat_number: null },
+      error: null,
+    } as any);
+    mockUpdate.mockResolvedValue({ data: { id: CUSTOMER_ID }, error: null } as any);
+
+    // Så som klienterna faktiskt skickar: båda formulären gör `.trim() || null`.
+    await PATCH(
+      makeRequest(
+        '/api/crm/customers/c1',
+        { method: 'PATCH', body: JSON.stringify({ organization_number: '556000-0001', vat_number: null }) }
+      ),
+      ctx
+    );
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      CUSTOMER_ID,
+      expect.objectContaining({ vat_number: null }),
+    );
+
+    // ⚠️ Och som ett rått API-anrop kan skicka. Zod trimmar men gör INTE om '' till null, så
+    // värdet skrivs som tom sträng — det är så de åtta raderna med vat_number = '' i
+    // produktionsdatan uppstått. Härledningen ska ligga still även då.
+    mockUpdate.mockClear();
+    await PATCH(
+      makeRequest(
+        '/api/crm/customers/c1',
+        { method: 'PATCH', body: JSON.stringify({ organization_number: '556000-0001', vat_number: '' }) }
+      ),
+      ctx
+    );
+
+    expect(mockUpdate).toHaveBeenCalledWith(
+      expect.anything(),
+      CUSTOMER_ID,
+      expect.objectContaining({ vat_number: '' }),
+    );
   });
 
   it('blockerar tömning av personnummer på en Fortnox-synkad privatkund (409, ingen skrivning)', async () => {

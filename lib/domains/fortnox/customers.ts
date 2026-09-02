@@ -130,6 +130,30 @@ function mapFortnoxCustomerToRow(
   };
 }
 
+/**
+ * Raden som skrivs vid en OMSYNK av en kund vi redan har. Skiljer sig från insert-raden på en
+ * enda punkt: ett tomt momsnummer från Fortnox utelämnas i stället för att skrivas som null.
+ *
+ * 🧨 Momsnumret härleds numera på VÅR sida ur org.numret (SE + tio siffror + 01, se
+ * lib/domains/crm/orgNumber.ts) — och Fortnox saknar det för de allra flesta kunder.
+ * `mapFortnoxCustomerToRow` skriver `vat_number: c.VATNumber ?? null` rakt av, så en helt
+ * rutinmässig omsynk hade nollställt varje härlett nummer igen och tyst rullat tillbaka hela
+ * backfillen i 20260902_crm_customers_backfill_vat_number.sql (587 länkade rader).
+ *
+ * ⚖️ Har Fortnox ett värde vinner det fortfarande — Fortnox äger fältet. Det är bara TOMHETEN
+ * som slutar räknas som ett besked, för den betyder "vi vet inte", inte "det finns inget".
+ */
+export function buildFortnoxCustomerUpdateRow(
+  c: FortnoxCustomer,
+  resolvedType: 'business' | 'private',
+  verified: boolean,
+  now: string,
+): Record<string, unknown> {
+  const row: Record<string, unknown> = mapFortnoxCustomerToRow(c, resolvedType, verified, now);
+  if (!c.VATNumber || !c.VATNumber.trim()) delete row.vat_number;
+  return row;
+}
+
 // Bulk-insert rows, falling back to row-by-row on failure so a single bad record
 // (e.g. an identity-constraint edge case) never aborts the whole page. Returns
 // how many rows actually landed.
@@ -217,7 +241,7 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
             : inferCustomerType(c.OrganisationNumber, c.VATNumber);
           const { error } = await supabase
             .from('crm_customers')
-            .update(mapFortnoxCustomerToRow(c, type, verified, now))
+            .update(buildFortnoxCustomerUpdateRow(c, type, verified, now))
             .eq('fortnox_customer_id', c.CustomerNumber);
           if (error) {
             console.warn(`[Fortnox sync] Kunde inte uppdatera kund ${c.CustomerNumber} (${error.message})`);

@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
+import CollapsibleCardSection from './CollapsibleCardSection';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
@@ -212,9 +213,14 @@ function AddressEditColumn({
   onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
   onEmail?: (v: string) => void;
 }) {
+  // 🧨 `content-start` är inte kosmetik. Kolumnerna är griditems i en `lg:grid-cols-3` och
+  // sträcks till radens höjd; med `align-content: stretch` (default) fördelas den extra höjden
+  // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
+  // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
+  // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
   return (
-    <div className="grid gap-2">
-      <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+    <div className="grid content-start gap-2">
+      <p className={crm.groupTitle}>{label}</p>
       <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" />
       <div className="grid grid-cols-2 gap-2">
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" />
@@ -517,7 +523,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       const updated: Customer = json.data?.item;
       if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
       const filled = json.data?.filled ?? 0;
-      toast.success(filled > 0 ? `Företagsdata hämtad (${filled} fält ifyllda)` : 'Inga nya fält att fylla – datan är redan komplett');
+      // Berikningen pushar numera vidare till Fortnox när kunden är länkad. Går pushen fel är
+      // raden ändå sparad — men det måste synas, annars ser en misslyckad synk ut som en
+      // lyckad hämtning och skillnaden upptäcks först i faktureringen.
+      if (json.data?.fortnox_error) {
+        toast.error(`Företagsdata hämtad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success(filled > 0 ? `Företagsdata hämtad (${filled} fält ifyllda)` : 'Inga nya fält att fylla – datan är redan komplett');
+      }
     } catch { toast.error('Fel vid hämtning av företagsdata'); }
     finally { setEnriching(false); }
   }
@@ -617,37 +630,45 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
 
   // ─── Sidebar (shared between read + edit views) ────────────────────────────
 
+  // Metadata bär kundansvarig-väljaren, som sparar direkt (utanför Spara-knappen) och därför
+  // gäller i BÅDA lägena. Egen variabel, så att redigeringsläget kan visa den utan att släpa
+  // med de kopplade posterna nedanför.
+  const metadataCard = (
+    <Card>
+      <SectionTitle>Metadata</SectionTitle>
+      <div className="grid gap-3">
+        <div className="grid gap-1">
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kundansvarig</p>
+          <Select
+            value={customer.account_manager_id || ''}
+            onChange={(e) => saveAccountManager(e.target.value)}
+            disabled={savingManager}
+          >
+            <option value="">— Ingen —</option>
+            {/* Behåll nuvarande värde valbart även om säljaren fallit ur listan (t.ex. slutat). */}
+            {customer.account_manager_id && !sellers.some((s) => s.id === customer.account_manager_id) ? (
+              <option value={customer.account_manager_id}>Okänd säljare</option>
+            ) : null}
+            {sellers.map((s) => (
+              <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
+            ))}
+          </Select>
+        </div>
+        <InfoField label="Skapad" value={formatDateTime(customer.created_at)} />
+        <InfoField label="Senast ändrad" value={formatDateTime(customer.updated_at)} />
+        {customer.fortnox_customer_id ? (
+          <InfoField label="Fortnox kund-ID" value={`#${customer.fortnox_customer_id}`} />
+        ) : null}
+      </div>
+    </Card>
+  );
+
+  // Metadata + kopplade poster. Bara LÄSVYN visar de kopplade posterna: under redigering går
+  // inget av dem att agera på, och fyra färgkodade kort bredvid formuläret drar blicken från
+  // fälten man faktiskt kom för att ändra.
   const historySidebar = (
     <div className="grid gap-4">
-
-      {/* Metadata */}
-      <Card>
-        <SectionTitle>Metadata</SectionTitle>
-        <div className="grid gap-3">
-          <div className="grid gap-1">
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kundansvarig</p>
-            <Select
-              value={customer.account_manager_id || ''}
-              onChange={(e) => saveAccountManager(e.target.value)}
-              disabled={savingManager}
-            >
-              <option value="">— Ingen —</option>
-              {/* Behåll nuvarande värde valbart även om säljaren fallit ur listan (t.ex. slutat). */}
-              {customer.account_manager_id && !sellers.some((s) => s.id === customer.account_manager_id) ? (
-                <option value={customer.account_manager_id}>Okänd säljare</option>
-              ) : null}
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
-              ))}
-            </Select>
-          </div>
-          <InfoField label="Skapad" value={formatDateTime(customer.created_at)} />
-          <InfoField label="Senast ändrad" value={formatDateTime(customer.updated_at)} />
-          {customer.fortnox_customer_id ? (
-            <InfoField label="Fortnox kund-ID" value={`#${customer.fortnox_customer_id}`} />
-          ) : null}
-        </div>
-      </Card>
+      {metadataCard}
 
       {/* Offerter */}
       <div className="rounded-2xl border border-amber-100 bg-gradient-to-b from-[#f9fbf7] to-amber-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
@@ -893,10 +914,18 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               </div>
             </Card>
 
-            {/* Företagsinformation (företag) */}
+            {/* Företagsinformation (företag) — HOPFÄLLT med flit: fälten fylls av tic.io-uppslaget
+                ("Hämta företagsdata" i läsvyn) och skrivs sällan för hand. Utfällda låg åtta
+                nyckeltal — soliditet, rörelsemarginal, totala tillgångar, räkenskapsår … — som
+                vanliga formulärfält på samma nivå som företagsnamnet, och utgjorde nästan halva
+                editorn. Samma hopfällning som registreringsformuläret redan gör.
+
+                Ledtexten säger vad som LIGGER i sektionen, inget annat — samma ord som
+                registreringsformulärets. "hämtas från tic.io" stod här först och var fel jobb
+                för etiketten: det här är den enda ytan där fälten går att skriva för hand, och
+                en ledtext om datans ursprung fick dem att läsas som låsta. */}
             {isB2B ? (
-              <Card>
-                <SectionTitle>Företagsinformation</SectionTitle>
+              <CollapsibleCardSection title="Företagsinformation" hint="ekonomi, bransch & risk">
                 <div className="grid gap-5">
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div><FieldLabel>Bolagsform</FieldLabel><Input value={editDraft.legal_entity_type} onChange={(e) => setField('legal_entity_type', e.target.value)} placeholder="Aktiebolag" /></div>
@@ -914,12 +943,17 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                     <div><FieldLabel>Räkenskapsår</FieldLabel><Input value={editDraft.financial_year} onChange={(e) => setField('financial_year', e.target.value)} placeholder="2024" type="number" step="1" /></div>
                   </div>
                 </div>
-              </Card>
+              </CollapsibleCardSection>
             ) : null}
 
           </div>
 
-          {/* Right sidebar: save + history */}
+          {/* Höger kolumn: spara + metadata.
+              🧨 `lg:sticky` satt här redan förut men gjorde INGENTING: historikkorten låg i
+              samma kolumn och gjorde den högre än fönstret, och en sticky box som är högre än
+              sin viewport fastnar aldrig — den scrollar bort med sidan. Spara försvann alltså
+              redan vid Fakturainställningar, mitt i formuläret. Med bara spara + metadata kvar
+              är kolumnen kortare än fönstret och knappen följer med hela vägen ner. */}
           <div className="grid gap-4 lg:sticky lg:top-6">
             <Card>
               <div className="grid gap-2">
@@ -931,7 +965,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                 </button>
               </div>
             </Card>
-            {historySidebar}
+            {metadataCard}
           </div>
         </div>
       </div>
@@ -997,18 +1031,21 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               {/* Divider */}
               <div className="h-px bg-slate-100" />
 
-              {/* 3-col addresses */}
+              {/* 3-col addresses. Gruppnivån (`groupTitle`), inte fältetiketten: en adress är
+                  flera värden — och samma stil som i redigeringsläget, så blocket ser likadant
+                  ut i båda lägena. Kontaktraden ovanför är enskilda fält och behåller därför
+                  sin fältetikett. */}
               <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid gap-1">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Besöksadress</p>
+                <div className="grid content-start gap-1">
+                  <p className={crm.groupTitle}>Besöksadress</p>
                   <AddressValue addr={customer.visit_address} />
                 </div>
-                <div className="grid gap-1">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Leveransadress</p>
+                <div className="grid content-start gap-1">
+                  <p className={crm.groupTitle}>Leveransadress</p>
                   <AddressValue addr={customer.delivery_address} />
                 </div>
-                <div className="grid gap-1">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Fakturaadress</p>
+                <div className="grid content-start gap-1">
+                  <p className={crm.groupTitle}>Fakturaadress</p>
                   <AddressValue addr={customer.invoice_address} />
                   {customer.invoice_email ? <EmailLink value={customer.invoice_email} className="mt-1 text-xs" /> : null}
                 </div>

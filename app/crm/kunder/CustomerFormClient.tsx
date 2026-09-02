@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
+import CollapsibleCardSection from './CollapsibleCardSection';
 import TicLookupInput from '@/app/crm/components/TicLookupInput';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -120,61 +121,46 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className={crm.label}>{children}</p>;
 }
 
-function CardSection({ title, children }: { title: string; children: React.ReactNode }) {
+// `action` hamnar till höger i kortets rubrikrad. Kontroller som gäller HELA kortet hör hemma
+// där — inte i en enskild kolumns rubrik, se noten i AddressColumn.
+function CardSection({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className={crm.cardInner}>
-      <p className={cn('mb-4', crm.sectionTitle)}>{title}</p>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <p className={crm.sectionTitle}>{title}</p>
+        {action}
+      </div>
       {children}
     </div>
-  );
-}
-
-// Same card chrome as CardSection but collapsible (native <details>). Collapsed by
-// default; the summary row carries the title + an optional hint and a chevron.
-function CollapsibleCardSection({
-  title, hint, children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className={cn(crm.cardInner, 'group')}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className={crm.sectionTitle}>{title}</span>
-          {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
-        </span>
-        <svg
-          width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-          className="shrink-0 text-slate-400 transition-transform group-open:rotate-180"
-        >
-          <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </summary>
-      <div className="mt-4">{children}</div>
-    </details>
   );
 }
 
 function AddressColumn({
   label, street, postalCode, city, email,
   onStreet, onPostal, onCity, onEmail,
-  disabled, headerControl,
+  disabled,
 }: {
   label: string;
   street: string; postalCode: string; city: string; email?: string;
   onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
   onEmail?: (v: string) => void;
   disabled?: boolean;
-  headerControl?: React.ReactNode;
 }) {
+  // Kolumnrubriken bär BARA namnet. Den tog förut emot en kontroll också ("Samma som
+  // besöksadress"), och då blev rubrikraden olika hög i olika kolumner: under ~1200 px fick
+  // fakturakolumnens rubrik två rader och sköt hela dess fältstapel ~22 px under de andra
+  // tvås. En kontroll som gäller kortet ligger nu i KORTETS rubrik (`CardSection action`),
+  // där den inte kan förskjuta någon kolumn. `w-auto` räckte inte: den botade bara
+  // `:where(label){width:100%}`, inte att raden faktiskt tar slut på smala skärmar.
+  //
+  // 🧨 `content-start` är inte kosmetik. Kolumnerna är griditems i en `lg:grid-cols-3` och
+  // sträcks till radens höjd; med `align-content: stretch` (default) fördelas den extra höjden
+  // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
+  // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
+  // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
   return (
-    <div className="grid gap-2">
-      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <p className={crm.sectionTitle}>{label}</p>
-        {headerControl}
-      </div>
+    <div className="grid content-start gap-2">
+      <p className={crm.groupTitle}>{label}</p>
       <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" disabled={disabled} />
       <div className="grid grid-cols-2 gap-2">
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
@@ -619,7 +605,23 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
           </div>
 
           {/* Row 2: Adresser – 3 columns on desktop */}
-          <CardSection title="Adresser">
+          <CardSection
+            title="Adresser"
+            action={
+              // 🧨 `w-auto` — `:where(label){display:block;width:100%}` i globals.css gör annars
+              // etiketten 100 % bred, och då knuffar den sig själv till en egen rad. `flex` slår
+              // display, men bredden står kvar tills en klass tar över den.
+              <label className="flex w-auto cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
+                <input
+                  type="checkbox"
+                  checked={invoiceSameAsVisit}
+                  onChange={(e) => toggleInvoiceSame(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                />
+                Fakturaadress samma som besöksadress
+              </label>
+            }
+          >
             <div className="grid gap-5 lg:grid-cols-3">
               <AddressColumn
                 label="Besöksadress"
@@ -638,17 +640,6 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                 onStreet={(v) => set('invoice_street', v)} onPostal={(v) => set('invoice_postal_code', v)} onCity={(v) => set('invoice_city', v)}
                 onEmail={(v) => set('invoice_email', v)}
                 disabled={invoiceSameAsVisit}
-                headerControl={
-                  <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
-                    <input
-                      type="checkbox"
-                      checked={invoiceSameAsVisit}
-                      onChange={(e) => toggleInvoiceSame(e.target.checked)}
-                      className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                    />
-                    Samma som besöksadress
-                  </label>
-                }
               />
             </div>
           </CardSection>
