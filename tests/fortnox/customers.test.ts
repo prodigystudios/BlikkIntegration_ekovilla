@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildFortnoxCustomerPayload,
   fortnoxCustomerFieldsChanged,
+  buildFortnoxCustomerUpdateRow,
   splitSwedishName,
   buildFortnoxAddress,
   inferCustomerType,
@@ -221,5 +222,47 @@ describe('inferCustomerType', () => {
     expect(inferCustomerType('', '   ')).toBe('private');
     expect(inferCustomerType(null, null)).toBe('private');
     expect(inferCustomerType('12345', null)).toBe('private'); // too short to discriminate
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFortnoxCustomerUpdateRow — regressionsvakt för att en omsynk inte får
+// nollställa ett momsnummer vi härlett själva.
+// ---------------------------------------------------------------------------
+
+describe('buildFortnoxCustomerUpdateRow', () => {
+  const fortnoxCustomer = (overrides: Record<string, unknown> = {}) =>
+    ({
+      CustomerNumber: '42',
+      Name: 'Acme AB',
+      OrganisationNumber: '556000-0001',
+      ...overrides,
+    }) as never;
+
+  // 🧨 Fortnox saknar momsnumret för de allra flesta kunder. Skrevs deras tomhet rakt av
+  // nollställdes varje härlett nummer vid nästa rutinsynk — inklusive hela backfillen
+  // (587 länkade rader). Att fältet UTELÄMNAS är hela poängen: en utelämnad nyckel rör
+  // inte kolumnen, en null skriver över den.
+  it('utelämnar vat_number när Fortnox saknar momsnummer', () => {
+    const row = buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATNumber: null }), 'business', true, 'nu');
+    expect('vat_number' in row).toBe(false);
+  });
+
+  it('utelämnar vat_number även när Fortnox skickar tom sträng eller blanksteg', () => {
+    expect('vat_number' in buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATNumber: '' }), 'business', true, 'nu')).toBe(false);
+    expect('vat_number' in buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATNumber: '   ' }), 'business', true, 'nu')).toBe(false);
+  });
+
+  // ⚖️ Fortnox äger fältet — har de ett värde vinner det, även över vårt härledda.
+  it('skriver vat_number när Fortnox HAR ett momsnummer', () => {
+    const row = buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATNumber: 'SE556000000102' }), 'business', true, 'nu');
+    expect(row.vat_number).toBe('SE556000000102');
+  });
+
+  it('rör inte övriga fält', () => {
+    const row = buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATNumber: null, Email: 'ny@acme.se' }), 'business', true, 'nu');
+    expect(row.email).toBe('ny@acme.se');
+    expect(row.company_name).toBe('Acme AB');
+    expect(row.organization_number).toBe('556000-0001');
   });
 });

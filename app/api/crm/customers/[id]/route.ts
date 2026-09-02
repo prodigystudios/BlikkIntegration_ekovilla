@@ -51,6 +51,15 @@ export async function PATCH(req: Request, context: RouteContext) {
     // actually changed (avoids pushing to Fortnox on notes/status/owner-only edits).
     const { data: before } = await getCrmCustomer(supabase, context.params.id);
 
+    // ⚠️ Utan raden kan ingen av spärrarna nedan resonera, och alla tre faller till sin
+    // TILLÅTANDE gren: identitetslåset hoppas över, momshärledningen tror att org.numret är
+    // nytt (och kan skriva över ett handsatt SE...02), och Fortnox-jämförelsen ser "ändrat".
+    // Dessutom svarar en UPDATE som inte matchar någon rad `error: null` under RLS, så felet
+    // hade blivit tyst. Saknas raden ska det synas här.
+    if (!before) {
+      return routeError(404, 'crm_customer_not_found', 'Kunden hittades inte.');
+    }
+
     // NOTE: a private customer may lack personal_number (sales sometimes get it only once the
     // job is booked). It is no longer required here — it is enforced when a work order is
     // created for the customer. This PATCH is also the path the "Ny order" / quote→order flows
@@ -61,7 +70,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Fortnox and break invoicing/ROT. Keyed off the MERGED type so a real business→private
     // switch (which swaps which number applies) is still allowed; only clearing the number
     // that stays relevant is blocked.
-    if (before?.fortnox_customer_id) {
+    if (before.fortnox_customer_id) {
       const effectiveType = updateInput.customer_type ?? before.customer_type;
       const clearsPersonal = effectiveType === 'private'
         && 'personal_number' in updateInput && !updateInput.personal_number && !!before.personal_number;
@@ -80,7 +89,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const { data, error } = await updateCrmCustomer(
       supabase,
       context.params.id,
-      deriveVatNumberForWrite(updateInput, before ?? null),
+      deriveVatNumberForWrite(updateInput, before),
     );
 
     if (error) {

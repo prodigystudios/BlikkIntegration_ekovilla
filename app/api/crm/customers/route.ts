@@ -79,8 +79,12 @@ export async function POST(req: Request) {
     const { create_in_fortnox, ...customerData } = parsedBody.data;
 
     // Momsnumret härleds ur org.numret när ett sådant sätts (SE + tio siffror + 01). Regeln
-    // låg förut bara i formulärets `onChange` och missade därför varje väg som inte gick via
-    // tangentbordet — uppslaget, importen, API:t.
+    // låg förut bara i formulärets `onChange` och utlöstes därför bara när någon SKREV numret.
+    //
+    // ⚠️ Regeln gäller API-vägarna (den här routen, PATCH och enrich). Fortnox-IMPORTEN går
+    // inte via någon route — `syncFortnoxCustomers` skriver rader direkt — så en nyimporterad
+    // företagskund landar fortfarande utan momsnummer. Den lagas av backfillen och av att
+    // importen inte längre nollställer ett härlett nummer, inte av den här raden.
     //
     // 🧨 Regeln matas med de FAKTISKT skickade fälten, inte `customerData`: Zod defaultar
     // `vat_number` till null även när nyckeln saknades, och då hade "anroparen tömde fältet

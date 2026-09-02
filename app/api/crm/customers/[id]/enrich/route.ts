@@ -111,8 +111,13 @@ export async function POST(_req: Request, context: RouteContext) {
         const { data: synced } = await getCrmCustomer(supabase, context.params.id);
         return ok({ item: synced ?? updated, filled });
       } catch (fortnoxErr: any) {
+        // ⚠️ Läs om raden — `updateFortnoxCustomer` har redan satt sync_status='failed', och
+        // `updated` är hämtad FÖRE pushen. Returneras den skriver klienten tillbaka en rad som
+        // säger "Synkad" trots att synken just misslyckades. PATCH-routen läser om av exakt
+        // det skälet; den detaljen tappades när mönstret kopierades hit.
+        const { data: latest } = await getCrmCustomer(supabase, context.params.id);
         return ok({
-          item: updated,
+          item: latest ?? updated,
           filled,
           fortnox_error: fortnoxErr?.message || 'Kunde inte uppdatera kund i Fortnox',
         });
