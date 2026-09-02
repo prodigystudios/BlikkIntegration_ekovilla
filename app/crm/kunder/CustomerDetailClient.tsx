@@ -523,7 +523,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
       const updated: Customer = json.data?.item;
       if (updated) { setCustomer(updated); setContacts(updated.contacts || []); }
       const filled = json.data?.filled ?? 0;
-      toast.success(filled > 0 ? `Företagsdata hämtad (${filled} fält ifyllda)` : 'Inga nya fält att fylla – datan är redan komplett');
+      // Berikningen pushar numera vidare till Fortnox när kunden är länkad. Går pushen fel är
+      // raden ändå sparad — men det måste synas, annars ser en misslyckad synk ut som en
+      // lyckad hämtning och skillnaden upptäcks först i faktureringen.
+      if (json.data?.fortnox_error) {
+        toast.error(`Företagsdata hämtad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else {
+        toast.success(filled > 0 ? `Företagsdata hämtad (${filled} fält ifyllda)` : 'Inga nya fält att fylla – datan är redan komplett');
+      }
     } catch { toast.error('Fel vid hämtning av företagsdata'); }
     finally { setEnriching(false); }
   }
