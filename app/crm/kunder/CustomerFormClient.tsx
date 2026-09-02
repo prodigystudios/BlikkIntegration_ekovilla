@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
+import CollapsibleCardSection from './CollapsibleCardSection';
 import TicLookupInput from '@/app/crm/components/TicLookupInput';
 import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -129,34 +130,6 @@ function CardSection({ title, children }: { title: string; children: React.React
   );
 }
 
-// Same card chrome as CardSection but collapsible (native <details>). Collapsed by
-// default; the summary row carries the title + an optional hint and a chevron.
-function CollapsibleCardSection({
-  title, hint, children,
-}: {
-  title: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className={cn(crm.cardInner, 'group')}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-2">
-        <span className="flex items-center gap-2">
-          <span className={crm.sectionTitle}>{title}</span>
-          {hint ? <span className="text-xs text-slate-400">{hint}</span> : null}
-        </span>
-        <svg
-          width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden
-          className="shrink-0 text-slate-400 transition-transform group-open:rotate-180"
-        >
-          <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </summary>
-      <div className="mt-4">{children}</div>
-    </details>
-  );
-}
-
 function AddressColumn({
   label, street, postalCode, city, email,
   onStreet, onPostal, onCity, onEmail,
@@ -169,10 +142,15 @@ function AddressColumn({
   disabled?: boolean;
   headerControl?: React.ReactNode;
 }) {
+  // 🧨 `content-start` är inte kosmetik. Kolumnerna är griditems i en `lg:grid-cols-3` och
+  // sträcks till radens höjd; med `align-content: stretch` (default) fördelas den extra höjden
+  // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
+  // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
+  // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
   return (
-    <div className="grid gap-2">
+    <div className="grid content-start gap-2">
       <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
-        <p className={crm.sectionTitle}>{label}</p>
+        <p className={crm.groupTitle}>{label}</p>
         {headerControl}
       </div>
       <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" disabled={disabled} />
@@ -639,7 +617,11 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                 onEmail={(v) => set('invoice_email', v)}
                 disabled={invoiceSameAsVisit}
                 headerControl={
-                  <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
+                  // 🧨 `w-auto` — utan den tar rutan hela rubrikraden och trycks ner på en egen
+                  // rad, så fakturakolumnens fält hamnar 20 px lägre än de andra tvås. Skälet är
+                  // `:where(label){display:block;width:100%}` i globals.css: `flex` slår display,
+                  // men bredden står kvar tills en klass tar över den.
+                  <label className="flex w-auto cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
                     <input
                       type="checkbox"
                       checked={invoiceSameAsVisit}

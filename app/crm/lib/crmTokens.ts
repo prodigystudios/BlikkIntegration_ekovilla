@@ -172,6 +172,14 @@ export const crm = {
   // på 11px/700/0.12em — den grövre vikten, som versalerna bär bättre.
   // ⚠️ Raden syns i 102 anrop i 35 filer, inte bara på översikten.
   sectionTitle: 'text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500',
+  // Nivån MELLAN kortets kicker och fältetiketten: en namngiven fältgrupp inne på ett kort
+  // (adresskolumnerna på kundkortet är fallet den skrevs för).
+  //
+  // 🧨 Den saknades, och därför greps `sectionTitle` för gruppnamnen — med följden att
+  // "ADRESSER" och "BESÖKSADRESS" fick IDENTISK stil och lästes som syskon i stället för
+  // rubrik och underrubrik. Gemener + mörkare färg skiljer den kategoriskt från kickern
+  // (som äger versalerna) och från fältetiketten (som är mindre och dämpad).
+  groupTitle: 'text-[13px] font-semibold text-slate-800',
   cardTitle: 'text-sm font-bold text-slate-900',
   bodyStrong: 'text-sm font-semibold text-slate-900',
   meta: 'text-xs text-slate-600',
