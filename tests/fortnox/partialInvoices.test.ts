@@ -451,6 +451,26 @@ describe('partialInvoiceReferenceField', () => {
     expect(partialInvoiceReferenceField('')).toEqual({});
     expect(partialInvoiceReferenceField('   ')).toEqual({});
   });
+
+  // ⛔ En ÅTERTAGEN märkning får inte speglas ut på en ny faktura. label_cleared betyder att
+  // säljaren tömt den men att rensnings-PUT:en inte gått igenom — Fortnox-ordern bär alltså kvar
+  // det gamla värdet. Orderbekräftelsen är redan skickad; fakturan är det inte.
+  it('speglar inte en märkning som tömts men ännu inte rensats i Fortnox', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: true })).toEqual({});
+  });
+
+  // ⚠️ Undantaget: på en ROT-order ÄR värdet fastighetsbeteckningen, inte en märkning. Den får inte
+  // försvinna för att en märkning tömts — samma regel som orderReferenceNumberField bär.
+  it('behåller fastighetsbeteckningen trots en tömd märkning', () => {
+    expect(partialInvoiceReferenceField('Haggården 6:3', { labelCleared: true, propertyDesignation: 'Haggården 6:3' }))
+      .toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+
+  // Utan rensning ändrar beteckningen ingenting — den är bara ett undantag från suppressionen.
+  it('speglar som vanligt när ingen rensning är på gång', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: false })).toEqual({ YourOrderNumber: 'Projekt 4711' });
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: null })).toEqual({ YourOrderNumber: 'Projekt 4711' });
+  });
 });
 
 // Andra halvan av samma regel. resolveRotReference fyller exakt EN av referensfältet och notraden;

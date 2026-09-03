@@ -302,7 +302,9 @@ type WorkOrderRow = {
   project_name: string | null;
   vat_percent: number | null;
   customer_id: string | null;
-  customer_snapshot: { reverse_vat?: boolean | null } | null;
+  // `label_cleared` = minnet av att märkningen tömts men ännu inte rensats i Fortnox. Läses av
+  // partialInvoiceReferenceField så en återtagen märkning inte speglas ut på en ny faktura.
+  customer_snapshot: { reverse_vat?: boolean | null; label_cleared?: boolean | null } | null;
   line_items: PartialInvoiceLineItem[] | null;
   partial_invoicing_started_at: string | null;
   fortnox_order_number: string | null;
@@ -345,12 +347,27 @@ type FortnoxOrderHeader = {
  * rensar ändå ingenting i Fortnox (uppmätt, se orderReferenceNumberField) — så `''` hade bara varit
  * brus i payloaden. Numret coercas via String(): Fortnox returnerar fältet som text, men det är
  * numeriskt på en order vars referensnummer råkar vara siffror.
+ *
+ * ⛔ RENSNINGEN RESPEKTERAS. Har säljaren tömt märkningen men rensnings-PUT:en inte gått igenom
+ * ännu bär Fortnox-ordern kvar den gamla — och `label_cleared` är minnet av precis det (se
+ * `mergeWorkOrderSnapshotOverrides`, släcks först när PUT:en lyckats). Att spegla rakt av hade
+ * tryckt en ÅTERTAGEN märkning på en helt ny faktura. Orderbekräftelsen är redan skickad och går
+ * inte att ta tillbaka; fakturan är det inte, så där väger vår egen kunskap tyngre än speglingen.
+ *
+ * ⚠️ Men referensnumret vinner alltid över rensningen på en ROT-order — exakt samma undantag som
+ * `orderReferenceNumberField` bär, och av samma skäl: där ÄR värdet fastighetsbeteckningen och inte
+ * en märkning, och den får inte försvinna för att en märkning tömts. Suppressionen kräver därför
+ * att värdet INTE är beteckningen. (Blir det ändå supprimerat behåller
+ * partialInvoiceRotPropertyNote textraden, så beteckningen når fakturan den vägen.)
  */
 export function partialInvoiceReferenceField(
   orderReferenceNumber: string | number | null | undefined,
+  opts?: { labelCleared?: boolean | null; propertyDesignation?: string | null },
 ): { YourOrderNumber?: string } {
   const value = orderReferenceNumber == null ? '' : String(orderReferenceNumber).trim();
-  return value ? { YourOrderNumber: value } : {};
+  if (!value) return {};
+  if (opts?.labelCleared === true && value !== opts?.propertyDesignation?.trim()) return {};
+  return { YourOrderNumber: value };
 }
 
 /**
@@ -508,7 +525,11 @@ export async function createPartialInvoice(
     // "Ert referensnummer" och ROT-notraden är två halvor av EN regel och avgörs därför ihop —
     // se partialInvoiceRotPropertyNote. Referensnumret speglas ur ordern, notraden rättar sig
     // efter vad huvudet då faktiskt bär.
-    const invoiceReference = partialInvoiceReferenceField(header.YourOrderNumber);
+    const invoiceReference = partialInvoiceReferenceField(header.YourOrderNumber, {
+      labelCleared: workOrder.customer_snapshot?.label_cleared,
+      // Beteckningen bara när ordern faktiskt är ROT — annars är den inget undantag att bevara.
+      propertyDesignation: rotEnabled ? workOrder.rot_details?.property_designation : null,
+    });
     const rotPropertyNote = partialInvoiceRotPropertyNote(
       workOrder.rot_details, rotEnabled, invoiceReference.YourOrderNumber,
     );
