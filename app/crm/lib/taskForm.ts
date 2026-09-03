@@ -14,10 +14,9 @@ export const relatedTypeLabel: Record<CrmRelatedType, string> = {
 };
 
 /**
- * Vem uppgiften handlar om att kontakta, uppslagen ur kopplingen.
+ * Vem uppgiften handlar om att kontakta, uppslagen ur kopplingen (attachCrmTaskContacts).
  *
- * ⚠️ Sätts BARA av GET /api/crm/tasks. Raden som kommer tillbaka från POST/PATCH bär den inte —
- * se noten på TaskItem.contact.
+ * Sätts av SERVERN, aldrig av formuläret: det är ett härlett fält, inte något man skriver.
  */
 export type TaskContact = { name: string | null; phone: string | null; email: string | null };
 
@@ -27,11 +26,14 @@ export type TaskItem = {
   related_id: string | null;
   related_label: string | null;
   /**
-   * 🧨 FRIVILLIG MED FLIT, och den måste BEVARAS vid en sparning. Fältet sätts bara av läsrutten
-   * (attachCrmTaskContacts); skrivrutterna returnerar raden utan det. Ersätts en rad rakt av med
-   * svaret från PATCH tappar uppgiften sin kontaktrad i samma stund någon rättar titeln. Sprid
-   * över den befintliga raden och behåll värdet — samma grepp som QuoteTasksCard använder för
-   * assignee_name/creator_name.
+   * Vem som ska kontaktas, härlett ur kopplingen. Sätts av ALLA rutter som returnerar en uppgift
+   * (GET-listan, POST och PATCH) — just för att en rad aldrig ska tappa fältet när klienten byter
+   * ut den mot svaret.
+   *
+   * 🧨 FRIVILLIG I TYPEN MED FLIT: uppgiftsflödet på offerten (`/api/crm/quotes/[id]/tasks`)
+   * sätter det inte, och en framtida rutt kan glömma. Klienterna sprider därför över den
+   * befintliga raden i stället för att ersätta den — samma grepp som QuoteTasksCard använder för
+   * assignee_name/creator_name, och samma felklass som fälten Zod strippade tyst.
    */
   contact?: TaskContact | null;
   prospect_id: string | null;

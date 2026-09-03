@@ -75,19 +75,27 @@ function GroupLabel({ children }: { children: React.ReactNode }) {
 export default function QuoteContactCard({ customerId, snapshot, canEditContacts }: QuoteContactCardProps) {
   const [card, setCard] = useState<CustomerCard | null>(null);
   const [loading, setLoading] = useState(Boolean(customerId));
+  // ⚠️ Skild från `card === null`. "Kunden gick inte att läsa" och "kunden har inga kontakter" ser
+  // likadana ut i state men betyder motsatta saker, och att skriva "inga kontaktpersoner
+  // registrerade" ovanpå en trasig hämtning är ett påstående vi inte kan stå för.
+  const [loadFailed, setLoadFailed] = useState(false);
   // null = stängd. `{ contact: null }` = ny, `{ contact }` = redigera.
   const [formTarget, setFormTarget] = useState<{ contact: CrmContactItem | null } | null>(null);
+  // Bumpas bara i återhämtningen nedan — se applySavedContact.
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    if (!customerId) { setCard(null); setLoading(false); return; }
+    if (!customerId) { setCard(null); setLoadFailed(false); setLoading(false); return; }
     let cancelled = false;
     setLoading(true);
+    setLoadFailed(false);
     fetch(`/api/crm/customers/${customerId}`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
         if (cancelled) return;
         const c = json?.ok ? json.data?.item : null;
-        setCard(c ? {
+        if (!c) { setCard(null); setLoadFailed(true); return; }
+        setCard({
           // ⚠️ customer_type MÅSTE med: det avgör om kortets e-post får lånas ut åt kontaktraden.
           // Utan fältet står bolagets adress under en anställds namn (se contacts.ts).
           customer_type: c.customer_type ?? null,
@@ -95,12 +103,12 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
           phone: c.phone ?? null,
           mobile: c.mobile ?? null,
           contacts: (c.contacts ?? []) as CrmContactItem[],
-        } : null);
+        });
       })
-      .catch(() => { if (!cancelled) setCard(null); })
+      .catch(() => { if (!cancelled) { setCard(null); setLoadFailed(true); } })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [customerId]);
+  }, [customerId, reloadKey]);
 
   // Er referens — den delade regeln, samma svar som arbetsordern ger.
   const reference = resolveDocumentReferenceContact(snapshot, card);
@@ -116,10 +124,26 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
   const others = (card?.contacts ?? []).filter((c) => c.id !== referenceRow?.id);
   const hasReference = Boolean(reference.name || reference.phone || reference.email);
 
+  // Kundkortet kan ha rättats efter att offerten sparades. Offertens frysta uppgifter gäller för
+  // OFFERTEN (snapshot-regeln) och visas därför överst — men den som just rättade ett nummer på
+  // kortet måste se att rättningen tog. Utan den här raden ser "Redigera" ut att inte göra
+  // någonting, eftersom snapshotens värde vinner i upplösningen.
+  const cardPhone = referenceRow?.phone?.trim() || '';
+  const cardEmail = referenceRow?.email?.trim() || '';
+  const showsCardPhone = Boolean(cardPhone && cardPhone !== reference.phone);
+  const showsCardEmail = Boolean(cardEmail && cardEmail !== reference.email);
+
   // Den sparade raden in i den visade listan. Delad med kundkortet (applyContactToList), som bär
   // speglingen av serverns primär-degradering — annars visas två primärbrickor.
+  //
+  // ⚠️ Saknas kortet (hämtningen fallerade) finns ingen lista att lägga raden i, och en tyst
+  // no-op hade kvitterat "Kontaktperson tillagd" utan att något syntes. Hämta om i stället.
   function applySavedContact(saved: CrmContactItem) {
-    setCard((current) => (current ? { ...current, contacts: applyContactToList(current.contacts, saved) } : current));
+    setCard((current) => {
+      if (!current) return current;
+      return { ...current, contacts: applyContactToList(current.contacts, saved) };
+    });
+    if (!card) setReloadKey((key) => key + 1);
   }
 
   return (
@@ -190,6 +214,21 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
                 ) : null}
               </div>
               <ContactLines phone={reference.phone || null} email={reference.email || null} />
+              {/* Kundkortet säger något annat än offerten. Båda är sanna: offerten bär det som
+                  gällde när den skrevs, kortet det som gäller nu. Att bara visa det ena gjorde en
+                  rättning på kortet osynlig här. */}
+              {showsCardPhone || showsCardEmail ? (
+                <div className="mt-0.5 grid gap-1 rounded-lg bg-slate-50 px-2.5 py-1.5">
+                  <GroupLabel>Kundkortet har andra uppgifter</GroupLabel>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs">
+                    {showsCardPhone ? <PhoneLink value={cardPhone} /> : null}
+                    {showsCardEmail ? <EmailLink value={cardEmail} /> : null}
+                  </div>
+                  <p className="m-0 text-[11px] leading-snug text-slate-400">
+                    Offerten bär uppgifterna den sparades med. Ska de nya följa med till Fortnox behöver offerten redigeras.
+                  </p>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
@@ -243,9 +282,18 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
             </div>
           ) : null}
 
+          {/* ⚠️ Egen gren, inte tomma listan. Gick kunden inte att läsa VET vi inte om det finns
+              kontaktpersoner — att skriva "inga registrerade" hade varit ett påstående byggt på ett
+              fel, och offertens egen referens ovan står kvar och kan läsas ändå. */}
+          {loadFailed ? (
+            <p className="m-0 text-xs text-amber-700">
+              Kundens kontaktpersoner kunde inte hämtas. Uppgifterna från offerten visas ändå.
+            </p>
+          ) : null}
+
           {/* Varken referens eller kontakter. Säg VARFÖR knappen saknas när offerten inte har någon
               kund — annars läses tomheten som ett fel. */}
-          {!hasReference && !hasOnSite && others.length === 0 ? (
+          {!loadFailed && !hasReference && !hasOnSite && others.length === 0 ? (
             <p className={cn('m-0 text-xs', customerId ? 'text-slate-400' : 'text-slate-500')}>
               {customerId
                 ? 'Inga kontaktpersoner registrerade på kunden ännu.'

@@ -62,6 +62,10 @@ export default function ContactFormModal({
     contact ? draftFromContact(contact) : initialContactDraft);
   const [submitting, setSubmitting] = useState(false);
 
+  // Namnbytet är det enda som lossar kopplingen till befintliga dokument — se varningen i fältet.
+  // Visas bara när namnet faktiskt ändrats, annars blir det brus i varje redigering.
+  const nameChanged = Boolean(contact) && draft.name.trim() !== (contact?.name ?? '').trim();
+
   // Sidan bakom får inte gå att skrolla medan formuläret står öppet. Det tidigare värdet
   // återställs i stället för att nollas — offertpanelen kan ha satt sitt eget.
   useEffect(() => {
@@ -154,6 +158,19 @@ export default function ContactFormModal({
               placeholder="Anna Svensson"
               autoFocus
             />
+            {/* ⚠️ NAMNET ÄR KOPPLINGEN. Offerter och arbetsordrar fryser kontaktpersonens namn i
+                sin snapshot och slår upp raden på det (contactRowByName) — det finns inget id att
+                följa. Byter man namn hittar äldre dokument inte längre raden och faller tillbaka på
+                sina egna frysta uppgifter, eller på kundkortet.
+                Beteendet är inte nytt (ta bort + lägg till gjorde detsamma) och är medvetet — vi
+                VET inte att den omdöpta personen är samma människa. Men omdöpning är ett klick nu,
+                så konsekvensen måste stå där handlingen görs. */}
+            {nameChanged ? (
+              <p className="mt-1.5 text-[11px] leading-snug text-amber-700">
+                Befintliga offerter och ordrar står kvar på det gamla namnet — de följer inte med i ett namnbyte.
+                Rätta hellre en felstavning här än att byta till en annan person; en ny person läggs till som en egen kontakt.
+              </p>
+            ) : null}
           </div>
 
           <div>
