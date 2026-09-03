@@ -21,6 +21,8 @@ import { formatQuantity } from '@/app/crm/lib/format';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
+import ContactFormModal from '@/app/crm/components/ContactFormModal';
+import type { CrmContactItem } from '@/app/crm/lib/contactForm';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { DndContext, closestCenter, PointerSensor, TouchSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, arrayMove, useSortable } from '@dnd-kit/sortable';
@@ -1298,6 +1300,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // ångra — artikeln, priset, rabatten och radnoteringen är borta ur draften direkt. Tomma rader
   // hoppar över frågan (se isBlankLineItem); där finns inget att förlora.
   const [pendingRemoveRowId, setPendingRemoveRowId] = useState<string | null>(null);
+  // Kontaktpersonsformuläret. Öppnas vid "Er referens" när personen saknas på kundkortet — en ny
+  // platschef eller inköpare ska inte tvinga fram en resa till kundkortet mitt i offertskrivandet.
+  const [contactFormOpen, setContactFormOpen] = useState(false);
 
   // Sista raden tas aldrig bort helt — den ersätts med en tom, så formuläret alltid har en rad att
   // fylla i. Samma regel gällde före bekräftelsedialogen och ligger här så att båda vägarna in
@@ -1562,6 +1567,29 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       customer_id: customer.id,
       customer_source: buildCustomerSource(customer),
     }));
+  }
+
+  /**
+   * En nyss tillagd kontaktperson blir offertens "Er referens".
+   *
+   * ⚠️ Till skillnad från offertpanelen, som aldrig rör offerten: HÄR är det enda skälet man lägger
+   * till personen — man står i fältet och saknar hen. Draften är dessutom osparad och sparas
+   * medvetet av säljaren efteråt, så ingenting skrivs om på ett dokument kunden redan fått.
+   *
+   * ⚠️ Fält för fält genom `resolveCrmContact`, aldrig råa `contact.phone`/`contact.email`: en
+   * kontaktrad utan telefon ska ärva kortets, inte tömma fältet. Privatkundens automatiska rad bär
+   * bara namnet, och råa värden hade raderat numret. Samma regel som kontaktväljarens onChange.
+   */
+  function applyNewContact(contact: CrmContactItem) {
+    const resolved = selectedCustomer
+      ? resolveCrmContact(selectedCustomer, contact)
+      : { name: contact.name, phone: contact.phone || '', email: contact.email || '' };
+    setDraft((d) => ({ ...d, contact_name: resolved.name, phone: resolved.phone, email: resolved.email }));
+    // Hämta om kunden så rullgardinen får den nya raden — och så en primär-degradering syns.
+    //
+    // 🧨 `hydrateSelectedCustomer` och INTE `applySelectedCustomer`: den senare förifyller HELA
+    // kundblocket ur kortet (namn, org.nr, adress, moms) och hade ätit det säljaren skrivit.
+    if (selectedCustomer) hydrateSelectedCustomer(selectedCustomer.id);
   }
 
   // Load quote for edit mode
@@ -2752,7 +2780,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             <Field fieldId="field-project-name" label="Offertnamn / projekt" className="md:col-span-2" error={fieldErrors.project_name}>
               <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
             </Field>
-            <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" className="md:col-span-2" error={fieldErrors.contact_name}>
+            {/* `plain` — fältet bär numera en KNAPP ("Ny kontaktperson"), och en omslutande
+                <label> vidarebefordrar klick till sin kontroll. Se Field: composite widgets får
+                ett <div> och en egen aria-label på inmatningen i stället. */}
+            <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" plain className="md:col-span-2" error={fieldErrors.contact_name}>
               {/* Contact picker — for a customer with several contacts, choose which one is
                   responsible for this offer/order. Fills name/phone/email from the chosen
                   contact; the free-text field below still allows a manual override. */}
@@ -2783,7 +2814,23 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 value={draft.contact_name}
                 onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
                 placeholder="Ex. Birgitta Ling"
+                aria-label="Er referens (kontaktperson)"
               />
+              {/* Saknas personen på kundkortet — en ny platschef, en ny inköpare — ska man kunna
+                  lägga till hen här. Vägen förut var en resa till kundkortet mitt i skrivandet:
+                  utkastet stashas visserligen, men det är en omväg ingen ska behöva ta. */}
+              {selectedCustomer ? (
+                <button
+                  type="button"
+                  onClick={() => setContactFormOpen(true)}
+                  className="mt-1.5 inline-flex w-fit items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                  Ny kontaktperson
+                </button>
+              ) : null}
               <p className="mt-1 text-[11px] leading-snug text-slate-400">
                 Obligatoriskt. Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten och följer med till order och faktura.
               </p>
@@ -3713,6 +3760,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             </Field>
           </div>
         </CrmModal>
+      ) : null}
+
+      {/* Ny kontaktperson på kunden, utan att lämna offerten. Samma modal som kundkortet och
+          offertpanelen öppnar — ett formulär, tre ingångar. */}
+      {contactFormOpen && selectedCustomer ? (
+        <ContactFormModal
+          customerId={selectedCustomer.id}
+          contact={null}
+          onClose={() => setContactFormOpen(false)}
+          onSaved={(contact) => applyNewContact(contact)}
+        />
       ) : null}
 
       {pendingRemoveRow ? (

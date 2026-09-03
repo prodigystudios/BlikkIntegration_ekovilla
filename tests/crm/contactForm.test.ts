@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 
 import {
+  applyContactToList,
   buildContactPayload,
   contactDraftError,
   draftFromContact,
   initialContactDraft,
   type ContactDraft,
+  type CrmContactItem,
 } from '@/app/crm/lib/contactForm';
 // Det RIKTIGA schemat rutten använder. Poängen med testet: Zod strippar okända nycklar tyst, så
 // ett felstavat fältnamn i nyttolasten hade försvunnit utan ett ord — precis som `prospect_id`
@@ -72,6 +74,48 @@ describe('buildContactPayload', () => {
 
   it('ett ifyllt namn passerar', () => {
     expect(contactDraftError(draft({ name: 'Anna' }))).toBeNull();
+  });
+});
+
+describe('applyContactToList', () => {
+  const anna: CrmContactItem = { id: 'a', name: 'Anna', role: null, phone: null, email: null, is_primary: true };
+  const bjorn: CrmContactItem = { id: 'b', name: 'Björn', role: null, phone: null, email: null, is_primary: false };
+
+  it('lägger en ny kontakt sist', () => {
+    const cecilia: CrmContactItem = { id: 'c', name: 'Cecilia', role: null, phone: null, email: null, is_primary: false };
+    expect(applyContactToList([anna, bjorn], cecilia).map((c) => c.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('ersätter en befintlig rad på plats', () => {
+    const rattad = { ...bjorn, name: 'Björn Ek' };
+    const next = applyContactToList([anna, bjorn], rattad);
+    expect(next.map((c) => c.id)).toEqual(['a', 'b']);
+    expect(next[1].name).toBe('Björn Ek');
+  });
+
+  // 🧨 Kärnan: servern degraderar syskonen, och utan spegling här visar listan två primärbrickor.
+  it('en ny primär degraderar den gamla', () => {
+    const next = applyContactToList([anna, bjorn], { ...bjorn, is_primary: true });
+    expect(next.filter((c) => c.is_primary).map((c) => c.id)).toEqual(['b']);
+  });
+
+  it('en ny primär som LÄGGS TILL degraderar också', () => {
+    const cecilia: CrmContactItem = { id: 'c', name: 'Cecilia', role: null, phone: null, email: null, is_primary: true };
+    const next = applyContactToList([anna, bjorn], cecilia);
+    expect(next.filter((c) => c.is_primary).map((c) => c.id)).toEqual(['c']);
+  });
+
+  // Motsatsen måste också hålla: en vanlig kontakt får inte råka nolla den primära.
+  it('en icke-primär rör inte den befintliga primären', () => {
+    const next = applyContactToList([anna, bjorn], { ...bjorn, name: 'Björn Ek' });
+    expect(next.filter((c) => c.is_primary).map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('muterar inte listan den fick', () => {
+    const list = [anna, bjorn];
+    applyContactToList(list, { ...bjorn, is_primary: true });
+    expect(list[0].is_primary).toBe(true);
+    expect(list).toHaveLength(2);
   });
 });
 

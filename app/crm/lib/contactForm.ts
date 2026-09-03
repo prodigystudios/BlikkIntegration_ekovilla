@@ -71,3 +71,22 @@ export function buildContactPayload(draft: ContactDraft) {
 export function contactDraftError(draft: ContactDraft): string | null {
   return draft.name.trim() ? null : 'Namn krävs';
 }
+
+/**
+ * Den sparade kontakten in i en visad lista: ersätter raden om den finns, annars läggs den sist.
+ *
+ * 🧨 SPEGLAR PRIMÄR-DEGRADERINGEN. Servern håller invarianten "bara EN primär per kund"
+ * (`demoteOtherPrimaryContacts` i lib/domains/crm/customers.ts) — men den skriver bara i
+ * databasen. Utan raden nedan visar listan TVÅ primärbrickor tills sidan laddas om, och den som
+ * läser den kan inte avgöra vilken kontakt nya offerter faktiskt kommer att välja.
+ *
+ * Bor här och inte i varje vy: kundkortet och offertpanelen visar samma lista, och två kopior av
+ * en invariant är hur de börjar visa olika saker. Servern äger fortfarande sanningen — det här är
+ * bara visningen som håller jämna steg.
+ */
+export function applyContactToList(contacts: CrmContactItem[], saved: CrmContactItem): CrmContactItem[] {
+  const exists = contacts.some((c) => c.id === saved.id);
+  const next = exists ? contacts.map((c) => (c.id === saved.id ? saved : c)) : [...contacts, saved];
+  if (!saved.is_primary) return next;
+  return next.map((c) => (c.id === saved.id ? c : { ...c, is_primary: false }));
+}

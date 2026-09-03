@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { PhoneLink, EmailLink } from '@/app/crm/components/ContactLinks';
 import ContactFormModal from '@/app/crm/components/ContactFormModal';
-import type { CrmContactItem } from '@/app/crm/lib/contactForm';
+import { applyContactToList, type CrmContactItem } from '@/app/crm/lib/contactForm';
 import {
   contactRowByName,
   resolveDocumentReferenceContact,
@@ -77,10 +77,6 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
   const [loading, setLoading] = useState(Boolean(customerId));
   // null = stängd. `{ contact: null }` = ny, `{ contact }` = redigera.
   const [formTarget, setFormTarget] = useState<{ contact: CrmContactItem | null } | null>(null);
-  // Bumpas efter en sparning. En omhämtning i stället för att peta i listan för hand: sätter man
-  // en kontakt till primär degraderar SERVERN syskonen (demoteOtherPrimaryContacts), och en lokal
-  // lista hade då visat två primärbrickor tills panelen öppnades om.
-  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!customerId) { setCard(null); setLoading(false); return; }
@@ -104,7 +100,7 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
       .catch(() => { if (!cancelled) setCard(null); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [customerId, reloadKey]);
+  }, [customerId]);
 
   // Er referens — den delade regeln, samma svar som arbetsordern ger.
   const reference = resolveDocumentReferenceContact(snapshot, card);
@@ -120,9 +116,10 @@ export default function QuoteContactCard({ customerId, snapshot, canEditContacts
   const others = (card?.contacts ?? []).filter((c) => c.id !== referenceRow?.id);
   const hasReference = Boolean(reference.name || reference.phone || reference.email);
 
-  function applySavedContact() {
-    // Läs om kundkortet så primär-degraderingen syns och den nya raden hamnar i rätt grupp.
-    setReloadKey((key) => key + 1);
+  // Den sparade raden in i den visade listan. Delad med kundkortet (applyContactToList), som bär
+  // speglingen av serverns primär-degradering — annars visas två primärbrickor.
+  function applySavedContact(saved: CrmContactItem) {
+    setCard((current) => (current ? { ...current, contacts: applyContactToList(current.contacts, saved) } : current));
   }
 
   return (
