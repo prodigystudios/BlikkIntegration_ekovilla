@@ -38,7 +38,9 @@ const workOrderRow = {
   line_items: [{ id: LINE_ID, pricing_mode: 'item', unit_price: '100', quantity: '10' }],
   partial_invoicing_started_at: null,
   fortnox_order_number: '1234',
-  rot_details: null,
+  // Uttrycklig typ, inte den inferrerade `null`: ROT-fallen nedan skickar in riktiga uppgifter via
+  // overrides, och Partial<typeof workOrderRow> hade annars låst fältet till null | undefined.
+  rot_details: null as { enabled?: boolean; property_designation?: string; brf_org_number?: string } | null,
 };
 
 // En kedja per tabell — den delade makeQueryChain räcker inte här, eftersom createPartialInvoice
@@ -55,10 +57,10 @@ function makeChain(result: { data: unknown; error: unknown }) {
   return chain;
 }
 
-function installSupabaseMock() {
+function installSupabaseMock(overrides: Partial<typeof workOrderRow> = {}) {
   // claimFortnoxPush vinner claimen på första försöket (update ... .select('id') ger en rad).
   const workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
-  workOrders.single = vi.fn().mockResolvedValue({ data: workOrderRow, error: null });
+  workOrders.single = vi.fn().mockResolvedValue({ data: { ...workOrderRow, ...overrides }, error: null });
   const invoices = makeChain({ data: [], error: null });
 
   vi.mocked(getSupabaseAdmin).mockReturnValue({
@@ -107,5 +109,37 @@ describe('createPartialInvoice — fakturahuvudet', () => {
     await createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1');
 
     expect('YourOrderNumber' in postedInvoice()).toBe(false);
+  });
+
+  // 🧨 Följdrisken av speglingen: på en ROT-villa ÄR fastighetsbeteckningen referensnumret, och
+  // Fortnox saknar fält för den — den rider annars som textrad. Bygger vi textraden vid sidan om
+  // regeln står beteckningen två gånger på fakturan medan orderbekräftelsen har den en gång.
+  const rotVilla = { enabled: true, property_designation: 'Haggården 6:3' };
+  const textRows = (invoice: Record<string, unknown>) =>
+    (invoice.InvoiceRows as Array<{ Description?: string }>).filter((r) => r.Description?.includes('Fastighetsbeteckning'));
+
+  it('trycker inte fastighetsbeteckningen två gånger på en ROT-villa', async () => {
+    installSupabaseMock({ rot_details: rotVilla });
+    vi.mocked(fortnoxGet).mockResolvedValue({
+      Order: { CustomerNumber: 55, YourOrderNumber: 'Haggården 6:3' },
+    } as never);
+
+    await createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1');
+
+    const invoice = postedInvoice();
+    expect(invoice.YourOrderNumber).toBe('Haggården 6:3');
+    expect(invoice.TaxReductionType).toBe('rot');
+    expect(textRows(invoice)).toHaveLength(0);
+  });
+
+  // ⚠️ Men beteckningen får aldrig FÖRSVINNA. Bär ordern den inte (pushad innan ROT-uppgifterna
+  // fanns, eller en misslyckad header-synk) ska textraden stå kvar — den är underlaget för avdraget.
+  it('behåller textraden när ROT-ordern saknar referensnummer', async () => {
+    installSupabaseMock({ rot_details: rotVilla });
+    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { CustomerNumber: 55 } } as never);
+
+    await createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1');
+
+    expect(textRows(postedInvoice())).toHaveLength(1);
   });
 });

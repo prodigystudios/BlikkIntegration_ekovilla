@@ -3,7 +3,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, rotRowHouseWork } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox } from './orders';
 
@@ -353,6 +353,36 @@ export function partialInvoiceReferenceField(
   return value ? { YourOrderNumber: value } : {};
 }
 
+/**
+ * ROT-notraden på delfakturan — ANDRA HALVAN av samma regel som referensnumret ovan.
+ *
+ * 🧨 De två får aldrig avgöras var för sig. `resolveRotReference` fyller exakt EN av dem: på en
+ * villa ÄR fastighetsbeteckningen kundens referensnummer och notraden utelämnas, på en bostadsrätt
+ * ryms BRF org.nr + beteckning inte i ett fält och rider som textrad i stället. Delfakturan byggde
+ * tidigare notraden vid sidan om regeln (`buildRotPropertyNote` rakt av), vilket gick bra bara så
+ * länge huvudet bar vårt ordernummer. I samma stund referensnumret speglades ur ordern hade en
+ * villa fått beteckningen TVÅ gånger — en i huvudet, en som textrad — medan orderbekräftelsen
+ * kunden redan fått bara har den en gång.
+ *
+ * ⚠️ `label` spelar ingen roll för den här halvan (`propertyNote` beror bara på rot + rotEnabled),
+ * därför skickas null. Referensnumret hämtas inte härifrån — det speglas ur ordern.
+ *
+ * ⚠️ Villafallet suppar notraden BARA när ordern faktiskt bär beteckningen. Gör den inte det — en
+ * order pushad innan ROT-uppgifterna fanns, eller en misslyckad header-synk — faller vi tillbaka på
+ * textraden. Beteckningen är Skatteverkets underlag för avdraget och ska hellre stå två gånger än
+ * inte alls.
+ */
+export function partialInvoiceRotPropertyNote(
+  rotDetails: { property_designation?: string | null; brf_org_number?: string | null } | null | undefined,
+  rotEnabled: boolean,
+  mirroredReference: string | undefined,
+): string | null {
+  if (!rotEnabled) return null;
+  const { propertyNote } = resolveRotReference(rotDetails, null, rotEnabled);
+  if (propertyNote) return propertyNote;
+  return mirroredReference ? null : buildRotPropertyNote(rotDetails);
+}
+
 // Create ONE partial-invoice round: validate the requested quantities against remaining, ensure
 // the Fortnox order exists (its header is the source for customer/references/delivery), POST a
 // standalone draft invoice with this round's rows, then record the round and advance the work
@@ -466,7 +496,13 @@ export async function createPartialInvoice(
     const header = order.Order ?? {};
     if (header.CustomerNumber == null) throw new Error('Fortnox-ordern saknar kundkoppling');
 
-    const rotPropertyNote = rotEnabled ? buildRotPropertyNote(workOrder.rot_details) : null;
+    // "Ert referensnummer" och ROT-notraden är två halvor av EN regel och avgörs därför ihop —
+    // se partialInvoiceRotPropertyNote. Referensnumret speglas ur ordern, notraden rättar sig
+    // efter vad huvudet då faktiskt bär.
+    const invoiceReference = partialInvoiceReferenceField(header.YourOrderNumber);
+    const rotPropertyNote = partialInvoiceRotPropertyNote(
+      workOrder.rot_details, rotEnabled, invoiceReference.YourOrderNumber,
+    );
     const invoiceRows = buildInvoiceRows(basis, requestByKey, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
     if (!invoiceRows.length) throw new PartialInvoiceError('Inget antal att fakturera angavs.');
 
@@ -486,7 +522,7 @@ export async function createPartialInvoice(
         InvoiceDate: new Date().toISOString().slice(0, 10),
         Remarks: remarks,
         // "Ert referensnummer" = kundens märkning, speglad ur ordern. Se partialInvoiceReferenceField.
-        ...partialInvoiceReferenceField(header.YourOrderNumber),
+        ...invoiceReference,
         ...(header.OurReference ? { OurReference: header.OurReference } : {}),
         ...(header.YourReference ? { YourReference: header.YourReference } : {}),
         // No VATType on the payload (kept consistent with offers/orders): the customer card drives

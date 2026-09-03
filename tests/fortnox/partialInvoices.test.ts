@@ -8,6 +8,7 @@ import {
   roundSubtotal,
   hasCarvedRotLabor,
   partialInvoiceReferenceField,
+  partialInvoiceRotPropertyNote,
   PartialInvoiceError,
   type PartialInvoiceLineItem,
 } from '@/lib/domains/fortnox/partialInvoices';
@@ -449,5 +450,36 @@ describe('partialInvoiceReferenceField', () => {
     expect(partialInvoiceReferenceField(undefined)).toEqual({});
     expect(partialInvoiceReferenceField('')).toEqual({});
     expect(partialInvoiceReferenceField('   ')).toEqual({});
+  });
+});
+
+// Andra halvan av samma regel. resolveRotReference fyller exakt EN av referensfältet och notraden;
+// delfakturan måste följa det beslutet, annars trycks fastighetsbeteckningen två gånger så fort
+// referensnumret speglas ur ordern.
+describe('partialInvoiceRotPropertyNote', () => {
+  const villa = { property_designation: 'Haggården 6:3' };
+  const brf = { property_designation: 'Haggården 6:3', brf_org_number: '769600-1234' };
+
+  // Villa: beteckningen ÄR referensnumret och står redan i huvudet — ingen textrad.
+  it('utelämnar notraden på en villa vars beteckning ordern redan bär', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Haggården 6:3')).toBeNull();
+  });
+
+  // ⚠️ Men bara när huvudet faktiskt bär den. Annars ska den stå kvar som textrad — hellre två
+  // gånger än inte alls, den är underlaget för avdraget.
+  it('behåller notraden när ordern saknar referensnummer', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, undefined)).toBe('Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  // Bostadsrätt: två värden ryms inte i ett fält, så de rider som textrad — precis som på ordern.
+  // Notraden ska stå kvar även om huvudet bär något.
+  it('behåller notraden på en bostadsrätt', () => {
+    expect(partialInvoiceRotPropertyNote(brf, true, 'Haggården 6:3'))
+      .toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
+  });
+
+  it('ger null när ordern inte är ROT', () => {
+    expect(partialInvoiceRotPropertyNote(villa, false, undefined)).toBeNull();
+    expect(partialInvoiceRotPropertyNote(null, false, undefined)).toBeNull();
   });
 });
