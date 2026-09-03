@@ -367,10 +367,16 @@ export function partialInvoiceReferenceField(
  * ⚠️ `label` spelar ingen roll för den här halvan (`propertyNote` beror bara på rot + rotEnabled),
  * därför skickas null. Referensnumret hämtas inte härifrån — det speglas ur ordern.
  *
- * ⚠️ Villafallet suppar notraden BARA när ordern faktiskt bär beteckningen. Gör den inte det — en
- * order pushad innan ROT-uppgifterna fanns, eller en misslyckad header-synk — faller vi tillbaka på
- * textraden. Beteckningen är Skatteverkets underlag för avdraget och ska hellre stå två gånger än
- * inte alls.
+ * ⚠️ Villafallet suppar notraden BARA när det speglade referensnumret ÄR beteckningen — jämfört
+ * som värde, inte "huvudet bär något". Skillnaden är hela poängen: bär ordern ett ANNAT
+ * referensnummer (beteckningen rättad i CRM efter en misslyckad header-synk, eller något ekonomi
+ * skrivit in för hand i Fortnox) hade en sanningstest tagit bort textraden och lämnat fakturan helt
+ * utan beteckning. Den är Skatteverkets underlag för avdraget och ska hellre stå två gånger än inte
+ * alls — så allt utom en exakt träff behåller raden.
+ *
+ * ⚠️ `createPartialInvoice` gatar INTE på `fortnox_order_sync_status` (till skillnad från
+ * helfaktureringen, som kör assertOrderRowsSynced), så ett divergerat orderhuvud är en verklig väg
+ * hit och inte ett teoretiskt fall.
  */
 export function partialInvoiceRotPropertyNote(
   rotDetails: { property_designation?: string | null; brf_org_number?: string | null } | null | undefined,
@@ -380,7 +386,10 @@ export function partialInvoiceRotPropertyNote(
   if (!rotEnabled) return null;
   const { propertyNote } = resolveRotReference(rotDetails, null, rotEnabled);
   if (propertyNote) return propertyNote;
-  return mirroredReference ? null : buildRotPropertyNote(rotDetails);
+  // Villafallet. Beteckningen jämförs trimmad mot det speglade värdet, som redan är trimmat av
+  // partialInvoiceReferenceField. Ingen beteckning alls → buildRotPropertyNote ger null ändå.
+  const designation = rotDetails?.property_designation?.trim();
+  return designation && mirroredReference === designation ? null : buildRotPropertyNote(rotDetails);
 }
 
 // Create ONE partial-invoice round: validate the requested quantities against remaining, ensure

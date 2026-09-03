@@ -471,6 +471,19 @@ describe('partialInvoiceRotPropertyNote', () => {
     expect(partialInvoiceRotPropertyNote(villa, true, undefined)).toBe('Fastighetsbeteckning: Haggården 6:3');
   });
 
+  // 🧨 Och bara vid EXAKT träff. Bär ordern ett annat referensnummer — beteckningen rättad i CRM
+  // efter en misslyckad header-synk, eller något ekonomi skrivit in för hand i Fortnox — hade en
+  // ren sanningstest tagit bort raden och lämnat fakturan helt utan beteckning.
+  it('behåller notraden när ordern bär ett ANNAT referensnummer', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Haggården 6:1')).toBe('Fastighetsbeteckning: Haggården 6:3');
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Projekt 4711')).toBe('Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  // Ingen beteckning alls på en ROT-order: ingen rad att bygga, och inget att jämföra mot.
+  it('ger null när ROT-uppgifterna saknar beteckning', () => {
+    expect(partialInvoiceRotPropertyNote({}, true, 'Projekt 4711')).toBeNull();
+  });
+
   // Bostadsrätt: två värden ryms inte i ett fält, så de rider som textrad — precis som på ordern.
   // Notraden ska stå kvar även om huvudet bär något.
   it('behåller notraden på en bostadsrätt', () => {
