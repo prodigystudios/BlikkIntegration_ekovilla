@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { updateCrmTask } from '@/lib/domains/crm/tasks';
+import { attachCrmTaskContacts, updateCrmTask } from '@/lib/domains/crm/tasks';
 import {
   ok,
   requireCrmWriter,
@@ -35,7 +35,11 @@ export async function PATCH(req: Request, context: RouteContext) {
       return routeError(500, 'crm_task_update_failed', error.message);
     }
 
-    return ok({ item: data });
+    // Kontakten följer med på ALLA svar som bär en uppgift, inte bara på listan. Klienten
+    // ersätter raden med det den får tillbaka, och ett svar utan fältet hade tömt kontaktraden i
+    // samma stund någon bockade av eller rättade titeln — en tyst förlust av något som stod på
+    // skärmen. Samma felklass som fälten Zod strippade tyst.
+    return ok({ item: data ? (await attachCrmTaskContacts(supabase, [data]))[0] : data });
   } catch (e: any) {
     return routeError(500, 'crm_task_update_unexpected', e?.message || 'Failed to update task');
   }

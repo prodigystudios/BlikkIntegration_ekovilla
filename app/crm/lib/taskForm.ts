@@ -13,11 +13,27 @@ export const relatedTypeLabel: Record<CrmRelatedType, string> = {
   crm_quote: 'Offert',
 };
 
+/**
+ * Vem uppgiften handlar om att kontakta, uppslagen ur kopplingen.
+ *
+ * ⚠️ Sätts BARA av GET /api/crm/tasks. Raden som kommer tillbaka från POST/PATCH bär den inte —
+ * se noten på TaskItem.contact.
+ */
+export type TaskContact = { name: string | null; phone: string | null; email: string | null };
+
 export type TaskItem = {
   id: string;
   related_type: CrmRelatedType | null;
   related_id: string | null;
   related_label: string | null;
+  /**
+   * 🧨 FRIVILLIG MED FLIT, och den måste BEVARAS vid en sparning. Fältet sätts bara av läsrutten
+   * (attachCrmTaskContacts); skrivrutterna returnerar raden utan det. Ersätts en rad rakt av med
+   * svaret från PATCH tappar uppgiften sin kontaktrad i samma stund någon rättar titeln. Sprid
+   * över den befintliga raden och behåll värdet — samma grepp som QuoteTasksCard använder för
+   * assignee_name/creator_name.
+   */
+  contact?: TaskContact | null;
   prospect_id: string | null;
   user_id: string;
   created_by: string | null;
