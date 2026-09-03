@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveDocumentReferenceContact, type CrmContactSource } from './contacts';
 
 export const crmTaskSelect = `
   id,
@@ -246,6 +247,110 @@ export async function attachCrmTaskParticipantNames<T extends { user_id: string;
     assignee_name: names.get(task.user_id) ?? null,
     creator_name: task.created_by ? names.get(task.created_by) ?? null : null,
   }));
+}
+
+/** Vem uppgiften handlar om att kontakta. Alla tre fälten kan vara null var för sig. */
+export type CrmTaskContact = { name: string | null; phone: string | null; email: string | null };
+
+// related_id är en TEXT-kolumn, så ett skräpvärde skulle nå `.in('id', …)` mot en uuid-kolumn och
+// få PostgREST att svara 400 — vilket hade tömt HELA uppgiftslistan på kontakter i stället för den
+// enda trasiga raden. Egna rader bär alltid riktiga id:n; det här är spärren mot att en enda
+// avvikelse tar ner det övriga.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Kontaktfälten regeln behöver. `customer_type` är inte kosmetik: det avgör om kortets e-post får
+// lånas ut åt en namngiven kontaktrad (se contacts.ts). Utan fältet hade uppgiftslistan visat
+// bolagets adress under en anställds namn.
+const taskContactCustomerSelect =
+  'id, customer_type, email, phone, mobile, contacts:crm_customer_contacts(name, phone, email, is_primary)';
+
+/**
+ * Sätter "vem ska jag kontakta" på varje uppgift som har en CRM-koppling.
+ *
+ * En uppgift säger VAD som ska göras men inte vem man ringer — och att leta upp numret betydde en
+ * resa via offerten eller kundkortet mitt i en uppföljning.
+ *
+ * ⚠️ ORDERGIVAREN, inte slutkunden på plats: `resolveDocumentReferenceContact` och INTE
+ * `resolveDocumentContact`. Uppgiftslistan är en säljyta, precis som offertpanelens "Er referens" —
+ * fältvyns fråga ("vem ringer jag när jag står på jobbet") är en annan, och där vinner slutkunden.
+ * Byts funktionen ut här börjar uppgiften peka på en annan person än offerten den hör till.
+ *
+ * ⚠️ SESSIONSKLIENTEN, aldrig elevated. En uppgift vars offert anroparen inte får se ska svara
+ * `contact: null` — RLS gör det gratis. Elevera aldrig "för att det blev tomt": uppgifterna själva
+ * läses redan elevated i den delegerade vyn, och att lägga kunduppgifter ovanpå det hade vidgat
+ * kretsen som ser kontaktuppgifter utan att någon bett om det.
+ *
+ * Best-effort, som `attachCrmTaskParticipantNames`: ett misslyckat uppslag ger null-kontakter, inte
+ * en trasig lista. Tre frågor totalt för en lista som ändå är kapad till 100 rader.
+ */
+export async function attachCrmTaskContacts<
+  T extends { related_type: CrmRelatedType | null; related_id: string | null }
+>(supabase: SupabaseClient, tasks: T[]): Promise<Array<T & { contact: CrmTaskContact | null }>> {
+  const withNull = () => tasks.map((task) => ({ ...task, contact: null }));
+
+  const idsFor = (type: CrmRelatedType) => Array.from(new Set(
+    tasks
+      .filter((task) => task.related_type === type && task.related_id && UUID_RE.test(task.related_id))
+      .map((task) => task.related_id as string)
+  ));
+
+  const quoteIds = idsFor('crm_quote');
+  // Prospekt och kund är SAMMA rad i crm_customers — convertProspectToCustomer flippar bara
+  // customer_stage. Båda kopplingarna slås därför upp i samma tabell.
+  const directCustomerIds = [...idsFor('crm_customer'), ...idsFor('crm_prospect')];
+
+  if (quoteIds.length === 0 && directCustomerIds.length === 0) return withNull();
+
+  try {
+    const quotes = new Map<string, { customer_id: string | null; customer_snapshot: unknown }>();
+    if (quoteIds.length > 0) {
+      const { data } = await supabase
+        .from('crm_quotes')
+        .select('id, customer_id, customer_snapshot')
+        .in('id', quoteIds);
+      for (const row of (data || []) as Array<{ id: string; customer_id: string | null; customer_snapshot: unknown }>) {
+        quotes.set(row.id, { customer_id: row.customer_id, customer_snapshot: row.customer_snapshot });
+      }
+    }
+
+    const customerIds = Array.from(new Set([
+      ...directCustomerIds,
+      ...Array.from(quotes.values()).map((q) => q.customer_id).filter((id): id is string => Boolean(id)),
+    ]));
+
+    const customers = new Map<string, CrmContactSource>();
+    if (customerIds.length > 0) {
+      const { data } = await supabase.from('crm_customers').select(taskContactCustomerSelect).in('id', customerIds);
+      for (const row of (data || []) as Array<CrmContactSource & { id: string }>) {
+        customers.set(row.id, row);
+      }
+    }
+
+    return tasks.map((task) => {
+      if (!task.related_id) return { ...task, contact: null };
+
+      // Offerten bär en egen ögonblicksbild av kontakten; kund och prospekt har bara kortet.
+      const quote = task.related_type === 'crm_quote' ? quotes.get(task.related_id) : undefined;
+      const customerId = quote ? quote.customer_id : task.related_id;
+      const card = customerId ? customers.get(customerId) ?? null : null;
+      // Offerten som inte gick att läsa (RLS) ger varken snapshot eller kort → null, som avsett.
+      if (task.related_type === 'crm_quote' && !quote) return { ...task, contact: null };
+
+      const resolved = resolveDocumentReferenceContact(
+        (quote?.customer_snapshot ?? null) as Parameters<typeof resolveDocumentReferenceContact>[0],
+        card,
+      );
+      const contact: CrmTaskContact = {
+        name: resolved.name || null,
+        phone: resolved.phone || null,
+        email: resolved.email || null,
+      };
+      const hasAnything = Boolean(contact.name || contact.phone || contact.email);
+      return { ...task, contact: hasAnything ? contact : null };
+    });
+  } catch {
+    return withNull();
+  }
 }
 
 export async function createCrmTask(supabase: SupabaseClient, input: CreateCrmTaskInput) {

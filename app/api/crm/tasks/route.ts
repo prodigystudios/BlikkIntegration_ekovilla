@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { createCrmTask, listCrmTasks, listCrmTasksDelegatedBy, mapCrmTaskRows } from '@/lib/domains/crm/tasks';
+import { attachCrmTaskContacts, createCrmTask, listCrmTasks, listCrmTasksDelegatedBy, mapCrmTaskRows } from '@/lib/domains/crm/tasks';
 import { buildCrmTaskAssignedNotification } from '@/lib/domains/notifications/payload';
 import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
 import { deliverNotifications } from '@/lib/domains/notifications/delivery';
@@ -33,6 +33,8 @@ export async function GET(req: Request) {
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
+    const supabase = createRouteHandlerClient({ cookies });
+
     // Uppgifter man delegerat tillhör mottagaren och ligger utanför den egna RLS-vyn. Skaparen
     // kommer alltid från sessionen, aldrig från frågesträngen — filtret är slutet om anroparen.
     if (parsedQuery.data.scope === 'delegated') {
@@ -40,10 +42,13 @@ export async function GET(req: Request) {
         search: parsedQuery.data.q,
       });
       if (error) return routeError(500, 'crm_tasks_delegated_failed', error.message);
-      return ok({ items: mapCrmTaskRows(data as any[] | null | undefined) });
+      // ⚠️ Kontakterna slås upp med SESSIONSKLIENTEN även här, inte med den elevated klienten som
+      // hämtade raderna. Elevationen ovan är motiverad av att uppgifterna tillhör mottagaren; den
+      // säger ingenting om vilka KUNDER anroparen får läsa. Ser hen inte offerten blir kontakten
+      // null, precis som avsett.
+      return ok({ items: await attachCrmTaskContacts(supabase, mapCrmTaskRows(data as any[] | null | undefined)) });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
     const query = await listCrmTasks(supabase, {
       search: parsedQuery.data.q,
       status: parsedQuery.data.status,
@@ -57,7 +62,7 @@ export async function GET(req: Request) {
       return routeError(500, 'crm_tasks_list_failed', error.message);
     }
 
-    return ok({ items: mapCrmTaskRows(data as any[] | null | undefined) });
+    return ok({ items: await attachCrmTaskContacts(supabase, mapCrmTaskRows(data as any[] | null | undefined)) });
   } catch (e: any) {
     return routeError(500, 'crm_tasks_unexpected', e?.message || 'Failed to list tasks');
   }
@@ -120,7 +125,8 @@ export async function POST(req: Request) {
     // elevated klient: dashboard_work_items WITH CHECK är egen-bara, och policyn lämnas
     // medvetet orörd (se 20260817_dashboard_work_items_created_by.sql). Behörighetsbeslutet är
     // redan fattat ovan — crm.admin plus en mottagare verifierad mot säljarkatalogen.
-    const supabase = owner.ownerId ? getSupabaseAdmin() : createRouteHandlerClient({ cookies });
+    const sessionClient = createRouteHandlerClient({ cookies });
+    const supabase = owner.ownerId ? getSupabaseAdmin() : sessionClient;
     const { data, error } = await createCrmTask(supabase, payload);
 
     if (error) {
@@ -139,7 +145,10 @@ export async function POST(req: Request) {
       }).catch((e) => console.error('[crm_task] notis-fan-out misslyckades', e));
     }
 
-    return ok({ item: data }, 201);
+    // ⚠️ SESSIONSKLIENTEN, även när uppgiften skrevs elevated åt någon annan: elevationen ovan
+    // gäller uppgiftstabellen, inte vilka kunder anroparen får läsa. Utan raden saknar en nyss
+    // skapad uppgift sin kontaktrad tills listan hämtas om.
+    return ok({ item: data ? (await attachCrmTaskContacts(sessionClient, [data]))[0] : data }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_task_unexpected', e?.message || 'Failed to create task');
   }

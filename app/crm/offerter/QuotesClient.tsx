@@ -29,6 +29,13 @@ type QuoteItem = {
     customer_name?: string | null;
     company_name?: string | null;
     email?: string | null;
+    // Kontaktfälten läses av detaljpanelens kontaktkort. Servern har alltid skickat dem —
+    // listan typade dem bara inte, eftersom raderna inte visar dem.
+    contact_name?: string | null;
+    phone?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
   } | null;
   pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
   prospect: { id: string; company_name: string; contact_name: string | null; city: string | null; status: string } | Array<{ id: string; company_name: string; contact_name: string | null; city: string | null; status: string }> | null;
@@ -91,7 +98,7 @@ function formatDate(value: string | null | undefined) {
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
-export default function QuotesClient({ currentUserId, canWrite, canDelegate }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean }) {
+export default function QuotesClient({ currentUserId, canWrite, canDelegate, canEditContacts }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean; canEditContacts: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -518,6 +525,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate }: {
           currentUserId={currentUserId}
           canWrite={canWrite}
           canDelegate={canDelegate}
+          canEditContacts={canEditContacts}
           onClose={() => setDetailPanelOpen(false)}
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));

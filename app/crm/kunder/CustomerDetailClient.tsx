@@ -20,6 +20,8 @@ import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import { CreditReportSummary } from '@/app/crm/components/CreditReport';
+import ContactFormModal from '@/app/crm/components/ContactFormModal';
+import { applyContactToList } from '@/app/crm/lib/contactForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,8 +103,6 @@ type EditDraft = {
   operating_profit: string; profit_after_financial_items: string; total_assets: string;
   operating_margin: string; equity_ratio: string; financial_year: string;
 };
-
-type ContactDraft = { name: string; role: string; phone: string; email: string; is_primary: boolean };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -282,9 +282,9 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
   const [enriching, setEnriching] = useState(false);
 
   const [contacts, setContacts] = useState<CustomerContact[]>([]);
-  const [addingContact, setAddingContact] = useState(false);
-  const [savingContact, setSavingContact] = useState(false);
-  const [contactDraft, setContactDraft] = useState<ContactDraft>({ name: '', role: '', phone: '', email: '', is_primary: false });
+  // null = stängd. `{ contact: null }` = ny, `{ contact }` = redigera. Formuläret bor i
+  // ContactFormModal och delas med offerten — kortet säger bara VAD som ska redigeras.
+  const [contactFormTarget, setContactFormTarget] = useState<{ contact: CustomerContact | null } | null>(null);
 
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [savingManager, setSavingManager] = useState(false);
@@ -550,27 +550,10 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
     finally { setFetchingCredit(false); }
   }
 
-  async function saveContact() {
-    if (!customer || !contactDraft.name.trim()) { toast.error('Namn krävs'); return; }
-    setSavingContact(true);
-    try {
-      const res = await fetch(`/api/crm/customers/${customer.id}/contacts`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: contactDraft.name.trim(), role: contactDraft.role.trim() || null,
-          phone: contactDraft.phone.trim() || null, email: contactDraft.email.trim() || null,
-          is_primary: contactDraft.is_primary,
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte lägga till kontakt'); return; }
-      const contact: CustomerContact = json.data?.item;
-      if (contact) setContacts((c) => [...c, contact]);
-      setContactDraft({ name: '', role: '', phone: '', email: '', is_primary: false });
-      setAddingContact(false);
-      toast.success('Kontakt tillagd');
-    } catch { toast.error('Fel vid tillägg'); }
-    finally { setSavingContact(false); }
+  // Den sparade raden in i listan. applyContactToList är delad med offertpanelen och bär
+  // speglingen av serverns primär-degradering — utan den visar listan två primärbrickor.
+  function applySavedContact(saved: CustomerContact) {
+    setContacts((current) => applyContactToList(current, saved));
   }
 
   async function deleteContact(contactId: string) {
@@ -1203,34 +1186,14 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Kontaktpersoner</p>
               <button
                 type="button"
-                onClick={() => setAddingContact((c) => !c)}
+                onClick={() => setContactFormTarget({ contact: null })}
                 className="inline-flex h-7 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
               >
-                {addingContact ? 'Avbryt' : '+ Lägg till'}
+                + Lägg till
               </button>
             </div>
 
-            {addingContact ? (
-              <div className="mb-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                <Input value={contactDraft.name} onChange={(e) => setContactDraft((c) => ({ ...c, name: e.target.value }))} placeholder="Namn *" />
-                <Input value={contactDraft.role} onChange={(e) => setContactDraft((c) => ({ ...c, role: e.target.value }))} placeholder="Roll (t.ex. Inköpschef)" />
-                <div className="grid sm:grid-cols-2 gap-2">
-                  <Input value={contactDraft.phone} onChange={(e) => setContactDraft((c) => ({ ...c, phone: e.target.value }))} placeholder="Telefon" />
-                  <Input value={contactDraft.email} onChange={(e) => setContactDraft((c) => ({ ...c, email: e.target.value }))} placeholder="E-post" />
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer select-none">
-                    <input type="checkbox" checked={contactDraft.is_primary} onChange={(e) => setContactDraft((c) => ({ ...c, is_primary: e.target.checked }))} className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]" />
-                    Primär kontakt
-                  </label>
-                  <button type="button" onClick={saveContact} disabled={savingContact} className={cn(crm.saveButton, 'h-8 w-auto px-3 text-xs')}>
-                    {savingContact ? 'Sparar…' : 'Spara'}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {contacts.length === 0 && !addingContact ? (
+            {contacts.length === 0 ? (
               <p className="text-sm text-slate-400">Inga kontaktpersoner registrerade.</p>
             ) : (
               <div className="grid gap-2">
@@ -1249,9 +1212,16 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
                         {contact.email ? <EmailLink value={contact.email} /> : null}
                       </div>
                     </div>
-                    <button type="button" onClick={() => deleteContact(contact.id)} className="shrink-0 text-xs text-slate-400 transition hover:text-rose-500">
-                      Ta bort
-                    </button>
+                    {/* Redigera fanns inte förut trots att PATCH-rutten alltid gjort det: en
+                        felstavad mejladress måste tas bort och skrivas in på nytt. */}
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button type="button" onClick={() => setContactFormTarget({ contact })} className="text-xs font-semibold text-slate-400 transition hover:text-slate-700">
+                        Redigera
+                      </button>
+                      <button type="button" onClick={() => deleteContact(contact.id)} className="text-xs text-slate-400 transition hover:text-rose-500">
+                        Ta bort
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1279,6 +1249,17 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
           {historySidebar}
         </div>
       </div>
+
+      {/* Samma formulär som offertpanelen och offertformuläret öppnar — ett formulär, tre
+          ingångar. Låg tidigare som ett inbyggt formulär här, utan möjlighet att RÄTTA en rad. */}
+      {contactFormTarget ? (
+        <ContactFormModal
+          customerId={customer.id}
+          contact={contactFormTarget.contact}
+          onClose={() => setContactFormTarget(null)}
+          onSaved={applySavedContact}
+        />
+      ) : null}
     </div>
   );
 }

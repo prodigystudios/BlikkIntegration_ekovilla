@@ -10,13 +10,14 @@ export default async function CrmSaljtavlaPage() {
   // ingen upptäcker förrän en säljare undrar varför knappen "försvinner ibland".
   const [user, permissions] = await Promise.all([
     getCurrentUser().catch(() => null),
-    hasCrmPermissions(['crm.write', 'crm.admin']),
+    hasCrmPermissions(['crm.write', 'crm.admin', 'crm.customer.write']),
   ]);
   return (
     <SaljtavlaClient
       currentUserId={user?.id ?? null}
       canWrite={permissions['crm.write']}
       canDelegate={permissions['crm.admin']}
+      canEditContacts={permissions['crm.customer.write']}
     />
   );
 }

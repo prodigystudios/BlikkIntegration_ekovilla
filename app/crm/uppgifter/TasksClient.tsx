@@ -7,6 +7,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import TaskFormModal from '@/app/crm/components/TaskFormModal';
+import { PhoneLink, EmailLink } from '@/app/crm/components/ContactLinks';
 // Formuläret och dess typer är delade med offertpanelens uppgiftskort — ETT formulär, två
 // ingångar. Se app/crm/lib/taskForm.ts.
 import { buildTaskStatusTogglePayload, relatedTypeLabel, type TaskItem } from '@/app/crm/lib/taskForm';
@@ -188,7 +189,10 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
   function applySavedTask(item: TaskItem, { isEditing }: { isEditing: boolean }) {
     const belongsInView = filter === 'delegated' ? item.delegated : !item.delegated;
     setTasks((current) => {
-      if (isEditing) return current.map((entry) => (entry.id === item.id ? item : entry));
+      // ⚠️ Spridning, inte ersättning. Rutterna sätter numera `contact` på varje svar, men en
+      // spridning håller ändå: skulle ett svar sakna fältet behålls det som redan står på skärmen
+      // i stället för att kontaktraden försvinner mitt i en titelrättning.
+      if (isEditing) return current.map((entry) => (entry.id === item.id ? { ...entry, ...item } : entry));
       return belongsInView ? [item, ...current] : current;
     });
     toast.success(
@@ -219,7 +223,9 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
 
       const item = json?.data?.item as TaskItem | undefined;
       if (item) {
-        setTasks((current) => current.map((entry) => (entry.id === item.id ? item : entry)));
+        // Spridning av samma skäl som i applySavedTask — en avbockning får inte tömma raden på
+        // kontaktuppgifter.
+        setTasks((current) => current.map((entry) => (entry.id === item.id ? { ...entry, ...item } : entry)));
       }
 
       toast.success(nextStatus === 'done' ? 'Uppgift klar' : 'Uppgift återöppnad');
@@ -405,6 +411,20 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
                         {linkLabel && task.related_type && <span>{relatedTypeLabel[task.related_type]}: {linkLabel}</span>}
                         {task.source && <span>Källa: {task.source}</span>}
                       </div>
+
+                      {/* Vem man ska kontakta. En uppgift sa förut VAD som skulle göras men inte
+                          vem man ringer — numret krävde en resa via offerten eller kundkortet mitt
+                          i uppföljningen. Egen rad och inte inklämd bland metadata ovan: telefon
+                          och mejl är klickbara mål, inte text att skumma. */}
+                      {task.contact && (task.contact.phone || task.contact.email || task.contact.name) ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                          {task.contact.name ? (
+                            <span className="font-medium text-slate-600">{task.contact.name}</span>
+                          ) : null}
+                          {task.contact.phone ? <PhoneLink value={task.contact.phone} /> : null}
+                          {task.contact.email ? <EmailLink value={task.contact.email} /> : null}
+                        </div>
+                      ) : null}
 
                       {task.details && (
                         <p className="mt-1.5 line-clamp-2 text-sm text-slate-500">{task.details}</p>

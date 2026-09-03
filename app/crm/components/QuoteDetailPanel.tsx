@@ -11,6 +11,7 @@ import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue, quoteLabel } from '@/app/crm/lib/quoteDisplay';
 import QuoteTasksCard from '@/app/crm/components/QuoteTasksCard';
+import QuoteContactCard from '@/app/crm/components/QuoteContactCard';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -34,7 +35,18 @@ export type QuoteDetailItem = {
   notes: string | null;
   customer_id: string | null;
   customer_name: string | null;
-  customer_snapshot: { customer_name?: string | null; company_name?: string | null; email?: string | null } | null;
+  // Kontaktfälten är med för QuoteContactCard. Servern har alltid skickat hela JSONB:n —
+  // det var bara typen här som var smalare än verkligheten.
+  customer_snapshot: {
+    customer_name?: string | null;
+    company_name?: string | null;
+    email?: string | null;
+    contact_name?: string | null;
+    phone?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
+  } | null;
   // Passed straight back on the status PATCH; the panel never reads into it.
   customer_source: { kind?: string | null } | null;
   prospect_id: string | null;
@@ -111,6 +123,7 @@ export default function QuoteDetailPanel({
   currentUserId,
   canWrite,
   canDelegate,
+  canEditContacts,
 }: {
   quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
@@ -145,6 +158,11 @@ export default function QuoteDetailPanel({
    * Samma nyckel och samma validering mot säljarkatalogen som uppgiftssidan använder.
    */
   canDelegate: boolean;
+  /**
+   * crm.customer.write. Styr om kontaktkortet får lägga till och rätta kontaktpersoner — samma
+   * nyckel som rutterna gatar på. Läses i sidan och skickas hit av BÅDA ytor som öppnar panelen.
+   */
+  canEditContacts: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -424,6 +442,15 @@ export default function QuoteDetailPanel({
                 <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{quote.notes}</p>
               </div>
             ) : null}
+
+            {/* Kontakt först av korten: panelen läses uppifrån och ned som arbetet går — vad
+                offerten är → VEM man ringer → vad som ska göras → vilka dokument som finns. Att
+                följa upp en skickad offert börjar med att nå någon. */}
+            <QuoteContactCard
+              customerId={quote.customer_id}
+              snapshot={quote.customer_snapshot}
+              canEditContacts={canEditContacts}
+            />
 
             {/* Uppgifter — ligger före dokumentkorten med flit: panelen läses uppifrån och ned som
                 arbetet går, alltså vad offerten är → vad som ska göras → vilka dokument som finns. */}

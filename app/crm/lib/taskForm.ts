@@ -13,11 +13,29 @@ export const relatedTypeLabel: Record<CrmRelatedType, string> = {
   crm_quote: 'Offert',
 };
 
+/**
+ * Vem uppgiften handlar om att kontakta, uppslagen ur kopplingen (attachCrmTaskContacts).
+ *
+ * Sätts av SERVERN, aldrig av formuläret: det är ett härlett fält, inte något man skriver.
+ */
+export type TaskContact = { name: string | null; phone: string | null; email: string | null };
+
 export type TaskItem = {
   id: string;
   related_type: CrmRelatedType | null;
   related_id: string | null;
   related_label: string | null;
+  /**
+   * Vem som ska kontaktas, härlett ur kopplingen. Sätts av ALLA rutter som returnerar en uppgift
+   * (GET-listan, POST och PATCH) — just för att en rad aldrig ska tappa fältet när klienten byter
+   * ut den mot svaret.
+   *
+   * 🧨 FRIVILLIG I TYPEN MED FLIT: uppgiftsflödet på offerten (`/api/crm/quotes/[id]/tasks`)
+   * sätter det inte, och en framtida rutt kan glömma. Klienterna sprider därför över den
+   * befintliga raden i stället för att ersätta den — samma grepp som QuoteTasksCard använder för
+   * assignee_name/creator_name, och samma felklass som fälten Zod strippade tyst.
+   */
+  contact?: TaskContact | null;
   prospect_id: string | null;
   user_id: string;
   created_by: string | null;

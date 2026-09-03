@@ -123,10 +123,14 @@ export function resolveCrmContact(
  * Delad av `evaluateWorkOrderReadiness` (skrivvägen) och `getWorkOrderCustomerContact` (fältvyn),
  * så samma order svarar likadant på båda hållen.
  */
-export function contactRowByName(
-  customer: CrmContactSource,
+// Generisk över radtypen så anroparen får TILLBAKA sin egen rad, med de fält den lagt till (t.ex.
+// `id` och `role`, som offertpanelen behöver för att kunna öppna redigeringen på rätt kontakt).
+// Utan det hade panelen fått matcha namnet en gång till på egen hand — en andra kopia av regeln,
+// och den som glider isär först.
+export function contactRowByName<T extends CrmContactRow>(
+  customer: { contacts?: T[] | null },
   name: string | null | undefined,
-): CrmContactRow | null {
+): T | null {
   // Skiftlägesokänslig: namnet skrevs in för hand på ett ställe och valdes ur en lista på ett
   // annat. En bomma här tömmer adressen enligt regeln nedan, så matchningen ska inte vara
   // strängare än nödvändigt. Ett omdöpt eller borttaget namn missar fortfarande — med flit, då
@@ -134,6 +138,150 @@ export function contactRowByName(
   const wanted = name?.trim().toLocaleLowerCase('sv');
   if (!wanted) return null;
   return (customer.contacts ?? []).find((c) => c.name?.trim().toLocaleLowerCase('sv') === wanted) ?? null;
+}
+
+// ─── Dokumentets kontaktperson ────────────────────────────────────────────────
+
+/** Kontaktfälten ett CRM-dokument (offert, arbetsorder) fryser i sin `customer_snapshot`. */
+export type DocumentContactSnapshot = {
+  contact_name?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  end_contact_name?: string | null;
+  end_contact_phone?: string | null;
+  end_contact_email?: string | null;
+};
+
+export type ResolvedDocumentContact = {
+  contactName: string | null;
+  phone: string | null;
+  email: string | null;
+  /** Kundens EGEN adress. Bara för utskick — visa den aldrig som kontaktpersonens. */
+  customerEmail: string | null;
+  /** Sant när uppgifterna är slutkundens på plats, alltså en ANNAN person än kundens kontakt. */
+  isOnSiteContact: boolean;
+  /**
+   * Sant när `phone` är LÅNAT av kunden för att slutkunden saknar eget nummer. Numret går att
+   * ringa — det är hela poängen med lånet — men det tillhör någon annan än `contactName`, och en
+   * vy som skriver namnet över numret skickar folk till fel person.
+   */
+  phoneFromCustomer: boolean;
+};
+
+/**
+ * Steg 2 + 3: dokumentets EGEN kontakt (ordergivaren, "Er referens"), med luckorna fyllda ur
+ * kundkortet. Slutkunden på plats räknas medvetet INTE in här.
+ *
+ * Skild från `resolveDocumentContact` nedan därför att de två ytorna frågar olika saker. Fältvyn
+ * frågar "vem ringer jag när jag står på jobbet" och vill ha ETT svar, där slutkunden vinner.
+ * Offertpanelen frågar "vem följer jag upp offerten med" och behöver se BÅDA — ordergivaren och
+ * platskontakten är olika personer, och att slå ihop dem där hade dolt den ena.
+ *
+ * ⚠️ NAMNET avgör att dokumentet har en egen kontakt. En snapshot med bara ett telefonnummer är
+ * ingen vald person — den hade annars trängt undan kortets primärkontakt och lämnat vyn med ett
+ * naket nummer utan namn, sämre än ingen upplösning alls.
+ */
+export function resolveDocumentReferenceContact(
+  snapshot: DocumentContactSnapshot | null | undefined,
+  card: CrmContactSource | null | undefined,
+): ResolvedCrmContact {
+  const snap = snapshot ?? null;
+  const source = card ?? null;
+
+  const documentContactName = snap?.contact_name?.trim() || null;
+
+  // Dokumentets egna värden vinner, och luckorna fylls ur den kortrad NAMNET syftar på — samma
+  // uppslagning som skrivvägen gör (`evaluateWorkOrderReadiness`). Utan den löstes ett äldre
+  // dokument vars snapshot bara bär ett namn mot kortets PRIMÄRA kontakt, och de två vägarna
+  // svarade olika om samma dokument.
+  const namedRow = source && documentContactName ? contactRowByName(source, documentContactName) : null;
+  const documentContact: CrmContactRow | null = documentContactName
+    ? {
+        name: documentContactName,
+        phone: snap?.phone?.trim() || namedRow?.phone || null,
+        email: snap?.email?.trim() || namedRow?.email || null,
+      }
+    : null;
+
+  // Kundkortet fyller resten via den delade regeln. Är snapshoten namnlös (äldre dokument som
+  // aldrig fångade någon kontakt) faller `resolveCrmContact` tillbaka på kortets primärkontakt av
+  // sig själv. Regeln avgör också om kortets e-post får lånas ut.
+  const resolved = source
+    ? resolveCrmContact(source, documentContact)
+    : {
+        name: documentContact?.name?.trim() || '',
+        email: documentContact?.email?.trim() || '',
+        phone: documentContact?.phone?.trim() || '',
+      };
+
+  // ⚠️ NUMRET på dokumentet gäller även när kontaktnamnet är tomt. Namnet avgör vem adressen
+  // tillhör, men ett nummer tillskrivs ingen — och rensar någon bort namnet men behåller telefonen
+  // skulle vyn annars kasta det enda numret dokumentet bär.
+  return { ...resolved, phone: snap?.phone?.trim() || resolved.phone };
+}
+
+/**
+ * Vem man ringer om ett CRM-dokument, i EN källa i taget — aldrig fält för fält mellan två
+ * personer:
+ *
+ *   1. slutkunden på plats (`end_contact_*`) — lånar numret, aldrig adressen
+ *   2. dokumentets egen kontakt (snapshoten) — den säljaren redigerar i offert/order
+ *   3. kundkortet — sista utvägen för äldre dokument som aldrig fångade någon kontakt
+ *
+ * ⚠️ REN funktion, utan databasläsning. Anroparen läser snapshoten och kundkortet och skickar in
+ * dem; det är därför både servern (arbetsordern, uppgiftslistan) och klienten (offertpanelen) kan
+ * dela EN regel. Låg tidigare bara inne i `getWorkOrderCustomerContact`, och tre ytor som var för
+ * sig gissar sin egen ordning är precis hur samma dokument börjar svara olika på olika ställen —
+ * felet steg 2 ovan en gång var.
+ *
+ * `card` måste bära `customer_type`: det avgör om kortets e-post får lånas ut åt kontaktraden
+ * (se huvudkommentaren). Utan fältet lånas den ut som förut, och då står bolagets adress under
+ * en anställds namn.
+ *
+ * Returnerar null när det inte finns någonting att visa.
+ */
+export function resolveDocumentContact(
+  snapshot: DocumentContactSnapshot | null | undefined,
+  card: CrmContactSource | null | undefined,
+): ResolvedDocumentContact | null {
+  const snap = snapshot ?? null;
+  const source = card ?? null;
+
+  const base = resolveDocumentReferenceContact(snap, source);
+
+  // Steg 1: en separat slutkund på plats (fångad utanför kundkortet) är den som ska nås vid jobbet
+  // och vinner över kundens kontakt. Fungerar även utan kundkoppling.
+  //
+  // ⚠️ ADRESSEN lånas inte hit: slutkunden är en ANNAN person, och kundens adress hade stått under
+  // hens namn. NUMRET lånas, med flit — någon måste gå att nå på plats, och slutkunden fångas ofta
+  // med bara namn. Samma skillnad som på kundkortet: ett nummer är en väg fram, en adress läses
+  // som en identitet.
+  const onSiteName = snap?.end_contact_name?.trim() || null;
+  const onSitePhone = snap?.end_contact_phone?.trim() || null;
+  const onSiteEmail = snap?.end_contact_email?.trim() || null;
+  if (onSiteName || onSitePhone || onSiteEmail) {
+    return {
+      contactName: onSiteName,
+      phone: onSitePhone || base.phone || null,
+      email: onSiteEmail,
+      customerEmail: source?.email?.trim() || null,
+      isOnSiteContact: true,
+      phoneFromCustomer: !onSitePhone && Boolean(base.phone),
+    };
+  }
+
+  if (!base.name && !base.phone && !base.email && !source?.email?.trim()) return null;
+
+  return {
+    contactName: base.name || null,
+    phone: base.phone || null,
+    email: base.email || null,
+    customerEmail: source?.email?.trim() || null,
+    isOnSiteContact: false,
+    // Kundens egen kontakt — numret är per definition redan kundens, så det finns inget lån att
+    // upplysa om.
+    phoneFromCustomer: false,
+  };
 }
 
 /**
