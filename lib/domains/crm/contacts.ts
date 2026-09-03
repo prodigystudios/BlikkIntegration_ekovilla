@@ -123,10 +123,14 @@ export function resolveCrmContact(
  * Delad av `evaluateWorkOrderReadiness` (skrivvägen) och `getWorkOrderCustomerContact` (fältvyn),
  * så samma order svarar likadant på båda hållen.
  */
-export function contactRowByName(
-  customer: CrmContactSource,
+// Generisk över radtypen så anroparen får TILLBAKA sin egen rad, med de fält den lagt till (t.ex.
+// `id` och `role`, som offertpanelen behöver för att kunna öppna redigeringen på rätt kontakt).
+// Utan det hade panelen fått matcha namnet en gång till på egen hand — en andra kopia av regeln,
+// och den som glider isär först.
+export function contactRowByName<T extends CrmContactRow>(
+  customer: { contacts?: T[] | null },
   name: string | null | undefined,
-): CrmContactRow | null {
+): T | null {
   // Skiftlägesokänslig: namnet skrevs in för hand på ett ställe och valdes ur en lista på ett
   // annat. En bomma här tömmer adressen enligt regeln nedan, så matchningen ska inte vara
   // strängare än nödvändigt. Ett omdöpt eller borttaget namn missar fortfarande — med flit, då
@@ -165,6 +169,58 @@ export type ResolvedDocumentContact = {
 };
 
 /**
+ * Steg 2 + 3: dokumentets EGEN kontakt (ordergivaren, "Er referens"), med luckorna fyllda ur
+ * kundkortet. Slutkunden på plats räknas medvetet INTE in här.
+ *
+ * Skild från `resolveDocumentContact` nedan därför att de två ytorna frågar olika saker. Fältvyn
+ * frågar "vem ringer jag när jag står på jobbet" och vill ha ETT svar, där slutkunden vinner.
+ * Offertpanelen frågar "vem följer jag upp offerten med" och behöver se BÅDA — ordergivaren och
+ * platskontakten är olika personer, och att slå ihop dem där hade dolt den ena.
+ *
+ * ⚠️ NAMNET avgör att dokumentet har en egen kontakt. En snapshot med bara ett telefonnummer är
+ * ingen vald person — den hade annars trängt undan kortets primärkontakt och lämnat vyn med ett
+ * naket nummer utan namn, sämre än ingen upplösning alls.
+ */
+export function resolveDocumentReferenceContact(
+  snapshot: DocumentContactSnapshot | null | undefined,
+  card: CrmContactSource | null | undefined,
+): ResolvedCrmContact {
+  const snap = snapshot ?? null;
+  const source = card ?? null;
+
+  const documentContactName = snap?.contact_name?.trim() || null;
+
+  // Dokumentets egna värden vinner, och luckorna fylls ur den kortrad NAMNET syftar på — samma
+  // uppslagning som skrivvägen gör (`evaluateWorkOrderReadiness`). Utan den löstes ett äldre
+  // dokument vars snapshot bara bär ett namn mot kortets PRIMÄRA kontakt, och de två vägarna
+  // svarade olika om samma dokument.
+  const namedRow = source && documentContactName ? contactRowByName(source, documentContactName) : null;
+  const documentContact: CrmContactRow | null = documentContactName
+    ? {
+        name: documentContactName,
+        phone: snap?.phone?.trim() || namedRow?.phone || null,
+        email: snap?.email?.trim() || namedRow?.email || null,
+      }
+    : null;
+
+  // Kundkortet fyller resten via den delade regeln. Är snapshoten namnlös (äldre dokument som
+  // aldrig fångade någon kontakt) faller `resolveCrmContact` tillbaka på kortets primärkontakt av
+  // sig själv. Regeln avgör också om kortets e-post får lånas ut.
+  const resolved = source
+    ? resolveCrmContact(source, documentContact)
+    : {
+        name: documentContact?.name?.trim() || '',
+        email: documentContact?.email?.trim() || '',
+        phone: documentContact?.phone?.trim() || '',
+      };
+
+  // ⚠️ NUMRET på dokumentet gäller även när kontaktnamnet är tomt. Namnet avgör vem adressen
+  // tillhör, men ett nummer tillskrivs ingen — och rensar någon bort namnet men behåller telefonen
+  // skulle vyn annars kasta det enda numret dokumentet bär.
+  return { ...resolved, phone: snap?.phone?.trim() || resolved.phone };
+}
+
+/**
  * Vem man ringer om ett CRM-dokument, i EN källa i taget — aldrig fält för fält mellan två
  * personer:
  *
@@ -191,38 +247,7 @@ export function resolveDocumentContact(
   const snap = snapshot ?? null;
   const source = card ?? null;
 
-  // ⚠️ NAMNET avgör att dokumentet har en egen kontakt. En snapshot med bara ett telefonnummer är
-  // ingen vald person — den hade annars trängt undan kortets primärkontakt och lämnat vyn med ett
-  // naket nummer utan namn, sämre än ingen upplösning alls.
-  const documentContactName = snap?.contact_name?.trim() || null;
-
-  // Dokumentets egna värden vinner, och luckorna fylls ur den kortrad NAMNET syftar på — samma
-  // uppslagning som skrivvägen gör (`evaluateWorkOrderReadiness`). Utan den löstes ett äldre
-  // dokument vars snapshot bara bär ett namn mot kortets PRIMÄRA kontakt, och de två vägarna
-  // svarade olika om samma dokument.
-  const namedRow = source && documentContactName ? contactRowByName(source, documentContactName) : null;
-  const documentContact: CrmContactRow | null = documentContactName
-    ? {
-        name: documentContactName,
-        phone: snap?.phone?.trim() || namedRow?.phone || null,
-        email: snap?.email?.trim() || namedRow?.email || null,
-      }
-    : null;
-
-  // Kundkortet fyller resten via den delade regeln. Är snapshoten namnlös (äldre dokument som
-  // aldrig fångade någon kontakt) faller `resolveCrmContact` tillbaka på kortets primärkontakt av
-  // sig själv. Regeln avgör också om kortets e-post får lånas ut.
-  const resolved = source
-    ? resolveCrmContact(source, documentContact)
-    : {
-        name: documentContact?.name?.trim() || '',
-        email: documentContact?.email?.trim() || '',
-        phone: documentContact?.phone?.trim() || '',
-      };
-  // ⚠️ NUMRET på dokumentet gäller även när kontaktnamnet är tomt. Namnet avgör vem adressen
-  // tillhör, men ett nummer tillskrivs ingen — och rensar någon bort namnet men behåller telefonen
-  // skulle vyn annars kasta det enda numret dokumentet bär.
-  const base = { ...resolved, phone: snap?.phone?.trim() || resolved.phone };
+  const base = resolveDocumentReferenceContact(snap, source);
 
   // Steg 1: en separat slutkund på plats (fångad utanför kundkortet) är den som ska nås vid jobbet
   // och vinner över kundens kontakt. Fungerar även utan kundkoppling.

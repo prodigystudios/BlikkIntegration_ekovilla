@@ -40,7 +40,17 @@ type BoardQuote = {
   assigned_to: string | null;
   quote_type: 'private' | 'business';
   customer_name: string | null;
-  customer_snapshot: { customer_name?: string | null; company_name?: string | null; email?: string | null } | null;
+  customer_snapshot: {
+    customer_name?: string | null;
+    company_name?: string | null;
+    email?: string | null;
+    // Kontaktfälten läses av panelens kontaktkort. Deklarerade av samma skäl som fälten nedan.
+    contact_name?: string | null;
+    phone?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
+  } | null;
   // Declared because the shared detail panel reads them. They were always in the payload — the board
   // simply didn't type them, since its cards don't show them.
   customer_source: { kind?: string | null } | null;
@@ -74,7 +84,7 @@ const COLUMN_DEF: Record<SaljtavlaColumn, { label: string; hint: string; accent:
 
 // ─── SaljtavlaClient ───────────────────────────────────────────────────────────
 
-export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean }) {
+export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, canEditContacts }: { currentUserId: string | null; canWrite: boolean; canDelegate: boolean; canEditContacts: boolean }) {
   const toast = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -351,6 +361,7 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate }
           currentUserId={currentUserId}
           canWrite={canWrite}
           canDelegate={canDelegate}
+          canEditContacts={canEditContacts}
           onClose={() => setDetailQuoteId(null)}
           onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
         />

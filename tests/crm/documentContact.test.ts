@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { resolveDocumentContact } from '@/lib/domains/crm/contacts';
+import { resolveDocumentContact, resolveDocumentReferenceContact } from '@/lib/domains/crm/contacts';
 
 // Den DELADE regeln för "vem ringer man om det här dokumentet". Låg tidigare bara inne i
 // getWorkOrderCustomerContact och prövades bara därigenom; nu läser offertpanelen och
@@ -147,5 +147,32 @@ describe('resolveDocumentContact', () => {
   it('blanka snapshotfält räknas inte som ifyllda', () => {
     expect(resolveDocumentContact({ contact_name: '   ', phone: '  ' }, ACME))
       .toMatchObject({ contactName: 'Anna', phone: '08-111' });
+  });
+});
+
+// Offertpanelen visar ordergivaren OCH platskontakten var för sig — att slå ihop dem där hade dolt
+// den ena. Fältvyn vill tvärtom ha ETT svar. Därför två funktioner, och därför det här testet:
+// referensupplösningen får aldrig börja svälja slutkunden.
+describe('resolveDocumentReferenceContact', () => {
+  it('lämnar slutkunden på plats åt sidan — ordergivaren är svaret', () => {
+    const reference = resolveDocumentReferenceContact(
+      { contact_name: 'Anna', phone: '08-111', email: 'anna@acme.se', end_contact_name: 'Ulla', end_contact_phone: '070-333' },
+      ACME,
+    );
+    expect(reference).toEqual({ name: 'Anna', phone: '08-111', email: 'anna@acme.se' });
+  });
+
+  it('faller tillbaka på kortets primärkontakt när snapshoten är namnlös', () => {
+    expect(resolveDocumentReferenceContact({}, ACME)).toEqual({ name: 'Anna', phone: '08-111', email: 'anna@acme.se' });
+  });
+
+  it('tomma strängar när det inte finns någon kontakt alls', () => {
+    expect(resolveDocumentReferenceContact(null, null)).toEqual({ name: '', phone: '', email: '' });
+  });
+
+  // Samma adressregel som resten: en namngiven person på ett företag ärver inte bolagets adress.
+  it('företagskontakt utan egen adress lånar numret men inte adressen', () => {
+    expect(resolveDocumentReferenceContact({ contact_name: 'Jonas' }, ACME))
+      .toEqual({ name: 'Jonas', phone: '08-000', email: '' });
   });
 });
