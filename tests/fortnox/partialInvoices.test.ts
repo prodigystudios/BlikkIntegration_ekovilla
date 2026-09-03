@@ -7,6 +7,8 @@ import {
   buildInvoiceRows,
   roundSubtotal,
   hasCarvedRotLabor,
+  partialInvoiceReferenceField,
+  partialInvoiceRotPropertyNote,
   PartialInvoiceError,
   type PartialInvoiceLineItem,
 } from '@/lib/domains/fortnox/partialInvoices';
@@ -419,5 +421,98 @@ describe('validateLineItemEdit — pris och artikel låsta på fakturerad rad', 
   it('nekar att en fakturerad rad skrivs av', () => {
     const res = validateLineItemEdit([a], [{ ...a, written_off: true }], rounds);
     expect(res.ok).toBe(false);
+  });
+});
+
+// Regressionsskydd för buggen där delfakturans "Ert referensnummer" bar VÅRT ordernummer i stället
+// för kundens märkning. Fältet heter YourOrderNumber på både order och faktura, vilket är precis
+// varför de kunde krocka — namnet låter som ett ordernummer, men på ordern är det märkningen.
+describe('partialInvoiceReferenceField', () => {
+  it('speglar företagskundens märkning från orderhuvudet', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711')).toEqual({ YourOrderNumber: 'Projekt 4711' });
+  });
+
+  // På en ROT-order är samma fält fastighetsbeteckningen. Den ska också nå fakturan.
+  it('speglar fastighetsbeteckningen på en ROT-order', () => {
+    expect(partialInvoiceReferenceField('Haggården 6:3')).toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+
+  // ⚠️ Coercas, inte antas vara text: ett referensnummer som råkar vara rena siffror kan komma
+  // tillbaka som number ur Fortnox-JSON:en, och `.trim()` på ett number hade kastat.
+  it('coercar ett numeriskt referensnummer till text', () => {
+    expect(partialInvoiceReferenceField(4711)).toEqual({ YourOrderNumber: '4711' });
+  });
+
+  // Tomt fält → nyckeln utelämnas helt. Fakturan är ny och har inget att rensa, och '' rensar
+  // ändå ingenting i Fortnox — den hade bara varit brus i payloaden.
+  it('utelämnar nyckeln när ordern saknar referensnummer', () => {
+    expect(partialInvoiceReferenceField(null)).toEqual({});
+    expect(partialInvoiceReferenceField(undefined)).toEqual({});
+    expect(partialInvoiceReferenceField('')).toEqual({});
+    expect(partialInvoiceReferenceField('   ')).toEqual({});
+  });
+
+  // ⛔ En ÅTERTAGEN märkning får inte speglas ut på en ny faktura. label_cleared betyder att
+  // säljaren tömt den men att rensnings-PUT:en inte gått igenom — Fortnox-ordern bär alltså kvar
+  // det gamla värdet. Orderbekräftelsen är redan skickad; fakturan är det inte.
+  it('speglar inte en märkning som tömts men ännu inte rensats i Fortnox', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: true })).toEqual({});
+  });
+
+  // ⚠️ Undantaget: på en ROT-order ÄR värdet fastighetsbeteckningen, inte en märkning. Den får inte
+  // försvinna för att en märkning tömts — samma regel som orderReferenceNumberField bär.
+  it('behåller fastighetsbeteckningen trots en tömd märkning', () => {
+    expect(partialInvoiceReferenceField('Haggården 6:3', { labelCleared: true, propertyDesignation: 'Haggården 6:3' }))
+      .toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+
+  // Utan rensning ändrar beteckningen ingenting — den är bara ett undantag från suppressionen.
+  it('speglar som vanligt när ingen rensning är på gång', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: false })).toEqual({ YourOrderNumber: 'Projekt 4711' });
+    expect(partialInvoiceReferenceField('Projekt 4711', { labelCleared: null })).toEqual({ YourOrderNumber: 'Projekt 4711' });
+  });
+});
+
+// Andra halvan av samma regel. resolveRotReference fyller exakt EN av referensfältet och notraden;
+// delfakturan måste följa det beslutet, annars trycks fastighetsbeteckningen två gånger så fort
+// referensnumret speglas ur ordern.
+describe('partialInvoiceRotPropertyNote', () => {
+  const villa = { property_designation: 'Haggården 6:3' };
+  const brf = { property_designation: 'Haggården 6:3', brf_org_number: '769600-1234' };
+
+  // Villa: beteckningen ÄR referensnumret och står redan i huvudet — ingen textrad.
+  it('utelämnar notraden på en villa vars beteckning ordern redan bär', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Haggården 6:3')).toBeNull();
+  });
+
+  // ⚠️ Men bara när huvudet faktiskt bär den. Annars ska den stå kvar som textrad — hellre två
+  // gånger än inte alls, den är underlaget för avdraget.
+  it('behåller notraden när ordern saknar referensnummer', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, undefined)).toBe('Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  // 🧨 Och bara vid EXAKT träff. Bär ordern ett annat referensnummer — beteckningen rättad i CRM
+  // efter en misslyckad header-synk, eller något ekonomi skrivit in för hand i Fortnox — hade en
+  // ren sanningstest tagit bort raden och lämnat fakturan helt utan beteckning.
+  it('behåller notraden när ordern bär ett ANNAT referensnummer', () => {
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Haggården 6:1')).toBe('Fastighetsbeteckning: Haggården 6:3');
+    expect(partialInvoiceRotPropertyNote(villa, true, 'Projekt 4711')).toBe('Fastighetsbeteckning: Haggården 6:3');
+  });
+
+  // Ingen beteckning alls på en ROT-order: ingen rad att bygga, och inget att jämföra mot.
+  it('ger null när ROT-uppgifterna saknar beteckning', () => {
+    expect(partialInvoiceRotPropertyNote({}, true, 'Projekt 4711')).toBeNull();
+  });
+
+  // Bostadsrätt: två värden ryms inte i ett fält, så de rider som textrad — precis som på ordern.
+  // Notraden ska stå kvar även om huvudet bär något.
+  it('behåller notraden på en bostadsrätt', () => {
+    expect(partialInvoiceRotPropertyNote(brf, true, 'Haggården 6:3'))
+      .toBe('Fastighetsbeteckning: Haggården 6:3  BRF org.nr: 769600-1234');
+  });
+
+  it('ger null när ordern inte är ROT', () => {
+    expect(partialInvoiceRotPropertyNote(villa, false, undefined)).toBeNull();
+    expect(partialInvoiceRotPropertyNote(null, false, undefined)).toBeNull();
   });
 });
