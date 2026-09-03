@@ -313,10 +313,45 @@ type FortnoxOrderHeader = {
   CustomerNumber?: string | number;
   OurReference?: string | null;
   YourReference?: string | null;
+  // "Ert referensnummer". Bär företagskundens MÄRKNING eller, på en ROT-order,
+  // fastighetsbeteckningen — se orderReferenceNumberField i orders.ts.
+  YourOrderNumber?: string | number | null;
   DeliveryAddress1?: string | null;
   DeliveryZipCode?: string | null;
   DeliveryCity?: string | null;
 };
+
+/**
+ * "Ert referensnummer" på delfakturan.
+ *
+ * ⚖️ MÄRKNINGEN, aldrig vårt ordernummer (Williams beslut 2026-09-03). Fältet heter
+ * `YourOrderNumber` på både order och faktura, och det är SAMMA fält som bär företagskundens
+ * märkning — eller, på en ROT-order, fastighetsbeteckningen (se `orderReferenceNumberField` i
+ * orders.ts). Delfakturan stämplade tidigare in Fortnox-ordernumret där, så en kund som satt en
+ * märkning såg den på orderbekräftelsen men vårt ordernummer på fakturan. Märkningen ska nå kunden
+ * oavsett om jobbet faktureras i ett svep eller i rundor.
+ *
+ * Ordernumret går inte förlorat: `Remarks` bär det redan ("Delfaktura N – avser order X"), vilket
+ * var hela skälet till att det låg här. Helfaktureringen (order → createinvoice) berörs inte —
+ * där kopierar Fortnox orderns eget huvud och märkningen följer med utan att vi skriver fältet.
+ *
+ * ⚠️ Värdet SPEGLAS ur Fortnox-ordern, det byggs inte om ur kundsnapshoten. Samma val som
+ * OurReference/YourReference/leveransadressen, och av samma skäl: delfakturorna ska matcha den
+ * orderbekräftelse kunden redan fått, inklusive ett referensnummer ekonomi skrivit in för hand i
+ * Fortnox. Bygger vi om det ur snapshoten hade fakturan i stället kunnat säga något ordern aldrig
+ * sagt — t.ex. efter en misslyckad header-synk.
+ *
+ * ⚠️ Tomt fält → nyckeln UTELÄMNAS. Fakturan är ny och har ingenting att rensa, och en tom sträng
+ * rensar ändå ingenting i Fortnox (uppmätt, se orderReferenceNumberField) — så `''` hade bara varit
+ * brus i payloaden. Numret coercas via String(): Fortnox returnerar fältet som text, men det är
+ * numeriskt på en order vars referensnummer råkar vara siffror.
+ */
+export function partialInvoiceReferenceField(
+  orderReferenceNumber: string | number | null | undefined,
+): { YourOrderNumber?: string } {
+  const value = orderReferenceNumber == null ? '' : String(orderReferenceNumber).trim();
+  return value ? { YourOrderNumber: value } : {};
+}
 
 // Create ONE partial-invoice round: validate the requested quantities against remaining, ensure
 // the Fortnox order exists (its header is the source for customer/references/delivery), POST a
@@ -437,8 +472,11 @@ export async function createPartialInvoice(
 
     // A partial invoice is a STANDALONE Fortnox invoice (it can't use the order's createinvoice,
     // which would lock the order after one round), so it lacks the native order↔invoice link.
-    // Stamp a human-readable reference into Remarks ("Övrigt") + YourOrderNumber so whoever handles
-    // invoicing in Fortnox — who may not have the CRM — can see which order this invoice belongs to.
+    // Stamp a human-readable reference into Remarks ("Övrigt") so whoever handles invoicing in
+    // Fortnox — who may not have the CRM — can see which order this invoice belongs to.
+    //
+    // ⛔ ORDERNUMRET HÖR HEMMA HÄR OCH INGEN ANNANSTANS. Det låg tidigare även i `YourOrderNumber`,
+    // men det fältet är kundens — se partialInvoiceReferenceField.
     const projectName = workOrder.project_name?.trim();
     const remarks = `Delfaktura ${roundNumber} – avser order ${orderNumber}${projectName ? ` – ${projectName}` : ''}`;
 
@@ -447,7 +485,8 @@ export async function createPartialInvoice(
         CustomerNumber: String(header.CustomerNumber),
         InvoiceDate: new Date().toISOString().slice(0, 10),
         Remarks: remarks,
-        YourOrderNumber: String(orderNumber),
+        // "Ert referensnummer" = kundens märkning, speglad ur ordern. Se partialInvoiceReferenceField.
+        ...partialInvoiceReferenceField(header.YourOrderNumber),
         ...(header.OurReference ? { OurReference: header.OurReference } : {}),
         ...(header.YourReference ? { YourReference: header.YourReference } : {}),
         // No VATType on the payload (kept consistent with offers/orders): the customer card drives

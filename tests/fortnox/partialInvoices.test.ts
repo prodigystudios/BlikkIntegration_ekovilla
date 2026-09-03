@@ -7,6 +7,7 @@ import {
   buildInvoiceRows,
   roundSubtotal,
   hasCarvedRotLabor,
+  partialInvoiceReferenceField,
   PartialInvoiceError,
   type PartialInvoiceLineItem,
 } from '@/lib/domains/fortnox/partialInvoices';
@@ -419,5 +420,34 @@ describe('validateLineItemEdit — pris och artikel låsta på fakturerad rad', 
   it('nekar att en fakturerad rad skrivs av', () => {
     const res = validateLineItemEdit([a], [{ ...a, written_off: true }], rounds);
     expect(res.ok).toBe(false);
+  });
+});
+
+// Regressionsskydd för buggen där delfakturans "Ert referensnummer" bar VÅRT ordernummer i stället
+// för kundens märkning. Fältet heter YourOrderNumber på både order och faktura, vilket är precis
+// varför de kunde krocka — namnet låter som ett ordernummer, men på ordern är det märkningen.
+describe('partialInvoiceReferenceField', () => {
+  it('speglar företagskundens märkning från orderhuvudet', () => {
+    expect(partialInvoiceReferenceField('Projekt 4711')).toEqual({ YourOrderNumber: 'Projekt 4711' });
+  });
+
+  // På en ROT-order är samma fält fastighetsbeteckningen. Den ska också nå fakturan.
+  it('speglar fastighetsbeteckningen på en ROT-order', () => {
+    expect(partialInvoiceReferenceField('Haggården 6:3')).toEqual({ YourOrderNumber: 'Haggården 6:3' });
+  });
+
+  // ⚠️ Coercas, inte antas vara text: ett referensnummer som råkar vara rena siffror kan komma
+  // tillbaka som number ur Fortnox-JSON:en, och `.trim()` på ett number hade kastat.
+  it('coercar ett numeriskt referensnummer till text', () => {
+    expect(partialInvoiceReferenceField(4711)).toEqual({ YourOrderNumber: '4711' });
+  });
+
+  // Tomt fält → nyckeln utelämnas helt. Fakturan är ny och har inget att rensa, och '' rensar
+  // ändå ingenting i Fortnox — den hade bara varit brus i payloaden.
+  it('utelämnar nyckeln när ordern saknar referensnummer', () => {
+    expect(partialInvoiceReferenceField(null)).toEqual({});
+    expect(partialInvoiceReferenceField(undefined)).toEqual({});
+    expect(partialInvoiceReferenceField('')).toEqual({});
+    expect(partialInvoiceReferenceField('   ')).toEqual({});
   });
 });
