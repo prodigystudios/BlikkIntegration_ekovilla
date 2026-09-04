@@ -563,21 +563,46 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
 // Resolve a quote's synced Fortnox offer number, or throw a 409 telling the caller
 // to push the offer to Fortnox first. Also reports whether the seller turned ROT on,
 // which gates the locally rendered PDF (see getFortnoxOfferPdf).
-async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: string; rotSelected: boolean; projectName: string | null }> {
+type QuoteForPdf = {
+  offerNumber: string;
+  rotSelected: boolean;
+  projectName: string | null;
+  // Fälten nedan används bara av den egna formgivningen: kundtypen väljer vilka allmänna villkor
+  // som bifogas, och kund-id:t hämtar momsnumret till kundraden.
+  quoteType: string | null;
+  customerId: string | null;
+  personalNumber: string | null;
+};
+
+async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_quotes')
-    .select('fortnox_offer_number, rot_details, project_name')
+    .select('fortnox_offer_number, rot_details, project_name, quote_type, customer_id, customer_snapshot')
     .eq('id', quoteId)
     .maybeSingle();
 
   if (error) throw new FortnoxApiError(500, `Kunde inte läsa offerten: ${error.message}`, undefined, 'Kunde inte läsa offerten. Försök igen.');
-  const offerNumber = data?.fortnox_offer_number;
+  const row = data as {
+    fortnox_offer_number?: string | number | null;
+    rot_details?: { enabled?: boolean | null } | null;
+    project_name?: string | null;
+    quote_type?: string | null;
+    customer_id?: string | null;
+    customer_snapshot?: { personal_number?: string | null } | null;
+  } | null;
+
+  const offerNumber = row?.fortnox_offer_number;
   if (!offerNumber) throw new FortnoxApiError(409, 'Skicka offerten till Fortnox först.', undefined, 'Skicka offerten till Fortnox först.');
-  const rotSelected = (data as { rot_details?: { enabled?: boolean | null } | null } | null)?.rot_details?.enabled === true;
-  // Projektnamnet följer med enbart för PDF:ens filnamn (offertnummer + offertnamn).
-  const projectName = (data as { project_name?: string | null } | null)?.project_name ?? null;
-  return { offerNumber: String(offerNumber), rotSelected, projectName };
+  return {
+    offerNumber: String(offerNumber),
+    rotSelected: row?.rot_details?.enabled === true,
+    // Projektnamnet följer med enbart för PDF:ens filnamn (offertnummer + offertnamn).
+    projectName: row?.project_name ?? null,
+    quoteType: row?.quote_type ?? null,
+    customerId: row?.customer_id ?? null,
+    personalNumber: row?.customer_snapshot?.personal_number ?? null,
+  };
 }
 
 // Fetch the offer as a PDF (GET /offers/{n}/preview). We use `/preview`, not `/print`:
@@ -587,8 +612,55 @@ async function requireOfferNumber(quoteId: string): Promise<{ offerNumber: strin
 // and rejects `application/pdf` with error 1000030 "Invalid response type" — you must
 // keep `Accept: application/json` and Fortnox still returns the PDF binary. See
 // FORTNOX_INTEGRATION.md.
-export async function getFortnoxOfferPdf(quoteId: string): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string; projectName: string | null }> {
-  const { offerNumber, rotSelected, projectName } = await requireOfferNumber(quoteId);
+export async function getFortnoxOfferPdf(
+  quoteId: string,
+  options: { design?: boolean } = {},
+): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string; projectName: string | null }> {
+  const quote = await requireOfferNumber(quoteId);
+  const { offerNumber, rotSelected, projectName } = quote;
+
+  // ── Egen formgivning (`?mall=ny`) ──
+  //
+  // Egen väg med FLIT, inte en gren inuti den befintliga. Den här renderaren tar över ALLA offerter
+  // — även företagsoffer som annars går till Fortnox mall — och den ska kunna provas mot skarpa
+  // offerter utan att någon annans dokument ändras. När den är verifierad ersätter den vägen nedan
+  // och `OFFER_PDF_MODE` kan gå till 'all'.
+  if (options.design) {
+    const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
+    const { belongsToOffer } = await import('./offerPdf');
+    const { renderOfferPdfDesign } = await import('./offerPdfDesign');
+    const { assembleOfferDocument, offerAttachments, resolveTermsKind } = await import('./offerPdfAssembly');
+    const { resolveCustomerVatNumber } = await import('./helpers');
+
+    // Ingen tyst fallback här heller: sväljer någon läsning sitt fel får säljaren ett dokument som
+    // SER rätt ut men saknar skattereduktionen eller företagsfoten.
+    const [taxReductionResponse, companyResponse, customerVatNumber] = await Promise.all([
+      fortnoxGet<{ TaxReductions?: FortnoxTaxReductionResponse[] }>('/taxreductions', {
+        filter: 'offers',
+        referencenumber: offerNumber,
+      }),
+      fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
+      resolveCustomerVatNumber(getSupabaseAdmin(), quote.customerId, Offer?.CustomerNumber),
+    ]);
+
+    const taxReductions = (taxReductionResponse.TaxReductions ?? [])
+      .filter((entry) => belongsToOffer(entry, offerNumber));
+
+    const rendered = await renderOfferPdfDesign({
+      offer: Offer,
+      company: companyResponse.CompanySettings ?? {},
+      customerVatNumber,
+      taxReductions,
+    });
+
+    const termsKind = resolveTermsKind({
+      quote_type: quote.quoteType,
+      rot_details: { enabled: rotSelected },
+      customer_snapshot: { personal_number: quote.personalNumber },
+    });
+    const bytes = await assembleOfferDocument(rendered, offerAttachments(termsKind));
+    return { bytes, contentType: 'application/pdf', offerNumber, projectName };
+  }
 
   // Offerten kan renderas LOKALT i stället för av Fortnox utskriftsmall — idag bara ROT, där
   // Fortnox mall utelämnar skattereduktionen, på sikt alla när den egna formgivningen är klar.
