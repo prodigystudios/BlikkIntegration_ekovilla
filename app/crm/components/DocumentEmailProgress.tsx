@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect } from 'react';
+import { useRef } from 'react';
 import { cn } from '@/lib/shared/cn';
+import { useTopmostEscape } from '@/app/crm/components/useTopmostEscape';
 
 // Progress overlay for the document e-mail flow.
 //
@@ -35,19 +36,20 @@ export default function DocumentEmailProgress({
   onDismiss: () => void;
 }) {
   const currentIndex = steps.indexOf(phase);
+  const overlayRef = useRef<HTMLDivElement>(null);
 
   // Escape always gets out. The PDF fetch has no timeout, so a stalled Fortnox request would
   // otherwise leave the whole surface blocked with no way back.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onDismiss();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onDismiss]);
+  //
+  // Går genom den DELADE hooken, inte en egen document-lyssnare: överlägget ligger på z-[2900],
+  // alltså ovanpå varje CrmModal, och mejlflödet startar oftast i en av dem (offertpanelen). Med
+  // en egen lyssnare var det osynligt för modalen under, och ett Escape stängde både den här rutan
+  // och panelen bakom.
+  useTopmostEscape(overlayRef, onDismiss);
 
   return (
     <div
+      ref={overlayRef}
       role="status"
       aria-live="polite"
       onClick={onDismiss}

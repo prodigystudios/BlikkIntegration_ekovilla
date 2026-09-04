@@ -1,11 +1,8 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
-
-// Varje öppen modals yttre overlay. Escape-hanteringen behöver veta om NÅGON ANNAN modal ligger
-// ovanpå den här — se kommentaren vid lyssnaren nedan.
-const openOverlays = new Set<HTMLElement>();
+import { useTopmostEscape } from '@/app/crm/components/useTopmostEscape';
 
 // Canonical CRM modal shell: full-screen bottom-sheet on phone, centered dialog on
 // desktop. Sticky header (with built-in close), scrollable body, optional sticky
@@ -34,39 +31,8 @@ export default function CrmModal({
 }) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
-  // Anmäl den här modalen så länge den är öppen.
-  useEffect(() => {
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    openOverlays.add(overlay);
-    return () => { openOverlays.delete(overlay); };
-  }, []);
-
-  // Close on Escape — men BARA om den här modalen är den översta.
-  //
-  // Utan spärren stänger ett Escape varenda öppen modal på en gång: lyssnarna sitter allihop på
-  // document, och stopPropagation når inte en syskonlyssnare på samma nod. Konkret: öppna en
-  // offert, börja skriva en ny uppgift, tryck Escape för att ångra bara formuläret — och både
-  // formuläret och hela offertpanelen försvann, med det påbörjade utkastet.
-  //
-  // "Överst" avgörs på DOKUMENTORDNING, inte på i vilken ordning modalerna monterades. Alla
-  // ligger på samma z-index, så den som målas överst är den som kommer sist i dokumentet — och
-  // en modal som öppnats UR en annan är nästlad i den, vilket i preorder är just "efter".
-  // Monteringsordning hade varit fel mått: React kör barnens effekter före förälderns.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key !== 'Escape') return;
-      const overlay = overlayRef.current;
-      if (!overlay) return;
-      for (const other of openOverlays) {
-        if (other === overlay) continue;
-        if (overlay.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING) return;
-      }
-      onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Close on Escape — men bara om den här modalen är den översta. Se useTopmostEscape.
+  useTopmostEscape(overlayRef, onClose);
 
   return (
     <div
