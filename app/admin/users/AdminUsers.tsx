@@ -82,7 +82,14 @@ export default function AdminUsers() {
       body: JSON.stringify({ email, password, full_name: name, role })
     });
     if (!res.ok) {
-      setCreateError('Kunde inte skapa användare');
+      // Visa serverns egen text. Den fasta strängen dolde `role_update_failed: not authorized` och
+      // gjorde felet obegripligt både i gränssnittet och i felsökningen — routen svarar med orsaken.
+      let message = 'Kunde inte skapa användare';
+      try {
+        const data = await res.json();
+        message = data?.error?.message || data?.legacyError || data?.error || message;
+      } catch {}
+      setCreateError(String(message));
       setCreating(false);
       return;
     }
