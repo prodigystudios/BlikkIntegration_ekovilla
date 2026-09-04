@@ -880,11 +880,24 @@ function drawFooter(page: PDFPage, fonts: Fonts, company: FortnoxCompanySettings
  * INTE — fontkit kan inte bädda in den och dokumentet blir tomt utan att något kastar.
  */
 export async function loadDesignFonts(): Promise<{ regular: Uint8Array; bold: Uint8Array }> {
-  const [regular, bold] = await Promise.all([
-    readFile(path.join(FONT_DIR, 'OpenSans-Regular.ttf')),
-    readFile(path.join(FONT_DIR, 'OpenSans-Bold.ttf')),
-  ]);
-  return { regular: new Uint8Array(regular), bold: new Uint8Array(bold) };
+  try {
+    const [regular, bold] = await Promise.all([
+      readFile(path.join(FONT_DIR, 'OpenSans-Regular.ttf')),
+      readFile(path.join(FONT_DIR, 'OpenSans-Bold.ttf')),
+    ]);
+    return { regular: new Uint8Array(regular), bold: new Uint8Array(bold) };
+  } catch (e) {
+    // Slog i drift 2026-09-04 med ett naket ENOENT. Orsaken: Next spårar ett `path.join` med enbart
+    // literaler, men INTE en väg som byggts genom en variabel — och `FONT_DIR` är en variabel, så
+    // typsnitten följde aldrig med in i serverfunktionen. Lokalt märks inget; där finns filerna.
+    // Lösningen bor i `experimental.outputFileTracingIncludes` i next.config.js — säg det rakt ut
+    // här, så nästa gång någon lägger till en fil att läsa vid körning tar felsökningen minuter.
+    throw new Error(
+      `Kunde inte läsa typsnitten i ${FONT_DIR}: ${e instanceof Error ? e.message : e}. ` +
+      'Ligger filen under public/ måste den listas i outputFileTracingIncludes (next.config.js), ' +
+      'annars saknas den i serverfunktionen trots att den finns i repot.',
+    );
+  }
 }
 
 /** Logotypen är valfri: saknas filen ritas offerten ändå. */
