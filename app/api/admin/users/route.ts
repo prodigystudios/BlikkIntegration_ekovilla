@@ -86,7 +86,9 @@ export async function POST(req: NextRequest) {
       .upsert({ id: userId, ...profileFields }, { onConflict: 'id' });
     if (profileErr) {
       await supabase.auth.admin.deleteUser(userId);
-      return routeError(500, 'profile_update_failed', profileErr.message);
+      // Läsbar text i `message`, databasens egen i `details` — samma uppdelning som PATCH på
+      // [id]/route.ts. Ytan visar båda, så orsaken går fortfarande att se utan att gräva i loggen.
+      return routeError(500, 'profile_update_failed', 'Kunde inte spara profiluppgifterna', profileErr.message);
     }
   }
 

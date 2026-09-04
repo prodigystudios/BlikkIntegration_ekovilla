@@ -76,28 +76,41 @@ export default function AdminUsers() {
     if (!email || !password) return;
     setCreating(true);
     setCreateError(null);
-    const res = await fetch('/api/admin/users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, full_name: name, role })
-    });
-    if (!res.ok) {
-      // Visa serverns egen text. Den fasta strängen dolde `role_update_failed: not authorized` och
-      // gjorde felet obegripligt både i gränssnittet och i felsökningen — routen svarar med orsaken.
-      let message = 'Kunde inte skapa användare';
-      try {
-        const data = await res.json();
-        message = data?.error?.message || data?.legacyError || data?.error || message;
-      } catch {}
-      setCreateError(String(message));
+    // 🧨 try/finally: ett nätverksfel avvisar fetch och hoppar över BÅDA grenarna nedan. Utan
+    // finally stod knappen kvar på "Skapar…" till omladdning, utan ett ord om varför — exakt den
+    // tysta felklass den här ändringen finns för att stänga.
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, full_name: name, role })
+      });
+      if (!res.ok) {
+        // Visa serverns egen text. Den fasta strängen dolde `role_update_failed: not authorized`
+        // och gjorde felet obegripligt både i gränssnittet och i felsökningen.
+        let message = 'Kunde inte skapa användare';
+        try {
+          const data = await res.json();
+          message = data?.error?.message || data?.legacyError || data?.error || message;
+          // `details` bär databasens egen text när routen delar upp dem. Bara strängar —
+          // validation_error lägger ett objekt där.
+          const details = data?.error?.details;
+          if (typeof details === 'string' && details.trim()) message = `${message}: ${details}`;
+        } catch {}
+        setCreateError(String(message));
+        return;
+      }
+      // Kroppen läses defensivt: kontot ÄR skapat vid 2xx, och en trasig kropp får inte landa i
+      // catch nedan och påstå att servern inte gick att nå.
+      const out = await res.json().catch(() => null);
+      const nextUser = out?.data?.user || out?.user;
+      if (nextUser) setUsers(u => [nextUser, ...u]);
+      setEmail(''); setPassword(''); setName(''); setRole('member');
+    } catch {
+      setCreateError('Kunde inte nå servern. Kontrollera anslutningen och försök igen.');
+    } finally {
       setCreating(false);
-      return;
     }
-    const out = await res.json();
-    const nextUser = out.data?.user || out.user;
-    if (nextUser) setUsers(u => [nextUser, ...u]);
-    setEmail(''); setPassword(''); setName(''); setRole('member');
-    setCreating(false);
   }
 
   const filteredUsers = users.filter((user) => {
