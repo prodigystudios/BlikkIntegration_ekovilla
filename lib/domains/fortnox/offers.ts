@@ -5,7 +5,7 @@ import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxGetBinary, FortnoxApiError,
 // Läget kommer från offerPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i getFortnoxOfferPdf, så PDF-motorn aldrig hamnar på kallstarten för
 // de routes som bara sparar en offert.
-import { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally } from './offerPdfMode';
+import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally, type OfferPdfMode, type OfferPdfLayout } from './offerPdfMode';
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
@@ -614,18 +614,22 @@ async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
 // FORTNOX_INTEGRATION.md.
 export async function getFortnoxOfferPdf(
   quoteId: string,
-  options: { design?: boolean } = {},
+  options: { mode?: OfferPdfMode; layout?: OfferPdfLayout } = {},
 ): Promise<{ bytes: Uint8Array; contentType: string; offerNumber: string; projectName: string | null }> {
   const quote = await requireOfferNumber(quoteId);
   const { offerNumber, rotSelected, projectName } = quote;
+  // Anroparen får åsidosätta båda lägena för EN offert. `mode: 'off'` kringgår all vår rendering
+  // och går till Fortnox utskriftsmall — det är den riktiga nödutgången, eftersom att byta till en
+  // annan av VÅRA renderare inte hjälper den dag vår rendering är trasig.
+  const mode = options.mode ?? OFFER_PDF_MODE;
+  const layout = options.layout ?? OFFER_PDF_LAYOUT;
 
-  // ── Egen formgivning (`?mall=ny`) ──
+  // ── Egen formgivning ──
   //
-  // Egen väg med FLIT, inte en gren inuti den befintliga. Den här renderaren tar över ALLA offerter
-  // — även företagsoffer som annars går till Fortnox mall — och den ska kunna provas mot skarpa
-  // offerter utan att någon annans dokument ändras. När den är verifierad ersätter den vägen nedan
-  // och `OFFER_PDF_MODE` kan gå till 'all'.
-  if (options.design) {
+  // Egen väg med FLIT, inte en gren inuti den befintliga: den bygger ett helt dokument med bilagor,
+  // medan grenen nedan bara ritar en sida. `mayRenderLocally` avgör OM vi renderar själva,
+  // `layout` avgör HUR — och `?mall=fortnox` kringgår båda för en enskild offert utan deploy.
+  if (mayRenderLocally(mode, rotSelected) && layout === 'design') {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
     const { belongsToOffer } = await import('./offerPdf');
     const { renderOfferPdfDesign } = await import('./offerPdfDesign');
@@ -665,10 +669,10 @@ export async function getFortnoxOfferPdf(
   // Offerten kan renderas LOKALT i stället för av Fortnox utskriftsmall — idag bara ROT, där
   // Fortnox mall utelämnar skattereduktionen, på sikt alla när den egna formgivningen är klar.
   // Se lib/domains/fortnox/offerPdf.ts för läget (`OFFER_PDF_MODE`) och varför.
-  if (mayRenderLocally(OFFER_PDF_MODE, rotSelected)) {
+  if (mayRenderLocally(mode, rotSelected)) {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
 
-    if (shouldRenderLocally(OFFER_PDF_MODE, rotSelected, Offer?.TaxReductionType)) {
+    if (shouldRenderLocally(mode, rotSelected, Offer?.TaxReductionType)) {
       // Dynamisk import: offerPdf drar in pdf-lib (stora font-/kodningstabeller) och node:fs. Den
       // laddas först när en PDF faktiskt ska ritas, inte när modulen importeras.
       const { belongsToOffer, loadLogo, renderOfferPdf } = await import('./offerPdf');

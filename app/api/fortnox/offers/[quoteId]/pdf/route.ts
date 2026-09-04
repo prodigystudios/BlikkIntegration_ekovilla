@@ -28,11 +28,12 @@ export async function GET(req: Request, { params }: RouteContext) {
         : crmUser.response;
     }
 
-    // `?mall=ny` renderar offerten med vår EGNA formgivning i stället för Fortnox utskriftsmall,
-    // och fogar in försättsblad, informationsblad och allmänna villkor. Medvetet en uttrycklig
-    // parameter medan formgivningen provas: den som inte skriver den får samma dokument som förut.
-    const design = new URL(req.url).searchParams.get('mall') === 'ny';
-    const { bytes, contentType, offerNumber, projectName } = await getFortnoxOfferPdf(params.quoteId, { design });
+    // Egen formgivning är standard sedan 2026-09-04. `?mall=fortnox` är NÖDUTGÅNGEN: den ger
+    // Fortnox utskriftsmall för en enskild offert, utan deploy. Finns för att en säljare ska kunna
+    // få ut ett dokument NU om något är fel i vår rendering — inte för att växla i vardagen.
+    const escape = new URL(req.url).searchParams.get('mall') === 'fortnox';
+    const { bytes, contentType, offerNumber, projectName } =
+      await getFortnoxOfferPdf(params.quoteId, escape ? { mode: 'off' } : {});
     const filename = buildDocumentFilename({ kind: 'offer', ref: offerNumber, projectName });
 
     // Svaret STRÖMMAS. Med bilagorna blir dokumentet några megabyte, och en serverlös funktion har
