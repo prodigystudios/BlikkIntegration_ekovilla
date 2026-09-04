@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, type ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
+import { useTopmostEscape } from '@/app/crm/components/useTopmostEscape';
 
 // Canonical CRM modal shell: full-screen bottom-sheet on phone, centered dialog on
 // desktop. Sticky header (with built-in close), scrollable body, optional sticky
@@ -28,17 +29,14 @@ export default function CrmModal({
   maxWidth?: string;
   bodyClassName?: string;
 }) {
-  // Close on Escape.
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
-    }
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Close on Escape — men bara om den här modalen är den översta. Se useTopmostEscape.
+  useTopmostEscape(overlayRef, onClose);
 
   return (
     <div
+      ref={overlayRef}
       className="crm-overlay-in fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
       onClick={onClose}
     >
