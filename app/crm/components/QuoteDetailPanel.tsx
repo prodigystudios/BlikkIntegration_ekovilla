@@ -16,6 +16,7 @@ import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
+import CrmModal from '@/app/crm/components/CrmModal';
 
 // The quote detail modal, shared by the offer list and the Säljtavla board.
 //
@@ -318,339 +319,49 @@ export default function QuoteDetailPanel({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[2800] flex items-end justify-center bg-slate-950/50 [backdrop-filter:blur(4px)] sm:items-center sm:p-4"
-        onClick={onClose}
-      >
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Offert ${quote.project_name}`}
-          onClick={(e) => e.stopPropagation()}
-          className="flex h-[100dvh] max-h-[100dvh] w-full max-w-[600px] flex-col overflow-hidden rounded-none bg-white shadow-[0_-12px_50px_rgba(15,23,42,0.30)] sm:h-auto sm:max-h-[88vh] sm:rounded-2xl sm:shadow-[0_30px_80px_rgba(15,23,42,0.28)]"
-        >
-          {/* Sticky header */}
-          <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 pb-4 [padding-top:calc(1rem+env(safe-area-inset-top))] sm:pt-4">
-            <div className="grid min-w-0 gap-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[quote.status].className)}>
-                  {quoteStatusMeta[quote.status].label}
-                </span>
-                {quote.quote_number ? (
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(quote.fortnox_offer_number, quote.quote_number)}</span>
-                ) : null}
-              </div>
-              <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{quote.project_name}</strong>
-              {/* Link to the customer card when the quote is tied to a saved CRM customer; a
-                  prospect/snapshot-only quote (no customer_id) keeps a plain name. returnTo points
-                  back at the list WITH ?quote_id so the detail modal re-opens on return (same
-                  open-then-return workflow as the offer form). */}
-              {quote.customer_id ? (
-                <Link
-                  href={`/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}`}
-                  className="m-0 inline-flex max-w-full items-center gap-1 text-sm text-slate-500 transition-colors hover:text-emerald-700"
-                >
-                  <span className="truncate underline-offset-2 hover:underline">{customerName}</span>
-                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
-                    <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </Link>
-              ) : (
-                <p className="m-0 truncate text-sm text-slate-500">{customerName}</p>
-              )}
-            </div>
-            <button
-              type="button"
-              aria-label="Stäng"
-              onClick={onClose}
-              className="h-9 w-9 shrink-0 rounded-full border border-slate-200 bg-white p-0 text-slate-500 transition hover:border-slate-300 hover:text-slate-700"
-            >
-              <svg className="mx-auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-
-          {/* Scrollable body */}
-          <div className="grid flex-1 gap-5 overflow-y-auto px-5 py-5">
-            {/* Hero: amount + key dates */}
-            <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
-              <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{display?.primaryLabel ?? 'Belopp'}</div>
-              <div className="mt-0.5 text-[1.75rem] font-bold leading-none tracking-tight text-slate-900 tabular-nums">
-                {formatCurrency(display?.primary ?? quote.amount, quote.currency_code)}
-              </div>
-              {display ? (
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
-                  <span>Ex moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.subtotal, quote.currency_code)}</span></span>
-                  <span>Moms ({display.vatPercent} %) <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.vat, quote.currency_code)}</span></span>
-                  <span>Inkl. moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.total, quote.currency_code)}</span></span>
-                </div>
+    <>
+      <CrmModal
+        onClose={onClose}
+        ariaLabel={`Offert ${quote.project_name}`}
+        maxWidth="sm:max-w-[600px]"
+        // Kroppen hålls vit medan skalet bär husets papper. Omvänt mot formulärmodalerna, där ytan
+        // är papper för att de vita FÄLTEN ska läsa som fält — panelen visar KORT, och de bär redan
+        // papper själva. Vit kropp är alltså det som får kortkanterna att synas här.
+        bodyClassName="grid gap-5 bg-white"
+        header={
+          <div className="grid gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={cn('rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', quoteStatusMeta[quote.status].className)}>
+                {quoteStatusMeta[quote.status].label}
+              </span>
+              {quote.quote_number ? (
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{documentRef(quote.fortnox_offer_number, quote.quote_number)}</span>
               ) : null}
-              <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#dce6d6] pt-3">
-                {([
-                  ['Offertdatum', formatDate(quote.quote_date), false],
-                  ['Följ upp', formatDate(quote.follow_up_date), isQuoteOverdue(quote)],
-                  ['Giltig till', formatDate(quote.valid_until), false],
-                ] as Array<[string, string, boolean]>).map(([lbl, val, warn]) => (
-                  <div key={lbl} className="grid gap-0.5">
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{lbl}</span>
-                    <span className={cn('text-sm font-medium', warn ? 'text-amber-700' : 'text-slate-700')}>{warn ? '⚠ ' : ''}{val}</span>
-                  </div>
-                ))}
-              </div>
             </div>
-
-            {/* Description */}
-            {quote.description ? (
-              <div className="grid gap-1.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Beskrivning</span>
-                <p className="m-0 text-sm leading-6 text-slate-700">{quote.description}</p>
-              </div>
-            ) : null}
-
-            {/* Status changer */}
-            <div className="grid gap-2">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
-              <div className="flex flex-wrap gap-2">
-                {(Object.entries(quoteStatusMeta) as Array<[QuoteDetailItem['status'], typeof quoteStatusMeta[QuoteDetailItem['status']]]>).map(([s, meta]) => {
-                  const isCurrent = quote.status === s;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      disabled={moving || isCurrent}
-                      onClick={() => requestMoveToStatus(s)}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
-                        isCurrent
-                          ? cn(meta.className, 'cursor-default')
-                          : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
-                      )}
-                    >
-                      {isCurrent ? <span className={cn('h-1.5 w-1.5 rounded-full', meta.accent)} /> : null}
-                      {meta.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Notes */}
-            {quote.notes ? (
-              <div className="grid gap-1.5 rounded-xl border border-amber-100 bg-amber-50/60 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700/80">Anteckningar</span>
-                <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{quote.notes}</p>
-              </div>
-            ) : null}
-
-            {/* Kontakt först av korten: panelen läses uppifrån och ned som arbetet går — vad
-                offerten är → VEM man ringer → vad som ska göras → vilka dokument som finns. Att
-                följa upp en skickad offert börjar med att nå någon. */}
-            <QuoteContactCard
-              customerId={quote.customer_id}
-              snapshot={quote.customer_snapshot}
-              canEditContacts={canEditContacts}
-            />
-
-            {/* Uppgifter — ligger före dokumentkorten med flit: panelen läses uppifrån och ned som
-                arbetet går, alltså vad offerten är → vad som ska göras → vilka dokument som finns. */}
-            <QuoteTasksCard
-              quoteId={quote.id}
-              quoteLabel={quoteLabel(quote)}
-              currentUserId={currentUserId}
-              canWrite={canWrite}
-              canDelegate={canDelegate}
-            />
-
-            {/* Action cards */}
-            <div className="grid gap-3">
-              {/* Work order */}
-              <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
-                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.5h6V4M9 11h6M9 15h4" />
-                      </svg>
-                    </span>
-                    <div className="grid min-w-0 gap-0.5">
-                      <span className="text-sm font-semibold text-slate-800">Arbetsorder</span>
-                      <span className="text-xs leading-5 text-slate-500">
-                        {quote.work_order_id
-                          ? `${documentRef(workOrderFortnoxNumber, quote.work_order_number)} är skapad.`
-                          : quote.status === 'won'
-                            ? 'Klar att bli en intern arbetsorder.'
-                            : 'Sätt offerten till vunnen för att skapa.'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    {quote.work_order_id ? (
-                      <button
-                        type="button"
-                        onClick={() => router.push(`/crm/arbetsorder/${quote.work_order_id}`)}
-                        className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
-                      >
-                        Gå till arbetsorder
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => void createWorkOrder()}
-                        disabled={quote.status !== 'won' || creatingWorkOrder || workOrderBlocked}
-                        className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
-                      >
-                        {creatingWorkOrder ? 'Skapar…' : 'Skapa arbetsorder'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {!quote.work_order_id && quote.status === 'won' && readiness ? (
-                  <WorkOrderReadinessNotice
-                    className="mt-3"
-                    blockers={readiness.blockers}
-                    warnings={readiness.warnings}
-                    customerHref={quote.customer_id ? `/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}` : null}
-                    quoteHref={`/crm/offerter/${quote.id}/redigera?returnTo=${encodeURIComponent(returnTo)}`}
-                    onRecheck={readiness.blockers.length > 0 ? () => { setRechecking(true); setReadinessNonce((n) => n + 1); } : null}
-                    rechecking={rechecking}
-                  />
-                ) : null}
-
-                {/* Order confirmation — once a work order (Fortnox order) exists */}
-                {quote.work_order_id ? (
-                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e3e9df] pt-3">
-                    <span className="mr-auto text-xs font-medium text-slate-500">Orderbekräftelse</span>
-                    <button
-                      type="button"
-                      onClick={() => openFortnoxPdf(`/api/crm/work-orders/${quote.work_order_id}/fortnox/pdf`)}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
-                    >
-                      Hämta PDF
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => documentEmail.start({
-                        id: quote.work_order_id!,
-                        kind: 'order',
-                        ref: documentRef(workOrderFortnoxNumber, quote.work_order_number),
-                        projectName: quote.project_name,
-                        customerName,
-                        snapshotEmail: quote.customer_snapshot?.email,
-                        customerId: quote.customer_id,
-                        pdfUrl: `/api/crm/work-orders/${quote.work_order_id}/fortnox/pdf`,
-                      })}
-                      disabled={documentEmail.sendingId === quote.work_order_id}
-                      className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {documentEmail.sendingId === quote.work_order_id ? 'Mejlar…' : 'Mejla order'}
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-
-              {/* Fortnox */}
-              <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
-                      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M12 16V4M8 8l4-4 4 4M5 20h14" />
-                      </svg>
-                    </span>
-                    <div className="grid min-w-0 gap-0.5">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-sm font-semibold text-slate-800">Fortnox</span>
-                        {offerLocked ? (
-                          <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
-                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
-                            </svg>
-                            Låst
-                          </span>
-                        ) : null}
-                      </div>
-                      <span className="text-xs leading-5 text-slate-500">
-                        {quote.fortnox_offer_number
-                          ? `Offert #${quote.fortnox_offer_number} skapad.`
-                          : 'Skicka offerten till Fortnox.'}
-                      </span>
-                      {quote.fortnox_sync_status === 'failed' ? (
-                        <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                    {quote.fortnox_offer_number ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => openFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`)}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
-                        >
-                          Hämta PDF
-                        </button>
-                        {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
-                            borttaget — mottagaren gick inte att styra därifrån och används inte. */}
-                        <button
-                          type="button"
-                          onClick={() => documentEmail.start({
-                            id: quote.id,
-                            kind: 'offer',
-                            ref: documentRef(quote.fortnox_offer_number, quote.quote_number),
-                            projectName: quote.project_name,
-                            customerName,
-                            snapshotEmail: quote.customer_snapshot?.email,
-                            customerId: quote.customer_id,
-                            pdfUrl: `/api/fortnox/offers/${quote.id}/pdf`,
-                          })}
-                          disabled={documentEmail.sendingId === quote.id}
-                          title="Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga."
-                          className="inline-flex items-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {documentEmail.sendingId === quote.id ? 'Mejlar…' : 'Mejla offert'}
-                        </button>
-                      </>
-                    ) : null}
-                    {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
-                        (but still shown if the sync failed, so the user can recover) */}
-                    {!offerLocked ? (
-                      <button
-                        type="button"
-                        onClick={() => void pushToFortnox()}
-                        disabled={pushingFortnox || quote.fortnox_sync_status === 'pending'}
-                        className={cn(
-                          'rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
-                          quote.fortnox_offer_number
-                            ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
-                            : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
-                        )}
-                      >
-                        {pushingFortnox ? 'Skickar…' : quote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-
-                {/* Locked explanation — offer can no longer be edited/re-synced */}
-                {offerLocked ? (
-                  <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
-                    <svg className="mt-0.5 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
-                    </svg>
-                    <span>
-                      Offerten är <strong>låst</strong>{quote.work_order_number ? ` – arbetsorder ${quote.work_order_number} är skapad` : ' – en arbetsorder har skapats'}, så den kan inte längre ändras eller synkas om i Fortnox. Du kan fortfarande hämta PDF:en och mejla den till kunden.
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            </div>
+            <strong className="truncate text-lg font-bold tracking-tight text-slate-950">{quote.project_name}</strong>
+            {/* Link to the customer card when the quote is tied to a saved CRM customer; a
+                prospect/snapshot-only quote (no customer_id) keeps a plain name. returnTo points
+                back at the list WITH ?quote_id so the detail modal re-opens on return (same
+                open-then-return workflow as the offer form). */}
+            {quote.customer_id ? (
+              <Link
+                href={`/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}`}
+                className="m-0 inline-flex max-w-full items-center gap-1 text-sm text-slate-500 transition-colors hover:text-emerald-700"
+              >
+                <span className="truncate underline-offset-2 hover:underline">{customerName}</span>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+                  <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </Link>
+            ) : (
+              <p className="m-0 truncate text-sm text-slate-500">{customerName}</p>
+            )}
           </div>
-
-          {/* Sticky footer — a locked offer (work order created) can't be edited or
-              re-synced, so the edit action is hidden and "Stäng" fills the row. */}
-          <div className="flex items-center gap-2 border-t border-slate-100 px-5 py-3 [padding-bottom:calc(0.75rem+env(safe-area-inset-bottom))] sm:[padding-bottom:0.75rem]">
+        }
+        /* Sticky footer — a locked offer (work order created) can't be edited or
+           re-synced, so the edit action is hidden and "Stäng" fills the row. */
+        footer={
+          <>
             <button
               type="button"
               onClick={onClose}
@@ -671,9 +382,287 @@ export default function QuoteDetailPanel({
                 Redigera offert
               </button>
             ) : null}
+          </>
+        }
+      >
+        {/* Hero: amount + key dates */}
+        <div className="rounded-xl border border-[#e3e9df] bg-[#f6f9f3] p-4">
+          <div className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{display?.primaryLabel ?? 'Belopp'}</div>
+          <div className="mt-0.5 text-[1.75rem] font-bold leading-none tracking-tight text-slate-900 tabular-nums">
+            {formatCurrency(display?.primary ?? quote.amount, quote.currency_code)}
+          </div>
+          {display ? (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-500">
+              <span>Ex moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.subtotal, quote.currency_code)}</span></span>
+              <span>Moms ({display.vatPercent} %) <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.vat, quote.currency_code)}</span></span>
+              <span>Inkl. moms <span className="font-medium text-slate-600 tabular-nums">{formatCurrency(display.total, quote.currency_code)}</span></span>
+            </div>
+          ) : null}
+          <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[#dce6d6] pt-3">
+            {([
+              ['Offertdatum', formatDate(quote.quote_date), false],
+              ['Följ upp', formatDate(quote.follow_up_date), isQuoteOverdue(quote)],
+              ['Giltig till', formatDate(quote.valid_until), false],
+            ] as Array<[string, string, boolean]>).map(([lbl, val, warn]) => (
+              <div key={lbl} className="grid gap-0.5">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">{lbl}</span>
+                <span className={cn('text-sm font-medium', warn ? 'text-amber-700' : 'text-slate-700')}>{warn ? '⚠ ' : ''}{val}</span>
+              </div>
+            ))}
           </div>
         </div>
 
+        {/* Description */}
+        {quote.description ? (
+          <div className="grid gap-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Beskrivning</span>
+            <p className="m-0 text-sm leading-6 text-slate-700">{quote.description}</p>
+          </div>
+        ) : null}
+
+        {/* Status changer */}
+        <div className="grid gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Byt status</span>
+          <div className="flex flex-wrap gap-2">
+            {(Object.entries(quoteStatusMeta) as Array<[QuoteDetailItem['status'], typeof quoteStatusMeta[QuoteDetailItem['status']]]>).map(([s, meta]) => {
+              const isCurrent = quote.status === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  disabled={moving || isCurrent}
+                  onClick={() => requestMoveToStatus(s)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition',
+                    isCurrent
+                      ? cn(meta.className, 'cursor-default')
+                      : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50',
+                  )}
+                >
+                  {isCurrent ? <span className={cn('h-1.5 w-1.5 rounded-full', meta.accent)} /> : null}
+                  {meta.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Notes */}
+        {quote.notes ? (
+          <div className="grid gap-1.5 rounded-xl border border-amber-100 bg-amber-50/60 p-3.5">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-amber-700/80">Anteckningar</span>
+            <p className="m-0 whitespace-pre-wrap text-sm leading-6 text-slate-700">{quote.notes}</p>
+          </div>
+        ) : null}
+
+        {/* Kontakt först av korten: panelen läses uppifrån och ned som arbetet går — vad
+            offerten är → VEM man ringer → vad som ska göras → vilka dokument som finns. Att
+            följa upp en skickad offert börjar med att nå någon. */}
+        <QuoteContactCard
+          customerId={quote.customer_id}
+          snapshot={quote.customer_snapshot}
+          canEditContacts={canEditContacts}
+        />
+
+        {/* Uppgifter — ligger före dokumentkorten med flit: panelen läses uppifrån och ned som
+            arbetet går, alltså vad offerten är → vad som ska göras → vilka dokument som finns. */}
+        <QuoteTasksCard
+          quoteId={quote.id}
+          quoteLabel={quoteLabel(quote)}
+          currentUserId={currentUserId}
+          canWrite={canWrite}
+          canDelegate={canDelegate}
+        />
+
+        {/* Action cards */}
+        <div className="grid gap-3">
+          {/* Work order */}
+          <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4V2.5h6V4M9 11h6M9 15h4" />
+                  </svg>
+                </span>
+                <div className="grid min-w-0 gap-0.5">
+                  <span className="text-sm font-semibold text-slate-800">Arbetsorder</span>
+                  <span className="text-xs leading-5 text-slate-500">
+                    {quote.work_order_id
+                      ? `${documentRef(workOrderFortnoxNumber, quote.work_order_number)} är skapad.`
+                      : quote.status === 'won'
+                        ? 'Klar att bli en intern arbetsorder.'
+                        : 'Sätt offerten till vunnen för att skapa.'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                {quote.work_order_id ? (
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/crm/arbetsorder/${quote.work_order_id}`)}
+                    className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800"
+                  >
+                    Gå till arbetsorder
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void createWorkOrder()}
+                    disabled={quote.status !== 'won' || creatingWorkOrder || workOrderBlocked}
+                    className="rounded-lg border border-emerald-700 bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-white disabled:text-slate-400"
+                  >
+                    {creatingWorkOrder ? 'Skapar…' : 'Skapa arbetsorder'}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!quote.work_order_id && quote.status === 'won' && readiness ? (
+              <WorkOrderReadinessNotice
+                className="mt-3"
+                blockers={readiness.blockers}
+                warnings={readiness.warnings}
+                customerHref={quote.customer_id ? `/crm/kunder/${quote.customer_id}?returnTo=${encodeURIComponent(returnTo)}` : null}
+                quoteHref={`/crm/offerter/${quote.id}/redigera?returnTo=${encodeURIComponent(returnTo)}`}
+                onRecheck={readiness.blockers.length > 0 ? () => { setRechecking(true); setReadinessNonce((n) => n + 1); } : null}
+                rechecking={rechecking}
+              />
+            ) : null}
+
+            {/* Order confirmation — once a work order (Fortnox order) exists */}
+            {quote.work_order_id ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-[#e3e9df] pt-3">
+                <span className="mr-auto text-xs font-medium text-slate-500">Orderbekräftelse</span>
+                <button
+                  type="button"
+                  onClick={() => openFortnoxPdf(`/api/crm/work-orders/${quote.work_order_id}/fortnox/pdf`)}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                >
+                  Hämta PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => documentEmail.start({
+                    id: quote.work_order_id!,
+                    kind: 'order',
+                    ref: documentRef(workOrderFortnoxNumber, quote.work_order_number),
+                    projectName: quote.project_name,
+                    customerName,
+                    snapshotEmail: quote.customer_snapshot?.email,
+                    customerId: quote.customer_id,
+                    pdfUrl: `/api/crm/work-orders/${quote.work_order_id}/fortnox/pdf`,
+                  })}
+                  disabled={documentEmail.sendingId === quote.work_order_id}
+                  className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {documentEmail.sendingId === quote.work_order_id ? 'Mejlar…' : 'Mejla order'}
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {/* Fortnox */}
+          <div className="rounded-xl border border-[#e3e9df] bg-[#f9fbf7] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M12 16V4M8 8l4-4 4 4M5 20h14" />
+                  </svg>
+                </span>
+                <div className="grid min-w-0 gap-0.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-sm font-semibold text-slate-800">Fortnox</span>
+                    {offerLocked ? (
+                      <span className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
+                        </svg>
+                        Låst
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="text-xs leading-5 text-slate-500">
+                    {quote.fortnox_offer_number
+                      ? `Offert #${quote.fortnox_offer_number} skapad.`
+                      : 'Skicka offerten till Fortnox.'}
+                  </span>
+                  {quote.fortnox_sync_status === 'failed' ? (
+                    <span className="text-xs font-semibold text-rose-600">Senaste synk misslyckades.</span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                {quote.fortnox_offer_number ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => openFortnoxPdf(`/api/fortnox/offers/${quote.id}/pdf`)}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300"
+                    >
+                      Hämta PDF
+                    </button>
+                    {/* Ett enda mejlsätt: eget mejlprogram. Fortnox egen offertutskick är
+                        borttaget — mottagaren gick inte att styra därifrån och används inte. */}
+                    <button
+                      type="button"
+                      onClick={() => documentEmail.start({
+                        id: quote.id,
+                        kind: 'offer',
+                        ref: documentRef(quote.fortnox_offer_number, quote.quote_number),
+                        projectName: quote.project_name,
+                        customerName,
+                        snapshotEmail: quote.customer_snapshot?.email,
+                        customerId: quote.customer_id,
+                        pdfUrl: `/api/fortnox/offers/${quote.id}/pdf`,
+                      })}
+                      disabled={documentEmail.sendingId === quote.id}
+                      title="Öppnar ditt mejlprogram – PDF:en laddas ner att bifoga."
+                      className="inline-flex items-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {documentEmail.sendingId === quote.id ? 'Mejlar…' : 'Mejla offert'}
+                    </button>
+                  </>
+                ) : null}
+                {/* Sync/re-sync hidden once a work order locks the offer in Fortnox
+                    (but still shown if the sync failed, so the user can recover) */}
+                {!offerLocked ? (
+                  <button
+                    type="button"
+                    onClick={() => void pushToFortnox()}
+                    disabled={pushingFortnox || quote.fortnox_sync_status === 'pending'}
+                    className={cn(
+                      'rounded-lg border px-3 py-1.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+                      quote.fortnox_offer_number
+                        ? 'border-slate-200 bg-white text-slate-700 hover:border-slate-300'
+                        : 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700',
+                    )}
+                  >
+                    {pushingFortnox ? 'Skickar…' : quote.fortnox_offer_number ? 'Skicka igen' : 'Skicka'}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Locked explanation — offer can no longer be edited/re-synced */}
+            {offerLocked ? (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-xs leading-5 text-amber-900">
+                <svg className="mt-0.5 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 018 0v4" />
+                </svg>
+                <span>
+                  Offerten är <strong>låst</strong>{quote.work_order_number ? ` – arbetsorder ${quote.work_order_number} är skapad` : ' – en arbetsorder har skapats'}, så den kan inte längre ändras eller synkas om i Fortnox. Du kan fortfarande hämta PDF:en och mejla den till kunden.
+                </span>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </CrmModal>
+
+      {/* Utanför CrmModal med flit. Låg bekräftelsedialogen kvar inuti panelens overlay bubblade
+          ett klick på DESS bakgrund vidare till panelens egen backdrop-stängning — ett avbrutet
+          "markera som vunnen" tog hela offertpanelen med sig. */}
       {pendingWonStatus ? (
         <CrmConfirmDialog
           title="Markera offerten som vunnen?"
@@ -688,6 +677,6 @@ export default function QuoteDetailPanel({
           onCancel={() => setPendingWonStatus(null)}
         />
       ) : null}
-    </div>
+    </>
   );
 }
