@@ -52,3 +52,16 @@ mockups/planning-board.html
 # VS Code-tillägget Counter skriver en ny tidsstämplad mapp per körning (36 filer efter
 # två körningar). Ren lokal verktygsutdata — den beskriver koden, den är inte kod.
 .VSCodeCounter/
+
+# Underlaget vi formgav offert-PDF:en mot: Figma-exporterna och en skarp kundoffert.
+#
+# Det är känsliga filer — ROT-exporten bär ett riktigt personnummer — och de ligger med flit UTANFÖR
+# public/. Allt under public/ serveras nämligen av Next utan inloggning, så en fil där är hämtbar av
+# vem som helst som gissar sökvägen, alldeles oavsett vad .gitignore säger. Att bara ignorera dem
+# hade skyddat git-historiken men inte servern.
+design-underlag/
+
+# Kvar som skyddsnät: nästa Figma-export hamnar lätt i templates/ igen av gammal vana, och där får
+# den inte bli committad. Bilagorna produktionen läser heter 13949-* och allmanna-villkor-*.
+public/documents/templates/Ekovilla-Offert-*
+public/documents/templates/Offert *

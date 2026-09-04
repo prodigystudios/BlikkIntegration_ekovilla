@@ -262,6 +262,51 @@ export async function resolveReverseVat(
   return (data as { reverse_vat?: boolean | null } | null)?.reverse_vat === true;
 }
 
+/**
+ * Kundens momsregistreringsnummer, för kundraden på vår egen offert-PDF.
+ *
+ * VARFÖR VÅRT REGISTER. Fortnox utskriftsmall visar "Ert VAT-nummer" på offerten, men den läser
+ * kundkortet på serversidan — offertresursen (`GET /offers/{nr}`) bär inget sådant fält. Att hämta
+ * kundposten från Fortnox för varje PDF vore ett extra API-anrop på en dokumentroute för uppgifter
+ * vi redan speglar. `crm_customers.vat_number` synkas från Fortnox `VATNumber`.
+ *
+ * Slår upp på kundens id först — det är den riktiga kopplingen. En offert utan `customer_id` (helt
+ * manuellt inskriven kund) faller tillbaka på Fortnox kundnummer.
+ *
+ * ⚠️ **Tomt är tomt.** Saknas numret returneras `null` och kundraden skriver bara kundnumret. En
+ * privatkund har aldrig ett momsnummer, och ett påhittat nummer på ett kunddokument vore värre än
+ * inget. Trimmas, eftersom en kolumn med enbart blanksteg betyder samma sak som tom.
+ */
+export async function resolveCustomerVatNumber(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  customerId: string | null | undefined,
+  fortnoxCustomerNumber: string | null | undefined,
+): Promise<string | null> {
+  const read = async (column: 'id' | 'fortnox_customer_id', value: string) => {
+    const { data, error } = await supabase
+      .from('crm_customers')
+      .select('vat_number')
+      .eq(column, value)
+      .maybeSingle();
+    // Ett databasfel får inte se ut som "kunden saknar momsnummer". `maybeSingle()` felar bland
+    // annat när flera rader matchar — en dubblett i kundregistret — och det är värt att kunna se i
+    // loggen i stället för att bara tyst utebli på kundraden.
+    if (error) {
+      console.warn(`[offert-pdf] kunde inte läsa momsnummer på ${column}=${value}: ${error.message}`);
+      return null;
+    }
+    const vat = (data as { vat_number?: string | null } | null)?.vat_number?.trim();
+    return vat ? vat : null;
+  };
+
+  if (customerId) {
+    const byId = await read('id', customerId);
+    if (byId) return byId;
+  }
+  if (fortnoxCustomerNumber) return read('fortnox_customer_id', String(fortnoxCustomerNumber));
+  return null;
+}
+
 // Builds a ROT property note (Fastighetsbeteckning + BRF org.nr) for a text row on the
 // offer/order/invoice. Fortnox has NO API field for the ROT property designation — it must be
 // typed manually into the husarbete dialog — so we surface it as a plain comment line for whoever
