@@ -19,7 +19,26 @@
 export type OfferPdfMode = 'rot' | 'all' | 'off';
 
 /** Ett värde att ändra, ingen kodändring runt omkring. */
-export const OFFER_PDF_MODE: OfferPdfMode = 'rot';
+export const OFFER_PDF_MODE: OfferPdfMode = 'all';
+
+/**
+ * VILKEN formgivning en lokalt renderad offert får. Skild från `OFFER_PDF_MODE`, som avgör VILKA
+ * offerter vi renderar själva — två frågor som inte hör ihop.
+ *
+ * - `'design'` – Ekovillas egen mall med försättsblad, informationsblad och allmänna villkor.
+ *   Live sedan 2026-09-04, godkänd av VD.
+ * - `'fortnox-kopia'` – den handritade kopian av Fortnox utskriftsmall i `offerPdf.ts`. Byggd när
+ *   ROT brann och Fortnox mall utelämnade skattereduktionen. Kvar som mellanläge: den renderar
+ *   lokalt utan att dokumentet byter utseende.
+ *
+ * Behöver något backas snabbt finns tre steg, i ordning efter hur mycket de ändrar:
+ *   1. `?mall=fortnox` på PDF-routen — enskild offert, ingen deploy, funkar direkt
+ *   2. `OFFER_PDF_LAYOUT = 'fortnox-kopia'` — alla offerter, men fortfarande vår rendering
+ *   3. `OFFER_PDF_MODE = 'off'` — allt tillbaka till Fortnox utskriftsmall
+ */
+export type OfferPdfLayout = 'design' | 'fortnox-kopia';
+
+export const OFFER_PDF_LAYOUT: OfferPdfLayout = 'design';
 
 /**
  * Ska den här offerten renderas lokalt?
