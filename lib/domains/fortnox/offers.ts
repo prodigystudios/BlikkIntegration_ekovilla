@@ -634,15 +634,20 @@ export async function getFortnoxOfferPdf(
   // `layout` avgör HUR — och `?mall=fortnox` kringgår båda för en enskild offert utan deploy.
   if (mayRenderLocally(mode, rotSelected) && layout === 'design') {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
-    const { renderOfferPdfDesign, rotApplicantsFromCrm } = await import('./documentPdfDesign');
+    const { renderOfferPdfDesign } = await import('./documentPdfDesign');
     const { assembleOfferDocument, offerAttachments, resolveTermsKind } = await import('./offerPdfAssembly');
-    const { resolveCustomerVatNumber } = await import('./helpers');
+    const { resolveCustomerPersonalNumber, resolveCustomerVatNumber } = await import('./helpers');
 
     // Ingen tyst fallback här heller: sväljer någon läsning sitt fel får säljaren ett dokument som
     // SER rätt ut men saknar skattereduktionen eller företagsfoten.
-    const [companyResponse, customerVatNumber] = await Promise.all([
+    const [companyResponse, customerVatNumber, cardPersonalNumber] = await Promise.all([
       fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
       resolveCustomerVatNumber(getSupabaseAdmin(), quote.customerId, Offer?.CustomerNumber),
+      // Bara för ROT-offerter — ett personnummer ska inte ens läsas för ett dokument som aldrig
+      // visar det.
+      rotSelected
+        ? resolveCustomerPersonalNumber(getSupabaseAdmin(), quote.customerId, Offer?.CustomerNumber)
+        : Promise.resolve(null),
     ]);
 
     const rendered = await renderOfferPdfDesign({
@@ -651,8 +656,10 @@ export async function getFortnoxOfferPdf(
       customerVatNumber,
       // 🧨 Sökanden kommer ur CRM, INTE ur Fortnox `/taxreductions`. Mätt mot skarp data 2026-09-07:
       // det registret är tomt för både offerter och ordrar hos oss, så ROT-blocket ritades utan
-      // sökande på varje skarp offert sedan 2026-09-04. Se rotApplicantLines.
-      rotApplicants: rotApplicantsFromCrm(quote.rotDetails),
+      // sökande på varje skarp offert sedan 2026-09-04. Se resolveRotApplicants.
+      rotDetails: quote.rotDetails,
+      cardPersonalNumber,
+      snapshotPersonalNumber: quote.personalNumber,
     });
 
     const termsKind = resolveTermsKind({

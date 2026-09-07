@@ -14,7 +14,6 @@ import {
   type FortnoxOrderResponse,
   type FortnoxOrderRowResponse,
 } from '@/lib/domains/fortnox/orderPdfDesign';
-import { rotApplicantsFromCrm } from '@/lib/domains/fortnox/documentPdfDesign';
 import { isTextOnlyRow, type FortnoxCompanySettingsResponse } from '@/lib/domains/fortnox/offerPdf';
 
 /** Textraderna på en given sida i en renderad PDF. */
@@ -104,11 +103,13 @@ const ROT_ORDER: FortnoxOrderResponse = {
 
 const ROT_DETAILS = { enabled: true, property_designation: 'Gustavsberg Sjöstugan 2:14' };
 
-// Sökanden kommer ur CRM:s rot_details, inte ur Fortnox — se rotApplicantLines.
+// Sökandens NAMN kommer ur rot_details; PERSONNUMRET ur kundkortet (cardPersonalNumber) — se
+// resolveRotApplicants. `personal_number` ligger kvar här med flit och ska INTE vinna: det är den
+// gamla tiosiffriga kopian, precis det fall rättningen 10 → 12 siffror handlar om.
 const ROT_DETAILS_WITH_APPLICANT = {
   ...ROT_DETAILS,
   applicant_name: 'Karin Lindqvist',
-  personal_number: '19740312-4519',
+  personal_number: '740312-4519',
 };
 
 // Företagsorder utan ROT: märkningen står kvar i referensnumret, inget ROT-block.
@@ -164,20 +165,6 @@ describe('orderToDesignHeader', () => {
     expect(header.Total).toBe(12250);
     expect(header.TotalToPay).toBe(10188);
     expect(header.TaxReduction).toBe(2062);
-  });
-});
-
-describe('sökanden ur CRM', () => {
-  it('bygger raden av namn och personnummer', () => {
-    expect(rotApplicantsFromCrm(ROT_DETAILS_WITH_APPLICANT))
-      .toEqual([{ name: 'Karin Lindqvist', personalNumber: '19740312-4519' }]);
-  });
-
-  it('ger inga sökande när uppgifterna saknas', () => {
-    // Då ritas ROT-blocket med enbart fastighetsbeteckningen — bättre än en rubrik utan innehåll.
-    expect(rotApplicantsFromCrm(ROT_DETAILS)).toEqual([]);
-    expect(rotApplicantsFromCrm(null)).toEqual([]);
-    expect(rotApplicantsFromCrm({ applicant_name: '  ', personal_number: '' })).toEqual([]);
   });
 });
 
@@ -243,6 +230,7 @@ describe('orderbekräftelsen', () => {
     company: COMPANY,
     rotDetails: ROT_DETAILS_WITH_APPLICANT,
     rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
     logo: null,
     ...extra,
   });
@@ -317,6 +305,7 @@ describe('följesedeln', () => {
     company: COMPANY,
     rotDetails: ROT_DETAILS_WITH_APPLICANT,
     rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
     logo: null,
   });
 
@@ -374,7 +363,10 @@ it('skriver förhandsvisningar när ORDER_PDF_PREVIEW_DIR är satt', async () =>
   if (!dir) return;
   await mkdir(dir, { recursive: true });
 
-  const base = { company: COMPANY, rotDetails: ROT_DETAILS_WITH_APPLICANT, rotEnabled: true };
+  const base = {
+    company: COMPANY, rotDetails: ROT_DETAILS_WITH_APPLICANT, rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
+  };
   const files: Array<[string, Uint8Array]> = [
     ['orderbekraftelse-rot.pdf', await renderOrderPdfDesign({ order: ROT_ORDER, ...base })],
     ['orderbekraftelse-foretag.pdf', await renderOrderPdfDesign({

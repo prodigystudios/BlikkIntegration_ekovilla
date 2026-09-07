@@ -1057,16 +1057,18 @@ type OrderForPdf = {
   projectName: string | null;
   /** Kundens id — hämtar momsnumret till kundraden i vår egen formgivning. */
   customerId: string | null;
-  /** Fastighetsbeteckning och BRF org.nr. Fortnox har inget fält för dem; CRM äger uppgiften. */
+  /** Sökande, fastighetsbeteckning och BRF org.nr. Fortnox äger inget av det; CRM gör. */
   rotDetails: RotDetails | null;
   rotEnabled: boolean;
+  /** Arbetsorderns `customer_snapshot.personal_number`. Reserv bakom kundkortet. */
+  snapshotPersonalNumber: string | null;
 };
 
 async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_work_orders')
-    .select('fortnox_order_number, project_name, quote_id, customer_id, rot_details')
+    .select('fortnox_order_number, project_name, quote_id, customer_id, rot_details, customer_snapshot')
     .eq('id', workOrderId)
     .maybeSingle();
 
@@ -1077,6 +1079,7 @@ async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
     quote_id?: string | null;
     customer_id?: string | null;
     rot_details?: RotDetails | null;
+    customer_snapshot?: { personal_number?: string | null } | null;
   } | null;
 
   const orderNumber = row?.fortnox_order_number;
@@ -1094,6 +1097,7 @@ async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
     customerId: row?.customer_id ?? null,
     rotDetails,
     rotEnabled: rotDetails?.enabled === true,
+    snapshotPersonalNumber: row?.customer_snapshot?.personal_number ?? null,
   };
 }
 
@@ -1113,11 +1117,17 @@ async function renderOrderDocument(
   const { orderNumber } = order;
   const { Order } = await fortnoxGet<{ Order: FortnoxOrderResponse }>(`/orders/${orderNumber}`);
   const { renderDeliveryNotePdf, renderOrderPdfDesign } = await import('./orderPdfDesign');
-  const { resolveCustomerVatNumber } = await import('./helpers');
+  const { resolveCustomerPersonalNumber, resolveCustomerVatNumber } = await import('./helpers');
 
-  const [companyResponse, customerVatNumber] = await Promise.all([
+  // Personnumret läses BARA för orderbekräftelsen på en ROT-order. Följesedeln visar det aldrig,
+  // och då ska det inte hämtas heller.
+  const wantsRot = kind === 'order' && order.rotEnabled;
+  const [companyResponse, customerVatNumber, cardPersonalNumber] = await Promise.all([
     fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
     resolveCustomerVatNumber(getSupabaseAdmin(), order.customerId, Order?.CustomerNumber),
+    wantsRot
+      ? resolveCustomerPersonalNumber(getSupabaseAdmin(), order.customerId, Order?.CustomerNumber)
+      : Promise.resolve(null),
   ]);
 
   const input = {
@@ -1129,6 +1139,8 @@ async function renderOrderDocument(
     // efter att kunden fått sin orderbekräftelse. Se rotApplicantLines i documentPdfDesign.ts.
     rotDetails: order.rotDetails,
     rotEnabled: order.rotEnabled,
+    cardPersonalNumber,
+    snapshotPersonalNumber: order.snapshotPersonalNumber,
   };
   return kind === 'order' ? renderOrderPdfDesign(input) : renderDeliveryNotePdf(input);
 }

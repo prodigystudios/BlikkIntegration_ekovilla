@@ -393,23 +393,37 @@ export function rotApplicantLines(applicants: RotApplicant[]): string[] {
 }
 
 /**
- * Sökandena ur CRM:s `rot_details`. Tom lista när ROT är av eller uppgifterna saknas — då ritas
- * blocket med enbart fastighetsbeteckningen, vilket är bättre än en rubrik utan innehåll.
+ * Sökanden till ROT-blocket. Tom lista när ingenting går att fylla i — då ritas blocket med enbart
+ * fastighetsbeteckningen, vilket är bättre än en rubrik utan innehåll.
+ *
+ * 🧨 **PERSONNUMRET KOMMER FRÅN KUNDKORTET FÖRST**, sedan dokumentets snapshot — exakt samma
+ * ordning som `workOrderReadiness.ts` spärrar på, och medvetet INTE ur `rot_details`. Numret går
+ * inte att redigera i offertformuläret, så kopiorna i snapshot och `rot_details` är aldrig ett
+ * medvetet val för just det dokumentet; de är kortet som det såg ut när kunden valdes. Kortet är
+ * dessutom det Fortnox läser (kundens `OrganisationNumber`).
+ *
+ * Det spelar roll just nu: rättningen 10 → 12 siffror pågår, och prompten i offertformuläret
+ * PATCHar bara kortet medan offerten låses så fort ordern finns. Läste vi `rot_details` hade
+ * dokumentet tryckt det gamla ogiltiga numret långt efter att kunden rättats.
+ *
+ * NAMNET tas däremot ur `rot_details.applicant_name` först — det är ROT-sektionens EGET fält, det
+ * enda av de två säljaren faktiskt fyller i där, och sökanden behöver inte vara densamma som
+ * kundkortets namn. Faller tillbaka på kundnamnet, som på en privat ROT-order är samma person.
  */
-export function rotApplicantsFromCrm(
-  // Tar HELA `rot_details` som den ligger i CRM, inte bara de två fälten: anroparna har objektet
-  // och skulle annars behöva plocka isär det, och en `rot_details` utan sökande (bara
-  // fastighetsbeteckning) är ett giltigt fall som ska ge en tom lista — inte ett typfel.
-  rot: {
-    applicant_name?: string | null;
-    personal_number?: string | null;
-    enabled?: boolean | null;
-    property_designation?: string | null;
-    brf_org_number?: string | null;
-  } | null | undefined,
-): RotApplicant[] {
-  const name = (rot?.applicant_name ?? '').trim();
-  const personalNumber = (rot?.personal_number ?? '').trim();
+export function resolveRotApplicants(input: {
+  rotDetails?: { applicant_name?: string | null; personal_number?: string | null } | null;
+  /** `crm_customers.personal_number` — se `resolveCustomerPersonalNumber`. */
+  cardPersonalNumber?: string | null;
+  /** Dokumentets `customer_snapshot.personal_number`. Reserv, som i workOrderReadiness. */
+  snapshotPersonalNumber?: string | null;
+  /** Kundnamnet på Fortnox-dokumentet. Reserv när ROT-sektionens namnfält är tomt. */
+  customerName?: string | null;
+}): RotApplicant[] {
+  const text = (value: unknown) => String(value ?? '').trim();
+
+  const name = text(input.rotDetails?.applicant_name) || text(input.customerName);
+  const personalNumber = text(input.cardPersonalNumber) || text(input.snapshotPersonalNumber);
+
   return name || personalNumber ? [{ name, personalNumber }] : [];
 }
 
@@ -588,7 +602,16 @@ type SharedPdfDesignInput = {
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
 
-export type OfferPdfDesignInput = SharedPdfDesignInput & {
+/** De råa ROT-uppgifterna en anropare har. Löses av `resolveRotApplicants`, inte av anroparen. */
+export type RotApplicantSources = {
+  rotDetails?: { applicant_name?: string | null; personal_number?: string | null } | null;
+  /** `crm_customers.personal_number` — se `resolveCustomerPersonalNumber`. KORTET vinner. */
+  cardPersonalNumber?: string | null;
+  /** Dokumentets `customer_snapshot.personal_number`. */
+  snapshotPersonalNumber?: string | null;
+};
+
+export type OfferPdfDesignInput = SharedPdfDesignInput & RotApplicantSources & {
   offer: FortnoxOfferResponse;
 };
 
@@ -638,12 +661,21 @@ export function offerVariant(offer: FortnoxOfferResponse): DocumentVariant {
 }
 
 export function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<Uint8Array> {
-  const { offer, ...shared } = input;
+  const { offer, rotDetails, cardPersonalNumber, snapshotPersonalNumber, ...shared } = input;
   return renderDocumentPdfDesign({
     ...shared,
     variant: offerVariant(offer),
     header: offer,
     rows: Array.isArray(offer.OfferRows) ? offer.OfferRows : [],
+    // Regeln bor i `resolveRotApplicants` och tillämpas HÄR, inte hos anroparen — så att
+    // offertens och orderns vägar bevisligen delar den. Att bygga listan i `offers.ts` var precis
+    // den sömmen där den ursprungliga buggen kunde gömma sig från testerna.
+    rotApplicants: resolveRotApplicants({
+      rotDetails,
+      cardPersonalNumber,
+      snapshotPersonalNumber,
+      customerName: offer.CustomerName,
+    }),
   });
 }
 

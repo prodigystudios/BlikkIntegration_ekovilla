@@ -17,7 +17,7 @@ import { buildRotPropertyNote } from './helpers';
 import {
   LATE_INTEREST,
   renderDocumentPdfDesign,
-  rotApplicantsFromCrm,
+  resolveRotApplicants,
   type DesignDocumentHeader,
   type DesignDocumentRow,
   type DocumentVariant,
@@ -244,12 +244,16 @@ export type OrderPdfDesignInput = {
    */
   rotDetails?: RotDetails;
   rotEnabled?: boolean;
+  /** `crm_customers.personal_number`. KORTET vinner över snapshotet — se resolveRotApplicants. */
+  cardPersonalNumber?: string | null;
+  /** Arbetsorderns `customer_snapshot.personal_number`. Reserv. */
+  snapshotPersonalNumber?: string | null;
   logo?: Uint8Array | null;
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
 
 export function renderOrderPdfDesign(input: OrderPdfDesignInput): Promise<Uint8Array> {
-  const { order, rotDetails, rotEnabled, ...shared } = input;
+  const { order, rotDetails, rotEnabled, cardPersonalNumber, snapshotPersonalNumber, ...shared } = input;
 
   // 🧨 **Referensraden och ROT-blocket MÅSTE avgöras på samma signal.**
   //
@@ -270,14 +274,19 @@ export function renderOrderPdfDesign(input: OrderPdfDesignInput): Promise<Uint8A
     header: orderToDesignHeader(order),
     rows: orderRowsToDesignRows(order.OrderRows),
     rotPropertyNote: rot.propertyNote,
-    rotApplicants: rotApplicantsFromCrm(rotDetails),
+    // Bara när dokumentet FAKTISKT visar ROT. Annars hade ett personnummer nått renderaren för ett
+    // dokument utan ROT-block — samma resonemang som följesedeln nedan.
+    rotApplicants: showsRot
+      ? resolveRotApplicants({ rotDetails, cardPersonalNumber, snapshotPersonalNumber, customerName: order.CustomerName })
+      : [],
   });
 }
 
 export function renderDeliveryNotePdf(input: OrderPdfDesignInput): Promise<Uint8Array> {
   // ROT-uppgifterna destruktureras BORT: följesedeln visar dem inte, och personnumret ska inte ens
   // nå renderaren för ett dokument som kvitteras av den som tar emot materialet.
-  const { order, rotDetails: _rot, rotEnabled: _enabled, ...shared } = input;
+  const { order, rotDetails: _rot, rotEnabled: _enabled,
+    cardPersonalNumber: _card, snapshotPersonalNumber: _snapshot, ...shared } = input;
 
   return renderDocumentPdfDesign({
     ...shared,

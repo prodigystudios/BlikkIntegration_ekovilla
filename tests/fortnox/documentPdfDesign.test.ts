@@ -31,6 +31,7 @@ import {
   extractRotPropertyNote,
   formatDiscount,
   rotApplicantLines,
+  resolveRotApplicants,
   wrapLines,
   groupHeight,
   groupDocumentRows,
@@ -136,6 +137,43 @@ describe('groupHeight', () => {
 
   it('knuffar INTE ned en fristående anmärkning ett radsteg — den är radens första text', () => {
     expect(groupHeight(false, 0, 1)).toBe(19);
+  });
+});
+
+describe('resolveRotApplicants', () => {
+  it('tar personnumret från KUNDKORTET före snapshotet och före rot_details', () => {
+    // 🧨 Samma ordning som workOrderReadiness spärrar på. Numret går inte att redigera i
+    // offertformuläret — prompten PATCHar KORTET — så kopiorna är aldrig ett medvetet val för just
+    // det dokumentet. Rättningen 10 → 12 siffror pågår, och kortet är det Fortnox läser.
+    expect(resolveRotApplicants({
+      rotDetails: { applicant_name: 'Karin Lindqvist', personal_number: '740312-4519' },
+      cardPersonalNumber: '19740312-4519',
+      snapshotPersonalNumber: '740312-4519',
+    })).toEqual([{ name: 'Karin Lindqvist', personalNumber: '19740312-4519' }]);
+  });
+
+  it('faller tillbaka på snapshotet när kortet saknar numret', () => {
+    expect(resolveRotApplicants({
+      rotDetails: { applicant_name: 'Karin Lindqvist' },
+      cardPersonalNumber: null,
+      snapshotPersonalNumber: '19740312-4519',
+    })[0].personalNumber).toBe('19740312-4519');
+  });
+
+  it('faller tillbaka på kundnamnet när ROT-sektionens namnfält är tomt', () => {
+    // Gäller en order där ROT slogs på först i orderläget: applicant_name härleds aldrig där, den
+    // bara bevaras (ROT_EDITABLE_KEYS saknar fältet). Utan reserven blev raden ett naket nummer.
+    expect(resolveRotApplicants({
+      rotDetails: {},
+      cardPersonalNumber: '19740312-4519',
+      customerName: 'Karin Lindqvist',
+    })).toEqual([{ name: 'Karin Lindqvist', personalNumber: '19740312-4519' }]);
+  });
+
+  it('ger inga sökande alls när ingenting går att fylla i', () => {
+    // Då ritas blocket med enbart fastighetsbeteckningen — bättre än en rubrik utan innehåll.
+    expect(resolveRotApplicants({})).toEqual([]);
+    expect(resolveRotApplicants({ rotDetails: { applicant_name: '  ' }, cardPersonalNumber: '' })).toEqual([]);
   });
 });
 
@@ -515,10 +553,13 @@ describe('renderOfferPdfDesign', () => {
   };
 
   // Två sökande: paret som äger huset ihop. Beloppet delas aldrig mellan dem.
-  const ROT_APPLICANTS = [
-    { name: 'Karin Lindqvist', personalNumber: '19740312-4519' },
-    { name: 'Erik Lindqvist', personalNumber: '19710918-2233' },
-  ];
+  // Sökandens NAMN ur rot_details, PERSONNUMRET ur kundkortet — se resolveRotApplicants.
+  // `personal_number` ligger kvar här med flit som den gamla tiosiffriga kopian och ska INTE vinna.
+  const ROT_DETAILS = {
+    enabled: true,
+    applicant_name: 'Karin Lindqvist',
+    personal_number: '740312-4519',
+  };
 
   // Fyrtio rader tvingar fram sidbrytning. Var femte bär rabatt, så RABATT-kolumnen syns på ALLA
   // sidor — kolumnen bestäms en gång för dokumentet, och det är just det som ska gå att se.
@@ -533,7 +574,8 @@ describe('renderOfferPdfDesign', () => {
       offer,
       company: COMPANY,
       customerVatNumber: vat ?? null,
-      rotApplicants: offer.TaxReductionType === 'rot' ? ROT_APPLICANTS : [],
+      rotDetails: offer.TaxReductionType === 'rot' ? ROT_DETAILS : null,
+      cardPersonalNumber: offer.TaxReductionType === 'rot' ? '19740312-4519' : null,
       logo: await loadDesignLogo(),
       fonts: await loadDesignFonts(),
     });
@@ -549,14 +591,22 @@ describe('renderOfferPdfDesign', () => {
     expect(Buffer.from(bytes.slice(0, 5)).toString('latin1')).toBe('%PDF-');
   });
 
-  it('sätter båda sökandena och fastighetsbeteckningen i ROT-blocket, inte i radlistan', async () => {
+  it('sätter sökanden och fastighetsbeteckningen i ROT-blocket, inte i radlistan', async () => {
     const text = (await extractPageText(await render(ROT), 1)).join(' ');
     expect(text).toContain('ROT-AVDRAG');
-    expect(text).toContain('19740312-4519');
-    expect(text).toContain('19710918-2233');
+    expect(text).toContain('Karin Lindqvist · 19740312-4519');
     expect(text).toContain('Fastighetsbeteckning: Gustavsberg Sjöstugan 2:14');
     // Förbehållet står bredvid beloppet det gäller.
     expect(text).toContain('Skatteverket');
+  });
+
+  it('tar personnumret från KUNDKORTET, inte från rot_details gamla kopia', async () => {
+    // 🧨 Rättningen 10 → 12 siffror PATCHar bara kundkortet, och offerten låses så fort ordern
+    // finns. Läste dokumentet rot_details hade det tryckt det gamla ogiltiga numret i evighet.
+    const text = (await extractPageText(await render(ROT), 1)).join(' ');
+    expect(text).toContain('19740312-4519');
+    expect(text).not.toContain('740312-4519 ·');
+    expect(text).not.toMatch(/· 740312-4519/);
   });
 
   it('håller ROT-uppgifterna borta från en offert UTAN avdrag', async () => {
