@@ -1,14 +1,15 @@
-// Vilka offerter som renderas lokalt i stället för av Fortnox utskriftsmall — läget och beslutet,
-// utan renderaren.
+// Vilka kunddokument som renderas lokalt i stället för av Fortnox utskriftsmall — lägena och
+// besluten, utan renderaren. **Det här är nödutgångarnas hemvist:** går något fel i vår rendering
+// står vägen tillbaka nedan, ett värde i taget.
 //
 // EGEN MODUL MED FLIT. `offerPdf.ts` drar in pdf-lib (stora font- och kodningstabeller) och
 // node:fs. `offers.ts` importeras av varje route som sparar en offert, så en statisk import av
 // renderaren därifrån hade lagt PDF-motorn på offertsparningens kallstart utan att någon renderar
-// något. Genom att lägga läget här kan `offers.ts` läsa det gratis och ladda renderaren dynamiskt
-// först när en PDF faktiskt ska produceras.
+// något. Genom att lägga lägena här kan `offers.ts` och `orders.ts` läsa dem gratis och ladda
+// renderaren dynamiskt först när en PDF faktiskt ska produceras.
 //
 // Se offerPdf.ts för bakgrunden: Fortnox utskriftsmall utelämnar skattereduktionen på offerter
-// skapade via API:t, och vi är på väg mot en egen offert-PDF för allt.
+// skapade via API:t, och vi är på väg mot egna PDF:er för alla kunddokument.
 
 /**
  * - `'rot'` – bara ROT-offerter (dagens läge: det är där Fortnox mall är trasig).
@@ -39,6 +40,23 @@ export const OFFER_PDF_MODE: OfferPdfMode = 'all';
 export type OfferPdfLayout = 'design' | 'fortnox-kopia';
 
 export const OFFER_PDF_LAYOUT: OfferPdfLayout = 'design';
+
+/**
+ * Renderar vi orderbekräftelsen själva?
+ *
+ * Enklare fråga än offertens: det finns ingen kopia av Fortnox ordermall att välja mellan, och
+ * ingen delmängd av ordrarna som behöver särbehandlas. Antingen vår formgivning eller Fortnox.
+ *
+ * - `'design'` – Ekovillas egen mall. Live sedan 2026-09-07.
+ * - `'off'` – tillbaka till `GET /orders/{nr}/preview`, om något behöver backas snabbt.
+ *
+ * Nödutgången för EN order, utan deploy, är `?mall=fortnox` på PDF-routen — samma grepp som
+ * offerten. **Följesedeln har ingen sådan väg:** Fortnox mall finns inte att falla tillbaka på,
+ * dokumentet är nytt hos oss.
+ */
+export type OrderPdfMode = 'design' | 'off';
+
+export const ORDER_PDF_MODE: OrderPdfMode = 'design';
 
 /**
  * Ska den här offerten renderas lokalt?

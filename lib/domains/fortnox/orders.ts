@@ -4,6 +4,12 @@ import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
 import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+// Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
+// renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
+// för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
+import { ORDER_PDF_MODE, type OrderPdfMode } from './documentPdfMode';
+import type { FortnoxCompanySettingsResponse, FortnoxTaxReductionResponse } from './offerPdf';
+import type { FortnoxOrderResponse } from './orderPdfDesign';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -1046,30 +1052,141 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
 // Kvarstående risk, medvetet accepterad: står ordern i 'failed' renderar Fortnox bekräftelsen ur de
 // rader den råkar hålla, som kan vara äldre än våra. Det är ett eget problem — spärra i så fall
 // MEJL-vägen, inte visningen.
-async function requireOrderNumber(workOrderId: string): Promise<{ orderNumber: string; projectName: string | null }> {
+type OrderForPdf = {
+  orderNumber: string;
+  projectName: string | null;
+  /** Kundens id — hämtar momsnumret till kundraden i vår egen formgivning. */
+  customerId: string | null;
+  /** Fastighetsbeteckning och BRF org.nr. Fortnox har inget fält för dem; CRM äger uppgiften. */
+  rotDetails: RotDetails | null;
+  rotEnabled: boolean;
+};
+
+async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_work_orders')
-    .select('fortnox_order_number, project_name')
+    .select('fortnox_order_number, project_name, quote_id, customer_id, rot_details')
     .eq('id', workOrderId)
     .maybeSingle();
 
   if (error) throw new FortnoxApiError(500, `Kunde inte läsa arbetsordern: ${error.message}`, undefined, 'Kunde inte läsa arbetsordern. Försök igen.');
-  const orderNumber = data?.fortnox_order_number;
+  const row = data as {
+    fortnox_order_number?: string | number | null;
+    project_name?: string | null;
+    quote_id?: string | null;
+    customer_id?: string | null;
+    rot_details?: RotDetails | null;
+  } | null;
+
+  const orderNumber = row?.fortnox_order_number;
   if (!orderNumber) throw new FortnoxApiError(409, 'Synka arbetsordern till Fortnox först.', undefined, 'Synka arbetsordern till Fortnox först.');
-  // Projektnamnet följer med enbart för PDF:ens filnamn (ordernummer + projektnamn).
-  return { orderNumber: String(orderNumber), projectName: (data as { project_name?: string | null }).project_name ?? null };
+
+  // Samma upplösning som pushen använder — orderns egna ROT-uppgifter, med offertens som reserv för
+  // rader vars `rot_details` är tom `{}`. Läste PDF:en dem på annat sätt hade dokumentet kunnat
+  // säga något annat än det vi skickade till Fortnox.
+  const rotDetails = resolveOrderRotDetails(row ?? {}, await fetchLinkedQuoteForHeader(supabase, row?.quote_id ?? null));
+
+  return {
+    orderNumber: String(orderNumber),
+    // Projektnamnet följer med enbart för PDF:ens filnamn (ordernummer + projektnamn).
+    projectName: row?.project_name ?? null,
+    customerId: row?.customer_id ?? null,
+    rotDetails,
+    rotEnabled: rotDetails?.enabled === true,
+  };
 }
 
-// Fetch the order confirmation as a PDF (GET /orders/{n}/preview). Same as offers:
-// use `/preview` (matches Fortnox's own förhandsgranskning, incl. ROT) and keep
-// `Accept: application/json` (Fortnox rejects application/pdf, code 1000030).
-export async function getFortnoxOrderPdf(workOrderId: string): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
-  const { orderNumber, projectName } = await requireOrderNumber(workOrderId);
+/**
+ * Orderdokumentet i vår egen formgivning: orderbekräftelsen eller följesedeln.
+ *
+ * Samma arbetsdelning som offerten. Datahämtningen bor här, ritandet i `orderPdfDesign.ts`, och
+ * BELOPPEN ÄGS AV FORTNOX — vi räknar ingenting om.
+ *
+ * Ingen tyst fallback: sväljer någon av läsningarna sitt fel får säljaren ett dokument som SER rätt
+ * ut men saknar företagsfoten eller ROT-sökandena, och mejlar det vidare utan att märka något.
+ */
+async function renderOrderDocument(
+  order: OrderForPdf,
+  kind: 'order' | 'delivery',
+): Promise<Uint8Array> {
+  const { orderNumber } = order;
+  const { Order } = await fortnoxGet<{ Order: FortnoxOrderResponse }>(`/orders/${orderNumber}`);
+  const { belongsToOrder, renderDeliveryNotePdf, renderOrderPdfDesign } = await import('./orderPdfDesign');
+  const { resolveCustomerVatNumber } = await import('./helpers');
+
+  // Följesedeln bär inga belopp och inget ROT — då finns inget skäl att fråga Fortnox efter
+  // skattereduktionens sökande, och deras personnummer ska inte ens hämtas för ett dokument som
+  // aldrig visar dem.
+  const wantsRot = kind === 'order' && order.rotEnabled;
+  const [taxReductionResponse, companyResponse, customerVatNumber] = await Promise.all([
+    wantsRot
+      ? fortnoxGet<{ TaxReductions?: FortnoxTaxReductionResponse[] }>('/taxreductions', {
+          filter: 'orders',
+          referencenumber: orderNumber,
+        })
+      : Promise.resolve({ TaxReductions: [] as FortnoxTaxReductionResponse[] }),
+    fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
+    resolveCustomerVatNumber(getSupabaseAdmin(), order.customerId, Order?.CustomerNumber),
+  ]);
+
+  // Fortnox numrerar offerter/ordrar/fakturor i skilda serier, så en post som slinker igenom
+  // filtret kan tillhöra ett annat dokument — och bär då en främmande kunds personnummer.
+  const taxReductions = (taxReductionResponse.TaxReductions ?? [])
+    .filter((entry) => belongsToOrder(entry, orderNumber));
+
+  const input = {
+    order: Order,
+    company: companyResponse.CompanySettings ?? {},
+    customerVatNumber,
+    taxReductions,
+    rotDetails: order.rotDetails,
+    rotEnabled: order.rotEnabled,
+  };
+  return kind === 'order' ? renderOrderPdfDesign(input) : renderDeliveryNotePdf(input);
+}
+
+// The order confirmation as a PDF — our own design since 2026-09-07 (ORDER_PDF_MODE).
+//
+// `mode: 'off'` är nödutgången och går till Fortnox utskriftsmall: `GET /orders/{n}/preview`. Vi
+// använder `/preview`, inte `/print` — preview renderar samma layout som Fortnox egen
+// förhandsgranskning och är biverkningsfri (markerar inte ordern som utskriven). Accept-headern
+// MÅSTE vara `application/json`; Fortnox avvisar `application/pdf` med kod 1000030 och returnerar
+// ändå PDF-binären. Se FORTNOX_INTEGRATION.md.
+export async function getFortnoxOrderPdf(
+  workOrderId: string,
+  options: { mode?: OrderPdfMode } = {},
+): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
+  const order = await requireOrderNumber(workOrderId);
+  const { orderNumber, projectName } = order;
+
+  if ((options.mode ?? ORDER_PDF_MODE) === 'design') {
+    return { bytes: await renderOrderDocument(order, 'order'), contentType: 'application/pdf', orderNumber, projectName };
+  }
+
   const { bytes, contentType } = await fortnoxGetBinary(`/orders/${orderNumber}/preview`, 'application/json');
   if (contentType.includes('application/json')) {
     const text = new TextDecoder().decode(bytes).slice(0, 500);
     throw new FortnoxApiError(502, `Fortnox returnerade inte en PDF för order ${orderNumber}: ${text}`, undefined, 'Fortnox kunde inte skapa en orderbekräftelse. Försök igen om en stund.');
   }
   return { bytes, contentType, orderNumber, projectName };
+}
+
+/**
+ * Följesedeln — leveransdokumentet till arbetsplatsen.
+ *
+ * ⛔ **Ingen väg till Fortnox utskriftsmall.** Följesedeln finns inte som Fortnox-dokument för våra
+ * ordrar, så det finns ingenting att falla tillbaka på. Går vår rendering sönder finns ingen
+ * följesedel — till skillnad från orderbekräftelsen, som alltid kan hämtas från Fortnox.
+ */
+export async function getDeliveryNotePdf(
+  workOrderId: string,
+): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
+  const order = await requireOrderNumber(workOrderId);
+  return {
+    bytes: await renderOrderDocument(order, 'delivery'),
+    contentType: 'application/pdf',
+    orderNumber: order.orderNumber,
+    projectName: order.projectName,
+  };
 }

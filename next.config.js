@@ -25,6 +25,17 @@ const nextConfig = {
         './public/brand/Ekovilla_logo_Header.png',
         './public/documents/templates/*.pdf',
       ],
+      // Orderbekräftelsen och följesedeln renderas av samma kod som offerten och läser samma
+      // typsnitt och logotyp. **Listan är PER ROUTE** — att offertens route har dem hjälper inte de
+      // här, varje serverfunktion packas för sig. Bilagor listas inte: orderdokumenten har inga.
+      '/api/crm/work-orders/[id]/fortnox/pdf': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
+      '/api/crm/work-orders/[id]/foljesedel': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
     },
   },
 };

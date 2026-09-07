@@ -1,4 +1,4 @@
-// Building the e-mail draft for a CRM document (offer / order confirmation).
+// Naming and e-mail wording for a CRM document (offer / order confirmation / delivery note).
 //
 // We send documents from the user's own mail client rather than through Fortnox's send
 // service, so the recipient is ours to choose. `mailto:` cannot carry an attachment
@@ -7,17 +7,27 @@
 //
 // Pure and dependency-free so the wording and the URL encoding are unit-testable.
 
-export type CrmDocumentKind = 'offer' | 'order';
+export type CrmDocumentKind = 'offer' | 'order' | 'delivery';
+
+/**
+ * Dokumenttyperna som kan MEJLAS. Följesedeln hämtas och skrivs ut — den följer med materialet till
+ * arbetsplatsen och har ingen mottagare att välja. Skild från `CrmDocumentKind` så mejlflödet inte
+ * behöver bära en mottagaretikett för ett dokument som aldrig når det.
+ */
+export type EmailableDocumentKind = Exclude<CrmDocumentKind, 'delivery'>;
 
 // `definite` is spelled out rather than built by appending "en" — "Orderbekräftelse" takes
 // only an -n, and the naive suffix produced "Orderbekräftelseen".
-const DOCUMENT_LABELS: Record<CrmDocumentKind, {
+export const DOCUMENT_LABELS: Record<CrmDocumentKind, {
   subject: string;
   sentence: string;
   definite: string;
 }> = {
   offer: { subject: 'Offert', sentence: 'offert', definite: 'Offerten' },
   order: { subject: 'Orderbekräftelse', sentence: 'orderbekräftelse', definite: 'Orderbekräftelsen' },
+  // Följesedeln har ingen mejlväg idag — den hämtas och skrivs ut. Ordlydelsen finns ändå, så
+  // filnamnet ("Foljesedel 113 - …") kommer från samma ställe som de andra dokumentens.
+  delivery: { subject: 'Följesedel', sentence: 'följesedel', definite: 'Följesedeln' },
 };
 
 // Ett filnamn passerar tre lager som alla har egna åsikter: `a.download` på en blob,
@@ -63,7 +73,7 @@ export type DocumentEmailDraft = {
 };
 
 export function buildDocumentEmailDraft(input: {
-  kind: CrmDocumentKind;
+  kind: EmailableDocumentKind;
   /** Document number, typically a `documentRef()` result. */
   ref: string;
   projectName?: string | null;

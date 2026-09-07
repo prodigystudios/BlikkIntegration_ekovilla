@@ -7,7 +7,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { documentRecipients, type CrmContactSource } from '@/lib/domains/crm/contacts';
-import { buildDocumentEmailDraft, buildMailtoUrl, type CrmDocumentKind } from '@/lib/domains/crm/documentEmail';
+import { buildDocumentEmailDraft, buildMailtoUrl, type EmailableDocumentKind } from '@/lib/domains/crm/documentEmail';
 import DocumentEmailProgress, { type DocumentEmailPhase } from '@/app/crm/components/DocumentEmailProgress';
 
 // Mailing a CRM document (offer / order confirmation) from the user's own mail client, with
@@ -19,7 +19,7 @@ import DocumentEmailProgress, { type DocumentEmailPhase } from '@/app/crm/compon
 export type EmailableDocument = {
   /** Drives the per-row busy state; typically the quote or work-order id. */
   id: string;
-  kind: CrmDocumentKind;
+  kind: EmailableDocumentKind;
   /** Document number, typically a `documentRef()` result. */
   ref: string;
   projectName?: string | null;
@@ -37,7 +37,7 @@ export type EmailableDocument = {
 const CUSTOM_RECIPIENT = '__custom__';
 
 // What the document's own stored address is called in the picker.
-const DOCUMENT_SNAPSHOT_LABEL: Record<CrmDocumentKind, string> = {
+const DOCUMENT_SNAPSHOT_LABEL: Record<EmailableDocumentKind, string> = {
   offer: 'Från offerten',
   order: 'Från ordern',
 };

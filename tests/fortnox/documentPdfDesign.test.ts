@@ -33,11 +33,11 @@ import {
   rotApplicantLines,
   wrapLines,
   groupHeight,
-  groupOfferRows,
+  groupDocumentRows,
   renderOfferPdfDesign,
   loadDesignFonts,
   loadDesignLogo,
-} from '@/lib/domains/fortnox/offerPdfDesign';
+} from '@/lib/domains/fortnox/documentPdfDesign';
 import type {
   FortnoxCompanySettingsResponse,
   FortnoxOfferResponse,
@@ -84,14 +84,14 @@ const COMPANY: FortnoxCompanySettingsResponse = {
   VATNumber: 'SE559341967301',
 };
 
-describe('groupOfferRows', () => {
+describe('groupDocumentRows', () => {
   it('hänger textraden på artikeln ovanför — mallens grå underrad', () => {
     const rows = [
       article('2410509', 'EKOVILLA cellulosa 0,038 W/mK vind', 80, 'm³', 370),
       note('Yta 200 m² · Tjocklek 400 mm'),
       article('1010', 'Etableringskostnad', 1, 'st', 2990),
     ];
-    const groups = groupOfferRows(rows);
+    const groups = groupDocumentRows(rows);
     expect(groups).toHaveLength(2);
     expect(groups[0].row?.ArticleNumber).toBe('2410509');
     expect(groups[0].notes).toEqual(['Yta 200 m² · Tjocklek 400 mm']);
@@ -99,7 +99,7 @@ describe('groupOfferRows', () => {
   });
 
   it('samlar FLERA textrader under samma artikel', () => {
-    const groups = groupOfferRows([
+    const groups = groupDocumentRows([
       article('2410603', 'Kantavstyvning vindsbjälklag', 42, 'm', 145),
       note('Plywood mot yttervägg'),
       note('Hela omkretsen'),
@@ -110,14 +110,14 @@ describe('groupOfferRows', () => {
 
   it('tappar ALDRIG en textrad som saknar artikel över sig', () => {
     // Utan egen grupp hade texten försvunnit tyst från ett kunddokument.
-    const groups = groupOfferRows([note('Avser etapp 2'), article('1010', 'Etablering', 1, 'st', 2990)]);
+    const groups = groupDocumentRows([note('Avser etapp 2'), article('1010', 'Etablering', 1, 'st', 2990)]);
     expect(groups).toHaveLength(2);
     expect(groups[0].row).toBeNull();
     expect(groups[0].notes).toEqual(['Avser etapp 2']);
   });
 
   it('hoppar över en tom textrad i stället för att rita en osynlig underrad', () => {
-    expect(groupOfferRows([article('1010', 'Etablering', 1, 'st', 2990), note('   ')])[0].notes).toEqual([]);
+    expect(groupDocumentRows([article('1010', 'Etablering', 1, 'st', 2990), note('   ')])[0].notes).toEqual([]);
   });
 });
 
@@ -373,6 +373,34 @@ describe('buildSummaryBlock', () => {
 
   it('lämnar avdraget ute på ett dokument utan ROT, även om typen står kvar', () => {
     expect(buildSummaryBlock({ ...base, TaxReductionType: 'rot', TaxReduction: 0 }, []).deduction).toBeNull();
+  });
+
+  it('tar etiketten anroparen ger — orderns säger ORDERVÄRDE, inte OFFERTVÄRDE', () => {
+    expect(buildSummaryBlock(base, [], 'SEK', 'TOTALT ORDERVÄRDE').total.label).toBe('TOTALT ORDERVÄRDE');
+  });
+
+  it('faller tillbaka på Total när TotalToPay saknas — men BARA utan avdrag', () => {
+    // Reserven finns för ett dokument vars svar inte bär fältet; utan den blev slutsumman "0,00".
+    const { TotalToPay: _drop, ...withoutTotalToPay } = base;
+    expect(buildSummaryBlock(withoutTotalToPay, []).total.value).toBe('44 820,00 SEK');
+  });
+
+  it('KASTAR hellre än att gissa slutsumman när avdraget finns men TotalToPay inte gör det', () => {
+    // 🧨 Båda utvägarna ger ett trovärdigt felaktigt kunddokument: `Total` är beloppet FÖRE
+    // avdraget (för högt under etiketten "efter avdrag"), och en nolla säger att kunden inte ska
+    // betala något. Båda står direkt under avdragsraden, där ingen läsare misstänker dem.
+    expect(() => buildSummaryBlock(
+      { DocumentNumber: '10129', Net: 18200, TotalVAT: 4550, Total: 22750, TaxReduction: 3937, TaxReductionType: 'rot' },
+      [],
+    )).toThrow(/TotalToPay/);
+  });
+
+  it('kastar INTE när avdraget är helt bortdraget — TotalToPay: 0 är ett giltigt svar', () => {
+    const block = buildSummaryBlock(
+      { Net: 3150, TotalVAT: 787.5, Total: 3937.5, TaxReduction: 3937.5, TaxReductionType: 'rot', TotalToPay: 0 },
+      [],
+    );
+    expect(block.total).toEqual({ label: 'ATT BETALA EFTER AVDRAG', value: '0,00 SEK' });
   });
 });
 

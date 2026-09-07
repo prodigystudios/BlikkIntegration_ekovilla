@@ -1767,14 +1767,25 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 {/* Order confirmation PDF/email — available once the order exists in Fortnox */}
                 {workOrder.fortnox_order_number ? (
                   <div className="grid grid-cols-2 gap-2 border-t border-[#e0e8dc] pt-3">
+                    {/* De två DOKUMENTEN står bredvid varandra, mejlet under. Knapparna heter det
+                        de hämtar — "Hämta PDF" sa ingenting om vilket av två dokument det blev så
+                        fort följesedeln fanns. Att båda är ghostButton är avsiktligt: de är
+                        likvärdiga val, medan mejlet är den enda av de tre som lämnar huset. */}
                     <button
                       type="button"
                       onClick={() => openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/fortnox/pdf`)}
-                      // Handrullad kopia av ghostButton — nu delad recept, så paret får samma
+                      // Handrullad kopia av ghostButton — nu delat recept, så paret får samma
                       // höjd och samma hover som resten av sidokolumnen.
                       className={cn(crm.ghostButton, 'h-9 w-full')}
                     >
-                      Hämta PDF
+                      Orderbekräftelse
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/foljesedel`)}
+                      className={cn(crm.ghostButton, 'h-9 w-full')}
+                    >
+                      Följesedel
                     </button>
                     <button
                       type="button"
@@ -1791,11 +1802,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       disabled={documentEmail.sendingId === workOrder.id}
                       // Var indigo — sidans enda färg utanför varumärkesrampen, och starkare än
                       // "Skicka till Fortnox" som är den mer konsekvensrika åtgärden.
-                      className={cn(crm.saveButton, 'h-9')}
+                      //
+                      // ⚠️ Mejlet bär ALLTID orderbekräftelsen (`pdfUrl` ovan). Följesedeln har
+                      // ingen mejlväg — den skrivs ut och följer med materialet.
+                      className={cn(crm.saveButton, 'col-span-2 h-9')}
                     >
                       {documentEmail.sendingId === workOrder.id ? 'Mejlar…' : 'Mejla order'}
                     </button>
-                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
+                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelsen bär priser och summering, följesedeln bara artiklar och antal. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
                   </div>
                 ) : null}
               </Card>
