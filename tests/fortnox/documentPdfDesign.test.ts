@@ -385,16 +385,22 @@ describe('buildSummaryBlock', () => {
     expect(buildSummaryBlock(withoutTotalToPay, []).total.value).toBe('44 820,00 SEK');
   });
 
-  it('räknar ALDRIG ut slutsumman själv när avdraget finns men TotalToPay inte gör det', () => {
-    // 🧨 `Total` är beloppet FÖRE avdraget medan etiketten säger "efter". Reserven hade gett ett
-    // trovärdigt dokument med för hög slutsumma, direkt under avdragsraden. Fortnox äger beloppen —
-    // en uppenbart saknad siffra är bättre än en trovärdig felaktig.
+  it('KASTAR hellre än att gissa slutsumman när avdraget finns men TotalToPay inte gör det', () => {
+    // 🧨 Båda utvägarna ger ett trovärdigt felaktigt kunddokument: `Total` är beloppet FÖRE
+    // avdraget (för högt under etiketten "efter avdrag"), och en nolla säger att kunden inte ska
+    // betala något. Båda står direkt under avdragsraden, där ingen läsare misstänker dem.
+    expect(() => buildSummaryBlock(
+      { DocumentNumber: '10129', Net: 18200, TotalVAT: 4550, Total: 22750, TaxReduction: 3937, TaxReductionType: 'rot' },
+      [],
+    )).toThrow(/TotalToPay/);
+  });
+
+  it('kastar INTE när avdraget är helt bortdraget — TotalToPay: 0 är ett giltigt svar', () => {
     const block = buildSummaryBlock(
-      { Net: 18200, TotalVAT: 4550, Total: 22750, TaxReduction: 3937, TaxReductionType: 'rot' },
+      { Net: 3150, TotalVAT: 787.5, Total: 3937.5, TaxReduction: 3937.5, TaxReductionType: 'rot', TotalToPay: 0 },
       [],
     );
-    expect(block.total.label).toBe('ATT BETALA EFTER AVDRAG');
-    expect(block.total.value).not.toBe('22 750,00 SEK');
+    expect(block.total).toEqual({ label: 'ATT BETALA EFTER AVDRAG', value: '0,00 SEK' });
   });
 });
 

@@ -495,6 +495,27 @@ export function buildSummaryBlock(
   const reduction = Math.abs(Number(offer.TaxReduction ?? 0));
   const isRot = (offer.TaxReductionType ?? '').toLowerCase() === 'rot';
 
+  // Slutsumman kommer ur Fortnox `TotalToPay`. Saknas fältet finns två lägen:
+  //
+  //   utan avdrag → `Total` ÄR slutsumman. Reserven är exakt rätt, och utan den hade ett svar som
+  //                 inte bär fältet gett "0,00" på ett dokument fullt av belopp.
+  //   med avdrag  → `Total` är beloppet FÖRE avdraget. Skrivet under etiketten "ATT BETALA EFTER
+  //                 AVDRAG" är det för högt; en nolla säger i stället att kunden inte ska betala
+  //                 något. **Båda är trovärdiga och båda är fel** — och de står direkt under en
+  //                 avdragsrad, så ingen läsare har anledning att misstänka dem.
+  //
+  // Mellanskillnaden räknar vi inte ut själva. Att Fortnox äger beloppen är hela skälet till att
+  // dokumentet inte kan visa något annat än det som faktureras. Alltså kastar vi, precis som
+  // resten av PDF-vägen gör där ett tyst fel annars hade nått kunden. `TotalToPay: 0` är ett
+  // giltigt svar (helt bortdraget belopp) och skiljs därför från att fältet saknas.
+  if (reduction > 0 && offer.TotalToPay == null) {
+    throw new Error(
+      `Fortnox svarade med en skattereduktion (${formatAmount(reduction)}) men utan TotalToPay på ` +
+      `dokument ${offer.DocumentNumber ?? '(utan nummer)'}. Slutsumman går då inte att visa utan att ` +
+      'vi räknar ut den själva, vilket den här renderaren aldrig gör.',
+    );
+  }
+
   return {
     rows: lines,
     deduction: reduction > 0
@@ -505,15 +526,8 @@ export function buildSummaryBlock(
       : null,
     total: {
       label: reduction > 0 ? 'ATT BETALA EFTER AVDRAG' : totalLabel,
-      // `TotalToPay` faller tillbaka på `Total` — men BARA på ett dokument utan avdrag. Offertsvaret
-      // bär fältet alltid, en order utan skattereduktion behöver inte göra det, och
-      // `formatAmount(undefined)` hade skrivit "0,00" som slutsumma på ett dokument med belopp.
-      //
-      // ⚠️ **Med ett avdrag får reserven inte slå till.** `Total` är då beloppet FÖRE avdraget medan
-      // etiketten säger "efter" — dokumentet hade visat en slutsumma som är för hög, direkt under
-      // avdragsraden, och sett helt trovärdigt ut. Mellanskillnaden räknar vi inte ut själva:
-      // Fortnox äger beloppen. En uppenbart saknad siffra är bättre än en trovärdig felaktig.
-      value: `${formatAmount(offer.TotalToPay ?? (reduction > 0 ? null : offer.Total))} ${currency}`,
+      // Reserven gäller bara dokument utan avdrag — se kastet ovan.
+      value: `${formatAmount(offer.TotalToPay ?? offer.Total)} ${currency}`,
     },
   };
 }
