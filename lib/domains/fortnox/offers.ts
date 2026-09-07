@@ -2,10 +2,10 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, fortnoxGetBinary, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-// Läget kommer från offerPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
+// Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i getFortnoxOfferPdf, så PDF-motorn aldrig hamnar på kallstarten för
 // de routes som bara sparar en offert.
-import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally, type OfferPdfMode, type OfferPdfLayout } from './offerPdfMode';
+import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally, type OfferPdfMode, type OfferPdfLayout } from './documentPdfMode';
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';

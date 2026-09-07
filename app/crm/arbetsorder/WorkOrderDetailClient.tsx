@@ -1795,7 +1795,18 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     >
                       {documentEmail.sendingId === workOrder.id ? 'Mejlar…' : 'Mejla order'}
                     </button>
-                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelse från Fortnox. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
+                    {/* Följesedeln står för sig, inte i paret ovanför: den är ett ANNAT dokument —
+                        leveransunderlaget till arbetsplatsen, utan priser — och har ingen mejlväg.
+                        Den kvitteras av den som tar emot materialet, som inte nödvändigtvis är den
+                        som ska se vad jobbet kostar. */}
+                    <button
+                      type="button"
+                      onClick={() => openFortnoxPdf(`/api/crm/work-orders/${workOrder.id}/foljesedel`)}
+                      className={cn(crm.ghostButton, 'col-span-2 h-9 w-full')}
+                    >
+                      Följesedel
+                    </button>
+                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelsen bär priser och summering, följesedeln bara artiklar och antal. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
                   </div>
                 ) : null}
               </Card>

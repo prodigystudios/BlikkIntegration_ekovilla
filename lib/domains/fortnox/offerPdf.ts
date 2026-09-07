@@ -31,10 +31,10 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from 'pdf-lib';
 
-// Läget och beslutet bor i offerPdfMode.ts — en modul UTAN pdf-lib, så offers.ts kan läsa dem
+// Läget och beslutet bor i documentPdfMode.ts — en modul UTAN pdf-lib, så offers.ts kan läsa dem
 // utan att dra in PDF-motorn på offertsparningens kallstart. Re-exporteras här för anropare som
 // ändå har renderaren laddad.
-export { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally, type OfferPdfMode } from './offerPdfMode';
+export { OFFER_PDF_MODE, mayRenderLocally, shouldRenderLocally, type OfferPdfMode } from './documentPdfMode';
 
 /**
  * Bär dokumentet ett ROT-avdrag? Styr det som BARA hör hemma på ett ROT-dokument: förbehållet om

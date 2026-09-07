@@ -6,7 +6,8 @@ import { requireCrmUser, routeError } from '../../../_lib';
 
 type RouteContext = { params: { id: string } };
 
-// Returns the work order's Fortnox order confirmation as a PDF (Fortnox preview layout).
+// Returns the work order's order confirmation as a PDF — Ekovillas egen formgivning sedan
+// 2026-09-07 (`ORDER_PDF_MODE` i documentPdfMode.ts).
 //
 // Öppnas som en fliknavigering (se `openFortnoxPdf`), så svaret måste tåla att LANDA i en
 // flik: filnamnet sätts i Content-Disposition — det är det namn webbläsaren föreslår när
@@ -26,7 +27,12 @@ export async function GET(req: Request, { params }: RouteContext) {
         : crmUser.response;
     }
 
-    const { bytes, contentType, orderNumber, projectName } = await getFortnoxOrderPdf(params.id);
+    // `?mall=fortnox` är NÖDUTGÅNGEN: Fortnox utskriftsmall för EN order, utan deploy. Finns för
+    // att en säljare ska kunna få ut ett dokument NU om något är fel i vår rendering — inte för att
+    // växla i vardagen. Samma grepp som offertens PDF-route.
+    const escape = new URL(req.url).searchParams.get('mall') === 'fortnox';
+    const { bytes, contentType, orderNumber, projectName } =
+      await getFortnoxOrderPdf(params.id, escape ? { mode: 'off' } : {});
     const filename = buildDocumentFilename({ kind: 'order', ref: orderNumber, projectName });
 
     return new Response(bytes, {
@@ -43,6 +49,10 @@ export async function GET(req: Request, { params }: RouteContext) {
     }
     if (e instanceof FortnoxNotConnectedError) return fail(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
     if (e instanceof FortnoxApiError) return fail(e.status === 409 ? 409 : 502, 'fortnox_order_pdf_failed', friendlyFortnoxMessage(e));
+    // Ordern renderas lokalt (lib/domains/fortnox/orderPdfDesign.ts). Ett fel där är varken ett
+    // Fortnox-fel eller loggat ovan, så det skulle annars bli ett tyst 500 på en ny kodväg — det
+    // vanligaste är att en fil under public/ inte följde med in i serverfunktionen.
+    console.error('[order-pdf] oväntat fel:', e instanceof Error ? e.stack ?? e.message : e);
     return fail(500, 'fortnox_order_pdf_unexpected', 'Kunde inte hämta orderbekräftelsen. Försök igen.');
   }
 }
