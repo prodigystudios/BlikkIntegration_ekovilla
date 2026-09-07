@@ -1,15 +1,20 @@
-// Egen formgivning av offertens PDF — Ekovillas mall, inte Fortnox.
+// Egen formgivning av kunddokumentens PDF — Ekovillas mall, inte Fortnox.
 //
-// VAD DEN ÄR. `offerPdf.ts` ritar idag en KOPIA av Fortnox utskriftsmall, medvetet, så mottagaren
-// inte skulle se att dokumentet bytte utseende mitt i en pågående offertdialog när ROT-offerterna
+// VAD DEN ÄR. `offerPdf.ts` ritar en KOPIA av Fortnox utskriftsmall, medvetet, så mottagaren inte
+// skulle se att dokumentet bytte utseende mitt i en pågående offertdialog när ROT-offerterna
 // snabbt behövde renderas lokalt. Den här modulen är den formgivning kopian alltid var tänkt att
 // ersättas av. Måtten nedan är MÄTTA ur Figma-exporten i public/documents/templates/, inte
 // uppskattade: text-, linje- och ytkoordinater lästa ur PDF:en och färgerna ur PNG:ens pixlar.
 //
-// ARBETSDELNINGEN ÄR OFÖRÄNDRAD. Datahämtningen bor kvar i `offers.ts` och beloppen ägs fortfarande
-// av Fortnox — vi räknar ingenting om. Fakturan skapas sedan av Fortnox ur samma underlag, så en
-// offert vi ritat själva kan aldrig visa ett annat belopp än det som faktureras. Den regeln
-// överlever formgivningsbytet.
+// TRE DOKUMENT, EN LAYOUT. Offert, orderbekräftelse och följesedel ritas av samma kod och skiljs åt
+// av en `DocumentVariant` — rubrik, metablock, referensrader och om dokumentet bär belopp. Måtten,
+// färgerna och kolumnerna är gemensamma med FLIT: de tre är samma brevpapper, och en kopia per
+// dokumenttyp hade betytt tre ställen att mäta om nästa gång mallen ändras.
+//
+// ARBETSDELNINGEN ÄR OFÖRÄNDRAD. Datahämtningen bor kvar i `offers.ts` / `orders.ts` och beloppen
+// ägs fortfarande av Fortnox — vi räknar ingenting om. Fakturan skapas sedan av Fortnox ur samma
+// underlag, så ett dokument vi ritat själva kan aldrig visa ett annat belopp än det som faktureras.
+// Den regeln överlever formgivningsbytet.
 //
 // ÅTERANVÄNDER de rena hjälparna ur `offerPdf.ts` (belopps- och antalsformatering, textradsregeln,
 // momsunderlaget, ROT-provet) i stället för att kopiera dem. När kopian av Fortnox mall tas bort
@@ -31,6 +36,46 @@ import {
   type FortnoxOfferRowResponse,
   type FortnoxTaxReductionResponse,
 } from './offerPdf';
+
+// ── Dokumentets form ─────────────────────────────────────────────────────────
+
+/**
+ * Dokumenthuvudet renderaren läser: allt utom det som heter olika saker på de olika
+ * Fortnox-dokumenten (datumfälten och radlistan).
+ *
+ * `FortnoxOfferResponse` uppfyller typen strukturellt och skickas in som den är. En Fortnox-ORDER
+ * normaliseras till den av `orderPdfDesign.ts` — där heter datumen `OrderDate`/`DeliveryDate` och
+ * raderna bär `OrderedQuantity` i stället för `Quantity`.
+ */
+export type DesignDocumentHeader = Omit<FortnoxOfferResponse, 'OfferDate' | 'ExpireDate' | 'OfferRows'>;
+
+/** En dokumentrad, normaliserad. Ordrarnas `OrderedQuantity` ligger i `Quantity` här. */
+export type DesignDocumentRow = FortnoxOfferRowResponse;
+
+export type DesignDocumentKind = 'offer' | 'order' | 'delivery';
+
+/**
+ * Det som skiljer de tre dokumenten åt. Allt annat — mått, färger, kolumnlägen, foten — är
+ * gemensamt och bor i konstanterna nedan.
+ */
+export type DocumentVariant = {
+  kind: DesignDocumentKind;
+  /** Rubriken i huvudet. Versaler, spärrad 0,1 em. */
+  title: string;
+  /** Titelblockets rader, uppifrån och ned. Max tre — se `META_Y`. */
+  meta: Array<[label: string, value: string]>;
+  /** UPPDRAG-blockets rader. Rader utan värde hoppas över när de ritas. */
+  references: Array<[label: string, value: string]>;
+  /** Etiketten i den gröna rutan när dokumentet saknar skattereduktion. */
+  totalLabel: string;
+  /**
+   * Bär dokumentet belopp? Falskt stänger av À-PRIS-, RABATT- och SUMMA-kolumnerna OCH hela
+   * summeringen — följesedeln är ett leveransdokument, inte ett prisdokument.
+   */
+  showPrices: boolean;
+  /** Ska ROT-blocket (sökande, fastighetsbeteckning) och ROT-förbehållet ritas? */
+  showRot: boolean;
+};
 
 // ── Färger ───────────────────────────────────────────────────────────────────
 //
@@ -246,7 +291,7 @@ function splitLongWord(word: string, font: PDFFont, size: number, maxWidth: numb
 
 // ── Radgruppering ────────────────────────────────────────────────────────────
 
-export type OfferRowGroup = {
+export type DocumentRowGroup = {
   /** Artikelraden. `null` för en textrad som inte har någon artikel över sig. */
   row: FortnoxOfferRowResponse | null;
   /** Textraderna som hör till artikeln — mallens grå underrad. */
@@ -264,8 +309,8 @@ export type OfferRowGroup = {
  * En textrad som kommer FÖRE varje artikel hör inte till någon rad och får en egen grupp — den
  * ritas då som en fristående anmärkning i benämningskolumnen i stället för att tyst försvinna.
  */
-export function groupOfferRows(rows: FortnoxOfferRowResponse[]): OfferRowGroup[] {
-  const groups: OfferRowGroup[] = [];
+export function groupDocumentRows(rows: FortnoxOfferRowResponse[]): DocumentRowGroup[] {
+  const groups: DocumentRowGroup[] = [];
   for (const row of rows) {
     if (isTextOnlyRow(row)) {
       const note = cleanText(row.Description).trim();
@@ -376,7 +421,7 @@ export function extractRotPropertyNote(
  * postorten ("Storgatan 1, Sandviken" vs "Storgatan 1, Gävle") är två olika platser, och att
  * jämföra enbart `Address1` hade dolt den — arbetslaget hade åkt till fel ort.
  */
-export function deliveryAddressLines(offer: FortnoxOfferResponse): string[] {
+export function deliveryAddressLines(offer: DesignDocumentHeader): string[] {
   const street = cleanText(offer.DeliveryAddress1).trim();
   if (!street) return [];
 
@@ -414,9 +459,10 @@ export type SummaryBlock = {
  * utelämnas raden går summeringen inte ihop på papperet och dokumentet ser felräknat ut.
  */
 export function buildSummaryBlock(
-  offer: FortnoxOfferResponse,
-  rows: FortnoxOfferRowResponse[],
+  offer: DesignDocumentHeader,
+  rows: DesignDocumentRow[],
   currency = 'SEK',
+  totalLabel = 'TOTALT OFFERTVÄRDE',
 ): SummaryBlock {
   const vat = Number(offer.TotalVAT ?? 0);
   const roundOff = Number(offer.RoundOff ?? 0);
@@ -453,44 +499,105 @@ export function buildSummaryBlock(
         }
       : null,
     total: {
-      label: reduction > 0 ? 'ATT BETALA EFTER AVDRAG' : 'TOTALT OFFERTVÄRDE',
-      value: `${formatAmount(offer.TotalToPay)} ${currency}`,
+      label: reduction > 0 ? 'ATT BETALA EFTER AVDRAG' : totalLabel,
+      // `TotalToPay` faller tillbaka på `Total` när fältet saknas. Offertsvaret bär det alltid, men
+      // en order utan skattereduktion behöver inte göra det — och `formatAmount(undefined)` hade
+      // skrivit ut "0,00" som slutsumma på ett dokument med rader och belopp.
+      value: `${formatAmount(offer.TotalToPay ?? offer.Total)} ${currency}`,
     },
   };
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
 
-export type OfferPdfDesignInput = {
-  offer: FortnoxOfferResponse;
+/** Fälten som är gemensamma för alla tre dokumenten. */
+type SharedPdfDesignInput = {
   company: FortnoxCompanySettingsResponse;
   /**
-   * Kundens momsregistreringsnummer. Står på kundraden i mallen men finns INTE på offertsvaret —
+   * Kundens momsregistreringsnummer. Står på kundraden i mallen men finns INTE på dokumentsvaret —
    * anroparen får hämta det (Fortnox kundpost eller `crm_customers.vat_number`). Saknas det skrivs
    * bara kundnumret; ett påhittat momsnummer på ett kunddokument vore värre än inget.
    */
   customerVatNumber?: string | null;
   /**
-   * De som söker ROT-avdraget, redan filtrerade med `belongsToOffer`. Måste filtreras av anroparen:
-   * Fortnox numrerar offerter, ordrar och fakturor i skilda serier, så en post som slinker igenom
-   * `/taxreductions`-filtret kan bära en FRÄMMANDE kunds fullständiga personnummer.
+   * De som söker ROT-avdraget, redan filtrerade mot DET HÄR dokumentet (`belongsToOffer` /
+   * `belongsToOrder`). Måste filtreras av anroparen: Fortnox numrerar offerter, ordrar och fakturor
+   * i skilda serier, så en post som slinker igenom `/taxreductions`-filtret kan bära en FRÄMMANDE
+   * kunds fullständiga personnummer.
    */
   taxReductions?: FortnoxTaxReductionResponse[];
   logo?: Uint8Array | null;
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
 
+export type OfferPdfDesignInput = SharedPdfDesignInput & {
+  offer: FortnoxOfferResponse;
+};
+
+export type DocumentPdfDesignInput = SharedPdfDesignInput & {
+  variant: DocumentVariant;
+  header: DesignDocumentHeader;
+  rows: DesignDocumentRow[];
+  /**
+   * Fastighetsbeteckningen när den INTE ligger som textrad i dokumentet.
+   *
+   * På en villaorder bär Fortnox-huvudets referensnummer beteckningen i stället för radlistan (se
+   * `resolveRotReference`) — då finns ingen rad att lyfta, och utan det här fältet hade
+   * ROT-blocket saknat den uppgift som avdraget vilar på. Offerten skickar aldrig fältet: där
+   * ligger beteckningen alltid som textrad och plockas ur raderna.
+   */
+  rotPropertyNote?: string | null;
+};
+
 type Fonts = { regular: PDFFont; bold: PDFFont };
 
-export async function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<Uint8Array> {
-  const { offer, company } = input;
+/**
+ * Offerten — samma dokument som förut, uttryckt som en variant.
+ *
+ * Datumfälten och radlistan heter olika saker på offert och order, så mappningen sitter här och
+ * inte i renderaren.
+ */
+export function offerVariant(offer: FortnoxOfferResponse): DocumentVariant {
+  return {
+    kind: 'offer',
+    title: 'OFFERT',
+    meta: [
+      ['Offertnr', offer.DocumentNumber ?? ''],
+      ['Offertdatum', offer.OfferDate ?? ''],
+      ['Giltig t.o.m.', offer.ExpireDate ?? ''],
+    ],
+    references: [
+      ['Er referens', offer.YourReference ?? ''],
+      ['Ert referensnr', offer.YourReferenceNumber ?? ''],
+      ['Vår referens', offer.OurReference ?? ''],
+      ['Betalningsvillkor', offer.TermsOfPayment ? `${offer.TermsOfPayment} dagar` : ''],
+      ['Dröjsmålsränta', LATE_INTEREST],
+    ],
+    totalLabel: 'TOTALT OFFERTVÄRDE',
+    showPrices: true,
+    showRot: true,
+  };
+}
+
+export function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<Uint8Array> {
+  const { offer, ...shared } = input;
+  return renderDocumentPdfDesign({
+    ...shared,
+    variant: offerVariant(offer),
+    header: offer,
+    rows: Array.isArray(offer.OfferRows) ? offer.OfferRows : [],
+  });
+}
+
+export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Promise<Uint8Array> {
+  const { variant, header, company } = input;
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
 
   const fontBytes = input.fonts ?? (await loadDesignFonts());
   const fonts: Fonts = {
     // `subset: true` bäddar bara in de tecken dokumentet faktiskt använder. Utan den växer varje
-    // offert med ~260 kB inbäddad Open Sans.
+    // dokument med ~260 kB inbäddad Open Sans.
     regular: await doc.embedFont(fontBytes.regular, { subset: true }),
     bold: await doc.embedFont(fontBytes.bold, { subset: true }),
   };
@@ -505,41 +612,47 @@ export async function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<
     try {
       logo = await doc.embedPng(logoBytes);
     } catch (e) {
-      // Hellre en offert utan logotyp än inget dokument alls — men tyst får det inte vara, annars
-      // går en trasig fil obemärkt ut på varje offert.
-      console.warn('[offert-pdf] logotypen kunde inte bäddas in:', e instanceof Error ? e.message : e);
+      // Hellre ett dokument utan logotyp än inget dokument alls — men tyst får det inte vara,
+      // annars går en trasig fil obemärkt ut på varje offert och order.
+      console.warn('[dokument-pdf] logotypen kunde inte bäddas in:', e instanceof Error ? e.message : e);
       logo = null;
     }
   }
 
-  const allRows = Array.isArray(offer.OfferRows) ? offer.OfferRows : [];
+  const allRows = input.rows;
   // Fastighetsbeteckningen plockas ur radlistan INNAN grupperingen, annars fastnar den som
   // beskrivning på sista artikeln.
   //
-  // ⚠️ Bara på ett ROT-dokument. Raden kan ligga kvar efter att ROT tagits bort i Fortnox — den
-  // glidningen varnar `offers.ts` redan för — och då finns inget ROT-block att lyfta den till.
-  // Lyfte vi den ändå hade den försvunnit helt, eller gett en ensam "ROT-AVDRAG"-rubrik på ett
-  // dokument utan avdrag. Är dokumentet inte ROT får raden vara kvar som den vanliga textrad den är.
-  const isRot = isRotDocument(offer);
-  const { note: propertyNote, rows } = isRot
+  // ⚠️ Bara på ett ROT-dokument som visar ROT. Raden kan ligga kvar efter att ROT tagits bort i
+  // Fortnox — den glidningen varnar `offers.ts` redan för — och då finns inget ROT-block att lyfta
+  // den till. Lyfte vi den ändå hade den försvunnit helt, eller gett en ensam "ROT-AVDRAG"-rubrik
+  // på ett dokument utan avdrag. Är dokumentet inte ROT får raden vara kvar som den vanliga textrad
+  // den är. Följesedeln (`showRot: false`) visar den av samma skäl som en vanlig textrad.
+  const isRot = variant.showRot && isRotDocument(header);
+  const { note: rowPropertyNote, rows } = isRot
     ? extractRotPropertyNote(allRows)
     : { note: null, rows: allRows };
+  // Beteckningen kommer antingen ur raderna (offert, BRF-order) eller ur anroparen (villaorder,
+  // där den bor i huvudets referensnummer). Aldrig ur båda — se `resolveRotReference`.
+  const propertyNote = rowPropertyNote ?? (isRot ? input.rotPropertyNote ?? null : null);
   const applicants = isRot ? rotApplicantLines(input.taxReductions ?? []) : [];
-  const groups = groupOfferRows(rows);
-  const summary = buildSummaryBlock(offer, rows, offer.Currency || 'SEK');
-  const showDiscount = rows.some((row) => formatDiscount(row) !== '');
+  const groups = groupDocumentRows(rows);
+  const summary = variant.showPrices
+    ? buildSummaryBlock(header, rows, header.Currency || 'SEK', variant.totalLabel)
+    : null;
+  const showDiscount = variant.showPrices && rows.some((row) => formatDiscount(row) !== '');
   const pages: PDFPage[] = [];
 
   const newPage = (): { page: PDFPage; y: number } => {
     const page = doc.addPage([PAGE_W, PAGE_H]);
     pages.push(page);
     // Sidorna är identiska: hela huvudet upprepas, inte bara en förkortad topp (William 2026-09-03).
-    const headTop = drawPageChrome(page, fonts, offer, input.customerVatNumber, logo, applicants, propertyNote);
+    const headTop = drawPageChrome(page, fonts, variant, header, input.customerVatNumber, logo, applicants, propertyNote);
     // Foten hör till VARJE sida, inte bara den sista. William 2026-09-03: sidorna är identiska så
     // när som på priset. Ritades den bara sist saknade sida ett både företagsuppgifter och
     // avgränsande linje, medan ytan ändå reserverades.
     drawFooter(page, fonts, company);
-    return { page, y: drawTableHead(page, fonts, headTop, showDiscount) };
+    return { page, y: drawTableHead(page, fonts, headTop, variant, showDiscount) };
   };
 
   // Raderna stannar ovanför summeringen på VARJE sida, inte bara den sista.
@@ -548,7 +661,11 @@ export async function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<
   // sidantal men en sista sida som är tom sånär som på totalbeloppet. Uppmätt: 40 rader blev
   // 20 + 20 + enbart summering. Med reservationen blir det 18 + 18 + 4 rader OCH summeringen, vilket
   // är det dokument en kund förväntar sig. Priset är ett par raders kapacitet per sida.
-  const summaryTop = SUM_ROW_Y + Math.max(summary.rows.length + (summary.deduction ? 1 : 0) - 1, 0) * SUM_ROW_STEP;
+  //
+  // Följesedeln har ingen summering och får därför använda ytan ned till fotens linje.
+  const summaryTop = summary
+    ? SUM_ROW_Y + Math.max(summary.rows.length + (summary.deduction ? 1 : 0) - 1, 0) * SUM_ROW_STEP
+    : FOOTER_RULE_Y;
   const rowFloor = summaryTop + ROW_SUMMARY_GAP;
 
   let { page, y } = newPage();
@@ -567,15 +684,17 @@ export async function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<
       ({ page, y } = newPage());
       drawnOnPage = 0;
     }
-    y = drawRowGroup(page, fonts, group, nameLines, noteLines, y);
+    y = drawRowGroup(page, fonts, group, nameLines, noteLines, y, variant.showPrices);
     drawnOnPage++;
   }
 
-  drawSummary(page, fonts, summary);
-  if (summary.deduction) drawRotClause(page, fonts);
+  if (summary) {
+    drawSummary(page, fonts, summary);
+    if (summary.deduction) drawRotClause(page, fonts);
+  }
 
-  // Sidnumret kan sättas först när vi vet hur många sidor det blev, och utelämnas på en ensidig
-  // offert — "Sida 1 av 1" ser mest ut som ett misstag. Mallen har inget sidnummer alls.
+  // Sidnumret kan sättas först när vi vet hur många sidor det blev, och utelämnas på ett ensidigt
+  // dokument — "Sida 1 av 1" ser mest ut som ett misstag. Mallen har inget sidnummer alls.
   if (pages.length > 1) {
     for (const [i, p] of pages.entries()) {
       drawCentered(p, `Sida ${i + 1} av ${pages.length}`, PAGE_W / 2, PAGE_NUMBER_Y, fonts.regular, 8, MUTED);
@@ -628,11 +747,12 @@ function drawRule(page: PDFPage, x0: number, x1: number, y: number) {
   page.drawRectangle({ x: x0, y: y - 0.3, width: x1 - x0, height: 0.6, color: RULE });
 }
 
-/** Logotyp, titel, offertmeta, kund- och uppdragsblock. Returnerar blockens nedersta baslinje. */
+/** Logotyp, titel, dokumentmeta, kund- och uppdragsblock. Returnerar blockens nedersta baslinje. */
 function drawPageChrome(
   page: PDFPage,
   fonts: Fonts,
-  offer: FortnoxOfferResponse,
+  variant: DocumentVariant,
+  offer: DesignDocumentHeader,
   customerVatNumber: string | null | undefined,
   logo: PDFImage | null,
   applicants: string[],
@@ -647,15 +767,18 @@ function drawPageChrome(
   // Teckenavståndet är ett texttillstånd som lever kvar tills det nollställs — pdf-lib skriver
   // aldrig ut Tc självt, så det MÅSTE återställas efter rubriken. Annars ärver hela resten av
   // sidan spärrningen.
+  //
+  // Rubriken står på mallens x=341 och KLÄMS bara om den inte ryms. Uppmätt i Open Sans Bold 18 pt
+  // med spärrningen: OFFERT 75,5 pt (slutar på 416,5), FÖLJESEDEL 120,2 och ORDERBEKRÄFTELSE
+  // 207,5 — den sista slutar på 548,5 mot högermarginalen 550. Den ryms alltså, med 1,5 pt över.
+  // Klämman finns för nästa rubrik: utan den spiller en längre text tyst ut ur sidan i stället för
+  // att flytta sig vänsterut. Offerten rör sig inte, den har 133 pt marginal.
+  const titleWidth = fonts.bold.widthOfTextAtSize(cleanText(variant.title), 18)
+    + Math.max(variant.title.length - 1, 0) * TITLE_TRACKING;
   page.pushOperators(setCharacterSpacing(TITLE_TRACKING));
-  draw(page, 'OFFERT', TITLE_X, TITLE_Y, fonts.bold, 18, GREEN);
+  draw(page, variant.title, Math.min(TITLE_X, M_RIGHT - titleWidth), TITLE_Y, fonts.bold, 18, GREEN);
   page.pushOperators(setCharacterSpacing(0));
-  const meta: Array<[string, string]> = [
-    ['Offertnr', offer.DocumentNumber ?? ''],
-    ['Offertdatum', offer.OfferDate ?? ''],
-    ['Giltig t.o.m.', offer.ExpireDate ?? ''],
-  ];
-  for (const [i, [label, value]] of meta.entries()) {
+  for (const [i, [label, value]] of variant.meta.entries()) {
     draw(page, label, META_LABEL_X, META_Y[i], fonts.regular, 7.5, MUTED);
     drawRight(page, value, META_VALUE_R, META_Y[i], fonts.regular, 7.5, INK);
   }
@@ -722,16 +845,8 @@ function drawPageChrome(
   // Värdena BRYTS om de är för breda. "Ert referensnr" bär fri text (kundens egen märkning) och
   // den är regelmässigt längre än kolumnen — i Figma-mallen sticker den ut 3,7 pt utanför
   // högermarginalen. Radbrytningen puttar ned raderna under sig i stället.
-  const references: Array<[string, string]> = [
-    ['Er referens', offer.YourReference ?? ''],
-    ['Ert referensnr', offer.YourReferenceNumber ?? ''],
-    ['Vår referens', offer.OurReference ?? ''],
-    ['Betalningsvillkor', offer.TermsOfPayment ? `${offer.TermsOfPayment} dagar` : ''],
-    ['Dröjsmålsränta', LATE_INTEREST],
-  ];
-
   let refY = REF_Y;
-  for (const [label, value] of references) {
+  for (const [label, value] of variant.references) {
     if (!value.trim()) continue;
     draw(page, label, REF_LABEL_X, refY, fonts.regular, REF_SIZE, MUTED);
     for (const line of wrapLines(value, fonts.regular, REF_SIZE, M_RIGHT - REF_VALUE_X)) {
@@ -750,15 +865,26 @@ function drawPageChrome(
  * ligga på sida två gett sida ett en RABATT-rubrik utan innehåll, och sida två en kolumn som inte
  * fanns i huvudet innan.
  */
-function drawTableHead(page: PDFPage, fonts: Fonts, blocksBottom: number, showDiscount: boolean): number {
+function drawTableHead(
+  page: PDFPage,
+  fonts: Fonts,
+  blocksBottom: number,
+  variant: DocumentVariant,
+  showDiscount: boolean,
+): number {
   const y = Math.min(TABLE_HEAD_Y, blocksBottom - TABLE_HEAD_GAP);
   draw(page, 'ARTIKEL NUMMER', COL_ARTNR, y, fonts.regular, 7, GREEN_TABLE);
   draw(page, 'BENÄMNING', COL_NAME, y, fonts.regular, 7, GREEN_TABLE);
   drawRight(page, 'ANTAL', COL_QTY_R, y, fonts.regular, 7, GREEN_TABLE);
   draw(page, 'ENHET', COL_UNIT, y, fonts.regular, 7, GREEN_TABLE);
-  drawRight(page, 'À-PRIS', COL_PRICE_R, y, fonts.regular, 7, GREEN_TABLE);
-  if (showDiscount) drawRight(page, 'RABATT', COL_DISCOUNT_R, y, fonts.regular, 7, GREEN_TABLE);
-  drawRight(page, 'SUMMA', COL_SUM_R, y, fonts.regular, 7, GREEN_TABLE);
+  // Priskolumnerna står kvar på sina uppmätta lägen även när de utgår — benämningen breddas INTE
+  // på följesedeln. Kolumnerna är desamma på alla tre dokumenten, så en följesedel och en
+  // orderbekräftelse av samma order går att lägga bredvid varandra och läsa rad för rad.
+  if (variant.showPrices) {
+    drawRight(page, 'À-PRIS', COL_PRICE_R, y, fonts.regular, 7, GREEN_TABLE);
+    if (showDiscount) drawRight(page, 'RABATT', COL_DISCOUNT_R, y, fonts.regular, 7, GREEN_TABLE);
+    drawRight(page, 'SUMMA', COL_SUM_R, y, fonts.regular, 7, GREEN_TABLE);
+  }
   return y - ROW_FIRST_GAP;
 }
 
@@ -766,10 +892,11 @@ function drawTableHead(page: PDFPage, fonts: Fonts, blocksBottom: number, showDi
 function drawRowGroup(
   page: PDFPage,
   fonts: Fonts,
-  group: OfferRowGroup,
+  group: DocumentRowGroup,
   nameLines: string[],
   noteLines: string[],
   top: number,
+  showPrices: boolean,
 ): number {
   const row = group.row;
   let y = top;
@@ -781,11 +908,13 @@ function drawRowGroup(
     }
     drawRight(page, formatQuantity(row.Quantity), COL_QTY_R, y, fonts.regular, 8, INK);
     if (row.Unit) draw(page, row.Unit, COL_UNIT, y, fonts.regular, 8, INK);
-    drawRight(page, formatAmount(row.Price), COL_PRICE_R, y, fonts.regular, 8, INK);
-    const discount = formatDiscount(row);
-    if (discount) drawRight(page, discount, COL_DISCOUNT_R, y, fonts.regular, 8, INK);
-    // Total från Fortnox är REDAN rabatterad — rabattkolumnen är upplysning, inte en uträkning.
-    drawRight(page, formatAmount(row.Total), COL_SUM_R, y, fonts.regular, 8, INK);
+    if (showPrices) {
+      drawRight(page, formatAmount(row.Price), COL_PRICE_R, y, fonts.regular, 8, INK);
+      const discount = formatDiscount(row);
+      if (discount) drawRight(page, discount, COL_DISCOUNT_R, y, fonts.regular, 8, INK);
+      // Total från Fortnox är REDAN rabatterad — rabattkolumnen är upplysning, inte en uträkning.
+      drawRight(page, formatAmount(row.Total), COL_SUM_R, y, fonts.regular, 8, INK);
+    }
     y -= Math.max(nameLines.length - 1, 0) * ROW_NOTE_STEP;
   }
 

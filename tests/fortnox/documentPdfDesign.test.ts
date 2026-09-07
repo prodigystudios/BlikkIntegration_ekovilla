@@ -33,11 +33,11 @@ import {
   rotApplicantLines,
   wrapLines,
   groupHeight,
-  groupOfferRows,
+  groupDocumentRows,
   renderOfferPdfDesign,
   loadDesignFonts,
   loadDesignLogo,
-} from '@/lib/domains/fortnox/offerPdfDesign';
+} from '@/lib/domains/fortnox/documentPdfDesign';
 import type {
   FortnoxCompanySettingsResponse,
   FortnoxOfferResponse,
@@ -84,14 +84,14 @@ const COMPANY: FortnoxCompanySettingsResponse = {
   VATNumber: 'SE559341967301',
 };
 
-describe('groupOfferRows', () => {
+describe('groupDocumentRows', () => {
   it('hänger textraden på artikeln ovanför — mallens grå underrad', () => {
     const rows = [
       article('2410509', 'EKOVILLA cellulosa 0,038 W/mK vind', 80, 'm³', 370),
       note('Yta 200 m² · Tjocklek 400 mm'),
       article('1010', 'Etableringskostnad', 1, 'st', 2990),
     ];
-    const groups = groupOfferRows(rows);
+    const groups = groupDocumentRows(rows);
     expect(groups).toHaveLength(2);
     expect(groups[0].row?.ArticleNumber).toBe('2410509');
     expect(groups[0].notes).toEqual(['Yta 200 m² · Tjocklek 400 mm']);
@@ -99,7 +99,7 @@ describe('groupOfferRows', () => {
   });
 
   it('samlar FLERA textrader under samma artikel', () => {
-    const groups = groupOfferRows([
+    const groups = groupDocumentRows([
       article('2410603', 'Kantavstyvning vindsbjälklag', 42, 'm', 145),
       note('Plywood mot yttervägg'),
       note('Hela omkretsen'),
@@ -110,14 +110,14 @@ describe('groupOfferRows', () => {
 
   it('tappar ALDRIG en textrad som saknar artikel över sig', () => {
     // Utan egen grupp hade texten försvunnit tyst från ett kunddokument.
-    const groups = groupOfferRows([note('Avser etapp 2'), article('1010', 'Etablering', 1, 'st', 2990)]);
+    const groups = groupDocumentRows([note('Avser etapp 2'), article('1010', 'Etablering', 1, 'st', 2990)]);
     expect(groups).toHaveLength(2);
     expect(groups[0].row).toBeNull();
     expect(groups[0].notes).toEqual(['Avser etapp 2']);
   });
 
   it('hoppar över en tom textrad i stället för att rita en osynlig underrad', () => {
-    expect(groupOfferRows([article('1010', 'Etablering', 1, 'st', 2990), note('   ')])[0].notes).toEqual([]);
+    expect(groupDocumentRows([article('1010', 'Etablering', 1, 'st', 2990), note('   ')])[0].notes).toEqual([]);
   });
 });
 

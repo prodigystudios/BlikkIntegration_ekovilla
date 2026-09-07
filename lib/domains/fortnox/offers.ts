@@ -632,7 +632,7 @@ export async function getFortnoxOfferPdf(
   if (mayRenderLocally(mode, rotSelected) && layout === 'design') {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
     const { belongsToOffer } = await import('./offerPdf');
-    const { renderOfferPdfDesign } = await import('./offerPdfDesign');
+    const { renderOfferPdfDesign } = await import('./documentPdfDesign');
     const { assembleOfferDocument, offerAttachments, resolveTermsKind } = await import('./offerPdfAssembly');
     const { resolveCustomerVatNumber } = await import('./helpers');
 
