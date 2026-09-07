@@ -8,7 +8,7 @@ import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxTextRowFields, assertLi
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
 import { ORDER_PDF_MODE, type OrderPdfMode } from './documentPdfMode';
-import type { FortnoxCompanySettingsResponse, FortnoxTaxReductionResponse } from './offerPdf';
+import type { FortnoxCompanySettingsResponse } from './offerPdf';
 import type { FortnoxOrderResponse } from './orderPdfDesign';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
@@ -1112,34 +1112,21 @@ async function renderOrderDocument(
 ): Promise<Uint8Array> {
   const { orderNumber } = order;
   const { Order } = await fortnoxGet<{ Order: FortnoxOrderResponse }>(`/orders/${orderNumber}`);
-  const { belongsToOrder, renderDeliveryNotePdf, renderOrderPdfDesign } = await import('./orderPdfDesign');
+  const { renderDeliveryNotePdf, renderOrderPdfDesign } = await import('./orderPdfDesign');
   const { resolveCustomerVatNumber } = await import('./helpers');
 
-  // Följesedeln bär inga belopp och inget ROT — då finns inget skäl att fråga Fortnox efter
-  // skattereduktionens sökande, och deras personnummer ska inte ens hämtas för ett dokument som
-  // aldrig visar dem.
-  const wantsRot = kind === 'order' && order.rotEnabled;
-  const [taxReductionResponse, companyResponse, customerVatNumber] = await Promise.all([
-    wantsRot
-      ? fortnoxGet<{ TaxReductions?: FortnoxTaxReductionResponse[] }>('/taxreductions', {
-          filter: 'orders',
-          referencenumber: orderNumber,
-        })
-      : Promise.resolve({ TaxReductions: [] as FortnoxTaxReductionResponse[] }),
+  const [companyResponse, customerVatNumber] = await Promise.all([
     fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
     resolveCustomerVatNumber(getSupabaseAdmin(), order.customerId, Order?.CustomerNumber),
   ]);
-
-  // Fortnox numrerar offerter/ordrar/fakturor i skilda serier, så en post som slinker igenom
-  // filtret kan tillhöra ett annat dokument — och bär då en främmande kunds personnummer.
-  const taxReductions = (taxReductionResponse.TaxReductions ?? [])
-    .filter((entry) => belongsToOrder(entry, orderNumber));
 
   const input = {
     order: Order,
     company: companyResponse.CompanySettings ?? {},
     customerVatNumber,
-    taxReductions,
+    // 🧨 Sökanden kommer ur CRM. Fortnox `/taxreductions?filter=orders` ger NOLL poster på varje
+    // ROT-order (mätt 2026-09-07) — registret fylls först när avdraget rapporteras, alltså långt
+    // efter att kunden fått sin orderbekräftelse. Se rotApplicantLines i documentPdfDesign.ts.
     rotDetails: order.rotDetails,
     rotEnabled: order.rotEnabled,
   };

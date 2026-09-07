@@ -143,22 +143,22 @@ describe('rotApplicantLines', () => {
   it('ger ett namn med personnummer per sökande', () => {
     expect(
       rotApplicantLines([
-        { CustomerName: 'Karin Lindqvist', SocialSecurityNumber: '19740312-4519' },
-        { CustomerName: 'Erik Lindqvist', SocialSecurityNumber: '19710918-2233' },
+        { name: 'Karin Lindqvist', personalNumber: '19740312-4519' },
+        { name: 'Erik Lindqvist', personalNumber: '19710918-2233' },
       ]),
     ).toEqual(['Karin Lindqvist · 19740312-4519', 'Erik Lindqvist · 19710918-2233']);
   });
 
   it('DELAR ALDRIG ut något belopp per sökande — Fortnox ger ingen sådan siffra', () => {
     const lines = rotApplicantLines([
-      { CustomerName: 'Karin Lindqvist', SocialSecurityNumber: '19740312-4519' },
-      { CustomerName: 'Erik Lindqvist', SocialSecurityNumber: '19710918-2233' },
+      { name: 'Karin Lindqvist', personalNumber: '19740312-4519' },
+      { name: 'Erik Lindqvist', personalNumber: '19710918-2233' },
     ]);
     expect(lines.join(' ')).not.toMatch(/\d[\d ]*,\d\d/);
   });
 
   it('utelämnar personnumret när det saknas i stället för ett tomt parentespar', () => {
-    expect(rotApplicantLines([{ CustomerName: 'Kim Wolke', SocialSecurityNumber: null }]))
+    expect(rotApplicantLines([{ name: 'Kim Wolke', personalNumber: null }]))
       .toEqual(['Kim Wolke']);
   });
 
@@ -516,8 +516,8 @@ describe('renderOfferPdfDesign', () => {
 
   // Två sökande: paret som äger huset ihop. Beloppet delas aldrig mellan dem.
   const ROT_APPLICANTS = [
-    { CustomerName: 'Karin Lindqvist', SocialSecurityNumber: '19740312-4519' },
-    { CustomerName: 'Erik Lindqvist', SocialSecurityNumber: '19710918-2233' },
+    { name: 'Karin Lindqvist', personalNumber: '19740312-4519' },
+    { name: 'Erik Lindqvist', personalNumber: '19710918-2233' },
   ];
 
   // Fyrtio rader tvingar fram sidbrytning. Var femte bär rabatt, så RABATT-kolumnen syns på ALLA
@@ -533,7 +533,7 @@ describe('renderOfferPdfDesign', () => {
       offer,
       company: COMPANY,
       customerVatNumber: vat ?? null,
-      taxReductions: offer.TaxReductionType === 'rot' ? ROT_APPLICANTS : [],
+      rotApplicants: offer.TaxReductionType === 'rot' ? ROT_APPLICANTS : [],
       logo: await loadDesignLogo(),
       fonts: await loadDesignFonts(),
     });

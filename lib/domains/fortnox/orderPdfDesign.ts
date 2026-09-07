@@ -17,15 +17,13 @@ import { buildRotPropertyNote } from './helpers';
 import {
   LATE_INTEREST,
   renderDocumentPdfDesign,
+  rotApplicantsFromCrm,
   type DesignDocumentHeader,
   type DesignDocumentRow,
   type DocumentVariant,
 } from './documentPdfDesign';
 import { isRotDocument } from './offerPdf';
-import type {
-  FortnoxCompanySettingsResponse,
-  FortnoxTaxReductionResponse,
-} from './offerPdf';
+import type { FortnoxCompanySettingsResponse } from './offerPdf';
 
 // ── Fortnox-orderns form (bara fälten vi ritar) ──────────────────────────────
 
@@ -75,22 +73,15 @@ export type FortnoxOrderResponse = {
   OrderRows?: FortnoxOrderRowResponse[] | null;
 };
 
-/**
- * Hör skattereduktionsposten till just den här ordern?
- *
- * Tvilling till `belongsToOffer` i `offerPdf.ts`, och medvetet en egen kopia: den modulen är vår
- * kopia av Fortnox utskriftsmall och ska bort när den nya formgivningen suttit ett tag. Att låta
- * orderns väg bero på den hade bundit fast den.
- *
- * Skälet att kontrollera i efterhand är detsamma: `/taxreductions?filter=orders&referencenumber=N`
- * filtrerar på serverns sida, men Fortnox numrerar offerter, ordrar och fakturor i SKILDA serier.
- * Skulle filtret tolkas fel får vi tillbaka en annan kunds post — och då trycks främmande namn OCH
- * fullständigt personnummer på ett dokument som mejlas ut.
- */
-export function belongsToOrder(entry: FortnoxTaxReductionResponse, orderNumber: string): boolean {
-  if ((entry.ReferenceDocumentType ?? '').toUpperCase() !== 'ORDER') return false;
-  return String(entry.ReferenceNumber ?? '') === String(orderNumber);
-}
+// ⛔ **FRÅGA INTE FORTNOX `/taxreductions` EFTER SÖKANDEN.** Mätt mot skarp data 2026-09-07 på fem
+// ROT-ordrar: `filter=orders` gav NOLL poster på varje, och `@urlTaxReductionList` på ordern pekar
+// på exakt den frågan. Offerterna gav också noll. Registret fylls tydligen först när avdraget
+// rapporteras — långt efter att kunden fått sitt dokument.
+//
+// 🧨 Och att "prova ett annat filter" är direkt farligt: `filter=invoices&referencenumber=113` gav
+// en post för FAKTURA 113 — ett annat dokument, en annan kund, med fullständigt personnummer.
+// Fortnox numrerar offerter, ordrar och fakturor i skilda serier, så numret ensamt bevisar
+// ingenting. Sökanden hämtas ur CRM i stället (`rotApplicantsFromCrm`).
 
 // ── Normalisering ────────────────────────────────────────────────────────────
 
@@ -139,7 +130,16 @@ export function orderToDesignHeader(order: FortnoxOrderResponse): DesignDocument
 
 // ── ROT ──────────────────────────────────────────────────────────────────────
 
-type RotDetails = { property_designation?: string | null; brf_org_number?: string | null } | null | undefined;
+/**
+ * CRM:s ROT-uppgifter. Bär BÅDA de saker Fortnox inte kan ge oss: sökanden (`/taxreductions` är
+ * tomt, se noten ovan) och fastighetsbeteckningen (inget API-fält alls, se FORTNOX_INTEGRATION.md).
+ */
+type RotDetails = {
+  applicant_name?: string | null;
+  personal_number?: string | null;
+  property_designation?: string | null;
+  brf_org_number?: string | null;
+} | null | undefined;
 
 /**
  * Var fastighetsbeteckningen står på ordern — huvudets referensnummer eller ROT-blocket.
@@ -237,9 +237,11 @@ export type OrderPdfDesignInput = {
   order: FortnoxOrderResponse;
   company: FortnoxCompanySettingsResponse;
   customerVatNumber?: string | null;
-  /** Redan filtrerade med `belongsToOrder`. Se `documentPdfDesign` för varför det är anroparens jobb. */
-  taxReductions?: FortnoxTaxReductionResponse[];
-  /** Arbetsorderns ROT-uppgifter (`resolveOrderRotDetails`). Fortnox har inget fält för beteckningen. */
+  /**
+   * Arbetsorderns ROT-uppgifter (`resolveOrderRotDetails`). Bär BÅDE sökanden och
+   * fastighetsbeteckningen — Fortnox har inget fält för beteckningen, och dess `/taxreductions` är
+   * tomt för ordrar (se noten ovan). CRM är alltså enda källan till båda.
+   */
   rotDetails?: RotDetails;
   rotEnabled?: boolean;
   logo?: Uint8Array | null;
@@ -268,11 +270,14 @@ export function renderOrderPdfDesign(input: OrderPdfDesignInput): Promise<Uint8A
     header: orderToDesignHeader(order),
     rows: orderRowsToDesignRows(order.OrderRows),
     rotPropertyNote: rot.propertyNote,
+    rotApplicants: rotApplicantsFromCrm(rotDetails),
   });
 }
 
 export function renderDeliveryNotePdf(input: OrderPdfDesignInput): Promise<Uint8Array> {
-  const { order, rotDetails: _rot, rotEnabled: _enabled, taxReductions: _tax, ...shared } = input;
+  // ROT-uppgifterna destruktureras BORT: följesedeln visar dem inte, och personnumret ska inte ens
+  // nå renderaren för ett dokument som kvitteras av den som tar emot materialet.
+  const { order, rotDetails: _rot, rotEnabled: _enabled, ...shared } = input;
 
   return renderDocumentPdfDesign({
     ...shared,

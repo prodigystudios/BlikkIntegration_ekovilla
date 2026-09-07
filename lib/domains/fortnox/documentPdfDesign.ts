@@ -34,7 +34,6 @@ import {
   type FortnoxCompanySettingsResponse,
   type FortnoxOfferResponse,
   type FortnoxOfferRowResponse,
-  type FortnoxTaxReductionResponse,
 } from './offerPdf';
 
 // ── Dokumentets form ─────────────────────────────────────────────────────────
@@ -356,25 +355,62 @@ export function formatDiscount(row: FortnoxOfferRowResponse): string {
 /** Prefixet `buildRotPropertyNote` sätter på fastighetsraden. Är kopplingen — ändras det ena måste det andra följa med. */
 const PROPERTY_PREFIX = 'Fastighetsbeteckning:';
 
+/** Den som söker ROT-avdraget. Kommer ur CRM:s `rot_details` — se `rotApplicantLines`. */
+export type RotApplicant = { name?: string | null; personalNumber?: string | null };
+
 /**
  * De som söker avdraget: ett namn per rad, med personnummer.
  *
- * ⚠️ **Beloppet står ALDRIG här.** Fortnox `/taxreductions` ger ingen summa per person på en offert
- * (`ApprovedAmount` är null tills Skatteverket svarat), så en uppdelning mellan två sökande vore vår
- * gissning — och att trycka en påhittad ROT-summa per person på ett kunddokument är precis vad
- * modulens huvudregel förbjuder. Totalen står i summeringen, en gång.
+ * 🧨 **UPPGIFTEN KOMMER UR CRM, INTE UR FORTNOX `/taxreductions`.** Mätt mot skarp data 2026-09-07:
+ * det registret är TOMT för både ordrar och offerter i vårt Fortnox-konto — `@urlTaxReductionList`
+ * på dokumenten pekar på exakt den frågan, och den ger noll poster. Den enda post som hittades i
+ * hela genomgången var kopplad till en FAKTURA, och saknade dessutom personnummer. Registret fylls
+ * tydligen först när avdraget rapporteras, alltså långt efter att kunden fått sitt dokument.
+ *
+ * Följden av att bygga på den källan: ROT-blocket ritades med rubrik och fastighetsbeteckning men
+ * UTAN sökande, på varje skarp offert sedan 2026-09-04. Det syntes inte i tester, för fixturerna
+ * matade in poster som Fortnox aldrig lämnar ifrån sig.
+ *
+ * ⚠️ **CRM bär EN sökande** (`rot_details.applicant_name` + `personal_number`), inte flera. Fortnox
+ * hade i teorin kunnat lista paret som äger huset ihop; vår datamodell kan det inte. Funktionen tar
+ * en lista ändå — layouten klarar flera rader — men i praktiken blir det en.
+ *
+ * ⚠️ **Beloppet står ALDRIG här.** En uppdelning mellan flera sökande vore vår gissning, och att
+ * trycka en påhittad ROT-summa per person på ett kunddokument är precis vad modulens huvudregel
+ * förbjuder. Totalen står i summeringen, en gång.
  *
  * Personnumret utelämnas när det saknas i stället för att skriva ett tomt parentespar, som Fortnox
  * gör ("Kim Wolke ()"). Numret krävs först när arbetsordern skapas.
  */
-export function rotApplicantLines(entries: FortnoxTaxReductionResponse[]): string[] {
-  return entries
-    .map((entry) => {
-      const name = cleanText(entry.CustomerName).trim();
-      const ssn = cleanText(entry.SocialSecurityNumber).trim();
+export function rotApplicantLines(applicants: RotApplicant[]): string[] {
+  return applicants
+    .map((applicant) => {
+      const name = cleanText(applicant.name).trim();
+      const ssn = cleanText(applicant.personalNumber).trim();
       return [name, ssn].filter(Boolean).join(' · ');
     })
     .filter(Boolean);
+}
+
+/**
+ * Sökandena ur CRM:s `rot_details`. Tom lista när ROT är av eller uppgifterna saknas — då ritas
+ * blocket med enbart fastighetsbeteckningen, vilket är bättre än en rubrik utan innehåll.
+ */
+export function rotApplicantsFromCrm(
+  // Tar HELA `rot_details` som den ligger i CRM, inte bara de två fälten: anroparna har objektet
+  // och skulle annars behöva plocka isär det, och en `rot_details` utan sökande (bara
+  // fastighetsbeteckning) är ett giltigt fall som ska ge en tom lista — inte ett typfel.
+  rot: {
+    applicant_name?: string | null;
+    personal_number?: string | null;
+    enabled?: boolean | null;
+    property_designation?: string | null;
+    brf_org_number?: string | null;
+  } | null | undefined,
+): RotApplicant[] {
+  const name = (rot?.applicant_name ?? '').trim();
+  const personalNumber = (rot?.personal_number ?? '').trim();
+  return name || personalNumber ? [{ name, personalNumber }] : [];
 }
 
 /**
@@ -544,12 +580,10 @@ type SharedPdfDesignInput = {
    */
   customerVatNumber?: string | null;
   /**
-   * De som söker ROT-avdraget, redan filtrerade mot DET HÄR dokumentet (`belongsToOffer` /
-   * `belongsToOrder`). Måste filtreras av anroparen: Fortnox numrerar offerter, ordrar och fakturor
-   * i skilda serier, så en post som slinker igenom `/taxreductions`-filtret kan bära en FRÄMMANDE
-   * kunds fullständiga personnummer.
+   * De som söker ROT-avdraget, ur CRM:s `rot_details` — se `rotApplicantLines` för varför Fortnox
+   * `/taxreductions` inte duger.
    */
-  taxReductions?: FortnoxTaxReductionResponse[];
+  rotApplicants?: RotApplicant[];
   logo?: Uint8Array | null;
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
@@ -659,7 +693,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
   // Beteckningen kommer antingen ur raderna (offert, BRF-order) eller ur anroparen (villaorder,
   // där den bor i huvudets referensnummer). Aldrig ur båda — se `resolveRotReference`.
   const propertyNote = rowPropertyNote ?? (isRot ? input.rotPropertyNote ?? null : null);
-  const applicants = isRot ? rotApplicantLines(input.taxReductions ?? []) : [];
+  const applicants = isRot ? rotApplicantLines(input.rotApplicants ?? []) : [];
   const groups = groupDocumentRows(rows);
   const summary = variant.showPrices
     ? buildSummaryBlock(header, rows, header.Currency || 'SEK', variant.totalLabel)
