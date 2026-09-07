@@ -566,6 +566,8 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
 type QuoteForPdf = {
   offerNumber: string;
   rotSelected: boolean;
+  /** Hela ROT-blocket ur CRM. Bär sökanden — Fortnox `/taxreductions` gör det inte, se offers-PDF:en. */
+  rotDetails: { applicant_name?: string | null; personal_number?: string | null } | null;
   projectName: string | null;
   // Fälten nedan används bara av den egna formgivningen: kundtypen väljer vilka allmänna villkor
   // som bifogas, och kund-id:t hämtar momsnumret till kundraden.
@@ -585,7 +587,7 @@ async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
   if (error) throw new FortnoxApiError(500, `Kunde inte läsa offerten: ${error.message}`, undefined, 'Kunde inte läsa offerten. Försök igen.');
   const row = data as {
     fortnox_offer_number?: string | number | null;
-    rot_details?: { enabled?: boolean | null } | null;
+    rot_details?: { enabled?: boolean | null; applicant_name?: string | null; personal_number?: string | null } | null;
     project_name?: string | null;
     quote_type?: string | null;
     customer_id?: string | null;
@@ -597,6 +599,7 @@ async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
   return {
     offerNumber: String(offerNumber),
     rotSelected: row?.rot_details?.enabled === true,
+    rotDetails: row?.rot_details ?? null,
     // Projektnamnet följer med enbart för PDF:ens filnamn (offertnummer + offertnamn).
     projectName: row?.project_name ?? null,
     quoteType: row?.quote_type ?? null,
@@ -631,30 +634,32 @@ export async function getFortnoxOfferPdf(
   // `layout` avgör HUR — och `?mall=fortnox` kringgår båda för en enskild offert utan deploy.
   if (mayRenderLocally(mode, rotSelected) && layout === 'design') {
     const { Offer } = await fortnoxGet<{ Offer: FortnoxOfferResponse }>(`/offers/${offerNumber}`);
-    const { belongsToOffer } = await import('./offerPdf');
     const { renderOfferPdfDesign } = await import('./documentPdfDesign');
     const { assembleOfferDocument, offerAttachments, resolveTermsKind } = await import('./offerPdfAssembly');
-    const { resolveCustomerVatNumber } = await import('./helpers');
+    const { resolveCustomerPersonalNumber, resolveCustomerVatNumber } = await import('./helpers');
 
     // Ingen tyst fallback här heller: sväljer någon läsning sitt fel får säljaren ett dokument som
     // SER rätt ut men saknar skattereduktionen eller företagsfoten.
-    const [taxReductionResponse, companyResponse, customerVatNumber] = await Promise.all([
-      fortnoxGet<{ TaxReductions?: FortnoxTaxReductionResponse[] }>('/taxreductions', {
-        filter: 'offers',
-        referencenumber: offerNumber,
-      }),
+    const [companyResponse, customerVatNumber, cardPersonalNumber] = await Promise.all([
       fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company'),
       resolveCustomerVatNumber(getSupabaseAdmin(), quote.customerId, Offer?.CustomerNumber),
+      // Bara för ROT-offerter — ett personnummer ska inte ens läsas för ett dokument som aldrig
+      // visar det.
+      rotSelected
+        ? resolveCustomerPersonalNumber(getSupabaseAdmin(), quote.customerId, Offer?.CustomerNumber)
+        : Promise.resolve(null),
     ]);
-
-    const taxReductions = (taxReductionResponse.TaxReductions ?? [])
-      .filter((entry) => belongsToOffer(entry, offerNumber));
 
     const rendered = await renderOfferPdfDesign({
       offer: Offer,
       company: companyResponse.CompanySettings ?? {},
       customerVatNumber,
-      taxReductions,
+      // 🧨 Sökanden kommer ur CRM, INTE ur Fortnox `/taxreductions`. Mätt mot skarp data 2026-09-07:
+      // det registret är tomt för både offerter och ordrar hos oss, så ROT-blocket ritades utan
+      // sökande på varje skarp offert sedan 2026-09-04. Se resolveRotApplicants.
+      rotDetails: quote.rotDetails,
+      cardPersonalNumber,
+      snapshotPersonalNumber: quote.personalNumber,
     });
 
     const termsKind = resolveTermsKind({

@@ -282,21 +282,60 @@ export async function resolveCustomerVatNumber(
   customerId: string | null | undefined,
   fortnoxCustomerNumber: string | null | undefined,
 ): Promise<string | null> {
-  const read = async (column: 'id' | 'fortnox_customer_id', value: string) => {
+  return readCustomerTextColumn(supabase, 'vat_number', customerId, fortnoxCustomerNumber);
+}
+
+/**
+ * Kundkortets personnummer, för ROT-blocket på våra egna dokument.
+ *
+ * ⚠️ **KORTET, inte offertens eller orderns `rot_details`.** Samma regel som
+ * `workOrderReadiness.ts` spärrar på, och av samma skäl: numret går inte att redigera i
+ * offertformuläret (ROT-sektionen VISAR det), så snapshotens och `rot_details`-kopiornas värde är
+ * aldrig ett medvetet val för just det dokumentet — det är kortet som det såg ut när kunden valdes.
+ * Och det är KORTET Fortnox faktiskt läser: numret går dit som kundens `OrganisationNumber`.
+ *
+ * 🧨 Det spelar roll just nu. Rättningen 10 → 12 siffror pågår (se PERMISSIONS/CRM-anteckningarna:
+ * tiosiffrigt dödar ROT tyst i Fortnox), och prompten i offertformuläret PATCHar bara KORTET —
+ * offerten är dessutom låst så fort ordern finns. Läste dokumentet `rot_details` hade det tryckt
+ * det gamla ogiltiga numret långt efter att kunden rättats.
+ */
+export async function resolveCustomerPersonalNumber(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  customerId: string | null | undefined,
+  fortnoxCustomerNumber: string | null | undefined,
+): Promise<string | null> {
+  return readCustomerTextColumn(supabase, 'personal_number', customerId, fortnoxCustomerNumber);
+}
+
+/**
+ * En textkolumn på kundkortet, uppslagen på kundens id först — det är den riktiga kopplingen. Ett
+ * dokument utan `customer_id` (helt manuellt inskriven kund) faller tillbaka på Fortnox kundnummer.
+ *
+ * ⚠️ **Tomt är tomt.** Saknas värdet returneras `null`. Ett påhittat momsnummer eller personnummer
+ * på ett kunddokument vore värre än inget. Trimmas, eftersom en kolumn med enbart blanksteg
+ * betyder samma sak som tom.
+ */
+async function readCustomerTextColumn(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  column: 'vat_number' | 'personal_number',
+  customerId: string | null | undefined,
+  fortnoxCustomerNumber: string | null | undefined,
+): Promise<string | null> {
+  const read = async (key: 'id' | 'fortnox_customer_id', value: string) => {
     const { data, error } = await supabase
       .from('crm_customers')
-      .select('vat_number')
-      .eq(column, value)
+      .select(column)
+      .eq(key, value)
       .maybeSingle();
-    // Ett databasfel får inte se ut som "kunden saknar momsnummer". `maybeSingle()` felar bland
+    // Ett databasfel får inte se ut som "kunden saknar uppgiften". `maybeSingle()` felar bland
     // annat när flera rader matchar — en dubblett i kundregistret — och det är värt att kunna se i
-    // loggen i stället för att bara tyst utebli på kundraden.
+    // loggen i stället för att bara tyst utebli på dokumentet.
     if (error) {
-      console.warn(`[offert-pdf] kunde inte läsa momsnummer på ${column}=${value}: ${error.message}`);
+      console.warn(`[dokument-pdf] kunde inte läsa ${column} på ${key}=${value}: ${error.message}`);
       return null;
     }
-    const vat = (data as { vat_number?: string | null } | null)?.vat_number?.trim();
-    return vat ? vat : null;
+    const value_ = (data as Record<string, string | null> | null)?.[column]?.trim();
+    return value_ ? value_ : null;
   };
 
   if (customerId) {

@@ -4,7 +4,6 @@ import path from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import {
-  belongsToOrder,
   deliveryNoteVariant,
   orderRowsToDesignRows,
   orderToDesignHeader,
@@ -104,10 +103,14 @@ const ROT_ORDER: FortnoxOrderResponse = {
 
 const ROT_DETAILS = { enabled: true, property_designation: 'Gustavsberg Sjöstugan 2:14' };
 
-const APPLICANTS = [
-  { CustomerName: 'Karin Lindqvist', SocialSecurityNumber: '19740312-4519' },
-  { CustomerName: 'Erik Lindqvist', SocialSecurityNumber: '19710918-2233' },
-];
+// Sökandens NAMN kommer ur rot_details; PERSONNUMRET ur kundkortet (cardPersonalNumber) — se
+// resolveRotApplicants. `personal_number` ligger kvar här med flit och ska INTE vinna: det är den
+// gamla tiosiffriga kopian, precis det fall rättningen 10 → 12 siffror handlar om.
+const ROT_DETAILS_WITH_APPLICANT = {
+  ...ROT_DETAILS,
+  applicant_name: 'Karin Lindqvist',
+  personal_number: '740312-4519',
+};
 
 // Företagsorder utan ROT: märkningen står kvar i referensnumret, inget ROT-block.
 const BUSINESS_ORDER: FortnoxOrderResponse = {
@@ -162,22 +165,6 @@ describe('orderToDesignHeader', () => {
     expect(header.Total).toBe(12250);
     expect(header.TotalToPay).toBe(10188);
     expect(header.TaxReduction).toBe(2062);
-  });
-});
-
-describe('belongsToOrder', () => {
-  it('släpper igenom orderns egen post', () => {
-    expect(belongsToOrder({ ReferenceDocumentType: 'ORDER', ReferenceNumber: 113 }, '113')).toBe(true);
-  });
-
-  it('avvisar en OFFERT med samma nummer', () => {
-    // Fortnox numrerar dokumenttyperna i skilda serier. Utan typkontrollen kan en främmande kunds
-    // fullständiga personnummer hamna på ordern.
-    expect(belongsToOrder({ ReferenceDocumentType: 'OFFER', ReferenceNumber: 113 }, '113')).toBe(false);
-  });
-
-  it('avvisar ett annat ordernummer', () => {
-    expect(belongsToOrder({ ReferenceDocumentType: 'ORDER', ReferenceNumber: 114 }, '113')).toBe(false);
   });
 });
 
@@ -241,9 +228,9 @@ describe('orderbekräftelsen', () => {
   const render = (order = ROT_ORDER, extra: Record<string, unknown> = {}) => renderOrderPdfDesign({
     order,
     company: COMPANY,
-    taxReductions: APPLICANTS,
-    rotDetails: ROT_DETAILS,
+    rotDetails: ROT_DETAILS_WITH_APPLICANT,
     rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
     logo: null,
     ...extra,
   });
@@ -283,7 +270,6 @@ describe('orderbekräftelsen', () => {
     const text = (await pageText(await render())).join(' ');
     expect(text).toContain('ROT-AVDRAG');
     expect(text).toContain('Karin Lindqvist · 19740312-4519');
-    expect(text).toContain('Erik Lindqvist · 19710918-2233');
     expect(text).toContain('Fastighetsbeteckning: Gustavsberg Sjöstugan 2:14');
   });
 
@@ -304,7 +290,7 @@ describe('orderbekräftelsen', () => {
   });
 
   it('säger TOTALT ORDERVÄRDE på en order utan avdrag', async () => {
-    const text = (await pageText(await render(BUSINESS_ORDER, { taxReductions: [], rotDetails: null, rotEnabled: false }))).join(' ');
+    const text = (await pageText(await render(BUSINESS_ORDER, { rotDetails: null, rotEnabled: false }))).join(' ');
     expect(text).toContain('TOTALT ORDERVÄRDE');
     expect(text).toContain('12 250,00 SEK');
     expect(text).not.toContain('ROT-AVDRAG');
@@ -317,9 +303,9 @@ describe('följesedeln', () => {
   const render = (order = ROT_ORDER) => renderDeliveryNotePdf({
     order,
     company: COMPANY,
-    taxReductions: APPLICANTS,
-    rotDetails: ROT_DETAILS,
+    rotDetails: ROT_DETAILS_WITH_APPLICANT,
     rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
     logo: null,
   });
 
@@ -377,11 +363,14 @@ it('skriver förhandsvisningar när ORDER_PDF_PREVIEW_DIR är satt', async () =>
   if (!dir) return;
   await mkdir(dir, { recursive: true });
 
-  const base = { company: COMPANY, taxReductions: APPLICANTS, rotDetails: ROT_DETAILS, rotEnabled: true };
+  const base = {
+    company: COMPANY, rotDetails: ROT_DETAILS_WITH_APPLICANT, rotEnabled: true,
+    cardPersonalNumber: '19740312-4519',
+  };
   const files: Array<[string, Uint8Array]> = [
     ['orderbekraftelse-rot.pdf', await renderOrderPdfDesign({ order: ROT_ORDER, ...base })],
     ['orderbekraftelse-foretag.pdf', await renderOrderPdfDesign({
-      order: BUSINESS_ORDER, company: COMPANY, taxReductions: [], rotDetails: null, rotEnabled: false,
+      order: BUSINESS_ORDER, company: COMPANY, rotDetails: null, rotEnabled: false,
     })],
     ['foljesedel.pdf', await renderDeliveryNotePdf({ order: ROT_ORDER, ...base })],
   ];

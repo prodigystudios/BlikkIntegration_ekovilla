@@ -34,7 +34,6 @@ import {
   type FortnoxCompanySettingsResponse,
   type FortnoxOfferResponse,
   type FortnoxOfferRowResponse,
-  type FortnoxTaxReductionResponse,
 } from './offerPdf';
 
 // ── Dokumentets form ─────────────────────────────────────────────────────────
@@ -356,25 +355,76 @@ export function formatDiscount(row: FortnoxOfferRowResponse): string {
 /** Prefixet `buildRotPropertyNote` sätter på fastighetsraden. Är kopplingen — ändras det ena måste det andra följa med. */
 const PROPERTY_PREFIX = 'Fastighetsbeteckning:';
 
+/** Den som söker ROT-avdraget. Kommer ur CRM:s `rot_details` — se `rotApplicantLines`. */
+export type RotApplicant = { name?: string | null; personalNumber?: string | null };
+
 /**
  * De som söker avdraget: ett namn per rad, med personnummer.
  *
- * ⚠️ **Beloppet står ALDRIG här.** Fortnox `/taxreductions` ger ingen summa per person på en offert
- * (`ApprovedAmount` är null tills Skatteverket svarat), så en uppdelning mellan två sökande vore vår
- * gissning — och att trycka en påhittad ROT-summa per person på ett kunddokument är precis vad
- * modulens huvudregel förbjuder. Totalen står i summeringen, en gång.
+ * 🧨 **UPPGIFTEN KOMMER UR CRM, INTE UR FORTNOX `/taxreductions`.** Mätt mot skarp data 2026-09-07:
+ * det registret är TOMT för både ordrar och offerter i vårt Fortnox-konto — `@urlTaxReductionList`
+ * på dokumenten pekar på exakt den frågan, och den ger noll poster. Den enda post som hittades i
+ * hela genomgången var kopplad till en FAKTURA, och saknade dessutom personnummer. Registret fylls
+ * tydligen först när avdraget rapporteras, alltså långt efter att kunden fått sitt dokument.
+ *
+ * Följden av att bygga på den källan: ROT-blocket ritades med rubrik och fastighetsbeteckning men
+ * UTAN sökande, på varje skarp offert sedan 2026-09-04. Det syntes inte i tester, för fixturerna
+ * matade in poster som Fortnox aldrig lämnar ifrån sig.
+ *
+ * ⚠️ **CRM bär EN sökande** (`rot_details.applicant_name` + `personal_number`), inte flera. Fortnox
+ * hade i teorin kunnat lista paret som äger huset ihop; vår datamodell kan det inte. Funktionen tar
+ * en lista ändå — layouten klarar flera rader — men i praktiken blir det en.
+ *
+ * ⚠️ **Beloppet står ALDRIG här.** En uppdelning mellan flera sökande vore vår gissning, och att
+ * trycka en påhittad ROT-summa per person på ett kunddokument är precis vad modulens huvudregel
+ * förbjuder. Totalen står i summeringen, en gång.
  *
  * Personnumret utelämnas när det saknas i stället för att skriva ett tomt parentespar, som Fortnox
  * gör ("Kim Wolke ()"). Numret krävs först när arbetsordern skapas.
  */
-export function rotApplicantLines(entries: FortnoxTaxReductionResponse[]): string[] {
-  return entries
-    .map((entry) => {
-      const name = cleanText(entry.CustomerName).trim();
-      const ssn = cleanText(entry.SocialSecurityNumber).trim();
+export function rotApplicantLines(applicants: RotApplicant[]): string[] {
+  return applicants
+    .map((applicant) => {
+      const name = cleanText(applicant.name).trim();
+      const ssn = cleanText(applicant.personalNumber).trim();
       return [name, ssn].filter(Boolean).join(' · ');
     })
     .filter(Boolean);
+}
+
+/**
+ * Sökanden till ROT-blocket. Tom lista när ingenting går att fylla i — då ritas blocket med enbart
+ * fastighetsbeteckningen, vilket är bättre än en rubrik utan innehåll.
+ *
+ * 🧨 **PERSONNUMRET KOMMER FRÅN KUNDKORTET FÖRST**, sedan dokumentets snapshot — exakt samma
+ * ordning som `workOrderReadiness.ts` spärrar på, och medvetet INTE ur `rot_details`. Numret går
+ * inte att redigera i offertformuläret, så kopiorna i snapshot och `rot_details` är aldrig ett
+ * medvetet val för just det dokumentet; de är kortet som det såg ut när kunden valdes. Kortet är
+ * dessutom det Fortnox läser (kundens `OrganisationNumber`).
+ *
+ * Det spelar roll just nu: rättningen 10 → 12 siffror pågår, och prompten i offertformuläret
+ * PATCHar bara kortet medan offerten låses så fort ordern finns. Läste vi `rot_details` hade
+ * dokumentet tryckt det gamla ogiltiga numret långt efter att kunden rättats.
+ *
+ * NAMNET tas däremot ur `rot_details.applicant_name` först — det är ROT-sektionens EGET fält, det
+ * enda av de två säljaren faktiskt fyller i där, och sökanden behöver inte vara densamma som
+ * kundkortets namn. Faller tillbaka på kundnamnet, som på en privat ROT-order är samma person.
+ */
+export function resolveRotApplicants(input: {
+  rotDetails?: { applicant_name?: string | null; personal_number?: string | null } | null;
+  /** `crm_customers.personal_number` — se `resolveCustomerPersonalNumber`. */
+  cardPersonalNumber?: string | null;
+  /** Dokumentets `customer_snapshot.personal_number`. Reserv, som i workOrderReadiness. */
+  snapshotPersonalNumber?: string | null;
+  /** Kundnamnet på Fortnox-dokumentet. Reserv när ROT-sektionens namnfält är tomt. */
+  customerName?: string | null;
+}): RotApplicant[] {
+  const text = (value: unknown) => String(value ?? '').trim();
+
+  const name = text(input.rotDetails?.applicant_name) || text(input.customerName);
+  const personalNumber = text(input.cardPersonalNumber) || text(input.snapshotPersonalNumber);
+
+  return name || personalNumber ? [{ name, personalNumber }] : [];
 }
 
 /**
@@ -544,17 +594,24 @@ type SharedPdfDesignInput = {
    */
   customerVatNumber?: string | null;
   /**
-   * De som söker ROT-avdraget, redan filtrerade mot DET HÄR dokumentet (`belongsToOffer` /
-   * `belongsToOrder`). Måste filtreras av anroparen: Fortnox numrerar offerter, ordrar och fakturor
-   * i skilda serier, så en post som slinker igenom `/taxreductions`-filtret kan bära en FRÄMMANDE
-   * kunds fullständiga personnummer.
+   * De som söker ROT-avdraget, ur CRM:s `rot_details` — se `rotApplicantLines` för varför Fortnox
+   * `/taxreductions` inte duger.
    */
-  taxReductions?: FortnoxTaxReductionResponse[];
+  rotApplicants?: RotApplicant[];
   logo?: Uint8Array | null;
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
 
-export type OfferPdfDesignInput = SharedPdfDesignInput & {
+/** De råa ROT-uppgifterna en anropare har. Löses av `resolveRotApplicants`, inte av anroparen. */
+export type RotApplicantSources = {
+  rotDetails?: { applicant_name?: string | null; personal_number?: string | null } | null;
+  /** `crm_customers.personal_number` — se `resolveCustomerPersonalNumber`. KORTET vinner. */
+  cardPersonalNumber?: string | null;
+  /** Dokumentets `customer_snapshot.personal_number`. */
+  snapshotPersonalNumber?: string | null;
+};
+
+export type OfferPdfDesignInput = SharedPdfDesignInput & RotApplicantSources & {
   offer: FortnoxOfferResponse;
 };
 
@@ -604,12 +661,21 @@ export function offerVariant(offer: FortnoxOfferResponse): DocumentVariant {
 }
 
 export function renderOfferPdfDesign(input: OfferPdfDesignInput): Promise<Uint8Array> {
-  const { offer, ...shared } = input;
+  const { offer, rotDetails, cardPersonalNumber, snapshotPersonalNumber, ...shared } = input;
   return renderDocumentPdfDesign({
     ...shared,
     variant: offerVariant(offer),
     header: offer,
     rows: Array.isArray(offer.OfferRows) ? offer.OfferRows : [],
+    // Regeln bor i `resolveRotApplicants` och tillämpas HÄR, inte hos anroparen — så att
+    // offertens och orderns vägar bevisligen delar den. Att bygga listan i `offers.ts` var precis
+    // den sömmen där den ursprungliga buggen kunde gömma sig från testerna.
+    rotApplicants: resolveRotApplicants({
+      rotDetails,
+      cardPersonalNumber,
+      snapshotPersonalNumber,
+      customerName: offer.CustomerName,
+    }),
   });
 }
 
@@ -659,7 +725,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
   // Beteckningen kommer antingen ur raderna (offert, BRF-order) eller ur anroparen (villaorder,
   // där den bor i huvudets referensnummer). Aldrig ur båda — se `resolveRotReference`.
   const propertyNote = rowPropertyNote ?? (isRot ? input.rotPropertyNote ?? null : null);
-  const applicants = isRot ? rotApplicantLines(input.taxReductions ?? []) : [];
+  const applicants = isRot ? rotApplicantLines(input.rotApplicants ?? []) : [];
   const groups = groupDocumentRows(rows);
   const summary = variant.showPrices
     ? buildSummaryBlock(header, rows, header.Currency || 'SEK', variant.totalLabel)
