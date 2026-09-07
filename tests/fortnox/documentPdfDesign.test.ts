@@ -374,6 +374,28 @@ describe('buildSummaryBlock', () => {
   it('lämnar avdraget ute på ett dokument utan ROT, även om typen står kvar', () => {
     expect(buildSummaryBlock({ ...base, TaxReductionType: 'rot', TaxReduction: 0 }, []).deduction).toBeNull();
   });
+
+  it('tar etiketten anroparen ger — orderns säger ORDERVÄRDE, inte OFFERTVÄRDE', () => {
+    expect(buildSummaryBlock(base, [], 'SEK', 'TOTALT ORDERVÄRDE').total.label).toBe('TOTALT ORDERVÄRDE');
+  });
+
+  it('faller tillbaka på Total när TotalToPay saknas — men BARA utan avdrag', () => {
+    // Reserven finns för ett dokument vars svar inte bär fältet; utan den blev slutsumman "0,00".
+    const { TotalToPay: _drop, ...withoutTotalToPay } = base;
+    expect(buildSummaryBlock(withoutTotalToPay, []).total.value).toBe('44 820,00 SEK');
+  });
+
+  it('räknar ALDRIG ut slutsumman själv när avdraget finns men TotalToPay inte gör det', () => {
+    // 🧨 `Total` är beloppet FÖRE avdraget medan etiketten säger "efter". Reserven hade gett ett
+    // trovärdigt dokument med för hög slutsumma, direkt under avdragsraden. Fortnox äger beloppen —
+    // en uppenbart saknad siffra är bättre än en trovärdig felaktig.
+    const block = buildSummaryBlock(
+      { Net: 18200, TotalVAT: 4550, Total: 22750, TaxReduction: 3937, TaxReductionType: 'rot' },
+      [],
+    );
+    expect(block.total.label).toBe('ATT BETALA EFTER AVDRAG');
+    expect(block.total.value).not.toBe('22 750,00 SEK');
+  });
 });
 
 describe('wrapLines', () => {

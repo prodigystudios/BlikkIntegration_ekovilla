@@ -15,11 +15,13 @@
 
 import { buildRotPropertyNote } from './helpers';
 import {
+  LATE_INTEREST,
   renderDocumentPdfDesign,
   type DesignDocumentHeader,
   type DesignDocumentRow,
   type DocumentVariant,
 } from './documentPdfDesign';
+import { isRotDocument } from './offerPdf';
 import type {
   FortnoxCompanySettingsResponse,
   FortnoxTaxReductionResponse,
@@ -170,9 +172,6 @@ export function resolveOrderRotPresentation(
 
 // ── Varianter ────────────────────────────────────────────────────────────────
 
-/** Dröjsmålsräntan visas i huvudet men returneras inte av Fortnox — samma värde som på offerten. */
-const LATE_INTEREST = '8%';
-
 /**
  * Titelblockets rader. Tomma värden UTELÄMNAS, till skillnad från offerten där alla tre alltid
  * finns: en order utan leveransdatum hade annars fått en naken etikett utan värde efter sig.
@@ -186,6 +185,10 @@ function orderMeta(order: FortnoxOrderResponse): Array<[string, string]> {
 }
 
 export function orderVariant(order: FortnoxOrderResponse, referenceNumber: string): DocumentVariant {
+  // Sätts av Fortnox när ordern skapas ur en offert (`createorder`). En fristående order saknar
+  // det — men Fortnox skickar tomma heltalsfält som NOLLA lika gärna som null, och "Vårt offertnr
+  // 0" är ett dokumentnummer som inte finns. Båda tomvärdena räknas därför som "ingen offert".
+  const offerReference = String(order.OfferReference ?? '').trim();
   return {
     kind: 'order',
     title: 'ORDERBEKRÄFTELSE',
@@ -194,9 +197,7 @@ export function orderVariant(order: FortnoxOrderResponse, referenceNumber: strin
       ['Er referens', order.YourReference ?? ''],
       ['Ert referensnr', referenceNumber],
       ['Vår referens', order.OurReference ?? ''],
-      // Sätts av Fortnox när ordern skapas ur en offert (`createorder`); tom på en fristående
-      // order, och raden utgår då av sig själv.
-      ['Vårt offertnr', order.OfferReference == null ? '' : String(order.OfferReference)],
+      ['Vårt offertnr', offerReference === '0' ? '' : offerReference],
       ['Betalningsvillkor', order.TermsOfPayment ? `${order.TermsOfPayment} dagar` : ''],
       ['Dröjsmålsränta', LATE_INTEREST],
     ],
@@ -247,7 +248,19 @@ export type OrderPdfDesignInput = {
 
 export function renderOrderPdfDesign(input: OrderPdfDesignInput): Promise<Uint8Array> {
   const { order, rotDetails, rotEnabled, ...shared } = input;
-  const rot = resolveOrderRotPresentation(rotDetails, rotEnabled === true, order.YourOrderNumber);
+
+  // 🧨 **Referensraden och ROT-blocket MÅSTE avgöras på samma signal.**
+  //
+  // Renderaren ritar ROT-blocket på FORTNOX tillstånd (`isRotDocument`), medan `rotEnabled` kommer
+  // ur CRM. Läste suppressionen bara CRM hade en villaorder vars Fortnox-dokument tappat ROT fått
+  // referensraden blankad OCH beteckningen kastad med ROT-blocket — den hade då stått ingenstans,
+  // trots att Fortnox egen mall skriver ut den. Det är Skatteverkets underlag för avdraget.
+  //
+  // Glidningen är inte hypotetisk: `TaxReductionType` sätts bara vid create och går inte att slå på
+  // i efterhand (se FORTNOX_INTEGRATION.md), så en order vars ROT aldrig nådde fram står kvar som
+  // 'none' medan CRM säger ROT — precis den avvikelse `offers.ts` redan varnar för på offerten.
+  const showsRot = rotEnabled === true && isRotDocument(order);
+  const rot = resolveOrderRotPresentation(rotDetails, showsRot, order.YourOrderNumber);
 
   return renderDocumentPdfDesign({
     ...shared,

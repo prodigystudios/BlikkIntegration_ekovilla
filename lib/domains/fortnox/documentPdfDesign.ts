@@ -224,8 +224,13 @@ const FONT_DIR = path.join(process.cwd(), 'public', 'brand', 'fonts');
 // som går ut till kund, och där ligger också underlag som är gitignorerat.
 const LOGO_PATH = path.join(process.cwd(), 'public', 'brand', 'Ekovilla_logo_Figma.png');
 
-/** Dröjsmålsräntan visas i huvudet men returneras inte av Fortnox — den bor här, som förut. */
-const LATE_INTEREST = '8%';
+/**
+ * Dröjsmålsräntan visas i huvudet men returneras inte av Fortnox — den bor här.
+ *
+ * Exporterad så orderbekräftelsen läser SAMMA värde. Två kopior hade tyst kunnat glida isär, och då
+ * hade offerten och ordern på samma affär lovat olika ränta.
+ */
+export const LATE_INTEREST = '8%';
 
 // ── Text ─────────────────────────────────────────────────────────────────────
 //
@@ -500,10 +505,15 @@ export function buildSummaryBlock(
       : null,
     total: {
       label: reduction > 0 ? 'ATT BETALA EFTER AVDRAG' : totalLabel,
-      // `TotalToPay` faller tillbaka på `Total` när fältet saknas. Offertsvaret bär det alltid, men
-      // en order utan skattereduktion behöver inte göra det — och `formatAmount(undefined)` hade
-      // skrivit ut "0,00" som slutsumma på ett dokument med rader och belopp.
-      value: `${formatAmount(offer.TotalToPay ?? offer.Total)} ${currency}`,
+      // `TotalToPay` faller tillbaka på `Total` — men BARA på ett dokument utan avdrag. Offertsvaret
+      // bär fältet alltid, en order utan skattereduktion behöver inte göra det, och
+      // `formatAmount(undefined)` hade skrivit "0,00" som slutsumma på ett dokument med belopp.
+      //
+      // ⚠️ **Med ett avdrag får reserven inte slå till.** `Total` är då beloppet FÖRE avdraget medan
+      // etiketten säger "efter" — dokumentet hade visat en slutsumma som är för hög, direkt under
+      // avdragsraden, och sett helt trovärdigt ut. Mellanskillnaden räknar vi inte ut själva:
+      // Fortnox äger beloppen. En uppenbart saknad siffra är bättre än en trovärdig felaktig.
+      value: `${formatAmount(offer.TotalToPay ?? (reduction > 0 ? null : offer.Total))} ${currency}`,
     },
   };
 }

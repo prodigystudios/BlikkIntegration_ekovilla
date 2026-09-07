@@ -190,10 +190,14 @@ describe('varianterna', () => {
   });
 
   it('tar med offertnumret bara när ordern kom ur en offert', () => {
-    const withOffer = orderVariant(ROT_ORDER, 'x').references.find(([l]) => l === 'Vårt offertnr');
-    const standalone = orderVariant(BUSINESS_ORDER, 'x').references.find(([l]) => l === 'Vårt offertnr');
-    expect(withOffer?.[1]).toBe('10152');
-    expect(standalone?.[1]).toBe('');
+    const offerRef = (order: FortnoxOrderResponse) =>
+      orderVariant(order, 'x').references.find(([l]) => l === 'Vårt offertnr')?.[1];
+    expect(offerRef(ROT_ORDER)).toBe('10152');
+    expect(offerRef(BUSINESS_ORDER)).toBe('');
+    // Fortnox skickar tomma heltalsfält som NOLLA lika gärna som null. "Vårt offertnr 0" är ett
+    // dokumentnummer som inte finns.
+    expect(offerRef({ ...ROT_ORDER, OfferReference: 0 })).toBe('');
+    expect(offerRef({ ...ROT_ORDER, OfferReference: '0' })).toBe('');
   });
 
   it('följesedeln bär varken belopp, ROT eller betalningsvillkor', () => {
@@ -286,6 +290,17 @@ describe('orderbekräftelsen', () => {
   it('skriver INTE beteckningen två gånger', async () => {
     const text = await pageText(await render());
     expect(text.filter((line) => line.includes('Gustavsberg Sjöstugan 2:14'))).toHaveLength(1);
+  });
+
+  it('tappar ALDRIG fastighetsbeteckningen när Fortnox tappat ROT men CRM inte har det', async () => {
+    // 🧨 Referensraden blankades på CRM-tillstånd medan ROT-blocket ritades på Fortnox — och på en
+    // villaorder vars dokument står som 'none' försvann beteckningen ur båda. Den är Skatteverkets
+    // underlag; Fortnox egen mall skriver ut den. Glidningen uppstår när ROT aldrig nådde fram vid
+    // pushen, och går inte att laga i efterhand (TaxReductionType sätts bara vid create).
+    const drifted = { ...ROT_ORDER, TaxReductionType: 'none', TaxReduction: 0, TotalToPay: 12250 };
+    const text = (await pageText(await render(drifted))).join(' ');
+    expect(text).toContain('Gustavsberg Sjöstugan 2:14');
+    expect(text).not.toContain('ROT-AVDRAG');
   });
 
   it('säger TOTALT ORDERVÄRDE på en order utan avdrag', async () => {
