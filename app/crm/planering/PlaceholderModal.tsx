@@ -6,17 +6,9 @@ import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
+import { placeholderChanges, type PlaceholderInput } from './placeholderForm';
 
-export type PlaceholderInput = {
-  title: string;
-  customer: string | null;
-  truck_id: string;
-  start_day: string;
-  end_day: string;
-  job_type: string | null;
-  field_visible: boolean;
-  work_description: string | null;
-};
+export type { PlaceholderInput } from './placeholderForm';
 
 /**
  * Publicerings-switchen. Egen liten komponent i stället för en `<input type="checkbox">` av två
@@ -97,7 +89,11 @@ export default function PlaceholderModal({
    */
   crewCountFor?: (truckId: string, startDay: string, endDay: string) => number | null;
   onClose: () => void;
-  onSubmit: (input: PlaceholderInput) => Promise<void> | void;
+  /**
+   * `patch` är satt vid redigering och innehåller bara de ändrade fälten — se
+   * `placeholderChanges`. Vid skapande är den utelämnad och hela `input` gäller.
+   */
+  onSubmit: (input: PlaceholderInput, patch?: Partial<PlaceholderInput>) => Promise<void> | void;
 }) {
   const [title, setTitle] = useState(editing?.placeholder_title ?? '');
   const [customer, setCustomer] = useState(editing?.placeholder_customer ?? '');
@@ -118,18 +114,23 @@ export default function PlaceholderModal({
 
   const submit = async () => {
     if (!valid || saving) return;
+    const input: PlaceholderInput = {
+      title: title.trim(),
+      customer: customer.trim() || null,
+      truck_id: truckId,
+      start_day: startDay,
+      end_day: endDay,
+      job_type: jobType || null,
+      field_visible: fieldVisible,
+      work_description: description.trim() || null,
+    };
+    const patch = editing ? placeholderChanges(input, editing) : undefined;
+    // Inget ändrat: stäng utan att skriva. Rutten hade avvisat en tom patch, och att visa
+    // "Inget att spara" som ett fel vore fel — man tryckte Spara på något som redan var sparat.
+    if (patch && Object.keys(patch).length === 0) return onClose();
     setSaving(true);
     try {
-      await onSubmit({
-        title: title.trim(),
-        customer: customer.trim() || null,
-        truck_id: truckId,
-        start_day: startDay,
-        end_day: endDay,
-        job_type: jobType || null,
-        field_visible: fieldVisible,
-        work_description: description.trim() || null,
-      });
+      await onSubmit(input, patch);
     } finally {
       setSaving(false);
     }

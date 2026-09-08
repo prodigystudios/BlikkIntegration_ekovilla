@@ -261,11 +261,15 @@ export async function updatePlaceholderSegment(
   notFound: boolean;
   previousFieldVisible: boolean | null;
 }> {
-  const { data: before } = await supabase
+  const { data: before, error: beforeError } = await supabase
     .from('ops_segments')
     .select('field_visible, work_order_id')
     .eq('id', id)
     .maybeSingle();
+  // ⚠️ Läsfelet får inte tappas. Utan den här raden blir ett RLS-avslag eller en tillfällig
+  // störning till `notFound`, och anroparen svarar 404 "finns inte längre" om en rad som finns —
+  // med felet självt spårlöst borta.
+  if (beforeError) return { data: null, error: beforeError, notFound: false, previousFieldVisible: null };
   const prev = before as { field_visible: boolean | null; work_order_id: string | null } | null;
   // Samma spärr som i UPDATE:n nedan, men här kan den svara VARFÖR raden inte gick att röra.
   if (!prev || prev.work_order_id) return { data: null, error: null, notFound: true, previousFieldVisible: null };

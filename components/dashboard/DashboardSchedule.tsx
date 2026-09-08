@@ -716,15 +716,22 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     const uniq = Array.from(new Set(arr.map(m => (m.name || '').trim()).filter(Boolean)));
                     return uniq;
                   })();
+                  // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy —
+                  // alltså ingenting att öppna. Då ska kortet inte heller SE ut som en knapp:
+                  // pekaren, tab-stoppet, rollen och chevronen längre ned lovar en handling som
+                  // inte finns, och installatören trycker på den i tron att beskrivningen
+                  // fortsätter någonstans.
+                  const opens = !isCrmItem(it) || !!it.work_order_id;
                   return (
                     <div
                       key={`${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`}
-                      onClick={() => openDetail(it)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } }}
-                      role="button"
-                      tabIndex={0}
+                      onClick={opens ? () => openDetail(it) : undefined}
+                      onKeyDown={opens ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } } : undefined}
+                      role={opens ? 'button' : undefined}
+                      tabIndex={opens ? 0 : undefined}
                       className={cn(
-                        'relative grid cursor-pointer rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
+                        'relative grid rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
+                        opens && 'cursor-pointer',
                         compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
                       )}
                       style={{ borderLeft: `3px solid ${theme.accent}` }}
@@ -791,9 +798,11 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </span>
                           )}
                           <div className="inline-flex items-center gap-2">
-                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
-                              <path fill="currentColor" d="M9 18l6-6-6-6" />
-                            </svg>
+                            {opens && (
+                              <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
+                                <path fill="currentColor" d="M9 18l6-6-6-6" />
+                              </svg>
+                            )}
                             {positionLabel && (
                               <span title="Placering i dag/lastbil" className="min-w-[34px] rounded-full border border-slate-700 bg-slate-900 px-[7px] py-1 text-center text-[10px] font-bold text-white">
                                 {positionLabel}

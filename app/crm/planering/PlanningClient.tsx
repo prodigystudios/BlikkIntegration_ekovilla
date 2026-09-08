@@ -872,12 +872,14 @@ export default function PlanningClient({
   // Create a placeholder card (booked slot before the real work order exists), or save an edit to
   // one. Samma modal, samma nyttolast — bara metoden och adressen skiljer.
   const savePlaceholder = useCallback(
-    async (input: PlaceholderInput) => {
+    async (input: PlaceholderInput, patch?: Partial<PlaceholderInput>) => {
       const editingId = editPlaceholder?.id;
       const r = await fetch(editingId ? `${API}/placeholders/${editingId}` : `${API}/placeholders`, {
         method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        // Vid redigering skickas bara det som ändrats, så en samtidig ändring från någon annan inte
+        // skrivs över av formulärets ögonblicksbild. Se `placeholderChanges`.
+        body: JSON.stringify(patch ?? input),
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || (editingId ? 'Kunde inte spara platshållaren' : 'Kunde inte skapa platshållaren'));
