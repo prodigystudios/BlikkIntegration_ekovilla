@@ -121,6 +121,28 @@ export const setPeriodStatusSchema = z.object({
   note: optionalText.optional().default(null),
 });
 
+// Påminnelse från attesten om att fylla i sin tid.
+//
+// ⚠️ Ingen `reason` i schemat, med flit. Varför någon påminns härleds serversidan ur samma underlag
+// som listan visar — en klient som fick bestämma anledningen kunde skicka "du har inte rapporterat
+// något" till någon som rapporterat hela månaden.
+//
+// Taket på 200 mottagare är en spärr mot ett massutskick som råkar bli en skur: företaget har
+// tjugotalet anställda, så ett anrop med fler än så är ett fel någonstans — inte en större firma.
+export const sendTimeRemindersSchema = z.object({
+  period: monthSchema,
+  user_ids: z.array(z.string().uuid('Ogiltigt användar-id')).min(1, 'Välj minst en person').max(200, 'För många mottagare'),
+  // Egna ord ovanpå mallen. Taket är 200 tecken för att texten kan gå ut som SMS, där längden
+  // kostar per mottagare: mallen och länken tar redan drygt hundra tecken.
+  //
+  // ⚠️ Taket är en broms, inte en garanti om antalet segment. Ett enda tecken utanför GSM-7 —
+  // ett typografiskt apostrof, ett tankstreck, en emoji — flippar HELA meddelandet till UCS-2, och
+  // då rymmer ett segment 67 tecken i stället för 153. Räkna aldrig med ett visst antal segment
+  // utifrån teckengränsen; den finns för att hålla texten kort.
+  message: optionalText.pipe(z.string().max(200, 'Meddelandet är för långt').nullable()).optional().default(null),
+  send_sms: z.boolean().optional().default(false),
+});
+
 // ── Kvitton ──────────────────────────────────────────────────────────────────
 
 // Uppladdningen i tre steg, som arbetsorderfilerna: (1) be om en signerad URL, (2) ladda upp direkt

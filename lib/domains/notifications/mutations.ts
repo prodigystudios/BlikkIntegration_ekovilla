@@ -30,6 +30,21 @@ export async function createNotifications(admin: SupabaseClient, rows: Notificat
 
 // Auto-gallring: delete READ notifications older than `olderThanDays`. Unread rows are always
 // kept. Service-role only (cron). Returns the deleted rows so the caller can log a count.
+/**
+ * Notistyper som ÖVERLEVER gallringen.
+ *
+ * 🧨 En påminnelse är inte bara ett meddelande — den är ett SPÅR. Attestvyn läser tillbaka
+ * `time.reminder` för att kunna visa "Påmind 3 sep", och det finns ingen annan lagring av det:
+ * `crm_time_approvals` får en rad först vid första statusövergången, alltså saknar just de personer
+ * man vill påminna en rad att skriva på.
+ *
+ * Gallras raden bort blir följden ett tyst felaktigt påstående — en månad som fortfarande står
+ * `open` i oktober visar "ingen påmind" fast alla påmindes i september, och någon påminner igen.
+ * Volymen är försumbar (ett tjugotal personer gånger tolv månader), så att spara dem är billigare
+ * än att ha fel.
+ */
+const RETAINED_NOTIFICATION_TYPES = ['time.reminder'];
+
 export async function pruneReadNotifications(admin: SupabaseClient, olderThanDays = 30) {
   const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
   return admin
@@ -37,6 +52,7 @@ export async function pruneReadNotifications(admin: SupabaseClient, olderThanDay
     .delete()
     .not('read_at', 'is', null)
     .lt('read_at', cutoff)
+    .not('type', 'in', `(${RETAINED_NOTIFICATION_TYPES.join(',')})`)
     .select('id');
 }
 

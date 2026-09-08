@@ -109,3 +109,29 @@ export function buildCrmTaskAssignedNotification(input: {
     entity_id: input.taskId,
   };
 }
+
+/**
+ * Påminnelse från attesten om att fylla i sin tid.
+ *
+ * Rubriken och texten byggs i tid-domänen (`lib/domains/time/reminders.ts`), som äger regeln för
+ * vad appen faktiskt vet om vad som saknas — och som medvetet aldrig påstår ett antal dagar. Här
+ * blir den bara en notis.
+ *
+ * `entity_id` lämnas null: kolumnen är uuid-typad och en periodstart ('2026-08-01') är ingen uuid.
+ * Perioden bärs i stället av href:en, som `timeReminderHref` äger — se den funktionen för varför
+ * det formatet är ett kontrakt och inte en visningsdetalj.
+ */
+export function buildTimeReminderNotification(input: {
+  title: string;
+  body: string;
+  href: string;
+}): NotificationContent {
+  return {
+    type: 'time.reminder',
+    title: input.title,
+    body: input.body,
+    href: input.href,
+    entity_type: 'time_period',
+    entity_id: null,
+  };
+}

@@ -90,6 +90,8 @@ const MEMBER_KEYS: PermissionKey[] = ['time.entry.write'];
 // framför allt inte `time.entry.write.all`: hon attesterar men rättar aldrig någons timmar.
 // Skillnaden mot admin är hela poängen med rollen, så seeden måste bära den för att route-testerna
 // ska mäta henne och inte en admin i förklädnad.
+// ⛔ `time.reminder.sms` saknas här med samma avsikt som `time.entry.write.all`: hon får påminna
+// personalen i appen, men inte sms:a deras privata mobiler på företagets bekostnad.
 const EKONOMI_KEYS: PermissionKey[] = ['time.entry.read.all', 'time.approve', 'time.payroll.read'];
 
 export function effectivePermissionsForRole(role: string | undefined | null): Set<PermissionKey> {

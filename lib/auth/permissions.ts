@@ -47,6 +47,11 @@ export const PERMISSION_KEYS = [
   // att godkänna det någon annan skrivit, att rätta är att skriva i deras ställe. Varje ändring
   // loggas av en databastrigger (20260814_time_admin_corrections.sql).
   'time.entry.write.all',
+  // Skicka attestens påminnelse som SMS. Egen nyckel och inte `time.approve` av samma skäl som
+  // raden ovan: notisen i appen är gratis och intern, men ett SMS går till en PRIVAT mobil på
+  // företagets kostnad — och `time.approve` innehas av lönebyrån, som är en extern part.
+  // Seedad admin-only i 20260908_time_reminder_sms_permission.sql.
+  'time.reminder.sms',
   // Coarse meta keys backing the legacy requireCrmUser/Writer/Admin guards 1:1
   'crm.access', 'crm.write', 'crm.admin',
 ] as const;

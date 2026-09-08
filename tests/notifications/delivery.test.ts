@@ -150,3 +150,44 @@ describe('deliverNotifications', () => {
     expect(calls.updates.some((u) => u.id === 'd1' && 'last_failure_at' in u.payload)).toBe(true);
   });
 });
+
+// 🧨 Push-taggen kollapsar banners för SAMMA sak. Med `entity_id` null blev den konstanten
+// "<type>:" för hela typen, så två OLIKA notiser krockade på enheten: septembers tidpåminnelse
+// ersatte augustis olästa. Href:en är fallbacken, eftersom den bär ämnet för de typer vars ämne
+// inte är en uuid (en periodstart är ingen uuid, så tidpåminnelsen kan inte lagra den i entity_id).
+describe('push-taggen skiljer notiser åt även utan entity_id', () => {
+  const reminder = (periodStart: string): NotificationInsert => ({
+    recipient_user_id: 'u1',
+    type: 'time.reminder',
+    title: `Lämna in din tid`,
+    body: 'text',
+    href: `/tid?datum=${periodStart}`,
+    entity_type: 'time_period',
+    entity_id: null,
+  });
+
+  async function tagSentFor(rows: NotificationInsert[]): Promise<string[]> {
+    const { admin } = makeAdmin([device('d1', 'u1')]);
+    vi.mocked(sendWebPush).mockClear();
+    await deliverNotifications(admin, rows);
+    return vi.mocked(sendWebPush).mock.calls.map((call) => (call[1] as { tag: string }).tag);
+  }
+
+  it('ger två perioder olika tagg', async () => {
+    const [augusti] = await tagSentFor([reminder('2026-08-01')]);
+    const [september] = await tagSentFor([reminder('2026-09-01')]);
+    expect(augusti).not.toBe(september);
+    expect(augusti).toContain('2026-08-01');
+  });
+
+  it('kollapsar fortfarande två påminnelser om SAMMA period', async () => {
+    const [a] = await tagSentFor([reminder('2026-08-01')]);
+    const [b] = await tagSentFor([reminder('2026-08-01')]);
+    expect(a).toBe(b);
+  });
+
+  it('låter entity_id vinna när den finns', async () => {
+    const [tag] = await tagSentFor([row('u1')]);
+    expect(tag).toBe('work_order.mention:wo1');
+  });
+});

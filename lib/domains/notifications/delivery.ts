@@ -80,7 +80,13 @@ async function sendToDevice(admin: SupabaseClient, device: PushSubscriptionRow, 
         url: row.href ?? '/',
         // Collapse repeated push banners for the same thing (a new mention on the same order
         // replaces the previous banner); the bell still lists every notification.
-        tag: `${row.type}:${row.entity_id ?? ''}`,
+        //
+        // 🧨 Faller tillbaka på href:en när entity_id saknas. Utan fallbacken blir taggen konstanten
+        // `"<type>:"` för varje sådan notistyp, och då kollapsar två OLIKA notiser mot varandra:
+        // septembers tidpåminnelse ersatte augustis olästa på enheten. Alla typer vars ämne inte är
+        // en uuid hamnar där — `time.reminder` bär t.ex. sin period i href:en, eftersom entity_id
+        // är uuid-typad och en periodstart inte är en uuid.
+        tag: `${row.type}:${row.entity_id ?? row.href ?? ''}`,
       },
     );
     await admin
