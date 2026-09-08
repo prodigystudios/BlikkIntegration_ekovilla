@@ -147,8 +147,14 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     // would be worse than useless: it enriches by looking a Blikk project up BY ORDER NUMBER, and
     // Fortnox numbers are numeric like Blikk's — so a CRM job could pull up an unrelated project's
     // details, and the segment reports/comments below belong to legacy tables entirely.
-    if (isCrmItem(it) && it.work_order_id) {
-      window.location.href = `/arbetsorder/${it.work_order_id}`;
+    //
+    // ⚠️ Grinden står på KÄLLAN, inte på order-id:t. En CRM-rad kan sakna arbetsorder sedan
+    // platshållare kan publiceras till entreprenaden — och `&& it.work_order_id` hade släppt
+    // igenom just den raden till precis det modalen ovan säger att den aldrig får köra på: ett
+    // uppslag mot planning_*-tabellerna med ett CRM-uuid, och ett Blikk-projekt sökt på
+    // ordernummer. En platshållare har inget att öppna, och då är rätt svar att inte öppna något.
+    if (isCrmItem(it)) {
+      if (it.work_order_id) window.location.href = `/arbetsorder/${it.work_order_id}`;
       return;
     }
     setDetailOpen(true);

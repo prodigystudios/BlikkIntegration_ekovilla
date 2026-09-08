@@ -246,12 +246,30 @@ export type UpdatePlaceholderInput = {
  * som en lyckad skrivning. `maybeSingle()` + `notFound` gör skillnaden synlig för anroparen, som
  * annars hade svarat 200 på en ändring som aldrig hände (fel id, eller ett riktigt jobb som
  * spärren ovan sorterade bort).
+ *
+ * `previousFieldVisible` läses före skrivningen och lämnas tillbaka: PostgREST kan inte returnera
+ * det gamla värdet, och utan det kan anroparen inte skilja "publicerade" från "sparade en ändring
+ * på något redan publicerat" — formuläret skickar med flaggan varje gång.
  */
 export async function updatePlaceholderSegment(
   supabase: SupabaseClient,
   id: string,
   patch: UpdatePlaceholderInput,
-): Promise<{ data: OpsSegment | null; error: { message: string } | null; notFound: boolean }> {
+): Promise<{
+  data: OpsSegment | null;
+  error: { message: string } | null;
+  notFound: boolean;
+  previousFieldVisible: boolean | null;
+}> {
+  const { data: before } = await supabase
+    .from('ops_segments')
+    .select('field_visible, work_order_id')
+    .eq('id', id)
+    .maybeSingle();
+  const prev = before as { field_visible: boolean | null; work_order_id: string | null } | null;
+  // Samma spärr som i UPDATE:n nedan, men här kan den svara VARFÖR raden inte gick att röra.
+  if (!prev || prev.work_order_id) return { data: null, error: null, notFound: true, previousFieldVisible: null };
+
   const update: Record<string, unknown> = {};
   if (patch.title !== undefined) update.placeholder_title = patch.title;
   if (patch.customer !== undefined) update.placeholder_customer = patch.customer;
@@ -270,9 +288,12 @@ export async function updatePlaceholderSegment(
     .select(SEGMENT_SELECT)
     .maybeSingle();
 
-  if (error) return { data: null, error, notFound: false };
-  if (!data) return { data: null, error: null, notFound: true };
-  return { data: mapSegment(data as unknown as RawSegment), error: null, notFound: false };
+  const previousFieldVisible = prev.field_visible ?? false;
+  if (error) return { data: null, error, notFound: false, previousFieldVisible };
+  // Raden fanns nyss men träffas inte längre — någon hann radera den mellan läsningen och
+  // skrivningen. Samma svar som om den aldrig fanns.
+  if (!data) return { data: null, error: null, notFound: true, previousFieldVisible };
+  return { data: mapSegment(data as unknown as RawSegment), error: null, notFound: false, previousFieldVisible };
 }
 
 export type MoveSegmentInput = {

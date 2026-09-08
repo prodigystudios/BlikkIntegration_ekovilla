@@ -9,12 +9,17 @@
 --
 -- Därför: en flagga planeraren slår på medvetet, och ett fritextfält som följer med ut i fältet.
 --
--- DEPLOY-ORDNING
+-- DEPLOY-ORDNING: SQL FÖRST, sedan koden.
 -- Körs efter 20260613_ops_segments_placeholders.sql och 20260810_get_my_crm_jobs.sql. Idempotent.
 --
--- ⚠️ Ordningen mot koden är fri här, till skillnad från vanligt: field_visible defaultar till false
--- och kan bara sättas av det nya UI:t, så RPC-ändringen nedan släpper igenom exakt noll rader förrän
--- någon slår på flaggan. Kör den när du vill.
+-- 🧨 Kod före SQL slår ut HELA planeringstavlan, inte bara det nya. `SEGMENT_SELECT`
+-- (lib/domains/planning/schedule.ts) namnger field_visible och work_description, och PostgREST
+-- svarar 42703 "column does not exist" på en kolumn som inte finns — alltså failar `listSegments`,
+-- och /crm/planering laddar noll segment. Inget går att placera, flytta eller ens se.
+--
+-- (Att flaggan defaultar till false gör bara RPC-ändringen ofarlig: den släpper igenom noll rader
+-- tills någon slår på den i UI:t. Det är ett argument för att SQL:en kan köras i god tid FÖRE
+-- driftsättningen — inte för att ordningen skulle vara fri.)
 
 -- ── 1. Kolumnerna ───────────────────────────────────────────────────────────
 -- field_visible ligger på ops_segments och inte på en platshållartabell för att en platshållare ÄR

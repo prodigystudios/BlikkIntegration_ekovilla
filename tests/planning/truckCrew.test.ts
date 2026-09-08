@@ -75,7 +75,12 @@ describe('crewSizeForRange', () => {
     row('b', 't1', '2026-06-15', '2026-06-21'),
     row('c', 't2', '2026-06-15', '2026-06-21'),
   ];
-  const defaults = [{ truck_id: 't1' }, { truck_id: 't1' }, { truck_id: 't1' }, { truck_id: 't2' }];
+  const defaults = [
+    { truck_id: 't1', member_id: 'u1' },
+    { truck_id: 't1', member_id: 'u2' },
+    { truck_id: 't1', member_id: 'u3' },
+    { truck_id: 't2', member_id: 'u4' },
+  ];
 
   it('räknar veckans besättning när veckan har egna rader', () => {
     expect(crewSizeForRange(weekly, defaults, 't1', '2026-06-15', '2026-06-21')).toBe(2);
@@ -104,5 +109,43 @@ describe('crewSizeForRange', () => {
     expect(crewSizeForRange(partial, defaults, 't1', '2026-06-15', '2026-06-21')).toBe(1);
     // Utan vidgning (bara torsdagen) hade den missats och standardteamet svarat i stället.
     expect(crewSizeForRange(partial, defaults, 't1', '2026-06-18', '2026-06-18')).toBe(3);
+  });
+});
+
+// Siffran ska svara på "hur många SER den", inte "hur många rader finns". Två sätt att räkna fel,
+// båda blåser upp den och tystar varningen om att ingen ser bokningen.
+describe('crewSizeForRange räknar mottagare, inte rader', () => {
+  const defaults = [
+    { truck_id: 't1', member_id: 'u1' },
+    { truck_id: 't1', member_id: 'u2' },
+  ];
+
+  it('räknar inte en besättningsrad utan konto', () => {
+    // member_id null = bara ett namn. is_user_on_segment matchar på member_id = auth.uid(),
+    // så raden når ingen — men veckan är ändå tilldelad, så standardteamet får inte svara.
+    const nameOnly: TruckCrewMember[] = [
+      { id: 'r1', truck_id: 't1', member_id: null, member_name: 'Inhyrd', start_day: '2026-06-15', end_day: '2026-06-21', role: 'member' },
+    ];
+    expect(crewSizeForRange(nameOnly, defaults, 't1', '2026-06-15', '2026-06-21')).toBe(0);
+  });
+
+  it('räknar inte samma person två gånger när intervallet spänner två veckor', () => {
+    // ops_truck_crew har en rad per person och vecka. Ett fredag–måndag-jobb vidgas till två
+    // ISO-veckor, så samma två personer kommer tillbaka i fyra rader.
+    const twoWeeks: TruckCrewMember[] = [
+      { id: 'r1', truck_id: 't1', member_id: 'u1', member_name: 'A', start_day: '2026-06-15', end_day: '2026-06-21', role: 'member' },
+      { id: 'r2', truck_id: 't1', member_id: 'u2', member_name: 'B', start_day: '2026-06-15', end_day: '2026-06-21', role: 'member' },
+      { id: 'r3', truck_id: 't1', member_id: 'u1', member_name: 'A', start_day: '2026-06-22', end_day: '2026-06-28', role: 'member' },
+      { id: 'r4', truck_id: 't1', member_id: 'u2', member_name: 'B', start_day: '2026-06-22', end_day: '2026-06-28', role: 'member' },
+    ];
+    expect(crewSizeForRange(twoWeeks, defaults, 't1', '2026-06-15', '2026-06-28')).toBe(2);
+  });
+
+  it('hoppar över kontolösa rader även i standardbemanningen', () => {
+    const mixed = [
+      { truck_id: 't1', member_id: 'u1' },
+      { truck_id: 't1', member_id: null },
+    ];
+    expect(crewSizeForRange([], mixed, 't1', '2026-06-15', '2026-06-21')).toBe(1);
   });
 });

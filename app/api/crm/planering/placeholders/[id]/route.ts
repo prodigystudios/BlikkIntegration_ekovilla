@@ -31,7 +31,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     }
 
     const supabase = createRouteHandlerClient({ cookies });
-    const { data, error, notFound } = await updatePlaceholderSegment(supabase, context.params.id, {
+    const { data, error, notFound, previousFieldVisible } = await updatePlaceholderSegment(supabase, context.params.id, {
       title: parsed.data.title,
       customer: parsed.data.customer,
       truckId: parsed.data.truck_id,
@@ -54,16 +54,20 @@ export async function PATCH(req: Request, context: RouteContext) {
       return routeError(404, 'planning_placeholder_not_found', 'Platshållaren finns inte längre, eller är ett riktigt jobb.');
     }
 
-    // Synligheten loggas uttryckligen när den ändras: det är den enda ändringen här som får en
+    // Synligheten loggas uttryckligen när den ÄNDRAS: det är den enda ändringen här som får en
     // konsekvens utanför tavlan — raden dyker upp hos, eller försvinner från, ett gäng
     // installatörer. En rad som bara säger "Uppdaterade" hade dolt just det.
+    //
+    // ⚠️ Jämför mot det gamla värdet, inte mot om fältet skickades: modalen skickar med flaggan
+    // varje gång den sparar, så ett rättat stavfel på en redan publicerad platshållare hade loggats
+    // som "Publicerade …" om och om igen — och loggen hade sagt att den publicerats fem gånger.
     const title = data.placeholder_title ?? 'platshållare';
-    const summary =
-      parsed.data.field_visible === true
+    const visibilityChanged = data.field_visible !== previousFieldVisible;
+    const summary = visibilityChanged
+      ? data.field_visible
         ? `Publicerade platshållare "${title}" för entreprenaden`
-        : parsed.data.field_visible === false
-          ? `Dolde platshållare "${title}" för entreprenaden`
-          : `Uppdaterade platshållare "${title}"`;
+        : `Dolde platshållare "${title}" för entreprenaden`
+      : `Uppdaterade platshållare "${title}"`;
 
     await logActivity(supabase, gate.currentUser, {
       action: 'segment.update',
