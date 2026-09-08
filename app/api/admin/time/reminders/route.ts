@@ -77,14 +77,18 @@ export async function POST(req: Request) {
     const selected = rows
       .map((row) => ({ row, reason: reminderReasonFor(row) }))
       .filter((item): item is { row: (typeof rows)[number]; reason: ReminderReason } =>
-        item.reason !== null &&
-        wanted.has(item.row.user_id.toLowerCase()) &&
-        // Aldrig sig själv. Attestlistan innehåller alla anställda utom konsult och lönebyrån,
-        // alltså står en admin som attesterar i sin egen lista — och en påminnelse till sig själv
-        // om att fylla i sin egen tid är brus. Samma regel som notissystemets recept ("minus the
-        // actor") redan har för mentions och felanmälningar.
-        item.row.user_id.toLowerCase() !== gate.currentUser!.id.toLowerCase(),
+        item.reason !== null && wanted.has(item.row.user_id.toLowerCase()),
       );
+
+    // ⛔ INGEN "minus the actor" här, till skillnad från notissystemets övriga producenter.
+    //
+    // Den konventionen finns för att en notis om DIN EGEN handling är brus — man @-taggar inte sig
+    // själv. Den här notisen handlar om MOTTAGARENS saknade tid, vilket är precis lika sant när
+    // mottagaren är du: en admin som attesterar rapporterar också sin egen tid.
+    //
+    // Regeln fanns kort och togs bort: den gjorde funktionen omöjlig att prova på sig själv, och
+    // gav ett 409 som skyllde på att listan ändrats. Att någon står med i ett massutskick som inte
+    // borde löses i stället SYNLIGT, med kryssrutorna i modalen.
 
     const admin = getSupabaseAdmin();
 

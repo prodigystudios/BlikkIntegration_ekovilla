@@ -267,19 +267,38 @@ describe('POST /api/admin/time/reminders — när numren inte går att läsa', (
 });
 
 describe('POST /api/admin/time/reminders — dubbletter och avsändaren själv', () => {
-  it('påminner aldrig avsändaren om hens egen tid', async () => {
-    // Attestlistan innehåller varje anställd utom konsult och lönebyrån, så en admin som attesterar
-    // står i sin egen lista. En påminnelse till sig själv är brus — samma "minus the actor"-regel
-    // som notissystemets recept redan har för mentions.
+  it('låter avsändaren påminna sig själv', async () => {
+    // ⛔ INGEN "minus the actor" här. Konventionen finns för notiser om din EGEN handling (man
+    // @-taggar inte sig själv); den här handlar om MOTTAGARENS saknade tid, vilket är lika sant när
+    // mottagaren är du — en admin som attesterar rapporterar också sin egen tid.
+    //
+    // Regeln fanns kort och togs bort: den gjorde funktionen omöjlig att prova på sig själv, och
+    // svaret blev ett 409 som skyllde på att listan ändrats.
     mockUser.mockResolvedValue({ ...adminUser, id: ANNA } as any);
     mockOverview.mockResolvedValue({
       data: [person(ANNA, 'Anna', 'open', 0), person(BENGT, 'Bengt', 'open', 0)],
       error: null,
     } as any);
-    const { body } = await json(await send({ period: '2026-08', user_ids: [ANNA, BENGT] }));
+    const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA, BENGT] }));
+    expect(status).toBe(200);
     const rows = mockDeliver.mock.calls[0][1] as Array<{ recipient_user_id: string }>;
-    expect(rows.map((r) => r.recipient_user_id)).toEqual([BENGT]);
-    expect(body.data.skipped).toBe(1);
+    expect(rows.map((r) => r.recipient_user_id)).toEqual([ANNA, BENGT]);
+    expect(body.data.skipped).toBe(0);
+  });
+
+  it('säger VARFÖR ingen kunde påminnas, inte bara att ingen kunde det', async () => {
+    // 🧨 Ett 409 som skyller på att "listan kan ha hunnit ändras" när den verkliga orsaken är en
+    // annan skickar folk att leta efter ett fel som inte finns. De två orsakerna har därför var
+    // sitt besked.
+    mockUser.mockResolvedValue(adminUser as any);
+    mockOverview.mockResolvedValue({ data: [person(ANNA, 'Anna', 'submitted', 14)], error: null } as any);
+    const inlämnad = await json(await send({ period: '2026-08', user_ids: [ANNA] }));
+    expect(inlämnad.body.error).toContain('behöver påminnas längre');
+
+    mockOverview.mockResolvedValue({ data: [person(ANNA, 'Anna', 'open', 0)], error: null } as any);
+    vi.mocked(getSupabaseAdmin).mockReturnValue(adminWithPhones({}, [ANNA]));
+    const nyss = await json(await send({ period: '2026-08', user_ids: [ANNA] }));
+    expect(nyss.body.error).toContain('redan påminda');
   });
 
   it('hoppar över den som påmindes för en stund sedan', async () => {
