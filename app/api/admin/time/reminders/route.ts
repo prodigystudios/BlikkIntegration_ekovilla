@@ -62,17 +62,43 @@ export async function POST(req: Request) {
     // Bara de som BÅDE valdes och faktiskt går att påminna. Filtret sitter här och inte i klienten
     // för att listan kan ha ändrats sedan sidan laddades: någon hinner lämna in medan modalen står
     // öppen, och då ska hon inte få en påminnelse om något hon just gjort.
-    const targets = rows
+    const selected = rows
       .map((row) => ({ row, reason: reminderReasonFor(row) }))
       .filter((item): item is { row: (typeof rows)[number]; reason: ReminderReason } =>
-        item.reason !== null && wanted.has(item.row.user_id.toLowerCase()),
+        item.reason !== null &&
+        wanted.has(item.row.user_id.toLowerCase()) &&
+        // Aldrig sig själv. Attestlistan innehåller alla anställda utom konsult och lönebyrån,
+        // alltså står en admin som attesterar i sin egen lista — och en påminnelse till sig själv
+        // om att fylla i sin egen tid är brus. Samma regel som notissystemets recept ("minus the
+        // actor") redan har för mentions och felanmälningar.
+        item.row.user_id.toLowerCase() !== gate.currentUser!.id.toLowerCase(),
       );
 
-    if (targets.length === 0) {
-      return routeError(409, 'time_reminder_no_targets', 'Ingen av de valda behöver påminnas längre — listan kan ha hunnit ändras.');
-    }
-
     const admin = getSupabaseAdmin();
+
+    /**
+     * Idempotensfönster — skyddet mot en OMTRYCKNING, inte mot att påminna igen.
+     *
+     * 🧨 Notiserna skrivs och SMS:en går innan svaret når klienten. Tappas svaret på vägen (bruten
+     * uppkoppling, eller taket i maxDuration mitt i SMS-loopen) ser användaren ett nätverksfel,
+     * ingen rad hinner få sitt "Påmind i dag", och det naturliga är att trycka igen — varpå alla
+     * dubbelnotifieras och varje redan skickat SMS betalas en gång till.
+     *
+     * Fönstret är därför kort med flit. Att påminna någon igen en timme senare är en giltig
+     * åtgärd och ska fungera; att göra det inom två minuter är i praktiken alltid ett omtryck.
+     */
+    const justReminded = await recentlyRemindedIds(admin, selected.map((t) => t.row.user_id), periodStart);
+    const targets = selected.filter((item) => !justReminded.has(item.row.user_id));
+
+    if (targets.length === 0) {
+      return routeError(
+        409,
+        'time_reminder_no_targets',
+        justReminded.size > 0
+          ? 'De valda är redan påminda alldeles nyss.'
+          : 'Ingen av de valda behöver påminnas längre — listan kan ha hunnit ändras.',
+      );
+    }
 
     // Notisen först, och den går ALLTID. Den är gratis, når alla som öppnar appen och är dessutom
     // det historiken läses tillbaka ur ("påmind 3 sep") — hoppar man över den finns det ingen
@@ -146,11 +172,49 @@ export async function POST(req: Request) {
       sms_missing_phone: missingPhone,
       sms_failed: smsFailed,
       sms_lookup_failed: smsLookupFailed,
-      // De som valdes men inte längre behövde påminnas. Klienten säger det rakt ut i stället för
-      // att tyst rapportera en lägre siffra än antalet man kryssade i.
+      // De som valdes men inte fick något: redan inlämnade, avsändaren själv, eller nyss påminda.
+      // Klienten säger det rakt ut i stället för att tyst rapportera en lägre siffra än antalet
+      // man kryssade i.
       skipped: wanted.size - targets.length,
     });
   } catch (e: any) {
     return routeError(500, 'time_reminder_unexpected', e?.message || 'Kunde inte skicka påminnelsen');
+  }
+}
+
+/** Hur länge en påminnelse räknas som "nyss skickad". Se idempotensnoten ovan. */
+const RESEND_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * De av mottagarna som redan fått en påminnelse om perioden de senaste minuterna.
+ *
+ * Läses med adminklienten av samma skäl som historiken i översikten: `notifications` är läsbar bara
+ * för sin MOTTAGARE, så avsändaren kan inte se sina egna utskick under sin session.
+ *
+ * ⚠️ Failar läsningen returneras en TOM mängd, alltså skickas påminnelsen. Det är medvetet åt det
+ * hållet: att missa ett dubblettskydd kostar ett extra SMS, att tro att alla nyss påmints hade
+ * tystat funktionen helt.
+ */
+async function recentlyRemindedIds(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  userIds: string[],
+  periodStart: string,
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  try {
+    const since = new Date(Date.now() - RESEND_WINDOW_MS).toISOString();
+    const { data, error } = await admin
+      .from('notifications')
+      .select('recipient_user_id')
+      .eq('type', 'time.reminder')
+      // Samma ankare som historiken i översikten — se timeReminderHref.
+      .eq('href', timeReminderHref(periodStart))
+      .in('recipient_user_id', userIds)
+      .gte('created_at', since);
+    if (error) throw error;
+    return new Set((data ?? []).map((row: { recipient_user_id: string }) => row.recipient_user_id));
+  } catch (e) {
+    console.error('[time.reminder] kunde inte läsa nyliga påminnelser', e);
+    return new Set();
   }
 }

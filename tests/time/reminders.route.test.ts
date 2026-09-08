@@ -54,13 +54,30 @@ const person = (user_id: string, full_name: string, status: string, entry_count:
   compensation_amount: 0, compensation_count: 0,
 });
 
-/** Adminklienten läser bara profiles(id, phone) i den här routen. */
-function adminWithPhones(phones: Record<string, string | null>) {
+/**
+ * Adminklienten gör TVÅ läsningar i den här routen: nyliga påminnelser ur `notifications`
+ * (.eq().eq().in().gte()) och telefonnummer ur `profiles` (.in()).
+ *
+ * Båda modelleras, så testerna inte tyst går genom felgrenarna — en attrapp som saknar `.gte`
+ * hade fått dubblettskyddet att kasta, fångas och returnera "ingen nyss påmind", vilket ser ut som
+ * att skyddet är avstängt fast det är attrappen som är ofullständig.
+ */
+function adminWithPhones(phones: Record<string, string | null>, recentlyReminded: string[] = []) {
   return {
-    from: () => ({
-      select: () => ({
-        in: async () => ({ data: Object.entries(phones).map(([id, phone]) => ({ id, phone })), error: null }),
-      }),
+    from: (table: string) => ({
+      select: () => {
+        if (table === 'notifications') {
+          const chain: any = {
+            eq: () => chain,
+            in: () => chain,
+            gte: async () => ({ data: recentlyReminded.map((id) => ({ recipient_user_id: id })), error: null }),
+          };
+          return chain;
+        }
+        return {
+          in: async () => ({ data: Object.entries(phones).map(([id, phone]) => ({ id, phone })), error: null }),
+        };
+      },
     }),
   } as any;
 }
@@ -222,7 +239,15 @@ describe('POST /api/admin/time/reminders — när numren inte går att läsa', (
     // blir ett glatt 200 med "alla saknar telefonnummer" — varpå någon letar i tjugo profiler
     // efter nummer som redan står där.
     vi.mocked(getSupabaseAdmin).mockReturnValue({
-      from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: 'boom' } }) }) }),
+      from: (table: string) => ({
+        select: () => {
+          if (table === 'notifications') {
+            const chain: any = { eq: () => chain, in: () => chain, gte: async () => ({ data: [], error: null }) };
+            return chain;
+          }
+          return { in: async () => ({ data: null, error: { message: 'boom' } }) };
+        },
+      }),
     } as any);
 
     const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
@@ -238,5 +263,33 @@ describe('POST /api/admin/time/reminders — när numren inte går att läsa', (
   it('flaggar inte uppslagningen som trasig i det normala fallet', async () => {
     const { body } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
     expect(body.data.sms_lookup_failed).toBe(false);
+  });
+});
+
+describe('POST /api/admin/time/reminders — dubbletter och avsändaren själv', () => {
+  it('påminner aldrig avsändaren om hens egen tid', async () => {
+    // Attestlistan innehåller varje anställd utom konsult och lönebyrån, så en admin som attesterar
+    // står i sin egen lista. En påminnelse till sig själv är brus — samma "minus the actor"-regel
+    // som notissystemets recept redan har för mentions.
+    mockUser.mockResolvedValue({ ...adminUser, id: ANNA } as any);
+    mockOverview.mockResolvedValue({
+      data: [person(ANNA, 'Anna', 'open', 0), person(BENGT, 'Bengt', 'open', 0)],
+      error: null,
+    } as any);
+    const { body } = await json(await send({ period: '2026-08', user_ids: [ANNA, BENGT] }));
+    const rows = mockDeliver.mock.calls[0][1] as Array<{ recipient_user_id: string }>;
+    expect(rows.map((r) => r.recipient_user_id)).toEqual([BENGT]);
+    expect(body.data.skipped).toBe(1);
+  });
+
+  it('hoppar över den som påmindes för en stund sedan', async () => {
+    // 🧨 Skyddet mot en OMTRYCKNING: notiserna är redan skrivna och SMS:en skickade när svaret
+    // tappas, så nästa klick hade dubbelnotifierat alla och betalat varje SMS en gång till.
+    mockUser.mockResolvedValue(adminUser as any);
+    vi.mocked(getSupabaseAdmin).mockReturnValue(adminWithPhones({}, [ANNA]));
+    const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA] }));
+    expect(status).toBe(409);
+    expect(body.error).toContain('redan påminda');
+    expect(mockDeliver).not.toHaveBeenCalled();
   });
 });

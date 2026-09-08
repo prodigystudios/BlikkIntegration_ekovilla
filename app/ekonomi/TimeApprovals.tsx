@@ -389,7 +389,7 @@ export default function TimeApprovals() {
         if (!res.ok || !body?.ok) return body?.error || `Fel (${res.status})`;
 
         const d = body.data;
-        const parts = [`${d.notified} ${d.notified === 1 ? 'påminnelse' : 'påminnelser'} skickade`];
+        const parts = [d.notified === 1 ? '1 påminnelse skickad' : `${d.notified} påminnelser skickade`];
         // ⚠️ "Kunde inte läsa numren" är INTE samma sak som "ingen har nummer". Utan den här grenen
         // hade beskedet sagt att hela personalen saknar telefonnummer, och någon börjat leta i
         // profilerna efter ett fel som inte finns.
@@ -743,10 +743,10 @@ export default function TimeApprovals() {
           hasPhone={hasPhone}
           phoneKnown={remindersOk}
           onClose={() => setReminding(null)}
-          onSubmit={async (message, sendSms) => {
+          onSubmit={async (chosen, message, sendSms) => {
             // Stänger FÖRST när anropet lyckats — samma skäl som återöppningen: ett 409 eller
             // nätverksfel får inte radera det man skrivit.
-            const failure = await sendReminders(reminding, message, sendSms);
+            const failure = await sendReminders(chosen, message, sendSms);
             if (failure) return failure;
             setReminding(null);
             return null;
@@ -1051,18 +1051,25 @@ function ReminderModal({
   /** Falskt när telefonuppgiften inte gick att läsa — då säger modalen inget om nummer alls. */
   phoneKnown: boolean;
   onClose: () => void;
-  onSubmit: (message: string | null, sendSms: boolean) => Promise<string | null>;
+  /** Får de FAKTISKT valda raderna, inte hela listan — mottagare kan bockas av här inne. */
+  onSubmit: (chosen: TimeApprovalOverviewRow[], message: string | null, sendSms: boolean) => Promise<string | null>;
 }) {
   const [message, setMessage] = React.useState('');
   const [sendSms, setSendSms] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
+  // Alla förkryssade, men avbockningsbara. Utan det var listan ren dekoration: attestlistan
+  // innehåller varje anställd utom konsult och lönebyrån, så ett massutskick på "Ej inlämnade" tar
+  // med säljare och kontor lika gärna som installatörerna — och den som ser en som inte borde stå
+  // där hade bara kunnat avbryta och skicka en i taget.
+  const [excluded, setExcluded] = React.useState<Set<string>>(() => new Set());
+  const chosen = rows.filter((row) => !excluded.has(row.user_id));
 
   // Hur många som faktiskt kan nås med SMS. Siffran står FÖRE utskicket, inte i kvittot efteråt:
   // upptäcker man där att halva personalen saknar nummer har pengarna redan gått åt, och det man
   // trodde var en påminnelse till alla nådde hälften.
-  const reachable = phoneKnown ? rows.filter((row) => hasPhone[row.user_id]).length : rows.length;
-  const missing = rows.length - reachable;
+  const reachable = phoneKnown ? chosen.filter((row) => hasPhone[row.user_id]).length : chosen.length;
+  const missing = chosen.length - reachable;
 
   return (
     <CrmModal
@@ -1075,9 +1082,9 @@ function ReminderModal({
             Påminn om {periodLabel(periodStart)}
           </h2>
           <p className="m-0 mt-0.5 text-sm text-slate-500">
-            {rows.length === 1
-              ? `${rows[0].full_name || 'Personen'} får en notis i appen.`
-              : `${rows.length} personer får en notis i appen.`}
+            {chosen.length === 1
+              ? `${chosen[0].full_name || 'Personen'} får en notis i appen.`
+              : `${chosen.length} personer får en notis i appen.`}
           </p>
         </>
       }
@@ -1095,10 +1102,10 @@ function ReminderModal({
             onClick={async () => {
               setBusy(true);
               setFailure(null);
-              const result = await onSubmit(message.trim() || null, sendSms);
+              const result = await onSubmit(chosen, message.trim() || null, sendSms);
               if (result) { setFailure(result); setBusy(false); }
             }}
-            disabled={busy}
+            disabled={busy || chosen.length === 0}
             className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
             style={{ backgroundColor: 'var(--ek-green)' }}
           >
@@ -1115,15 +1122,32 @@ function ReminderModal({
         {/* Mottagarna, utskrivna. Vid ett massutskick är det här enda tillfället att se att någon
             står med som inte borde. */}
         <div className="grid gap-1">
-          <span className={LABEL}>Får påminnelsen</span>
+          <span className={LABEL}>Får påminnelsen ({chosen.length} av {rows.length})</span>
           <div className="max-h-32 overflow-y-auto rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-700">
             {rows.map((row) => (
-              <div key={row.user_id} className="flex items-baseline justify-between gap-3 py-0.5">
-                <span className="truncate">{row.full_name || '(namn saknas)'}</span>
+              <label key={row.user_id} className="flex items-center justify-between gap-3 py-0.5">
+                <span className="flex min-w-0 items-center gap-2">
+                  {/* h-4 w-4 accent-* — `border-*` ritar ingenting på en kryssruta, se
+                      FRONTEND_SYSTEM.md. */}
+                  <input
+                    type="checkbox"
+                    checked={!excluded.has(row.user_id)}
+                    onChange={(e) =>
+                      setExcluded((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.delete(row.user_id);
+                        else next.add(row.user_id);
+                        return next;
+                      })
+                    }
+                    className="h-4 w-4 shrink-0 accent-emerald-600"
+                  />
+                  <span className="truncate">{row.full_name || '(namn saknas)'}</span>
+                </span>
                 <span className="shrink-0 text-xs text-slate-500">
                   {row.entry_count === 0 ? 'inget rapporterat' : 'ej inlämnad'}
                 </span>
-              </div>
+              </label>
             ))}
           </div>
         </div>
@@ -1164,7 +1188,7 @@ function ReminderModal({
                   ? `Går till alla ${reachable === 1 ? 'mottagaren' : `${reachable} mottagarna`}.`
                   : reachable === 0
                     ? 'Ingen av mottagarna har ett telefonnummer i profilen — bara notisen går fram.'
-                    : `Går till ${reachable} av ${rows.length}. ${missing} saknar telefonnummer i profilen.`}
+                    : `Går till ${reachable} av ${chosen.length}. ${missing} saknar telefonnummer i profilen.`}
             </span>
           </span>
         </label>

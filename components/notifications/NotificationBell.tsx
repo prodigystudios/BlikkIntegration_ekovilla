@@ -216,7 +216,11 @@ export default function NotificationBell({ className, collapsed = false }: { cla
                           {!n.read && <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden />}
                           <span className={cn('text-[13px] text-slate-900', !n.read ? 'font-bold' : 'font-semibold')}>{n.title}</span>
                         </div>
-                        {n.body && <span className="text-[12px] text-slate-600">{n.body}</span>}
+                        {/* `whitespace-pre-line` behåller radbrytningar som byggaren satt med
+                            avsikt. Tidpåminnelsen skiljer t.ex. mallens text från attestansvarigs
+                            egna ord med en blankrad — utan den här klassen kollapsade den till ett
+                            mellanslag och de två meningarna läste som en enda. */}
+                        {n.body && <span className="whitespace-pre-line text-[12px] text-slate-600">{n.body}</span>}
                         <span className="text-[11px] text-slate-400">{formatWhen(n.created_at)}</span>
                       </button>
                     </li>
