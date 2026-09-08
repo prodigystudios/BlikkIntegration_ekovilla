@@ -212,3 +212,31 @@ describe('POST /api/admin/time/reminders — SMS', () => {
     expect(status).toBe(500);
   });
 });
+
+describe('POST /api/admin/time/reminders — när numren inte går att läsa', () => {
+  beforeEach(() => mockUser.mockResolvedValue(adminUser as any));
+
+  it('säger att uppslagningen fallerade i stället för att alla saknar nummer', async () => {
+    // 🧨 Felklassen den här ytan redan betalat för två gånger: ett fel som ser ut som ett tomt
+    // värde. Tappas läsfelet blir kartan tom, varje mottagare räknas som nummerlös, och svaret
+    // blir ett glatt 200 med "alla saknar telefonnummer" — varpå någon letar i tjugo profiler
+    // efter nummer som redan står där.
+    vi.mocked(getSupabaseAdmin).mockReturnValue({
+      from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: 'boom' } }) }) }),
+    } as any);
+
+    const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
+    expect(status).toBe(200);
+    expect(body.data.sms_lookup_failed).toBe(true);
+    // Ingen får räknas som nummerlös när vi inte vet något om numren.
+    expect(body.data.sms_missing_phone).toBe(0);
+    expect(mockSms).not.toHaveBeenCalled();
+    // Notisen gick ändå fram — den är påminnelsen, SMS:et är tillvalet.
+    expect(body.data.notified).toBe(1);
+  });
+
+  it('flaggar inte uppslagningen som trasig i det normala fallet', async () => {
+    const { body } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
+    expect(body.data.sms_lookup_failed).toBe(false);
+  });
+});

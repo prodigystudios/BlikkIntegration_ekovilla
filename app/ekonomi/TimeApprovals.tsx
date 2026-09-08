@@ -390,9 +390,15 @@ export default function TimeApprovals() {
 
         const d = body.data;
         const parts = [`${d.notified} ${d.notified === 1 ? 'påminnelse' : 'påminnelser'} skickade`];
-        if (sendSms) parts.push(`${d.sms_sent} som SMS`);
-        if (d.sms_missing_phone > 0) parts.push(`${d.sms_missing_phone} saknar telefonnummer`);
-        if (d.sms_failed?.length) parts.push(`SMS misslyckades för ${d.sms_failed.join(', ')}`);
+        // ⚠️ "Kunde inte läsa numren" är INTE samma sak som "ingen har nummer". Utan den här grenen
+        // hade beskedet sagt att hela personalen saknar telefonnummer, och någon börjat leta i
+        // profilerna efter ett fel som inte finns.
+        if (sendSms && d.sms_lookup_failed) parts.push('men SMS kunde inte skickas — telefonnumren gick inte att läsa');
+        else if (sendSms) {
+          parts.push(`${d.sms_sent} som SMS`);
+          if (d.sms_missing_phone > 0) parts.push(`${d.sms_missing_phone} saknar telefonnummer`);
+          if (d.sms_failed?.length) parts.push(`SMS misslyckades för ${d.sms_failed.join(', ')}`);
+        }
         if (d.skipped > 0) parts.push(`${d.skipped} behövde inte påminnas längre`);
         // ⚠️ LADDA OM FÖRST, SKRIV BESKEDET SEN — samma ordning och samma skäl som massattesten:
         // `load()` nollställer felrutan som sitt första steg, och ett besked satt före anropet
@@ -482,6 +488,23 @@ export default function TimeApprovals() {
   // knappen just dem. Att alltid skicka till alla hade gjort filtren till dekoration — och den som
   // filtrerat fram fyra personer förväntar sig fyra påminnelser, inte tjugo.
   const remindableVisible = React.useMemo(() => remindableUsers(visible), [visible]);
+
+  /**
+   * Är månaden slut?
+   *
+   * 🧨 Avgör om MASSUTSKICKET ens erbjuds. Varje pågående månad står `open` för alla, så den andra
+   * september hade knappen erbjudit sig att påminna hela personalen om september — en månad med
+   * tjugo arbetsdagar kvar. Ingen lämnar in mitt i månaden, så påståendet "din tid är inte
+   * inlämnad" är visserligen sant men helt utan innebörd, och en påminnelse ingen behöver är det
+   * som lär folk att inte läsa påminnelser.
+   *
+   * Per person går det fortfarande att påminna när som helst — att en enskild inte rapporterat på
+   * två veckor ÄR värt en knuff mitt i månaden. Det är massutskicket som saknar mening förrän
+   * månaden är över.
+   *
+   * Strängjämförelse duger: 'ÅÅÅÅ-MM' sorterar som det ska.
+   */
+  const periodIsOver = period < currentPeriod();
 
   const filterCount: Record<Filter, number> = {
     all: people.length,
@@ -617,7 +640,7 @@ export default function TimeApprovals() {
           {/* Påminn dem filtret visar. Samma laddningsvillkor som massattesten nedan och av samma
               skäl: under en månadsväxling ligger föregående månads rader kvar, och knappen hade
               annars skickat påminnelser om FEL månad. */}
-          {!loading && remindableVisible.length > 0 ? (
+          {!loading && periodIsOver && remindableVisible.length > 0 ? (
             <button
               type="button"
               onClick={() => setReminding(remindableVisible)}

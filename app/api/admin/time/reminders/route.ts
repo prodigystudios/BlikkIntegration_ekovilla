@@ -28,6 +28,13 @@ import { ok, requirePermission, routeError, sendTimeRemindersSchema, validationE
 //
 // ⚠️ Och appen påstår ALDRIG hur mycket som fattas. Se lib/domains/time/reminders.ts — det är samma
 // regel som gör att attestens staplar saknar trösklar.
+
+// SMS skickas sekventiellt, en Twilio-rundtur per mottagare. Tjugotalet anställda tar några
+// sekunder, men taket i schemat är 200 — och en timeout här är dyr på ett särskilt sätt: notiserna
+// är redan skrivna, så en användare som trycker igen dubbelnotifierar alla OCH dubbelbetalar varje
+// SMS som redan gick. Marginalen är därför satt uttryckligen i stället för att ärvas.
+export const maxDuration = 120;
+
 export async function POST(req: Request) {
   try {
     const gate = await requirePermission('time.approve');
@@ -89,14 +96,30 @@ export async function POST(req: Request) {
     let smsSent = 0;
     const smsFailed: string[] = [];
     let missingPhone = 0;
+    let smsLookupFailed = false;
 
     if (parsed.data.send_sms) {
       const ids = targets.map((t) => t.row.user_id);
-      const { data: profiles } = await admin.from('profiles').select('id, phone').in('id', ids);
+      const { data: profiles, error: phoneError } = await admin.from('profiles').select('id, phone').in('id', ids);
       const phoneById = new Map((profiles ?? []).map((p: { id: string; phone: string | null }) => [p.id, p.phone]));
       const origin = getPublicOrigin(req);
 
+      // 🧨 Läsfelet får inte tappas. Utan det blir en misslyckad uppslagning en TOM karta, varje
+      // mottagare faller i "saknar nummer"-grenen, och svaret blir ett glatt 200 med "20 saknar
+      // telefonnummer" — varpå någon letar i tjugo profiler efter nummer som redan står där.
+      // Samma felklass som `reminders_ok` vaktar på GET-sidan: fel som ser ut som tomma värden.
+      //
+      // Notiserna är redan skrivna, så anropet kan inte rullas tillbaka. Svaret säger i stället
+      // rakt ut att SMS-delen inte gick att göra.
+      if (phoneError) {
+        console.error('[time.reminder] kunde inte läsa telefonnummer', phoneError);
+        smsLookupFailed = true;
+      }
+
       for (const { row, reason } of targets) {
+        // Gick uppslagningen fel vet vi ingenting om numren — då är rätt svar att avstå, inte att
+        // rapportera alla som nummerlösa.
+        if (smsLookupFailed) break;
         const to = toSwedishE164(phoneById.get(row.user_id) ?? null);
         if (!to) {
           // Inget nummer är inte ett fel — det är en upplysning. Notisen har redan gått fram, och
@@ -122,6 +145,7 @@ export async function POST(req: Request) {
       sms_sent: smsSent,
       sms_missing_phone: missingPhone,
       sms_failed: smsFailed,
+      sms_lookup_failed: smsLookupFailed,
       // De som valdes men inte längre behövde påminnas. Klienten säger det rakt ut i stället för
       // att tyst rapportera en lägre siffra än antalet man kryssade i.
       skipped: wanted.size - targets.length,
