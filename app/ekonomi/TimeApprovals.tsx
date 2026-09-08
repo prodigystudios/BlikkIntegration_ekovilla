@@ -26,6 +26,7 @@ import {
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
 } from '@/lib/domains/time/approvals';
+import { reminderReasonFor, remindableUsers } from '@/lib/domains/time/reminders';
 import { breakWasDeducted, reasonOrJobLabel, type PersonPeriodSummary } from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
@@ -172,6 +173,17 @@ export default function TimeApprovals() {
   const [confirmBulk, setConfirmBulk] = React.useState(false);
   const [bulkBusy, setBulkBusy] = React.useState(false);
   const [reopening, setReopening] = React.useState<TimeApprovalOverviewRow | null>(null);
+  // Påminnelser. `reminders` = senaste påminnelsen per person för DEN HÄR månaden, `hasPhone` = om
+  // det finns ett nummer att sms:a till.
+  //
+  // ⚠️ `remindersOk` skiljer "ingen är påmind" från "vi vet inte". Går adminläsningen fel (den
+  // kringgår RLS med flit — notiser är bara läsbara för sin mottagare) ska vyn TIGA om både
+  // historik och telefonnummer i stället för att rita frånvaron som ett faktum. En trasig
+  // servicenyckel skulle annars se ut som att hela personalen saknar telefonnummer.
+  const [reminders, setReminders] = React.useState<Record<string, string>>({});
+  const [hasPhone, setHasPhone] = React.useState<Record<string, boolean>>({});
+  const [remindersOk, setRemindersOk] = React.useState(false);
+  const [reminding, setReminding] = React.useState<TimeApprovalOverviewRow[] | null>(null);
   const [correcting, setCorrecting] = React.useState<PersonPeriodSummary['rows'][number] | null>(null);
   // Referenslistorna behövs bara när en rättelse öppnas, men hämtas en gång: de ändras sällan och
   // ett anrop per modalöppning hade gjort knappen trög utan att ge något.
@@ -207,6 +219,9 @@ export default function TimeApprovals() {
       if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
       setPeople(body.data.people || []);
       setCanCorrectOthers(body.data.can_correct === true);
+      setReminders(body.data.reminders || {});
+      setHasPhone(body.data.has_phone || {});
+      setRemindersOk(body.data.reminders_ok === true);
     } catch (e) {
       if (seq === loadSeq.current) {
         setError((e as Error).message);
@@ -216,8 +231,12 @@ export default function TimeApprovals() {
         setPeople([]);
         // Samma regel som statusen: ett tillstånd som styr knappar måste skrivas i FELGRENEN
         // också. Annars låg föregående lyckade hämtnings `true` kvar och ritade rättaknappar
-        // ovanpå en tom lista.
+        // ovanpå en tom lista. Gäller påminnelserna med — en kvarliggande "Påmind 3 sep" från
+        // förra månaden hade fått någon att avstå från att påminna.
         setCanCorrectOthers(false);
+        setReminders({});
+        setHasPhone({});
+        setRemindersOk(false);
       }
     } finally {
       // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
@@ -237,6 +256,10 @@ export default function TimeApprovals() {
     setExpandedId(null);
     setDetail(null);
     setConfirmBulk(false);
+    // Även påminnelsemodalen: den håller de personer som var värda att påminna i FÖRRA månaden, men
+    // utskicket postar den period som är vald NU. Kvar öppen hade den skickat julis lista märkt
+    // "augusti".
+    setReminding(null);
   }, [period]);
 
   const loadDetail = React.useCallback(async (userId: string, opts?: { keepVisible?: boolean }) => {
@@ -346,6 +369,45 @@ export default function TimeApprovals() {
     setBusyId(null);
   }
 
+  /**
+   * Skicka påminnelsen. Notisen går alltid; SMS är ett tillval.
+   *
+   * Servern avgör vem som FAKTISKT påminns och varför — listan här kan ha hunnit bli inaktuell
+   * medan modalen stod öppen, och svaret säger hur många som hoppades över. Det rapporteras rakt
+   * ut i stället för att en lägre siffra tyst ska se ut som ett fel.
+   */
+  const sendReminders = React.useCallback(
+    async (rows: TimeApprovalOverviewRow[], message: string | null, sendSms: boolean): Promise<string | null> => {
+      try {
+        const res = await fetch('/api/admin/time/reminders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ period, user_ids: rows.map((row) => row.user_id), message, send_sms: sendSms }),
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok || !body?.ok) return body?.error || `Fel (${res.status})`;
+
+        const d = body.data;
+        const parts = [`${d.notified} ${d.notified === 1 ? 'påminnelse' : 'påminnelser'} skickade`];
+        if (sendSms) parts.push(`${d.sms_sent} som SMS`);
+        if (d.sms_missing_phone > 0) parts.push(`${d.sms_missing_phone} saknar telefonnummer`);
+        if (d.sms_failed?.length) parts.push(`SMS misslyckades för ${d.sms_failed.join(', ')}`);
+        if (d.skipped > 0) parts.push(`${d.skipped} behövde inte påminnas längre`);
+        // ⚠️ LADDA OM FÖRST, SKRIV BESKEDET SEN — samma ordning och samma skäl som massattesten:
+        // `load()` nollställer felrutan som sitt första steg, och ett besked satt före anropet
+        // riskerar att hamna under ett fel som skrivs efteråt. Omladdningen får dessutom
+        // "Påmind i dag" att synas direkt på raderna man just skickade till.
+        await load();
+        setNotice(`${parts.join(' · ')}.`);
+        return null;
+      } catch {
+        return 'Kunde inte skicka påminnelsen — kontrollera uppkopplingen';
+      }
+    },
+    [period, load],
+  );
+
   const submitted = React.useMemo(() => people.filter((row) => row.status === 'submitted'), [people]);
 
   /**
@@ -415,6 +477,11 @@ export default function TimeApprovals() {
     else sorted.sort((a, b) => (a.full_name || '').localeCompare(b.full_name || '', 'sv'));
     return sorted;
   }, [people, filter, sort]);
+
+  // Massutskicket följer det AKTIVA FILTRET, inte hela listan: står du på "Ej inlämnade" påminner
+  // knappen just dem. Att alltid skicka till alla hade gjort filtren till dekoration — och den som
+  // filtrerat fram fyra personer förväntar sig fyra påminnelser, inte tjugo.
+  const remindableVisible = React.useMemo(() => remindableUsers(visible), [visible]);
 
   const filterCount: Record<Filter, number> = {
     all: people.length,
@@ -547,6 +614,22 @@ export default function TimeApprovals() {
             </Select>
           </label>
 
+          {/* Påminn dem filtret visar. Samma laddningsvillkor som massattesten nedan och av samma
+              skäl: under en månadsväxling ligger föregående månads rader kvar, och knappen hade
+              annars skickat påminnelser om FEL månad. */}
+          {!loading && remindableVisible.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setReminding(remindableVisible)}
+              disabled={bulkBusy}
+              className="px-3 py-1.5 rounded-lg border border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+            >
+              {remindableVisible.length === 1
+                ? 'Påminn 1 person'
+                : `Påminn ${remindableVisible.length} personer`}
+            </button>
+          ) : null}
+
           {/* ⚠️ Bara när periodens data faktiskt är hämtad. `people` töms inte vid månadsbyte, så
               under laddningen låg föregående månads inlämnade kvar — och knappen hade attesterat
               DEM under den NYA perioden. */}
@@ -600,9 +683,11 @@ export default function TimeApprovals() {
               detail={expandedId === row.user_id ? detail : null}
               busy={busyId === row.user_id || bulkBusy}
               canCorrectOthers={canCorrectOthers}
+              remindedAt={remindersOk ? reminders[row.user_id] ?? null : null}
               onToggle={() => toggleDetail(row.user_id)}
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
+              onRemind={() => setReminding([row])}
               onEdit={setCorrecting}
               onDelete={async (entryId) => {
                 const failure = await correctEntry(entryId, null);
@@ -623,6 +708,24 @@ export default function TimeApprovals() {
             const failure = await correctEntry(correcting.entryId!, patch);
             if (failure) return failure;
             setCorrecting(null);
+            return null;
+          }}
+        />
+      ) : null}
+
+      {reminding ? (
+        <ReminderModal
+          rows={reminding}
+          periodStart={periodStartOf(period)}
+          hasPhone={hasPhone}
+          phoneKnown={remindersOk}
+          onClose={() => setReminding(null)}
+          onSubmit={async (message, sendSms) => {
+            // Stänger FÖRST när anropet lyckats — samma skäl som återöppningen: ett 409 eller
+            // nätverksfel får inte radera det man skrivit.
+            const failure = await sendReminders(reminding, message, sendSms);
+            if (failure) return failure;
+            setReminding(null);
             return null;
           }}
         />
@@ -658,7 +761,7 @@ export default function TimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, onToggle, onApprove, onReopen, onEdit, onDelete,
+  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, remindedAt, onToggle, onApprove, onReopen, onRemind, onEdit, onDelete,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
@@ -667,13 +770,19 @@ function PersonRow({
   busy: boolean;
   /** `time.entry.write.all` — se kommentaren vid tillståndet i TimeApprovals. */
   canCorrectOthers: boolean;
+  /** När personen senast påmindes om den här månaden. null = aldrig, ELLER att vi inte vet. */
+  remindedAt: string | null;
   onToggle: () => void;
   onApprove: () => void;
   onReopen: () => void;
+  onRemind: () => void;
   onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
   onDelete: (entryId: string) => Promise<boolean>;
 }) {
   const locked = isPeriodLocked(row.status);
+  // Knappen visas bara där den kan göra något: en öppen månad. `submitted` betyder att personen
+  // gjort sitt och väntar på OSS — att knuffa henne då är att be om något hon redan lämnat.
+  const remindable = reminderReasonFor(row) !== null;
   const workPercent = Math.round((row.work_minutes / scaleMinutes) * 100);
   const absencePercent = Math.round((row.absence_minutes / scaleMinutes) * 100);
 
@@ -709,6 +818,9 @@ function PersonRow({
                   ? ` · Attesterad ${formatStamp(row.approved_at)}${row.approved_by_name ? ` av ${row.approved_by_name}` : ''}`
                   : null}
                 {row.status === 'open' && row.note ? ` · Öppnad igen: ${row.note}` : null}
+                {/* Vad som redan gjorts åt den här raden. Utan den skickar man en andra påminnelse
+                    samma dag utan att veta om det — särskilt lätt hänt via massutskicket. */}
+                {remindedAt ? ` · Påmind ${formatStamp(remindedAt)}` : null}
               </span>
             </span>
           </button>
@@ -758,6 +870,16 @@ function PersonRow({
           </div>
 
           <div className="flex shrink-0 gap-2">
+            {remindable ? (
+              <button
+                type="button"
+                onClick={onRemind}
+                disabled={busy}
+                className="px-3 py-1.5 rounded-lg border border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400 disabled:opacity-60"
+              >
+                Påminn
+              </button>
+            ) : null}
             {row.status !== 'approved' ? (
               <button
                 type="button"
@@ -881,6 +1003,149 @@ function ReopenModal({
         />
         <span className="text-xs text-slate-500">Syns för {row.full_name || 'personen'} i Tidrapport.</span>
       </label>
+    </CrmModal>
+  );
+}
+
+/**
+ * Påminnelsen: "fyll i tiden som saknas".
+ *
+ * Samma modal för en person och för ett helt filter — skillnaden är bara hur många som står i
+ * listan, och den listan visas alltid. Ett massutskick där mottagarna är osynliga är ett utskick
+ * man inte kan granska innan det går.
+ *
+ * ⚠️ Modalen skriver inte texten om vad som saknas. Den byggs på servern ur samma underlag som
+ * listan (lib/domains/time/reminders.ts) och säger bara det appen faktiskt vet: att månaden inte
+ * är inlämnad, eller att ingen tid är rapporterad. Aldrig ett antal dagar — systemet känner varken
+ * tjänstgöringsgrad eller schema.
+ */
+function ReminderModal({
+  rows, periodStart, hasPhone, phoneKnown, onClose, onSubmit,
+}: {
+  rows: TimeApprovalOverviewRow[];
+  periodStart: string;
+  hasPhone: Record<string, boolean>;
+  /** Falskt när telefonuppgiften inte gick att läsa — då säger modalen inget om nummer alls. */
+  phoneKnown: boolean;
+  onClose: () => void;
+  onSubmit: (message: string | null, sendSms: boolean) => Promise<string | null>;
+}) {
+  const [message, setMessage] = React.useState('');
+  const [sendSms, setSendSms] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [failure, setFailure] = React.useState<string | null>(null);
+
+  // Hur många som faktiskt kan nås med SMS. Siffran står FÖRE utskicket, inte i kvittot efteråt:
+  // upptäcker man där att halva personalen saknar nummer har pengarna redan gått åt, och det man
+  // trodde var en påminnelse till alla nådde hälften.
+  const reachable = phoneKnown ? rows.filter((row) => hasPhone[row.user_id]).length : rows.length;
+  const missing = rows.length - reachable;
+
+  return (
+    <CrmModal
+      onClose={onClose}
+      ariaLabel="Skicka påminnelse"
+      maxWidth="sm:max-w-[520px]"
+      header={
+        <>
+          <h2 className="text-lg font-bold text-slate-900">
+            Påminn om {periodLabel(periodStart)}
+          </h2>
+          <p className="m-0 mt-0.5 text-sm text-slate-500">
+            {rows.length === 1
+              ? `${rows[0].full_name || 'Personen'} får en notis i appen.`
+              : `${rows.length} personer får en notis i appen.`}
+          </p>
+        </>
+      }
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            className={cn(crm.ghostButton, 'h-auto flex-1 py-2.5 sm:flex-none sm:px-5')}
+          >
+            Avbryt
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              setBusy(true);
+              setFailure(null);
+              const result = await onSubmit(message.trim() || null, sendSms);
+              if (result) { setFailure(result); setBusy(false); }
+            }}
+            disabled={busy}
+            className={cn(crm.formButton, 'h-auto flex-1 py-2.5 sm:ml-auto sm:flex-none sm:px-5')}
+            style={{ backgroundColor: 'var(--ek-green)' }}
+          >
+            {busy ? 'Skickar…' : 'Skicka påminnelse'}
+          </button>
+        </>
+      }
+    >
+      {failure ? (
+        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{failure}</div>
+      ) : null}
+
+      <div className="grid gap-3">
+        {/* Mottagarna, utskrivna. Vid ett massutskick är det här enda tillfället att se att någon
+            står med som inte borde. */}
+        <div className="grid gap-1">
+          <span className={LABEL}>Får påminnelsen</span>
+          <div className="max-h-32 overflow-y-auto rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-700">
+            {rows.map((row) => (
+              <div key={row.user_id} className="flex items-baseline justify-between gap-3 py-0.5">
+                <span className="truncate">{row.full_name || '(namn saknas)'}</span>
+                <span className="shrink-0 text-xs text-slate-500">
+                  {row.entry_count === 0 ? 'inget rapporterat' : 'ej inlämnad'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <label className="grid gap-1">
+          <span className={LABEL}>Eget meddelande (valfritt)</span>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value.slice(0, 200))}
+            rows={3}
+            autoFocus
+            className="w-full rounded-xl border border-[#dbe4d6] bg-white px-3 py-2 text-sm text-slate-900"
+            placeholder="T.ex. Lönen körs på fredag, så vi behöver augusti klart innan dess."
+          />
+          {/* Räknaren finns för att texten kan gå ut som SMS: varje påbörjat segment om 160 tecken
+              kostar per mottagare, och mallen tar redan en bit av det första. */}
+          <span className="text-xs text-slate-500">
+            Läggs till i notisen{sendSms ? ' och i SMS:et' : ''}. {message.length}/200 tecken.
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2.5 rounded-xl border border-[#dbe4d6] bg-white px-3 py-2.5">
+          {/* h-4 w-4 accent-emerald-600 — INTE `border-*`. globals.css nollar kanter för allt utom
+              knappar, så en `border-slate-300` här hade sett komplett ut men inte ritat något.
+              Se FRONTEND_SYSTEM.md. */}
+          <input
+            type="checkbox"
+            checked={sendSms}
+            onChange={(e) => setSendSms(e.target.checked)}
+            className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600"
+          />
+          <span className="grid gap-0.5">
+            <span className="text-sm font-semibold text-slate-800">Skicka även som SMS</span>
+            <span className="text-xs text-slate-500">
+              {!phoneKnown
+                ? 'Notisen går alltid. SMS går till dem som har ett telefonnummer i profilen.'
+                : missing === 0
+                  ? `Går till alla ${reachable === 1 ? 'mottagaren' : `${reachable} mottagarna`}.`
+                  : reachable === 0
+                    ? 'Ingen av mottagarna har ett telefonnummer i profilen — bara notisen går fram.'
+                    : `Går till ${reachable} av ${rows.length}. ${missing} saknar telefonnummer i profilen.`}
+            </span>
+          </span>
+        </label>
+      </div>
     </CrmModal>
   );
 }

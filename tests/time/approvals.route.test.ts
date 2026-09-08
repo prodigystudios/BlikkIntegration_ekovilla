@@ -28,12 +28,14 @@ vi.mock('@/lib/domains/time/approvals', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { getTimeApproval, setTimePeriodStatus, listTimeApprovalOverview } from '@/lib/domains/time/approvals';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 const { GET, POST } = await import('@/app/api/time/approvals/route');
 const { GET: overviewGET } = await import('@/app/api/admin/time/approvals/route');
@@ -293,5 +295,84 @@ describe('GET /api/admin/time/approvals', () => {
       expect(res.status).toBe(200);
       expect((await res.json()).data.can_correct).toBe(false);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Påminnelsehistoriken i översikten
+// ---------------------------------------------------------------------------
+//
+// Två upplysningar som attestvyn ritar knappen på: när personen senast påmindes om den här månaden,
+// och om det finns ett nummer att sms:a till. Båda läses med adminklienten — notiser är läsbara
+// bara för sin MOTTAGARE, och profiles är self-select, så attestansvarig kommer inte åt något av
+// det under sin egen session hur mycket behörighet hon än har.
+
+describe('GET /api/admin/time/approvals — påminnelser', () => {
+  const ANNA = '11111111-1111-4111-8111-111111111111';
+
+  function adminReturning(notifications: unknown[], profiles: unknown[]) {
+    return {
+      from: (table: string) => ({
+        select: () => {
+          const rows = table === 'notifications' ? notifications : profiles;
+          const result = { data: rows, error: null };
+          // notifications-kedjan är .eq().eq().in().order(), profiles bara .in()
+          const chain: any = {
+            eq: () => chain,
+            in: () => chain,
+            order: async () => result,
+            then: (resolve: (v: unknown) => unknown) => resolve(result),
+          };
+          return chain;
+        },
+      }),
+    } as any;
+  }
+
+  beforeEach(() => {
+    mockUser.mockResolvedValue(adminUser);
+    mockOverview.mockResolvedValue({
+      data: [{ user_id: ANNA, full_name: 'Anna', role: 'member', status: 'open' }],
+      error: null,
+    } as any);
+  });
+
+  it('svarar med senaste påminnelsen per person och om numret går att sms:a', async () => {
+    vi.mocked(getSupabaseAdmin).mockReturnValue(
+      adminReturning(
+        [
+          { recipient_user_id: ANNA, created_at: '2026-09-03T08:00:00Z' },
+          // Äldre rad, sorterad efter. Den FÖRSTA per person ska vinna.
+          { recipient_user_id: ANNA, created_at: '2026-09-01T08:00:00Z' },
+        ],
+        [{ id: ANNA, phone: '070-123 45 67' }],
+      ),
+    );
+    const json = await (await overviewGET(req('/api/admin/time/approvals?period=2026-08'))).json();
+    expect(json.data.reminders[ANNA]).toBe('2026-09-03T08:00:00Z');
+    expect(json.data.has_phone[ANNA]).toBe(true);
+    expect(json.data.reminders_ok).toBe(true);
+  });
+
+  it('räknar ett nummer Twilio ändå hade avvisat som inget nummer', async () => {
+    // Annars lovar SMS-rutan ett utskick som tyst uteblir. Samma normalisering som skickandet gör.
+    vi.mocked(getSupabaseAdmin).mockReturnValue(adminReturning([], [{ id: ANNA, phone: 'ring mig' }]));
+    const json = await (await overviewGET(req('/api/admin/time/approvals?period=2026-08'))).json();
+    expect(json.data.has_phone[ANNA]).toBe(false);
+  });
+
+  it('🧨 skiljer "ingen är påmind" från "vi vet inte" när läsningen fallerar', async () => {
+    // Fel som ser ut som tomma värden är den felklass den här ytan redan betalat för två gånger.
+    // En trasig servicenyckel får inte läsa som att hela personalen saknar telefonnummer och aldrig
+    // påmints — vyn ska TIGA om båda i stället.
+    vi.mocked(getSupabaseAdmin).mockImplementation(() => { throw new Error('no service key'); });
+    const res = await overviewGET(req('/api/admin/time/approvals?period=2026-08'));
+    const json = await res.json();
+    // Attestlistan är det primära och måste ladda ändå.
+    expect(res.status).toBe(200);
+    expect(json.data.people).toHaveLength(1);
+    expect(json.data.reminders_ok).toBe(false);
+    expect(json.data.reminders).toEqual({});
+    expect(json.data.has_phone).toEqual({});
   });
 });
