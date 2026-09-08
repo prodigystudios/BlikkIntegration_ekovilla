@@ -84,7 +84,8 @@ caught at compile time).
 `crm.write` (write), `crm.admin`.
 
 **Time & payroll** (fas 4, seeded in `20260811_time_permissions.sql`): `time.entry.write`,
-`time.entry.read.all`, `time.approve`, `time.payroll.read`, `time.reference.manage`, `time.entry.write.all`.
+`time.entry.read.all`, `time.approve`, `time.payroll.read`, `time.reference.manage`, `time.entry.write.all`,
+plus `time.reminder.sms` (`20260908_time_reminder_sms_permission.sql`).
 
 > Deliberately **not** `crm.*`. Time is company-wide — every employee reports it, including roles
 > with no CRM access at all. A time key inside the CRM namespace would inherit the `crm.access` /
@@ -115,6 +116,7 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | `time.entry.write` | **✓** | **✓** | – | – | ✓ |
 | `time.entry.read.all` / `time.approve` / `time.payroll.read` | – | – | – | **✓** | ✓ |
 | `time.reference.manage` / `time.entry.write.all` | – | – | – | – | ✓ |
+| `time.reminder.sms` | – | – | – | **–** | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work
@@ -129,6 +131,14 @@ override rather than inventing a role — **both keys, not just `time.approve`**
 select public.set_user_permission('<uuid>', 'time.approve', 'grant');
 select public.set_user_permission('<uuid>', 'time.entry.read.all', 'grant');
 ```
+
+⚠️ **`time.reminder.sms` is split out of `time.approve` for the same reason `time.entry.write.all`
+was.** The attest view can remind whoever has not filled in their time; the in-app notification is
+internal and free and stays on `time.approve`. An SMS is something else — 200 free-text characters
+from the company Twilio number to an employee's **private mobile, at company cost** — and
+`time.approve` is held by `ekonomi`, the external payroll bureau. Approving a payroll month and
+being able to text the whole staff are different powers. Seeded **admin-only**; ⛔ never grant it to
+`ekonomi`. A supervisor who needs it gets the per-user override, same as approval rights.
 
 ⚠️ The approval surface is two reads behind two different guards: the month overview goes through
 `time_approval_overview` (`time.approve`), and expanding a person goes through
@@ -237,6 +247,18 @@ But they have to reach the work order they are scheduled on. That access is **de
 not granted by a key**: `is_user_on_work_order(uid, work_order_id)` asks the planning crew tables
 (`ops_segment_crew` / `ops_truck_crew` / `ops_truck_default_crew`, joined to the order through
 `ops_segments.work_order_id`) whether this person is on this job.
+
+⚠️ **Since 2026-09-08 the primitive is `is_user_on_segment(uid, segment_id)`**, and
+`is_user_on_work_order` is expressed through it: you are on the order if you are on **any** of its
+segments (`supabase/sql/20260908_ops_segments_field_visible.sql`). The answer is unchanged — all
+three branches and the ISO-week widening survived intact — but the question can now be asked about a
+**single placement**, which a placeholder needs: it has a truck and days but no work order to ask
+through. Placeholders published to the field (`ops_segments.field_visible`) are scoped by
+`is_user_on_segment` in `get_my_crm_jobs`.
+
+The extraction was deliberate over copying the three branches into a second function: two
+definitions of "who crews this truck that week" drift apart at the first change, and that drift is
+**silent** — the board shows one person, the feed another, and neither looks wrong on its own.
 
 | | |
 | --- | --- |
@@ -398,7 +420,9 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 - **Keep the catalog in sync** between the SQL `permissions` table and `PERMISSION_KEYS`.
 - **Not all access is a permission key.** Crew access to work orders is derived from the planning
   tables (see above), so "member has no CRM keys" does *not* mean "member cannot read a work
-  order". Grep for `is_user_on_work_order` before reasoning about who can see what.
+  order". Grep for `is_user_on_work_order` **and `is_user_on_segment`** before reasoning about who
+  can see what — the second is the primitive, and a placeholder's field visibility only goes
+  through it.
 - **`profiles` is self-read-only, and no permission key changes that.** `profiles_select_self`
   (`auth_roles_setup.sql:71`) is the *only* SELECT policy: `USING (auth.uid() = id)`. It predates
   this model and is unrelated to it — a leftover from a recursion bugfix, not a privacy decision.
@@ -422,12 +446,13 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Model + resolver + seed | `supabase/sql/20260608_permissions_model.sql`, `…_parity_assert.sql` |
 | RLS swaps | `supabase/sql/20260609_rls_permissions_crm_{core,quotes_workorders,admin}.sql`, `…_verify.sql` |
 | Lockout guard | `supabase/sql/20260609_permissions_admin_lockout_guard.sql` |
-| Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql`, `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
+| Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql` (policies + `is_user_on_work_order`), `supabase/sql/20260908_ops_segments_field_visible.sql` (the `is_user_on_segment` primitive it now delegates to), `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
 | Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
 | App layer | `lib/auth/permissions.ts` (catalog + resolver), `lib/auth/guards.ts` (`requirePermission`, `requireSignedInUser`), `app/api/crm/_shared.ts` (re-export + legacy CRM wrappers) |
 | Time & payroll keys | `supabase/sql/20260811_time_permissions.sql` |
 | Payroll role (`ekonomi`) | `supabase/sql/20260831_ekonomi_role.sql` + `…_seed.sql`, `app/ekonomi/page.tsx` (the `time.approve` gate), `app/_lib/appNav.ts` (the menu row) |
 | Time approval (fas 4.4) | `supabase/sql/20260812_time_approvals.sql` — no new keys, but `time.approve` gains teeth: the transition RPC `set_time_period_status` and the `security definer` read model `time_approval_overview` both check it internally, and the write policies on `crm_time_entries` / `crm_time_compensations` gain `not is_time_locked(...)` |
+| Time reminders (SMS key) | `supabase/sql/20260908_time_reminder_sms_permission.sql` — `time.reminder.sms`, admin-only. `POST /api/admin/time/reminders` gates on `time.approve` and checks the SMS key separately **before writing anything**; `GET /api/admin/time/approvals` returns `can_sms` so the client never draws a checkbox whose only outcome is 403 |
 | Admin UI | `app/admin/permissions/AdminPermissions.tsx`, `app/api/admin/permissions/**` |
 
 ## Related docs
