@@ -98,3 +98,28 @@ export function reminderSmsBody(input: {
     .filter((line): line is string => Boolean(line))
     .join(' ');
 }
+
+/**
+ * Raden under SMS-rutan: vem utskicket faktiskt når.
+ *
+ * Ligger här och inte i modalen för att den är ren text med fyra fall och en fälla — och en
+ * 'use client'-fil går inte att pröva från vitest. Fällan var att ett `alla` stod utanför
+ * singularvalet, så en ensam mottagare fick meningen "Går till alla mottagaren".
+ *
+ * `known: false` betyder att telefonuppgiften inte gick att läsa. Då säger raden ingenting om
+ * antal — att skriva "ingen har nummer" när vi inte vet vore samma fel som `reminders_ok` finns
+ * för att undvika.
+ */
+export function smsReachSentence(input: { known: boolean; total: number; reachable: number }): string {
+  if (!input.known) return 'Notisen går alltid. SMS går till dem som har ett telefonnummer i profilen.';
+
+  const missing = input.total - input.reachable;
+  if (input.total === 1) {
+    return input.reachable === 1
+      ? 'Går till mottagaren.'
+      : 'Mottagaren har inget telefonnummer i profilen — bara notisen går fram.';
+  }
+  if (missing === 0) return `Går till alla ${input.reachable} mottagarna.`;
+  if (input.reachable === 0) return 'Ingen av mottagarna har ett telefonnummer i profilen — bara notisen går fram.';
+  return `Går till ${input.reachable} av ${input.total}. ${missing} saknar telefonnummer i profilen.`;
+}

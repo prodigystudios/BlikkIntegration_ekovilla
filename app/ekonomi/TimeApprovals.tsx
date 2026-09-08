@@ -26,7 +26,7 @@ import {
   type TimeApprovalOverviewRow,
   type TimePeriodStatus,
 } from '@/lib/domains/time/approvals';
-import { reminderReasonFor, remindableUsers } from '@/lib/domains/time/reminders';
+import { reminderReasonFor, remindableUsers, smsReachSentence } from '@/lib/domains/time/reminders';
 import { breakWasDeducted, reasonOrJobLabel, type PersonPeriodSummary } from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
@@ -496,21 +496,19 @@ export default function TimeApprovals() {
   const remindableVisible = React.useMemo(() => remindableUsers(visible), [visible]);
 
   /**
-   * Är månaden slut?
+   * Pågår månaden fortfarande?
    *
-   * 🧨 Avgör om MASSUTSKICKET ens erbjuds. Varje pågående månad står `open` för alla, så den andra
-   * september hade knappen erbjudit sig att påminna hela personalen om september — en månad med
-   * tjugo arbetsdagar kvar. Ingen lämnar in mitt i månaden, så påståendet "din tid är inte
-   * inlämnad" är visserligen sant men helt utan innebörd, och en påminnelse ingen behöver är det
-   * som lär folk att inte läsa påminnelser.
+   * Varje pågående månad står `open` för alla, så den andra september är hela personalen tekniskt
+   * "ej inlämnad" — fast ingen lämnar in mitt i en månad. Massutskicket är därför inte SPÄRRAT
+   * (ni kan behöva jaga in tiden före ett lönestopp den 25:e), men modalen säger rakt ut att
+   * månaden inte är slut, så en ovanlig åtgärd inte ser ut som en vardaglig.
    *
-   * Per person går det fortfarande att påminna när som helst — att en enskild inte rapporterat på
-   * två veckor ÄR värt en knuff mitt i månaden. Det är massutskicket som saknar mening förrän
-   * månaden är över.
+   * ⚠️ Var tidigare en spärr som DOLDE knappen. Den regeln var rimlig men tyst, och en knapp som
+   * bara uteblir är en gåta, inte en regel — William hittade den inte när han testade.
    *
    * Strängjämförelse duger: 'ÅÅÅÅ-MM' sorterar som det ska.
    */
-  const periodIsOver = period < currentPeriod();
+  const periodOngoing = period >= currentPeriod();
 
   const filterCount: Record<Filter, number> = {
     all: people.length,
@@ -646,7 +644,7 @@ export default function TimeApprovals() {
           {/* Påminn dem filtret visar. Samma laddningsvillkor som massattesten nedan och av samma
               skäl: under en månadsväxling ligger föregående månads rader kvar, och knappen hade
               annars skickat påminnelser om FEL månad. */}
-          {!loading && periodIsOver && remindableVisible.length > 0 ? (
+          {!loading && remindableVisible.length > 0 ? (
             <button
               type="button"
               onClick={() => setReminding(remindableVisible)}
@@ -749,6 +747,7 @@ export default function TimeApprovals() {
           hasPhone={hasPhone}
           phoneKnown={remindersOk}
           canSms={canSms}
+          periodOngoing={periodOngoing}
           onClose={() => setReminding(null)}
           onSubmit={async (chosen, message, sendSms) => {
             // Stänger FÖRST när anropet lyckats — samma skäl som återöppningen: ett 409 eller
@@ -1050,7 +1049,7 @@ function ReopenModal({
  * tjänstgöringsgrad eller schema.
  */
 function ReminderModal({
-  rows, periodStart, hasPhone, phoneKnown, canSms, onClose, onSubmit,
+  rows, periodStart, hasPhone, phoneKnown, canSms, periodOngoing, onClose, onSubmit,
 }: {
   rows: TimeApprovalOverviewRow[];
   periodStart: string;
@@ -1059,6 +1058,8 @@ function ReminderModal({
   phoneKnown: boolean;
   /** `time.reminder.sms`. Utan den ritas ingen SMS-ruta — dess enda utfall vore ett 403. */
   canSms: boolean;
+  /** Månaden är inte slut. Gör inte utskicket fel, men värt att säga innan man skickar till många. */
+  periodOngoing: boolean;
   onClose: () => void;
   /** Får de FAKTISKT valda raderna, inte hela listan — mottagare kan bockas av här inne. */
   onSubmit: (chosen: TimeApprovalOverviewRow[], message: string | null, sendSms: boolean) => Promise<string | null>;
@@ -1078,7 +1079,6 @@ function ReminderModal({
   // upptäcker man där att halva personalen saknar nummer har pengarna redan gått åt, och det man
   // trodde var en påminnelse till alla nådde hälften.
   const reachable = phoneKnown ? chosen.filter((row) => hasPhone[row.user_id]).length : chosen.length;
-  const missing = chosen.length - reachable;
 
   return (
     <CrmModal
@@ -1131,6 +1131,16 @@ function ReminderModal({
       ) : null}
 
       <div className="grid gap-3">
+        {/* Bara vid ETT MASSUTSKICK i en månad som fortfarande pågår. Att påminna en enskild mitt i
+            månaden är normalt — att påminna tjugo är ovanligt, och då ska det synas att det är
+            ovanligt. Ingen spärr: ett lönestopp mitt i månaden är ett giltigt skäl. */}
+        {periodOngoing && rows.length > 1 ? (
+          <p className="m-0 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-snug text-amber-800">
+            {periodLabel(periodStart)} pågår fortfarande. De flesta lämnar in först när månaden är
+            slut — påminnelsen säger bara att tiden inte är inlämnad.
+          </p>
+        ) : null}
+
         {/* Mottagarna, utskrivna. Vid ett massutskick är det här enda tillfället att se att någon
             står med som inte borde. */}
         <div className="grid gap-1">
@@ -1198,13 +1208,7 @@ function ReminderModal({
           <span className="grid gap-0.5">
             <span className="text-sm font-semibold text-slate-800">Skicka även som SMS</span>
             <span className="text-xs text-slate-500">
-              {!phoneKnown
-                ? 'Notisen går alltid. SMS går till dem som har ett telefonnummer i profilen.'
-                : missing === 0
-                  ? `Går till alla ${reachable === 1 ? 'mottagaren' : `${reachable} mottagarna`}.`
-                  : reachable === 0
-                    ? 'Ingen av mottagarna har ett telefonnummer i profilen — bara notisen går fram.'
-                    : `Går till ${reachable} av ${chosen.length}. ${missing} saknar telefonnummer i profilen.`}
+              {smsReachSentence({ known: phoneKnown, total: chosen.length, reachable })}
             </span>
           </span>
         </label>

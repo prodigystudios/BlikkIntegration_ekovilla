@@ -4,6 +4,7 @@ import {
   reminderReasonFor,
   reminderSmsBody,
   remindableUsers,
+  smsReachSentence,
   timeReminderHref,
 } from '@/lib/domains/time/reminders';
 import { buildTimeReminderNotification } from '@/lib/domains/notifications/payload';
@@ -119,5 +120,43 @@ describe('timeReminderHref som kontrakt', () => {
     const notification = buildTimeReminderNotification({ title: 't', body: 'b', href: timeReminderHref('2026-08-01') });
     expect(notification.entity_id).toBeNull();
     expect(notification.type).toBe('time.reminder');
+  });
+});
+
+// Raden under SMS-rutan. Fyra fall och en fälla: ett `alla` utanför singularvalet gav en ensam
+// mottagare meningen "Går till alla mottagaren", vilket William läste som en fråga om vad den
+// egentligen menade — och det är precis vad en trasig mening gör, den flyttar tolkningsarbetet
+// till läsaren mitt i ett beslut som kostar pengar.
+describe('smsReachSentence', () => {
+  it('säger ingenting om antal när telefonuppgiften inte gick att läsa', () => {
+    const text = smsReachSentence({ known: false, total: 5, reachable: 0 });
+    expect(text).toContain('Notisen går alltid');
+    // Får INTE påstå att ingen har nummer — vi vet inte.
+    expect(text).not.toContain('Ingen av mottagarna');
+  });
+
+  it('böjer rätt för en enda mottagare', () => {
+    expect(smsReachSentence({ known: true, total: 1, reachable: 1 })).toBe('Går till mottagaren.');
+    expect(smsReachSentence({ known: true, total: 1, reachable: 1 })).not.toContain('alla');
+  });
+
+  it('säger vad som händer när den ende mottagaren saknar nummer', () => {
+    const text = smsReachSentence({ known: true, total: 1, reachable: 0 });
+    expect(text).toContain('Mottagaren har inget telefonnummer');
+    expect(text).toContain('bara notisen går fram');
+  });
+
+  it('räknar upp när alla i en grupp kan nås', () => {
+    expect(smsReachSentence({ known: true, total: 4, reachable: 4 })).toBe('Går till alla 4 mottagarna.');
+  });
+
+  it('säger hur många som faller bort när bara några kan nås', () => {
+    expect(smsReachSentence({ known: true, total: 4, reachable: 3 })).toBe(
+      'Går till 3 av 4. 1 saknar telefonnummer i profilen.',
+    );
+  });
+
+  it('säger rakt ut när ingen i gruppen kan nås', () => {
+    expect(smsReachSentence({ known: true, total: 4, reachable: 0 })).toContain('Ingen av mottagarna');
   });
 });
