@@ -61,6 +61,14 @@ export type OpsSegment = {
   // Placeholder title/customer when this is a booked slot without a work order yet (else null).
   placeholder_title: string | null;
   placeholder_customer: string | null;
+  // Platshållare: publicerad till entreprenaden. Slås på medvetet av planeraren och släpper ut
+  // raden i besättningens feed (/mina-jobb + startsidans veckoschema) via get_my_crm_jobs — för
+  // bilens besättning, inte för alla. Läses bara på rader utan arbetsorder: ett riktigt jobb syns
+  // redan för sin besättning via arbetsordern.
+  field_visible: boolean;
+  // Vad som ska göras, skrivet av planeraren och läst av grabbarna i fält. Bär hela innehållet på
+  // en platshållare som aldrig får en arbetsorder (service av maskiner, interna dagar).
+  work_description: string | null;
   // The job's card data (null for a placeholder, or if the related work order is unreadable).
   job: JobDisplay | null;
   // Total sacks blown for this job across all its segments' reports (per-day sack reporting).

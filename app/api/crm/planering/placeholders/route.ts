@@ -26,6 +26,8 @@ export async function POST(req: Request) {
       startDay: parsed.data.start_day,
       endDay: parsed.data.end_day,
       jobType: parsed.data.job_type,
+      fieldVisible: parsed.data.field_visible,
+      workDescription: parsed.data.work_description,
       actorUserId: gate.currentUser.id,
       actorName: gate.currentUser.name ?? null,
     });
@@ -36,8 +38,16 @@ export async function POST(req: Request) {
       entityType: 'segment',
       entityId: data?.id ?? null,
       segmentId: data?.id ?? null,
-      summary: `Placerade platshållare "${parsed.data.title}"`,
-      details: { truck_id: parsed.data.truck_id, start_day: parsed.data.start_day, end_day: parsed.data.end_day, placeholder: true },
+      summary: parsed.data.field_visible
+        ? `Placerade platshållare "${parsed.data.title}" (synlig för entreprenaden)`
+        : `Placerade platshållare "${parsed.data.title}"`,
+      details: {
+        truck_id: parsed.data.truck_id,
+        start_day: parsed.data.start_day,
+        end_day: parsed.data.end_day,
+        placeholder: true,
+        field_visible: parsed.data.field_visible ?? false,
+      },
     });
 
     return ok({ item: data }, 201);

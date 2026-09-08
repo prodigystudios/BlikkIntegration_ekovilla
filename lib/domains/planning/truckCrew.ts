@@ -26,6 +26,33 @@ export function crewForTruckInRange(
   return rows.filter((r) => r.truck_id === truckId && r.start_day <= to && r.end_day >= from);
 }
 
+/**
+ * Pure: hur många som bemannar en bil under [from, to] — veckans besättning om den finns, annars
+ * bilens standardbemanning.
+ *
+ * ⚠️ Fallbacken gäller BARA när veckan är helt otilldelad. Har veckan egna rader ÄR de svaret, även
+ * om de är färre än standardteamet: en forkad vecka är ett medvetet undantag, och att lägga ihop
+ * dem hade räknat in någon som uttryckligen bytts bort. Samma ordning som boarden ritar och som
+ * `is_user_on_segment` släpper igenom på
+ * (supabase/sql/20260908_ops_segments_field_visible.sql) — de tre måste svara likadant, annars
+ * lovar planeringen en mottagare som feeden inte har.
+ *
+ * Anroparen ansvarar för att [from, to] redan är vidgat till hela ISO-veckor, precis som SQL:en
+ * gör: veckorader kan täcka del av en vecka, och en jämförelse mot jobbets egna dagar hade missat
+ * en måndag–onsdag-besättning på ett torsdagsjobb.
+ */
+export function crewSizeForRange(
+  weekly: TruckCrewMember[],
+  defaults: { truck_id: string }[],
+  truckId: string,
+  from: string,
+  to: string,
+): number {
+  const thisWeek = crewForTruckInRange(weekly, truckId, from, to);
+  if (thisWeek.length > 0) return thisWeek.length;
+  return defaults.filter((d) => d.truck_id === truckId).length;
+}
+
 const TRUCK_CREW_SELECT = 'id, truck_id, member_id, member_name, start_day, end_day, role';
 
 // Crew rows overlapping [from, to]. RLS (planning.schedule.read) applies.

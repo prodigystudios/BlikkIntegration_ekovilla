@@ -191,17 +191,27 @@ function JobMeta({ job }: { job: MyJob }) {
 }
 
 function CrmJobCard({ job }: { job: MyJob }) {
-  const status = (job.status || 'scheduled') as WorkOrderStatus;
+  // En platshållare har ingen arbetsorder och därmed ingen status. `job.status || 'scheduled'`
+  // hade satt en "Schemalagd"-pill på den ändå — en etikett hämtad från en order som inte finns.
+  const status = job.workOrderId ? ((job.status || 'scheduled') as WorkOrderStatus) : null;
   return (
     <JobCardShell accentClass="bg-emerald-500" accentColor={job.truckColor}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="text-[15px] font-bold text-slate-900">{job.projectName || job.ref || 'Arbetsorder'}</div>
-        {workOrderStatusLabel[status] && (
+        {status && workOrderStatusLabel[status] && (
           <span className={cn(crm.badge, workOrderStatusClass[status])}>{workOrderStatusLabel[status]}</span>
         )}
       </div>
       <div className="text-[12px] text-slate-500">{[job.customer, job.ref].filter(Boolean).join(' • ')}</div>
       {job.address && <div className="text-[12px] text-slate-600">{job.address}</div>}
+      {/* Planerarens arbetsbeskrivning. På en platshållare — service av maskiner, en intern dag —
+          är den ofta allt som säger vad dagen går ut på, så den får stå fram och inte klippas.
+          `whitespace-pre-wrap` behåller raderna den skrevs med. */}
+      {job.description && (
+        <div className="mt-1 whitespace-pre-wrap rounded-lg border border-solid border-[#e3e9df] bg-white px-2.5 py-2 text-[12.5px] leading-relaxed text-slate-700">
+          {job.description}
+        </div>
+      )}
       <JobMeta job={job} />
       {/* Arbetsordern är primär — det är där dagens arbete görs (säckrapport, egenkontroll,
           kommentarer). Tidgenvägen står bredvid som andrahandsval, med jobbets dag i adressen:

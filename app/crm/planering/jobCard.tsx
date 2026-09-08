@@ -736,6 +736,9 @@ export type SegmentActions = {
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
   onReorder: (seg: OpsSegment, direction: 'up' | 'down') => void;
   onCopyToTruck: (seg: OpsSegment) => void;
+  // Öppna platshållaren för redigering (titel, kund, bil, datum, synlighet, arbetsbeskrivning).
+  // Bara platshållare — ett riktigt jobb redigeras på arbetsordern.
+  onEditPlaceholder: (seg: OpsSegment) => void;
   onDelete: (seg: OpsSegment) => void;
 };
 
@@ -840,21 +843,52 @@ export function SegmentCardBody({
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-slate-300 bg-slate-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-slate-500">
               Platshållare
             </span>
-            {canWrite && (
-              <button
-                type="button"
-                onClick={() => actions.onDelete(seg)}
-                aria-label="Ta bort platshållare"
-                className="relative z-20 ml-auto rounded p-0.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+            {/* Publicerad till entreprenaden. En glyf, ingen andra pill: kortet är litet och
+                "PLATSHÅLLARE" bär redan sortens identitet — det här säger bara vem som ser den. */}
+            {seg.field_visible && (
+              <span
+                title="Synlig för entreprenaden — bilens besättning ser den i Mina jobb"
+                aria-label="Synlig för entreprenaden"
+                className="inline-flex shrink-0 items-center text-emerald-600"
               >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M18 6 6 18M6 6l12 12" />
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z" />
+                  <circle cx="12" cy="12" r="2.6" />
                 </svg>
-              </button>
+              </span>
+            )}
+            {canWrite && (
+              <span className="relative z-20 ml-auto inline-flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => actions.onEditPlaceholder(seg)}
+                  aria-label="Redigera platshållare"
+                  className="rounded p-0.5 text-slate-400 transition hover:bg-emerald-50 hover:text-emerald-600"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => actions.onDelete(seg)}
+                  aria-label="Ta bort platshållare"
+                  className="rounded p-0.5 text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                </button>
+              </span>
             )}
           </div>
           <div className="mt-1 truncate text-[10.5px] font-bold leading-tight text-slate-800">{seg.placeholder_title}</div>
           {seg.placeholder_customer && <div className="truncate text-[9.5px] text-slate-500">{seg.placeholder_customer}</div>}
+          {seg.work_description && (
+            <div className="mt-1 line-clamp-2 text-[9.5px] leading-snug text-slate-600" title={seg.work_description}>
+              {seg.work_description}
+            </div>
+          )}
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={null} />
             <div className="ml-auto flex items-center gap-1">

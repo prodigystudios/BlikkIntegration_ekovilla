@@ -16,7 +16,7 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
 }
 
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, created_at, updated_at, ' +
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, field_visible, work_description, created_at, updated_at, ' +
   'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
 
 type RawSegment = {
@@ -32,6 +32,8 @@ type RawSegment = {
   created_by_name: string | null;
   placeholder_title: string | null;
   placeholder_customer: string | null;
+  field_visible: boolean | null;
+  work_description: string | null;
   created_at: string;
   updated_at: string;
   work_order: WorkOrderJobRow | WorkOrderJobRow[] | null;
@@ -55,6 +57,8 @@ export function mapSegment(row: RawSegment): OpsSegment {
     created_by_name: row.created_by_name ?? null,
     placeholder_title: row.placeholder_title ?? null,
     placeholder_customer: row.placeholder_customer ?? null,
+    field_visible: row.field_visible ?? false,
+    work_description: row.work_description ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
     job: wo ? mapWorkOrderJob(wo) : null,
@@ -183,6 +187,9 @@ export type PlaceholderSegmentInput = {
   startDay: string;
   endDay: string;
   jobType?: string | null;
+  // Publicera till entreprenaden + vad som ska göras. Se OpsSegment.field_visible.
+  fieldVisible?: boolean;
+  workDescription?: string | null;
   actorUserId: string;
   actorName?: string | null;
 };
@@ -205,6 +212,8 @@ export async function createPlaceholderSegment(
       // Same rule as a real placement — a blocked slot queues behind what's already on that day.
       sort_index: await nextSortIndex(supabase, input.truckId, input.startDay),
       job_type: input.jobType ?? null,
+      field_visible: input.fieldVisible ?? false,
+      work_description: input.workDescription ?? null,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,
     })
@@ -212,6 +221,58 @@ export async function createPlaceholderSegment(
     .single();
 
   return { data: data ? mapSegment(data as unknown as RawSegment) : null, error };
+}
+
+export type UpdatePlaceholderInput = {
+  title?: string;
+  customer?: string | null;
+  truckId?: string;
+  startDay?: string;
+  endDay?: string;
+  jobType?: string | null;
+  fieldVisible?: boolean;
+  workDescription?: string | null;
+};
+
+/**
+ * Redigera en platshållare. Bara skickade fält skrivs.
+ *
+ * ⚠️ `.is('work_order_id', null)` är en SPÄRR, inte en optimering: utan den hade den här vägen
+ * kunnat sätta placeholder_title på ett riktigt jobb och därmed skapa en rad som är både och —
+ * en form varken korten eller feeden vet hur den ska rita. Platshållarfälten ägs av den här
+ * funktionen, arbetsorderfälten av ordern.
+ *
+ * 🧨 En PostgREST-UPDATE som inte träffar någon rad svarar `error: null` med tom data — den ser ut
+ * som en lyckad skrivning. `maybeSingle()` + `notFound` gör skillnaden synlig för anroparen, som
+ * annars hade svarat 200 på en ändring som aldrig hände (fel id, eller ett riktigt jobb som
+ * spärren ovan sorterade bort).
+ */
+export async function updatePlaceholderSegment(
+  supabase: SupabaseClient,
+  id: string,
+  patch: UpdatePlaceholderInput,
+): Promise<{ data: OpsSegment | null; error: { message: string } | null; notFound: boolean }> {
+  const update: Record<string, unknown> = {};
+  if (patch.title !== undefined) update.placeholder_title = patch.title;
+  if (patch.customer !== undefined) update.placeholder_customer = patch.customer;
+  if (patch.truckId !== undefined) update.truck_id = patch.truckId;
+  if (patch.startDay !== undefined) update.start_day = patch.startDay;
+  if (patch.endDay !== undefined) update.end_day = patch.endDay;
+  if (patch.jobType !== undefined) update.job_type = patch.jobType;
+  if (patch.fieldVisible !== undefined) update.field_visible = patch.fieldVisible;
+  if (patch.workDescription !== undefined) update.work_description = patch.workDescription;
+
+  const { data, error } = await supabase
+    .from('ops_segments')
+    .update(update)
+    .eq('id', id)
+    .is('work_order_id', null)
+    .select(SEGMENT_SELECT)
+    .maybeSingle();
+
+  if (error) return { data: null, error, notFound: false };
+  if (!data) return { data: null, error: null, notFound: true };
+  return { data: mapSegment(data as unknown as RawSegment), error: null, notFound: false };
 }
 
 export type MoveSegmentInput = {

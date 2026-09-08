@@ -737,6 +737,18 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                               {it.truck}
                             </div>
                           )}
+                          {/* Planerarens arbetsbeskrivning. Finns bara på publicerade platshållare
+                              (service av maskiner, interna dagar) — där är den det enda som säger
+                              vad dagen går ut på, och kortet leder inte till någon arbetsorder där
+                              den annars hade stått. Klippt till två rader; hela texten i title. */}
+                          {it.work_description && (
+                            <div
+                              title={it.work_description}
+                              className={cn('line-clamp-2 leading-snug text-slate-600', compact ? 'text-[11px]' : 'text-[11.5px]')}
+                            >
+                              {it.work_description}
+                            </div>
+                          )}
                         </div>
                         <div className="grid justify-items-end gap-2">
                           {/* ⚠️ Knappen satt tidigare BARA på äldre rader (`!isCrmItem`), för att
@@ -760,7 +772,12 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                               Tid
                             </button>
                           )}
-                          {isCrmItem(it) && (
+                          {/* ⚠️ Grindad på ORDER-ID:t, inte på källan. En CRM-rad kan sakna
+                              arbetsorder sedan platshållare kan publiceras till entreprenaden
+                              (supabase/sql/20260908_ops_segments_field_visible.sql), och kortets
+                              klick (`isCrmItem(it) && it.work_order_id` längre upp) gör då
+                              ingenting — knappen hade lovat något den inte kan hålla. */}
+                          {isCrmItem(it) && it.work_order_id && (
                             <span
                               className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-[#1a3f26] bg-[#1a3f26] text-white shadow-[0_8px_16px_rgba(26,63,38,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
                             >
