@@ -21,8 +21,24 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   status: 'scheduled',
   work_address: {},
   customer_address: {},
+  placeholder_title: null,
+  work_description: null,
   ...over,
 });
+
+// En publicerad platshållare: bokad dag utan arbetsorder (service av maskiner, intern dag).
+const placeholder = (over: Partial<CrmJobRow> = {}): CrmJobRow =>
+  crm({
+    work_order_id: null,
+    order_number: null,
+    fortnox_order_number: null,
+    project_name: null,
+    customer: null,
+    status: null,
+    placeholder_title: 'Service av blåsmaskin',
+    work_description: 'Filterbyte och smörjning.',
+    ...over,
+  });
 
 describe('crmJobToScheduleItem', () => {
   it('produces the fields the dashboard card reads', () => {
@@ -40,6 +56,7 @@ describe('crmJobToScheduleItem', () => {
       bag_count: null,
       source: 'crm',
       work_order_id: 'wo-1',
+      work_description: null,
     });
   });
 
@@ -64,5 +81,28 @@ describe('crmJobToScheduleItem', () => {
 
   it('falls back to the segment start when the expanded day is missing', () => {
     expect(crmJobToScheduleItem(crm({ job_day: null })).job_day).toBe('2026-08-11');
+  });
+
+  // ── Publicerade platshållare ──────────────────────────────────────────────
+  // De kommer ur samma RPC som riktiga jobb men saknar arbetsorder. Kortet i veckoschemat
+  // navigerar till /arbetsorder/<id> och ritar en "Öppna order"-knapp, båda grindade på
+  // work_order_id — så det fältet MÅSTE vara null här, annars får besättningen en knapp som
+  // leder till /arbetsorder/null.
+  it('lämnar work_order_id null på en platshållare, så kortets orderväg stängs', () => {
+    expect(crmJobToScheduleItem(placeholder()).work_order_id).toBeNull();
+  });
+
+  it('använder platshållarens titel som rubrik', () => {
+    expect(crmJobToScheduleItem(placeholder()).project_name).toBe('Service av blåsmaskin');
+  });
+
+  it('ger platshållaren inget ordernummer att visa', () => {
+    // `workOrderRef(null, '')` svarar med tomma strängen, som hade ritat en tom separatorprick
+    // efter kundnamnet i stället för att utebli.
+    expect(crmJobToScheduleItem(placeholder()).order_number).toBeNull();
+  });
+
+  it('bär arbetsbeskrivningen vidare till kortet', () => {
+    expect(crmJobToScheduleItem(placeholder()).work_description).toBe('Filterbyte och smörjning.');
   });
 });

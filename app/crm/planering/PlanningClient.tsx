@@ -11,13 +11,13 @@ import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/p
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
-import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
+import { crewForTruckInRange, crewSizeForRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  sectionStart, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
+  parseISO, sectionStart, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -210,6 +210,9 @@ export default function PlanningClient({
   const [adminOpen, setAdminOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [placeholderOpen, setPlaceholderOpen] = useState(false);
+  // Platshållaren som redigeras. Samma modal som "Ny platshållare", så den ena stängs när den andra
+  // öppnas — annars hade två instanser stått på varandra med var sitt formulärtillstånd.
+  const [editPlaceholder, setEditPlaceholder] = useState<OpsSegment | null>(null);
 
   const dragRef = useRef<DragData | null>(null);
   // ONE clock read for the whole board, anchored to Europe/Stockholm.
@@ -840,25 +843,57 @@ export default function PlanningClient({
     [copySeg, refresh, toast, revealTruck],
   );
 
-  // Create a placeholder card (booked slot before the real work order exists).
-  const createPlaceholder = useCallback(
-    async (input: PlaceholderInput) => {
-      const r = await fetch(`${API}/placeholders`, {
-        method: 'POST',
+  /**
+   * Hur många ur besättningen som faktiskt skulle SE en publicerad platshållare på den bilen och de
+   * dagarna. Utan den här siffran är "Synlig för entreprenad" en switch utan återkoppling: en bil
+   * utan besättning ger noll mottagare, planeraren slår på den och tror att jobbet är ute.
+   *
+   * Regeln speglar get_my_crm_jobs → is_user_on_segment: veckans besättning slår standardbemanningen,
+   * och dagarna vidgas till hela ISO-veckor före överlappstestet (samma sak som boardens
+   * crewForTruckInRange gör). Räknar den annorlunda ljuger den om vem som ser vad.
+   *
+   * `null` = vi vet inte. `truckCrew` laddas bara för den synliga perioden, så en platshållare
+   * utanför den går inte att uttala sig om — och en varning som inte går att belägga är värre än
+   * ingen alls. Anroparen ritar då ingenting.
+   */
+  const crewCountFor = useCallback(
+    (truckId: string, startDay: string, endDay: string): number | null => {
+      // Vidga till hela ISO-veckor före uppslaget — samma sak som SQL:en gör, och av samma skäl:
+      // en veckorad kan täcka del av en vecka, så ett test mot jobbets egna dagar hade missat en
+      // måndag–onsdag-besättning på ett torsdagsjobb.
+      const weekStart = fmtISO(startOfWeek(parseISO(startDay)));
+      const weekEnd = addDaysISO(fmtISO(startOfWeek(parseISO(endDay))), 6);
+      if (weekStart < range.from || weekEnd > range.to) return null;
+      return crewSizeForRange(truckCrew, defaultCrew, truckId, weekStart, weekEnd);
+    },
+    [range.from, range.to, truckCrew, defaultCrew],
+  );
+
+  // Create a placeholder card (booked slot before the real work order exists), or save an edit to
+  // one. Samma modal, samma nyttolast — bara metoden och adressen skiljer.
+  const savePlaceholder = useCallback(
+    async (input: PlaceholderInput, patch?: Partial<PlaceholderInput>) => {
+      const editingId = editPlaceholder?.id;
+      const r = await fetch(editingId ? `${API}/placeholders/${editingId}` : `${API}/placeholders`, {
+        method: editingId ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(input),
+        // Vid redigering skickas bara det som ändrats, så en samtidig ändring från någon annan inte
+        // skrivs över av formulärets ögonblicksbild. Se `placeholderChanges`.
+        body: JSON.stringify(patch ?? input),
       });
       const j = await r.json();
-      if (!j.ok) return toast.error(j.error || 'Kunde inte skapa platshållaren');
+      if (!j.ok) return toast.error(j.error || (editingId ? 'Kunde inte spara platshållaren' : 'Kunde inte skapa platshållaren'));
       setPlaceholderOpen(false);
+      setEditPlaceholder(null);
       // Platshållarmodalen är den TREDJE bilväljaren, och dess förval är `trucks[0]` — som mycket
       // väl kan vara en bortvald bil. Samma regel som de andra två: en placering på en dold bil
-      // avdöljer den, annars skapas något som inte syns. Se noten vid `revealTruck`.
+      // avdöljer den, annars skapas något som inte syns. Se noten vid `revealTruck`. Gäller
+      // redigering också: flyttas platshållaren till en dold bil försvinner den ur vyn.
       revealTruck(input.truck_id);
-      toast.success('Platshållare skapad');
+      toast.success(editingId ? 'Platshållare sparad' : 'Platshållare skapad');
       await refresh();
     },
-    [refresh, toast, revealTruck],
+    [editPlaceholder, refresh, toast, revealTruck],
   );
 
   // ── filters ───────────────────────────────────────────────────────────────
@@ -1009,7 +1044,7 @@ export default function PlanningClient({
   );
 
   const actions = useMemo<SegmentActions>(
-    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg), onDelete: (seg) => unschedule(seg.id) }),
+    () => ({ onSetStatus, onSetJobType, onToggleHold, onOpenConfirm: openConfirm, onResize, onAddCrew: addCrew, onRemoveCrew: removeCrew, onReorder: reorderSegment, onCopyToTruck: (seg) => setCopySeg(seg), onEditPlaceholder: (seg) => setEditPlaceholder(seg), onDelete: (seg) => unschedule(seg.id) }),
     [onSetStatus, onSetJobType, onToggleHold, openConfirm, onResize, addCrew, removeCrew, reorderSegment, unschedule],
   );
 
@@ -1133,7 +1168,9 @@ export default function PlanningClient({
           </button>
           {canWrite && (
             <button
-              onClick={() => setPlaceholderOpen(true)}
+              // Nollställ redigeringen: står den kvar vinner den i modalvillkoret, och "Ny
+              // platshållare" hade öppnat den senast redigerade i stället för ett tomt formulär.
+              onClick={() => { setEditPlaceholder(null); setPlaceholderOpen(true); }}
               className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
             >
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1424,15 +1461,24 @@ export default function PlanningClient({
       {/* Activity log (audit trail) */}
       {activityOpen && <ActivityLogModal onClose={() => setActivityOpen(false)} />}
 
-      {/* New placeholder (booked slot before a work order exists) */}
-      {placeholderOpen && (
+      {/* Placeholder (booked slot before a work order exists) — ny eller under redigering */}
+      {(placeholderOpen || editPlaceholder) && (
         <PlaceholderModal
+          // Formulärets fält är initialt state, så en instans som lever kvar behåller den FÖRRA
+          // platshållarens värden när man öppnar nästa. Nyckeln tvingar fram en ny instans per
+          // redigerad rad.
+          key={editPlaceholder?.id ?? 'new'}
           trucks={trucks}
           hiddenTruckIds={hiddenTrucks}
           jobTypes={jobTypes}
           defaultDay={todayISO}
-          onClose={() => setPlaceholderOpen(false)}
-          onCreate={createPlaceholder}
+          editing={editPlaceholder ?? undefined}
+          crewCountFor={crewCountFor}
+          onClose={() => {
+            setPlaceholderOpen(false);
+            setEditPlaceholder(null);
+          }}
+          onSubmit={savePlaceholder}
         />
       )}
     </>

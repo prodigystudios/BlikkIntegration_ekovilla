@@ -147,8 +147,14 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     // would be worse than useless: it enriches by looking a Blikk project up BY ORDER NUMBER, and
     // Fortnox numbers are numeric like Blikk's — so a CRM job could pull up an unrelated project's
     // details, and the segment reports/comments below belong to legacy tables entirely.
-    if (isCrmItem(it) && it.work_order_id) {
-      window.location.href = `/arbetsorder/${it.work_order_id}`;
+    //
+    // ⚠️ Grinden står på KÄLLAN, inte på order-id:t. En CRM-rad kan sakna arbetsorder sedan
+    // platshållare kan publiceras till entreprenaden — och `&& it.work_order_id` hade släppt
+    // igenom just den raden till precis det modalen ovan säger att den aldrig får köra på: ett
+    // uppslag mot planning_*-tabellerna med ett CRM-uuid, och ett Blikk-projekt sökt på
+    // ordernummer. En platshållare har inget att öppna, och då är rätt svar att inte öppna något.
+    if (isCrmItem(it)) {
+      if (it.work_order_id) window.location.href = `/arbetsorder/${it.work_order_id}`;
       return;
     }
     setDetailOpen(true);
@@ -710,15 +716,22 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     const uniq = Array.from(new Set(arr.map(m => (m.name || '').trim()).filter(Boolean)));
                     return uniq;
                   })();
+                  // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy —
+                  // alltså ingenting att öppna. Då ska kortet inte heller SE ut som en knapp:
+                  // pekaren, tab-stoppet, rollen och chevronen längre ned lovar en handling som
+                  // inte finns, och installatören trycker på den i tron att beskrivningen
+                  // fortsätter någonstans.
+                  const opens = !isCrmItem(it) || !!it.work_order_id;
                   return (
                     <div
                       key={`${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`}
-                      onClick={() => openDetail(it)}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } }}
-                      role="button"
-                      tabIndex={0}
+                      onClick={opens ? () => openDetail(it) : undefined}
+                      onKeyDown={opens ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } } : undefined}
+                      role={opens ? 'button' : undefined}
+                      tabIndex={opens ? 0 : undefined}
                       className={cn(
-                        'relative grid cursor-pointer rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
+                        'relative grid rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
+                        opens && 'cursor-pointer',
                         compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
                       )}
                       style={{ borderLeft: `3px solid ${theme.accent}` }}
@@ -735,6 +748,18 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                                 <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
                               </svg>
                               {it.truck}
+                            </div>
+                          )}
+                          {/* Planerarens arbetsbeskrivning. Finns bara på publicerade platshållare
+                              (service av maskiner, interna dagar) — där är den det enda som säger
+                              vad dagen går ut på, och kortet leder inte till någon arbetsorder där
+                              den annars hade stått. Klippt till två rader; hela texten i title. */}
+                          {it.work_description && (
+                            <div
+                              title={it.work_description}
+                              className={cn('line-clamp-2 leading-snug text-slate-600', compact ? 'text-[11px]' : 'text-[11.5px]')}
+                            >
+                              {it.work_description}
                             </div>
                           )}
                         </div>
@@ -760,7 +785,12 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                               Tid
                             </button>
                           )}
-                          {isCrmItem(it) && (
+                          {/* ⚠️ Grindad på ORDER-ID:t, inte på källan. En CRM-rad kan sakna
+                              arbetsorder sedan platshållare kan publiceras till entreprenaden
+                              (supabase/sql/20260908_ops_segments_field_visible.sql), och kortets
+                              klick (`isCrmItem(it) && it.work_order_id` längre upp) gör då
+                              ingenting — knappen hade lovat något den inte kan hålla. */}
+                          {isCrmItem(it) && it.work_order_id && (
                             <span
                               className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-[#1a3f26] bg-[#1a3f26] text-white shadow-[0_8px_16px_rgba(26,63,38,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
                             >
@@ -768,9 +798,11 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                             </span>
                           )}
                           <div className="inline-flex items-center gap-2">
-                            <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
-                              <path fill="currentColor" d="M9 18l6-6-6-6" />
-                            </svg>
+                            {opens && (
+                              <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
+                                <path fill="currentColor" d="M9 18l6-6-6-6" />
+                              </svg>
+                            )}
                             {positionLabel && (
                               <span title="Placering i dag/lastbil" className="min-w-[34px] rounded-full border border-slate-700 bg-slate-900 px-[7px] py-1 text-center text-[10px] font-bold text-white">
                                 {positionLabel}

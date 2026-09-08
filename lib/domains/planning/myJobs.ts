@@ -26,8 +26,12 @@ export type BlikkJobRow = {
 
 export type CrmJobRow = {
   segment_id: string;
-  work_order_id: string;
-  order_number: string;
+  // null på en platshållare — en bokad dag som planeraren publicerat till entreprenaden utan att
+  // det finns (eller någonsin kommer att finnas) en arbetsorder: service av maskiner, interna
+  // dagar. Det är den enda skillnaden mellan sorterna, och därmed det som avgör vad kortet får
+  // erbjuda: utan order finns ingen arbetsorder att öppna.
+  work_order_id: string | null;
+  order_number: string | null;
   fortnox_order_number: string | null;
   project_name: string | null;
   customer: string | null;
@@ -40,6 +44,9 @@ export type CrmJobRow = {
   status: string | null;
   work_address: Record<string, unknown> | null;
   customer_address: Record<string, unknown> | null;
+  // Platshållarens egen rubrik + vad som ska göras. Bara satta när work_order_id är null.
+  placeholder_title: string | null;
+  work_description: string | null;
 };
 
 export type MyJob = {
@@ -59,8 +66,14 @@ export type MyJob = {
   status: string | null;
   address: string | null;
   bagCount: number | null;
+  // Vad som ska göras, skrivet av planeraren. Bara platshållare bär den — ett riktigt jobb har sin
+  // arbetsorder att öppna, och där står allt.
+  description: string | null;
   // Exactly one of these is set, by source. workOrderId drives the link to /arbetsorder/<id>;
   // projectId keeps the legacy Blikk comment/time flow working on old rows.
+  //
+  // ⚠️ En CRM-rad kan numera sakna BÅDA: en platshållare har ingen arbetsorder och inget
+  // Blikk-projekt. Allt som leder någonstans måste därför grindas på id:t, inte på källan.
   workOrderId: string | null;
   projectId: string | null;
 };
@@ -94,6 +107,7 @@ function fromBlikk(row: BlikkJobRow): MyJob | null {
     status: null,
     address: null,
     bagCount: typeof row.bag_count === 'number' ? row.bag_count : null,
+    description: null,
     workOrderId: null,
     projectId,
   };
@@ -102,13 +116,18 @@ function fromBlikk(row: BlikkJobRow): MyJob | null {
 function fromCrm(row: CrmJobRow): MyJob | null {
   const day = dayOf(row);
   if (!day) return null;
-  const { ref } = workOrderRef(row.fortnox_order_number, row.order_number);
+  // En platshållare har varken Fortnox-nummer eller internt ordernummer, så den har ingen referens
+  // att visa. `workOrderRef` hade svarat med tomma strängen och kortet hade ritat en tom
+  // separatorprick efter kundnamnet.
+  const ref = row.work_order_id ? workOrderRef(row.fortnox_order_number, row.order_number ?? '').ref || null : null;
   return {
     key: `crm:${row.segment_id}:${day}`,
     source: 'crm',
     day,
     ref,
-    projectName: str(row.project_name),
+    // Platshållarens titel ÄR dess rubrik. Sammanslagningen görs här och inte i SQL, av samma skäl
+    // som adressprecedensen: en visningsregel hör hemma på ett ställe.
+    projectName: str(row.project_name) ?? str(row.placeholder_title),
     customer: str(row.customer),
     truck: str(row.truck),
     truckColor: str(row.truck_color),
@@ -117,7 +136,8 @@ function fromCrm(row: CrmJobRow): MyJob | null {
     address: resolveJobAddress(row.work_address, row.customer_address),
     // Sacks are not in the v1 RPC (derived from line_items jsonb); the work order view has them.
     bagCount: null,
-    workOrderId: row.work_order_id,
+    description: str(row.work_description),
+    workOrderId: str(row.work_order_id),
     projectId: null,
   };
 }
@@ -143,15 +163,20 @@ export type ScheduleItem = {
   job_type: string | null;
   bag_count: number | null;
   source: 'crm';
-  work_order_id: string;
+  // ⚠️ null på en platshållare. Kortet i veckoschemat navigerar till /arbetsorder/<id> och visar
+  // en "Öppna order"-knapp — båda MÅSTE grindas på det här fältet, annars får besättningen en
+  // knapp som inte gör något.
+  work_order_id: string | null;
+  // Vad som ska göras. Bara platshållare bär den; ett riktigt jobb har sin arbetsorder.
+  work_description: string | null;
 };
 
 export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
-  const { ref } = workOrderRef(row.fortnox_order_number, row.order_number);
+  const ref = row.work_order_id ? workOrderRef(row.fortnox_order_number, row.order_number ?? '').ref || null : null;
   return {
     segment_id: row.segment_id,
     project_id: null,
-    project_name: str(row.project_name),
+    project_name: str(row.project_name) ?? str(row.placeholder_title),
     customer: str(row.customer),
     order_number: ref,
     start_day: str(row.start_day),
@@ -162,7 +187,8 @@ export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
     // Not in the v1 RPC (derived from line_items jsonb); the work order view has them.
     bag_count: null,
     source: 'crm',
-    work_order_id: row.work_order_id,
+    work_order_id: str(row.work_order_id),
+    work_description: str(row.work_description),
   };
 }
 

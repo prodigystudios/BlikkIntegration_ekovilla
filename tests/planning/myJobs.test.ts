@@ -31,8 +31,27 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   status: 'scheduled',
   work_address: { street_address: 'Jobbvägen 1', postal_code: '131 30', city: 'Nacka' },
   customer_address: { street_address: 'Kontoret 9', postal_code: '111 22', city: 'Stockholm' },
+  placeholder_title: null,
+  work_description: null,
   ...over,
 });
+
+// En platshållare som planeraren publicerat till entreprenaden: bokad dag på en bil, utan
+// arbetsorder och utan kund. Adressfälten kommer tomma från RPC:n (de byggs ur kundsnapshoten).
+const placeholder = (over: Partial<CrmJobRow> = {}): CrmJobRow =>
+  crm({
+    work_order_id: null,
+    order_number: null,
+    fortnox_order_number: null,
+    project_name: null,
+    customer: null,
+    status: null,
+    work_address: {},
+    customer_address: {},
+    placeholder_title: 'Service av blåsmaskin',
+    work_description: 'Filterbyte och smörjning.',
+    ...over,
+  });
 
 describe('mergeMyJobs', () => {
   it('interleaves both sources chronologically and tags each row', () => {
@@ -122,5 +141,53 @@ describe('mergeMyJobs', () => {
     expect(mergeMyJobs(null, undefined)).toEqual([]);
     expect(mergeMyJobs(null, [crm()])).toHaveLength(1);
     expect(mergeMyJobs([blikk()], null)).toHaveLength(1);
+  });
+
+  // ── Publicerade platshållare ──────────────────────────────────────────────
+  // Sedan 20260908_ops_segments_field_visible.sql kan en flaggad platshållare komma ur samma RPC
+  // som riktiga jobb. Den saknar arbetsorder, kund och adress — och feeden måste ändå kunna rita
+  // den utan att lova något den inte har.
+  describe('platshållare utan arbetsorder', () => {
+    it('visar platshållarens titel som rubrik', () => {
+      const [job] = mergeMyJobs([], [placeholder()]);
+      expect(job.projectName).toBe('Service av blåsmaskin');
+    });
+
+    it('lämnar workOrderId null, så kortet inte erbjuder en arbetsorder som inte finns', () => {
+      const [job] = mergeMyJobs([], [placeholder()]);
+      expect(job.workOrderId).toBeNull();
+      // Inte heller ett Blikk-projekt: en CRM-platshållare hör inte hemma i den kedjan.
+      expect(job.projectId).toBeNull();
+    });
+
+    it('ger den ingen referens att visa i stället för en tom sträng', () => {
+      // `workOrderRef(null, '')` svarar med '', som kortet hade ritat som en tom prick efter
+      // kundnamnet: `[job.customer, job.ref].filter(Boolean)` filtrerar bort null, inte ''.
+      const [job] = mergeMyJobs([], [placeholder()]);
+      expect(job.ref).toBeNull();
+    });
+
+    it('bär arbetsbeskrivningen — på en platshållare är den hela innehållet', () => {
+      const [job] = mergeMyJobs([], [placeholder()]);
+      expect(job.description).toBe('Filterbyte och smörjning.');
+    });
+
+    it('lämnar description null på ett riktigt jobb (beskrivningen står på arbetsordern)', () => {
+      const [job] = mergeMyJobs([], [crm()]);
+      expect(job.description).toBeNull();
+    });
+
+    it('ger ingen adress när det inte finns någon kund att hämta den från', () => {
+      const [job] = mergeMyJobs([], [placeholder()]);
+      expect(job.address).toBeNull();
+    });
+
+    it('sorteras in bland dagens riktiga jobb som vilken rad som helst', () => {
+      const merged = mergeMyJobs(
+        [],
+        [crm({ segment_id: 'seg-wo', job_day: '2026-08-11' }), placeholder({ segment_id: 'seg-ph', job_day: '2026-08-10' })],
+      );
+      expect(merged.map((j) => j.day)).toEqual(['2026-08-10', '2026-08-11']);
+    });
   });
 });

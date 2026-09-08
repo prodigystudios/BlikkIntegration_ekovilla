@@ -22,6 +22,13 @@ export const placeSegmentSchema = z.object({
   job_type: jobType.optional(),
 });
 
+// Vad grabbarna ska göra, när platshållaren är publicerad till entreprenaden. Tom text är samma sak
+// som ingen beskrivning — annars sparas en blank rad som ser ut som ett svar på kortet i fält.
+const workDescription = z.preprocess(
+  (v) => (v == null ? null : String(v).trim() || null),
+  z.string().max(2000, 'Beskrivningen är för lång').nullable(),
+);
+
 // Create a placeholder placement (booked slot before a CRM work order exists). Carries its own
 // title/customer instead of a work_order_id.
 export const createPlaceholderSchema = z.object({
@@ -31,7 +38,25 @@ export const createPlaceholderSchema = z.object({
   start_day: isoDate,
   end_day: isoDate,
   job_type: jobType.optional(),
+  field_visible: z.boolean().optional(),
+  work_description: workDescription.optional(),
 });
+
+// Redigera en platshållare. Alla fält valfria (bara det som skickas skrivs), men minst ett måste
+// med — en tom patch hade blivit en UPDATE utan kolumner, alltså ett databasfel på en begäran som
+// egentligen bara var meningslös.
+export const updatePlaceholderSchema = z
+  .object({
+    title: z.string().trim().min(1, 'Ange en titel').max(120, 'Titeln är för lång').optional(),
+    customer: z.string().trim().max(120).nullable().optional(),
+    truck_id: z.string().uuid('Ogiltig bil').optional(),
+    start_day: isoDate.optional(),
+    end_day: isoDate.optional(),
+    job_type: jobType.optional(),
+    field_visible: z.boolean().optional(),
+    work_description: workDescription.optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, 'Inget att spara');
 
 export const moveSegmentSchema = z.object({
   truck_id: z.string().uuid('Ogiltig bil').optional(),
