@@ -48,6 +48,11 @@ export async function GET(req: Request) {
       period_start: periodStart,
       people,
       can_correct: can(perms, 'time.entry.write.all'),
+      // Får den här användaren skicka påminnelsen som SMS? Egen nyckel, admin-only i seeden —
+      // lönebyrån påminner i appen men sms:ar inte personalens privata mobiler. Följer med
+      // underlaget av samma skäl som can_correct: klienten kan inte fråga efter sina egna
+      // behörigheter, och en kryssruta vars enda utfall är 403 är värre än ingen kryssruta.
+      can_sms: can(perms, 'time.reminder.sms'),
       ...(await remindersEnrichment(people.map((row) => row.user_id), periodStart)),
     });
   } catch (e: any) {

@@ -158,6 +158,10 @@ export default function TimeApprovals() {
   // aldrig write.all: hon rapporterar avvikelser, den anställde rättar själv. Defaulten är false
   // — fail-closed, så en misslyckad hämtning aldrig kan rita fram knapparna.
   const [canCorrectOthers, setCanCorrectOthers] = React.useState(false);
+  // Får den här användaren skicka påminnelsen som SMS (`time.reminder.sms`)? Egen nyckel, admin-only
+  // i seeden: lönebyrån påminner i appen men sms:ar inte personalens privata mobiler på företagets
+  // bekostnad. Fail-closed som can_correct — en misslyckad hämtning får aldrig rita fram rutan.
+  const [canSms, setCanSms] = React.useState(false);
   // Skelettet härleds ur VILKEN PERIOD som faktiskt är hämtad, det sätts inte för hand.
   //
   // Förut satte varje load() `loading = true`, även omladdningen efter en rättelse. Då byttes hela
@@ -219,6 +223,7 @@ export default function TimeApprovals() {
       if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
       setPeople(body.data.people || []);
       setCanCorrectOthers(body.data.can_correct === true);
+      setCanSms(body.data.can_sms === true);
       setReminders(body.data.reminders || {});
       setHasPhone(body.data.has_phone || {});
       setRemindersOk(body.data.reminders_ok === true);
@@ -234,6 +239,7 @@ export default function TimeApprovals() {
         // ovanpå en tom lista. Gäller påminnelserna med — en kvarliggande "Påmind 3 sep" från
         // förra månaden hade fått någon att avstå från att påminna.
         setCanCorrectOthers(false);
+        setCanSms(false);
         setReminders({});
         setHasPhone({});
         setRemindersOk(false);
@@ -742,6 +748,7 @@ export default function TimeApprovals() {
           periodStart={periodStartOf(period)}
           hasPhone={hasPhone}
           phoneKnown={remindersOk}
+          canSms={canSms}
           onClose={() => setReminding(null)}
           onSubmit={async (chosen, message, sendSms) => {
             // Stänger FÖRST när anropet lyckats — samma skäl som återöppningen: ett 409 eller
@@ -1043,13 +1050,15 @@ function ReopenModal({
  * tjänstgöringsgrad eller schema.
  */
 function ReminderModal({
-  rows, periodStart, hasPhone, phoneKnown, onClose, onSubmit,
+  rows, periodStart, hasPhone, phoneKnown, canSms, onClose, onSubmit,
 }: {
   rows: TimeApprovalOverviewRow[];
   periodStart: string;
   hasPhone: Record<string, boolean>;
   /** Falskt när telefonuppgiften inte gick att läsa — då säger modalen inget om nummer alls. */
   phoneKnown: boolean;
+  /** `time.reminder.sms`. Utan den ritas ingen SMS-ruta — dess enda utfall vore ett 403. */
+  canSms: boolean;
   onClose: () => void;
   /** Får de FAKTISKT valda raderna, inte hela listan — mottagare kan bockas av här inne. */
   onSubmit: (chosen: TimeApprovalOverviewRow[], message: string | null, sendSms: boolean) => Promise<string | null>;
@@ -1102,7 +1111,10 @@ function ReminderModal({
             onClick={async () => {
               setBusy(true);
               setFailure(null);
-              const result = await onSubmit(chosen, message.trim() || null, sendSms);
+              // `&& canSms` är hängslen: rutan renderas inte utan nyckeln, men tillståndet lever
+              // kvar om behörigheten skulle försvinna under tiden modalen står öppen, och
+              // routen svarar då 403 på hela utskicket i stället för att skicka notiserna.
+              const result = await onSubmit(chosen, message.trim() || null, sendSms && canSms);
               if (result) { setFailure(result); setBusy(false); }
             }}
             disabled={busy || chosen.length === 0}
@@ -1169,6 +1181,10 @@ function ReminderModal({
           </span>
         </label>
 
+        {/* Ingen SMS-ruta utan nyckeln. Notisen i appen går ändå, och den är påminnelsen —
+            SMS:et är tillvalet. Att visa en ruta vars enda utfall är 403 hade fått den som
+            trycker att tro att systemet är trasigt, inte att hon saknar behörighet. */}
+        {canSms ? (
         <label className="flex items-start gap-2.5 rounded-xl border border-[#dbe4d6] bg-white px-3 py-2.5">
           {/* h-4 w-4 accent-emerald-600 — INTE `border-*`. globals.css nollar kanter för allt utom
               knappar, så en `border-slate-300` här hade sett komplett ut men inte ritat något.
@@ -1192,6 +1208,7 @@ function ReminderModal({
             </span>
           </span>
         </label>
+        ) : null}
       </div>
     </CrmModal>
   );

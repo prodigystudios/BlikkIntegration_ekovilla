@@ -293,3 +293,32 @@ describe('POST /api/admin/time/reminders — dubbletter och avsändaren själv',
     expect(mockDeliver).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/admin/time/reminders — SMS kräver en egen nyckel', () => {
+  it('nekar lönebyrån SMS-delen — hon attesterar, men sms:ar inte privata mobiler', async () => {
+    // 🧨 Gränsen som `time.reminder.sms` finns för. `ekonomi` är en EXTERN part som har
+    // `time.approve`, och utan den egna nyckeln hade attesträtten också gett rätten att skicka
+    // 200 fria tecken från företagets Twilio-nummer till varje anställds privata mobil.
+    mockUser.mockResolvedValue(ekonomiUser as any);
+    const { status } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
+    expect(status).toBe(403);
+    // Nekat FÖRE något skrivits — inget halvt utfört utskick.
+    expect(mockDeliver).not.toHaveBeenCalled();
+    expect(mockSms).not.toHaveBeenCalled();
+  });
+
+  it('låter henne ändå påminna i appen', async () => {
+    mockUser.mockResolvedValue(ekonomiUser as any);
+    const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA] }));
+    expect(status).toBe(200);
+    expect(body.data.notified).toBe(1);
+  });
+
+  it('släpper igenom admin, som har nyckeln', async () => {
+    mockUser.mockResolvedValue(adminUser as any);
+    vi.mocked(getSupabaseAdmin).mockReturnValue(adminWithPhones({ [ANNA]: '0701234567' }));
+    const { status, body } = await json(await send({ period: '2026-08', user_ids: [ANNA], send_sms: true }));
+    expect(status).toBe(200);
+    expect(body.data.sms_sent).toBe(1);
+  });
+});

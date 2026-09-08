@@ -14,7 +14,7 @@ import {
   timeReminderHref,
   type ReminderReason,
 } from '@/lib/domains/time/reminders';
-import { ok, requirePermission, routeError, sendTimeRemindersSchema, validationError } from '@/app/api/time/_lib';
+import { can, getEffectivePermissions, ok, requirePermission, routeError, sendTimeRemindersSchema, validationError } from '@/app/api/time/_lib';
 
 // POST /api/admin/time/reminders — påminn en eller flera anställda om att fylla i sin tid.
 //
@@ -42,6 +42,18 @@ export async function POST(req: Request) {
 
     const parsed = sendTimeRemindersSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
+
+    // ⚠️ SMS kräver en EGEN nyckel. Notisen i appen är intern och gratis; ett SMS går till en privat
+    // mobil på företagets kostnad, och `time.approve` innehas av lönebyrån — en extern part. Samma
+    // gräns som `time.entry.write.all` drar mellan att godkänna någons tid och att skriva i deras
+    // ställe. Se 20260908_time_reminder_sms_permission.sql.
+    //
+    // Nekas FÖRE någonting skrivits: UI:t döljer rutan för den som saknar nyckeln, så ett anrop hit
+    // är antingen en gammal flik eller något handgjort. Att i stället skicka notiserna och tiga om
+    // SMS:et hade gett ett halvt utfört uppdrag som ser lyckat ut.
+    if (parsed.data.send_sms && !can(await getEffectivePermissions(), 'time.reminder.sms')) {
+      return routeError(403, 'time_reminder_sms_forbidden', 'Du har inte behörighet att skicka påminnelser som SMS.');
+    }
 
     const periodStart = periodStartOf(parsed.data.period);
     const supabase = createRouteHandlerClient({ cookies });
