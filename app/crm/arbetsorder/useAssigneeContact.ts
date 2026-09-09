@@ -21,7 +21,11 @@ export function useAssigneeContact(workOrderId: string | null | undefined): Assi
   const [contact, setContact] = useState<AssigneeContact | null>(null);
 
   useEffect(() => {
-    if (!workOrderId) { setContact(null); return; }
+    // 🧨 NOLLSTÄLL FÖRE HÄMTNINGEN, inte bara när id:t försvinner. Byter ordern utan att
+    // komponenten monteras om står FÖRRA orderns säljare kvar tills svaret kommer — med ett
+    // ringbart nummer under sig. Att ringa fel person står det ingenstans i kortet att man gör.
+    setContact(null);
+    if (!workOrderId) return;
     let active = true;
     fetch(`/api/crm/work-orders/${workOrderId}/assignee-contact`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))

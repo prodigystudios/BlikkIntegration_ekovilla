@@ -14,7 +14,7 @@
 // rebuilding how installers are granted a work order — that would break the field flow.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
-import { ok, requireSignedInUser, routeError } from '../../_lib';
+import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -26,6 +26,13 @@ export async function GET(_req: Request, context: RouteContext) {
   try {
     const currentUser = await requireSignedInUser();
     if (currentUser.response) return currentUser.response;
+
+    // ⚠️ Denna grind finns INTE i customer-contact intill, som access-modellen ovan speglar. Det
+    // är inte en avvikelse att harmonisera bort åt andra hållet: varje annan [id]-route här har
+    // den, och utan den når ett icke-UUID PostgREST och kommer tillbaka som en rå 500 med
+    // "invalid input syntax for type uuid" i klartext. 400 är rätt svar på ett trasigt id.
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
 
     const supabase = getSupabaseAdmin();
     const { data, error } = await getWorkOrderAssigneeContact(supabase, context.params.id);
