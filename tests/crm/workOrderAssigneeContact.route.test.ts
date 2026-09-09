@@ -23,7 +23,11 @@ vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
   return { ...actual, getWorkOrderAssigneeContact: vi.fn() };
 });
 
-vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
+// De två klienterna MÄRKS, så testet kan säga vilken som gick vart. Utan märkningen är de två
+// tomma objekt och en route som eleverar båda läsningarna ser identisk ut för sviten — se vakten
+// längst ner.
+const ADMIN_CLIENT = { __client: 'admin' } as any;
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ADMIN_CLIENT) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 // Sessionsklienten svarar med läsarens EGEN profilrad — det är den rollen grinden frågar efter.
@@ -33,6 +37,7 @@ let readerError: { message: string } | null = null;
 
 vi.mock('@supabase/auth-helpers-nextjs', () => ({
   createRouteHandlerClient: vi.fn(() => ({
+    __client: 'session',
     from: () => {
       const builder: any = {
         select: () => builder,
@@ -142,5 +147,24 @@ describe('GET /api/crm/work-orders/[id]/assignee-contact', () => {
     (getCurrentUser as any).mockResolvedValue(memberUser);
     (getWorkOrderAssigneeContact as any).mockResolvedValue({ data: null, error: { message: 'trasigt' } });
     expect((await call()).status).toBe(500);
+  });
+
+  // 🧨 VILKEN KLIENT SOM GÅR VART ÄR HELA SÄKERHETSMODELLEN, och den avgörs HÄR i routen — inte
+  // i domänfunktionen, som bara tar emot det den får. Skickas admin-klienten som första argument
+  // läses arbetsordern förbi RLS, och routen svarar med den ansvariges namn och privata mobil för
+  // vilket order-UUID som helst, åt vilket inloggat icke-externt konto som helst.
+  //
+  // Utan den här assertionen är den mutationen OSYNLIG: domänfunktionen är mockad, och varje annat
+  // test frågar bara OM den anropades. Granskningen körde precis den mutationen och fick alla tio
+  // testerna gröna.
+  it('arbetsordern läses med sessionsklienten, profilen med admin', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    await call();
+
+    const [orderClient, profileClient, id] = (getWorkOrderAssigneeContact as any).mock.calls[0];
+    expect(orderClient.__client).toBe('session');
+    expect(profileClient.__client).toBe('admin');
+    expect(orderClient).not.toBe(profileClient);
+    expect(id).toBe(WO);
   });
 });
