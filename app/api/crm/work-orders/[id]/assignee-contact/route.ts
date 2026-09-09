@@ -40,6 +40,8 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
+    const session = createRouteHandlerClient({ cookies });
+
     // ⛔ `konsult` är EXTERN (PERMISSIONS.md) och håller ändå `crm.workorder.read`, alltså skulle
     // RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är personalens
     // eget, ur `profiles` — och det delas i dag bara via Kontaktlistan, en KURERAD tabell där
@@ -49,13 +51,28 @@ export async function GET(_req: Request, context: RouteContext) {
     // Beslutet är Williams och gällde "de anställda" (2026-09-09). En extern part faller utanför
     // det, och konsulten arbetar i CRM, inte i fält — kortet finns bara i fältvyn.
     //
+    // 🧨 EGEN LÄSNING, INTE `currentUser.role` — den grinden failade OPEN. `getCurrentUser()`
+    // kastar sitt profiles-läsfel (lib/auth/route.ts: `const { data: profile }`, ingen error) och
+    // svarar `role || 'member'`, så en misslyckad rolluppslagning hade sett ut som en installatör
+    // och släppt konsulten förbi — medan RLS fortsatte att admittera hen. Här är ett läsfel i
+    // stället ett nej. Läsningen är self-read och går under `profiles_select_self`, alltså den
+    // enda profilfråga som alltid får svara.
+    //
     // ⚠️ EN ROLLGRIND, alltså precis det lager RBAC-arbetet river (se project_full_rbac_frontend).
     // Den står här tills det finns en nyckel att fråga efter i stället; byt till nyckeln då,
     // ta inte bort grinden.
-    if (currentUser.currentUser?.role === 'konsult') return ok({ contact: null });
+    // Grinden kräver ett POSITIVT bevis: en läst roll som inte är konsult. Läsfel OCH saknad
+    // profilrad är båda "obevisad", alltså nej — hade grinden bara nekat på `role === 'konsult'`
+    // vore varje utfall som inte råkade säga 'konsult' ett ja, inklusive tomma svar.
+    const { data: reader, error: readerError } = await session
+      .from('profiles').select('role').eq('id', currentUser.currentUser!.id).maybeSingle();
+    const readerRole = (reader as { role?: string } | null)?.role ?? null;
+    if (readerError || !readerRole || readerRole === 'konsult') {
+      return ok({ contact: null });
+    }
 
     const { data, error } = await getWorkOrderAssigneeContact(
-      createRouteHandlerClient({ cookies }),
+      session,
       getSupabaseAdmin(),
       context.params.id,
     );
