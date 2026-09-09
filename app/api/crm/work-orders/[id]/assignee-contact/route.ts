@@ -40,6 +40,20 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
+    // ⛔ `konsult` är EXTERN (PERMISSIONS.md) och håller ändå `crm.workorder.read`, alltså skulle
+    // RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är personalens
+    // eget, ur `profiles` — och det delas i dag bara via Kontaktlistan, en KURERAD tabell där
+    // administrationen valt vad som publiceras. `listAssignableCrmUsers`, kontorets egen
+    // personallista, väljer också medvetet bort telefonen (`id, full_name, role`).
+    //
+    // Beslutet är Williams och gällde "de anställda" (2026-09-09). En extern part faller utanför
+    // det, och konsulten arbetar i CRM, inte i fält — kortet finns bara i fältvyn.
+    //
+    // ⚠️ EN ROLLGRIND, alltså precis det lager RBAC-arbetet river (se project_full_rbac_frontend).
+    // Den står här tills det finns en nyckel att fråga efter i stället; byt till nyckeln då,
+    // ta inte bort grinden.
+    if (currentUser.currentUser?.role === 'konsult') return ok({ contact: null });
+
     const { data, error } = await getWorkOrderAssigneeContact(
       createRouteHandlerClient({ cookies }),
       getSupabaseAdmin(),

@@ -8,13 +8,20 @@ export type AssigneeContact = {
   phone: string | null;
 };
 
-// Loads the work order's assignee (name + phone) — who sold the job, i.e. who the crew calls when
-// something on the order doesn't add up. Goes through the work-order-scoped endpoint (open to any
-// signed-in user) because `profiles` is self-read-only, so the `assignee` embed on the order itself
-// is null for everyone but yourself, and /work-orders/assignees is CRM-gated and closed to member.
-// See app/api/crm/work-orders/[id]/assignee-contact/route.ts for the access model.
+// Loads the work order's assignee (name + phone) — the person on the office side the crew calls
+// when something on the order doesn't add up. Goes through a work-order-scoped endpoint because
+// `profiles` is self-read-only, so the `assignee` embed on the order itself is null for everyone
+// but yourself, and /work-orders/assignees is CRM-gated and closed to member.
 //
-// null = ingen ansvarig att visa (otilldelad order, eller en profil utan både namn och nummer).
+// ⚠️ ÄNDPUNKTEN ÄR RLS-GRINDAD, inte öppen för vem som helst med länken: läsaren måste kunna se
+// arbetsordern under sin egen RLS (besättningen via crm_work_orders_select_crew, kontoret via
+// crm.workorder.read; `konsult` nekas som extern part). Hela modellen står i
+// app/api/crm/work-orders/[id]/assignee-contact/route.ts — läs den innan du hänger något nytt här.
+//
+// 🧨 ETT NEKAT SVAR SER UT SOM EN OTILLDELAD ORDER: båda ger null, med flit. Bygg alltså inget som
+// tolkar null som "ordern saknar ansvarig" — det enda null betyder är "inget kort att visa".
+//
+// null = inget att visa (otilldelad order, order läsaren inte når, eller en profil utan uppgifter).
 // Ett laddningsläge saknas med flit: kortet är en tillägsuppgift, och en skelettruta som blinkar
 // förbi ovanför arbetsbeskrivningen hade flyttat sidans innehåll efter första rendern.
 export function useAssigneeContact(workOrderId: string | null | undefined): AssigneeContact | null {
