@@ -1,17 +1,23 @@
-// getSupabaseAdmin: the field view (installers/member) needs to know WHO SOLD THE JOB — the person
-// to call when something on the order doesn't add up — but `profiles` is self-read-only
-// (profiles_select_self, auth_roles_setup.sql:71), so the `assignee:profiles!assigned_to` embed on
-// the work order comes back null for everyone but yourself. This endpoint resolves only the
-// assignee's name + phone. Nothing else of the profile: it also carries private_email, home address
-// and next-of-kin (20260517_employee_profile_details.sql), and RLS is row level and cannot narrow
-// columns — the column line is drawn in getWorkOrderAssigneeContact.
+// Vem på kontoret som äger arbetsordern — namn + telefon, för fältvyns "ansvarig säljare"-kort.
 //
-// ACCESS MODEL: identical to ../customer-contact, deliberately. The installer page
-// (app/arbetsorder/[id]/page.tsx) is reachable by ANY signed-in user holding the work order's link —
-// installers are not the order's `assigned_to` and have no CRM role, so crm_work_orders SELECT RLS
-// would exclude them. The random UUIDv4 id is the capability (enumeration is infeasible), and the
-// payload is limited to two fields. Do NOT tighten this to assigned_to/CRM-role without also
-// rebuilding how installers are granted a work order — that would break the field flow.
+// ACCESS MODEL: RLS ÄR GRINDEN, och den frågas med SESSIONSKLIENTEN. Läsaren måste kunna se
+// arbetsordern under sin egen RLS för att få veta något om den ansvarige: besättningen via
+// `crm_work_orders_select_crew` (20260810_crm_work_order_crew_access.sql, härlett ur planeringens
+// besättningstabeller), kontoret via `crm.workorder.read`. Ingen egen behörighetsregel här — den
+// hade blivit en andra kopia att hålla i synk med den som redan finns i databasen.
+//
+// 🧨 DEN ELEVERADE LÄSNINGEN GÄLLER BARA `profiles`-RADEN, och sker först efter att ordern släppt
+// igenom. `profiles` är self-read-only (`profiles_select_self`, auth_roles_setup.sql:71), så
+// namnet på någon ANNAN kräver service-role — men eleveras BÅDA läsningarna blir routen en läcka:
+// säljarens namn och privata mobilnummer hade då besvarats för vilket order-UUID som helst, åt
+// vilket inloggat konto som helst. Och "inloggad" är inte "anställd": `/auth/create-account` delar
+// ut `role='member'` åt vem som helst.
+//
+// ⚠️ Systerrutten ../customer-contact bygger fortfarande på den ÄLDRE modellen ("inloggad + har
+// länken", UUID:t som capability). Den kommentaren skrevs i juni, innan crew-policyn fanns i
+// augusti — kopiera inte upplägget hit tillbaka.
+import { cookies } from 'next/headers';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
 import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../_lib';
@@ -27,15 +33,18 @@ export async function GET(_req: Request, context: RouteContext) {
     const currentUser = await requireSignedInUser();
     if (currentUser.response) return currentUser.response;
 
-    // ⚠️ Denna grind finns INTE i customer-contact intill, som access-modellen ovan speglar. Det
-    // är inte en avvikelse att harmonisera bort åt andra hållet: varje annan [id]-route här har
-    // den, och utan den når ett icke-UUID PostgREST och kommer tillbaka som en rå 500 med
-    // "invalid input syntax for type uuid" i klartext. 400 är rätt svar på ett trasigt id.
+    // ⚠️ Denna grind finns INTE i customer-contact intill. Det är inte en avvikelse att
+    // harmonisera bort åt andra hållet: varje annan [id]-route här har den, och utan den når ett
+    // icke-UUID PostgREST och kommer tillbaka som en rå 500 med "invalid input syntax for type
+    // uuid" i klartext. 400 är rätt svar på ett trasigt id.
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = getSupabaseAdmin();
-    const { data, error } = await getWorkOrderAssigneeContact(supabase, context.params.id);
+    const { data, error } = await getWorkOrderAssigneeContact(
+      createRouteHandlerClient({ cookies }),
+      getSupabaseAdmin(),
+      context.params.id,
+    );
     if (error) return routeError(500, 'crm_work_order_assignee_failed', error.message);
 
     return ok({ contact: data });
