@@ -19,6 +19,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { isReadonlyRole } from '@/lib/auth/route';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
 import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../_lib';
 
@@ -42,11 +43,17 @@ export async function GET(_req: Request, context: RouteContext) {
 
     const session = createRouteHandlerClient({ cookies });
 
-    // ⛔ `konsult` är EXTERN (PERMISSIONS.md) och håller ändå `crm.workorder.read`, alltså skulle
-    // RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är personalens
-    // eget, ur `profiles` — och det delas i dag bara via Kontaktlistan, en KURERAD tabell där
-    // administrationen valt vad som publiceras. `listAssignableCrmUsers`, kontorets egen
-    // personallista, väljer också medvetet bort telefonen (`id, full_name, role`).
+    // ⛔ DE EXTERNA ROLLERNA FÅR INTE PERSONALENS NUMMER. `konsult` håller `crm.workorder.read`,
+    // alltså skulle RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är
+    // personalens eget, ur `profiles` — och det delas i dag bara via Kontaktlistan, en KURERAD
+    // tabell där administrationen valt vad som publiceras. `listAssignableCrmUsers`, kontorets
+    // egen personallista, väljer också medvetet bort telefonen (`id, full_name, role`).
+    //
+    // ⚠️ `isReadonlyRole` OCH INTE EN LITERAL `=== 'konsult'`. Listan bär också `ekonomi`
+    // (lönebyrån, likaså extern) och legacy `readonly`. Ekonomi når ingen arbetsorder i dag — hon
+    // har bara `time.*`-nycklar, så RLS stoppar henne — men hennes yta har vidgats flera gånger,
+    // och den dagen hon når en order ska hon inte plötsligt få personalens privata mobilnummer på
+    // köpet. Grinden ska inte behöva ändras igen för att en rolldefinition rörde sig.
     //
     // Beslutet är Williams och gällde "de anställda" (2026-09-09). En extern part faller utanför
     // det, och konsulten arbetar i CRM, inte i fält — kortet finns bara i fältvyn.
@@ -61,13 +68,13 @@ export async function GET(_req: Request, context: RouteContext) {
     // ⚠️ EN ROLLGRIND, alltså precis det lager RBAC-arbetet river (se project_full_rbac_frontend).
     // Den står här tills det finns en nyckel att fråga efter i stället; byt till nyckeln då,
     // ta inte bort grinden.
-    // Grinden kräver ett POSITIVT bevis: en läst roll som inte är konsult. Läsfel OCH saknad
-    // profilrad är båda "obevisad", alltså nej — hade grinden bara nekat på `role === 'konsult'`
-    // vore varje utfall som inte råkade säga 'konsult' ett ja, inklusive tomma svar.
+    // Grinden kräver ett POSITIVT bevis: en läst, intern roll. Läsfel OCH saknad profilrad är båda
+    // "obevisad", alltså nej — nekade grinden bara på en igenkänd extern roll vore varje utfall som
+    // inte råkade matcha ett ja, inklusive tomma svar.
     const { data: reader, error: readerError } = await session
       .from('profiles').select('role').eq('id', currentUser.currentUser!.id).maybeSingle();
     const readerRole = (reader as { role?: string } | null)?.role ?? null;
-    if (readerError || !readerRole || readerRole === 'konsult') {
+    if (readerError || !readerRole || isReadonlyRole(readerRole)) {
       return ok({ contact: null });
     }
 

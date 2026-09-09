@@ -9,7 +9,14 @@ import { konsultUser, memberUser, salesUser } from './helpers/supabase';
 // kommentar förutser dessutom att någon vill "harmonisera" routen med systern customer-contact
 // intill; görs det utan denna fil faller grinden bort med allt grönt.
 
-vi.mock('@/lib/auth/route', () => ({ getCurrentUser: vi.fn() }));
+// Bara `getCurrentUser` mockas. `isReadonlyRole` behålls ÄKTA med flit: det är den delade
+// rollistan (konsult/ekonomi/readonly) grinden vilar på, och en mockad kopia hade gjort testet
+// blint för precis den ändring det finns för att fånga — att någon lägger till eller tar bort en
+// extern roll i lib/auth/route.ts.
+vi.mock('@/lib/auth/route', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/route')>();
+  return { ...actual, getCurrentUser: vi.fn() };
+});
 
 vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/work-orders')>();
@@ -81,6 +88,17 @@ describe('GET /api/crm/work-orders/[id]/assignee-contact', () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.data.contact).toBeNull();
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ HELA `isReadonlyRole`-LISTAN, inte bara konsult. `ekonomi` (lönebyrån) är likaså extern och
+  // når ingen arbetsorder i dag — hon har bara `time.*`-nycklar, så RLS stoppar henne innan
+  // grinden ens spelar roll. Testet finns för den dagen det ändras: hennes yta har vidgats flera
+  // gånger, och en grind som bara kände 'konsult' hade släppt igenom henne tyst, med sviten grön.
+  it.each(['ekonomi', 'readonly'])('extern roll %s får heller inget nummer', async (role) => {
+    (getCurrentUser as any).mockResolvedValue({ id: 'user-x', role: 'member' });
+    readerRole = role;
+    expect((await (await call()).json()).data.contact).toBeNull();
     expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
   });
 

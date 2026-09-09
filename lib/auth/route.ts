@@ -23,7 +23,12 @@ export type CurrentUser = {
 // den här servervägen, tvillingen den direkta klientvägen — så en roll som bara läggs till på ett
 // ställe är fortfarande skrivbehörig via det andra. Ändra alltid båda.
 // Tvillingen ägs numera av supabase/sql/20260831_ekonomi_role_seed.sql.
-function isReadonlyRole(role: unknown) {
+//
+// Exporterad sedan 2026-09-09: listan bär numera också en LÄS-grind. Fältvyns säljarkort
+// (work-orders/[id]/assignee-contact) lämnar ut personalens egna telefonnummer, och det är samma
+// fråga som ställs här — "är den här läsaren en utomstående?". Kopiera inte rollistan dit i stället;
+// den har redan en tvilling att hålla i synk, och en tredje hade drivit isär i tysthet.
+export function isReadonlyRole(role: unknown) {
   return role === 'konsult' || role === 'readonly' || role === 'ekonomi';
 }
 
