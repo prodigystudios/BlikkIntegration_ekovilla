@@ -15,6 +15,7 @@ import { useSackReports } from '@/app/crm/arbetsorder/useSackReports';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
+import { useAssigneeContact } from '@/app/crm/arbetsorder/useAssigneeContact';
 import { formatDate, joinAddress, documentRef, orderLookupRef } from '@/app/crm/lib/format';
 import { inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
@@ -59,6 +60,9 @@ export default function WorkOrderInstallerClient({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<InstallerTab>('info');
   const customerInfo = useCustomerContact(workOrderId);
+  // Vem på kontoret som äger ordern. Egen hämtning och inte `workOrder.assignee` — den joinen är
+  // alltid null här, se app/crm/arbetsorder/useAssigneeContact.ts.
+  const assignee = useAssigneeContact(workOrderId);
   const sackReports = useSackReports(workOrderId);
 
   // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
@@ -244,6 +248,42 @@ export default function WorkOrderInstallerClient({
               {onSite && customerInfo?.phoneFromCustomer && phone ? (
                 <p className="text-xs text-slate-500">Numret går till kundens kontakt – kontakten på plats har inget eget.</p>
               ) : null}
+            </div>
+          ) : null}
+
+          {/* Ansvarig säljare — vem på kontoret som sålde jobbet, alltså vem man ringer när något
+              på ordern inte stämmer. Utan den fick besättningen gissa, eller ringa kunden om en
+              uppgift kunden inte äger.
+
+              ⚠️ LIGGER DIREKT UNDER KUNDKONTAKTEN OCH SER NÄSTAN LIKADAN UT — därför måste
+              rubriken och hjälptexten göra skillnaden. Två ringbara kort i rad är precis den yta
+              där man trycker på fel nummer, och att ringa kunden med en fråga om arbetsordern är
+              värre än att inte ringa alls.
+
+              Renderas inte alls när ordern är otilldelad eller den ansvariges profil är tom —
+              en rubrik över ett streck säger ingenting man inte redan visste. */}
+          {assignee ? (
+            <div className={cn(crm.cardInner, 'grid gap-3')}>
+              <p className={crm.sectionTitle}>Ansvarig säljare</p>
+              <p className="text-sm font-semibold text-slate-900">{assignee.name || 'Namn saknas'}</p>
+              {assignee.phone ? (
+                <>
+                  <div className="grid gap-1.5 text-sm">
+                    <PhoneLink value={assignee.phone} />
+                  </div>
+                  <p className="text-xs text-slate-500">Ring hen om något på arbetsordern inte stämmer.</p>
+                </>
+              ) : (
+                // Numret kommer ur den ansvariges egen profil och kan mycket väl saknas där. Säg
+                // det rakt ut och peka på listan som har det, i stället för att låta kortet se
+                // trasigt ut.
+                <p className="text-xs text-slate-500">
+                  Inget nummer i profilen –{' '}
+                  <Link href="/kontakt-lista" className="font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900">
+                    sök i Kontaktlistan
+                  </Link>.
+                </p>
+              )}
             </div>
           ) : null}
 
