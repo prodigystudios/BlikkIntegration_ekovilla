@@ -271,7 +271,7 @@ export default function WorkOrderInstallerClient({
                   <div className="grid gap-1.5 text-sm">
                     <PhoneLink value={assignee.phone} />
                   </div>
-                  <p className="text-xs text-slate-500">Ring hen om något på arbetsordern inte stämmer.</p>
+                  <p className="text-xs text-slate-500">Ring säljaren om något inte stämmer i arbetsordern.</p>
                 </>
               ) : (
                 // Numret kommer ur den ansvariges egen profil och kan mycket väl saknas där. Säg
