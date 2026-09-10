@@ -43,8 +43,30 @@ export type DepotMaterialForecast = {
   worst_deficit: number;
   /** worst_deficit avrundat upp till leverantörens beställningsstorlek. */
   suggested_sacks: number;
-  /** Senaste dag beställningen kan skickas för att hinna fram: run_out − ledtid, aldrig före idag. */
+  /**
+   * Senaste dag beställningen kan skickas för att hinna fram: run_out − ledtid, aldrig före idag.
+   *
+   * ⚠️ null NÄR LEDTIDEN ÄR OKÄND (supply_known === false), inte run-out-dagen. Med ledtid 0 blir
+   * uttrycket lika med run_out_day — alltså "beställ senast den dag depån är tom", vilket är ett
+   * SENARE datum och läses som en instruktion. En okänd ledtid får inte se ut som ett svar.
+   */
   suggested_date: string | null;
+  /**
+   * Fanns det leveransvillkor (ledtid, pallstorlek) för det här materialet?
+   *
+   * false betyder antingen att ingen aktiv leverantör bär materialet, eller att FLERA gör det —
+   * defaultSupplierForMaterial gissar aldrig mellan två fabriker. Åt båda hållen är svaret att
+   * datumet inte går att räkna, och det ska UI:t säga rakt ut i stället för att visa ett tal som
+   * ser räknat ut.
+   */
+  supply_known: boolean;
+  /**
+   * Behov som ligger BORTOM horisonten och därför inte räknats in.
+   *
+   * Redovisas, inte döljs: att veta att det finns 800 säck bokade längre fram är precis vad som
+   * avgör om man ska passa på att beställa mer nu. Men de får inte styra dagens förslag.
+   */
+  beyond_horizon: number;
   /**
    * Beställt material vars datum redan passerat utan att ha kvitterats.
    *
@@ -71,6 +93,19 @@ export type ForecastInput = {
   inflow: ForecastEvent[];
   /** stockholmTodayISO(), aldrig new Date() i anroparen. */
   today: string;
+  /**
+   * Hur långt fram prognosen räknar, i dagar från idag. Default 90.
+   *
+   * ⚠️ UTAN HORISONT BLIR suggested_sacks HELA RESTBEHOVET. worst_deficit är den djupaste punkten
+   * över det som räknas, så ett jobb bokat ett halvår fram drog upp DAGENS förslag till hela sitt
+   * säckantal — daterat till den FÖRSTA run-outen, alltså "beställ 3 000 säck på tisdag". Det är
+   * den ofarliga riktningen (för mycket, för tidigt) men det gör förslaget obrukbart.
+   *
+   * 90 dagar är en FÖRSTA GISSNING och inte ett fattat beslut — den bör bekräftas mot hur långt
+   * fram planeringen i praktiken är bindande. Händelser bortom horisonten redovisas i
+   * beyond_horizon i stället för att tigas ihjäl.
+   */
+  horizonDays?: number;
   /** Per depå+material: ledtid och beställningsstorlek hos den leverantör som skulle få ordern. */
   supply?: Map<string, { leadTimeDays: number; roundUpTo: number }>;
   excluded?: DemandExclusion[];
@@ -84,15 +119,24 @@ export function supplyKey(depotId: string, material: string): string {
   return `${depotId}\u0000${material}`;
 }
 
+/**
+ * ⚠️ EN FÖRSTA GISSNING, INTE ETT FATTAT BESLUT. Bekräftas mot hur långt fram planeringen i
+ * praktiken är bindande. Se horizonDays.
+ */
+export const DEFAULT_HORIZON_DAYS = 90;
+
 type Cell = {
   opening: number;
   /** dag -> { in, out } */
   byDay: Map<string, { inflow: number; demand: number }>;
   overdue: number;
+  beyond: number;
 };
 
 export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
   const depotName = new Map(input.depots.map((d) => [d.id, d.name]));
+  // Sista dagen som räknas. Inklusive: en händelse PÅ horisonten hör till det vi planerar för.
+  const horizonEnd = addDaysISO(input.today, Math.max(0, input.horizonDays ?? DEFAULT_HORIZON_DAYS));
 
   // Nästlade kartor i stället för en sammanslagen strängnyckel — samma form som
   // computeDepotBalances, och ingen kodning att resonera om.
@@ -105,7 +149,7 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
     }
     let cell = byMat.get(material);
     if (!cell) {
-      cell = { opening: 0, byDay: new Map(), overdue: 0 };
+      cell = { opening: 0, byDay: new Map(), overdue: 0, beyond: 0 };
       byMat.set(material, cell);
     }
     return cell;
@@ -130,6 +174,11 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
     // men inte rapporterats har inte dragit något ur lagret — säckarna ska fortfarande gå åt. Kastas
     // posten underskattas behovet, och underskattning är den riktning som ställer en bil utan
     // material.
+    if (e.day > horizonEnd) {
+      // Bortom horisonten: redovisas, men styr inte dagens förslag. Se horizonDays.
+      cell.beyond += e.sacks;
+      continue;
+    }
     day(cell, e.day < input.today ? input.today : e.day).demand += e.sacks;
   }
 
@@ -140,7 +189,9 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
     // har passerat och ingen har kvitterat. Att vika in det på idag vore att anta att det dök upp,
     // och då slocknar bristvarningen på material som fortfarande står hos fabriken.
     if (e.day < input.today) cell.overdue += e.sacks;
-    else day(cell, e.day).inflow += e.sacks;
+    // Ett inflöde bortom horisonten täcker inget av det vi räknar på. Att räkna in det hade sänkt
+    // dagens brist med material som kommer efter att den redan uppstått — fel riktning.
+    else if (e.day <= horizonEnd) day(cell, e.day).inflow += e.sacks;
   }
 
   const rows: DepotMaterialForecast[] = [];
@@ -153,8 +204,12 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
       const days = [...cell.byDay.keys()].sort();
 
       let balance = cell.opening;
-      let runOut: string | null = null;
-      let shortfallAtRunOut = 0;
+      // ⚠️ ETT REDAN NEGATIVT SALDO TAR SLUT IDAG, INTE VID NÄSTA HÄNDELSE. Sattes run_out bara
+      // inne i loopen fick en depå som redan står på minus sin run-out-dag daterad till nästa
+      // bokade jobb — kanske veckor bort — trots att den är tom nu. Då bryts också invarianten som
+      // rowsNeedingOrder sorterar på: worst_deficit > 0 utan run_out_day.
+      let runOut: string | null = cell.opening < 0 ? input.today : null;
+      let shortfallAtRunOut = cell.opening < 0 ? -cell.opening : 0;
       let lowest = balance;
 
       for (const dayKey of days) {
@@ -175,6 +230,7 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
       const supply = input.supply?.get(supplyKey(d.id, material));
       const leadTimeDays = supply?.leadTimeDays ?? 0;
       const roundUpTo = supply?.roundUpTo ?? 1;
+      const supplyKnown = supply !== undefined;
 
       rows.push({
         depot_id: d.id,
@@ -186,8 +242,11 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
         worst_deficit: worst,
         // Avrundas EN gång, på totalen. Se roundUpToMultiple om varför aldrig per delbehov.
         suggested_sacks: roundUpToMultiple(worst, roundUpTo),
-        // Aldrig före idag: en beställning kan inte skickas i går. Räcker lagret finns ingen dag.
-        suggested_date: runOut ? maxISO(input.today, addDaysISO(runOut, -leadTimeDays)) : null,
+        // Aldrig före idag: en beställning kan inte skickas i går. Räcker lagret finns ingen dag —
+        // och utan kända leveransvillkor finns ingen dag att räkna fram, se supply_known.
+        suggested_date: runOut && supplyKnown ? maxISO(input.today, addDaysISO(runOut, -leadTimeDays)) : null,
+        supply_known: supplyKnown,
+        beyond_horizon: cell.beyond,
         overdue_inflow: cell.overdue,
       });
     }

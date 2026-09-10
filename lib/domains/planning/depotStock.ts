@@ -4,7 +4,7 @@ import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { effectiveSackReports, sackReportKind } from './sackLedger';
 import { chunkIds, readAllPages, type ReadError } from './pagedRead';
 import { listOpenExpected } from './expectedDeliveries';
-import { defaultSupplierForMaterial, listAllSuppliers } from './materialSuppliers';
+import { defaultSupplierForMaterial, listSupplyTerms } from './materialSuppliers';
 import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
@@ -310,7 +310,11 @@ export function applyReportedToDemand(
   return segments.map((s) => {
     const rep = s.work_order_id ? reported.get(s.work_order_id) : undefined;
     if (!rep) return s;
-    if (rep.hasFinal) return { ...s, materials: [] };
+    // ⚠️ NOLLAR materialen, RADERAR dem inte. Skillnaden är inte kosmetisk: en tom lista betyder
+    // "inget material gick att härleda" nedströms, och ett färdigblåst jobb rapporterades då som
+    // no_material i excluded — kortet påstod att siffrorna var för låga för jobb som behöver noll.
+    // Materialet ÄR känt; det är behovet som är slut.
+    if (rep.hasFinal) return { ...s, materials: (s.materials ?? []).map((m) => ({ material: m.material, sacks: 0 })) };
     // Bara det som blåstes ur DEN HÄR depån får krympa behovet här — se invarianten vid
     // reportedDemandByWorkOrder. Ett segment vid en depå som aldrig rapporterats mot lämnas orört.
     const blown = s.depot_id ? rep.byDepotMaterial.get(s.depot_id) : undefined;
@@ -426,14 +430,19 @@ export function pickDemandSegments(segments: PlannedDemandSegment[]): {
     }
   }
   for (const p of picked) {
-    // Utan igenkänt material vet vi inte VILKET lager jobbet tär på — och i beställningen är det
-    // materialet som väljer fabrik. Tyst överhoppat var precis felet den här listan finns för.
-    if (!p.materials.some((m) => m.material && m.sacks > 0)) {
+    // ⚠️ FRÅGAN ÄR OM MATERIALET ÄR KÄNT, INTE OM DET FINNS BEHOV KVAR. Villkoret löd förut
+    // `sacks > 0`, vilket gjorde varje FÄRDIGBLÅST jobb till ett no_material-fynd: kortet skrev
+    // "kunde inte räknas — inget material gick att härleda ur artikelnamnen" och påstod att
+    // siffrorna var för låga, för jobb vars behov korrekt var noll. En lista med falsklarm blir
+    // inte läst, och då är den värdelös också för de riktiga fynden.
+    if (!p.materials.some((m) => m.material)) {
       excluded.push({ work_order_id: p.work_order_id, reason: 'no_material' });
       continue;
     }
-    // Räknas i saldot ("hur mycket fattas") men kan inte placeras på en dag ("när tar det slut").
-    if (!p.start_day) excluded.push({ work_order_id: p.work_order_id, reason: 'no_date' });
+    // Ett jobb utan behov kvar behöver ingen dag — det är redovisat och färdigt, inte utelämnat.
+    if (!p.start_day && p.materials.some((m) => m.material && m.sacks > 0)) {
+      excluded.push({ work_order_id: p.work_order_id, reason: 'no_date' });
+    }
   }
 
   return { picked, excluded };
@@ -596,7 +605,7 @@ export async function getDepotStockWithForecast(
     deriveConsumptionRows(supabase, truckDepot),
     derivePlannedDemandSegments(supabase, truckDepot),
     listOpenExpected(supabase),
-    listAllSuppliers(supabase),
+    listSupplyTerms(supabase),
   ]);
 
   const readError =
@@ -641,15 +650,33 @@ export async function getDepotStockWithForecast(
   }));
 
   // Ledtid och pallstorlek per depå+material, från den leverantör som skulle få ordern.
-  // defaultSupplierForMaterial gissar aldrig mellan två fabriker: är valet tvetydigt saknas posten
-  // och prognosen faller tillbaka på ingen ledtid och ingen avrundning — ett tidigare datum och ett
-  // exakt antal, alltså den försiktiga riktningen.
+  //
+  // 🧨 LÄSS VIA planning_supply_terms, INTE UR TABELLEN. ops_material_suppliers SELECT kräver
+  // planning.depot.manage medan den här rutten grindar på planning.schedule.read — och RLS NEKAR
+  // INTE, den filtrerar. För sales och konsult kom noll rader tillbaka UTAN FEL, och prognosen föll
+  // tyst tillbaka på ingen ledtid. Mätt: admin fick "beställ senast 23/9", sales fick 30/9 på samma
+  // data. RPC:n bär bara de ofarliga fälten; adress och kontaktperson stannar bakom sin grind.
+  //
+  // ⚠️ Är valet TVETYDIGT (flera aktiva leverantörer av materialet) saknas posten med flit —
+  // defaultSupplierForMaterial gissar aldrig mellan två fabriker. Följden är supply_known: false
+  // och INGET föreslaget datum. Att i stället falla tillbaka på ledtid 0 gav run-out-dagen själv,
+  // alltså ett SENARE datum som såg ut som ett svar.
+  // ⚠️ ÖVER UNIONEN AV ALLA PAR PROGNOSEN KAN RETURNERA, inte bara saldoraderna. Prognosen skapar en
+  // cell för varje depå+material som har NÅGON rörelse — och en väntad leverans av ett material som
+  // depån aldrig haft är just ett sådant par. Byggdes kartan bara ur saldot saknade den posten,
+  // supply_known blev false och raden tappade både ledtid och avrundning, tyst.
+  // Paret bärs som DATA, inte som en kodad sträng att plocka isär igen: supplyKey är envägs med
+  // flit, och att avkoda den hade lagt en andra tolkning av nyckeln bredvid den enda som ska finnas.
+  const pairs = new Map<string, { depotId: string; material: string }>();
+  const addPair = (depotId: string, material: string) => pairs.set(supplyKey(depotId, material), { depotId, material });
+  for (const b of balances) for (const r of b.rows) addPair(b.depot_id, r.material);
+  for (const e of forecastDemand) addPair(e.depot_id, e.material);
+  for (const e of inflow) addPair(e.depot_id, e.material);
+
   const supply = new Map<string, { leadTimeDays: number; roundUpTo: number }>();
-  for (const d of depots) {
-    for (const r of balances.find((b) => b.depot_id === d.id)?.rows ?? []) {
-      const s = defaultSupplierForMaterial(suppliers.data, r.material);
-      if (s) supply.set(supplyKey(d.id, r.material), { leadTimeDays: s.lead_time_days, roundUpTo: s.round_up_to });
-    }
+  for (const [key, pair] of pairs) {
+    const s = defaultSupplierForMaterial(suppliers.data, pair.material);
+    if (s) supply.set(key, { leadTimeDays: s.lead_time_days, roundUpTo: s.round_up_to });
   }
 
   return {

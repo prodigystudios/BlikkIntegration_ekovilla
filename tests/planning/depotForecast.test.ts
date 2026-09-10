@@ -181,14 +181,40 @@ describe('suggested_date backar ledtiden', () => {
     expect(rowFor(f).suggested_date).toBe(TODAY);
   });
 
-  it('utan leverantörsuppgift: ingen ledtid, ingen avrundning', () => {
+  /**
+   * 🧨 UTAN KÄND LEDTID FINNS INGET DATUM ATT VISA — INTE run-out-dagen.
+   *
+   * Med ledtid 0 blir max(idag, runOut − 0) exakt lika med runOut, alltså "beställ senast den dag
+   * depån är tom". Det är ett SENARE datum än det rätta och läses som en instruktion. Fallbacken
+   * såg alltså ut som ett svar och pekade åt fel håll — den farliga riktningen.
+   *
+   * Vägen dit var inte teoretisk: leverantörsvillkoren var RLS-grindade hårdare än lagerrutten, så
+   * för varje planerare som inte var admin kom noll rader tillbaka UTAN FEL.
+   */
+  it('utan leverantörsuppgift: INGET datum, och supply_known säger varför', () => {
     const f = run({
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [{ depot_id: SYD, material: EKO, sacks: 187, day: '2026-09-30' }],
     });
     const r = rowFor(f);
-    expect(r.suggested_date).toBe('2026-09-30');
+    expect(r.supply_known).toBe(false);
+    expect(r.suggested_date).toBeNull();
+    // Antalet går fortfarande att räkna — det är bara avrundningen som saknas.
     expect(r.suggested_sacks).toBe(187);
+    expect(r.run_out_day).toBe('2026-09-30');
+  });
+
+  it('med leverantörsuppgift och ledtid 0 finns datumet — då BETYDER run-out-dagen något', () => {
+    // Skillnaden mot testet ovan: här VET vi att ledtiden är noll ("levererar samma dag"), och då
+    // är run-out-dagen ett riktigt svar. Okänt och noll är inte samma sak.
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 187, day: '2026-09-30' }],
+      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 0, roundUpTo: 1 }]]),
+    });
+    const r = rowFor(f);
+    expect(r.supply_known).toBe(true);
+    expect(r.suggested_date).toBe('2026-09-30');
   });
 
   it('avrundar upp till leverantörens pall — en gång, på totalen', () => {
@@ -204,6 +230,102 @@ describe('suggested_date backar ledtiden', () => {
     // Avrundat per dag hade det blivit 3 pallar = 72. Behovet är 3 säckar, alltså EN pall.
     expect(rowFor(f).worst_deficit).toBe(3);
     expect(rowFor(f).suggested_sacks).toBe(24);
+  });
+});
+
+describe('horisonten', () => {
+  /**
+   * 🧨 UTAN HORISONT BLIR suggested_sacks HELA RESTBEHOVET. worst_deficit är den djupaste punkten
+   * över det som räknas, så ett jobb ett halvår fram drog upp DAGENS förslag till hela sitt
+   * säckantal — daterat till den FÖRSTA run-outen. "Beställ 3 000 säck på tisdag."
+   */
+  it('ett jobb bortom horisonten styr inte dagens förslag', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [
+        { depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' },
+        { depot_id: SYD, material: EKO, sacks: 3000, day: '2027-03-01' }, // ett halvår fram
+      ],
+      horizonDays: 90,
+    });
+    const r = rowFor(f);
+    expect(r.worst_deficit).toBe(100);
+    expect(r.suggested_sacks).toBe(100);
+    // Men det tigs inte ihjäl — att veta att 3 000 säck är bokade längre fram avgör om man ska
+    // passa på att beställa mer nu.
+    expect(r.beyond_horizon).toBe(3000);
+  });
+
+  it('en händelse PÅ horisonten räknas med — gränsen är inklusive', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-10-14' }], // exakt +30
+      horizonDays: 30,
+    });
+    expect(rowFor(f).worst_deficit).toBe(100);
+    expect(rowFor(f).beyond_horizon).toBe(0);
+  });
+
+  it('ett inflöde bortom horisonten sänker inte dagens brist', () => {
+    // Att räkna in det hade täckt en brist med material som kommer efter att den uppstått.
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' }],
+      inflow: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2027-03-01' }],
+      horizonDays: 90,
+    });
+    expect(rowFor(f).worst_deficit).toBe(100);
+  });
+
+  it('defaultar till 90 dagar när ingen horisont anges', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [
+        { depot_id: SYD, material: EKO, sacks: 10, day: '2026-11-01' }, // inom 90 dagar
+        { depot_id: SYD, material: EKO, sacks: 5000, day: '2027-06-01' }, // långt bortom
+      ],
+    });
+    expect(rowFor(f).worst_deficit).toBe(10);
+    expect(rowFor(f).beyond_horizon).toBe(5000);
+  });
+});
+
+describe('redan negativt ingångssaldo', () => {
+  /**
+   * 🧨 EN DEPÅ SOM REDAN STÅR PÅ MINUS TAR SLUT IDAG, INTE VID NÄSTA BOKADE JOBB.
+   *
+   * run_out sattes bara inne i händelseloopen, så ett negativt saldo daterades till nästa händelse
+   * — kanske veckor bort. Samtidigt bröts invarianten rowsNeedingOrder sorterar på: worst_deficit
+   * över noll men run_out_day null.
+   */
+  it('run-out är idag, inte nästa händelse', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: -50 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 10, day: '2026-10-20' }],
+    });
+    const r = rowFor(f);
+    expect(r.run_out_day).toBe(TODAY);
+    expect(r.shortfall_at_run_out).toBe(50);
+    expect(r.worst_deficit).toBe(60);
+  });
+
+  it('negativt saldo UTAN några händelser ger ändå en run-out-dag', () => {
+    const f = run({ opening: [{ depot_id: SYD, material: EKO, sacks: -50 }] });
+    const r = rowFor(f);
+    expect(r.worst_deficit).toBe(50);
+    expect(r.run_out_day).toBe(TODAY);
+  });
+
+  // Invarianten som sorteringen i rowsNeedingOrder vilar på.
+  it('varje rad med ett underskott har en run-out-dag', () => {
+    const f = run({
+      opening: [
+        { depot_id: SYD, material: EKO, sacks: -50 },
+        { depot_id: NORR, material: EKO, sacks: 0 },
+      ],
+      demand: [{ depot_id: NORR, material: EKO, sacks: 10, day: '2026-09-20' }],
+    });
+    for (const r of rowsNeedingOrder(f)) expect(r.run_out_day).not.toBeNull();
   });
 });
 

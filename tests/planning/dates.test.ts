@@ -192,18 +192,35 @@ describe('shortDayISO', () => {
     expect(shortDayISO('2026-09-06')).toBe(`${WEEKDAYS_SHORT[6]} 6/9`);
   });
 
-  it('är oberoende av runtimens zon', () => {
+  // ⚠️ ETT ÄRLIGT ZONTEST, MED EN ÄRLIG BEGRÄNSNING. shortDayISO tar en ISO-sträng och bygger sin
+  // Date med Date.UTC, så en LOKALT förankrad variant (new Date(y, m-1, d) + getDay) ger faktiskt
+  // samma svar i varje zon — den läses ju tillbaka lokalt. Loopen nedan kan alltså inte skilja de
+  // två åt, och att påstå det vore att sätta en vakt som inte vaktar.
+  //
+  // Det den DÄREMOT fångar är varje implementation som blandar ankringarna (bygger UTC och läser
+  // lokalt, eller tvärtom) — vilket är det fel som faktiskt uppstår när någon 'förenklar' den.
+  it('blandar inte UTC- och lokalankring — samma svar i fyra zoner', () => {
     const original = process.env.TZ;
     try {
       for (const tz of ['UTC', 'Europe/Stockholm', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
         process.env.TZ = tz;
-        // Kiritimati ligger på UTC+14: en lokalt förankrad implementation hade tappat ett dygn här.
+        // Kiritimati ligger på UTC+14 och Los Angeles på UTC−8: en blandad ankring tappar ett dygn
+        // åt ena eller andra hållet här.
         expect(shortDayISO('2026-09-24')).toBe(`${WEEKDAYS_SHORT[3]} 24/9`);
         expect(shortDayISO('2026-01-01')).toBe(`${WEEKDAYS_SHORT[3]} 1/1`);
+        expect(shortDayISO('2026-12-31')).toBe(`${WEEKDAYS_SHORT[3]} 31/12`);
       }
     } finally {
       if (original === undefined) delete process.env.TZ;
       else process.env.TZ = original;
     }
+  });
+
+  it('täcker alla sju veckodagar — mappningen prövas inte av ett enda datum', () => {
+    // 2026-09-07 är en måndag; sju dagar i rad går igenom hela WEEKDAYS_SHORT i ordning.
+    const days = ['07', '08', '09', '10', '11', '12', '13'];
+    days.forEach((d, i) => {
+      expect(shortDayISO(`2026-09-${d}`)).toBe(`${WEEKDAYS_SHORT[i]} ${Number(d)}/9`);
+    });
   });
 });

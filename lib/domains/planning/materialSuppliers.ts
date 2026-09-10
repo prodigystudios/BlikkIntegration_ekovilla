@@ -39,6 +39,57 @@ export type MaterialSupplier = {
 const SUPPLIER_SELECT =
   'id, name, email, contact_name, phone, materials, lead_time_days, round_up_to, note, active';
 
+/**
+ * Det MINSTA en rad behöver bära för att urvalsregeln ska gälla den.
+ *
+ * ⚠️ FINNS FÖR ATT REGELN SKA VARA EN, INTE TVÅ. Registret läser hela rader; prognosen läser bara
+ * de ofarliga villkoren via planning_supply_terms (adress och kontaktperson stannar bakom
+ * depot.manage). Utan den här abstraktionen hade "vilken leverantör gäller för materialet" fått
+ * skrivas en gång till för den smala formen — och två kopior av ett val mellan fabriker glider
+ * isär tyst.
+ */
+export type MaterialSupply = {
+  materials: string[];
+  active: boolean;
+};
+
+/** Ledtid och pallstorlek, utan något som pekar ut VEM leverantören är. */
+export type SupplyTerms = MaterialSupply & {
+  supplier_id: string;
+  lead_time_days: number;
+  round_up_to: number;
+};
+
+/**
+ * Leveransvillkoren för alla aktiva leverantörer, via SECURITY DEFINER-RPC.
+ *
+ * 🧨 LÄSER INTE ops_material_suppliers DIREKT, OCH DET ÄR HELA POÄNGEN. Tabellens SELECT-policy
+ * kräver planning.depot.manage, medan lagerrutten grindar på planning.schedule.read. RLS NEKAR
+ * INTE — den filtrerar: för `sales` och `konsult` kom noll rader tillbaka UTAN FEL, och prognosen
+ * föll tyst tillbaka på ingen ledtid och ingen avrundning. Utfallet var "beställ senast den dag
+ * depån är tom", bara för dem som inte var admin. Se filhuvudet i
+ * supabase/sql/20260911_planning_supply_terms.sql.
+ *
+ * ⚠️ SESSIONSKLIENTEN, ALDRIG ADMIN-KLIENTEN: funktionen prövar has_permission, som nycklar på
+ * auth.uid() — null under service-role, alltså alltid nekad.
+ */
+export async function listSupplyTerms(
+  supabase: SupabaseClient,
+): Promise<{ data: SupplyTerms[]; error: { message: string } | null }> {
+  const { data, error } = await supabase.rpc('planning_supply_terms');
+  if (error) return { data: [], error };
+  const rows = ((data as Record<string, any>[]) ?? []).map((r) => ({
+    supplier_id: r.supplier_id as string,
+    materials: Array.isArray(r.materials) ? (r.materials as string[]) : [],
+    lead_time_days: Number(r.lead_time_days ?? 0),
+    round_up_to: Number(r.round_up_to ?? 1) || 1,
+    // Funktionen returnerar bara aktiva rader; fältet finns för att urvalsregeln ska vara DELAD
+    // med registret i stället för omskriven för den smala formen.
+    active: true,
+  }));
+  return { data: rows, error: null };
+}
+
 export type SupplierProblem =
   | 'name_required'
   | 'name_too_long'
@@ -121,7 +172,7 @@ export function roundUpToMultiple(sacks: number, multiple: number): number {
  *
  * Ordningen är anroparens (listAllSuppliers sorterar på namn) — funktionen sorterar inte om.
  */
-export function suppliersForMaterial(suppliers: MaterialSupplier[], material: string): MaterialSupplier[] {
+export function suppliersForMaterial<T extends MaterialSupply>(suppliers: T[], material: string): T[] {
   return suppliers.filter((s) => s.active && s.materials.includes(material));
 }
 
@@ -135,10 +186,10 @@ export function suppliersForMaterial(suppliers: MaterialSupplier[], material: st
  *
  * Normalfallet (en leverantör per material) förväljer alltså, tvetydigheten frågar.
  */
-export function defaultSupplierForMaterial(
-  suppliers: MaterialSupplier[],
+export function defaultSupplierForMaterial<T extends MaterialSupply>(
+  suppliers: T[],
   material: string,
-): MaterialSupplier | null {
+): T | null {
   const matches = suppliersForMaterial(suppliers, material);
   return matches.length === 1 ? matches[0] : null;
 }

@@ -800,9 +800,12 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                     min={1}
                     max={1000}
                     value={supplier.round_up_to}
-                    // 1 = ingen avrundning, och det är rätt förval på ett tomt fält. NOLL vore en
-                    // division med noll i avrundningen, så `|| 1` — inte `|| 0` som ledtiden.
-                    onChange={(e) => patchLocal(supplier.id, { round_up_to: Number(e.target.value) || 1 })}
+                    // 🧨 INGET `|| 1` HÄR. Fallbacket snäppte tillbaka fältet till 1 så fort det
+                    // tömdes, så den som markerade "24" och skrev en ny siffra fick "1" + siffran —
+                    // 124 i stället för 4, tyst. Tomt fält får stå tomt (0 lagras aldrig: schemat,
+                    // den rena valideringen och en CHECK i databasen kräver alla minst 1, och
+                    // Spara nekar med ett svenskt fel).
+                    onChange={(e) => patchLocal(supplier.id, { round_up_to: Number(e.target.value) })}
                     className={cn(crm.input, 'tabular-nums')}
                     aria-label="Säckar per pall"
                   />
@@ -1079,6 +1082,8 @@ function ExpectedRow({
   );
 }
 
+const EXCLUDED_SHOWN = 8;
+
 const EXCLUSION_TEXT: Record<'no_depot' | 'no_material' | 'no_date', string> = {
   no_depot: 'ligger på en bil utan depå — behovet tillhör ingen depå',
   no_material: 'inget material gick att härleda ur artikelnamnen',
@@ -1102,11 +1107,18 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
     <div className={PANEL}>
       <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Prognos</h3>
       <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-        När depån tar slut om inget mer levereras, och hur mycket som behöver beställas.
+        När depån tar slut, och hur mycket som behöver beställas. Väntade leveranser är inräknade.
       </p>
 
       {needed.length === 0 ? (
-        <p className="text-[12px] text-emerald-700">Lagret räcker för allt som är bokat.</p>
+        <p className="text-[12px] text-emerald-700">
+          Lagret räcker för allt som är bokat.{' '}
+          {/* ⚠️ Kan stå ovanför ett rött "Lager räcker inte" på depåkortet nedan, och det är inte
+              en motsägelse utan två olika frågor: saldot räknar inte väntade leveranser (de står
+              inte på depån), prognosen gör det (de kommer innan behovet). Sägs det inte rakt ut
+              läses det som att en av dem har fel. */}
+          <span className="text-slate-500">Väntade leveranser är inräknade här, men inte i saldot nedan.</span>
+        </p>
       ) : (
         <ul className="grid gap-1.5">
           {needed.map((r) => (
@@ -1126,7 +1138,17 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
                 {r.suggested_sacks !== r.worst_deficit && (
                   <span className="text-slate-400"> ({r.worst_deficit} uppåt till hel pall)</span>
                 )}
-                {r.suggested_date && <> · beställ senast {shortDayISO(r.suggested_date)}</>}
+                {r.suggested_date ? (
+                  <> · beställ senast {shortDayISO(r.suggested_date)}</>
+                ) : (
+                  // 🧨 Aldrig ett datum vi inte kan räkna. Med okänd ledtid blev "beställ senast"
+                  // run-out-dagen själv — alltså "beställ den dag depån är tom", ett senare datum
+                  // som såg ut som en instruktion.
+                  <span className="text-amber-700"> · ledtid okänd, sätt leverantör för materialet</span>
+                )}
+                {r.beyond_horizon > 0 && (
+                  <span className="text-slate-400"> · {r.beyond_horizon} säck bokade längre fram</span>
+                )}
               </span>
             </li>
           ))}
@@ -1157,11 +1179,24 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
             {forecast.excluded.length} jobb kunde inte räknas
           </div>
           <ul className="mt-0.5 grid gap-0.5">
-            {forecast.excluded.map((e) => (
+            {/* Tak: listan är inte en logg. Utan det kunde ett systematiskt fel (t.ex. en bil som
+                tappat sin depå) fylla modalen med hundratals rader och trycka ned siffrorna som
+                faktiskt ska läsas. Antalet står i rubriken, så inget döljs. */}
+            {forecast.excluded.slice(0, EXCLUDED_SHOWN).map((e) => (
               <li key={`${e.work_order_id}-${e.reason}`} className="text-[11px] text-slate-500">
-                {e.work_order_id.slice(0, 8)} — {EXCLUSION_TEXT[e.reason]}
+                {/* Åtta tecken av ett uuid går inte att söka på någonstans i appen. Länken gör
+                    raden användbar: den öppnar arbetsordern där felet faktiskt går att rätta. */}
+                <a href={`/crm/arbetsorder/${e.work_order_id}`} className={crm.link} target="_blank" rel="noreferrer">
+                  Öppna arbetsordern
+                </a>{' '}
+                — {EXCLUSION_TEXT[e.reason]}
               </li>
             ))}
+            {forecast.excluded.length > EXCLUDED_SHOWN && (
+              <li className="text-[11px] font-semibold text-slate-500">
+                … och {forecast.excluded.length - EXCLUDED_SHOWN} till
+              </li>
+            )}
           </ul>
           <p className="mt-1 text-[10.5px] text-slate-400">
             Siffrorna ovan är alltså för låga. Rätta jobben så räknas de med.
@@ -1271,13 +1306,22 @@ function StockPanel({
     loadOpen().catch(() => {});
   }, [loadOpen]);
 
+  // Väntade leveranser och prognosen hör ihop: den ena är inflödet i den andra. Samlad så att
+  // ingen ändringsväg kan råka uppdatera bara halva bilden.
+  const reloadExpectedAndForecast = useCallback(async () => {
+    await Promise.all([loadOpen(), load()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadOpen]);
+
   async function cancelExpected(id: string) {
     try {
       const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
       toast.success('Väntad leverans avbokad');
-      await loadOpen();
+      // Prognosen räknar in väntade leveranser — en avbokning ÖPPNAR en brist som kortet annars
+      // fortsatte visa som täckt. Åt det hållet är tystnaden farlig.
+      await Promise.all([loadOpen(), load()]);
     } catch {
       // Utan grenen är ett nätverksfel helt tyst, och raden står kvar som om ingenting hänt.
       toast.error('Kunde inte avboka leveransen');
@@ -1305,9 +1349,11 @@ function StockPanel({
       toast.success('Väntad leverans inlagd');
       setExpSacks('');
       setExpNote('');
-      // Saldot ändras INTE av en väntad leverans, så ingen omladdning av `load()` här. Tavlans
-      // remsa uppdateras via realtime (ops_expected_deliveries ligger i publikationen).
-      await loadOpen();
+      // ⚠️ SALDOT ändras inte av en väntad leverans — men PROGNOSEN gör det, och de kommer ur samma
+      // svar. Kommentaren här sa förut att ingen omladdning behövdes, vilket var sant ända tills
+      // prognosen fanns: utan den här raden stod kortet kvar och sa "tar slut tors" för en brist
+      // som just täcktes, och nästa person beställde samma lass en gång till.
+      await Promise.all([loadOpen(), load()]);
     } catch {
       // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
       // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
@@ -1419,7 +1465,8 @@ function StockPanel({
                   depots={depotOptions}
                   today={today}
                   canManage={canManageDepots}
-                  onSaved={loadOpen}
+                  // Både listan OCH prognosen: en ändrad leverans flyttar datumet den täcker.
+                  onSaved={reloadExpectedAndForecast}
                   onCancel={cancelExpected}
                 />
               ))}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
-  applyReportedToDemand, attributePlannedDemand, computeDepotBalances, reportedDemandByWorkOrder,
-  type PlannedDemandSegment, type StockRow,
+  applyReportedToDemand, attributePlannedDemand, computeDepotBalances, pickDemandSegments,
+  reportedDemandByWorkOrder, type PlannedDemandSegment, type StockRow,
 } from '@/lib/domains/planning/depotStock';
 import { materialShortFromLineItems, MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 
@@ -255,8 +255,15 @@ describe('applyReportedToDemand', () => {
     // ⚠️ Ordern säger 564, egenkontrollen 528. Skillnaden är att det gick åt mindre än beräknat,
     // inte att 36 säck återstår. Statusen sätts för hand och flyttas inte av egenkontrollen, så
     // jobbet ligger kvar som in_progress och hade annars fortsatt kräva material ur depån.
+    //
+    // ⚠️ MATERIALEN NOLLAS, DE RADERAS INTE. Formen bär en betydelse nedströms: en TOM lista läses
+    // som "inget material gick att härleda" (pickDemandSegments -> excluded: no_material), och
+    // varje färdigblåst jobb rapporterades då som ett fynd i prognoskortets "kunde inte räknas".
+    // Materialet ÄR känt här; det är behovet som är slut. Assertionen prövar båda halvorna.
     const out = applyReportedToDemand([seg()], reported({ hasFinal: true, byMaterial: [['EKOVILLA', 528]] }));
-    expect(out[0].materials).toEqual([]);
+    expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 0 }]);
+    // Det som faktiskt räknas: inget behov kvar. Attributionen filtrerar bort nollor.
+    expect(attributePlannedDemand(out)).toEqual([]);
   });
 
   it('drar bara från det material som rapporterats', () => {
@@ -351,5 +358,110 @@ describe('dubbelräkningen av blåsta säckar', () => {
 
     const row = computeDepotBalances(depots, delivered, consumed, planned)[0].rows[0];
     expect(row).toMatchObject({ balance: 200, planned: 264, shortfall: 64 });
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// pickDemandSegments — den funktion som håller saldot och prognosen samman
+// ---------------------------------------------------------------------------
+//
+// 🧨 SAKNADE EGET TEST. attributePlannedDemand testades, men den kastar bort både datumet och
+// excluded-listan — alltså precis de två saker prognosen är byggd av. Ett fel i dem hade varit
+// osynligt för sviten.
+
+describe('pickDemandSegments', () => {
+  const s = (over: Partial<PlannedDemandSegment> = {}): PlannedDemandSegment => ({
+    work_order_id: 'wo1',
+    depot_id: 'd1',
+    status: 'scheduled',
+    materials: [{ material: 'EKOVILLA', sacks: 100 }],
+    start_day: '2026-09-20',
+    ...over,
+  });
+
+  it('väljer FÖRSTA segmentet med depå och räknar jobbet en gång', () => {
+    const { picked } = pickDemandSegments([
+      s({ depot_id: 'd1', start_day: '2026-09-20' }),
+      s({ depot_id: 'd2', start_day: '2026-09-25' }),
+    ]);
+    expect(picked).toHaveLength(1);
+    expect(picked[0]).toMatchObject({ depot_id: 'd1', start_day: '2026-09-20' });
+  });
+
+  // ⚠️ Att sakna depå säger ingenting om jobbet — pröva nästa segment. Markerades jobbet som sett
+  // före depåkontrollen försvann behovet helt och banderollen teg.
+  it('faller igenom till nästa segment när bilen saknar depå', () => {
+    const { picked, excluded } = pickDemandSegments([s({ depot_id: null }), s({ depot_id: 'd2' })]);
+    expect(picked).toHaveLength(1);
+    expect(picked[0].depot_id).toBe('d2');
+    expect(excluded).toEqual([]);
+  });
+
+  it('utesluter ett jobb vars ALLA segment saknar depå', () => {
+    const { picked, excluded } = pickDemandSegments([s({ depot_id: null }), s({ depot_id: null })]);
+    expect(picked).toEqual([]);
+    expect(excluded).toEqual([{ work_order_id: 'wo1', reason: 'no_depot' }]);
+  });
+
+  it('utesluter en gång per jobb, inte en gång per segment', () => {
+    const { excluded } = pickDemandSegments([
+      s({ work_order_id: 'wo1', depot_id: null }),
+      s({ work_order_id: 'wo1', depot_id: null }),
+      s({ work_order_id: 'wo1', depot_id: null }),
+    ]);
+    expect(excluded).toHaveLength(1);
+  });
+
+  it('hoppar över stängda arbetsordrar helt — de är varken valda eller uteslutna', () => {
+    const { picked, excluded } = pickDemandSegments([s({ status: 'invoiced', depot_id: null })]);
+    expect(picked).toEqual([]);
+    expect(excluded).toEqual([]);
+  });
+
+  it('bär startdagen vidare — den är hela grunden för prognosen', () => {
+    const { picked } = pickDemandSegments([s({ start_day: '2026-10-05' })]);
+    expect(picked[0].start_day).toBe('2026-10-05');
+  });
+
+  it('ett segment utan startdag räknas i saldot men redovisas som odaterat', () => {
+    const { picked, excluded } = pickDemandSegments([s({ start_day: null })]);
+    expect(picked).toHaveLength(1);
+    expect(excluded).toEqual([{ work_order_id: 'wo1', reason: 'no_date' }]);
+  });
+
+  it('utan igenkänt material blir det no_material', () => {
+    const { excluded } = pickDemandSegments([s({ materials: [] })]);
+    expect(excluded).toEqual([{ work_order_id: 'wo1', reason: 'no_material' }]);
+  });
+
+  /**
+   * 🧨 FÄRDIGBLÅST ÄR INTE SAMMA SAK SOM OKÄNT MATERIAL.
+   *
+   * applyReportedToDemand nollar materialen på ett jobb med egenkontroll. Frågade exkluderingen
+   * efter `sacks > 0` blev varje färdigt jobb ett no_material-fynd, och kortet påstod att siffrorna
+   * var för låga för jobb vars behov korrekt är noll. En lista med falsklarm blir inte läst.
+   */
+  it('ett färdigblåst jobb (material känt, noll kvar) är INTE uteslutet', () => {
+    const { picked, excluded } = pickDemandSegments([s({ materials: [{ material: 'EKOVILLA', sacks: 0 }] })]);
+    expect(picked).toHaveLength(1);
+    expect(excluded).toEqual([]);
+  });
+
+  it('ett färdigblåst jobb utan startdag är inte heller uteslutet — det behöver ingen dag', () => {
+    const { excluded } = pickDemandSegments([
+      s({ start_day: null, materials: [{ material: 'EKOVILLA', sacks: 0 }] }),
+    ]);
+    expect(excluded).toEqual([]);
+  });
+
+  // Kopplingen tillbaka: attributePlannedDemand MÅSTE ge samma rader som pickDemandSegments väljer.
+  // Glider de isär säger banderollen och prognosen olika saker om samma depå.
+  it('attributePlannedDemand är exakt de valda raderna utan datum', () => {
+    const segments = [s({ work_order_id: 'a' }), s({ work_order_id: 'b', depot_id: 'd2', materials: [{ material: 'PAROC', sacks: 40 }] })];
+    const { picked } = pickDemandSegments(segments);
+    expect(attributePlannedDemand(segments)).toEqual(
+      picked.flatMap((p) => p.materials.filter((m) => m.sacks > 0).map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks }))),
+    );
   });
 });

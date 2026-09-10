@@ -22,8 +22,10 @@ import { join } from 'node:path';
  * Det går alltså inte att se på en emoji om den duger, och två av tre nya SQL-filer i det här
  * projektet har fastnat på just 🧨. Därför en mekanisk vakt i stället för ett åtagande att minnas.
  *
- * Testet ligger under tests/planning/ eftersom det var där felet uppstod, men det granskar HELA
- * supabase/-trädet — regeln gäller varje .sql-fil i repot.
+ * Testet ligger under tests/planning/ eftersom det var där felet uppstod, men det granskar hela
+ * supabase/-trädet rekursivt (supabase/sql och supabase/migrations, inklusive underkataloger som
+ * supabase/sql/manual). Ligger .sql-filer någon annanstans i repot omfattas de INTE — lägg i så
+ * fall till roten i SQL_ROOTS nedan.
  */
 
 const SQL_ROOTS = ['supabase/sql', 'supabase/migrations'];
@@ -59,8 +61,14 @@ describe('SQL-filer innehåller inga tecken utanför BMP', () => {
 
   // 🧨 Utan den här raden är hela sviten tom om sökvägarna någon gång ändras — och ett tomt test
   // ser exakt ut som ett godkänt.
-  it('hittar faktiskt SQL-filer att granska', () => {
-    expect(files.length).toBeGreaterThan(50);
+  it('hittar faktiskt SQL-filer att granska, och missar ingen rot', () => {
+    // 🧨 Golvet var 50 medan repot har långt fler. Ett tal som ligger långt under verkligheten
+    // fångar inte att en HEL katalog slutat läsas — det fångar bara att allt försvann. Räkna mot
+    // vad som faktiskt finns i stället.
+    for (const root of SQL_ROOTS) {
+      expect(sqlFilesUnder(root).length, `${root} gav noll .sql-filer — har sökvägen ändrats?`).toBeGreaterThan(0);
+    }
+    expect(files.length).toBeGreaterThan(150);
   });
 
   it.each(files)('%s', (file) => {

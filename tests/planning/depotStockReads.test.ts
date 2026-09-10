@@ -10,9 +10,23 @@ import { getDepotStockWithForecast } from '@/lib/domains/planning/depotStock';
 
 type PageResult = { data: unknown[] | null; error: { message: string } | null };
 
-/** Minimal Supabase-klient där varje tabell svarar per sida (range-offset → svar). */
-function makeClient(tables: Record<string, (from: number | null) => PageResult>) {
+/**
+ * Minimal Supabase-klient där varje tabell svarar per sida (range-offset → svar).
+ *
+ * ⚠️ `rpc` MÅSTE FINNAS HÄR. Kedjan är handrullad, så varje metod produktionskoden börjar använda
+ * måste läggas till — annars kraschar testet med "is not a function" i stället för att pröva det
+ * det finns för. Leveransvillkoren läses via rpc('planning_supply_terms') just för att tabellen är
+ * hårdare RLS-grindad än rutten.
+ */
+function makeClient(
+  tables: Record<string, (from: number | null) => PageResult>,
+  rpcs: Record<string, () => PageResult> = {},
+) {
   return {
+    rpc(name: string) {
+      const responder = rpcs[name] ?? (() => ({ data: [], error: null }));
+      return Promise.resolve(responder());
+    },
     from(table: string) {
       let rangeFrom: number | null = null;
       const chain: Record<string, unknown> = {};
@@ -107,13 +121,45 @@ describe('getDepotStockWithForecast failar stängt', () => {
     expect(res.forecast).toBeNull();
   });
 
-  it('propagerar fel från leverantörsregistret', async () => {
+  it('propagerar fel från leveransvillkoren', async () => {
     const res = await getDepotStockWithForecast(
-      makeClient({ ...base(), ops_material_suppliers: () => fail('leverantörer nere') }),
+      makeClient(base(), { planning_supply_terms: () => fail('villkoren nere') }),
       TODAY,
     );
-    expect(res.error?.message).toBe('leverantörer nere');
+    expect(res.error?.message).toBe('villkoren nere');
     expect(res.forecast).toBeNull();
+  });
+
+  /**
+   * 🧨 RLS NEKAR INTE, DEN FILTRERAR — och det är därför den här raden finns.
+   *
+   * ops_material_suppliers SELECT kräver planning.depot.manage medan rutten grindar på
+   * planning.schedule.read. För sales och konsult kom NOLL RADER tillbaka UTAN FEL, prognosen föll
+   * tyst tillbaka på ingen ledtid, och "beställ senast" blev run-out-dagen själv. Ett tomt svar får
+   * alltså aldrig se ut som ett räknat svar.
+   */
+  it('tomma leveransvillkor ger INGET föreslaget datum, inte run-out-dagen', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient(
+        {
+          ...base(),
+          ops_depots: () => ok([depot]),
+          ops_trucks: () => ok([{ id: 't1', depot_id: 'd1' }]),
+          ops_depot_deliveries: () => ok([]),
+          crm_work_orders: () => ok([
+            { id: 'wo1', status: 'scheduled', line_items: [{ article_name: 'Ekovilla lösull', density: '30', pricing_mode: 'm2', m2: '100', thickness_mm: '400' }] },
+          ]),
+          ops_segments: () => ok([{ id: 's1', work_order_id: 'wo1', truck_id: 't1', start_day: '2026-09-30' }]),
+        },
+        { planning_supply_terms: () => ok([]) },
+      ),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    const row = res.forecast?.rows.find((r) => r.material === 'EKOVILLA');
+    expect(row?.run_out_day).toBe('2026-09-30');
+    expect(row?.supply_known).toBe(false);
+    expect(row?.suggested_date).toBeNull();
   });
 
   it('ger en prognos när allt svarar', async () => {
@@ -125,6 +171,63 @@ describe('getDepotStockWithForecast failar stängt', () => {
     expect(res.forecast?.rows).toEqual([
       expect.objectContaining({ depot_id: 'd1', material: 'EKOVILLA', opening: 1, run_out_day: null }),
     ]);
+  });
+});
+
+/**
+ * ⚠️ BESTÄLLNINGSSPÅRETS KÄRNINVARIANT, OCH DEN SAKNADE VAKT HELT.
+ *
+ * En väntad leverans är material som är BESTÄLLT, inte material som STÅR på depån. Räknades den i
+ * saldot skulle bristvarningen slockna så fort någon lagt in en beställning — oavsett om fabriken
+ * levererar — och felet upptäcks först när en bil står utan material.
+ *
+ * Prognosen SKA däremot se den, som inflöde. De två påståendena prövas här tillsammans, för det är
+ * skillnaden mellan dem som är hela poängen.
+ */
+describe('väntade leveranser rör aldrig saldot — men syns i prognosen', () => {
+  const wideBase = () => ({
+    ...base(),
+    ops_trucks: () => ok([{ id: 't1', depot_id: 'd1' }]),
+    crm_work_orders: () => ok([
+      { id: 'wo1', status: 'scheduled', line_items: [{ article_name: 'Ekovilla lösull', density: '30', pricing_mode: 'm2', m2: '100', thickness_mm: '400' }] },
+    ]),
+    ops_segments: () => ok([{ id: 's1', work_order_id: 'wo1', truck_id: 't1', start_day: '2026-09-30' }]),
+  });
+
+  it('saldot är identiskt med och utan en väntad leverans', async () => {
+    const utan = await getDepotStockWithForecast(makeClient(wideBase()), TODAY);
+    const med = await getDepotStockWithForecast(
+      makeClient({
+        ...wideBase(),
+        ops_expected_deliveries: () => ok([
+          { id: 'e1', depot_id: 'd1', material: 'EKOVILLA', sacks: 5000, expected_on: '2026-09-25', note: null, status: 'expected', depot: { name: 'Syd' } },
+        ]),
+      }),
+      TODAY,
+    );
+    expect(utan.error).toBeNull();
+    expect(med.error).toBeNull();
+    // 5000 säck på väg får inte flytta EN ENDA säck i saldot.
+    expect(med.data).toEqual(utan.data);
+  });
+
+  it('men prognosen räknar in den som inflöde och bristen försvinner', async () => {
+    const med = await getDepotStockWithForecast(
+      makeClient({
+        ...wideBase(),
+        ops_expected_deliveries: () => ok([
+          { id: 'e1', depot_id: 'd1', material: 'EKOVILLA', sacks: 5000, expected_on: '2026-09-25', note: null, status: 'expected', depot: { name: 'Syd' } },
+        ]),
+      }),
+      TODAY,
+    );
+    const row = med.forecast?.rows.find((r) => r.material === 'EKOVILLA');
+    expect(row?.run_out_day).toBeNull();
+    expect(row?.worst_deficit).toBe(0);
+
+    // Utan den täcks ingenting — annars vore testet ovan tomt.
+    const utan = await getDepotStockWithForecast(makeClient(wideBase()), TODAY);
+    expect(utan.forecast?.rows.find((r) => r.material === 'EKOVILLA')?.worst_deficit).toBeGreaterThan(0);
   });
 });
 
