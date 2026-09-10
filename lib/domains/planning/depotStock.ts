@@ -83,13 +83,49 @@ export function computeDepotBalances(
 }
 
 // Raw delivery stock rows (one per delivery; computeDepotBalances aggregates).
-async function listDeliveryRows(supabase: SupabaseClient): Promise<StockRow[]> {
-  const { data } = await supabase.from('ops_depot_deliveries').select('depot_id, material, sacks');
-  return ((data ?? []) as Array<{ depot_id: string; material: string; sacks: number | string }>).map((r) => ({
-    depot_id: r.depot_id,
-    material: r.material,
-    sacks: Number(r.sacks),
-  }));
+const PAGE = 1000;
+
+type ReadError = { message: string } | null;
+
+/**
+ * Läser en hel tabell sida för sida.
+ *
+ * ⚠️ PostgREST kapar ett svar vid projektets max-rows (mätt till 1000) UTAN att fela. En oskyddad
+ * select gör därför inte svaret ofullständigt — den gör det FEL, och åt olika håll beroende på
+ * vilken läsning som kapades: en kapad leveranslista sänker `delivered` och driver ÖVERbeställning,
+ * en kapad segmentlista sänker `planned` och tystar bristvarningen.
+ *
+ * `.order('id')` hos anroparen är inte kosmetik: utan en stabil och unik ordning är det odefinierat
+ * vilka rader som ligger på vilken sida, så rader kan både dubbleras och hoppas över.
+ *
+ * Vid fel returneras INGA rader, inte de sidor som hann komma. Ett halvt underlag som ser komplett
+ * ut är precis det felet som ska undvikas.
+ */
+async function readAllPages<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: ReadError }>,
+): Promise<{ rows: T[]; error: ReadError }> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) return { rows: [], error };
+    const batch = (data ?? []) as T[];
+    rows.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return { rows, error: null };
+}
+
+async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: StockRow[]; error: ReadError }> {
+  // INGET datumfilter, med flit: saldot gäller över all tid. Tavlans remsa, som bara vill ha en
+  // veckas leveranser, har en egen datumbegränsad läsning — vidga inte den här.
+  const { rows, error } = await readAllPages<{ depot_id: string; material: string; sacks: number | string }>(
+    (from, to) => supabase.from('ops_depot_deliveries').select('depot_id, material, sacks').order('id', { ascending: true }).range(from, to),
+  );
+  if (error) return { rows: [], error };
+  return {
+    rows: rows.map((r) => ({ depot_id: r.depot_id, material: r.material, sacks: Number(r.sacks) })),
+    error: null,
+  };
 }
 
 // Förbrukade säckar per depå och material: blåsta säckar → segmentets bil → bilens depå.
@@ -110,33 +146,34 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<StockRow[]> {
 // en etapprad vars artikelnamn inte gick att tyda — faller tillbaka på den gamla härledningen.)
 async function deriveConsumptionRows(
   supabase: SupabaseClient,
-): Promise<{ rows: StockRow[]; reported: Map<string, ReportedDemand> }> {
-  const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
+): Promise<{ rows: StockRow[]; reported: Map<string, ReportedDemand>; error: ReadError }> {
+  const empty = { rows: [] as StockRow[], reported: new Map<string, ReportedDemand>() };
+  const { data: trucks, error: truckError } = await supabase.from('ops_trucks').select('id, depot_id');
+  // Ett fel här ger en tom depåkarta, alltså NOLL förbrukning på varje depå — saldot ser fullt ut.
+  // Bilparken är liten nog att aldrig nå max-rows, men felet måste ändå fram.
+  if (truckError) return { ...empty, error: truckError };
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
-  // ⚠️ SIDINDELAD, till skillnad från sina systerläsningar i den här filen. PostgREST kapar svaret
-  // vid max-rows (mätt till 1000 i det här projektet) UTAN att fela, och supersede-regeln nycklas
+  // ⚠️ SIDINDELAD. PostgREST kapar svaret vid max-rows UTAN att fela, och supersede-regeln nycklas
   // per arbetsorder: hamnar ett jobbs final på sida 2 medan dess delrapporter ligger på sida 1 ser
   // regeln bara delrapporterna och debiterar depån för BÅDA besöken. En kapning gör alltså inte
   // svaret ofullständigt, den gör det FEL — och åt fel håll.
   //
-  // Systerläsningarna (listDeliveryRows och derivePlannedDemandSegments) har samma exponering och är
-  // fortfarande opaginerade; filen sa tidigare att alla tre borde lösas i samma omgång. Den här kan inte vänta:
-  // ops_segment_reports var tom före säckrapporteringen och växer nu monotont med varje besök,
-  // medan de andra är bundna till mängden ÖPPNA ordrar.
-  const reports: Array<Record<string, any> & { work_order_id: string }> = [];
-  const PAGE = 1000;
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await supabase
-      .from('ops_segment_reports')
-      .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
-    if (error) break;
-    const page = (data ?? []) as Array<Record<string, any> & { work_order_id: string }>;
-    reports.push(...page);
-    if (page.length < PAGE) break;
-  }
+  // ops_segment_reports är dessutom den läsning som växer snabbast: tabellen var tom före
+  // säckrapporteringen och växer nu monotont med varje besök, medan systerläsningarna är bundna
+  // till mängden ÖPPNA ordrar.
+  const { rows: reports, error: reportError } = await readAllPages<Record<string, any> & { work_order_id: string }>(
+    (from, to) =>
+      supabase
+        .from('ops_segment_reports')
+        .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
+        .order('id', { ascending: true })
+        .range(from, to),
+  );
+  // Tidigare `break`:ade den här loopen vid fel och returnerade de sidor som hunnit komma. Ett halvt
+  // underlag är värre än inget: supersede prövas då bara på raderna som kom fram, så en final på den
+  // kapade sidan gör att delrapporterna räknas — precis felmoden pagineringen infördes för.
+  if (reportError) return { ...empty, error: reportError };
 
   const counted = effectiveSackReports(reports);
 
@@ -152,7 +189,7 @@ async function deriveConsumptionRows(
   // är kvar att blåsa (reported). De MÅSTE komma ur en och samma läsning — läses tabellen två
   // gånger kan en rapport skriven mellan läsningarna finnas i den ena och saknas i den andra, och
   // då tar dubbelräkningen inte ut sig exakt. sackLedger varnar för just det.
-  return { rows, reported: reportedDemandByWorkOrder(reports) };
+  return { rows, reported: reportedDemandByWorkOrder(reports), error: null };
 }
 
 /** Vad en arbetsorder redan blåst, per material — och om egenkontrollen satt punkt. */
@@ -283,24 +320,32 @@ export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockR
 // vilket segment som vinner (attributePlannedDemand) är rena och görs av getDepotStock — dels för
 // att de går att enhetstesta isolerat, dels för att avdraget måste använda samma rapportrader som
 // förbrukningen räknades ur.
-async function derivePlannedDemandSegments(supabase: SupabaseClient): Promise<PlannedDemandSegment[]> {
-  const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
+async function derivePlannedDemandSegments(
+  supabase: SupabaseClient,
+): Promise<{ segments: PlannedDemandSegment[]; error: ReadError }> {
+  const { data: trucks, error: truckError } = await supabase.from('ops_trucks').select('id, depot_id');
+  // Tom depåkarta betyder att INGET segment löser en depå, alltså noll planerat behov överallt och
+  // en bristvarning som tiger. Felet måste fram.
+  if (truckError) return { segments: [], error: truckError };
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
   // Open work orders first, then only THEIR segments — the same two-step listSchedulableWorkOrders
   // and getPlanningInsights use. This bounds the read to the working set instead of every
   // ops_segments row ever created, which grew with the table forever.
   //
-  // ⚠️ It is NOT an absolute bound. Open orders (draft especially) still accumulate, and neither
-  // this query nor its siblings paginate, so past PostgREST's max-rows the map silently loses
-  // entries: those segments fall out of the flatMap below, `planned` under-counts, `shortfall`
-  // floors to 0 and the depot banner stays quiet on a real shortage — with no error anywhere.
-  // Same exposure as listSchedulableWorkOrders/computeBacklogValue; worth solving for all three at
-  // once rather than paginating this one call site into a pattern the rest of the domain lacks.
-  const { data: openWos } = await supabase
-    .from('crm_work_orders')
-    .select('id, status, line_items')
-    .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+  // Sidindelad ovanpå det: bunden till öppna ordrar är inte samma sak som bunden under max-rows.
+  // Utkast ackumuleras, och en kapad lista tappar poster tyst — segmenten faller ur flatMap:en
+  // nedan, `planned` underskattas, `shortfall` golvas till 0 och banderollen tiger på en verklig
+  // brist. (listSchedulableWorkOrders/computeBacklogValue har kvar samma exponering.)
+  const { rows: openWos, error: woError } = await readAllPages<Record<string, any>>((from, to) =>
+    supabase
+      .from('crm_work_orders')
+      .select('id, status, line_items')
+      .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[])
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (woError) return { segments: [], error: woError };
 
   // Parsed once per work order, not once per segment: line_items is the expensive part and a job's
   // material/sack count is the same on every segment it spans.
@@ -310,18 +355,24 @@ async function derivePlannedDemandSegments(supabase: SupabaseClient): Promise<Pl
       { status: (w.status as string | null) ?? null, materials: materialDemandFromLineItems(w.line_items) },
     ]),
   );
-  if (woById.size === 0) return [];
+  if (woById.size === 0) return { segments: [], error: null };
 
   // Ordered so the attribution is deterministic: a job split across trucks is booked against its
-  // EARLIEST segment's depot, not whichever row came back first. Cheap now that the set is bounded.
-  const { data: segs } = await supabase
-    .from('ops_segments')
-    .select('id, work_order_id, truck_id, start_day')
-    .in('work_order_id', [...woById.keys()])
-    .order('start_day', { ascending: true })
-    .order('id', { ascending: true });
+  // EARLIEST segment's depot, not whichever row came back first. Ordningen bär alltså ett resultat,
+  // inte bara ett utseende — och den är därför också vad sidindelningen måste följa. `id` bryter
+  // lika start_day, så ordningen är unik och sidorna kan varken dubblera eller hoppa över rader.
+  const { rows: segs, error: segError } = await readAllPages<Record<string, any>>((from, to) =>
+    supabase
+      .from('ops_segments')
+      .select('id, work_order_id, truck_id, start_day')
+      .in('work_order_id', [...woById.keys()])
+      .order('start_day', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (segError) return { segments: [], error: segError };
 
-  return ((segs ?? []) as Array<Record<string, any>>).flatMap((s) => {
+  const segments = segs.flatMap((s) => {
     const wo = woById.get(s.work_order_id as string);
     if (!wo) return [];
     return [{
@@ -331,6 +382,7 @@ async function derivePlannedDemandSegments(supabase: SupabaseClient): Promise<Pl
       materials: wo.materials,
     }];
   });
+  return { segments, error: null };
 }
 
 // Per-depot, per-material balances + planned demand for the stock view. RLS (planning.schedule.read).
@@ -338,21 +390,32 @@ export async function getDepotStock(supabase: SupabaseClient): Promise<{ data: D
   const { data: depots, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
   if (error) return { data: [], error };
 
-  const [delivered, consumption, demandSegments] = await Promise.all([
+  const [delivered, consumption, demand] = await Promise.all([
     listDeliveryRows(supabase),
     deriveConsumptionRows(supabase),
     derivePlannedDemandSegments(supabase),
   ]);
+
+  // ⚠️ FAILA STÄNGT. Tidigare svalde varje läsning sitt fel och getDepotStock returnerade hårdkodat
+  // `error: null`, så rutten kunde bara vidarebefordra ett fel den aldrig fick. Utfallet blev ett
+  // TAL i stället för ett fel — och åt olika håll beroende på vilken läsning som gick sönder:
+  // ett fel på leveranserna ger `delivered = 0` och uppblåst brist, ett fel på segmenten ger
+  // `planned = 0` och en tyst banderoll på en depå som är tom.
+  //
+  // "Kunde inte räkna" är ett svar. "Behöver 0 säck" är en lögn, och den lögnen ska snart få fylla
+  // i en beställning till fabriken.
+  const readError = delivered.error ?? consumption.error ?? demand.error;
+  if (readError) return { data: [], error: readError };
 
   // Behovet är det som är KVAR att blåsa, inte orderns hela säckantal. Utan avdraget räknades de
   // blåsta säckarna två gånger — en gång som sänkt `balance` och en gång som kvarstående `planned`
   // — och `shortfall` överskattades med exakt det blåsta antalet, växande under veckan.
   // Avdraget görs ur SAMMA rapportrader som förbrukningen räknades ur (consumption.reported), så de
   // två halvorna alltid ser samma tillstånd.
-  const planned = attributePlannedDemand(applyReportedToDemand(demandSegments, consumption.reported));
+  const planned = attributePlannedDemand(applyReportedToDemand(demand.segments, consumption.reported));
 
   return {
-    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered, consumption.rows, planned),
+    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered.rows, consumption.rows, planned),
     error: null,
   };
 }
