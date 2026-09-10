@@ -1539,12 +1539,22 @@ export default function PlanningClient({
           chip={receiving}
           onClose={() => setReceiving(null)}
           onConfirm={async (input) => {
-            const r = await fetch(`${API}/expected-deliveries/${receiving.id}/receive`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(input),
-            });
-            const j = await r.json().catch(() => null);
+            // ⚠️ try/catch, inte bara ok-kontroll. Knappen är alltid synlig just för att appen körs
+            // som PWA på surfplatta i bil — där ÄR nätet ibland borta, och ett obehandlat avslag
+            // hade gett varken toast eller tillståndsändring. Alltså ett andra tryck, och när nätet
+            // kommer tillbaka två kvitteringsförsök på samma leverans.
+            let j: { ok?: boolean; error?: string } | null = null;
+            try {
+              const r = await fetch(`${API}/expected-deliveries/${receiving.id}/receive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(input),
+              });
+              j = await r.json().catch(() => null);
+            } catch {
+              toast.error('Ingen kontakt med servern — ankomsten är inte bekräftad');
+              return;
+            }
             if (!j?.ok) {
               toast.error(j?.error || 'Kunde inte bekräfta ankomsten');
               return;

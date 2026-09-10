@@ -428,20 +428,26 @@ async function derivePlannedDemandSegments(
   // växer med varje utkast spränger till slut querysträngen. Det felet hade dessutom, med
   // fail-closed, tagit ned hela lagervyn. Därför i portioner — ordningen inom varje portion är
   // densamma, och sorteringen som avgör vilken depå ett splittat jobb bokas mot återställs nedan.
-  const segs: Array<Record<string, any>> = [];
-  for (const chunk of chunkIds([...woById.keys()])) {
-    const { rows, error: segError } = await readAllPages<Record<string, any>>((from, to) =>
-      supabase
-        .from('ops_segments')
-        .select('id, work_order_id, truck_id, start_day')
-        .in('work_order_id', chunk)
-        .order('start_day', { ascending: true })
-        .order('id', { ascending: true })
-        .range(from, to),
-    );
-    if (segError) return { segments: [], error: segError };
-    segs.push(...rows);
-  }
+  // Portionerna är oberoende och körs parallellt: rutten hämtas om av varje planerare vid varje
+  // realtime-ping, så en serie väntetider staplade på varandra märks. Ordningen mellan portionerna
+  // spelar ingen roll — sorteringen nedan återställer den ändå, och det är den som avgör vilken
+  // depå ett splittat jobb bokas mot.
+  const chunkResults = await Promise.all(
+    chunkIds([...woById.keys()]).map((chunk) =>
+      readAllPages<Record<string, any>>((from, to) =>
+        supabase
+          .from('ops_segments')
+          .select('id, work_order_id, truck_id, start_day')
+          .in('work_order_id', chunk)
+          .order('start_day', { ascending: true })
+          .order('id', { ascending: true })
+          .range(from, to),
+      ),
+    ),
+  );
+  const failedChunk = chunkResults.find((r) => r.error);
+  if (failedChunk?.error) return { segments: [], error: failedChunk.error };
+  const segs = chunkResults.flatMap((r) => r.rows);
 
   // Portionerna kom var för sig, så den globala ordningen måste återställas: attributionen väljer
   // FÖRSTA giltiga segmentet, och vilket det är får inte bero på hur id-listan råkade delas.

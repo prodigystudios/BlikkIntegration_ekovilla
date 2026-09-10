@@ -38,8 +38,13 @@ create table if not exists public.ops_expected_deliveries (
   id           uuid primary key default gen_random_uuid(),
   -- RESTRICT, inte CASCADE. ops_depot_deliveries.depot_id är cascade, vilket gör att en raderad
   -- depå tyst tar hela sin leveranshistorik med sig — UI:ts riskzon nämner bara att bilar nollas.
-  -- Upprepa inte det: en depå med utestående leveranser ska inte gå att radera. Avveckling sker
-  -- genom ops_depots.active.
+  -- Upprepa inte det.
+  --
+  -- ⚠️ RESTRICT VET INGET OM STATUS. Spärren gäller alltså inte bara utestående leveranser utan
+  -- också kvitterad och avbokad historik, alltså i praktiken för alltid så snart depån använts en
+  -- gång. Det är avsiktligt — historiken ska inte gå att radera bort — men det betyder att
+  -- "Ta bort depå" blir omöjlig, och DELETE-rutten måste säga det på svenska i stället för att
+  -- läcka ett FK-fel. Avveckling sker genom ops_depots.active.
   depot_id     uuid not null references public.ops_depots(id) on delete restrict,
   -- Kanonisk kortkod ur MATERIAL_SHORTS (lib/domains/crm/materials.ts). Ingen CHECK, av samma skäl
   -- som systertabellerna: vokabulären bor i koden och valideras i Zod på ETT ställe. Identiteten är
@@ -116,6 +121,50 @@ drop policy if exists ops_expected_deliveries_delete on public.ops_expected_deli
 create policy ops_expected_deliveries_delete on public.ops_expected_deliveries
   for delete to authenticated
   using (public.has_permission('planning.depot.manage'));
+
+-- ---------------------------------------------------------------------------
+-- Livscykeln går bara framåt
+-- ---------------------------------------------------------------------------
+--
+-- ⚠️ EN POLICY VÄLJER RADER, ALDRIG KOLUMNER (se SUPABASE_CONVENTIONS.md). UPDATE-policyn ovan
+-- släpper in planning.depot.manage för att datum och antal ska gå att rätta — men den kan inte
+-- hindra samma anrop från att skriva `status` och `delivery_id`.
+--
+-- Utan den här spärren räcker ett direkt PostgREST-anrop förbi routen för att sätta en redan
+-- kvitterad rad tillbaka till 'expected' med `delivery_id = null`, och sedan kvittera den igen. Då
+-- föds en ANDRA lagerrad, säckarna dubbelräknas i saldot, och det unika indexet på delivery_id
+-- fångar ingenting eftersom fältet nollades på vägen. "Ta emot en gång" hade alltså bara gällt den
+-- väg som redan uppförde sig.
+--
+-- Regeln är därför en databasregel, inte en routegrind: status går expected -> arrived | cancelled
+-- och aldrig tillbaka, och delivery_id skrivs en gång och kan varken nollas eller bytas.
+-- Kvitteringsfunktionen nedan lyder samma regel — den behöver inget undantag.
+
+create or replace function public.ops_expected_deliveries_forward_only()
+returns trigger
+language plpgsql
+as $$
+begin
+  if old.status is distinct from new.status then
+    if old.status <> 'expected' then
+      raise exception 'expected_delivery_status_is_final' using errcode = '23514';
+    end if;
+    if new.status not in ('arrived', 'cancelled') then
+      raise exception 'expected_delivery_status_invalid' using errcode = '23514';
+    end if;
+  end if;
+
+  if old.delivery_id is not null and new.delivery_id is distinct from old.delivery_id then
+    raise exception 'expected_delivery_link_is_final' using errcode = '23514';
+  end if;
+
+  return new;
+end $$;
+
+drop trigger if exists ops_expected_deliveries_forward_only on public.ops_expected_deliveries;
+create trigger ops_expected_deliveries_forward_only
+  before update on public.ops_expected_deliveries
+  for each row execute function public.ops_expected_deliveries_forward_only();
 
 -- ---------------------------------------------------------------------------
 -- Kvittering: en väntad leverans blir en lagerrad
@@ -237,3 +286,18 @@ end $$;
 --
 --    select public.receive_expected_delivery('<uuid>', current_date, 180, null);
 --    select public.receive_expected_delivery('<uuid>', current_date, 180, null);  -- ska fela
+--
+-- 4. Livscykeln går inte att backa, inte ens med en direkt skrivning. Båda ska fela:
+--
+--    update public.ops_expected_deliveries
+--       set status = 'expected', delivery_id = null where id = '<kvitterad uuid>';
+--       -- expected_delivery_status_is_final
+--
+--    update public.ops_expected_deliveries
+--       set delivery_id = null where id = '<kvitterad uuid>';
+--       -- expected_delivery_link_is_final
+--
+--    Att bara ändra datum på en ÖPPEN rad ska däremot gå igenom:
+--
+--    update public.ops_expected_deliveries
+--       set expected_on = current_date + 7 where id = '<öppen uuid>';

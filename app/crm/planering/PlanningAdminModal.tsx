@@ -159,7 +159,16 @@ export default function PlanningAdminModal({
             {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} people={people} defaultByTruck={defaultByTruck} onCrewSaved={loadDefaultCrew} onChanged={onChanged} />}
             {active === 'depots' && <DepotPanel crud={depotsCrud} onChanged={onChanged} />}
             {active === 'jobtypes' && <JobTypePanel crud={jobTypesCrud} onChanged={onChanged} />}
-            {active === 'stock' && <StockPanel canWrite={canWrite} canManageDepots={canManageDepots} />}
+            {active === 'stock' && (
+              <StockPanel
+                canWrite={canWrite}
+                canManageDepots={canManageDepots}
+                // Depålistan kommer från depåregistret, INTE ur lagersaldot: saldot failar stängt,
+                // och då hade väljarna stått tomma — trots att väntade leveranser ska gå att
+                // hantera även när saldot inte gick att räkna ut.
+                depotOptions={depotsCrud.items.filter((d) => d.active)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -486,7 +495,17 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
               </label>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
-            <RiskZone title="Riskzon" body="Bilar kopplade till depån nollställs (utan depå). Ta bort bara om depån avvecklas." label="Ta bort depå" onConfirm={onRemove} busy={busy} />
+            {/* Texten säger vad som FAKTISKT händer. Att bilar nollställs stod här förut, men inte
+                att leveranshistoriken följer med — och sedan väntade leveranser fick en FK med
+                RESTRICT går borttagningen dessutom oftast inte igenom alls. Ett löfte som inte
+                håller är sämre än inget löfte. */}
+            <RiskZone
+              title="Riskzon"
+              body="Bilar kopplade till depån nollställs (utan depå), och depåns leveranshistorik försvinner. Har depån någon väntad eller kvitterad leverans går den inte att ta bort — avaktivera den i stället."
+              label="Ta bort depå"
+              onConfirm={onRemove}
+              busy={busy}
+            />
           </div>
         )
       }
@@ -610,7 +629,7 @@ function ExpectedRow({
   onCancel,
 }: {
   item: ExpectedDelivery;
-  depots: DepotBalance[];
+  depots: OpsDepot[];
   today: string;
   canManage: boolean;
   onSaved: () => Promise<void>;
@@ -682,8 +701,11 @@ function ExpectedRow({
             <button type="button" onClick={startEditing} className={crm.ghostButton}>
               Ändra
             </button>
+            {/* "Avboka", inte "Avbryt". Samma komponent använder "Avbryt" för det ofarliga
+                stänga-utan-att-spara, och ReceiveDeliveryModal likaså — samma ord för två motsatta
+                handlingar, varav den ena inte går att ångra. */}
             <button type="button" onClick={() => onCancel(item.id)} className={crm.dangerButton}>
-              Avbryt
+              Avboka
             </button>
           </div>
         )}
@@ -700,7 +722,7 @@ function ExpectedRow({
             value={depotId}
             onChange={setDepotId}
             aria-label="Depå"
-            options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+            options={depots.map((d) => ({ value: d.id, label: d.name }))}
           />
         </div>
         <div>
@@ -741,7 +763,15 @@ function ExpectedRow({
   );
 }
 
-function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManageDepots: boolean }) {
+function StockPanel({
+  canWrite,
+  canManageDepots,
+  depotOptions,
+}: {
+  canWrite: boolean;
+  canManageDepots: boolean;
+  depotOptions: OpsDepot[];
+}) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -767,6 +797,12 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
   const [expBusy, setExpBusy] = useState(false);
   const [open, setOpen] = useState<ExpectedDelivery[]>([]);
 
+  // Förval när depåregistret landat. Inte ur lagersaldot: det failar stängt, och då hade
+  // väljaren stått tom på en yta som ska fungera även när saldot inte gick att räkna ut.
+  useEffect(() => {
+    setExpDepotId((cur) => cur || (depotOptions[0]?.id ?? ''));
+  }, [depotOptions]);
+
   // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
   // började propagera sina fel (getDepotStock), och utan den här grenen renderades 500:an som
   // "Inga depåer upplagda än" — alltså ett påstående om verkligheten, byggt på att vi inte vet.
@@ -779,7 +815,6 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
       const list = j.data.depots as DepotBalance[];
       setDepots(list);
       setDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
-      setExpDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
       setLoadError(null);
     } catch (e: any) {
       setLoadError(e?.message || 'Kunde inte hämta lagersaldo');
@@ -824,11 +859,16 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
   }, [loadOpen]);
 
   async function cancelExpected(id: string) {
-    const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
-    const j = await r.json().catch(() => null);
-    if (!j?.ok) return toast.error(j?.error || 'Kunde inte avbryta leveransen');
-    toast.success('Väntad leverans avbruten');
-    await loadOpen();
+    try {
+      const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
+      toast.success('Väntad leverans avbokad');
+      await loadOpen();
+    } catch {
+      // Utan grenen är ett nätverksfel helt tyst, och raden står kvar som om ingenting hänt.
+      toast.error('Kunde inte avboka leveransen');
+    }
   }
 
   async function recordExpected(e: FormEvent) {
@@ -925,7 +965,7 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
                   onChange={setExpDepotId}
                   placeholder="Välj depå"
                   aria-label="Depå"
-                  options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+                  options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
                 />
               </div>
               <div>
@@ -963,7 +1003,7 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
                 <ExpectedRow
                   key={e.id}
                   item={e}
-                  depots={depots}
+                  depots={depotOptions}
                   today={today}
                   canManage={canManageDepots}
                   onSaved={loadOpen}
