@@ -190,7 +190,7 @@ function isoToDayNumber(iso: string | null | undefined): number | null {
  * ⚠️ TVÅ SEGMENT KAN TÄCKA SAMMA DAG. Ett jobb som splittas på två bilar ("Kopiera till bil" på
  * tavlan) är ett normalt drag, och då är det genuint tvetydigt vilken bils depå säckarna ska dras
  * från. Valet här är det TIDIGASTE segmentet (sedan id), samma deterministiska ordning som
- * derivePlannedDemandRows använder för planerad efterfrågan — så planerat och förbrukat attribueras
+ * derivePlannedDemandSegments använder för planerad efterfrågan — så planerat och förbrukat attribueras
  * åtminstone likadant. Ett riktigt svar kräver att rapporten bär bilen, vilket den inte gör i dag.
  */
 export function resolveSegmentForDay(

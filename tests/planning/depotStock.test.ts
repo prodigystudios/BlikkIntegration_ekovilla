@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  attributePlannedDemand, computeDepotBalances,
+  applyReportedToDemand, attributePlannedDemand, computeDepotBalances, reportedDemandByWorkOrder,
   type PlannedDemandSegment, type StockRow,
 } from '@/lib/domains/planning/depotStock';
 import { materialShortFromLineItems, MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
@@ -140,5 +140,128 @@ describe('attributePlannedDemand', () => {
       { depot_id: 'd1', material: 'EKOVILLA', sacks: 40 },
       { depot_id: 'd2', material: 'EKOVILLA', sacks: 12 },
     ]);
+  });
+});
+
+describe('reportedDemandByWorkOrder', () => {
+  const rapport = (over: Record<string, unknown> = {}) => ({
+    work_order_id: 'wo1',
+    sacks_blown: 30,
+    kind: 'partial',
+    material: 'EKOVILLA',
+    ...over,
+  });
+
+  it('summerar delrapporter per material', () => {
+    const map = reportedDemandByWorkOrder([
+      rapport(),
+      rapport({ sacks_blown: 25 }),
+      rapport({ material: 'PAROC', sacks_blown: 10 }),
+    ]);
+    expect(map.get('wo1')!.hasFinal).toBe(false);
+    expect([...map.get('wo1')!.byMaterial]).toEqual([['EKOVILLA', 55], ['PAROC', 10]]);
+  });
+
+  it('en final är jobbets sanning — delrapporterna adderas inte ovanpå', () => {
+    // 30 + 25 delrapporterat, sista besöket 36 till, egenkontroll skriven på TOTALEN 91.
+    // Naiv summering hade gett 146. Regeln bor i sackLedger; det här vaktar att den används.
+    const map = reportedDemandByWorkOrder([
+      rapport({ sacks_blown: 30 }),
+      rapport({ sacks_blown: 25 }),
+      rapport({ kind: 'final', sacks_blown: 91 }),
+    ]);
+    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(91);
+  });
+
+  it('hasFinal läses ur de RÅA raderna, inte ur de effektiva', () => {
+    const map = reportedDemandByWorkOrder([rapport(), rapport({ kind: 'final', sacks_blown: 91 })]);
+    expect(map.get('wo1')!.hasFinal).toBe(true);
+  });
+
+  it('faller tillbaka på orderns material för rader skrivna innan kolumnen fanns', () => {
+    const map = reportedDemandByWorkOrder([
+      rapport({ material: null, work_order: { line_items: [{ article_name: 'Ekovilla Cellulosa Lösull' }] } }),
+    ]);
+    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
+  });
+
+  it('en rad utan härledbart material lämnar jobbet känt men utan avdrag', () => {
+    // "Vi vet att jobbet rapporterat" är inte "vi vet vad som drogs". Behovet ska då stå kvar
+    // orört — överskatta hellre än att beställa för lite.
+    const map = reportedDemandByWorkOrder([rapport({ material: null, work_order: { line_items: [] } })]);
+    expect(map.has('wo1')).toBe(true);
+    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+  });
+
+  it('håller isär arbetsordrar', () => {
+    const map = reportedDemandByWorkOrder([rapport(), rapport({ work_order_id: 'wo2', sacks_blown: 7 })]);
+    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
+    expect(map.get('wo2')!.byMaterial.get('EKOVILLA')).toBe(7);
+  });
+});
+
+describe('applyReportedToDemand', () => {
+  const seg = (over: Partial<PlannedDemandSegment> = {}): PlannedDemandSegment => ({
+    work_order_id: 'wo1',
+    depot_id: 'd1',
+    status: 'in_progress',
+    materials: [{ material: 'EKOVILLA', sacks: 564 }],
+    ...over,
+  });
+  const reported = (over: Partial<{ hasFinal: boolean; byMaterial: Array<[string, number]> }> = {}) =>
+    new Map([['wo1', { hasFinal: over.hasFinal ?? false, byMaterial: new Map(over.byMaterial ?? []) }]]);
+
+  it('räknar ned mot planen när egenkontroll saknas', () => {
+    const out = applyReportedToDemand([seg()], reported({ byMaterial: [['EKOVILLA', 300]] }));
+    expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 264 }]);
+  });
+
+  it('en ifylld egenkontroll betyder blåst färdigt — inget mer material behövs', () => {
+    // ⚠️ Ordern säger 564, egenkontrollen 528. Skillnaden är att det gick åt mindre än beräknat,
+    // inte att 36 säck återstår. Statusen sätts för hand och flyttas inte av egenkontrollen, så
+    // jobbet ligger kvar som in_progress och hade annars fortsatt kräva material ur depån.
+    const out = applyReportedToDemand([seg()], reported({ hasFinal: true, byMaterial: [['EKOVILLA', 528]] }));
+    expect(out[0].materials).toEqual([]);
+  });
+
+  it('drar bara från det material som rapporterats', () => {
+    const two = seg({ materials: [{ material: 'EKOVILLA', sacks: 200 }, { material: 'PAROC', sacks: 80 }] });
+    const out = applyReportedToDemand([two], reported({ byMaterial: [['PAROC', 30]] }));
+    expect(out[0].materials).toEqual([
+      { material: 'EKOVILLA', sacks: 200 },
+      { material: 'PAROC', sacks: 50 },
+    ]);
+  });
+
+  it('går aldrig under noll när mer blåstes än planerat', () => {
+    const out = applyReportedToDemand([seg()], reported({ byMaterial: [['EKOVILLA', 700]] }));
+    expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 0 }]);
+  });
+
+  it('lämnar en order utan rapportrader orörd — "ej rapporterat" är inte "noll blåsta"', () => {
+    const out = applyReportedToDemand([seg()], new Map());
+    expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 564 }]);
+  });
+});
+
+describe('dubbelräkningen av blåsta säckar', () => {
+  it('halvblåst order överskattar inte längre bristen', () => {
+    // 🧨 Regressionen: `balance` sänktes av det blåsta (deriveConsumptionRows) medan `planned` stod
+    // kvar på orderns HELA säckantal, så samma säckar räknades två gånger och shortfall blev 364
+    // där svaret är 64. Överskattningen var exakt det blåsta antalet och växte under veckan — och
+    // hade den siffran fyllt i en materialbeställning hade 300 säck beställts i onödan.
+    const depots = [{ id: 'd1', name: 'Syd' }];
+    const delivered: StockRow[] = [{ depot_id: 'd1', material: 'EKOVILLA', sacks: 500 }];
+
+    const reports = [{ work_order_id: 'wo1', sacks_blown: 300, kind: 'partial', material: 'EKOVILLA' }];
+    const consumed: StockRow[] = [{ depot_id: 'd1', material: 'EKOVILLA', sacks: 300 }];
+
+    const segments: PlannedDemandSegment[] = [
+      { work_order_id: 'wo1', depot_id: 'd1', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 564 }] },
+    ];
+    const planned = attributePlannedDemand(applyReportedToDemand(segments, reportedDemandByWorkOrder(reports)));
+
+    const row = computeDepotBalances(depots, delivered, consumed, planned)[0].rows[0];
+    expect(row).toMatchObject({ balance: 200, planned: 264, shortfall: 64 });
   });
 });

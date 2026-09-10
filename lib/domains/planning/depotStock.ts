@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { materialDemandFromLineItems, materialShortFromLineItems, type MaterialDemand } from '@/lib/domains/crm/materials';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
-import { effectiveSackReports } from './sackLedger';
+import { effectiveSackReports, sackReportKind } from './sackLedger';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -108,7 +108,9 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<StockRow[]> {
 // (Bristen där materialShortFromLineItems debiterade allt på orderns FÖRSTA igenkända material är
 // löst för nya rader: rapporten bär sitt eget material. Rader utan materialkolumn — legacy, eller
 // en etapprad vars artikelnamn inte gick att tyda — faller tillbaka på den gamla härledningen.)
-async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow[]> {
+async function deriveConsumptionRows(
+  supabase: SupabaseClient,
+): Promise<{ rows: StockRow[]; reported: Map<string, ReportedDemand> }> {
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
@@ -118,8 +120,8 @@ async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow
   // regeln bara delrapporterna och debiterar depån för BÅDA besöken. En kapning gör alltså inte
   // svaret ofullständigt, den gör det FEL — och åt fel håll.
   //
-  // Systerläsningarna (derivePlannedDemandRows) har samma exponering och är fortfarande
-  // opaginerade; filen sa tidigare att alla tre borde lösas i samma omgång. Den här kan inte vänta:
+  // Systerläsningarna (listDeliveryRows och derivePlannedDemandSegments) har samma exponering och är
+  // fortfarande opaginerade; filen sa tidigare att alla tre borde lösas i samma omgång. Den här kan inte vänta:
   // ops_segment_reports var tom före säckrapporteringen och växer nu monotont med varje besök,
   // medan de andra är bundna till mängden ÖPPNA ordrar.
   const reports: Array<Record<string, any> & { work_order_id: string }> = [];
@@ -146,7 +148,89 @@ async function deriveConsumptionRows(supabase: SupabaseClient): Promise<StockRow
     const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
     if (depotId && material) rows.push({ depot_id: depotId, material, sacks: Number(r.sacks_blown) });
   }
-  return rows;
+  // Samma rader bär BÅDA halvorna av saldot: det som gått åt (rows) och det som därför inte längre
+  // är kvar att blåsa (reported). De MÅSTE komma ur en och samma läsning — läses tabellen två
+  // gånger kan en rapport skriven mellan läsningarna finnas i den ena och saknas i den andra, och
+  // då tar dubbelräkningen inte ut sig exakt. sackLedger varnar för just det.
+  return { rows, reported: reportedDemandByWorkOrder(reports) };
+}
+
+/** Vad en arbetsorder redan blåst, per material — och om egenkontrollen satt punkt. */
+export type ReportedDemand = { hasFinal: boolean; byMaterial: Map<string, number> };
+
+/**
+ * Ren: blåsta säckar per arbetsorder och material, ur RÅA rapportrader.
+ *
+ * `hasFinal` läses ur de råa raderna, inte ur de effektiva — supersede får inte dölja ATT en final
+ * finns, den avgör bara vilka rader som räknas. Beloppen kommer däremot ur effectiveSackReports,
+ * alltså finalerna när jobbet har några och annars dess partials. Aldrig addition mellan dem.
+ *
+ * Materialet tas från radens egen kolumn, med orderns första igenkända material som reserv för
+ * rader skrivna innan kolumnen fanns — EXAKT samma härledning som förbrukningen använder. Skulle de
+ * två skilja sig åt drogs säckarna från ett material i saldot och från ett annat i behovet.
+ *
+ * En rad vars material inte går att härleda lämnar arbetsordern i kartan men utan belopp: jobbet är
+ * känt, avdraget är det inte. Behovet står då kvar orört, vilket överskattar snarare än underskattar.
+ */
+export function reportedDemandByWorkOrder(
+  reports: Array<Record<string, any> & { work_order_id: string; kind?: string | null }>,
+): Map<string, ReportedDemand> {
+  const map = new Map<string, ReportedDemand>();
+  const ensure = (workOrderId: string): ReportedDemand => {
+    let cell = map.get(workOrderId);
+    if (!cell) {
+      cell = { hasFinal: false, byMaterial: new Map() };
+      map.set(workOrderId, cell);
+    }
+    return cell;
+  };
+
+  for (const r of reports) {
+    if (sackReportKind(r) === 'final') ensure(r.work_order_id).hasFinal = true;
+  }
+
+  for (const r of effectiveSackReports(reports)) {
+    const cell = ensure(r.work_order_id);
+    const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
+    const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
+    const sacks = Number(r.sacks_blown ?? 0);
+    if (!material || !Number.isFinite(sacks)) continue;
+    cell.byMaterial.set(material, (cell.byMaterial.get(material) ?? 0) + sacks);
+  }
+
+  return map;
+}
+
+/**
+ * Ren: drar av det som redan blåsts från varje segments materialbehov.
+ *
+ * ⚠️ EN IFYLLD EGENKONTROLL BETYDER BLÅST FÄRDIGT. Den är jobbets slutsiffra, så inget mer material
+ * behövs — även när ordern säger 564 och egenkontrollen 528. Skillnaden är att det gick åt mindre
+ * än beräknat, inte att 36 säckar återstår. Statusen sätts för hand och flyttas inte av
+ * egenkontrollen, så ett färdigblåst jobb ligger ofta kvar som `in_progress` och skulle annars
+ * fortsätta kräva material ur depån. (Williams beslut 2026-09-10.)
+ *
+ * Utan egenkontroll räknas behovet ned mot planen, per material — samma "kvar"-innebörd som
+ * jobbkortets badge redan visar när egenkontroll saknas.
+ *
+ * En order utan rapportrader lämnas orörd: "ej rapporterat" är inte "noll blåsta".
+ */
+export function applyReportedToDemand(
+  segments: PlannedDemandSegment[],
+  reported: Map<string, ReportedDemand>,
+): PlannedDemandSegment[] {
+  return segments.map((s) => {
+    const rep = s.work_order_id ? reported.get(s.work_order_id) : undefined;
+    if (!rep) return s;
+    if (rep.hasFinal) return { ...s, materials: [] };
+    return {
+      ...s,
+      materials: (s.materials ?? []).map((m) => ({
+        material: m.material,
+        sacks: Math.max(0, m.sacks - (rep.byMaterial.get(m.material) ?? 0)),
+      })),
+    };
+  });
 }
 
 // One scheduled segment, already resolved down to the fields the attribution needs.
@@ -191,19 +275,15 @@ export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockR
   return rows;
 }
 
-// Planned demand rows: for each OPEN scheduled job (work order still draft/scheduled/in_progress),
-// the sacks it's booked to blow → its segment's truck → that truck's depot, split PER MATERIAL.
-// Deduped by work order so a multi-segment job counts once. This is what the booked schedule needs
-// from the depot, regardless of the visible week.
+// Kandidatsegmenten bakom det planerade behovet: för varje ÖPPET bokat jobb (arbetsordern
+// fortfarande draft/scheduled/in_progress) säckarna den ska blåsa → segmentets bil → bilens depå,
+// uppdelat PER MATERIAL.
 //
-// ⚠️ KVARSTÅENDE: talet är fortfarande orderns HELA säckantal, inte det som är kvar att blåsa.
-// `balance` sänks samtidigt av det som redan rapporterats (deriveConsumptionRows), så en halvblåst
-// order räknas två gånger och `shortfall` överskattas med exakt det blåsta antalet. Det är en
-// beteendeändring på ett tal som redan visas och tas i en egen omgång — men den MÅSTE vara gjord
-// innan siffran får fylla i en materialbeställning, annars beställs för mycket.
-// Återstoden ska hämtas via reportedSacksByWorkOrder/sackTotalsByWorkOrder, som redan bär
-// supersede-regeln; bygg ingen andra kopia av den.
-async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockRow[]> {
+// Bara LÄSNINGEN bor här. Avdraget för det som redan blåsts (applyReportedToDemand) och urvalet av
+// vilket segment som vinner (attributePlannedDemand) är rena och görs av getDepotStock — dels för
+// att de går att enhetstesta isolerat, dels för att avdraget måste använda samma rapportrader som
+// förbrukningen räknades ur.
+async function derivePlannedDemandSegments(supabase: SupabaseClient): Promise<PlannedDemandSegment[]> {
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
 
@@ -241,7 +321,7 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
     .order('start_day', { ascending: true })
     .order('id', { ascending: true });
 
-  const candidates: PlannedDemandSegment[] = ((segs ?? []) as Array<Record<string, any>>).flatMap((s) => {
+  return ((segs ?? []) as Array<Record<string, any>>).flatMap((s) => {
     const wo = woById.get(s.work_order_id as string);
     if (!wo) return [];
     return [{
@@ -251,7 +331,6 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
       materials: wo.materials,
     }];
   });
-  return attributePlannedDemand(candidates);
 }
 
 // Per-depot, per-material balances + planned demand for the stock view. RLS (planning.schedule.read).
@@ -259,13 +338,21 @@ export async function getDepotStock(supabase: SupabaseClient): Promise<{ data: D
   const { data: depots, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
   if (error) return { data: [], error };
 
-  const [delivered, consumed, planned] = await Promise.all([
+  const [delivered, consumption, demandSegments] = await Promise.all([
     listDeliveryRows(supabase),
     deriveConsumptionRows(supabase),
-    derivePlannedDemandRows(supabase),
+    derivePlannedDemandSegments(supabase),
   ]);
+
+  // Behovet är det som är KVAR att blåsa, inte orderns hela säckantal. Utan avdraget räknades de
+  // blåsta säckarna två gånger — en gång som sänkt `balance` och en gång som kvarstående `planned`
+  // — och `shortfall` överskattades med exakt det blåsta antalet, växande under veckan.
+  // Avdraget görs ur SAMMA rapportrader som förbrukningen räknades ur (consumption.reported), så de
+  // två halvorna alltid ser samma tillstånd.
+  const planned = attributePlannedDemand(applyReportedToDemand(demandSegments, consumption.reported));
+
   return {
-    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered, consumed, planned),
+    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered, consumption.rows, planned),
     error: null,
   };
 }
