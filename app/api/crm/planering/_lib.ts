@@ -235,9 +235,17 @@ export const receiveExpectedDeliverySchema = z.object({
 // oförändrat, och kopieras det mönstret till inköp blir flödet en öppen relä.
 
 // Ett tomt fält är samma sak som inget värde: en blank sträng i registret ser ut som en ifylld
-// uppgift. Samma preprocess-idiom som jobType/workDescription ovan.
+// uppgift. Samma preprocess-idiom som jobType/workDescription ovan, med en skillnad:
+//
+// ⚠️ INGEN String()-KONVERTERING. `String(v)` gjorde vilket JSON-värde som helst till en giltig
+// sträng — ett objekt blev bokstavligen "[object Object]" som kontaktperson, en array blev sina
+// element hopfogade med komma. Ett fel av fel typ ska nekas, inte tolkas. Icke-strängar släpps
+// igenom orörda så att `z.string()` nedan avvisar dem med ett begripligt fel.
 const nullableText = (max: number, tooLong: string) =>
-  z.preprocess((v) => (v == null ? null : String(v).trim() || null), z.string().max(max, tooLong).nullable());
+  z.preprocess(
+    (v) => (v == null ? null : typeof v === 'string' ? v.trim() || null : v),
+    z.string().max(max, tooLong).nullable(),
+  );
 
 // 🧨 KODEN ÄR IDENTITETEN, INTE EN ETIKETT. Materialet väljer mottagare, alltså vilken fabrik
 // mailet går till: en sträng som inte ligger tecken för tecken i MATERIAL_SHORTS matchar aldrig ett
@@ -255,18 +263,29 @@ const supplierMaterials = z
 // Ledtiden går rakt in i en datumuträkning (suggested_date = max(idag, run_out − ledtid)), så en
 // felskrivning som 3650 klampar varje förslag till "beställ idag" utan att se fel ut. Taket vaktas
 // också i databasen.
-const leadTimeDays = z.coerce
-  .number()
-  .int('Ledtiden anges i hela dagar')
-  .min(0, 'Ledtiden kan inte vara negativ')
-  .max(365, 'Ledtiden är orimligt lång');
+//
+// 🧨 INTE z.coerce.number(). Coerce är `Number(v)`, och det gör `null`, `''` och `[]` till **0**
+// samt `true` till 1 — alltså en giltig ledtid ur skräp. `sacks` slipper undan med `.positive()`,
+// men här är 0 ett LEGITIMT värde ("levererar samma dag"), så noll-fallet har inget nät under sig:
+// en PATCH med `lead_time_days: null` hade tyst nollställt en inställd ledtid och tidigarelagt varje
+// framtida beställningsförslag.
+//
+// Numeriska strängar tas emot (ett formulärfält skickar text), allt annat avvisas.
+const leadTimeDays = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+  z
+    .number({ invalid_type_error: 'Ledtiden anges i hela dagar' })
+    .int('Ledtiden anges i hela dagar')
+    .min(0, 'Ledtiden kan inte vara negativ')
+    .max(365, 'Ledtiden är orimligt lång'),
+);
 
 export const createSupplierSchema = z.object({
   name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt'),
   // Obligatorisk: en leverantör som inte kan ta emot en beställning är en kontakt, inte en
   // leverantör. Utan adress hade raden legat i väljaren och felat först vid utskicket.
   email: z.string().trim().email('Ogiltig e-postadress').max(200, 'Adressen är för lång'),
-  contact_name: nullableText(120, 'Namnet är för långt').optional(),
+  contact_name: nullableText(120, 'Kontaktpersonens namn är för långt').optional(),
   phone: nullableText(40, 'Numret är för långt').optional(),
   materials: supplierMaterials,
   lead_time_days: leadTimeDays.optional().default(0),
@@ -277,7 +296,7 @@ export const updateSupplierSchema = z
   .object({
     name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt').optional(),
     email: z.string().trim().email('Ogiltig e-postadress').max(200, 'Adressen är för lång').optional(),
-    contact_name: nullableText(120, 'Namnet är för långt').optional(),
+    contact_name: nullableText(120, 'Kontaktpersonens namn är för långt').optional(),
     phone: nullableText(40, 'Numret är för långt').optional(),
     materials: supplierMaterials.optional(),
     lead_time_days: leadTimeDays.optional(),

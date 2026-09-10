@@ -16,7 +16,7 @@ import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
-import { validateSupplier, type MaterialSupplier } from '@/lib/domains/planning/materialSuppliers';
+import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
 import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
@@ -546,7 +546,9 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
 // hade annars kunnat läsa hela registret. Sänk inte grinden här utan att sänka den i RLS först —
 // och det ska inte göras.
 
-const SUPPLIER_PROBLEM_TEXT: Record<NonNullable<ReturnType<typeof validateSupplier>>, string> = {
+// Record över hela unionen, inte ett uppslag med fallback: läggs ett nytt SupplierProblem till i
+// domänen failar type-check här i stället för att visa ett tomt felmeddelande.
+const SUPPLIER_PROBLEM_TEXT: Record<SupplierProblem, string> = {
   name_required: 'Ange ett namn',
   name_too_long: 'Namnet är för långt',
   email_required: 'Ange en e-postadress — beställningen skickas dit',
@@ -562,26 +564,59 @@ const SUPPLIER_PROBLEM_TEXT: Record<NonNullable<ReturnType<typeof validateSuppli
 // ⚠️ Native <input type="checkbox"> bär bara `h-4 w-4 accent-*`. Preflight nollar border-width och
 // globals.css återställer den bara för knappar, så `rounded`/`border-*` är tyst verkningslöst här.
 // Samma klasser som Aktiv-rutorna i den här filen.
-function MaterialChecklist({ selected, onToggle }: { selected: string[]; onToggle: (material: string) => void }) {
+// `columns`: listkolumnen i MasterDetail är 300 px bred, och materialkoderna är långa
+// ('ISOCELL/ISECO', 'KNAUF SUPAFIL', 'HUNTON NATIVO'). I två spalter radbryter de mitt i namnet.
+// Detaljvyn är bred och tar två.
+//
+// 🧨 RENDERAR UNIONEN AV KATALOGEN OCH DET VALDA, INTE BARA KATALOGEN. En rad kan bära en kod som
+// inte finns i MATERIAL_SHORTS — seedad via SQL (det finns med flit ingen CHECK), eller efterlämnad
+// den dag ett `short` döps om i lib/domains/crm/materials.ts, vilket repot redan behandlar som en
+// levande risk (se materialRenameEffect).
+//
+// Med bara katalogen hade den koden saknat kryssruta: osynlig, omöjlig att kryssa ur, men skickad
+// vid varje sparning — där validateSupplier nekar den med "Okänt material". Leverantören gick då
+// inte att rätta, inte ens att AVAKTIVERA, eftersom Aktiv sparas genom samma knapp. Enda utvägen
+// var att radera raden. Nu är koden synlig, förkryssad och går att ta bort; grinden mot att LÄGGA
+// TILL en okänd kod är oförändrad, eftersom katalogen är det enda man kan kryssa I.
+function MaterialChecklist({
+  selected,
+  onToggle,
+  columns = 2,
+}: {
+  selected: string[];
+  onToggle: (material: string) => void;
+  columns?: 1 | 2;
+}) {
+  const rows = [...new Set([...MATERIAL_SHORTS, ...selected])];
   return (
-    <div className="grid gap-1.5 sm:grid-cols-2">
-      {MATERIAL_SHORTS.map((m) => (
-        <label key={m} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#e0e8dc] bg-white px-2.5 py-1.5">
-          <input
-            type="checkbox"
-            checked={selected.includes(m)}
-            onChange={() => onToggle(m)}
-            className="h-4 w-4 accent-[color:var(--ek-accent)]"
-          />
-          <span className="text-[12px] font-semibold text-slate-700">{m}</span>
-        </label>
-      ))}
+    <div className={cn('grid gap-1.5', columns === 2 && 'sm:grid-cols-2')}>
+      {rows.map((m) => {
+        const unknown = !MATERIAL_SHORTS.includes(m);
+        return (
+          <label
+            key={m}
+            className={cn(
+              'flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5',
+              unknown ? 'border-rose-300 bg-rose-50' : 'border-[#e0e8dc] bg-white',
+            )}
+          >
+            <input
+              type="checkbox"
+              checked={selected.includes(m)}
+              onChange={() => onToggle(m)}
+              className="h-4 w-4 accent-[color:var(--ek-accent)]"
+            />
+            <span className={cn('text-[12px] font-semibold', unknown ? 'text-rose-700' : 'text-slate-700')}>{m}</span>
+            {unknown && <span className="ml-auto text-[10px] font-bold uppercase tracking-wide text-rose-500">okänd kod</span>}
+          </label>
+        );
+      })}
     </div>
   );
 }
 
 function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud<MaterialSupplier>>; onChanged: () => void }) {
-  const { items, loading, busy, patchLocal, save, remove, add } = crud;
+  const { items, loading, loadError, busy, reload, patchLocal, save, remove, add } = crud;
   const toast = useToast();
   const [sel, setSel] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -609,7 +644,16 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
       leadTimeDays: supplier.lead_time_days,
     });
     if (problem) return toast.error(SUPPLIER_PROBLEM_TEXT[problem]);
-    if (await save(supplier)) onChanged();
+    if (await save(supplier)) {
+      onChanged();
+      return;
+    }
+    // 🧨 EN NEKAD SPARNING FÅR INTE LÄMNA KVAR SITT UTKAST. `patchLocal` skrev optimistiskt redan
+    // vid tangenttrycket, så efter ett 409 (namnet bärs av en annan AKTIV leverantör) står raden
+    // kvar och visar precis det databasen vägrade — kryssrutan ikryssad, raden utan opacity-60 —
+    // medan registret säger något annat. Toasten är övergående; det felaktiga tillståndet är det
+    // inte. Att gissa fram ett "före" räcker inte, för utkastet är äldre än knapptrycket: hämta om.
+    await reload();
   }
   async function onRemove() {
     if (supplier && (await remove(supplier.id))) onChanged();
@@ -634,6 +678,25 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
   }
 
   if (loading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
+
+  // 🧨 Ett fel får inte se ut som ett tomt register — "Inga leverantörer upplagda än" är ett
+  // påstående om verkligheten, och en 403 eller ett nätverksfel vet ingenting om verkligheten.
+  // Hela panelen ersätts, inte bara listan: formuläret nedanför hade bjudit in till att lägga upp
+  // en fabrik som redan finns. Samma gren som StockPanel har för lagersaldot.
+  if (loadError) {
+    return (
+      <div className="h-full overflow-y-auto p-5">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
+          <div className="font-semibold">Leverantörsregistret kunde inte hämtas</div>
+          <p className="mt-0.5 text-rose-600">{loadError}</p>
+          <p className="mt-1 text-[11px] text-rose-500">
+            Listan visas inte, eftersom ett fel annars hade sett ut som ett tomt register. Ladda om sidan och hör av dig
+            om det står kvar.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <MasterDetail
@@ -669,7 +732,11 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
             <p className="mb-2.5 text-[11px] text-slate-400">Fabriken materialet beställs från. Ledtid och kontaktuppgifter fyller du i sedan.</p>
             <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Namn, t.ex. Ekovilla AB" className={cn(crm.input, 'mb-2')} aria-label="Namn på ny leverantör" />
             <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Beställningsadress" className={cn(crm.input, 'mb-2')} aria-label="E-postadress" />
-            <MaterialChecklist selected={newMaterials} onToggle={(m) => setNewMaterials((prev) => toggle(prev, m))} />
+            {/* Etiketten säger också VARFÖR minst ett krävs — knappen är avstängd tills något är
+                valt, och utan förklaring ser det ut som att formuläret hänger sig. */}
+            <span className={LABEL}>Levererar</span>
+            <MaterialChecklist columns={1} selected={newMaterials} onToggle={(m) => setNewMaterials((prev) => toggle(prev, m))} />
+            <p className="mt-1.5 text-[11px] text-slate-400">Minst ett — materialet avgör när leverantören föreslås som mottagare.</p>
             <button type="submit" disabled={busy || !newName.trim() || !newEmail.trim() || newMaterials.length === 0} className="mt-2.5 h-9 w-full rounded-lg border border-emerald-200 bg-emerald-50 text-[12.5px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">Lägg till leverantör</button>
           </form>
         </>

@@ -14,6 +14,18 @@ import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 const EKOVILLA = MATERIAL_SHORTS[0];
 const KNAUF = MATERIAL_SHORTS[1];
 
+// 🧨 FIXTURERNA HÄNGER PÅ KATALOGENS ORDNING. MATERIAL_SHORTS härleds ur MATERIALS
+// insättningsordning, så ett nytt material överst byter betydelse på [0] och [1] — tyst, och utan
+// att något failar. Den här förutsättningen får det att smälla högt i stället.
+describe('fixturernas förutsättningar', () => {
+  it('katalogen har minst två skilda koder, och de är versaler', () => {
+    expect(MATERIAL_SHORTS.length).toBeGreaterThanOrEqual(2);
+    expect(EKOVILLA).not.toBe(KNAUF);
+    // Skiftlägestestet nedan är tomt om koden redan är gemener.
+    expect(EKOVILLA).not.toBe(EKOVILLA.toLowerCase());
+  });
+});
+
 function supplier(over: Partial<MaterialSupplier> = {}): MaterialSupplier {
   return {
     id: 's1',
@@ -36,6 +48,12 @@ describe('validateSupplier', () => {
 
   it('kräver ett namn', () => {
     expect(validateSupplier({ name: '   ', email: 'a@b.se', materials: [EKOVILLA] })).toBe('name_required');
+  });
+
+  it('avvisar ett för långt namn — och mäter EFTER trim, som schemat', () => {
+    expect(validateSupplier({ name: 'x'.repeat(121), email: 'a@b.se', materials: [EKOVILLA] })).toBe('name_too_long');
+    expect(validateSupplier({ name: 'x'.repeat(120), email: 'a@b.se', materials: [EKOVILLA] })).toBeNull();
+    expect(validateSupplier({ name: '  ' + 'x'.repeat(120) + '  ', email: 'a@b.se', materials: [EKOVILLA] })).toBeNull();
   });
 
   it('kräver en adress — utan den kan beställningen inte skickas', () => {
@@ -73,13 +91,19 @@ describe('suppliersForMaterial', () => {
     expect(suppliersForMaterial(list, EKOVILLA).map((s) => s.id)).toEqual(['b']);
   });
 
+  // Varianten HÄRLEDS ur konstanten. Skrevs 'ekovilla' ut för hand jämfördes den mot MATERIAL_SHORTS[0]
+  // — och byter katalogen ordning är det två helt orelaterade strängar, så testet passerar av fel
+  // skäl och prövar inte längre skiftläge alls.
   it('matchar tecken för tecken — ingen normalisering', () => {
-    const list = [supplier({ materials: ['ekovilla'] })];
+    const list = [supplier({ materials: [EKOVILLA.toLowerCase()] })];
     expect(suppliersForMaterial(list, EKOVILLA)).toEqual([]);
   });
 
-  it('behåller anroparens ordning', () => {
-    const list = [supplier({ id: 'b' }), supplier({ id: 'a' })];
+  // 🧨 Namnen är omvänt sorterade mot inmatningsordningen MED FLIT. Hette båda likadant vore en
+  // namnsortering en no-op på just de raderna — och namnsortering är precis den sortering någon
+  // skulle råka lägga till här, eftersom listAllSuppliers redan ordnar på name.
+  it('behåller anroparens ordning — sorterar aldrig om', () => {
+    const list = [supplier({ id: 'b', name: 'Ö-fabriken' }), supplier({ id: 'a', name: 'A-fabriken' })];
     expect(suppliersForMaterial(list, EKOVILLA).map((s) => s.id)).toEqual(['b', 'a']);
   });
 });
@@ -142,6 +166,40 @@ describe('createSupplierSchema', () => {
     expect(createSupplierSchema.safeParse({ ...base, lead_time_days: 365 }).success).toBe(true);
   });
 
+  // 🧨 z.coerce.number() är Number(v), och det gör null, '' och [] till 0 samt true till 1 — alltså
+  // en GILTIG ledtid ur skräp. `sacks` slipper undan med .positive(), men 0 är ett legitimt värde
+  // här ("levererar samma dag"), så noll-fallet har inget nät under sig.
+  it('avvisar skräp i ledtiden i stället för att tolka det som noll', () => {
+    for (const junk of [null, '', '   ', true, [], {}, 'abc']) {
+      expect(createSupplierSchema.safeParse({ ...base, lead_time_days: junk }).success).toBe(false);
+    }
+  });
+
+  it('tar emot en numerisk sträng — ett formulärfält skickar text', () => {
+    const parsed = createSupplierSchema.safeParse({ ...base, lead_time_days: '14' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.lead_time_days).toBe(14);
+  });
+
+  // 🧨 String(v) gjorde vilket JSON-värde som helst till en giltig sträng: ett objekt landade som
+  // "[object Object]" som kontaktperson. Ett fel av fel typ ska nekas, inte tolkas.
+  it('avvisar fel typ i fritextfälten i stället för att stringifiera den', () => {
+    expect(createSupplierSchema.safeParse({ ...base, contact_name: {} }).success).toBe(false);
+    expect(createSupplierSchema.safeParse({ ...base, phone: 12345 }).success).toBe(false);
+    expect(createSupplierSchema.safeParse({ ...base, note: ['a', 'b'] }).success).toBe(false);
+  });
+
+  it('pekar ut rätt fält när kontaktpersonens namn är för långt', () => {
+    const parsed = createSupplierSchema.safeParse({ ...base, contact_name: 'x'.repeat(121) });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      const errors = parsed.error.flatten().fieldErrors;
+      expect(errors.contact_name?.[0]).toMatch(/Kontaktperson/);
+      // Samma sträng på två fält gör att felet pekar ut fel ruta.
+      expect(errors.contact_name?.[0]).not.toBe('Namnet är för långt');
+    }
+  });
+
   it('tomma valfria fält blir null, inte blanksträng', () => {
     const parsed = createSupplierSchema.safeParse({ ...base, contact_name: '  ', phone: '', note: '   ' });
     expect(parsed.success).toBe(true);
@@ -170,6 +228,32 @@ describe('updateSupplierSchema', () => {
   it('håller samma ledtidstak som inläggningen', () => {
     expect(updateSupplierSchema.safeParse({ lead_time_days: 3650 }).success).toBe(false);
     expect(updateSupplierSchema.safeParse({ lead_time_days: 30 }).success).toBe(true);
+  });
+
+  // Den farligaste varianten av coerce-fällan: `null` i en PATCH hade nollställt en inställd ledtid
+  // tyst, och därmed tidigarelagt varje framtida beställningsförslag.
+  it('nollställer INTE ledtiden på ett null — den avvisas', () => {
+    expect(updateSupplierSchema.safeParse({ lead_time_days: null }).success).toBe(false);
+    expect(updateSupplierSchema.safeParse({ lead_time_days: '' }).success).toBe(false);
+    // Att uttryckligen sätta noll ska däremot gå: "levererar samma dag" är ett svar.
+    const parsed = updateSupplierSchema.safeParse({ lead_time_days: 0 });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.lead_time_days).toBe(0);
+  });
+
+  /**
+   * 🧨 EN RAD MED EN OKÄND MATERIALKOD MÅSTE GÅ ATT RÄDDA I ETT STEG.
+   *
+   * En kod utanför katalogen kan komma från en SQL-seed (det finns med flit ingen CHECK) eller bli
+   * kvar den dag ett `short` döps om i materials.ts. Renderade checklistan bara katalogen saknade
+   * koden kryssruta: osynlig, omöjlig att kryssa ur, men skickad vid varje sparning — där schemat
+   * nekade den. Leverantören gick då varken att rätta eller att AVAKTIVERA.
+   *
+   * Vakten är därför tvådelad: koden får ALDRIG godtas, men listan utan den måste godtas.
+   */
+  it('en okänd kod nekas, men samma patch utan den godtas', () => {
+    expect(updateSupplierSchema.safeParse({ materials: ['KNAUF', EKOVILLA] }).success).toBe(false);
+    expect(updateSupplierSchema.safeParse({ materials: [EKOVILLA] }).success).toBe(true);
   });
 
   it('håller samma adressgrind som inläggningen', () => {

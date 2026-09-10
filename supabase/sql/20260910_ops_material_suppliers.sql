@@ -28,7 +28,10 @@
 --
 -- ADDITIV. Inget befintligt rörs, ingen befintlig behörighet ändras, ingen befintlig tabell
 -- ändras. Ordningen mot koden är alltså fri: körs koden först svarar PostgREST 400 på saknad
--- relation, Leverantörer-fliken visar ett fel och allt annat i planeringen är opåverkat.
+-- relation, och Leverantörer-fliken visar en felruta ("Leverantörsregistret kunde inte hämtas").
+-- Det löftet vilar på `loadError` i app/crm/planering/useEntityCrud.ts — utan den grenen renderades
+-- felet i stället som "Inga leverantörer upplagda än", alltså ett påstående om verkligheten byggt
+-- på att vi inte vet. Tas grenen bort blir den här raden en lögn.
 --
 -- Kör i Supabase SQL editor. Idempotent — kör den TVÅ gånger innan du litar på påståendet.
 -- Inga tecken utanför BMP i den här filen.
@@ -122,6 +125,25 @@ drop policy if exists ops_material_suppliers_delete on public.ops_material_suppl
 create policy ops_material_suppliers_delete on public.ops_material_suppliers
   for delete to authenticated
   using (public.has_permission('planning.depot.manage'));
+
+-- ⚠️ TVÅ MEDVETNA LUCKOR I UPDATE-POLICYN, båda prövade och valda bort — ändra inte utan att läsa
+-- det här först.
+--
+-- 1. `created_by` går att skriva om. En policy väljer RADER, aldrig KOLUMNER, så att frysa fältet
+--    kräver en BEFORE UPDATE-trigger (mönstret finns: ops_expected_deliveries_forward_only). Den är
+--    inte värd sitt underhåll här: `created_by` är ren proveniens, ingenting läser den, och den som
+--    kan skriva den håller redan planning.depot.manage. Bär fältet någon gång ett BESLUT — inte
+--    bara "vem la upp raden" — är det triggern som ska in, inte en kolumngrind i policyn.
+--
+-- 2. En ändrad `email` lämnar inget spår. Det följer av att registret medvetet INTE loggar till
+--    ops_activity_events: loggen läses med planning.schedule.read och hade blivit en andra läsväg
+--    förbi RLS ovan (se noten i app/api/crm/planering/material-suppliers/route.ts).
+--
+--    Spåret som faktiskt betyder något ligger på beställningen, inte här: ops_material_orders
+--    (etapp 4) snapshottar `recipient_email` vid skicktillfället, så varje avsänd order bär vart
+--    den GICK — oberoende av vad registret säger idag. En rättad adress får inte skriva om vad en
+--    skickad beställning påstår sig ha skickats till. Faller den snapshoten bort ur etapp 4 blir
+--    den här luckan verklig, och då behöver registret ett eget spår.
 
 -- ---------------------------------------------------------------------------
 -- Realtime: NEJ
