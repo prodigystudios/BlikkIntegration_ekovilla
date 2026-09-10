@@ -228,6 +228,66 @@ export const receiveExpectedDeliverySchema = z.object({
   note: z.string().trim().max(300).nullable().optional(),
 });
 
+// ── Leverantörsregistret (planning.depot.manage) ────────────────────────────
+//
+// Vem materialet beställs FRÅN. Registret finns för att beställningsmailet ska slå upp adressen på
+// SERVERN via supplier_id — orderbekräftelsens route tar ett fritt recipient_email och mailar dit
+// oförändrat, och kopieras det mönstret till inköp blir flödet en öppen relä.
+
+// Ett tomt fält är samma sak som inget värde: en blank sträng i registret ser ut som en ifylld
+// uppgift. Samma preprocess-idiom som jobType/workDescription ovan.
+const nullableText = (max: number, tooLong: string) =>
+  z.preprocess((v) => (v == null ? null : String(v).trim() || null), z.string().max(max, tooLong).nullable());
+
+// 🧨 KODEN ÄR IDENTITETEN, INTE EN ETIKETT. Materialet väljer mottagare, alltså vilken fabrik
+// mailet går till: en sträng som inte ligger tecken för tecken i MATERIAL_SHORTS matchar aldrig ett
+// behov — eller matchar fel. Enda stället vokabulären prövas, därav ingen CHECK i SQL.
+//
+// Minst ett material krävs. Databasen tillåter en tom lista (`default '{}'`), men en leverantör
+// utan material blir osynlig i mottagarvalet samtidigt som den syns i registret — den ser upplagd
+// ut och är det inte. `.max()` biter FÖRE dedupliceringen och är därmed också storleksgränsen.
+const supplierMaterials = z
+  .array(z.string().trim().refine((m) => MATERIAL_SHORTS.includes(m), 'Okänt material'))
+  .min(1, 'Välj minst ett material')
+  .max(MATERIAL_SHORTS.length, 'För många material')
+  .transform((list) => [...new Set(list)]);
+
+// Ledtiden går rakt in i en datumuträkning (suggested_date = max(idag, run_out − ledtid)), så en
+// felskrivning som 3650 klampar varje förslag till "beställ idag" utan att se fel ut. Taket vaktas
+// också i databasen.
+const leadTimeDays = z.coerce
+  .number()
+  .int('Ledtiden anges i hela dagar')
+  .min(0, 'Ledtiden kan inte vara negativ')
+  .max(365, 'Ledtiden är orimligt lång');
+
+export const createSupplierSchema = z.object({
+  name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt'),
+  // Obligatorisk: en leverantör som inte kan ta emot en beställning är en kontakt, inte en
+  // leverantör. Utan adress hade raden legat i väljaren och felat först vid utskicket.
+  email: z.string().trim().email('Ogiltig e-postadress').max(200, 'Adressen är för lång'),
+  contact_name: nullableText(120, 'Namnet är för långt').optional(),
+  phone: nullableText(40, 'Numret är för långt').optional(),
+  materials: supplierMaterials,
+  lead_time_days: leadTimeDays.optional().default(0),
+  note: nullableText(300, 'Noteringen är för lång').optional(),
+});
+
+export const updateSupplierSchema = z
+  .object({
+    name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt').optional(),
+    email: z.string().trim().email('Ogiltig e-postadress').max(200, 'Adressen är för lång').optional(),
+    contact_name: nullableText(120, 'Namnet är för långt').optional(),
+    phone: nullableText(40, 'Numret är för långt').optional(),
+    materials: supplierMaterials.optional(),
+    lead_time_days: leadTimeDays.optional(),
+    note: nullableText(300, 'Noteringen är för lång').optional(),
+    // Avveckling sker genom avaktivering — inaktiva leverantörer ligger kvar men blir aldrig
+    // mottagare (suppliersForMaterial filtrerar på active).
+    active: z.boolean().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, 'Inget att spara');
+
 // List the activity log (audit trail). Newest-first, keyset-paginated by `before` (ISO timestamp),
 // with optional filters on actor name, exact action key, and a free-text search over the summary.
 export const listActivityQuerySchema = z.object({

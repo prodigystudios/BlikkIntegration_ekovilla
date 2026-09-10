@@ -16,6 +16,7 @@ import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
+import { validateSupplier, type MaterialSupplier } from '@/lib/domains/planning/materialSuppliers';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
 import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
@@ -25,7 +26,7 @@ import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planni
 // filtered by permission (Option A): admins see the management areas, everyone sees Lager.
 // Reuses the existing domain/API + useEntityCrud — no behaviour change, just one surface.
 
-type AreaKey = 'trucks' | 'depots' | 'jobtypes' | 'stock';
+type AreaKey = 'trucks' | 'depots' | 'suppliers' | 'jobtypes' | 'stock';
 
 const PANEL = 'rounded-2xl border border-[#e0e8dc] bg-white p-4';
 const LABEL = 'mb-1.5 block text-[10.5px] font-bold uppercase tracking-wide text-slate-400';
@@ -54,6 +55,25 @@ export default function PlanningAdminModal({
     listKey: 'depots',
     toPayload: (d) => ({ name: d.name, location: d.location, active: d.active }),
     labels: { saveFail: 'Kunde inte spara depån', removeFail: 'Kunde inte ta bort depån', addFail: 'Kunde inte lägga till depån' },
+  });
+  // Leverantörsregistret. Hela registret ligger bakom planning.depot.manage — ÄVEN läsningen, till
+  // skillnad från depåerna ovan — eftersom raden bär fabrikens mailadress och kontaktperson.
+  // Hämtningen sker ändå ovillkorligt, som för bilarna (vars GET också är manage-gatad): den som
+  // saknar nyckeln får 403, hooken sväljer det och området är dolt.
+  const suppliersCrud = useEntityCrud<MaterialSupplier>({
+    api: '/api/crm/planering/material-suppliers',
+    listKey: 'suppliers',
+    toPayload: (s) => ({
+      name: s.name,
+      email: s.email,
+      contact_name: s.contact_name,
+      phone: s.phone,
+      materials: s.materials,
+      lead_time_days: s.lead_time_days,
+      note: s.note,
+      active: s.active,
+    }),
+    labels: { saveFail: 'Kunde inte spara leverantören', removeFail: 'Kunde inte ta bort leverantören', addFail: 'Kunde inte lägga till leverantören' },
   });
   const jobTypesCrud = useEntityCrud<JobTypeRow>({
     api: '/api/crm/planering/job-types',
@@ -85,10 +105,11 @@ export default function PlanningAdminModal({
       [
         { key: 'trucks' as const, label: 'Lastbilar', sub: 'Namn, färg och depåkoppling', count: trucksCrud.items.length, show: canManageTrucks },
         { key: 'depots' as const, label: 'Depåer', sub: 'Lagerplatser', count: depotsCrud.items.length, show: canManageDepots },
+        { key: 'suppliers' as const, label: 'Leverantörer', sub: 'Fabriker, material och ledtid', count: suppliersCrud.items.length, show: canManageDepots },
         { key: 'jobtypes' as const, label: 'Jobbtyper', sub: 'Färger och materialkoppling', count: jobTypesCrud.items.length, show: canManageTrucks },
         { key: 'stock' as const, label: 'Lager', sub: 'Saldo och leveranser', count: null, show: true },
       ].filter((a) => a.show),
-    [canManageTrucks, canManageDepots, trucksCrud.items.length, depotsCrud.items.length, jobTypesCrud.items.length],
+    [canManageTrucks, canManageDepots, trucksCrud.items.length, depotsCrud.items.length, suppliersCrud.items.length, jobTypesCrud.items.length],
   );
 
   const [active, setActive] = useState<AreaKey>(areas[0]?.key ?? 'stock');
@@ -158,6 +179,7 @@ export default function PlanningAdminModal({
           <div className="min-h-0 overflow-hidden">
             {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} people={people} defaultByTruck={defaultByTruck} onCrewSaved={loadDefaultCrew} onChanged={onChanged} />}
             {active === 'depots' && <DepotPanel crud={depotsCrud} onChanged={onChanged} />}
+            {active === 'suppliers' && <SupplierPanel crud={suppliersCrud} onChanged={onChanged} />}
             {active === 'jobtypes' && <JobTypePanel crud={jobTypesCrud} onChanged={onChanged} />}
             {active === 'stock' && (
               <StockPanel
@@ -503,6 +525,212 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
               title="Riskzon"
               body="Bilar kopplade till depån nollställs (utan depå), och depåns leveranshistorik försvinner. Har depån någon väntad eller kvitterad leverans går den inte att ta bort — avaktivera den i stället."
               label="Ta bort depå"
+              onConfirm={onRemove}
+              busy={busy}
+            />
+          </div>
+        )
+      }
+    />
+  );
+}
+
+// ── Leverantörer ────────────────────────────────────────────────────────────
+//
+// Vem materialet beställs FRÅN. Registret är etapp 2 av beställningsspåret: prognosen använder
+// ledtiden för att datera förslaget, och beställningsmailet slår upp adressen på servern via
+// supplier_id — klienten skickar aldrig en mailadress.
+//
+// ⚠️ Området är grindat på canManageDepots, och API:t kräver planning.depot.manage även för
+// LÄSNING. Raden bär fabrikens adress och kontaktperson; rollen konsult håller schedule.read och
+// hade annars kunnat läsa hela registret. Sänk inte grinden här utan att sänka den i RLS först —
+// och det ska inte göras.
+
+const SUPPLIER_PROBLEM_TEXT: Record<NonNullable<ReturnType<typeof validateSupplier>>, string> = {
+  name_required: 'Ange ett namn',
+  name_too_long: 'Namnet är för långt',
+  email_required: 'Ange en e-postadress — beställningen skickas dit',
+  email_invalid: 'Ogiltig e-postadress',
+  materials_required: 'Välj minst ett material, annars kan leverantören aldrig väljas som mottagare',
+  material_unknown: 'Okänt material',
+  lead_time_invalid: 'Ledtiden anges i hela dagar, 0–365',
+};
+
+// Flervalet över materialkatalogen. Ingen delad multi-select finns i repot, och den här ska inte
+// bli en: listan är fem fasta koder och hör till den här ytan.
+//
+// ⚠️ Native <input type="checkbox"> bär bara `h-4 w-4 accent-*`. Preflight nollar border-width och
+// globals.css återställer den bara för knappar, så `rounded`/`border-*` är tyst verkningslöst här.
+// Samma klasser som Aktiv-rutorna i den här filen.
+function MaterialChecklist({ selected, onToggle }: { selected: string[]; onToggle: (material: string) => void }) {
+  return (
+    <div className="grid gap-1.5 sm:grid-cols-2">
+      {MATERIAL_SHORTS.map((m) => (
+        <label key={m} className="flex cursor-pointer items-center gap-2 rounded-lg border border-[#e0e8dc] bg-white px-2.5 py-1.5">
+          <input
+            type="checkbox"
+            checked={selected.includes(m)}
+            onChange={() => onToggle(m)}
+            className="h-4 w-4 accent-[color:var(--ek-accent)]"
+          />
+          <span className="text-[12px] font-semibold text-slate-700">{m}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud<MaterialSupplier>>; onChanged: () => void }) {
+  const { items, loading, busy, patchLocal, save, remove, add } = crud;
+  const toast = useToast();
+  const [sel, setSel] = useState<string | null>(null);
+  const [newName, setNewName] = useState('');
+  const [newEmail, setNewEmail] = useState('');
+  const [newMaterials, setNewMaterials] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!items.some((s) => s.id === sel)) setSel(items[0]?.id ?? null);
+  }, [items, sel]);
+
+  const supplier = items.find((s) => s.id === sel) ?? null;
+
+  function toggle(list: string[], material: string): string[] {
+    return list.includes(material) ? list.filter((m) => m !== material) : [...list, material];
+  }
+
+  // Samma regel som createSupplierSchema, men på klientsidan — så felet syns vid fältet i stället
+  // för som ett 400-svar. Grinden som räknas sitter i schemat och i RLS.
+  async function onSave() {
+    if (!supplier) return;
+    const problem = validateSupplier({
+      name: supplier.name,
+      email: supplier.email,
+      materials: supplier.materials,
+      leadTimeDays: supplier.lead_time_days,
+    });
+    if (problem) return toast.error(SUPPLIER_PROBLEM_TEXT[problem]);
+    if (await save(supplier)) onChanged();
+  }
+  async function onRemove() {
+    if (supplier && (await remove(supplier.id))) onChanged();
+  }
+  async function onAdd(e: FormEvent) {
+    e.preventDefault();
+    const problem = validateSupplier({ name: newName, email: newEmail, materials: newMaterials });
+    if (problem) return toast.error(SUPPLIER_PROBLEM_TEXT[problem]);
+    const created = await add({
+      name: newName.trim(),
+      email: newEmail.trim(),
+      materials: newMaterials,
+      lead_time_days: 0,
+    });
+    if (created) {
+      setNewName('');
+      setNewEmail('');
+      setNewMaterials([]);
+      setSel(created.id);
+      onChanged();
+    }
+  }
+
+  if (loading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
+
+  return (
+    <MasterDetail
+      list={
+        <>
+          <div className="mb-2 px-1 text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400">Leverantörer</div>
+          {items.length === 0 && (
+            <p className="mb-2 px-1 text-[11.5px] text-slate-400">Inga leverantörer upplagda än.</p>
+          )}
+          {items.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setSel(s.id)}
+              className={cn('mb-2 block w-full rounded-xl border bg-white p-3 text-left transition', s.id === sel ? 'border-emerald-400 ring-2 ring-emerald-500/15' : 'border-[#e0e8dc] hover:border-[#c8d4c3]', !s.active && 'opacity-60')}
+            >
+              <div className="truncate text-[13.5px] font-bold text-slate-800">{s.name}</div>
+              <div className="mt-0.5 truncate text-[11.5px] text-slate-500">{s.email}</div>
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {s.materials.length === 0 ? (
+                  // En leverantör utan material matchar aldrig ett behov och kan alltså aldrig
+                  // väljas som mottagare. Säg det, i stället för att visa en tom rad.
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] font-bold text-amber-700">Inget material</span>
+                ) : (
+                  s.materials.map((m) => (
+                    <span key={m} className="rounded-full border border-[#e0e8dc] bg-[#f9fbf7] px-1.5 py-px text-[10px] font-semibold text-slate-600">{m}</span>
+                  ))
+                )}
+              </div>
+            </button>
+          ))}
+          <form onSubmit={onAdd} className="mt-1 rounded-xl border border-dashed border-[#c6d3c0] bg-[#fbfdfa] p-3">
+            <p className="mb-1 text-[12px] font-extrabold text-slate-700">Lägg till leverantör</p>
+            <p className="mb-2.5 text-[11px] text-slate-400">Fabriken materialet beställs från. Ledtid och kontaktuppgifter fyller du i sedan.</p>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Namn, t.ex. Ekovilla AB" className={cn(crm.input, 'mb-2')} aria-label="Namn på ny leverantör" />
+            <input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} placeholder="Beställningsadress" className={cn(crm.input, 'mb-2')} aria-label="E-postadress" />
+            <MaterialChecklist selected={newMaterials} onToggle={(m) => setNewMaterials((prev) => toggle(prev, m))} />
+            <button type="submit" disabled={busy || !newName.trim() || !newEmail.trim() || newMaterials.length === 0} className="mt-2.5 h-9 w-full rounded-lg border border-emerald-200 bg-emerald-50 text-[12.5px] font-bold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">Lägg till leverantör</button>
+          </form>
+        </>
+      }
+      detail={
+        !supplier ? (
+          <EmptyDetail text="Välj en leverantör för att redigera." />
+        ) : (
+          <div className="grid gap-3.5">
+            <div className={PANEL}>
+              <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Grunduppgifter</h3>
+              <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+                Beställningen mailas till adressen här — den hämtas på servern och skickas aldrig med från webbläsaren.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div><span className={LABEL}>Namn</span><input value={supplier.name} onChange={(e) => patchLocal(supplier.id, { name: e.target.value })} className={crm.input} /></div>
+                <div><span className={LABEL}>E-post</span><input type="email" value={supplier.email} onChange={(e) => patchLocal(supplier.id, { email: e.target.value })} className={crm.input} /></div>
+                <div><span className={LABEL}>Kontaktperson</span><input value={supplier.contact_name ?? ''} onChange={(e) => patchLocal(supplier.id, { contact_name: e.target.value || null })} className={crm.input} /></div>
+                <div><span className={LABEL}>Telefon</span><input value={supplier.phone ?? ''} onChange={(e) => patchLocal(supplier.id, { phone: e.target.value || null })} className={crm.input} /></div>
+              </div>
+              <label className="mt-3.5 flex cursor-pointer items-center justify-between gap-3">
+                <span>
+                  <span className="block text-[12.5px] font-bold text-slate-800">Aktiv</span>
+                  <span className="block text-[11px] text-slate-400">Inaktiva leverantörer ligger kvar i registret men kan inte väljas som mottagare</span>
+                </span>
+                <input type="checkbox" checked={supplier.active} onChange={(e) => patchLocal(supplier.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
+              </label>
+              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+            </div>
+
+            <div className={PANEL}>
+              <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Material och ledtid</h3>
+              <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+                Materialet avgör vilken leverantör som föreslås som mottagare. Ledtiden styr hur långt före depån tar slut beställningen dateras.
+              </p>
+              <span className={LABEL}>Levererar</span>
+              <MaterialChecklist selected={supplier.materials} onToggle={(m) => patchLocal(supplier.id, { materials: toggle(supplier.materials, m) })} />
+              <div className="mt-3.5 grid grid-cols-2 gap-3">
+                <div>
+                  <span className={LABEL}>Ledtid (dagar)</span>
+                  <input
+                    type="number"
+                    min={0}
+                    max={365}
+                    value={supplier.lead_time_days}
+                    // Ett tomt fält ger '' → NaN, som skrivs som null och failar i schemat. Noll är
+                    // ett giltigt svar ("levererar samma dag") och rätt förval här.
+                    onChange={(e) => patchLocal(supplier.id, { lead_time_days: Number(e.target.value) || 0 })}
+                    className={cn(crm.input, 'tabular-nums')}
+                    aria-label="Ledtid i dagar"
+                  />
+                </div>
+                <div><span className={LABEL}>Notering</span><input value={supplier.note ?? ''} onChange={(e) => patchLocal(supplier.id, { note: e.target.value || null })} className={crm.input} /></div>
+              </div>
+              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+            </div>
+
+            <RiskZone
+              title="Riskzon"
+              body="Avaktivera hellre än ta bort — en avaktiverad leverantör kan inte väljas som mottagare men finns kvar i registret. Ta bort bara en rad som lagts upp av misstag."
+              label="Ta bort leverantör"
               onConfirm={onRemove}
               busy={busy}
             />
