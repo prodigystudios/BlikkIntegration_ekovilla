@@ -12,7 +12,7 @@
 -- DEPLOY-ORDNING: SQL FÖRST, sedan koden.
 -- Körs efter 20260613_ops_segments_placeholders.sql och 20260810_get_my_crm_jobs.sql. Idempotent.
 --
--- 🧨 Kod före SQL slår ut HELA planeringstavlan, inte bara det nya. `SEGMENT_SELECT`
+-- ⚠️ Kod före SQL slår ut HELA planeringstavlan, inte bara det nya. `SEGMENT_SELECT`
 -- (lib/domains/planning/schedule.ts) namnger field_visible och work_description, och PostgREST
 -- svarar 42703 "column does not exist" på en kolumn som inte finns — alltså failar `listSegments`,
 -- och /crm/planering laddar noll segment. Inget går att placera, flytta eller ens se.

@@ -56,6 +56,7 @@ export async function POST(req: Request) {
       phone: parsed.data.phone ?? null,
       materials: parsed.data.materials,
       leadTimeDays: parsed.data.lead_time_days,
+      roundUpTo: parsed.data.round_up_to,
       note: parsed.data.note ?? null,
       actorUserId: gate.currentUser.id,
     });

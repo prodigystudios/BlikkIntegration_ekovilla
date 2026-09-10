@@ -34,6 +34,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       phone: parsed.data.phone,
       materials: parsed.data.materials,
       leadTimeDays: parsed.data.lead_time_days,
+      roundUpTo: parsed.data.round_up_to,
       note: parsed.data.note,
       active: parsed.data.active,
     });

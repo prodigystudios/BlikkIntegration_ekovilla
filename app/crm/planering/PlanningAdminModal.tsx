@@ -70,6 +70,7 @@ export default function PlanningAdminModal({
       phone: s.phone,
       materials: s.materials,
       lead_time_days: s.lead_time_days,
+      round_up_to: s.round_up_to,
       note: s.note,
       active: s.active,
     }),
@@ -556,6 +557,7 @@ const SUPPLIER_PROBLEM_TEXT: Record<SupplierProblem, string> = {
   materials_required: 'Välj minst ett material, annars kan leverantören aldrig väljas som mottagare',
   material_unknown: 'Okänt material',
   lead_time_invalid: 'Ledtiden anges i hela dagar, 0–365',
+  round_up_invalid: 'Beställningsstorleken anges i hela säckar, minst 1',
 };
 
 // Flervalet över materialkatalogen. Ingen delad multi-select finns i repot, och den här ska inte
@@ -642,6 +644,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
       email: supplier.email,
       materials: supplier.materials,
       leadTimeDays: supplier.lead_time_days,
+      roundUpTo: supplier.round_up_to,
     });
     if (problem) return toast.error(SUPPLIER_PROBLEM_TEXT[problem]);
     if (await save(supplier)) {
@@ -774,7 +777,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
               </p>
               <span className={LABEL}>Levererar</span>
               <MaterialChecklist selected={supplier.materials} onToggle={(m) => patchLocal(supplier.id, { materials: toggle(supplier.materials, m) })} />
-              <div className="mt-3.5 grid grid-cols-2 gap-3">
+              <div className="mt-3.5 grid grid-cols-3 gap-3">
                 <div>
                   <span className={LABEL}>Ledtid (dagar)</span>
                   <input
@@ -789,8 +792,25 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                     aria-label="Ledtid i dagar"
                   />
                 </div>
+                <div>
+                  <span className={LABEL}>Säckar per pall</span>
+                  <input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={supplier.round_up_to}
+                    // 1 = ingen avrundning, och det är rätt förval på ett tomt fält. NOLL vore en
+                    // division med noll i avrundningen, så `|| 1` — inte `|| 0` som ledtiden.
+                    onChange={(e) => patchLocal(supplier.id, { round_up_to: Number(e.target.value) || 1 })}
+                    className={cn(crm.input, 'tabular-nums')}
+                    aria-label="Säckar per pall"
+                  />
+                </div>
                 <div><span className={LABEL}>Notering</span><input value={supplier.note ?? ''} onChange={(e) => patchLocal(supplier.id, { note: e.target.value || null })} className={crm.input} /></div>
               </div>
+              <p className="mt-1.5 text-[11px] text-slate-400">
+                Beställningsförslaget avrundas upp till hela pallar. Sätt 1 om fabriken levererar lösa säckar.
+              </p>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
 

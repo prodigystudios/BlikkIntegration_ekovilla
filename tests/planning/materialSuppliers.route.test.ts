@@ -70,6 +70,7 @@ const ROW = {
   phone: null,
   materials: [MATERIAL_SHORTS[0]],
   lead_time_days: 5,
+  round_up_to: 1,
   note: null,
   active: true,
 };
