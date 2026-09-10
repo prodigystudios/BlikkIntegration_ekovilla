@@ -14,12 +14,13 @@ import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import { crewForTruckInRange, crewSizeForRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
+import type { DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, sectionStart, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
+  parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -164,6 +165,9 @@ export default function PlanningClient({
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
+  // Prognosen kommer ur SAMMA svar som saldot, aldrig en egen hämtning: banderollen och
+  // prognoskortet får inte kunna beskriva olika ögonblick av samma depå.
+  const [depotForecast, setDepotForecast] = useState<DepotForecast | null>(null);
   const [depotStockError, setDepotStockError] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
   const [expectedDeliveries, setExpectedDeliveries] = useState<ExpectedDelivery[]>([]);
@@ -349,9 +353,10 @@ export default function PlanningClient({
   // en lyckad segmenthämtning, som inte säger något om lagret.
   const loadDepotStock = useCallback(async () => {
     try {
-      const data = await fetchLatest<{ depots: DepotBalance[] }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
+      const data = await fetchLatest<{ depots: DepotBalance[]; forecast: DepotForecast | null }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
       if (!data) return; // överkörd av en nyare hämtning — den äger slotten nu
       setDepotStock(data.depots);
+      setDepotForecast(data.forecast ?? null);
       setDepotStockError(null);
     } catch (e: any) {
       setDepotStockError(e?.message || 'Kunde inte hämta lagersaldo');
@@ -1264,11 +1269,21 @@ export default function PlanningClient({
             {depotStock.flatMap((d) =>
               d.rows
                 .filter((r) => r.shortfall > 0)
-                .map((r) => (
-                  <li key={`${d.depot_id}-${r.material}`} className="tabular-nums">
-                    <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
-                  </li>
-                )),
+                .map((r) => {
+                  // Prognosraden för samma depå och material. Saknas den (prognosen kunde inte
+                  // räknas) faller raden tillbaka på sin gamla text — hellre utan datum än ett
+                  // påhittat.
+                  const f = depotForecast?.rows.find((x) => x.depot_id === d.depot_id && x.material === r.material);
+                  return (
+                    <li key={`${d.depot_id}-${r.material}`} className="tabular-nums">
+                      <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
+                      {f?.run_out_day && <> — tar slut <strong>{shortDayISO(f.run_out_day)}</strong></>}
+                      {f && f.overdue_inflow > 0 && (
+                        <span className="font-semibold"> · {f.overdue_inflow} säck beställda men försenade</span>
+                      )}
+                    </li>
+                  );
+                }),
             )}
           </ul>
           <div className="mt-1 text-[11px] text-rose-500">Registrera en påfyllning under Administrera → Lager.</div>

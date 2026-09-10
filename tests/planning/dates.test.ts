@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  monthStackStart, parseISO, sectionStart, startOfWeek, stockholmToday, stockholmTodayISO,
-  weeksBetweenMondays,
+  monthStackStart, parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO,
+  weeksBetweenMondays, WEEKDAYS_SHORT,
 } from '@/app/crm/planering/planningDates';
 
 describe('addDaysISO / daysBetweenInclusive', () => {
@@ -171,5 +171,39 @@ describe('buildMonthWeeks', () => {
     expect(july1?.inMonth).toBe(false);
     const jun30 = weeks.flatMap((w) => w.days).find((d) => d.iso === '2026-06-30');
     expect(jun30?.inMonth).toBe(true);
+  });
+});
+
+// shortDayISO — banderollens och prognoskortets "tar slut tor 24/9".
+//
+// ⚠️ Veckodagsnamnen HÄRLEDS ur WEEKDAYS_SHORT, inte skrivna för hand i testet: en egen kopia här
+// hade gjort testet grönt även om produktionslistan bytte stavning.
+describe('shortDayISO', () => {
+  it('ger veckodag och datum utan inledande nolla', () => {
+    // 2026-09-24 är en torsdag.
+    expect(shortDayISO('2026-09-24')).toBe(`${WEEKDAYS_SHORT[3]} 24/9`);
+    // 2026-09-07 är en måndag.
+    expect(shortDayISO('2026-09-07')).toBe(`${WEEKDAYS_SHORT[0]} 7/9`);
+  });
+
+  it('söndag mappas till sista platsen, inte första', () => {
+    // getUTCDay ger 0 för söndag medan WEEKDAYS_SHORT är måndagsindexerad — utan omräkningen
+    // hade varje söndag visats som måndag. 2026-09-06 är en söndag.
+    expect(shortDayISO('2026-09-06')).toBe(`${WEEKDAYS_SHORT[6]} 6/9`);
+  });
+
+  it('är oberoende av runtimens zon', () => {
+    const original = process.env.TZ;
+    try {
+      for (const tz of ['UTC', 'Europe/Stockholm', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+        process.env.TZ = tz;
+        // Kiritimati ligger på UTC+14: en lokalt förankrad implementation hade tappat ett dygn här.
+        expect(shortDayISO('2026-09-24')).toBe(`${WEEKDAYS_SHORT[3]} 24/9`);
+        expect(shortDayISO('2026-01-01')).toBe(`${WEEKDAYS_SHORT[3]} 1/1`);
+      }
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
   });
 });

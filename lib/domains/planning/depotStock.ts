@@ -3,6 +3,9 @@ import { materialDemandFromLineItems, materialShortFromLineItems, type MaterialD
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { effectiveSackReports, sackReportKind } from './sackLedger';
 import { chunkIds, readAllPages, type ReadError } from './pagedRead';
+import { listOpenExpected } from './expectedDeliveries';
+import { defaultSupplierForMaterial, listAllSuppliers } from './materialSuppliers';
+import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -560,48 +563,98 @@ async function derivePlannedDemandSegments(
   return { segments, error: null };
 }
 
-// Per-depot, per-material balances + planned demand for the stock view. RLS (planning.schedule.read).
-export async function getDepotStock(supabase: SupabaseClient): Promise<{ data: DepotBalance[]; error: { message: string } | null }> {
-  const { data: depots, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
-  if (error) return { data: [], error };
+/**
+ * Saldot OCH den tidsfasade prognosen ur EN läsning.
+ *
+ * ⚠️ EN LÄSNING, INTE TVÅ. Att låta prognosen läsa om allt själv vore att öppna för att de två
+ * beskriver olika ögonblick: en rapport skriven mellan läsningarna hade sänkt saldot i den ena och
+ * inte i den andra, och då säger banderollen och prognoskortet olika saker om samma depå på samma
+ * skärm. Samma regel som redan gäller mellan förbrukningen och avdraget.
+ *
+ * Prognosen tillför tre saker utöver saldot: datumet på behovet, de väntade leveranserna som
+ * inflöde, och leverantörens ledtid + pallstorlek.
+ *
+ * Failar stängt, som getDepotStock: "kunde inte räkna" är ett svar, "behöver 0 säck" är en lögn —
+ * och den lögnen ska snart få fylla i en beställning till fabriken.
+ */
+export async function getDepotStockWithForecast(
+  supabase: SupabaseClient,
+  today: string,
+): Promise<{ data: DepotBalance[]; forecast: DepotForecast | null; error: { message: string } | null }> {
+  const { data: depotRows, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
+  if (error) return { data: [], forecast: null, error };
+  const depots = ((depotRows ?? []) as { id: string; name: string }[]);
 
-  // ⚠️ EN läsning av bilparken, delad av båda halvorna. Två läsningar kan se olika ögonblick, och
-  // byter en bil depå emellan bokförs förbrukningen på den gamla depån medan behovet räknas mot den
-  // nya — samma "måste komma ur en och samma läsning"-regel som rapportraderna bär.
-  // Ett fel här ger en tom depåkarta, alltså noll förbrukning OCH noll planerat behov på varje
-  // depå: saldot ser fullt ut och banderollen tiger. Måste fram.
   const { data: trucks, error: truckError } = await supabase.from('ops_trucks').select('id, depot_id');
-  if (truckError) return { data: [], error: truckError };
+  if (truckError) return { data: [], forecast: null, error: truckError };
   const truckDepot = new Map(
     ((trucks ?? []) as Array<Record<string, any>>).map((t) => [t.id as string, (t.depot_id as string | null) ?? null]),
   );
 
-  const [delivered, consumption, demand] = await Promise.all([
+  const [delivered, consumption, demand, expected, suppliers] = await Promise.all([
     listDeliveryRows(supabase),
     deriveConsumptionRows(supabase, truckDepot),
     derivePlannedDemandSegments(supabase, truckDepot),
+    listOpenExpected(supabase),
+    listAllSuppliers(supabase),
   ]);
 
-  // ⚠️ FAILA STÄNGT. Tidigare svalde varje läsning sitt fel och getDepotStock returnerade hårdkodat
-  // `error: null`, så rutten kunde bara vidarebefordra ett fel den aldrig fick. Utfallet blev ett
-  // TAL i stället för ett fel — och åt olika håll beroende på vilken läsning som gick sönder:
-  // ett fel på leveranserna ger `delivered = 0` och uppblåst brist, ett fel på segmenten ger
-  // `planned = 0` och en tyst banderoll på en depå som är tom.
-  //
-  // "Kunde inte räkna" är ett svar. "Behöver 0 säck" är en lögn, och den lögnen ska snart få fylla
-  // i en beställning till fabriken.
-  const readError = delivered.error ?? consumption.error ?? demand.error;
-  if (readError) return { data: [], error: readError };
+  const readError =
+    delivered.error ?? consumption.error ?? demand.error ?? expected.error ?? suppliers.error;
+  if (readError) return { data: [], forecast: null, error: readError };
 
-  // Behovet är det som är KVAR att blåsa, inte orderns hela säckantal. Utan avdraget räknades de
-  // blåsta säckarna två gånger — en gång som sänkt `balance` och en gång som kvarstående `planned`
-  // — och `shortfall` överskattades med exakt det blåsta antalet, växande under veckan.
-  // Avdraget görs ur SAMMA rapportrader som förbrukningen räknades ur (consumption.reported), så de
-  // två halvorna alltid ser samma tillstånd.
-  const planned = attributePlannedDemand(applyReportedToDemand(demand.segments, consumption.reported));
+  const adjusted = applyReportedToDemand(demand.segments, consumption.reported);
+  const { picked, excluded } = pickDemandSegments(adjusted);
+
+  const balances = computeDepotBalances(
+    depots,
+    delivered.rows,
+    consumption.rows,
+    picked.flatMap((p) =>
+      p.materials.filter((m) => m.material && m.sacks > 0).map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks })),
+    ),
+  );
+
+  // Ingångssaldot är EXAKT samma tal som saldovyn visar — härlett, inte omräknat. Räknades det om
+  // ur råa rader här skulle prognosen kunna säga något annat än tabellen bredvid den.
+  const opening: StockRow[] = balances.flatMap((d) =>
+    d.rows.map((r) => ({ depot_id: d.depot_id, material: r.material, sacks: r.balance })),
+  );
+
+  const forecastDemand: ForecastEvent[] = picked.flatMap((p) =>
+    // Utan startdag kan raden inte placeras på en dag. Den räknas ändå i saldot ovan, och
+    // pickDemandSegments har redan lagt jobbet i `excluded` — så bortfallet är redovisat, inte tyst.
+    p.start_day
+      ? p.materials
+          .filter((m) => m.material && m.sacks > 0)
+          .map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks, day: p.start_day as string }))
+      : [],
+  );
+
+  // Väntade leveranser är inflödet. De rör ALDRIG saldot ovan — det är beställningsspårets
+  // kärninvariant — men prognosen ska veta att materialet är på väg.
+  const inflow: ForecastEvent[] = expected.data.map((e) => ({
+    depot_id: e.depot_id,
+    material: e.material,
+    sacks: e.sacks,
+    day: e.expected_on,
+  }));
+
+  // Ledtid och pallstorlek per depå+material, från den leverantör som skulle få ordern.
+  // defaultSupplierForMaterial gissar aldrig mellan två fabriker: är valet tvetydigt saknas posten
+  // och prognosen faller tillbaka på ingen ledtid och ingen avrundning — ett tidigare datum och ett
+  // exakt antal, alltså den försiktiga riktningen.
+  const supply = new Map<string, { leadTimeDays: number; roundUpTo: number }>();
+  for (const d of depots) {
+    for (const r of balances.find((b) => b.depot_id === d.id)?.rows ?? []) {
+      const s = defaultSupplierForMaterial(suppliers.data, r.material);
+      if (s) supply.set(supplyKey(d.id, r.material), { leadTimeDays: s.lead_time_days, roundUpTo: s.round_up_to });
+    }
+  }
 
   return {
-    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered.rows, consumption.rows, planned),
+    data: balances,
+    forecast: forecastDepotRunOut({ depots, opening, demand: forecastDemand, inflow, today, supply, excluded }),
     error: null,
   };
 }

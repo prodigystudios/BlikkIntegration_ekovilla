@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getDepotStock } from '@/lib/domains/planning/depotStock';
+import { getDepotStockWithForecast } from '@/lib/domains/planning/depotStock';
 
 // Läsvägarna i depotStock, till skillnad från de rena funktionerna bredvid.
 //
@@ -37,6 +37,9 @@ const fail = (message: string): PageResult => ({ data: null, error: { message } 
 
 const depot = { id: 'd1', name: 'Syd' };
 const delivery = { depot_id: 'd1', material: 'EKOVILLA', sacks: 1 };
+// Fast datum: prognosen behöver ett 'idag', och ett rörligt hade gjort testerna beroende av
+// när de kördes. stockholmTodayISO() hör hemma i routen, inte här.
+const TODAY = '2026-09-14';
 
 /** Grundläge: allt svarar tomt och felfritt. */
 const base = (): Record<string, (from: number | null) => PageResult> => ({
@@ -48,9 +51,9 @@ const base = (): Record<string, (from: number | null) => PageResult> => ({
   ops_segments: () => ok([]),
 });
 
-describe('getDepotStock failar stängt', () => {
+describe('getDepotStockWithForecast failar stängt', () => {
   it('räknar normalt när alla läsningar svarar', async () => {
-    const res = await getDepotStock(makeClient({ ...base(), ops_depot_deliveries: () => ok([delivery]) }));
+    const res = await getDepotStockWithForecast(makeClient({ ...base(), ops_depot_deliveries: () => ok([delivery]) }), TODAY);
     expect(res.error).toBeNull();
     expect(res.data[0].rows[0]).toMatchObject({ material: 'EKOVILLA', delivered: 1 });
   });
@@ -60,61 +63,94 @@ describe('getDepotStock failar stängt', () => {
     // på den kapade sidan gör att jobbets delrapporter räknas — dubbeldebitering av depån. Loopen
     // `break`:ade tidigare vid fel och returnerade de sidor som hunnit komma.
     const page1 = Array.from({ length: 1000 }, () => ({ work_order_id: 'wo1', sacks_blown: 1, kind: 'partial', material: 'EKOVILLA' }));
-    const res = await getDepotStock(makeClient({
+    const res = await getDepotStockWithForecast(makeClient({
       ...base(),
       ops_segment_reports: (from) => (from === 0 ? ok(page1) : fail('nätverksfel på sida 2')),
-    }));
+    }), TODAY);
     expect(res.error?.message).toBe('nätverksfel på sida 2');
     expect(res.data).toEqual([]);
   });
 
   it('ett fel på leveransläsningen ger fel — inte delivered = 0 och uppblåst brist', async () => {
-    const res = await getDepotStock(makeClient({ ...base(), ops_depot_deliveries: () => fail('leveranser nere') }));
+    const res = await getDepotStockWithForecast(makeClient({ ...base(), ops_depot_deliveries: () => fail('leveranser nere') }), TODAY);
     expect(res.error?.message).toBe('leveranser nere');
     expect(res.data).toEqual([]);
   });
 
   it('ett fel på bilarna ger fel — inte en tom depåkarta och noll förbrukning', async () => {
-    const res = await getDepotStock(makeClient({ ...base(), ops_trucks: () => fail('bilar nere') }));
+    const res = await getDepotStockWithForecast(makeClient({ ...base(), ops_trucks: () => fail('bilar nere') }), TODAY);
     expect(res.error?.message).toBe('bilar nere');
     expect(res.data).toEqual([]);
   });
 
   it('ett fel på arbetsordrarna ger fel — inte planned = 0 och tyst banderoll', async () => {
-    const res = await getDepotStock(makeClient({ ...base(), crm_work_orders: () => fail('ordrar nere') }));
+    const res = await getDepotStockWithForecast(makeClient({ ...base(), crm_work_orders: () => fail('ordrar nere') }), TODAY);
     expect(res.error?.message).toBe('ordrar nere');
     expect(res.data).toEqual([]);
   });
 
   it('ett fel på depålistan ger fel', async () => {
-    const res = await getDepotStock(makeClient({ ...base(), ops_depots: () => fail('depåer nere') }));
+    const res = await getDepotStockWithForecast(makeClient({ ...base(), ops_depots: () => fail('depåer nere') }), TODAY);
     expect(res.error?.message).toBe('depåer nere');
+  });
+
+  // Prognosen tillför två läsningar till, och båda måste faila stängt av samma skäl som de
+  // ursprungliga fem: ett halvt underlag ger ett TAL i stället för ett fel, och talet pekar åt fel
+  // håll. Faller de väntade leveranserna bort saknas inflödet -> uppblåst brist -> överbeställning.
+  // Faller leverantörerna bort försvinner ledtid och pallstorlek -> förslaget dateras för sent.
+  it('propagerar fel från väntade leveranser', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({ ...base(), ops_expected_deliveries: () => fail('väntade leveranser nere') }),
+      TODAY,
+    );
+    expect(res.error?.message).toBe('väntade leveranser nere');
+    expect(res.forecast).toBeNull();
+  });
+
+  it('propagerar fel från leverantörsregistret', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({ ...base(), ops_material_suppliers: () => fail('leverantörer nere') }),
+      TODAY,
+    );
+    expect(res.error?.message).toBe('leverantörer nere');
+    expect(res.forecast).toBeNull();
+  });
+
+  it('ger en prognos när allt svarar', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({ ...base(), ops_depot_deliveries: () => ok([delivery]) }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    expect(res.forecast?.rows).toEqual([
+      expect.objectContaining({ depot_id: 'd1', material: 'EKOVILLA', opening: 1, run_out_day: null }),
+    ]);
   });
 });
 
-describe('getDepotStock paginerar', () => {
+describe('getDepotStockWithForecast paginerar', () => {
   it('lägger ihop alla sidor av leveranserna — en full första sida är inte hela svaret', async () => {
     // 🧨 PostgREST kapar vid max-rows UTAN att fela. En kapad leveranslista sänker `delivered`, och
     // det driver ÖVERbeställning: bristen ser större ut än den är.
     const full = Array.from({ length: 1000 }, () => delivery);
     const rest = Array.from({ length: 500 }, () => delivery);
-    const res = await getDepotStock(makeClient({
+    const res = await getDepotStockWithForecast(makeClient({
       ...base(),
       ops_depot_deliveries: (from) => (from === 0 ? ok(full) : from === 1000 ? ok(rest) : ok([])),
-    }));
+    }), TODAY);
     expect(res.error).toBeNull();
     expect(res.data[0].rows[0].delivered).toBe(1500);
   });
 
   it('slutar läsa när en sida inte är full', async () => {
     let calls = 0;
-    const res = await getDepotStock(makeClient({
+    const res = await getDepotStockWithForecast(makeClient({
       ...base(),
       ops_depot_deliveries: () => {
         calls += 1;
         return ok([delivery]);
       },
-    }));
+    }), TODAY);
     expect(res.error).toBeNull();
     expect(calls).toBe(1);
   });
