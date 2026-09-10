@@ -145,21 +145,25 @@ export type DepotDeliveryOnBoard = {
  * Syskon till listDeliveryRows, inte en ersättare: SALDOT gäller över all tid och får aldrig
  * datumfiltreras, medan TAVLAN bara ska rita den vecka som syns. Vidga inte den ena till den andra.
  *
- * Ingen sidindelning här, till skillnad från saldots läsningar: datumfönstret ÄR begränsningen, och
- * en vecka eller månad rymmer inte tusen leveranser. Skulle fönstret någon gång kunna bli obegränsat
- * hör den här läsningen till readAllPages.
+ * Sidindelad ändå, trots att datumfönstret redan begränsar: fönstret är inte alltid en vecka.
+ * Månadsvyn och "Hela månaden" ber om ~42 dagar, och antalet leveranser per dag är inte vårt att
+ * bestämma. Ett tak som råkar hålla är inget tak — och tyst kapning är precis det den här filen just
+ * härdats mot.
  */
 export async function listDeliveriesInRange(
   supabase: SupabaseClient,
   range: { from: string; to: string },
 ): Promise<{ data: DepotDeliveryOnBoard[]; error: ReadError }> {
-  const { data, error } = await supabase
-    .from('ops_depot_deliveries')
-    .select('id, depot_id, material, sacks, delivered_on, note, depot:ops_depots(name)')
-    .gte('delivered_on', range.from)
-    .lte('delivered_on', range.to)
-    .order('delivered_on', { ascending: true })
-    .order('id', { ascending: true });
+  const { rows: data, error } = await readAllPages<Record<string, any>>((from, to) =>
+    supabase
+      .from('ops_depot_deliveries')
+      .select('id, depot_id, material, sacks, delivered_on, note, depot:ops_depots(name)')
+      .gte('delivered_on', range.from)
+      .lte('delivered_on', range.to)
+      .order('delivered_on', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
   if (error) return { data: [], error };
 
   const rows = ((data ?? []) as Array<Record<string, any>>).map((r) => {
@@ -241,8 +245,13 @@ async function deriveConsumptionRows(
   return { rows, reported: reportedDemandByWorkOrder(reports, truckDepot), error: null };
 }
 
-/** Vad en arbetsorder redan blåst, per material — och om egenkontrollen satt punkt. */
-export type ReportedDemand = { hasFinal: boolean; byMaterial: Map<string, number> };
+/** Vad en arbetsorder redan blåst, per depå och material — och om egenkontrollen satt punkt. */
+export type ReportedDemand = {
+  /** Jobbet har en egenkontroll. Gäller HELA jobbet, inte en depå. */
+  hasFinal: boolean;
+  /** depå → material → blåsta säckar. Måste vara per depå: se invarianten nedan. */
+  byDepotMaterial: Map<string, Map<string, number>>;
+};
 
 /**
  * Ren: blåsta säckar per arbetsorder och material, ur RÅA rapportrader.
@@ -255,12 +264,19 @@ export type ReportedDemand = { hasFinal: boolean; byMaterial: Map<string, number
  * rader skrivna innan kolumnen fanns — EXAKT samma härledning som förbrukningen använder. Skulle de
  * två skilja sig åt drogs säckarna från ett material i saldot och från ett annat i behovet.
  *
- * ⚠️ SAMMA GRIND SOM FÖRBRUKNINGEN: en rad räknas bara när den löser BÅDE en depå och ett material.
- * Invarianten som gör `shortfall` värd att lita på är att varje säck som dras från `planned` också
- * dragits från `balance`. deriveConsumptionRows hoppar tyst över segment vars bil saknar depot_id
- * (en dokumenterad, medveten lucka), så räknade avdraget dem skulle behovet sjunka utan att saldot
- * gjorde det — och bristvarningen tystna på en depå som verkligen tömts. Hellre ett för högt behov
- * (dyrt) än ett för lågt (en bil utan material).
+ * ⚠️ INVARIANTEN ÄR PER DEPÅ, INTE GLOBAL. `shortfall` räknas per depå och material, så det räcker
+ * inte att varje avdragen säck finns bokförd som förbrukning NÅGONSTANS — den måste vara bokförd på
+ * SAMMA depå. Därför nycklas beloppen på den depå förbrukningen faktiskt debiterades, med exakt
+ * samma härledning (segmentets bil → bilens depå).
+ *
+ * Ett jobb splittat på två bilar vid olika depåer ("Kopiera till bil" är ett normalt drag) är
+ * precis fallet: säckar som fysiskt togs ur depå B får inte krympa behovet vid depå A. Ett globalt
+ * nycklat avdrag gjorde just det, och A:s brist blev för liten — den farliga riktningen.
+ *
+ * Samma grind som förbrukningen i övrigt: en rad räknas bara när den löser BÅDE en depå och ett
+ * material. deriveConsumptionRows hoppar tyst över segment vars bil saknar depot_id (en dokumenterad
+ * lucka), så räknades de här skulle behovet sjunka utan att saldot gjorde det. Hellre ett för högt
+ * behov (dyrt) än ett för lågt (en bil utan material).
  *
  * En rad vars material eller depå inte går att härleda lämnar arbetsordern i kartan men utan belopp:
  * jobbet är känt, avdraget är det inte.
@@ -273,7 +289,7 @@ export function reportedDemandByWorkOrder(
   const ensure = (workOrderId: string): ReportedDemand => {
     let cell = map.get(workOrderId);
     if (!cell) {
-      cell = { hasFinal: false, byMaterial: new Map() };
+      cell = { hasFinal: false, byDepotMaterial: new Map() };
       map.set(workOrderId, cell);
     }
     return cell;
@@ -291,7 +307,9 @@ export function reportedDemandByWorkOrder(
     const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
     const sacks = Number(r.sacks_blown ?? 0);
     if (!depotId || !material || !Number.isFinite(sacks)) continue;
-    cell.byMaterial.set(material, (cell.byMaterial.get(material) ?? 0) + sacks);
+    const byMaterial = cell.byDepotMaterial.get(depotId) ?? new Map<string, number>();
+    byMaterial.set(material, (byMaterial.get(material) ?? 0) + sacks);
+    cell.byDepotMaterial.set(depotId, byMaterial);
   }
 
   return map;
@@ -325,11 +343,15 @@ export function applyReportedToDemand(
     const rep = s.work_order_id ? reported.get(s.work_order_id) : undefined;
     if (!rep) return s;
     if (rep.hasFinal) return { ...s, materials: [] };
+    // Bara det som blåstes ur DEN HÄR depån får krympa behovet här — se invarianten vid
+    // reportedDemandByWorkOrder. Ett segment vid en depå som aldrig rapporterats mot lämnas orört.
+    const blown = s.depot_id ? rep.byDepotMaterial.get(s.depot_id) : undefined;
+    if (!blown) return s;
     return {
       ...s,
       materials: (s.materials ?? []).map((m) => ({
         material: m.material,
-        sacks: Math.max(0, m.sacks - (rep.byMaterial.get(m.material) ?? 0)),
+        sacks: Math.max(0, m.sacks - (blown.get(m.material) ?? 0)),
       })),
     };
   });

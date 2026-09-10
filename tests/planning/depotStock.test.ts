@@ -162,7 +162,7 @@ describe('reportedDemandByWorkOrder', () => {
       rapport({ material: 'PAROC', sacks_blown: 10 }),
     ], fleet);
     expect(map.get('wo1')!.hasFinal).toBe(false);
-    expect([...map.get('wo1')!.byMaterial]).toEqual([['EKOVILLA', 55], ['PAROC', 10]]);
+    expect([...map.get('wo1')!.byDepotMaterial.get('d1')!]).toEqual([['EKOVILLA', 55], ['PAROC', 10]]);
   });
 
   it('en final är jobbets sanning — delrapporterna adderas inte ovanpå', () => {
@@ -173,7 +173,7 @@ describe('reportedDemandByWorkOrder', () => {
       rapport({ sacks_blown: 25 }),
       rapport({ kind: 'final', sacks_blown: 91 }),
     ], fleet);
-    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(91);
+    expect(map.get('wo1')!.byDepotMaterial.get('d1')?.get('EKOVILLA')).toBe(91);
   });
 
   it('hasFinal läses ur de RÅA raderna, inte ur de effektiva', () => {
@@ -185,7 +185,7 @@ describe('reportedDemandByWorkOrder', () => {
     const map = reportedDemandByWorkOrder([
       rapport({ material: null, work_order: { line_items: [{ article_name: 'Ekovilla Cellulosa Lösull' }] } }),
     ], fleet);
-    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
+    expect(map.get('wo1')!.byDepotMaterial.get('d1')?.get('EKOVILLA')).toBe(30);
   });
 
   it('en rad utan härledbart material lämnar jobbet känt men utan avdrag', () => {
@@ -193,7 +193,7 @@ describe('reportedDemandByWorkOrder', () => {
     // orört — överskatta hellre än att beställa för lite.
     const map = reportedDemandByWorkOrder([rapport({ material: null, work_order: { line_items: [] } })], fleet);
     expect(map.has('wo1')).toBe(true);
-    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+    expect(map.get('wo1')!.byDepotMaterial.size).toBe(0);
   });
 
   it('en rapport från en bil UTAN depå ger inget avdrag', () => {
@@ -202,18 +202,30 @@ describe('reportedDemandByWorkOrder', () => {
     // saknar depot_id, så räknades avdraget här skulle behovet sjunka utan att saldot gjorde det —
     // och bristvarningen tystna på en depå som verkligen tömts.
     const map = reportedDemandByWorkOrder([rapport({ segment: { truck_id: 't0' } })], fleet);
-    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+    expect(map.get('wo1')!.byDepotMaterial.size).toBe(0);
   });
 
   it('en rapport utan segment ger inget avdrag', () => {
     const map = reportedDemandByWorkOrder([rapport({ segment: null })], fleet);
-    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+    expect(map.get('wo1')!.byDepotMaterial.size).toBe(0);
+  });
+
+  it('håller isär depåerna inom samma arbetsorder', () => {
+    // Ett splittat jobb: samma order, två bilar, två depåer. Beloppen får inte slås ihop — det är
+    // vad som gör att avdraget kan hållas per depå längre fram.
+    const split = new Map<string, string | null>([['t1', 'd1'], ['t2', 'd2']]);
+    const map = reportedDemandByWorkOrder(
+      [rapport({ sacks_blown: 30 }), rapport({ segment: { truck_id: 't2' }, sacks_blown: 45 })],
+      split,
+    );
+    expect(map.get('wo1')!.byDepotMaterial.get('d1')?.get('EKOVILLA')).toBe(30);
+    expect(map.get('wo1')!.byDepotMaterial.get('d2')?.get('EKOVILLA')).toBe(45);
   });
 
   it('håller isär arbetsordrar', () => {
     const map = reportedDemandByWorkOrder([rapport(), rapport({ work_order_id: 'wo2', sacks_blown: 7 })], fleet);
-    expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
-    expect(map.get('wo2')!.byMaterial.get('EKOVILLA')).toBe(7);
+    expect(map.get('wo1')!.byDepotMaterial.get('d1')?.get('EKOVILLA')).toBe(30);
+    expect(map.get('wo2')!.byDepotMaterial.get('d1')?.get('EKOVILLA')).toBe(7);
   });
 });
 
@@ -225,8 +237,14 @@ describe('applyReportedToDemand', () => {
     materials: [{ material: 'EKOVILLA', sacks: 564 }],
     ...over,
   });
-  const reported = (over: Partial<{ hasFinal: boolean; byMaterial: Array<[string, number]> }> = {}) =>
-    new Map([['wo1', { hasFinal: over.hasFinal ?? false, byMaterial: new Map(over.byMaterial ?? []) }]]);
+  const reported = (over: Partial<{ hasFinal: boolean; byMaterial: Array<[string, number]>; depotId: string }> = {}) =>
+    new Map([[
+      'wo1',
+      {
+        hasFinal: over.hasFinal ?? false,
+        byDepotMaterial: new Map([[over.depotId ?? 'd1', new Map(over.byMaterial ?? [])]]),
+      },
+    ]]);
 
   it('räknar ned mot planen när egenkontroll saknas', () => {
     const out = applyReportedToDemand([seg()], reported({ byMaterial: [['EKOVILLA', 300]] }));
@@ -257,6 +275,15 @@ describe('applyReportedToDemand', () => {
 
   it('lämnar en order utan rapportrader orörd — "ej rapporterat" är inte "noll blåsta"', () => {
     const out = applyReportedToDemand([seg()], new Map());
+    expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 564 }]);
+  });
+
+  it('säckar blåsta ur EN ANNAN depå krymper inte behovet här', () => {
+    // 🧨 `shortfall` räknas per depå, så invarianten måste gälla per depå: en säck får bara dras
+    // från `planned` vid den depå där den också drogs från `balance`. Ett jobb splittat på två
+    // bilar vid olika depåer ("Kopiera till bil") är normalfallet — dras d2:s förbrukning från
+    // d1:s behov blir d1:s brist för liten, alltså den farliga riktningen.
+    const out = applyReportedToDemand([seg()], reported({ depotId: 'd2', byMaterial: [['EKOVILLA', 300]] }));
     expect(out[0].materials).toEqual([{ material: 'EKOVILLA', sacks: 564 }]);
   });
 });

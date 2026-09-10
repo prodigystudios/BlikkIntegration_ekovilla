@@ -161,6 +161,7 @@ export default function PlanningClient({
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
+  const [depotStockError, setDepotStockError] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [backlogLoaded, setBacklogLoaded] = useState(false);
@@ -333,9 +334,20 @@ export default function PlanningClient({
 
   // Depot stock + planned demand — range-independent (all open booked jobs vs current stock). Drives
   // the "lager räcker inte"-banner so planners catch a shortfall before over-committing.
+  // 🧨 Felet får INTE sväljas här. Sedan lagerläsningarna failar stängt (getDepotStock) betyder ett
+  // fel att vi inte vet något om saldot — och `depotStock` står då kvar tom, vilket gör att
+  // bristbanderollen aldrig ritas. Tystnaden blir alltså omöjlig att skilja från "lagret räcker",
+  // på precis den yta som ska varna. Egen felslot, inte `error`: den ägs av schemat och rensas av
+  // en lyckad segmenthämtning, som inte säger något om lagret.
   const loadDepotStock = useCallback(async () => {
-    const data = await fetchLatest<{ depots: DepotBalance[] }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
-    if (data) setDepotStock(data.depots);
+    try {
+      const data = await fetchLatest<{ depots: DepotBalance[] }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
+      if (!data) return; // överkörd av en nyare hämtning — den äger slotten nu
+      setDepotStock(data.depots);
+      setDepotStockError(null);
+    } catch (e: any) {
+      setDepotStockError(e?.message || 'Kunde inte hämta lagersaldo');
+    }
   }, [depotStockLoad]);
 
   // Registrerade leveranser i det synliga fönstret — leveransremsan högst upp på veckotavlan.
@@ -1207,6 +1219,18 @@ export default function PlanningClient({
       {/* Schedule errors only. A backlog failure is reported inside the backlog panel itself, where
           the empty list it explains actually is — see its loadError prop. */}
       {error && <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
+
+      {/* Lagersaldot gick inte att räkna ut. Måste sägas rakt ut: utan den här raden är ett fel
+          omöjligt att skilja från "lagret räcker", eftersom banderollen nedan bara ritas när det
+          finns en känd brist. Neutral ton, inte rosa larm — vi påstår inget om lagret, vi säger att
+          vi inte vet. */}
+      {depotStockError && (
+        <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+          <span className="font-bold">Lagersaldot kunde inte räknas ut.</span>{' '}
+          <span className="text-amber-700">{depotStockError}</span>{' '}
+          <span className="text-amber-600">Bristvarningen är därför avstängd — utgå inte från att lagret räcker.</span>
+        </div>
+      )}
 
       {/* Depot stock shortfall — the booked work needs more sacks than the depot has in stock. */}
       {depotStock.some((d) => d.rows.some((r) => r.shortfall > 0)) && (
