@@ -128,6 +128,55 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: Stock
   };
 }
 
+/** En registrerad leverans som den visas på tavlan. */
+export type DepotDeliveryOnBoard = {
+  id: string;
+  depot_id: string;
+  depot_name: string;
+  material: string;
+  sacks: number;
+  delivered_on: string; // 'YYYY-MM-DD'
+  note: string | null;
+};
+
+/**
+ * Leveranser vars datum faller i [from, to]. RLS (planning.schedule.read).
+ *
+ * Syskon till listDeliveryRows, inte en ersättare: SALDOT gäller över all tid och får aldrig
+ * datumfiltreras, medan TAVLAN bara ska rita den vecka som syns. Vidga inte den ena till den andra.
+ *
+ * Ingen sidindelning här, till skillnad från saldots läsningar: datumfönstret ÄR begränsningen, och
+ * en vecka eller månad rymmer inte tusen leveranser. Skulle fönstret någon gång kunna bli obegränsat
+ * hör den här läsningen till readAllPages.
+ */
+export async function listDeliveriesInRange(
+  supabase: SupabaseClient,
+  range: { from: string; to: string },
+): Promise<{ data: DepotDeliveryOnBoard[]; error: ReadError }> {
+  const { data, error } = await supabase
+    .from('ops_depot_deliveries')
+    .select('id, depot_id, material, sacks, delivered_on, note, depot:ops_depots(name)')
+    .gte('delivered_on', range.from)
+    .lte('delivered_on', range.to)
+    .order('delivered_on', { ascending: true })
+    .order('id', { ascending: true });
+  if (error) return { data: [], error };
+
+  const rows = ((data ?? []) as Array<Record<string, any>>).map((r) => {
+    const depot = Array.isArray(r.depot) ? r.depot[0] : r.depot;
+    return {
+      id: r.id as string,
+      depot_id: r.depot_id as string,
+      depot_name: (depot?.name as string) ?? 'Okänd depå',
+      material: r.material as string,
+      sacks: Number(r.sacks),
+      delivered_on: r.delivered_on as string,
+      note: (r.note as string | null) ?? null,
+    };
+  });
+  return { data: rows, error: null };
+}
+
 // Förbrukade säckar per depå och material: blåsta säckar → segmentets bil → bilens depå.
 //
 // ⚠️ SUPERSEDE MÅSTE KÖRAS HÄR OCKSÅ. Det här är det ANDRA av exakt två ställen som summerar

@@ -13,7 +13,7 @@ import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import { crewForTruckInRange, crewSizeForRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
-import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
@@ -161,6 +161,7 @@ export default function PlanningClient({
   const [truckCrew, setTruckCrew] = useState<TruckCrewMember[]>([]);
   const [defaultCrew, setDefaultCrew] = useState<DefaultCrewMember[]>([]);
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
+  const [deliveries, setDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [backlogLoaded, setBacklogLoaded] = useState(false);
   const [boardLoaded, setBoardLoaded] = useState(false);
@@ -272,6 +273,10 @@ export default function PlanningClient({
   const truckCrewLoad = useLoadTicket();
   const defaultCrewLoad = useLoadTicket();
   const depotStockLoad = useLoadTicket();
+  // 🧨 EGEN AUTOMAT, aldrig delad med depotStockLoad. Delas den tar lagersaldot biljett N och
+  // leveranserna N+1, `isCurrent(N)` blir falskt, `setDepotStock` körs ALDRIG och bristbanderollen
+  // visas aldrig — permanent, och tyst, eftersom fetchLatest sväljer även felet.
+  const deliveriesLoad = useLoadTicket();
 
   // The backlog spinner is cleared HERE rather than by the effect that raised it, so that whichever
   // load is current owns it. Clearing it on a superseded response would drop the panel to its empty
@@ -332,6 +337,18 @@ export default function PlanningClient({
     const data = await fetchLatest<{ depots: DepotBalance[] }>(depotStockLoad, `${API}/depot-stock`, 'Kunde inte hämta lagersaldo');
     if (data) setDepotStock(data.depots);
   }, [depotStockLoad]);
+
+  // Registrerade leveranser i det synliga fönstret — leveransremsan högst upp på veckotavlan.
+  // Fönsterberoende, till skillnad från lagersaldot ovanför: saldot gäller över all tid, remsan
+  // bara den vecka som ritas.
+  const loadDeliveries = useCallback(async (from: string, to: string) => {
+    const data = await fetchLatest<{ deliveries: DepotDeliveryOnBoard[] }>(
+      deliveriesLoad,
+      `${API}/depot-deliveries?from=${from}&to=${to}`,
+      'Kunde inte hämta leveranser',
+    );
+    if (data) setDeliveries(data.deliveries);
+  }, [deliveriesLoad]);
 
   useEffect(() => {
     setLoadingBacklog(true);
@@ -434,7 +451,8 @@ export default function PlanningClient({
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
     loadDepotStock().catch(() => {});
-  }, [prefsLoaded, range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock]);
+    loadDeliveries(range.from, range.to).catch(() => {});
+  }, [prefsLoaded, range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock, loadDeliveries]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -456,6 +474,10 @@ export default function PlanningClient({
     loadTruckCrew(range.from, range.to).catch(() => {});
     loadDefaultCrew().catch(() => {});
     loadDepotStock().catch(() => {});
+    // ⚠️ Varje ny laddare måste in på BÅDA ställena. Glöms den här fryser leveransremsan medan allt
+    // annat på samma skärm uppdateras — och en nyss registrerad leverans syns inte förrän någon
+    // byter vecka.
+    loadDeliveries(range.from, range.to).catch(() => {});
     // Same rule as the schedule above: quiet while a list is already on screen, but a failure that
     // supersedes the only load that ever succeeded has to speak — otherwise the panel shows its
     // "Skapa en order i CRM:et…" empty state over orders that had in fact loaded.
@@ -1313,6 +1335,7 @@ export default function PlanningClient({
                         dayNotes={dayNotes}
                         onAddNote={addDayNote}
                         onRemoveNote={removeDayNote}
+                        deliveries={deliveries}
                         truckCrew={truckCrew}
                         defaultCrew={defaultCrew}
                         onAddTruckCrew={addTruckCrew}
