@@ -942,6 +942,84 @@ export async function listWorkOrderInvoiceRounds(supabase: SupabaseClient, workO
     .order('round_number', { ascending: true });
 }
 
+// ── Ansvarig på ordern, för fältvyn ─────────────────────────────────────────
+//
+// Vem besättningen ringer när något inte stämmer på arbetsordern — någon på KONTORET, inte kunden.
+// Två fält, namn och nummer, ingenting annat.
+//
+// Fältvyn rubricerar kortet "Ansvarig säljare", vilket stämmer i normalfallet: `assigned_to` ärvs
+// från offerten vid konverteringen, alltså den som sålde jobbet. Det är inte en garanti — en
+// standalone-order sätter beställaren själv (createStandaloneCrmWorkOrder), och ordern kan tilldelas
+// om — så bygg ingenting som FÖRUTSÄTTER en säljarroll här. CRM kallar samma fält bara "Ansvarig".
+//
+// ⚠️ VARFÖR EN EGEN LÄSNING NÄR `crmWorkOrderSelect` REDAN BÄR `assignee:profiles!assigned_to`?
+// Därför att den joinen alltid ger `null` här. `profiles` har en enda SELECT-policy,
+// `profiles_select_self` (auth_roles_setup.sql:71, `auth.uid() = id`), och fältvyns GET går via
+// sessionsklienten — så en PostgREST-embed av någon ANNANS profil kommer tillbaka tom. Tyst, och
+// utan fel: det läses som "ingen ansvarig", inte som "du fick inte se". Kontoret kringgår det med
+// en klientsidig namnkarta från `/work-orders/assignees`, men den routen är CRM-gatead och stängd
+// för member. Samma skäl som `listMentionableProfiles` och `created_by_name` finns.
+//
+// Därför en elevering för just profilraden — och därför den smala payloaden: `profiles` bär numera
+// privat e-post, hemadress och anhörigkontakt (20260517_employee_profile_details.sql), och RLS är
+// radnivå och kan inte smalna av kolumner. Gränsen dras här. Se [[project_profiles_rls_rebuild]]:
+// när de sju privata kolumnerna flyttas ut börjar joinen leverera av sig själv och den här
+// funktionen kan gå.
+export type WorkOrderAssigneeContact = {
+  name: string | null;
+  phone: string | null;
+};
+
+// Ren del, enhetstestad separat. Ett tomt namn och ett tomt nummer är samma sak som ingen ansvarig
+// alls — utan trimningen renderade kortet en tom rubrikrad över ingenting.
+export function normalizeAssigneeContact(
+  profile: { full_name?: string | null; phone?: string | null } | null | undefined,
+): WorkOrderAssigneeContact | null {
+  const name = String(profile?.full_name ?? '').trim() || null;
+  const phone = String(profile?.phone ?? '').trim() || null;
+  return name || phone ? { name, phone } : null;
+}
+
+// 🧨 TVÅ KLIENTER, OCH ORDNINGEN ÄR SJÄLVA GRINDEN.
+//
+//  • `supabase` är SESSIONSKLIENTEN och läser arbetsordern. RLS avgör om läsaren hör till jobbet:
+//    besättningen kommer in via `crm_work_orders_select_crew` (20260810_crm_work_order_crew_access),
+//    kontoret via `crm.workorder.read`. Den som inte hör till ordern får noll rader — och därmed
+//    ingen ansvarig, utan att vi behöver upprepa behörighetsregeln här.
+//  • `admin` läser BARA profilraden, och bara efter att ordern släppt igenom. `profiles` är
+//    self-read-only, så en elevering krävs — men den får inte vara första steget.
+//
+// Att elevera BÅDA läsningarna vore hela funktionen om till en läcka: `assigned_to` hade då
+// besvarats för vilket order-UUID som helst, åt vilket inloggat konto som helst. Och "inloggad"
+// är inte "anställd" — `/auth/create-account` delar ut `role='member'` åt vem som helst. Numret
+// som faller ut kommer ur den ansvariges egen profil och är i praktiken en privat mobil.
+//
+// Returns { data: null } when the order is invisible to the reader or has no assignee, or when the
+// assignee's profile carries neither a name nor a number — the field view renders nothing then.
+export async function getWorkOrderAssigneeContact(
+  supabase: SupabaseClient,
+  admin: SupabaseClient,
+  workOrderId: string,
+) {
+  const { data: wo, error: woError } = await supabase
+    .from('crm_work_orders').select('assigned_to').eq('id', workOrderId).maybeSingle();
+  if (woError) return { data: null, error: woError };
+
+  // `maybeSingle` + RLS: en order läsaren inte får se svarar med noll rader, alltså `null` utan
+  // fel. Samma svar som en otilldelad order — och det är rätt, kortet ska utebli i båda fallen.
+  const assignedTo = (wo as { assigned_to?: string | null } | null)?.assigned_to ?? null;
+  if (!assignedTo) return { data: null, error: null };
+
+  const { data: profile, error } = await admin
+    // ⛔ Aldrig `select('*')` här. Varje ny kolumn på `profiles` hade följt med ut till en telefon
+    // i fält utan att någon tog beslutet — och de sju privata ligger kvar i tabellen tills
+    // flytten görs.
+    .from('profiles').select('full_name, phone').eq('id', assignedTo).maybeSingle();
+  if (error) return { data: null, error };
+
+  return { data: normalizeAssigneeContact(profile), error: null };
+}
+
 // Resolve just the customer contact (name/phone/email) for a work order. Pass an ADMIN
 // client: the field view (installers/member) needs to know who to call but has no CRM
 // read access to the full customer record — this exposes only the three contact fields.

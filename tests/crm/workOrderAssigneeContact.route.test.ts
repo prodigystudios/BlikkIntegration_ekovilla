@@ -1,0 +1,170 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { konsultUser, memberUser, salesUser } from './helpers/supabase';
+
+// Routen bakom fältvyns "ansvarig säljare"-kort. Domänfunktionen har egna tester
+// (workOrderAssigneeContact.test.ts); det som prövas HÄR är den rad som bär själva
+// integritetsbeslutet — att en extern konsult inte får personalens telefonnummer.
+//
+// 🧨 Raden är en enda `if`, och utan det här testet är den osynlig för sviten. Filens egen
+// kommentar förutser dessutom att någon vill "harmonisera" routen med systern customer-contact
+// intill; görs det utan denna fil faller grinden bort med allt grönt.
+
+// Bara `getCurrentUser` mockas. `isReadonlyRole` behålls ÄKTA med flit: det är den delade
+// rollistan (konsult/ekonomi/readonly) grinden vilar på, och en mockad kopia hade gjort testet
+// blint för precis den ändring det finns för att fånga — att någon lägger till eller tar bort en
+// extern roll i lib/auth/route.ts.
+vi.mock('@/lib/auth/route', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/route')>();
+  return { ...actual, getCurrentUser: vi.fn() };
+});
+
+vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/crm/work-orders')>();
+  return { ...actual, getWorkOrderAssigneeContact: vi.fn() };
+});
+
+// De två klienterna MÄRKS, så testet kan säga vilken som gick vart. Utan märkningen är de två
+// tomma objekt och en route som eleverar båda läsningarna ser identisk ut för sviten — se vakten
+// längst ner.
+const ADMIN_CLIENT = { __client: 'admin' } as any;
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ADMIN_CLIENT) }));
+vi.mock('next/headers', () => ({ cookies: vi.fn() }));
+
+// Sessionsklienten svarar med läsarens EGEN profilrad — det är den rollen grinden frågar efter.
+// `readerRole`/`readerError` sätts per test.
+let readerRole: string | null = 'member';
+let readerError: { message: string } | null = null;
+
+vi.mock('@supabase/auth-helpers-nextjs', () => ({
+  createRouteHandlerClient: vi.fn(() => ({
+    __client: 'session',
+    from: () => {
+      const builder: any = {
+        select: () => builder,
+        eq: () => builder,
+        maybeSingle: () => Promise.resolve(
+          readerError ? { data: null, error: readerError } : { data: readerRole ? { role: readerRole } : null, error: null },
+        ),
+      };
+      return builder;
+    },
+  })),
+}));
+
+import { getCurrentUser } from '@/lib/auth/route';
+import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
+import { GET } from '@/app/api/crm/work-orders/[id]/assignee-contact/route';
+
+const WO = '11111111-2222-4333-8444-555555555555';
+const ANDERS = { name: 'Anders Säljare', phone: '070-123 45 67' };
+
+function call(id = WO) {
+  return GET(new Request('http://localhost/x'), { params: { id } });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  readerRole = 'member';
+  readerError = null;
+  (getWorkOrderAssigneeContact as any).mockResolvedValue({ data: ANDERS, error: null });
+});
+
+describe('GET /api/crm/work-orders/[id]/assignee-contact', () => {
+  it('installatören får den ansvariges namn och nummer', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    const json = await (await call()).json();
+    expect(json.ok).toBe(true);
+    expect(json.data.contact).toEqual(ANDERS);
+  });
+
+  it('kontoret får det också', async () => {
+    (getCurrentUser as any).mockResolvedValue(salesUser);
+    readerRole = 'sales';
+    expect((await (await call()).json()).data.contact).toEqual(ANDERS);
+  });
+
+  // ⛔ HUVUDVAKTEN. konsult är en EXTERN part som ändå håller crm.workorder.read, alltså skulle
+  // RLS släppa igenom hen på varje order. Numret är personalens eget och delas i dag bara via
+  // Kontaktlistan, en kurerad tabell. Uppslaget får inte ens göras.
+  it('konsult får inget nummer — och uppslaget görs inte alls', async () => {
+    (getCurrentUser as any).mockResolvedValue(konsultUser);
+    readerRole = 'konsult';
+    const res = await call();
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.data.contact).toBeNull();
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  // ⚠️ HELA `isReadonlyRole`-LISTAN, inte bara konsult. `ekonomi` (lönebyrån) är likaså extern och
+  // når ingen arbetsorder i dag — hon har bara `time.*`-nycklar, så RLS stoppar henne innan
+  // grinden ens spelar roll. Testet finns för den dagen det ändras: hennes yta har vidgats flera
+  // gånger, och en grind som bara kände 'konsult' hade släppt igenom henne tyst, med sviten grön.
+  it.each(['ekonomi', 'readonly'])('extern roll %s får heller inget nummer', async (role) => {
+    (getCurrentUser as any).mockResolvedValue({ id: 'user-x', role: 'member' });
+    readerRole = role;
+    expect((await (await call()).json()).data.contact).toBeNull();
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  // 🧨 FAIL-CLOSED, och HELA POÄNGEN LIGGER I MOCKEN. Grinden läste först `currentUser.role`.
+  // `getCurrentUser()` kastar sitt profiles-läsfel (lib/auth/route.ts: `const { data: profile }`)
+  // och svarar `role || 'member'` — så en konsult vars rolluppslag failade kom hit MASKERAD SOM
+  // INSTALLATÖR, passerade grinden, och RLS fortsatte admittera hen på ordern.
+  //
+  // Därför säger mocken 'member' här, inte 'konsult': det är vad verkligheten skickar in i just
+  // det fönstret. Ett test som satte 'konsult' hade varit grönt även med den gamla trasiga
+  // grinden — det var precis det misstaget den här raden fick rätta.
+  it('ett trasigt rolluppslag nekar, även när sessionen ser ut som en installatör', async () => {
+    (getCurrentUser as any).mockResolvedValue({ id: konsultUser.id, role: 'member' });
+    readerError = { message: 'tillfälligt fel' };
+    const json = await (await call()).json();
+    expect(json.data.contact).toBeNull();
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  // Samma sak när raden helt saknas: ingen roll bevisad, alltså inget nummer.
+  it('en läsare utan profilrad får heller inget', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    readerRole = null;
+    expect((await (await call()).json()).data.contact).toBeNull();
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  it('utloggad avvisas', async () => {
+    (getCurrentUser as any).mockResolvedValue(null);
+    expect((await call()).status).toBe(401);
+  });
+
+  it('trasigt id ger 400, inte en rå 500 ur PostgREST', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    const res = await call('inte-ett-uuid');
+    expect(res.status).toBe(400);
+    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
+  });
+
+  it('läsfel i uppslaget bärs upp som 500', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    (getWorkOrderAssigneeContact as any).mockResolvedValue({ data: null, error: { message: 'trasigt' } });
+    expect((await call()).status).toBe(500);
+  });
+
+  // 🧨 VILKEN KLIENT SOM GÅR VART ÄR HELA SÄKERHETSMODELLEN, och den avgörs HÄR i routen — inte
+  // i domänfunktionen, som bara tar emot det den får. Skickas admin-klienten som första argument
+  // läses arbetsordern förbi RLS, och routen svarar med den ansvariges namn och privata mobil för
+  // vilket order-UUID som helst, åt vilket inloggat icke-externt konto som helst.
+  //
+  // Utan den här assertionen är den mutationen OSYNLIG: domänfunktionen är mockad, och varje annat
+  // test frågar bara OM den anropades. Granskningen körde precis den mutationen och fick alla tio
+  // testerna gröna.
+  it('arbetsordern läses med sessionsklienten, profilen med admin', async () => {
+    (getCurrentUser as any).mockResolvedValue(memberUser);
+    await call();
+
+    const [orderClient, profileClient, id] = (getWorkOrderAssigneeContact as any).mock.calls[0];
+    expect(orderClient.__client).toBe('session');
+    expect(profileClient.__client).toBe('admin');
+    expect(orderClient).not.toBe(profileClient);
+    expect(id).toBe(WO);
+  });
+});
