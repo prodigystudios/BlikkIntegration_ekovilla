@@ -144,11 +144,14 @@ describe('attributePlannedDemand', () => {
 });
 
 describe('reportedDemandByWorkOrder', () => {
+  // t1 hör till en depå, t0 gör det inte — samma två fall som förbrukningssidan skiljer på.
+  const fleet = new Map<string, string | null>([['t1', 'd1'], ['t0', null]]);
   const rapport = (over: Record<string, unknown> = {}) => ({
     work_order_id: 'wo1',
     sacks_blown: 30,
     kind: 'partial',
     material: 'EKOVILLA',
+    segment: { truck_id: 't1' },
     ...over,
   });
 
@@ -157,7 +160,7 @@ describe('reportedDemandByWorkOrder', () => {
       rapport(),
       rapport({ sacks_blown: 25 }),
       rapport({ material: 'PAROC', sacks_blown: 10 }),
-    ]);
+    ], fleet);
     expect(map.get('wo1')!.hasFinal).toBe(false);
     expect([...map.get('wo1')!.byMaterial]).toEqual([['EKOVILLA', 55], ['PAROC', 10]]);
   });
@@ -169,32 +172,46 @@ describe('reportedDemandByWorkOrder', () => {
       rapport({ sacks_blown: 30 }),
       rapport({ sacks_blown: 25 }),
       rapport({ kind: 'final', sacks_blown: 91 }),
-    ]);
+    ], fleet);
     expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(91);
   });
 
   it('hasFinal läses ur de RÅA raderna, inte ur de effektiva', () => {
-    const map = reportedDemandByWorkOrder([rapport(), rapport({ kind: 'final', sacks_blown: 91 })]);
+    const map = reportedDemandByWorkOrder([rapport(), rapport({ kind: 'final', sacks_blown: 91 })], fleet);
     expect(map.get('wo1')!.hasFinal).toBe(true);
   });
 
   it('faller tillbaka på orderns material för rader skrivna innan kolumnen fanns', () => {
     const map = reportedDemandByWorkOrder([
       rapport({ material: null, work_order: { line_items: [{ article_name: 'Ekovilla Cellulosa Lösull' }] } }),
-    ]);
+    ], fleet);
     expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
   });
 
   it('en rad utan härledbart material lämnar jobbet känt men utan avdrag', () => {
     // "Vi vet att jobbet rapporterat" är inte "vi vet vad som drogs". Behovet ska då stå kvar
     // orört — överskatta hellre än att beställa för lite.
-    const map = reportedDemandByWorkOrder([rapport({ material: null, work_order: { line_items: [] } })]);
+    const map = reportedDemandByWorkOrder([rapport({ material: null, work_order: { line_items: [] } })], fleet);
     expect(map.has('wo1')).toBe(true);
     expect(map.get('wo1')!.byMaterial.size).toBe(0);
   });
 
+  it('en rapport från en bil UTAN depå ger inget avdrag', () => {
+    // 🧨 Invarianten som gör shortfall värd att lita på: varje säck som dras från `planned` måste
+    // också ha dragits från `balance`. deriveConsumptionRows hoppar tyst över segment vars bil
+    // saknar depot_id, så räknades avdraget här skulle behovet sjunka utan att saldot gjorde det —
+    // och bristvarningen tystna på en depå som verkligen tömts.
+    const map = reportedDemandByWorkOrder([rapport({ segment: { truck_id: 't0' } })], fleet);
+    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+  });
+
+  it('en rapport utan segment ger inget avdrag', () => {
+    const map = reportedDemandByWorkOrder([rapport({ segment: null })], fleet);
+    expect(map.get('wo1')!.byMaterial.size).toBe(0);
+  });
+
   it('håller isär arbetsordrar', () => {
-    const map = reportedDemandByWorkOrder([rapport(), rapport({ work_order_id: 'wo2', sacks_blown: 7 })]);
+    const map = reportedDemandByWorkOrder([rapport(), rapport({ work_order_id: 'wo2', sacks_blown: 7 })], fleet);
     expect(map.get('wo1')!.byMaterial.get('EKOVILLA')).toBe(30);
     expect(map.get('wo2')!.byMaterial.get('EKOVILLA')).toBe(7);
   });
@@ -253,13 +270,14 @@ describe('dubbelräkningen av blåsta säckar', () => {
     const depots = [{ id: 'd1', name: 'Syd' }];
     const delivered: StockRow[] = [{ depot_id: 'd1', material: 'EKOVILLA', sacks: 500 }];
 
-    const reports = [{ work_order_id: 'wo1', sacks_blown: 300, kind: 'partial', material: 'EKOVILLA' }];
+    const fleet = new Map<string, string | null>([['t1', 'd1']]);
+    const reports = [{ work_order_id: 'wo1', sacks_blown: 300, kind: 'partial', material: 'EKOVILLA', segment: { truck_id: 't1' } }];
     const consumed: StockRow[] = [{ depot_id: 'd1', material: 'EKOVILLA', sacks: 300 }];
 
     const segments: PlannedDemandSegment[] = [
       { work_order_id: 'wo1', depot_id: 'd1', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 564 }] },
     ];
-    const planned = attributePlannedDemand(applyReportedToDemand(segments, reportedDemandByWorkOrder(reports)));
+    const planned = attributePlannedDemand(applyReportedToDemand(segments, reportedDemandByWorkOrder(reports, fleet)));
 
     const row = computeDepotBalances(depots, delivered, consumed, planned)[0].rows[0];
     expect(row).toMatchObject({ balance: 200, planned: 264, shortfall: 64 });

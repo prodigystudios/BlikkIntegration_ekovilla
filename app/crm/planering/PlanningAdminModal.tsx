@@ -593,6 +593,7 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Swedish calendar day, not UTC: toISOString() booked the delivery to yesterday when recorded
@@ -604,13 +605,21 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
   const [deliveredOn, setDeliveredOn] = useState(today);
   const [note, setNote] = useState('');
 
+  // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
+  // började propagera sina fel (getDepotStock), och utan den här grenen renderades 500:an som
+  // "Inga depåer upplagda än" — alltså ett påstående om verkligheten, byggt på att vi inte vet.
+  // Samma felklass som "ej rapporterat" kontra "0 st".
   async function load() {
-    const r = await fetch(STOCK_API, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.ok) {
+    try {
+      const r = await fetch(STOCK_API, { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) throw new Error(j?.error || 'Kunde inte hämta lagersaldo');
       const list = j.data.depots as DepotBalance[];
       setDepots(list);
       setDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
+      setLoadError(null);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Kunde inte hämta lagersaldo');
     }
   }
   useEffect(() => {
@@ -680,7 +689,16 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
           </form>
         )}
 
-        {depots.length === 0 ? (
+        {loadError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
+            <div className="font-semibold">Lagersaldot kunde inte räknas ut</div>
+            <p className="mt-0.5 text-rose-600">{loadError}</p>
+            <p className="mt-1 text-[11px] text-rose-500">
+              Siffrorna nedan visas inte, eftersom ett halvt underlag ser ut som ett fullt lager. Ladda om sidan och hör
+              av dig om det står kvar.
+            </p>
+          </div>
+        ) : depots.length === 0 ? (
           <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
         ) : (
           <div className={PANEL}>

@@ -189,7 +189,7 @@ async function deriveConsumptionRows(
   // är kvar att blåsa (reported). De MÅSTE komma ur en och samma läsning — läses tabellen två
   // gånger kan en rapport skriven mellan läsningarna finnas i den ena och saknas i den andra, och
   // då tar dubbelräkningen inte ut sig exakt. sackLedger varnar för just det.
-  return { rows, reported: reportedDemandByWorkOrder(reports), error: null };
+  return { rows, reported: reportedDemandByWorkOrder(reports, truckDepot), error: null };
 }
 
 /** Vad en arbetsorder redan blåst, per material — och om egenkontrollen satt punkt. */
@@ -206,11 +206,19 @@ export type ReportedDemand = { hasFinal: boolean; byMaterial: Map<string, number
  * rader skrivna innan kolumnen fanns — EXAKT samma härledning som förbrukningen använder. Skulle de
  * två skilja sig åt drogs säckarna från ett material i saldot och från ett annat i behovet.
  *
- * En rad vars material inte går att härleda lämnar arbetsordern i kartan men utan belopp: jobbet är
- * känt, avdraget är det inte. Behovet står då kvar orört, vilket överskattar snarare än underskattar.
+ * ⚠️ SAMMA GRIND SOM FÖRBRUKNINGEN: en rad räknas bara när den löser BÅDE en depå och ett material.
+ * Invarianten som gör `shortfall` värd att lita på är att varje säck som dras från `planned` också
+ * dragits från `balance`. deriveConsumptionRows hoppar tyst över segment vars bil saknar depot_id
+ * (en dokumenterad, medveten lucka), så räknade avdraget dem skulle behovet sjunka utan att saldot
+ * gjorde det — och bristvarningen tystna på en depå som verkligen tömts. Hellre ett för högt behov
+ * (dyrt) än ett för lågt (en bil utan material).
+ *
+ * En rad vars material eller depå inte går att härleda lämnar arbetsordern i kartan men utan belopp:
+ * jobbet är känt, avdraget är det inte.
  */
 export function reportedDemandByWorkOrder(
   reports: Array<Record<string, any> & { work_order_id: string; kind?: string | null }>,
+  truckDepot: Map<string, string | null>,
 ): Map<string, ReportedDemand> {
   const map = new Map<string, ReportedDemand>();
   const ensure = (workOrderId: string): ReportedDemand => {
@@ -228,10 +236,12 @@ export function reportedDemandByWorkOrder(
 
   for (const r of effectiveSackReports(reports)) {
     const cell = ensure(r.work_order_id);
+    const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
     const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
+    const depotId = seg ? truckDepot.get(seg.truck_id) : null;
     const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
     const sacks = Number(r.sacks_blown ?? 0);
-    if (!material || !Number.isFinite(sacks)) continue;
+    if (!depotId || !material || !Number.isFinite(sacks)) continue;
     cell.byMaterial.set(material, (cell.byMaterial.get(material) ?? 0) + sacks);
   }
 
@@ -251,6 +261,12 @@ export function reportedDemandByWorkOrder(
  * jobbkortets badge redan visar när egenkontroll saknas.
  *
  * En order utan rapportrader lämnas orörd: "ej rapporterat" är inte "noll blåsta".
+ *
+ * ⚠️ `hasFinal` är INTE grindat på depå, till skillnad från beloppen. Ett färdigt jobb behöver noll
+ * mer material, och det är sant oavsett vilken depå säckarna kom ifrån. Följden är att ett jobb som
+ * blåstes från en bil utan depot_id tar bort ett behov som aldrig bokfördes som förbrukning — en
+ * konsekvens av den dokumenterade luckan i deriveConsumptionRows, inte av regeln här. Grinden hör
+ * hemma där förbrukningen får en depå, inte här.
  */
 export function applyReportedToDemand(
   segments: PlannedDemandSegment[],
@@ -361,16 +377,33 @@ async function derivePlannedDemandSegments(
   // EARLIEST segment's depot, not whichever row came back first. Ordningen bär alltså ett resultat,
   // inte bara ett utseende — och den är därför också vad sidindelningen måste följa. `id` bryter
   // lika start_day, så ordningen är unik och sidorna kan varken dubblera eller hoppa över rader.
-  const { rows: segs, error: segError } = await readAllPages<Record<string, any>>((from, to) =>
-    supabase
-      .from('ops_segments')
-      .select('id, work_order_id, truck_id, start_day')
-      .in('work_order_id', [...woById.keys()])
-      .order('start_day', { ascending: true })
-      .order('id', { ascending: true })
-      .range(from, to),
-  );
-  if (segError) return { segments: [], error: segError };
+  //
+  // ⚠️ `.in()` LIGGER I URL:EN. Så länge orderläsningen ovan kapades vid max-rows höll den listan
+  // under tusen id:n av en ren slump; nu när den paginerar finns inget sådant tak, och en lista som
+  // växer med varje utkast spränger till slut querysträngen. Det felet hade dessutom, med
+  // fail-closed, tagit ned hela lagervyn. Därför i portioner — ordningen inom varje portion är
+  // densamma, och sorteringen som avgör vilken depå ett splittat jobb bokas mot återställs nedan.
+  const woIds = [...woById.keys()];
+  const IN_CHUNK = 300;
+  const segs: Array<Record<string, any>> = [];
+  for (let i = 0; i < woIds.length; i += IN_CHUNK) {
+    const chunk = woIds.slice(i, i + IN_CHUNK);
+    const { rows, error: segError } = await readAllPages<Record<string, any>>((from, to) =>
+      supabase
+        .from('ops_segments')
+        .select('id, work_order_id, truck_id, start_day')
+        .in('work_order_id', chunk)
+        .order('start_day', { ascending: true })
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (segError) return { segments: [], error: segError };
+    segs.push(...rows);
+  }
+
+  // Portionerna kom var för sig, så den globala ordningen måste återställas: attributionen väljer
+  // FÖRSTA giltiga segmentet, och vilket det är får inte bero på hur id-listan råkade delas.
+  segs.sort((a, b) => String(a.start_day).localeCompare(String(b.start_day)) || String(a.id).localeCompare(String(b.id)));
 
   const segments = segs.flatMap((s) => {
     const wo = woById.get(s.work_order_id as string);
