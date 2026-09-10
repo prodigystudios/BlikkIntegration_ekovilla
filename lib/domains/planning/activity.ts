@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // to ops_activity_events so planners can trace "who changed what, when". Writes are best-effort —
 // a logging failure must NEVER break the user's action — so logActivity swallows its own errors.
 
-export type ActivityEntityType = 'segment' | 'crew' | 'truck_crew' | 'day_note' | 'confirmation';
+export type ActivityEntityType = 'segment' | 'crew' | 'truck_crew' | 'day_note' | 'confirmation' | 'expected_delivery';
 
 // The acting user. name is the durable display snapshot stored on the row (profiles are
 // self-read-only, so the log can never re-read another planner's name).

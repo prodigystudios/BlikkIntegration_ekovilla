@@ -112,3 +112,37 @@ export function totalSacks(items: SackLineItem[] | null | undefined): number {
   if (!Array.isArray(items)) return 0;
   return items.reduce((sum, it) => sum + lineItemSacks(it), 0);
 }
+
+/** Säckbehovet för ETT material på en offert/arbetsorder. */
+export type MaterialDemand = { material: string; sacks: number };
+
+/**
+ * Säckarna per material — en post per igenkänt material bland raderna.
+ *
+ * 🧨 `materialShortFromLineItems` och `totalSacks` FÅR INTE ANVÄNDAS I PAR för att beskriva ett
+ * behov. Den första returnerar FÖRSTA igenkända materialet, den andra summerar ALLA rader: en order
+ * med 200 säck Ekovilla och 80 säck Knauf blev "280 säck EKOVILLA". Depålagret drog då hela summan
+ * från ett material och lämnade det andra helt utan planerat behov — vilket syntes som ett
+ * oförklarligt negativt saldo på en depå som aldrig sett en leverans av det materialet.
+ *
+ * I materialbeställningen väger felet tyngre än så: materialet väljer MOTTAGARE, alltså vilken
+ * fabrik mailet går till.
+ *
+ * Invariant: summan av posternas `sacks` är exakt `totalSacks(items)`. Rader vars artikelnamn inte
+ * härleder något material bidrar med noll i båda — se varningen vid `materialRenameEffect` om vad
+ * en omdöpt artikel gör.
+ *
+ * Posterna kommer i den ordning materialen först dyker upp bland raderna.
+ */
+export function materialDemandFromLineItems(items: SackLineItem[] | null | undefined): MaterialDemand[] {
+  if (!Array.isArray(items)) return [];
+  const byMaterial = new Map<string, number>();
+  for (const it of items) {
+    const material = inferMaterialFromArticle(it?.article_name);
+    if (!material) continue;
+    const sacks = lineItemSacks(it);
+    if (!(sacks > 0)) continue;
+    byMaterial.set(material.short, (byMaterial.get(material.short) ?? 0) + sacks);
+  }
+  return [...byMaterial].map(([material, sacks]) => ({ material, sacks }));
+}

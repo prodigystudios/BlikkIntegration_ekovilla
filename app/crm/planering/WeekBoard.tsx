@@ -10,10 +10,14 @@ import { crewInitials, crewColor, type AssignablePerson } from '@/lib/domains/pl
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
+import { buildDeliveryChipsByDay, type DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
+import type { DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
+import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
+import DeliveryStripCell from './DeliveryStripCell';
 
 type WeekBoardProps = {
   weekDays: WeekDay[];
@@ -41,6 +45,13 @@ type WeekBoardProps = {
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
+  /** Registrerade leveranser in till depåerna, för hela brädets fönster. Läses, ändras aldrig här. */
+  deliveries: DepotDeliveryOnBoard[];
+  /** Beställt men ännu inte ankommet. Räknas ALDRIG i lagersaldot — se deliveryStrip. */
+  expectedDeliveries: ExpectedDelivery[];
+  /** Sant när användaren får kvittera en ankomst (planning.schedule.write). */
+  canReceiveDelivery: boolean;
+  onReceiveDelivery: (chip: DeliveryChip) => void;
   truckCrew: TruckCrewMember[];
   defaultCrew: DefaultCrewMember[];
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
@@ -79,7 +90,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
-  dayNotes, onAddNote, onRemoveNote, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
+  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -89,6 +100,15 @@ export default function WeekBoard({
   const laneCols = `112px repeat(${n}, minmax(132px,1fr))`;
   const dayCols = `repeat(${n}, minmax(0,1fr))`;
   const notesByDay = groupNotesByDay(dayNotes);
+  // Veckans ALLA dagar avgör vad som hör hit; de synliga avgör vilken kolumn chipet hamnar i. Med
+  // helgen dold fälls en lördagsleverans in på fredagen i stället för att försvinna.
+  const deliveriesByDay = buildDeliveryChipsByDay(
+    deliveries,
+    expectedDeliveries,
+    weekDays.map((d) => d.iso),
+    days.map((d) => d.iso),
+  );
+  const hasDeliveries = deliveriesByDay.size > 0;
 
   // Whole-week total across all trucks (deduped by work order, same basis as the per-lane totals).
   const weekTotals = (() => {
@@ -207,6 +227,26 @@ export default function WeekBoard({
             />
           ))}
         </div>
+
+        {/* Leveransremsa (material IN till depåerna).
+            Ligger som noteringsremsans syskon, UTANFÖR bil-loopen: den hör till dagen, inte till en
+            bil, och måste synas även när varje bil är bortvald. Renderas bara när fönstret faktiskt
+            har leveranser — en tom etikettrad varje vecka äter höjd utan att säga något. */}
+        {hasDeliveries && (
+          <div className="grid" style={{ gridTemplateColumns: laneCols }}>
+            <div className="flex items-center justify-end pr-2 text-[9.5px] font-semibold uppercase tracking-wide text-slate-300">Leveranser</div>
+            {days.map((wd) => (
+              <DeliveryStripCell
+                key={wd.iso}
+                chips={deliveriesByDay.get(wd.iso) ?? []}
+                isWeekend={wd.isWeekend}
+                isToday={wd.iso === todayISO}
+                canReceive={canReceiveDelivery}
+                onReceive={onReceiveDelivery}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Truck lanes */}
         {trucks.length === 0 ? (

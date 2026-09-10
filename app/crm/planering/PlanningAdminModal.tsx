@@ -15,6 +15,7 @@ import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
 import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
@@ -158,7 +159,16 @@ export default function PlanningAdminModal({
             {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} people={people} defaultByTruck={defaultByTruck} onCrewSaved={loadDefaultCrew} onChanged={onChanged} />}
             {active === 'depots' && <DepotPanel crud={depotsCrud} onChanged={onChanged} />}
             {active === 'jobtypes' && <JobTypePanel crud={jobTypesCrud} onChanged={onChanged} />}
-            {active === 'stock' && <StockPanel canWrite={canWrite} />}
+            {active === 'stock' && (
+              <StockPanel
+                canWrite={canWrite}
+                canManageDepots={canManageDepots}
+                // Depålistan kommer från depåregistret, INTE ur lagersaldot: saldot failar stängt,
+                // och då hade väljarna stått tomma — trots att väntade leveranser ska gå att
+                // hantera även när saldot inte gick att räkna ut.
+                depotOptions={depotsCrud.items.filter((d) => d.active)}
+              />
+            )}
           </div>
         </div>
       </div>
@@ -485,7 +495,17 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
               </label>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
-            <RiskZone title="Riskzon" body="Bilar kopplade till depån nollställs (utan depå). Ta bort bara om depån avvecklas." label="Ta bort depå" onConfirm={onRemove} busy={busy} />
+            {/* Texten säger vad som FAKTISKT händer. Att bilar nollställs stod här förut, men inte
+                att leveranshistoriken följer med — och sedan väntade leveranser fick en FK med
+                RESTRICT går borttagningen dessutom oftast inte igenom alls. Ett löfte som inte
+                håller är sämre än inget löfte. */}
+            <RiskZone
+              title="Riskzon"
+              body="Bilar kopplade till depån nollställs (utan depå), och depåns leveranshistorik försvinner. Har depån någon väntad eller kvitterad leverans går den inte att ta bort — avaktivera den i stället."
+              label="Ta bort depå"
+              onConfirm={onRemove}
+              busy={busy}
+            />
           </div>
         )
       }
@@ -584,15 +604,178 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
 // ── Lager ───────────────────────────────────────────────────────────────────
 const STOCK_API = '/api/crm/planering/depot-stock';
 const DELIVERIES_API = '/api/crm/planering/depot-deliveries';
+const EXPECTED_API = '/api/crm/planering/expected-deliveries';
 
 function balanceClass(b: number) {
   return b < 0 ? 'text-rose-600' : b === 0 ? 'text-amber-600' : 'text-emerald-700';
 }
 
-function StockPanel({ canWrite }: { canWrite: boolean }) {
+/**
+ * En rad i listan över väntade leveranser, med inbyggd redigering.
+ *
+ * Egen komponent, och utkastet bor HÄR och inte i panelen: med ett delat redigeringstillstånd bär
+ * fälten kvar föregående rads värden när man öppnar nästa, och det syns inte förrän någon sparar
+ * fel siffra på fel leverans. Samma skäl som `key`-noten på PlaceholderModal.
+ *
+ * Att ändra i stället för att avboka och lägga upp på nytt är hela poängen: en flyttad leverans är
+ * SAMMA beställning, och två rader hade sett ut som två.
+ */
+function ExpectedRow({
+  item,
+  depots,
+  today,
+  canManage,
+  onSaved,
+  onCancel,
+}: {
+  item: ExpectedDelivery;
+  depots: OpsDepot[];
+  today: string;
+  canManage: boolean;
+  onSaved: () => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
+}) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [depotId, setDepotId] = useState(item.depot_id);
+  const [material, setMaterial] = useState(item.material);
+  const [sacks, setSacks] = useState(String(item.sacks));
+  const [expectedOn, setExpectedOn] = useState(item.expected_on);
+  const [note, setNote] = useState(item.note ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const late = item.expected_on < today;
+
+  function startEditing() {
+    // Läs om ur raden varje gång: ett avbrutet försök ska inte lämna kvar sina ändringar till nästa.
+    setDepotId(item.depot_id);
+    setMaterial(item.material);
+    setSacks(String(item.sacks));
+    setExpectedOn(item.expected_on);
+    setNote(item.note ?? '');
+    setEditing(true);
+  }
+
+  async function save() {
+    const count = Number(sacks);
+    if (!depotId || !material || !(count > 0) || saving) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`${EXPECTED_API}/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot_id: depotId,
+          material,
+          sacks: count,
+          expected_on: expectedOn,
+          note: note.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte spara ändringen');
+      toast.success('Leveransen ändrad');
+      setEditing(false);
+      await onSaved();
+    } catch {
+      toast.error('Kunde inte spara ändringen');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <li className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-semibold text-slate-700">
+            {item.depot_name} · {item.sacks} säck {item.material}
+          </div>
+          <div className={cn('text-[11px] tabular-nums', late ? 'font-semibold text-amber-700' : 'text-slate-400')}>
+            {late ? 'Skulle ha kommit' : 'Väntas'} {item.expected_on}
+            {item.note ? ` · ${item.note}` : ''}
+          </div>
+        </div>
+        {canManage && (
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={startEditing} className={crm.ghostButton}>
+              Ändra
+            </button>
+            {/* "Avboka", inte "Avbryt". Samma komponent använder "Avbryt" för det ofarliga
+                stänga-utan-att-spara, och ReceiveDeliveryModal likaså — samma ord för två motsatta
+                handlingar, varav den ena inte går att ångra. */}
+            <button type="button" onClick={() => onCancel(item.id)} className={crm.dangerButton}>
+              Avboka
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
+
+  return (
+    <li className="rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
+      <div className="grid gap-2.5 sm:grid-cols-4">
+        <div>
+          <span className={LABEL}>Depå</span>
+          <SelectMenu
+            value={depotId}
+            onChange={setDepotId}
+            aria-label="Depå"
+            options={depots.map((d) => ({ value: d.id, label: d.name }))}
+          />
+        </div>
+        <div>
+          <span className={LABEL}>Material</span>
+          <SelectMenu
+            value={material}
+            onChange={setMaterial}
+            aria-label="Material"
+            options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+          />
+        </div>
+        <div>
+          <span className={LABEL}>Säckar</span>
+          <input type="number" min={1} value={sacks} onChange={(ev) => setSacks(ev.target.value)} className={crm.input} aria-label="Antal säckar" />
+        </div>
+        {/* Inget max: en väntad leverans ligger normalt framåt, och ska kunna flyttas åt båda håll. */}
+        <div>
+          <span className={LABEL}>Väntas</span>
+          <input type="date" value={expectedOn} onChange={(ev) => setExpectedOn(ev.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" />
+        </div>
+      </div>
+      <div className="mt-2.5 grid grid-cols-[1fr_auto_auto] gap-2.5">
+        <input value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+        <button type="button" onClick={() => setEditing(false)} className={crm.ghostButton}>
+          Avbryt
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !depotId || !(Number(sacks) > 0)}
+          className={crm.formButton}
+          style={{ backgroundColor: 'var(--crm-primary)' }}
+        >
+          {saving ? 'Sparar…' : 'Spara'}
+        </button>
+      </div>
+    </li>
+  );
+}
+
+function StockPanel({
+  canWrite,
+  canManageDepots,
+  depotOptions,
+}: {
+  canWrite: boolean;
+  canManageDepots: boolean;
+  depotOptions: OpsDepot[];
+}) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Swedish calendar day, not UTC: toISOString() booked the delivery to yesterday when recorded
@@ -604,13 +787,37 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
   const [deliveredOn, setDeliveredOn] = useState(today);
   const [note, setNote] = useState('');
 
+  // Väntad leverans — eget formulär, egna fält. Delas de med det ovan blir det oklart vilken
+  // knapp som gör vad, och skillnaden mellan "står på depån" och "är på väg" är hela poängen.
+  const [expDepotId, setExpDepotId] = useState('');
+  const [expMaterial, setExpMaterial] = useState(MATERIAL_SHORTS[0] ?? '');
+  const [expSacks, setExpSacks] = useState('');
+  const [expOn, setExpOn] = useState(today);
+  const [expNote, setExpNote] = useState('');
+  const [expBusy, setExpBusy] = useState(false);
+  const [open, setOpen] = useState<ExpectedDelivery[]>([]);
+
+  // Förval när depåregistret landat. Inte ur lagersaldot: det failar stängt, och då hade
+  // väljaren stått tom på en yta som ska fungera även när saldot inte gick att räkna ut.
+  useEffect(() => {
+    setExpDepotId((cur) => cur || (depotOptions[0]?.id ?? ''));
+  }, [depotOptions]);
+
+  // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
+  // började propagera sina fel (getDepotStock), och utan den här grenen renderades 500:an som
+  // "Inga depåer upplagda än" — alltså ett påstående om verkligheten, byggt på att vi inte vet.
+  // Samma felklass som "ej rapporterat" kontra "0 st".
   async function load() {
-    const r = await fetch(STOCK_API, { cache: 'no-store' });
-    const j = await r.json();
-    if (j.ok) {
+    try {
+      const r = await fetch(STOCK_API, { cache: 'no-store' });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) throw new Error(j?.error || 'Kunde inte hämta lagersaldo');
       const list = j.data.depots as DepotBalance[];
       setDepots(list);
       setDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
+      setLoadError(null);
+    } catch (e: any) {
+      setLoadError(e?.message || 'Kunde inte hämta lagersaldo');
     }
   }
   useEffect(() => {
@@ -636,6 +843,64 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
       await load();
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Öppna väntade leveranser — utan datumfönster, se listOpenExpected. Egen läsning: den lever
+  // vidare även när saldot failar, för listan är det enda stället en utebliven leverans går att
+  // hitta och avbryta.
+  const loadOpen = useCallback(async () => {
+    const r = await fetch(EXPECTED_API, { cache: 'no-store' });
+    const j = await r.json().catch(() => null);
+    if (j?.ok) setOpen(j.data.expected as ExpectedDelivery[]);
+  }, []);
+  useEffect(() => {
+    loadOpen().catch(() => {});
+  }, [loadOpen]);
+
+  async function cancelExpected(id: string) {
+    try {
+      const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
+      toast.success('Väntad leverans avbokad');
+      await loadOpen();
+    } catch {
+      // Utan grenen är ett nätverksfel helt tyst, och raden står kvar som om ingenting hänt.
+      toast.error('Kunde inte avboka leveransen');
+    }
+  }
+
+  async function recordExpected(e: FormEvent) {
+    e.preventDefault();
+    if (!expDepotId || !expMaterial || !(Number(expSacks) > 0)) return;
+    setExpBusy(true);
+    try {
+      const r = await fetch(EXPECTED_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot_id: expDepotId,
+          material: expMaterial,
+          sacks: Number(expSacks),
+          expected_on: expOn,
+          note: expNote.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte lägga in leveransen');
+      toast.success('Väntad leverans inlagd');
+      setExpSacks('');
+      setExpNote('');
+      // Saldot ändras INTE av en väntad leverans, så ingen omladdning av `load()` här. Tavlans
+      // remsa uppdateras via realtime (ops_expected_deliveries ligger i publikationen).
+      await loadOpen();
+    } catch {
+      // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
+      // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
+      toast.error('Kunde inte lägga in leveransen');
+    } finally {
+      setExpBusy(false);
     }
   }
 
@@ -669,7 +934,9 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
                 />
               </div>
               <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
-              <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
+              {/* max: en framtida leverans hade höjt saldot redan idag och tystat bristbanderollen.
+                  Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
+              <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
             </div>
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
@@ -678,7 +945,90 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
           </form>
         )}
 
-        {depots.length === 0 ? (
+        {/* Väntad leverans — beställt men inte framme.
+            Egen ruta, med flit skild från "Registrera leverans" ovan: den ena säger att materialet
+            STÅR på depån och räknas i saldot, den andra att det är på väg och inte gör det.
+            Grindad på depot.manage — att säga att något är beställt är inköpsbeslutet. */}
+        {canManageDepots && (
+          <form onSubmit={recordExpected} className={PANEL}>
+            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Lägg in väntad leverans</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Syns på veckotavlan som <span className="font-semibold text-slate-600">Ankommer</span>. Räknas
+              <span className="font-semibold text-slate-600"> inte </span>
+              i saldot förrän någon bekräftar ankomsten.
+            </p>
+            <div className="grid gap-2.5 sm:grid-cols-4">
+              <div className="sm:col-span-1">
+                <span className={LABEL}>Depå</span>
+                <SelectMenu
+                  value={expDepotId}
+                  onChange={setExpDepotId}
+                  placeholder="Välj depå"
+                  aria-label="Depå"
+                  options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
+                />
+              </div>
+              <div>
+                <span className={LABEL}>Material</span>
+                <SelectMenu
+                  value={expMaterial}
+                  onChange={setExpMaterial}
+                  aria-label="Material"
+                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                />
+              </div>
+              <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={expSacks} onChange={(e) => setExpSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
+              {/* INGET max här — spegelvänt mot formuläret ovan. En väntad leverans SKA normalt
+                  ligga i framtiden; det är just därför den bor i en egen tabell. */}
+              <div><span className={LABEL}>Väntas</span><input type="date" value={expOn} onChange={(e) => setExpOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" /></div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
+              <input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Lägg in</button>
+            </div>
+          </form>
+        )}
+
+        {/* Öppna väntade leveranser. Egen lista, UTAN datumfönster: tavlans remsa visar bara den
+            vecka som ritas, så en leverans som aldrig kom föll tyst ur synfältet när veckan
+            passerade — och det är precis den som behöver jagas. */}
+        {open.length > 0 && (
+          <div className={PANEL}>
+            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Väntade leveranser</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Beställt men inte framme. Räknas inte i saldot nedan.
+            </p>
+            <ul className="grid gap-1.5">
+              {open.map((e) => (
+                <ExpectedRow
+                  key={e.id}
+                  item={e}
+                  depots={depotOptions}
+                  today={today}
+                  canManage={canManageDepots}
+                  onSaved={loadOpen}
+                  onCancel={cancelExpected}
+                />
+              ))}
+            </ul>
+            {canWrite && (
+              <p className="mt-2 text-[11px] text-slate-400">
+                Bekräfta ankomst gör du på veckotavlan, där leveransen står på sin dag.
+              </p>
+            )}
+          </div>
+        )}
+
+        {loadError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
+            <div className="font-semibold">Lagersaldot kunde inte räknas ut</div>
+            <p className="mt-0.5 text-rose-600">{loadError}</p>
+            <p className="mt-1 text-[11px] text-rose-500">
+              Siffrorna nedan visas inte, eftersom ett halvt underlag ser ut som ett fullt lager. Ladda om sidan och hör
+              av dig om det står kvar.
+            </p>
+          </div>
+        ) : depots.length === 0 ? (
           <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
         ) : (
           <div className={PANEL}>

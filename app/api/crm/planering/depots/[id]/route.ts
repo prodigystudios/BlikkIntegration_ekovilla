@@ -46,7 +46,21 @@ export async function DELETE(_req: Request, context: RouteContext) {
 
     const supabase = createRouteHandlerClient({ cookies });
     const { error } = await deleteDepot(supabase, context.params.id);
-    if (error) return routeError(500, 'planning_depot_delete_failed', error.message);
+    if (error) {
+      // ops_expected_deliveries.depot_id är ON DELETE RESTRICT, och den spärren vet inget om status
+      // — kvitterad och avbokad historik håller emot precis som en utestående leverans. En depå som
+      // använts en gång går alltså inte att radera, med flit: historiken ska inte kunna raderas
+      // bort under fötterna på lagersaldot. Men säg det på svenska, i stället för att skicka vidare
+      // "violates foreign key constraint" till någon som tryckte på en knapp.
+      if ((error as { code?: string }).code === '23503') {
+        return routeError(
+          409,
+          'planning_depot_in_use',
+          'Depån har leveranshistorik och kan inte tas bort. Avaktivera den i stället — då försvinner den ur listorna men historiken finns kvar.',
+        );
+      }
+      return routeError(500, 'planning_depot_delete_failed', error.message);
+    }
 
     return ok({ ok: true });
   } catch (e: any) {

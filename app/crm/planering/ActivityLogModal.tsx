@@ -29,6 +29,10 @@ const ACTION_LABELS: Record<string, string> = {
   'day_note.add': 'Anteckning +',
   'day_note.remove': 'Anteckning −',
   'confirmation.send': 'Bekräftelse',
+  'expected_delivery.add': 'Leverans väntas',
+  'expected_delivery.update': 'Leverans ändrad',
+  'expected_delivery.receive': 'Leverans ankom',
+  'expected_delivery.cancel': 'Leverans avbruten',
 };
 
 // Coarse tone per entity type for the chip colour.
@@ -39,6 +43,7 @@ function chipTone(entityType: string): string {
     case 'truck_crew': return 'bg-violet-50 text-violet-700 border-violet-200';
     case 'day_note': return 'bg-amber-50 text-amber-700 border-amber-200';
     case 'confirmation': return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'expected_delivery': return 'bg-indigo-50 text-indigo-700 border-indigo-200';
     default: return 'bg-slate-50 text-slate-600 border-slate-200';
   }
 }
