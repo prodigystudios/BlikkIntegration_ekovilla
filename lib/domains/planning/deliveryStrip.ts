@@ -1,4 +1,5 @@
 import type { DepotDeliveryOnBoard } from './depotStock';
+import type { ExpectedDelivery } from './expectedDeliveries';
 
 // Leveransremsan på veckotavlan: vilka registrerade leveranser som ska ritas i vilken dagkolumn.
 // Rent och sidoeffektfritt; läsningen ligger hos anroparen (listDeliveriesInRange).
@@ -8,8 +9,19 @@ import type { DepotDeliveryOnBoard } from './depotStock';
 // ändras där den registreras (Administrera → Lager). Det är hela skillnaden mot dagsanteckningarna,
 // som remsan annars ser ut som.
 
+/**
+ * Vad chipet påstår.
+ *
+ * 🧨 SKILLNADEN ÄR LASTBÄRANDE, inte kosmetisk. `arrived` är en rad i ops_depot_deliveries och
+ * RÄKNAS I LAGERSALDOT. `expected` är en rad i ops_expected_deliveries och räknas INTE — den är
+ * beställd, inte levererad. Ser de likadana ut på tavlan kommer någon planera mot material som inte
+ * finns. Skilj dem på form OCH ord, aldrig bara på nyans.
+ */
+export type DeliveryChipKind = 'arrived' | 'expected';
+
 export type DeliveryChip = {
   id: string;
+  kind: DeliveryChipKind;
   depot_id: string;
   depot_name: string;
   material: string;
@@ -60,6 +72,7 @@ function isoToDayNumber(iso: string): number | null {
  */
 export function buildDeliveryChipsByDay(
   deliveries: DepotDeliveryOnBoard[],
+  expected: ExpectedDelivery[],
   weekDayISOs: string[],
   visibleDayISOs: string[],
 ): Map<string, DeliveryChip[]> {
@@ -75,13 +88,42 @@ export function buildDeliveryChipsByDay(
   const first = Math.min(...weekDays);
   const last = Math.max(...weekDays);
 
-  for (const delivery of deliveries) {
-    const day = isoToDayNumber(delivery.delivered_on);
+  // Båda sorterna går genom samma vikning: en väntad leverans på lördagen ska inte försvinna av
+  // andra skäl än en ankommen.
+  const source: Array<{ chip: Omit<DeliveryChip, 'folded'>; day: string }> = [
+    ...deliveries.map((d) => ({
+      day: d.delivered_on,
+      chip: {
+        id: d.id,
+        kind: 'arrived' as const,
+        depot_id: d.depot_id,
+        depot_name: d.depot_name,
+        material: d.material,
+        sacks: d.sacks,
+        delivered_on: d.delivered_on,
+      },
+    })),
+    ...expected.map((e) => ({
+      day: e.expected_on,
+      chip: {
+        id: e.id,
+        kind: 'expected' as const,
+        depot_id: e.depot_id,
+        depot_name: e.depot_name,
+        material: e.material,
+        sacks: e.sacks,
+        delivered_on: e.expected_on,
+      },
+    })),
+  ];
+
+  for (const item of source) {
+    const day = isoToDayNumber(item.day);
     if (day === null || day < first || day > last) continue;
 
-    let column = delivery.delivered_on;
+    let column = item.day;
     let folded = false;
-    if (!visibleSet.has(delivery.delivered_on)) {
+    if (!visibleSet.has(item.day)) {
       let best = visible[0];
       let bestDistance = Number.POSITIVE_INFINITY;
       for (const candidate of visible) {
@@ -96,23 +138,17 @@ export function buildDeliveryChipsByDay(
     }
 
     const list = byDay.get(column) ?? [];
-    list.push({
-      id: delivery.id,
-      depot_id: delivery.depot_id,
-      depot_name: delivery.depot_name,
-      material: delivery.material,
-      sacks: delivery.sacks,
-      delivered_on: delivery.delivered_on,
-      folded,
-    });
+    list.push({ ...item.chip, folded });
     byDay.set(column, list);
   }
 
-  // Stabil ordning inom en dag: depå, sedan material. Utan den flyttar sig chippen när svaret
-  // råkar komma i en annan ordning, och två leveranser samma dag ser ut att byta plats.
+  // Stabil ordning inom en dag: ankomna före väntade (det som FINNS är det säkrare beskedet), sedan
+  // depå och material. Utan den flyttar sig chippen när svaret råkar komma i en annan ordning, och
+  // två leveranser samma dag ser ut att byta plats.
   for (const list of byDay.values()) {
     list.sort(
       (a, b) =>
+        (a.kind === b.kind ? 0 : a.kind === 'arrived' ? -1 : 1) ||
         a.depot_name.localeCompare(b.depot_name, 'sv') ||
         a.material.localeCompare(b.material, 'sv') ||
         a.id.localeCompare(b.id),

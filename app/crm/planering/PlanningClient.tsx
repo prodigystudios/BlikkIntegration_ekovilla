@@ -14,6 +14,8 @@ import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import { crewForTruckInRange, crewSizeForRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
+import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
+import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
@@ -30,6 +32,7 @@ import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal from './PlanningAdminModal';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
+import ReceiveDeliveryModal from './ReceiveDeliveryModal';
 import InsightsView from './InsightsView';
 
 type View = 'week' | 'month' | 'insights';
@@ -163,6 +166,10 @@ export default function PlanningClient({
   const [depotStock, setDepotStock] = useState<DepotBalance[]>([]);
   const [depotStockError, setDepotStockError] = useState<string | null>(null);
   const [deliveries, setDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
+  const [expectedDeliveries, setExpectedDeliveries] = useState<ExpectedDelivery[]>([]);
+  // Chipet som ska kvitteras. Modalen lever i PlanningClient, inte i remsan: den ska ligga utanför
+  // .planning-density (zoomen) som de andra modalerna.
+  const [receiving, setReceiving] = useState<DeliveryChip | null>(null);
   const [loadingBacklog, setLoadingBacklog] = useState(true);
   const [backlogLoaded, setBacklogLoaded] = useState(false);
   const [boardLoaded, setBoardLoaded] = useState(false);
@@ -278,6 +285,7 @@ export default function PlanningClient({
   // leveranserna N+1, `isCurrent(N)` blir falskt, `setDepotStock` körs ALDRIG och bristbanderollen
   // visas aldrig — permanent, och tyst, eftersom fetchLatest sväljer även felet.
   const deliveriesLoad = useLoadTicket();
+  const expectedLoad = useLoadTicket();
 
   // The backlog spinner is cleared HERE rather than by the effect that raised it, so that whichever
   // load is current owns it. Clearing it on a superseded response would drop the panel to its empty
@@ -361,6 +369,16 @@ export default function PlanningClient({
     );
     if (data) setDeliveries(data.deliveries);
   }, [deliveriesLoad]);
+
+  // Väntade leveranser — beställt men inte ankommet. Egen automat av samma skäl som ovan.
+  const loadExpected = useCallback(async (from: string, to: string) => {
+    const data = await fetchLatest<{ expected: ExpectedDelivery[] }>(
+      expectedLoad,
+      `${API}/expected-deliveries?from=${from}&to=${to}`,
+      'Kunde inte hämta väntade leveranser',
+    );
+    if (data) setExpectedDeliveries(data.expected);
+  }, [expectedLoad]);
 
   useEffect(() => {
     setLoadingBacklog(true);
@@ -464,7 +482,8 @@ export default function PlanningClient({
     loadDefaultCrew().catch(() => {});
     loadDepotStock().catch(() => {});
     loadDeliveries(range.from, range.to).catch(() => {});
-  }, [prefsLoaded, range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock, loadDeliveries]);
+    loadExpected(range.from, range.to).catch(() => {});
+  }, [prefsLoaded, range.from, range.to, loadSegments, loadDayNotes, loadTruckCrew, loadDefaultCrew, loadDepotStock, loadDeliveries, loadExpected]);
 
   // ── Realtime: ~10 planners work this board at once, so reflect each other's changes live to
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
@@ -490,6 +509,7 @@ export default function PlanningClient({
     // annat på samma skärm uppdateras — och en nyss registrerad leverans syns inte förrän någon
     // byter vecka.
     loadDeliveries(range.from, range.to).catch(() => {});
+    loadExpected(range.from, range.to).catch(() => {});
     // Same rule as the schedule above: quiet while a list is already on screen, but a failure that
     // supersedes the only load that ever succeeded has to speak — otherwise the panel shows its
     // "Skapa en order i CRM:et…" empty state over orders that had in fact loaded.
@@ -511,6 +531,7 @@ export default function PlanningClient({
       'ops_trucks',
       'ops_depots',
       'ops_depot_deliveries',
+      'ops_expected_deliveries',
       'ops_job_types',
     ];
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1360,6 +1381,9 @@ export default function PlanningClient({
                         onAddNote={addDayNote}
                         onRemoveNote={removeDayNote}
                         deliveries={deliveries}
+                        expectedDeliveries={expectedDeliveries}
+                        canReceiveDelivery={canWrite}
+                        onReceiveDelivery={setReceiving}
                         truckCrew={truckCrew}
                         defaultCrew={defaultCrew}
                         onAddTruckCrew={addTruckCrew}
@@ -1507,6 +1531,32 @@ export default function PlanningClient({
 
       {/* Activity log (audit trail) */}
       {activityOpen && <ActivityLogModal onClose={() => setActivityOpen(false)} />}
+
+      {/* Kvittering av en väntad leverans. Ligger här och inte i remsan, så den hamnar utanför
+          .planning-density (zoomen) som de andra modalerna. */}
+      {receiving && (
+        <ReceiveDeliveryModal
+          chip={receiving}
+          onClose={() => setReceiving(null)}
+          onConfirm={async (input) => {
+            const r = await fetch(`${API}/expected-deliveries/${receiving.id}/receive`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(input),
+            });
+            const j = await r.json().catch(() => null);
+            if (!j?.ok) {
+              toast.error(j?.error || 'Kunde inte bekräfta ankomsten');
+              return;
+            }
+            setReceiving(null);
+            toast.success('Ankomst bekräftad');
+            // Både remsan OCH saldot ändras av en kvittering: den väntade raden försvinner och en
+            // lagerrad tillkommer. Ladda om båda, annars visar tavlan två sanningar samtidigt.
+            reloadBoardRef.current();
+          }}
+        />
+      )}
 
       {/* Placeholder (booked slot before a work order exists) — ny eller under redigering */}
       {(placeholderOpen || editPlaceholder) && (

@@ -158,7 +158,7 @@ export default function PlanningAdminModal({
             {active === 'trucks' && <TruckPanel crud={trucksCrud} depots={depotsCrud.items} people={people} defaultByTruck={defaultByTruck} onCrewSaved={loadDefaultCrew} onChanged={onChanged} />}
             {active === 'depots' && <DepotPanel crud={depotsCrud} onChanged={onChanged} />}
             {active === 'jobtypes' && <JobTypePanel crud={jobTypesCrud} onChanged={onChanged} />}
-            {active === 'stock' && <StockPanel canWrite={canWrite} />}
+            {active === 'stock' && <StockPanel canWrite={canWrite} canManageDepots={canManageDepots} />}
           </div>
         </div>
       </div>
@@ -584,12 +584,13 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
 // ── Lager ───────────────────────────────────────────────────────────────────
 const STOCK_API = '/api/crm/planering/depot-stock';
 const DELIVERIES_API = '/api/crm/planering/depot-deliveries';
+const EXPECTED_API = '/api/crm/planering/expected-deliveries';
 
 function balanceClass(b: number) {
   return b < 0 ? 'text-rose-600' : b === 0 ? 'text-amber-600' : 'text-emerald-700';
 }
 
-function StockPanel({ canWrite }: { canWrite: boolean }) {
+function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManageDepots: boolean }) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
   const [loading, setLoading] = useState(true);
@@ -604,6 +605,15 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
   const [sacks, setSacks] = useState('');
   const [deliveredOn, setDeliveredOn] = useState(today);
   const [note, setNote] = useState('');
+
+  // Väntad leverans — eget formulär, egna fält. Delas de med det ovan blir det oklart vilken
+  // knapp som gör vad, och skillnaden mellan "står på depån" och "är på väg" är hela poängen.
+  const [expDepotId, setExpDepotId] = useState('');
+  const [expMaterial, setExpMaterial] = useState(MATERIAL_SHORTS[0] ?? '');
+  const [expSacks, setExpSacks] = useState('');
+  const [expOn, setExpOn] = useState(today);
+  const [expNote, setExpNote] = useState('');
+  const [expBusy, setExpBusy] = useState(false);
 
   // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
   // började propagera sina fel (getDepotStock), och utan den här grenen renderades 500:an som
@@ -648,6 +658,34 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
     }
   }
 
+  async function recordExpected(e: FormEvent) {
+    e.preventDefault();
+    if (!expDepotId || !expMaterial || !(Number(expSacks) > 0)) return;
+    setExpBusy(true);
+    try {
+      const r = await fetch(EXPECTED_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot_id: expDepotId,
+          material: expMaterial,
+          sacks: Number(expSacks),
+          expected_on: expOn,
+          note: expNote.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte lägga in leveransen');
+      toast.success('Väntad leverans inlagd');
+      setExpSacks('');
+      setExpNote('');
+      // Saldot ändras INTE av en väntad leverans, så ingen omladdning av `load()` här. Tavlans
+      // remsa uppdateras via realtime (ops_expected_deliveries ligger i publikationen).
+    } finally {
+      setExpBusy(false);
+    }
+  }
+
   if (loading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
 
   return (
@@ -685,6 +723,50 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
               <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera</button>
+            </div>
+          </form>
+        )}
+
+        {/* Väntad leverans — beställt men inte framme.
+            Egen ruta, med flit skild från "Registrera leverans" ovan: den ena säger att materialet
+            STÅR på depån och räknas i saldot, den andra att det är på väg och inte gör det.
+            Grindad på depot.manage — att säga att något är beställt är inköpsbeslutet. */}
+        {canManageDepots && (
+          <form onSubmit={recordExpected} className={PANEL}>
+            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Lägg in väntad leverans</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Syns på veckotavlan som <span className="font-semibold text-slate-600">Ankommer</span>. Räknas
+              <span className="font-semibold text-slate-600"> inte </span>
+              i saldot förrän någon bekräftar ankomsten.
+            </p>
+            <div className="grid gap-2.5 sm:grid-cols-4">
+              <div className="sm:col-span-1">
+                <span className={LABEL}>Depå</span>
+                <SelectMenu
+                  value={expDepotId}
+                  onChange={setExpDepotId}
+                  placeholder="Välj depå"
+                  aria-label="Depå"
+                  options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+                />
+              </div>
+              <div>
+                <span className={LABEL}>Material</span>
+                <SelectMenu
+                  value={expMaterial}
+                  onChange={setExpMaterial}
+                  aria-label="Material"
+                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                />
+              </div>
+              <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={expSacks} onChange={(e) => setExpSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
+              {/* INGET max här — spegelvänt mot formuläret ovan. En väntad leverans SKA normalt
+                  ligga i framtiden; det är just därför den bor i en egen tabell. */}
+              <div><span className={LABEL}>Väntas</span><input type="date" value={expOn} onChange={(e) => setExpOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" /></div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
+              <input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Lägg in</button>
             </div>
           </form>
         )}

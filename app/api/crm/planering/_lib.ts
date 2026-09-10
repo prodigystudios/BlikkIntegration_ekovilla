@@ -187,6 +187,31 @@ export const createDeliverySchema = z.object({
   note: z.string().trim().max(300).nullable().optional(),
 });
 
+// En VÄNTAD leverans: material som är beställt men inte står på depån än.
+//
+// 🧨 Spegelvänt datumkrav mot createDeliverySchema, och det är hela poängen med att det är två
+// tabeller. En registrerad leverans får inte ligga i framtiden (den räknas i saldot direkt); en
+// väntad SKA normalt göra det, och räknas aldrig i saldot förrän ankomsten kvitteras.
+export const createExpectedDeliverySchema = z.object({
+  depot_id: z.string().uuid('Ogiltig depå'),
+  material: z.string().trim().refine((m) => MATERIAL_SHORTS.includes(m), 'Okänt material'),
+  sacks: z.coerce.number().int().positive('Ange ett antal säckar'),
+  expected_on: isoDate,
+  note: z.string().trim().max(300).nullable().optional(),
+});
+
+// Kvittering av en väntad leverans. `sacks` är vad som FAKTISKT kom, förifyllt med det beställda:
+// kommer 120 av 180 är det 120 som ska in i lagret. Datumtaket vaktas också i databasen
+// (receive_expected_delivery), eftersom det är saldot som står på spel.
+export const receiveExpectedDeliverySchema = z.object({
+  delivered_on: isoDate.refine(
+    (d) => d <= stockholmTodayISO(),
+    'Ankomstdatum kan inte ligga i framtiden',
+  ),
+  sacks: z.coerce.number().int().positive('Ange ett antal säckar'),
+  note: z.string().trim().max(300).nullable().optional(),
+});
+
 // List the activity log (audit trail). Newest-first, keyset-paginated by `before` (ISO timestamp),
 // with optional filters on actor name, exact action key, and a free-text search over the summary.
 export const listActivityQuerySchema = z.object({

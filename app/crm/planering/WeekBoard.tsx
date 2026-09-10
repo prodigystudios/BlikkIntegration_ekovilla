@@ -10,8 +10,9 @@ import { crewInitials, crewColor, type AssignablePerson } from '@/lib/domains/pl
 import { crewForTruckInRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
-import { buildDeliveryChipsByDay } from '@/lib/domains/planning/deliveryStrip';
+import { buildDeliveryChipsByDay, type DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import type { DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
+import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
@@ -46,6 +47,11 @@ type WeekBoardProps = {
   onRemoveNote: (id: string) => void;
   /** Registrerade leveranser in till depåerna, för hela brädets fönster. Läses, ändras aldrig här. */
   deliveries: DepotDeliveryOnBoard[];
+  /** Beställt men ännu inte ankommet. Räknas ALDRIG i lagersaldot — se deliveryStrip. */
+  expectedDeliveries: ExpectedDelivery[];
+  /** Sant när användaren får kvittera en ankomst (planning.schedule.write). */
+  canReceiveDelivery: boolean;
+  onReceiveDelivery: (chip: DeliveryChip) => void;
   truckCrew: TruckCrewMember[];
   defaultCrew: DefaultCrewMember[];
   onAddTruckCrew: (truckId: string, person: AssignablePerson, startDay: string, endDay: string) => void;
@@ -84,7 +90,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
-  dayNotes, onAddNote, onRemoveNote, deliveries, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
+  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -98,6 +104,7 @@ export default function WeekBoard({
   // helgen dold fälls en lördagsleverans in på fredagen i stället för att försvinna.
   const deliveriesByDay = buildDeliveryChipsByDay(
     deliveries,
+    expectedDeliveries,
     weekDays.map((d) => d.iso),
     days.map((d) => d.iso),
   );
@@ -234,6 +241,8 @@ export default function WeekBoard({
                 chips={deliveriesByDay.get(wd.iso) ?? []}
                 isWeekend={wd.isWeekend}
                 isToday={wd.iso === todayISO}
+                canReceive={canReceiveDelivery}
+                onReceive={onReceiveDelivery}
               />
             ))}
           </div>
