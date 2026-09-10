@@ -669,7 +669,9 @@ function StockPanel({ canWrite }: { canWrite: boolean }) {
                 />
               </div>
               <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
-              <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
+              {/* max: en framtida leverans hade höjt saldot redan idag och tystat bristbanderollen.
+                  Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
+              <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
             </div>
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
