@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listExpectedInRange, createExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
+import { listExpectedInRange, listOpenExpected, createExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, createExpectedDeliverySchema } from '../_lib';
 
@@ -14,13 +14,23 @@ export async function GET(req: Request) {
     if (gate.response) return gate.response;
 
     const url = new URL(req.url);
+    const supabase = createRouteHandlerClient({ cookies });
+
+    // Utan from/to: ALLA öppna, oavsett datum. Lagerpanelens lista behöver det — en leverans som
+    // aldrig kom faller annars ur synfältet så fort veckan passerat, och det är just den som ska
+    // jagas. Tavlans remsa frågar med fönster.
+    if (!url.searchParams.get('from') && !url.searchParams.get('to')) {
+      const { data, error } = await listOpenExpected(supabase);
+      if (error) return routeError(500, 'planning_expected_deliveries_failed', error.message);
+      return ok({ expected: data });
+    }
+
     const parsed = listSegmentsQuerySchema.safeParse({
       from: url.searchParams.get('from') || undefined,
       to: url.searchParams.get('to') || undefined,
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await listExpectedInRange(supabase, { from: parsed.data.from, to: parsed.data.to });
     if (error) return routeError(500, 'planning_expected_deliveries_failed', error.message);
 

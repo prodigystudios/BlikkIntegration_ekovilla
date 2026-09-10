@@ -15,6 +15,7 @@ import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
 import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
@@ -614,6 +615,7 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
   const [expOn, setExpOn] = useState(today);
   const [expNote, setExpNote] = useState('');
   const [expBusy, setExpBusy] = useState(false);
+  const [open, setOpen] = useState<ExpectedDelivery[]>([]);
 
   // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
   // började propagera sina fel (getDepotStock), och utan den här grenen renderades 500:an som
@@ -627,6 +629,7 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
       const list = j.data.depots as DepotBalance[];
       setDepots(list);
       setDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
+      setExpDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
       setLoadError(null);
     } catch (e: any) {
       setLoadError(e?.message || 'Kunde inte hämta lagersaldo');
@@ -658,6 +661,26 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
     }
   }
 
+  // Öppna väntade leveranser — utan datumfönster, se listOpenExpected. Egen läsning: den lever
+  // vidare även när saldot failar, för listan är det enda stället en utebliven leverans går att
+  // hitta och avbryta.
+  const loadOpen = useCallback(async () => {
+    const r = await fetch(EXPECTED_API, { cache: 'no-store' });
+    const j = await r.json().catch(() => null);
+    if (j?.ok) setOpen(j.data.expected as ExpectedDelivery[]);
+  }, []);
+  useEffect(() => {
+    loadOpen().catch(() => {});
+  }, [loadOpen]);
+
+  async function cancelExpected(id: string) {
+    const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
+    const j = await r.json().catch(() => null);
+    if (!j?.ok) return toast.error(j?.error || 'Kunde inte avbryta leveransen');
+    toast.success('Väntad leverans avbruten');
+    await loadOpen();
+  }
+
   async function recordExpected(e: FormEvent) {
     e.preventDefault();
     if (!expDepotId || !expMaterial || !(Number(expSacks) > 0)) return;
@@ -681,6 +704,11 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
       setExpNote('');
       // Saldot ändras INTE av en väntad leverans, så ingen omladdning av `load()` här. Tavlans
       // remsa uppdateras via realtime (ops_expected_deliveries ligger i publikationen).
+      await loadOpen();
+    } catch {
+      // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
+      // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
+      toast.error('Kunde inte lägga in leveransen');
     } finally {
       setExpBusy(false);
     }
@@ -769,6 +797,53 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
               <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Lägg in</button>
             </div>
           </form>
+        )}
+
+        {/* Öppna väntade leveranser. Egen lista, UTAN datumfönster: tavlans remsa visar bara den
+            vecka som ritas, så en leverans som aldrig kom föll tyst ur synfältet när veckan
+            passerade — och det är precis den som behöver jagas. */}
+        {open.length > 0 && (
+          <div className={PANEL}>
+            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Väntade leveranser</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Beställt men inte framme. Räknas inte i saldot nedan.
+            </p>
+            <ul className="grid gap-1.5">
+              {open.map((e) => {
+                const late = e.expected_on < today;
+                return (
+                  <li
+                    key={e.id}
+                    className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate text-[12.5px] font-semibold text-slate-700">
+                        {e.depot_name} · {e.sacks} säck {e.material}
+                      </div>
+                      <div className={cn('text-[11px] tabular-nums', late ? 'font-semibold text-amber-700' : 'text-slate-400')}>
+                        {late ? 'Skulle ha kommit' : 'Väntas'} {e.expected_on}
+                        {e.note ? ` · ${e.note}` : ''}
+                      </div>
+                    </div>
+                    {canManageDepots && (
+                      <button
+                        type="button"
+                        onClick={() => cancelExpected(e.id)}
+                        className={cn(crm.dangerButton, 'shrink-0')}
+                      >
+                        Avbryt
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {canWrite && (
+              <p className="mt-2 text-[11px] text-slate-400">
+                Bekräfta ankomst gör du på veckotavlan, där leveransen står på sin dag.
+              </p>
+            )}
+          </div>
         )}
 
         {loadError ? (

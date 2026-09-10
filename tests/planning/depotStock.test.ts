@@ -288,6 +288,49 @@ describe('applyReportedToDemand', () => {
   });
 });
 
+describe('urvalet när behovet redan är uppätet', () => {
+  it('ett färdigblåst jobb skapar inget spökbehov på nästa depå', () => {
+    // 🧨 Fallet: jobbet är splittat på två bilar vid olika depåer och HELA det har blåsts från dA.
+    // Avdraget nollar dA:s segment, men "inget kvar att blåsa" fick tidigare samma behandling som
+    // "den här bilen saknar depå" — alltså falla igenom till nästa segment, som aldrig fick något
+    // avdrag. Resultatet blev ett fullt behov på dB och en rosa bristbanderoll på en depå där
+    // ingenting är planerat.
+    //
+    // Genomfallningsregeln finns för DEPÅLÖSA segment ("vi vet inte, pröva nästa"). Ett segment MED
+    // depå har redovisat jobbet — även när svaret är noll.
+    const segments: PlannedDemandSegment[] = [
+      { work_order_id: 'wo1', depot_id: 'dA', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+      { work_order_id: 'wo1', depot_id: 'dB', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+    ];
+    const reported = new Map([
+      ['wo1', { hasFinal: false, byDepotMaterial: new Map([['dA', new Map([['EKOVILLA', 200]])]]) }],
+    ]);
+    expect(attributePlannedDemand(applyReportedToDemand(segments, reported))).toEqual([]);
+  });
+
+  it('en egenkontroll stänger jobbet på alla depåer, inte bara den första', () => {
+    const segments: PlannedDemandSegment[] = [
+      { work_order_id: 'wo1', depot_id: 'dA', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+      { work_order_id: 'wo1', depot_id: 'dB', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+    ];
+    const reported = new Map([['wo1', { hasFinal: true, byDepotMaterial: new Map() }]]);
+    expect(attributePlannedDemand(applyReportedToDemand(segments, reported))).toEqual([]);
+  });
+
+  it('men ett DELVIS blåst jobb behåller sin återstod på samma depå', () => {
+    const segments: PlannedDemandSegment[] = [
+      { work_order_id: 'wo1', depot_id: 'dA', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+      { work_order_id: 'wo1', depot_id: 'dB', status: 'in_progress', materials: [{ material: 'EKOVILLA', sacks: 200 }] },
+    ];
+    const reported = new Map([
+      ['wo1', { hasFinal: false, byDepotMaterial: new Map([['dA', new Map([['EKOVILLA', 60]])]]) }],
+    ]);
+    expect(attributePlannedDemand(applyReportedToDemand(segments, reported))).toEqual([
+      { depot_id: 'dA', material: 'EKOVILLA', sacks: 140 },
+    ]);
+  });
+});
+
 describe('dubbelräkningen av blåsta säckar', () => {
   it('halvblåst order överskattar inte längre bristen', () => {
     // 🧨 Regressionen: `balance` sänktes av det blåsta (deriveConsumptionRows) medan `planned` stod

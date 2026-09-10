@@ -87,11 +87,15 @@ export default function DeliveryStripCell({
               {c.folded && <span className="font-semibold"> · {shortDate(c.delivered_on)}</span>}
             </div>
 
+            {/* ⚠️ ALLTID SYNLIG, inte hover-avslöjad. Appen körs som PWA på surfplatta i bilen, och
+                på touch finns ingen hover — en gömd knapp hade gjort kvitteringen omöjlig där, och
+                det finns ingen annan väg in. Dagsanteckningens kryss är hover-gömt, men det är en
+                genväg till något som går att göra på annat håll; det här är enda ingången. */}
             {!arrived && canReceive && (
               <button
                 type="button"
                 onClick={() => onReceive(c)}
-                className="mt-0.5 hidden w-full rounded border border-sky-200 bg-sky-50 py-px text-[9px] font-bold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100 group-hover/lev:block"
+                className="mt-1 w-full rounded border border-sky-200 bg-sky-50 py-px text-[9px] font-bold text-sky-700 transition hover:border-sky-300 hover:bg-sky-100"
               >
                 Bekräfta ankomst
               </button>

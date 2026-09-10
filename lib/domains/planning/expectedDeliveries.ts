@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { readAllPages, type ReadError } from './pagedRead';
 
 // Väntade leveranser: material som är beställt men ännu inte står på depån.
 //
@@ -21,8 +22,6 @@ export type ExpectedDelivery = {
   note: string | null;
   status: ExpectedDeliveryStatus;
 };
-
-type ReadError = { message: string } | null;
 
 const SELECT = 'id, depot_id, material, sacks, expected_on, note, status, depot:ops_depots(name)';
 
@@ -64,16 +63,45 @@ export async function listExpectedInRange(
   supabase: SupabaseClient,
   range: { from: string; to: string },
 ): Promise<{ data: ExpectedDelivery[]; error: ReadError }> {
-  const { data, error } = await supabase
-    .from('ops_expected_deliveries')
-    .select(SELECT)
-    .eq('status', 'expected')
-    .gte('expected_on', range.from)
-    .lte('expected_on', range.to)
-    .order('expected_on', { ascending: true })
-    .order('id', { ascending: true });
+  // Sidindelad som sitt syskon listDeliveriesInRange: fönstret är inte alltid en vecka — månadsvyn
+  // och "Hela månaden" ber om ~42 dagar — och tyst kapning är den felklass hela lagerläsningen just
+  // härdats mot.
+  const { rows, error } = await readAllPages<Record<string, any>>((from, to) =>
+    supabase
+      .from('ops_expected_deliveries')
+      .select(SELECT)
+      .eq('status', 'expected')
+      .gte('expected_on', range.from)
+      .lte('expected_on', range.to)
+      .order('expected_on', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
   if (error) return { data: [], error };
-  return { data: ((data ?? []) as Array<Record<string, any>>).map(toExpected), error: null };
+  return { data: rows.map(toExpected), error: null };
+}
+
+/**
+ * Alla ÖPPNA väntade leveranser, oavsett datum. För listan i Administrera → Lager.
+ *
+ * ⚠️ INTE fönsterbegränsad, med flit. Tavlans remsa visar bara den vecka som ritas, så en leverans
+ * som aldrig kom försvann tyst ur synfältet när veckan passerade — och det är precis den som
+ * behöver jagas. Här ska den ligga kvar tills någon kvitterar eller avbryter den.
+ */
+export async function listOpenExpected(
+  supabase: SupabaseClient,
+): Promise<{ data: ExpectedDelivery[]; error: ReadError }> {
+  const { rows, error } = await readAllPages<Record<string, any>>((from, to) =>
+    supabase
+      .from('ops_expected_deliveries')
+      .select(SELECT)
+      .eq('status', 'expected')
+      .order('expected_on', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+  if (error) return { data: [], error };
+  return { data: rows.map(toExpected), error: null };
 }
 
 export type CreateExpectedInput = {
