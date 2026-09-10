@@ -129,6 +129,47 @@ export async function createExpectedDelivery(supabase: SupabaseClient, input: Cr
     .single();
 }
 
+export type UpdateExpectedInput = {
+  depotId?: string;
+  material?: string;
+  sacks?: number;
+  expectedOn?: string;
+  note?: string | null;
+};
+
+/**
+ * Ändra en väntad leverans — typiskt när fabriken flyttar datumet.
+ *
+ * ⚠️ BARA ÖPPNA RADER. `.eq('status', 'expected')` är inte en bekvämlighet: en kvitterad rad har
+ * redan gett upphov till en lagerrad, och att i efterhand ändra dess depå, material eller antal
+ * hade gjort de två oense utan att något felar — beställningen säger en sak och saldot en annan.
+ * En avbokad rad är på samma sätt ett fattat beslut.
+ *
+ * Noll matchande rader ger `data: null` utan fel (PostgREST svarar så), så anroparen MÅSTE skilja
+ * på det och en lyckad skrivning. Se [[project_crm_quote_owner_handoff]] — samma tautologi har
+ * bitit i det här repot förr.
+ */
+export async function updateExpectedDelivery(
+  supabase: SupabaseClient,
+  id: string,
+  patch: UpdateExpectedInput,
+) {
+  const update: Record<string, unknown> = {};
+  if (patch.depotId !== undefined) update.depot_id = patch.depotId;
+  if (patch.material !== undefined) update.material = patch.material;
+  if (patch.sacks !== undefined) update.sacks = patch.sacks;
+  if (patch.expectedOn !== undefined) update.expected_on = patch.expectedOn;
+  if (patch.note !== undefined) update.note = patch.note;
+
+  return supabase
+    .from('ops_expected_deliveries')
+    .update(update)
+    .eq('id', id)
+    .eq('status', 'expected')
+    .select(SELECT)
+    .maybeSingle();
+}
+
 // Avbryt en väntad leverans. Raden raderas inte — den är revision över vad vi trodde skulle komma.
 export async function cancelExpectedDelivery(supabase: SupabaseClient, id: string) {
   return supabase

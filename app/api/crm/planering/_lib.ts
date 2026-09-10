@@ -200,6 +200,22 @@ export const createExpectedDeliverySchema = z.object({
   note: z.string().trim().max(300).nullable().optional(),
 });
 
+// Ändra en väntad leverans. Vanligaste fallet är att fabriken flyttar datumet — då ska raden gå att
+// rätta, inte avbokas och läggas upp på nytt: avbokningen tappar spåret av vad som faktiskt
+// beställdes, och en ny rad ser ut som en andra beställning.
+//
+// Inget datumtak, som vid inläggningen: en väntad leverans ska normalt ligga i framtiden. Att flytta
+// den BAKÅT måste också gå — en försenad leverans som visade sig ha kommit tidigare än trott.
+export const updateExpectedDeliverySchema = z
+  .object({
+    depot_id: z.string().uuid('Ogiltig depå').optional(),
+    material: z.string().trim().refine((m) => MATERIAL_SHORTS.includes(m), 'Okänt material').optional(),
+    sacks: z.coerce.number().int().positive('Ange ett antal säckar').optional(),
+    expected_on: isoDate.optional(),
+    note: z.string().trim().max(300).nullable().optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, 'Inget att spara');
+
 // Kvittering av en väntad leverans. `sacks` är vad som FAKTISKT kom, förifyllt med det beställda:
 // kommer 120 av 180 är det 120 som ska in i lagret. Datumtaket vaktas också i databasen
 // (receive_expected_delivery), eftersom det är saldot som står på spel.

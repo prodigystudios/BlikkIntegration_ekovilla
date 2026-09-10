@@ -591,6 +591,156 @@ function balanceClass(b: number) {
   return b < 0 ? 'text-rose-600' : b === 0 ? 'text-amber-600' : 'text-emerald-700';
 }
 
+/**
+ * En rad i listan över väntade leveranser, med inbyggd redigering.
+ *
+ * Egen komponent, och utkastet bor HÄR och inte i panelen: med ett delat redigeringstillstånd bär
+ * fälten kvar föregående rads värden när man öppnar nästa, och det syns inte förrän någon sparar
+ * fel siffra på fel leverans. Samma skäl som `key`-noten på PlaceholderModal.
+ *
+ * Att ändra i stället för att avboka och lägga upp på nytt är hela poängen: en flyttad leverans är
+ * SAMMA beställning, och två rader hade sett ut som två.
+ */
+function ExpectedRow({
+  item,
+  depots,
+  today,
+  canManage,
+  onSaved,
+  onCancel,
+}: {
+  item: ExpectedDelivery;
+  depots: DepotBalance[];
+  today: string;
+  canManage: boolean;
+  onSaved: () => Promise<void>;
+  onCancel: (id: string) => Promise<void>;
+}) {
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [depotId, setDepotId] = useState(item.depot_id);
+  const [material, setMaterial] = useState(item.material);
+  const [sacks, setSacks] = useState(String(item.sacks));
+  const [expectedOn, setExpectedOn] = useState(item.expected_on);
+  const [note, setNote] = useState(item.note ?? '');
+  const [saving, setSaving] = useState(false);
+
+  const late = item.expected_on < today;
+
+  function startEditing() {
+    // Läs om ur raden varje gång: ett avbrutet försök ska inte lämna kvar sina ändringar till nästa.
+    setDepotId(item.depot_id);
+    setMaterial(item.material);
+    setSacks(String(item.sacks));
+    setExpectedOn(item.expected_on);
+    setNote(item.note ?? '');
+    setEditing(true);
+  }
+
+  async function save() {
+    const count = Number(sacks);
+    if (!depotId || !material || !(count > 0) || saving) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`${EXPECTED_API}/${item.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot_id: depotId,
+          material,
+          sacks: count,
+          expected_on: expectedOn,
+          note: note.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte spara ändringen');
+      toast.success('Leveransen ändrad');
+      setEditing(false);
+      await onSaved();
+    } catch {
+      toast.error('Kunde inte spara ändringen');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <li className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
+        <div className="min-w-0">
+          <div className="truncate text-[12.5px] font-semibold text-slate-700">
+            {item.depot_name} · {item.sacks} säck {item.material}
+          </div>
+          <div className={cn('text-[11px] tabular-nums', late ? 'font-semibold text-amber-700' : 'text-slate-400')}>
+            {late ? 'Skulle ha kommit' : 'Väntas'} {item.expected_on}
+            {item.note ? ` · ${item.note}` : ''}
+          </div>
+        </div>
+        {canManage && (
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={startEditing} className={crm.ghostButton}>
+              Ändra
+            </button>
+            <button type="button" onClick={() => onCancel(item.id)} className={crm.dangerButton}>
+              Avbryt
+            </button>
+          </div>
+        )}
+      </li>
+    );
+  }
+
+  return (
+    <li className="rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
+      <div className="grid gap-2.5 sm:grid-cols-4">
+        <div>
+          <span className={LABEL}>Depå</span>
+          <SelectMenu
+            value={depotId}
+            onChange={setDepotId}
+            aria-label="Depå"
+            options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+          />
+        </div>
+        <div>
+          <span className={LABEL}>Material</span>
+          <SelectMenu
+            value={material}
+            onChange={setMaterial}
+            aria-label="Material"
+            options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+          />
+        </div>
+        <div>
+          <span className={LABEL}>Säckar</span>
+          <input type="number" min={1} value={sacks} onChange={(ev) => setSacks(ev.target.value)} className={crm.input} aria-label="Antal säckar" />
+        </div>
+        {/* Inget max: en väntad leverans ligger normalt framåt, och ska kunna flyttas åt båda håll. */}
+        <div>
+          <span className={LABEL}>Väntas</span>
+          <input type="date" value={expectedOn} onChange={(ev) => setExpectedOn(ev.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" />
+        </div>
+      </div>
+      <div className="mt-2.5 grid grid-cols-[1fr_auto_auto] gap-2.5">
+        <input value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+        <button type="button" onClick={() => setEditing(false)} className={crm.ghostButton}>
+          Avbryt
+        </button>
+        <button
+          type="button"
+          onClick={save}
+          disabled={saving || !depotId || !(Number(sacks) > 0)}
+          className={crm.formButton}
+          style={{ backgroundColor: 'var(--crm-primary)' }}
+        >
+          {saving ? 'Sparar…' : 'Spara'}
+        </button>
+      </div>
+    </li>
+  );
+}
+
 function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManageDepots: boolean }) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
@@ -809,34 +959,17 @@ function StockPanel({ canWrite, canManageDepots }: { canWrite: boolean; canManag
               Beställt men inte framme. Räknas inte i saldot nedan.
             </p>
             <ul className="grid gap-1.5">
-              {open.map((e) => {
-                const late = e.expected_on < today;
-                return (
-                  <li
-                    key={e.id}
-                    className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-[12.5px] font-semibold text-slate-700">
-                        {e.depot_name} · {e.sacks} säck {e.material}
-                      </div>
-                      <div className={cn('text-[11px] tabular-nums', late ? 'font-semibold text-amber-700' : 'text-slate-400')}>
-                        {late ? 'Skulle ha kommit' : 'Väntas'} {e.expected_on}
-                        {e.note ? ` · ${e.note}` : ''}
-                      </div>
-                    </div>
-                    {canManageDepots && (
-                      <button
-                        type="button"
-                        onClick={() => cancelExpected(e.id)}
-                        className={cn(crm.dangerButton, 'shrink-0')}
-                      >
-                        Avbryt
-                      </button>
-                    )}
-                  </li>
-                );
-              })}
+              {open.map((e) => (
+                <ExpectedRow
+                  key={e.id}
+                  item={e}
+                  depots={depots}
+                  today={today}
+                  canManage={canManageDepots}
+                  onSaved={loadOpen}
+                  onCancel={cancelExpected}
+                />
+              ))}
             </ul>
             {canWrite && (
               <p className="mt-2 text-[11px] text-slate-400">

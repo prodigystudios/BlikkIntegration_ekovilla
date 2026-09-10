@@ -81,12 +81,17 @@ create unique index if not exists ops_expected_deliveries_delivery_uniq
 -- SELECT är board-nivå: raden bär bara depå, material, antal och datum — inget om leverantör eller
 -- pris — och tavlans remsa ska kunna visa den för alla som får se schemat.
 --
--- INSERT/DELETE kräver planning.depot.manage. Att lägga in en väntad leverans ÄR att säga att något
--- är beställt, alltså samma inköpsbeslut som materialbeställningen kommer kräva.
+-- INSERT/UPDATE/DELETE kräver planning.depot.manage. Att lägga in, ändra eller avboka en väntad
+-- leverans är alla samma sak: ett besked om vad som är beställt. Samma inköpsgräns som
+-- materialbeställningen till fabriken kommer kräva.
 --
--- UPDATE kräver planning.schedule.write: att ta emot gods är lagerarbete, samma nyckel som
--- "Registrera leverans" redan använder. Med depot.manage här hade ingen utom admin kunnat kvittera
--- en leverans som stod på depån en fredag.
+-- ⚠️ ANKOMSTEN GÅR INTE HÄR. Kvitteringen sker i receive_expected_delivery, som är SECURITY DEFINER
+-- och därmed går förbi de här policyerna helt — den prövar planning.schedule.write själv, för att
+-- ta emot gods är lagerarbete och inte ett inköpsbeslut. Att låta UPDATE stå öppen för
+-- schedule.write "eftersom kvitteringen behöver det" vore alltså både onödigt och en glidning:
+-- vem som helst med skrivrätt på schemat hade kunnat flytta datum på en beställning direkt mot
+-- PostgREST, förbi routegrinden. Rör inte den här raden utan att först kontrollera att kvitteringen
+-- fortfarande går via funktionen.
 
 alter table public.ops_expected_deliveries enable row level security;
 grant select, insert, update, delete on public.ops_expected_deliveries to authenticated;
@@ -104,8 +109,8 @@ create policy ops_expected_deliveries_insert on public.ops_expected_deliveries
 drop policy if exists ops_expected_deliveries_update on public.ops_expected_deliveries;
 create policy ops_expected_deliveries_update on public.ops_expected_deliveries
   for update to authenticated
-  using (public.has_permission('planning.schedule.write'))
-  with check (public.has_permission('planning.schedule.write'));
+  using (public.has_permission('planning.depot.manage'))
+  with check (public.has_permission('planning.depot.manage'));
 
 drop policy if exists ops_expected_deliveries_delete on public.ops_expected_deliveries;
 create policy ops_expected_deliveries_delete on public.ops_expected_deliveries

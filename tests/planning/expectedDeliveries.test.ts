@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { canReceiveExpected } from '@/lib/domains/planning/expectedDeliveries';
-import { createExpectedDeliverySchema, createDeliverySchema } from '@/app/api/crm/planering/_lib';
+import { createExpectedDeliverySchema, createDeliverySchema, updateExpectedDeliverySchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 
@@ -50,5 +50,35 @@ describe('datumreglerna för de två leveranssorterna', () => {
   it('avvisar okänt material och noll säckar', () => {
     expect(createExpectedDeliverySchema.safeParse({ ...base, material: 'GLASULL', expected_on: today }).success).toBe(false);
     expect(createExpectedDeliverySchema.safeParse({ ...base, sacks: 0, expected_on: today }).success).toBe(false);
+  });
+});
+
+describe('updateExpectedDeliverySchema', () => {
+  it('en flyttad leverans behöver bara det nya datumet', () => {
+    // Hela poängen: en leverans som flyttas är SAMMA beställning. Att kräva alla fält hade tvingat
+    // fram avboka-och-lägg-upp-på-nytt, vilket tappar spåret och ser ut som två beställningar.
+    const parsed = updateExpectedDeliverySchema.safeParse({ expected_on: '2026-10-02' });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('får flyttas åt båda håll — inget datumtak', () => {
+    expect(updateExpectedDeliverySchema.safeParse({ expected_on: '2027-01-15' }).success).toBe(true);
+    expect(updateExpectedDeliverySchema.safeParse({ expected_on: '2025-01-15' }).success).toBe(true);
+  });
+
+  it('en tom patch avvisas — "Spara" på något oförändrat är inte ett fel att skriva bort', () => {
+    expect(updateExpectedDeliverySchema.safeParse({}).success).toBe(false);
+  });
+
+  it('noteringen går att nolla, men inte antalet', () => {
+    expect(updateExpectedDeliverySchema.safeParse({ note: null }).success).toBe(true);
+    expect(updateExpectedDeliverySchema.safeParse({ sacks: 0 }).success).toBe(false);
+  });
+
+  it('avvisar okänt material också vid ändring', () => {
+    // Materialidentiteten måste stämma tecken för tecken mot ops_depot_deliveries.material, annars
+    // möts leverans och behov aldrig. Grinden får inte vara lösare här än vid inläggningen.
+    expect(updateExpectedDeliverySchema.safeParse({ material: 'GLASULL' }).success).toBe(false);
+    expect(updateExpectedDeliverySchema.safeParse({ material: MATERIAL_SHORTS[1] }).success).toBe(true);
   });
 });

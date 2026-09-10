@@ -30,6 +30,7 @@ const ACTION_LABELS: Record<string, string> = {
   'day_note.remove': 'Anteckning −',
   'confirmation.send': 'Bekräftelse',
   'expected_delivery.add': 'Leverans väntas',
+  'expected_delivery.update': 'Leverans ändrad',
   'expected_delivery.receive': 'Leverans ankom',
   'expected_delivery.cancel': 'Leverans avbruten',
 };
