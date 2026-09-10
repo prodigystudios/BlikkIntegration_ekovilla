@@ -69,8 +69,7 @@ describe('attributePlannedDemand', () => {
     work_order_id: 'wo1',
     depot_id: 'd1',
     status: 'scheduled',
-    material: 'EKOVILLA',
-    sacks: 40,
+    materials: [{ material: 'EKOVILLA', sacks: 40 }],
     ...over,
   });
 
@@ -78,6 +77,24 @@ describe('attributePlannedDemand', () => {
     expect(attributePlannedDemand([seg(), seg(), seg()])).toEqual([
       { depot_id: 'd1', material: 'EKOVILLA', sacks: 40 },
     ]);
+  });
+
+  it('ger EN RAD PER MATERIAL — jobbet räknas en gång, materialen var för sig', () => {
+    // 🧨 Regression: hela säckantalet lades på orderns FÖRSTA material, så det andra fick inget
+    // planerat behov alls. Det syntes som ett oförklarligt negativt saldo på en depå som aldrig
+    // sett en leverans av det materialet — och i materialbeställningen väljer materialet fabrik.
+    const rows = attributePlannedDemand([
+      seg({ materials: [{ material: 'EKOVILLA', sacks: 200 }, { material: 'KNAUF SUPAFIL', sacks: 80 }] }),
+    ]);
+    expect(rows).toEqual([
+      { depot_id: 'd1', material: 'EKOVILLA', sacks: 200 },
+      { depot_id: 'd1', material: 'KNAUF SUPAFIL', sacks: 80 },
+    ]);
+  });
+
+  it('dedupen gäller jobbet, inte materialet — ett flersegmentsjobb dubblar inte sina material', () => {
+    const two = { materials: [{ material: 'EKOVILLA', sacks: 200 }, { material: 'PAROC', sacks: 30 }] };
+    expect(attributePlannedDemand([seg(two), seg(two)])).toHaveLength(2);
   });
 
   it('falls through to the next segment when the first truck has no depot', () => {
@@ -100,13 +117,25 @@ describe('attributePlannedDemand', () => {
   it('ignores closed work orders and rows with nothing to blow', () => {
     expect(attributePlannedDemand([seg({ status: 'completed' })])).toEqual([]);
     expect(attributePlannedDemand([seg({ status: null })])).toEqual([]);
-    expect(attributePlannedDemand([seg({ sacks: 0 })])).toEqual([]);
-    expect(attributePlannedDemand([seg({ material: null })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ materials: [{ material: 'EKOVILLA', sacks: 0 }] })])).toEqual([]);
+    expect(attributePlannedDemand([seg({ materials: [] })])).toEqual([]);
     expect(attributePlannedDemand([seg({ work_order_id: null })])).toEqual([]);
   });
 
+  it('ett material utan säckar faller bort, resten av ordern står kvar', () => {
+    // Inte "hela jobbet försvinner": en rad utan densitet ger noll säckar för sitt material, men
+    // säger ingenting om de andra materialen på samma order.
+    const rows = attributePlannedDemand([
+      seg({ materials: [{ material: 'EKOVILLA', sacks: 0 }, { material: 'PAROC', sacks: 30 }] }),
+    ]);
+    expect(rows).toEqual([{ depot_id: 'd1', material: 'PAROC', sacks: 30 }]);
+  });
+
   it('keeps separate work orders apart', () => {
-    const rows = attributePlannedDemand([seg(), seg({ work_order_id: 'wo2', depot_id: 'd2', sacks: 12 })]);
+    const rows = attributePlannedDemand([
+      seg(),
+      seg({ work_order_id: 'wo2', depot_id: 'd2', materials: [{ material: 'EKOVILLA', sacks: 12 }] }),
+    ]);
     expect(rows).toEqual([
       { depot_id: 'd1', material: 'EKOVILLA', sacks: 40 },
       { depot_id: 'd2', material: 'EKOVILLA', sacks: 12 },

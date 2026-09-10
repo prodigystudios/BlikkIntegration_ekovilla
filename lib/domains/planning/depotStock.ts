@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { materialShortFromLineItems, totalSacks } from '@/lib/domains/crm/materials';
+import { materialDemandFromLineItems, materialShortFromLineItems, type MaterialDemand } from '@/lib/domains/crm/materials';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { effectiveSackReports } from './sackLedger';
 
@@ -154,19 +154,28 @@ export type PlannedDemandSegment = {
   work_order_id: string | null;
   depot_id: string | null;
   status: string | null;
-  material: string | null;
-  sacks: number;
+  /**
+   * Behovet per material (materialDemandFromLineItems). En order kan bära flera material, och de
+   * dras från depån var för sig — tom lista betyder att inget material gick att härleda.
+   */
+  materials: MaterialDemand[];
 };
 
 /**
- * Pure: one planned-demand row per open work order, attributed to the first segment (in the given
- * order) that resolves to BOTH a depot and a material.
+ * Pure: planned-demand rows per open work order, attributed to the first segment (in the given
+ * order) that resolves to BOTH a depot and at least one material with sacks to blow.
  *
  * ⚠️ A work order counts as seen only once it has actually been counted. Marking it seen before the
  * validity check — which is what this did — meant a job whose first segment sat on a truck with no
  * depot was dropped entirely, and the dedup then skipped its remaining segments too. The demand
  * silently vanished and the shortfall banner stayed quiet. Splitting a job across two trucks is a
  * normal move on the board ("Kopiera till bil"), so this was reachable.
+ *
+ * ⚠️ EN RAD PER MATERIAL, inte per arbetsorder. Dedupen gäller fortfarande jobbet — ett jobb över
+ * flera segment räknas en gång — men det jobbet kan mycket väl behöva två material ur samma depå.
+ * Att lägga hela säckantalet på orderns första material (vilket det här gjorde) lämnade det andra
+ * materialet utan planerat behov, och i materialbeställningen är materialet dessutom det som väljer
+ * fabrik.
  */
 export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockRow[] {
   const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
@@ -174,19 +183,26 @@ export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockR
   const rows: StockRow[] = [];
   for (const s of segments) {
     if (!s.work_order_id || !s.status || !open.has(s.status) || seen.has(s.work_order_id)) continue;
-    if (!s.depot_id || !s.material || !(s.sacks > 0)) continue;
+    const demand = (s.materials ?? []).filter((m) => m.material && m.sacks > 0);
+    if (!s.depot_id || demand.length === 0) continue;
     seen.add(s.work_order_id);
-    rows.push({ depot_id: s.depot_id, material: s.material, sacks: s.sacks });
+    for (const d of demand) rows.push({ depot_id: s.depot_id, material: d.material, sacks: d.sacks });
   }
   return rows;
 }
 
 // Planned demand rows: for each OPEN scheduled job (work order still draft/scheduled/in_progress),
-// the sacks it's booked to blow → its segment's truck → that truck's depot, attributed to the work
-// order's material. Deduped by work order so a multi-segment job counts once. This is what the booked
-// schedule needs from the depot, regardless of the visible week. (While installer reporting is
-// dormant, consumed≈0, so balance is the physical stock and planned is the full booked demand —
-// refine to "remaining" once reports land.)
+// the sacks it's booked to blow → its segment's truck → that truck's depot, split PER MATERIAL.
+// Deduped by work order so a multi-segment job counts once. This is what the booked schedule needs
+// from the depot, regardless of the visible week.
+//
+// ⚠️ KVARSTÅENDE: talet är fortfarande orderns HELA säckantal, inte det som är kvar att blåsa.
+// `balance` sänks samtidigt av det som redan rapporterats (deriveConsumptionRows), så en halvblåst
+// order räknas två gånger och `shortfall` överskattas med exakt det blåsta antalet. Det är en
+// beteendeändring på ett tal som redan visas och tas i en egen omgång — men den MÅSTE vara gjord
+// innan siffran får fylla i en materialbeställning, annars beställs för mycket.
+// Återstoden ska hämtas via reportedSacksByWorkOrder/sackTotalsByWorkOrder, som redan bär
+// supersede-regeln; bygg ingen andra kopia av den.
 async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockRow[]> {
   const { data: trucks } = await supabase.from('ops_trucks').select('id, depot_id');
   const truckDepot = new Map((trucks ?? []).map((t: any) => [t.id as string, (t.depot_id as string | null) ?? null]));
@@ -211,7 +227,7 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
   const woById = new Map(
     (openWos ?? []).map((w: any) => [
       w.id as string,
-      { status: (w.status as string | null) ?? null, material: materialShortFromLineItems(w.line_items), sacks: totalSacks(w.line_items) },
+      { status: (w.status as string | null) ?? null, materials: materialDemandFromLineItems(w.line_items) },
     ]),
   );
   if (woById.size === 0) return [];
@@ -232,8 +248,7 @@ async function derivePlannedDemandRows(supabase: SupabaseClient): Promise<StockR
       work_order_id: (s.work_order_id as string | null) ?? null,
       depot_id: truckDepot.get(s.truck_id) ?? null,
       status: wo.status,
-      material: wo.material,
-      sacks: wo.sacks,
+      materials: wo.materials,
     }];
   });
   return attributePlannedDemand(candidates);
