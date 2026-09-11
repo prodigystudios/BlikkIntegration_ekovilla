@@ -5,13 +5,44 @@ import { lineItemQuantity, type LineItemQuantitySource } from '@/lib/domains/crm
 // Single source of truth shared by egenkontroll (manual select) and the quote form's
 // sack calculation (material inferred from the article).
 // `short` is the headline shown above the measurements in the work description.
-export const MATERIALS: Record<string, { bagWeight: number; lambda: string; short: string }> = {
-  'Ekovilla Cellulosa Lösull CE ETA-09/0081': { bagWeight: 14, lambda: '0.038', short: 'EKOVILLA' },
-  'Knauf Supafil Frame Lösull B0709EPCR': { bagWeight: 15.5, lambda: '0.038', short: 'KNAUF SUPAFIL' },
-  'Isocell/isEco cellulosa Lösull CE ETA-06/0076': { bagWeight: 12, lambda: '0.038', short: 'ISOCELL/ISECO' },
-  'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039', short: 'HUNTON NATIVO' },
-  'PAROC SHT 1, Lösull vind 0809-CPR-1014': { bagWeight: 15, lambda: '0.041', short: 'PAROC' },
+//
+// `sacksPerPallet` är BESTÄLLNINGSENHETEN: material köps i hela pallar, aldrig i lösa säckar.
+//
+// ⚠️ TALET HÖR TILL MATERIALET, INTE TILL LEVERANTÖREN, och det går INTE att härleda ur
+// `bagWeight`. Ekovilla packar 54 säckar à 14 kg (756 kg/pall) medan Knauf packar 24 à 15,5 kg
+// (372 kg/pall) — en pall bär alltså inte en given vikt heller. Siffran är packningsfakta och måste
+// anges per material. (Williams besked 2026-09-11.)
+//
+// ⚠️ null BETYDER "VI VET INTE", INTE "INGEN AVRUNDNING". Prognosen avrundar då inte alls och
+// SKRIVER UT att pallstorleken saknas, i stället för att föreslå ett säckantal som fabriken inte
+// kan leverera. Samma regel som för leverantörens ledtid: ett okänt värde får aldrig se ut som ett
+// uträknat svar. Fyll i de saknade när de blir kända.
+//
+// ⛔ Ett fullt lass modelleras INTE. Antalet pallar på en bil varierar (William 2026-09-11), och
+// bilen kan dessutom blanda produkter — "fullt lass" är kapacitet, inte en beställningsenhet.
+export const MATERIALS: Record<
+  string,
+  { bagWeight: number; lambda: string; short: string; sacksPerPallet: number | null }
+> = {
+  'Ekovilla Cellulosa Lösull CE ETA-09/0081': { bagWeight: 14, lambda: '0.038', short: 'EKOVILLA', sacksPerPallet: 54 },
+  'Knauf Supafil Frame Lösull B0709EPCR': { bagWeight: 15.5, lambda: '0.038', short: 'KNAUF SUPAFIL', sacksPerPallet: 24 },
+  'Isocell/isEco cellulosa Lösull CE ETA-06/0076': { bagWeight: 12, lambda: '0.038', short: 'ISOCELL/ISECO', sacksPerPallet: null },
+  'Hunton Nativo Träfiber Lösull DoP 02-04-01': { bagWeight: 14, lambda: '0.039', short: 'HUNTON NATIVO', sacksPerPallet: null },
+  'PAROC SHT 1, Lösull vind 0809-CPR-1014': { bagWeight: 15, lambda: '0.041', short: 'PAROC', sacksPerPallet: null },
 };
+
+/**
+ * Säckar per pall för en kanonisk materialkod, eller null när packningen inte är känd.
+ *
+ * Slår upp på `short` och inte på artikelnamnet: det är koden som bär materialidentiteten genom
+ * lagret, prognosen och beställningen.
+ */
+export function sacksPerPalletFor(short: string): number | null {
+  for (const m of Object.values(MATERIALS)) {
+    if (m.short === short) return m.sacksPerPallet;
+  }
+  return null;
+}
 
 // Brand keywords → material key, for inferring the material (and its bag weight) from
 // a Fortnox article name. Same name-based approach as inferConstructionFromArticle.

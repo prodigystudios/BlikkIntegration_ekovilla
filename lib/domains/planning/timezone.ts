@@ -47,3 +47,27 @@ export function stockholmTodayISO(now: Date = new Date()): string {
   const { year, month, day } = parts(now);
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
+
+/**
+ * Flytta ett ISO-datum n kalenderdagar, som ISO-sträng. Oberoende av runtimens zon.
+ *
+ * ⚠️ UTC-FÖRANKRAD, OCH DET ÄR HELA POÄNGEN. Den naiva varianten — lägg n * 86 400 000 ms på en
+ * LOKAL midnatt och läs tillbaka lokala fält — ger samma datum tillbaka över höstens
+ * sommartidsväxling: `2026-10-25 00:00 +24 h` blir `2026-10-25 23:00`, eftersom det dygnet är 25
+ * timmar långt. En dag-för-dag-vandring besöker då samma datum två gånger, och en beräkning som
+ * backar ledtiden hoppar en dag fel. I UTC finns ingen växling, så aritmetiken är exakt.
+ *
+ * 🕰️ TESTET SOM VAKTAR DET HÄR BITER BARA I EN DST-ZON. Under `TZ=UTC` (CI och Vercel) beter sig
+ * den naiva varianten identiskt, så ett grönt test bevisar ingenting där. Se
+ * tests/planning/depotForecast.test.ts, som är mutationstestat under `TZ=Europe/Stockholm`.
+ *
+ * (Två privata tvillingar finns redan: `addDaysISO` i insights.ts och `addDays` i holidays.ts, båda
+ * UTC-förankrade och båda korrekta. Att slå ihop dem är en egen ändring — den här bor här för att
+ * det är hit datumankringen hör, inte i en fjärde kopia hos den som råkade behöva den.)
+ */
+export function addDaysISO(iso: string, days: number): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1, d) + days * 86_400_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}

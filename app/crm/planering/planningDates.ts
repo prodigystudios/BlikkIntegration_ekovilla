@@ -32,6 +32,24 @@ export function addDaysISO(iso: string, n: number): string {
 }
 
 // Inclusive day span between two ISO dates (same day = 1).
+/**
+ * '2026-09-24' -> 'tor 24/9'. För banderoller och kort som ska säga NÄR något händer.
+ *
+ * ⚠️ Veckodagsnamnen kommer ur WEEKDAYS_SHORT, inte ur en egen lista. En andra uppsättning namn
+ * bredvid den här hade sett identisk ut tills någon rättade stavningen i den ena.
+ *
+ * UTC-förankrad hela vägen: Date byggs med Date.UTC och läses med getUTCDay, så svaret är detsamma
+ * i varje zon. En lokal `new Date(y, m-1, d)` hade gett rätt svar också — men bara för att den
+ * läses tillbaka lokalt, och den sortens "råkar gå ihop" spricker vid nästa ändring.
+ *
+ * WEEKDAYS_SHORT är måndagsindexerad (0 = mån) medan getUTCDay är söndagsindexerad (0 = sön).
+ */
+export function shortDayISO(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const weekday = WEEKDAYS_SHORT[(new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7];
+  return `${weekday} ${d}/${m}`;
+}
+
 export function daysBetweenInclusive(startISO: string, endISO: string): number {
   const ms = parseISO(endISO).getTime() - parseISO(startISO).getTime();
   return Math.round(ms / 86_400_000) + 1;

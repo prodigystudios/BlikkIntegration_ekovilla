@@ -3,6 +3,7 @@ import {
   validateSupplier,
   suppliersForMaterial,
   defaultSupplierForMaterial,
+  roundUpToMultiple,
   type MaterialSupplier,
 } from '@/lib/domains/planning/materialSuppliers';
 import { createSupplierSchema, updateSupplierSchema } from '@/app/api/crm/planering/_lib';
@@ -77,6 +78,54 @@ describe('validateSupplier', () => {
 
   it('godtar noll dagars ledtid — det är ett svar, inte ett tomt fält', () => {
     expect(validateSupplier({ name: 'X', email: 'a@b.se', materials: [EKOVILLA], leadTimeDays: 0 })).toBeNull();
+  });
+});
+
+describe('roundUpToMultiple', () => {
+  it('avrundar upp till närmaste hela pall', () => {
+    expect(roundUpToMultiple(187, 24)).toBe(192);
+    expect(roundUpToMultiple(1, 24)).toBe(24);
+  });
+
+  it('lämnar ett exakt jämnt tal orört', () => {
+    expect(roundUpToMultiple(192, 24)).toBe(192);
+    expect(roundUpToMultiple(24, 24)).toBe(24);
+  });
+
+  it('multipel 1 betyder ingen avrundning — måste fungera', () => {
+    // Defaulten. En leverantör som säljer lösa säckar ska gå att lägga upp, och ett obesatt fält
+    // får aldrig tyst börja avrunda.
+    expect(roundUpToMultiple(187, 1)).toBe(187);
+  });
+
+  it('noll behov blir noll, inte en pall', () => {
+    expect(roundUpToMultiple(0, 24)).toBe(0);
+    expect(roundUpToMultiple(-5, 24)).toBe(0);
+  });
+
+  // 🧨 En nolla eller ett trasigt tal som multipel hade gett Infinity respektive NaN och tyst
+  // förstört förslaget. Faller tillbaka på 1 (ingen avrundning) i stället.
+  it('en trasig multipel avrundar inte, i stället för att ge Infinity eller NaN', () => {
+    for (const bad of [0, -1, 0.5, NaN, undefined as unknown as number]) {
+      expect(roundUpToMultiple(187, bad)).toBe(187);
+    }
+  });
+
+  /**
+   * ⚠️ REGELN SOM PLANEN VARNAR FÖR: avrunda EN gång, på totalen — aldrig per delbehov.
+   *
+   * Underskottet är sanningen om vad som behövs; pallen är en leveransform. Avrundas varje dags
+   * rörelse för sig växer förslaget med antalet HÄNDELSER i stället för med behovet.
+   */
+  it('avrundning per delbehov staplar felen — därför en gång, på totalen', () => {
+    const perDag = [1, 1, 1];
+    const felaktigt = perDag.reduce((sum, d) => sum + roundUpToMultiple(d, 24), 0);
+    const rätt = roundUpToMultiple(
+      perDag.reduce((sum, d) => sum + d, 0),
+      24,
+    );
+    expect(felaktigt).toBe(72); // tre pallar för tre säckar
+    expect(rätt).toBe(24); // en pall, vilket är svaret
   });
 });
 

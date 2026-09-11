@@ -3,6 +3,9 @@ import { materialDemandFromLineItems, materialShortFromLineItems, type MaterialD
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { effectiveSackReports, sackReportKind } from './sackLedger';
 import { chunkIds, readAllPages, type ReadError } from './pagedRead';
+import { listOpenExpected } from './expectedDeliveries';
+import { defaultSupplierForMaterial, listSupplyTerms } from './materialSuppliers';
+import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -307,7 +310,11 @@ export function applyReportedToDemand(
   return segments.map((s) => {
     const rep = s.work_order_id ? reported.get(s.work_order_id) : undefined;
     if (!rep) return s;
-    if (rep.hasFinal) return { ...s, materials: [] };
+    // ⚠️ NOLLAR materialen, RADERAR dem inte. Skillnaden är inte kosmetisk: en tom lista betyder
+    // "inget material gick att härleda" nedströms, och ett färdigblåst jobb rapporterades då som
+    // no_material i excluded — kortet påstod att siffrorna var för låga för jobb som behöver noll.
+    // Materialet ÄR känt; det är behovet som är slut.
+    if (rep.hasFinal) return { ...s, materials: (s.materials ?? []).map((m) => ({ material: m.material, sacks: 0 })) };
     // Bara det som blåstes ur DEN HÄR depån får krympa behovet här — se invarianten vid
     // reportedDemandByWorkOrder. Ett segment vid en depå som aldrig rapporterats mot lämnas orört.
     const blown = s.depot_id ? rep.byDepotMaterial.get(s.depot_id) : undefined;
@@ -332,7 +339,114 @@ export type PlannedDemandSegment = {
    * dras från depån var för sig — tom lista betyder att inget material gick att härleda.
    */
   materials: MaterialDemand[];
+  /**
+   * Segmentets startdag, 'YYYY-MM-DD'. Bär INGEN vikt i saldot (som är tidlöst) men är hela grunden
+   * för prognosen: det är den här dagen behovet bokförs på när depån vandras dag för dag.
+   *
+   * VALFRITT med flit: saldovägen (attributePlannedDemand -> computeDepotBalances) är tidlös och
+   * bryr sig inte, så dess anropare och tester behöver inte känna till fältet alls. Utelämnat eller
+   * null betyder att dagen inte gick att läsa — då räknas raden i saldot men kan inte dateras, och
+   * prognosen redovisar den som utesluten i stället för att gissa ett datum.
+   */
+  start_day?: string | null;
 };
+
+/**
+ * Ett jobb vars behov inte kunde räknas fullt ut.
+ *
+ * ⚠️ Finns för att prognosen ska kunna SÄGA vad den inte vet. Tidigare hoppades de här jobben tyst
+ * över (`if (depotId && material)`), så ett underlag med hål såg exakt ut som ett komplett — och
+ * skillnaden är ett beställningsförslag som är för lågt utan att någon kan se det.
+ */
+export type DemandExclusion = {
+  work_order_id: string;
+  /**
+   * `no_depot`  — inget av jobbets segment ligger på en bil med depå. Behovet tillhör ingen depå.
+   * `no_material` — artikelnamnen härledde inget material (se materialRenameEffect).
+   * `no_date`   — segmentet saknar startdag: räknas i saldot, men går inte att placera på en dag.
+   */
+  reason: 'no_depot' | 'no_material' | 'no_date';
+};
+
+/** Ett arbetsordersegment som VANN attributionen, med behovet som återstår vid dess depå. */
+export type PickedDemand = {
+  work_order_id: string;
+  depot_id: string;
+  start_day: string | null;
+  materials: MaterialDemand[];
+};
+
+/**
+ * Ren: vilket segment som bär en arbetsorders materialbehov — EN källa för både saldot och prognosen.
+ *
+ * ⚠️ DEN HÄR FUNKTIONEN ÄR HELA POÄNGEN MED ATT DE INTE GLIDER ISÄR. Bristbanderollen frågar "hur
+ * mycket fattas" och prognosen frågar "när tar det slut", men det är samma fråga om samma underlag.
+ * Skrivs urvalet två gånger driver de isär tyst — banderollen larmar om en depå prognosen säger är
+ * försörjd, eller tvärtom, och ingen av dem felar. Lägg aldrig en andra urvalsregel bredvid den här.
+ *
+ * REGELN, oförändrad från den attribution som gällt sedan lagervyn byggdes: en arbetsorder räknas
+ * EN gång, mot det FÖRSTA segmentet (i inskickad ordning) som löser en depå.
+ *
+ * ⚠️ En arbetsorder räknas som sedd först när den faktiskt räknats. Markerades den sedd före
+ * depåkontrollen — vilket den gjorde en gång — försvann ett jobb vars första segment satt på en bil
+ * utan depå helt, och dedupen hoppade sedan över dess övriga segment också. Behovet försvann tyst
+ * och banderollen teg. Att splitta ett jobb över två bilar är ett normalt drag ("Kopiera till bil"),
+ * så det var nåbart.
+ *
+ * ⚠️ Genomfallningen gäller BARA depålösheten. Ett tomt materialbehov fick en gång samma behandling,
+ * och då flyttades ett färdigblåst jobbs behov till NÄSTA depå — en rosa banderoll på en depå där
+ * ingenting var planerat. Att sakna depå säger ingenting om jobbet; att ha noll kvar är ett svar.
+ */
+export function pickDemandSegments(segments: PlannedDemandSegment[]): {
+  picked: PickedDemand[];
+  excluded: DemandExclusion[];
+} {
+  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+  const seen = new Set<string>();
+  const candidates = new Set<string>();
+  const picked: PickedDemand[] = [];
+
+  for (const s of segments) {
+    if (!s.work_order_id || !s.status || !open.has(s.status)) continue;
+    candidates.add(s.work_order_id);
+    if (seen.has(s.work_order_id)) continue;
+    if (!s.depot_id) continue;
+    seen.add(s.work_order_id);
+    picked.push({
+      work_order_id: s.work_order_id,
+      depot_id: s.depot_id,
+      start_day: s.start_day ?? null,
+      materials: s.materials ?? [],
+    });
+  }
+
+  // ⚠️ ETT FÖRSLAG FÅR ALDRIG SE KOMPLETT UT NÄR DET INTE ÄR DET. Bortfallet räknas EFTER loopen,
+  // inte i den: att ett segment saknar depå säger ingenting så länge jobbet har ett annat segment
+  // som har en. Ett jobb är uteslutet först när INGET av dess segment löste en depå.
+  const excluded: DemandExclusion[] = [];
+  for (const id of candidates) {
+    if (!seen.has(id)) {
+      excluded.push({ work_order_id: id, reason: 'no_depot' });
+    }
+  }
+  for (const p of picked) {
+    // ⚠️ FRÅGAN ÄR OM MATERIALET ÄR KÄNT, INTE OM DET FINNS BEHOV KVAR. Villkoret löd förut
+    // `sacks > 0`, vilket gjorde varje FÄRDIGBLÅST jobb till ett no_material-fynd: kortet skrev
+    // "kunde inte räknas — inget material gick att härleda ur artikelnamnen" och påstod att
+    // siffrorna var för låga, för jobb vars behov korrekt var noll. En lista med falsklarm blir
+    // inte läst, och då är den värdelös också för de riktiga fynden.
+    if (!p.materials.some((m) => m.material)) {
+      excluded.push({ work_order_id: p.work_order_id, reason: 'no_material' });
+      continue;
+    }
+    // Ett jobb utan behov kvar behöver ingen dag — det är redovisat och färdigt, inte utelämnat.
+    if (!p.start_day && p.materials.some((m) => m.material && m.sacks > 0)) {
+      excluded.push({ work_order_id: p.work_order_id, reason: 'no_date' });
+    }
+  }
+
+  return { picked, excluded };
+}
 
 /**
  * Pure: planned-demand rows per open work order, attributed to the first segment (in the given
@@ -356,25 +470,14 @@ export type PlannedDemandSegment = {
  * fabrik.
  */
 export function attributePlannedDemand(segments: PlannedDemandSegment[]): StockRow[] {
-  const open = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
-  const seen = new Set<string>();
-  const rows: StockRow[] = [];
-  for (const s of segments) {
-    if (!s.work_order_id || !s.status || !open.has(s.status) || seen.has(s.work_order_id)) continue;
-    // ⚠️ ATT SAKNA DEPÅ OCH ATT HA NOLL KVAR ÄR OLIKA SAKER, och bara det första ska falla igenom.
-    // En bil utan depot_id säger ingenting om jobbet — pröva nästa segment. Ett segment MED depå
-    // har däremot redovisat jobbet mot den depån, även när svaret är noll säckar.
-    //
-    // 🧨 Behandlades de lika fick ett färdigblåst jobb sitt behov flyttat till nästa depå: avdraget
-    // är per depå, så segmentet vid depå B hade aldrig fått något avdrag och bidrog med hela
-    // säckantalet. Utfallet var en rosa bristbanderoll på en depå där ingenting var planerat.
-    if (!s.depot_id) continue;
-    seen.add(s.work_order_id);
-    for (const d of s.materials ?? []) {
-      if (d.material && d.sacks > 0) rows.push({ depot_id: s.depot_id, material: d.material, sacks: d.sacks });
-    }
-  }
-  return rows;
+  // Urvalet bor i pickDemandSegments — samma rader som prognosen räknar på. Den här funktionen
+  // gör bara om dem till tidlösa saldorader: den kastar datumet, vilket är precis skillnaden
+  // mellan "hur mycket fattas" och "när tar det slut".
+  return pickDemandSegments(segments).picked.flatMap((p) =>
+    p.materials
+      .filter((d) => d.material && d.sacks > 0)
+      .map((d) => ({ depot_id: p.depot_id, material: d.material, sacks: d.sacks })),
+  );
 }
 
 // Kandidatsegmenten bakom det planerade behovet: för varje ÖPPET bokat jobb (arbetsordern
@@ -461,53 +564,126 @@ async function derivePlannedDemandSegments(
       depot_id: truckDepot.get(s.truck_id) ?? null,
       status: wo.status,
       materials: wo.materials,
+      // Redan hämtad — sorteringen som avgör vilket segment som vinner bygger på den. Nu bärs den
+      // också vidare, för prognosen behöver veta VILKEN DAG behovet infaller.
+      start_day: (s.start_day as string | null) ?? null,
     }];
   });
   return { segments, error: null };
 }
 
-// Per-depot, per-material balances + planned demand for the stock view. RLS (planning.schedule.read).
-export async function getDepotStock(supabase: SupabaseClient): Promise<{ data: DepotBalance[]; error: { message: string } | null }> {
-  const { data: depots, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
-  if (error) return { data: [], error };
+/**
+ * Saldot OCH den tidsfasade prognosen ur EN läsning.
+ *
+ * ⚠️ EN LÄSNING, INTE TVÅ. Att låta prognosen läsa om allt själv vore att öppna för att de två
+ * beskriver olika ögonblick: en rapport skriven mellan läsningarna hade sänkt saldot i den ena och
+ * inte i den andra, och då säger banderollen och prognoskortet olika saker om samma depå på samma
+ * skärm. Samma regel som redan gäller mellan förbrukningen och avdraget.
+ *
+ * Prognosen tillför tre saker utöver saldot: datumet på behovet, de väntade leveranserna som
+ * inflöde, och leverantörens LEDTID. Pallstorleken hämtas inte här — den hör till materialet
+ * (sacksPerPalletFor) och läses av prognosmodulen själv.
+ *
+ * Failar stängt, som getDepotStock: "kunde inte räkna" är ett svar, "behöver 0 säck" är en lögn —
+ * och den lögnen ska snart få fylla i en beställning till fabriken.
+ */
+export async function getDepotStockWithForecast(
+  supabase: SupabaseClient,
+  today: string,
+): Promise<{ data: DepotBalance[]; forecast: DepotForecast | null; error: { message: string } | null }> {
+  const { data: depotRows, error } = await supabase.from('ops_depots').select('id, name').order('name', { ascending: true });
+  if (error) return { data: [], forecast: null, error };
+  const depots = ((depotRows ?? []) as { id: string; name: string }[]);
 
-  // ⚠️ EN läsning av bilparken, delad av båda halvorna. Två läsningar kan se olika ögonblick, och
-  // byter en bil depå emellan bokförs förbrukningen på den gamla depån medan behovet räknas mot den
-  // nya — samma "måste komma ur en och samma läsning"-regel som rapportraderna bär.
-  // Ett fel här ger en tom depåkarta, alltså noll förbrukning OCH noll planerat behov på varje
-  // depå: saldot ser fullt ut och banderollen tiger. Måste fram.
   const { data: trucks, error: truckError } = await supabase.from('ops_trucks').select('id, depot_id');
-  if (truckError) return { data: [], error: truckError };
+  if (truckError) return { data: [], forecast: null, error: truckError };
   const truckDepot = new Map(
     ((trucks ?? []) as Array<Record<string, any>>).map((t) => [t.id as string, (t.depot_id as string | null) ?? null]),
   );
 
-  const [delivered, consumption, demand] = await Promise.all([
+  const [delivered, consumption, demand, expected, suppliers] = await Promise.all([
     listDeliveryRows(supabase),
     deriveConsumptionRows(supabase, truckDepot),
     derivePlannedDemandSegments(supabase, truckDepot),
+    listOpenExpected(supabase),
+    listSupplyTerms(supabase),
   ]);
 
-  // ⚠️ FAILA STÄNGT. Tidigare svalde varje läsning sitt fel och getDepotStock returnerade hårdkodat
-  // `error: null`, så rutten kunde bara vidarebefordra ett fel den aldrig fick. Utfallet blev ett
-  // TAL i stället för ett fel — och åt olika håll beroende på vilken läsning som gick sönder:
-  // ett fel på leveranserna ger `delivered = 0` och uppblåst brist, ett fel på segmenten ger
-  // `planned = 0` och en tyst banderoll på en depå som är tom.
-  //
-  // "Kunde inte räkna" är ett svar. "Behöver 0 säck" är en lögn, och den lögnen ska snart få fylla
-  // i en beställning till fabriken.
-  const readError = delivered.error ?? consumption.error ?? demand.error;
-  if (readError) return { data: [], error: readError };
+  const readError =
+    delivered.error ?? consumption.error ?? demand.error ?? expected.error ?? suppliers.error;
+  if (readError) return { data: [], forecast: null, error: readError };
 
-  // Behovet är det som är KVAR att blåsa, inte orderns hela säckantal. Utan avdraget räknades de
-  // blåsta säckarna två gånger — en gång som sänkt `balance` och en gång som kvarstående `planned`
-  // — och `shortfall` överskattades med exakt det blåsta antalet, växande under veckan.
-  // Avdraget görs ur SAMMA rapportrader som förbrukningen räknades ur (consumption.reported), så de
-  // två halvorna alltid ser samma tillstånd.
-  const planned = attributePlannedDemand(applyReportedToDemand(demand.segments, consumption.reported));
+  const adjusted = applyReportedToDemand(demand.segments, consumption.reported);
+  const { picked, excluded } = pickDemandSegments(adjusted);
+
+  const balances = computeDepotBalances(
+    depots,
+    delivered.rows,
+    consumption.rows,
+    picked.flatMap((p) =>
+      p.materials.filter((m) => m.material && m.sacks > 0).map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks })),
+    ),
+  );
+
+  // Ingångssaldot är EXAKT samma tal som saldovyn visar — härlett, inte omräknat. Räknades det om
+  // ur råa rader här skulle prognosen kunna säga något annat än tabellen bredvid den.
+  const opening: StockRow[] = balances.flatMap((d) =>
+    d.rows.map((r) => ({ depot_id: d.depot_id, material: r.material, sacks: r.balance })),
+  );
+
+  const forecastDemand: ForecastEvent[] = picked.flatMap((p) =>
+    // Utan startdag kan raden inte placeras på en dag. Den räknas ändå i saldot ovan, och
+    // pickDemandSegments har redan lagt jobbet i `excluded` — så bortfallet är redovisat, inte tyst.
+    p.start_day
+      ? p.materials
+          .filter((m) => m.material && m.sacks > 0)
+          .map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks, day: p.start_day as string }))
+      : [],
+  );
+
+  // Väntade leveranser är inflödet. De rör ALDRIG saldot ovan — det är beställningsspårets
+  // kärninvariant — men prognosen ska veta att materialet är på väg.
+  const inflow: ForecastEvent[] = expected.data.map((e) => ({
+    depot_id: e.depot_id,
+    material: e.material,
+    sacks: e.sacks,
+    day: e.expected_on,
+  }));
+
+  // LEDTIDEN per depå+material, från den leverantör som skulle få ordern. Pallstorleken ligger
+  // INTE här — den hör till materialet (sacksPerPalletFor), inte till fabriken.
+  //
+  // 🧨 LÄSS VIA planning_supply_terms, INTE UR TABELLEN. ops_material_suppliers SELECT kräver
+  // planning.depot.manage medan den här rutten grindar på planning.schedule.read — och RLS NEKAR
+  // INTE, den filtrerar. För sales och konsult kom noll rader tillbaka UTAN FEL, och prognosen föll
+  // tyst tillbaka på ingen ledtid. Mätt: admin fick "beställ senast 23/9", sales fick 30/9 på samma
+  // data. RPC:n bär bara de ofarliga fälten; adress och kontaktperson stannar bakom sin grind.
+  //
+  // ⚠️ Är valet TVETYDIGT (flera aktiva leverantörer av materialet) saknas posten med flit —
+  // defaultSupplierForMaterial gissar aldrig mellan två fabriker. Följden är supply_known: false
+  // och INGET föreslaget datum. Att i stället falla tillbaka på ledtid 0 gav run-out-dagen själv,
+  // alltså ett SENARE datum som såg ut som ett svar.
+  // ⚠️ ÖVER UNIONEN AV ALLA PAR PROGNOSEN KAN RETURNERA, inte bara saldoraderna. Prognosen skapar en
+  // cell för varje depå+material som har NÅGON rörelse — och en väntad leverans av ett material som
+  // depån aldrig haft är just ett sådant par. Byggdes kartan bara ur saldot saknade den posten,
+  // supply_known blev false och raden tappade både ledtid och avrundning, tyst.
+  // Paret bärs som DATA, inte som en kodad sträng att plocka isär igen: supplyKey är envägs med
+  // flit, och att avkoda den hade lagt en andra tolkning av nyckeln bredvid den enda som ska finnas.
+  const pairs = new Map<string, { depotId: string; material: string }>();
+  const addPair = (depotId: string, material: string) => pairs.set(supplyKey(depotId, material), { depotId, material });
+  for (const b of balances) for (const r of b.rows) addPair(b.depot_id, r.material);
+  for (const e of forecastDemand) addPair(e.depot_id, e.material);
+  for (const e of inflow) addPair(e.depot_id, e.material);
+
+  const supply = new Map<string, { leadTimeDays: number }>();
+  for (const [key, pair] of pairs) {
+    const s = defaultSupplierForMaterial(suppliers.data, pair.material);
+    if (s) supply.set(key, { leadTimeDays: s.lead_time_days });
+  }
 
   return {
-    data: computeDepotBalances((depots ?? []) as { id: string; name: string }[], delivered.rows, consumption.rows, planned),
+    data: balances,
+    forecast: forecastDepotRunOut({ depots, opening, demand: forecastDemand, inflow, today, supply, excluded }),
     error: null,
   };
 }

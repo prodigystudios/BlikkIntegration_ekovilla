@@ -28,7 +28,57 @@ export type MaterialSupplier = {
   active: boolean;
 };
 
-const SUPPLIER_SELECT = 'id, name, email, contact_name, phone, materials, lead_time_days, note, active';
+const SUPPLIER_SELECT =
+  'id, name, email, contact_name, phone, materials, lead_time_days, note, active';
+
+/**
+ * Det MINSTA en rad behöver bära för att urvalsregeln ska gälla den.
+ *
+ * ⚠️ FINNS FÖR ATT REGELN SKA VARA EN, INTE TVÅ. Registret läser hela rader; prognosen läser bara
+ * de ofarliga villkoren via planning_supply_terms (adress och kontaktperson stannar bakom
+ * depot.manage). Utan den här abstraktionen hade "vilken leverantör gäller för materialet" fått
+ * skrivas en gång till för den smala formen — och två kopior av ett val mellan fabriker glider
+ * isär tyst.
+ */
+export type MaterialSupply = {
+  materials: string[];
+  active: boolean;
+};
+
+/** Ledtiden, utan något som pekar ut VEM leverantören är. Pallstorleken bor på MATERIALET. */
+export type SupplyTerms = MaterialSupply & {
+  supplier_id: string;
+  lead_time_days: number;
+};
+
+/**
+ * Leveransvillkoren för alla aktiva leverantörer, via SECURITY DEFINER-RPC.
+ *
+ * 🧨 LÄSER INTE ops_material_suppliers DIREKT, OCH DET ÄR HELA POÄNGEN. Tabellens SELECT-policy
+ * kräver planning.depot.manage, medan lagerrutten grindar på planning.schedule.read. RLS NEKAR
+ * INTE — den filtrerar: för `sales` och `konsult` kom noll rader tillbaka UTAN FEL, och prognosen
+ * föll tyst tillbaka på ingen ledtid och ingen avrundning. Utfallet var "beställ senast den dag
+ * depån är tom", bara för dem som inte var admin. Se filhuvudet i
+ * supabase/sql/20260911_planning_supply_terms.sql.
+ *
+ * ⚠️ SESSIONSKLIENTEN, ALDRIG ADMIN-KLIENTEN: funktionen prövar has_permission, som nycklar på
+ * auth.uid() — null under service-role, alltså alltid nekad.
+ */
+export async function listSupplyTerms(
+  supabase: SupabaseClient,
+): Promise<{ data: SupplyTerms[]; error: { message: string } | null }> {
+  const { data, error } = await supabase.rpc('planning_supply_terms');
+  if (error) return { data: [], error };
+  const rows = ((data as Record<string, any>[]) ?? []).map((r) => ({
+    supplier_id: r.supplier_id as string,
+    materials: Array.isArray(r.materials) ? (r.materials as string[]) : [],
+    lead_time_days: Number(r.lead_time_days ?? 0),
+    // Funktionen returnerar bara aktiva rader; fältet finns för att urvalsregeln ska vara DELAD
+    // med registret i stället för omskriven för den smala formen.
+    active: true,
+  }));
+  return { data: rows, error: null };
+}
 
 export type SupplierProblem =
   | 'name_required'
@@ -77,6 +127,22 @@ export function validateSupplier(input: {
 }
 
 /**
+ * Avrunda UPP till närmaste hela pall.
+ *
+ * ⚠️ ANVÄNDS PÅ `worst_deficit`, ALDRIG PÅ ETT DELBEHOV. Underskottet är sanningen om vad som
+ * behövs; pallen är en leveransform. Avrundas varje dags rörelse för sig staplas felen uppåt och
+ * förslaget växer med antalet händelser i stället för med behovet — 3 dagar à 1 säck blir tre
+ * pallar i stället för en.
+ *
+ * Noll säckar avrundas till noll: ett behov som inte finns blir inte en pall.
+ */
+export function roundUpToMultiple(sacks: number, multiple: number): number {
+  if (!(sacks > 0)) return 0;
+  const step = Number.isInteger(multiple) && multiple >= 1 ? multiple : 1;
+  return Math.ceil(sacks / step) * step;
+}
+
+/**
  * Leverantörer som levererar ett visst material.
  *
  * 🧨 BARA AKTIVA. En avvecklad leverantör ligger kvar i registret för historikens skull, men får
@@ -89,7 +155,7 @@ export function validateSupplier(input: {
  *
  * Ordningen är anroparens (listAllSuppliers sorterar på namn) — funktionen sorterar inte om.
  */
-export function suppliersForMaterial(suppliers: MaterialSupplier[], material: string): MaterialSupplier[] {
+export function suppliersForMaterial<T extends MaterialSupply>(suppliers: T[], material: string): T[] {
   return suppliers.filter((s) => s.active && s.materials.includes(material));
 }
 
@@ -103,10 +169,10 @@ export function suppliersForMaterial(suppliers: MaterialSupplier[], material: st
  *
  * Normalfallet (en leverantör per material) förväljer alltså, tvetydigheten frågar.
  */
-export function defaultSupplierForMaterial(
-  suppliers: MaterialSupplier[],
+export function defaultSupplierForMaterial<T extends MaterialSupply>(
+  suppliers: T[],
   material: string,
-): MaterialSupplier | null {
+): T | null {
   const matches = suppliersForMaterial(suppliers, material);
   return matches.length === 1 ? matches[0] : null;
 }

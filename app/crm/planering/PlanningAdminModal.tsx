@@ -6,7 +6,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
-import { stockholmTodayISO } from './planningDates';
+import { shortDayISO, stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
@@ -15,6 +15,7 @@ import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import { describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
@@ -791,6 +792,12 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                 </div>
                 <div><span className={LABEL}>Notering</span><input value={supplier.note ?? ''} onChange={(e) => patchLocal(supplier.id, { note: e.target.value || null })} className={crm.input} /></div>
               </div>
+              <p className="mt-1.5 text-[11px] text-slate-400">
+                Beställningsförslaget avrundas upp till hela pallar för de material vars packning är känd
+                (Ekovilla och Knauf Supafil). Pallstorleken hör till materialet, inte till leverantören, och
+                ligger i materialkatalogen — för övriga material föreslås ett exakt säckantal tills packningen
+                fyllts i.
+              </p>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
 
@@ -1058,6 +1065,155 @@ function ExpectedRow({
   );
 }
 
+const EXCLUDED_SHOWN = 8;
+
+const EXCLUSION_TEXT: Record<'no_depot' | 'no_material' | 'no_date', string> = {
+  no_depot: 'ligger på en bil utan depå — behovet tillhör ingen depå',
+  no_material: 'inget material gick att härleda ur artikelnamnen',
+  no_date: 'saknar startdag — räknas i saldot, men kan inte placeras på en dag',
+};
+
+/**
+ * Prognoskortet: när tar depån slut, hur mycket behövs och senast vilken dag måste det beställas.
+ *
+ * ⚠️ REDOVISAR VAD SOM INTE KUNDE RÄKNAS. Jobb utan depå eller utan igenkänt material hoppades förr
+ * tyst över, och ett underlag med hål såg då exakt ut som ett komplett. Skillnaden är ett
+ * beställningsförslag som är för lågt utan att någon kan se det — därför står bortfallet i kortet,
+ * inte i en logg.
+ */
+function ForecastCard({ forecast }: { forecast: DepotForecast }) {
+  const needed = rowsNeedingOrder(forecast);
+  const overdue = forecast.rows.filter((r) => r.overdue_inflow > 0);
+  if (needed.length === 0 && overdue.length === 0 && forecast.excluded.length === 0) return null;
+
+  return (
+    <div className={PANEL}>
+      <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Prognos</h3>
+      <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+        När depån tar slut, och hur mycket som behöver beställas. Väntade leveranser är inräknade.
+      </p>
+
+      {needed.length === 0 ? (
+        <p className="text-[12px] text-emerald-700">
+          Lagret räcker för allt som är bokat.{' '}
+          {/* ⚠️ Kan stå ovanför ett rött "Lager räcker inte" på depåkortet nedan, och det är inte
+              en motsägelse utan två olika frågor: saldot räknar inte väntade leveranser (de står
+              inte på depån), prognosen gör det (de kommer innan behovet). Sägs det inte rakt ut
+              läses det som att en av dem har fel. */}
+          <span className="text-slate-500">Väntade leveranser är inräknade här, men inte i saldot nedan.</span>
+        </p>
+      ) : (
+        <ul className="grid gap-1.5">
+          {needed.map((r) => (
+            <li
+              key={`${r.depot_id}-${r.material}`}
+              className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] px-3 py-2"
+            >
+              <span className="text-[12.5px] font-semibold text-slate-700">
+                {r.depot_name} · {r.material}
+              </span>
+              <span className="text-[11.5px] tabular-nums text-slate-500">
+                {/* run_out_day kan inte vara null här (worst_deficit > 0), men texten ska inte
+                    bero på att den invarianten håller. */}
+                {r.run_out_day ? <>tar slut <strong className="text-rose-600">{shortDayISO(r.run_out_day)}</strong></> : 'underskott'}
+                {' · behöver '}
+                {/* Orden kommer ur describeSuggestion (ren, enhetstestad); färgerna hör hit.
+                    Pallen är beställningsenheten — säckantalet är det man räknar i. */}
+                {(() => {
+                  const p = describeSuggestion(r);
+                  if (p.kind === 'unknown_pallet') {
+                    // ⚠️ Okänd packning får inte se ut som "inga pallar". Ett säckantal utan
+                    // pallstorlek är inget man kan beställa.
+                    return (
+                      <>
+                        <strong className="text-slate-700">{p.sacks} säck</strong>
+                        <span className="text-amber-700"> · pallstorlek okänd för {p.material}</span>
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      <strong className="text-slate-700">
+                        {p.pallets} {p.unit}
+                      </strong>
+                      <span className="text-slate-400">
+                        {' ('}
+                        {p.sacks} säck
+                        {p.deficit !== null && <>, behovet är {p.deficit}</>}
+                        {')'}
+                      </span>
+                    </>
+                  );
+                })()}
+                {r.suggested_date ? (
+                  <> · beställ senast {shortDayISO(r.suggested_date)}</>
+                ) : (
+                  // 🧨 Aldrig ett datum vi inte kan räkna. Med okänd ledtid blev "beställ senast"
+                  // run-out-dagen själv — alltså "beställ den dag depån är tom", ett senare datum
+                  // som såg ut som en instruktion.
+                  <span className="text-amber-700"> · ledtid okänd, sätt leverantör för materialet</span>
+                )}
+                {r.beyond_horizon > 0 && (
+                  <span className="text-slate-400"> · {r.beyond_horizon} säck bokade längre fram</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* En försenad leverans räknas inte som anländ — men den som ska beställa behöver veta att
+          den finns, annars beställs samma lass en gång till. */}
+      {overdue.length > 0 && (
+        <div className="mt-2.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <div className="text-[11.5px] font-bold text-amber-800">Beställt men försenat</div>
+          <ul className="mt-0.5 grid gap-0.5">
+            {overdue.map((r) => (
+              <li key={`late-${r.depot_id}-${r.material}`} className="text-[11px] tabular-nums text-amber-700">
+                {r.depot_name} · {r.material}: {r.overdue_inflow} säck skulle ha kommit
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-[10.5px] text-amber-600">
+            Räknas inte i prognosen ovan — hör av dig till fabriken hellre än att beställa igen.
+          </p>
+        </div>
+      )}
+
+      {forecast.excluded.length > 0 && (
+        <div className="mt-2.5 rounded-xl border border-slate-200 bg-white px-3 py-2">
+          <div className="text-[11.5px] font-bold text-slate-700">
+            {forecast.excluded.length} jobb kunde inte räknas
+          </div>
+          <ul className="mt-0.5 grid gap-0.5">
+            {/* Tak: listan är inte en logg. Utan det kunde ett systematiskt fel (t.ex. en bil som
+                tappat sin depå) fylla modalen med hundratals rader och trycka ned siffrorna som
+                faktiskt ska läsas. Antalet står i rubriken, så inget döljs. */}
+            {forecast.excluded.slice(0, EXCLUDED_SHOWN).map((e) => (
+              <li key={`${e.work_order_id}-${e.reason}`} className="text-[11px] text-slate-500">
+                {/* Åtta tecken av ett uuid går inte att söka på någonstans i appen. Länken gör
+                    raden användbar: den öppnar arbetsordern där felet faktiskt går att rätta. */}
+                <a href={`/crm/arbetsorder/${e.work_order_id}`} className={crm.link} target="_blank" rel="noreferrer">
+                  Öppna arbetsordern
+                </a>{' '}
+                — {EXCLUSION_TEXT[e.reason]}
+              </li>
+            ))}
+            {forecast.excluded.length > EXCLUDED_SHOWN && (
+              <li className="text-[11px] font-semibold text-slate-500">
+                … och {forecast.excluded.length - EXCLUDED_SHOWN} till
+              </li>
+            )}
+          </ul>
+          <p className="mt-1 text-[10.5px] text-slate-400">
+            Siffrorna ovan är alltså för låga. Rätta jobben så räknas de med.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function StockPanel({
   canWrite,
   canManageDepots,
@@ -1069,6 +1225,7 @@ function StockPanel({
 }) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
+  const [forecast, setForecast] = useState<DepotForecast | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1109,6 +1266,9 @@ function StockPanel({
       if (!j?.ok) throw new Error(j?.error || 'Kunde inte hämta lagersaldo');
       const list = j.data.depots as DepotBalance[];
       setDepots(list);
+      // Samma svar som saldot, med flit — se getDepotStockWithForecast. Två hämtningar kan se
+      // olika ögonblick, och då säger kortet och tabellen olika saker om samma depå.
+      setForecast((j.data.forecast as DepotForecast | null) ?? null);
       setDepotId((cur) => cur || (list[0]?.depot_id ?? ''));
       setLoadError(null);
     } catch (e: any) {
@@ -1153,13 +1313,22 @@ function StockPanel({
     loadOpen().catch(() => {});
   }, [loadOpen]);
 
+  // Väntade leveranser och prognosen hör ihop: den ena är inflödet i den andra. Samlad så att
+  // ingen ändringsväg kan råka uppdatera bara halva bilden.
+  const reloadExpectedAndForecast = useCallback(async () => {
+    await Promise.all([loadOpen(), load()]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadOpen]);
+
   async function cancelExpected(id: string) {
     try {
       const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
       toast.success('Väntad leverans avbokad');
-      await loadOpen();
+      // Prognosen räknar in väntade leveranser — en avbokning ÖPPNAR en brist som kortet annars
+      // fortsatte visa som täckt. Åt det hållet är tystnaden farlig.
+      await Promise.all([loadOpen(), load()]);
     } catch {
       // Utan grenen är ett nätverksfel helt tyst, och raden står kvar som om ingenting hänt.
       toast.error('Kunde inte avboka leveransen');
@@ -1187,9 +1356,11 @@ function StockPanel({
       toast.success('Väntad leverans inlagd');
       setExpSacks('');
       setExpNote('');
-      // Saldot ändras INTE av en väntad leverans, så ingen omladdning av `load()` här. Tavlans
-      // remsa uppdateras via realtime (ops_expected_deliveries ligger i publikationen).
-      await loadOpen();
+      // ⚠️ SALDOT ändras inte av en väntad leverans — men PROGNOSEN gör det, och de kommer ur samma
+      // svar. Kommentaren här sa förut att ingen omladdning behövdes, vilket var sant ända tills
+      // prognosen fanns: utan den här raden stod kortet kvar och sa "tar slut tors" för en brist
+      // som just täcktes, och nästa person beställde samma lass en gång till.
+      await Promise.all([loadOpen(), load()]);
     } catch {
       // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
       // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
@@ -1301,7 +1472,8 @@ function StockPanel({
                   depots={depotOptions}
                   today={today}
                   canManage={canManageDepots}
-                  onSaved={loadOpen}
+                  // Både listan OCH prognosen: en ändrad leverans flyttar datumet den täcker.
+                  onSaved={reloadExpectedAndForecast}
                   onCancel={cancelExpected}
                 />
               ))}
@@ -1326,6 +1498,8 @@ function StockPanel({
         ) : depots.length === 0 ? (
           <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
         ) : (
+          <>
+          {forecast && <ForecastCard forecast={forecast} />}
           <div className={PANEL}>
             <h3 className="mb-3 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
             <div className="grid gap-2.5">
@@ -1368,6 +1542,7 @@ function StockPanel({
               <p className="text-[10.5px] text-slate-400">Planerat = säckar bokade på öppna jobb från depån. "Räcker?" visar om lagret täcker det planerade. Förbrukning fylls i automatiskt när installatörernas säckrapportering är på plats.</p>
             </div>
           </div>
+          </>
         )}
       </div>
     </div>
