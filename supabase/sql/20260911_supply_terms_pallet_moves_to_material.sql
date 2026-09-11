@@ -25,10 +25,17 @@
 -- skrivas om i samma svep — `drop column` skulle annars lämna funktionen trasig vid nästa anrop.
 -- Filen gör båda sakerna, i rätt ordning.
 --
--- ⚠️ ORDNINGEN MOT KODEN ÄR FRI, men bara åt ett håll: den nya koden skickar INTE round_up_to och
--- läser inte fältet ur RPC:n, så den fungerar före som efter. Körs den här filen medan GAMMAL kod
--- är ute failar däremot varje leverantörssparning (PostgREST 400 på en kolumn som försvunnit).
--- Kör alltså filen SAMTIDIGT MED eller EFTER att koden är ute — inte före.
+-- Filnamnet är valt så att den SORTERAR SIST av de tre ('supply_' > 'planning_' > 'ops_'). Den hette
+-- först ..._ops_material_suppliers_drop_round_up_to.sql och hamnade då FÖRST i en namnsorterad
+-- uppspelning — omvänt mot vad raderna ovan kräver.
+--
+-- ORDNINGEN MOT KODEN ÄR FRI MOT PRODUKTION. Ingen kod som läser eller skriver round_up_to har
+-- någonsin gått ut: kolumnen lades till på en gren som byggdes om innan den mergades. Produktionen
+-- vet alltså inte att kolumnen finns, och den här filen kan köras när som helst.
+--
+-- ⚠️ Undantaget är den som kör GRENENS mellanläge lokalt (commit 2363669..616b035): den koden
+-- skickar round_up_to vid varje leverantörssparning, och efter den här filen svarar PostgREST 400
+-- på varje sådan. Checka ut grenens topp innan du kör.
 --
 -- DESTRUKTIV, till skillnad från allt annat i den här serien: kolumnen och dess värden försvinner.
 -- Det är ofarligt här och nu — kolumnen är ett dygn gammal, har aldrig lästs av kod i drift, och
@@ -36,6 +43,26 @@
 --
 -- Kör i Supabase SQL editor. Idempotent — kör den TVÅ gånger innan du litar på påståendet.
 -- Inga tecken utanför BMP i den här filen.
+
+-- ---------------------------------------------------------------------------
+-- ⚠️ FÖRE KÖRNING — obligatorisk förkontroll
+-- ---------------------------------------------------------------------------
+--
+-- Den här filen är DESTRUKTIV och har ingen återvändo. Kör frågan nedan FÖRST, på egen hand, och
+-- läs svaret innan du kör resten. (Den stod förut under "Verifiering (kör efter applicering)",
+-- där den inte GÅR att köra — kolumnen är då redan borta och frågan felar med 42703.)
+--
+--    select id, name, materials, round_up_to
+--    from public.ops_material_suppliers where round_up_to is distinct from 1;
+--
+-- Noll rader: kör filen. Rader: någon har fyllt i en pallstorlek på en leverantör — för in talet i
+-- materialkatalogen (lib/domains/crm/materials.ts, sacksPerPallet) på rätt MATERIAL först.
+--
+-- ⛔ Lägg INTE till en backup-tabell här, hur frestande det än är. En `create table ... as select`
+-- i public från SQL-editorn får Supabases default-privilegier och RLS AV — leverantörernas namn och
+-- material hade legat öppna bakom anon-nyckeln, alltså precis den läsväg förbi RLS som resten av
+-- den här serien är byggd för att stänga. Den hade dessutom brutit idempotensen: vid andra
+-- körningen refererar SELECT:en en kolumn som inte längre finns.
 
 -- ---------------------------------------------------------------------------
 -- 1. Funktionen först: den namnger kolumnen och måste sluta göra det
@@ -95,30 +122,24 @@ alter table public.ops_material_suppliers
 -- Verifiering (kör efter applicering)
 -- ---------------------------------------------------------------------------
 --
--- 1. FÖRE du kör: se vad som går förlorat. Är någon rad satt till något annat än 1 har någon
---    hunnit fylla i den, och värdet ska då flyttas till materialkatalogen i koden först:
---
---    select id, name, materials, round_up_to
---    from public.ops_material_suppliers where round_up_to is distinct from 1;
---
--- 2. Kolumnen är borta. Frågan ska ge noll rader:
+-- 1. Kolumnen är borta. Frågan ska ge noll rader:
 --
 --    select column_name from information_schema.columns
 --    where table_schema = 'public' and table_name = 'ops_material_suppliers'
 --      and column_name = 'round_up_to';
 --
--- 3. Funktionen returnerar TRE kolumner, och round_up_to är inte en av dem:
+-- 2. Funktionen returnerar TRE kolumner, och round_up_to är inte en av dem:
 --
 --    select p.proargnames
 --    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --    where n.nspname = 'public' and p.proname = 'planning_supply_terms';
 --    -- {supplier_id,materials,lead_time_days}
 --
--- 4. ⚠️ Att ANROPA funktionen i SQL-editorn ska fortfarande fela med 'forbidden' (42501) — editorn
+-- 3. ⚠️ Att ANROPA funktionen i SQL-editorn ska fortfarande fela med 'forbidden' (42501) — editorn
 --    kör utan JWT, så auth.uid() är null och grinden nekar. Det är rätt svar, inte ett problem:
 --
 --    select * from public.planning_supply_terms();   -- ERROR: forbidden
 --
--- 5. Ledtiden lever kvar på leverantören:
+-- 4. Ledtiden lever kvar på leverantören:
 --
 --    select id, name, lead_time_days from public.ops_material_suppliers order by name;

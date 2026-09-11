@@ -581,7 +581,8 @@ async function derivePlannedDemandSegments(
  * skärm. Samma regel som redan gäller mellan förbrukningen och avdraget.
  *
  * Prognosen tillför tre saker utöver saldot: datumet på behovet, de väntade leveranserna som
- * inflöde, och leverantörens ledtid + pallstorlek.
+ * inflöde, och leverantörens LEDTID. Pallstorleken hämtas inte här — den hör till materialet
+ * (sacksPerPalletFor) och läses av prognosmodulen själv.
  *
  * Failar stängt, som getDepotStock: "kunde inte räkna" är ett svar, "behöver 0 säck" är en lögn —
  * och den lögnen ska snart få fylla i en beställning till fabriken.

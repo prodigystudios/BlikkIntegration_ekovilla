@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { forecastDepotRunOut, rowsNeedingOrder, supplyKey } from '@/lib/domains/planning/depotForecast';
+import { describeSuggestion, forecastDepotRunOut, rowsNeedingOrder, supplyKey } from '@/lib/domains/planning/depotForecast';
 import { addDaysISO } from '@/lib/domains/planning/timezone';
 import { sacksPerPalletFor } from '@/lib/domains/crm/materials';
 
@@ -414,16 +414,6 @@ describe('pallstorleken hör till MATERIALET, inte leverantören', () => {
     expect(rowFor(f).suggested_pallets).toBe(0);
   });
 
-  // ⛔ Lasset modelleras INTE: antalet pallar på en bil varierar, och bilen kan blanda produkter.
-  // "Fullt lass" är kapacitet, inte en beställningsenhet. Vaktas så ingen inför det som konstant.
-  it('prognosen bär inget begrepp om ett fullt lass', () => {
-    const f = run({
-      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
-      demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' }],
-    });
-    const r = rowFor(f) as Record<string, unknown>;
-    for (const key of Object.keys(r)) expect(key).not.toMatch(/load|lass|truck/i);
-  });
 });
 
 describe('depåer och material hålls isär', () => {
@@ -572,5 +562,79 @@ describe('addDaysISO över sommartidsväxlingarna', () => {
       supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 7 }]]),
     });
     expect(rowFor(f).suggested_date).toBe('2026-10-21');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// describeSuggestion — vad kortet SÄGER
+// ---------------------------------------------------------------------------
+//
+// ⚠️ Reglerna satt förut inlagda i JSX:en och var därmed otestbara: vitest plockar bara upp
+// .test.ts, kör i node utan DOM, och en .tsx-komponent når sviten inte alls. Utbruten hit är varje
+// regel prövbar — och det är regler, inte formgivning: vilken enhet som visas, svensk numerus, och
+// när det råa behovet ska stå bredvid det avrundade talet.
+
+describe('describeSuggestion', () => {
+  const row = (over: Partial<ReturnType<typeof rowFor>> = {}) =>
+    ({
+      depot_id: SYD,
+      depot_name: 'Depå Syd',
+      material: EKO,
+      opening: 0,
+      run_out_day: '2026-09-20',
+      shortfall_at_run_out: 10,
+      worst_deficit: 187,
+      suggested_sacks: 4 * EKO_PALL,
+      suggested_pallets: 4,
+      sacks_per_pallet: EKO_PALL,
+      supply_known: true,
+      beyond_horizon: 0,
+      overdue_inflow: 0,
+      ...over,
+    }) as ReturnType<typeof rowFor>;
+
+  it('visar pallar som enhet, med säckantalet inom parentes', () => {
+    const p = describeSuggestion(row());
+    expect(p).toEqual({ kind: 'pallets', pallets: 4, unit: 'pallar', sacks: 216, deficit: 187 });
+  });
+
+  it('en pall heter "pall", inte "pallar"', () => {
+    const p = describeSuggestion(row({ suggested_pallets: 1, suggested_sacks: EKO_PALL }));
+    expect(p.kind === 'pallets' && p.unit).toBe('pall');
+  });
+
+  it('flera pallar heter "pallar"', () => {
+    expect(describeSuggestion(row({ suggested_pallets: 2 })).kind === 'pallets').toBe(true);
+    const p = describeSuggestion(row({ suggested_pallets: 2 }));
+    expect(p.kind === 'pallets' && p.unit).toBe('pallar');
+  });
+
+  // "(216 säck, behovet är 216)" vore bara brus. Behovet skrivs ut bara när avrundningen FLYTTADE
+  // talet — annars säger raden samma sak två gånger.
+  it('utelämnar behovet när det redan är jämnt delbart', () => {
+    const p = describeSuggestion(row({ worst_deficit: 4 * EKO_PALL }));
+    expect(p.kind === 'pallets' && p.deficit).toBeNull();
+  });
+
+  it('skriver ut behovet när avrundningen flyttade talet', () => {
+    const p = describeSuggestion(row({ worst_deficit: 187 }));
+    expect(p.kind === 'pallets' && p.deficit).toBe(187);
+  });
+
+  /**
+   * ⚠️ OKÄND PACKNING BYTER GREN, den visar inte "0 pallar". Ett säckantal utan pallstorlek är
+   * inget man kan beställa, och kortet ska säga varför i stället för att se komplett ut.
+   */
+  it('okänd pallstorlek ger säckar och materialets namn', () => {
+    const p = describeSuggestion(row({ sacks_per_pallet: null, suggested_pallets: null, suggested_sacks: 187, material: OKAND_PALL }));
+    expect(p).toEqual({ kind: 'unknown_pallet', sacks: 187, material: OKAND_PALL });
+  });
+
+  // 🧨 Frågan är `=== null`, inte falsy: en nolla och en okänd packning får aldrig behandlas lika.
+  it('noll pallar är ett svar, inte en okänd packning', () => {
+    const p = describeSuggestion(row({ suggested_pallets: 0, suggested_sacks: 0, worst_deficit: 0 }));
+    expect(p.kind).toBe('pallets');
+    expect(p.kind === 'pallets' && p.unit).toBe('pallar');
   });
 });

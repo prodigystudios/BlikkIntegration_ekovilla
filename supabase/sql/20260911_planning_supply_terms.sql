@@ -1,5 +1,17 @@
 -- Leveransvillkoren — ledtid och pallstorlek — läsbara för den som får se schemat.
 --
+-- ⚠️ ERSATT AV 20260911_supply_terms_pallet_moves_to_material.sql. Den filen skriver om funktionen
+-- utan round_up_to och droppar kolumnen, eftersom pallstorleken visade sig höra till MATERIALET och
+-- inte till leverantören. Läs den för hur funktionen ser ut nu.
+--
+-- ⛔ KÖR INTE DEN HÄR FILEN IGEN efter att ersättaren körts. Den skapar funktionen med fyra
+-- kolumner, varav en läser round_up_to — en kolumn som då inte längre finns, så varje anrop failar
+-- och lagervyn dör med den. Påståendet "idempotent, kör två gånger" nedan gällde filen på egen hand
+-- och håller inte längre när ersättaren väl är applicerad.
+--
+-- Filen står kvar oredigerad i sin DDL med flit: den är körd i produktion, och en omskriven fil hade
+-- gjort att repot slutade beskriva vad databasen faktiskt gått igenom.
+--
 -- BAKGRUND: EN TYST DEGRADERING SOM BARA ADMIN INTE SÅG
 -- Prognosen (depotForecast) behöver två tal per material: leverantörens LEDTID (för att datera
 -- beställningen bakåt från run-out) och PALLSTORLEKEN (för att avrunda antalet). Båda bor på

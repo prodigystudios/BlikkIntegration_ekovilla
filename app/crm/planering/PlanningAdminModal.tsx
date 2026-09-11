@@ -15,7 +15,7 @@ import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
-import { rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
+import { describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
@@ -793,8 +793,10 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                 <div><span className={LABEL}>Notering</span><input value={supplier.note ?? ''} onChange={(e) => patchLocal(supplier.id, { note: e.target.value || null })} className={crm.input} /></div>
               </div>
               <p className="mt-1.5 text-[11px] text-slate-400">
-                Beställningsförslaget avrundas upp till hela pallar. Pallstorleken hör till materialet, inte till
-                leverantören, och ligger i materialkatalogen.
+                Beställningsförslaget avrundas upp till hela pallar för de material vars packning är känd
+                (Ekovilla och Knauf Supafil). Pallstorleken hör till materialet, inte till leverantören, och
+                ligger i materialkatalogen — för övriga material föreslås ett exakt säckantal tills packningen
+                fyllts i.
               </p>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
@@ -1115,27 +1117,34 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
                     bero på att den invarianten håller. */}
                 {r.run_out_day ? <>tar slut <strong className="text-rose-600">{shortDayISO(r.run_out_day)}</strong></> : 'underskott'}
                 {' · behöver '}
-                {r.suggested_pallets != null ? (
-                  // Pallen är beställningsenheten — säckantalet är det man räknar i, pallarna det
-                  // man beställer i. Båda visas: "4 pallar (216 säck)".
-                  <>
-                    <strong className="text-slate-700">
-                      {r.suggested_pallets} {r.suggested_pallets === 1 ? 'pall' : 'pallar'}
-                    </strong>
-                    <span className="text-slate-400"> ({r.suggested_sacks} säck</span>
-                    {r.suggested_sacks !== r.worst_deficit && (
-                      <span className="text-slate-400">, behovet är {r.worst_deficit}</span>
-                    )}
-                    <span className="text-slate-400">)</span>
-                  </>
-                ) : (
-                  // ⚠️ Okänd packning får inte se ut som "inga pallar". Ett säckantal utan
-                  // pallstorlek är inget man kan beställa.
-                  <>
-                    <strong className="text-slate-700">{r.suggested_sacks} säck</strong>
-                    <span className="text-amber-700"> · pallstorlek okänd för {r.material}</span>
-                  </>
-                )}
+                {/* Orden kommer ur describeSuggestion (ren, enhetstestad); färgerna hör hit.
+                    Pallen är beställningsenheten — säckantalet är det man räknar i. */}
+                {(() => {
+                  const p = describeSuggestion(r);
+                  if (p.kind === 'unknown_pallet') {
+                    // ⚠️ Okänd packning får inte se ut som "inga pallar". Ett säckantal utan
+                    // pallstorlek är inget man kan beställa.
+                    return (
+                      <>
+                        <strong className="text-slate-700">{p.sacks} säck</strong>
+                        <span className="text-amber-700"> · pallstorlek okänd för {p.material}</span>
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      <strong className="text-slate-700">
+                        {p.pallets} {p.unit}
+                      </strong>
+                      <span className="text-slate-400">
+                        {' ('}
+                        {p.sacks} säck
+                        {p.deficit !== null && <>, behovet är {p.deficit}</>}
+                        {')'}
+                      </span>
+                    </>
+                  );
+                })()}
                 {r.suggested_date ? (
                   <> · beställ senast {shortDayISO(r.suggested_date)}</>
                 ) : (

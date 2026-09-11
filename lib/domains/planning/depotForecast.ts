@@ -15,6 +15,13 @@ import type { StockRow, DemandExclusion } from './depotStock';
 // bristbanderollen räknar på. Skrivs urvalet en andra gång här driver de två isär tyst — banderollen
 // larmar om en depå prognosen kallar försörjd, eller tvärtom, och ingendera felar.
 //
+// ⛔ ETT FULLT LASS MODELLERAS INTE, och ska inte göra det. Antalet pallar på en bil varierar, och
+// bilen kan dessutom ta med andra produkter — "fullt lass" är kapacitet, inte en beställningsenhet
+// (Williams besked 2026-09-11). Att avgöra om bilen ska fyllas resten av vägen är ett mänskligt
+// beslut; systemet vet inte vad mer som ska med. (Det fanns ett "test" som skulle vakta det här
+// genom att matcha nyckelnamn mot /load|lass|truck/ — det bevisade ingenting och är borttaget. Att
+// ett begrepp INTE finns går inte att enhetstesta; den här kommentaren är vakten.)
+//
 // ⚠️ VANDRINGEN SKER I ISO-STRÄNGAR, aldrig i Date-objekt. 'YYYY-MM-DD' sorterar lexikografiskt =
 // kronologiskt, och en sträng har ingen tidszon att tolka fel. Se addDaysISO om varför.
 
@@ -68,7 +75,12 @@ export type DepotMaterialForecast = {
    */
   suggested_date: string | null;
   /**
-   * Fanns det leveransvillkor (ledtid, pallstorlek) för det här materialet?
+   * Fanns det en LEDTID för det här materialet? Gäller bara datumet.
+   *
+   * ⚠️ SÄGER INGENTING OM PALLSTORLEKEN. De två är skilda axlar: ledtiden kommer från leverantören,
+   * packningen från materialet (sacks_per_pallet). En rad kan mycket väl ha känd pall och okänd
+   * ledtid — då avrundas antalet men inget datum visas. Att läsa det här fältet som "vet vi allt?"
+   * var sant i en tidigare modell och är det inte längre.
    *
    * false betyder antingen att ingen aktiv leverantör bär materialet, eller att FLERA gör det —
    * defaultSupplierForMaterial gissar aldrig mellan två fabriker. Åt båda hållen är svaret att
@@ -279,6 +291,48 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
   }
 
   return { rows, excluded: input.excluded ?? [] };
+}
+
+/**
+ * Vad prognoskortet ska säga om EN rads beställning — som data, inte som färdig text.
+ *
+ * ⚠️ BOR HÄR OCH INTE I JSX:EN. Reglerna nedan (vilken enhet som visas, singular/plural, när
+ * behovet ska skrivas ut bredvid det avrundade talet) är beslut, inte formgivning — och inlagda i
+ * ForecastCard var de otestbara: vitest plockar bara upp .test.ts, kör i node utan DOM, och en
+ * .tsx-komponent når sviten inte alls. Kortet mappar delarna till spans; färgerna hör dit, orden hit.
+ */
+export type SuggestionParts =
+  | {
+      kind: 'pallets';
+      pallets: number;
+      /** 'pall' eller 'pallar' — svenskan är en regel, inte en formgivningsfråga. */
+      unit: 'pall' | 'pallar';
+      sacks: number;
+      /**
+       * Det råa underskottet, men BARA när avrundningen faktiskt flyttade talet. Är behovet redan
+       * jämnt delbart vore "(216 säck, behovet är 216)" bara brus.
+       */
+      deficit: number | null;
+    }
+  | {
+      kind: 'unknown_pallet';
+      sacks: number;
+      material: string;
+    };
+
+export function describeSuggestion(row: DepotMaterialForecast): SuggestionParts {
+  // ⚠️ null, inte 0, är frågan. sacks_per_pallet === 0 kan inte förekomma (katalogen vaktas), men
+  // att fråga efter `!row.sacks_per_pallet` hade behandlat en okänd packning och en nolla lika.
+  if (row.sacks_per_pallet === null || row.suggested_pallets === null) {
+    return { kind: 'unknown_pallet', sacks: row.suggested_sacks, material: row.material };
+  }
+  return {
+    kind: 'pallets',
+    pallets: row.suggested_pallets,
+    unit: row.suggested_pallets === 1 ? 'pall' : 'pallar',
+    sacks: row.suggested_sacks,
+    deficit: row.suggested_sacks !== row.worst_deficit ? row.worst_deficit : null,
+  };
 }
 
 /** Senare av två ISO-datum. Lexikografisk jämförelse — 'YYYY-MM-DD' sorterar kronologiskt. */
