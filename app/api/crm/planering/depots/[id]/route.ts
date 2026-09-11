@@ -56,7 +56,10 @@ export async function DELETE(_req: Request, context: RouteContext) {
         return routeError(
           409,
           'planning_depot_in_use',
-          'Depån har leveranshistorik och kan inte tas bort. Avaktivera den i stället — då försvinner den ur listorna men historiken finns kvar.',
+          // Både väntade leveranser och avstämningar spärrar (båda är ON DELETE RESTRICT), så meddelandet
+          // säger "historik" och inte "leveranshistorik" — en depå med bara en räkning hade annars fått
+          // höra att den har leveranser den aldrig haft.
+          'Depån har lagerhistorik (leveranser eller avstämningar) och kan inte tas bort. Avaktivera den i stället — då försvinner den ur listorna men historiken finns kvar.',
         );
       }
       return routeError(500, 'planning_depot_delete_failed', error.message);

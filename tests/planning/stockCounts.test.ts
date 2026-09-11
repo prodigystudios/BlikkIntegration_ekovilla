@@ -1,17 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { latestCounts, movementsAfterCounts, type DatedMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
+import { deliveriesAfterCounts, latestCounts, type DatedMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
 import { computeDepotBalances, consumptionAfterCounts } from '@/lib/domains/planning/depotStock';
 import { stockCountSchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO, addDaysISO } from '@/lib/domains/planning/timezone';
 
 // Avstämning av depålagret: "den här dagen stod det X säckar på depån".
 //
-// Kärnfrågan är ETT scenario, och det är därför modellen är avstämning och inte justering: en rapport
-// för arbete FÖRE räkningen som kommer in EFTER den. Med en justering dras de säckarna av två gånger.
+// Två felklasser har redan bitit här, båda i den farliga riktningen (saldot för HÖGT, bristbanderollen
+// tyst), och båda gick igenom en tidigare version av den här filen gröna:
+//
+//   1. Förbrukningen drogs genom ett DATUMFILTER. Säckrapporteringen har en supersede-regel —
+//      egenkontrollen ersätter delrapporterna — så filtret dubbelräknade.
+//   2. Rättelsen daterade egenkontrollen efter sin report_day. Men den report_day är jobbets FÖRSTA
+//      dag (förifylld ur tidigaste segmentet), så varje pågående jobb hamnade "före räkningen".
+//      Testfixturerna daterade egenkontrollen till räkningsdagen — något produktionen aldrig gör — och
+//      dolde felet.
+//
+// Därför: fixturerna nedan daterar en egenkontroll SOM PRODUKTIONEN GÖR (report_day = jobbets första
+// dag, created_at = när den skrevs), och balanceWith kör PRODUKTIONENS väg — inte en förenklad kopia.
 
 const SYD = 'depot-syd';
+const NORR = 'depot-norr';
 const EKO = 'EKOVILLA';
 const DEPOTS = [{ id: SYD, name: 'Syd' }];
+const FLEET = new Map<string, string | null>([['truck-syd', SYD], ['truck-norr', NORR]]);
 
 const count = (sacks: number, counted_on: string, over: Partial<StockCount> = {}): StockCount => ({
   depot_id: SYD,
@@ -20,7 +32,7 @@ const count = (sacks: number, counted_on: string, over: Partial<StockCount> = {}
   counted_on,
   ...over,
 });
-const move = (sacks: number, day: string, over: Partial<DatedMovement> = {}): DatedMovement => ({
+const delivery = (sacks: number, day: string, over: Partial<DatedMovement> = {}): DatedMovement => ({
   depot_id: SYD,
   material: EKO,
   sacks,
@@ -28,13 +40,48 @@ const move = (sacks: number, day: string, over: Partial<DatedMovement> = {}): Da
   ...over,
 });
 
-/** Hela kedjan som lagerläsningen kör: senaste räkning -> stryk det som redan syns -> baslinje. */
-function balanceWith(counts: StockCount[], delivered: DatedMovement[], consumed: DatedMovement[]) {
+/**
+ * En säckrapport som produktionen skriver den.
+ *
+ * ⚠️ En DELRAPPORT bär den faktiska arbetsdagen (förifylld med dagens datum). En EGENKONTROLL bär
+ * jobbets FÖRSTA dag som report_day, oavsett när den skrivs — det är `created_at` som säger när.
+ */
+function partial(sacks: number, workDay: string, over: Record<string, unknown> = {}) {
+  return {
+    work_order_id: 'wo1',
+    sacks_blown: sacks,
+    kind: 'partial',
+    material: EKO,
+    report_day: workDay,
+    created_at: `${workDay}T15:00:00Z`,
+    segment: { truck_id: 'truck-syd' },
+    ...over,
+  };
+}
+function final(sacks: number, jobFirstDay: string, writtenOn: string, over: Record<string, unknown> = {}) {
+  return {
+    work_order_id: 'wo1',
+    sacks_blown: sacks,
+    kind: 'final',
+    material: EKO,
+    report_day: jobFirstDay, // ← som produktionen: installationDate = tidigaste segmentets start
+    created_at: `${writtenOn}T15:00:00Z`,
+    segment: { truck_id: 'truck-syd' },
+    ...over,
+  };
+}
+
+/** PRODUKTIONENS väg: senaste räkning -> leveranser och förbrukning avgränsade -> baslinje. */
+function balanceWith(
+  counts: StockCount[],
+  deliveries: DatedMovement[],
+  reports: Array<ReturnType<typeof partial>>,
+) {
   const latest = latestCounts(counts);
   const rows = computeDepotBalances(
     DEPOTS,
-    movementsAfterCounts(delivered, latest),
-    movementsAfterCounts(consumed, latest),
+    deliveriesAfterCounts(deliveries, latest),
+    consumptionAfterCounts(reports, FLEET, latest),
     [],
     latest,
   );
@@ -43,73 +90,188 @@ function balanceWith(counts: StockCount[], delivered: DatedMovement[], consumed:
 
 describe('avstämning, inte justering', () => {
   /**
-   * 🧨 SCENARIOT HELA MODELLEN ÄR BYGGD FÖR.
-   *
-   * Måndag morgon räknas 400. I fredags blåstes 50 säckar, men rapporten skickas först på tisdag.
-   * En justering (skriv in skillnaden) hade dragit av de 50 en gång till när rapporten kom — 350,
-   * fast det står 400 på depån. Här räknas saldot FRÅN räkningen, och fredagens 50 syns redan i de 400.
+   * Måndag morgon räknas 400. I fredags blåstes 50, men rapporten skickas först på tisdag. En
+   * justering hade dragit av de 50 en gång till — 350, fast det står 400 på depån.
    */
   it('en sen rapport för arbete före räkningen dras INTE av en gång till', () => {
-    const r = balanceWith(
-      [count(400, '2026-09-14')], // måndag
-      [],
-      [move(50, '2026-09-11')], // fredagens arbete, rapporterat på tisdagen
-    );
+    const r = balanceWith([count(400, '2026-09-14')], [], [partial(50, '2026-09-11')]);
     expect(r.balance).toBe(400);
   });
 
   it('förbrukning EFTER räkningen dras av som vanligt', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [], [move(30, '2026-09-15')]);
+    const r = balanceWith([count(400, '2026-09-14')], [], [partial(30, '2026-09-15')]);
     expect(r.balance).toBe(370);
   });
 
   it('en leverans efter räkningen läggs på', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [move(1296, '2026-09-16')], []);
+    const r = balanceWith([count(400, '2026-09-14')], [delivery(1296, '2026-09-16')], []);
     expect(r.balance).toBe(1696);
   });
 
   it('en leverans före räkningen läggs INTE på — den står redan på depån', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [move(1296, '2026-09-10')], []);
+    const r = balanceWith([count(400, '2026-09-14')], [delivery(1296, '2026-09-10')], []);
     expect(r.balance).toBe(400);
   });
+});
 
+describe('räkningsdagen — ASYMMETRISKT, så att ett fel alltid blir för lågt', () => {
   /**
-   * ⚠️ RÄKNINGEN GÄLLER VID DAGENS BÖRJAN. Förbrukning på räkningsdagen dras av efteråt.
-   *
-   * Räknade man på morgonen innan en bil blåste 50 säckar är det rätt. Räknade man efter blir saldot
-   * en dags förbrukning för LÅGT — det ofarliga hållet. Motsatt regel hade gjort det för HÖGT, och ett
-   * för högt saldo tystar bristbanderollen.
+   * Förbrukning PÅ räkningsdagen dras av (räknas som efter). Blåstes den i själva verket FÖRE räkningen
+   * blir saldot för lågt — ofarligt.
    */
-  it('förbrukning PÅ räkningsdagen dras av — räkningen gäller vid dagens början', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [], [move(50, '2026-09-14')]);
+  it('förbrukning PÅ räkningsdagen dras av', () => {
+    const r = balanceWith([count(400, '2026-09-14')], [], [partial(50, '2026-09-14')]);
     expect(r.balance).toBe(350);
   });
 
-  it('en leverans PÅ räkningsdagen läggs på — samma regel åt båda håll', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [move(100, '2026-09-14')], []);
-    expect(r.balance).toBe(500);
+  /**
+   * 🧨 En leverans PÅ räkningsdagen läggs INTE på (räknas som före). Kom den på morgonen innan man räknade
+   * står den redan i antalet — att lägga på den igen gav ett för HÖGT saldo. En tidigare version gjorde
+   * precis det och påstod "samma regel åt båda håll"; det testet stod här och var grönt.
+   */
+  it('en leverans PÅ räkningsdagen läggs INTE på — den kan redan finnas i antalet', () => {
+    const r = balanceWith([count(400, '2026-09-14')], [delivery(1296, '2026-09-14')], []);
+    expect(r.balance).toBe(400);
+  });
+});
+
+describe('egenkontrollen — daterad som produktionen daterar den', () => {
+  /**
+   * 🧨 FALLET SOM TVÅ VERSIONER MISSADE.
+   *
+   * Jobbet startar fredag. Delrapport fredag 50. Räkning måndag morgon: 400. Egenkontrollen skrivs
+   * TISDAG med 120 — men dess report_day är FREDAG, jobbets första dag, eftersom fältet förifylls så.
+   *
+   * Vid räkningen fanns bara delrapporten (50). Nu gäller egenkontrollen (120). Efter räkningen 70.
+   * Den version som jämförde egenkontrollens report_day lade den "före räkningen", fick 120 − 120 = 0
+   * och saldot 400 — 70 för högt.
+   */
+  it('en egenkontroll skriven efter räkningen drar av det som blåstes efter räkningen', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-14')],
+      [],
+      [partial(50, '2026-09-11'), final(120, '2026-09-11', '2026-09-15')],
+    );
+    expect(r.balance).toBe(330);
+  });
+
+  /**
+   * Saldot får inte HOPPA UPP när egenkontrollen sparas. Före egenkontrollen: delrapporterna efter
+   * räkningen dras av. Efter: egenkontrollen minus delrapporterna före räkningen. Stämmer delrapporterna
+   * med slutsiffran ska de två vara lika.
+   */
+  it('saldot står still när en egenkontroll som stämmer med delrapporterna kommer in', () => {
+    const partials = [partial(50, '2026-09-11'), partial(70, '2026-09-15')];
+    const innan = balanceWith([count(400, '2026-09-14')], [], partials);
+    const efter = balanceWith(
+      [count(400, '2026-09-14')],
+      [],
+      [...partials, final(120, '2026-09-11', '2026-09-16')],
+    );
+    expect(innan.balance).toBe(330);
+    expect(efter.balance).toBe(innan.balance);
+  });
+
+  it('ett jobb vars egenkontroll skrevs FÖRE räkningen drar av noll efter den', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-14')],
+      [],
+      [partial(50, '2026-09-10'), final(120, '2026-09-10', '2026-09-12')],
+    );
+    expect(r.balance).toBe(400);
+  });
+
+  it('en egenkontroll skriven PÅ räkningsdagen räknas som efter', () => {
+    const r = balanceWith([count(400, '2026-09-14')], [], [final(120, '2026-09-10', '2026-09-14')]);
+    expect(r.balance).toBe(280);
+  });
+
+  /**
+   * created_at är en UTC-tidsstämpel, räkningen en svensk kalenderdag. En egenkontroll skriven 00:30
+   * svensk tid (22:30 UTC dagen innan) hör till den SVENSKA dagen.
+   */
+  it('created_at tolkas som svensk kalenderdag, inte UTC', () => {
+    // 2026-09-13T22:30Z = 2026-09-14 00:30 i Stockholm (sommartid, UTC+2) — alltså PÅ räkningsdagen.
+    const r = balanceWith(
+      [count(400, '2026-09-14')],
+      [],
+      [final(120, '2026-09-10', '2026-09-14', { created_at: '2026-09-13T22:30:00Z' })],
+    );
+    // I UTC hade den blivit 09-13, alltså "före räkningen", och dragit av noll -> 400.
+    expect(r.balance).toBe(280);
+  });
+
+  it('utan räkning: hela summan efter supersede, precis som förut', () => {
+    const r = balanceWith([], [], [partial(50, '2026-09-11'), final(120, '2026-09-11', '2026-09-15')]);
+    expect(r.balance).toBe(-120);
+  });
+});
+
+describe('golvet vid noll — per arbetsorder', () => {
+  /**
+   * Ett jobb vars delrapport ligger vid Syd före räkningen och vars egenkontroll hamnar på en bil vid
+   * Norr efteråt: egenkontrollen flyttar hela attributionen, och Syd skulle få −50.
+   */
+  it('en depå får aldrig negativ förbrukning när ett jobb byter depå över räkningen', () => {
+    const rows = consumptionAfterCounts(
+      [
+        partial(50, '2026-09-11'),
+        final(120, '2026-09-11', '2026-09-15', { segment: { truck_id: 'truck-norr' } }),
+      ],
+      FLEET,
+      latestCounts([count(400, '2026-09-14')]),
+    );
+    const syd = rows.find((r) => r.depot_id === SYD);
+    // ⚠️ Syd-raden FINNS INTE i resultatet — hela jobbet attribueras till Norr i totalen, och Syd har
+    // ingen annan förbrukning. Den tidigare versionen av testet skrev `?? 0` och godkände därmed
+    // "raden saknas" som om den vore noll: testet kunde inte bli rött. Här står det uttryckligen.
+    expect(syd).toBeUndefined();
+    expect(rows.find((r) => r.depot_id === NORR)?.sacks).toBe(120);
+  });
+
+  /**
+   * 🧨 DET SOM FAKTISKT KAN GÅ FEL: golvet på depåns SUMMA i stället för per jobb. Då äter det ena
+   * jobbets negativa bidrag upp ett ANNAT jobbs verkliga förbrukning, och depån ser orörd ut.
+   */
+  /**
+   * ⚠️ Scenariot MÅSTE ge jobb 1 Syd-nyckeln på BÅDA sidor. En tidigare version av testet lade hela
+   * egenkontrollen på Norr — då finns Syd aldrig i jobbets totalsumma, det negativa bidraget uppstår
+   * aldrig, och testet var grönt även med golvet flyttat till summan. Mutationstestet visade det.
+   *
+   * Det realistiska fallet är en egenkontroll i flera ETAPPER där en del av jobbet flyttade depå:
+   *   wo1: delrapport Syd 50 före räkningen. Egenkontrollen: etapp Syd 20 + etapp Norr 100.
+   *        Vid räkningen: Syd 50.  Nu: Syd 20.  Bidrag till Syd: 20 − 50 = −30.
+   *   wo2: ett vanligt jobb vid Syd som blåser 50 efter räkningen.  Bidrag: +50.
+   *
+   *   per arbetsorder:  max(0, −30) + 50 = 50   ← rätt: wo2:s säckar gick åt
+   *   golv på summan:   max(0, −30 + 50) = 20  ← 30 av wo2:s säckar försvann i wo1:s minus
+   */
+  it('ett jobbs negativa bidrag äter inte upp ett annat jobbs verkliga förbrukning', () => {
+    const rows = consumptionAfterCounts(
+      [
+        partial(50, '2026-09-11'),
+        final(20, '2026-09-11', '2026-09-15'),
+        final(100, '2026-09-11', '2026-09-15', { segment: { truck_id: 'truck-norr' } }),
+        partial(50, '2026-09-15', { work_order_id: 'wo2' }),
+      ],
+      FLEET,
+      latestCounts([count(400, '2026-09-14')]),
+    );
+    expect(rows.find((r) => r.depot_id === SYD)?.sacks).toBe(50);
+    expect(rows.find((r) => r.depot_id === NORR)?.sacks).toBe(100);
   });
 });
 
 describe('fantomsaldot försvinner', () => {
-  /**
-   * Varför avstämningen behövs nu: Sandviken stod på −1100 för att ingående lager aldrig registrerats
-   * (levererat 2000, förbrukat 3100). En enda räkning ska göra saldot rätt, oavsett vad som hänt före.
-   */
   it('en räkning ersätter ett negativt saldo helt', () => {
-    const r = balanceWith(
-      [count(400, '2026-09-14')],
-      [move(2000, '2026-08-01')],
-      [move(3100, '2026-08-20')],
-    );
+    const r = balanceWith([count(400, '2026-09-14')], [delivery(2000, '2026-08-01')], [partial(3100, '2026-08-20')]);
     expect(r.balance).toBe(400);
     expect(r.counted).toBe(400);
     expect(r.counted_on).toBe('2026-09-14');
   });
 
   it('kan rätta ett för HÖGT saldo — det som inte gick alls före avstämningarna', () => {
-    // Bokfört 900 (blåsta säckar som aldrig rapporterats), räknat 300.
-    const r = balanceWith([count(300, '2026-09-14')], [move(1000, '2026-09-01')], [move(100, '2026-09-05')]);
+    const r = balanceWith([count(300, '2026-09-14')], [delivery(1000, '2026-09-01')], [partial(100, '2026-09-05')]);
     expect(r.balance).toBe(300);
   });
 });
@@ -122,15 +284,11 @@ describe('senaste räkningen gäller', () => {
   });
 
   it('en efterhandsinmatad äldre räkning tar inte över från en nyare', () => {
-    // Inmatningsordningen säger 14:e först, 10:e sist — men det är räkningsDAGEN som avgör.
     const r = balanceWith([count(250, '2026-09-14'), count(400, '2026-09-10')], [], []);
     expect(r.balance).toBe(250);
   });
 
-  /**
-   * 🧨 En felaktig räkning rättas med en ny, SAMMA dag. Då måste den senast inmatade vinna — med `>` i
-   * stället för `>=` hade den första stått kvar och rättelsen varit verkningslös, tyst.
-   */
+  /** En felaktig räkning rättas med en ny, SAMMA dag — den senast inmatade måste vinna. */
   it('två räkningar samma dag: den senast inmatade vinner', () => {
     const r = balanceWith([count(400, '2026-09-14'), count(380, '2026-09-14')], [], []);
     expect(r.balance).toBe(380);
@@ -138,28 +296,21 @@ describe('senaste räkningen gäller', () => {
 });
 
 describe('null är inte noll', () => {
-  /**
-   * ⚠️ En räkning på 0 är ett av de viktigaste svaren: depån är tom, och bristbanderollen ska tändas.
-   * Den får aldrig behandlas som "ingen räkning".
-   */
   it('en räkning på noll är en baslinje på noll', () => {
-    const r = balanceWith([count(0, '2026-09-14')], [move(500, '2026-09-01')], []);
+    const r = balanceWith([count(0, '2026-09-14')], [delivery(500, '2026-09-01')], []);
     expect(r.balance).toBe(0);
     expect(r.counted).toBe(0);
-    expect(r.counted_on).toBe('2026-09-14');
   });
 
   it('utan räkning är counted null och saldot räknas över all tid som förut', () => {
-    const r = balanceWith([], [move(500, '2026-09-01')], [move(100, '2026-09-05')]);
+    const r = balanceWith([], [delivery(500, '2026-09-01')], [partial(100, '2026-09-05')]);
     expect(r.counted).toBeNull();
     expect(r.counted_on).toBeNull();
     expect(r.balance).toBe(400);
   });
 
   it('en räkning utan några rörelser efteråt visar ändå sin rad', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [], []);
-    expect(r).toBeDefined();
-    expect(r.balance).toBe(400);
+    expect(balanceWith([count(400, '2026-09-14')], [], []).balance).toBe(400);
   });
 });
 
@@ -168,29 +319,23 @@ describe('räkningen gäller bara sin egen depå och sitt eget material', () => 
     const latest = latestCounts([count(400, '2026-09-14')]);
     const rows = computeDepotBalances(
       DEPOTS,
-      movementsAfterCounts([move(500, '2026-09-01', { material: 'KNAUF SUPAFIL' })], latest),
+      deliveriesAfterCounts([delivery(500, '2026-09-01', { material: 'KNAUF SUPAFIL' })], latest),
       [],
       [],
       latest,
     )[0].rows;
-    // Knauf har ingen räkning — dess leverans före 14:e ska stå kvar.
-    expect(rows.find((r) => r.material === 'KNAUF SUPAFIL')!.balance).toBe(500);
-    expect(rows.find((r) => r.material === 'KNAUF SUPAFIL')!.counted).toBeNull();
+    const knauf = rows.find((r) => r.material === 'KNAUF SUPAFIL')!;
+    expect(knauf.balance).toBe(500);
+    expect(knauf.counted).toBeNull();
   });
 
   it('rör inte samma material på en annan depå', () => {
     const latest = latestCounts([count(400, '2026-09-14')]);
-    const kept = movementsAfterCounts([move(500, '2026-09-01', { depot_id: 'depot-norr' })], latest);
-    expect(kept).toHaveLength(1);
+    expect(deliveriesAfterCounts([delivery(500, '2026-09-01', { depot_id: NORR })], latest)).toHaveLength(1);
   });
 });
 
-describe('planerat behov påverkas inte av räkningen', () => {
-  /**
-   * Säckar som blåsts före räkningen är redan borta ur det räknade antalet OCH redan avdragna ur det
-   * planerade behovet. De finns alltså varken i saldot eller i det som återstår — invarianten från
-   * etapp 0 ("varje säck ur planned måste också ur balance") håller.
-   */
+describe('planerat behov', () => {
   it('shortfall räknas mot det avstämda saldot', () => {
     const latest = latestCounts([count(400, '2026-09-14')]);
     const r = computeDepotBalances(DEPOTS, [], [], [{ depot_id: SYD, material: EKO, sacks: 600 }], latest)[0].rows[0];
@@ -216,13 +361,8 @@ describe('stockCountSchema', () => {
     expect(stockCountSchema.safeParse({ ...base, counted_sacks: -1 }).success).toBe(false);
   });
 
-  /**
-   * 🧨 En framtidsdaterad räkning blir baslinje DIREKT och stryker all förbrukning före sitt datum —
-   * saldot fryses på ett tal ingen har räknat. Samma felklass som den framtidsdaterade leveransen.
-   */
   it('avvisar ett datum i framtiden', () => {
-    const parsed = stockCountSchema.safeParse({ ...base, counted_on: addDaysISO(today, 1) });
-    expect(parsed.success).toBe(false);
+    expect(stockCountSchema.safeParse({ ...base, counted_on: addDaysISO(today, 1) }).success).toBe(false);
   });
 
   it('godtar ett passerat datum — en räkning får föras över i efterhand', () => {
@@ -237,99 +377,5 @@ describe('stockCountSchema', () => {
     for (const junk of [null, '', true, [], 'abc']) {
       expect(stockCountSchema.safeParse({ ...base, counted_sacks: junk }).success).toBe(false);
     }
-  });
-});
-
-
-// ---------------------------------------------------------------------------
-// consumptionAfterCounts — förbrukningen efter en räkning, med supersede-regeln
-// ---------------------------------------------------------------------------
-//
-// 🧨 HITTAT EFTER FÖRSTA VERSIONEN, AV MIG, OCH MISSAT AV RUBRIKTESTET OVAN. Det testet har bara EN
-// delrapport. Det normala flödet för ett flerdagarsjobb är delrapporter följda av en EGENKONTROLL, och
-// egenkontrollen ERSÄTTER delrapporterna och bär sitt eget datum. Ett datumfilter drog då av hela jobbet
-// efter räkningen. Varje jobb som pågick när man räknade hade sänkt saldot under det man just skrev in.
-
-describe('consumptionAfterCounts — egenkontrollen ersätter delrapporterna', () => {
-  const T1 = 'truck-syd';
-  const fleet = new Map<string, string | null>([[T1, SYD], ['truck-norr', 'depot-norr']]);
-  const report = (sacks: number, day: string, kind: 'partial' | 'final', over: Record<string, unknown> = {}) => ({
-    work_order_id: 'wo1',
-    sacks_blown: sacks,
-    kind,
-    material: EKO,
-    report_day: day,
-    segment: { truck_id: T1 },
-    ...over,
-  });
-  const run = (reports: ReturnType<typeof report>[], counts: StockCount[]) =>
-    consumptionAfterCounts(reports, fleet, latestCounts(counts));
-  const at = (rows: ReturnType<typeof run>, depot = SYD) =>
-    rows.find((r) => r.depot_id === depot && r.material === EKO)?.sacks;
-
-  /**
-   * FALLET. Fredag delrapport 50, måndag egenkontroll 120 (hela jobbet). Räkning måndag morgon.
-   * Vid räkningen sa huvudboken 50; nu säger den 120. Efter räkningen blåstes alltså 70 — inte 120.
-   */
-  it('en egenkontroll efter räkningen drar bara av det som blåstes EFTER', () => {
-    const rows = run(
-      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')],
-      [count(400, '2026-09-14')],
-    );
-    expect(at(rows)).toBe(70);
-  });
-
-  it('hela saldot hänger ihop: 400 räknat − 70 = 330, inte 280', () => {
-    const latest = latestCounts([count(400, '2026-09-14')]);
-    const consumed = consumptionAfterCounts(
-      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')],
-      fleet,
-      latest,
-    );
-    const r = computeDepotBalances(DEPOTS, [], consumed, [], latest)[0].rows[0];
-    expect(r.balance).toBe(330);
-  });
-
-  it('ett jobb helt färdigt före räkningen drar av noll', () => {
-    const rows = run(
-      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-12', 'final')],
-      [count(400, '2026-09-14')],
-    );
-    expect(at(rows)).toBe(0);
-  });
-
-  it('bara delrapporter: det efter räkningen dras av, det före inte', () => {
-    const rows = run(
-      [report(50, '2026-09-11', 'partial'), report(30, '2026-09-15', 'partial')],
-      [count(400, '2026-09-14')],
-    );
-    expect(at(rows)).toBe(30);
-  });
-
-  it('en egenkontroll PÅ räkningsdagen räknas som efter — räkningen gäller vid dagens början', () => {
-    const rows = run([report(120, '2026-09-14', 'final')], [count(400, '2026-09-14')]);
-    expect(at(rows)).toBe(120);
-  });
-
-  it('utan räkning: hela summan efter supersede, precis som förut', () => {
-    const rows = run([report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')], []);
-    expect(at(rows)).toBe(120);
-  });
-
-  /**
-   * ⚠️ Golvet vid noll. Delrapporten vid Syd före räkningen, egenkontrollen på en bil vid Norr efteråt:
-   * egenkontrollen flyttar hela attributionen till Norr, och Syd hade fått −50 — säckar tillbaka som
-   * aldrig kom. Man kan inte avblåsa säckar.
-   */
-  it('en depå får aldrig negativ förbrukning när ett jobb byter depå över räkningen', () => {
-    const rows = run(
-      [
-        report(50, '2026-09-11', 'partial'),
-        report(120, '2026-09-15', 'final', { segment: { truck_id: 'truck-norr' } }),
-      ],
-      [count(400, '2026-09-14')],
-    );
-    expect(at(rows, SYD) ?? 0).toBeGreaterThanOrEqual(0);
-    expect(at(rows, 'depot-norr')).toBe(120);
   });
 });

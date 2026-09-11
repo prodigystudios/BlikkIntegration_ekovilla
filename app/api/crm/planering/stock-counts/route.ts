@@ -39,13 +39,13 @@ export async function POST(req: Request) {
       actorName: gate.currentUser.name ?? null,
     });
     if (error) {
-      // 23503 = depån finns inte (FK). 42501 = RLS nekade, vilket i praktiken är datumtaket i
-      // insert-policyn — Zod har redan prövat nyckeln. Båda på svenska, inte som ett rått databasfel.
+      // 23503 = depån finns inte (FK). 42501 = RLS nekade. Det meddelandet är MEDVETET allmänt: Zod har
+      // redan stoppat ett framtida datum, så datumtaket i policyn nås i praktiken inte via routen, och
+      // 42501 kan lika gärna betyda att nyckeln dragits in mellan grinden ovan och skrivningen. Ett
+      // meddelande som gissar på orsaken skickar den som felsöker åt fel håll.
       const code = (error as { code?: string }).code;
       if (code === '23503') return routeError(404, 'planning_stock_count_depot_missing', 'Depån finns inte längre');
-      if (code === '42501') {
-        return routeError(403, 'planning_stock_count_rejected', 'Räkningen nekades — kontrollera att datumet inte ligger i framtiden');
-      }
+      if (code === '42501') return routeError(403, 'planning_stock_count_rejected', 'Räkningen nekades av databasen');
       return routeError(500, 'planning_stock_count_create_failed', error.message);
     }
 

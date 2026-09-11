@@ -2,11 +2,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { materialDemandFromLineItems, materialShortFromLineItems, type MaterialDemand } from '@/lib/domains/crm/materials';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { effectiveSackReports, sackReportKind } from './sackLedger';
+import { stockholmTodayISO } from './timezone';
 import { chunkIds, readAllPages, type ReadError } from './pagedRead';
 import { listOpenExpected } from './expectedDeliveries';
 import { defaultSupplierForMaterial, listSupplyTerms } from './materialSuppliers';
 import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
-import { countFor, latestCounts, listStockCounts, movementsAfterCounts, type DatedMovement, type StockCount } from './stockCounts';
+import { countFor, deliveriesAfterCounts, latestCounts, listStockCounts, type DatedMovement, type StockCount } from './stockCounts';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -58,8 +59,8 @@ export function computeDepotBalances(
    * Senaste avstämning per depå+material (latestCounts). Valfri: utan den räknas saldot som förut,
    * över all tid.
    *
-   * ⚠️ Rörelserna i `delivered` och `consumed` måste REDAN vara filtrerade med movementsAfterCounts
-   * mot samma karta. Den här funktionen lägger bara på baslinjen — den stryker ingenting. Skickas
+   * ⚠️ Rörelserna i `delivered` och `consumed` måste REDAN vara avgränsade mot samma karta —
+   * leveranserna med deliveriesAfterCounts, förbrukningen med consumptionAfterCounts. Den här funktionen lägger bara på baslinjen — den stryker ingenting. Skickas
    * ofiltrerade rader in räknas allt före räkningen två gånger: en gång i det räknade antalet och en
    * gång som rörelse.
    */
@@ -125,7 +126,7 @@ async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: Dated
   // veckas leveranser, har en egen datumbegränsad läsning — vidga inte den här.
   //
   // `delivered_on` följer med sedan avstämningarna kom: en leverans FÖRE en räkning syns redan i det
-  // räknade antalet och får inte läggas på en gång till (movementsAfterCounts).
+  // räknade antalet och får inte läggas på en gång till (deliveriesAfterCounts).
   const { rows, error } = await readAllPages<{ depot_id: string; material: string; sacks: number | string; delivered_on: string }>(
     (from, to) =>
       supabase
@@ -220,69 +221,109 @@ export function attributeReport(
 }
 
 /**
+ * Den dag huvudboken fick veta om en rapportrad — vilket är det som avgör om raden fanns vid en räkning.
+ *
+ * 🧨 FÖR EN EGENKONTROLL ÄR DET INTE report_day. Egenkontrollens datumfält förifylls med jobbets
+ * FÖRSTA dag (tidigaste segmentets start_day, via installationDate), så ett flerdagarsjobbs
+ * egenkontroll bär ett datum FÖRE alla sina delrapporter — fast den skrivs när jobbet är klart. Att
+ * jämföra report_day mot räkningsdagen lade därför varje egenkontroll "före räkningen", även för jobb
+ * som pågick när man räknade. Följden var att hela jobbets förbrukning efter räkningen försvann:
+ * saldot blev för HÖGT och hoppade UPPÅT i samma stund som egenkontrollen sparades.
+ *
+ * (Min första rättelse, 8bfa6ac, byggde på premissen att egenkontrollen är daterad till SISTA dagen.
+ * Det är den aldrig i produktion. Testfixturerna daterade den till räkningsdagen och dolde felet.)
+ *
+ * En DELRAPPORT förifylls däremot med dagens datum och bär alltså den faktiska arbetsdagen — där är
+ * report_day rätt signal.
+ *
+ * created_at översätts till SVENSK kalenderdag: servern kör UTC, och en egenkontroll skriven 00:30
+ * svensk tid hör till den dagen, inte till gårdagen.
+ */
+function ledgerDay(r: Record<string, any>): string | null {
+  if (sackReportKind(r) === 'final') {
+    return typeof r.created_at === 'string' ? stockholmTodayISO(new Date(r.created_at)) : null;
+  }
+  return (r.report_day as string | null) ?? null;
+}
+
+/**
  * Ren: förbrukningen per depå och material — efter senaste avstämningen där det finns en.
  *
  * 🧨 "DET HUVUDBOKEN SÄGER NU, MINUS DET DEN SA I RÄKNINGSÖGONBLICKET". Inte ett datumfilter på
- * rapportraderna, och skillnaden är supersede-regeln:
+ * rapportraderna, för säckrapporteringen har en supersede-regel: finns en egenkontroll gäller BARA den,
+ * och den ERSÄTTER delrapporterna.
  *
- *     jobb över två dagar:  fredag delrapport 50,  måndag egenkontroll 120.  Räkning måndag morgon.
+ *     jobb över två dagar:  fredag delrapport 50,  egenkontroll 120 skriven tisdag.
+ *     räkning måndag morgon, 400 säck.
  *
- *     datumfilter:  egenkontrollen ERSÄTTER delrapporten och bär måndagens datum -> hela 120 dras av
- *                   efter räkningen. Men bara 70 blåstes efter den; fredagens 50 syns redan i det
- *                   räknade antalet. Dubbelräknat.
- *     här:          vid räkningen sa huvudboken 50 (bara delrapporten fanns). Nu säger den 120
- *                   (egenkontrollen gäller). Efter räkningen: 120 − 50 = 70.
+ *     vid räkningen:  huvudboken hade bara delrapporten -> 50
+ *     nu:             egenkontrollen gäller           -> 120
+ *     efter räkningen: 120 − 50 = 70.   Saldo 330, vilket är vad som står på depån.
  *
- * Det är inget kantfall: delrapporter följda av en egenkontroll är NORMALFLÖDET för flerdagarsjobb, så
- * varje jobb som pågick vid räkningen hade dragit saldot under det som just skrevs in.
+ * "Vid räkningen" avgörs av ledgerDay — se den för varför egenkontrollen inte kan dateras med sin
+ * egen report_day.
  *
- * Supersede tillämpas på BÅDA sidor (effectiveSackReports), så regeln skrivs inte en gång till här.
+ * Det är inget kantfall: delrapporter följda av en egenkontroll är NORMALFLÖDET för flerdagarsjobb.
  *
+ * Supersede tillämpas på BÅDA sidor (effectiveSackReports), så regeln skrivs inte en gång till.
  * Depå+material UTAN räkning får hela summan, precis som före avstämningarna.
  *
- * ⚠️ Golvat vid noll per depå+material. Det negativa fallet uppstår bara när ett jobbs rapporter
- * hamnar på OLIKA depåer före och efter räkningen — egenkontrollen flyttar då hela attributionen, och
- * depån som räknades skulle få en negativ förbrukning, alltså säckar tillbaka som aldrig kom. Man kan
- * inte avblåsa säckar; noll är det enda försvarbara svaret.
+ * ⚠️ GOLVET VID NOLL SITTER PER ARBETSORDER, INTE PER DEPÅ+MATERIAL. Ett negativt bidrag uppstår när
+ * ett jobbs rapporter hamnar på OLIKA depåer före och efter räkningen — egenkontrollen flyttar då hela
+ * attributionen, och den räknade depån skulle få negativ förbrukning. Golvades det på depåns SUMMA åt
+ * det ena jobbets −50 upp ett ANNAT jobbs verkliga 50 säckar efter räkningen, och depån såg orörd ut.
+ * Per arbetsorder kan ett jobb bara nolla sig självt.
  */
 export function consumptionAfterCounts(
   reports: Array<Record<string, any> & { work_order_id: string }>,
   truckDepot: Map<string, string | null>,
   counts: Map<string, StockCount>,
 ): StockRow[] {
-  const sumByKey = (rows: typeof reports) => {
-    const out = new Map<string, { depot_id: string; material: string; sacks: number }>();
+  // arbetsorder -> depå+material -> säckar
+  type Cell = { depot_id: string; material: string; sacks: number };
+  const sumByOrderAndKey = (rows: typeof reports) => {
+    const out = new Map<string, Map<string, Cell>>();
     for (const r of effectiveSackReports(rows)) {
       const a = attributeReport(r, truckDepot);
       if (!a) continue;
       const k = `${a.depot_id}\u0000${a.material}`;
-      const cur = out.get(k) ?? { depot_id: a.depot_id, material: a.material, sacks: 0 };
+      const byKey = out.get(r.work_order_id) ?? new Map<string, Cell>();
+      const cur = byKey.get(k) ?? { depot_id: a.depot_id, material: a.material, sacks: 0 };
       cur.sacks += a.sacks;
-      out.set(k, cur);
+      byKey.set(k, cur);
+      out.set(r.work_order_id, byKey);
     }
     return out;
   };
 
-  // Det huvudboken hade sett i räkningsögonblicket: rapporter för arbete FÖRE sin depås räkning.
-  // En rapport vars depå+material saknar räkning är aldrig "före" — där gäller all tid.
+  // Det huvudboken hade sett i räkningsögonblicket. En rapport vars depå+material saknar räkning är
+  // aldrig "före" — där gäller all tid.
   const before = reports.filter((r) => {
     const a = attributeReport(r, truckDepot);
     if (!a) return false;
     const c = countFor(counts, a.depot_id, a.material);
-    // `<`: räkningen gäller vid dagens BÖRJAN — räkningsdagens arbete är efter räkningen.
-    return c ? a.day < c.counted_on : false;
+    const day = ledgerDay(r);
+    // `<`: räkningen gäller vid dagens BÖRJAN — det som skrevs på räkningsdagen är efter räkningen.
+    // Saknas dagen räknas raden som EFTER: då dras den av, och felet blir ett för lågt saldo.
+    return c && day ? day < c.counted_on : false;
   });
 
-  const total = sumByKey(reports);
-  const atCount = sumByKey(before);
+  const total = sumByOrderAndKey(reports);
+  const atCount = sumByOrderAndKey(before);
 
-  const rows: StockRow[] = [];
-  for (const [k, t] of total) {
-    const counted = countFor(counts, t.depot_id, t.material);
-    const sacks = counted ? Math.max(0, t.sacks - (atCount.get(k)?.sacks ?? 0)) : t.sacks;
-    rows.push({ depot_id: t.depot_id, material: t.material, sacks });
+  const bySum = new Map<string, Cell>();
+  for (const [workOrderId, byKey] of total) {
+    for (const [k, t] of byKey) {
+      const counted = countFor(counts, t.depot_id, t.material);
+      const sacks = counted
+        ? Math.max(0, t.sacks - (atCount.get(workOrderId)?.get(k)?.sacks ?? 0))
+        : t.sacks;
+      const cur = bySum.get(k) ?? { depot_id: t.depot_id, material: t.material, sacks: 0 };
+      cur.sacks += sacks;
+      bySum.set(k, cur);
+    }
   }
-  return rows;
+  return [...bySum.values()];
 }
 
 // Förbrukade säckar per depå och material: blåsta säckar → segmentets bil → bilens depå.
@@ -327,7 +368,10 @@ async function deriveConsumptionRows(
         // `report_day` följer med sedan avstämningarna kom: förbrukning FÖRE en räkning syns redan i
         // det räknade antalet. Det är ARBETSDAGEN som avgör, inte när rapporten skickades — annars
         // hade en sen rapport för fredagens arbete dragits av efter måndagens räkning, dubbelt.
-        .select('work_order_id, sacks_blown, kind, material, report_day, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
+        // `created_at` följer med för avstämningen: en EGENKONTROLLS report_day är jobbets FÖRSTA dag
+        // (förifylld ur tidigaste segmentet), så det är när den SKRIVITS som avgör om den fanns vid
+        // räkningen. Se consumptionAfterCounts.
+        .select('work_order_id, sacks_blown, kind, material, report_day, created_at, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
         .order('id', { ascending: true })
         .range(from, to),
   );
@@ -756,8 +800,9 @@ export async function getDepotStockWithForecast(
   // Avstämningen: stryk rörelser som redan syns i en räkning, och lägg räkningen som baslinje. SAMMA
   // karta till båda stegen — se varningen vid computeDepotBalances om vad som händer annars.
   const counts = latestCounts(stockCounts.data);
-  // Leveranser har ingen supersede-regel, så där räcker ett datumfilter.
-  const deliveredAfter = movementsAfterCounts(delivered.rows, counts);
+  // Leveranser har ingen supersede-regel, så där räcker ett datumfilter — men med räkningsdagens
+  // leveranser räknade som FÖRE räkningen. Se deliveriesAfterCounts om asymmetrin.
+  const deliveredAfter = deliveriesAfterCounts(delivered.rows, counts);
   // 🧨 Förbrukningen går INTE via samma datumfilter. En egenkontroll ersätter delrapporterna och bär
   // sitt EGET datum, så ett filter hade dragit av hela jobbet efter räkningen. Se consumptionAfterCounts.
   const consumedAfter = consumptionAfterCounts(consumption.raw, truckDepot, counts);
@@ -769,10 +814,16 @@ export async function getDepotStockWithForecast(
     depots,
     deliveredAfter,
     consumedAfter,
-    // Det PLANERADE behovet påverkas INTE av räkningen, med flit. Säckar som blåsts före räkningen är
-    // redan borta ur det räknade antalet OCH redan avdragna ur behovet (applyReportedToDemand) — de
-    // finns alltså varken i saldot eller i det som återstår att blåsa. Invarianten från etapp 0
-    // ("varje säck ur planned måste också ur balance") håller.
+    // Det PLANERADE behovet påverkas INTE av räkningen, med flit. Säckar som blåsts OCH RAPPORTERATS
+    // före räkningen är redan borta ur det räknade antalet och redan avdragna ur behovet
+    // (applyReportedToDemand), så de finns varken i saldot eller i det som återstår — etapp 0:s
+    // invariant håller för dem.
+    //
+    // ⚠️ Men inte för blåsta säckar som ännu INTE rapporterats. De är borta ur depån (och därmed ur
+    // räkningen) men står kvar i behovet tills rapporten kommer, så bristen och prognosen blir för
+    // stora så länge. Det är den ofarliga riktningen — något för mycket beställt — och det rättar sig
+    // självt när rapporten kommer in. Men invarianten håller alltså inte i det fönstret, och det ska
+    // inte påstås att den gör.
     picked.flatMap((p) =>
       p.materials.filter((m) => m.material && m.sacks > 0).map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks })),
     ),

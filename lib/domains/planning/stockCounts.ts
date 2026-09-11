@@ -58,23 +58,30 @@ export function latestCounts(rows: StockCount[]): Map<string, StockCount> {
 }
 
 /**
- * Ren: stryk rörelser som redan syns i en räkning.
+ * Ren: stryk LEVERANSER som redan syns i en räkning.
  *
- * För varje depå+material MED en räkning försvinner rörelser daterade FÖRE räkningsdagen — de är redan
- * med i det räknade antalet. Rörelser PÅ räkningsdagen och senare står kvar och läggs på, eftersom
- * räkningen gäller vid dagens början.
+ * ⚠️ BARA FÖR LEVERANSER. Förbrukningen går via consumptionAfterCounts i depotStock, och den skillnaden
+ * är inte kosmetisk: säckrapporteringen har en supersede-regel — egenkontrollen ersätter delrapporterna
+ * och bär ett eget datum — så ett datumfilter på förbrukning dubbelräknar. Funktionen hette förut
+ * movementsAfterCounts och drog förbrukningen också; det var fel, och namnet är ändrat så att det inte
+ * går att göra om av misstag.
  *
- * ⚠️ `<`, INTE `<=`. Med `<=` hade räkningsdagens egen förbrukning försvunnit, och räknade man på
- * morgonen innan en bil blåste 50 säckar hade de 50 aldrig dragits av — saldot för HÖGT, den farliga
- * riktningen. Med `<` blir felet, om man i själva verket räknade efter dagens arbete, åt andra hållet:
- * en dags förbrukning för lågt, något för mycket beställt.
+ * ⚠️ `>`, INTE `>=`: EN LEVERANS PÅ RÄKNINGSDAGEN RÄKNAS SOM FÖRE RÄKNINGEN. Kom den på morgonen innan
+ * man räknade står den redan i det räknade antalet, och att lägga på den igen gav ett för HÖGT saldo —
+ * den farliga riktningen, som tystar bristbanderollen. Kom den i själva verket efter räkningen blir
+ * saldot för lågt, vilket är ofarligt.
+ *
+ * Det är AVSIKTLIGT ASYMMETRISKT mot förbrukningen, där räkningsdagens arbete dras av (räknas som
+ * efter). Båda reglerna är valda så att ett fel alltid hamnar åt SAMMA håll: för lågt saldo, något för
+ * mycket beställt, aldrig en bil utan material. "Samma regel åt båda håll" — som en tidigare version
+ * påstod — hade gjort leveransfelet farligt.
  *
  * Depåer och material UTAN räkning passerar orörda — där gäller saldot över all tid som förut.
  */
-export function movementsAfterCounts<T extends DatedMovement>(movements: T[], counts: Map<string, StockCount>): T[] {
-  return movements.filter((m) => {
+export function deliveriesAfterCounts<T extends DatedMovement>(deliveries: T[], counts: Map<string, StockCount>): T[] {
+  return deliveries.filter((m) => {
     const c = counts.get(key(m.depot_id, m.material));
-    return !c || m.day >= c.counted_on;
+    return !c || m.day > c.counted_on;
   });
 }
 

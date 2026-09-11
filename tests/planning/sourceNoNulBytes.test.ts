@@ -17,7 +17,8 @@ import { join } from 'node:path';
  * Samma sorts vakt som sqlNoAstralChars: en mekanisk kontroll i stället för ett åtagande att minnas.
  */
 
-const ROOTS = ['app', 'lib', 'components', 'tests'];
+// supabase/ med: .sql står i filändelserna nedan, och utan roten hade den raden varit ett tomt löfte.
+const ROOTS = ['app', 'lib', 'components', 'tests', 'supabase'];
 const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.sql', '.css', '.json'];
 const SKIP = new Set(['node_modules', '.next', '.git']);
 

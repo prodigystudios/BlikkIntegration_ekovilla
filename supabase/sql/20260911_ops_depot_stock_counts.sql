@@ -21,13 +21,23 @@
 --       justering:   saldo 400 -> på tisdag dras 50 igen -> 350, fast det står 400 på depån
 --       avstämning:  saldot räknas FRÅN räkningen; fredagens 50 syns redan i de 400 -> stannar på 400
 --
--- Rapporterna bär arbetsdagen (ops_segment_reports.report_day), så avstämningen går att räkna rätt:
--- saldo = räknat + leveranser från och med räkningsdagen − förbrukning från och med räkningsdagen.
+-- saldo = räknat + leveranser EFTER räkningsdagen − förbrukning från och med räkningsdagen.
 --
--- ⚠️ RÄKNINGEN GÄLLER VID DAGENS BÖRJAN. Förbrukning som rapporteras FÖR räkningsdagen dras av
--- efteråt. Räknade man i själva verket EFTER dagens arbete blir saldot en dags förbrukning för lågt
--- — det ofarliga hållet: något för mycket beställt, aldrig en bil utan material. Samma regel för
--- leveranser: en leverans på räkningsdagen läggs på.
+-- ⚠️ FÖRBRUKNINGEN RÄKNAS INTE MED ETT DATUMFILTER. Säckrapporteringen har en supersede-regel: finns en
+-- egenkontroll gäller BARA den, och den ersätter delrapporterna. Förbrukningen efter en räkning är
+-- därför "det huvudboken säger nu, minus det den sa i räkningsögonblicket" (consumptionAfterCounts i
+-- lib/domains/planning/depotStock.ts). Och för att avgöra om en EGENKONTROLL fanns vid räkningen
+-- används dess created_at, inte dess report_day — den report_day är jobbets FÖRSTA dag (förifylld ur
+-- tidigaste segmentet), så varje pågående jobb hade annars hamnat "före räkningen". Två versioner av
+-- koden gick fel på just det, båda åt det farliga hållet.
+--
+-- ⚠️ RÄKNINGSDAGEN ÄR MED FLIT ASYMMETRISK, så att ett fel alltid hamnar åt SAMMA håll:
+--   förbrukning PÅ räkningsdagen  -> dras av  (räknas som EFTER)   fel = saldo för lågt
+--   leverans    PÅ räkningsdagen  -> läggs INTE på (räknas som FÖRE)  fel = saldo för lågt
+-- Kom leveransen på morgonen innan man räknade står den redan i antalet; att lägga på den igen gav ett
+-- för HÖGT saldo, som tystar bristbanderollen. En tidigare version hade "samma regel åt båda håll" —
+-- det gjorde leveransfelet farligt. För lågt betyder något för mycket beställt, aldrig en bil utan
+-- material.
 --
 -- BARA TILLÄGG. Ingen UPDATE, ingen DELETE: den senaste räkningen per depå och material gäller, och en
 -- felaktig räkning rättas med en ny. Historiken lagras därmed redan — en historikvy senare är bara en
@@ -38,9 +48,13 @@
 -- Kör EFTER 20260612_ops_depots.sql (FK), 20260611_planning_permissions.sql (policyerna anropar
 -- has_permission) och auth_roles_setup.sql (FK -> profiles).
 --
--- ADDITIV. Ingen befintlig tabell, policy eller funktion rörs. Ordningen mot koden är fri åt ETT håll:
--- ⚠️ SQL FÖRE KOD. Den nya koden läser tabellen i lagerberäkningen, och den läsningen failar stängt —
--- saknas tabellen dör HELA lagervyn och bristbanderollen med den (PostgREST 400 på saknad relation).
+-- ADDITIV. Ingen befintlig tabell, policy eller funktion rörs. Men ordningen mot koden är INTE fri:
+-- ⚠️ SQL FÖRE KOD, av två skäl som båda slår bredare än funktionen själv:
+--   1. Lagerberäkningen läser tabellen och failar stängt — saknas den dör HELA lagervyn och
+--      bristbanderollen (PostgREST 400 på saknad relation).
+--   2. Tavlan prenumererar på tabellen i en DELAD realtime-kanal (planning-board-sync) tillsammans med
+--      alla andra ops-tabeller. Saknas tabellen i publikationen kan hela kanalen misslyckas — och då
+--      slutar livesynken för SCHEMAT, inte bara för lagret, utan att något felmeddelande syns.
 --
 -- Kör i Supabase SQL editor. Idempotent — kör den TVÅ gånger innan du litar på påståendet.
 -- Inga tecken utanför BMP i den här filen.
@@ -89,7 +103,14 @@ create index if not exists ops_depot_stock_counts_latest_idx
 -- Ingen UPDATE och ingen DELETE. En felaktig räkning rättas med en ny.
 
 alter table public.ops_depot_stock_counts enable row level security;
--- Bara select och insert: utan grant på update/delete finns det inget för en policy att släppa in.
+-- ⚠️ `grant select, insert` ENSAMT BEGRÄNSAR INGENTING. En tabell som skapas i Supabase SQL-editorn
+-- får projektets default privileges — `grant all ... to anon, authenticated` — så authenticated har
+-- redan UPDATE och DELETE när raden nedan körs. Att bara lägga till select och insert tar inte bort
+-- något. Därför en uttrycklig revoke. (RLS hade ändå nekat, eftersom ingen update- eller delete-policy
+-- finns — men "bara tillägg" ska vara sant på båda nivåerna, inte hänga på att ingen någonsin lägger
+-- till en policy.)
+revoke update, delete, truncate on public.ops_depot_stock_counts from authenticated, anon;
+revoke all on public.ops_depot_stock_counts from anon;
 grant select, insert on public.ops_depot_stock_counts to authenticated;
 
 drop policy if exists ops_depot_stock_counts_select on public.ops_depot_stock_counts;
@@ -142,7 +163,9 @@ end $$;
 --    select policyname, cmd from pg_policies
 --    where schemaname = 'public' and tablename = 'ops_depot_stock_counts' order by policyname;
 --
--- 2. Ingen grant på update/delete. Frågan ska bara lista SELECT och INSERT:
+-- 2. Ingen grant på update/delete/truncate för authenticated. Frågan ska lista SELECT och INSERT
+--    (och möjligen REFERENCES/TRIGGER från default privileges, som är ofarliga här) — men ALDRIG
+--    UPDATE, DELETE eller TRUNCATE. Står någon av dem där har revoke-raden inte körts.
 --
 --    select privilege_type from information_schema.role_table_grants
 --    where table_schema = 'public' and table_name = 'ops_depot_stock_counts'

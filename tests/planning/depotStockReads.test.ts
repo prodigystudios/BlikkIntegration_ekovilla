@@ -167,16 +167,22 @@ describe('getDepotStockWithForecast failar stängt', () => {
         ...base(),
         ops_trucks: () => ok([{ id: 't1', depot_id: 'd1' }]),
         ops_segment_reports: () => ok([
-          // Fredag: delrapport 50. Måndag: egenkontroll 120 för hela jobbet. Räknat måndag morgon: 400.
-          { work_order_id: 'wo1', sacks_blown: 50, kind: 'partial', material: 'EKOVILLA', report_day: '2026-09-11', segment: { truck_id: 't1' } },
-          { work_order_id: 'wo1', sacks_blown: 120, kind: 'final', material: 'EKOVILLA', report_day: '2026-09-14', segment: { truck_id: 't1' } },
+          // Fredag: delrapport 50. Räknat måndag morgon: 400. Egenkontroll 120 skriven TISDAG.
+          //
+          // ⚠️ Egenkontrollens report_day är FREDAG — jobbets första dag — för så förifyller produktionen
+          // fältet (installationDate = tidigaste segmentets start). En tidigare version av det här testet
+          // daterade den till räkningsdagen, något produktionen aldrig gör, och var därför grönt för en
+          // implementation som gav 400 på verklig data. `created_at` säger när den faktiskt skrevs.
+          { work_order_id: 'wo1', sacks_blown: 50, kind: 'partial', material: 'EKOVILLA', report_day: '2026-09-11', created_at: '2026-09-11T15:00:00Z', segment: { truck_id: 't1' } },
+          { work_order_id: 'wo1', sacks_blown: 120, kind: 'final', material: 'EKOVILLA', report_day: '2026-09-11', created_at: '2026-09-15T15:00:00Z', segment: { truck_id: 't1' } },
         ]),
         ops_depot_stock_counts: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 400, counted_on: '2026-09-14' }]),
       }),
       TODAY,
     );
     expect(res.error).toBeNull();
-    // 400 − 70 (bara det efter räkningen). Datumfiltret gav 400 − 120 = 280.
+    // 400 − 70 (bara det efter räkningen). Datumfiltret gav 280; att jämföra egenkontrollens
+    // report_day gav 400. Båda är mutationstestade mot det här testet.
     expect(res.data[0].rows.find((r) => r.material === 'EKOVILLA')?.balance).toBe(330);
   });
 

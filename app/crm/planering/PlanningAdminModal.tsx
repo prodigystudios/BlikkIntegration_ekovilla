@@ -1425,7 +1425,10 @@ function StockPanel({
         {canWrite && (
           <form onSubmit={record} className={PANEL}>
             <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Lägger till säckar i saldot. Förbrukningen härleds från blåsta säckar.</p>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Lägger till säckar i saldot — utom när leveransen är daterad på eller före depåns senaste avstämning,
+              då den redan finns i det räknade antalet.
+            </p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
                 <SelectMenu
@@ -1489,7 +1492,7 @@ function StockPanel({
                 />
               </div>
               {/* min 0, inte 1: en tom depå är ett svar, och det som ska tända bristbanderollen. */}
-              <div><span className={LABEL}>Antal på depån</span><input type="number" min={0} value={cntSacks} onChange={(e) => setCntSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar på depån" /></div>
+              <div><span className={LABEL}>Antal på depån</span><input type="number" min={0} value={cntSacks} onChange={(e) => setCntSacks(e.target.value)} placeholder="Antal" className={crm.input} aria-label="Antal säckar på depån" /></div>
               {/* max: en framtidsdaterad räkning blir baslinje direkt och fryser saldot på ett tal ingen
                   räknat. Grinden som räknas sitter i stockCountSchema och i databasens insert-policy. */}
               <div><span className={LABEL}>Räknat</span><input type="date" value={cntOn} max={today} onChange={(e) => setCntOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Räknat datum" /></div>
@@ -1505,10 +1508,13 @@ function StockPanel({
                 Stäm av
               </button>
             </div>
-            {/* Konventionen står utskriven, för den avgör åt vilket håll ett fel blir. */}
+            {/* Konventionen står utskriven, för den avgör åt vilket håll ett fel blir. Platshållaren i
+                antalsfältet är "Antal" och inte "0": ett tomt fält är ingen räkning, och en nolla
+                i gråtext såg ut som en. */}
             <p className="mt-2 text-[11px] text-slate-400">
-              Räkningen gäller vid dagens början: förbrukning som rapporteras för samma dag dras av efteråt.
-              Räknade ni efter dagens arbete blir saldot en dags förbrukning för lågt — hellre det än för högt.
+              Samma dag som räkningen dras förbrukningen av, men leveranser läggs inte på — de kan redan stå i
+              antalet. Blir det fel blir saldot alltså för lågt, aldrig för högt. Förs räkningen över i
+              efterhand: ange dagen den gjordes, inte dagens datum.
             </p>
           </form>
         )}
