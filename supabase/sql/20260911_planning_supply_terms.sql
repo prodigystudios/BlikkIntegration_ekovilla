@@ -89,18 +89,30 @@ grant execute on function public.planning_supply_terms() to authenticated;
 --    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
 --    where n.nspname = 'public' and p.proname = 'planning_supply_terms';
 --
--- 3. Den ger samma villkor som tabellen, för en admin:
+-- 3. ⚠️ GRINDEN BITER I SQL-EDITORN, OCH DET ÄR RÄTT SVAR. Editorn kör utan JWT, så auth.uid() är
+--    null och has_permission returnerar false. Anropet SKA alltså fela:
 --
---    select * from public.planning_supply_terms() order by supplier_id;
---    select id, materials, lead_time_days, round_up_to
---    from public.ops_material_suppliers where active order by id;
---    -- samma rader
+--    select * from public.planning_supply_terms();
+--    -- ERROR: forbidden (42501)  <- funktionen fungerar som den ska
 --
--- 4. En INAKTIV leverantör syns inte:
+--    Ett anrop som i stället returnerar rader betyder att grinden inte sitter. (Samma fälla som
+--    varnas för inne i funktionen: service-role har ingen auth.uid(). Att verifiera den här filen
+--    genom att köra funktionen i editorn går alltså inte — läs kroppen i stället:)
 --
---    update public.ops_material_suppliers set active = false where id = '<uuid>';
---    select count(*) from public.planning_supply_terms() where supplier_id = '<uuid>';  -- 0
---    update public.ops_material_suppliers set active = true where id = '<uuid>';
+--    select pg_get_functiondef(p.oid)
+--    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+--    where n.nspname = 'public' and p.proname = 'planning_supply_terms';
+--
+--    Jämför att select-satsen i kroppen är exakt
+--      select s.id, s.materials, s.lead_time_days, s.round_up_to
+--      from public.ops_material_suppliers s where s.active
+--    alltså fyra kolumner och ett aktiv-filter, inget mer.
+--
+-- 4. Underlaget den läser (körs mot TABELLEN, som editorn når):
+--
+--    select id, materials, lead_time_days, round_up_to, active
+--    from public.ops_material_suppliers order by id;
+--    -- raderna med active = true är exakt de funktionen ska returnera
 --
 -- 5. ⚠️ DET SOM FAKTISKT SKA PROVAS: en användare med schedule.read men UTAN depot.manage får
 --    villkoren, men INTE tabellen. Logga in som en sales-användare i appen och kontrollera att
