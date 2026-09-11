@@ -152,6 +152,34 @@ describe('getDepotStockWithForecast failar stängt', () => {
     expect(res.forecast?.rows.find((r) => r.material === 'EKOVILLA')?.opening).toBe(400);
   });
 
+  /**
+   * 🧨 SUPERSEDE GENOM HELA LÄSVÄGEN — och varför det måste provas HÄR och inte bara i enhetstestet.
+   *
+   * Min första version drog förbrukningen genom samma datumfilter som leveranserna. En egenkontroll
+   * ERSÄTTER delrapporterna och bär sitt eget datum, så filtret drog av hela jobbet efter räkningen.
+   * consumptionAfterCounts har egna enhetstester, men de anropar funktionen DIREKT: skulle läsvägen
+   * kopplas tillbaka till datumfiltret märks det inte där. Bara ett test genom getDepotStockWithForecast
+   * fångar det — mutationstestat, datumfiltret ger 280 i stället för 330.
+   */
+  it('en egenkontroll efter räkningen drar bara av det som blåstes efter den', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({
+        ...base(),
+        ops_trucks: () => ok([{ id: 't1', depot_id: 'd1' }]),
+        ops_segment_reports: () => ok([
+          // Fredag: delrapport 50. Måndag: egenkontroll 120 för hela jobbet. Räknat måndag morgon: 400.
+          { work_order_id: 'wo1', sacks_blown: 50, kind: 'partial', material: 'EKOVILLA', report_day: '2026-09-11', segment: { truck_id: 't1' } },
+          { work_order_id: 'wo1', sacks_blown: 120, kind: 'final', material: 'EKOVILLA', report_day: '2026-09-14', segment: { truck_id: 't1' } },
+        ]),
+        ops_depot_stock_counts: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 400, counted_on: '2026-09-14' }]),
+      }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    // 400 − 70 (bara det efter räkningen). Datumfiltret gav 400 − 120 = 280.
+    expect(res.data[0].rows.find((r) => r.material === 'EKOVILLA')?.balance).toBe(330);
+  });
+
   it('propagerar fel från leveransvillkoren', async () => {
     const res = await getDepotStockWithForecast(
       makeClient(base(), { planning_supply_terms: () => fail('villkoren nere') }),

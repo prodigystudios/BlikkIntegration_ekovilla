@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { latestCounts, movementsAfterCounts, type DatedMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
-import { computeDepotBalances } from '@/lib/domains/planning/depotStock';
+import { computeDepotBalances, consumptionAfterCounts } from '@/lib/domains/planning/depotStock';
 import { stockCountSchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO, addDaysISO } from '@/lib/domains/planning/timezone';
 
@@ -237,5 +237,99 @@ describe('stockCountSchema', () => {
     for (const junk of [null, '', true, [], 'abc']) {
       expect(stockCountSchema.safeParse({ ...base, counted_sacks: junk }).success).toBe(false);
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// consumptionAfterCounts — förbrukningen efter en räkning, med supersede-regeln
+// ---------------------------------------------------------------------------
+//
+// 🧨 HITTAT EFTER FÖRSTA VERSIONEN, AV MIG, OCH MISSAT AV RUBRIKTESTET OVAN. Det testet har bara EN
+// delrapport. Det normala flödet för ett flerdagarsjobb är delrapporter följda av en EGENKONTROLL, och
+// egenkontrollen ERSÄTTER delrapporterna och bär sitt eget datum. Ett datumfilter drog då av hela jobbet
+// efter räkningen. Varje jobb som pågick när man räknade hade sänkt saldot under det man just skrev in.
+
+describe('consumptionAfterCounts — egenkontrollen ersätter delrapporterna', () => {
+  const T1 = 'truck-syd';
+  const fleet = new Map<string, string | null>([[T1, SYD], ['truck-norr', 'depot-norr']]);
+  const report = (sacks: number, day: string, kind: 'partial' | 'final', over: Record<string, unknown> = {}) => ({
+    work_order_id: 'wo1',
+    sacks_blown: sacks,
+    kind,
+    material: EKO,
+    report_day: day,
+    segment: { truck_id: T1 },
+    ...over,
+  });
+  const run = (reports: ReturnType<typeof report>[], counts: StockCount[]) =>
+    consumptionAfterCounts(reports, fleet, latestCounts(counts));
+  const at = (rows: ReturnType<typeof run>, depot = SYD) =>
+    rows.find((r) => r.depot_id === depot && r.material === EKO)?.sacks;
+
+  /**
+   * FALLET. Fredag delrapport 50, måndag egenkontroll 120 (hela jobbet). Räkning måndag morgon.
+   * Vid räkningen sa huvudboken 50; nu säger den 120. Efter räkningen blåstes alltså 70 — inte 120.
+   */
+  it('en egenkontroll efter räkningen drar bara av det som blåstes EFTER', () => {
+    const rows = run(
+      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')],
+      [count(400, '2026-09-14')],
+    );
+    expect(at(rows)).toBe(70);
+  });
+
+  it('hela saldot hänger ihop: 400 räknat − 70 = 330, inte 280', () => {
+    const latest = latestCounts([count(400, '2026-09-14')]);
+    const consumed = consumptionAfterCounts(
+      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')],
+      fleet,
+      latest,
+    );
+    const r = computeDepotBalances(DEPOTS, [], consumed, [], latest)[0].rows[0];
+    expect(r.balance).toBe(330);
+  });
+
+  it('ett jobb helt färdigt före räkningen drar av noll', () => {
+    const rows = run(
+      [report(50, '2026-09-11', 'partial'), report(120, '2026-09-12', 'final')],
+      [count(400, '2026-09-14')],
+    );
+    expect(at(rows)).toBe(0);
+  });
+
+  it('bara delrapporter: det efter räkningen dras av, det före inte', () => {
+    const rows = run(
+      [report(50, '2026-09-11', 'partial'), report(30, '2026-09-15', 'partial')],
+      [count(400, '2026-09-14')],
+    );
+    expect(at(rows)).toBe(30);
+  });
+
+  it('en egenkontroll PÅ räkningsdagen räknas som efter — räkningen gäller vid dagens början', () => {
+    const rows = run([report(120, '2026-09-14', 'final')], [count(400, '2026-09-14')]);
+    expect(at(rows)).toBe(120);
+  });
+
+  it('utan räkning: hela summan efter supersede, precis som förut', () => {
+    const rows = run([report(50, '2026-09-11', 'partial'), report(120, '2026-09-14', 'final')], []);
+    expect(at(rows)).toBe(120);
+  });
+
+  /**
+   * ⚠️ Golvet vid noll. Delrapporten vid Syd före räkningen, egenkontrollen på en bil vid Norr efteråt:
+   * egenkontrollen flyttar hela attributionen till Norr, och Syd hade fått −50 — säckar tillbaka som
+   * aldrig kom. Man kan inte avblåsa säckar.
+   */
+  it('en depå får aldrig negativ förbrukning när ett jobb byter depå över räkningen', () => {
+    const rows = run(
+      [
+        report(50, '2026-09-11', 'partial'),
+        report(120, '2026-09-15', 'final', { segment: { truck_id: 'truck-norr' } }),
+      ],
+      [count(400, '2026-09-14')],
+    );
+    expect(at(rows, SYD) ?? 0).toBeGreaterThanOrEqual(0);
+    expect(at(rows, 'depot-norr')).toBe(120);
   });
 });

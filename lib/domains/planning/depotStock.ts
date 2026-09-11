@@ -194,6 +194,97 @@ export async function listDeliveriesInRange(
   return { data: rows, error: null };
 }
 
+/**
+ * Ren: vilken depå och vilket material en rapportrad hör till, och med hur många säckar — eller null.
+ *
+ * ⚠️ EN ENDA HÄRLEDNING, INTE TRE. Uttrycket fanns kopierat i deriveConsumptionRows OCH i
+ * reportedDemandByWorkOrder, och de två hade redan glidit isär: den ena prövade `Number.isFinite`,
+ * den andra inte. Etapp 0:s invariant — "varje säck ur planned måste också ur balance" — vilar på att
+ * förbrukningen och avdraget använder EXAKT samma villkor. Två kopior av ett villkor är två villkor.
+ *
+ * null när segmentets bil saknar depå (den dokumenterade luckan), när materialet inte går att härleda,
+ * eller när antalet inte är ett tal. Materialet tas ur radens egen kolumn, med orderns första
+ * igenkända material som reserv för rader skrivna innan kolumnen fanns.
+ */
+export function attributeReport(
+  r: Record<string, any>,
+  truckDepot: Map<string, string | null>,
+): { depot_id: string; material: string; sacks: number; day: string } | null {
+  const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
+  const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
+  const depotId = seg ? truckDepot.get(seg.truck_id) : null;
+  const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
+  const sacks = Number(r.sacks_blown ?? 0);
+  if (!depotId || !material || !Number.isFinite(sacks)) return null;
+  return { depot_id: depotId, material, sacks, day: r.report_day as string };
+}
+
+/**
+ * Ren: förbrukningen per depå och material — efter senaste avstämningen där det finns en.
+ *
+ * 🧨 "DET HUVUDBOKEN SÄGER NU, MINUS DET DEN SA I RÄKNINGSÖGONBLICKET". Inte ett datumfilter på
+ * rapportraderna, och skillnaden är supersede-regeln:
+ *
+ *     jobb över två dagar:  fredag delrapport 50,  måndag egenkontroll 120.  Räkning måndag morgon.
+ *
+ *     datumfilter:  egenkontrollen ERSÄTTER delrapporten och bär måndagens datum -> hela 120 dras av
+ *                   efter räkningen. Men bara 70 blåstes efter den; fredagens 50 syns redan i det
+ *                   räknade antalet. Dubbelräknat.
+ *     här:          vid räkningen sa huvudboken 50 (bara delrapporten fanns). Nu säger den 120
+ *                   (egenkontrollen gäller). Efter räkningen: 120 − 50 = 70.
+ *
+ * Det är inget kantfall: delrapporter följda av en egenkontroll är NORMALFLÖDET för flerdagarsjobb, så
+ * varje jobb som pågick vid räkningen hade dragit saldot under det som just skrevs in.
+ *
+ * Supersede tillämpas på BÅDA sidor (effectiveSackReports), så regeln skrivs inte en gång till här.
+ *
+ * Depå+material UTAN räkning får hela summan, precis som före avstämningarna.
+ *
+ * ⚠️ Golvat vid noll per depå+material. Det negativa fallet uppstår bara när ett jobbs rapporter
+ * hamnar på OLIKA depåer före och efter räkningen — egenkontrollen flyttar då hela attributionen, och
+ * depån som räknades skulle få en negativ förbrukning, alltså säckar tillbaka som aldrig kom. Man kan
+ * inte avblåsa säckar; noll är det enda försvarbara svaret.
+ */
+export function consumptionAfterCounts(
+  reports: Array<Record<string, any> & { work_order_id: string }>,
+  truckDepot: Map<string, string | null>,
+  counts: Map<string, StockCount>,
+): StockRow[] {
+  const sumByKey = (rows: typeof reports) => {
+    const out = new Map<string, { depot_id: string; material: string; sacks: number }>();
+    for (const r of effectiveSackReports(rows)) {
+      const a = attributeReport(r, truckDepot);
+      if (!a) continue;
+      const k = `${a.depot_id}\u0000${a.material}`;
+      const cur = out.get(k) ?? { depot_id: a.depot_id, material: a.material, sacks: 0 };
+      cur.sacks += a.sacks;
+      out.set(k, cur);
+    }
+    return out;
+  };
+
+  // Det huvudboken hade sett i räkningsögonblicket: rapporter för arbete FÖRE sin depås räkning.
+  // En rapport vars depå+material saknar räkning är aldrig "före" — där gäller all tid.
+  const before = reports.filter((r) => {
+    const a = attributeReport(r, truckDepot);
+    if (!a) return false;
+    const c = countFor(counts, a.depot_id, a.material);
+    // `<`: räkningen gäller vid dagens BÖRJAN — räkningsdagens arbete är efter räkningen.
+    return c ? a.day < c.counted_on : false;
+  });
+
+  const total = sumByKey(reports);
+  const atCount = sumByKey(before);
+
+  const rows: StockRow[] = [];
+  for (const [k, t] of total) {
+    const counted = countFor(counts, t.depot_id, t.material);
+    const sacks = counted ? Math.max(0, t.sacks - (atCount.get(k)?.sacks ?? 0)) : t.sacks;
+    rows.push({ depot_id: t.depot_id, material: t.material, sacks });
+  }
+  return rows;
+}
+
 // Förbrukade säckar per depå och material: blåsta säckar → segmentets bil → bilens depå.
 //
 // ⚠️ SUPERSEDE MÅSTE KÖRAS HÄR OCKSÅ. Det här är det ANDRA av exakt två ställen som summerar
@@ -213,8 +304,13 @@ export async function listDeliveriesInRange(
 async function deriveConsumptionRows(
   supabase: SupabaseClient,
   truckDepot: Map<string, string | null>,
-): Promise<{ rows: DatedMovement[]; reported: Map<string, ReportedDemand>; error: ReadError }> {
-  const empty = { rows: [] as DatedMovement[], reported: new Map<string, ReportedDemand>() };
+): Promise<{
+  rows: DatedMovement[];
+  raw: Array<Record<string, any> & { work_order_id: string }>;
+  reported: Map<string, ReportedDemand>;
+  error: ReadError;
+}> {
+  const empty = { rows: [] as DatedMovement[], raw: [] as Array<Record<string, any> & { work_order_id: string }>, reported: new Map<string, ReportedDemand>() };
 
   // ⚠️ SIDINDELAD. PostgREST kapar svaret vid max-rows UTAN att fela, och supersede-regeln nycklas
   // per arbetsorder: hamnar ett jobbs final på sida 2 medan dess delrapporter ligger på sida 1 ser
@@ -244,17 +340,17 @@ async function deriveConsumptionRows(
 
   const rows: DatedMovement[] = [];
   for (const r of counted) {
-    const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
-    const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
-    const depotId = seg ? truckDepot.get(seg.truck_id) : null;
-    const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
-    if (depotId && material) rows.push({ depot_id: depotId, material, sacks: Number(r.sacks_blown), day: r.report_day as string });
+    const a = attributeReport(r, truckDepot);
+    if (a) rows.push(a);
   }
   // Samma rader bär BÅDA halvorna av saldot: det som gått åt (rows) och det som därför inte längre
   // är kvar att blåsa (reported). De MÅSTE komma ur en och samma läsning — läses tabellen två
   // gånger kan en rapport skriven mellan läsningarna finnas i den ena och saknas i den andra, och
   // då tar dubbelräkningen inte ut sig exakt. sackLedger varnar för just det.
-  return { rows, reported: reportedDemandByWorkOrder(reports, truckDepot), error: null };
+  // `raw` följer med för avstämningen: förbrukning efter en räkning måste räknas som "det huvudboken
+  // säger nu minus det den sa vid räkningen", och det kräver råraderna — supersede-regeln måste kunna
+  // tillämpas på båda sidor. Se consumptionAfterCounts.
+  return { rows, raw: reports, reported: reportedDemandByWorkOrder(reports, truckDepot), error: null };
 }
 
 /** Vad en arbetsorder redan blåst, per depå och material — och om egenkontrollen satt punkt. */
@@ -313,15 +409,11 @@ export function reportedDemandByWorkOrder(
 
   for (const r of effectiveSackReports(reports)) {
     const cell = ensure(r.work_order_id);
-    const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
-    const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
-    const depotId = seg ? truckDepot.get(seg.truck_id) : null;
-    const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
-    const sacks = Number(r.sacks_blown ?? 0);
-    if (!depotId || !material || !Number.isFinite(sacks)) continue;
-    const byMaterial = cell.byDepotMaterial.get(depotId) ?? new Map<string, number>();
-    byMaterial.set(material, (byMaterial.get(material) ?? 0) + sacks);
-    cell.byDepotMaterial.set(depotId, byMaterial);
+    const a = attributeReport(r, truckDepot);
+    if (!a) continue;
+    const byMaterial = cell.byDepotMaterial.get(a.depot_id) ?? new Map<string, number>();
+    byMaterial.set(a.material, (byMaterial.get(a.material) ?? 0) + a.sacks);
+    cell.byDepotMaterial.set(a.depot_id, byMaterial);
   }
 
   return map;
@@ -664,8 +756,11 @@ export async function getDepotStockWithForecast(
   // Avstämningen: stryk rörelser som redan syns i en räkning, och lägg räkningen som baslinje. SAMMA
   // karta till båda stegen — se varningen vid computeDepotBalances om vad som händer annars.
   const counts = latestCounts(stockCounts.data);
+  // Leveranser har ingen supersede-regel, så där räcker ett datumfilter.
   const deliveredAfter = movementsAfterCounts(delivered.rows, counts);
-  const consumedAfter = movementsAfterCounts(consumption.rows, counts);
+  // 🧨 Förbrukningen går INTE via samma datumfilter. En egenkontroll ersätter delrapporterna och bär
+  // sitt EGET datum, så ett filter hade dragit av hela jobbet efter räkningen. Se consumptionAfterCounts.
+  const consumedAfter = consumptionAfterCounts(consumption.raw, truckDepot, counts);
 
   const adjusted = applyReportedToDemand(demand.segments, consumption.reported);
   const { picked, excluded } = pickDemandSegments(adjusted);
