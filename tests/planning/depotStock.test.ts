@@ -21,14 +21,16 @@ describe('computeDepotBalances', () => {
 
     const d1 = computeDepotBalances(depots, delivered, consumed).find((d) => d.depot_id === 'd1')!;
     const eko = d1.rows.find((r) => r.material === 'EKOVILLA')!;
-    expect(eko).toEqual({ material: 'EKOVILLA', delivered: 150, consumed: 30, balance: 120, planned: 0, shortfall: 0 });
+    // Utan räkning: counted är null (inte 0) och saldot är levererat − förbrukat över all tid, precis
+    // som före avstämningarna.
+    expect(eko).toEqual({ material: 'EKOVILLA', delivered: 150, consumed: 30, counted: null, counted_on: null, balance: 120, planned: 0, shortfall: 0 });
     expect(d1.rows.find((r) => r.material === 'PAROC')!.balance).toBe(40);
     expect(d1.total_balance).toBe(160);
   });
 
   it('shows a material that has only consumption (negative balance)', () => {
     const d1 = computeDepotBalances(depots, [], [{ depot_id: 'd1', material: 'EKOVILLA', sacks: 25 }]).find((d) => d.depot_id === 'd1')!;
-    expect(d1.rows[0]).toEqual({ material: 'EKOVILLA', delivered: 0, consumed: 25, balance: -25, planned: 0, shortfall: 25 });
+    expect(d1.rows[0]).toEqual({ material: 'EKOVILLA', delivered: 0, consumed: 25, counted: null, counted_on: null, balance: -25, planned: 0, shortfall: 25 });
   });
 
   it('flags a shortfall when planned demand exceeds the balance', () => {

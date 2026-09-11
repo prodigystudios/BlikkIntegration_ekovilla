@@ -907,6 +907,7 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
 const STOCK_API = '/api/crm/planering/depot-stock';
 const DELIVERIES_API = '/api/crm/planering/depot-deliveries';
 const EXPECTED_API = '/api/crm/planering/expected-deliveries';
+const STOCK_COUNTS_API = '/api/crm/planering/stock-counts';
 
 function balanceClass(b: number) {
   return b < 0 ? 'text-rose-600' : b === 0 ? 'text-amber-600' : 'text-emerald-700';
@@ -1247,12 +1248,24 @@ function StockPanel({
   const [expOn, setExpOn] = useState(today);
   const [expNote, setExpNote] = useState('');
   const [expBusy, setExpBusy] = useState(false);
+
+  // Avstämning — eget formulär, egna fält, av samma skäl som den väntade leveransen ovan: "det här
+  // står på depån" är ett annat besked än "det här kom in", och det får inte gå att blanda ihop.
+  const [cntDepotId, setCntDepotId] = useState('');
+  const [cntMaterial, setCntMaterial] = useState(MATERIAL_SHORTS[0] ?? '');
+  const [cntSacks, setCntSacks] = useState('');
+  const [cntOn, setCntOn] = useState(today);
+  const [cntNote, setCntNote] = useState('');
+  const [cntBusy, setCntBusy] = useState(false);
   const [open, setOpen] = useState<ExpectedDelivery[]>([]);
 
   // Förval när depåregistret landat. Inte ur lagersaldot: det failar stängt, och då hade
   // väljaren stått tom på en yta som ska fungera även när saldot inte gick att räkna ut.
   useEffect(() => {
     setExpDepotId((cur) => cur || (depotOptions[0]?.id ?? ''));
+    // Ur depåregistret, inte ur saldot: avstämningen är VERKTYGET för att rätta ett trasigt saldo, så
+    // den måste fungera just när saldot inte gick att räkna ut.
+    setCntDepotId((cur) => cur || (depotOptions[0]?.id ?? ''));
   }, [depotOptions]);
 
   // 🧨 Ett fel får inte se ut som ett tomt lager. Saldot failar stängt sedan lagerläsningarna
@@ -1335,6 +1348,40 @@ function StockPanel({
     }
   }
 
+  async function recordCount(e: FormEvent) {
+    e.preventDefault();
+    // `cntSacks !== ''` och inte `Number(cntSacks) > 0`: NOLL är ett giltigt och viktigt svar — depån
+    // är tom. Ett tomt fält är däremot inget svar alls och får inte skickas som en räkning på noll.
+    if (!cntDepotId || !cntMaterial || cntSacks.trim() === '' || !(Number(cntSacks) >= 0)) return;
+    setCntBusy(true);
+    try {
+      const r = await fetch(STOCK_COUNTS_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot_id: cntDepotId,
+          material: cntMaterial,
+          counted_sacks: Number(cntSacks),
+          counted_on: cntOn,
+          note: cntNote.trim() || null,
+        }),
+      });
+      const j = await r.json().catch(() => null);
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte spara avstämningen');
+      toast.success('Saldot avstämt');
+      setCntSacks('');
+      setCntNote('');
+      // Saldot OCH prognosen flyttas — avstämningen är baslinjen båda räknar från.
+      await load();
+    } catch {
+      // Utan grenen gav ett nätverksfel ingen återkoppling, och formuläret stod kvar ifyllt — vilket
+      // bjuder in till ett andra tryck.
+      toast.error('Kunde inte spara avstämningen');
+    } finally {
+      setCntBusy(false);
+    }
+  }
+
   async function recordExpected(e: FormEvent) {
     e.preventDefault();
     if (!expDepotId || !expMaterial || !(Number(expSacks) > 0)) return;
@@ -1378,7 +1425,10 @@ function StockPanel({
         {canWrite && (
           <form onSubmit={record} className={PANEL}>
             <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Saldot = levererat − förbrukat (förbrukning härleds från blåsta säckar).</p>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Lägger till säckar i saldot — utom när leveransen är daterad på eller före depåns senaste avstämning,
+              då den redan finns i det räknade antalet.
+            </p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
                 <SelectMenu
@@ -1408,6 +1458,64 @@ function StockPanel({
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
               <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera</button>
             </div>
+          </form>
+        )}
+
+        {/* Avstämning — "det här står på depån". Rättar saldot åt BÅDA hållen, till skillnad från
+            leveransen ovan som bara kan lägga till. Grindad på depot.manage: ett för högt räknat värde
+            tystar bristbanderollen, så det är ett känsligare beslut än att ta emot gods. */}
+        {canManageDepots && (
+          <form onSubmit={recordCount} className={PANEL}>
+            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Stäm av saldo</h3>
+            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+              Skriv in hur många säckar som faktiskt står på depån. Saldot räknas sedan från det — det som hände
+              före räkningen syns redan i antalet, även rapporter som kommer in i efterhand.
+            </p>
+            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+              <div className="sm:col-span-1">
+                <span className={LABEL}>Depå</span>
+                <SelectMenu
+                  value={cntDepotId}
+                  onChange={setCntDepotId}
+                  placeholder="Välj depå"
+                  aria-label="Depå"
+                  options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
+                />
+              </div>
+              <div>
+                <span className={LABEL}>Material</span>
+                <SelectMenu
+                  value={cntMaterial}
+                  onChange={setCntMaterial}
+                  aria-label="Material"
+                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                />
+              </div>
+              {/* min 0, inte 1: en tom depå är ett svar, och det som ska tända bristbanderollen. */}
+              <div><span className={LABEL}>Antal på depån</span><input type="number" min={0} value={cntSacks} onChange={(e) => setCntSacks(e.target.value)} placeholder="Antal" className={crm.input} aria-label="Antal säckar på depån" /></div>
+              {/* max: en framtidsdaterad räkning blir baslinje direkt och fryser saldot på ett tal ingen
+                  räknat. Grinden som räknas sitter i stockCountSchema och i databasens insert-policy. */}
+              <div><span className={LABEL}>Räknat</span><input type="date" value={cntOn} max={today} onChange={(e) => setCntOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Räknat datum" /></div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
+              <input value={cntNote} onChange={(e) => setCntNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+              <button
+                type="submit"
+                disabled={cntBusy || !cntDepotId || cntSacks.trim() === '' || !(Number(cntSacks) >= 0)}
+                className={crm.formButton}
+                style={{ backgroundColor: 'var(--crm-primary)' }}
+              >
+                Stäm av
+              </button>
+            </div>
+            {/* Konventionen står utskriven, för den avgör åt vilket håll ett fel blir. Platshållaren i
+                antalsfältet är "Antal" och inte "0": ett tomt fält är ingen räkning, och en nolla
+                i gråtext såg ut som en. */}
+            <p className="mt-2 text-[11px] text-slate-400">
+              Samma dag som räkningen dras förbrukningen av, men leveranser läggs inte på — de kan redan stå i
+              antalet. Blir det fel blir saldot alltså för lågt, aldrig för högt. Förs räkningen över i
+              efterhand: ange dagen den gjordes, inte dagens datum.
+            </p>
           </form>
         )}
 
@@ -1523,7 +1631,18 @@ function StockPanel({
                       <tbody>
                         {d.rows.map((r) => (
                           <tr key={r.material} className="border-t border-[#eef3eb]">
-                            <td className="py-1 font-semibold text-slate-700">{r.material}</td>
+                            <td className="py-1 font-semibold text-slate-700">
+                              {r.material}
+                              {/* ⚠️ Utan den här raden ser "Levererat" och "Förbrukat" ut som all tid —
+                                  men efter en avstämning räknas de från räkningen. Siffrorna går då inte
+                                  ihop för den som läser dem utan att veta om baslinjen. `!= null`, inte
+                                  sanningsvärde: en räkning på NOLL är en baslinje och ska synas. */}
+                              {r.counted_on != null && r.counted != null && (
+                                <span className="block text-[10px] font-normal text-slate-400">
+                                  avstämt {r.counted} · {shortDayISO(r.counted_on)}
+                                </span>
+                              )}
+                            </td>
                             <td className="py-1 text-right tabular-nums text-slate-500">{r.delivered}</td>
                             <td className="py-1 text-right tabular-nums text-slate-500">{r.consumed}</td>
                             <td className={cn('py-1 text-right font-bold tabular-nums', balanceClass(r.balance))}>{r.balance}</td>

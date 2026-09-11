@@ -121,6 +121,71 @@ describe('getDepotStockWithForecast failar stängt', () => {
     expect(res.forecast).toBeNull();
   });
 
+  // ⚠️ Faller räkningarna bort räknas varje avstämd depå om över ALL TID — tillbaka till fantomsaldot
+  // (t.ex. Sandvikens −1100) som avstämningen fanns för att ersätta. Och det syns inte: siffran ser
+  // lika räknad ut. Ett fel är ett svar; ett tyst återfall till gamla siffror är det inte.
+  it('propagerar fel från avstämningarna', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({ ...base(), ops_depot_stock_counts: () => fail('räkningar nere') }),
+      TODAY,
+    );
+    expect(res.error?.message).toBe('räkningar nere');
+    expect(res.forecast).toBeNull();
+    expect(res.data).toEqual([]);
+  });
+
+  it('en räkning blir baslinje hela vägen genom läsningen', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({
+        ...base(),
+        // Levererat 2000 i augusti, men räknat 400 i september: saldot ska vara 400, inte 2000.
+        ops_depot_deliveries: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', sacks: 2000, delivered_on: '2026-08-01' }]),
+        ops_depot_stock_counts: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 400, counted_on: '2026-09-10' }]),
+      }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    const row = res.data[0].rows.find((r) => r.material === 'EKOVILLA');
+    expect(row?.balance).toBe(400);
+    expect(row?.counted).toBe(400);
+    // Prognosen räknar från samma baslinje — de får inte kunna säga olika saker.
+    expect(res.forecast?.rows.find((r) => r.material === 'EKOVILLA')?.opening).toBe(400);
+  });
+
+  /**
+   * 🧨 SUPERSEDE GENOM HELA LÄSVÄGEN — och varför det måste provas HÄR och inte bara i enhetstestet.
+   *
+   * Min första version drog förbrukningen genom samma datumfilter som leveranserna. En egenkontroll
+   * ERSÄTTER delrapporterna och bär sitt eget datum, så filtret drog av hela jobbet efter räkningen.
+   * consumptionAfterCounts har egna enhetstester, men de anropar funktionen DIREKT: skulle läsvägen
+   * kopplas tillbaka till datumfiltret märks det inte där. Bara ett test genom getDepotStockWithForecast
+   * fångar det — mutationstestat, datumfiltret ger 280 i stället för 330.
+   */
+  it('en egenkontroll efter räkningen drar bara av det som blåstes efter den', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({
+        ...base(),
+        ops_trucks: () => ok([{ id: 't1', depot_id: 'd1' }]),
+        ops_segment_reports: () => ok([
+          // Fredag: delrapport 50. Räknat måndag morgon: 400. Egenkontroll 120 skriven TISDAG.
+          //
+          // ⚠️ Egenkontrollens report_day är FREDAG — jobbets första dag — för så förifyller produktionen
+          // fältet (installationDate = tidigaste segmentets start). En tidigare version av det här testet
+          // daterade den till räkningsdagen, något produktionen aldrig gör, och var därför grönt för en
+          // implementation som gav 400 på verklig data. `created_at` säger när den faktiskt skrevs.
+          { work_order_id: 'wo1', sacks_blown: 50, kind: 'partial', material: 'EKOVILLA', report_day: '2026-09-11', created_at: '2026-09-11T15:00:00Z', segment: { truck_id: 't1' } },
+          { work_order_id: 'wo1', sacks_blown: 120, kind: 'final', material: 'EKOVILLA', report_day: '2026-09-11', created_at: '2026-09-15T15:00:00Z', segment: { truck_id: 't1' } },
+        ]),
+        ops_depot_stock_counts: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 400, counted_on: '2026-09-14' }]),
+      }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    // 400 − 70 (bara det efter räkningen). Datumfiltret gav 280; att jämföra egenkontrollens
+    // report_day gav 400. Båda är mutationstestade mot det här testet.
+    expect(res.data[0].rows.find((r) => r.material === 'EKOVILLA')?.balance).toBe(330);
+  });
+
   it('propagerar fel från leveransvillkoren', async () => {
     const res = await getDepotStockWithForecast(
       makeClient(base(), { planning_supply_terms: () => fail('villkoren nere') }),
