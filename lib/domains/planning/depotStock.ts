@@ -6,6 +6,7 @@ import { chunkIds, readAllPages, type ReadError } from './pagedRead';
 import { listOpenExpected } from './expectedDeliveries';
 import { defaultSupplierForMaterial, listSupplyTerms } from './materialSuppliers';
 import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
+import { countFor, latestCounts, listStockCounts, movementsAfterCounts, type DatedMovement, type StockCount } from './stockCounts';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -16,8 +17,21 @@ export type StockRow = { depot_id: string; material: string; sacks: number };
 
 export type DepotMaterialBalance = {
   material: string;
+  /** Levererat — sedan senaste avstämningen om det finns en, annars över all tid. */
   delivered: number;
+  /** Förbrukat — samma avgränsning som `delivered`. */
   consumed: number;
+  /**
+   * Säckarna vid senaste avstämningen, eller null när depån+materialet aldrig stämts av.
+   *
+   * ⚠️ null och 0 är OLIKA saker. 0 betyder "vi räknade och depån var tom" — ett av de viktigaste
+   * svaren, eftersom det tänder bristbanderollen. null betyder att saldot vilar på levererat − förbrukat
+   * över all tid, precis som före avstämningarna.
+   */
+  counted: number | null;
+  /** 'YYYY-MM-DD', eller null. Räkningen gäller vid dagens början. */
+  counted_on: string | null;
+  /** (counted ?? 0) + delivered − consumed. */
   balance: number;
   // Planned sacks still booked to be blown (open scheduled jobs drawing from this depot+material).
   planned: number;
@@ -40,6 +54,16 @@ export function computeDepotBalances(
   delivered: StockRow[],
   consumed: StockRow[],
   planned: StockRow[] = [],
+  /**
+   * Senaste avstämning per depå+material (latestCounts). Valfri: utan den räknas saldot som förut,
+   * över all tid.
+   *
+   * ⚠️ Rörelserna i `delivered` och `consumed` måste REDAN vara filtrerade med movementsAfterCounts
+   * mot samma karta. Den här funktionen lägger bara på baslinjen — den stryker ingenting. Skickas
+   * ofiltrerade rader in räknas allt före räkningen två gånger: en gång i det räknade antalet och en
+   * gång som rörelse.
+   */
+  counts: Map<string, StockCount> = new Map(),
 ): DepotBalance[] {
   // depot_id -> material -> { delivered, consumed, planned }
   const acc = new Map<string, Map<string, { delivered: number; consumed: number; planned: number }>>();
@@ -59,17 +83,26 @@ export function computeDepotBalances(
   for (const r of delivered) ensure(r.depot_id, r.material).delivered += r.sacks;
   for (const r of consumed) ensure(r.depot_id, r.material).consumed += r.sacks;
   for (const r of planned) ensure(r.depot_id, r.material).planned += r.sacks;
+  // En räkning skapar sin rad även utan någon rörelse efteråt — en depå som stämts av till 400 och
+  // sedan stått orörd ska visa 400, inte saknas i tabellen.
+  for (const c of counts.values()) ensure(c.depot_id, c.material);
 
   return depots.map((d) => {
     const byMat = acc.get(d.id);
     const rows: DepotMaterialBalance[] = byMat
       ? [...byMat.entries()]
           .map(([material, cell]) => {
-            const balance = cell.delivered - cell.consumed;
+            const c = countFor(counts, d.id, material);
+            // Baslinjen är räkningen om det finns en, annars noll — och då är det exakt formeln som
+            // gällde före avstämningarna. `?? 0` och inte `|| 0` behövs inte här (c.sacks är ett tal),
+            // men poängen är att en räkning på 0 är en baslinje på 0, inte en frånvarande baslinje.
+            const balance = (c ? c.sacks : 0) + cell.delivered - cell.consumed;
             return {
               material,
               delivered: cell.delivered,
               consumed: cell.consumed,
+              counted: c ? c.sacks : null,
+              counted_on: c ? c.counted_on : null,
               balance,
               planned: cell.planned,
               shortfall: Math.max(0, cell.planned - balance),
@@ -87,15 +120,23 @@ export function computeDepotBalances(
 }
 
 // Raw delivery stock rows (one per delivery; computeDepotBalances aggregates).
-async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: StockRow[]; error: ReadError }> {
+async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: DatedMovement[]; error: ReadError }> {
   // INGET datumfilter, med flit: saldot gäller över all tid. Tavlans remsa, som bara vill ha en
   // veckas leveranser, har en egen datumbegränsad läsning — vidga inte den här.
-  const { rows, error } = await readAllPages<{ depot_id: string; material: string; sacks: number | string }>(
-    (from, to) => supabase.from('ops_depot_deliveries').select('depot_id, material, sacks').order('id', { ascending: true }).range(from, to),
+  //
+  // `delivered_on` följer med sedan avstämningarna kom: en leverans FÖRE en räkning syns redan i det
+  // räknade antalet och får inte läggas på en gång till (movementsAfterCounts).
+  const { rows, error } = await readAllPages<{ depot_id: string; material: string; sacks: number | string; delivered_on: string }>(
+    (from, to) =>
+      supabase
+        .from('ops_depot_deliveries')
+        .select('depot_id, material, sacks, delivered_on')
+        .order('id', { ascending: true })
+        .range(from, to),
   );
   if (error) return { rows: [], error };
   return {
-    rows: rows.map((r) => ({ depot_id: r.depot_id, material: r.material, sacks: Number(r.sacks) })),
+    rows: rows.map((r) => ({ depot_id: r.depot_id, material: r.material, sacks: Number(r.sacks), day: r.delivered_on })),
     error: null,
   };
 }
@@ -172,8 +213,8 @@ export async function listDeliveriesInRange(
 async function deriveConsumptionRows(
   supabase: SupabaseClient,
   truckDepot: Map<string, string | null>,
-): Promise<{ rows: StockRow[]; reported: Map<string, ReportedDemand>; error: ReadError }> {
-  const empty = { rows: [] as StockRow[], reported: new Map<string, ReportedDemand>() };
+): Promise<{ rows: DatedMovement[]; reported: Map<string, ReportedDemand>; error: ReadError }> {
+  const empty = { rows: [] as DatedMovement[], reported: new Map<string, ReportedDemand>() };
 
   // ⚠️ SIDINDELAD. PostgREST kapar svaret vid max-rows UTAN att fela, och supersede-regeln nycklas
   // per arbetsorder: hamnar ett jobbs final på sida 2 medan dess delrapporter ligger på sida 1 ser
@@ -187,7 +228,10 @@ async function deriveConsumptionRows(
     (from, to) =>
       supabase
         .from('ops_segment_reports')
-        .select('work_order_id, sacks_blown, kind, material, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
+        // `report_day` följer med sedan avstämningarna kom: förbrukning FÖRE en räkning syns redan i
+        // det räknade antalet. Det är ARBETSDAGEN som avgör, inte när rapporten skickades — annars
+        // hade en sen rapport för fredagens arbete dragits av efter måndagens räkning, dubbelt.
+        .select('work_order_id, sacks_blown, kind, material, report_day, segment:ops_segments(truck_id), work_order:crm_work_orders(line_items)')
         .order('id', { ascending: true })
         .range(from, to),
   );
@@ -198,13 +242,13 @@ async function deriveConsumptionRows(
 
   const counted = effectiveSackReports(reports);
 
-  const rows: StockRow[] = [];
+  const rows: DatedMovement[] = [];
   for (const r of counted) {
     const seg = Array.isArray(r.segment) ? r.segment[0] : r.segment;
     const wo = Array.isArray(r.work_order) ? r.work_order[0] : r.work_order;
     const depotId = seg ? truckDepot.get(seg.truck_id) : null;
     const material = (typeof r.material === 'string' && r.material.trim()) || materialShortFromLineItems(wo?.line_items);
-    if (depotId && material) rows.push({ depot_id: depotId, material, sacks: Number(r.sacks_blown) });
+    if (depotId && material) rows.push({ depot_id: depotId, material, sacks: Number(r.sacks_blown), day: r.report_day as string });
   }
   // Samma rader bär BÅDA halvorna av saldot: det som gått åt (rows) och det som därför inte längre
   // är kvar att blåsa (reported). De MÅSTE komma ur en och samma läsning — läses tabellen två
@@ -601,28 +645,43 @@ export async function getDepotStockWithForecast(
     ((trucks ?? []) as Array<Record<string, any>>).map((t) => [t.id as string, (t.depot_id as string | null) ?? null]),
   );
 
-  const [delivered, consumption, demand, expected, suppliers] = await Promise.all([
+  const [delivered, consumption, demand, expected, suppliers, stockCounts] = await Promise.all([
     listDeliveryRows(supabase),
     deriveConsumptionRows(supabase, truckDepot),
     derivePlannedDemandSegments(supabase, truckDepot),
     listOpenExpected(supabase),
     listSupplyTerms(supabase),
+    listStockCounts(supabase),
   ]);
 
+  // ⚠️ Räkningarna failar stängt som resten. Faller den läsningen bort räknas varje avstämd depå om
+  // över all tid — alltså tillbaka till fantomsaldot avstämningen fanns för att ersätta, och utan att
+  // något syns. Ett fel är ett svar; ett tyst återfall till gamla siffror är det inte.
   const readError =
-    delivered.error ?? consumption.error ?? demand.error ?? expected.error ?? suppliers.error;
+    delivered.error ?? consumption.error ?? demand.error ?? expected.error ?? suppliers.error ?? stockCounts.error;
   if (readError) return { data: [], forecast: null, error: readError };
+
+  // Avstämningen: stryk rörelser som redan syns i en räkning, och lägg räkningen som baslinje. SAMMA
+  // karta till båda stegen — se varningen vid computeDepotBalances om vad som händer annars.
+  const counts = latestCounts(stockCounts.data);
+  const deliveredAfter = movementsAfterCounts(delivered.rows, counts);
+  const consumedAfter = movementsAfterCounts(consumption.rows, counts);
 
   const adjusted = applyReportedToDemand(demand.segments, consumption.reported);
   const { picked, excluded } = pickDemandSegments(adjusted);
 
   const balances = computeDepotBalances(
     depots,
-    delivered.rows,
-    consumption.rows,
+    deliveredAfter,
+    consumedAfter,
+    // Det PLANERADE behovet påverkas INTE av räkningen, med flit. Säckar som blåsts före räkningen är
+    // redan borta ur det räknade antalet OCH redan avdragna ur behovet (applyReportedToDemand) — de
+    // finns alltså varken i saldot eller i det som återstår att blåsa. Invarianten från etapp 0
+    // ("varje säck ur planned måste också ur balance") håller.
     picked.flatMap((p) =>
       p.materials.filter((m) => m.material && m.sacks > 0).map((m) => ({ depot_id: p.depot_id, material: m.material, sacks: m.sacks })),
     ),
+    counts,
   );
 
   // Ingångssaldot är EXAKT samma tal som saldovyn visar — härlett, inte omräknat. Räknades det om

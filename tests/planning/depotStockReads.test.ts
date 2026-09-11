@@ -121,6 +121,37 @@ describe('getDepotStockWithForecast failar stängt', () => {
     expect(res.forecast).toBeNull();
   });
 
+  // ⚠️ Faller räkningarna bort räknas varje avstämd depå om över ALL TID — tillbaka till fantomsaldot
+  // (t.ex. Sandvikens −1100) som avstämningen fanns för att ersätta. Och det syns inte: siffran ser
+  // lika räknad ut. Ett fel är ett svar; ett tyst återfall till gamla siffror är det inte.
+  it('propagerar fel från avstämningarna', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({ ...base(), ops_depot_stock_counts: () => fail('räkningar nere') }),
+      TODAY,
+    );
+    expect(res.error?.message).toBe('räkningar nere');
+    expect(res.forecast).toBeNull();
+    expect(res.data).toEqual([]);
+  });
+
+  it('en räkning blir baslinje hela vägen genom läsningen', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({
+        ...base(),
+        // Levererat 2000 i augusti, men räknat 400 i september: saldot ska vara 400, inte 2000.
+        ops_depot_deliveries: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', sacks: 2000, delivered_on: '2026-08-01' }]),
+        ops_depot_stock_counts: () => ok([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 400, counted_on: '2026-09-10' }]),
+      }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    const row = res.data[0].rows.find((r) => r.material === 'EKOVILLA');
+    expect(row?.balance).toBe(400);
+    expect(row?.counted).toBe(400);
+    // Prognosen räknar från samma baslinje — de får inte kunna säga olika saker.
+    expect(res.forecast?.rows.find((r) => r.material === 'EKOVILLA')?.opening).toBe(400);
+  });
+
   it('propagerar fel från leveransvillkoren', async () => {
     const res = await getDepotStockWithForecast(
       makeClient(base(), { planning_supply_terms: () => fail('villkoren nere') }),

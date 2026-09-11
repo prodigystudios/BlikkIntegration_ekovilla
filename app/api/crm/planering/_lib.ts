@@ -307,6 +307,36 @@ export const updateSupplierSchema = z
   })
   .refine((v) => Object.keys(v).length > 0, 'Inget att spara');
 
+// Avstämning av depålagret (planning.depot.manage): "den här dagen stod det X säckar på depån".
+//
+// 🧨 INTE z.coerce.number() PÅ ANTALET. Coerce gör null, '' och [] till 0 — och 0 är här ett
+// LEGITIMT svar ("depån är tom"), så noll-fallet har inget nät under sig. En tom inmatning hade
+// alltså sparats som en räkning på noll och tänt bristbanderollen på en depå ingen räknat. Samma fälla
+// som leadTimeDays; numeriska strängar tas emot (formulärfält skickar text), allt annat avvisas.
+const countedSacks = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+  z
+    .number({ invalid_type_error: 'Ange antalet säckar ni räknade' })
+    .int('Antalet anges i hela säckar')
+    // >= 0, inte positive(): en tom depå är ett av de viktigaste svaren.
+    .min(0, 'Antalet kan inte vara negativt'),
+);
+
+export const stockCountSchema = z.object({
+  depot_id: z.string().uuid('Ogiltig depå'),
+  material: z.string().trim().refine((m) => MATERIAL_SHORTS.includes(m), 'Okänt material'),
+  counted_sacks: countedSacks,
+  // 🧨 INTE I FRAMTIDEN. En framtidsdaterad räkning blir baslinje DIREKT (den senaste gäller) och
+  // stryker all förbrukning före sitt datum — saldot fryses på ett tal ingen har räknat. Samma felklass
+  // som den framtidsdaterade leveransen i etapp 0. Taket vaktas också i databasens insert-policy, som en
+  // direkt PostgREST-skrivning inte kommer förbi. Läses per anrop, inte vid modulladdning.
+  counted_on: isoDate.refine(
+    (d) => d <= stockholmTodayISO(),
+    'Räkningen kan inte ligga i framtiden',
+  ),
+  note: z.string().trim().max(300).nullable().optional(),
+});
+
 // List the activity log (audit trail). Newest-first, keyset-paginated by `before` (ISO timestamp),
 // with optional filters on actor name, exact action key, and a free-text search over the summary.
 export const listActivityQuerySchema = z.object({

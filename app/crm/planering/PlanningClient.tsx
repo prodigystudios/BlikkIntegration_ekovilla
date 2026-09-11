@@ -537,6 +537,9 @@ export default function PlanningClient({
       'ops_depots',
       'ops_depot_deliveries',
       'ops_expected_deliveries',
+      // En avstämning flyttar saldot — upp eller NED — och därmed bristbanderollen. Utan den här raden
+      // stod en kollegas banderoll kvar på det gamla fantomsaldot tills sidan laddades om.
+      'ops_depot_stock_counts',
       'ops_job_types',
     ];
     let timer: ReturnType<typeof setTimeout> | undefined;
