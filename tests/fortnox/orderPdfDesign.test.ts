@@ -297,6 +297,28 @@ describe('orderbekräftelsen', () => {
     // Företagskundens egen märkning står kvar i referensraden.
     expect(text).toContain('Projekt 483089');
   });
+
+  it('skriver ALDRIG "inkl. moms" på en order med omvänd skattskyldighet, inte ens öresavrundad', async () => {
+    // Orderbekräftelsen går genom samma summering som offerten, så felet från offert 10200 följde
+    // med till varje vunnen offert vars netto hade ören.
+    const reverse: FortnoxOrderResponse = {
+      ...BUSINESS_ORDER,
+      Net: 11885.3,
+      TotalVAT: 0,
+      RoundOff: -0.3,
+      Total: 11885,
+      TotalToPay: 11885,
+      OrderRows: [
+        ...(BUSINESS_ORDER.OrderRows ?? []).map((row) => ({ ...row, VAT: 0 })),
+        { ...orderRow('13220', 'Variabel ångbroms', 1, 'RLE', 2979), Discount: 30, DiscountType: 'PERCENT', Total: 2085.3, VAT: 0 },
+      ],
+    };
+    const text = (await pageText(await render(reverse, { rotDetails: null, rotEnabled: false }))).join(' ');
+    expect(text).toContain('Summa exkl. moms');
+    expect(text).toContain('Öresavrundning');
+    expect(text).toContain('TOTALT ORDERVÄRDE');
+    expect(text).not.toContain('inkl. moms');
+  });
 });
 
 describe('följesedeln', () => {
