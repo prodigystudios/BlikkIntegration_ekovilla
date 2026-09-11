@@ -531,9 +531,15 @@ export function buildSummaryBlock(
     lines.push({ label, value: formatAmount(vat) });
   }
   if (roundOff !== 0) lines.push({ label: 'Öresavrundning', value: formatAmount(roundOff) });
-  // Utan moms och utan avrundning ÄR "Summa exkl. moms" slutsumman — en rad till som upprepar
-  // samma tal ser ut som ett fel. Så ritar mallen den omvända skattskyldighetens offert också.
-  if (vat !== 0 || roundOff !== 0) lines.push({ label: 'Totalt inkl. moms', value: formatAmount(offer.Total) });
+  // "Totalt inkl. moms" står BARA på ett dokument som har moms — offerter med moms och
+  // ROT-offerterna, som alltid bär moms (pushen släcker ROT vid omvänd skattskyldighet). "Summa
+  // exkl. moms" står på alla. Williams regel 2026-09-11.
+  //
+  // 🧨 Styr ALDRIG raden på avrundningen. Den gjorde det, och varje offert med omvänd
+  // skattskyldighet vars netto hade ören — rabattrader, m³-antal, mer än hälften av dem — fick
+  // "Totalt inkl. moms" på ett dokument utan moms (offert 10200). Summeringen går ihop ändå:
+  // avrundningsraden förklarar skillnaden mellan nettot och slutsumman i den gröna rutan.
+  if (vat !== 0) lines.push({ label: 'Totalt inkl. moms', value: formatAmount(offer.Total) });
 
   // ⚠️ Avdragsraden styrs av BELOPPET, inte av att typen råkar vara 'rot'.
   //

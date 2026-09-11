@@ -376,6 +376,60 @@ describe('buildSummaryBlock', () => {
     ]);
   });
 
+  it('skriver ALDRIG "inkl. moms" vid omvänd skattskyldighet, inte ens när Fortnox öresavrundar', () => {
+    // 🧨 Offert 10200. 30 % rabatt på 2 979 kr ger 2 085,30 — nettot får ören, Fortnox avrundar
+    // slutsumman till hela kronor, och avrundningen ENSAM tände "Totalt inkl. moms" på ett
+    // dokument utan en krona moms. Mer än hälften av offerterna med omvänd moms har ören.
+    const rows = [
+      article('2410509', 'Cellulosa', 80, 'm³', 370, 0),
+      { ...article('13220', 'Variabel ångbroms', 1, 'RLE', 2979, 0), Discount: 30, DiscountType: 'PERCENT', Total: 2085.3 },
+    ];
+    const block = buildSummaryBlock({ ...base, Net: 31685.3, RoundOff: -0.3, Total: 31685, TotalToPay: 31685 }, rows);
+    expect(block.rows).toEqual([
+      { label: 'Summa exkl. moms', value: '31 685,30' },
+      { label: 'Öresavrundning', value: '-0,30' },
+    ]);
+    // Nettot och avrundningen går ihop med slutsumman — ingen rad saknas för att förklara den.
+    expect(block.total).toEqual({ label: 'TOTALT OFFERTVÄRDE', value: '31 685,00 SEK' });
+  });
+
+  it('ett dokument UTAN moms säger aldrig "inkl. moms" — oavsett avrundning, avdrag eller dokumenttyp', () => {
+    // Invarianten bakom Williams regel: exkl. moms på alla, inkl. moms bara där momsen finns.
+    for (const RoundOff of [0, 0.5, -0.48, 0.25]) {
+      for (const totalLabel of ['TOTALT OFFERTVÄRDE', 'TOTALT ORDERVÄRDE']) {
+        for (const reduction of [{}, { TaxReduction: 1000, TaxReductionType: 'rot', TotalToPay: 43820 + RoundOff }]) {
+          const block = buildSummaryBlock(
+            { ...base, RoundOff, Total: 44820 + RoundOff, TotalToPay: 44820 + RoundOff, ...reduction },
+            [],
+            'SEK',
+            totalLabel,
+          );
+          const labels = [...block.rows.map((r) => r.label), block.deduction?.label ?? '', block.total.label];
+          expect(labels.filter((label) => label.includes('inkl. moms'))).toEqual([]);
+          expect(block.rows[0].label).toBe('Summa exkl. moms');
+        }
+      }
+    }
+  });
+
+  it('ROT-offerten BEHÅLLER "Totalt inkl. moms" — den bär alltid moms', () => {
+    // Andra halvan av regeln. Raden får inte försvinna från ROT-offerten när villkoret skärps,
+    // varken med eller utan öresavrundning.
+    const rows = [article('10058', 'Arbetskostnad ROT', 1, 'st', 18200, 25)];
+    const rot = { ...base, Net: 18200, TotalVAT: 4550, Total: 22750, TaxReduction: 3937, TaxReductionType: 'rot', TotalToPay: 18813 };
+    expect(buildSummaryBlock(rot, rows).rows.map((r) => r.label)).toEqual([
+      'Summa exkl. moms',
+      'Moms 25%',
+      'Totalt inkl. moms',
+    ]);
+    expect(buildSummaryBlock({ ...rot, RoundOff: 0.5, Total: 22750.5, TotalToPay: 18813.5 }, rows).rows.map((r) => r.label)).toEqual([
+      'Summa exkl. moms',
+      'Moms 25%',
+      'Öresavrundning',
+      'Totalt inkl. moms',
+    ]);
+  });
+
   it('visar avdraget även när skattereduktionen INTE är ROT — annars går summan inte ihop', () => {
     // TotalToPay är redan minskad med reduktionen, vilken sort den än är. Utan raden vore
     // slutsumman lägre än "Totalt inkl. moms" utan att något förklarar mellanskillnaden.
@@ -616,6 +670,33 @@ describe('renderOfferPdfDesign', () => {
     expect(text).not.toContain('ROT-AVDRAG');
     expect(text).not.toContain('19740312-4519');
     expect(text).not.toContain('Skatteverket');
+  });
+
+  it('skriver "Summa exkl. moms" men ALDRIG "inkl. moms" på en öresavrundad offert utan moms', async () => {
+    // Summeringstestet vaktar funktionen; det här vaktar dokumentet kunden faktiskt får. En rabattrad
+    // ger nettot ören och Fortnox avrundar — precis offert 10200.
+    const rounded: FortnoxOfferResponse = {
+      ...STANDARD,
+      Net: 46905.3,
+      RoundOff: -0.3,
+      Total: 46905,
+      TotalToPay: 46905,
+      OfferRows: [
+        ...(STANDARD.OfferRows ?? []),
+        { ...article('13220', 'Variabel ångbroms', 1, 'RLE', 2979, 0), Discount: 30, DiscountType: 'PERCENT', Total: 2085.3 },
+      ],
+    };
+    const text = (await extractPageText(await render(rounded, 'SE556948642501'), 1)).join(' ');
+    expect(text).toContain('Summa exkl. moms');
+    expect(text).toContain('Öresavrundning');
+    expect(text).toContain('46 905,00 SEK');
+    expect(text).not.toContain('inkl. moms');
+  });
+
+  it('ROT-offerten bär "Totalt inkl. moms" i den färdiga PDF:en', async () => {
+    const text = (await extractPageText(await render(ROT), 1)).join(' ');
+    expect(text).toContain('Summa exkl. moms');
+    expect(text).toContain('Totalt inkl. moms');
   });
 
   it('bryter till flera sidor när raderna inte får plats', async () => {
