@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { forecastDepotRunOut, rowsNeedingOrder, supplyKey } from '@/lib/domains/planning/depotForecast';
 import { addDaysISO } from '@/lib/domains/planning/timezone';
+import { sacksPerPalletFor } from '@/lib/domains/crm/materials';
 
 // Den tidsfasade prognosen: NÄR tar depån slut, och hur mycket ska beställas.
 //
@@ -11,6 +12,25 @@ const SYD = 'depot-syd';
 const NORR = 'depot-norr';
 const EKO = 'EKOVILLA';
 const KNAUF = 'KNAUF SUPAFIL';
+// Material med OKÄND pallstorlek — packningen är inte inrapporterad än.
+const OKAND_PALL = 'PAROC';
+
+// 🧨 HÄRLEDDA UR KATALOGEN, inte handskrivna. Ändras packningen i materials.ts ska testet räkna om
+// sig, inte tyst pröva ett tal som inte längre gäller. Samma läxa som skiftlägestestet i
+// materialSuppliers.test.ts.
+const EKO_PALL = sacksPerPalletFor(EKO)!;
+const KNAUF_PALL = sacksPerPalletFor(KNAUF)!;
+
+describe('fixturernas förutsättningar', () => {
+  it('katalogen bär de packningar testerna räknar på', () => {
+    expect(EKO_PALL).toBeGreaterThan(0);
+    expect(KNAUF_PALL).toBeGreaterThan(0);
+    // Skiljer de sig inte prövar "per material"-testerna ingenting.
+    expect(EKO_PALL).not.toBe(KNAUF_PALL);
+    // Och det MÅSTE finnas ett material utan känd packning, annars är null-vägen otestad.
+    expect(sacksPerPalletFor(OKAND_PALL)).toBeNull();
+  });
+});
 const DEPOTS = [
   { id: SYD, name: 'Depå Syd' },
   { id: NORR, name: 'Depå Norr' },
@@ -87,8 +107,10 @@ describe('suggested_sacks är STÖRSTA underskottet, inte det första', () => {
     });
     const r = rowFor(f);
     expect(r.shortfall_at_run_out).toBe(40); // vad som fattas den dag det tar slut
-    expect(r.worst_deficit).toBe(180); // vad som måste beställas
-    expect(r.suggested_sacks).toBe(180);
+    expect(r.worst_deficit).toBe(180); // det verkliga underskottet
+    // …men beställningen sker i hela pallar: 180 / 54 = 3,33 -> 4 pallar.
+    expect(r.suggested_sacks).toBe(4 * EKO_PALL);
+    expect(r.suggested_pallets).toBe(4);
   });
 
   it('ett inflöde mitt i horisonten sänker inte det värsta som kommer efter', () => {
@@ -167,7 +189,7 @@ describe('suggested_date backar ledtiden', () => {
     const f = run({
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-30' }],
-      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 7, roundUpTo: 1 }]]),
+      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 7 }]]),
     });
     expect(rowFor(f).suggested_date).toBe('2026-09-23');
   });
@@ -176,7 +198,7 @@ describe('suggested_date backar ledtiden', () => {
     const f = run({
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-15' }],
-      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 30, roundUpTo: 1 }]]),
+      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 30 }]]),
     });
     expect(rowFor(f).suggested_date).toBe(TODAY);
   });
@@ -199,8 +221,10 @@ describe('suggested_date backar ledtiden', () => {
     const r = rowFor(f);
     expect(r.supply_known).toBe(false);
     expect(r.suggested_date).toBeNull();
-    // Antalet går fortfarande att räkna — det är bara avrundningen som saknas.
-    expect(r.suggested_sacks).toBe(187);
+    // Antalet går fortfarande att räkna och avrundas till hel pall — pallstorleken hör till
+    // MATERIALET och är känd även när leverantören inte är det. De två är skilda axlar.
+    expect(r.suggested_sacks).toBe(4 * EKO_PALL); // 187 -> 216
+    expect(r.sacks_per_pallet).toBe(EKO_PALL);
     expect(r.run_out_day).toBe('2026-09-30');
   });
 
@@ -210,14 +234,14 @@ describe('suggested_date backar ledtiden', () => {
     const f = run({
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [{ depot_id: SYD, material: EKO, sacks: 187, day: '2026-09-30' }],
-      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 0, roundUpTo: 1 }]]),
+      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 0 }]]),
     });
     const r = rowFor(f);
     expect(r.supply_known).toBe(true);
     expect(r.suggested_date).toBe('2026-09-30');
   });
 
-  it('avrundar upp till leverantörens pall — en gång, på totalen', () => {
+  it('avrundar upp till hel pall — en gång, på totalen', () => {
     const f = run({
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [
@@ -225,11 +249,11 @@ describe('suggested_date backar ledtiden', () => {
         { depot_id: SYD, material: EKO, sacks: 1, day: '2026-09-16' },
         { depot_id: SYD, material: EKO, sacks: 1, day: '2026-09-17' },
       ],
-      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 0, roundUpTo: 24 }]]),
     });
-    // Avrundat per dag hade det blivit 3 pallar = 72. Behovet är 3 säckar, alltså EN pall.
+    // Avrundat per dag hade det blivit TRE pallar. Behovet är 3 säckar, alltså EN pall.
     expect(rowFor(f).worst_deficit).toBe(3);
-    expect(rowFor(f).suggested_sacks).toBe(24);
+    expect(rowFor(f).suggested_sacks).toBe(EKO_PALL);
+    expect(rowFor(f).suggested_pallets).toBe(1);
   });
 });
 
@@ -250,7 +274,7 @@ describe('horisonten', () => {
     });
     const r = rowFor(f);
     expect(r.worst_deficit).toBe(100);
-    expect(r.suggested_sacks).toBe(100);
+    expect(r.suggested_sacks).toBe(2 * EKO_PALL); // 100 -> 108, två pallar
     // Men det tigs inte ihjäl — att veta att 3 000 säck är bokade längre fram avgör om man ska
     // passa på att beställa mer nu.
     expect(r.beyond_horizon).toBe(3000);
@@ -326,6 +350,79 @@ describe('redan negativt ingångssaldo', () => {
       demand: [{ depot_id: NORR, material: EKO, sacks: 10, day: '2026-09-20' }],
     });
     for (const r of rowsNeedingOrder(f)) expect(r.run_out_day).not.toBeNull();
+  });
+});
+
+describe('pallstorleken hör till MATERIALET, inte leverantören', () => {
+  /**
+   * 🧨 GÅR INTE ATT HÄRLEDA UR SÄCKVIKTEN. Ekovilla packar 54 säckar à 14 kg (756 kg/pall), Knauf
+   * 24 à 15,5 kg (372 kg/pall) — en pall bär alltså varken ett givet antal eller en given vikt.
+   * Talet är packningsfakta per material. (William 2026-09-11.)
+   */
+  it('samma behov ger olika antal för olika material', () => {
+    const f = run({
+      opening: [
+        { depot_id: SYD, material: EKO, sacks: 0 },
+        { depot_id: SYD, material: KNAUF, sacks: 0 },
+      ],
+      demand: [
+        { depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' },
+        { depot_id: SYD, material: KNAUF, sacks: 100, day: '2026-09-20' },
+      ],
+    });
+    const eko = rowFor(f, SYD, EKO);
+    const knauf = rowFor(f, SYD, KNAUF);
+    expect(eko.worst_deficit).toBe(100);
+    expect(knauf.worst_deficit).toBe(100);
+    // Samma underskott, olika beställning — det är hela poängen med att talet är per material.
+    expect(eko.suggested_sacks).toBe(2 * EKO_PALL); // 108
+    expect(knauf.suggested_sacks).toBe(5 * KNAUF_PALL); // 120
+    expect(eko.suggested_sacks).not.toBe(knauf.suggested_sacks);
+  });
+
+  /**
+   * ⚠️ OKÄND PACKNING FÅR INTE SE UT SOM "INGA PALLAR". Samma regel som supply_known för ledtiden:
+   * hellre säga att vi inte vet än att föreslå ett säckantal fabriken inte kan leverera.
+   */
+  it('okänd pallstorlek avrundar inte, och säger det', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: OKAND_PALL, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: OKAND_PALL, sacks: 187, day: '2026-09-20' }],
+    });
+    const r = rowFor(f, SYD, OKAND_PALL);
+    expect(r.sacks_per_pallet).toBeNull();
+    expect(r.suggested_pallets).toBeNull();
+    // Det råa underskottet, orört.
+    expect(r.suggested_sacks).toBe(187);
+  });
+
+  it('ett exakt jämnt behov ger inte en extra pall', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 2 * EKO_PALL, day: '2026-09-20' }],
+    });
+    expect(rowFor(f).suggested_sacks).toBe(2 * EKO_PALL);
+    expect(rowFor(f).suggested_pallets).toBe(2);
+  });
+
+  it('inget behov ger noll pallar, inte en', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 500 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 10, day: '2026-09-20' }],
+    });
+    expect(rowFor(f).suggested_sacks).toBe(0);
+    expect(rowFor(f).suggested_pallets).toBe(0);
+  });
+
+  // ⛔ Lasset modelleras INTE: antalet pallar på en bil varierar, och bilen kan blanda produkter.
+  // "Fullt lass" är kapacitet, inte en beställningsenhet. Vaktas så ingen inför det som konstant.
+  it('prognosen bär inget begrepp om ett fullt lass', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' }],
+    });
+    const r = rowFor(f) as Record<string, unknown>;
+    for (const key of Object.keys(r)) expect(key).not.toMatch(/load|lass|truck/i);
   });
 });
 
@@ -472,7 +569,7 @@ describe('addDaysISO över sommartidsväxlingarna', () => {
       today: '2026-10-01',
       opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
       demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-10-28' }],
-      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 7, roundUpTo: 1 }]]),
+      supply: new Map([[supplyKey(SYD, EKO), { leadTimeDays: 7 }]]),
     });
     expect(rowFor(f).suggested_date).toBe('2026-10-21');
   });

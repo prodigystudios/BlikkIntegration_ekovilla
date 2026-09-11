@@ -280,21 +280,6 @@ const leadTimeDays = z.preprocess(
     .max(365, 'Ledtiden är orimligt lång'),
 );
 
-// Beställningsstorleken: material beställs i hela pallar, och pallen är olika stor hos olika
-// fabriker. Samma preprocess som ledtiden och av samma skäl — coerce hade gjort null och '' till 0,
-// och NOLL är inte "ingen avrundning" utan en division med noll i väntan på att hända.
-//
-// 1 är defaulten och betyder ingen avrundning. En leverantör som säljer lösa säckar måste gå att
-// lägga upp, och en ny rad får inte tyst börja avrunda.
-const roundUpTo = z.preprocess(
-  (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
-  z
-    .number({ invalid_type_error: 'Beställningsstorleken anges i hela säckar' })
-    .int('Beställningsstorleken anges i hela säckar')
-    .min(1, 'Minsta beställningsstorlek är 1 (ingen avrundning)')
-    .max(1000, 'Beställningsstorleken är orimligt stor'),
-);
-
 export const createSupplierSchema = z.object({
   name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt'),
   // Obligatorisk: en leverantör som inte kan ta emot en beställning är en kontakt, inte en
@@ -304,7 +289,6 @@ export const createSupplierSchema = z.object({
   phone: nullableText(40, 'Numret är för långt').optional(),
   materials: supplierMaterials,
   lead_time_days: leadTimeDays.optional().default(0),
-  round_up_to: roundUpTo.optional().default(1),
   note: nullableText(300, 'Noteringen är för lång').optional(),
 });
 
@@ -316,7 +300,6 @@ export const updateSupplierSchema = z
     phone: nullableText(40, 'Numret är för långt').optional(),
     materials: supplierMaterials.optional(),
     lead_time_days: leadTimeDays.optional(),
-    round_up_to: roundUpTo.optional(),
     note: nullableText(300, 'Noteringen är för lång').optional(),
     // Avveckling sker genom avaktivering — inaktiva leverantörer ligger kvar men blir aldrig
     // mottagare (suppliersForMaterial filtrerar på active).

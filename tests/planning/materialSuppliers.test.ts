@@ -36,7 +36,6 @@ function supplier(over: Partial<MaterialSupplier> = {}): MaterialSupplier {
     phone: null,
     materials: [EKOVILLA],
     lead_time_days: 5,
-    round_up_to: 1,
     note: null,
     active: true,
     ...over,
@@ -75,16 +74,6 @@ describe('validateSupplier', () => {
     expect(validateSupplier({ name: 'X', email: 'a@b.se', materials: [EKOVILLA], leadTimeDays: -1 })).toBe('lead_time_invalid');
     expect(validateSupplier({ name: 'X', email: 'a@b.se', materials: [EKOVILLA], leadTimeDays: 3650 })).toBe('lead_time_invalid');
     expect(validateSupplier({ name: 'X', email: 'a@b.se', materials: [EKOVILLA], leadTimeDays: 1.5 })).toBe('lead_time_invalid');
-  });
-
-  it('avvisar en ogiltig beställningsstorlek — noll är division med noll, inte "ingen avrundning"', () => {
-    const base = { name: 'X', email: 'a@b.se', materials: [EKOVILLA] };
-    expect(validateSupplier({ ...base, roundUpTo: 0 })).toBe('round_up_invalid');
-    expect(validateSupplier({ ...base, roundUpTo: -1 })).toBe('round_up_invalid');
-    expect(validateSupplier({ ...base, roundUpTo: 2.5 })).toBe('round_up_invalid');
-    expect(validateSupplier({ ...base, roundUpTo: 5000 })).toBe('round_up_invalid');
-    expect(validateSupplier({ ...base, roundUpTo: 1 })).toBeNull();
-    expect(validateSupplier({ ...base, roundUpTo: 24 })).toBeNull();
   });
 
   it('godtar noll dagars ledtid — det är ett svar, inte ett tomt fält', () => {

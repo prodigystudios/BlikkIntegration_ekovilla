@@ -71,7 +71,6 @@ export default function PlanningAdminModal({
       phone: s.phone,
       materials: s.materials,
       lead_time_days: s.lead_time_days,
-      round_up_to: s.round_up_to,
       note: s.note,
       active: s.active,
     }),
@@ -558,7 +557,6 @@ const SUPPLIER_PROBLEM_TEXT: Record<SupplierProblem, string> = {
   materials_required: 'Välj minst ett material, annars kan leverantören aldrig väljas som mottagare',
   material_unknown: 'Okänt material',
   lead_time_invalid: 'Ledtiden anges i hela dagar, 0–365',
-  round_up_invalid: 'Beställningsstorleken anges i hela säckar, minst 1',
 };
 
 // Flervalet över materialkatalogen. Ingen delad multi-select finns i repot, och den här ska inte
@@ -645,7 +643,6 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
       email: supplier.email,
       materials: supplier.materials,
       leadTimeDays: supplier.lead_time_days,
-      roundUpTo: supplier.round_up_to,
     });
     if (problem) return toast.error(SUPPLIER_PROBLEM_TEXT[problem]);
     if (await save(supplier)) {
@@ -778,7 +775,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
               </p>
               <span className={LABEL}>Levererar</span>
               <MaterialChecklist selected={supplier.materials} onToggle={(m) => patchLocal(supplier.id, { materials: toggle(supplier.materials, m) })} />
-              <div className="mt-3.5 grid grid-cols-3 gap-3">
+              <div className="mt-3.5 grid grid-cols-2 gap-3">
                 <div>
                   <span className={LABEL}>Ledtid (dagar)</span>
                   <input
@@ -793,27 +790,11 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                     aria-label="Ledtid i dagar"
                   />
                 </div>
-                <div>
-                  <span className={LABEL}>Säckar per pall</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={1000}
-                    value={supplier.round_up_to}
-                    // 🧨 INGET `|| 1` HÄR. Fallbacket snäppte tillbaka fältet till 1 så fort det
-                    // tömdes, så den som markerade "24" och skrev en ny siffra fick "1" + siffran —
-                    // 124 i stället för 4, tyst. Tomt fält får stå tomt (0 lagras aldrig: schemat,
-                    // den rena valideringen och en CHECK i databasen kräver alla minst 1, och
-                    // Spara nekar med ett svenskt fel).
-                    onChange={(e) => patchLocal(supplier.id, { round_up_to: Number(e.target.value) })}
-                    className={cn(crm.input, 'tabular-nums')}
-                    aria-label="Säckar per pall"
-                  />
-                </div>
                 <div><span className={LABEL}>Notering</span><input value={supplier.note ?? ''} onChange={(e) => patchLocal(supplier.id, { note: e.target.value || null })} className={crm.input} /></div>
               </div>
               <p className="mt-1.5 text-[11px] text-slate-400">
-                Beställningsförslaget avrundas upp till hela pallar. Sätt 1 om fabriken levererar lösa säckar.
+                Beställningsförslaget avrundas upp till hela pallar. Pallstorleken hör till materialet, inte till
+                leverantören, och ligger i materialkatalogen.
               </p>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
@@ -1134,9 +1115,26 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
                     bero på att den invarianten håller. */}
                 {r.run_out_day ? <>tar slut <strong className="text-rose-600">{shortDayISO(r.run_out_day)}</strong></> : 'underskott'}
                 {' · behöver '}
-                <strong className="text-slate-700">{r.suggested_sacks} säck</strong>
-                {r.suggested_sacks !== r.worst_deficit && (
-                  <span className="text-slate-400"> ({r.worst_deficit} uppåt till hel pall)</span>
+                {r.suggested_pallets != null ? (
+                  // Pallen är beställningsenheten — säckantalet är det man räknar i, pallarna det
+                  // man beställer i. Båda visas: "4 pallar (216 säck)".
+                  <>
+                    <strong className="text-slate-700">
+                      {r.suggested_pallets} {r.suggested_pallets === 1 ? 'pall' : 'pallar'}
+                    </strong>
+                    <span className="text-slate-400"> ({r.suggested_sacks} säck</span>
+                    {r.suggested_sacks !== r.worst_deficit && (
+                      <span className="text-slate-400">, behovet är {r.worst_deficit}</span>
+                    )}
+                    <span className="text-slate-400">)</span>
+                  </>
+                ) : (
+                  // ⚠️ Okänd packning får inte se ut som "inga pallar". Ett säckantal utan
+                  // pallstorlek är inget man kan beställa.
+                  <>
+                    <strong className="text-slate-700">{r.suggested_sacks} säck</strong>
+                    <span className="text-amber-700"> · pallstorlek okänd för {r.material}</span>
+                  </>
                 )}
                 {r.suggested_date ? (
                   <> · beställ senast {shortDayISO(r.suggested_date)}</>

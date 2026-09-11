@@ -24,20 +24,12 @@ export type MaterialSupplier = {
   /** Kanoniska kortkoder ur MATERIAL_SHORTS. */
   materials: string[];
   lead_time_days: number;
-  /**
-   * Beställningsstorlek: material beställs i hela pallar, och pallen är olika stor hos olika
-   * fabriker (Williams besked 2026-09-10). `suggested_sacks` avrundas UPP till närmaste multipel.
-   *
-   * 1 = ingen avrundning, och det är defaulten — en leverantör som säljer lösa säckar ska gå att
-   * lägga upp, och en ny rad får inte tyst börja avrunda.
-   */
-  round_up_to: number;
   note: string | null;
   active: boolean;
 };
 
 const SUPPLIER_SELECT =
-  'id, name, email, contact_name, phone, materials, lead_time_days, round_up_to, note, active';
+  'id, name, email, contact_name, phone, materials, lead_time_days, note, active';
 
 /**
  * Det MINSTA en rad behöver bära för att urvalsregeln ska gälla den.
@@ -53,11 +45,10 @@ export type MaterialSupply = {
   active: boolean;
 };
 
-/** Ledtid och pallstorlek, utan något som pekar ut VEM leverantören är. */
+/** Ledtiden, utan något som pekar ut VEM leverantören är. Pallstorleken bor på MATERIALET. */
 export type SupplyTerms = MaterialSupply & {
   supplier_id: string;
   lead_time_days: number;
-  round_up_to: number;
 };
 
 /**
@@ -82,7 +73,6 @@ export async function listSupplyTerms(
     supplier_id: r.supplier_id as string,
     materials: Array.isArray(r.materials) ? (r.materials as string[]) : [],
     lead_time_days: Number(r.lead_time_days ?? 0),
-    round_up_to: Number(r.round_up_to ?? 1) || 1,
     // Funktionen returnerar bara aktiva rader; fältet finns för att urvalsregeln ska vara DELAD
     // med registret i stället för omskriven för den smala formen.
     active: true,
@@ -97,8 +87,7 @@ export type SupplierProblem =
   | 'email_invalid'
   | 'materials_required'
   | 'material_unknown'
-  | 'lead_time_invalid'
-  | 'round_up_invalid';
+  | 'lead_time_invalid';
 
 // Samma grovhet som resten av appen använder på en adress: ett tecken, ett @, en punkt i domänen.
 // Den riktiga prövningen är att mailet går fram — det här fångar felskrivningen, inte allt.
@@ -117,7 +106,6 @@ export function validateSupplier(input: {
   email: string;
   materials: string[];
   leadTimeDays?: number;
-  roundUpTo?: number;
 }): SupplierProblem | null {
   const name = input.name.trim();
   if (!name) return 'name_required';
@@ -135,16 +123,11 @@ export function validateSupplier(input: {
   const lead = input.leadTimeDays ?? 0;
   if (!Number.isInteger(lead) || lead < 0 || lead > 365) return 'lead_time_invalid';
 
-  // 1 = ingen avrundning. NOLL är inte "ingen avrundning" utan en division med noll i väntan på att
-  // hända — roundUpToMultiple måste kunna lita på att talet är minst 1.
-  const roundUp = input.roundUpTo ?? 1;
-  if (!Number.isInteger(roundUp) || roundUp < 1 || roundUp > 1000) return 'round_up_invalid';
-
   return null;
 }
 
 /**
- * Avrunda UPP till närmaste hela beställningsstorlek.
+ * Avrunda UPP till närmaste hela pall.
  *
  * ⚠️ ANVÄNDS PÅ `worst_deficit`, ALDRIG PÅ ETT DELBEHOV. Underskottet är sanningen om vad som
  * behövs; pallen är en leveransform. Avrundas varje dags rörelse för sig staplas felen uppåt och
@@ -205,8 +188,6 @@ function toSupplier(row: Record<string, any>): MaterialSupplier {
     // skulle ge undefined och krascha varje .includes() nedströms.
     materials: Array.isArray(row.materials) ? (row.materials as string[]) : [],
     lead_time_days: Number(row.lead_time_days ?? 0),
-    // Default 1, aldrig 0: en nolla här hade blivit en division med noll i avrundningen.
-    round_up_to: Number(row.round_up_to ?? 1) || 1,
     note: (row.note as string | null) ?? null,
     active: row.active !== false,
   };
@@ -237,7 +218,6 @@ export type CreateSupplierInput = {
   phone: string | null;
   materials: string[];
   leadTimeDays: number;
-  roundUpTo: number;
   note: string | null;
   actorUserId: string;
 };
@@ -253,7 +233,6 @@ export async function createSupplier(supabase: SupabaseClient, input: CreateSupp
       phone: input.phone,
       materials: input.materials,
       lead_time_days: input.leadTimeDays,
-      round_up_to: input.roundUpTo,
       note: input.note,
       created_by: input.actorUserId,
     })
@@ -268,7 +247,6 @@ export type UpdateSupplierInput = {
   phone?: string | null;
   materials?: string[];
   leadTimeDays?: number;
-  roundUpTo?: number;
   note?: string | null;
   active?: boolean;
 };
@@ -288,7 +266,6 @@ export async function updateSupplier(supabase: SupabaseClient, id: string, patch
   if (patch.phone !== undefined) update.phone = patch.phone;
   if (patch.materials !== undefined) update.materials = patch.materials;
   if (patch.leadTimeDays !== undefined) update.lead_time_days = patch.leadTimeDays;
-  if (patch.roundUpTo !== undefined) update.round_up_to = patch.roundUpTo;
   if (patch.note !== undefined) update.note = patch.note;
   if (patch.active !== undefined) update.active = patch.active;
 

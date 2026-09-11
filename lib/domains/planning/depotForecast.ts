@@ -1,5 +1,6 @@
 import { addDaysISO } from './timezone';
 import { roundUpToMultiple } from './materialSuppliers';
+import { sacksPerPalletFor } from '@/lib/domains/crm/materials';
 import type { StockRow, DemandExclusion } from './depotStock';
 
 // Tidsfasad prognos: NÄR tar depån slut, och hur mycket ska beställas.
@@ -41,8 +42,23 @@ export type DepotMaterialForecast = {
    * ändå. Det är alltså den DJUPASTE punkten som ska täckas.
    */
   worst_deficit: number;
-  /** worst_deficit avrundat upp till leverantörens beställningsstorlek. */
+  /**
+   * Vad som ska beställas: worst_deficit avrundat UPP till hel pall.
+   *
+   * När pallstorleken är okänd (sacks_per_pallet === null) sker ingen avrundning och talet är det
+   * råa underskottet — men då säger UI:t att pallstorleken saknas, i stället för att presentera ett
+   * säckantal fabriken inte kan leverera.
+   */
   suggested_sacks: number;
+  /** suggested_sacks uttryckt i hela pallar, eller null när pallstorleken är okänd. */
+  suggested_pallets: number | null;
+  /**
+   * Säckar per pall för materialet, eller null när packningen inte är känd.
+   *
+   * ⚠️ null betyder "vi vet inte", inte "inga pallar". Samma regel som supply_known för ledtiden:
+   * ett okänt värde får aldrig se ut som ett uträknat svar.
+   */
+  sacks_per_pallet: number | null;
   /**
    * Senaste dag beställningen kan skickas för att hinna fram: run_out − ledtid, aldrig före idag.
    *
@@ -106,8 +122,13 @@ export type ForecastInput = {
    * beyond_horizon i stället för att tigas ihjäl.
    */
   horizonDays?: number;
-  /** Per depå+material: ledtid och beställningsstorlek hos den leverantör som skulle få ordern. */
-  supply?: Map<string, { leadTimeDays: number; roundUpTo: number }>;
+  /**
+   * Per depå+material: LEDTIDEN hos den leverantör som skulle få ordern.
+   *
+   * ⚠️ Pallstorleken ligger INTE här. Den hör till materialet (sacksPerPalletFor), inte till
+   * fabriken — Ekovilla packar 54 säckar per pall och Knauf 24, oavsett vem som säljer.
+   */
+  supply?: Map<string, { leadTimeDays: number }>;
   excluded?: DemandExclusion[];
 };
 
@@ -229,8 +250,11 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
       const worst = Math.max(0, -lowest);
       const supply = input.supply?.get(supplyKey(d.id, material));
       const leadTimeDays = supply?.leadTimeDays ?? 0;
-      const roundUpTo = supply?.roundUpTo ?? 1;
       const supplyKnown = supply !== undefined;
+      // Pallstorleken kommer ur MATERIALKATALOGEN, inte ur leverantören. null = okänd packning:
+      // ingen avrundning, och UI:t skriver ut varför.
+      const perPallet = sacksPerPalletFor(material);
+      const suggested = perPallet ? roundUpToMultiple(worst, perPallet) : worst;
 
       rows.push({
         depot_id: d.id,
@@ -241,7 +265,9 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
         shortfall_at_run_out: shortfallAtRunOut,
         worst_deficit: worst,
         // Avrundas EN gång, på totalen. Se roundUpToMultiple om varför aldrig per delbehov.
-        suggested_sacks: roundUpToMultiple(worst, roundUpTo),
+        suggested_sacks: suggested,
+        suggested_pallets: perPallet ? suggested / perPallet : null,
+        sacks_per_pallet: perPallet,
         // Aldrig före idag: en beställning kan inte skickas i går. Räcker lagret finns ingen dag —
         // och utan kända leveransvillkor finns ingen dag att räkna fram, se supply_known.
         suggested_date: runOut && supplyKnown ? maxISO(input.today, addDaysISO(runOut, -leadTimeDays)) : null,

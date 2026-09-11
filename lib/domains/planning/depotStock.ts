@@ -649,7 +649,8 @@ export async function getDepotStockWithForecast(
     day: e.expected_on,
   }));
 
-  // Ledtid och pallstorlek per depå+material, från den leverantör som skulle få ordern.
+  // LEDTIDEN per depå+material, från den leverantör som skulle få ordern. Pallstorleken ligger
+  // INTE här — den hör till materialet (sacksPerPalletFor), inte till fabriken.
   //
   // 🧨 LÄSS VIA planning_supply_terms, INTE UR TABELLEN. ops_material_suppliers SELECT kräver
   // planning.depot.manage medan den här rutten grindar på planning.schedule.read — och RLS NEKAR
@@ -673,10 +674,10 @@ export async function getDepotStockWithForecast(
   for (const e of forecastDemand) addPair(e.depot_id, e.material);
   for (const e of inflow) addPair(e.depot_id, e.material);
 
-  const supply = new Map<string, { leadTimeDays: number; roundUpTo: number }>();
+  const supply = new Map<string, { leadTimeDays: number }>();
   for (const [key, pair] of pairs) {
     const s = defaultSupplierForMaterial(suppliers.data, pair.material);
-    if (s) supply.set(key, { leadTimeDays: s.lead_time_days, roundUpTo: s.round_up_to });
+    if (s) supply.set(key, { leadTimeDays: s.lead_time_days });
   }
 
   return {

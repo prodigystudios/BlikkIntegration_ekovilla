@@ -3,6 +3,7 @@ import {
   inferMaterialFromArticle,
   materialDemandFromLineItems,
   sacksFor,
+  sacksPerPalletFor,
   totalSacks,
   MATERIALS,
   MATERIAL_SHORTS,
@@ -103,5 +104,47 @@ describe('materialDemandFromLineItems', () => {
     for (const row of materialDemandFromLineItems([rad(), rad({ article_name: 'PAROC SHT 1 vind' })])) {
       expect(MATERIAL_SHORTS).toContain(row.material);
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// sacksPerPallet — beställningsenheten
+// ---------------------------------------------------------------------------
+//
+// 🧨 TALET GÅR INTE ATT HÄRLEDA UR SÄCKVIKTEN. Ekovilla packar 54 säckar à 14 kg (756 kg/pall),
+// Knauf 24 à 15,5 kg (372 kg/pall) — en pall bär varken ett givet antal eller en given vikt. Det är
+// packningsfakta per material och måste anges, inte räknas fram.
+
+describe('sacksPerPallet', () => {
+  it('svarar per kanonisk materialkod', () => {
+    expect(sacksPerPalletFor('EKOVILLA')).toBe(54);
+    expect(sacksPerPalletFor('KNAUF SUPAFIL')).toBe(24);
+  });
+
+  // ⚠️ null betyder "vi vet inte", inte "inga pallar". Prognosen avrundar då inte och skriver ut
+  // varför — ett säckantal utan pallstorlek är inget man kan beställa.
+  it('ger null för ett material vars packning inte är känd', () => {
+    expect(sacksPerPalletFor('PAROC')).toBeNull();
+  });
+
+  it('ger null för en kod som inte finns i katalogen', () => {
+    expect(sacksPerPalletFor('FINNS INTE')).toBeNull();
+  });
+
+  it('varje känd packning är ett positivt heltal', () => {
+    for (const short of MATERIAL_SHORTS) {
+      const n = sacksPerPalletFor(short);
+      if (n === null) continue;
+      expect(Number.isInteger(n)).toBe(true);
+      expect(n).toBeGreaterThan(0);
+    }
+  });
+
+  // Uppslaget sker på `short`, så katalogen får inte bära två poster med samma kod — då vore det
+  // odefinierat vilken packning som gäller.
+  it('ingen materialkod förekommer två gånger i katalogen', () => {
+    const shorts = Object.values(MATERIALS).map((m) => m.short);
+    expect(shorts.length).toBe(new Set(shorts).size);
   });
 });
