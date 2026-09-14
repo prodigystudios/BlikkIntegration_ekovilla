@@ -60,7 +60,15 @@ export async function POST(_req: Request, context: RouteContext) {
 
     let fortnoxError: string | null = null;
     try {
-      await updateWorkOrderInFortnox(context.params.id);
+      // ⚠️ `mirrorFailed` når hit via create-fallbacken (updateWorkOrderInFortnox →
+      // pushWorkOrderToFortnox på en order som aldrig pushats). Kastades resultatet bort svarade
+      // routen `fortnox_error: null` — grön "Arbetsorder synkad" — medan raden den returnerar
+      // läser Misslyckad. Samma tysta framgång som offertvägen redan rättat.
+      const pushed = await updateWorkOrderInFortnox(context.params.id);
+      if (pushed.mirrorFailed) {
+        fortnoxError = 'Arbetsordern skapades i Fortnox, men en ändring som sparades under tiden '
+          + 'kunde inte speglas dit. Synka om ordern och kontrollera uppgifterna.';
+      }
     } catch (e) {
       if (e instanceof FortnoxNotConnectedError) {
         return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));

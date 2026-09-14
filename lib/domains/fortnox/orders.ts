@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { isFortnoxOrderClosed, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/work-orders';
+import { isFortnoxOrderClosed, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/workOrderSyncFields';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
@@ -587,6 +587,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // annars dragit igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har,
   // med allt vad `assertLineItemsArePriced` och 'failed'-stämpling innebär.
   //
+  // Och `customer_snapshot` bär telefon, e-post, slutkundens uppgifter, org.nr och personnummer —
+  // inget av det når Fortnox. Hela kolumnen jämförd gjorde en rättad telefon på arbetsplatsen till
+  // en "ändring", med en header-PUT som kunde stämpla 'failed' och spärra faktureringen för ett
+  // fält dokumentet aldrig burit. Se MIRRORED_SNAPSHOT_KEYS.
+  //
   // Samma sak för `work_address`: PATCH-schemat fyller på med `delivery_address: null` och
   // `invoice_address: null`, så en rad som saknar nycklarna jämförs olik och kostar en header-PUT
   // i onödan. Routen normaliserar redan så (workOrderMirroredFieldsChanged) — den här vägen måste
@@ -599,7 +604,7 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
   const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
     || !same(fresh.line_items, atBuild.line_items);
-  const headerDiffers = !same(fresh.customer_snapshot, atBuild.customer_snapshot)
+  const headerDiffers = !same(subset(fresh.customer_snapshot, MIRRORED_SNAPSHOT_KEYS), subset(atBuild.customer_snapshot, MIRRORED_SNAPSHOT_KEYS))
     || !same(subset(fresh.work_address, MIRRORED_WORK_ADDRESS_KEYS), subset(atBuild.work_address, MIRRORED_WORK_ADDRESS_KEYS))
     || !same(fresh.assigned_to, atBuild.assigned_to);
 

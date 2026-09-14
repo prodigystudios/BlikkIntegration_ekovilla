@@ -134,6 +134,29 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
     expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
   });
 
+  // 🧨 GAPET MELLAN LARMET OCH PUSHEN. En DELfakturerad order är öppen hos Fortnox, så den ska
+  // PUSHAS — inte larmas om. Med det gamla stängd-testet (`!fortnox_invoice_number`) föll den
+  // mellan stolarna: invoicedInFortnox falskt (inget larm) OCH rotPush falskt (ingen push), så ett
+  // rättat BRF org.nr sparades, rapporterades grönt och nådde aldrig ROT-textraden i Fortnox.
+  it('pushar ROT-ändringen på en DELfakturerad order i stället för att tiga', async () => {
+    install({
+      ...openOrder,
+      status: 'invoiced',
+      fortnox_invoice_number: '2026',
+      partial_invoicing_started_at: '2026-09-10T08:06:00Z',
+      quote_type: 'private',
+      rot_details: { enabled: true, brf_org_number: '769600-0000' },
+    });
+
+    const json = await (await PATCH(patchReq({
+      status: 'invoiced',
+      rot_details: { brf_org_number: '769600-1234' },
+    }), ctx)).json();
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(json.data.fortnox_error).toBeNull();
+  });
+
   // 🧨 NÄRVARO ÄR INTE ÄNDRING. Ordervyn skickar `your_reference` vid VARJE sparning (och `label`
   // på varje företagsorder), så ett larm som gick på närvaro hade gett "nådde inte Fortnox" varje
   // gång någon rättade en anteckning på en fakturerad order — ett rött larm om ingenting.
@@ -227,6 +250,19 @@ describe('POST arbetsorder/fortnox — omsynken', () => {
 
     expect(res.status).toBe(200);
     expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+  });
+
+  // 🧨 Omsynken av en aldrig pushad order faller tillbaka på create, som kan svara `mirrorFailed`
+  // — en sparning landade mitt i pushen och gick inte att spegla om. Kastades det bort svarade
+  // routen `fortnox_error: null` (grön "synkad") medan raden den returnerar läser Misslyckad.
+  it('bär upp mirrorFailed i stället för att svara rent', async () => {
+    install(openOrder);
+    vi.mocked(updateWorkOrderInFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true } as never);
+
+    const json = await (await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx)).json();
+
+    expect(json.data.fortnox_error).toBeTruthy();
   });
 
   // Och en ÖPPEN order ska fortfarande gå att synka om — spärren får inte ta knappen ifrån oss.

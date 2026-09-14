@@ -369,6 +369,34 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(fortnoxPut).not.toHaveBeenCalled();
   });
 
+  // ⚠️ `customer_snapshot` bär telefon, e-post och slutkundens uppgifter — INGET av det når
+  // Fortnox. Jämfördes hela kolumnen blev en rättad telefon på arbetsplatsen en "ändring", med en
+  // header-PUT som kunde stämpla 'failed' och spärra faktureringen för ett fält dokumentet aldrig
+  // burit. Se MIRRORED_SNAPSHOT_KEYS.
+  it('reparerar inte för snapshot-fält som aldrig når dokumentet', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: {
+          ...baseRow.customer_snapshot,
+          // Bara sådant som stannar i CRM.
+          phone: '070-000 00 00',
+          email: 'ny@c24bygg.se',
+          end_contact_name: 'Platschefen',
+        },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
   // PUT i onödan, på den enda väg som saknar dedup-skydd.
   it('speglar inte om huvudet när raden är oförändrad', async () => {

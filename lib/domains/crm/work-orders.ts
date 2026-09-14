@@ -13,6 +13,18 @@ import {
 } from './workOrderReadiness';
 import type { CreateWorkOrderFileInput } from './workOrderFiles/types';
 
+// Reglerna för vad som når Fortnox-dokumentet bor i en egen, beroendefri modul — annars blir
+// importen från `fortnox/orders` en cykel via `fortnox/partialInvoices`. Re-exporteras här så
+// befintliga importvägar är oförändrade.
+export {
+  isFortnoxOrderClosed,
+  workOrderMirroredFieldsChanged,
+  MIRRORED_WORK_ADDRESS_KEYS,
+  MIRRORED_SNAPSHOT_KEYS,
+  ROT_DOCUMENT_KEYS,
+} from './workOrderSyncFields';
+import { ROT_DOCUMENT_KEYS } from './workOrderSyncFields';
+
 export const crmWorkOrderSelect = `
   id,
   quote_id,
@@ -693,104 +705,6 @@ export function mergeWorkOrderSnapshotOverrides(
   return merged;
 }
 
-// De fält i `work_address` som faktiskt når Fortnox-huvudet — se buildOrderDeliveryFields, som
-// bara läser gata, postnummer och ort. `delivery_address`/`invoice_address` bor visserligen i
-// samma kolumn men rör inte orderhuvudet.
-export const MIRRORED_WORK_ADDRESS_KEYS = ['street_address', 'postal_code', 'city'] as const;
-
-/**
- * Är FORTNOX-ORDERN stängd för ändringar?
- *
- * 🧨 "Fakturerad" räcker inte som fråga — de två faktureringsvägarna gör helt olika saker med
- * Fortnox-ordern:
- *
- *  • HELFAKTURERING går `PUT /orders/{n}/createinvoice`. Fortnox konverterar ordern till en faktura
- *    och dokumentet STÄNGS: varje efterföljande skrivning avvisas.
- *  • DELFAKTURERING (Model B) POST:ar FRISTÅENDE fakturor och rör aldrig createinvoice. Orderns
- *    dokument hos Fortnox är alltså fortfarande ÖPPET och tar emot ändringar.
- *
- * ⚠️ Och just slutrundan i en delfakturering sätter `fortnox_invoice_number` på ordern (spegling åt
- * kortet och rapporterna, se partialInvoices). Ett villkor som bara frågar efter fakturanumret
- * låser därför ute en order som Fortnox gärna hade tagit emot — och eftersom `createPartialInvoice`
- * medvetet INTE gatar på synkstatusen kan en sådan order stå kvar på 'failed' med sin enda
- * reparationsväg ("Synka om") bortspärrad. `partial_invoicing_started_at` är det som skiljer dem.
- */
-export function isFortnoxOrderClosed(workOrder: {
-  status?: string | null;
-  fortnox_invoice_number?: string | null;
-  partial_invoicing_started_at?: string | null;
-} | null | undefined): boolean {
-  if (!workOrder) return false;
-  if (workOrder.partial_invoicing_started_at) return false;
-  return workOrder.status === 'invoiced' || Boolean(workOrder.fortnox_invoice_number);
-}
-
-/** Tom sträng, blanktecken och null är SAMMA tomhet. Fortnox ser ingen skillnad; inte vi heller. */
-function mirroredText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-/**
- * Ändrades något som faktiskt NÅR kundens Fortnox-dokument?
- *
- * 🧨 SKILT FRÅN "skickade klienten fältet". Ordervyn skickar `your_reference` vid varje sparning
- * och `label` vid varje sparning av en företagsorder, så en närvarokoll (`'label' in updateInput`)
- * betyder bara att formuläret postades. Det duger för att BESLUTA OM EN PUSH — en extra PUT med
- * oförändrade värden är ofarlig — men inte för att LARMA: på en fakturerad order, där ändringen
- * omöjligt kan nå fram, hade varje rättad anteckning gett ett rött "nådde inte Fortnox" om
- * ingenting.
- *
- * ⚠️ TRE NORMALISERINGAR, var och en hittad genom att den saknades:
- *
- *  1. `work_address` jämförs FÄLT FÖR FÄLT, aldrig med `JSON.stringify`. Kolumnen är jsonb och
- *     kommer tillbaka i PostgREST:s nyckelordning (city, postal_code, street_address …) medan
- *     Zod-schemat bygger sin egen (street_address, postal_code, city …) och dessutom fyller på med
- *     nycklar klienten aldrig skickade. Två strängar som ALDRIG kan bli lika — mätt mot den riktiga
- *     raden för order 131 — alltså "ändrat" vid varje sparning.
- *  2. `your_reference` jämförs mot samma FALLBACK som huvudet använder (`resolveYourReference`:
- *     your_reference → contact_name). En äldre rad utan egen referens bär kontaktpersonens namn
- *     dit, och klientens utkast seedas från just det värdet.
- *  3. Tomhet normaliseras: `''`, `'  '` och `null` är samma sak.
- *
- * ROT ligger medvetet UTANFÖR. De fälten går den fulla pushen, inte header-vägen, och har sin egen
- * ändringsflagga i `mergeWorkOrderRotDetails` (`documentChanged`).
- */
-export function workOrderMirroredFieldsChanged(
-  current: {
-    customer_snapshot?: Record<string, unknown> | null;
-    work_address?: Record<string, unknown> | null;
-    assigned_to?: string | null;
-  } | null | undefined,
-  // Bara nycklar klienten FAKTISKT skickade får finnas här — `undefined` betyder "rör inte".
-  overrides: {
-    label?: string | null;
-    your_reference?: string | null;
-    assigned_to?: string | null;
-    work_address?: Record<string, unknown> | null;
-  },
-): boolean {
-  const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
-
-  if ('label' in overrides && mirroredText(overrides.label) !== mirroredText(snapshot.label)) return true;
-
-  if ('your_reference' in overrides) {
-    const now = mirroredText(snapshot.your_reference) ?? mirroredText(snapshot.contact_name);
-    if (mirroredText(overrides.your_reference) !== now) return true;
-  }
-
-  if ('assigned_to' in overrides && (overrides.assigned_to ?? null) !== (current?.assigned_to ?? null)) return true;
-
-  if ('work_address' in overrides) {
-    const next = (overrides.work_address ?? {}) as Record<string, unknown>;
-    const prev = (current?.work_address ?? {}) as Record<string, unknown>;
-    if (MIRRORED_WORK_ADDRESS_KEYS.some((key) => mirroredText(next[key]) !== mirroredText(prev[key]))) return true;
-  }
-
-  return false;
-}
-
 /**
  * ROT-uppgifterna på arbetsordern, read-merge-write.
  *
@@ -807,16 +721,6 @@ export function workOrderMirroredFieldsChanged(
  */
 export const ROT_EDITABLE_KEYS = ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const;
 
-/**
- * De ROT-fält som faktiskt NÅR FORTNOX-DOKUMENTET.
- *
- * ⚠️ `rot_percent` och `max_deduction` står medvetet UTANFÖR. De läses bara av `pricing.ts` för
- * vår egen preliminära "Att betala" — Fortnox räknar det verkliga avdraget själv och får aldrig
- * siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT
- * (plus `assertLineItemsArePriced`, som kan stämpla 'failed' och spärra faktureringen) för en
- * ändring dokumentet aldrig ser.
- */
-export const ROT_DOCUMENT_KEYS = ['enabled', 'property_designation', 'brf_org_number'] as const;
 
 export function mergeWorkOrderRotDetails(
   current: Record<string, unknown> | null | undefined,

@@ -303,10 +303,13 @@ export async function PATCH(req: Request, context: RouteContext) {
     //    just därför). En order som ännu inte pushats får sin ROT vid create ändå.
     //  • En fakturerad order är stängd hos Fortnox: en rad-PUT avvisas, och statusen hade
     //    stämplats 'failed' av en sparning som egentligen bara rörde CRM.
+    // ⚠️ SAMMA stängd-regel som larmet ovan. Med det gamla testet (`!fortnox_invoice_number &&
+    // status !== 'invoiced'`) föll en DELfakturerad order mellan stolarna: `invoicedInFortnox` var
+    // falskt (inget larm) och `rotPush` falskt (ingen push), så ett rättat BRF org.nr sparades,
+    // rapporterades grönt och nådde aldrig ROT-textraden i Fortnox.
     const rotPush = rotChanged
       && Boolean(current?.fortnox_order_number)
-      && !current?.fortnox_invoice_number
-      && current?.status !== 'invoiced';
+      && !isFortnoxOrderClosed(current);
     if (invoicedInFortnox) {
       // Ingen push — Fortnox avvisar varje skrivning mot ett fakturerat dokument. Men svaret ska
       // säga vad som faktiskt gäller, och BARA när något speglat verkligen ändrats.
