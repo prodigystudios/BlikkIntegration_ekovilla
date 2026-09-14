@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { isFortnoxOrderClosed, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/workOrderSyncFields';
+import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/workOrderSyncFields';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
@@ -538,7 +538,7 @@ function same(a: unknown, b: unknown): boolean {
     if (value && typeof value === 'object') {
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>)
-          .filter(([key]) => key !== 'label_cleared')
+          .filter(([key]) => key !== 'label_cleared' && !(LINE_ITEM_CRM_ONLY_KEYS as readonly string[]).includes(key))
           .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
           .map(([key, val]) => [key, normalise(val)]),
       );
@@ -572,11 +572,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // `assertOrderRowsSynced` släpper igenom, och `createinvoice` fakturerar de gamla.
   const { data } = await supabase
     .from('crm_work_orders')
-    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items')
+    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, quote_id')
     .eq('id', workOrderId)
     .maybeSingle();
 
-  const fresh = data as typeof atBuild | null;
+  const fresh = data as (typeof atBuild & { quote_id: string | null }) | null;
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return {};
 
@@ -619,25 +619,45 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
 
   if (!rowsDiffer && !headerDiffers) return {};
 
-  // 🧨 EN RENSNING GÅR INTE ATT UTTRYCKA — och då får vi inte rapportera framgång.
+  // 🧨 REPARATIONEN MÅSTE RAPPORTERA VAD DEN FAKTISKT FICK UTTRYCKT — inte "kastade inget".
   //
   // `buildOrderHeader` UTELÄMNAR tomma värden (`...(ourReference ? { OurReference } : {})`), och en
-  // Fortnox-PUT rör bara fält den bär. Tömdes "Er referens" eller ansvarig mitt i pushen upptäcker
-  // vakten skillnaden, skickar en PUT — och Fortnox behåller sitt gamla värde. PUT:en lyckas, så
-  // utan den här flaggan hade svaret sagt att allt speglats medan kundens dokument bar kvar en
-  // person som inte längre står på ordern.
+  // Fortnox-PUT rör bara fält den bär. En TÖMNING går därför inte igenom: vakten ser skillnaden,
+  // PUT:en går igenom, och Fortnox behåller sitt gamla värde. Utan det här hade svaret sagt att allt
+  // speglats medan kundens dokument bar kvar en referens eller en arbetsplats som inte längre gäller.
   //
   // ⚠️ `label` är UNDANTAGET: den har sitt eget rensningsminne (`label_cleared` →
   // `YourOrderNumber: null`) och lagas därför av PUT:en som vanligt.
+  //
+  // Leveransadressen MÄTS genom att bygga fältet före och efter, i stället för att gissa på
+  // kolumnen: `buildOrderDeliveryFields` returnerar `{}` både när arbetsadressen tömts OCH när den
+  // blivit lika med kundens gata — två olika ändringar, samma outtryckbara utfall.
+  const deliveryBefore = buildOrderDeliveryFields(atBuild.work_address, atBuild.customer_snapshot);
+  const deliveryAfter = buildOrderDeliveryFields(fresh.work_address, fresh.customer_snapshot);
+  const deliveryCleared = Object.keys(deliveryBefore).length > 0 && Object.keys(deliveryAfter).length === 0;
+
   const referenceCleared = Boolean(resolveYourReference(atBuild.customer_snapshot))
     && !resolveYourReference(fresh.customer_snapshot);
-  const ourReferenceCleared = Boolean(atBuild.assigned_to) && !fresh.assigned_to;
-  const unexpressibleClear = referenceCleared || ourReferenceCleared;
+
+  // ⚠️ OurReference faller tillbaka på OFFERTENS ansvarige (buildOrderHeader). En tömd ansvarig på
+  // en offertfödd order rensar alltså ingenting — och ett larm där hade varit rött för ett dokument
+  // som faktiskt är rätt, utan något sätt att bli av med det. Offerten läses bara i just det fallet.
+  let ourReferenceCleared = Boolean(atBuild.assigned_to) && !fresh.assigned_to;
+  if (ourReferenceCleared && fresh.quote_id) {
+    const { data: quote } = await supabase
+      .from('crm_quotes').select('assigned_to').eq('id', fresh.quote_id).maybeSingle();
+    if ((quote as { assigned_to?: string | null } | null)?.assigned_to) ourReferenceCleared = false;
+  }
+
+  const unexpressibleClear = referenceCleared || ourReferenceCleared || deliveryCleared;
 
   try {
-    if (rowsDiffer) await updateWorkOrderInFortnox(workOrderId);
-    else await syncWorkOrderHeaderToFortnox(workOrderId);
-    if (unexpressibleClear) return { mirrorFailed: true };
+    // ⚠️ `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — en tom header, eller en order
+    // som hunnit stängas. Att läsa "kastade inte" som framgång hade gjort just de fallen tysta.
+    const mirrored = rowsDiffer
+      ? await updateWorkOrderInFortnox(workOrderId)
+      : await syncWorkOrderHeaderToFortnox(workOrderId);
+    if (mirrored === null || unexpressibleClear) return { mirrorFailed: true };
   } catch (e) {
     console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
     // Kastar INTE — ordern finns i Fortnox och numret är sparat, så ett kast hade fått anroparen
@@ -726,7 +746,10 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         .from('crm_work_orders')
         .update({ fortnox_order_sync_status: 'not_synced' })
         .eq('id', workOrderId);
-      return { fortnox_order_number: workOrder.fortnox_order_number };
+      // ⚠️ OCH DET SÄGS. Utan `mirrorFailed` svarade routen 201 med grön toast medan brickan läste
+      // "Ej synkad" och faktureringen var spärrad — samma tysta framgång som resten av ändringen
+      // tar bort. Beskedet ("synka om ordern") är rätt handling även här.
+      return { fortnox_order_number: workOrder.fortnox_order_number, mirrorFailed: true };
     }
 
     // Rader utan prisförankring blir Price 0 på ordern (och carve 0 → ingen ROT-arbetsrad). Ordern

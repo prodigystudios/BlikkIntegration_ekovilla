@@ -196,8 +196,10 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
 
     const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
-    expect(result).toEqual({ fortnox_order_number: '131' });
+    expect(result.fortnox_order_number).toBe('131');
     expect(fortnoxPost).not.toHaveBeenCalled();
+    // Inget claimades och ingen status rördes — svaret ska vara rent.
+    expect(result.mirrorFailed).toBeUndefined();
   });
 
   // 🧨 DUBBELORDERN. Idempotenskollen görs på en SMAL läsning före claimen; hinner en samtidig push
@@ -212,8 +214,12 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
 
     const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
-    expect(result).toEqual({ fortnox_order_number: '131' });
+    expect(result.fortnox_order_number).toBe('131');
     expect(fortnoxPost).not.toHaveBeenCalled();
+    // Inget claimades och ingen status rördes — svaret ska vara rent.
+    // ⚠️ Claimen hann stämpla 'pending' och grenen skriver ner den till 'not_synced'. Svaras det
+    // grönt läser brickan "Ej synkad" och faktureringen är spärrad utan att något förklarar varför.
+    expect(result.mirrorFailed).toBe(true);
   });
 
   // ⚖️ VAKTEN MOT RACET. Huvudet byggs ur en rad som lästes innan Fortnox svarat, och fönstret fram
@@ -440,6 +446,73 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
     expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
+  // 🧨 En TÖMD ARBETSADRESS går inte att uttrycka: buildOrderDeliveryFields returnerar {} och
+  // PUT:en utelämnar DeliveryAddress1, så Fortnox behåller den gamla arbetsplatsen. Mäts genom att
+  // bygga fältet före och efter — inte genom att gissa på kolumnen.
+  it('rapporterar inte framgång när arbetsadressen tömdes under pushen', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, work_address: { street_address: 'Nygatan 3', postal_code: '81140', city: 'Sandviken' } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        work_address: { street_address: null, postal_code: null, city: null },
+      },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(result.mirrorFailed).toBe(true);
+  });
+
+  // ⚠️ `include_in_description` styr bara VÅR arbetsbeskrivning — Fortnox ser den aldrig. En
+  // ÖVRIGT-bock mitt i pushen får inte kosta en full positionsbaserad rad-PUT, den farligaste
+  // skrivningen i filen.
+  it('reparerar inte för radfält som stannar i CRM', async () => {
+    const rows = (extra: Record<string, unknown>) => [{ id: 'line-a', pricing_mode: 'item', unit_price: '100', quantity: '10', ...extra }];
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, line_items: rows({ include_in_description: false }) },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        line_items: rows({ include_in_description: true }),
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
+  // 🧨 `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — här för att ordern hann
+  // faktureras (och stängas) medan pushen pågick. Läses "kastade inte" som framgång blir just de
+  // fallen tysta: ändringen finns i CRM, Fortnox vet inget, och svaret är grönt.
+  it('rapporterar inte framgång när header-synken inte skickade något', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, label: null } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        // Ordern hann helfaktureras → header-synken svarar null utan att skicka något.
+        status: 'invoiced',
+        fortnox_invoice_number: '2026',
+        partial_invoicing_started_at: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: 'SPARAD-UNDER-PUSHEN' },
+      },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+    expect(result.mirrorFailed).toBe(true);
   });
 
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en

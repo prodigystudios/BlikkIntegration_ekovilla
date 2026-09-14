@@ -50,6 +50,20 @@ export const MIRRORED_SNAPSHOT_KEYS = [
  */
 export const ROT_DOCUMENT_KEYS = ['enabled', 'property_designation', 'brf_org_number'] as const;
 
+/**
+ * Radfält som stannar i CRM.
+ *
+ * ⚠️ EXKLUDERINGS-, inte inkluderingslista, med flit. Nästan allt på en rad når Fortnox (artikel,
+ * antal, pris, rabatt, enhet, radtext, husarbetesflaggor), så en inkluderingslista hade måst hållas
+ * i synk med `buildOrderRows` och tyst börjat missa nya fält. Här defaultar ett nytt fält i stället
+ * till "räknas som en ändring" — fel åt det säkra hållet.
+ *
+ * `include_in_description` styr bara vilken rad som hamnar i VÅR arbetsbeskrivning
+ * (measurementBlock.ts). Fortnox ser den aldrig, så en ÖVRIGT-bock får inte kosta en full
+ * positionsbaserad rad-PUT — den farligaste skrivningen i hela pushen.
+ */
+export const LINE_ITEM_CRM_ONLY_KEYS = ['include_in_description'] as const;
+
 /** Tom sträng, blanktecken och null är SAMMA tomhet. Fortnox ser ingen skillnad; inte vi heller. */
 function mirroredText(value: unknown): string | null {
   if (typeof value !== 'string') return null;
