@@ -397,6 +397,51 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(fortnoxPut).not.toHaveBeenCalled();
   });
 
+  // 🧨 EN RENSNING GÅR INTE ATT UTTRYCKA. buildOrderHeader utelämnar tomma värden och en Fortnox-PUT
+  // rör bara fält den bär — så en tömd "Er referens" upptäcks, PUT:en går igenom, och Fortnox
+  // behåller ändå sitt gamla värde. Rapporterades det som framgång bar kundens dokument kvar en
+  // person som inte längre står på ordern, utan att något sa ifrån.
+  it('rapporterar inte framgång för en rensning Fortnox behåller', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        // Er referens TÖMD medan pushen pågick (contact_name saknas, så fallbacken räddar inget).
+        customer_snapshot: { ...baseRow.customer_snapshot, your_reference: null },
+      },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).toHaveBeenCalled();
+    expect(result.mirrorFailed).toBe(true);
+  });
+
+  // ⚠️ Tom sträng, blanktecken och null är SAMMA tomhet. En sparning som skriver '' där raden höll
+  // null får inte kosta en header-PUT direkt efter att ordern stämplats 'synced' — en sådan PUT som
+  // misslyckas stämplar 'failed' och spärrar faktureringen.
+  it('reparerar inte för tom sträng där raden höll null', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, delivery_address: null } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, delivery_address: '   ' },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
   // PUT i onödan, på den enda väg som saknar dedup-skydd.
   it('speglar inte om huvudet när raden är oförändrad', async () => {

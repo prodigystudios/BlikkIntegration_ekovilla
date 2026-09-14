@@ -24,7 +24,13 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 // testet blint för just den sömmen.
 vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/work-orders')>();
-  return { ...actual, getCrmWorkOrder: vi.fn(), updateCrmWorkOrder: vi.fn(), listWorkOrderInvoiceRounds: vi.fn() };
+  return {
+    ...actual,
+    getCrmWorkOrder: vi.fn(),
+    updateCrmWorkOrder: vi.fn(),
+    listWorkOrderInvoiceRounds: vi.fn(),
+    saveWorkOrderLineItems: vi.fn(),
+  };
 });
 
 vi.mock('@/lib/domains/fortnox/orders', () => ({
@@ -37,11 +43,12 @@ vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
-import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, saveWorkOrderLineItems } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 const { PATCH } = await import('@/app/api/crm/work-orders/[id]/route');
 const { POST: pushPOST } = await import('@/app/api/crm/work-orders/[id]/fortnox/route');
+const { PATCH: lineItemsPATCH } = await import('@/app/api/crm/work-orders/[id]/line-items/route');
 
 const WORK_ORDER_ID = '77777777-7777-4777-8777-777777777777';
 const ctx = { params: { id: WORK_ORDER_ID } };
@@ -273,5 +280,29 @@ describe('POST arbetsorder/fortnox — omsynken', () => {
 
     expect(res.status).toBe(200);
     expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+  });
+});
+
+
+// Artikelvägen — den TREDJE anroparen av updateWorkOrderInFortnox.
+describe('PATCH arbetsorder/line-items — speglingen', () => {
+  // 🧨 Samma tysta framgång som offert- och omsynkvägen redan rättat: `mirrorFailed` når hit via
+  // create-fallbacken (en order som aldrig pushats). Kastas resultatet bort svarar routen
+  // `fortnox_error: null` på en order pushen just stämplat 'failed' — och den statusen spärrar
+  // faktureringen via assertOrderRowsSynced, utan att något förklarar varför.
+  it('bär upp mirrorFailed i stället för att svara rent', async () => {
+    vi.mocked(saveWorkOrderLineItems).mockResolvedValue({ data: openOrder, error: null } as never);
+    vi.mocked(getCrmWorkOrder).mockResolvedValue({ data: openOrder, error: null } as never);
+    vi.mocked(updateWorkOrderInFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true } as never);
+
+    const req = new Request(`http://localhost/x`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ line_items: [] }),
+    });
+    const json = await (await lineItemsPATCH(req, ctx)).json();
+
+    expect(json.data.fortnox_error).toBeTruthy();
   });
 });

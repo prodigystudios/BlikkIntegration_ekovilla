@@ -596,9 +596,18 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // `invoice_address: null`, så en rad som saknar nycklarna jämförs olik och kostar en header-PUT
   // i onödan. Routen normaliserar redan så (workOrderMirroredFieldsChanged) — den här vägen måste
   // göra samma sak, annars är varje spurios skrivning en ny chans att stämpla 'failed'.
+  // ⚠️ TOMHETEN NORMALISERAS, samma regel som workOrderMirroredFieldsChanged: `''`, blanktecken och
+  // null är SAMMA sak för Fortnox. Utan det räknades en sparning som skriver tom sträng där raden
+  // höll null som en ändring — och kostade en header-PUT direkt efter att ordern stämplats
+  // 'synced'. En sådan PUT som misslyckas stämplar 'failed' och spärrar faktureringen.
   const subset = (value: unknown, keys: readonly string[]): Record<string, unknown> => {
     const row = (value ?? {}) as Record<string, unknown>;
-    return Object.fromEntries(keys.map((key) => [key, row[key] ?? null]));
+    return Object.fromEntries(keys.map((key) => {
+      const raw = row[key];
+      if (typeof raw !== 'string') return [key, raw ?? null];
+      const trimmed = raw.trim();
+      return [key, trimmed.length > 0 ? trimmed : null];
+    }));
   };
 
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
@@ -610,9 +619,25 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
 
   if (!rowsDiffer && !headerDiffers) return {};
 
+  // 🧨 EN RENSNING GÅR INTE ATT UTTRYCKA — och då får vi inte rapportera framgång.
+  //
+  // `buildOrderHeader` UTELÄMNAR tomma värden (`...(ourReference ? { OurReference } : {})`), och en
+  // Fortnox-PUT rör bara fält den bär. Tömdes "Er referens" eller ansvarig mitt i pushen upptäcker
+  // vakten skillnaden, skickar en PUT — och Fortnox behåller sitt gamla värde. PUT:en lyckas, så
+  // utan den här flaggan hade svaret sagt att allt speglats medan kundens dokument bar kvar en
+  // person som inte längre står på ordern.
+  //
+  // ⚠️ `label` är UNDANTAGET: den har sitt eget rensningsminne (`label_cleared` →
+  // `YourOrderNumber: null`) och lagas därför av PUT:en som vanligt.
+  const referenceCleared = Boolean(resolveYourReference(atBuild.customer_snapshot))
+    && !resolveYourReference(fresh.customer_snapshot);
+  const ourReferenceCleared = Boolean(atBuild.assigned_to) && !fresh.assigned_to;
+  const unexpressibleClear = referenceCleared || ourReferenceCleared;
+
   try {
     if (rowsDiffer) await updateWorkOrderInFortnox(workOrderId);
     else await syncWorkOrderHeaderToFortnox(workOrderId);
+    if (unexpressibleClear) return { mirrorFailed: true };
   } catch (e) {
     console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
     // Kastar INTE — ordern finns i Fortnox och numret är sparat, så ett kast hade fått anroparen
