@@ -292,13 +292,49 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(puttedOrder()).toHaveProperty('OrderRows');
   });
 
+  // 🧨 ARTIKLARNA. Artikelvägen (updateWorkOrderInFortnox) CLAIMAR INTE, och create sparar
+  // ordernumret FÖRE radskrivningen — så en artikelredigering i fönstret hittar ett nummer, PUT:ar
+  // sina nya rader och stämplar 'synced', varpå creates egen radskrivning lägger tillbaka de gamla
+  // och stämplar 'synced' igen. Fortnox och CRM håller då olika rader utan att något säger ifrån,
+  // och createinvoice fakturerar de gamla.
+  it('går den fulla pushen när artiklarna redigerades medan pushen pågick', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        line_items: [
+          { id: 'line-a', pricing_mode: 'item', unit_price: '100', quantity: '10' },
+          { id: 'line-b', pricing_mode: 'item', unit_price: '250', quantity: '4' },
+        ],
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).toHaveBeenCalled();
+    // Raderna måste med — en header-PUT hade lämnat Fortnox med de gamla artiklarna.
+    expect(puttedOrder()).toHaveProperty('OrderRows');
+  });
+
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
   // PUT i onödan, på den enda väg som saknar dedup-skydd.
   it('speglar inte om huvudet när raden är oförändrad', async () => {
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
       afterClaim: baseRow,
-      afterPush: baseRow,
+      // ⚠️ SAMMA TRE RADER SOM TESTERNA OVAN, av samma skäl: utan ordernummer och öppen status
+      // svarar header-synken null före varje PUT, och testet hade varit grönt vad efterkontrollen
+      // än beslutade. Mutationsprövat — `if (false) return;` i vakten fäller det nu.
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+      },
     });
 
     await pushWorkOrderToFortnox(WORK_ORDER_ID);

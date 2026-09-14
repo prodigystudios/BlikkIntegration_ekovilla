@@ -545,15 +545,23 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
     work_address: WorkOrderAddress | null;
     assigned_to: string | null;
     rot_details: RotDetails | null;
+    line_items: unknown;
   },
 ): Promise<void> {
-  // ⚠️ ALLA FYRA INGÅNGARNA till buildOrderHeader, inte bara de två uppenbara: `assigned_to` bär
-  // OurReference och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett
-  // första utkast läste bara snapshot + adress och lämnade därmed halva problemet öppet — en
-  // ansvarig som byttes mitt i pushen gick just den tysta vägen som hela ändringen finns för.
+  // ⚠️ ALLA INGÅNGARNA till dokumentet, inte bara de två uppenbara: `assigned_to` bär OurReference
+  // och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett första utkast läste
+  // bara snapshot + adress och lämnade därmed halva problemet öppet — en ansvarig som byttes mitt i
+  // pushen gick just den tysta vägen som hela ändringen finns för.
+  //
+  // 🧨 OCH `line_items`, av ett eget skäl: artikelvägen (`updateWorkOrderInFortnox`) CLAIMAR INTE,
+  // den stämplar bara 'pending'. Create sparar dessutom `fortnox_order_number` FÖRE radskrivningen,
+  // så en artikelredigering som landar i fönstret hittar ett nummer, PUT:ar sina nya rader och
+  // stämplar 'synced' — varpå creates egen `putOrderHeaderAndRows` skriver tillbaka de gamla
+  // raderna över dem och stämplar 'synced' igen. Fortnox och CRM håller då olika rader,
+  // `assertOrderRowsSynced` släpper igenom, och `createinvoice` fakturerar de gamla.
   const { data } = await supabase
     .from('crm_work_orders')
-    .select('customer_snapshot, work_address, assigned_to, rot_details')
+    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items')
     .eq('id', workOrderId)
     .maybeSingle();
 
@@ -561,16 +569,17 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return;
 
-  // ROT bär en RADHALVA och måste därför gå den fulla pushen — se rutan ovan.
-  const rotDiffers = !same(fresh.rot_details, atBuild.rot_details);
+  // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
+  const rowsDiffer = !same(fresh.rot_details, atBuild.rot_details)
+    || !same(fresh.line_items, atBuild.line_items);
   const headerDiffers = !same(fresh.customer_snapshot, atBuild.customer_snapshot)
     || !same(fresh.work_address, atBuild.work_address)
     || !same(fresh.assigned_to, atBuild.assigned_to);
 
-  if (!rotDiffers && !headerDiffers) return;
+  if (!rowsDiffer && !headerDiffers) return;
 
   try {
-    if (rotDiffers) await updateWorkOrderInFortnox(workOrderId);
+    if (rowsDiffer) await updateWorkOrderInFortnox(workOrderId);
     else await syncWorkOrderHeaderToFortnox(workOrderId);
   } catch (e) {
     console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
@@ -810,6 +819,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       work_address: workOrder.work_address,
       assigned_to: workOrder.assigned_to,
       rot_details: workOrder.rot_details ?? null,
+      line_items: workOrder.line_items ?? null,
     });
 
     return { fortnox_order_number: fortnoxOrderNumber };
