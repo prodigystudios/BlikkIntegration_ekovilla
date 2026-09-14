@@ -41,6 +41,7 @@ import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orde
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 const { PATCH } = await import('@/app/api/crm/work-orders/[id]/route');
+const { POST: pushPOST } = await import('@/app/api/crm/work-orders/[id]/fortnox/route');
 
 const WORK_ORDER_ID = '77777777-7777-4777-8777-777777777777';
 const ctx = { params: { id: WORK_ORDER_ID } };
@@ -129,5 +130,74 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
 
     expect(json.data.fortnox_error).toBeNull();
     expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
+  });
+
+  // 🧨 NÄRVARO ÄR INTE ÄNDRING. Ordervyn skickar `your_reference` vid VARJE sparning (och `label`
+  // på varje företagsorder), så ett larm som gick på närvaro hade gett "nådde inte Fortnox" varje
+  // gång någon rättade en anteckning på en fakturerad order — ett rött larm om ingenting.
+  it('larmar inte när de speglade fälten skickas OFÖRÄNDRADE', async () => {
+    install({ ...openOrder, status: 'invoiced', fortnox_invoice_number: '2026' });
+
+    const json = await (await PATCH(patchReq({
+      status: 'invoiced',
+      // Exakt det som redan står i snapshoten — klienten skickar alltid med dem.
+      your_reference: 'Per Linderdahl',
+      label: 'GAMMAL',
+      notes: 'en rättad anteckning',
+    }), ctx)).json();
+
+    expect(json.data.fortnox_error).toBeNull();
+  });
+
+  // 🧨 ROT-fälten står INTE i FORTNOX_MIRRORED_FIELDS — de går den fulla pushen, inte header-vägen.
+  // En rättad fastighetsbeteckning ÄR villaorderns "Ert referensnummer", så utan att `rotChanged`
+  // räknas med hade just den ändringen hoppat över hela blocket och rapporterats som ren framgång.
+  it('säger ifrån när fastighetsbeteckningen ändras på en fakturerad order', async () => {
+    install({
+      ...openOrder,
+      status: 'invoiced',
+      fortnox_invoice_number: '2026',
+      quote_type: 'private',
+      rot_details: { enabled: true, property_designation: 'Gläntan 1:14' },
+    });
+
+    const json = await (await PATCH(patchReq({
+      status: 'invoiced',
+      rot_details: { property_designation: 'Haggården 6:3' },
+    }), ctx)).json();
+
+    expect(json.data.fortnox_error).toBeTruthy();
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+});
+
+// "Synka om" / "Försök igen" — den manuella pushen.
+describe('POST arbetsorder/fortnox — omsynken', () => {
+  // 🧨 SPÄRREN MÅSTE STÅ I ROUTEN, inte bara i ordervyn.
+  //
+  // Fortnox avvisar varje skrivning mot ett fakturerat dokument, så updateWorkOrderInFortnox kastar
+  // och stämplar 'failed' — en order som stod 'synced' degraderas av ett anrop som aldrig kunde
+  // lyckas, och en kvarstående 'failed' spärrar faktureringen via assertOrderRowsSynced.
+  //
+  // Knappen är dold i klienten (fortnoxClosed), men en flik som stod öppen när ordern fakturerades
+  // någon annanstans har den kvar — och routen är nåbar direkt för var och en med
+  // fortnox.workorder.push. Mätt i drift på order 131.
+  it('nekar omsynk av en fakturerad order i stället för att stämpla den failed', async () => {
+    install({ ...openOrder, status: 'invoiced', fortnox_invoice_number: '2026' });
+
+    const res = await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx);
+
+    expect(res.status).toBe(409);
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+
+  // Och en ÖPPEN order ska fortfarande gå att synka om — spärren får inte ta knappen ifrån oss.
+  it('synkar om en öppen order som vanligt', async () => {
+    install(openOrder);
+
+    const res = await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
   });
 });

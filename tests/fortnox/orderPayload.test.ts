@@ -75,18 +75,34 @@ function makeChain(result: { data: unknown; error: unknown }) {
 function installSupabaseMock(opts: {
   beforeClaim: Record<string, unknown>;
   afterClaim?: Record<string, unknown>;
+  /** Raden som efterkontrollen efter pushen ser — "någon sparade medan vi skrev till Fortnox". */
+  afterPush?: Record<string, unknown>;
 }) {
   // claimFortnoxPush vinner claimen på första försöket (update … .select('id') ger en rad).
   const workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
-  let claimed = false;
+
+  // Tre faser, så testet kan skilja på VAR i pushen en läsning sker:
+  //   'before' — före claimen (idempotenskollen)
+  //   'build'  — efter claimen (raden huvudet byggs ur)
+  //   'after'  — efter POST:en (efterkontrollens maybeSingle, och synken den kan dra igång)
+  let phase: 'before' | 'build' | 'after' = 'before';
+  const rowFor = () => (
+    phase === 'before' ? opts.beforeClaim
+      : phase === 'build' ? (opts.afterClaim ?? opts.beforeClaim)
+        : (opts.afterPush ?? opts.afterClaim ?? opts.beforeClaim)
+  );
+
+  // Claimen är det första update:t — därefter är pushen vår.
   workOrders.update = vi.fn(() => {
-    claimed = true;
+    if (phase === 'before') phase = 'build';
     return workOrders;
   });
-  workOrders.single = vi.fn(async () => ({
-    data: claimed ? (opts.afterClaim ?? opts.beforeClaim) : opts.beforeClaim,
-    error: null,
-  }));
+  workOrders.single = vi.fn(async () => ({ data: rowFor(), error: null }));
+  // Bara efterkontrollen läser arbetsordern med maybeSingle (linkedQuote går mot crm_quotes).
+  workOrders.maybeSingle = vi.fn(async () => {
+    phase = 'after';
+    return { data: opts.afterPush ?? opts.afterClaim ?? opts.beforeClaim, error: null };
+  });
 
   const customers = makeChain({ data: { fortnox_customer_id: '55' }, error: null });
   const profiles = makeChain({ data: { full_name: 'Anna Andersson' }, error: null });
@@ -182,6 +198,65 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
 
     expect(result).toEqual({ fortnox_order_number: '131' });
     expect(fortnoxPost).not.toHaveBeenCalled();
+  });
+
+  // 🧨 DUBBELORDERN. Idempotenskollen görs på en SMAL läsning före claimen; hinner en samtidig push
+  // slutföra sig mellan den och claimen ser vi numret först i omläsningen. Prövas den inte OM går
+  // vi vidare till standalone-grenen och POST:ar en andra order åt samma kund — den grenen har
+  // ingen dedup hos Fortnox (createorder skyddas åtminstone av 2000499).
+  it('POSTar ingen andra order när en samtidig push hann skapa den', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, fortnox_order_number: '131' },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(result).toEqual({ fortnox_order_number: '131' });
+    expect(fortnoxPost).not.toHaveBeenCalled();
+  });
+
+  // ⚖️ VAKTEN MOT RACET. Huvudet byggs ur en rad som lästes innan Fortnox svarat, och fönstret fram
+  // till POST:en är sekunder brett (kundnummer, byggmoms, ansvarig). Att flytta läsningen stänger
+  // inte det — efterkontrollen gör det: skiljer raden sig efteråt speglas huvudet om.
+  it('speglar om huvudet när märkningen sparades medan pushen pågick', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      // Huvudet byggdes utan märkning …
+      afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, label: null } },
+      // … men när POST:en var klar fanns den i databasen. Ordern har nu sitt nummer, så
+      // header-synken kan skriva den.
+      afterPush: {
+        ...baseRow,
+        status: 'in_progress',
+        fortnox_order_number: '131',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: 'SPARAD-UNDER-PUSHEN' },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    // POST:en hann aldrig få märkningen …
+    expect('YourOrderNumber' in postedOrder()).toBe(false);
+    // … men den efterföljande header-PUT:en bär den.
+    expect(fortnoxPut).toHaveBeenCalled();
+    expect(puttedOrder().YourOrderNumber).toBe('SPARAD-UNDER-PUSHEN');
+  });
+
+  // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
+  // PUT i onödan, på den enda väg som saknar dedup-skydd.
+  it('speglar inte om huvudet när raden är oförändrad', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: baseRow,
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(postedOrder().YourOrderNumber).toBe('58184');
+    expect(fortnoxPut).not.toHaveBeenCalled();
   });
 });
 

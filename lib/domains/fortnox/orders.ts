@@ -467,6 +467,59 @@ async function resolveFortnoxCustomerNumberById(
   return (data as { fortnox_customer_id?: string | null } | null)?.fortnox_customer_id ?? null;
 }
 
+/**
+ * 🧨 VAKTEN MOT EN SPARNING SOM LANDADE MITT I PUSHEN.
+ *
+ * Skapandet bygger orderhuvudet ur en rad som lästes innan Fortnox ens svarat. Mellan den
+ * läsningen och POST:en ligger offertuppslaget, kundnumret (ett Fortnox-GET), byggmomsen,
+ * ansvarigs namn och själva skrivningen — sekunder, inte millisekunder. En sparning som landar i
+ * det fönstret skrivs till databasen men når aldrig payloaden.
+ *
+ * ⚠️ OCH SÄLJAREN FÅR INGEN ANING, för PATCH-vägen är tyst just då: `syncWorkOrderHeaderToFortnox`
+ * svarar null när ordern ännu saknar `fortnox_order_number`, och numret sparas först EFTER POST:en.
+ * Båda vägarna rapporterar alltså framgång medan fältet tappas mellan dem.
+ *
+ * Mätt i drift 2026-09-09 på arbetsorder AO-20260909-06D6B7 (Fortnox-order 131): märkningen
+ * "58184" stod kvar i CRM medan Fortnox-orderns "Ert referensnummer" var tomt — och fakturan ur
+ * den ärvde tomheten, eftersom `createinvoice` kopierar orderns huvud. Claimen sattes 12:01:50,
+ * stämpeln 'synced' 12:02:29.
+ *
+ * Att flytta läsningen hjälper inte: fönstret är det långsamma arbetet NEDSTRÖMS om den. Läget
+ * upptäcks därför i efterhand i stället — skiljer sig raden från den vi byggde huvudet ur, speglas
+ * huvudet om. Bara huvudet: raderna kom från samma läsning, men de redigeras på en egen route som
+ * har sin egen synk.
+ *
+ * ⚠️ ETT FEL HÄR FÄLLER INTE PUSHEN. Ordern ÄR skapad och numret sparat — att kasta hade fått
+ * anroparen att tro att inget hänt, och nästa försök hade gått idempotensvägen ändå.
+ * `syncWorkOrderHeaderToFortnox` stämplar själv ner synkstatusen när den misslyckas, så sanningen
+ * går inte förlorad: ordern står kvar som osynkad och "Synka om" reparerar den.
+ */
+async function resyncHeaderIfSnapshotChangedDuringPush(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrderId: string,
+  snapshotAtBuild: CustomerSnapshot | null,
+  workAddressAtBuild: WorkOrderAddress | null,
+): Promise<void> {
+  const { data } = await supabase
+    .from('crm_work_orders')
+    .select('customer_snapshot, work_address')
+    .eq('id', workOrderId)
+    .maybeSingle();
+
+  const fresh = data as { customer_snapshot: CustomerSnapshot | null; work_address: WorkOrderAddress | null } | null;
+  // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
+  if (!fresh) return;
+
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  if (same(fresh.customer_snapshot, snapshotAtBuild) && same(fresh.work_address, workAddressAtBuild)) return;
+
+  try {
+    await syncWorkOrderHeaderToFortnox(workOrderId);
+  } catch (e) {
+    console.error('[fortnox] Omspegling av huvudet efter orderskapandet misslyckades:', (e as Error)?.message);
+  }
+}
+
 // Push a CRM work order to Fortnox as an order.
 // If the linked quote already has a Fortnox offer number, converts that offer to an order
 // (preserving the offer→order link in Fortnox). Otherwise creates a standalone order.
@@ -507,21 +560,14 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
-    // 🧨 UNDERLAGET LÄSES EFTER CLAIMEN, ALDRIG FÖRE.
+    // Underlaget läses när pushen är vår, inte innan.
     //
-    // Allt mellan läsningen och POST:en nedan är nätverksanrop — kundnummeruppslag mot Fortnox,
-    // byggmomsen, ansvarigs namn. Det tar sekunder, och en sparning som landar i det fönstret
-    // skrivs till databasen men når aldrig payloaden: pushen bygger headern ur den rad den läste
-    // innan den ens ägde pushen.
-    //
-    // ⚠️ OCH SÄLJAREN FÅR INGEN ANING. PATCH-vägens header-synk hoppar tyst över en order som ännu
-    // saknar `fortnox_order_number` (se syncWorkOrderHeaderToFortnox) — och numret sparas först
-    // EFTER POST:en här. Båda vägarna rapporterar alltså framgång medan fältet tappas mellan dem.
-    //
-    // Mätt i drift 2026-09-09 på arbetsorder AO-20260909-06D6B7 (Fortnox-order 131): märkningen
-    // "58184" stod kvar i CRM medan Fortnox-orderns "Ert referensnummer" var tomt — och fakturan
-    // ur den ärvde tomheten, eftersom `createinvoice` kopierar orderns huvud. Claimen sattes
-    // 12:01:50, stämpeln 'synced' 12:02:29: ett 39 sekunder brett fönster.
+    // ⚠️ DET STÄNGER INTE RACET — det krymper det bara med claimens två UPDATE:ar. Allt långsamt
+    // ligger EFTER den här läsningen: offertuppslaget, kundnumret (ett Fortnox-GET), byggmomsen,
+    // ansvarigs namn och själva POST:en. Order 131 låg 39 sekunder mellan claim och 'synced', och
+    // nästan hela det fönstret ligger nedströms härifrån. Den som tror att en läsning tidigare
+    // eller senare i sig löser problemet bygger vidare på fel antagande — vakten mot en sparning
+    // som landar mitt i pushen är `resyncHeaderIfSnapshotChangedDuringPush` i slutet av try:t.
     const { data: workOrder, error: readError } = await supabase
       .from('crm_work_orders')
       .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
@@ -529,6 +575,23 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       .single<WorkOrderRow>();
 
     if (readError || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+    // 🧨 IDEMPOTENSEN PRÖVAS OM — den smala läsningen ovan skedde FÖRE claimen.
+    //
+    // Hann en samtidig push slutföra sig däremellan, ser vi numret först nu. Utan den här raden
+    // går vi vidare till standalone-grenen och POST:ar EN ORDER TILL åt samma kund — den grenen
+    // har ingen dedup hos Fortnox (till skillnad från createorder, som skyddas av 2000499).
+    //
+    // ⚠️ Statusen stämplas 'not_synced', inte 'synced': vi skickade ingenting och vet inte vad den
+    // andra pushen hann med. Att claimen redan skrivit 'pending' får inte bli kvar — pending har
+    // ingen tidsgräns för `assertOrderRowsSynced` och hade spärrat faktureringen tyst.
+    if (workOrder.fortnox_order_number) {
+      await supabase
+        .from('crm_work_orders')
+        .update({ fortnox_order_sync_status: 'not_synced' })
+        .eq('id', workOrderId);
+      return { fortnox_order_number: workOrder.fortnox_order_number };
+    }
 
     // Rader utan prisförankring blir Price 0 på ordern (och carve 0 → ingen ROT-arbetsrad). Ordern
     // ärver offertens rader rakt av, så en offert från 900-stubbens tid bär felet vidare hit.
@@ -675,6 +738,11 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         fortnox_order_synced_at: new Date().toISOString(),
       })
       .eq('id', workOrderId);
+
+    // Hann någon spara medan pushen pågick? Då bär Fortnox fel huvud — spegla om det.
+    await resyncHeaderIfSnapshotChangedDuringPush(
+      supabase, workOrderId, workOrder.customer_snapshot, workOrder.work_address,
+    );
 
     return { fortnox_order_number: fortnoxOrderNumber };
   } catch (e) {

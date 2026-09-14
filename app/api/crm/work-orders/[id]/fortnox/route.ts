@@ -22,6 +22,28 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
+    const supabase = createRouteHandlerClient({ cookies });
+
+    // 🧨 EN FAKTURERAD ORDER FÅR INTE SYNKAS OM — försöket kan bara göra skada.
+    //
+    // Fortnox avvisar varje skrivning mot ett fakturerat dokument, så `updateWorkOrderInFortnox`
+    // kastar och dess catch stämplar `fortnox_order_sync_status: 'failed'`. En order som stod
+    // 'synced' degraderas alltså av ett anrop som aldrig kunde lyckas — och en kvarstående
+    // 'failed' spärrar i sin tur faktureringen via `assertOrderRowsSynced`.
+    //
+    // ⚠️ SPÄRREN MÅSTE STÅ HÄR, inte bara i ordervyn. Knappen är dold (WorkOrderDetailClient,
+    // `fortnoxClosed`), men en flik som stod öppen när ordern fakturerades någon annanstans har
+    // den kvar — och routen är dessutom nåbar direkt för var och en med `fortnox.workorder.push`.
+    // Mätt i drift på order 131: en omsynk på den redan fakturerade ordern flyttade den från
+    // 'synced' till 'failed'.
+    const { data: currentRow } = await getCrmWorkOrder(supabase, context.params.id);
+    const current = currentRow as { status?: string | null; fortnox_invoice_number?: string | null } | null;
+    if (current && (current.status === 'invoiced' || current.fortnox_invoice_number)) {
+      return routeError(409, 'crm_work_order_invoiced_locked',
+        'Ordern är fakturerad i Fortnox och kan inte synkas om. Rättningar går att göra i CRM, '
+        + 'men når inte kundens orderbekräftelse eller faktura.');
+    }
+
     let fortnoxError: string | null = null;
     try {
       await updateWorkOrderInFortnox(context.params.id);
@@ -36,7 +58,6 @@ export async function POST(_req: Request, context: RouteContext) {
       fortnoxError = friendlyFortnoxMessage(e);
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await getCrmWorkOrder(supabase, context.params.id);
     if (error) return routeError(500, 'crm_work_order_fetch_failed', error.message);
 

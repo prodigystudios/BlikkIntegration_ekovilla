@@ -111,6 +111,9 @@ export async function PATCH(req: Request, context: RouteContext) {
       rot_details?: Record<string, unknown> | null;
       fortnox_order_number?: string | null;
       fortnox_invoice_number?: string | null;
+      // Speglade fält vi måste kunna JÄMFÖRA mot, inte bara skriva — se mirroredFieldChanged.
+      assigned_to?: string | null;
+      work_address?: Record<string, unknown> | null;
     };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
@@ -136,6 +139,25 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
       current = currentRead.data as WoCurrent | null;
     }
+
+    // 🧨 ÄNDRADES NÅGOT FORTNOX SPEGLAR — eller skickade klienten bara med fälten?
+    //
+    // `touchesFortnox` testar NÄRVARO, och ordervyn skickar `your_reference` vid varje sparning
+    // (samt `label` på varje företagsorder). Att läsa det som "en spegling begärdes" är rätt för
+    // PUSHEN — en extra PUT med oförändrade värden är ofarlig — men fel för BESKEDET nedan: varje
+    // rättad anteckning på en fakturerad order hade fått ett rött "nådde inte Fortnox" om något
+    // som inte ens ändrats.
+    //
+    // ⚠️ Måste beräknas HÄR, före merge-blocket: det raderar `label` och `your_reference` ur
+    // updateInput så fort de vandrat in i snapshoten.
+    const snapshotNow = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
+    const mirroredFieldChanged =
+      ('label' in updateInput && (updateInput.label ?? null) !== (snapshotNow.label ?? null))
+      || ('your_reference' in updateInput
+        && (updateInput.your_reference ?? null) !== (snapshotNow.your_reference ?? null))
+      || ('assigned_to' in updateInput && (updateInput.assigned_to ?? null) !== (current?.assigned_to ?? null))
+      || ('work_address' in updateInput
+        && JSON.stringify(updateInput.work_address ?? null) !== JSON.stringify(current?.work_address ?? null));
 
     // Every snapshot override merges into the (jsonb) customer_snapshot with a read-merge-write so
     // the other snapshot fields (personnummer, addresses, reverse_vat) survive. The rule itself
@@ -285,24 +307,29 @@ export async function PATCH(req: Request, context: RouteContext) {
       && Boolean(current?.fortnox_order_number)
       && !current?.fortnox_invoice_number
       && current?.status !== 'invoiced';
-    if (rotPush || touchesFortnox) {
-      if (invoicedInFortnox) {
-        // Ingen push — den kan bara avvisas. Men svaret ska säga vad som faktiskt gäller.
+    if (invoicedInFortnox) {
+      // Ingen push — Fortnox avvisar varje skrivning mot ett fakturerat dokument. Men svaret ska
+      // säga vad som faktiskt gäller, och BARA när något speglat verkligen ändrats.
+      //
+      // ⚠️ `rotChanged` hör med. ROT-fälten står inte i FORTNOX_MIRRORED_FIELDS (de går den fulla
+      // pushen, inte header-vägen), så en rättad fastighetsbeteckning — villaorderns
+      // `YourOrderNumber` — hade annars hoppat över hela blocket och rapporterats som ren framgång.
+      if (mirroredFieldChanged || rotChanged) {
         fortnoxError = 'Ordern är fakturerad i Fortnox och dokumentet kan inte längre ändras. '
           + 'Ändringen är sparad i CRM, men syns inte på kundens orderbekräftelse eller faktura.';
-      } else {
-        attemptedPush = true;
-        try {
-          // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
-          // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
-          // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
-          if (rotPush) await updateWorkOrderInFortnox(context.params.id);
-          else await syncWorkOrderHeaderToFortnox(context.params.id);
-        } catch (e) {
-          if (!(e instanceof FortnoxNotConnectedError)) {
-            fortnoxError = friendlyFortnoxMessage(e);
-            console.error('[fortnox] Arbetsordersynk misslyckades:', (e as Error)?.message);
-          }
+      }
+    } else if (rotPush || touchesFortnox) {
+      attemptedPush = true;
+      try {
+        // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
+        // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
+        // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
+        if (rotPush) await updateWorkOrderInFortnox(context.params.id);
+        else await syncWorkOrderHeaderToFortnox(context.params.id);
+      } catch (e) {
+        if (!(e instanceof FortnoxNotConnectedError)) {
+          fortnoxError = friendlyFortnoxMessage(e);
+          console.error('[fortnox] Arbetsordersynk misslyckades:', (e as Error)?.message);
         }
       }
     }
