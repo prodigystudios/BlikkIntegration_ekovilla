@@ -88,7 +88,14 @@ export async function POST(_req: Request, context: RouteContext) {
     // surface the reason so the UI can show why a sync failed instead of failing silently.
     let fortnoxError: string | null = null;
     try {
-      await pushWorkOrderToFortnox(result.data.workOrder.id);
+      // ⚠️ `mirrorFailed` = ordern SKAPADES, men en sparning som landade mitt i pushen gick inte att
+      // spegla om. Synkstatusen är redan nerstämplad; utan det här beskedet svarade routen 201 med
+      // en grön toast medan brickan läste Misslyckad och faktureringen var spärrad.
+      const pushed = await pushWorkOrderToFortnox(result.data.workOrder.id);
+      if (pushed.mirrorFailed) {
+        fortnoxError = 'Arbetsordern skapades i Fortnox, men en ändring som sparades under tiden '
+          + 'kunde inte speglas dit. Synka om ordern och kontrollera uppgifterna.';
+      }
     } catch (e) {
       if (!(e instanceof FortnoxNotConnectedError)) {
         console.error('[fortnox] Auto-push arbetsorder misslyckades:', (e as Error)?.message);

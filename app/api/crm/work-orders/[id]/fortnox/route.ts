@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError, invalidUuidParam, isNoRowsError } from '../../_lib';
@@ -48,8 +48,11 @@ export async function POST(_req: Request, context: RouteContext) {
       return routeError(503, 'crm_work_order_read_failed',
         'Kunde inte läsa arbetsordern just nu. Försök igen — ingenting har ändrats.');
     }
-    const current = currentRow as { status?: string | null; fortnox_invoice_number?: string | null } | null;
-    if (current && (current.status === 'invoiced' || current.fortnox_invoice_number)) {
+    // ⚠️ HELFAKTURERAD, inte "har ett fakturanummer". Delfaktureringens slutrunda sätter också
+    // `fortnox_invoice_number`, men de fakturorna är FRISTÅENDE och Fortnox-ordern är fortfarande
+    // öppen — och eftersom delfaktureringen inte gatar på synkstatusen kan en sådan order stå på
+    // 'failed' med "Synka om" som enda väg tillbaka. Se isFortnoxOrderClosed.
+    if (isFortnoxOrderClosed(currentRow as Parameters<typeof isFortnoxOrderClosed>[0])) {
       return routeError(409, 'crm_work_order_invoiced_locked',
         'Ordern är fakturerad i Fortnox och kan inte synkas om. Rättningar går att göra i CRM, '
         + 'men når inte kundens orderbekräftelse eller faktura.');

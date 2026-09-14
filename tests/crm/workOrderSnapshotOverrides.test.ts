@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Modulen importerar getSupabaseAdmin på toppnivå. Rörs inte här, men måste finnas för importen.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => null }));
 
-import { mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged } from '@/lib/domains/crm/work-orders';
+import { mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 
 // Arbetsorderns customer_snapshot bär tre olika personer/värden som redigeras i samma formulär:
 //
@@ -389,5 +389,33 @@ describe('workOrderMirroredFieldsChanged', () => {
     const current = { customer_snapshot: { label: '58184', your_reference: 'Per' }, assigned_to: 'user-1' };
     expect(workOrderMirroredFieldsChanged(current, {})).toBe(false);
     expect(workOrderMirroredFieldsChanged(current, { assigned_to: 'user-2' })).toBe(true);
+  });
+});
+
+// ── Är FORTNOX-ORDERN stängd för ändringar? ──────────────────────────────────
+//
+// 🧨 "Fakturerad" duger inte som fråga. Helfakturering går createinvoice och STÄNGER dokumentet;
+// delfakturering POSTar fristående fakturor och lämnar det ÖPPET — men dess slutrunda sätter ändå
+// fortnox_invoice_number på ordern. Ett villkor som bara läser fakturanumret spärrar därför ute en
+// order Fortnox gärna hade tagit emot, och eftersom delfaktureringen medvetet inte gatar på
+// synkstatusen kan just den ordern stå på 'failed' med "Synka om" som enda väg tillbaka.
+describe('isFortnoxOrderClosed', () => {
+  it('stänger en helfakturerad order', () => {
+    expect(isFortnoxOrderClosed({ status: 'invoiced', partial_invoicing_started_at: null })).toBe(true);
+    expect(isFortnoxOrderClosed({ fortnox_invoice_number: '2026', partial_invoicing_started_at: null })).toBe(true);
+  });
+
+  // ⚖️ KÄRNAN: fakturanumret finns, men ordern är öppen hos Fortnox.
+  it('håller en DELfakturerad order öppen trots fakturanumret', () => {
+    expect(isFortnoxOrderClosed({
+      status: 'invoiced',
+      fortnox_invoice_number: '2026',
+      partial_invoicing_started_at: '2026-09-10T08:06:00Z',
+    })).toBe(false);
+  });
+
+  it('håller en order utan fakturering öppen', () => {
+    expect(isFortnoxOrderClosed({ status: 'in_progress' })).toBe(false);
+    expect(isFortnoxOrderClosed(null)).toBe(false);
   });
 });

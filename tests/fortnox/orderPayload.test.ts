@@ -320,6 +320,55 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(puttedOrder()).toHaveProperty('OrderRows');
   });
 
+  // 🧨 ETT MISSLYCKAT REPARATIONSFÖRSÖK MÅSTE NÅ ANROPAREN. Reparationen har då redan stämplat ner
+  // synkstatusen — men svarade pushen ändå "skapad" visade routen en grön toast medan brickan läste
+  // Misslyckad och faktureringen var spärrad utan att något förklarade varför. Precis den tysta
+  // framgång hela ändringen finns för att ta bort, en nivå upp.
+  it('bär upp att omspeglingen misslyckades i stället för att svara rent', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, label: null } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: 'SPARAD-UNDER-PUSHEN' },
+      },
+    });
+    // Skapandet (POST) går igenom; det är den efterföljande reparations-PUT:en som faller.
+    vi.mocked(fortnoxPut).mockRejectedValue(new Error('Fortnox 400') as never);
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    // Ordern ÄR skapad — numret bärs tillbaka som vanligt (Fortnox svarar med ett tal; kolumnen
+    // är text, så jämförelsen görs på strängen).
+    expect(String(result.fortnox_order_number)).toBe('131');
+    expect(result.mirrorFailed).toBe(true);
+  });
+
+  // ⚠️ `rot_percent` och `max_deduction` når ALDRIG Fortnox (se ROT_DOCUMENT_KEYS) — de läses bara
+  // av vår egen preliminära "Att betala". En rättad procentsats mitt i pushen får därför inte dra
+  // igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har.
+  it('reparerar inte för ROT-fält som aldrig når dokumentet', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, rot_details: { enabled: false, rot_percent: 30 } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        // Bara procenten och maxavdraget skiljer — dokumentet ser ingen skillnad.
+        rot_details: { enabled: false, rot_percent: 50, max_deduction: 75000 },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
   // PUT i onödan, på den enda väg som saknar dedup-skydd.
   it('speglar inte om huvudet när raden är oförändrad', async () => {

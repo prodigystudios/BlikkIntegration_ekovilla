@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { isFortnoxOrderClosed, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/work-orders';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
@@ -85,6 +86,16 @@ type WorkOrderRow = {
 
 export type PushOrderResult = {
   fortnox_order_number: string;
+  /**
+   * 🧨 ORDERN SKAPADES, MEN DOKUMENTET ÄR INTE KOMPLETT.
+   *
+   * Sätts när efterkontrollen upptäckte en sparning som landat mitt i pushen men INTE lyckades
+   * spegla om den. Reparationsanropet har då redan stämplat ner synkstatusen — men den som
+   * anropade oss svarade ändå "skapad/synkad" och visade en grön toast, medan brickan läste
+   * Misslyckad och faktureringen var spärrad utan att något förklarade varför. Precis den tysta
+   * framgång hela den här ändringen finns för att ta bort, en nivå upp.
+   */
+  mirrorFailed?: boolean;
 };
 
 export type CreateInvoiceResult = {
@@ -547,7 +558,7 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
     rot_details: RotDetails | null;
     line_items: unknown;
   },
-): Promise<void> {
+): Promise<{ mirrorFailed?: boolean }> {
   // ⚠️ ALLA INGÅNGARNA till dokumentet, inte bara de två uppenbara: `assigned_to` bär OurReference
   // och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett första utkast läste
   // bara snapshot + adress och lämnade därmed halva problemet öppet — en ansvarig som byttes mitt i
@@ -567,23 +578,44 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
 
   const fresh = data as typeof atBuild | null;
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
-  if (!fresh) return;
+  if (!fresh) return {};
+
+  // ⚠️ JÄMFÖR BARA DET SOM NÅR DOKUMENTET, aldrig hela kolumnen.
+  //
+  // `rot_details` bär också `rot_percent` och `max_deduction`, som Fortnox ALDRIG får se — de läses
+  // bara av vår egen preliminära "Att betala" (se ROT_DOCUMENT_KEYS). En rättad procentsats hade
+  // annars dragit igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har,
+  // med allt vad `assertLineItemsArePriced` och 'failed'-stämpling innebär.
+  //
+  // Samma sak för `work_address`: PATCH-schemat fyller på med `delivery_address: null` och
+  // `invoice_address: null`, så en rad som saknar nycklarna jämförs olik och kostar en header-PUT
+  // i onödan. Routen normaliserar redan så (workOrderMirroredFieldsChanged) — den här vägen måste
+  // göra samma sak, annars är varje spurios skrivning en ny chans att stämpla 'failed'.
+  const subset = (value: unknown, keys: readonly string[]): Record<string, unknown> => {
+    const row = (value ?? {}) as Record<string, unknown>;
+    return Object.fromEntries(keys.map((key) => [key, row[key] ?? null]));
+  };
 
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
-  const rowsDiffer = !same(fresh.rot_details, atBuild.rot_details)
+  const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
     || !same(fresh.line_items, atBuild.line_items);
   const headerDiffers = !same(fresh.customer_snapshot, atBuild.customer_snapshot)
-    || !same(fresh.work_address, atBuild.work_address)
+    || !same(subset(fresh.work_address, MIRRORED_WORK_ADDRESS_KEYS), subset(atBuild.work_address, MIRRORED_WORK_ADDRESS_KEYS))
     || !same(fresh.assigned_to, atBuild.assigned_to);
 
-  if (!rowsDiffer && !headerDiffers) return;
+  if (!rowsDiffer && !headerDiffers) return {};
 
   try {
     if (rowsDiffer) await updateWorkOrderInFortnox(workOrderId);
     else await syncWorkOrderHeaderToFortnox(workOrderId);
   } catch (e) {
     console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
+    // Kastar INTE — ordern finns i Fortnox och numret är sparat, så ett kast hade fått anroparen
+    // att tro att ingenting hänt och nästa försök hade gått idempotensvägen ändå. Men tystnad
+    // duger inte: felet bärs upp så svaret kan säga att dokumentet behöver synkas om.
+    return { mirrorFailed: true };
   }
+  return {};
 }
 
 // Push a CRM work order to Fortnox as an order.
@@ -814,7 +846,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       .eq('id', workOrderId);
 
     // Hann någon spara medan pushen pågick? Då bär Fortnox fel huvud — spegla om det.
-    await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
+    const { mirrorFailed } = await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
       customer_snapshot: workOrder.customer_snapshot,
       work_address: workOrder.work_address,
       assigned_to: workOrder.assigned_to,
@@ -822,7 +854,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       line_items: workOrder.line_items ?? null,
     });
 
-    return { fortnox_order_number: fortnoxOrderNumber };
+    return { fortnox_order_number: fortnoxOrderNumber, ...(mirrorFailed ? { mirrorFailed: true } : {}) };
   } catch (e) {
     const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     await supabase
@@ -1141,17 +1173,22 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     status: string;
     fortnox_order_number: string | null;
     fortnox_invoice_number: string | null;
+    partial_invoicing_started_at: string | null;
   };
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number, rot_details')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number, partial_invoicing_started_at, rot_details')
     .eq('id', workOrderId)
     .single<HeaderSyncRow>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
   if (!workOrder.fortnox_order_number) return null;
-  if (workOrder.status === 'invoiced' || workOrder.fortnox_invoice_number) return null;
+  // ⚠️ HELFAKTURERAD, inte "har ett fakturanummer". Delfakturering POSTar fristående fakturor och
+  // lämnar Fortnox-ordern ÖPPEN — men dess slutrunda sätter ändå `fortnox_invoice_number`, så det
+  // gamla villkoret stängde ute just de ordrar funktionens egen doc säger ska släppas igenom.
+  // Se isFortnoxOrderClosed.
+  if (isFortnoxOrderClosed(workOrder)) return null;
 
   try {
     const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);

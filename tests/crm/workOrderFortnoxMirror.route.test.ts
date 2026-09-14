@@ -211,6 +211,24 @@ describe('POST arbetsorder/fortnox — omsynken', () => {
     expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
+  // 🧨 DELFAKTURERAD ÄR INTE STÄNGD. Model B POSTar fristående fakturor och rör aldrig
+  // createinvoice, så Fortnox-ordern är öppen — men slutrundan sätter ändå fortnox_invoice_number.
+  // Spärrade vi på det hade en delfakturerad order som fastnat på 'failed' blivit omöjlig att
+  // reparera, och createPartialInvoice gatar medvetet INTE på synkstatusen.
+  it('tillåter omsynk av en DELfakturerad order trots fakturanumret', async () => {
+    install({
+      ...openOrder,
+      status: 'invoiced',
+      fortnox_invoice_number: '2026',
+      partial_invoicing_started_at: '2026-09-10T08:06:00Z',
+    });
+
+    const res = await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+  });
+
   // Och en ÖPPEN order ska fortfarande gå att synka om — spärren får inte ta knappen ifrån oss.
   it('synkar om en öppen order som vanligt', async () => {
     install(openOrder);

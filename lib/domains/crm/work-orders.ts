@@ -696,7 +696,34 @@ export function mergeWorkOrderSnapshotOverrides(
 // De fält i `work_address` som faktiskt når Fortnox-huvudet — se buildOrderDeliveryFields, som
 // bara läser gata, postnummer och ort. `delivery_address`/`invoice_address` bor visserligen i
 // samma kolumn men rör inte orderhuvudet.
-const MIRRORED_WORK_ADDRESS_KEYS = ['street_address', 'postal_code', 'city'] as const;
+export const MIRRORED_WORK_ADDRESS_KEYS = ['street_address', 'postal_code', 'city'] as const;
+
+/**
+ * Är FORTNOX-ORDERN stängd för ändringar?
+ *
+ * 🧨 "Fakturerad" räcker inte som fråga — de två faktureringsvägarna gör helt olika saker med
+ * Fortnox-ordern:
+ *
+ *  • HELFAKTURERING går `PUT /orders/{n}/createinvoice`. Fortnox konverterar ordern till en faktura
+ *    och dokumentet STÄNGS: varje efterföljande skrivning avvisas.
+ *  • DELFAKTURERING (Model B) POST:ar FRISTÅENDE fakturor och rör aldrig createinvoice. Orderns
+ *    dokument hos Fortnox är alltså fortfarande ÖPPET och tar emot ändringar.
+ *
+ * ⚠️ Och just slutrundan i en delfakturering sätter `fortnox_invoice_number` på ordern (spegling åt
+ * kortet och rapporterna, se partialInvoices). Ett villkor som bara frågar efter fakturanumret
+ * låser därför ute en order som Fortnox gärna hade tagit emot — och eftersom `createPartialInvoice`
+ * medvetet INTE gatar på synkstatusen kan en sådan order stå kvar på 'failed' med sin enda
+ * reparationsväg ("Synka om") bortspärrad. `partial_invoicing_started_at` är det som skiljer dem.
+ */
+export function isFortnoxOrderClosed(workOrder: {
+  status?: string | null;
+  fortnox_invoice_number?: string | null;
+  partial_invoicing_started_at?: string | null;
+} | null | undefined): boolean {
+  if (!workOrder) return false;
+  if (workOrder.partial_invoicing_started_at) return false;
+  return workOrder.status === 'invoiced' || Boolean(workOrder.fortnox_invoice_number);
+}
 
 /** Tom sträng, blanktecken och null är SAMMA tomhet. Fortnox ser ingen skillnad; inte vi heller. */
 function mirroredText(value: unknown): string | null {

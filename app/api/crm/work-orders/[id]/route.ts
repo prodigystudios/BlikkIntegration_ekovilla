@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -111,6 +111,8 @@ export async function PATCH(req: Request, context: RouteContext) {
       rot_details?: Record<string, unknown> | null;
       fortnox_order_number?: string | null;
       fortnox_invoice_number?: string | null;
+      // Skiljer helfakturering (Fortnox-ordern stängd) från delfakturering (den är öppen).
+      partial_invoicing_started_at?: string | null;
       // Speglade fält vi måste kunna JÄMFÖRA mot, inte bara skriva — se mirroredFieldChanged.
       assigned_to?: string | null;
       work_address?: Record<string, unknown> | null;
@@ -291,8 +293,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     //
     // Mätt i drift 2026-09-09 på Fortnox-order 131: märkningen fanns i CRM, fältet var tomt hos
     // Fortnox på både ordern och fakturan, och ingenting på skärmen antydde det.
-    const invoicedInFortnox = Boolean(current?.fortnox_order_number)
-      && (current?.status === 'invoiced' || Boolean(current?.fortnox_invoice_number));
+    // ⚠️ Speglar EXAKT syncWorkOrderHeaderToFortnox null-villkor, via samma delade regel — annars
+    // larmar routen om en ändring synken gärna hade skickat, eller tiger om en den inte kan.
+    const invoicedInFortnox = Boolean(current?.fortnox_order_number) && isFortnoxOrderClosed(current);
     // ⚠️ Den fulla pushen bara för en order som REDAN ligger i Fortnox och inte är fakturerad.
     //
     //  • Utan nummer skulle `updateWorkOrderInFortnox` falla tillbaka på create och alltså SKAPA

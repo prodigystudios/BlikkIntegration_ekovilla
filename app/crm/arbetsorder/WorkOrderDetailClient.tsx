@@ -839,6 +839,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
   // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
   const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
+  // ⚠️ SKILT FRÅN `fortnoxClosed` OVAN, och skillnaden avgör om "Synka om" får finnas.
+  //
+  // Delfakturering POSTar FRISTÅENDE fakturor och rör aldrig `createinvoice`, så Fortnox-ordern är
+  // fortfarande ÖPPEN — men slutrundan sätter ändå `fortnox_invoice_number`. Doldes knappen på det
+  // hade en delfakturerad order som fastnat på 'failed' blivit omöjlig att reparera, och
+  // delfaktureringen gatar medvetet INTE på synkstatusen. Samma regel som servern (isFortnoxOrderClosed).
+  const fortnoxOrderClosed = !workOrder.partial_invoicing_started_at
+    && (Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced');
   // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
   //
   // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
@@ -1761,7 +1769,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     `assertOrderRowsSynced`. Mätt i drift: order 131 stod 'synced' tills en omsynk
                     trycktes på den redan fakturerade ordern.
                     Gäller BÅDA knapparna: "Försök igen" på en fakturerad order är samma återvändsgränd. */}
-                {fortnoxClosed ? (
+                {fortnoxOrderClosed ? (
                   <p className="text-xs text-slate-500">
                     Ordern är fakturerad i Fortnox och tar inte emot fler ändringar. Rättningar går
                     att göra här i CRM, men når inte kundens orderbekräftelse eller faktura.
