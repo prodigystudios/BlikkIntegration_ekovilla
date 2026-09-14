@@ -258,6 +258,42 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(postedOrder().YourOrderNumber).toBe('58184');
     expect(fortnoxPut).not.toHaveBeenCalled();
   });
+
+  // 🧨 `label_cleared` ÄR INTE KUNDDATA — det är synkens eget minne, och `clearReferenceMemory`
+  // flippar det mitt i pushen. Räknades det som en ändring hade VARJE orderskapande på
+  // offert→order-vägen kostat en onödig header-PUT, och en PUT som misslyckades hade stämplat
+  // 'failed' över det 'synced' som skrevs ögonblicket innan.
+  //
+  // Samma sak för nyckelordningen: jsonb kommer tillbaka i sin ordning, en merge i sin.
+  it('speglar inte om huvudet för synkens eget minne eller en omkastad nyckelordning', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        // ⚠️ Ordern MÅSTE bära sitt nummer och vara öppen här, annars svarar header-synken null och
+        // testet hade varit grönt vad efterkontrollen än beslutade — alltså bevisat ingenting.
+        // (Mutationsprövat: utan de här tre raderna överlever en borttagen label_cleared-filtrering.)
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: {
+          // Andra nyckelordning, plus ett flippat label_cleared. Samma kunddata.
+          city: 'Sandviken',
+          label: '58184',
+          label_cleared: true,
+          postal_code: '81140',
+          reverse_vat: false,
+          street_address: 'Stallgatan 18',
+          your_reference: 'Per Linderdahl',
+        },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
 });
 
 describe('syncWorkOrderHeaderToFortnox — speglingen av en rättad märkning', () => {

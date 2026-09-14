@@ -494,6 +494,34 @@ async function resolveFortnoxCustomerNumberById(
  * `syncWorkOrderHeaderToFortnox` stämplar själv ner synkstatusen när den misslyckas, så sanningen
  * går inte förlorad: ordern står kvar som osynkad och "Synka om" reparerar den.
  */
+// Jämför två jsonb-värden som DATA, inte som text.
+//
+// 🧨 TVÅ FÄLLOR, båda verkliga:
+//
+//  • NYCKELORDNING. `JSON.stringify` är ordningskänslig, och samma kolumn kommer tillbaka i olika
+//    ordning beroende på om raden just skrivits om av en merge eller lästs rakt ur jsonb. Nycklarna
+//    sorteras därför före jämförelsen.
+//  • `label_cleared` ÄR INTE KUNDDATA. Det är synkens eget minne av en genomförd referensrensning,
+//    och `clearReferenceMemory` flippar det mitt i pushen — på offert→order-vägen skriver alltså
+//    pushen om snapshoten själv. Räknades det med hade efterkontrollen sett en "ändring" vid varje
+//    orderskapande och skickat en onödig header-PUT; misslyckades den PUT:en stämplades dessutom
+//    'failed' över det 'synced' som skrevs ögonblicket innan.
+function same(a: unknown, b: unknown): boolean {
+  const normalise = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalise);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => key !== 'label_cleared')
+          .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
+          .map(([key, val]) => [key, normalise(val)]),
+      );
+    }
+    return value ?? null;
+  };
+  return JSON.stringify(normalise(a ?? null)) === JSON.stringify(normalise(b ?? null));
+}
+
 async function resyncHeaderIfSnapshotChangedDuringPush(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   workOrderId: string,
@@ -510,7 +538,6 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return;
 
-  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   if (same(fresh.customer_snapshot, snapshotAtBuild) && same(fresh.work_address, workAddressAtBuild)) return;
 
   try {

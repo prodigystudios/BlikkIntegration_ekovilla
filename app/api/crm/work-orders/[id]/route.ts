@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -119,7 +119,11 @@ export async function PATCH(req: Request, context: RouteContext) {
     const touchesSnapshot =
       Boolean(updateInput.contact) || updateInput.your_reference !== undefined
       || Boolean(updateInput.end_contact) || updateInput.label !== undefined;
-    if (touchesSnapshot || touchesRot || updateInput.status) {
+    // ⚠️ `touchesFortnox` MÅSTE stå med i villkoret. `work_address` och `assigned_to` speglas till
+    // Fortnox men vandrar inte genom snapshoten, så en PATCH som bara bär dem hade lämnat `current`
+    // null — och då hade både `invoicedInFortnox` och `mirroredFieldChanged` läst tomt och tigit.
+    // Att det inte syns i drift beror bara på att varje anropare råkar skicka `status` också.
+    if (touchesSnapshot || touchesRot || touchesFortnox || updateInput.status) {
       const currentRead = await getCrmWorkOrder(supabase, context.params.id);
       // 🧨 FAIL-CLOSED PÅ LÄSFELET. Snapshoten skrivs read-merge-write, så en misslyckad läsning
       // gav `null` → merge mot `{}` → kolumnen ersattes av BARA överlagringarna. Personnummer,
@@ -140,24 +144,17 @@ export async function PATCH(req: Request, context: RouteContext) {
       current = currentRead.data as WoCurrent | null;
     }
 
-    // 🧨 ÄNDRADES NÅGOT FORTNOX SPEGLAR — eller skickade klienten bara med fälten?
-    //
-    // `touchesFortnox` testar NÄRVARO, och ordervyn skickar `your_reference` vid varje sparning
-    // (samt `label` på varje företagsorder). Att läsa det som "en spegling begärdes" är rätt för
-    // PUSHEN — en extra PUT med oförändrade värden är ofarlig — men fel för BESKEDET nedan: varje
-    // rättad anteckning på en fakturerad order hade fått ett rött "nådde inte Fortnox" om något
-    // som inte ens ändrats.
+    // Ändrades något som faktiskt NÅR kundens dokument — eller skickade klienten bara med fälten?
+    // Regeln (med sina tre normaliseringar) bor i domänen och är testad där.
     //
     // ⚠️ Måste beräknas HÄR, före merge-blocket: det raderar `label` och `your_reference` ur
     // updateInput så fort de vandrat in i snapshoten.
-    const snapshotNow = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
-    const mirroredFieldChanged =
-      ('label' in updateInput && (updateInput.label ?? null) !== (snapshotNow.label ?? null))
-      || ('your_reference' in updateInput
-        && (updateInput.your_reference ?? null) !== (snapshotNow.your_reference ?? null))
-      || ('assigned_to' in updateInput && (updateInput.assigned_to ?? null) !== (current?.assigned_to ?? null))
-      || ('work_address' in updateInput
-        && JSON.stringify(updateInput.work_address ?? null) !== JSON.stringify(current?.work_address ?? null));
+    const mirroredFieldChanged = workOrderMirroredFieldsChanged(current, {
+      ...('label' in updateInput ? { label: updateInput.label } : {}),
+      ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+      ...('assigned_to' in updateInput ? { assigned_to: updateInput.assigned_to } : {}),
+      ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
+    });
 
     // Every snapshot override merges into the (jsonb) customer_snapshot with a read-merge-write so
     // the other snapshot fields (personnummer, addresses, reverse_vat) survive. The rule itself

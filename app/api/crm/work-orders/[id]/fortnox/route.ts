@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { ok, requirePermission, routeError, invalidUuidParam } from '../../_lib';
+import { ok, requirePermission, routeError, invalidUuidParam, isNoRowsError } from '../../_lib';
 
 type RouteContext = {
   params: {
@@ -36,7 +36,18 @@ export async function POST(_req: Request, context: RouteContext) {
     // den kvar — och routen är dessutom nåbar direkt för var och en med `fortnox.workorder.push`.
     // Mätt i drift på order 131: en omsynk på den redan fakturerade ordern flyttade den från
     // 'synced' till 'failed'.
-    const { data: currentRow } = await getCrmWorkOrder(supabase, context.params.id);
+    // 🧨 FAIL-CLOSED PÅ LÄSFELET, som PATCH-vägen. Sväljs felet går omsynken vidare mot en order vi
+    // inte vet något om — och är den fakturerad stämplas den 'failed' av ett anrop som aldrig kunde
+    // lyckas, med knappen nu dold så ingenting förklarar var statusen kom ifrån.
+    const { data: currentRow, error: readError } = await getCrmWorkOrder(supabase, context.params.id);
+    if (readError) {
+      if (isNoRowsError(readError)) {
+        return routeError(404, 'crm_work_order_not_found', 'Arbetsorder hittades inte.');
+      }
+      console.error('[fortnox] Läsning före omsynk misslyckades:', readError.message);
+      return routeError(503, 'crm_work_order_read_failed',
+        'Kunde inte läsa arbetsordern just nu. Försök igen — ingenting har ändrats.');
+    }
     const current = currentRow as { status?: string | null; fortnox_invoice_number?: string | null } | null;
     if (current && (current.status === 'invoiced' || current.fortnox_invoice_number)) {
       return routeError(409, 'crm_work_order_invoiced_locked',

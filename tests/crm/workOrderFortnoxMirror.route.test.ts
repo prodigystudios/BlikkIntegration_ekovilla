@@ -52,6 +52,8 @@ const openOrder = {
   status: 'in_progress',
   quote_type: 'business',
   customer_snapshot: { label: 'GAMMAL', your_reference: 'Per Linderdahl' },
+  // Nyckelordningen är PostgREST:s, inte Zod:s — se testet om oförändrade fält.
+  work_address: { city: 'Sandviken', postal_code: '81140', street_address: 'Stallgatan 18' },
   rot_details: {},
   fortnox_order_number: '131',
   fortnox_invoice_number: null as string | null,
@@ -143,6 +145,10 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
       // Exakt det som redan står i snapshoten — klienten skickar alltid med dem.
       your_reference: 'Per Linderdahl',
       label: 'GAMMAL',
+      // 🧨 ADRESSEN SKICKAS ALLTID, och kommer tillbaka ur jsonb i en ANNAN nyckelordning än den
+      // Zod bygger. En JSON.stringify-jämförelse är därför alltid "olika" — larmet gick på varje
+      // sparning tills jämförelsen blev fält-för-fält. Nyckelordningen här är den riktiga radens.
+      work_address: { street_address: 'Stallgatan 18', postal_code: '81140', city: 'Sandviken' },
       notes: 'en rättad anteckning',
     }), ctx)).json();
 
@@ -188,6 +194,20 @@ describe('POST arbetsorder/fortnox — omsynken', () => {
     const res = await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx);
 
     expect(res.status).toBe(409);
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+
+  // 🧨 FAIL-CLOSED. Sväljs ett läsfel går omsynken vidare mot en order vi inte vet något om — är
+  // den fakturerad stämplas den 'failed' av ett anrop som aldrig kunde lyckas, och med knappen nu
+  // dold finns ingenting som förklarar var statusen kom ifrån. PATCH-vägen failar stängt på samma
+  // läsning; den här gjorde det inte.
+  it('failar STÄNGT när arbetsordern inte går att läsa', async () => {
+    vi.mocked(getCrmWorkOrder).mockResolvedValue(
+      { data: null, error: { message: 'timeout', code: '57014' } } as never);
+
+    const res = await pushPOST(new Request('http://localhost/x', { method: 'POST' }), ctx);
+
+    expect(res.status).toBe(503);
     expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 

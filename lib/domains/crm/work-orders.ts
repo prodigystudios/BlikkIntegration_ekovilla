@@ -693,6 +693,77 @@ export function mergeWorkOrderSnapshotOverrides(
   return merged;
 }
 
+// De fält i `work_address` som faktiskt når Fortnox-huvudet — se buildOrderDeliveryFields, som
+// bara läser gata, postnummer och ort. `delivery_address`/`invoice_address` bor visserligen i
+// samma kolumn men rör inte orderhuvudet.
+const MIRRORED_WORK_ADDRESS_KEYS = ['street_address', 'postal_code', 'city'] as const;
+
+/** Tom sträng, blanktecken och null är SAMMA tomhet. Fortnox ser ingen skillnad; inte vi heller. */
+function mirroredText(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Ändrades något som faktiskt NÅR kundens Fortnox-dokument?
+ *
+ * 🧨 SKILT FRÅN "skickade klienten fältet". Ordervyn skickar `your_reference` vid varje sparning
+ * och `label` vid varje sparning av en företagsorder, så en närvarokoll (`'label' in updateInput`)
+ * betyder bara att formuläret postades. Det duger för att BESLUTA OM EN PUSH — en extra PUT med
+ * oförändrade värden är ofarlig — men inte för att LARMA: på en fakturerad order, där ändringen
+ * omöjligt kan nå fram, hade varje rättad anteckning gett ett rött "nådde inte Fortnox" om
+ * ingenting.
+ *
+ * ⚠️ TRE NORMALISERINGAR, var och en hittad genom att den saknades:
+ *
+ *  1. `work_address` jämförs FÄLT FÖR FÄLT, aldrig med `JSON.stringify`. Kolumnen är jsonb och
+ *     kommer tillbaka i PostgREST:s nyckelordning (city, postal_code, street_address …) medan
+ *     Zod-schemat bygger sin egen (street_address, postal_code, city …) och dessutom fyller på med
+ *     nycklar klienten aldrig skickade. Två strängar som ALDRIG kan bli lika — mätt mot den riktiga
+ *     raden för order 131 — alltså "ändrat" vid varje sparning.
+ *  2. `your_reference` jämförs mot samma FALLBACK som huvudet använder (`resolveYourReference`:
+ *     your_reference → contact_name). En äldre rad utan egen referens bär kontaktpersonens namn
+ *     dit, och klientens utkast seedas från just det värdet.
+ *  3. Tomhet normaliseras: `''`, `'  '` och `null` är samma sak.
+ *
+ * ROT ligger medvetet UTANFÖR. De fälten går den fulla pushen, inte header-vägen, och har sin egen
+ * ändringsflagga i `mergeWorkOrderRotDetails` (`documentChanged`).
+ */
+export function workOrderMirroredFieldsChanged(
+  current: {
+    customer_snapshot?: Record<string, unknown> | null;
+    work_address?: Record<string, unknown> | null;
+    assigned_to?: string | null;
+  } | null | undefined,
+  // Bara nycklar klienten FAKTISKT skickade får finnas här — `undefined` betyder "rör inte".
+  overrides: {
+    label?: string | null;
+    your_reference?: string | null;
+    assigned_to?: string | null;
+    work_address?: Record<string, unknown> | null;
+  },
+): boolean {
+  const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
+
+  if ('label' in overrides && mirroredText(overrides.label) !== mirroredText(snapshot.label)) return true;
+
+  if ('your_reference' in overrides) {
+    const now = mirroredText(snapshot.your_reference) ?? mirroredText(snapshot.contact_name);
+    if (mirroredText(overrides.your_reference) !== now) return true;
+  }
+
+  if ('assigned_to' in overrides && (overrides.assigned_to ?? null) !== (current?.assigned_to ?? null)) return true;
+
+  if ('work_address' in overrides) {
+    const next = (overrides.work_address ?? {}) as Record<string, unknown>;
+    const prev = (current?.work_address ?? {}) as Record<string, unknown>;
+    if (MIRRORED_WORK_ADDRESS_KEYS.some((key) => mirroredText(next[key]) !== mirroredText(prev[key]))) return true;
+  }
+
+  return false;
+}
+
 /**
  * ROT-uppgifterna på arbetsordern, read-merge-write.
  *

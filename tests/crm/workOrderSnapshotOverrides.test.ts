@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // Modulen importerar getSupabaseAdmin på toppnivå. Rörs inte här, men måste finnas för importen.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => null }));
 
-import { mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails } from '@/lib/domains/crm/work-orders';
+import { mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged } from '@/lib/domains/crm/work-orders';
 
 // Arbetsorderns customer_snapshot bär tre olika personer/värden som redigeras i samma formulär:
 //
@@ -332,5 +332,62 @@ describe('mergeWorkOrderRotDetails', () => {
       expect(mergeWorkOrderRotDetails({ property_designation: null }, { property_designation: null }).propertyCleared).toBe(false);
       expect(mergeWorkOrderRotDetails({}, { property_designation: null }).propertyCleared).toBe(false);
     });
+  });
+});
+
+// ── Ändrades något som NÅR kundens Fortnox-dokument? ─────────────────────────
+//
+// Skilt från "skickade klienten fältet". Ordervyn postar hela formuläret vid varje sparning, så en
+// närvarokoll säger bara att någon tryckte Spara. Skillnaden avgör om en sparning på en FAKTURERAD
+// order ska larma ("ändringen når inte kunden") eller tiga — och ett larm som går på närvaro är ett
+// rött felmeddelande vid varje rättad anteckning.
+describe('workOrderMirroredFieldsChanged', () => {
+  // 🧨 REGRESSIONEN. Kolumnen är jsonb och kommer tillbaka i PostgREST:s nyckelordning, medan
+  // Zod-schemat bygger sin egen OCH fyller på med nycklar klienten aldrig skickade. Nyckelordningen
+  // nedan är kopierad ur den riktiga raden för order 131; en JSON.stringify-jämförelse av de två
+  // objekten är alltid olika, alltså "ändrat" vid varje sparning.
+  it('ser ingen ändring när samma adress kommer i olika nyckelordning', () => {
+    const current = {
+      work_address: {
+        city: 'Sandviken', postal_code: '81140', street_address: 'Stallgatan 18',
+        invoice_address: null, delivery_address: null,
+      },
+    };
+    const fromZod = {
+      street_address: 'Stallgatan 18', postal_code: '81140', city: 'Sandviken',
+      delivery_address: null, invoice_address: null,
+    };
+
+    expect(JSON.stringify(current.work_address)).not.toBe(JSON.stringify(fromZod)); // vakt: fällan finns
+    expect(workOrderMirroredFieldsChanged(current, { work_address: fromZod })).toBe(false);
+  });
+
+  it('ser en ändring när gatan faktiskt byts', () => {
+    expect(workOrderMirroredFieldsChanged(
+      { work_address: { city: 'Sandviken', street_address: 'Stallgatan 18' } },
+      { work_address: { street_address: 'Nygatan 3', city: 'Sandviken' } },
+    )).toBe(true);
+  });
+
+  // ⚠️ Huvudet faller tillbaka på contact_name när your_reference saknas (resolveYourReference), och
+  // klientens utkast seedas från just det värdet. Utan fallbacken hade varje sparning av en äldre
+  // rad sett ut som en ändring.
+  it('läser contact_name som Er referens när fältet är tomt', () => {
+    const current = { customer_snapshot: { your_reference: null, contact_name: 'Per Linderdahl' } };
+    expect(workOrderMirroredFieldsChanged(current, { your_reference: 'Per Linderdahl' })).toBe(false);
+    expect(workOrderMirroredFieldsChanged(current, { your_reference: 'Anna Andersson' })).toBe(true);
+  });
+
+  it('läser tom sträng, blanktecken och null som samma tomhet', () => {
+    expect(workOrderMirroredFieldsChanged({ customer_snapshot: { label: null } }, { label: '' })).toBe(false);
+    expect(workOrderMirroredFieldsChanged({ customer_snapshot: { label: '58184' } }, { label: '  58184  ' })).toBe(false);
+    expect(workOrderMirroredFieldsChanged({ customer_snapshot: { label: null } }, { label: '58184' })).toBe(true);
+  });
+
+  // Nycklar som inte skickats betyder "rör inte" och får aldrig räknas som en ändring.
+  it('bryr sig bara om fält anroparen faktiskt skickade', () => {
+    const current = { customer_snapshot: { label: '58184', your_reference: 'Per' }, assigned_to: 'user-1' };
+    expect(workOrderMirroredFieldsChanged(current, {})).toBe(false);
+    expect(workOrderMirroredFieldsChanged(current, { assigned_to: 'user-2' })).toBe(true);
   });
 });
