@@ -142,8 +142,13 @@ export function workOrderMirroredFieldsChanged(
   if ('label' in overrides && mirroredText(overrides.label) !== mirroredText(snapshot.label)) return true;
 
   if ('your_reference' in overrides) {
-    const now = mirroredText(snapshot.your_reference) ?? mirroredText(snapshot.contact_name);
-    if (mirroredText(overrides.your_reference) !== now) return true;
+    // ⚠️ FALLBACKEN GÄLLER BÅDA SIDOR. Tidigare gick bara det nuvarande värdet genom
+    // `your_reference ?? contact_name`, så att TÖMMA fältet på en rad vars referens ÄR
+    // kontaktnamnet såg ut som en ändring — fast headern får exakt samma värde efter sparningen.
+    // Det gav ett rött "nådde inte Fortnox" för en ändring som inte finns.
+    const before = mirroredText(snapshot.your_reference) ?? mirroredText(snapshot.contact_name);
+    const after = mirroredText(overrides.your_reference) ?? mirroredText(snapshot.contact_name);
+    if (after !== before) return true;
   }
 
   if ('assigned_to' in overrides && (overrides.assigned_to ?? null) !== (current?.assigned_to ?? null)) return true;

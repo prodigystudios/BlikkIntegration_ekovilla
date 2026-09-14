@@ -378,6 +378,15 @@ describe('workOrderMirroredFieldsChanged', () => {
     expect(workOrderMirroredFieldsChanged(current, { your_reference: 'Anna Andersson' })).toBe(true);
   });
 
+  // ⚠️ FALLBACKEN GÄLLER BÅDA SIDOR. Att TÖMMA your_reference på en rad vars referens ÄR
+  // kontaktnamnet ändrar ingenting — headern får samma värde före och efter. Gick bara den ena
+  // sidan genom fallbacken larmade routen rött för en ändring som inte finns.
+  it('ser ingen ändring när en tömd Er referens ändå ger samma värde via contact_name', () => {
+    const current = { customer_snapshot: { your_reference: null, contact_name: 'Per Linderdahl' } };
+    expect(workOrderMirroredFieldsChanged(current, { your_reference: null })).toBe(false);
+    expect(workOrderMirroredFieldsChanged(current, { your_reference: '' })).toBe(false);
+  });
+
   it('läser tom sträng, blanktecken och null som samma tomhet', () => {
     expect(workOrderMirroredFieldsChanged({ customer_snapshot: { label: null } }, { label: '' })).toBe(false);
     expect(workOrderMirroredFieldsChanged({ customer_snapshot: { label: '58184' } }, { label: '  58184  ' })).toBe(false);

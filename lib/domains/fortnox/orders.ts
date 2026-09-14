@@ -96,6 +96,15 @@ export type PushOrderResult = {
    * framgång hela den här ändringen finns för att ta bort, en nivå upp.
    */
   mirrorFailed?: boolean;
+  /**
+   * ⚠️ Rensningen går inte att skicka ALLS — inte "gick inte den här gången".
+   *
+   * `buildOrderHeader` utelämnar tomma värden och en Fortnox-PUT rör bara fält den bär, så ett
+   * tömt "Er referens"/"Vår referens"/leveransadress kan aldrig nollas av en omsynk. Rådet "synka
+   * om" hade alltså skickat säljaren i en cirkel: andra försöket rapporterar framgång medan
+   * Fortnox behåller sitt gamla värde. Fältet måste rättas för hand i Fortnox.
+   */
+  mirrorNeedsManualFix?: boolean;
 };
 
 export type CreateInvoiceResult = {
@@ -558,7 +567,7 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
     rot_details: RotDetails | null;
     line_items: unknown;
   },
-): Promise<{ mirrorFailed?: boolean }> {
+): Promise<{ mirrorFailed?: boolean; mirrorNeedsManualFix?: boolean }> {
   // ⚠️ ALLA INGÅNGARNA till dokumentet, inte bara de två uppenbara: `assigned_to` bär OurReference
   // och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett första utkast läste
   // bara snapshot + adress och lämnade därmed halva problemet öppet — en ansvarig som byttes mitt i
@@ -655,9 +664,10 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
     // ⚠️ `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — en tom header, eller en order
     // som hunnit stängas. Att läsa "kastade inte" som framgång hade gjort just de fallen tysta.
     const mirrored = rowsDiffer
-      ? await updateWorkOrderInFortnox(workOrderId)
+      ? await updateWorkOrderInFortnox(workOrderId, { recheckAfterPush: false })
       : await syncWorkOrderHeaderToFortnox(workOrderId);
-    if (mirrored === null || unexpressibleClear) return { mirrorFailed: true };
+    if (unexpressibleClear) return { mirrorFailed: true, mirrorNeedsManualFix: true };
+    if (mirrored === null) return { mirrorFailed: true };
   } catch (e) {
     console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
     // Kastar INTE — ordern finns i Fortnox och numret är sparat, så ett kast hade fått anroparen
@@ -1156,7 +1166,13 @@ async function clearReferenceMemory(
 // too: it used to send rows only, so "Synka om" could not repair a contact person or work
 // address no matter how many times a seller pressed it. Fortnox rejects edits to an
 // invoiced/cancelled order — that surfaces as the thrown error and sync status flips to 'failed'.
-export async function updateWorkOrderInFortnox(workOrderId: string): Promise<PushOrderResult> {
+export async function updateWorkOrderInFortnox(
+  workOrderId: string,
+  // ⚠️ `false` BARA från efterkontrollen själv. Den anropar den här vägen när raderna skiljer sig,
+  // och en efterkontroll därifrån hade blivit en rekursion: push → kontroll → push → kontroll.
+  // En extra runda räcker för att konvergera; fler vore en loop så länge någon fortsätter spara.
+  opts?: { recheckAfterPush?: boolean },
+): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
   const { data: workOrder, error } = await supabase
@@ -1192,6 +1208,21 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
       .eq('id', workOrderId);
+
+    // 🧨 SAMMA RACE SOM PÅ SKAPANDEVÄGEN. Raden lästes före PUT:en, och mellan dem ligger
+    // radbygget och hela Fortnox-anropet. En översiktssparning som landar där skrivs till
+    // databasen medan den här PUT:en lägger tillbaka det gamla huvudet — och stämplar 'synced'.
+    // Exakt felet på order 131, på den väg efterkontrollen först inte täckte.
+    if (opts?.recheckAfterPush !== false) {
+      const { mirrorFailed } = await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
+        customer_snapshot: workOrder.customer_snapshot,
+        work_address: workOrder.work_address,
+        assigned_to: workOrder.assigned_to,
+        rot_details: workOrder.rot_details ?? null,
+        line_items: workOrder.line_items ?? null,
+      });
+      if (mirrorFailed) return { fortnox_order_number: workOrder.fortnox_order_number, mirrorFailed: true };
+    }
 
     return { fortnox_order_number: workOrder.fortnox_order_number };
   } catch (e) {

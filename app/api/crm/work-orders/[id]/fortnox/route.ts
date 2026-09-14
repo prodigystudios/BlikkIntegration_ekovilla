@@ -66,8 +66,15 @@ export async function POST(_req: Request, context: RouteContext) {
       // läser Misslyckad. Samma tysta framgång som offertvägen redan rättat.
       const pushed = await updateWorkOrderInFortnox(context.params.id);
       if (pushed.mirrorFailed) {
-        fortnoxError = 'Arbetsordern skapades i Fortnox, men en ändring som sparades under tiden '
-          + 'kunde inte speglas dit. Synka om ordern och kontrollera uppgifterna.';
+        // ⚠️ TVÅ OLIKA RÅD. En rensning (tömd Er/Vår referens eller arbetsadress) går inte att
+        // skicka alls — buildOrderHeader utelämnar tomma värden — så "synka om" hade skickat
+        // säljaren i en cirkel där andra försöket rapporterar framgång medan Fortnox behåller sitt
+        // gamla värde. Allt annat lagas av en omsynk.
+        fortnoxError = pushed.mirrorNeedsManualFix
+          ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '
+            + 'synken — rätta fältet direkt i Fortnox.'
+          : 'Arbetsordern skapades i Fortnox, men en ändring som sparades under tiden kunde inte '
+            + 'speglas dit. Synka om arbetsordern och kontrollera uppgifterna.';
       }
     } catch (e) {
       if (e instanceof FortnoxNotConnectedError) {

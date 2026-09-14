@@ -22,7 +22,7 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxPost, fortnoxPut } from '@/lib/domains/fortnox/client';
-import { pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox } from '@/lib/domains/fortnox/orders';
+import { pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 const WORK_ORDER_ID = 'wo-1';
 
@@ -572,6 +572,85 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
     expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+});
+
+// Omsynkvägen — samma race som create, på den väg efterkontrollen först inte täckte.
+describe('updateWorkOrderInFortnox — efterkontrollen på omsynken', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fortnoxPut).mockResolvedValue({} as never);
+  });
+
+  // 🧨 Raden läses före PUT:en, och mellan dem ligger radbygget och hela Fortnox-anropet. En
+  // översiktssparning som landar där skrivs till databasen medan PUT:en lägger tillbaka det GAMLA
+  // huvudet — och stämplar 'synced'. Exakt felet på order 131, en väg bort.
+  it('upptäcker en sparning som landade mitt i omsynken', async () => {
+    installSupabaseMock({
+      beforeClaim: { ...baseRow, fortnox_order_number: '131', status: 'in_progress', fortnox_invoice_number: null },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: 'SPARAD-UNDER-OMSYNKEN' },
+      },
+    });
+
+    const result = await updateWorkOrderInFortnox(WORK_ORDER_ID);
+
+    expect(result.fortnox_order_number).toBe('131');
+    // Reparationen körde och bar den nya märkningen.
+    expect(vi.mocked(fortnoxPut).mock.calls.length).toBeGreaterThan(1);
+  });
+
+  // ⚠️ Efterkontrollen anropar SJÄLV den här vägen när raderna skiljer sig. Utan spärren blir det
+  // en rekursion: push → kontroll → push → kontroll.
+  // 🧨 REKURSIONEN. Efterkontrollen anropar SJÄLV den här vägen när raderna skiljer sig, och utan
+  // spärren blir det push → kontroll → push → kontroll. Mocken ger ett nytt värde per läsning, så
+  // en rekursion skulle synas som en växande kedja av PUT:ar i stället för de två som ska ske.
+  it('loopar inte när efterkontrollen själv går den fulla pushen', async () => {
+    let read = 0;
+    const workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
+    const row = (label: string, rows: unknown) => ({
+      ...baseRow, fortnox_order_number: '131', status: 'in_progress', fortnox_invoice_number: null,
+      customer_snapshot: { ...baseRow.customer_snapshot, label }, line_items: rows,
+    });
+    const altRows = [{ id: 'line-a', pricing_mode: 'item', unit_price: '999', quantity: '1' }];
+    workOrders.single = vi.fn(async () => ({ data: row('START', baseRow.line_items), error: null }));
+    // Varje efterkontroll ser BÅDE nytt label och nya rader → rowsDiffer → full push igen.
+    workOrders.maybeSingle = vi.fn(async () => {
+      read += 1;
+      return { data: row(`ÄNDRAD-${read}`, read <= 3 ? altRows : baseRow.line_items), error: null };
+    });
+    const customers = makeChain({ data: { fortnox_customer_id: '55' }, error: null });
+    const profiles = makeChain({ data: { full_name: 'Anna Andersson' }, error: null });
+    vi.mocked(getSupabaseAdmin).mockReturnValue({
+      from: vi.fn((t: string) => (t === 'crm_customers' ? customers : t === 'profiles' ? profiles : workOrders)),
+    } as unknown as ReturnType<typeof getSupabaseAdmin>);
+
+    await updateWorkOrderInFortnox(WORK_ORDER_ID);
+
+    // Den egna PUT:en + EN reparationsrunda. Utan spärren kedjas de vidare.
+    expect(vi.mocked(fortnoxPut).mock.calls.length).toBe(2);
+  });
+
+  it('kör ingen efterkontroll när den anropas FRÅN efterkontrollen', async () => {
+    installSupabaseMock({
+      beforeClaim: { ...baseRow, fortnox_order_number: '131', status: 'in_progress', fortnox_invoice_number: null },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: 'ÄNDRAD' },
+      },
+    });
+
+    await updateWorkOrderInFortnox(WORK_ORDER_ID, { recheckAfterPush: false });
+
+    // Exakt EN PUT — ingen reparationsrunda.
+    expect(vi.mocked(fortnoxPut).mock.calls.length).toBe(1);
   });
 });
 
