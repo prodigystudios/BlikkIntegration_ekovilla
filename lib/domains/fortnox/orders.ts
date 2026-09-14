@@ -909,15 +909,24 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       .eq('id', workOrderId);
 
     // Hann någon spara medan pushen pågick? Då bär Fortnox fel huvud — spegla om det.
-    const { mirrorFailed } = await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
-      customer_snapshot: workOrder.customer_snapshot,
-      work_address: workOrder.work_address,
-      assigned_to: workOrder.assigned_to,
-      rot_details: workOrder.rot_details ?? null,
-      line_items: workOrder.line_items ?? null,
-    });
+    const { mirrorFailed, mirrorNeedsManualFix } = await resyncHeaderIfSnapshotChangedDuringPush(
+      supabase, workOrderId, {
+        customer_snapshot: workOrder.customer_snapshot,
+        work_address: workOrder.work_address,
+        assigned_to: workOrder.assigned_to,
+        rot_details: workOrder.rot_details ?? null,
+        line_items: workOrder.line_items ?? null,
+      },
+    );
 
-    return { fortnox_order_number: fortnoxOrderNumber, ...(mirrorFailed ? { mirrorFailed: true } : {}) };
+    return {
+      fortnox_order_number: fortnoxOrderNumber,
+      ...(mirrorFailed ? { mirrorFailed: true } : {}),
+      // ⚠️ MÅSTE MED. Utan den här raden var hela "rätta fältet direkt i Fortnox"-grenen i de tre
+      // routerna död kod, och en säljare som tömt Er referens fick rådet "synka om" — det cirkulära
+      // rådet som aldrig kan laga en rensning.
+      ...(mirrorNeedsManualFix ? { mirrorNeedsManualFix: true } : {}),
+    };
   } catch (e) {
     const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     await supabase
@@ -1214,14 +1223,22 @@ export async function updateWorkOrderInFortnox(
     // databasen medan den här PUT:en lägger tillbaka det gamla huvudet — och stämplar 'synced'.
     // Exakt felet på order 131, på den väg efterkontrollen först inte täckte.
     if (opts?.recheckAfterPush !== false) {
-      const { mirrorFailed } = await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
-        customer_snapshot: workOrder.customer_snapshot,
-        work_address: workOrder.work_address,
-        assigned_to: workOrder.assigned_to,
-        rot_details: workOrder.rot_details ?? null,
-        line_items: workOrder.line_items ?? null,
-      });
-      if (mirrorFailed) return { fortnox_order_number: workOrder.fortnox_order_number, mirrorFailed: true };
+      const { mirrorFailed, mirrorNeedsManualFix } = await resyncHeaderIfSnapshotChangedDuringPush(
+        supabase, workOrderId, {
+          customer_snapshot: workOrder.customer_snapshot,
+          work_address: workOrder.work_address,
+          assigned_to: workOrder.assigned_to,
+          rot_details: workOrder.rot_details ?? null,
+          line_items: workOrder.line_items ?? null,
+        },
+      );
+      if (mirrorFailed) {
+        return {
+          fortnox_order_number: workOrder.fortnox_order_number,
+          mirrorFailed: true,
+          ...(mirrorNeedsManualFix ? { mirrorNeedsManualFix: true } : {}),
+        };
+      }
     }
 
     return { fortnox_order_number: workOrder.fortnox_order_number };

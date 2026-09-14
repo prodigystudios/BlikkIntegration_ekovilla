@@ -2,10 +2,10 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
-import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
-import { pushWorkOrderToFortnox } from './orders';
+import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
 // Delfakturering (partial invoicing). Appen ÄGER det per-artikel fakturerade läget — en
 // Fortnox-order exponerar bara en enda InvoiceReference och inget fakturerat antal per rad, så
@@ -517,15 +517,27 @@ export async function createPartialInvoice(
     if (!orderNumber) {
       const pushed = await pushWorkOrderToFortnox(workOrderId);
       orderNumber = pushed.fortnox_order_number;
-      // 🧨 ORDERHUVUDET ÄR KÄNT INAKTUELLT — och det är just det huvudet vi nu speglar ut på
-      // kundens faktura ("Ert referensnummer", raden nedan). En sparning landade mitt i pushen och
-      // gick inte att spegla, så Fortnox bär ett annat värde än CRM. Att fakturera vidare på det
-      // vore att trycka en gammal märkning på ett nytt dokument hos kunden.
+      // 🧨 ORDERHUVUDET ÄR KÄNT INAKTUELLT — och det är just det huvudet vi speglar ut på kundens
+      // faktura ("Ert referensnummer", raden nedan). En sparning landade mitt i pushen.
+      //
+      // ⚠️ LAGA, INTE NEKA. En ren spärr hade bara hållit FÖRSTA försöket: numret är redan sparat,
+      // så nästa anrop hoppar över hela den här grenen och delfakturerar mot exakt det huvud
+      // spärren nyss kallade osäkert. Falsk trygghet. En omsynk är däremot beständig — den lagar
+      // huvudet, och misslyckas den kastar den och avbryter faktureringen.
+      if (pushed.mirrorNeedsManualFix) {
+        // …utom en RENSNING, som ingen omsynk kan uttrycka (buildOrderHeader utelämnar tomma
+        // värden). PartialInvoiceError, inte FortnoxApiError: rutten returnerar den klassens
+        // meddelande ordagrant, medan friendlyFortnoxMessage hade kastat texten och sagt
+        // "Något gick fel mot Fortnox. Försök igen" — och skickat säljaren till just det omförsök
+        // som inte hjälper.
+        throw new PartialInvoiceError(
+          'Arbetsordern har en tömd referens eller arbetsadress som inte kan nollas i Fortnox via '
+          + 'synken. Rätta fältet direkt i Fortnox innan du delfakturerar — annars speglas ett '
+          + 'gammalt referensnummer till kundens faktura.',
+        );
+      }
       if (pushed.mirrorFailed) {
-        throw new FortnoxApiError(409,
-          'Arbetsordern hann ändras under synken och Fortnox-ordern är inte uppdaterad. '
-          + 'Synka om arbetsordern innan du delfakturerar — annars speglas ett gammalt '
-          + 'referensnummer till kundens faktura.');
+        await updateWorkOrderInFortnox(workOrderId);
       }
     }
     const order = await fortnoxGet<{ Order?: FortnoxOrderHeader }>(`/orders/${orderNumber}`);

@@ -425,6 +425,10 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
 
     expect(fortnoxPut).toHaveBeenCalled();
     expect(result.mirrorFailed).toBe(true);
+    // 🧨 FLAGGAN MÅSTE NÅ ANROPAREN. Droppades den i destruktureringen blev hela
+    // "rätta fältet direkt i Fortnox"-grenen i routerna död kod, och säljaren fick rådet
+    // "synka om" — som aldrig kan uttrycka en rensning.
+    expect(result.mirrorNeedsManualFix).toBe(true);
   });
 
   // ⚠️ Tom sträng, blanktecken och null är SAMMA tomhet. En sparning som skriver '' där raden höll

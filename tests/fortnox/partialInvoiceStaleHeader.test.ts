@@ -15,11 +15,11 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
   return { ...actual, fortnoxGet: vi.fn(), fortnoxPost: vi.fn(), fortnoxPut: vi.fn() };
 });
 
-vi.mock('@/lib/domains/fortnox/orders', () => ({ pushWorkOrderToFortnox: vi.fn() }));
+vi.mock('@/lib/domains/fortnox/orders', () => ({ pushWorkOrderToFortnox: vi.fn(), updateWorkOrderInFortnox: vi.fn() }));
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost } from '@/lib/domains/fortnox/client';
-import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
+import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { createPartialInvoice } from '@/lib/domains/fortnox/partialInvoices';
 
 const WORK_ORDER_ID = 'wo-1';
@@ -65,16 +65,34 @@ beforeEach(() => {
 });
 
 describe('createPartialInvoice — ett känt inaktuellt orderhuvud', () => {
-  // ⚖️ KÄRNAN. Vet vi att Fortnox-ordern inte matchar CRM får vi inte spegla dess huvud vidare.
-  it('vägrar fakturera när orderpushen rapporterade mirrorFailed', async () => {
+  // ⚖️ LAGA, INTE NEKA. En ren spärr hade bara hållit FÖRSTA försöket — numret är redan sparat, så
+  // nästa anrop hoppar över grenen och delfakturerar mot exakt det huvud spärren kallade osäkert.
+  // En omsynk är beständig.
+  it('synkar om huvudet innan det speglas till fakturan', async () => {
     vi.mocked(pushWorkOrderToFortnox).mockResolvedValue(
       { fortnox_order_number: '131', mirrorFailed: true } as never);
+    vi.mocked(updateWorkOrderInFortnox).mockResolvedValue({ fortnox_order_number: '131' } as never);
+
+    await createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1');
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(fortnoxPost).toHaveBeenCalled();
+  });
+
+  // 🧨 …UTOM en RENSNING, som ingen omsynk kan uttrycka. Där måste vi neka — och meddelandet måste
+  // överleva hela vägen ut (PartialInvoiceError, inte FortnoxApiError, som friendlyFortnoxMessage
+  // hade tvättat till "Något gick fel mot Fortnox. Försök igen" och skickat säljaren till just det
+  // omförsök som inte hjälper).
+  it('vägrar fakturera när en rensning inte går att spegla — med begripligt besked', async () => {
+    vi.mocked(pushWorkOrderToFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true, mirrorNeedsManualFix: true } as never);
 
     await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
-      .rejects.toThrow(/[Ss]ynka om/);
+      .rejects.toThrow(/direkt i Fortnox/);
 
-    // Ingen faktura fick skapas hos kunden.
+    // Ingen faktura fick skapas hos kunden, och ingen meningslös omsynk försökas.
     expect(fortnoxPost).not.toHaveBeenCalled();
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
   // …och en ren push ska förstås gå vidare som vanligt.
