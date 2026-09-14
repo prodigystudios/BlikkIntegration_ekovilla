@@ -1754,7 +1754,19 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 {workOrder.fortnox_order_synced_at ? (
                   <p className="text-xs text-slate-500">Synkad {formatDateTime(workOrder.fortnox_order_synced_at)}</p>
                 ) : null}
-                {workOrder.fortnox_order_sync_status !== 'synced' ? (
+                {/* 🧨 INGEN SYNKKNAPP PÅ EN FAKTURERAD ORDER — den kan bara göra skada.
+                    Fortnox avvisar varje skrivning mot ett fakturerat dokument, så `updateWorkOrderInFortnox`
+                    kastar och stämplar 'failed'. Knappen kunde alltså aldrig lyckas, bara degradera en
+                    'synced' order — och en kvarstående 'failed' spärrar i sin tur faktureringen via
+                    `assertOrderRowsSynced`. Mätt i drift: order 131 stod 'synced' tills en omsynk
+                    trycktes på den redan fakturerade ordern.
+                    Gäller BÅDA knapparna: "Försök igen" på en fakturerad order är samma återvändsgränd. */}
+                {fortnoxClosed ? (
+                  <p className="text-xs text-slate-500">
+                    Ordern är fakturerad i Fortnox och tar inte emot fler ändringar. Rättningar går
+                    att göra här i CRM, men når inte kundens orderbekräftelse eller faktura.
+                  </p>
+                ) : workOrder.fortnox_order_sync_status !== 'synced' ? (
                   <button type="button" onClick={pushToFortnox} disabled={pushingFortnox} className={cn(crm.saveButton, 'h-10 w-full')}>
                     {pushingFortnox ? 'Skickar…' : workOrder.fortnox_order_sync_status === 'failed' ? 'Försök igen' : 'Skicka till Fortnox'}
                   </button>

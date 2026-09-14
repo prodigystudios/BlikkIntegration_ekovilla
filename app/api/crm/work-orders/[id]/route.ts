@@ -255,7 +255,25 @@ export async function PATCH(req: Request, context: RouteContext) {
     // the save has already succeeded, and a Fortnox outage must not make it look like it didn't.
     // The reason is handed back so the UI can say the save landed but the sync didn't.
     let fortnoxError: string | null = null;
-    let synced = false;
+    // Kördes Fortnox-vägen överhuvudtaget? Styr omläsningen nedan — INTE om den lyckades.
+    // En synk som kastade har redan stämplat om synkstatusen, och den stämpeln måste nå klienten.
+    let attemptedPush = false;
+
+    // 🧨 EN FAKTURERAD ORDER TAR INTE EMOT ÄNDRINGAR — OCH DET MÅSTE SÄGAS HÖGT.
+    //
+    // `syncWorkOrderHeaderToFortnox` svarar `null` på ett fakturerat dokument. Inte ett fel: den
+    // vägen får medvetet inte stämpla 'failed' för att någon rättar ett telefonnummer på en stängd
+    // order. Men routen läste `null` som "inget att rapportera" och svarade `fortnox_error: null`,
+    // så klienten visade grön "Arbetsorder sparad" — för en ändring som aldrig nådde kundens
+    // orderbekräftelse eller faktura.
+    //
+    // ⚠️ Speglingen går inte att rädda här (Fortnox avvisar skrivningen mot ett fakturerat
+    // dokument), men tystnaden går. Sparningen landar som förut; det är beskedet som ändras.
+    //
+    // Mätt i drift 2026-09-09 på Fortnox-order 131: märkningen fanns i CRM, fältet var tomt hos
+    // Fortnox på både ordern och fakturan, och ingenting på skärmen antydde det.
+    const invoicedInFortnox = Boolean(current?.fortnox_order_number)
+      && (current?.status === 'invoiced' || Boolean(current?.fortnox_invoice_number));
     // ⚠️ Den fulla pushen bara för en order som REDAN ligger i Fortnox och inte är fakturerad.
     //
     //  • Utan nummer skulle `updateWorkOrderInFortnox` falla tillbaka på create och alltså SKAPA
@@ -268,24 +286,35 @@ export async function PATCH(req: Request, context: RouteContext) {
       && !current?.fortnox_invoice_number
       && current?.status !== 'invoiced';
     if (rotPush || touchesFortnox) {
-      try {
-        // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
-        // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
-        // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
-        synced = rotPush
-          ? Boolean(await updateWorkOrderInFortnox(context.params.id))
-          : (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
-      } catch (e) {
-        if (!(e instanceof FortnoxNotConnectedError)) {
-          fortnoxError = friendlyFortnoxMessage(e);
-          console.error('[fortnox] Arbetsordersynk misslyckades:', (e as Error)?.message);
+      if (invoicedInFortnox) {
+        // Ingen push — den kan bara avvisas. Men svaret ska säga vad som faktiskt gäller.
+        fortnoxError = 'Ordern är fakturerad i Fortnox och dokumentet kan inte längre ändras. '
+          + 'Ändringen är sparad i CRM, men syns inte på kundens orderbekräftelse eller faktura.';
+      } else {
+        attemptedPush = true;
+        try {
+          // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
+          // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
+          // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
+          if (rotPush) await updateWorkOrderInFortnox(context.params.id);
+          else await syncWorkOrderHeaderToFortnox(context.params.id);
+        } catch (e) {
+          if (!(e instanceof FortnoxNotConnectedError)) {
+            fortnoxError = friendlyFortnoxMessage(e);
+            console.error('[fortnox] Arbetsordersynk misslyckades:', (e as Error)?.message);
+          }
         }
       }
     }
 
-    // Re-read only when Fortnox was actually touched, so the returned row carries the fresh
-    // sync status/timestamp instead of the pre-sync one the update returned.
-    if (synced || fortnoxError) {
+    // Läs om raden så fort Fortnox-vägen KÖRDES — inte bara när den lyckades.
+    //
+    // ⚠️ Villkoret stod tidigare på "lyckades eller felade", och missade därför just det fall där
+    // sanningen bara finns i den omlästa raden: `FortnoxNotConnectedError` sväljs här (en sparning
+    // ska inte se misslyckad ut för att Fortnox är frånkopplat), men synkvägen har redan hunnit
+    // stämpla ner statusen till 'not_synced'. Utan omläsningen svarade routen med raden som
+    // `updateCrmWorkOrder` returnerade FÖRE synkförsöket, och ordersidan fortsatte visa "Synkad".
+    if (attemptedPush || fortnoxError) {
       const fresh = await getCrmWorkOrder(supabase, context.params.id);
       return ok({ item: fresh.data ?? data, fortnox_error: fortnoxError });
     }

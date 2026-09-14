@@ -473,13 +473,16 @@ async function resolveFortnoxCustomerNumberById(
 export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
-  const { data: workOrder, error } = await supabase
+  // Idempotenskollen går på en SMAL läsning, före claimen. Hela underlaget läses först när pushen
+  // är vår (se omläsningen inne i try:t) — en order som redan ligger i Fortnox ska varken claimas
+  // eller läsas i sin helhet.
+  const { data: existing, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
+    .select('id, fortnox_order_number')
     .eq('id', workOrderId)
-    .single<WorkOrderRow>();
+    .single<{ id: string; fortnox_order_number: string | null }>();
 
-  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+  if (error || !existing) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
   // Idempotency: if this work order is already linked to a Fortnox order, don't try
   // to create another one — Fortnox rejects a second createorder on the same offer
@@ -491,8 +494,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   // sparas nu FÖRE rad-PUT:en (se createorder-grenen nedan), just för att en order som finns i
   // Fortnox aldrig ska tappas bort. En kvarstående 'failed' hade alltså kunnat tvättas till
   // 'synced' av ett anrop som inte skickade en enda rad — precis det läge fakturaspärren finns för.
-  if (workOrder.fortnox_order_number) {
-    return { fortnox_order_number: workOrder.fortnox_order_number };
+  if (existing.fortnox_order_number) {
+    return { fortnox_order_number: existing.fortnox_order_number };
   }
 
   // Atomically claim the push so a concurrent request can't create a SECOND Fortnox order
@@ -504,6 +507,29 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
+    // 🧨 UNDERLAGET LÄSES EFTER CLAIMEN, ALDRIG FÖRE.
+    //
+    // Allt mellan läsningen och POST:en nedan är nätverksanrop — kundnummeruppslag mot Fortnox,
+    // byggmomsen, ansvarigs namn. Det tar sekunder, och en sparning som landar i det fönstret
+    // skrivs till databasen men når aldrig payloaden: pushen bygger headern ur den rad den läste
+    // innan den ens ägde pushen.
+    //
+    // ⚠️ OCH SÄLJAREN FÅR INGEN ANING. PATCH-vägens header-synk hoppar tyst över en order som ännu
+    // saknar `fortnox_order_number` (se syncWorkOrderHeaderToFortnox) — och numret sparas först
+    // EFTER POST:en här. Båda vägarna rapporterar alltså framgång medan fältet tappas mellan dem.
+    //
+    // Mätt i drift 2026-09-09 på arbetsorder AO-20260909-06D6B7 (Fortnox-order 131): märkningen
+    // "58184" stod kvar i CRM medan Fortnox-orderns "Ert referensnummer" var tomt — och fakturan
+    // ur den ärvde tomheten, eftersom `createinvoice` kopierar orderns huvud. Claimen sattes
+    // 12:01:50, stämpeln 'synced' 12:02:29: ett 39 sekunder brett fönster.
+    const { data: workOrder, error: readError } = await supabase
+      .from('crm_work_orders')
+      .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
+      .eq('id', workOrderId)
+      .single<WorkOrderRow>();
+
+    if (readError || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
     // Rader utan prisförankring blir Price 0 på ordern (och carve 0 → ingen ROT-arbetsrad). Ordern
     // ärver offertens rader rakt av, så en offert från 900-stubbens tid bär felet vidare hit.
     // Avskrivna rader räknas bort — de pushas inte alls. Inne i try:t så catch:en stämplar 'failed'.
