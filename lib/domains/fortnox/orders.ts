@@ -486,8 +486,23 @@ async function resolveFortnoxCustomerNumberById(
  *
  * Att flytta läsningen hjälper inte: fönstret är det långsamma arbetet NEDSTRÖMS om den. Läget
  * upptäcks därför i efterhand i stället — skiljer sig raden från den vi byggde huvudet ur, speglas
- * huvudet om. Bara huvudet: raderna kom från samma läsning, men de redigeras på en egen route som
- * har sin egen synk.
+ * dokumentet om.
+ *
+ * ⚠️ VILKEN VÄG REPARATIONEN TAR BEROR PÅ VAD SOM SKILJER SIG, och det är inte en detalj:
+ *
+ *  • snapshot / arbetsadress / ansvarig → header-synken räcker. De bor alla i orderhuvudet.
+ *  • `rot_details` → den FULLA pushen. ROT delar sig i två halvor på dokumentet: en VILLAS
+ *    fastighetsbeteckning blir headerns `YourOrderNumber`, men en BOSTADSRÄTTS uppgifter blir en
+ *    TEXTRAD (se resolveRotReference), och header-synken släpper medvetet radhalvan. En BRF-order
+ *    vars uppgifter rättades mitt i pushen hade alltså upptäckts, "reparerats" med en header-PUT
+ *    som inte bar något ROT — och stämplats 'synced'. Raderna hör hit just för att `rot_details`
+ *    redigeras på DEN HÄR routen, till skillnad från `line_items` som har sin egen.
+ *
+ * ⛔ KVARSTÅENDE, OLAGBART: flippas `rot_details.enabled` inne i fönstret går det inte att rätta
+ * alls. `TaxReductionType` sätts bara vid create, och PATCH-routens 409-spärr mot det keyar på
+ * `fortnox_order_number` — som är null ända tills POST:en landat. Den fulla pushen nedan avvisas då
+ * av Fortnox med 2004021 och stämplar 'failed', vilket är rätt utfall: ordern ska inte kunna se
+ * komplett ut. Att tiga hade varit värre.
  *
  * ⚠️ ETT FEL HÄR FÄLLER INTE PUSHEN. Ordern ÄR skapad och numret sparat — att kasta hade fått
  * anroparen att tro att inget hänt, och nästa försök hade gått idempotensvägen ändå.
@@ -546,15 +561,19 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return;
 
-  if (same(fresh.customer_snapshot, atBuild.customer_snapshot)
-    && same(fresh.work_address, atBuild.work_address)
-    && same(fresh.assigned_to, atBuild.assigned_to)
-    && same(fresh.rot_details, atBuild.rot_details)) return;
+  // ROT bär en RADHALVA och måste därför gå den fulla pushen — se rutan ovan.
+  const rotDiffers = !same(fresh.rot_details, atBuild.rot_details);
+  const headerDiffers = !same(fresh.customer_snapshot, atBuild.customer_snapshot)
+    || !same(fresh.work_address, atBuild.work_address)
+    || !same(fresh.assigned_to, atBuild.assigned_to);
+
+  if (!rotDiffers && !headerDiffers) return;
 
   try {
-    await syncWorkOrderHeaderToFortnox(workOrderId);
+    if (rotDiffers) await updateWorkOrderInFortnox(workOrderId);
+    else await syncWorkOrderHeaderToFortnox(workOrderId);
   } catch (e) {
-    console.error('[fortnox] Omspegling av huvudet efter orderskapandet misslyckades:', (e as Error)?.message);
+    console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
   }
 }
 

@@ -265,9 +265,14 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(fortnoxPut).toHaveBeenCalled();
   });
 
-  // Samma sak för ROT: fastighetsbeteckningen ÄR villaorderns YourOrderNumber, och en ROT-ändring
-  // triggar ingen push alls på egen hand (rotPush kräver ett ordernummer som ännu inte finns).
-  it('speglar om huvudet när ROT-uppgifterna ändrades medan pushen pågick', async () => {
+  // 🧨 ROT MÅSTE GÅ DEN FULLA PUSHEN, inte header-synken. Uppgifterna delar sig i två halvor på
+  // dokumentet: en villas beteckning blir headerns YourOrderNumber, men en BOSTADSRÄTTS blir en
+  // TEXTRAD — och header-synken släpper medvetet radhalvan. En BRF-order vars uppgifter rättades
+  // mitt i pushen hade alltså "reparerats" med en PUT utan något ROT, och stämplats 'synced'.
+  //
+  // Att PUT:en bär OrderRows är alltså hela skillnaden mellan de två vägarna, och därför det testet
+  // mäter — inte bara att någon PUT skedde.
+  it('går den FULLA pushen när ROT-uppgifterna ändrades medan pushen pågick', async () => {
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
       afterClaim: baseRow,
@@ -276,13 +281,15 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
         fortnox_order_number: '131',
         status: 'in_progress',
         fortnox_invoice_number: null,
-        rot_details: { enabled: true, property_designation: 'Haggården 6:3' },
+        rot_details: { enabled: true, brf_org_number: '769600-1234' },
       },
     });
 
     await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
     expect(fortnoxPut).toHaveBeenCalled();
+    // Header-synken skickar `{ Order: header }` UTAN rader. Den fulla pushen bär dem.
+    expect(puttedOrder()).toHaveProperty('OrderRows');
   });
 
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
