@@ -244,6 +244,47 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(puttedOrder().YourOrderNumber).toBe('SPARAD-UNDER-PUSHEN');
   });
 
+  // ⚠️ ALLA FYRA INGÅNGARNA till huvudet måste bevakas, inte bara snapshot + adress. `assigned_to`
+  // bär OurReference, och en ansvarig som byts mitt i pushen går just den tysta vägen: PATCH:en ser
+  // ingen order i Fortnox än och svarar null, pushen bär det gamla namnet.
+  it('speglar om huvudet när ansvarig byttes medan pushen pågick', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        assigned_to: 'user-2',
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).toHaveBeenCalled();
+  });
+
+  // Samma sak för ROT: fastighetsbeteckningen ÄR villaorderns YourOrderNumber, och en ROT-ändring
+  // triggar ingen push alls på egen hand (rotPush kräver ett ordernummer som ännu inte finns).
+  it('speglar om huvudet när ROT-uppgifterna ändrades medan pushen pågick', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        rot_details: { enabled: true, property_designation: 'Haggården 6:3' },
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).toHaveBeenCalled();
+  });
+
   // …och ingen extra skrivning när ingenting ändrades. Annars hade varje orderskapande kostat en
   // PUT i onödan, på den enda väg som saknar dedup-skydd.
   it('speglar inte om huvudet när raden är oförändrad', async () => {

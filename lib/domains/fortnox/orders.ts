@@ -525,20 +525,31 @@ function same(a: unknown, b: unknown): boolean {
 async function resyncHeaderIfSnapshotChangedDuringPush(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   workOrderId: string,
-  snapshotAtBuild: CustomerSnapshot | null,
-  workAddressAtBuild: WorkOrderAddress | null,
+  atBuild: {
+    customer_snapshot: CustomerSnapshot | null;
+    work_address: WorkOrderAddress | null;
+    assigned_to: string | null;
+    rot_details: RotDetails | null;
+  },
 ): Promise<void> {
+  // ⚠️ ALLA FYRA INGÅNGARNA till buildOrderHeader, inte bara de två uppenbara: `assigned_to` bär
+  // OurReference och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett
+  // första utkast läste bara snapshot + adress och lämnade därmed halva problemet öppet — en
+  // ansvarig som byttes mitt i pushen gick just den tysta vägen som hela ändringen finns för.
   const { data } = await supabase
     .from('crm_work_orders')
-    .select('customer_snapshot, work_address')
+    .select('customer_snapshot, work_address, assigned_to, rot_details')
     .eq('id', workOrderId)
     .maybeSingle();
 
-  const fresh = data as { customer_snapshot: CustomerSnapshot | null; work_address: WorkOrderAddress | null } | null;
+  const fresh = data as typeof atBuild | null;
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return;
 
-  if (same(fresh.customer_snapshot, snapshotAtBuild) && same(fresh.work_address, workAddressAtBuild)) return;
+  if (same(fresh.customer_snapshot, atBuild.customer_snapshot)
+    && same(fresh.work_address, atBuild.work_address)
+    && same(fresh.assigned_to, atBuild.assigned_to)
+    && same(fresh.rot_details, atBuild.rot_details)) return;
 
   try {
     await syncWorkOrderHeaderToFortnox(workOrderId);
@@ -612,6 +623,14 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
     // ⚠️ Statusen stämplas 'not_synced', inte 'synced': vi skickade ingenting och vet inte vad den
     // andra pushen hann med. Att claimen redan skrivit 'pending' får inte bli kvar — pending har
     // ingen tidsgräns för `assertOrderRowsSynced` och hade spärrat faktureringen tyst.
+    //
+    // ⚖️ MEDVETET VAL, och det kostar något: lyckades den andra pushen står ordern nu som "Ej
+    // synkad" tills någon trycker "Synka om", och faktureringen är spärrad så länge. Alternativet
+    // — att gissa 'synced' — vore värre åt fel håll: claimen har redan skrivit över den andra
+    // pushens egen stämpel, så ett 'failed' därifrån hade tvättats bort och ordern sett komplett ut
+    // medan Fortnox höll andra rader än vi. `fortnox_order_synced_at` går inte att skilja på:
+    // tidsstämpeln kan lika gärna komma från en äldre lyckad synk. Hellre ett synligt extra
+    // knapptryck än en tyst osanning — samma regel som resten av synkstatusen följer.
     if (workOrder.fortnox_order_number) {
       await supabase
         .from('crm_work_orders')
@@ -767,9 +786,12 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       .eq('id', workOrderId);
 
     // Hann någon spara medan pushen pågick? Då bär Fortnox fel huvud — spegla om det.
-    await resyncHeaderIfSnapshotChangedDuringPush(
-      supabase, workOrderId, workOrder.customer_snapshot, workOrder.work_address,
-    );
+    await resyncHeaderIfSnapshotChangedDuringPush(supabase, workOrderId, {
+      customer_snapshot: workOrder.customer_snapshot,
+      work_address: workOrder.work_address,
+      assigned_to: workOrder.assigned_to,
+      rot_details: workOrder.rot_details ?? null,
+    });
 
     return { fortnox_order_number: fortnoxOrderNumber };
   } catch (e) {
