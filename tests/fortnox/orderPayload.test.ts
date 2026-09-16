@@ -150,6 +150,43 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(order.CustomerNumber).toBe('55');
   });
 
+  // ⚖️ TITELN SOM TEXTRAD. Fortnox har inget fält för projektnamnet, och `Remarks` går inte att
+  // använda: det bär Ekovillas villkorstext och kopieras INTE av createinvoice (uppmätt 2026-09-16).
+  // Raderna kopieras däremot exakt (order 161→faktura 2051), så textraden är enda vägen till både
+  // orderbekräftelsen och fakturan.
+  //
+  // 🧨 Märkningen står KVAR i YourOrderNumber — den upprepas bara i raden. Flyttades den DIT skulle
+  // kundens ekonomiavdelning tappa fältet de matchar fakturan mot sin beställning på.
+  it('lägger titel och märkning som textrad, utan att röra YourOrderNumber', async () => {
+    installSupabaseMock({ beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null }, afterClaim: baseRow });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    const order = postedOrder();
+    // Referensfältet är ORÖRT — märkningen, inte titeln.
+    expect(order.YourOrderNumber).toBe('58184');
+
+    const rows = order.OrderRows as Array<Record<string, unknown>>;
+    const note = rows[rows.length - 1];
+    expect(note.Description).toBe('Projekt: Beställning från Ekovilla Lager  Märkning: 58184');
+    // Textraden får inte bli en prissatt artikelrad.
+    expect(note.Price).toBe(0);
+    expect(note.ArticleNumber ?? null).toBeNull();
+  });
+
+  // Utan märkning ska raden bara bära titeln — ingen tom "Märkning: ".
+  it('bär bara titeln när märkning saknas', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, label: null } },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    const rows = postedOrder().OrderRows as Array<Record<string, unknown>>;
+    expect(rows[rows.length - 1].Description).toBe('Projekt: Beställning från Ekovilla Lager');
+  });
+
   // En order utan märkning ska inte få en påhittad, och nyckeln ska UTELÄMNAS — inte skickas som
   // tom sträng. Fortnox behåller sitt eget värde för ett fält vi inte skickar, vilket är rätt för
   // en order vi inte har någon åsikt om (se orderReferenceNumberField).

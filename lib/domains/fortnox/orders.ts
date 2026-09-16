@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -143,7 +143,7 @@ function orderTextRow(description: string, vat = 0): FortnoxOrderRow {
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
+export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, documentNote: string | null = null): FortnoxOrderRow[] {
   // Written-off rows are dropped from the document: the customer is never billed for work that
   // wasn't performed, and the Fortnox order total has to match what the order is actually worth.
   // They stay in line_items (indices are load-bearing for the invoice rounds) — only the push omits.
@@ -213,10 +213,11 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
   const laborRow = rotLaborRow(carvedLaborTotal, reverseVat ? 0 : vatPercent);
   if (laborRow) rows.push({ ...laborRow, OrderedQuantity: 1, DeliveredQuantity: 1 });
 
-  // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
-  // API field for it. Only relevant for a standalone order with ROT (the offer→order path inherits
-  // the offer's rows, which already carry it); the caller passes null otherwise.
-  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  // Dokumentets textrad sist: orderns TITEL (+ kundens märkning) och, för en ROT-order,
+  // fastighetsbeteckningen/BRF org.nr. Fortnox har inget API-fält för någondera, och raderna är det
+  // enda som `createinvoice` kopierar vidare till fakturan (uppmätt 2026-09-16). Byggs ihop till EN
+  // sträng i buildOrderHeader — två textrader i följd gör Fortnox till en felaktig prissatt rad.
+  return appendFortnoxTextNote(rows, documentNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
 }
 
 // The header fields we own on a Fortnox order. Everything else on the document (customer, dates,
@@ -342,6 +343,8 @@ export function orderReferenceNumberField(
 
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
+  /** Orderns titel — blir en textrad på dokumentet (buildOrderProjectNote). */
+  project_name?: string | null;
   customer_snapshot: CustomerSnapshot | null;
   work_address: WorkOrderAddress | null;
   // ⚠️ ORDERNS EGNA ROT-uppgifter, och det är DE som gäller. Se resolveOrderRotDetails.
@@ -413,13 +416,18 @@ async function buildOrderHeader(
   // Kvar blir en enda väg som kan misslyckas, och den är icke-fatal: sparningen har redan landat
   // och säljaren får felet i en toast.
   opts?: { allowReferenceClear?: boolean },
-): Promise<{ header: FortnoxOrderHeaderFields; rotPropertyNote: string | null }> {
+): Promise<{ header: FortnoxOrderHeaderFields; documentNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
   const { referenceNumber, propertyNote } = resolveRotReference(
     resolveOrderRotDetails(workOrder, linkedQuote), snapshot?.label, rotEnabled);
 
   const yourReference = resolveYourReference(snapshot);
+
+  // Titeln (+ märkningen) som textrad, hopslagen med ROT-noten till EN rad. Två textrader i följd
+  // gör Fortnox till en felaktig prissatt rad — samma skäl som buildRotPropertyNote slår ihop sina.
+  const documentNote = [buildOrderProjectNote(workOrder.project_name, snapshot?.label), propertyNote]
+    .filter(Boolean).join('  ') || null;
 
   return {
     header: {
@@ -435,7 +443,7 @@ async function buildOrderHeader(
       // buildEndContactNote.
       ...buildOrderDeliveryFields(workOrder.work_address, snapshot),
     },
-    rotPropertyNote: propertyNote,
+    documentNote,
   };
 }
 
@@ -868,8 +876,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
       // ⛔ INGEN rensning här. Dokumentet skapas i det här anropet — det finns ingenting att rensa,
       // och `createorder` är den enda Fortnox-skrivningen utan dedup-skydd.
-      const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
-      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+      const { header, documentNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
@@ -1128,10 +1136,10 @@ async function putOrderHeaderAndRows(
   // och varje "Synka om" ha kastat, med ordern kvar på 'failed' och faktureringen spärrad av
   // assertOrderRowsSynced. Nu är det den ENDA vägen som levererar båda halvorna av en ROT-ändring
   // (referensnumret i headern, ROT-noten som rad), så den måste kunna rensa.
-  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
+  const { header, documentNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
     allowReferenceClear: true,
   });
-  const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+  const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
   await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
 
@@ -1186,7 +1194,7 @@ export async function updateWorkOrderInFortnox(
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, fortnox_order_number, line_items, rot_details')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, project_name, fortnox_order_number, line_items, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
