@@ -1367,6 +1367,114 @@ export async function deleteCrmWorkOrderFile(
   return query.select('id, storage_bucket, storage_path').maybeSingle();
 }
 
+// ── Framdriftsrapporter ─────────────────────────────────────────────────────
+// Meter landgång, antal brandmattor, "Hus A". Egen bok, medvetet skild från säckarnas
+// (ops_segment_reports): `sacks_blown` summeras blint av fyra läsare, och en meterrad där hade
+// blivit tysta säckar i depån och fel materialkostnad i TB1/TB2. Se
+// 20260916_crm_work_order_progress_reports.sql och lib/domains/crm/workOrderProgress.ts.
+
+const crmWorkOrderProgressSelect = `
+  id,
+  work_order_id,
+  report_day,
+  line_item_id,
+  work_item,
+  quantity,
+  unit,
+  location,
+  note,
+  created_by,
+  created_by_name,
+  created_at
+`;
+
+// Orderns rader, för att kunna lösa ett inkommet `line_item_id` mot ett faktiskt moment. Smal med
+// flit — hela ordern behövs inte, och POST:en ska inte betala för den.
+export async function getCrmWorkOrderLineItems(supabase: SupabaseClient, workOrderId: string) {
+  return supabase
+    .from('crm_work_orders')
+    .select('id, line_items')
+    .eq('id', workOrderId)
+    .maybeSingle();
+}
+
+// Nyaste först, samma ordning som filerna och säckrapporterna. Går genom sessionsklienten: RLS
+// avgör vem som ser vad (kontoret via crm.workorder.read, besättningen via is_user_on_work_order).
+export async function listCrmWorkOrderProgressReports(supabase: SupabaseClient, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_progress_reports')
+    .select(crmWorkOrderProgressSelect)
+    .eq('work_order_id', workOrderId)
+    .order('created_at', { ascending: false });
+}
+
+/**
+ * Skriver framdriftsrader.
+ *
+ * ⚠️ MÅSTE GÅ GENOM SESSIONSKLIENTEN, aldrig admin. Det är RLS som auktoriserar: insert-policyn
+ * kräver `created_by = auth.uid()` OCH antingen kontorets skrivnyckel eller besättning på jobbet.
+ * Med admin-klienten hade vilken inloggad användare som helst kunnat skriva framdrift på vilket
+ * jobb som helst, och den enda kontrollen hade varit den vi råkat skriva i routen.
+ *
+ * ⚠️ `work_order_id` sätts server-side ur rutt-parametern, och etikett/enhet ur ORDERRADEN
+ * (resolveProgressEntry) — inget av dem får komma från klienten.
+ *
+ * En insert med flera rader är EN sats: antingen landar dagens alla moment eller inget. Rad för rad
+ * hade en avvisad tredje rad lämnat två halva rader i en bok fältet bara kan städa en rad i taget.
+ */
+export async function createCrmWorkOrderProgressReports(
+  supabase: SupabaseClient,
+  rows: Array<Record<string, unknown>>,
+) {
+  return supabase.from('crm_work_order_progress_reports').insert(rows).select(crmWorkOrderProgressSelect);
+}
+
+/**
+ * EN framdriftsrad, läst för sig — för borttagningen, som måste kunna skilja "finns inte" från
+ * "får inte".
+ *
+ * ⚠️ `work_order_id` är inte överflödigt trots att id:t är unikt: utan det kan en rad på en ANNAN
+ * order läsas (och raderas) genom den här orderns adress. Samma skäl som i deleteCrmWorkOrderFile.
+ */
+export async function getCrmWorkOrderProgressReport(
+  supabase: SupabaseClient,
+  reportId: string,
+  workOrderId: string,
+) {
+  return supabase
+    .from('crm_work_order_progress_reports')
+    .select(crmWorkOrderProgressSelect)
+    .eq('id', reportId)
+    .eq('work_order_id', workOrderId)
+    .maybeSingle();
+}
+
+/**
+ * Tar bort EN framdriftsrad.
+ *
+ * ⚠️ INGEN ÄGARFILTRERING HÄR, med flit — till skillnad från deleteCrmWorkOrderFile. Regeln bor i
+ * RLS (kontoret via crm.workorder.write, rapportören via ägarskap + besättning), och en kopia i
+ * TypeScript blir förr eller senare den som svarar 200 där databasen svarar nej. DELETE:n möts av
+ * policyn, precis som skrivvägen.
+ *
+ * ⚠️ `.select().maybeSingle()`: en DELETE som inte träffar någon rad svarar `error: null`. Utan
+ * raden tillbaka hade ett RLS-nej sett ut som en lyckad borttagning, och kortet tagit bort en rad
+ * ur listan som ligger kvar i databasen.
+ */
+export async function deleteCrmWorkOrderProgressReport(
+  supabase: SupabaseClient,
+  reportId: string,
+  workOrderId: string,
+) {
+  return supabase
+    .from('crm_work_order_progress_reports')
+    .delete()
+    .eq('id', reportId)
+    .eq('work_order_id', workOrderId)
+    .select('id')
+    .maybeSingle();
+}
+
 // Besättningsfrågan, ställd till samma SECURITY DEFINER-funktion som RLS-policyerna kallar
 // (20260810_crm_work_order_crew_access.sql). Routen som gatar en skrivning måste ge SAMMA svar som
 // policyn — härleder den i stället svaret ur rollen glider de två isär, och användaren får ett
