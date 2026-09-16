@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { formatDate, formatSacks, parseSackInput } from '@/app/crm/lib/format';
+import { formatDate, formatSacks, parseQuantityInput } from '@/app/crm/lib/format';
 import { CONSTRUCTIONS, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import { groupSackReportsByConstruction, totalReportedSacks } from '@/lib/domains/planning/sackLedger';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
@@ -103,7 +103,7 @@ export default function WorkOrderSackReportCard({
   // lämnats tomt får inte tyst falla bort ur submiten — då tror hen att vinden är rapporterad.
   // Båda blir null här, och null blockerar sparningen i stället för att skriva något påhittat.
   const pickedSlugs = CONSTRUCTIONS.filter(({ slug }) => slug in picked);
-  const parsed = pickedSlugs.map(({ slug }) => ({ slug, sacks: parseSackInput(picked[slug] ?? '') }));
+  const parsed = pickedSlugs.map(({ slug }) => ({ slug, sacks: parseQuantityInput(picked[slug] ?? '') }));
   const entries: NewSackReportEntry[] = parsed.flatMap(({ slug, sacks }) =>
     sacks === null ? [] : [{ construction: slug, sacks_blown: sacks, material }],
   );

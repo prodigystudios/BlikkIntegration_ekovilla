@@ -27,6 +27,7 @@ import WorkOrderCommentsTab from './WorkOrderCommentsTab';
 import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
+import WorkOrderProgressCard from './WorkOrderProgressCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
 import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
@@ -34,6 +35,8 @@ import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { useWorkOrderActivity } from './useWorkOrderActivity';
 import { useWorkOrderFiles } from './useWorkOrderFiles';
 import { useSackReports } from './useSackReports';
+import { useProgressReports } from './useProgressReports';
+import { progressWorkItemsFromLineItems } from '@/lib/domains/crm/workOrderProgress';
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
@@ -245,6 +248,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Spåret bakom snabböversiktens tal. Skriver inga rapporter — dörr 1 och 2 gör det — men kan ta
   // bort en felrapporterad delrapport, se removeSackReport.
   const sackReports = useSackReports(workOrderId);
+  // Framdriften — meter landgång, antal brandmattor, och det fältet byggt utanför ordern. Egen bok,
+  // medvetet skild från säckarnas: se lib/domains/crm/workOrderProgress.ts. Kortet nedan är samma
+  // komponent som fältvyns, med canReport={false}.
+  const progressReports = useProgressReports(workOrderId);
   // Efterkalkylen går sin egen väg med flit — kostnadsdata får aldrig ligga i den nyttolast
   // fältvyn läser. Se app/api/crm/work-orders/[id]/after-calculation/route.ts.
   const afterCalculation = useAfterCalculation(workOrderId);
@@ -479,6 +486,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     });
   }, [workOrder?.line_items]);
   const totalSacks = useMemo(() => sackRows.reduce((sum, r) => sum + r.sacks, 0), [sackRows]);
+
+  // Orderns rapporterbara moment: antals- och meterraderna (landgång, brandmatta, sarg). Ytorna
+  // ovan hör till säckrapporten, så ett moment kan aldrig dubbelrapporteras i båda böckerna.
+  // Framdriftskortet behöver dem för att kunna skriva "45 av 120 m" — utan dem vet det bara vad som
+  // rapporterats, inte vad som är sålt.
+  const progressWorkItems = useMemo(
+    () => progressWorkItemsFromLineItems((workOrder?.line_items || []) as any[]),
+    [workOrder?.line_items],
+  );
 
   function setField<K extends keyof WorkOrderDraft>(key: K, value: WorkOrderDraft[K]) {
     setDraft((d) => (d ? { ...d, [key]: value } : d));
@@ -1250,6 +1266,23 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               isRemoving={sackReports.isRemoving}
               onDelete={removeSackReport}
               egenkontrollUrl={egenkontrollUrl}
+            />
+
+            {/* Framdriften, direkt under säckspåret: de två svarar på olika halvor av "vad har
+                gjorts på jobbet". Säckarna först — de är det vanliga arbetet — och framdriften
+                under, där landgångar och andra antals-/meterrader redovisas mot det sålda antalet.
+
+                Samma komponent som fältvyns kort, med canReport={false}: kontoret läser och
+                rättar, fältet rapporterar. Till skillnad från säckarna, där de två vyerna har egna
+                kort därför att de svarar på olika frågor (grupperat kontra kronologiskt). */}
+            <WorkOrderProgressCard
+              reports={progressReports.reports}
+              workItems={progressWorkItems}
+              loading={progressReports.loading}
+              loadError={progressReports.loadError}
+              isRemoving={progressReports.isRemoving}
+              onDelete={progressReports.remove}
+              canReport={false}
             />
 
             {/* ─── Ekonomi ────────────────────────────────────────────────────

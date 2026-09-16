@@ -166,6 +166,49 @@ export const createFinalSackReportSchema = z.object({
     .max(40),
 });
 
+// Framdriftsrapport från fältet — meter landgång, antal brandmattor, "Hus A".
+//
+// ⚠️ DATUM, PLATS OCH NOTERING LIGGER PÅ SUBMITEN, inte per moment, och stämplas på varje rad. En
+// besättning arbetar i praktiken på ETT hus en dag och gör flera moment där, så per-momentfält hade
+// varit tre gånger så mycket knappande på en telefon för samma svar. Lagringen är ändå per rad, så
+// kontoret kan summera per plats — och två hus samma dag blir två submits.
+//
+// ⚠️ `work_item` och `unit` skickas BARA för fritextmoment. För ett kopplat moment (line_item_id)
+// IGNORERAS klientens värden och etikett/enhet snapshottas ur orderraden — se resolveProgressEntry.
+// Fälten är därför nullbara här: schemat kan inte uttrycka "antingen id eller etikett" utan att
+// lägga regeln på två ställen, och den bor i domänen där den är testad.
+export const createProgressReportSchema = z.object({
+  report_day: dateSchema,
+  location: z.preprocess(normalizeOptionalText, z.string().max(80, 'Platsen är för lång').nullable()).optional().default(null),
+  note: z.preprocess(normalizeOptionalText, z.string().max(2000).nullable()).optional().default(null),
+  entries: z
+    .array(
+      z.object({
+        line_item_id: z.preprocess(normalizeOptionalText, z.string().max(80).nullable()).optional().default(null),
+        work_item: z.preprocess(normalizeOptionalText, z.string().max(120, 'Momentets namn är för långt').nullable()).optional().default(null),
+        // Max matchar kolumnens numeric(10,2) — en databasfakta, inte en påhittad affärsregel.
+        // 0 är TILLÅTET och betyder något: "vi var på Hus C men kom inte in" är en rapport.
+        quantity: z.coerce.number().finite().min(0).max(99999999.99),
+        unit: z.preprocess(normalizeOptionalText, z.string().max(30).nullable()).optional().default(null),
+      }),
+    )
+    .min(1, 'Minst ett moment måste rapporteras')
+    // Taket är en dubblettspärr i förklädnad, inte en affärsregel: en order har en handfull
+    // antals-/meterrader, och en submit med fler än så är ett fel någon annanstans.
+    .max(20, 'För många moment i en rapport')
+    // Samma moment två gånger i EN submit är nästan alltid ett dubbeltryck — och boken kan bara
+    // rättas en rad i taget. Kopplade moment jämförs på id:t, fritextmoment på etikett + enhet
+    // (skiftlägesokänsligt), samma nyckling som grupperingen använder.
+    .refine((entries) => {
+      const keys = entries.map((e) =>
+        e.line_item_id
+          ? `line:${e.line_item_id}`
+          : `free:${String(e.work_item ?? '').trim().toLocaleLowerCase('sv')}|${String(e.unit ?? '').trim().toLocaleLowerCase('sv')}`,
+      );
+      return new Set(keys).size === keys.length;
+    }, 'Samma moment kan bara rapporteras en gång per rapport'),
+});
+
 export const createWorkOrderCommentSchema = z.object({
   body: z.string().trim().min(1, 'Kommentar krävs'),
   // Ids of users @-mentioned in the body (client-supplied; validated server-side before notifying).
