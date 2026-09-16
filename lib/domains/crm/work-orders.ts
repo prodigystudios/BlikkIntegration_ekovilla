@@ -13,6 +13,19 @@ import {
 } from './workOrderReadiness';
 import type { CreateWorkOrderFileInput } from './workOrderFiles/types';
 
+// Reglerna för vad som når Fortnox-dokumentet bor i en egen, beroendefri modul — annars blir
+// importen från `fortnox/orders` en cykel via `fortnox/partialInvoices`. Re-exporteras här så
+// befintliga importvägar är oförändrade.
+export {
+  isFortnoxOrderClosed,
+  workOrderMirroredFieldsChanged,
+  workOrderClearIsUnexpressible,
+  MIRRORED_WORK_ADDRESS_KEYS,
+  MIRRORED_SNAPSHOT_KEYS,
+  ROT_DOCUMENT_KEYS,
+} from './workOrderSyncFields';
+import { ROT_DOCUMENT_KEYS } from './workOrderSyncFields';
+
 export const crmWorkOrderSelect = `
   id,
   quote_id,
@@ -709,16 +722,6 @@ export function mergeWorkOrderSnapshotOverrides(
  */
 export const ROT_EDITABLE_KEYS = ['enabled', 'property_designation', 'rot_percent', 'max_deduction', 'brf_org_number'] as const;
 
-/**
- * De ROT-fält som faktiskt NÅR FORTNOX-DOKUMENTET.
- *
- * ⚠️ `rot_percent` och `max_deduction` står medvetet UTANFÖR. De läses bara av `pricing.ts` för
- * vår egen preliminära "Att betala" — Fortnox räknar det verkliga avdraget själv och får aldrig
- * siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT
- * (plus `assertLineItemsArePriced`, som kan stämpla 'failed' och spärra faktureringen) för en
- * ändring dokumentet aldrig ser.
- */
-export const ROT_DOCUMENT_KEYS = ['enabled', 'property_designation', 'brf_org_number'] as const;
 
 export function mergeWorkOrderRotDetails(
   current: Record<string, unknown> | null | undefined,

@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -111,12 +111,21 @@ export async function PATCH(req: Request, context: RouteContext) {
       rot_details?: Record<string, unknown> | null;
       fortnox_order_number?: string | null;
       fortnox_invoice_number?: string | null;
+      // Skiljer helfakturering (Fortnox-ordern stängd) från delfakturering (den är öppen).
+      partial_invoicing_started_at?: string | null;
+      // Speglade fält vi måste kunna JÄMFÖRA mot, inte bara skriva — se mirroredFieldChanged.
+      assigned_to?: string | null;
+      work_address?: Record<string, unknown> | null;
     };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
       Boolean(updateInput.contact) || updateInput.your_reference !== undefined
       || Boolean(updateInput.end_contact) || updateInput.label !== undefined;
-    if (touchesSnapshot || touchesRot || updateInput.status) {
+    // ⚠️ `touchesFortnox` MÅSTE stå med i villkoret. `work_address` och `assigned_to` speglas till
+    // Fortnox men vandrar inte genom snapshoten, så en PATCH som bara bär dem hade lämnat `current`
+    // null — och då hade både `invoicedInFortnox` och `mirroredFieldChanged` läst tomt och tigit.
+    // Att det inte syns i drift beror bara på att varje anropare råkar skicka `status` också.
+    if (touchesSnapshot || touchesRot || touchesFortnox || updateInput.status) {
       const currentRead = await getCrmWorkOrder(supabase, context.params.id);
       // 🧨 FAIL-CLOSED PÅ LÄSFELET. Snapshoten skrivs read-merge-write, så en misslyckad läsning
       // gav `null` → merge mot `{}` → kolumnen ersattes av BARA överlagringarna. Personnummer,
@@ -136,6 +145,26 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
       current = currentRead.data as WoCurrent | null;
     }
+
+    // Ändrades något som faktiskt NÅR kundens dokument — eller skickade klienten bara med fälten?
+    // Regeln (med sina tre normaliseringar) bor i domänen och är testad där.
+    //
+    // ⚠️ Måste beräknas HÄR, före merge-blocket: det raderar `label` och `your_reference` ur
+    // updateInput så fort de vandrat in i snapshoten.
+    // ⚠️ En RENSNING kan header-synken inte uttrycka — buildOrderHeader utelämnar tomma värden, så
+    // PUT:en lyckas medan Fortnox behåller sitt gamla värde. Beräknas här av samma skäl som raden
+    // nedan: merge-blocket raderar fälten ur updateInput strax efter.
+    const clearIsUnexpressible = workOrderClearIsUnexpressible(current, {
+      ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+      ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
+    });
+
+    const mirroredFieldChanged = workOrderMirroredFieldsChanged(current, {
+      ...('label' in updateInput ? { label: updateInput.label } : {}),
+      ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+      ...('assigned_to' in updateInput ? { assigned_to: updateInput.assigned_to } : {}),
+      ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
+    });
 
     // Every snapshot override merges into the (jsonb) customer_snapshot with a read-merge-write so
     // the other snapshot fields (personnummer, addresses, reverse_vat) survive. The rule itself
@@ -255,7 +284,26 @@ export async function PATCH(req: Request, context: RouteContext) {
     // the save has already succeeded, and a Fortnox outage must not make it look like it didn't.
     // The reason is handed back so the UI can say the save landed but the sync didn't.
     let fortnoxError: string | null = null;
-    let synced = false;
+    // Kördes Fortnox-vägen överhuvudtaget? Styr omläsningen nedan — INTE om den lyckades.
+    // En synk som kastade har redan stämplat om synkstatusen, och den stämpeln måste nå klienten.
+    let attemptedPush = false;
+
+    // 🧨 EN FAKTURERAD ORDER TAR INTE EMOT ÄNDRINGAR — OCH DET MÅSTE SÄGAS HÖGT.
+    //
+    // `syncWorkOrderHeaderToFortnox` svarar `null` på ett fakturerat dokument. Inte ett fel: den
+    // vägen får medvetet inte stämpla 'failed' för att någon rättar ett telefonnummer på en stängd
+    // order. Men routen läste `null` som "inget att rapportera" och svarade `fortnox_error: null`,
+    // så klienten visade grön "Arbetsorder sparad" — för en ändring som aldrig nådde kundens
+    // orderbekräftelse eller faktura.
+    //
+    // ⚠️ Speglingen går inte att rädda här (Fortnox avvisar skrivningen mot ett fakturerat
+    // dokument), men tystnaden går. Sparningen landar som förut; det är beskedet som ändras.
+    //
+    // Mätt i drift 2026-09-09 på Fortnox-order 131: märkningen fanns i CRM, fältet var tomt hos
+    // Fortnox på både ordern och fakturan, och ingenting på skärmen antydde det.
+    // ⚠️ Speglar EXAKT syncWorkOrderHeaderToFortnox null-villkor, via samma delade regel — annars
+    // larmar routen om en ändring synken gärna hade skickat, eller tiger om en den inte kan.
+    const invoicedInFortnox = Boolean(current?.fortnox_order_number) && isFortnoxOrderClosed(current);
     // ⚠️ Den fulla pushen bara för en order som REDAN ligger i Fortnox och inte är fakturerad.
     //
     //  • Utan nummer skulle `updateWorkOrderInFortnox` falla tillbaka på create och alltså SKAPA
@@ -263,18 +311,52 @@ export async function PATCH(req: Request, context: RouteContext) {
     //    just därför). En order som ännu inte pushats får sin ROT vid create ändå.
     //  • En fakturerad order är stängd hos Fortnox: en rad-PUT avvisas, och statusen hade
     //    stämplats 'failed' av en sparning som egentligen bara rörde CRM.
+    // ⚠️ SAMMA stängd-regel som larmet ovan. Med det gamla testet (`!fortnox_invoice_number &&
+    // status !== 'invoiced'`) föll en DELfakturerad order mellan stolarna: `invoicedInFortnox` var
+    // falskt (inget larm) och `rotPush` falskt (ingen push), så ett rättat BRF org.nr sparades,
+    // rapporterades grönt och nådde aldrig ROT-textraden i Fortnox.
     const rotPush = rotChanged
       && Boolean(current?.fortnox_order_number)
-      && !current?.fortnox_invoice_number
-      && current?.status !== 'invoiced';
-    if (rotPush || touchesFortnox) {
+      && !isFortnoxOrderClosed(current);
+    if (invoicedInFortnox) {
+      // Ingen push — Fortnox avvisar varje skrivning mot ett fakturerat dokument. Men svaret ska
+      // säga vad som faktiskt gäller, och BARA när något speglat verkligen ändrats.
+      //
+      // ⚠️ `rotChanged` hör med. ROT-fälten står inte i FORTNOX_MIRRORED_FIELDS (de går den fulla
+      // pushen, inte header-vägen), så en rättad fastighetsbeteckning — villaorderns
+      // `YourOrderNumber` — hade annars hoppat över hela blocket och rapporterats som ren framgång.
+      if (mirroredFieldChanged || rotChanged) {
+        fortnoxError = 'Ordern är fakturerad i Fortnox och dokumentet kan inte längre ändras. '
+          + 'Ändringen är sparad i CRM, men syns inte på kundens orderbekräftelse eller faktura.';
+      }
+    } else if (rotPush || touchesFortnox) {
+      attemptedPush = true;
       try {
         // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
         // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
         // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
-        synced = rotPush
-          ? Boolean(await updateWorkOrderInFortnox(context.params.id))
-          : (await syncWorkOrderHeaderToFortnox(context.params.id)) !== null;
+        // ⚠️ RESULTATET MÅSTE LÄSAS. Den här grenen är fjärde anroparen av updateWorkOrderInFortnox,
+        // och kastas svaret bort stämplas raden 'failed' av en misslyckad omspegling medan routen
+        // svarar `fortnox_error: null` och klienten visar grön toast — med faktureringen spärrad av
+        // assertOrderRowsSynced och ingenting som förklarar varför.
+        if (rotPush) {
+          const pushed = await updateWorkOrderInFortnox(context.params.id);
+          if (pushed.mirrorFailed) {
+            fortnoxError = pushed.mirrorNeedsManualFix
+              ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '
+                + 'synken — rätta fältet direkt i Fortnox.'
+              : 'Ändringen är sparad, men något som ändrades under synken kunde inte speglas till '
+                + 'Fortnox. Synka om arbetsordern och kontrollera uppgifterna.';
+          }
+        } else {
+          await syncWorkOrderHeaderToFortnox(context.params.id);
+          // PUT:en lyckas, men Fortnox behåller sitt gamla värde — säg det, i stället för att
+          // råda till en omsynk som rapporterar framgång lika tyst.
+          if (clearIsUnexpressible) {
+            fortnoxError = 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte '
+              + 'nollas via synken — rätta fältet direkt i Fortnox.';
+          }
+        }
       } catch (e) {
         if (!(e instanceof FortnoxNotConnectedError)) {
           fortnoxError = friendlyFortnoxMessage(e);
@@ -283,9 +365,14 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
     }
 
-    // Re-read only when Fortnox was actually touched, so the returned row carries the fresh
-    // sync status/timestamp instead of the pre-sync one the update returned.
-    if (synced || fortnoxError) {
+    // Läs om raden så fort Fortnox-vägen KÖRDES — inte bara när den lyckades.
+    //
+    // ⚠️ Villkoret stod tidigare på "lyckades eller felade", och missade därför just det fall där
+    // sanningen bara finns i den omlästa raden: `FortnoxNotConnectedError` sväljs här (en sparning
+    // ska inte se misslyckad ut för att Fortnox är frånkopplat), men synkvägen har redan hunnit
+    // stämpla ner statusen till 'not_synced'. Utan omläsningen svarade routen med raden som
+    // `updateCrmWorkOrder` returnerade FÖRE synkförsöket, och ordersidan fortsatte visa "Synkad".
+    if (attemptedPush || fortnoxError) {
       const fresh = await getCrmWorkOrder(supabase, context.params.id);
       return ok({ item: fresh.data ?? data, fortnox_error: fortnoxError });
     }

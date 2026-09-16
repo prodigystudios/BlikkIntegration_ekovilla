@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // '@/lib/supabase/server' (i typposition). Mocka den så testet inte drar in env-beroenden.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, fortnoxTextRowFields, resolveRotReference, assertLineItemsArePriced, assertOrderRowsSynced } from '@/lib/domains/fortnox/helpers';
+import { claimFortnoxPush, buildRotPropertyNote, appendFortnoxTextNote, fortnoxTextRowFields, resolveRotReference, assertLineItemsArePriced, assertOrderRowsSynced, buildOrderProjectNote } from '@/lib/domains/fortnox/helpers';
 import { FortnoxApiError } from '@/lib/domains/fortnox/client';
 
 // Mock av supabase-kedjan. claimFortnoxPush gör upp till TVÅ försök, vart och ett:
@@ -267,5 +267,35 @@ describe('assertOrderRowsSynced', () => {
       expect(e).toBeInstanceOf(FortnoxApiError);
       expect((e as FortnoxApiError).status).toBe(409);
     }
+  });
+});
+
+// Orderns titel (+ kundens märkning) som textrad — Fortnox har inget fält för projektnamnet.
+//
+// 🧨 Den får INTE läggas i YourOrderNumber (kundens "Ert referensnummer", som bär märkningen och som
+// kundens ekonomiavdelning matchar fakturan mot sin beställning på) och inte i Remarks (som bär
+// Ekovillas villkorstext och INTE kopieras av createinvoice — uppmätt 2026-09-16).
+describe('buildOrderProjectNote', () => {
+  it('bär både titel och märkning när båda finns', () => {
+    expect(buildOrderProjectNote('Vindsisolering Kv Björken', '58184'))
+      .toBe('Projekt: Vindsisolering Kv Björken  Märkning: 58184');
+  });
+
+  it('utelämnar den halva som saknas', () => {
+    expect(buildOrderProjectNote('Vindsisolering Kv Björken', null)).toBe('Projekt: Vindsisolering Kv Björken');
+    expect(buildOrderProjectNote(null, '58184')).toBe('Märkning: 58184');
+  });
+
+  // Ingen not alls — annars hade appendFortnoxTextNote lagt en tom rad på dokumentet.
+  it('svarar null när ingendera finns', () => {
+    expect(buildOrderProjectNote(null, null)).toBeNull();
+    expect(buildOrderProjectNote('   ', '  ')).toBeNull();
+  });
+
+  // Dubbelt mellanslag som separator, precis som buildRotPropertyNote: radbrytningar strippas av
+  // Fortnox, och två textrader i följd blir en felaktig prissatt rad.
+  it('separerar med dubbelt mellanslag, som ROT-noten', () => {
+    expect(buildOrderProjectNote('A', 'B')).toContain('  ');
+    expect(buildOrderProjectNote('A', 'B')).not.toContain('\n');
   });
 });

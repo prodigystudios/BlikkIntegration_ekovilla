@@ -491,9 +491,6 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
     // ett påslag i efterhand hade sänkt varje efterföljande radsynk. Samma villkor som reglaget
     // i formuläret; servern gör om kontrollen.
     const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
-  // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
-  // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
-  const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
     setSaving(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}`, {
@@ -836,9 +833,14 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // därför så fort ordern har ett Fortnox-nummer. Uppgifterna (beteckning, BRF, procent, maxbelopp)
   // rör inte regimen och är fritt redigerbara. Servern gör om kontrollen.
   const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
-  // Fortnox tar inte emot ändringar på en fakturerad order — header-synken svarar null och den
-  // fulla pushen hoppas över i routen. Texterna nedan får därför inte lova någon synk.
-  const fortnoxClosed = Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced';
+  // ⚠️ "FAKTURERAD" RÄCKER INTE SOM FRÅGA, och skillnaden avgör om "Synka om" får finnas.
+  //
+  // Delfakturering POSTar FRISTÅENDE fakturor och rör aldrig `createinvoice`, så Fortnox-ordern är
+  // fortfarande ÖPPEN — men slutrundan sätter ändå `fortnox_invoice_number`. Doldes knappen på det
+  // hade en delfakturerad order som fastnat på 'failed' blivit omöjlig att reparera, och
+  // delfaktureringen gatar medvetet INTE på synkstatusen. Samma regel som servern (isFortnoxOrderClosed).
+  const fortnoxOrderClosed = !workOrder.partial_invoicing_started_at
+    && (Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced');
   // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
   //
   // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
@@ -1295,7 +1297,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         </span>
                       </div>
                       <span className="text-[11px] leading-snug text-slate-500">
-                        Låst — ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Uppgifterna nedan går fortfarande att rätta{fortnoxClosed ? ' i CRM' : ''}.
+                        Låst — ROT-läget sätts när ordern skapas i Fortnox och kan inte ändras efteråt. Uppgifterna nedan går fortfarande att rätta{fortnoxOrderClosed ? ' i CRM' : ''}.
                       </span>
                     </div>
                   ) : (
@@ -1340,7 +1342,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                           inget fel, så en sparning hade sett helt lyckad ut medan dokumentet stod
                           kvar oförändrat. Samma villkor som Märkning-fältet ovan. */}
                       <p className="text-[11px] leading-snug text-slate-500">
-                        {fortnoxClosed
+                        {fortnoxOrderClosed
                           ? 'Ordern är fakturerad — ändringar här sparas i CRM men når inte Fortnox. Rätta ROT-uppgifterna i Fortnox innan fakturan slutförs.'
                           : 'Fastighetsbeteckning och BRF org.nr följer med till Fortnox. Skattereduktionen är preliminär — det faktiska avdraget räknas av Fortnox vid fakturering.'}
                       </p>
@@ -1570,7 +1572,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                       <span className="text-xs text-slate-500">
                         Kundens eget referensnummer — visas som ”Ert referensnummer” på order och faktura.
                         {!workOrder.fortnox_order_number ? ''
-                          : fortnoxClosed
+                          : fortnoxOrderClosed
                             ? ' Ordern är fakturerad — ändringar här når inte Fortnox och behöver göras där.'
                             : ' Ändringar synkas till Fortnox.'}
                       </span>
@@ -1754,7 +1756,19 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 {workOrder.fortnox_order_synced_at ? (
                   <p className="text-xs text-slate-500">Synkad {formatDateTime(workOrder.fortnox_order_synced_at)}</p>
                 ) : null}
-                {workOrder.fortnox_order_sync_status !== 'synced' ? (
+                {/* 🧨 INGEN SYNKKNAPP PÅ EN FAKTURERAD ORDER — den kan bara göra skada.
+                    Fortnox avvisar varje skrivning mot ett fakturerat dokument, så `updateWorkOrderInFortnox`
+                    kastar och stämplar 'failed'. Knappen kunde alltså aldrig lyckas, bara degradera en
+                    'synced' order — och en kvarstående 'failed' spärrar i sin tur faktureringen via
+                    `assertOrderRowsSynced`. Mätt i drift: order 131 stod 'synced' tills en omsynk
+                    trycktes på den redan fakturerade ordern.
+                    Gäller BÅDA knapparna: "Försök igen" på en fakturerad order är samma återvändsgränd. */}
+                {fortnoxOrderClosed ? (
+                  <p className="text-xs text-slate-500">
+                    Ordern är fakturerad i Fortnox och tar inte emot fler ändringar. Rättningar går
+                    att göra här i CRM, men når inte kundens orderbekräftelse eller faktura.
+                  </p>
+                ) : workOrder.fortnox_order_sync_status !== 'synced' ? (
                   <button type="button" onClick={pushToFortnox} disabled={pushingFortnox} className={cn(crm.saveButton, 'h-10 w-full')}>
                     {pushingFortnox ? 'Skickar…' : workOrder.fortnox_order_sync_status === 'failed' ? 'Försök igen' : 'Skicka till Fortnox'}
                   </button>

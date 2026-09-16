@@ -5,7 +5,7 @@ import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice,
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
-import { pushWorkOrderToFortnox } from './orders';
+import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
 // Delfakturering (partial invoicing). Appen ÄGER det per-artikel fakturerade läget — en
 // Fortnox-order exponerar bara en enda InvoiceReference och inget fakturerat antal per rad, så
@@ -517,6 +517,38 @@ export async function createPartialInvoice(
     if (!orderNumber) {
       const pushed = await pushWorkOrderToFortnox(workOrderId);
       orderNumber = pushed.fortnox_order_number;
+      // 🧨 ORDERHUVUDET ÄR KÄNT INAKTUELLT — och det är just det huvudet vi speglar ut på kundens
+      // faktura ("Ert referensnummer", raden nedan). En sparning landade mitt i pushen.
+      //
+      // ⚠️ LAGA, INTE NEKA. En ren spärr hade bara hållit FÖRSTA försöket: numret är redan sparat,
+      // så nästa anrop hoppar över hela den här grenen och delfakturerar mot exakt det huvud
+      // spärren nyss kallade osäkert. Falsk trygghet. En omsynk är däremot beständig — den lagar
+      // huvudet, och misslyckas den kastar den och avbryter faktureringen.
+      if (pushed.mirrorNeedsManualFix) {
+        // …utom en RENSNING, som ingen omsynk kan uttrycka (buildOrderHeader utelämnar tomma
+        // värden). PartialInvoiceError, inte FortnoxApiError: rutten returnerar den klassens
+        // meddelande ordagrant, medan friendlyFortnoxMessage hade kastat texten och sagt
+        // "Något gick fel mot Fortnox. Försök igen" — och skickat säljaren till just det omförsök
+        // som inte hjälper.
+        throw new PartialInvoiceError(
+          'Arbetsordern har en tömd referens eller arbetsadress som inte kan nollas i Fortnox via '
+          + 'synken. Rätta fältet direkt i Fortnox innan du delfakturerar — annars speglas ett '
+          + 'gammalt referensnummer till kundens faktura.',
+        );
+      }
+      if (pushed.mirrorFailed) {
+        // ⚠️ OCH REPARATIONENS EGET UTFALL MÅSTE LÄSAS. Hinner en ANDRA sparning landa under
+        // omsynken är huvudet inaktuellt igen — och då speglas ett gammalt referensnummer ut på
+        // kundens faktura, precis det som spärren tre rader upp finns för att hindra.
+        const repaired = await updateWorkOrderInFortnox(workOrderId);
+        if (repaired.mirrorFailed) {
+          throw new PartialInvoiceError(
+            'Arbetsordern ändrades igen under synken och Fortnox-ordern är fortfarande inte '
+            + 'uppdaterad. Synka om arbetsordern och försök igen — annars speglas ett gammalt '
+            + 'referensnummer till kundens faktura.',
+          );
+        }
+      }
     }
     const order = await fortnoxGet<{ Order?: FortnoxOrderHeader }>(`/orders/${orderNumber}`);
     const header = order.Order ?? {};

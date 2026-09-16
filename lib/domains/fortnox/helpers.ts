@@ -363,6 +363,41 @@ export function buildRotPropertyNote(
   return parts.length ? parts.join('  ') : null;
 }
 
+/**
+ * Orderns TITEL (och kundens märkning) som textrad på dokumentet.
+ *
+ * ⚖️ VD vill se båda när han fakturerar, och Fortnox har inget fält för projektnamnet.
+ *
+ * 🧨 TITELN FÅR INTE LÄGGAS I `YourOrderNumber`. Det fältet är KUNDENS ("Ert referensnummer") och
+ * bär märkningen — det är den kundens ekonomiavdelning matchar fakturan mot sin beställning på.
+ * Vårt ordernummer låg där fram till 2026-09-03 och backades av precis det skälet; titeln är samma
+ * sorts text och hör inte heller hemma där. Se rutan i FORTNOX_INTEGRATION.md.
+ *
+ * ⚠️ OCH INTE I `Remarks`. Uppmätt mot skarp Fortnox 2026-09-16: fältet bär redan Ekovillas egen
+ * villkorstext ("Vi tackar för beställningen…") på varje order, och `createinvoice` KOPIERAR DEN
+ * INTE — fakturan får sin egen ("Stort tack för att Ni valde EKOVILLA…"). Att skriva titeln dit
+ * hade alltså raderat villkorstexten på orderbekräftelsen och ändå aldrig nått fakturan.
+ *
+ * Raderna däremot kopieras exakt (verifierat på order 161→faktura 2051 och 159→2050), så en
+ * textrad är den enda vägen som når båda dokumenten.
+ *
+ * Märkningen står KVAR i `YourOrderNumber` — den här raden upprepar den bara så att den syns
+ * bredvid titeln i artikellistan.
+ */
+export function buildOrderProjectNote(
+  projectName: string | null | undefined,
+  label: string | null | undefined,
+): string | null {
+  const project = projectName?.trim();
+  const marking = label?.trim();
+  const parts: string[] = [];
+  if (project) parts.push(`Projekt: ${project}`);
+  if (marking) parts.push(`Märkning: ${marking}`);
+  // Dubbelt mellanslag, som buildRotPropertyNote: två textrader i följd gör Fortnox till en
+  // felaktig prissatt rad, och radbrytningar strippas.
+  return parts.length ? parts.join('  ') : null;
+}
+
 // "Ert referensnummer" and the ROT property text row are two halves of ONE rule, so they are
 // resolved together instead of by two parallel copies of the same condition. A villa's
 // fastighetsbeteckning IS the customer's reference for the house and fits the single reference

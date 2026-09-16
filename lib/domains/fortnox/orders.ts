@@ -1,9 +1,10 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/workOrderSyncFields';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -85,6 +86,25 @@ type WorkOrderRow = {
 
 export type PushOrderResult = {
   fortnox_order_number: string;
+  /**
+   * 🧨 ORDERN SKAPADES, MEN DOKUMENTET ÄR INTE KOMPLETT.
+   *
+   * Sätts när efterkontrollen upptäckte en sparning som landat mitt i pushen men INTE lyckades
+   * spegla om den. Reparationsanropet har då redan stämplat ner synkstatusen — men den som
+   * anropade oss svarade ändå "skapad/synkad" och visade en grön toast, medan brickan läste
+   * Misslyckad och faktureringen var spärrad utan att något förklarade varför. Precis den tysta
+   * framgång hela den här ändringen finns för att ta bort, en nivå upp.
+   */
+  mirrorFailed?: boolean;
+  /**
+   * ⚠️ Rensningen går inte att skicka ALLS — inte "gick inte den här gången".
+   *
+   * `buildOrderHeader` utelämnar tomma värden och en Fortnox-PUT rör bara fält den bär, så ett
+   * tömt "Er referens"/"Vår referens"/leveransadress kan aldrig nollas av en omsynk. Rådet "synka
+   * om" hade alltså skickat säljaren i en cirkel: andra försöket rapporterar framgång medan
+   * Fortnox behåller sitt gamla värde. Fältet måste rättas för hand i Fortnox.
+   */
+  mirrorNeedsManualFix?: boolean;
 };
 
 export type CreateInvoiceResult = {
@@ -123,7 +143,7 @@ function orderTextRow(description: string, vat = 0): FortnoxOrderRow {
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
 // `Quantity`, invoice rows use `DeliveredQuantity`) — sending `Quantity` to /orders
 // returns 400 "Felaktigt fältnamn (Quantity)".
-export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, rotPropertyNote: string | null = null): FortnoxOrderRow[] {
+export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPercent: number, rotEnabled: boolean, reverseVat = false, documentNote: string | null = null): FortnoxOrderRow[] {
   // Written-off rows are dropped from the document: the customer is never billed for work that
   // wasn't performed, and the Fortnox order total has to match what the order is actually worth.
   // They stay in line_items (indices are load-bearing for the invoice rounds) — only the push omits.
@@ -193,10 +213,11 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
   const laborRow = rotLaborRow(carvedLaborTotal, reverseVat ? 0 : vatPercent);
   if (laborRow) rows.push({ ...laborRow, OrderedQuantity: 1, DeliveredQuantity: 1 });
 
-  // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
-  // API field for it. Only relevant for a standalone order with ROT (the offer→order path inherits
-  // the offer's rows, which already carry it); the caller passes null otherwise.
-  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  // Dokumentets textrad sist: orderns TITEL (+ kundens märkning) och, för en ROT-order,
+  // fastighetsbeteckningen/BRF org.nr. Fortnox har inget API-fält för någondera, och raderna är det
+  // enda som `createinvoice` kopierar vidare till fakturan (uppmätt 2026-09-16). Byggs ihop till EN
+  // sträng i buildOrderHeader — två textrader i följd gör Fortnox till en felaktig prissatt rad.
+  return appendFortnoxTextNote(rows, documentNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
 }
 
 // The header fields we own on a Fortnox order. Everything else on the document (customer, dates,
@@ -322,6 +343,8 @@ export function orderReferenceNumberField(
 
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
+  /** Orderns titel — blir en textrad på dokumentet (buildOrderProjectNote). */
+  project_name?: string | null;
   customer_snapshot: CustomerSnapshot | null;
   work_address: WorkOrderAddress | null;
   // ⚠️ ORDERNS EGNA ROT-uppgifter, och det är DE som gäller. Se resolveOrderRotDetails.
@@ -393,13 +416,18 @@ async function buildOrderHeader(
   // Kvar blir en enda väg som kan misslyckas, och den är icke-fatal: sparningen har redan landat
   // och säljaren får felet i en toast.
   opts?: { allowReferenceClear?: boolean },
-): Promise<{ header: FortnoxOrderHeaderFields; rotPropertyNote: string | null }> {
+): Promise<{ header: FortnoxOrderHeaderFields; documentNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
   const { referenceNumber, propertyNote } = resolveRotReference(
     resolveOrderRotDetails(workOrder, linkedQuote), snapshot?.label, rotEnabled);
 
   const yourReference = resolveYourReference(snapshot);
+
+  // Titeln (+ märkningen) som textrad, hopslagen med ROT-noten till EN rad. Två textrader i följd
+  // gör Fortnox till en felaktig prissatt rad — samma skäl som buildRotPropertyNote slår ihop sina.
+  const documentNote = [buildOrderProjectNote(workOrder.project_name, snapshot?.label), propertyNote]
+    .filter(Boolean).join('  ') || null;
 
   return {
     header: {
@@ -415,7 +443,7 @@ async function buildOrderHeader(
       // buildEndContactNote.
       ...buildOrderDeliveryFields(workOrder.work_address, snapshot),
     },
-    rotPropertyNote: propertyNote,
+    documentNote,
   };
 }
 
@@ -467,19 +495,217 @@ async function resolveFortnoxCustomerNumberById(
   return (data as { fortnox_customer_id?: string | null } | null)?.fortnox_customer_id ?? null;
 }
 
+/**
+ * 🧨 VAKTEN MOT EN SPARNING SOM LANDADE MITT I PUSHEN.
+ *
+ * Skapandet bygger orderhuvudet ur en rad som lästes innan Fortnox ens svarat. Mellan den
+ * läsningen och POST:en ligger offertuppslaget, kundnumret (ett Fortnox-GET), byggmomsen,
+ * ansvarigs namn och själva skrivningen — sekunder, inte millisekunder. En sparning som landar i
+ * det fönstret skrivs till databasen men når aldrig payloaden.
+ *
+ * ⚠️ OCH SÄLJAREN FÅR INGEN ANING, för PATCH-vägen är tyst just då: `syncWorkOrderHeaderToFortnox`
+ * svarar null när ordern ännu saknar `fortnox_order_number`, och numret sparas först EFTER POST:en.
+ * Båda vägarna rapporterar alltså framgång medan fältet tappas mellan dem.
+ *
+ * Mätt i drift 2026-09-09 på arbetsorder AO-20260909-06D6B7 (Fortnox-order 131): märkningen
+ * "58184" stod kvar i CRM medan Fortnox-orderns "Ert referensnummer" var tomt — och fakturan ur
+ * den ärvde tomheten, eftersom `createinvoice` kopierar orderns huvud. Claimen sattes 12:01:50,
+ * stämpeln 'synced' 12:02:29.
+ *
+ * Att flytta läsningen hjälper inte: fönstret är det långsamma arbetet NEDSTRÖMS om den. Läget
+ * upptäcks därför i efterhand i stället — skiljer sig raden från den vi byggde huvudet ur, speglas
+ * dokumentet om.
+ *
+ * ⚠️ VILKEN VÄG REPARATIONEN TAR BEROR PÅ VAD SOM SKILJER SIG, och det är inte en detalj:
+ *
+ *  • snapshot / arbetsadress / ansvarig → header-synken räcker. De bor alla i orderhuvudet.
+ *  • `rot_details` → den FULLA pushen. ROT delar sig i två halvor på dokumentet: en VILLAS
+ *    fastighetsbeteckning blir headerns `YourOrderNumber`, men en BOSTADSRÄTTS uppgifter blir en
+ *    TEXTRAD (se resolveRotReference), och header-synken släpper medvetet radhalvan. En BRF-order
+ *    vars uppgifter rättades mitt i pushen hade alltså upptäckts, "reparerats" med en header-PUT
+ *    som inte bar något ROT — och stämplats 'synced'. Raderna hör hit just för att `rot_details`
+ *    redigeras på DEN HÄR routen, till skillnad från `line_items` som har sin egen.
+ *
+ * ⛔ KVARSTÅENDE, OLAGBART: flippas `rot_details.enabled` inne i fönstret går det inte att rätta
+ * alls. `TaxReductionType` sätts bara vid create, och PATCH-routens 409-spärr mot det keyar på
+ * `fortnox_order_number` — som är null ända tills POST:en landat. Den fulla pushen nedan avvisas då
+ * av Fortnox med 2004021 och stämplar 'failed', vilket är rätt utfall: ordern ska inte kunna se
+ * komplett ut. Att tiga hade varit värre.
+ *
+ * ⚠️ ETT FEL HÄR FÄLLER INTE PUSHEN. Ordern ÄR skapad och numret sparat — att kasta hade fått
+ * anroparen att tro att inget hänt, och nästa försök hade gått idempotensvägen ändå.
+ * `syncWorkOrderHeaderToFortnox` stämplar själv ner synkstatusen när den misslyckas, så sanningen
+ * går inte förlorad: ordern står kvar som osynkad och "Synka om" reparerar den.
+ */
+// Jämför två jsonb-värden som DATA, inte som text.
+//
+// 🧨 TVÅ FÄLLOR, båda verkliga:
+//
+//  • NYCKELORDNING. `JSON.stringify` är ordningskänslig, och samma kolumn kommer tillbaka i olika
+//    ordning beroende på om raden just skrivits om av en merge eller lästs rakt ur jsonb. Nycklarna
+//    sorteras därför före jämförelsen.
+//  • `label_cleared` ÄR INTE KUNDDATA. Det är synkens eget minne av en genomförd referensrensning,
+//    och `clearReferenceMemory` flippar det mitt i pushen — på offert→order-vägen skriver alltså
+//    pushen om snapshoten själv. Räknades det med hade efterkontrollen sett en "ändring" vid varje
+//    orderskapande och skickat en onödig header-PUT; misslyckades den PUT:en stämplades dessutom
+//    'failed' över det 'synced' som skrevs ögonblicket innan.
+function same(a: unknown, b: unknown): boolean {
+  const normalise = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalise);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([key]) => key !== 'label_cleared' && !(LINE_ITEM_CRM_ONLY_KEYS as readonly string[]).includes(key))
+          .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
+          .map(([key, val]) => [key, normalise(val)]),
+      );
+    }
+    return value ?? null;
+  };
+  return JSON.stringify(normalise(a ?? null)) === JSON.stringify(normalise(b ?? null));
+}
+
+async function resyncHeaderIfSnapshotChangedDuringPush(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrderId: string,
+  atBuild: {
+    customer_snapshot: CustomerSnapshot | null;
+    work_address: WorkOrderAddress | null;
+    assigned_to: string | null;
+    rot_details: RotDetails | null;
+    line_items: unknown;
+  },
+): Promise<{ mirrorFailed?: boolean; mirrorNeedsManualFix?: boolean }> {
+  // ⚠️ ALLA INGÅNGARNA till dokumentet, inte bara de två uppenbara: `assigned_to` bär OurReference
+  // och `rot_details` bär YourOrderNumber på en villa (resolveRotReference). Ett första utkast läste
+  // bara snapshot + adress och lämnade därmed halva problemet öppet — en ansvarig som byttes mitt i
+  // pushen gick just den tysta vägen som hela ändringen finns för.
+  //
+  // 🧨 OCH `line_items`, av ett eget skäl: artikelvägen (`updateWorkOrderInFortnox`) CLAIMAR INTE,
+  // den stämplar bara 'pending'. Create sparar dessutom `fortnox_order_number` FÖRE radskrivningen,
+  // så en artikelredigering som landar i fönstret hittar ett nummer, PUT:ar sina nya rader och
+  // stämplar 'synced' — varpå creates egen `putOrderHeaderAndRows` skriver tillbaka de gamla
+  // raderna över dem och stämplar 'synced' igen. Fortnox och CRM håller då olika rader,
+  // `assertOrderRowsSynced` släpper igenom, och `createinvoice` fakturerar de gamla.
+  const { data } = await supabase
+    .from('crm_work_orders')
+    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, quote_id')
+    .eq('id', workOrderId)
+    .maybeSingle();
+
+  const fresh = data as (typeof atBuild & { quote_id: string | null }) | null;
+  // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
+  if (!fresh) return {};
+
+  // ⚠️ JÄMFÖR BARA DET SOM NÅR DOKUMENTET, aldrig hela kolumnen.
+  //
+  // `rot_details` bär också `rot_percent` och `max_deduction`, som Fortnox ALDRIG får se — de läses
+  // bara av vår egen preliminära "Att betala" (se ROT_DOCUMENT_KEYS). En rättad procentsats hade
+  // annars dragit igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har,
+  // med allt vad `assertLineItemsArePriced` och 'failed'-stämpling innebär.
+  //
+  // Och `customer_snapshot` bär telefon, e-post, slutkundens uppgifter, org.nr och personnummer —
+  // inget av det når Fortnox. Hela kolumnen jämförd gjorde en rättad telefon på arbetsplatsen till
+  // en "ändring", med en header-PUT som kunde stämpla 'failed' och spärra faktureringen för ett
+  // fält dokumentet aldrig burit. Se MIRRORED_SNAPSHOT_KEYS.
+  //
+  // Samma sak för `work_address`: PATCH-schemat fyller på med `delivery_address: null` och
+  // `invoice_address: null`, så en rad som saknar nycklarna jämförs olik och kostar en header-PUT
+  // i onödan. Routen normaliserar redan så (workOrderMirroredFieldsChanged) — den här vägen måste
+  // göra samma sak, annars är varje spurios skrivning en ny chans att stämpla 'failed'.
+  // ⚠️ TOMHETEN NORMALISERAS, samma regel som workOrderMirroredFieldsChanged: `''`, blanktecken och
+  // null är SAMMA sak för Fortnox. Utan det räknades en sparning som skriver tom sträng där raden
+  // höll null som en ändring — och kostade en header-PUT direkt efter att ordern stämplats
+  // 'synced'. En sådan PUT som misslyckas stämplar 'failed' och spärrar faktureringen.
+  const subset = (value: unknown, keys: readonly string[]): Record<string, unknown> => {
+    const row = (value ?? {}) as Record<string, unknown>;
+    return Object.fromEntries(keys.map((key) => {
+      const raw = row[key];
+      if (typeof raw !== 'string') return [key, raw ?? null];
+      const trimmed = raw.trim();
+      return [key, trimmed.length > 0 ? trimmed : null];
+    }));
+  };
+
+  // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
+  const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
+    || !same(fresh.line_items, atBuild.line_items);
+  const headerDiffers = !same(subset(fresh.customer_snapshot, MIRRORED_SNAPSHOT_KEYS), subset(atBuild.customer_snapshot, MIRRORED_SNAPSHOT_KEYS))
+    || !same(subset(fresh.work_address, MIRRORED_WORK_ADDRESS_KEYS), subset(atBuild.work_address, MIRRORED_WORK_ADDRESS_KEYS))
+    || !same(fresh.assigned_to, atBuild.assigned_to);
+
+  if (!rowsDiffer && !headerDiffers) return {};
+
+  // 🧨 REPARATIONEN MÅSTE RAPPORTERA VAD DEN FAKTISKT FICK UTTRYCKT — inte "kastade inget".
+  //
+  // `buildOrderHeader` UTELÄMNAR tomma värden (`...(ourReference ? { OurReference } : {})`), och en
+  // Fortnox-PUT rör bara fält den bär. En TÖMNING går därför inte igenom: vakten ser skillnaden,
+  // PUT:en går igenom, och Fortnox behåller sitt gamla värde. Utan det här hade svaret sagt att allt
+  // speglats medan kundens dokument bar kvar en referens eller en arbetsplats som inte längre gäller.
+  //
+  // ⚠️ `label` är UNDANTAGET: den har sitt eget rensningsminne (`label_cleared` →
+  // `YourOrderNumber: null`) och lagas därför av PUT:en som vanligt.
+  //
+  // Leveransadressen MÄTS genom att bygga fältet före och efter, i stället för att gissa på
+  // kolumnen: `buildOrderDeliveryFields` returnerar `{}` både när arbetsadressen tömts OCH när den
+  // blivit lika med kundens gata — två olika ändringar, samma outtryckbara utfall.
+  const deliveryBefore = buildOrderDeliveryFields(atBuild.work_address, atBuild.customer_snapshot);
+  const deliveryAfter = buildOrderDeliveryFields(fresh.work_address, fresh.customer_snapshot);
+  // ⚠️ NYCKEL FÖR NYCKEL, inte "blev objektet tomt". Rensas bara orten utelämnas `DeliveryCity`
+  // medan gata och postnummer skickas — PUT:en rör bara fält den bär, så Fortnox behåller den gamla
+  // orten och dokumentet får en halv adress från två olika platser.
+  const deliveryCleared = Object.entries(deliveryBefore)
+    .some(([key, value]) => value && !(deliveryAfter as Record<string, unknown>)[key]);
+
+  const referenceCleared = Boolean(resolveYourReference(atBuild.customer_snapshot))
+    && !resolveYourReference(fresh.customer_snapshot);
+
+  // ⚠️ OurReference faller tillbaka på OFFERTENS ansvarige (buildOrderHeader). En tömd ansvarig på
+  // en offertfödd order rensar alltså ingenting — och ett larm där hade varit rött för ett dokument
+  // som faktiskt är rätt, utan något sätt att bli av med det. Offerten läses bara i just det fallet.
+  let ourReferenceCleared = Boolean(atBuild.assigned_to) && !fresh.assigned_to;
+  if (ourReferenceCleared && fresh.quote_id) {
+    const { data: quote } = await supabase
+      .from('crm_quotes').select('assigned_to').eq('id', fresh.quote_id).maybeSingle();
+    if ((quote as { assigned_to?: string | null } | null)?.assigned_to) ourReferenceCleared = false;
+  }
+
+  const unexpressibleClear = referenceCleared || ourReferenceCleared || deliveryCleared;
+
+  try {
+    // ⚠️ `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — en tom header, eller en order
+    // som hunnit stängas. Att läsa "kastade inte" som framgång hade gjort just de fallen tysta.
+    const mirrored = rowsDiffer
+      ? await updateWorkOrderInFortnox(workOrderId, { recheckAfterPush: false })
+      : await syncWorkOrderHeaderToFortnox(workOrderId);
+    if (unexpressibleClear) return { mirrorFailed: true, mirrorNeedsManualFix: true };
+    if (mirrored === null) return { mirrorFailed: true };
+  } catch (e) {
+    console.error('[fortnox] Omspegling efter orderskapandet misslyckades:', (e as Error)?.message);
+    // Kastar INTE — ordern finns i Fortnox och numret är sparat, så ett kast hade fått anroparen
+    // att tro att ingenting hänt och nästa försök hade gått idempotensvägen ändå. Men tystnad
+    // duger inte: felet bärs upp så svaret kan säga att dokumentet behöver synkas om.
+    return { mirrorFailed: true };
+  }
+  return {};
+}
+
 // Push a CRM work order to Fortnox as an order.
 // If the linked quote already has a Fortnox offer number, converts that offer to an order
 // (preserving the offer→order link in Fortnox). Otherwise creates a standalone order.
 export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
-  const { data: workOrder, error } = await supabase
+  // Idempotenskollen går på en SMAL läsning, före claimen. Hela underlaget läses först när pushen
+  // är vår (se omläsningen inne i try:t) — en order som redan ligger i Fortnox ska varken claimas
+  // eller läsas i sin helhet.
+  const { data: existing, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
+    .select('id, fortnox_order_number')
     .eq('id', workOrderId)
-    .single<WorkOrderRow>();
+    .single<{ id: string; fortnox_order_number: string | null }>();
 
-  if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+  if (error || !existing) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
   // Idempotency: if this work order is already linked to a Fortnox order, don't try
   // to create another one — Fortnox rejects a second createorder on the same offer
@@ -491,8 +717,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   // sparas nu FÖRE rad-PUT:en (se createorder-grenen nedan), just för att en order som finns i
   // Fortnox aldrig ska tappas bort. En kvarstående 'failed' hade alltså kunnat tvättas till
   // 'synced' av ett anrop som inte skickade en enda rad — precis det läge fakturaspärren finns för.
-  if (workOrder.fortnox_order_number) {
-    return { fortnox_order_number: workOrder.fortnox_order_number };
+  if (existing.fortnox_order_number) {
+    return { fortnox_order_number: existing.fortnox_order_number };
   }
 
   // Atomically claim the push so a concurrent request can't create a SECOND Fortnox order
@@ -504,6 +730,50 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   if (!claimed) throw new FortnoxPushInProgressError();
 
   try {
+    // Underlaget läses när pushen är vår, inte innan.
+    //
+    // ⚠️ DET STÄNGER INTE RACET — det krymper det bara med claimens två UPDATE:ar. Allt långsamt
+    // ligger EFTER den här läsningen: offertuppslaget, kundnumret (ett Fortnox-GET), byggmomsen,
+    // ansvarigs namn och själva POST:en. Order 131 låg 39 sekunder mellan claim och 'synced', och
+    // nästan hela det fönstret ligger nedströms härifrån. Den som tror att en läsning tidigare
+    // eller senare i sig löser problemet bygger vidare på fel antagande — vakten mot en sparning
+    // som landar mitt i pushen är `resyncHeaderIfSnapshotChangedDuringPush` i slutet av try:t.
+    const { data: workOrder, error: readError } = await supabase
+      .from('crm_work_orders')
+      .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
+      .eq('id', workOrderId)
+      .single<WorkOrderRow>();
+
+    if (readError || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+    // 🧨 IDEMPOTENSEN PRÖVAS OM — den smala läsningen ovan skedde FÖRE claimen.
+    //
+    // Hann en samtidig push slutföra sig däremellan, ser vi numret först nu. Utan den här raden
+    // går vi vidare till standalone-grenen och POST:ar EN ORDER TILL åt samma kund — den grenen
+    // har ingen dedup hos Fortnox (till skillnad från createorder, som skyddas av 2000499).
+    //
+    // ⚠️ Statusen stämplas 'not_synced', inte 'synced': vi skickade ingenting och vet inte vad den
+    // andra pushen hann med. Att claimen redan skrivit 'pending' får inte bli kvar — pending har
+    // ingen tidsgräns för `assertOrderRowsSynced` och hade spärrat faktureringen tyst.
+    //
+    // ⚖️ MEDVETET VAL, och det kostar något: lyckades den andra pushen står ordern nu som "Ej
+    // synkad" tills någon trycker "Synka om", och faktureringen är spärrad så länge. Alternativet
+    // — att gissa 'synced' — vore värre åt fel håll: claimen har redan skrivit över den andra
+    // pushens egen stämpel, så ett 'failed' därifrån hade tvättats bort och ordern sett komplett ut
+    // medan Fortnox höll andra rader än vi. `fortnox_order_synced_at` går inte att skilja på:
+    // tidsstämpeln kan lika gärna komma från en äldre lyckad synk. Hellre ett synligt extra
+    // knapptryck än en tyst osanning — samma regel som resten av synkstatusen följer.
+    if (workOrder.fortnox_order_number) {
+      await supabase
+        .from('crm_work_orders')
+        .update({ fortnox_order_sync_status: 'not_synced' })
+        .eq('id', workOrderId);
+      // ⚠️ OCH DET SÄGS. Utan `mirrorFailed` svarade routen 201 med grön toast medan brickan läste
+      // "Ej synkad" och faktureringen var spärrad — samma tysta framgång som resten av ändringen
+      // tar bort. Beskedet ("synka om ordern") är rätt handling även här.
+      return { fortnox_order_number: workOrder.fortnox_order_number, mirrorFailed: true };
+    }
+
     // Rader utan prisförankring blir Price 0 på ordern (och carve 0 → ingen ROT-arbetsrad). Ordern
     // ärver offertens rader rakt av, så en offert från 900-stubbens tid bär felet vidare hit.
     // Avskrivna rader räknas bort — de pushas inte alls. Inne i try:t så catch:en stämplar 'failed'.
@@ -610,8 +880,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
       // ⛔ INGEN rensning här. Dokumentet skapas i det här anropet — det finns ingenting att rensa,
       // och `createorder` är den enda Fortnox-skrivningen utan dedup-skydd.
-      const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
-      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+      const { header, documentNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
+      const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
@@ -650,7 +920,25 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       })
       .eq('id', workOrderId);
 
-    return { fortnox_order_number: fortnoxOrderNumber };
+    // Hann någon spara medan pushen pågick? Då bär Fortnox fel huvud — spegla om det.
+    const { mirrorFailed, mirrorNeedsManualFix } = await resyncHeaderIfSnapshotChangedDuringPush(
+      supabase, workOrderId, {
+        customer_snapshot: workOrder.customer_snapshot,
+        work_address: workOrder.work_address,
+        assigned_to: workOrder.assigned_to,
+        rot_details: workOrder.rot_details ?? null,
+        line_items: workOrder.line_items ?? null,
+      },
+    );
+
+    return {
+      fortnox_order_number: fortnoxOrderNumber,
+      ...(mirrorFailed ? { mirrorFailed: true } : {}),
+      // ⚠️ MÅSTE MED. Utan den här raden var hela "rätta fältet direkt i Fortnox"-grenen i de tre
+      // routerna död kod, och en säljare som tömt Er referens fick rådet "synka om" — det cirkulära
+      // rådet som aldrig kan laga en rensning.
+      ...(mirrorNeedsManualFix ? { mirrorNeedsManualFix: true } : {}),
+    };
   } catch (e) {
     const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     await supabase
@@ -852,10 +1140,10 @@ async function putOrderHeaderAndRows(
   // och varje "Synka om" ha kastat, med ordern kvar på 'failed' och faktureringen spärrad av
   // assertOrderRowsSynced. Nu är det den ENDA vägen som levererar båda halvorna av en ROT-ändring
   // (referensnumret i headern, ROT-noten som rad), så den måste kunna rensa.
-  const { header, rotPropertyNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
+  const { header, documentNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
     allowReferenceClear: true,
   });
-  const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, rotPropertyNote);
+  const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
   await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
 
@@ -899,12 +1187,18 @@ async function clearReferenceMemory(
 // too: it used to send rows only, so "Synka om" could not repair a contact person or work
 // address no matter how many times a seller pressed it. Fortnox rejects edits to an
 // invoiced/cancelled order — that surfaces as the thrown error and sync status flips to 'failed'.
-export async function updateWorkOrderInFortnox(workOrderId: string): Promise<PushOrderResult> {
+export async function updateWorkOrderInFortnox(
+  workOrderId: string,
+  // ⚠️ `false` BARA från efterkontrollen själv. Den anropar den här vägen när raderna skiljer sig,
+  // och en efterkontroll därifrån hade blivit en rekursion: push → kontroll → push → kontroll.
+  // En extra runda räcker för att konvergera; fler vore en loop så länge någon fortsätter spara.
+  opts?: { recheckAfterPush?: boolean },
+): Promise<PushOrderResult> {
   const supabase = getSupabaseAdmin();
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, fortnox_order_number, line_items, rot_details')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, project_name, fortnox_order_number, line_items, rot_details')
     .eq('id', workOrderId)
     .single<WorkOrderRow>();
 
@@ -935,6 +1229,29 @@ export async function updateWorkOrderInFortnox(workOrderId: string): Promise<Pus
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: 'synced', fortnox_order_synced_at: new Date().toISOString() })
       .eq('id', workOrderId);
+
+    // 🧨 SAMMA RACE SOM PÅ SKAPANDEVÄGEN. Raden lästes före PUT:en, och mellan dem ligger
+    // radbygget och hela Fortnox-anropet. En översiktssparning som landar där skrivs till
+    // databasen medan den här PUT:en lägger tillbaka det gamla huvudet — och stämplar 'synced'.
+    // Exakt felet på order 131, på den väg efterkontrollen först inte täckte.
+    if (opts?.recheckAfterPush !== false) {
+      const { mirrorFailed, mirrorNeedsManualFix } = await resyncHeaderIfSnapshotChangedDuringPush(
+        supabase, workOrderId, {
+          customer_snapshot: workOrder.customer_snapshot,
+          work_address: workOrder.work_address,
+          assigned_to: workOrder.assigned_to,
+          rot_details: workOrder.rot_details ?? null,
+          line_items: workOrder.line_items ?? null,
+        },
+      );
+      if (mirrorFailed) {
+        return {
+          fortnox_order_number: workOrder.fortnox_order_number,
+          mirrorFailed: true,
+          ...(mirrorNeedsManualFix ? { mirrorNeedsManualFix: true } : {}),
+        };
+      }
+    }
 
     return { fortnox_order_number: workOrder.fortnox_order_number };
   } catch (e) {
@@ -969,17 +1286,22 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     status: string;
     fortnox_order_number: string | null;
     fortnox_invoice_number: string | null;
+    partial_invoicing_started_at: string | null;
   };
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number, rot_details')
+    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, status, fortnox_order_number, fortnox_invoice_number, partial_invoicing_started_at, rot_details')
     .eq('id', workOrderId)
     .single<HeaderSyncRow>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
   if (!workOrder.fortnox_order_number) return null;
-  if (workOrder.status === 'invoiced' || workOrder.fortnox_invoice_number) return null;
+  // ⚠️ HELFAKTURERAD, inte "har ett fakturanummer". Delfakturering POSTar fristående fakturor och
+  // lämnar Fortnox-ordern ÖPPEN — men dess slutrunda sätter ändå `fortnox_invoice_number`, så det
+  // gamla villkoret stängde ute just de ordrar funktionens egen doc säger ska släppas igenom.
+  // Se isFortnoxOrderClosed.
+  if (isFortnoxOrderClosed(workOrder)) return null;
 
   try {
     const linkedQuote = await fetchLinkedQuoteForHeader(supabase, workOrder.quote_id);

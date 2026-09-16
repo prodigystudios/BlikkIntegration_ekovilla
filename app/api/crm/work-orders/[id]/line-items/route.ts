@@ -41,7 +41,21 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     let fortnoxError: string | null = null;
     try {
-      await updateWorkOrderInFortnox(context.params.id);
+      // ⚠️ `mirrorFailed` når hit via create-fallbacken (en order som aldrig pushats). Kastades
+      // resultatet bort svarade routen `fortnox_error: null` på en order pushen just stämplat
+      // 'failed' — och den statusen spärrar faktureringen via assertOrderRowsSynced.
+      const pushed = await updateWorkOrderInFortnox(context.params.id);
+      if (pushed.mirrorFailed) {
+        // ⚠️ TVÅ OLIKA RÅD. En rensning (tömd Er/Vår referens eller arbetsadress) går inte att
+        // skicka alls — buildOrderHeader utelämnar tomma värden — så "synka om" hade skickat
+        // säljaren i en cirkel där andra försöket rapporterar framgång medan Fortnox behåller sitt
+        // gamla värde. Allt annat lagas av en omsynk.
+        fortnoxError = pushed.mirrorNeedsManualFix
+          ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '
+            + 'synken — rätta fältet direkt i Fortnox.'
+          : 'Artiklarna sparades, men en ändring som gjordes under synken kunde inte speglas till '
+            + 'Fortnox. Synka om arbetsordern och kontrollera uppgifterna.';
+      }
     } catch (e) {
       if (!(e instanceof FortnoxNotConnectedError)) {
         // friendlyFortnoxMessage, inte e.message: FortnoxApiError.message ÄR den tekniska
