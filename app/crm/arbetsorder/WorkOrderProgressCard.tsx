@@ -37,23 +37,38 @@ import type { NewProgressEntry } from './useProgressReports';
 // enhet; en totalsumma hade krävt att meter och styck adderades. Samma skäl som domänen medvetet
 // saknar en funktion som summerar över moment.
 
+// ── DELAS MED KONTORET (canReport) ───────────────────────────────────────────
+// Till skillnad från säckarna, där fältet och kontoret har två egna kort. Där är läsningarna
+// genuint olika frågor: fältet vill veta hur långt man kommit på vinden (grupperat per placering),
+// kontoret varför det står 91 när raderna ser ut att bli 146 (kronologiskt, en ORDNINGSFRÅGA).
+//
+// Här ställer båda SAMMA fråga — hur långt har vi kommit, och vad är byggt utanför ordern — så en
+// andra komponent hade bara blivit en kopia som glider isär. Samma mönster som WorkOrderArticles,
+// som fältvyn återanvänder med canEdit={false}.
 type Props = {
   reports: ProgressReportView[];
   /** Orderns antals-/meterrader. Tom lista = bara fritextmoment går att rapportera. */
   workItems: ProgressWorkItem[];
   loading: boolean;
-  saving: boolean;
   /** Hämtningen misslyckades — boken kan mycket väl ha rader vi inte såg. */
   loadError: boolean;
-  onCreate: (input: {
+  /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
+  isRemoving: (id: string) => boolean;
+  onDelete: (id: string) => void;
+  /**
+   * Fältet rapporterar; kontoret läser och rättar.
+   *
+   * Styr både formuläret och rubrikens tyngd — fältvyns kort står bland andra `sectionTitle`-kort
+   * på Info-fliken, kontorets bland `cardTitle`-kort i översiktens spalt.
+   */
+  canReport?: boolean;
+  saving?: boolean;
+  onCreate?: (input: {
     reportDay: string;
     location: string | null;
     note: string | null;
     entries: NewProgressEntry[];
   }) => Promise<boolean>;
-  /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
-  isRemoving: (id: string) => boolean;
-  onDelete: (id: string) => void;
 };
 
 const CHIP_BASE =
@@ -69,11 +84,12 @@ export default function WorkOrderProgressCard({
   reports,
   workItems,
   loading,
-  saving,
   loadError,
-  onCreate,
   isRemoving,
   onDelete,
+  canReport = true,
+  saving = false,
+  onCreate,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -140,7 +156,7 @@ export default function WorkOrderProgressCard({
   }
 
   async function submit() {
-    if (!canSave) return;
+    if (!canSave || !onCreate) return;
     const ok = await onCreate({
       reportDay: day,
       location: location.trim() || null,
@@ -152,7 +168,21 @@ export default function WorkOrderProgressCard({
 
   return (
     <div className={cn(crm.cardInner, 'grid gap-3')}>
-      <p className={crm.sectionTitle}>Framdrift</p>
+      <p className={canReport ? crm.sectionTitle : crm.cardTitle}>Framdrift</p>
+
+      {/* ⚠️ AVVIKELSEN MÅSTE SYNAS UTAN ATT MAN SCROLLAR. William 2026-09-16: arbete utanför
+          ordern ska vara synligt på ordern — ingen notis, ingen egen livscykel. Då räcker inte en
+          märkning per grupp längst ner på ett kort med åtta moment; det är ju precis det kontoret
+          ska upptäcka utan att leta. Raden visas bara för kontoret: fältet har just rapporterat
+          raden och behöver inte påminnas om den. */}
+      {!canReport && !loading && groups.some((g) => g.notOnOrder) ? (
+        <p className="m-0 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+          {groups.filter((g) => g.notOnOrder).length === 1
+            ? 'Ett moment är rapporterat utan att finnas på ordern.'
+            : `${groups.filter((g) => g.notOnOrder).length} moment är rapporterade utan att finnas på ordern.`}{' '}
+          Se raderna märkta <strong className="font-semibold">Ej på ordern</strong> nedan.
+        </p>
+      ) : null}
 
       {loading ? (
         <p className="m-0 text-sm text-slate-400">Hämtar…</p>
@@ -160,7 +190,14 @@ export default function WorkOrderProgressCard({
         // "Vi vet inte", inte "inget finns". En tom lista här hade sett ut som ett svar om jobbet.
         <p className="m-0 text-sm text-amber-700">Kunde inte hämta rapporterna. Dra ner för att ladda om innan du rapporterar.</p>
       ) : groups.length === 0 ? (
-        <p className="m-0 text-sm text-slate-500">Inget rapporterat än på det här jobbet.</p>
+        // "Ingen har rapporterat", inte "noll gjort". Och säg VAR rapporten görs — kontorets kort
+        // är en läsvy, och den som står här och undrar varför den är tom ska inte behöva leta efter
+        // skrivstället. Samma val som säckrapporternas tomtext.
+        <p className={canReport ? 'm-0 text-sm text-slate-500' : crm.emptyValue}>
+          {canReport
+            ? 'Inget rapporterat än på det här jobbet.'
+            : 'Ingen har rapporterat framdrift på det här jobbet än. Rapporterna kommer från installatörens vy.'}
+        </p>
       ) : (
         <div className="grid gap-3">
           {groups.map((group) => {
@@ -256,7 +293,9 @@ export default function WorkOrderProgressCard({
         </div>
       )}
 
-      {!open ? (
+      {/* Kontoret rapporterar inte — det är fältets yta. Rättningen (Ta bort per rad) finns
+          däremot i båda vyerna, och den styrs av `can_delete` från servern. */}
+      {!canReport ? null : !open ? (
         <button
           type="button"
           onClick={() => setOpen(true)}
