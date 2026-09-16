@@ -82,17 +82,25 @@ export function isWorkOrderOverdue(date: string | null | undefined, status: stri
 
 // Säckantal: heltal utan decimalsvans, decimaler med svenskt komma. Kolumnen är numeric(10,2), så
 // ett halvt säckantal är möjligt även om det är ovanligt.
+//
+// ⚠️ EGEN REGEL, inte `formatQuantity` ovan — de skiljer sig på tusentalsavskiljaren. Ett radantal
+// visas som "1 200" (bredvid à-priset, där avskiljaren hjälper), ett säckantal som "1200". Slå inte
+// ihop dem utan att titta på båda ytorna först.
 export function formatSacks(value: number): string {
   return Number.isInteger(value) ? String(value) : String(Math.round(value * 100) / 100).replace('.', ',');
 }
 
-// Säckinmatning från fältet → tal, eller null när rutan inte bär ett tal.
+// Mängdinmatning från fältet → tal, eller null när rutan inte bär ett tal.
 //
-// ⚠️ NULL OCH INTE 0. `parseDecimal` faller tillbaka på 0, vilket i den här boken är ett PÅSTÅENDE
-// ("vi var här, inget gick åt") och inte en avsaknad. Skrivs "abv" eller lämnas rutan tom ska
-// sparningen blockeras, inte skriva en nollrad som fältet sedan inte kan rätta — huvudboken är
-// append-only och besättningen har ingen raderingsrätt.
-export function parseSackInput(raw: string): number | null {
+// ⚠️ NULL OCH INTE 0. `parseDecimal` faller tillbaka på 0, vilket i båda rapportböckerna är ett
+// PÅSTÅENDE ("vi var här, inget gick åt") och inte en avsaknad. Skrivs "abv" eller lämnas rutan tom
+// ska sparningen blockeras, inte skriva en nollrad — raden går bara att rätta genom att tas bort,
+// och i säckboken bara av den som skrev den.
+//
+// Hette tidigare parseSackInput. Namnet generaliserades när framdriftsrapporteringen blev en andra
+// konsument: regeln är densamma för meter landgång som för säckar, och två kopior av en strikt
+// parsning blir förr eller senare två olika svar på "är det här ett tal?".
+export function parseQuantityInput(raw: string): number | null {
   const trimmed = raw.trim();
   if (!/^\d+([.,]\d{1,2})?$/.test(trimmed)) return null;
   const parsed = Number(trimmed.replace(',', '.'));

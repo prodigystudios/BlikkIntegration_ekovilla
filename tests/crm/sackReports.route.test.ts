@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { effectivePermissionsForRole, memberUser, salesUser } from './helpers/supabase';
-import { parseSackInput } from '@/app/crm/lib/format';
+import { parseQuantityInput } from '@/app/crm/lib/format';
 
 // Säckrapporteringens rutt. Det som prövas här är inte att en insert går igenom, utan att routen
 // inte litar på klienten och att de två spärrarna faktiskt spärrar:
@@ -549,17 +549,17 @@ describe('POST /sack-reports/final — dörr 1', () => {
 // Fältets inmatningsregel. En nolla är ett PÅSTÅENDE i den här boken ("vi var här, inget gick åt"),
 // så tomt och oläsbart får aldrig bli 0 — huvudboken är append-only och besättningen kan inte
 // rätta en felskriven rad.
-describe('parseSackInput', () => {
+describe('parseQuantityInput', () => {
   it('tar emot heltal och upp till två decimaler, komma eller punkt', () => {
-    expect(parseSackInput('30')).toBe(30);
-    expect(parseSackInput(' 12,5 ')).toBe(12.5);
-    expect(parseSackInput('1.25')).toBe(1.25);
-    expect(parseSackInput('0')).toBe(0);
+    expect(parseQuantityInput('30')).toBe(30);
+    expect(parseQuantityInput(' 12,5 ')).toBe(12.5);
+    expect(parseQuantityInput('1.25')).toBe(1.25);
+    expect(parseQuantityInput('0')).toBe(0);
   });
 
   it('tomt, bokstäver och minus ger null — INTE noll', () => {
     for (const raw of ['', '   ', 'abv', '-5', '3-', '1,2,3', '1,234']) {
-      expect(parseSackInput(raw), raw).toBeNull();
+      expect(parseQuantityInput(raw), raw).toBeNull();
     }
   });
 });
