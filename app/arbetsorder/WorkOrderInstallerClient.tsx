@@ -11,7 +11,10 @@ import WorkOrderArticles, { type ArticleLineItem } from '@/app/crm/arbetsorder/W
 import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
 import WorkOrderSackReportCard from '@/app/crm/arbetsorder/WorkOrderSackReportCard';
+import WorkOrderProgressCard from '@/app/crm/arbetsorder/WorkOrderProgressCard';
 import { useSackReports } from '@/app/crm/arbetsorder/useSackReports';
+import { useProgressReports } from '@/app/crm/arbetsorder/useProgressReports';
+import { progressWorkItemsFromLineItems } from '@/lib/domains/crm/workOrderProgress';
 import { useWorkOrderActivity } from '@/app/crm/arbetsorder/useWorkOrderActivity';
 import { useWorkOrderFiles } from '@/app/crm/arbetsorder/useWorkOrderFiles';
 import { useCustomerContact } from '@/app/crm/arbetsorder/useCustomerContact';
@@ -64,6 +67,9 @@ export default function WorkOrderInstallerClient({
   // alltid null här, se app/crm/arbetsorder/useAssigneeContact.ts.
   const assignee = useAssigneeContact(workOrderId);
   const sackReports = useSackReports(workOrderId);
+  // Framdriften — meter landgång, antal brandmattor. Egen bok och egen hook, medvetet skild från
+  // säckarnas: se lib/domains/crm/workOrderProgress.ts och migreringen.
+  const progressReports = useProgressReports(workOrderId);
 
   // Utan Tid-fliken finns ingen konsument för tidraderna — hämta dem inte då.
   const activity = useWorkOrderActivity(workOrderId, { includeTimeEntries: canReportTime });
@@ -98,6 +104,16 @@ export default function WorkOrderInstallerClient({
     const shorts = (workOrder?.line_items || []).map((item) => inferMaterialFromArticle(item?.article_name)?.short);
     return [...new Set(shorts.filter((short): short is string => Boolean(short)))];
   }, [workOrder?.line_items]);
+
+  // Orderns rapporterbara moment: antals- och meterraderna. Ytorna hör till säckrapporten, så ett
+  // moment kan aldrig dubbelrapporteras i båda korten.
+  //
+  // Ligger här av samma skäl som memon ovan: `workOrder` är null under laddningen, och en hook
+  // efter den tidiga returen körs inte i första rendern.
+  const progressWorkItems = useMemo(
+    () => progressWorkItemsFromLineItems((workOrder?.line_items || []) as any[]),
+    [workOrder?.line_items],
+  );
 
   useEffect(() => {
     let active = true;
@@ -318,6 +334,25 @@ export default function WorkOrderInstallerClient({
             onCreate={sackReports.create}
             isRemoving={sackReports.isRemoving}
             onDelete={sackReports.remove}
+          />
+
+          {/* Framdrift — meter landgång, antal brandmattor, och det som byggts utanför ordern.
+              Ligger direkt under säckrapporten: samma ögonblick i dagen, och de två svarar på
+              olika halvor av "vad gjorde vi i dag". Säckarna först, eftersom de är det vanliga
+              jobbet; framdriften är den som bär flerhusprojekten.
+
+              ⚠️ Kortet är INTE spärrat av egenkontrollen, till skillnad från säckkortet ovanför.
+              Där vore en sen delrapport en tyst nolloperation (finalen vinner); här finns ingen
+              final, och landgång kan byggas på ett återbesök. */}
+          <WorkOrderProgressCard
+            reports={progressReports.reports}
+            workItems={progressWorkItems}
+            loading={progressReports.loading}
+            saving={progressReports.saving}
+            loadError={progressReports.loadError}
+            onCreate={progressReports.create}
+            isRemoving={progressReports.isRemoving}
+            onDelete={progressReports.remove}
           />
 
           {/* Egenkontroll — de två vägarna till pappersarbetet, båda med ordernumret ifyllt.
