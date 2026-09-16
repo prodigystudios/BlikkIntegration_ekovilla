@@ -99,6 +99,50 @@ export function isFortnoxOrderClosed(workOrder: {
 }
 
 /**
+ * Är ändringen en RENSNING som Fortnox inte kan ta emot?
+ *
+ * 🧨 `buildOrderHeader` UTELÄMNAR tomma värden (`...(yourReference ? { YourReference } : {})`), och
+ * en Fortnox-PUT rör bara fält den bär. Ett tömt "Er referens" eller en tömd arbetsadress kan
+ * därför ALDRIG nollas via synken — PUT:en går igenom, rapporterar framgång, och Fortnox behåller
+ * sitt gamla värde. Kundens dokument bär då kvar en referens eller en arbetsplats som inte längre
+ * gäller, med allt grönt på skärmen.
+ *
+ * ⚠️ Rådet "synka om" är därför FEL här — det skickar säljaren i en cirkel där andra försöket
+ * rapporterar framgång lika tyst. Fältet måste rättas för hand i Fortnox.
+ *
+ * ⚠️ `label` är UNDANTAGET och står inte med: den har ett eget rensningsminne (`label_cleared` →
+ * `YourOrderNumber: null`) och lagas av PUT:en som vanligt.
+ *
+ * ⚠️ `assigned_to` står inte heller med: kolumnen är `not null`, så ansvarig kan aldrig tömmas.
+ */
+export function workOrderClearIsUnexpressible(
+  current: {
+    customer_snapshot?: Record<string, unknown> | null;
+    work_address?: Record<string, unknown> | null;
+  } | null | undefined,
+  overrides: { your_reference?: string | null; work_address?: Record<string, unknown> | null },
+): boolean {
+  const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
+
+  if ('your_reference' in overrides) {
+    // Samma fallback som huvudet använder (resolveYourReference) på BÅDA sidor.
+    const before = mirroredText(snapshot.your_reference) ?? mirroredText(snapshot.contact_name);
+    const after = mirroredText(overrides.your_reference) ?? mirroredText(snapshot.contact_name);
+    if (before && !after) return true;
+  }
+
+  if ('work_address' in overrides) {
+    const next = (overrides.work_address ?? {}) as Record<string, unknown>;
+    const prev = (current?.work_address ?? {}) as Record<string, unknown>;
+    // Nyckel för nyckel: rensas bara orten utelämnas DeliveryCity medan gata och postnummer
+    // skickas, och dokumentet får en halv adress från två olika platser.
+    if (MIRRORED_WORK_ADDRESS_KEYS.some((key) => mirroredText(prev[key]) && !mirroredText(next[key]))) return true;
+  }
+
+  return false;
+}
+
+/**
  * Ändrades något som faktiskt NÅR kundens Fortnox-dokument?
  *
  * 🧨 SKILT FRÅN "skickade klienten fältet". Ordervyn skickar `your_reference` vid varje sparning

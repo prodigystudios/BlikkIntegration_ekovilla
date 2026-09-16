@@ -537,7 +537,17 @@ export async function createPartialInvoice(
         );
       }
       if (pushed.mirrorFailed) {
-        await updateWorkOrderInFortnox(workOrderId);
+        // ⚠️ OCH REPARATIONENS EGET UTFALL MÅSTE LÄSAS. Hinner en ANDRA sparning landa under
+        // omsynken är huvudet inaktuellt igen — och då speglas ett gammalt referensnummer ut på
+        // kundens faktura, precis det som spärren tre rader upp finns för att hindra.
+        const repaired = await updateWorkOrderInFortnox(workOrderId);
+        if (repaired.mirrorFailed) {
+          throw new PartialInvoiceError(
+            'Arbetsordern ändrades igen under synken och Fortnox-ordern är fortfarande inte '
+            + 'uppdaterad. Synka om arbetsordern och försök igen — annars speglas ett gammalt '
+            + 'referensnummer till kundens faktura.',
+          );
+        }
       }
     }
     const order = await fortnoxGet<{ Order?: FortnoxOrderHeader }>(`/orders/${orderNumber}`);

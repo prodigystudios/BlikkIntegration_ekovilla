@@ -19,6 +19,7 @@ import type { CreateWorkOrderFileInput } from './workOrderFiles/types';
 export {
   isFortnoxOrderClosed,
   workOrderMirroredFieldsChanged,
+  workOrderClearIsUnexpressible,
   MIRRORED_WORK_ADDRESS_KEYS,
   MIRRORED_SNAPSHOT_KEYS,
   ROT_DOCUMENT_KEYS,

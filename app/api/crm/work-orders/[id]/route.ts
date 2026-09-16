@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -151,6 +151,14 @@ export async function PATCH(req: Request, context: RouteContext) {
     //
     // ⚠️ Måste beräknas HÄR, före merge-blocket: det raderar `label` och `your_reference` ur
     // updateInput så fort de vandrat in i snapshoten.
+    // ⚠️ En RENSNING kan header-synken inte uttrycka — buildOrderHeader utelämnar tomma värden, så
+    // PUT:en lyckas medan Fortnox behåller sitt gamla värde. Beräknas här av samma skäl som raden
+    // nedan: merge-blocket raderar fälten ur updateInput strax efter.
+    const clearIsUnexpressible = workOrderClearIsUnexpressible(current, {
+      ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
+      ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
+    });
+
     const mirroredFieldChanged = workOrderMirroredFieldsChanged(current, {
       ...('label' in updateInput ? { label: updateInput.label } : {}),
       ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
@@ -327,8 +335,28 @@ export async function PATCH(req: Request, context: RouteContext) {
         // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
         // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
         // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
-        if (rotPush) await updateWorkOrderInFortnox(context.params.id);
-        else await syncWorkOrderHeaderToFortnox(context.params.id);
+        // ⚠️ RESULTATET MÅSTE LÄSAS. Den här grenen är fjärde anroparen av updateWorkOrderInFortnox,
+        // och kastas svaret bort stämplas raden 'failed' av en misslyckad omspegling medan routen
+        // svarar `fortnox_error: null` och klienten visar grön toast — med faktureringen spärrad av
+        // assertOrderRowsSynced och ingenting som förklarar varför.
+        if (rotPush) {
+          const pushed = await updateWorkOrderInFortnox(context.params.id);
+          if (pushed.mirrorFailed) {
+            fortnoxError = pushed.mirrorNeedsManualFix
+              ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '
+                + 'synken — rätta fältet direkt i Fortnox.'
+              : 'Ändringen är sparad, men något som ändrades under synken kunde inte speglas till '
+                + 'Fortnox. Synka om arbetsordern och kontrollera uppgifterna.';
+          }
+        } else {
+          await syncWorkOrderHeaderToFortnox(context.params.id);
+          // PUT:en lyckas, men Fortnox behåller sitt gamla värde — säg det, i stället för att
+          // råda till en omsynk som rapporterar framgång lika tyst.
+          if (clearIsUnexpressible) {
+            fortnoxError = 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte '
+              + 'nollas via synken — rätta fältet direkt i Fortnox.';
+          }
+        }
       } catch (e) {
         if (!(e instanceof FortnoxNotConnectedError)) {
           fortnoxError = friendlyFortnoxMessage(e);

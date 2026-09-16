@@ -95,6 +95,21 @@ describe('createPartialInvoice — ett känt inaktuellt orderhuvud', () => {
     expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
+  // 🧨 OCH REPARATIONENS EGET UTFALL. Hinner en ANDRA sparning landa under omsynken är huvudet
+  // inaktuellt igen — då speglas ett gammalt referensnummer ut på kundens faktura, precis det
+  // spärren finns för att hindra.
+  it('vägrar fakturera när även omsynken lämnade huvudet inaktuellt', async () => {
+    vi.mocked(pushWorkOrderToFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true } as never);
+    vi.mocked(updateWorkOrderInFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true } as never);
+
+    await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
+      .rejects.toThrow(/[Ss]ynka om/);
+
+    expect(fortnoxPost).not.toHaveBeenCalled();
+  });
+
   // …och en ren push ska förstås gå vidare som vanligt.
   it('fakturerar som vanligt när pushen speglade allt', async () => {
     vi.mocked(pushWorkOrderToFortnox).mockResolvedValue({ fortnox_order_number: '131' } as never);

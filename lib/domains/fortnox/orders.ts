@@ -651,7 +651,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // blivit lika med kundens gata — två olika ändringar, samma outtryckbara utfall.
   const deliveryBefore = buildOrderDeliveryFields(atBuild.work_address, atBuild.customer_snapshot);
   const deliveryAfter = buildOrderDeliveryFields(fresh.work_address, fresh.customer_snapshot);
-  const deliveryCleared = Object.keys(deliveryBefore).length > 0 && Object.keys(deliveryAfter).length === 0;
+  // ⚠️ NYCKEL FÖR NYCKEL, inte "blev objektet tomt". Rensas bara orten utelämnas `DeliveryCity`
+  // medan gata och postnummer skickas — PUT:en rör bara fält den bär, så Fortnox behåller den gamla
+  // orten och dokumentet får en halv adress från två olika platser.
+  const deliveryCleared = Object.entries(deliveryBefore)
+    .some(([key, value]) => value && !(deliveryAfter as Record<string, unknown>)[key]);
 
   const referenceCleared = Boolean(resolveYourReference(atBuild.customer_snapshot))
     && !resolveYourReference(fresh.customer_snapshot);

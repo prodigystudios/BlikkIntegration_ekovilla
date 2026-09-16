@@ -164,6 +164,41 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
     expect(json.data.fortnox_error).toBeNull();
   });
 
+  // 🧨 ROT-GRENEN ÄR FJÄRDE ANROPAREN av updateWorkOrderInFortnox. Kastas svaret bort stämplas
+  // raden 'failed' av en misslyckad omspegling medan routen svarar grönt — och faktureringen är
+  // spärrad av assertOrderRowsSynced utan att något förklarar varför.
+  //
+  // ⚠️ Den här fixen rapporterades en gång som gjord utan att ha applicerats (fel indentering i
+  // sökmönstret), och INGET test fångade det. Därför finns testet.
+  it('bär upp mirrorFailed från ROT-pushen', async () => {
+    install({ ...openOrder, quote_type: 'private', rot_details: { enabled: true, property_designation: 'Gläntan 1:14' } });
+    vi.mocked(updateWorkOrderInFortnox).mockResolvedValue(
+      { fortnox_order_number: '131', mirrorFailed: true } as never);
+
+    const json = await (await PATCH(patchReq({
+      status: 'in_progress',
+      rot_details: { property_designation: 'Haggården 6:3' },
+    }), ctx)).json();
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalled();
+    expect(json.data.fortnox_error).toBeTruthy();
+  });
+
+  // 🧨 En RENSNING kan header-synken inte uttrycka: buildOrderHeader utelämnar tomma värden, så
+  // PUT:en lyckas medan Fortnox behåller sitt gamla värde. Rådet måste bli "rätta i Fortnox",
+  // aldrig "synka om" — det senare rapporterar framgång lika tyst andra gången.
+  it('säger att en tömd Er referens måste rättas i Fortnox', async () => {
+    install(openOrder);
+
+    const json = await (await PATCH(patchReq({
+      status: 'in_progress',
+      your_reference: null,
+    }), ctx)).json();
+
+    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalled();
+    expect(String(json.data.fortnox_error)).toContain('direkt i Fortnox');
+  });
+
   // 🧨 NÄRVARO ÄR INTE ÄNDRING. Ordervyn skickar `your_reference` vid VARJE sparning (och `label`
   // på varje företagsorder), så ett larm som gick på närvaro hade gett "nådde inte Fortnox" varje
   // gång någon rättade en anteckning på en fakturerad order — ett rött larm om ingenting.

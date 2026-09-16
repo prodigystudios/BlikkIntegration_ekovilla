@@ -510,6 +510,27 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(result.mirrorFailed).toBe(true);
   });
 
+  // 🧨 EN DELVIS RENSNING räknas också. Rensas bara ORTEN utelämnas DeliveryCity medan gata och
+  // postnummer skickas — Fortnox behåller sin gamla ort och dokumentet får en halv adress från två
+  // olika platser. Ett villkor på "blev hela blocket tomt" missar det.
+  it('flaggar även när bara en del av arbetsadressen rensades', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: { ...baseRow, work_address: { street_address: 'Nygatan 3', postal_code: '81140', city: 'Sandviken' } },
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        work_address: { street_address: 'Nygatan 3', postal_code: '81140', city: null },
+      },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(result.mirrorNeedsManualFix).toBe(true);
+  });
+
   // ⚠️ `include_in_description` styr bara VÅR arbetsbeskrivning — Fortnox ser den aldrig. En
   // ÖVRIGT-bock mitt i pushen får inte kosta en full positionsbaserad rad-PUT, den farligaste
   // skrivningen i filen.
