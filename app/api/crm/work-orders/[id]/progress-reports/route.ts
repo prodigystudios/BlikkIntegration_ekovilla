@@ -174,6 +174,15 @@ export async function POST(req: Request, context: RouteContext) {
         note: parsedBody.data.note,
       });
       if (!resolution.ok) {
+        if (resolution.reason === 'written_off_line_item') {
+          // Eget svar, och inte "ladda om sidan": raden FINNS på ordern, det är dess status som är
+          // svaret, och ingen omladdning ändrar den. Kontoret måste ta ställning först.
+          return routeError(
+            409,
+            'crm_work_order_progress_written_off_line_item',
+            'Raden är avskriven på arbetsordern och går inte att rapportera på. Hör med kontoret om den ska tas i bruk igen.',
+          );
+        }
         if (resolution.reason === 'unknown_line_item') {
           // 409 och inte 400: kroppen var välformad, men ordern har ändrats under fältvyns fötter.
           // Att i stället tyst spara raden som ett fritextmoment hade gjort en PLANERAD rapport

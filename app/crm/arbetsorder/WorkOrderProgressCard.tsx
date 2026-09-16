@@ -8,6 +8,7 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
   groupProgressReports,
   progressLocationSuggestions,
+  PROGRESS_UNIT_FALLBACKS,
   type ProgressReportView,
   type ProgressWorkItem,
 } from '@/lib/domains/crm/workOrderProgress';
@@ -107,18 +108,30 @@ export default function WorkOrderProgressCard({
     if (open && !day) setDay(stockholmTodayISO());
   }, [open, day]);
 
+  // ⚠️ GRUPPERINGEN FÅR HELA LISTAN, chipsen bara de rapporterbara. En avskriven rad (såld men
+  // markerad aldrig utförd) ska inte gå att rapportera NY framdrift på, men måste fortfarande gå
+  // att slå upp: rapporterades 45 m innan raden skrevs av ska kortet visa "45 av 120 m · Avskriven"
+  // och inte "Ej på ordern" — den märkningen är till för arbete som aldrig såldes.
   const groups = groupProgressReports(reports, workItems);
+  const reportable = workItems.filter((item) => !item.writtenOff);
   const locationSuggestions = progressLocationSuggestions(reports).slice(0, 6);
-  // Enhetschips för ett fritextmoment: de enheter ordern faktiskt använder, annars husets vanliga.
-  // Ingen fri inmatning av enhet — men null är tillåtet, för "Röjning – 1" behöver ingen.
-  const unitOptions = [...new Set(workItems.map((i) => i.unit).filter((u): u is string => Boolean(u)))];
+  // Enhetschips för ett fritextmoment: de enheter ordern faktiskt använder, plus husets vanliga.
+  // Fallbacken behövs i precis det fall kortet hänvisar till "Annat" — en order utan
+  // antals-/meterrader har inga enheter att härleda ur, och utan den fick fältet välja mellan noll
+  // chips. Ingen fri inmatning av enhet, men null är tillåtet: "Röjning – 1" behöver ingen.
+  const unitOptions = [
+    ...new Set([
+      ...reportable.map((i) => i.unit).filter((u): u is string => Boolean(u)),
+      ...PROGRESS_UNIT_FALLBACKS,
+    ]),
+  ];
   const freePicked = FREE_KEY in picked;
 
   // ⚠️ STRIKT PARSNING. `parseDecimal` faller tillbaka på 0, så "abv" hade blivit en riktig nollrad
   // i en bok där en rad bara går att ta bort — och ett chip som tappats på men lämnats tomt får
   // inte tyst falla bort ur submiten, då tror hen att landgången är rapporterad. Båda blir null
   // här, och null blockerar sparningen i stället för att skriva något påhittat.
-  const pickedItems = workItems.filter((item) => item.lineItemId in picked);
+  const pickedItems = reportable.filter((item) => item.lineItemId in picked);
   const parsedItems = pickedItems.map((item) => ({ item, quantity: parseQuantityInput(picked[item.lineItemId] ?? '') }));
   const freeQuantity = freePicked ? parseQuantityInput(picked[FREE_KEY] ?? '') : null;
   const freeLabelOk = !freePicked || freeLabel.trim() !== '';
@@ -229,6 +242,12 @@ export default function WorkOrderProgressCard({
                   {group.notOnOrder ? (
                     <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>Ej på ordern</span>
                   ) : null}
+                  {/* Rapporterad framdrift på en rad som markerats som aldrig utförd — en
+                      motsägelse kontoret ska se, men en ANNAN än "Ej på ordern": här finns både en
+                      rad och ett sålt antal att jämföra mot. */}
+                  {group.writtenOff ? (
+                    <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-800')}>Avskriven rad</span>
+                  ) : null}
                 </div>
 
                 {/* Per plats — hela skälet att platsen finns. "Hus A 25, Hus B 20" är svaret på
@@ -320,7 +339,7 @@ export default function WorkOrderProgressCard({
           <div>
             <p className={cn(crm.label, 'mb-1.5')}>Vad gjorde ni?</p>
             <div className="flex flex-wrap gap-2">
-              {workItems.map((item) => {
+              {reportable.map((item) => {
                 const on = item.lineItemId in picked;
                 return (
                   <button
@@ -347,7 +366,7 @@ export default function WorkOrderProgressCard({
                 Annat
               </button>
             </div>
-            {workItems.length === 0 ? (
+            {reportable.length === 0 ? (
               <p className="m-0 mt-1.5 text-xs text-slate-500">
                 Ordern har inga antals- eller meterrader. Använd <strong className="font-semibold">Annat</strong> och
                 skriv vad ni gjorde.

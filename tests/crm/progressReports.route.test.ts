@@ -240,6 +240,22 @@ describe('POST /progress-reports', () => {
     expect(res.status).toBe(409);
   });
 
+  // 🧨 GRANSKNINGSFYND 2026-09-16. En avskriven rad får ett EGET besked. Rådet som hör till ett
+  // okänt id ("ladda om sidan") hjälper inte här — raden finns kvar, det är dess status som är
+  // svaret, och ingen omladdning i världen ändrar den.
+  it('avvisar en avskriven rad med ett besked som går att handla på', async () => {
+    mockOrder.mockResolvedValue({
+      data: { id: WORK_ORDER_ID, line_items: [{ ...LINE_ITEMS[0], written_off: true }] },
+      error: null,
+    } as never);
+    const res = await POST(postReq({ ...BODY, entries: [{ line_item_id: 'li-1', quantity: 45 }] }), ctx);
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.error).toMatch(/avskriven/i);
+    expect(body.error).not.toMatch(/ladda om/i);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
   it('avvisar ett moment utan namn', async () => {
     const res = await POST(postReq({ ...BODY, entries: [{ quantity: 6 }] }), ctx);
     expect(res.status).toBe(400);

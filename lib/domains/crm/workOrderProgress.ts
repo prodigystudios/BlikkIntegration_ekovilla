@@ -44,7 +44,30 @@ export type ProgressWorkItem = {
    * kortet ska skriva "–" i stället för "45 av 0".
    */
   planned: number | null;
+  /**
+   * Avskriven rad: såld men aldrig utförd.
+   *
+   * ⚠️ RADEN LIGGER KVAR I LISTAN, med flit — den filtreras INTE bort här. Ny framdrift får inte
+   * rapporteras på den (kortet ritar inget chip, resolveProgressEntry avvisar), men GRUPPERINGEN
+   * måste kunna slå upp den: rapporterades 45 m innan raden skrevs av ska kontoret läsa
+   * "45 av 120 m · Avskriven" och inte "Ej på ordern". Raden ÄR på ordern, och den märkningen är
+   * till för arbete som aldrig såldes — annars larmar kortet om en avvikelse som inte finns, och
+   * jämförelsen mot det sålda antalet försvinner.
+   *
+   * Filtrerades den bort här blev följden dessutom ett 409 med rådet "ladda om sidan" på ett
+   * line_item_id som aldrig kommer tillbaka, hur många omladdningar det än blir.
+   */
+  writtenOff: boolean;
 };
+
+/**
+ * Enheter att erbjuda för ett FRITEXTMOMENT när ordern inte själv bär några.
+ *
+ * ⚠️ Behövs i precis det fall kortet hänvisar till "Annat": en order helt utan antals-/meterrader
+ * har inga enheter att härleda ur, och utan den här listan fick fältet välja mellan noll chips.
+ * Kopplade moment tar ALLTID enheten ur orderraden och rör aldrig den här listan.
+ */
+export const PROGRESS_UNIT_FALLBACKS = ['m', 'st', 'm²'] as const;
 
 /**
  * Orderns rapporterbara moment: antals- och meterraderna.
@@ -67,14 +90,18 @@ export type ProgressWorkItem = {
  * ⚠️ Men till skillnad från `buildExtraRow` hoppas rader med mängd 0 INTE över. Där är regeln rätt
  * ("en 0 st-rad är inget arbetsmoment" i en beskrivning); här hade den gjort ett sålt moment
  * orapporterbart och tvingat fram samma falska avvikelse som ovan. Raden kommer med, utan plan.
+ *
+ * ⚠️ Avskrivna rader kommer också MED, märkta `writtenOff` — se fältet för varför de inte får
+ * filtreras bort här. Anroparen filtrerar för chipsen; uppslaget behöver dem kvar.
  */
 export function progressWorkItemsFromLineItems(items: ProgressLineItemSource[]): ProgressWorkItem[] {
   const out: ProgressWorkItem[] = [];
   for (const item of items) {
     if ((item?.pricing_mode ?? 'm3') !== 'item') continue;
-    // Avskriven rad: såld men aldrig utförd. Ska inte gå att rapportera framdrift på.
-    if (item?.written_off === true) continue;
     const lineItemId = String(item?.id ?? '').trim();
+    // Utan id går raden inte att adressera — en rapport på den kunde aldrig pekas tillbaka. I
+    // praktiken finns de inte: både offertformuläret och artikelfliken skapar rader med ett uuid,
+    // och quoteLineItemSchema kräver `id` vid VARJE sparning.
     if (!lineItemId) continue;
     const label = String(item?.article_name || item?.line_note || '').replace(/\s+/g, ' ').trim();
     if (!label) continue;
@@ -87,6 +114,7 @@ export function progressWorkItemsFromLineItems(items: ProgressLineItemSource[]):
       // ingen sådan rundtur, och "löpande meter" ur Fortnox enhetsregister ska synas som den är.
       unit: String(item?.article_unit_name ?? '').trim() || null,
       planned: Number.isFinite(planned) && planned > 0 ? planned : null,
+      writtenOff: item?.written_off === true,
     });
   }
   return out;
@@ -118,7 +146,7 @@ export type ResolvedProgressEntry = {
 
 export type ProgressEntryResolution =
   | { ok: true; entry: ResolvedProgressEntry }
-  | { ok: false; reason: 'unknown_line_item' | 'missing_work_item' };
+  | { ok: false; reason: 'unknown_line_item' | 'written_off_line_item' | 'missing_work_item' };
 
 function trimmedOrNull(value: string | null | undefined): string | null {
   const trimmed = String(value ?? '').replace(/\s+/g, ' ').trim();
@@ -150,6 +178,10 @@ export function resolveProgressEntry(
   if (lineItemId) {
     const known = workItems.find((item) => item.lineItemId === lineItemId);
     if (!known) return { ok: false, reason: 'unknown_line_item' };
+    // Avskriven rad = såld men aldrig utförd. Ny framdrift på den är en motsägelse, och den får ett
+    // EGET skäl: rådet "ladda om sidan" (som ett okänt id får) hjälper inte, för raden finns kvar —
+    // det är dess status som är svaret.
+    if (known.writtenOff) return { ok: false, reason: 'written_off_line_item' };
     return {
       ok: true,
       entry: {
@@ -212,6 +244,12 @@ export type ProgressGroup<T> = {
    * skicka en notis och inte bära en egen livscykel.
    */
   notOnOrder: boolean;
+  /**
+   * Orderraden är avskriven — såld men markerad som aldrig utförd, trots att det finns rapporterad
+   * framdrift på den. En motsägelse kontoret ska se, men en ANNAN än `notOnOrder`: här finns en rad
+   * och ett sålt antal att jämföra mot.
+   */
+  writtenOff: boolean;
   /** Rapporterat över det sålda antalet. Alltid false när `planned` är null. */
   overPlanned: boolean;
   /** Per plats, i bokstavsordning med de platslösa sist. */
@@ -275,6 +313,7 @@ export function groupProgressReports<T extends ProgressReportView>(
         planned: item?.planned ?? null,
         reported: 0,
         notOnOrder: !item,
+        writtenOff: item?.writtenOff === true,
         overPlanned: false,
         locations: [],
         items: [],

@@ -43,11 +43,16 @@ describe('progressWorkItemsFromLineItems', () => {
     expect(items[0]).toMatchObject({ label: 'Landgång', unit: 'm', planned: 120 });
   });
 
-  it('utesluter avskrivna rader', () => {
+  // 🧨 GRANSKNINGSFYND 2026-09-16. Avskrivna rader FILTRERADES först bort helt — och då tappade
+  // grupperingen sitt uppslag: framdrift som rapporterats innan raden skrevs av blev en
+  // "gone:"-grupp med badgen "Ej på ordern" plus kontorets varningsrad, och "45 av 120 m"
+  // försvann. Raden ÄR på ordern. De kommer med, märkta; anroparen filtrerar för chipsen.
+  it('tar med avskrivna rader men märker dem', () => {
     const items = progressWorkItemsFromLineItems([
       { id: 'a', article_name: 'Landgång', pricing_mode: 'item', quantity: '120', written_off: true },
+      { id: 'b', article_name: 'Sarg', pricing_mode: 'item', quantity: '4' },
     ]);
-    expect(items).toEqual([]);
+    expect(items.map((i) => [i.lineItemId, i.writtenOff])).toEqual([['a', true], ['b', false]]);
   });
 
   // 🧨 FÄLLAN: måttblockets isExtraRow kräver include_in_description === true, och den flaggan
@@ -99,8 +104,18 @@ describe('progressWorkItemsFromLineItems', () => {
 
 describe('resolveProgressEntry', () => {
   const workItems: ProgressWorkItem[] = [
-    { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120 },
+    { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
+    { lineItemId: 'av', label: 'Avskriven landgång', unit: 'm', planned: 30, writtenOff: true },
   ];
+
+  // Ny framdrift på en avskriven rad är en motsägelse, och skälet måste vara ett EGET: rådet som
+  // hör till ett okänt id ("ladda om sidan") hjälper inte, för raden finns kvar.
+  it('avvisar en avskriven rad med eget skäl', () => {
+    expect(resolveProgressEntry(workItems, { line_item_id: 'av', quantity: 5 })).toEqual({
+      ok: false,
+      reason: 'written_off_line_item',
+    });
+  });
 
   // 🧨 SPÄRREN BAKOM "45 av 120 m". Tillåts klienten sätta enhet eller etikett kan en rapport säga
   // "45 st" mot en rad som säljer 120 meter, och kontorets jämförelse blir ett tal utan betydelse.
@@ -173,8 +188,8 @@ describe('resolveProgressEntry', () => {
 
 describe('groupProgressReports', () => {
   const workItems: ProgressWorkItem[] = [
-    { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120 },
-    { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4 },
+    { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
+    { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4, writtenOff: false },
   ];
 
   it('summerar per moment och bär planen ur ordern', () => {
@@ -192,6 +207,25 @@ describe('groupProgressReports', () => {
   it('flaggar överdrag mot planen', () => {
     const groups = groupProgressReports([ROW({ line_item_id: 'b', quantity: 5 })], workItems);
     expect(groups[0]).toMatchObject({ planned: 4, reported: 5, overPlanned: true });
+  });
+
+  // 🧨 GRANSKNINGSFYND 2026-09-16. En avskriven rad ska INTE läsas som "ej på ordern": den ligger
+  // kvar på ordern med ett sålt antal, och kontorets amber-varning är till för arbete som aldrig
+  // såldes. Blir de samma sak larmar kortet om en avvikelse som inte finns, och "45 av 120 m"
+  // försvinner.
+  it('skiljer en avskriven rad från ett moment utanför ordern', () => {
+    const withWrittenOff: ProgressWorkItem[] = [
+      ...workItems,
+      { lineItemId: 'av', label: 'Avskriven landgång', unit: 'm', planned: 30, writtenOff: true },
+    ];
+    const groups = groupProgressReports([ROW({ line_item_id: 'av', quantity: 12 })], withWrittenOff);
+    expect(groups[0]).toMatchObject({
+      label: 'Avskriven landgång',
+      planned: 30,
+      reported: 12,
+      notOnOrder: false,
+      writtenOff: true,
+    });
   });
 
   it('flaggar ett fritextmoment som ej på ordern, utan plan', () => {
