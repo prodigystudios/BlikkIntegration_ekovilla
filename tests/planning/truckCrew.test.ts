@@ -67,7 +67,7 @@ describe('shiftISO', () => {
 
 // Hur många som ser en publicerad platshållare. Siffran står i platshållarmodalen och avgör om
 // planeraren varnas för att ingen ser bokningen — så den måste svara exakt som
-// `is_user_on_segment` i supabase/sql/20260908_ops_segments_field_visible.sql släpper igenom på.
+// `is_user_on_segment_between` i supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql släpper igenom på.
 // Räknar de olika lovar modalen en mottagare som feeden inte har.
 describe('crewSizeForRange', () => {
   const weekly = [
@@ -121,7 +121,7 @@ describe('crewSizeForRange räknar mottagare, inte rader', () => {
   ];
 
   it('räknar inte en besättningsrad utan konto', () => {
-    // member_id null = bara ett namn. is_user_on_segment matchar på member_id = auth.uid(),
+    // member_id null = bara ett namn. is_user_on_segment_between matchar på member_id = auth.uid(),
     // så raden når ingen — men veckan är ändå tilldelad, så standardteamet får inte svara.
     const nameOnly: TruckCrewMember[] = [
       { id: 'r1', truck_id: 't1', member_id: null, member_name: 'Inhyrd', start_day: '2026-06-15', end_day: '2026-06-21', role: 'member' },

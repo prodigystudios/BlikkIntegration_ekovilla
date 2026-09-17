@@ -33,14 +33,14 @@ export function crewForTruckInRange(
  * ⚠️ Fallbacken gäller BARA när veckan är helt otilldelad. Har veckan egna rader ÄR de svaret, även
  * om de är färre än standardteamet: en forkad vecka är ett medvetet undantag, och att lägga ihop
  * dem hade räknat in någon som uttryckligen bytts bort. Samma ordning som boarden ritar och som
- * `is_user_on_segment` släpper igenom på
- * (supabase/sql/20260908_ops_segments_field_visible.sql) — de tre måste svara likadant, annars
+ * `is_user_on_segment_between` släpper igenom på
+ * (supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql) — de tre måste svara likadant, annars
  * lovar planeringen en mottagare som feeden inte har.
  *
  * 🧨 Räknar UNIKA member_id, inte rader, och hoppar över `member_id: null`. Två skäl, båda får
  * siffran att ljuga uppåt om man missar dem:
  *   • En besättningsrad kan vara bara ett NAMN (member_id är nullable — någon som inte har konto).
- *     `is_user_on_segment` matchar på `member_id = auth.uid()`, så en sådan rad når ingen. Räknad
+ *     `is_user_on_segment_between` matchar på `member_id = auth.uid()`, så en sådan rad når ingen. Räknad
  *     som en mottagare kväver den varningen som finns just för att fånga att ingen ser bokningen.
  *   • `ops_truck_crew` har en rad per person och VECKA (unik på truck_id, member_id, start_day).
  *     Ett fredag–måndag-jobb vidgas till två ISO-veckor, och då kommer samma person tillbaka två

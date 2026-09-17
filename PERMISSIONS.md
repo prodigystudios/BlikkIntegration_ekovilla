@@ -253,8 +253,23 @@ not granted by a key**: `is_user_on_work_order(uid, work_order_id)` asks the pla
 segments (`supabase/sql/20260908_ops_segments_field_visible.sql`). The answer is unchanged — all
 three branches and the ISO-week widening survived intact — but the question can now be asked about a
 **single placement**, which a placeholder needs: it has a truck and days but no work order to ask
-through. Placeholders published to the field (`ops_segments.field_visible`) are scoped by
-`is_user_on_segment` in `get_my_crm_jobs`.
+through.
+
+⚠️ **Since 2026-09-17 the three branches live in `is_user_on_segment_between(uid, segment_id, from,
+to)`** (`supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql`). It clips the range to the
+segment's days and widens *that* to ISO weeks. `is_user_on_segment` passes the segment's own days,
+so its answer — and therefore `is_user_on_work_order` and every policy on it — is unchanged.
+
+**Access is not schedule.** `is_user_on_work_order` answers "may you open this order" and is
+deliberately broad: whoever drove Friday's segment can still open the order, comment and report
+sacks. The field feed (`get_my_crm_jobs`) answers "do you drive *this* job *this* day", and asks
+`is_user_on_segment_between(auth.uid(), s.id, day, day)` for every row, real jobs and published
+placeholders alike. Until 2026-09-17 it used `is_user_on_work_order` for real jobs, so last week's
+crew got next week's days of the same order — on other trucks, with other crews — in `/mina-jobb`,
+the dashboard schedule and the `/tid` job picker. Per day rather than per segment because the board
+resolves crew per rendered ISO week: a Friday–Monday segment's Monday belongs to Monday's week's
+crew. The feed is a subset of access (on the segment that day ⇒ on the order), so every feed row
+still opens. `tests/planning/myCrmJobsFeedSql.test.ts` guards both rules.
 
 The extraction was deliberate over copying the three branches into a second function: two
 definitions of "who crews this truck that week" drift apart at the first change, and that drift is
@@ -420,9 +435,9 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 - **Keep the catalog in sync** between the SQL `permissions` table and `PERMISSION_KEYS`.
 - **Not all access is a permission key.** Crew access to work orders is derived from the planning
   tables (see above), so "member has no CRM keys" does *not* mean "member cannot read a work
-  order". Grep for `is_user_on_work_order` **and `is_user_on_segment`** before reasoning about who
-  can see what — the second is the primitive, and a placeholder's field visibility only goes
-  through it.
+  order". Grep for `is_user_on_work_order` **and `is_user_on_segment`** (which also matches
+  `is_user_on_segment_between`, the primitive) before reasoning about who can see what. The field
+  feed goes only through the primitive, per day — never through `is_user_on_work_order`.
 - **`profiles` is self-read-only, and no permission key changes that.** `profiles_select_self`
   (`auth_roles_setup.sql:71`) is the *only* SELECT policy: `USING (auth.uid() = id)`. It predates
   this model and is unrelated to it — a leftover from a recursion bugfix, not a privacy decision.
@@ -446,7 +461,7 @@ yet), and coach. Swap them to granular keys once those are reconciled.
 | Model + resolver + seed | `supabase/sql/20260608_permissions_model.sql`, `…_parity_assert.sql` |
 | RLS swaps | `supabase/sql/20260609_rls_permissions_crm_{core,quotes_workorders,admin}.sql`, `…_verify.sql` |
 | Lockout guard | `supabase/sql/20260609_permissions_admin_lockout_guard.sql` |
-| Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql` (policies + `is_user_on_work_order`), `supabase/sql/20260908_ops_segments_field_visible.sql` (the `is_user_on_segment` primitive it now delegates to), `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
+| Crew access (non-key) | `supabase/sql/20260810_crm_work_order_crew_access.sql` (policies + `is_user_on_work_order`), `supabase/sql/20260908_ops_segments_field_visible.sql` (`is_user_on_segment`, which it delegates to), `supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql` (the `is_user_on_segment_between` primitive + the per-day feed), `redactWorkOrderForField` in `lib/domains/crm/work-orders.ts` |
 | Policy cost probe | `supabase/sql/20260811_crm_work_order_rls_perf_probe.sql` (create → run → drop; measures under impersonation) |
 | App layer | `lib/auth/permissions.ts` (catalog + resolver), `lib/auth/guards.ts` (`requirePermission`, `requireSignedInUser`), `app/api/crm/_shared.ts` (re-export + legacy CRM wrappers) |
 | Time & payroll keys | `supabase/sql/20260811_time_permissions.sql` |
