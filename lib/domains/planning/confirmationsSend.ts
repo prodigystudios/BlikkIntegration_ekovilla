@@ -105,8 +105,10 @@ export type SendConfirmationResult = {
 
 // Build + send the requested channels, recording each successful send. Channels are independent: a
 // failure in one (e.g. SMS not configured) is returned as an error and never blocks the other.
-// Note: sendEmail is a no-op in non-production when Resend isn't configured (it logs and resolves),
-// so a dev "sent" reflects the app-wide email stub — production really sends.
+// ⚠️ sendEmail sends for REAL in every environment where RESEND_API_KEY and MAIL_FROM are set —
+// locally too (.env.local has both) and on Vercel previews. Only when they are missing outside
+// production does it log and return `skipped: true`, and only then is a dev "sent" not a real send.
+// A local QA run of this flow can reach a real customer.
 export async function sendOrderConfirmation(
   supabase: SupabaseClient,
   input: SendConfirmationInput,
