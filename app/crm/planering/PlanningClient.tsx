@@ -14,7 +14,7 @@ import type { DayNote } from '@/lib/domains/planning/dayNotes';
 import { crewForTruckInRange, crewSizeForRange, type TruckCrewMember } from '@/lib/domains/planning/truckCrew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
-import type { DepotForecast } from '@/lib/domains/planning/depotForecast';
+import { describeShortfallCover, type DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
@@ -30,7 +30,7 @@ import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
-import PlanningAdminModal from './PlanningAdminModal';
+import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 import ReceiveDeliveryModal from './ReceiveDeliveryModal';
@@ -221,6 +221,8 @@ export default function PlanningClient({
   const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
+  // Området admin-modalen öppnar på. Bristbanderollen öppnar Lager; Administrera-knappen det första.
+  const [adminArea, setAdminArea] = useState<AdminAreaKey | undefined>(undefined);
   const [activityOpen, setActivityOpen] = useState(false);
   const [placeholderOpen, setPlaceholderOpen] = useState(false);
   // Platshållaren som redigeras. Samma modal som "Ny platshållare", så den ena stängs när den andra
@@ -1216,7 +1218,10 @@ export default function PlanningClient({
             </button>
           )}
           <button
-            onClick={() => setAdminOpen(true)}
+            onClick={() => {
+              setAdminArea(undefined);
+              setAdminOpen(true);
+            }}
             className="inline-flex h-[30px] items-center gap-1.5 rounded-full border border-dashed border-[#c8d4c3] bg-white px-3 text-[12px] font-semibold text-slate-500 transition hover:border-emerald-400 hover:text-emerald-600"
           >
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1266,37 +1271,77 @@ export default function PlanningClient({
         </div>
       )}
 
-      {/* Depot stock shortfall — the booked work needs more sacks than the depot has in stock. */}
-      {depotStock.some((d) => d.rows.some((r) => r.shortfall > 0)) && (
-        <div className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] text-rose-700">
-          <div className="flex items-center gap-1.5 font-bold">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></svg>
-            Lagret räcker inte för det som är bokat
-          </div>
-          <ul className="mt-1 grid gap-0.5 pl-0.5">
-            {depotStock.flatMap((d) =>
-              d.rows
-                .filter((r) => r.shortfall > 0)
-                .map((r) => {
-                  // Prognosraden för samma depå och material. Saknas den (prognosen kunde inte
-                  // räknas) faller raden tillbaka på sin gamla text — hellre utan datum än ett
-                  // påhittat.
-                  const f = depotForecast?.rows.find((x) => x.depot_id === d.depot_id && x.material === r.material);
-                  return (
-                    <li key={`${d.depot_id}-${r.material}`} className="tabular-nums">
-                      <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
-                      {f?.run_out_day && <> — tar slut <strong>{shortDayISO(f.run_out_day)}</strong></>}
-                      {f && f.overdue_inflow > 0 && (
-                        <span className="font-semibold"> · {f.overdue_inflow} säck beställda men försenade</span>
-                      )}
-                    </li>
-                  );
-                }),
+      {/* Depot stock shortfall — the booked work needs more sacks than the depot has in stock.
+          Saldot räknar inte inbokade leveranser (de står inte på depån), prognosen gör det. En rad vars
+          brist redan täcks av ett inbokat lass får neutral ton, och är ALLA rader täckta larmar inte
+          banderollen — men den försvinner inte, för saldot är fortfarande för lågt tills lasset kommer. */}
+      {(() => {
+        const shortRows = depotStock.flatMap((d) =>
+          d.rows
+            .filter((r) => r.shortfall > 0)
+            .map((r) => ({
+              d,
+              r,
+              // Prognosraden för samma depå och material. Saknas den (prognosen kunde inte räknas)
+              // faller raden tillbaka på sin gamla text — hellre utan datum än ett påhittat.
+              f: depotForecast?.rows.find((x) => x.depot_id === d.depot_id && x.material === r.material),
+            })),
+        );
+        if (shortRows.length === 0) return null;
+        const allCovered = shortRows.every(({ f }) => describeShortfallCover(f)?.covered === true);
+        return (
+          <div
+            className={cn(
+              'mb-3 rounded-xl border px-3 py-2 text-[12px]',
+              allCovered ? 'border-slate-200 bg-slate-50 text-slate-700' : 'border-rose-200 bg-rose-50 text-rose-700',
             )}
-          </ul>
-          <div className="mt-1 text-[11px] text-rose-500">Boka in en leverans under Administrera → Lager.</div>
-        </div>
-      )}
+          >
+            <div className="flex items-center gap-1.5 font-bold">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></svg>
+              {allCovered ? 'Lagret räcker inte än — inbokade leveranser täcker bristen' : 'Lagret räcker inte för det som är bokat'}
+            </div>
+            <ul className="mt-1 grid gap-0.5 pl-0.5">
+              {shortRows.map(({ d, r, f }) => {
+                const cover = describeShortfallCover(f);
+                return (
+                  <li key={`${d.depot_id}-${r.material}`} className={cn('tabular-nums', cover?.covered && !allCovered && 'text-slate-600')}>
+                    <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
+                    {f?.run_out_day && <> — tar slut <strong>{shortDayISO(f.run_out_day)}</strong></>}
+                    {cover && cover.on_order > 0 && cover.next_arrival && (
+                      <span className={cn(cover.arrives_after_run_out && 'font-semibold text-amber-700')}>
+                        {' · '}
+                        {cover.on_order} säck på väg, väntas {shortDayISO(cover.next_arrival)}
+                        {cover.covered ? ' — täcker bristen' : cover.arrives_after_run_out ? ' — kommer efter att depån tar slut' : ''}
+                      </span>
+                    )}
+                    {f && f.overdue_inflow > 0 && (
+                      <span className="font-semibold"> · {f.overdue_inflow} säck beställda men försenade</span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {!allCovered && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-rose-500">
+                {canManageDepots ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminArea('stock');
+                      setAdminOpen(true);
+                    }}
+                    className="inline-flex h-7 items-center rounded-lg border border-rose-200 bg-white px-2.5 text-[11.5px] font-bold text-rose-700 transition hover:bg-rose-100"
+                  >
+                    Boka in leverans
+                  </button>
+                ) : (
+                  <span>Leveranser bokas in under Administrera → Lager.</span>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {selected && (
         <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-[12px] text-emerald-800">
@@ -1539,6 +1584,7 @@ export default function PlanningClient({
           canManageTrucks={canManageTrucks}
           canManageDepots={canManageDepots}
           canWrite={canWrite}
+          initialArea={adminArea}
           onClose={() => setAdminOpen(false)}
           onChanged={() => {
             // Same rule as the realtime reload: quiet unless nothing has loaded yet. "Administrera"

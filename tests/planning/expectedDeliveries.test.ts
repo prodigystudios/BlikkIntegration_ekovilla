@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canReceiveExpected } from '@/lib/domains/planning/expectedDeliveries';
+import { canReceiveExpected, openBookingsFor, type ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { createExpectedDeliverySchema, createDeliverySchema, updateExpectedDeliverySchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
@@ -80,5 +80,45 @@ describe('updateExpectedDeliverySchema', () => {
     // möts leverans och behov aldrig. Grinden får inte vara lösare här än vid inläggningen.
     expect(updateExpectedDeliverySchema.safeParse({ material: 'GLASULL' }).success).toBe(false);
     expect(updateExpectedDeliverySchema.safeParse({ material: MATERIAL_SHORTS[1] }).success).toBe(true);
+  });
+});
+
+describe('openBookingsFor — varningen i den manuella leveransen', () => {
+  const EKO = MATERIAL_SHORTS[0];
+  const KNAUF = MATERIAL_SHORTS.find((m) => m !== EKO)!;
+  const row = (over: Partial<ExpectedDelivery>): ExpectedDelivery => ({
+    id: 'e1',
+    depot_id: 'syd',
+    depot_name: 'Syd',
+    material: EKO,
+    sacks: 1296,
+    expected_on: '2026-09-22',
+    note: null,
+    status: 'expected',
+    ...over,
+  });
+
+  it('förutsättning: två olika material att hålla isär', () => {
+    expect(KNAUF).toBeTruthy();
+    expect(KNAUF).not.toBe(EKO);
+  });
+
+  it('tar bara samma depå och samma material, tidigast först', () => {
+    const got = openBookingsFor(
+      [
+        row({ id: 'sen', expected_on: '2026-10-06' }),
+        row({ id: 'norr', depot_id: 'norr' }),
+        row({ id: 'knauf', material: KNAUF }),
+        row({ id: 'tidig', expected_on: '2026-09-18' }),
+      ],
+      'syd',
+      EKO,
+    );
+    expect(got.map((e) => e.id)).toEqual(['tidig', 'sen']);
+  });
+
+  it('tar inte med en redan kvitterad eller avbokad leverans', () => {
+    const got = openBookingsFor([row({ id: 'kom', status: 'arrived' }), row({ id: 'av', status: 'cancelled' })], 'syd', EKO);
+    expect(got).toEqual([]);
   });
 });

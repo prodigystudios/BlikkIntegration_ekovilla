@@ -1,4 +1,5 @@
 import { getCurrentUser } from '@/lib/auth/route';
+import { hasCrmPermission } from '@/app/crm/lib/pagePermissions';
 import PlanningClient from './PlanningClient';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,9 @@ export default async function CrmPlaneringPage() {
   // Fleet + depot management are seeded to admins (planning.truck.manage / planning.depot.manage).
   // The API enforces the real permissions; these are just the UI affordances.
   const canManageTrucks = user?.role === 'admin';
-  const canManageDepots = user?.role === 'admin';
+  // Depåhanteringen läses ur NYCKELN, inte rollen: den bär inköpsbeslutet (boka in leveranser, stämma
+  // av, snart beställa material), och getCurrentUser() failar öppet på rollen. hasCrmPermission failar
+  // stängt. canWrite och canManageTrucks följer med i RBAC-passet.
+  const canManageDepots = await hasCrmPermission('planning.depot.manage');
   return <PlanningClient canWrite={canWrite} canManageTrucks={canManageTrucks} canManageDepots={canManageDepots} />;
 }
