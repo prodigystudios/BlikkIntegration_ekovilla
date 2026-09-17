@@ -16,6 +16,7 @@ const vantad = (over: Partial<ExpectedDelivery> = {}): ExpectedDelivery => ({
   expected_on: '2026-09-10',
   note: null,
   status: 'expected',
+  order_id: null,
   ...over,
 });
 

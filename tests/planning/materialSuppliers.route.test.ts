@@ -39,6 +39,10 @@ vi.mock('@/lib/domains/planning/materialSuppliers', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/domains/planning/materialOrdersStore', () => ({
+  findOpenOrderForSupplier: vi.fn(async () => ({ data: null, error: null })),
+}));
+
 // Klienterna MÄRKS, så testet kan säga vilken som gick vart. Utan märkningen ser en route som
 // eleverar läsningen identisk ut för sviten — och service-role kringgår hela RLS-halvan av grinden.
 const ADMIN_CLIENT = { __client: 'admin' } as any;
@@ -57,6 +61,7 @@ import {
   deleteSupplier,
 } from '@/lib/domains/planning/materialSuppliers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { findOpenOrderForSupplier } from '@/lib/domains/planning/materialOrdersStore';
 import { GET, POST } from '@/app/api/crm/planering/material-suppliers/route';
 import { PATCH, DELETE } from '@/app/api/crm/planering/material-suppliers/[id]/route';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
@@ -178,6 +183,21 @@ describe('PostgREST svarar error: null på noll rader', () => {
   it('DELETE mot en rad som inte längre finns ger 404, inte 200', async () => {
     (deleteSupplier as any).mockResolvedValue({ data: null, error: null });
     expect((await del()).status).toBe(404);
+  });
+});
+
+describe('en leverantör med en öppen beställning går inte att ta bort', () => {
+  /**
+   * Raderingen nollar supplier_id och lyfter ordern ur "en öppen order per fabrik". En ny beställning till
+   * samma fabrik hade då kunnat gå medan den gamla fortfarande kan skickas om: två lass.
+   */
+  it('409, och ingen radering', async () => {
+    asRole(adminUser);
+    (findOpenOrderForSupplier as any).mockResolvedValueOnce({ data: { id: 'o1', order_no: 14, status: 'sending' }, error: null });
+    const res = await del();
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toContain('#14');
+    expect(deleteSupplier).not.toHaveBeenCalled();
   });
 });
 

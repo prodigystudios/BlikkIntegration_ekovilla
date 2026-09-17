@@ -1,8 +1,17 @@
 import { MATERIAL_SHORTS, sacksPerPalletFor } from '@/lib/domains/crm/materials';
 import type { OpsDepot } from './types';
 import type { MaterialSupplier } from './materialSuppliers';
-import type { OrderEmailData, OrderEmailDepot } from './materialOrderEmail';
+import {
+  effectiveOrderEmailTemplate,
+  renderOrderEmail,
+  type OrderEmailData,
+  type OrderEmailDepot,
+  type OrderEmailLanguage,
+  type OrderEmailTemplateProblem,
+} from './materialOrderEmail';
 import type { ExpectedDeliveryStatus } from './expectedDeliveries';
+import type { DepotMaterialForecast } from './depotForecast';
+import { addDaysISO } from './timezone';
 
 // Materialbeställningar till fabriken: de rena reglerna. Tabellen och dess spärrar bor i
 // supabase/sql/20260917_ops_material_orders.sql; mailets text i ./materialOrderEmail.ts.
@@ -292,4 +301,236 @@ export function orderDeliveryState(rows: { status: ExpectedDeliveryStatus }[]): 
   if (arrived === 0 && expected === 0) return 'cancelled';
   if (expected === 0) return 'arrived';
   return arrived > 0 ? 'partial' : 'waiting';
+}
+
+// ---------------------------------------------------------------------------
+// Övrigt på lasset
+// ---------------------------------------------------------------------------
+
+export type OtherLineInput = { text: string; depot_id: string | null };
+export type OtherLine = { text: string; depot_id: string | null; depot_name: string | null };
+
+export const OTHER_LINES_MAX = 20;
+export const OTHER_LINE_TEXT_MAX = 200;
+export const ORDER_MESSAGE_MAX = 1000;
+
+/**
+ * Fria rader som följer med lasset men aldrig rör lagret. Depånamnet läses ur registret, som för stockraderna.
+ * null när en rad pekar på en depå som inte finns — raden står då utan depå hellre än med ett påhittat namn.
+ */
+export function buildOtherLines(input: OtherLineInput[], depots: OpsDepot[]): OtherLine[] {
+  const byId = new Map(depots.map((d) => [d.id, d]));
+  return input
+    .map((o) => ({ text: o.text.trim(), depot_id: o.depot_id }))
+    .filter((o) => o.text !== '')
+    .map((o) => {
+      const depot = o.depot_id ? byId.get(o.depot_id) : undefined;
+      return { text: o.text, depot_id: depot ? depot.id : null, depot_name: depot ? depot.name : null };
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Sätta ihop ordern: rader + mail, ur registret
+// ---------------------------------------------------------------------------
+
+export type ComposedOrder = {
+  lines: OrderLine[];
+  other_lines: OtherLine[];
+  message: string | null;
+  supplier_name: string;
+  recipient_email: string;
+  from_address: string;
+  reply_to: string;
+  bcc: string;
+  email_language: OrderEmailLanguage;
+  email_subject: string;
+  email_text: string;
+  composed_by_name: string;
+};
+
+/**
+ * Hela ordern som den ska lagras — raderna kompletterade ur registret och mailet renderat med leverantörens mall.
+ *
+ * ⚠️ SAMMA FUNKTION VID GRANSKA OCH VID SKICKA. Skicka sätter ihop ordern en gång till ur det AKTUELLA
+ * registret och jämför med det lagrade: har leverantörens adress, mall eller en depås adress ändrats sedan
+ * granskningen ska ordern granskas om, inte skickas med en text ingen sett.
+ */
+export function composeOrder(input: {
+  supplier: MaterialSupplier;
+  depots: OpsDepot[];
+  lines: OrderLineInput[];
+  other_lines: OtherLineInput[];
+  message: string | null;
+  order_no: number;
+  composed_by_name: string;
+  today: string;
+  env: Record<string, string | undefined>;
+}):
+  | { ok: true; order: ComposedOrder }
+  | { ok: false; lineProblems: OrderLineProblem[]; templateProblems: OrderEmailTemplateProblem[] } {
+  const built = buildOrderLines(input.lines, { supplier: input.supplier, depots: input.depots, today: input.today });
+  if (!built.ok) return { ok: false, lineProblems: built.problems, templateProblems: [] };
+
+  const other = buildOtherLines(input.other_lines, input.depots);
+  const message = (input.message ?? '').trim() || null;
+  const language = input.supplier.order_email_language;
+  const rendered = renderOrderEmail(
+    effectiveOrderEmailTemplate(input.supplier),
+    language,
+    orderEmailDataFromOrder({
+      order_no: input.order_no,
+      supplier_name: input.supplier.name,
+      contact_name: input.supplier.contact_name,
+      sender_name: input.composed_by_name,
+      message,
+      lines: built.lines,
+      other_lines: other,
+    }),
+  );
+  if (!rendered.ok) return { ok: false, lineProblems: [], templateProblems: rendered.problems };
+
+  const addresses = materialOrderAddresses(input.env);
+  return {
+    ok: true,
+    order: {
+      lines: built.lines,
+      other_lines: other,
+      message,
+      supplier_name: input.supplier.name,
+      recipient_email: input.supplier.email.trim(),
+      from_address: addresses.from,
+      reply_to: addresses.replyTo,
+      bcc: addresses.bcc,
+      email_language: language,
+      email_subject: rendered.email.subject,
+      email_text: rendered.email.text,
+      composed_by_name: input.composed_by_name,
+    },
+  };
+}
+
+/** De fält som avgör om det lagrade mailet fortfarande är det som skulle skickas idag. */
+export function composedOrderDiffers(
+  stored: Pick<ComposedOrder, 'recipient_email' | 'email_subject' | 'email_text' | 'email_language' | 'from_address' | 'reply_to' | 'bcc'>,
+  fresh: ComposedOrder,
+): boolean {
+  return (
+    stored.recipient_email !== fresh.recipient_email ||
+    stored.email_subject !== fresh.email_subject ||
+    stored.email_text !== fresh.email_text ||
+    stored.email_language !== fresh.email_language ||
+    stored.from_address !== fresh.from_address ||
+    stored.reply_to !== fresh.reply_to ||
+    stored.bcc !== fresh.bcc
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Varningar
+// ---------------------------------------------------------------------------
+
+export type OrderWarning =
+  | { kind: 'forecast_unavailable' }
+  | { kind: 'open_inflow'; depot_name: string; material: string; sacks: number; next_arrival: string }
+  | { kind: 'overdue_inflow'; depot_name: string; material: string; sacks: number }
+  | { kind: 'after_run_out'; depot_name: string; material: string; run_out_day: string; requested_on: string }
+  | { kind: 'lead_time_too_short'; depot_name: string; requested_on: string; earliest: string }
+  | { kind: 'lead_time_zero' }
+  | { kind: 'unknown_pallet_size'; material: string }
+  | { kind: 'excluded_jobs'; count: number }
+  | { kind: 'earlier_order_open'; order_no: number }
+  | { kind: 'earlier_orders_unknown' };
+
+/**
+ * Det den som skickar bör ha sett innan mailet går. Inget av det blockerar — men Skicka kräver att varningarna
+ * är kvitterade, så att ett dubbelt lass eller ett datum efter att depån tagit slut inte går iväg obemärkt.
+ *
+ * `forecast` null = prognosen kunde inte räknas: det är en varning, inte ett hinder.
+ */
+export function orderWarnings(input: {
+  lines: OrderLine[];
+  forecast: { rows: DepotMaterialForecast[]; excludedCount: number } | null;
+  leadTimeDays: number;
+  today: string;
+  /** Tidigare skickade ordrar till samma leverantör som inte kommit fram än. */
+  openEarlierOrders: number[];
+  /** Läsningen av tidigare ordrar felade: säg det, i stället för att tyst inte ha något att varna om. */
+  earlierOrdersUnknown?: boolean;
+}): OrderWarning[] {
+  const warnings: OrderWarning[] = [];
+  if (!input.forecast) warnings.push({ kind: 'forecast_unavailable' });
+
+  const earliest = addDaysISO(input.today, Math.max(0, input.leadTimeDays));
+  if (input.leadTimeDays === 0) warnings.push({ kind: 'lead_time_zero' });
+
+  const unknownPallet = new Set<string>();
+  const tooShort = new Set<string>();
+  for (const l of input.lines) {
+    if (l.sacks_per_pallet === null) unknownPallet.add(l.material);
+    if (l.requested_on < earliest && !tooShort.has(l.depot_id)) {
+      tooShort.add(l.depot_id);
+      warnings.push({ kind: 'lead_time_too_short', depot_name: l.depot_name, requested_on: l.requested_on, earliest });
+    }
+    const f = input.forecast?.rows.find((r) => r.depot_id === l.depot_id && r.material === l.material);
+    if (!f) continue;
+    if (f.on_order > 0 && f.next_arrival) {
+      warnings.push({ kind: 'open_inflow', depot_name: l.depot_name, material: l.material, sacks: f.on_order, next_arrival: f.next_arrival });
+    }
+    if (f.overdue_inflow > 0) {
+      warnings.push({ kind: 'overdue_inflow', depot_name: l.depot_name, material: l.material, sacks: f.overdue_inflow });
+    }
+    if (f.run_out_day && l.requested_on > f.run_out_day) {
+      warnings.push({ kind: 'after_run_out', depot_name: l.depot_name, material: l.material, run_out_day: f.run_out_day, requested_on: l.requested_on });
+    }
+  }
+  for (const material of unknownPallet) warnings.push({ kind: 'unknown_pallet_size', material });
+  if (input.forecast && input.forecast.excludedCount > 0) warnings.push({ kind: 'excluded_jobs', count: input.forecast.excludedCount });
+  for (const order_no of input.openEarlierOrders) warnings.push({ kind: 'earlier_order_open', order_no });
+  if (input.earlierOrdersUnknown) warnings.push({ kind: 'earlier_orders_unknown' });
+  return warnings;
+}
+
+export function describeOrderWarning(w: OrderWarning): string {
+  switch (w.kind) {
+    case 'forecast_unavailable':
+      return 'Prognosen kunde inte räknas ut — varningarna om lagret nedan saknas';
+    case 'open_inflow':
+      return `${w.depot_name} · ${w.material}: ${w.sacks} säck är redan på väg (första väntas ${w.next_arrival})`;
+    case 'overdue_inflow':
+      return `${w.depot_name} · ${w.material}: ${w.sacks} säck är beställda men försenade — hör av dig till fabriken hellre än att beställa igen`;
+    case 'after_run_out':
+      return `${w.depot_name} · ${w.material}: leveransen ${w.requested_on} kommer efter att depån tar slut (${w.run_out_day})`;
+    case 'lead_time_too_short':
+      return `${w.depot_name}: ${w.requested_on} är tidigare än leverantörens ledtid medger (tidigast ${w.earliest})`;
+    case 'lead_time_zero':
+      return 'Leverantören har ledtid 0 dagar — stämmer det?';
+    case 'unknown_pallet_size':
+      return `Pallstorleken för ${w.material} är okänd — beställs i säckar`;
+    case 'excluded_jobs':
+      return `${w.count} jobb kunde inte räknas in i prognosen — behovet kan vara större`;
+    case 'earlier_order_open':
+      return `Beställning #${w.order_no} till samma fabrik har inte kommit fram än`;
+    case 'earlier_orders_unknown':
+      return 'Tidigare beställningar till fabriken kunde inte läsas — kontrollera att inget redan är på väg';
+  }
+}
+
+/**
+ * Ett fingeravtryck av exakt de varningar som visades. Skicka kräver att klienten skickar tillbaka det.
+ *
+ * 🧨 EN KVITTERING GÄLLER DET MAN SÅG, INTE "VARNINGAR" I ALLMÄNHET. Med en ren ja/nej-flagga godkändes vilka
+ * varningar som helst — och vissa beställningar bär alltid en (okänd pallstorlek för Paroc, ledtid 0), så
+ * rutan kryssas av vana. Bokar en kollega in ett lass mellan granskning och Skicka dyker varningen "redan på
+ * väg" upp, och den hade godkänts osedd: två lass. Ordningsoberoende, så samma varningar i annan ordning är
+ * samma avtryck.
+ */
+export function warningsFingerprint(warnings: OrderWarning[]): string {
+  return JSON.stringify(warnings.map((w) => JSON.stringify(w, Object.keys(w).sort())).sort());
+}
+
+/** Är den sammansatta ordern exakt den som redan är lagrad? Då finns inget att skriva. */
+export function composedEqualsStored(stored: Record<string, unknown>, composed: ComposedOrder): boolean {
+  return (Object.keys(composed) as (keyof ComposedOrder)[]).every(
+    (k) => JSON.stringify(stored[k] ?? null) === JSON.stringify(composed[k] ?? null),
+  );
 }

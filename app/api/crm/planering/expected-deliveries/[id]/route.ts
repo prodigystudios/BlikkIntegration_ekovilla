@@ -36,7 +36,18 @@ export async function PATCH(req: Request, context: RouteContext) {
       expectedOn: parsed.data.expected_on,
       note: parsed.data.note,
     });
-    if (error) return routeError(500, 'planning_expected_delivery_update_failed', error.message);
+    if (error) {
+      // Databasen låser depå och material på en rad som kom ur en materialbeställning — det är vad fabriken
+      // fick i mailet. Datum, antal och notering går att ändra (fabrikens svar).
+      if ((error.message || '').includes('expected_delivery_ordered_line_is_locked')) {
+        return routeError(
+          409,
+          'planning_expected_delivery_ordered_locked',
+          'Leveransen är beställd hos fabriken — depå och material går inte att ändra. Datum och antal går bra.',
+        );
+      }
+      return routeError(500, 'planning_expected_delivery_update_failed', error.message);
+    }
     // ⚠️ Noll matchande rader svarar `error: null` i PostgREST. Raden kan vara kvitterad, avbokad
     // eller osynlig bakom RLS — och en kvitterad rad SKA inte gå att ändra, eftersom lagerraden den
     // gav upphov till då hade sagt något annat. Tigande hade lästs som "sparat".

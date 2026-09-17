@@ -21,9 +21,17 @@ export type ExpectedDelivery = {
   expected_on: string; // 'YYYY-MM-DD'
   note: string | null;
   status: ExpectedDeliveryStatus;
+  /**
+   * Beställningen raden kom ur, eller null för en manuell inbokning. Bara ett naket id: raden läses med
+   * schedule.read, och orderhuvudet (fabrik, adress, mailtext) ligger bakom depot.manage. Bädda aldrig in det
+   * här — embeddet kommer tillbaka null för sales och konsult, utan fel.
+   *
+   * På en beställd rad är depå och material låsta i databasen (det fabriken fick i mailet).
+   */
+  order_id: string | null;
 };
 
-const SELECT = 'id, depot_id, material, sacks, expected_on, note, status, depot:ops_depots(name)';
+const SELECT = 'id, depot_id, material, sacks, expected_on, note, status, order_id, depot:ops_depots(name)';
 
 function toExpected(row: Record<string, any>): ExpectedDelivery {
   const depot = Array.isArray(row.depot) ? row.depot[0] : row.depot;
@@ -36,6 +44,7 @@ function toExpected(row: Record<string, any>): ExpectedDelivery {
     expected_on: row.expected_on as string,
     note: (row.note as string | null) ?? null,
     status: (row.status as ExpectedDeliveryStatus) ?? 'expected',
+    order_id: (row.order_id as string | null) ?? null,
   };
 }
 

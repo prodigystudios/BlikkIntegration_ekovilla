@@ -1,6 +1,7 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { updateSupplier, deleteSupplier } from '@/lib/domains/planning/materialSuppliers';
+import { findOpenOrderForSupplier } from '@/lib/domains/planning/materialOrdersStore';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateSupplierSchema } from '../../_lib';
 
 // Ingen logActivity här — se noten i ../route.ts: loggen läses med planning.schedule.read och vore
@@ -82,6 +83,18 @@ export async function DELETE(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     const supabase = createRouteHandlerClient({ cookies });
+    // 🧨 En öppen beställning (utkast eller ett utskick med oklart utfall) spärrar fabriken med flit. Raderingen
+    // nollar supplier_id och lyfter den ur spärren — en ny beställning till samma fabrik hade då kunnat gå medan
+    // den gamla fortfarande kan skickas om: två lass. Avgör den öppna först.
+    const open = await findOpenOrderForSupplier(supabase, context.params.id);
+    if (open.error) return routeError(500, 'planning_supplier_delete_failed', open.error.message);
+    if (open.data) {
+      return routeError(
+        409,
+        'planning_supplier_has_open_order',
+        `Leverantören har en öppen beställning (#${open.data.order_no}). Skicka, släng eller avgör den innan leverantören tas bort.`,
+      );
+    }
     const { data, error } = await deleteSupplier(supabase, context.params.id);
     if (error) return routeError(500, 'planning_supplier_delete_failed', error.message);
     // Samma tautologi som ovan: en DELETE som inte träffade någon rad svarar `error: null`.

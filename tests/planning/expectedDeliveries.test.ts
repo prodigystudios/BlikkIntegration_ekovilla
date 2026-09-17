@@ -95,6 +95,7 @@ describe('openBookingsFor — varningen i den manuella leveransen', () => {
     expected_on: '2026-09-22',
     note: null,
     status: 'expected',
+    order_id: null,
     ...over,
   });
 
