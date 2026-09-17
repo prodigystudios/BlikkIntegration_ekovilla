@@ -31,6 +31,12 @@ export type EgenkontrollProject = {
   installationDate: string;
   // Human summary shown on the lookup card.
   description: string;
+  // The order's arbetsbeskrivning, verbatim — the text the installer view shows under the same
+  // heading. It is the fallback when the rows were never given area/thickness and no etapp row gets
+  // prefilled: the measurements are often written here instead, and without it on the lookup card
+  // the installer has to leave a half-filled egenkontroll to go and read the order. CRM only; ''
+  // for Blikk, whose description IS its work description and is already shown above.
+  workDescription: string;
   // CRM only: the order's rows, which already carry area/thickness/density as structured data.
   lineItems: CrmEgenkontrollLineItem[] | null;
 };
@@ -92,6 +98,7 @@ export function mapCrmWorkOrderToEgenkontrollProject(row: CrmWorkOrderLookupRow)
     address,
     installationDate: isoDay(row.scheduled_day) || isoDay(row.desired_installation_date),
     description: [str(row.project_name), str(handoff.work_scope)].filter(Boolean).join(' — '),
+    workDescription: str(handoff.handoff_notes),
     lineItems: Array.isArray(row.line_items) ? row.line_items : [],
   };
 }
@@ -121,6 +128,7 @@ export function mapBlikkProjectToEgenkontrollProject(raw: Record<string, any> | 
     },
     installationDate: isoDay(raw.startDate) || isoDay(raw.created),
     description: str(raw.description),
+    workDescription: '',
     lineItems: null,
   };
 }

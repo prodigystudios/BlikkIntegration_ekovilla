@@ -20,6 +20,8 @@ import { ok, requireSignedInUser, routeError, validationError } from '../_lib';
 //   • the projection is fixed in the domain module (lookupCrmWorkOrderByNumber): address fields
 //     only from customer_snapshot — personnummer never leaves the server — and line items reduced
 //     to geometry, so no unit_price / discount / labour cost either
+//   • from internal_handoff only the work scope and the arbetsbeskrivning (handoff_notes) — the
+//     installer's instructions, same as the Blikk lookup's project description always exposed
 //   • read-only; there is no write path here
 // Same shape as the existing service-role + explicit-gate route /api/planning/consume-bags.
 //

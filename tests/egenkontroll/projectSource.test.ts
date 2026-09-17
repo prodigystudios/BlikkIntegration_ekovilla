@@ -31,8 +31,26 @@ describe('mapCrmWorkOrderToEgenkontrollProject', () => {
       address: { streetAddress: 'Jobbvägen 1', postalCode: '131 30', city: 'Nacka' },
       installationDate: '2026-08-14',
       description: 'Vindsisolering — Vind + snedtak',
+      workDescription: '',
       lineItems: [],
     });
+  });
+
+  it('carries the arbetsbeskrivning through verbatim, line breaks and all', () => {
+    // When the rows lack area/thickness nothing is prefilled, and the measurements live in this
+    // text instead — the installer reads them off the lookup card, so the layout must survive.
+    const notes = 'Totalt: 141 säck\n\nEKOVILLA\n• Vind – 120 m² × 400 mm\n\nÖVRIGT\n• Brandmatta – 4 st';
+    const project = mapCrmWorkOrderToEgenkontrollProject(
+      crmRow({ internal_handoff: { work_scope: 'Vind + snedtak', handoff_notes: `  ${notes}\n` } }),
+    );
+    expect(project.workDescription).toBe(notes);
+    // Not folded into the one-line summary, which stays a quick identity check.
+    expect(project.description).toBe('Vindsisolering — Vind + snedtak');
+  });
+
+  it('leaves the arbetsbeskrivning empty when the order has none', () => {
+    expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: null })).workDescription).toBe('');
+    expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: { handoff_notes: null } })).workDescription).toBe('');
   });
 
   it('leads with the Fortnox number, falling back to the internal order number', () => {
@@ -93,6 +111,8 @@ describe('mapBlikkProjectToEgenkontrollProject', () => {
       address: { streetAddress: 'Byggvägen 5', postalCode: '100 00', city: 'Solna' },
       installationDate: '2026-08-12',
       description: 'Vind - 120 m2 x 400 mm - 42 eko',
+      // Blikk's description already is its work description — not repeated.
+      workDescription: '',
       lineItems: null,
     });
   });

@@ -717,6 +717,20 @@ export default function EgenkontrollPage() {
                     </button>
                   )}
                 </div>
+                {/* After the identity check, not inside it: this is reference material, and the
+                    measurement block can run long. When the rows lacked area/thickness nothing was
+                    prefilled below, and the measurements are usually written here instead.
+                    Blikk has no separate field — its description line above already is this text. */}
+                {foundProject.source === 'crm' && (
+                  <div className="grid gap-1.5 rounded-xl bg-slate-50 px-3 py-2.5">
+                    <div style={fieldLabelStyle}>Arbetsbeskrivning</div>
+                    {foundProject.workDescription ? (
+                      <p className="m-0 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700">{foundProject.workDescription}</p>
+                    ) : (
+                      <p className="m-0 text-[13px] text-slate-400">Ingen arbetsbeskrivning angiven på ordern.</p>
+                    )}
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
