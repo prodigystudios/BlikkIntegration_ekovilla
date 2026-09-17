@@ -47,6 +47,10 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
   const [custom, setCustom] = useState(savedCustom);
   const [subject, setSubject] = useState(supplier.order_email_subject ?? DEFAULT_ORDER_EMAIL[supplier.order_email_language].subject);
   const [body, setBody] = useState(supplier.order_email_body ?? DEFAULT_ORDER_EMAIL[supplier.order_email_language].body);
+  // Språket den egna texten SKREVS på: standardtexten den utgick från, eller det sparade språket. Hintraden
+  // om att en egen text inte byter språk ska visas när språket ändras EFTER det — inte direkt efter
+  // "Anpassa texten", då texten just skapats på det valda språket.
+  const [textLanguage, setTextLanguage] = useState<OrderEmailLanguage>(supplier.order_email_language);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
 
@@ -55,6 +59,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
   // mall får inte kasta ett osparat utkast.
   useEffect(() => {
     setLanguage(supplier.order_email_language);
+    setTextLanguage(supplier.order_email_language);
     setCustom(supplier.order_email_subject !== null && supplier.order_email_body !== null);
     setSubject(supplier.order_email_subject ?? DEFAULT_ORDER_EMAIL[supplier.order_email_language].subject);
     setBody(supplier.order_email_body ?? DEFAULT_ORDER_EMAIL[supplier.order_email_language].body);
@@ -88,6 +93,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
     // något som redan fungerar.
     setSubject(DEFAULT_ORDER_EMAIL[language].subject);
     setBody(DEFAULT_ORDER_EMAIL[language].body);
+    setTextLanguage(language);
     setCustom(true);
   }
 
@@ -196,7 +202,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
               );
             })}
           </div>
-          {custom && language !== supplier.order_email_language && (
+          {custom && language !== textLanguage && (
             <p className="mt-1.5 text-[11px] text-amber-700">
               Språket styr raderna, datumen och enheterna. Din egen text byter inte språk — skriv om den, eller återställ till
               standardtexten.
