@@ -41,3 +41,28 @@ describe('friendlyFortnoxMessage', () => {
     expect(friendlyFortnoxMessage(new Error('boom'))).toBe('Något gick fel. Försök igen.');
   });
 });
+
+// 🧨 DET HÄR FELET NÅDDE EN SÄLJARE RÅTT 2026-09-17, som
+// `Fortnox POST /customers misslyckades (400): {"ErrorInformation":{...}}`.
+// Kundrutterna returnerade `fortnoxErr.message` i stället för att gå genom den här funktionen, så
+// den tekniska strängen hamnade i toasten. Orsaken satt i kundkortets momsnummer och var fullt
+// åtgärdbar — men beskedet sa ingenting om var.
+describe('2004194 — ogiltigt momsnummer', () => {
+  it('pekar ut kundkortet och rätt format i stället för Fortnox tre ord', () => {
+    const e = new FortnoxApiError(
+      400,
+      'Fortnox POST /customers misslyckades (400): {"ErrorInformation":{"error":1,"message":"Ogiltigt VAT-nummer.","code":2004194}}',
+      2004194,
+      'Ogiltigt VAT-nummer.',
+    );
+
+    const msg = friendlyFortnoxMessage(e);
+
+    // Inget av den tekniska strängen får läcka igenom.
+    expect(msg).not.toContain('Fortnox POST');
+    expect(msg).not.toContain('ErrorInformation');
+    // …och beskedet ska säga VAR felet sitter och hur det ska se ut.
+    expect(msg).toContain('kundkortet');
+    expect(msg).toContain('SE');
+  });
+});

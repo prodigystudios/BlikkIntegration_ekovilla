@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer } from '@/lib/domains/crm/customers';
 import { createFortnoxCustomer, updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
@@ -34,7 +35,7 @@ export async function POST(_req: Request, context: RouteContext) {
       const { data: latest } = await getCrmCustomer(supabase, context.params.id);
       return ok({
         item: latest ?? existing,
-        fortnox_error: fortnoxErr?.message || 'Kunde inte skapa kund i Fortnox',
+        fortnox_error: friendlyFortnoxMessage(fortnoxErr) || 'Kunde inte skapa kund i Fortnox',
       });
     }
   } catch (e: any) {

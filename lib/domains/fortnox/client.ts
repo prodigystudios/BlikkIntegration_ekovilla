@@ -104,6 +104,13 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   2000310: 'Posten används redan i Fortnox och kan inte ändras eller tas bort.',
   2000204: 'En obligatorisk uppgift saknas i Fortnox. Komplettera kund-/offertuppgifterna och försök igen.',
   1000030: 'Kunde inte hämta dokumentet från Fortnox. Försök igen om en stund.',
+  // Uppmätt i drift 2026-09-17 på en enskild firma: momsnumret var handinmatat ur ett org.nr som
+  // inte ens var kontrollsiffre-giltigt, och låg kvar när org.numret rättades. Fortnox säger bara
+  // "Ogiltigt VAT-nummer" — beskedet här pekar ut VAR det sitter och hur det ska se ut, eftersom
+  // felet alltid är kundkortets och alltid samma åtgärd.
+  2004194: 'Momsregistreringsnumret på kundkortet är ogiltigt. Det ska vara SE + organisationsnumrets '
+    + 'tio siffror + 01 (t.ex. SE556123456701). Rätta det på kunden — eller töm fältet om företaget '
+    + 'inte är momsregistrerat — och försök igen.',
   // Fortnox säger "skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen X" —
   // sant, men det pekar ut dokumentet när felet sitter på ARTIKELN. Vi skickar aldrig husarbete på
   // ett icke-ROT-dokument; flaggan (`Housework` på artikeln i Fortnox) ärvs ner på raden och går

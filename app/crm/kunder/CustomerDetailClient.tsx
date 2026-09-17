@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { postalCodeWarning } from '@/lib/domains/crm/postalCode';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
@@ -226,6 +227,11 @@ function AddressEditColumn({
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" />
         <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" />
       </div>
+      {/* Samma varning som i nykundsformuläret — se AddressColumn där. Fortnox tar bara siffror i
+          ZipCode, och felet syns annars först som ett 400 flera steg senare. */}
+      {postalCodeWarning(postalCode, city) ? (
+        <p className="text-[11px] leading-snug text-amber-700">{postalCodeWarning(postalCode, city)}</p>
+      ) : null}
       {onEmail !== undefined && email !== undefined ? (
         <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" />
       ) : null}

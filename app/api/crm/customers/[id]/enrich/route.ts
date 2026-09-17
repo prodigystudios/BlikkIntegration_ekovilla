@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer, type UpdateCrmCustomerInput } from '@/lib/domains/crm/customers';
 import { vatFromOrgNumber } from '@/lib/domains/crm/orgNumber';
@@ -119,7 +120,7 @@ export async function POST(_req: Request, context: RouteContext) {
         return ok({
           item: latest ?? updated,
           filled,
-          fortnox_error: fortnoxErr?.message || 'Kunde inte uppdatera kund i Fortnox',
+          fortnox_error: friendlyFortnoxMessage(fortnoxErr) || 'Kunde inte uppdatera kund i Fortnox',
         });
       }
     }

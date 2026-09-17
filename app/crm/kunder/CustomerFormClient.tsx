@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { postalCodeWarning } from '@/lib/domains/crm/postalCode';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
@@ -166,6 +167,14 @@ function AddressColumn({
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
         <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" disabled={disabled} />
       </div>
+      {/* 🧨 ORTEN I POSTNUMMERFÄLTET. Fortnox tar bara siffror i ZipCode, och avvisar kunden med ett
+          400 som inte pekar ut fältet — felet dyker upp först flera steg senare, som "Ingen
+          Fortnox-kundkoppling" på en orderpush. Uppmätt i drift 2026-09-17.
+          VARNAR, spärrar inte: fältet bär utländska adresser också, och en hård spärr på ett
+          fritextfält lär man sig bara att kringgå. Se lib/domains/crm/postalCode.ts. */}
+      {postalCodeWarning(postalCode, city) ? (
+        <p className="text-[11px] leading-snug text-amber-700">{postalCodeWarning(postalCode, city)}</p>
+      ) : null}
       {onEmail !== undefined && email !== undefined ? (
         <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" disabled={disabled} />
       ) : null}
