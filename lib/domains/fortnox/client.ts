@@ -46,7 +46,10 @@ export class FortnoxApiError extends Error {
 }
 
 // Fortnox error bodies look like { "ErrorInformation": { "code": 2001243, "message": "..." } }.
-function parseFortnoxError(text: string): { code?: number; message?: string } {
+// Exporterad för test: det är HÄR som avgörs om en FRIENDLY_FORTNOX_MESSAGES-mappning alls kan
+// slå till. Ett test som bygger FortnoxApiError med en redan tolkad kod hoppar över steget, och
+// skulle förbli grönt om Fortnox bytte till versalt `Code`.
+export function parseFortnoxError(text: string): { code?: number; message?: string } {
   try {
     const info = (JSON.parse(text) as { ErrorInformation?: { code?: unknown; message?: unknown } })?.ErrorInformation;
     if (!info) return {};
@@ -104,6 +107,14 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   2000310: 'Posten används redan i Fortnox och kan inte ändras eller tas bort.',
   2000204: 'En obligatorisk uppgift saknas i Fortnox. Komplettera kund-/offertuppgifterna och försök igen.',
   1000030: 'Kunde inte hämta dokumentet från Fortnox. Försök igen om en stund.',
+  // Uppmätt i drift 2026-09-17 på en enskild firma: momsnumret var handinmatat ur ett org.nr som
+  // inte ens var kontrollsiffre-giltigt, och låg kvar när org.numret rättades. Fortnox säger bara
+  // "Ogiltigt VAT-nummer" — beskedet här pekar ut VAR det sitter och hur det ska se ut, eftersom
+  // felet alltid är kundkortets och alltid samma åtgärd.
+  // ⚠️ KORT MED FLIT. Beskedet levereras i en toast som försvinner efter fem sekunder, så det måste
+  // gå att läsa i ett svep. Formen (01 är vanligast, koncerner kan ha 02/03) står i orgNumber.ts.
+  2004194: 'Ogiltigt momsregistreringsnummer på kundkortet. Rätta det (normalt SE + org.nr + 01), '
+    + 'eller töm fältet om företaget inte är momsregistrerat.',
   // Fortnox säger "skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen X" —
   // sant, men det pekar ut dokumentet när felet sitter på ARTIKELN. Vi skickar aldrig husarbete på
   // ett icke-ROT-dokument; flaggan (`Housework` på artikeln i Fortnox) ärvs ner på raden och går

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
+import { postalCodeWarning } from '@/lib/domains/crm/postalCode';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
@@ -158,6 +159,9 @@ function AddressColumn({
   // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
   // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
   // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
+  // Ett anrop, två användningar — annars kan villkoret och texten glida isär vid en framtida ändring.
+  const zipWarning = postalCodeWarning(postalCode, city);
+
   return (
     <div className="grid content-start gap-2">
       <p className={crm.groupTitle}>{label}</p>
@@ -166,6 +170,17 @@ function AddressColumn({
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
         <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" disabled={disabled} />
       </div>
+      {/* 🧨 ORTEN I POSTNUMMERFÄLTET. Fortnox tar bara siffror i ZipCode, och avvisar kunden med ett
+          400 som inte pekar ut fältet — felet dyker upp först flera steg senare, som "Ingen
+          Fortnox-kundkoppling" på en orderpush. Uppmätt i drift 2026-09-17.
+          VARNAR, spärrar inte: fältet bär utländska adresser också, och en hård spärr på ett
+          fritextfält lär man sig bara att kringgå. Se lib/domains/crm/postalCode.ts. */}
+      {/* ⚠️ INTE under låsta fält. Med "Fakturaadress samma som besöksadress" (default) speglar
+          fakturakolumnen besöksadressen i disabled inputs — varningen hade då stått två gånger, och
+          den ena bett säljaren rätta ett fält som inte går att skriva i. */}
+      {!disabled && zipWarning ? (
+        <p className="text-[11px] leading-snug text-amber-700">{zipWarning}</p>
+      ) : null}
       {onEmail !== undefined && email !== undefined ? (
         <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" disabled={disabled} />
       ) : null}

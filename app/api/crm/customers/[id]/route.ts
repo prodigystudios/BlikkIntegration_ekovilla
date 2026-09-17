@@ -1,4 +1,5 @@
 import { cookies } from 'next/headers';
+import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
@@ -105,10 +106,12 @@ export async function PATCH(req: Request, context: RouteContext) {
         const { data: synced } = await getCrmCustomer(supabase, context.params.id);
         return ok({ item: synced ?? data });
       } catch (fortnoxErr: any) {
+        // Se kundskapandet: svaret bär bara det begripliga beskedet, loggen bär Fortnox egen text.
+        console.error('[fortnox] Kunduppdatering misslyckades:', (fortnoxErr as Error)?.message);
         const { data: latest } = await getCrmCustomer(supabase, context.params.id);
         return ok({
           item: latest ?? data,
-          fortnox_error: fortnoxErr?.message || 'Kunde inte uppdatera kund i Fortnox',
+          fortnox_error: friendlyFortnoxMessage(fortnoxErr),
         });
       }
     }
