@@ -112,7 +112,9 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   const [filter, setFilter] = useState<QuoteFilter>('all');
   const [sort, setSort] = useState<QuoteSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
+  // Startar på den inloggades egna offerter — samma val som säljtavlan gör. Reserven är alla:
+  // utan ett känt id löses MINE upp till tomt, och listan ska då visa allt snarare än ingenting.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   // 'mine' resolves to the current user before it goes to the server, the same way the order board

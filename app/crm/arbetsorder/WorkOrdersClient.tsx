@@ -128,7 +128,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
   const [sort, setSort] = useState<WorkOrderSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>([]);
+  // Startar på den inloggades egna ordrar — samma val som offertlistan och säljtavlan. Reserven är
+  // alla: utan ett känt id löses MINE upp till tomt, och listan ska då visa allt snarare än inget.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   // 'mine' → the current user id, resolved before the request so status/assignee filtering and
