@@ -18,6 +18,7 @@ export default function CrmConfirmDialog({
   cancelLabel = 'Avbryt',
   busy = false,
   tone = 'primary',
+  focusCancel,
   onConfirm,
   onCancel,
 }: {
@@ -35,10 +36,16 @@ export default function CrmConfirmDialog({
    * felklick ska inte utföra åtgärden på ett reflexmässigt Enter.
    */
   tone?: 'primary' | 'danger';
+  /**
+   * Fokus på Avbryt även i en 'primary'-dialog. För en åtgärd som inte är farlig i sig men inte går att ta
+   * tillbaka (t.ex. ett mail till en leverantör): ett reflexmässigt Enter ska inte utföra den. Förval: som tonen.
+   */
+  focusCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   const dangerous = tone === 'danger';
+  const cancelFocused = focusCancel ?? dangerous;
   return (
     <CrmModal
       onClose={onCancel}
@@ -56,7 +63,7 @@ export default function CrmConfirmDialog({
             type="button"
             onClick={onCancel}
             disabled={busy}
-            autoFocus={dangerous}
+            autoFocus={cancelFocused}
             className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-5"
           >
             {cancelLabel}
@@ -65,7 +72,7 @@ export default function CrmConfirmDialog({
             type="button"
             onClick={onConfirm}
             disabled={busy}
-            autoFocus={!dangerous}
+            autoFocus={!cancelFocused}
             className={cn(
               'flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5',
               dangerous && 'bg-rose-600',
