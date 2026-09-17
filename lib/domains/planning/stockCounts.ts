@@ -43,7 +43,7 @@ export type DatedMovement = {
  * för att tyst ge tillbaka felet där bekräftade säckar aldrig nådde saldot.
  */
 export type DeliveryMovement = DatedMovement & {
-  /** När leveransen fördes in — kvitteringen eller "Registrera leverans" (timestamptz). */
+  /** När leveransen fördes in — kvitteringen eller en manuell leverans i Lager-fliken (timestamptz). */
   created_at: string;
 };
 

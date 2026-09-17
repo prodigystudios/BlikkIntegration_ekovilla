@@ -13,8 +13,8 @@ type RouteContext = {
 // Kvittera ankomst: den väntade raden blir en riktig lagerrad.
 //
 // planning.schedule.write, inte depot.manage: att ta emot gods är lagerarbete, samma nyckel som
-// "Registrera leverans" redan kräver. Med admin-grinden här hade ingen annan kunnat kvittera en
-// leverans som stod på depån en fredag. Att BESTÄLLA är fortfarande depot.manage.
+// den manuella leveransen i Lager-fliken redan kräver. Med admin-grinden här hade ingen annan kunnat
+// kvittera en leverans som stod på depån en fredag. Att BESTÄLLA är fortfarande depot.manage.
 //
 // 🧨 SESSIONSKLIENTEN. receive_expected_delivery är SECURITY DEFINER och prövar has_permission, som
 // nycklar på auth.uid() — under service-role är den null och grinden nekar alltid.

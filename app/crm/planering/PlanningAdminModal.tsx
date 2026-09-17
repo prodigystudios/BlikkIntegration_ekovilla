@@ -1326,12 +1326,18 @@ function StockPanel({
 
   // Åtgärdsspalten visar ETT formulär i taget. Bara de lägen behörigheten räcker till; utan något alls
   // försvinner spalten och läget tar hela bredden. Utkasten ligger kvar i sina egna fält vid byte.
+  //
+  // ⚠️ "Leverans" är att BOKA IN ett lass som ska komma, och står först som förval. Det var förr namnet
+  // på den manuella leveransen, och den som lägger in lass läste det som "här lägger jag in leveransen"
+  // (Williams besked 2026-09-17). Den manuella — ett lass som kom utan att vara inbokat, rakt in i
+  // saldot — är undantaget och står sist. Byt inte tillbaka: två lass i saldot för samma leverans är
+  // precis vad förväxlingen ger.
   const actions = [
-    { key: 'delivery' as const, label: 'Leverans', show: canWrite },
+    { key: 'expected' as const, label: 'Leverans', show: canManageDepots },
     { key: 'count' as const, label: 'Avstämning', show: canManageDepots },
-    { key: 'expected' as const, label: 'Väntad', show: canManageDepots },
+    { key: 'delivery' as const, label: 'Manuell', show: canWrite },
   ].filter((a) => a.show);
-  const [action, setAction] = useState<'delivery' | 'count' | 'expected'>(canWrite ? 'delivery' : 'count');
+  const [action, setAction] = useState<'delivery' | 'count' | 'expected'>('expected');
   const activeAction = actions.some((a) => a.key === action) ? action : (actions[0]?.key ?? null);
 
   async function record(e: FormEvent) {
@@ -1346,7 +1352,7 @@ function StockPanel({
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte registrera leveransen');
-      toast.success('Leverans registrerad');
+      toast.success('Manuell leverans registrerad');
       setSacks('');
       setNote('');
       setCntDayReload((n) => n + 1);
@@ -1441,8 +1447,8 @@ function StockPanel({
         }),
       });
       const j = await r.json().catch(() => null);
-      if (!j?.ok) return toast.error(j?.error || 'Kunde inte lägga in leveransen');
-      toast.success('Väntad leverans inlagd');
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte boka in leveransen');
+      toast.success('Leverans inbokad');
       setExpSacks('');
       setExpNote('');
       // ⚠️ SALDOT ändras inte av en väntad leverans — men PROGNOSEN gör det, och de kommer ur samma
@@ -1453,7 +1459,7 @@ function StockPanel({
     } catch {
       // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
       // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
-      toast.error('Kunde inte lägga in leveransen');
+      toast.error('Kunde inte boka in leveransen');
     } finally {
       setExpBusy(false);
     }
@@ -1605,10 +1611,14 @@ function StockPanel({
 
           {activeAction === 'delivery' && (
             <form onSubmit={record} className="mt-4">
-              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
+              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Manuell leverans</h3>
               <p className="mt-0.5 text-[11.5px] text-slate-500">
-                Lägger till säckar i saldot — utom när leveransen är daterad före depåns senaste avstämning, då den
-                redan finns i det räknade antalet.
+                För ett lass som kom utan att vara inbokat. Säckarna läggs direkt på saldot — utom när leveransen är
+                daterad före depåns senaste avstämning, då den redan finns i det räknade antalet.
+              </p>
+              {/* Ett inbokat lass som ÄVEN registreras här räknas två gånger när ankomsten sedan bekräftas. */}
+              <p className="mt-1.5 text-[11.5px] text-amber-700">
+                Är lasset inbokat? Bekräfta ankomsten på veckotavlan i stället.
               </p>
               <div className="mt-3 grid grid-cols-2 gap-2.5">
                 <div><span className={LABEL}>Depå</span>
@@ -1650,12 +1660,12 @@ function StockPanel({
                 </p>
               )}
               <div className="mt-2.5"><span className={LABEL}>Notering</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Valfritt" className={crm.input} aria-label="Notering" /></div>
-              <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera leverans</button>
+              <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera manuell leverans</button>
             </form>
           )}
 
           {/* Avstämning — "det här står på depån". Rättar saldot åt BÅDA hållen, till skillnad från
-              leveransen som bara kan lägga till. Grindad på depot.manage: ett för högt räknat värde
+              den manuella leveransen som bara kan lägga till. Grindad på depot.manage: ett för högt räknat värde
               tystar bristbanderollen, så det är ett känsligare beslut än att ta emot gods. */}
           {activeAction === 'count' && (
             <form onSubmit={recordCount} className="mt-4">
@@ -1716,13 +1726,13 @@ function StockPanel({
             </form>
           )}
 
-          {/* Väntad leverans — beställt men inte framme. Eget läge, med flit skilt från "Registrera
-              leverans": den ena säger att materialet STÅR på depån och räknas i saldot, den andra att
-              det är på väg och inte gör det. Grindad på depot.manage — att säga att något är beställt
-              är inköpsbeslutet. */}
+          {/* Boka in leverans — beställt men inte framme. Eget läge, med flit skilt från den manuella
+              leveransen: den ena säger att materialet är på väg och inte räknas i saldot, den andra att
+              det STÅR på depån och gör det. Grindad på depot.manage — att säga att något är beställt är
+              inköpsbeslutet. */}
           {activeAction === 'expected' && (
             <form onSubmit={recordExpected} className="mt-4">
-              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Lägg in väntad leverans</h3>
+              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Boka in leverans</h3>
               <p className="mt-0.5 text-[11.5px] text-slate-500">
                 Syns på veckotavlan som <span className="font-semibold text-slate-600">Ankommer</span>. Räknas
                 <span className="font-semibold text-slate-600"> inte </span>
@@ -1749,12 +1759,12 @@ function StockPanel({
                   />
                 </div>
                 <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={expSacks} onChange={(e) => setExpSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
-                {/* INGET max här — spegelvänt mot leveransen. En väntad leverans SKA normalt ligga i
-                    framtiden; det är just därför den bor i en egen tabell. */}
+                {/* INGET max här — spegelvänt mot den manuella leveransen. En inbokad leverans SKA normalt
+                    ligga i framtiden; det är just därför den bor i en egen tabell. */}
                 <div><span className={LABEL}>Väntas</span><input type="date" value={expOn} onChange={(e) => setExpOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" /></div>
               </div>
               <div className="mt-2.5"><span className={LABEL}>Notering</span><input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="Valfritt" className={crm.input} aria-label="Notering" /></div>
-              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Lägg in väntad leverans</button>
+              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Boka in leverans</button>
             </form>
           )}
         </aside>
