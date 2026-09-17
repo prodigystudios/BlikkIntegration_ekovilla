@@ -54,6 +54,19 @@ export function canReceiveExpected(status: ExpectedDeliveryStatus): 'ok' | 'alre
 }
 
 /**
+ * Pure: de öppna inbokningarna för en depå och ett material, tidigast först.
+ *
+ * För den manuella leveransen: finns ett inbokat lass för samma par är det nästan alltid DET som kom,
+ * och då ska ankomsten bekräftas på tavlan. Registreras det manuellt i stället och bekräftas sedan,
+ * räknas samma säckar två gånger i saldot.
+ */
+export function openBookingsFor(open: ExpectedDelivery[], depotId: string, material: string): ExpectedDelivery[] {
+  return open
+    .filter((e) => e.status === 'expected' && e.depot_id === depotId && e.material === material)
+    .sort((a, b) => a.expected_on.localeCompare(b.expected_on) || a.id.localeCompare(b.id));
+}
+
+/**
  * Väntade leveranser vars datum faller i [from, to]. RLS (planning.schedule.read).
  *
  * Bara `expected`: en kvitterad rad syns på tavlan som sin LAGERRAD i stället, och en avbruten ska
