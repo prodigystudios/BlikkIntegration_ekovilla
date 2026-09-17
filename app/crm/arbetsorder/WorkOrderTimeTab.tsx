@@ -7,6 +7,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatDateTime } from '@/app/crm/lib/format';
 import { DEFAULT_BREAK_MINUTES, minutesToHours, workedMinutes } from '@/lib/domains/time/hours';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 // Kontorets Tid-flik. Den skriver i `crm_time_entries` — SAMMA tabell som löneunderlaget — och
 // därför fångar den klockslag sedan 2026-08-14. Ett timtal går inte att räkna övertid eller OB på:
@@ -38,7 +39,8 @@ export type TimeEntryItem = {
 export type TimeDraft = { work_date: string; start_time: string; end_time: string; break_minutes: string; note: string };
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  // Svensk dag. UTC-dygnet hade föreslagit gårdagens datum för ett pass rapporterat efter midnatt.
+  return stockholmTodayISO();
 }
 
 function emptyDraft(): TimeDraft {

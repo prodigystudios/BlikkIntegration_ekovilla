@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { z } from 'zod';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -154,7 +155,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     const cardBg = rgb(0.985, 0.992, 0.988);
     const headerBg = rgb(primary.r, primary.g, primary.b);
     const contentWidth = PAGE_WIDTH - PAGE_MARGIN * 2;
-    const printedOn = new Date().toISOString().slice(0, 10);
+    // Svensk dag — utskriftsdatumet står på dokumentet.
+    const printedOn = stockholmTodayISO();
 
     let logoImage: any = null;
     let footerBadgeImage: any = null;

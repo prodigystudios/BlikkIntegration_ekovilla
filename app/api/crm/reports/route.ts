@@ -4,6 +4,7 @@ import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_
 import { composeSalesReport, fetchReportData, partitionOrders, type ReportRange } from '@/lib/domains/crm/reports';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,9 +17,11 @@ const querySchema = z.object({
 
 // Default range: the last 12 months (inclusive of the current month).
 function defaultRange(): ReportRange {
-  const now = new Date();
-  const to = now.toISOString().slice(0, 10);
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+  // Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet ett intervall som slutade i går, och
+  // den 1:a i månaden flyttade det dessutom hela tolvmånadersfönstret en månad bakåt.
+  const to = stockholmTodayISO();
+  const [year, month] = to.split('-').map(Number);
+  const start = new Date(Date.UTC(year, month - 1 - 11, 1));
   return { from: start.toISOString().slice(0, 10), to };
 }
 

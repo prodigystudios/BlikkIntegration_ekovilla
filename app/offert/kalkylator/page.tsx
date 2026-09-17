@@ -14,6 +14,7 @@ import {
 } from '@/lib/offertKalkylator';
 import { useToast } from '@/lib/Toast';
 import { useUserProfile } from '@/lib/UserProfileContext';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 function formatKr(value: number) {
   const v = Number.isFinite(value) ? value : 0;
@@ -126,7 +127,8 @@ function OffertKalkylatorInner() {
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
   const [phone, setPhone] = useState('');
-  const [quoteDate, setQuoteDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // Svensk dag, inte UTC: offertdatumet trycks på kundens PDF (se /api/pdf/offert-kalkylator).
+  const [quoteDate, setQuoteDate] = useState(() => stockholmTodayISO());
   const [nextMeetingDate, setNextMeetingDate] = useState('');
   const [salesperson, setSalesperson] = useState('');
   const [salespersonPhone, setSalespersonPhone] = useState('');
@@ -288,7 +290,7 @@ function OffertKalkylatorInner() {
         setAddress('');
         setCity('');
         setPhone('');
-        setQuoteDate(new Date().toISOString().slice(0, 10));
+        setQuoteDate(stockholmTodayISO());
         setNextMeetingDate('');
         setSalesperson(profileName || '');
         setSalespersonPhone(String(profilePhone || '').trim());
@@ -871,7 +873,7 @@ function OffertKalkylatorInner() {
                 setAddress('');
                 setCity('');
                 setPhone('');
-                setQuoteDate(new Date().toISOString().slice(0, 10));
+                setQuoteDate(stockholmTodayISO());
                 setNextMeetingDate('');
                 setSalesperson(profileName || '');
                 setSalespersonPhone(String(profilePhone || '').trim());

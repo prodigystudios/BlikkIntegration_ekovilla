@@ -42,6 +42,7 @@ import {
   type CustomerDerivedValues,
 } from './quoteSerializers';
 import { quoteLabel } from '@/app/crm/lib/quoteDisplay';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -487,9 +488,14 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   return issues;
 }
 
-const initialQuoteDate = new Date().toISOString().slice(0, 10);
-
-const initialDraft: QuoteDraft = {
+// 🧨 ALDRIG `new Date().toISOString().slice(0, 10)` för ett kalenderdatum. Det ger UTC-dygnet, och
+// mellan midnatt och kl. 02 svensk sommartid är det GÅRDAGEN. Offertdatumet går vidare till Fortnox
+// som OfferDate och trycks som "Offertdatum" på kundens PDF — en offert skriven natten till den 16:e
+// daterades den 15:e, alltså möjligen före förfrågan kom in.
+//
+// ⚠️ Och inte som modulkonstant: den beräknas när modulen laddas, så en flik som stått öppen över
+// midnatt hade gett gårdagens datum oavsett zon.
+const BLANK_DRAFT: QuoteDraft = {
   customer_id: null,
   prospect_id: '',
   quote_type: 'business',
@@ -517,7 +523,7 @@ const initialDraft: QuoteDraft = {
   project_name: '',
   description: '',
   vat_percent: '25',
-  valid_until: addDaysIso(initialQuoteDate, OFFER_VALIDITY_DAYS),
+  valid_until: '',
   rot_enabled: false,
   rot_property_designation: '',
   rot_percent: '30',
@@ -527,12 +533,25 @@ const initialDraft: QuoteDraft = {
   handoff_notes: '',
   work_scope: '',
   status: 'draft',
-  quote_date: initialQuoteDate,
+  quote_date: '',
   follow_up_date: '',
   notes: '',
   create_follow_up_task: true,
   assigned_to: '',
 };
+
+/** En tom offert med dagens SVENSKA datum och en egen tom artikelrad. Ett anrop per mount. */
+function createInitialDraft(): QuoteDraft {
+  // Giltighetstiden räknas från offertdatumet, så den måste följa med samma dag — annars blir en
+  // offert skriven på natten giltig en dag för kort.
+  const quoteDate = stockholmTodayISO();
+  return {
+    ...BLANK_DRAFT,
+    quote_date: quoteDate,
+    valid_until: addDaysIso(quoteDate, OFFER_VALIDITY_DAYS),
+    items: [createEmptyLineItem()],
+  };
+}
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
@@ -1288,6 +1307,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const [readinessNonce, setReadinessNonce] = useState(0);
   const [rechecking, setRechecking] = useState(false);
   const [pnValue, setPnValue] = useState('');
+  // Ett värde för hela mountet: draften och den "rena" baslinjen jämförs med JSON.stringify, så
+  // två olika datum hade fått ett orört formulär att se ut som osparat arbete.
+  const initialDraft = useMemo(() => createInitialDraft(), []);
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
   // or manually opening a row makes it the only open one (others collapse). A stale id
