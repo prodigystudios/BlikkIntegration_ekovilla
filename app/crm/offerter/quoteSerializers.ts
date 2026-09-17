@@ -6,6 +6,7 @@
 // callers pass `draft` directly, and tests build small plain objects.
 
 import { parseDecimal } from '@/lib/shared/number';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 // ── Giltighetstid ────────────────────────────────────────────────────────────
 //
@@ -34,6 +35,21 @@ export function addDaysIso(iso: string, days: number): string {
   if (!Number.isFinite(days)) return iso;
   date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+/**
+ * Datumen en ny offert föds med: dagens SVENSKA dag, och giltighetstiden räknad från just den.
+ *
+ * 🧨 Två fällor bakar ihop sig här, därför bor paret i EN funktion:
+ *   • `new Date().toISOString().slice(0, 10)` ger UTC-dygnet. Mellan midnatt och kl. 02 svensk
+ *     sommartid är det gårdagen — och offertdatumet går vidare till Fortnox som OfferDate och
+ *     trycks som "Offertdatum" på kundens PDF.
+ *   • Räknas `valid_until` ur en ANNAN klockavläsning än `quote_date` kan de hamna på var sin sida
+ *     om midnatt, och offerten går ut med en giltighetstid som är en dag kort.
+ */
+export function initialQuoteDates(now: Date = new Date()): { quote_date: string; valid_until: string } {
+  const quoteDate = stockholmTodayISO(now);
+  return { quote_date: quoteDate, valid_until: addDaysIso(quoteDate, OFFER_VALIDITY_DAYS) };
 }
 
 /** Antal dagar mellan två datum (YYYY-MM-DD), eller null om något av dem inte är ett datum. */

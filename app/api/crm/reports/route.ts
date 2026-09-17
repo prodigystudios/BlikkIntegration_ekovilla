@@ -4,7 +4,7 @@ import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_
 import { composeSalesReport, fetchReportData, partitionOrders, type ReportRange } from '@/lib/domains/crm/reports';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
-import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { reportRange } from '@/app/crm/rapportering/reportRanges';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,13 +16,14 @@ const querySchema = z.object({
 });
 
 // Default range: the last 12 months (inclusive of the current month).
+// Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet ett intervall som slutade i går, och den
+// 1:a i månaden flyttade dessutom hela tolvmånadersfönstret en månad bakåt.
+//
+// Samma funktion som rapportsidans egen snabbknapp "Senaste 12 mån" använder — den är ren, tar
+// ögonblicket som argument och är redan testad. En egen kopia av månadsaritmetiken här hade varit
+// husets tredje, och den enda som ingen prövar.
 function defaultRange(): ReportRange {
-  // Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet ett intervall som slutade i går, och
-  // den 1:a i månaden flyttade det dessutom hela tolvmånadersfönstret en månad bakåt.
-  const to = stockholmTodayISO();
-  const [year, month] = to.split('-').map(Number);
-  const start = new Date(Date.UTC(year, month - 1 - 11, 1));
-  return { from: start.toISOString().slice(0, 10), to };
+  return reportRange('last12');
 }
 
 export async function GET(req: Request) {

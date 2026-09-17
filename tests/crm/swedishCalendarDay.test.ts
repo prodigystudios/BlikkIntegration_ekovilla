@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { buildWorkOrderNumber } from '@/lib/domains/crm/work-orders';
+import { initialQuoteDates } from '@/app/crm/offerter/quoteSerializers';
+import { getCurrentMonthStartDate, getCurrentWeekStartDate } from '@/lib/domains/crm/goals';
 
 // Kalenderdatum i CRM ska vara den SVENSKA dagen, aldrig UTC-dygnet.
 //
@@ -47,5 +49,33 @@ describe('buildWorkOrderNumber', () => {
   it('behåller dagen före när klockan ännu inte passerat svensk midnatt', () => {
     expect(buildWorkOrderNumber('2ca7aa00-0000-4000-8000-000000000000', JUST_BEFORE_SWEDISH_MIDNIGHT))
       .toBe('AO-20260915-2CA7AA');
+  });
+});
+
+describe('initialQuoteDates', () => {
+  it('🧨 daterar offerten i svensk dag — den går vidare som OfferDate till kundens PDF', () => {
+    expect(initialQuoteDates(JUST_AFTER_SWEDISH_MIDNIGHT).quote_date).toBe('2026-09-16');
+  });
+
+  it('räknar giltighetstiden från SAMMA dag som offertdatumet', () => {
+    // Två klockavläsningar kunde hamna på var sin sida om midnatt och ge en dag för kort giltighet.
+    const { quote_date, valid_until } = initialQuoteDates(JUST_AFTER_SWEDISH_MIDNIGHT);
+    expect(quote_date).toBe('2026-09-16');
+    expect(valid_until).toBe('2026-10-16');
+  });
+});
+
+describe('målens periodnycklar', () => {
+  it('🧨 månadsnyckeln pekar på rätt månad strax efter midnatt den 1:a', () => {
+    // 22:30Z den 30 sep = 00:30 svensk tid den 1 okt. UTC-dygnet gav september, och ett sparat mål
+    // hade då skrivit över septembers budget med oktobers siffror.
+    expect(getCurrentMonthStartDate(new Date('2026-09-30T22:30:00Z'))).toBe('2026-10-01');
+    expect(getCurrentMonthStartDate(new Date('2026-09-30T21:30:00Z'))).toBe('2026-09-01');
+  });
+
+  it('veckonyckeln ger måndagen i den svenska veckan', () => {
+    // 00:30 svensk tid måndag 21 sep — UTC-dygnet låg kvar på söndagen, alltså förra veckan.
+    expect(getCurrentWeekStartDate(new Date('2026-09-20T22:30:00Z'))).toBe('2026-09-21');
+    expect(getCurrentWeekStartDate(new Date('2026-09-20T21:30:00Z'))).toBe('2026-09-14');
   });
 });

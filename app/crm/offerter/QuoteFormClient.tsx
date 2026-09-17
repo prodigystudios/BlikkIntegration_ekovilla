@@ -37,12 +37,12 @@ import {
   mergeUntouchedCustomerFields,
   pickCustomerDerived,
   buildFollowUpTaskPayload,
+  initialQuoteDates,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
   type CustomerDerivedValues,
 } from './quoteSerializers';
 import { quoteLabel } from '@/app/crm/lib/quoteDisplay';
-import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -519,7 +519,9 @@ const BLANK_DRAFT: QuoteDraft = {
   end_contact_phone: '',
   end_contact_email: '',
   label: '',
-  items: [createEmptyLineItem()],
+  // Tom med flit: startraden skapas per draft i createInitialDraft. En delad rad här hade gett två
+  // drafter i samma flik SAMMA rad-id, och en redigering i den ena hade synts i den andra.
+  items: [],
   project_name: '',
   description: '',
   vat_percent: '25',
@@ -542,15 +544,8 @@ const BLANK_DRAFT: QuoteDraft = {
 
 /** En tom offert med dagens SVENSKA datum och en egen tom artikelrad. Ett anrop per mount. */
 function createInitialDraft(): QuoteDraft {
-  // Giltighetstiden räknas från offertdatumet, så den måste följa med samma dag — annars blir en
-  // offert skriven på natten giltig en dag för kort.
-  const quoteDate = stockholmTodayISO();
-  return {
-    ...BLANK_DRAFT,
-    quote_date: quoteDate,
-    valid_until: addDaysIso(quoteDate, OFFER_VALIDITY_DAYS),
-    items: [createEmptyLineItem()],
-  };
+  // Datumparet kommer ur serializern — se initialQuoteDates för varför de två måste födas ihop.
+  return { ...BLANK_DRAFT, ...initialQuoteDates(), items: [createEmptyLineItem()] };
 }
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
@@ -1309,7 +1304,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const [pnValue, setPnValue] = useState('');
   // Ett värde för hela mountet: draften och den "rena" baslinjen jämförs med JSON.stringify, så
   // två olika datum hade fått ett orört formulär att se ut som osparat arbete.
-  const initialDraft = useMemo(() => createInitialDraft(), []);
+  //
+  // 🧨 Lazy useState och INTE useMemo. React lovar inte att behålla ett memo — kastas det körs
+  // createInitialDraft igen och ger en ny rad-id, medan baslinjen och expandedRowId bär den gamla.
+  // Då är formuläret "smutsigt" för alltid: spökautospar, lämna-varning vid varje navigering och en
+  // återuppta-banner på ett orört formulär. useState-initialiseraren körs exakt en gång.
+  const [initialDraft] = useState(createInitialDraft);
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
   // or manually opening a row makes it the only open one (others collapse). A stale id

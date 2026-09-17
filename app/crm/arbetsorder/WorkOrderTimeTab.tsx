@@ -38,16 +38,12 @@ export type TimeEntryItem = {
 
 export type TimeDraft = { work_date: string; start_time: string; end_time: string; break_minutes: string; note: string };
 
-function todayIso() {
-  // Svensk dag. UTC-dygnet hade föreslagit gårdagens datum för ett pass rapporterat efter midnatt.
-  return stockholmTodayISO();
-}
-
 function emptyDraft(): TimeDraft {
   // Utgångsvärdet delas med /tid — se DEFAULT_BREAK_MINUTES för varför det är en konstant och inte
   // en literal per formulär.
   return {
-    work_date: todayIso(),
+    // Svensk dag: UTC-dygnet hade föreslagit gårdagens datum för ett pass rapporterat efter midnatt.
+    work_date: stockholmTodayISO(),
     start_time: '',
     end_time: '',
     break_minutes: String(DEFAULT_BREAK_MINUTES),
