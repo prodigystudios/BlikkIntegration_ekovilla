@@ -36,6 +36,14 @@ export async function PATCH(req: Request, context: RouteContext) {
       leadTimeDays: parsed.data.lead_time_days,
       note: parsed.data.note,
       active: parsed.data.active,
+      orderEmailLanguage: parsed.data.order_email_language,
+      // undefined = rör inte mallen. Schemat har redan krävt att ämne och text kommer ihop.
+      orderEmailTemplate:
+        parsed.data.order_email_body === undefined
+          ? undefined
+          : parsed.data.order_email_subject === null || parsed.data.order_email_body === null
+            ? null
+            : { subject: parsed.data.order_email_subject as string, body: parsed.data.order_email_body },
     });
     if (error) {
       // Att aktivera en leverantör vars namn redan bärs av en aktiv rad landar här, inte bara en

@@ -38,6 +38,9 @@ function supplier(over: Partial<MaterialSupplier> = {}): MaterialSupplier {
     lead_time_days: 5,
     note: null,
     active: true,
+    order_email_language: 'sv',
+    order_email_subject: null,
+    order_email_body: null,
     ...over,
   };
 }

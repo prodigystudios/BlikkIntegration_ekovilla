@@ -7,6 +7,7 @@ import {
   effectiveOrderEmailTemplate,
   exampleOrderEmailData,
   formatOrderDate,
+  orderEmailProblemField,
   renderOrderEmail,
   validateOrderEmailTemplate,
   type OrderEmailData,
@@ -131,6 +132,16 @@ describe('validering', () => {
     expect(kinds({ subject: '  ', body: ' ' })).toEqual(expect.arrayContaining(['subject_empty', 'body_empty']));
     expect(kinds({ ...ok, subject: `#{ordernummer}${'x'.repeat(200)}` })).toContain('subject_too_long');
     expect(kinds({ ...ok, body: `{orderrader}${'x'.repeat(5000)}` })).toContain('body_too_long');
+  });
+
+  it('varje problem pekar på rätt fält, så felet visas där det går att rätta', () => {
+    const field = (t: OrderEmailTemplate) => validateOrderEmailTemplate(t).map((p) => [p.kind, orderEmailProblemField(p)]);
+    expect(field({ ...ok, subject: 'Utan nummer' })).toEqual([['order_number_missing_in_subject', 'subject']]);
+    expect(field({ ...ok, subject: '#{ordernummer} {orderrader}' })).toEqual([['lines_in_subject', 'subject']]);
+    expect(field({ ...ok, body: 'Utan rader' })).toEqual([['lines_missing', 'body']]);
+    expect(field({ ...ok, subject: '#{ordernummer} {foo}' })).toEqual([['unknown_placeholder', 'subject']]);
+    expect(field({ ...ok, body: '{foo} {orderrader}' })).toEqual([['unknown_placeholder', 'body']]);
+    expect(field({ ...ok, subject: '#{ordernummer}\nx' })).toEqual([['subject_multiline', 'subject']]);
   });
 
   it('varje problem har en svensk text', () => {

@@ -177,6 +177,25 @@ export function validateOrderEmailTemplate(template: OrderEmailTemplate): OrderE
   return problems;
 }
 
+/** Vilket fält ett problem gäller — så att felet kan visas vid rätt fält, i redigeraren och i API-svaret. */
+export function orderEmailProblemField(p: OrderEmailTemplateProblem): 'subject' | 'body' {
+  switch (p.kind) {
+    case 'subject_empty':
+    case 'subject_too_long':
+    case 'subject_multiline':
+    case 'lines_in_subject':
+    case 'order_number_missing_in_subject':
+      return 'subject';
+    case 'unknown_placeholder':
+      return p.field;
+    case 'body_empty':
+    case 'body_too_long':
+    case 'lines_missing':
+    case 'lines_repeated':
+      return 'body';
+  }
+}
+
 /** Svensk text för ett problem — samma ord i redigeraren och i API-svaret. */
 export function describeOrderEmailTemplateProblem(p: OrderEmailTemplateProblem): string {
   switch (p.kind) {
