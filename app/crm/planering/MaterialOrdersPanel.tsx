@@ -54,6 +54,8 @@ import {
 
 const API = '/api/crm/planering/material-orders';
 const STOCK_API = '/api/crm/planering/depot-stock';
+const SUPPLIERS_API = '/api/crm/planering/material-suppliers';
+const DEPOTS_API = '/api/crm/planering/depots';
 
 const PANEL = 'rounded-2xl border border-[#e0e8dc] bg-white p-4';
 const LABEL = 'mb-1.5 block text-[10.5px] font-bold uppercase tracking-wide text-slate-400';
@@ -122,19 +124,9 @@ function sacksText(sacks: number, perPallet: number | null): string {
 }
 
 export default function MaterialOrdersPanel({
-  suppliers,
-  depots,
-  registryLoading,
-  registryError,
   onChanged,
   onDirtyChange,
 }: {
-  suppliers: MaterialSupplier[];
-  depots: OpsDepot[];
-  /** Leverantörer och depåer. Förslagen räknas en gång per leverantör, så panelen väntar in båda. */
-  registryLoading: boolean;
-  /** Utan registret går ingen beställning att sätta ihop — och ett tomt register får inte se ut som "borttagen". */
-  registryError: string | null;
   /** Tavlan: ett skickat lass blir väntade leveranser som ska synas. */
   onChanged: () => void;
   /** Osparade ändringar i en beställning — modalen frågar innan de kastas. */
@@ -142,6 +134,13 @@ export default function MaterialOrdersPanel({
 }) {
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [ordersError, setOrdersError] = useState<string | null>(null);
+  // Leverantörer och depåer SOM DE ÄR SPARADE — egen läsning, inte modalens listor. De andra flikarna skriver
+  // osparad text rakt in i sina listor (useEntityCrud.patchLocal), och en Plats som skrivits men inte sparats
+  // fick panelen att säga att allt var i ordning medan Granska nekade "saknar Plats" (Williams QA 2026-09-17).
+  // Servern sätter ihop ordern ur det sparade registret; panelen ska se samma sak.
+  const [suppliers, setSuppliers] = useState<MaterialSupplier[]>([]);
+  const [depots, setDepots] = useState<OpsDepot[]>([]);
+  const [registryError, setRegistryError] = useState<string | null>(null);
   const [forecast, setForecast] = useState<DepotForecast | null>(null);
   const [forecastError, setForecastError] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -174,9 +173,23 @@ export default function MaterialOrdersPanel({
     }
   }, []);
 
+  const loadRegistry = useCallback(async () => {
+    // Utan registret går ingen beställning att sätta ihop — och ett tomt register får inte se ut som "borttagen".
+    try {
+      const [s, d] = await Promise.all([callApi(SUPPLIERS_API), callApi(DEPOTS_API)]);
+      if (!s.ok) throw new Error(s.error || 'Kunde inte hämta leverantörerna');
+      if (!d.ok) throw new Error(d.error || 'Kunde inte hämta depåerna');
+      setSuppliers(s.data.suppliers as MaterialSupplier[]);
+      setDepots(d.data.depots as OpsDepot[]);
+      setRegistryError(null);
+    } catch (e: any) {
+      setRegistryError(e?.message || 'Kunde inte hämta leverantörer och depåer');
+    }
+  }, []);
+
   const reloadAll = useCallback(async () => {
-    await Promise.all([loadOrders(), loadForecast()]);
-  }, [loadOrders, loadForecast]);
+    await Promise.all([loadOrders(), loadForecast(), loadRegistry()]);
+  }, [loadOrders, loadForecast, loadRegistry]);
 
   useEffect(() => {
     reloadAll().finally(() => setLoading(false));
@@ -220,14 +233,17 @@ export default function MaterialOrdersPanel({
   const today = stockholmTodayISO();
   const selectedKey = selection ? `${selection.kind}:${selection.id}` : '';
 
-  if (loading || registryLoading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
+  if (loading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
   if (registryError) {
     return (
       <div className="p-5">
         <div className="max-w-xl rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
           <div className="font-semibold">Leverantörer eller depåer kunde inte hämtas</div>
           <p className="mt-0.5">{registryError}</p>
-          <p className="mt-1 text-[11px] text-rose-500">Beställningar går inte att sätta ihop utan dem. Stäng och öppna Administrera igen.</p>
+          <p className="mt-1 text-[11px] text-rose-500">Beställningar går inte att sätta ihop utan dem.</p>
+          <button type="button" onClick={() => reloadAll()} className={cn(crm.ghostButton, 'mt-2')}>
+            Försök igen
+          </button>
         </div>
       </div>
     );
@@ -646,16 +662,23 @@ function Composer({
       )}
 
       {value.depots.map((d) => {
-        const hasLocation = (d.location ?? '').trim() !== '';
+        // Ur registret när depån finns där — samma källa som kontrollen nedan och som Granska. Raden bär platsen från
+        // när den lades till, och efter en sparad Plats + Läs om hade rubriken annars sagt "saknar" medan kontrollen
+        // sa ja.
+        const registryDepot = depots.find((x) => x.id === d.depot_id);
+        const location = registryDepot ? registryDepot.location : d.location;
+        const hasLocation = (location ?? '').trim() !== '';
         return (
           <section key={d.depot_id} className={PANEL}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
                 <h4 className="text-[14px] font-extrabold text-[#142c1b]">{d.depot_name}</h4>
                 {hasLocation ? (
-                  <p className="text-[11.5px] text-slate-500">Leveransadress: {d.location}</p>
+                  <p className="text-[11.5px] text-slate-500">Leveransadress: {location}</p>
                 ) : (
-                  <p className="text-[11.5px] font-semibold text-rose-600">Saknar Plats. Fyll i leveransadressen under Depåer, annars vägras beställningen.</p>
+                  <p className="text-[11.5px] font-semibold text-rose-600">
+                    Saknar Plats. Fyll i leveransadressen under Depåer och tryck Spara där, sedan Läs om här.
+                  </p>
                 )}
               </div>
               <label className="flex items-center gap-2">

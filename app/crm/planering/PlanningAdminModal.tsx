@@ -216,10 +216,6 @@ export default function PlanningAdminModal({
             )}
             {active === 'orders' && (
               <MaterialOrdersPanel
-                suppliers={suppliersCrud.items}
-                depots={depotsCrud.items}
-                registryLoading={suppliersCrud.loading || depotsCrud.loading}
-                registryError={suppliersCrud.loadError || depotsCrud.loadError}
                 onChanged={onChanged}
                 onDirtyChange={setOrdersDirty}
               />
