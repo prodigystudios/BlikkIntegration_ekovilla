@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { expectedStatusesForOrders, getOrder } from '@/lib/domains/planning/materialOrdersStore';
 import { discardDraft, updateDraft, warningsForOrder } from '@/lib/domains/planning/materialOrdersService';
-import { describeOrderWarning, orderDeliveryState } from '@/lib/domains/planning/materialOrders';
+import { describeOrderWarning, orderDeliveryState, warningsFingerprint } from '@/lib/domains/planning/materialOrders';
 import { getSupplier } from '@/lib/domains/planning/materialSuppliers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, materialOrderUpdateSchema } from '../../_lib';
@@ -24,19 +24,22 @@ export async function GET(_req: Request, context: RouteContext) {
     if (error) return routeError(500, 'material_order_read_failed', error.message);
     if (!order) return routeError(404, 'material_order_not_found', 'Beställningen finns inte');
 
-    let warnings: { text: string }[] = [];
+    let warnings: Awaited<ReturnType<typeof warningsForOrder>> = [];
     if (order.status === 'draft' && order.supplier_id) {
       const supplier = await getSupplier(supabase, order.supplier_id);
-      if (supplier.data) {
-        warnings = (await warningsForOrder(supabase, order, supplier.data, stockholmTodayISO())).map((w) => ({ ...w, text: describeOrderWarning(w) }));
-      }
+      if (supplier.data) warnings = await warningsForOrder(supabase, order, supplier.data, stockholmTodayISO());
     }
     let delivery_state = null;
     if (order.status === 'sent') {
       const statuses = await expectedStatusesForOrders(supabase, [order.id]);
       delivery_state = orderDeliveryState(statuses.data.get(order.id) ?? []);
     }
-    return ok({ order, warnings, delivery_state });
+    return ok({
+      order,
+      warnings: warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })),
+      warnings_fingerprint: warningsFingerprint(warnings),
+      delivery_state,
+    });
   } catch (e: any) {
     return routeError(500, 'material_order_read_unexpected', e?.message || 'Failed to read material order');
   }
@@ -69,7 +72,11 @@ export async function PATCH(req: Request, context: RouteContext) {
       case 'updated': {
         const supplier = result.order.supplier_id ? await getSupplier(supabase, result.order.supplier_id) : null;
         const warnings = supplier?.data ? await warningsForOrder(supabase, result.order, supplier.data, today) : [];
-        return ok({ order: result.order, warnings: warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })) });
+        return ok({
+          order: result.order,
+          warnings: warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })),
+          warnings_fingerprint: warningsFingerprint(warnings),
+        });
       }
       case 'not_found':
         return routeError(404, 'material_order_not_found', 'Beställningen finns inte');

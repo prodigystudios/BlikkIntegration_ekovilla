@@ -1,6 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { EmailSendError, sendEmail } from '@/lib/email';
-import { classifySendError, composedOrderDiffers, materialOrderIdempotencyKey, materialOrderSendMode, type OrderWarning } from './materialOrders';
+import {
+  classifySendError,
+  composedOrderDiffers,
+  materialOrderIdempotencyKey,
+  materialOrderSendMode,
+  warningsFingerprint,
+  type OrderWarning,
+} from './materialOrders';
 import { claimSend, finalizeSend, getOrder, recordSendError, releaseSend, resolveSend, type MaterialOrder } from './materialOrdersStore';
 import { composeFromRegistry, draftInputOf, warningsForOrder } from './materialOrdersService';
 
@@ -18,16 +25,27 @@ import { composeFromRegistry, draftInputOf, warningsForOrder } from './materialO
 //    ens ta ett utskick.
 
 export const SEND_TIMEOUT_MS = 15_000;
+/**
+ * Hela budgeten för en förfrågan. Routen har maxDuration 30 s; marginalen täcker finalize och svaret. Dödas
+ * funktionen mitt i utskicket blir klienten utan besked och inget fel bokförs — ordern står säkert kvar som
+ * "skickas", men ett 202 med rådet att vänta är bättre än ett 504.
+ */
+export const REQUEST_BUDGET_MS = 25_000;
+/** Minsta tid som måste finnas kvar för att ett utskick alls ska påbörjas. */
+export const MIN_SEND_WINDOW_MS = 8_000;
+/** Hur länge ett utskick räknas som pågående i databasen (claim/resolve). */
+export const RETRY_AFTER_SECONDS = 120;
 
 export type SendOutcome =
   | { kind: 'blocked' }
   | { kind: 'not_found' }
   | { kind: 'already_sent'; order: MaterialOrder | null }
   | { kind: 'conflict'; code: string; message: string }
-  | { kind: 'acknowledge_required'; warnings: OrderWarning[] }
+  | { kind: 'acknowledge_required'; warnings: OrderWarning[]; fingerprint: string }
   | { kind: 'sent'; order_no: number; created: number; expected: number }
-  | { kind: 'rejected'; code: string; message: string }
-  | { kind: 'unknown'; message: string }
+  /** attempt = försöket nästa Skicka ska använda. */
+  | { kind: 'rejected'; code: string; message: string; attempt: number }
+  | { kind: 'unknown'; message: string; retry_after_seconds: number }
   | { kind: 'db_error'; message: string };
 
 const CLAIM_CONFLICT: Record<string, string> = {
@@ -44,6 +62,8 @@ type Deps = {
   env: Record<string, string | undefined>;
   today: string;
   actor: { id: string; name: string | null };
+  /** Klockan, injicerbar för testerna av tidsbudgeten. */
+  now?: () => number;
 };
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'> {
@@ -64,8 +84,12 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | 'timeout'>
 
 export async function sendMaterialOrder(
   deps: Deps,
-  input: { orderId: string; revision: number; attempt: number; acknowledged: boolean },
+  input: { orderId: string; revision: number; attempt: number; acknowledgedWarnings: string | null },
 ): Promise<SendOutcome> {
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const unknown = (message: string): SendOutcome => ({ kind: 'unknown', message, retry_after_seconds: RETRY_AFTER_SECONDS });
+
   // 1. Spärren, före allt annat.
   if (materialOrderSendMode(deps.env) !== 'live') return { kind: 'blocked' };
 
@@ -118,7 +142,17 @@ export async function sendMaterialOrder(
       };
     }
     const warnings = await warningsForOrder(supabase, order, fresh.supplier, deps.today);
-    if (warnings.length > 0 && !input.acknowledged) return { kind: 'acknowledge_required', warnings };
+    // Kvitteringen gäller exakt de varningar som visades — se warningsFingerprint.
+    if (warnings.length > 0 && input.acknowledgedWarnings !== warningsFingerprint(warnings)) {
+      return { kind: 'acknowledge_required', warnings, fingerprint: warningsFingerprint(warnings) };
+    }
+  }
+
+  // Kontrollerna ovan läser prognosen och kan ta tid. Räcker inte budgeten till ett utskick tas det inte alls —
+  // ingenting är påbörjat, och ett nytt tryck börjar om.
+  const remaining = REQUEST_BUDGET_MS - (now() - started);
+  if (remaining < MIN_SEND_WINDOW_MS) {
+    return { kind: 'conflict', code: 'slow_checks', message: 'Kontrollerna tog för lång tid — inget har skickats. Försök igen.' };
   }
 
   // 3. Ta utskicket.
@@ -154,49 +188,46 @@ export async function sendMaterialOrder(
         },
         { idempotencyKey: key },
       ),
-      SEND_TIMEOUT_MS,
+      Math.min(SEND_TIMEOUT_MS, remaining - 2_000),
     );
   } catch (e) {
     if (e instanceof EmailSendError && classifySendError(e.code) === 'rejected') {
       const released = await releaseSend(supabase, order.id, input.attempt, e.code, e.message);
-      if (released.data === 'released') return { kind: 'rejected', code: e.code, message: e.message };
+      if (released.data === 'released') return { kind: 'rejected', code: e.code, message: e.message, attempt: input.attempt + 1 };
       // 'retried': försöket har skickats om, och ett avslag bevisar då inget om det första anropet.
       await recordSendError(supabase, order.id, input.attempt, e.code, e.message).catch(() => {});
-      return { kind: 'unknown', message: `Oklart om mailet gick fram (${e.message}). Tryck Försök igen — inget nytt mail skickas.` };
+      return unknown(`Oklart om mailet gick fram (${e.message}). Tryck Försök igen om ett par minuter — inget nytt mail skickas.`);
     }
     const code = e instanceof EmailSendError ? e.code : 'exception';
     const message = e instanceof Error ? e.message : 'Okänt fel';
     await recordSendError(supabase, order.id, input.attempt, code, message).catch(() => {});
-    return { kind: 'unknown', message: `Oklart om mailet gick fram (${message}). Tryck Försök igen — inget nytt mail skickas.` };
+    return unknown(`Oklart om mailet gick fram (${message}). Tryck Försök igen om ett par minuter — inget nytt mail skickas.`);
   }
 
   if (result === 'timeout') {
-    await recordSendError(supabase, order.id, input.attempt, 'timeout', 'Inget svar från Resend inom 15 s').catch(() => {});
-    return { kind: 'unknown', message: 'Inget svar från mailtjänsten i tid. Tryck Försök igen om en stund — inget nytt mail skickas.' };
+    await recordSendError(supabase, order.id, input.attempt, 'timeout', 'Inget svar från Resend i tid').catch(() => {});
+    return unknown('Inget svar från mailtjänsten i tid. Tryck Försök igen om ett par minuter — inget nytt mail skickas.');
   }
   if (result.skipped) {
     // Mail är inte konfigurerat: DET HÄR anropet skickade inget. Släpp försöket — men bara om det aldrig
     // skickats om; annars kan ett tidigare anrop ha gått fram ('retried').
     const released = await releaseSend(supabase, order.id, input.attempt, 'not_configured', 'Mail är inte konfigurerat');
     if (released.data === 'released') {
-      return { kind: 'rejected', code: 'not_configured', message: 'Mail är inte konfigurerat i den här miljön' };
+      return { kind: 'rejected', code: 'not_configured', message: 'Mail är inte konfigurerat i den här miljön', attempt: input.attempt + 1 };
     }
     await recordSendError(supabase, order.id, input.attempt, 'not_configured', 'Mail är inte konfigurerat').catch(() => {});
-    return { kind: 'unknown', message: 'Mail är inte konfigurerat, och ett tidigare försök kan ha gått fram. Titta i kopian i order@.' };
+    return unknown('Mail är inte konfigurerat, och ett tidigare försök kan ha gått fram. Titta i kopian i order@.');
   }
   if (!result.id) {
     await recordSendError(supabase, order.id, input.attempt, 'no_id', 'Resend svarade utan id').catch(() => {});
-    return { kind: 'unknown', message: 'Mailtjänsten svarade utan kvitto. Tryck Försök igen — inget nytt mail skickas.' };
+    return unknown('Mailtjänsten svarade utan kvitto. Tryck Försök igen om ett par minuter — inget nytt mail skickas.');
   }
 
   // 5. Resend tog emot mailet: registrera.
   const finalized = await finalizeSend(supabase, order.id, result.id);
   if (finalized.error || finalized.data === null) {
     await recordSendError(supabase, order.id, input.attempt, 'finalize_failed', finalized.error?.message ?? 'Inget svar').catch(() => {});
-    return {
-      kind: 'unknown',
-      message: 'Mailet är skickat men beställningen kunde inte registreras. Tryck Försök igen — inget nytt mail skickas.',
-    };
+    return unknown('Mailet är skickat men beställningen kunde inte registreras. Tryck Försök igen om ett par minuter — inget nytt mail skickas.');
   }
   return { kind: 'sent', order_no: order.order_no, created: finalized.data, expected: order.lines.length };
 }

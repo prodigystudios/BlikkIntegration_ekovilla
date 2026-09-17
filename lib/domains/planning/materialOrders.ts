@@ -438,7 +438,8 @@ export type OrderWarning =
   | { kind: 'lead_time_zero' }
   | { kind: 'unknown_pallet_size'; material: string }
   | { kind: 'excluded_jobs'; count: number }
-  | { kind: 'earlier_order_open'; order_no: number };
+  | { kind: 'earlier_order_open'; order_no: number }
+  | { kind: 'earlier_orders_unknown' };
 
 /**
  * Det den som skickar bör ha sett innan mailet går. Inget av det blockerar — men Skicka kräver att varningarna
@@ -453,6 +454,8 @@ export function orderWarnings(input: {
   today: string;
   /** Tidigare skickade ordrar till samma leverantör som inte kommit fram än. */
   openEarlierOrders: number[];
+  /** Läsningen av tidigare ordrar felade: säg det, i stället för att tyst inte ha något att varna om. */
+  earlierOrdersUnknown?: boolean;
 }): OrderWarning[] {
   const warnings: OrderWarning[] = [];
   if (!input.forecast) warnings.push({ kind: 'forecast_unavailable' });
@@ -483,6 +486,7 @@ export function orderWarnings(input: {
   for (const material of unknownPallet) warnings.push({ kind: 'unknown_pallet_size', material });
   if (input.forecast && input.forecast.excludedCount > 0) warnings.push({ kind: 'excluded_jobs', count: input.forecast.excludedCount });
   for (const order_no of input.openEarlierOrders) warnings.push({ kind: 'earlier_order_open', order_no });
+  if (input.earlierOrdersUnknown) warnings.push({ kind: 'earlier_orders_unknown' });
   return warnings;
 }
 
@@ -506,5 +510,27 @@ export function describeOrderWarning(w: OrderWarning): string {
       return `${w.count} jobb kunde inte räknas in i prognosen — behovet kan vara större`;
     case 'earlier_order_open':
       return `Beställning #${w.order_no} till samma fabrik har inte kommit fram än`;
+    case 'earlier_orders_unknown':
+      return 'Tidigare beställningar till fabriken kunde inte läsas — kontrollera att inget redan är på väg';
   }
+}
+
+/**
+ * Ett fingeravtryck av exakt de varningar som visades. Skicka kräver att klienten skickar tillbaka det.
+ *
+ * 🧨 EN KVITTERING GÄLLER DET MAN SÅG, INTE "VARNINGAR" I ALLMÄNHET. Med en ren ja/nej-flagga godkändes vilka
+ * varningar som helst — och vissa beställningar bär alltid en (okänd pallstorlek för Paroc, ledtid 0), så
+ * rutan kryssas av vana. Bokar en kollega in ett lass mellan granskning och Skicka dyker varningen "redan på
+ * väg" upp, och den hade godkänts osedd: två lass. Ordningsoberoende, så samma varningar i annan ordning är
+ * samma avtryck.
+ */
+export function warningsFingerprint(warnings: OrderWarning[]): string {
+  return JSON.stringify(warnings.map((w) => JSON.stringify(w, Object.keys(w).sort())).sort());
+}
+
+/** Är den sammansatta ordern exakt den som redan är lagrad? Då finns inget att skriva. */
+export function composedEqualsStored(stored: Record<string, unknown>, composed: ComposedOrder): boolean {
+  return (Object.keys(composed) as (keyof ComposedOrder)[]).every(
+    (k) => JSON.stringify(stored[k] ?? null) === JSON.stringify(composed[k] ?? null),
+  );
 }

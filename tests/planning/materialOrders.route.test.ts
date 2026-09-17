@@ -91,7 +91,7 @@ const calls = {
   list: () => listRoute.GET(),
   create: () => listRoute.POST(req('POST', { supplier_id: SUP, lines: [LINE] })),
   read: () => itemRoute.GET(req('GET'), ctx),
-  update: () => itemRoute.PATCH(req('PATCH', { revision: 2, lines: [LINE] }), ctx),
+  update: () => itemRoute.PATCH(req('PATCH', { revision: 2, lines: [LINE], other_lines: [], message: null }), ctx),
   discard: () => itemRoute.DELETE(req('DELETE'), ctx),
   send: () => sendRoute.POST(req('POST', { revision: 2, attempt: 1 }), ctx),
   resolve: () => resolveRoute.POST(req('POST', { delivered: true }), ctx),
@@ -165,9 +165,9 @@ describe('utskickets svar', () => {
     [{ kind: 'not_found' }, 404],
     [{ kind: 'already_sent', order: null }, 200],
     [{ kind: 'conflict', code: 'in_progress', message: 'x' }, 409],
-    [{ kind: 'acknowledge_required', warnings: [{ kind: 'lead_time_zero' }] }, 409],
-    [{ kind: 'rejected', code: 'validation_error', message: 'x' }, 422],
-    [{ kind: 'unknown', message: 'x' }, 202],
+    [{ kind: 'acknowledge_required', warnings: [{ kind: 'lead_time_zero' }], fingerprint: 'fp' }, 409],
+    [{ kind: 'rejected', code: 'validation_error', message: 'x', attempt: 2 }, 422],
+    [{ kind: 'unknown', message: 'x', retry_after_seconds: 120 }, 202],
     [{ kind: 'db_error', message: 'x' }, 500],
     [{ kind: 'sent', order_no: 14, created: 2, expected: 2 }, 201],
   ])('%o -> %i', async (outcome, status) => {
@@ -178,9 +178,9 @@ describe('utskickets svar', () => {
 
   it('skickar revision, försök och kvittering vidare, med processens miljö', async () => {
     asRole(adminUser);
-    await sendRoute.POST(req('POST', { revision: 5, attempt: 2, acknowledged: true }), ctx);
+    await sendRoute.POST(req('POST', { revision: 5, attempt: 2, acknowledged_warnings: 'fp-sidan-visade' }), ctx);
     const [deps, input] = (sendMaterialOrder as any).mock.calls[0];
-    expect(input).toEqual({ orderId: ID, revision: 5, attempt: 2, acknowledged: true });
+    expect(input).toEqual({ orderId: ID, revision: 5, attempt: 2, acknowledgedWarnings: 'fp-sidan-visade' });
     expect(deps.env).toBe(process.env);
     expect(deps.supabase).toEqual(expect.objectContaining({ __client: 'session' }));
   });
@@ -196,7 +196,7 @@ describe('utskickets svar', () => {
 
   it('ett oklart eller avvisat utskick loggas inte', async () => {
     asRole(adminUser);
-    for (const outcome of [{ kind: 'unknown', message: 'x' }, { kind: 'rejected', code: 'x', message: 'x' }]) {
+    for (const outcome of [{ kind: 'unknown', message: 'x', retry_after_seconds: 120 }, { kind: 'rejected', code: 'x', message: 'x', attempt: 2 }]) {
       (sendMaterialOrder as any).mockResolvedValue(outcome);
       await calls.send();
     }
@@ -248,5 +248,39 @@ describe('beskedet om ett oklart utskick', () => {
     (resolveMaterialOrder as any).mockResolvedValue({ kind: 'conflict', code: 'window_open', message: 'x' });
     expect((await calls.resolve()).status).toBe(409);
     expect(logActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe('svarens detaljer', () => {
+  it('ett avvisat utskick säger vilket försök nästa Skicka ska använda', async () => {
+    asRole(adminUser);
+    (sendMaterialOrder as any).mockResolvedValue({ kind: 'rejected', code: 'validation_error', message: 'x', attempt: 2 });
+    expect((await (await calls.send()).json()).errorDetails.details).toMatchObject({ attempt: 2 });
+  });
+
+  it('ett oklart utskick säger när man kan försöka igen', async () => {
+    asRole(adminUser);
+    (sendMaterialOrder as any).mockResolvedValue({ kind: 'unknown', message: 'x', retry_after_seconds: 120 });
+    expect((await (await calls.send()).json()).data).toMatchObject({ state: 'unknown', retry_after_seconds: 120 });
+  });
+
+  it('varningarna som ska kvitteras kommer med sitt avtryck', async () => {
+    asRole(adminUser);
+    (sendMaterialOrder as any).mockResolvedValue({ kind: 'acknowledge_required', warnings: [{ kind: 'lead_time_zero' }], fingerprint: 'fp' });
+    expect((await (await calls.send()).json()).errorDetails.details).toMatchObject({ warnings_fingerprint: 'fp' });
+  });
+
+  /** Ändra skickar hela utkastet: en PATCH utan Övrigt eller meddelande hade annars raderat dem tyst. */
+  it('en PATCH utan alla fält avvisas', async () => {
+    asRole(adminUser);
+    expect((await itemRoute.PATCH(req('PATCH', { revision: 2, lines: [LINE] }), ctx)).status).toBe(400);
+    expect(updateDraft).not.toHaveBeenCalled();
+  });
+
+  it('"gick inte fram" loggas också', async () => {
+    asRole(adminUser);
+    (resolveMaterialOrder as any).mockResolvedValue({ kind: 'released' });
+    await resolveRoute.POST(req('POST', { delivered: false }), ctx);
+    expect((logActivity as any).mock.calls[0][2].action).toBe('material_order.not_delivered');
   });
 });

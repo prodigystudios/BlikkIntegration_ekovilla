@@ -30,6 +30,13 @@ export async function POST(req: Request, context: RouteContext) {
         });
         return ok({ state: 'sent' });
       case 'released':
+        // Det riskablaste beskedet (nästa Skicka får en ny nyckel) — därför loggat, som "gick fram".
+        await logActivity(supabase, gate.currentUser, {
+          action: 'material_order.not_delivered',
+          entityType: 'material_order',
+          entityId: context.params.id,
+          summary: 'Markerade att en materialbeställning inte gick fram',
+        });
         return ok({ state: 'draft' });
       case 'not_found':
         return routeError(404, 'material_order_not_found', 'Beställningen finns inte');

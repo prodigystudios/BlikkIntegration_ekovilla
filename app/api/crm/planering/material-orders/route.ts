@@ -2,7 +2,7 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { expectedStatusesForOrders, listOrders } from '@/lib/domains/planning/materialOrdersStore';
 import { createDraft, warningsForOrder } from '@/lib/domains/planning/materialOrdersService';
-import { describeOrderWarning, orderDeliveryState } from '@/lib/domains/planning/materialOrders';
+import { describeOrderWarning, orderDeliveryState, warningsFingerprint } from '@/lib/domains/planning/materialOrders';
 import { getSupplier } from '@/lib/domains/planning/materialSuppliers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { ok, routeError, validationError, requirePermission, materialOrderCreateSchema } from '../_lib';
@@ -72,7 +72,10 @@ export async function POST(req: Request) {
 
     const supplier = await getSupplier(supabase, parsed.data.supplier_id);
     const warnings = supplier.data ? await warningsForOrder(supabase, result.order, supplier.data, today) : [];
-    return ok({ order: result.order, warnings: warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })) }, 201);
+    return ok(
+      { order: result.order, warnings: warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })), warnings_fingerprint: warningsFingerprint(warnings) },
+      201,
+    );
   } catch (e: any) {
     return routeError(500, 'material_order_create_unexpected', e?.message || 'Failed to create material order');
   }

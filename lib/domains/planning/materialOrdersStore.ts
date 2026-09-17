@@ -105,6 +105,25 @@ export async function listOrders(
   return { data: [...(open.data ?? []), ...(sent.data ?? [])].map((r) => toOrder(r as Record<string, any>)), error: null };
 }
 
+/**
+ * Skickade ordrar till EN leverantör, utan globalt tak. En order som aldrig tagits emot ska varna även när
+ * femtio andra beställningar gått sedan dess — det är den glömda ordern varningen finns för.
+ */
+export async function listSentOrdersForSupplier(
+  supabase: SupabaseClient,
+  supplierId: string,
+): Promise<{ data: Pick<MaterialOrder, 'id' | 'order_no'>[]; error: DbError }> {
+  const { data, error } = await supabase
+    .from('ops_material_orders')
+    .select('id, order_no')
+    .eq('supplier_id', supplierId)
+    .eq('status', 'sent')
+    .order('sent_at', { ascending: false })
+    .limit(1000);
+  if (error) return { data: [], error };
+  return { data: (data ?? []).map((r: any) => ({ id: r.id, order_no: Number(r.order_no) })), error: null };
+}
+
 export async function getOrder(supabase: SupabaseClient, id: string): Promise<{ data: MaterialOrder | null; error: DbError }> {
   const { data, error } = await supabase.from('ops_material_orders').select(ORDER_SELECT).eq('id', id).maybeSingle();
   if (error) return { data: null, error };

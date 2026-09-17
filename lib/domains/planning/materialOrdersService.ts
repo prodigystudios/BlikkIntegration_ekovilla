@@ -5,6 +5,7 @@ import { getDepotStockWithForecast } from './depotStock';
 import type { OpsDepot } from './types';
 import {
   composeOrder,
+  composedEqualsStored,
   orderDeliveryState,
   orderWarnings,
   type ComposedOrder,
@@ -21,7 +22,7 @@ import {
   findOpenOrderForSupplier,
   getOrder,
   insertDraft,
-  listOrders,
+  listSentOrdersForSupplier,
   writeComposed,
   type MaterialOrder,
 } from './materialOrdersStore';
@@ -86,7 +87,7 @@ export type CreateDraftResult =
  * Granska: skapa ett utkast med ett renderat mail.
  *
  * Två skrivningar: ordernumret föds vid insert, och mailet (som bär numret) skrivs sedan. Faller den andra
- * står ett utkast utan mail kvar — claim svarar då not_reviewed, och nästa Ändra skriver mailet.
+ * slängs utkastet igen — ett tomt utkast hade spärrat fabriken utan att gå att skicka.
  *
  * Registret prövas FÖRE insert, så ett ogiltigt underlag aldrig lämnar ett tomt utkast som spärrar fabriken.
  */
@@ -115,10 +116,14 @@ export async function createDraft(
   const draft = inserted.data!;
 
   const composed = await composeFromRegistry(supabase, { ...input, orderNo: draft.order_no, composedByName });
-  if (!composed.ok) return composed.failure;
-  const written = await writeComposed(supabase, draft.id, draft.revision, composed.composed);
-  if (written.error) return { kind: 'db_error', message: written.error.message };
-  if (!written.data) return { kind: 'db_error', message: 'Utkastet ändrades medan det skapades' };
+  const written = composed.ok ? await writeComposed(supabase, draft.id, draft.revision, composed.composed) : null;
+  if (!composed.ok || !written || written.error || !written.data) {
+    // ⚠️ Ett tomt utkast får inte bli kvar: det spärrar fabriken ("en öppen order per leverantör") utan att
+    // gå att skicka. Släng det innan felet rapporteras.
+    await deleteDraft(supabase, draft.id).catch(() => {});
+    if (!composed.ok) return composed.failure;
+    return { kind: 'db_error', message: written?.error?.message ?? 'Utkastet ändrades medan det skapades' };
+  }
   return { kind: 'created', order: written.data };
 }
 
@@ -149,6 +154,11 @@ export async function updateDraft(
     composedByName: input.actorName?.trim() || 'Ekovilla',
   });
   if (!composed.ok) return composed.failure;
+  // Oförändrat (t.ex. Granska igen för att se varningarna): inget att skriva. Databasen vägrar dessutom
+  // revision+1 utan innehållsändring, och det hade blivit ett 500.
+  if (composedEqualsStored(order as unknown as Record<string, unknown>, composed.composed)) {
+    return { kind: 'updated', order };
+  }
   const written = await writeComposed(supabase, order.id, input.revision, composed.composed);
   if (written.error) return { kind: 'db_error', message: written.error.message };
   if (!written.data) {
@@ -174,8 +184,10 @@ export function draftInputOf(order: Pick<MaterialOrder, 'lines' | 'other_lines' 
 }
 
 /**
- * Varningarna för en order. Prognosen och de tidigare ordrarna läses här; felar prognosen blir det en varning,
- * aldrig ett hinder.
+ * Varningarna för en order. Prognosen och de tidigare ordrarna läses här.
+ *
+ * ⚠️ Ett läsfel blir en VARNING, aldrig ett tyst "inget att varna om": en felande prognos ger
+ * forecast_unavailable, en felande läsning av tidigare ordrar earlier_orders_unknown.
  */
 export async function warningsForOrder(
   supabase: SupabaseClient,
@@ -187,17 +199,22 @@ export async function warningsForOrder(
   const forecast = stock && !stock.error && stock.forecast ? { rows: stock.forecast.rows, excludedCount: stock.forecast.excluded.length } : null;
 
   let openEarlier: number[] = [];
+  let earlierOrdersUnknown = false;
   if (order.supplier_id) {
-    const listed = await listOrders(supabase, { sentLimit: 50 });
-    const earlier = listed.data.filter((o) => o.status === 'sent' && o.supplier_id === order.supplier_id && o.id !== order.id);
-    const statuses = await expectedStatusesForOrders(supabase, earlier.map((o) => o.id));
-    openEarlier = earlier
-      .filter((o) => {
-        const state = orderDeliveryState(statuses.data.get(o.id) ?? []);
-        return state === 'waiting' || state === 'partial';
-      })
-      .map((o) => o.order_no);
+    const sent = await listSentOrdersForSupplier(supabase, order.supplier_id);
+    const earlier = sent.data.filter((o) => o.id !== order.id);
+    const statuses = sent.error ? null : await expectedStatusesForOrders(supabase, earlier.map((o) => o.id));
+    if (sent.error || !statuses || statuses.error) {
+      earlierOrdersUnknown = true;
+    } else {
+      openEarlier = earlier
+        .filter((o) => {
+          const state = orderDeliveryState(statuses.data.get(o.id) ?? []);
+          return state === 'waiting' || state === 'partial';
+        })
+        .map((o) => o.order_no);
+    }
   }
 
-  return orderWarnings({ lines: order.lines, forecast, leadTimeDays: supplier.lead_time_days, today, openEarlierOrders: openEarlier });
+  return orderWarnings({ lines: order.lines, forecast, leadTimeDays: supplier.lead_time_days, today, openEarlierOrders: openEarlier, earlierOrdersUnknown });
 }

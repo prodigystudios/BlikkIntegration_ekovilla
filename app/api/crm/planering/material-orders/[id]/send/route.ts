@@ -28,7 +28,12 @@ export async function POST(req: Request, context: RouteContext) {
     const supabase = createRouteHandlerClient({ cookies });
     const outcome = await sendMaterialOrder(
       { supabase, env: process.env, today: stockholmTodayISO(), actor: { id: gate.currentUser.id, name: gate.currentUser.name ?? null } },
-      { orderId: context.params.id, revision: parsed.data.revision, attempt: parsed.data.attempt, acknowledged: parsed.data.acknowledged },
+      {
+        orderId: context.params.id,
+        revision: parsed.data.revision,
+        attempt: parsed.data.attempt,
+        acknowledgedWarnings: parsed.data.acknowledged_warnings,
+      },
     );
 
     switch (outcome.kind) {
@@ -45,14 +50,21 @@ export async function POST(req: Request, context: RouteContext) {
       case 'conflict':
         return routeError(409, `material_order_${outcome.code}`, outcome.message);
       case 'acknowledge_required':
+        // Varningarna har ändrats sedan sidan visade dem (eller visades aldrig): visa de aktuella och deras avtryck.
         return routeError(409, 'material_order_acknowledge_warnings', 'Ta ställning till varningarna innan beställningen skickas', {
           warnings: outcome.warnings.map((w) => ({ ...w, text: describeOrderWarning(w) })),
+          warnings_fingerprint: outcome.fingerprint,
         });
       case 'rejected':
-        return routeError(422, 'material_order_rejected', `Mailet avvisades och skickades inte: ${outcome.message}`, { code: outcome.code });
+        // attempt: försöket nästa Skicka ska använda — utkastet är tillbaka, med en ny nyckel.
+        return routeError(422, 'material_order_rejected', `Mailet avvisades och skickades inte: ${outcome.message}`, {
+          code: outcome.code,
+          attempt: outcome.attempt,
+        });
       case 'unknown':
-        // 202: ordern står kvar som "skickas". Ingen logg — vi vet inte om något gick.
-        return ok({ state: 'unknown', message: outcome.message }, 202);
+        // 202: ordern står kvar som "skickas". Ingen logg — vi vet inte om något gick. Försök igen med SAMMA försök
+        // efter retry_after_seconds; tidigare svarar databasen "pågår".
+        return ok({ state: 'unknown', message: outcome.message, retry_after_seconds: outcome.retry_after_seconds }, 202);
       case 'db_error':
         return routeError(500, 'material_order_send_db_error', outcome.message);
       case 'sent':

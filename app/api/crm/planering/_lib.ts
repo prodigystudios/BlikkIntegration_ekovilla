@@ -442,17 +442,22 @@ export const materialOrderCreateSchema = z.object({
   ...orderDraftFields,
 });
 
+// ⚠️ Ändra skickar HELA utkastet. Med defaults hade en PATCH utan `other_lines` eller `message` tyst raderat dem.
 export const materialOrderUpdateSchema = z.object({
   revision: z.number().int().positive(),
-  ...orderDraftFields,
+  lines: orderDraftFields.lines,
+  other_lines: z.array(otherLineInput).max(OTHER_LINES_MAX, `Högst ${OTHER_LINES_MAX} rader under Övrigt`),
+  message: nullableText(ORDER_MESSAGE_MAX, 'Meddelandet är för långt'),
 });
 
 // revision OCH attempt: båda är det sidan såg. Ett "Försök igen" från en gammal sida får inte bli ett nytt
 // försök med ny nyckel (claim svarar attempt_changed).
+// `acknowledged_warnings` är fingeravtrycket av de varningar sidan visade (warningsFingerprint), inte ett ja/nej:
+// en kvittering gäller det man såg.
 export const materialOrderSendSchema = z.object({
   revision: z.number().int().positive(),
   attempt: z.number().int().positive(),
-  acknowledged: z.boolean().optional().default(false),
+  acknowledged_warnings: z.string().max(20_000).nullable().optional().default(null),
 });
 
 export const materialOrderResolveSchema = z.object({

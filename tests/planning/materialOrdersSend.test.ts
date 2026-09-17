@@ -27,7 +27,8 @@ vi.mock('@/lib/domains/planning/materialOrdersService', () => ({
 import { EmailSendError, sendEmail } from '@/lib/email';
 import { claimSend, finalizeSend, getOrder, recordSendError, releaseSend } from '@/lib/domains/planning/materialOrdersStore';
 import { composeFromRegistry, warningsForOrder } from '@/lib/domains/planning/materialOrdersService';
-import { SEND_TIMEOUT_MS, sendMaterialOrder } from '@/lib/domains/planning/materialOrdersSend';
+import { MIN_SEND_WINDOW_MS, REQUEST_BUDGET_MS, SEND_TIMEOUT_MS, sendMaterialOrder } from '@/lib/domains/planning/materialOrdersSend';
+import { warningsFingerprint } from '@/lib/domains/planning/materialOrders';
 
 const LIVE = { VERCEL_ENV: 'production', MATERIAL_ORDER_SEND_ENABLED: 'true' };
 const STORED = {
@@ -59,7 +60,7 @@ const deps = (env: Record<string, string> = LIVE) => ({
   today: '2026-09-17',
   actor: { id: 'u1', name: 'William' },
 });
-const input = { orderId: 'order-1', revision: 3, attempt: 1, acknowledged: false };
+const input = { orderId: 'order-1', revision: 3, attempt: 1, acknowledgedWarnings: null as string | null };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -120,16 +121,32 @@ describe('ett utkast kontrolleras före claim', () => {
     expect(claimSend).not.toHaveBeenCalled();
   });
 
-  it('okvitterade varningar: inget claim', async () => {
-    (warningsForOrder as any).mockResolvedValue([{ kind: 'open_inflow' }]);
+  it('okvitterade varningar: inget claim, och de aktuella varningarna med sitt avtryck tillbaka', async () => {
+    (warningsForOrder as any).mockResolvedValue([{ kind: 'lead_time_zero' }]);
     const r = await sendMaterialOrder(deps(), input);
-    expect(r.kind).toBe('acknowledge_required');
+    expect(r).toMatchObject({ kind: 'acknowledge_required', fingerprint: warningsFingerprint([{ kind: 'lead_time_zero' }]) });
     expect(claimSend).not.toHaveBeenCalled();
   });
 
-  it('kvitterade varningar: skickas', async () => {
-    (warningsForOrder as any).mockResolvedValue([{ kind: 'open_inflow' }]);
-    expect((await sendMaterialOrder(deps(), { ...input, acknowledged: true })).kind).toBe('sent');
+  it('kvitterade varningar (samma avtryck): skickas', async () => {
+    const warnings = [{ kind: 'lead_time_zero' }, { kind: 'unknown_pallet_size', material: 'PAROC' }];
+    (warningsForOrder as any).mockResolvedValue(warnings);
+    // Ordningen spelar ingen roll för avtrycket.
+    const fp = warningsFingerprint([...warnings].reverse() as never);
+    expect((await sendMaterialOrder(deps(), { ...input, acknowledgedWarnings: fp })).kind).toBe('sent');
+  });
+
+  /**
+   * 🧨 GRANSKNINGSFYNDET. En kvittering av "okänd pallstorlek" får inte godkänna en varning om ett lass som
+   * bokades in efter granskningen — det hade blivit två lass.
+   */
+  it('en NY varning efter kvitteringen: inget claim', async () => {
+    const seen = [{ kind: 'unknown_pallet_size', material: 'PAROC' }];
+    (warningsForOrder as any).mockResolvedValue([...seen, { kind: 'open_inflow', depot_name: 'Syd', material: 'PAROC', sacks: 87, next_arrival: '2026-09-20' }]);
+    const r = await sendMaterialOrder(deps(), { ...input, acknowledgedWarnings: warningsFingerprint(seen as never) });
+    expect(r.kind).toBe('acknowledge_required');
+    expect(claimSend).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
   });
 });
 
@@ -191,7 +208,7 @@ describe('Resend svarar med ett fel', () => {
   it('ett bevisat avslag på ett försök som aldrig skickats om: släpps till utkast', async () => {
     (sendEmail as any).mockRejectedValue(new EmailSendError('validation_error', 'Invalid `to`'));
     const r = await sendMaterialOrder(deps(), input);
-    expect(r).toMatchObject({ kind: 'rejected', code: 'validation_error' });
+    expect(r).toMatchObject({ kind: 'rejected', code: 'validation_error', attempt: 2 });
     expect(releaseSend).toHaveBeenCalledWith(expect.anything(), 'order-1', 1, 'validation_error', 'Invalid `to`');
     expect(finalizeSend).not.toHaveBeenCalled();
   });
@@ -264,5 +281,31 @@ describe('Resend svarar inte som väntat', () => {
     expect(r.kind).toBe('unknown');
     expect(r.kind === 'unknown' && r.message).toMatch(/inget nytt mail/);
     expect(releaseSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('tidsbudgeten', () => {
+  it('Resends tak ryms i routens maxDuration', async () => {
+    const { maxDuration } = await import('@/app/api/crm/planering/material-orders/[id]/send/route');
+    expect(SEND_TIMEOUT_MS).toBeLessThan(REQUEST_BUDGET_MS);
+    expect(REQUEST_BUDGET_MS).toBeLessThan(maxDuration * 1000);
+  });
+
+  it('räcker inte tiden efter kontrollerna tas inget utskick', async () => {
+    let t = 0;
+    (warningsForOrder as any).mockImplementation(async () => {
+      t = REQUEST_BUDGET_MS - MIN_SEND_WINDOW_MS + 1;
+      return [];
+    });
+    const r = await sendMaterialOrder({ ...deps(), now: () => t }, input);
+    expect(r).toMatchObject({ kind: 'conflict', code: 'slow_checks' });
+    expect(claimSend).not.toHaveBeenCalled();
+    expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('ett oklart svar säger när man kan försöka igen', async () => {
+    (sendEmail as any).mockRejectedValue(new EmailSendError('application_error', 'x'));
+    const r = await sendMaterialOrder(deps(), input);
+    expect(r).toMatchObject({ kind: 'unknown', retry_after_seconds: 120 });
   });
 });
