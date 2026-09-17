@@ -3,7 +3,12 @@ import {
   ORDER_LINES_MAX,
   ORDER_LINE_SACKS_MAX,
   buildOrderLines,
+  buildOtherLines,
   classifySendError,
+  composeOrder,
+  composedOrderDiffers,
+  describeOrderWarning,
+  orderWarnings,
   describeOrderLineProblem,
   materialOrderAddresses,
   materialOrderIdempotencyKey,
@@ -236,5 +241,137 @@ describe('orderDeliveryState', () => {
   it('en avbokad rad räknas varken som framme eller väntad', () => {
     expect(orderDeliveryState([r('arrived'), r('cancelled')])).toBe('arrived');
     expect(orderDeliveryState([r('expected'), r('cancelled')])).toBe('waiting');
+  });
+});
+
+describe('composeOrder — ordern ur registret', () => {
+  const supplierRow = {
+    id: 's1',
+    name: 'Ekovilla Oy',
+    email: ' fabrik@example.fi ',
+    contact_name: 'Pekka',
+    phone: null,
+    materials: [EKO, PAROC],
+    lead_time_days: 7,
+    note: null,
+    active: true,
+    order_email_language: 'en' as const,
+    order_email_subject: null,
+    order_email_body: null,
+  };
+  const compose = (over: Partial<Parameters<typeof composeOrder>[0]> = {}) =>
+    composeOrder({
+      supplier: supplierRow,
+      depots: [SYD, NORR],
+      lines: [line()],
+      other_lines: [],
+      message: '  Ring innan  ',
+      order_no: 14,
+      composed_by_name: 'William',
+      today: TODAY,
+      env: {},
+      ...over,
+    });
+
+  it('mottagare, avsändare, språk och mail kommer ur registret och miljön', () => {
+    const r = compose();
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.order.recipient_email).toBe('fabrik@example.fi');
+    expect(r.order.supplier_name).toBe('Ekovilla Oy');
+    expect(r.order.from_address).toBe('Ekovilla <order@ekovilla.se>');
+    expect(r.order.bcc).toBe('order@ekovilla.se');
+    expect(r.order.email_language).toBe('en');
+    expect(r.order.email_subject).toBe('Material order #14 from Ekovilla – delivery by Thursday 1 October');
+    expect(r.order.email_text).toContain('Hello Pekka,');
+    expect(r.order.email_text).toContain(SYD.location);
+    expect(r.order.message).toBe('Ring innan');
+  });
+
+  it('ogiltiga rader: inget mail', () => {
+    const r = compose({ lines: [line({ requested_on: '2020-01-01' })] });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.lineProblems.map((p) => p.kind)).toEqual(['date_in_past']);
+  });
+
+  it('en trasig egen mall: inget mail', () => {
+    const r = compose({ supplier: { ...supplierRow, order_email_subject: 'Utan nummer', order_email_body: '{orderrader}' } });
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.templateProblems.map((p) => p.kind)).toContain('order_number_missing_in_subject');
+  });
+
+  it('composedOrderDiffers märker varje fält som avgör mailet', () => {
+    const r = compose();
+    if (!r.ok) throw new Error('förutsättning');
+    const stored = { ...r.order };
+    expect(composedOrderDiffers(stored, r.order)).toBe(false);
+    for (const field of ['recipient_email', 'email_subject', 'email_text', 'email_language', 'from_address', 'reply_to', 'bcc'] as const) {
+      expect(composedOrderDiffers({ ...stored, [field]: 'annat' }, r.order)).toBe(true);
+    }
+  });
+});
+
+describe('buildOtherLines', () => {
+  it('trimmar, tar bort tomma och läser depånamnet ur registret', () => {
+    expect(buildOtherLines([{ text: '  Plast  ', depot_id: SYD.id }, { text: '   ', depot_id: null }, { text: 'Slang', depot_id: 'finns-inte' }], [SYD])).toEqual([
+      { text: 'Plast', depot_id: SYD.id, depot_name: SYD.name },
+      { text: 'Slang', depot_id: null, depot_name: null },
+    ]);
+  });
+});
+
+describe('orderWarnings', () => {
+  const built = buildOrderLines([line(), line({ depot_id: NORR.id, material: PAROC, sacks: 87, requested_on: '2026-09-20' })], ctx);
+  if (!built.ok) throw new Error('förutsättning');
+  const fc = (over: Record<string, unknown> = {}) => ({
+    depot_id: SYD.id,
+    depot_name: SYD.name,
+    material: EKO,
+    opening: 0,
+    run_out_day: '2026-09-25',
+    shortfall_at_run_out: 0,
+    worst_deficit: 100,
+    suggested_sacks: 108,
+    suggested_pallets: 2,
+    sacks_per_pallet: EKO_PALL,
+    suggested_date: null,
+    supply_known: true,
+    beyond_horizon: 0,
+    overdue_inflow: 0,
+    on_order: 0,
+    next_arrival: null,
+    arrivals: [],
+    ...over,
+  });
+  const kindsOf = (w: ReturnType<typeof orderWarnings>) => w.map((x) => x.kind).sort();
+
+  it('prognosen saknas: en varning, inget hinder', () => {
+    expect(kindsOf(orderWarnings({ lines: built.lines, forecast: null, leadTimeDays: 7, today: TODAY, openEarlierOrders: [] }))).toContain('forecast_unavailable');
+  });
+
+  it('på väg, försenat, efter run-out, för kort ledtid, okänd pall, uteslutna jobb och en tidigare order', () => {
+    const w = orderWarnings({
+      lines: built.lines,
+      forecast: { rows: [fc({ on_order: 1296, next_arrival: '2026-10-15', overdue_inflow: 540 })], excludedCount: 3 },
+      leadTimeDays: 7,
+      today: TODAY,
+      openEarlierOrders: [12],
+    });
+    expect(kindsOf(w)).toEqual(
+      ['after_run_out', 'earlier_order_open', 'excluded_jobs', 'lead_time_too_short', 'open_inflow', 'overdue_inflow', 'unknown_pallet_size'].sort(),
+    );
+    // Leveransen 1/10 kommer efter run-out 25/9; Norr 20/9 hinner inte med 7 dagars ledtid (tidigast 24/9).
+    expect(w.find((x) => x.kind === 'lead_time_too_short')).toMatchObject({ depot_name: NORR.name, earliest: '2026-09-24' });
+    for (const x of w) expect(describeOrderWarning(x)).toMatch(/\S/);
+  });
+
+  it('ledtid 0 varnas', () => {
+    expect(kindsOf(orderWarnings({ lines: built.lines, forecast: { rows: [], excludedCount: 0 }, leadTimeDays: 0, today: TODAY, openEarlierOrders: [] }))).toContain('lead_time_zero');
+  });
+
+  it('inga varningar när allt ser rätt ut', () => {
+    const clean = buildOrderLines([line({ requested_on: '2026-09-24' })], ctx);
+    if (!clean.ok) throw new Error('förutsättning');
+    expect(orderWarnings({ lines: clean.lines, forecast: { rows: [fc({ run_out_day: '2026-09-30' })], excludedCount: 0 }, leadTimeDays: 7, today: TODAY, openEarlierOrders: [] })).toEqual([]);
   });
 });

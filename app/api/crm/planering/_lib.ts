@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
+  ORDER_LINES_MAX,
+  ORDER_MESSAGE_MAX,
+  OTHER_LINES_MAX,
+  OTHER_LINE_TEXT_MAX,
+} from '@/lib/domains/planning/materialOrders';
+import {
   ORDER_EMAIL_LANGUAGES,
   describeOrderEmailTemplateProblem,
   orderEmailProblemField,
@@ -396,4 +402,59 @@ export const sendConfirmationSchema = z.object({
   send_sms: z.boolean().optional().default(false),
   recipient_phone: z.string().trim().min(3, 'Ogiltigt telefonnummer').nullable().optional(),
   custom_message: z.string().trim().max(2000).nullable().optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Materialbeställningar (planning.depot.manage)
+// ---------------------------------------------------------------------------
+//
+// ⚠️ Klienten skickar bara VAD, VAR, HUR MYCKET och NÄR. Depånamn, leveransadress, mottagare och mailtext
+// sätts ihop på servern ur registret (composeOrder). Ett fält som `recipient_email` eller `depot_name` i
+// anropet kastas av Zod (okända fält tas bort) och når aldrig databasen.
+
+// Numeriska strängar tas emot (formulärfält skickar text); allt annat avvisas. Inte z.coerce: den gör null,
+// '' och true till tal.
+const orderSacks = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() !== '' ? Number(v) : v),
+  z.number({ invalid_type_error: 'Ange antalet säckar' }).int('Antalet anges i hela säckar').positive('Antalet måste vara större än noll'),
+);
+
+const orderLineInput = z.object({
+  depot_id: z.string().uuid('Ogiltig depå'),
+  material: z.string().trim().min(1, 'Välj material'),
+  sacks: orderSacks,
+  requested_on: isoDate,
+});
+
+const otherLineInput = z.object({
+  text: z.string().max(OTHER_LINE_TEXT_MAX, `En rad under Övrigt får vara högst ${OTHER_LINE_TEXT_MAX} tecken`),
+  depot_id: z.string().uuid('Ogiltig depå').nullable().optional().default(null),
+});
+
+const orderDraftFields = {
+  lines: z.array(orderLineInput).max(ORDER_LINES_MAX, `Högst ${ORDER_LINES_MAX} rader`),
+  other_lines: z.array(otherLineInput).max(OTHER_LINES_MAX, `Högst ${OTHER_LINES_MAX} rader under Övrigt`).optional().default([]),
+  message: nullableText(ORDER_MESSAGE_MAX, 'Meddelandet är för långt').optional().default(null),
+};
+
+export const materialOrderCreateSchema = z.object({
+  supplier_id: z.string().uuid('Ogiltig leverantör'),
+  ...orderDraftFields,
+});
+
+export const materialOrderUpdateSchema = z.object({
+  revision: z.number().int().positive(),
+  ...orderDraftFields,
+});
+
+// revision OCH attempt: båda är det sidan såg. Ett "Försök igen" från en gammal sida får inte bli ett nytt
+// försök med ny nyckel (claim svarar attempt_changed).
+export const materialOrderSendSchema = z.object({
+  revision: z.number().int().positive(),
+  attempt: z.number().int().positive(),
+  acknowledged: z.boolean().optional().default(false),
+});
+
+export const materialOrderResolveSchema = z.object({
+  delivered: z.boolean({ required_error: 'Ange om mailet gick fram', invalid_type_error: 'Ange om mailet gick fram' }),
 });

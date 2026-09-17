@@ -50,6 +50,19 @@ Miljövariabler:
 - NEXT_PUBLIC_APP_URL — **krävs i produktion.** Bygger Fortnox `redirect_uri`, som måste vara tecken-för-tecken identisk med den registrerade adressen och därför inte kan härledas ur requesten. Saknas den kastar `lib/domains/fortnox/auth.ts` i stället för att tyst bygga en localhost-adress.
 - Båda är `NEXT_PUBLIC_*` och **bakas in vid bygget** — en ändring i Vercel kräver ny deploy.
 
+### Materialbeställningar till fabriken ⚠️
+
+Administrera → Beställningar i CRM-planeringen skickar ETT mail per beställningstillfälle till en leverantör.
+Mallen (svenska/engelska) redigeras per leverantör under Leverantörer.
+
+- `MATERIAL_ORDER_SEND_ENABLED` — **skarpt utskick sker bara när `VERCEL_ENV=production` OCH den här är exakt `true`.**
+  Sätt den bara i Vercels Production-scope. `.env.local` har en skarp Resend-nyckel och pekar på produktionsdatan,
+  och preview kör `NODE_ENV=production` — därför räcker ingen av dem. Överallt annars: bara "Skicka test till mig".
+- `MATERIAL_ORDER_MAIL_FROM` — (valfri) avsändare. Default `Ekovilla <order@ekovilla.se>`. Svar och kopia går alltid
+  till `order@ekovilla.se`, som **måste vara en delad brevlåda någon läser** innan utskicket slås på.
+- Varje depå på en beställning måste ha **Plats** (leveransadress) under Depåer, annars vägras beställningen.
+- SQL: `supabase/sql/20260917_ops_material_orders.sql` och `20260917_ops_material_suppliers_order_email.sql`.
+
 ### Lösenordsåterställning: mejlmallen i Supabase ⚠️
 
 Mallen är en **dashboard-inställning** (Authentication → Emails → Reset Password) och kan alltså inte
