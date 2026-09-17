@@ -146,6 +146,28 @@ describe('behörighetsgrinden — planning.depot.manage, aldrig schedule.read', 
 describe('PostgREST svarar error: null på noll rader', () => {
   beforeEach(() => asRole(adminUser));
 
+  /**
+   * 🧨 Panelens vanliga "Spara" skickar hela raden UTAN mallfält. Tolkades det som "återställ mallen" hade
+   * varje sparning av en ledtid tömt leverantörens egna beställningsmail — tyst.
+   */
+  it('en PATCH utan mallfält rör inte mallen', async () => {
+    asRole(adminUser);
+    await patch({ lead_time_days: 5 });
+    const input = (updateSupplier as any).mock.calls[0][2];
+    expect(input.orderEmailTemplate).toBeUndefined();
+    expect(input.orderEmailLanguage).toBeUndefined();
+  });
+
+  it('ämne och text null återställer mallen, strängar sparar den', async () => {
+    asRole(adminUser);
+    await patch({ order_email_subject: null, order_email_body: null });
+    expect((updateSupplier as any).mock.calls[0][2].orderEmailTemplate).toBeNull();
+    await patch({ order_email_language: 'en', order_email_subject: 'Order #{ordernummer}', order_email_body: '{orderrader}' });
+    expect((updateSupplier as any).mock.calls[1][2]).toEqual(
+      expect.objectContaining({ orderEmailLanguage: 'en', orderEmailTemplate: { subject: 'Order #{ordernummer}', body: '{orderrader}' } }),
+    );
+  });
+
   it('PATCH mot en rad som inte längre finns ger 404, inte 200', async () => {
     (updateSupplier as any).mockResolvedValue({ data: null, error: null });
     const res = await patch();

@@ -812,7 +812,8 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
 
-            <OrderEmailCard key={supplier.id} supplier={supplier} onSaved={reload} />
+            {/* Bara mallfälten läggs in — se OrderEmailCard om varför inte reload(). */}
+            <OrderEmailCard key={supplier.id} supplier={supplier} onSaved={(saved) => patchLocal(supplier.id, saved)} />
 
             <RiskZone
               title="Riskzon"

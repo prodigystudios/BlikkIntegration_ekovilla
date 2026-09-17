@@ -45,7 +45,7 @@ export type OrderEmailPlaceholder = (typeof ORDER_EMAIL_PLACEHOLDERS)[number];
 export const ORDER_EMAIL_PLACEHOLDER_HELP: Record<OrderEmailPlaceholder, string> = {
   orderrader: 'Beställningen per depå: leveransdatum, adress och material. Krävs i texten.',
   ordernummer: 'Beställningens nummer, t.ex. 14. Krävs i ämnet.',
-  leveransdatum: 'Leveransdagen, eller första–sista dagen när depåerna har olika datum.',
+  leveransdatum: 'Senast-dagen, t.ex. "senast torsdag 24 september", eller första–sista dagen när depåerna har olika datum.',
   totalt: 'Summan av beställningen, t.ex. 12 pall (648 säck).',
   kontaktperson: 'Leverantörens kontaktperson, annars leverantörens namn.',
   leverantör: 'Leverantörens namn.',
@@ -122,19 +122,36 @@ export type OrderEmailTemplateProblem =
   | { kind: 'body_too_long' }
   | { kind: 'subject_multiline' }
   | { kind: 'unknown_placeholder'; field: 'subject' | 'body'; name: string }
+  | { kind: 'stray_brace'; field: 'subject' | 'body' }
   | { kind: 'lines_missing' }
   | { kind: 'lines_repeated' }
   | { kind: 'lines_in_subject' }
   | { kind: 'order_number_missing_in_subject' };
 
 /**
- * `{namn}` där namnet är bokstäver. Klamrar kring något annat (siffror, mellanslag, skiljetecken) lämnas
- * som text: "{12 st}" är inte ett försök att skriva en platshållare.
+ * ALLT inom klammerparenteser är en platshållare — klamrar är reserverad syntax i mallen, inte text.
+ *
+ * 🧨 En smalare regel (bara `{bokstäver}`) lät de felstavningar folk faktiskt gör gå ordagrant till
+ * fabriken: `{kontakt person}`, `{kontakt_person}`, `{ordernummer }`, `{leveranté}`. Med den här regeln är
+ * var och en en okänd platshållare, och sparningen nekas med texten utskriven.
  */
-const PLACEHOLDER_RE = /\{([A-Za-zÅÄÖåäö]+)\}/g;
+const PLACEHOLDER_RE = /\{([^{}\r\n]{1,60})\}/g;
+
+/**
+ * Mallen normaliseras till NFC innan den läses. Text inklistrad från macOS kan bära "ö" som o + kombinerande
+ * trema, och då hade `{leverantör}` varit okänd fast den ser rätt ut.
+ */
+function nfc(text: string): string {
+  return text.normalize('NFC');
+}
 
 function placeholdersIn(text: string): string[] {
-  return [...text.matchAll(PLACEHOLDER_RE)].map((m) => m[1]);
+  return [...nfc(text).matchAll(PLACEHOLDER_RE)].map((m) => m[1]);
+}
+
+/** Klamrar som blir kvar när platshållarna är borta: `{{ordernummer}}`, en ensam `{`. */
+function hasStrayBrace(text: string): boolean {
+  return /[{}]/.test(nfc(text).replace(PLACEHOLDER_RE, ''));
 }
 
 function isKnown(name: string): name is OrderEmailPlaceholder {
@@ -166,6 +183,8 @@ export function validateOrderEmailTemplate(template: OrderEmailTemplate): OrderE
   for (const name of new Set(inBody)) {
     if (!isKnown(name)) problems.push({ kind: 'unknown_placeholder', field: 'body', name });
   }
+  if (hasStrayBrace(subject)) problems.push({ kind: 'stray_brace', field: 'subject' });
+  if (hasStrayBrace(body)) problems.push({ kind: 'stray_brace', field: 'body' });
 
   const lines = inBody.filter((n) => n === 'orderrader').length;
   if (lines === 0) problems.push({ kind: 'lines_missing' });
@@ -187,6 +206,7 @@ export function orderEmailProblemField(p: OrderEmailTemplateProblem): 'subject' 
     case 'order_number_missing_in_subject':
       return 'subject';
     case 'unknown_placeholder':
+    case 'stray_brace':
       return p.field;
     case 'body_empty':
     case 'body_too_long':
@@ -210,7 +230,9 @@ export function describeOrderEmailTemplateProblem(p: OrderEmailTemplateProblem):
     case 'subject_multiline':
       return 'Ämnet måste vara en rad';
     case 'unknown_placeholder':
-      return `Okänd platshållare {${p.name}} i ${p.field === 'subject' ? 'ämnet' : 'texten'}`;
+      return `Okänd platshållare {${p.name}} i ${p.field === 'subject' ? 'ämnet' : 'texten'} — klammerparenteser används bara för platshållarna`;
+    case 'stray_brace':
+      return `En ensam klammerparentes i ${p.field === 'subject' ? 'ämnet' : 'texten'} — { } används bara runt en platshållare`;
     case 'lines_missing':
       return 'Texten måste innehålla {orderrader} — annars står ingen beställning i mailet';
     case 'lines_repeated':
@@ -258,6 +280,7 @@ const WORDS = {
   sv: {
     locale: 'sv-SE',
     deliveryBy: 'leverans senast',
+    by: 'senast',
     address: 'Leveransadress',
     pallet: (n: number) => 'pall',
     sacks: (n: number) => 'säck',
@@ -266,6 +289,7 @@ const WORDS = {
   en: {
     locale: 'en-GB',
     deliveryBy: 'delivery by',
+    by: 'by',
     address: 'Delivery address',
     pallet: (n: number) => (n === 1 ? 'pallet' : 'pallets'),
     sacks: (n: number) => (n === 1 ? 'bag' : 'bags'),
@@ -319,7 +343,9 @@ function renderLines(data: OrderEmailData, language: OrderEmailLanguage): string
 function renderDeliveryDate(data: OrderEmailData, language: OrderEmailLanguage): string {
   const dates = [...new Set(data.depots.map((d) => d.deliveryDate))].sort();
   if (dates.length === 0) return '';
-  if (dates.length === 1) return formatOrderDate(dates[0], language);
+  // "senast torsdag 24 september" / "by Thursday 24 September". Utan ordet läses ett ämne som
+  // "leverans torsdag 24 september" som en fast leveransdag, inte ett senaste datum.
+  if (dates.length === 1) return `${WORDS[language].by} ${formatOrderDate(dates[0], language)}`;
   return `${formatOrderDate(dates[0], language, false)}–${formatOrderDate(dates[dates.length - 1], language, false)}`;
 }
 
@@ -363,8 +389,10 @@ export function renderOrderEmail(
     avsändare: data.senderName,
     meddelande: message,
   };
+  // Mallen är validerad: varje träff är en känd platshållare. Ersättningen är en FUNKTION, så ett värde som
+  // innehåller `$&` eller `{...}` sätts in ordagrant och expanderas aldrig en gång till.
   const fill = (text: string, oneLine: boolean) =>
-    text.replace(PLACEHOLDER_RE, (_, name: OrderEmailPlaceholder) =>
+    nfc(text).replace(PLACEHOLDER_RE, (_, name: OrderEmailPlaceholder) =>
       oneLine ? values[name].replace(/[\r\n]+/g, ' ') : values[name],
     );
 
@@ -372,7 +400,7 @@ export function renderOrderEmail(
 
   // En rad som BARA består av {meddelande} försvinner när meddelandet är tomt, i stället för att lämna
   // ett hål. Därefter slås tre eller fler radbrytningar ihop till en tom rad.
-  const bodyTemplate = message === '' ? template.body.replace(/^[ \t]*\{meddelande\}[ \t]*(\r?\n|$)/gm, '') : template.body;
+  const bodyTemplate = message === '' ? nfc(template.body).replace(/^[ \t]*\{meddelande\}[ \t]*(\r?\n|$)/gm, '') : template.body;
   const text = fill(bodyTemplate, false)
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

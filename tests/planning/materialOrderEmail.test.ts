@@ -103,8 +103,33 @@ describe('validering', () => {
     ]);
   });
 
-  it('klamrar kring annat än bokstäver är text, inte platshållare', () => {
-    expect(kinds({ ...ok, body: 'Pris {12 st} och {} och {a b}\n{orderrader}' })).toEqual([]);
+  /**
+   * 🧨 GRANSKNINGSFYNDET. En regel som bara kände igen {bokstäver} lät de felstavningar folk faktiskt gör gå
+   * ordagrant till fabriken. Klamrar är reserverad syntax: allt inom dem som inte är en känd platshållare
+   * nekas.
+   */
+  it.each(['kontakt person', 'kontakt_person', 'ordernummer ', 'kontaktperson2', 'leveranté', '12 st', 'a b'])(
+    '{%s} är en okänd platshållare, inte text',
+    (name) => {
+      expect(validateOrderEmailTemplate({ ...ok, body: `Hej {${name}}\n{orderrader}` })).toEqual([
+        { kind: 'unknown_placeholder', field: 'body', name },
+      ]);
+    },
+  );
+
+  it('dubbla klamrar lämnar en lös klammer och nekas — {{ordernummer}} hade blivit {0}', () => {
+    expect(kinds({ ...ok, subject: 'Order {{ordernummer}}' })).toEqual(['stray_brace']);
+    expect(kinds({ ...ok, body: '{orderrader} }' })).toEqual(['stray_brace']);
+    expect(kinds({ ...ok, body: '{ {orderrader}' })).toEqual(['stray_brace']);
+  });
+
+  /** macOS kan klistra in "ö" som o + kombinerande trema. Det ska läsas som samma platshållare. */
+  it('en platshållare i sönderdelad Unicode känns igen och fylls i', () => {
+    const decomposed = '{leverantör}'.normalize('NFD');
+    expect(decomposed).not.toBe('{leverantör}'); // förutsättning: strängen ÄR sönderdelad
+    const t = { subject: `#{ordernummer} ${decomposed}`, body: `{orderrader}` };
+    expect(validateOrderEmailTemplate(t)).toEqual([]);
+    expect(render(t, 'sv').subject).toBe('#14 Ekovilla Oy');
   });
 
   it('{orderrader} krävs i texten', () => {
@@ -128,10 +153,22 @@ describe('validering', () => {
     expect(kinds({ ...ok, subject: 'Order #{ordernummer}\rX' })).toContain('subject_multiline');
   });
 
-  it('tomma fält och för långa fält', () => {
+  it('tomma fält', () => {
     expect(kinds({ subject: '  ', body: ' ' })).toEqual(expect.arrayContaining(['subject_empty', 'body_empty']));
-    expect(kinds({ ...ok, subject: `#{ordernummer}${'x'.repeat(200)}` })).toContain('subject_too_long');
-    expect(kinds({ ...ok, body: `{orderrader}${'x'.repeat(5000)}` })).toContain('body_too_long');
+  });
+
+  /**
+   * Exakt vid gränsen. Databasen tillåter 200 och 5000 tecken; en höjd gräns här hade låtit mallen passera
+   * och sedan fått ett 500 med ett råt constraint-fel.
+   */
+  it('längdgränserna är 200 och 5000, precis som i databasen', () => {
+    const subjectOf = (n: number) => `#{ordernummer}${'x'.repeat(n - '#{ordernummer}'.length)}`;
+    const bodyOf = (n: number) => `{orderrader}${'x'.repeat(n - '{orderrader}'.length)}`;
+    expect(subjectOf(200)).toHaveLength(200);
+    expect(kinds({ ...ok, subject: subjectOf(200) })).toEqual([]);
+    expect(kinds({ ...ok, subject: subjectOf(201) })).toEqual(['subject_too_long']);
+    expect(kinds({ ...ok, body: bodyOf(5000) })).toEqual([]);
+    expect(kinds({ ...ok, body: bodyOf(5001) })).toEqual(['body_too_long']);
   });
 
   it('varje problem pekar på rätt fält, så felet visas där det går att rätta', () => {
@@ -249,7 +286,7 @@ describe('platshållarna', () => {
     expect(text).toContain('leverantör=[Ekovilla Oy]');
     expect(text).toContain('avsändare=[William Ali]');
     expect(text).toContain('meddelande=[Ring innan]');
-    expect(text).toContain('leveransdatum=[torsdag 24 september]');
+    expect(text).toContain('leveransdatum=[senast torsdag 24 september]');
   });
 
   it('{kontaktperson} utan kontaktperson blir leverantörens namn', () => {
@@ -321,6 +358,23 @@ describe('aldrig i mailet', () => {
     expect(Object.keys(d).sort()).toEqual(['contactName', 'depots', 'message', 'orderNumber', 'otherLines', 'senderName', 'supplierName']);
     expect(Object.keys(d.depots[0]).sort()).toEqual(['address', 'deliveryDate', 'depotName', 'items']);
     expect(Object.keys(d.depots[0].items[0]).sort()).toEqual(['material', 'sacks']);
+  });
+
+  /**
+   * Fälten ovan säger vad som FINNS. Det här säger vad som SKRIVS: data med extra fält — ett saldo, en
+   * run-out-dag, ett internt id — får inte hamna i mailet, även om någon lägger till dem i typen.
+   */
+  it('extra fält i indatan skrivs aldrig ut', () => {
+    const withJunk = {
+      ...data(),
+      balance: 16630,
+      runOutDay: '2031-01-31',
+      depotId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+      depots: data().depots.map((d) => ({ ...d, runOutDay: '2031-02-28', shortfall: 9871, id: 'ffffffff-1111-4222-8333-444444444444' })),
+    } as unknown as OrderEmailData;
+    const { subject, text } = render(DEFAULT_ORDER_EMAIL.sv, 'sv', withJunk);
+    const all = `${subject}\n${text}`;
+    for (const leak of ['16630', '2031', '9871', 'aaaaaaaa', 'ffffffff']) expect(all).not.toContain(leak);
   });
 
   it('exempelmailet har ordernummer 0, så ett testmail inte kan förväxlas med en beställning', () => {

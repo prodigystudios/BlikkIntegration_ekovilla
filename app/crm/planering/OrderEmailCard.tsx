@@ -34,7 +34,12 @@ const API = '/api/crm/planering/material-suppliers';
 
 const LANGUAGE_LABEL: Record<OrderEmailLanguage, string> = { sv: 'Svenska', en: 'Engelska' };
 
-export default function OrderEmailCard({ supplier, onSaved }: { supplier: MaterialSupplier; onSaved: () => Promise<void> | void }) {
+export type SavedOrderEmail = Pick<MaterialSupplier, 'order_email_language' | 'order_email_subject' | 'order_email_body'>;
+
+// ⚠️ onSaved får BARA mallfälten, och föräldern ska lägga in bara dem i listan. En omladdning av hela
+// leverantörslistan kastade osparade ändringar i panelerna bredvid (t.ex. en ändrad ledtid), och panelens
+// "Spara" sparade sedan de gamla värdena och sa "Sparad".
+export default function OrderEmailCard({ supplier, onSaved }: { supplier: MaterialSupplier; onSaved: (saved: SavedOrderEmail) => void }) {
   const toast = useToast();
   const savedCustom = supplier.order_email_subject !== null && supplier.order_email_body !== null;
 
@@ -114,8 +119,13 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
       });
       const j = await r.json().catch(() => null);
       if (!j?.ok) return toast.error(j?.error || 'Kunde inte spara mallen');
+      const item = j.data?.item ?? {};
+      onSaved({
+        order_email_language: item.order_email_language ?? language,
+        order_email_subject: item.order_email_subject ?? null,
+        order_email_body: item.order_email_body ?? null,
+      });
       toast.success('Mallen sparad');
-      await onSaved();
     } catch {
       toast.error('Kunde inte spara mallen');
     } finally {
@@ -177,6 +187,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
                   type="button"
                   role="radio"
                   aria-checked={on}
+                  disabled={saving}
                   onClick={() => setLanguage(lang)}
                   className={cn('h-8 rounded-lg px-3 text-[12px] font-bold transition', on ? 'bg-[#1a3f26] text-white shadow-sm' : 'text-slate-600 hover:bg-white')}
                 >
@@ -197,7 +208,9 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
             <input
               ref={subjectRef}
               value={template.subject}
-              readOnly={!custom}
+              // Låst under sparningen: det som skrivs efter klicket hade annars skrivits över när den sparade
+              // mallen läses tillbaka.
+              readOnly={!custom || saving}
               onFocus={() => (lastFocused.current = 'subject')}
               onChange={(e) => setSubject(e.target.value)}
               className={cn(crm.input, !custom && 'bg-[#f9fbf7] text-slate-500')}
@@ -215,7 +228,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
             <textarea
               ref={bodyRef}
               value={template.body}
-              readOnly={!custom}
+              readOnly={!custom || saving}
               onFocus={() => (lastFocused.current = 'body')}
               onChange={(e) => setBody(e.target.value)}
               rows={16}
@@ -238,6 +251,7 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
                     key={name}
                     type="button"
                     title={ORDER_EMAIL_PLACEHOLDER_HELP[name]}
+                    disabled={saving}
                     // mousedown, inte click: fältet får inte tappa sin markering innan platshållaren läggs in.
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => insertPlaceholder(name)}
@@ -252,11 +266,11 @@ export default function OrderEmailCard({ supplier, onSaved }: { supplier: Materi
 
           <div className="mt-3.5 flex flex-wrap items-center gap-2">
             {custom ? (
-              <button type="button" onClick={() => setCustom(false)} className={crm.ghostButton}>
+              <button type="button" onClick={() => setCustom(false)} disabled={saving} className={crm.ghostButton}>
                 Återställ till standardtext
               </button>
             ) : (
-              <button type="button" onClick={startCustom} className={crm.ghostButton}>
+              <button type="button" onClick={startCustom} disabled={saving} className={crm.ghostButton}>
                 Anpassa texten
               </button>
             )}

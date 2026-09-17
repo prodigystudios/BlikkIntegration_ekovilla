@@ -4,6 +4,7 @@ import {
   suppliersForMaterial,
   defaultSupplierForMaterial,
   roundUpToMultiple,
+  updateSupplier,
   type MaterialSupplier,
 } from '@/lib/domains/planning/materialSuppliers';
 import { createSupplierSchema, updateSupplierSchema } from '@/app/api/crm/planering/_lib';
@@ -331,5 +332,38 @@ describe('materialvokabulären är EN', () => {
 
   it('hela katalogen på en gång ryms — .max() får inte vara satt under kataloglängden', () => {
     expect(createSupplierSchema.safeParse({ name: 'X', email: 'a@b.se', materials: [...MATERIAL_SHORTS] }).success).toBe(true);
+  });
+});
+
+describe('updateSupplier — mallkolumnerna skrivs bara när mallen skickas', () => {
+  function captureClient() {
+    const captured: { update: Record<string, unknown> | null } = { update: null };
+    const chain: Record<string, unknown> = {};
+    chain.update = (u: Record<string, unknown>) => {
+      captured.update = u;
+      return chain;
+    };
+    chain.eq = () => chain;
+    chain.select = () => chain;
+    chain.maybeSingle = () => Promise.resolve({ data: null, error: null });
+    return { client: { from: () => chain } as never, captured };
+  }
+
+  it('utan orderEmailTemplate finns inga order_email-kolumner i skrivningen', async () => {
+    const { client, captured } = captureClient();
+    await updateSupplier(client, 's1', { leadTimeDays: 5 });
+    expect(captured.update).toEqual({ lead_time_days: 5 });
+  });
+
+  it('null skriver null i båda — en återställning, aldrig en halv mall', async () => {
+    const { client, captured } = captureClient();
+    await updateSupplier(client, 's1', { orderEmailTemplate: null });
+    expect(captured.update).toEqual({ order_email_subject: null, order_email_body: null });
+  });
+
+  it('en mall skriver ämne och text ihop', async () => {
+    const { client, captured } = captureClient();
+    await updateSupplier(client, 's1', { orderEmailLanguage: 'en', orderEmailTemplate: { subject: 'S #{ordernummer}', body: '{orderrader}' } });
+    expect(captured.update).toEqual({ order_email_language: 'en', order_email_subject: 'S #{ordernummer}', order_email_body: '{orderrader}' });
   });
 });
