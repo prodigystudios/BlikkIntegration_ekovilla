@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/lib/Toast';
+import { itemsAfterSave, revertedItems, savedAfterSave, unsavedIds } from './unsavedChanges';
 
 type WithId = { id: string };
 
@@ -21,6 +22,9 @@ export function useEntityCrud<T extends WithId>(opts: {
   const toast = useToast();
   const itemKey = opts.itemKey ?? 'item';
   const [items, setItems] = useState<T[]>([]);
+  // Det senast SPARADE läget per rad. `items` bär det som står i fälten (patchLocal vid varje tangenttryck); utan
+  // det här gick det inte att se skillnad på skrivet och sparat — se unsavedChanges.ts.
+  const [saved, setSaved] = useState<Record<string, T>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   // 🧨 ETT FEL FÅR INTE SE UT SOM ETT TOMT REGISTER. Läsningen sväljer sitt fel (403, nätverksfel,
@@ -37,7 +41,9 @@ export function useEntityCrud<T extends WithId>(opts: {
       const r = await fetch(opts.api, { cache: 'no-store' });
       const j = await r.json();
       if (j.ok) {
-        setItems(j.data[opts.listKey] as T[]);
+        const list = j.data[opts.listKey] as T[];
+        setItems(list);
+        setSaved(Object.fromEntries(list.map((it) => [it.id, it])));
         setLoadError(null);
       } else {
         setLoadError(j.error || 'Kunde inte hämta listan');
@@ -76,6 +82,27 @@ export function useEntityCrud<T extends WithId>(opts: {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
   }
 
+  /** Raderna med ändringar som inte är sparade. */
+  const unsaved = unsavedIds(items, saved, opts.toPayload);
+
+  /** Tillbaka till det sparade läget — för Ångra, och när ändringarna kastas vid byte av flik. */
+  function revert(id: string) {
+    setItems((prev) => revertedItems(prev, saved, [id]));
+  }
+  function revertAll() {
+    setItems((prev) => revertedItems(prev, saved, unsaved));
+  }
+
+  /**
+   * Fält som redan sparats på en ANNAN väg (t.ex. leverantörens mall, som har egen spara-knapp): in i både fälten och
+   * det sparade läget. Med patchLocal hade Ångra — eller att ändringarna kastas vid byte av flik — rullat tillbaka en
+   * mall som redan ligger i databasen.
+   */
+  function patchSaved(id: string, patch: Partial<T>) {
+    setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    setSaved((prev) => (prev[id] ? { ...prev, [id]: { ...prev[id], ...patch } } : prev));
+  }
+
   async function save(item: T): Promise<boolean> {
     setBusy(true);
     try {
@@ -89,6 +116,9 @@ export function useEntityCrud<T extends WithId>(opts: {
         toast.error(j.error || opts.labels?.saveFail || 'Kunde inte spara');
         return false;
       }
+      const server = (j.data?.[itemKey] ?? null) as Partial<T> | null;
+      setSaved((prev) => savedAfterSave(prev, item, server));
+      setItems((prev) => itemsAfterSave(prev, item, server, opts.toPayload));
       toast.success(opts.labels?.saved || 'Sparad');
       return true;
     } catch {
@@ -113,6 +143,11 @@ export function useEntityCrud<T extends WithId>(opts: {
         return false;
       }
       setItems((prev) => prev.filter((it) => it.id !== id));
+      setSaved((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
       return true;
     } catch {
       // Samma tystnad som i save — och här är den värre: raden står kvar i listan, vilket är exakt
@@ -139,6 +174,7 @@ export function useEntityCrud<T extends WithId>(opts: {
       }
       const created = j.data[itemKey] as T;
       setItems((prev) => [...prev, created]);
+      setSaved((prev) => ({ ...prev, [created.id]: created }));
       return created;
     } catch {
       // 🧨 Farligast av de tre: ett nätverksfel EFTER att requesten gått iväg kan mycket väl ha
@@ -151,5 +187,5 @@ export function useEntityCrud<T extends WithId>(opts: {
     }
   }
 
-  return { items, setItems, loading, loadError, busy, reload, patchLocal, save, remove, add };
+  return { items, setItems, loading, loadError, busy, reload, patchLocal, patchSaved, save, remove, add, unsaved, revert, revertAll };
 }

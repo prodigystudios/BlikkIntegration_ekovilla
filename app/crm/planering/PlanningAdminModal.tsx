@@ -12,6 +12,7 @@ import OnOrderNote from './OnOrderNote';
 import OrderEmailCard from './OrderEmailCard';
 import MaterialOrdersPanel from './MaterialOrdersPanel';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
+import { unsavedNamesText } from './unsavedChanges';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
 // `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
@@ -133,9 +134,42 @@ export default function PlanningAdminModal({
   // Osparade ändringar i en beställning. Att byta område eller stänga kastar dem, så modalen frågar först —
   // en halvfylld beställning som försvinner tyst beställs annars aldrig, eller från början igen med andra tal.
   const [ordersDirty, setOrdersDirty] = useState(false);
-  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+
+  // Osparade ändringar i registerflikarna. Fälten skriver rakt in i listan, och förr låg det man skrivit kvar när man
+  // bytte flik — det såg sparat ut fast Spara aldrig tryckts (en Plats som aldrig sparades, Williams QA 2026-09-17).
+  // Nu frågar modalen, och kastar dem om man lämnar: det som står i fälten ska vara det som är sparat.
+  const unsavedInArea: Record<AreaKey, string[]> = {
+    trucks: trucksCrud.items.filter((t) => trucksCrud.unsaved.includes(t.id)).map((t) => t.name),
+    depots: depotsCrud.items.filter((d) => depotsCrud.unsaved.includes(d.id)).map((d) => d.name),
+    suppliers: suppliersCrud.items.filter((x) => suppliersCrud.unsaved.includes(x.id)).map((x) => x.name),
+    jobtypes: jobTypesCrud.items.filter((t) => jobTypesCrud.unsaved.includes(t.id)).map((t) => t.label),
+    stock: [],
+    orders: [],
+  };
+  const busyInArea: Record<AreaKey, boolean> = {
+    trucks: trucksCrud.busy,
+    depots: depotsCrud.busy,
+    suppliers: suppliersCrud.busy,
+    jobtypes: jobTypesCrud.busy,
+    stock: false,
+    orders: false,
+  };
+  function discardArea(area: AreaKey) {
+    if (area === 'trucks') trucksCrud.revertAll();
+    if (area === 'depots') depotsCrud.revertAll();
+    if (area === 'suppliers') suppliersCrud.revertAll();
+    if (area === 'jobtypes') jobTypesCrud.revertAll();
+    if (area === 'orders') setOrdersDirty(false);
+  }
+
+  type PendingLeave =
+    | { action: () => void; area: AreaKey; kind: 'orders' }
+    | { action: () => void; area: AreaKey; kind: 'entities' };
+  const [pendingLeave, setPendingLeave] = useState<PendingLeave | null>(null);
   function guarded(action: () => void) {
-    if (active === 'orders' && ordersDirty) setPendingLeave(() => action);
+    if (active === 'orders' && ordersDirty) setPendingLeave({ action, area: active, kind: 'orders' });
+    // Också medan en sparning pågår: raden räknas som osparad tills svaret kommit, och dialogen väntar in det.
+    else if (unsavedInArea[active].length > 0) setPendingLeave({ action, area: active, kind: 'entities' });
     else action();
   }
   const close = () => guarded(onClose);
@@ -186,7 +220,12 @@ export default function PlanningAdminModal({
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className={cn('text-[13.5px] font-bold', on ? 'text-white' : 'text-slate-800')}>{a.label}</span>
+                    <span className={cn('inline-flex items-center gap-1.5 text-[13.5px] font-bold', on ? 'text-white' : 'text-slate-800')}>
+                      {a.label}
+                      {(unsavedInArea[a.key].length > 0 || (a.key === 'orders' && ordersDirty)) && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-amber-400" title="Osparade ändringar" aria-label="Osparade ändringar" />
+                      )}
+                    </span>
                     {a.count != null && (
                       <span className={cn('rounded-full px-2 py-px text-[11px] font-extrabold', on ? 'bg-white/15 text-[#dff0e6]' : 'bg-[#eef3ea] text-slate-500')}>{a.count}</span>
                     )}
@@ -228,20 +267,39 @@ export default function PlanningAdminModal({
         // stopPropagation: dialogen ligger utanför modalrutan, och ett klick i den hade annars bubblat till
         // bakgrundens "stäng" — och frågat igen i samma stund som man svarat.
         <div onClick={(e) => e.stopPropagation()}>
-          <CrmConfirmDialog
-            title="Lämna beställningen?"
-            message="Ändringarna är inte granskade och försvinner. Tryck Granska först om de ska sparas."
-            confirmLabel="Lämna utan att spara"
-            cancelLabel="Stanna kvar"
-            tone="danger"
-            onCancel={() => setPendingLeave(null)}
-            onConfirm={() => {
-              const action = pendingLeave;
-              setPendingLeave(null);
-              setOrdersDirty(false);
-              action();
-            }}
-          />
+          {(() => {
+            // Namnen läses LEVANDE, inte som en ögonblicksbild: en sparning som pågick när dialogen öppnades kan bli klar
+            // under tiden. 🧨 Och "Kasta" är spärrat medan den pågår — annars rullade det tillbaka fältet medan PATCH:en
+            // ändå gick igenom, och databasen fick värdet som fältet sa var kastat (granskningsfynd).
+            const names = pendingLeave.kind === 'entities' ? unsavedInArea[pendingLeave.area] : [];
+            const saving = pendingLeave.kind === 'entities' && busyInArea[pendingLeave.area];
+            const nothingLeft = pendingLeave.kind === 'entities' && !saving && names.length === 0;
+            return (
+              <CrmConfirmDialog
+                title={pendingLeave.kind === 'orders' ? 'Lämna beställningen?' : nothingLeft ? 'Ändringarna är sparade' : 'Kasta osparade ändringar?'}
+                message={
+                  pendingLeave.kind === 'orders'
+                    ? 'Ändringarna är inte granskade och försvinner. Tryck Granska först om de ska sparas.'
+                    : saving
+                      ? 'Sparar… vänta tills sparningen är klar.'
+                      : nothingLeft
+                        ? 'Inget att kasta.'
+                        : `${unsavedNamesText(names)} har ändringar som inte är sparade. Tryck Spara först om de ska vara kvar.`
+                }
+                confirmLabel={pendingLeave.kind === 'orders' ? 'Lämna utan att spara' : nothingLeft ? 'Fortsätt' : 'Kasta ändringarna'}
+                cancelLabel="Stanna kvar"
+                tone={nothingLeft ? 'primary' : 'danger'}
+                busy={saving}
+                onCancel={() => setPendingLeave(null)}
+                onConfirm={() => {
+                  const { action, area } = pendingLeave;
+                  setPendingLeave(null);
+                  discardArea(area);
+                  action();
+                }}
+              />
+            );
+          })()}
         </div>
       )}
     </div>
@@ -258,6 +316,53 @@ function MasterDetail({ list, detail }: { list: React.ReactNode; detail: React.R
     <div className="grid h-full min-h-0 grid-cols-[300px_1fr]">
       <div className="overflow-y-auto border-r border-[#e0e8dc] p-4">{list}</div>
       <div className="overflow-y-auto bg-gradient-to-b from-[#fcfdfb] to-[#f9fbf7] p-5">{detail}</div>
+    </div>
+  );
+}
+
+/** Märket i listan på en rad med osparade ändringar. */
+function UnsavedChip() {
+  return <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[10px] font-bold text-amber-700">Ej sparad</span>;
+}
+
+/**
+ * Spara-knappen, och beskedet när fälten har ändringar som inte är sparade. Utan beskedet såg ett skrivet värde sparat ut
+ * — se unsavedChanges.ts.
+ */
+function SaveRow({
+  label = 'Spara',
+  busy,
+  unsaved,
+  onSave,
+  onRevert,
+  className = 'mt-3.5',
+}: {
+  label?: string;
+  busy: boolean;
+  unsaved: boolean;
+  onSave: () => void;
+  onRevert: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn('flex flex-wrap items-center gap-x-3 gap-y-2', className)}>
+      <button onClick={onSave} disabled={busy} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>
+        {label}
+      </button>
+      {unsaved && (
+        <span className="inline-flex items-center gap-2 text-[11.5px] font-semibold text-amber-700">
+          <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          Ändringarna är inte sparade
+          <button
+            type="button"
+            onClick={onRevert}
+            disabled={busy}
+            className="font-bold text-slate-500 underline-offset-2 transition hover:text-slate-800 hover:underline disabled:opacity-50"
+          >
+            Ångra
+          </button>
+        </span>
+      )}
     </div>
   );
 }
@@ -395,7 +500,7 @@ function TruckPanel({
   onCrewSaved: () => void;
   onChanged: () => void;
 }) {
-  const { items, loading, busy, patchLocal, save, remove, add } = crud;
+  const { items, loading, busy, patchLocal, save, remove, add, unsaved, revert } = crud;
   const [sel, setSel] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState('#3f6f52');
@@ -440,7 +545,8 @@ function TruckPanel({
             >
               <div className="flex items-center gap-2.5">
                 <span className="h-3.5 w-3.5 shrink-0 rounded-[5px]" style={{ backgroundColor: t.color || '#94a3b8', boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.08)' }} />
-                <span className="text-[13.5px] font-bold text-slate-800">{t.name}</span>
+                <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-slate-800">{t.name}</span>
+                {unsaved.includes(t.id) && <UnsavedChip />}
               </div>
               <div className="mt-1.5 text-[11.5px] text-slate-500"><span className="font-semibold text-slate-600">Depå:</span> {depotName(t.depot_id)}</div>
             </button>
@@ -474,7 +580,7 @@ function TruckPanel({
                 <span><span className="block text-[12.5px] font-bold text-slate-800">Aktiv</span><span className="block text-[11px] text-slate-400">Inaktiva bilar göms från tavlan</span></span>
                 <input type="checkbox" checked={truck.active} onChange={(e) => patchLocal(truck.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+              <SaveRow busy={busy} unsaved={unsaved.includes(truck.id)} onSave={onSave} onRevert={() => revert(truck.id)} />
             </div>
 
             <div className={PANEL}>
@@ -487,7 +593,7 @@ function TruckPanel({
                 aria-label="Depå"
                 options={[{ value: '', label: 'Ingen depå' }, ...activeDepots.map((d) => ({ value: d.id, label: d.name }))]}
               />
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara depå</button>
+              <SaveRow label="Spara depå" className="mt-3" busy={busy} unsaved={unsaved.includes(truck.id)} onSave={onSave} onRevert={() => revert(truck.id)} />
             </div>
 
             <StandardCrewEditor key={truck.id} truckId={truck.id} initial={defaultByTruck.get(truck.id) ?? NO_CREW} people={people} onSaved={onCrewSaved} />
@@ -502,7 +608,7 @@ function TruckPanel({
 
 // ── Depåer ──────────────────────────────────────────────────────────────────
 function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud<OpsDepot>>; onChanged: () => void }) {
-  const { items, loading, busy, patchLocal, save, remove, add } = crud;
+  const { items, loading, busy, patchLocal, save, remove, add, unsaved, revert } = crud;
   const [sel, setSel] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newLoc, setNewLoc] = useState('');
@@ -540,7 +646,10 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
           <div className="mb-2 px-1 text-[10.5px] font-extrabold uppercase tracking-wider text-slate-400">Depåer</div>
           {items.map((d) => (
             <button key={d.id} onClick={() => setSel(d.id)} className={cn('mb-2 block w-full rounded-xl border bg-white p-3 text-left transition', d.id === sel ? 'border-emerald-400 ring-2 ring-emerald-500/15' : 'border-[#e0e8dc] hover:border-[#c8d4c3]', !d.active && 'opacity-60')}>
-              <div className="text-[13.5px] font-bold text-slate-800">{d.name}</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[13.5px] font-bold text-slate-800">{d.name}</span>
+                {unsaved.includes(d.id) && <UnsavedChip />}
+              </div>
               {d.location && <div className="mt-1 text-[11.5px] text-slate-500">{d.location}</div>}
             </button>
           ))}
@@ -569,7 +678,7 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
                 <span className="text-[12.5px] font-bold text-slate-800">Aktiv</span>
                 <input type="checkbox" checked={depot.active} onChange={(e) => patchLocal(depot.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+              <SaveRow busy={busy} unsaved={unsaved.includes(depot.id)} onSave={onSave} onRevert={() => revert(depot.id)} />
             </div>
             {/* Texten säger vad som FAKTISKT händer. Att bilar nollställs stod här förut, men inte
                 att leveranshistoriken följer med — och sedan väntade leveranser fick en FK med
@@ -671,7 +780,7 @@ function MaterialChecklist({
 }
 
 function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud<MaterialSupplier>>; onChanged: () => void }) {
-  const { items, loading, loadError, busy, reload, patchLocal, save, remove, add } = crud;
+  const { items, loading, loadError, busy, reload, patchLocal, patchSaved, save, remove, add, unsaved, revert } = crud;
   const toast = useToast();
   const [sel, setSel] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -767,7 +876,10 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
               onClick={() => setSel(s.id)}
               className={cn('mb-2 block w-full rounded-xl border bg-white p-3 text-left transition', s.id === sel ? 'border-emerald-400 ring-2 ring-emerald-500/15' : 'border-[#e0e8dc] hover:border-[#c8d4c3]', !s.active && 'opacity-60')}
             >
-              <div className="truncate text-[13.5px] font-bold text-slate-800">{s.name}</div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[13.5px] font-bold text-slate-800">{s.name}</span>
+                {unsaved.includes(s.id) && <UnsavedChip />}
+              </div>
               <div className="mt-0.5 truncate text-[11.5px] text-slate-500">{s.email}</div>
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {s.materials.length === 0 ? (
@@ -819,7 +931,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                 </span>
                 <input type="checkbox" checked={supplier.active} onChange={(e) => patchLocal(supplier.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+              <SaveRow busy={busy} unsaved={unsaved.includes(supplier.id)} onSave={onSave} onRevert={() => revert(supplier.id)} />
             </div>
 
             <div className={PANEL}>
@@ -852,11 +964,12 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
                 ligger i materialkatalogen — för övriga material föreslås ett exakt säckantal tills packningen
                 fyllts i.
               </p>
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+              <SaveRow busy={busy} unsaved={unsaved.includes(supplier.id)} onSave={onSave} onRevert={() => revert(supplier.id)} />
             </div>
 
-            {/* Bara mallfälten läggs in — se OrderEmailCard om varför inte reload(). */}
-            <OrderEmailCard key={supplier.id} supplier={supplier} onSaved={(saved) => patchLocal(supplier.id, saved)} />
+            {/* Bara mallfälten läggs in — se OrderEmailCard om varför inte reload(). patchSaved och inte patchLocal: mallen
+                ÄR sparad, och Ångra eller att kasta panelens ändringar får inte rulla tillbaka den. */}
+            <OrderEmailCard key={supplier.id} supplier={supplier} onSaved={(saved) => patchSaved(supplier.id, saved)} />
 
             <RiskZone
               title="Riskzon"
@@ -874,7 +987,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
 
 // ── Jobbtyper ───────────────────────────────────────────────────────────────
 function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud<JobTypeRow>>; onChanged: () => void }) {
-  const { items, loading, busy, patchLocal, save, remove, add } = crud;
+  const { items, loading, busy, patchLocal, save, remove, add, unsaved, revert } = crud;
   const [sel, setSel] = useState<string | null>(null);
   const [newLabel, setNewLabel] = useState('');
   const [newColor, setNewColor] = useState('#0d9488');
@@ -912,7 +1025,8 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
           {items.map((t) => (
             <button key={t.id} onClick={() => setSel(t.id)} className={cn('mb-2 flex w-full items-center gap-2.5 rounded-xl border bg-white p-3 text-left transition', t.id === sel ? 'border-emerald-400 ring-2 ring-emerald-500/15' : 'border-[#e0e8dc] hover:border-[#c8d4c3]', !t.active && 'opacity-60')}>
               <span className="h-3.5 w-3.5 shrink-0 rounded-[5px]" style={{ backgroundColor: t.color, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.08)' }} />
-              <span className="text-[13.5px] font-bold text-slate-800">{t.label}</span>
+              <span className="min-w-0 flex-1 truncate text-[13.5px] font-bold text-slate-800">{t.label}</span>
+              {unsaved.includes(t.id) && <UnsavedChip />}
             </button>
           ))}
           <form onSubmit={onAdd} className="mt-1 rounded-xl border border-dashed border-[#c6d3c0] bg-[#fbfdfa] p-3">
@@ -943,7 +1057,7 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
                 <span className="text-[12.5px] font-bold text-slate-800">Aktiv</span>
                 <input type="checkbox" checked={jt.active} onChange={(e) => patchLocal(jt.id, { active: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
               </label>
-              <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
+              <SaveRow busy={busy} unsaved={unsaved.includes(jt.id)} onSave={onSave} onRevert={() => revert(jt.id)} />
             </div>
             <div className={PANEL}>
               <h3 className="mb-2 text-[12.5px] font-extrabold text-[#142c1b]">Förhandsvisning</h3>
