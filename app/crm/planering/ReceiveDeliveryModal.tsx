@@ -109,8 +109,8 @@ export default function ReceiveDeliveryModal({
             />
             {short && (
               <p className="mt-1 text-[11px] text-amber-700">
-                Färre än de {chip.sacks} som väntades. Bara {count} räknas in i lagret — lägg in en ny väntad
-                leverans om resten kommer senare.
+                Färre än de {chip.sacks} som väntades. Bara {count} räknas in i lagret — boka in en ny leverans
+                för resten om den kommer senare.
               </p>
             )}
           </div>

@@ -1294,7 +1294,7 @@ export default function PlanningClient({
                 }),
             )}
           </ul>
-          <div className="mt-1 text-[11px] text-rose-500">Registrera en påfyllning under Administrera → Lager.</div>
+          <div className="mt-1 text-[11px] text-rose-500">Boka in en leverans under Administrera → Lager.</div>
         </div>
       )}
 

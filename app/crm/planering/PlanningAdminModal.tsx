@@ -571,7 +571,8 @@ const SUPPLIER_PROBLEM_TEXT: Record<SupplierProblem, string> = {
 // Samma klasser som Aktiv-rutorna i den här filen.
 // `columns`: listkolumnen i MasterDetail är 300 px bred, och materialkoderna är långa
 // ('ISOCELL/ISECO', 'KNAUF SUPAFIL', 'HUNTON NATIVO'). I två spalter radbryter de mitt i namnet.
-// Detaljvyn är bred och tar två.
+// Detaljvyn tar så många spalter som ryms utan att namnen bryts — den delar bredden med ett kort till
+// från xl, så en fast tvåspalt bröt dem där också.
 //
 // 🧨 RENDERAR UNIONEN AV KATALOGEN OCH DET VALDA, INTE BARA KATALOGEN. En rad kan bära en kod som
 // inte finns i MATERIAL_SHORTS — seedad via SQL (det finns med flit ingen CHECK), eller efterlämnad
@@ -594,7 +595,7 @@ function MaterialChecklist({
 }) {
   const rows = [...new Set([...MATERIAL_SHORTS, ...selected])];
   return (
-    <div className={cn('grid gap-1.5', columns === 2 && 'sm:grid-cols-2')}>
+    <div className={cn('grid gap-1.5', columns === 2 && 'grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]')}>
       {rows.map((m) => {
         const unknown = !MATERIAL_SHORTS.includes(m);
         return (
@@ -993,7 +994,7 @@ function ExpectedRow({
 
   if (!editing) {
     return (
-      <li className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
+      <li className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
         <div className="min-w-0">
           <div className="truncate text-[12.5px] font-semibold text-slate-700">
             {item.depot_name} · {item.sacks} säck {item.material}
@@ -1021,7 +1022,7 @@ function ExpectedRow({
   }
 
   return (
-    <li className="rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
+    <li className="min-w-0 rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
       <div className="grid gap-2.5 sm:grid-cols-4">
         <div>
           <span className={LABEL}>Depå</span>
@@ -1386,7 +1387,7 @@ function StockPanel({
       const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
-      toast.success('Väntad leverans avbokad');
+      toast.success('Leverans avbokad');
       // Prognosen räknar in väntade leveranser — en avbokning ÖPPNAR en brist som kortet annars
       // fortsatte visa som täckt. Åt det hållet är tystnaden farlig.
       await Promise.all([loadOpen(), load()]);
@@ -1471,14 +1472,21 @@ function StockPanel({
     // Läget till vänster, en åtgärd i taget till höger. Saldot står kvar i synfältet medan man
     // registrerar och uppdateras bredvid formuläret när det sparas. Förr stod tre formulär med nästan
     // samma fält överst, och saldot — det man öppnar fliken för att se — längst ned.
+    //
+    // ⚠️ Under lg är det ETT scrollområde, med formuläret under läget. Två rader i ett grid lät
+    // formulärets auto-rad äta höjden, och på en låg skärm (eller med zoom) blev saldot noll pixlar
+    // högt och gick inte att scrolla fram. `minmax(0,1fr)` på raden från lg: utan den växer raden med
+    // innehållet och spalterna slutar scrolla var för sig.
     <div
       className={cn(
-        'grid h-full min-h-0 grid-rows-[minmax(0,1fr)_auto] bg-gradient-to-b from-[#fcfdfb] to-[#f9fbf7] lg:grid-rows-1',
+        'h-full min-h-0 overflow-y-auto bg-gradient-to-b from-[#fcfdfb] to-[#f9fbf7] lg:grid lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden',
         activeAction && 'lg:grid-cols-[minmax(0,1fr)_400px]',
       )}
     >
-      <div className="min-h-0 overflow-y-auto p-5">
-        <div className="grid gap-3.5">
+      <div className="p-5 lg:min-h-0 lg:overflow-y-auto">
+        {/* `minmax(0,1fr)`, inte gridets auto-spår: saldotabellen kan inte krympa under ~490 px, och ett
+            auto-spår växer då med den — hela spalten, prognosen inräknad, tryckte ut åt sidan och klipptes. */}
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3.5 [&>*]:min-w-0">
           {loadError ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
               <div className="font-semibold">Lagersaldot kunde inte räknas ut</div>
@@ -1496,12 +1504,13 @@ function StockPanel({
               <section>
                 <h3 className="mb-2 px-1 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
                 {/* Så många depåkort i bredd som ytan rymmer, i stället för en brytpunkt: modalen är lika bred
-                    som skärmen, och den varierar mellan en laptop och en stor skärm. */}
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(460px,1fr))] items-start gap-2.5">
+                    som skärmen, och den varierar mellan en laptop och en stor skärm. `min(…, 100%)`: är ytan
+                    smalare än ett kort ska kortet krympa, inte trycka ut spalten åt sidan och klippa talen. */}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(460px,100%),1fr))] items-start gap-2.5">
                   {depots.map((d) => {
                     const shortfall = d.rows.reduce((s, r) => s + r.shortfall, 0);
                     return (
-                      <div key={d.depot_id} className="rounded-2xl border border-[#e0e8dc] bg-white p-3.5">
+                      <div key={d.depot_id} className="min-w-0 rounded-2xl border border-[#e0e8dc] bg-white p-3.5">
                         <div className="mb-1.5 flex items-baseline justify-between gap-2">
                           <span className="flex flex-wrap items-center gap-2">
                             <span className="text-[13.5px] font-bold text-slate-800">{d.depot_name}</span>
@@ -1513,6 +1522,8 @@ function StockPanel({
                         {d.rows.length === 0 ? (
                           <p className="text-[11px] text-slate-400">Inga rörelser än.</p>
                         ) : (
+                          // Egen sidscroll i ett smalt kort, så att talen går att nå i stället för att klippas.
+                          <div className="overflow-x-auto">
                           <table className="w-full text-[11.5px]">
                             <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="font-semibold">Material</th><th className="pl-2 text-right font-semibold">Levererat</th><th className="pl-2 text-right font-semibold">Förbrukat</th><th className="pl-2 text-right font-semibold">Saldo</th><th className="pl-2 text-right font-semibold">Planerat</th><th className="pl-2 text-right font-semibold">Räcker?</th></tr></thead>
                             <tbody>
@@ -1541,6 +1552,7 @@ function StockPanel({
                               ))}
                             </tbody>
                           </table>
+                          </div>
                         )}
                       </div>
                     );
@@ -1560,7 +1572,7 @@ function StockPanel({
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
                 Beställt men inte framme. Räknas inte i saldot ovan.
               </p>
-              <ul className="grid items-start gap-1.5 min-[2000px]:grid-cols-2">
+              <ul className="grid grid-cols-[minmax(0,1fr)] items-start gap-1.5 min-[2000px]:grid-cols-2">
                 {open.map((e) => (
                   <ExpectedRow
                     key={e.id}
@@ -1585,7 +1597,7 @@ function StockPanel({
       </div>
 
       {activeAction && (
-        <aside className="min-h-0 overflow-y-auto border-t border-[#e0e8dc] bg-white p-5 lg:border-l lg:border-t-0">
+        <aside className="border-t border-[#e0e8dc] bg-white p-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
           {actions.length > 1 && (
             <div role="tablist" aria-label="Åtgärd" className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl border border-[#e0e8dc] bg-[#f4f7f2] p-1">
               {actions.map((a) => {
