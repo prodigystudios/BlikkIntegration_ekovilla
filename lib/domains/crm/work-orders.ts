@@ -844,12 +844,18 @@ const LOOKUP_LINE_ITEM_KEYS = [
   'construction', 'm2', 'thickness_mm', 'density', 'article_name', 'line_note', 'pricing_mode', 'quantity',
 ] as const;
 
-function narrowLookupRow(row: Record<string, unknown>): Record<string, unknown> {
+// handoff_notes rides along only to be withheld or shown by the route — see
+// canSessionReadWorkOrder. Whatever else lands in internal_handoff later stays on the server.
+const LOOKUP_HANDOFF_KEYS = ['work_scope', 'handoff_notes'] as const;
+
+export function narrowLookupRow(row: Record<string, unknown>): Record<string, unknown> {
   const snapshot = (row.customer_snapshot ?? {}) as Record<string, unknown>;
+  const handoff = (row.internal_handoff ?? {}) as Record<string, unknown>;
   const items = Array.isArray(row.line_items) ? (row.line_items as Record<string, unknown>[]) : [];
   return {
     ...row,
     customer_snapshot: Object.fromEntries(LOOKUP_ADDRESS_KEYS.map((k) => [k, snapshot[k] ?? null])),
+    internal_handoff: Object.fromEntries(LOOKUP_HANDOFF_KEYS.map((k) => [k, handoff[k] ?? null])),
     line_items: items.map((item) => Object.fromEntries(LOOKUP_LINE_ITEM_KEYS.map((k) => [k, item[k] ?? null]))),
   };
 }
@@ -893,6 +899,23 @@ export async function lookupCrmWorkOrderByNumber(supabase: SupabaseClient, order
     data: { ...narrowLookupRow(row), scheduled_day: (segment as { start_day?: string } | null)?.start_day ?? null },
     error: null,
   };
+}
+
+// Whether the SESSION may read this work order — the same RLS the field view goes through
+// (crew on the order, the assignee, or a CRM role). The egenkontroll lookup runs under the service
+// role so anyone can fill in paperwork by number, but the arbetsbeskrivning routinely carries
+// portkoder and access notes, and "signed in" does not mean "employee" while self-registration is
+// open. So that text follows the order's own read rule instead of the lookup's.
+//
+// RLS filters rather than refuses: an unreadable row is simply no row. Any error counts as
+// unreadable — withholding the text is the safe failure.
+export async function canSessionReadWorkOrder(supabase: SupabaseClient, workOrderId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('crm_work_orders')
+    .select('id')
+    .eq('id', workOrderId)
+    .maybeSingle();
+  return !error && Boolean(data);
 }
 
 // Redact a work order down to what the field view needs.

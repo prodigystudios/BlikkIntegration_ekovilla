@@ -1,7 +1,9 @@
+import { cookies } from 'next/headers';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { forbidIfReadonly } from '@/lib/auth/route';
-import { lookupCrmWorkOrderByNumber } from '@/lib/domains/crm/work-orders';
+import { canSessionReadWorkOrder, lookupCrmWorkOrderByNumber } from '@/lib/domains/crm/work-orders';
 import { mapCrmWorkOrderToEgenkontrollProject, type CrmWorkOrderLookupRow } from '@/lib/domains/egenkontroll/projectSource';
 import { ok, requireSignedInUser, routeError, validationError } from '../_lib';
 
@@ -20,8 +22,10 @@ import { ok, requireSignedInUser, routeError, validationError } from '../_lib';
 //   • the projection is fixed in the domain module (lookupCrmWorkOrderByNumber): address fields
 //     only from customer_snapshot — personnummer never leaves the server — and line items reduced
 //     to geometry, so no unit_price / discount / labour cost either
-//   • from internal_handoff only the work scope and the arbetsbeskrivning (handoff_notes) — the
-//     installer's instructions, same as the Blikk lookup's project description always exposed
+//   • internal_handoff is narrowed to work_scope + handoff_notes, and the arbetsbeskrivning
+//     (handoff_notes) is only returned to someone the order's own RLS lets read it — it carries
+//     portkoder and access notes, and an open self-registration makes "signed in" mean "anyone".
+//     Everyone else gets workDescription: null and the card says why.
 //   • read-only; there is no write path here
 // Same shape as the existing service-role + explicit-gate route /api/planning/consume-bags.
 //
@@ -56,7 +60,10 @@ export async function GET(req: Request) {
     // Not an error — the caller falls back to Blikk for jobs still in the legacy planning.
     if (!data) return routeError(404, 'crm_work_order_not_found', 'No CRM work order with that number');
 
-    return ok({ item: mapCrmWorkOrderToEgenkontrollProject(data as unknown as CrmWorkOrderLookupRow) });
+    const row = data as unknown as CrmWorkOrderLookupRow;
+    const workDescriptionVisible = await canSessionReadWorkOrder(createRouteHandlerClient({ cookies }), row.id);
+
+    return ok({ item: mapCrmWorkOrderToEgenkontrollProject(row, { workDescriptionVisible }) });
   } catch (e: any) {
     return routeError(500, 'crm_work_order_lookup_unexpected', e?.message || 'Failed to look up work order');
   }

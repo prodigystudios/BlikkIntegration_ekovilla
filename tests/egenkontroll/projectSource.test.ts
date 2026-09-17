@@ -31,26 +31,37 @@ describe('mapCrmWorkOrderToEgenkontrollProject', () => {
       address: { streetAddress: 'Jobbvägen 1', postalCode: '131 30', city: 'Nacka' },
       installationDate: '2026-08-14',
       description: 'Vindsisolering — Vind + snedtak',
-      workDescription: '',
+      workDescription: null,
       lineItems: [],
     });
   });
 
-  it('carries the arbetsbeskrivning through verbatim, line breaks and all', () => {
-    // When the rows lack area/thickness nothing is prefilled, and the measurements live in this
-    // text instead — the installer reads them off the lookup card, so the layout must survive.
+  describe('the arbetsbeskrivning', () => {
     const notes = 'Totalt: 141 säck\n\nEKOVILLA\n• Vind – 120 m² × 400 mm\n\nÖVRIGT\n• Brandmatta – 4 st';
-    const project = mapCrmWorkOrderToEgenkontrollProject(
-      crmRow({ internal_handoff: { work_scope: 'Vind + snedtak', handoff_notes: `  ${notes}\n` } }),
-    );
-    expect(project.workDescription).toBe(notes);
-    // Not folded into the one-line summary, which stays a quick identity check.
-    expect(project.description).toBe('Vindsisolering — Vind + snedtak');
-  });
+    const withNotes = crmRow({ internal_handoff: { work_scope: 'Vind + snedtak', handoff_notes: `  ${notes}\n` } });
 
-  it('leaves the arbetsbeskrivning empty when the order has none', () => {
-    expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: null })).workDescription).toBe('');
-    expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: { handoff_notes: null } })).workDescription).toBe('');
+    it('keeps its line breaks, trimming only the ends', () => {
+      // When the rows lack area/thickness nothing is prefilled, and the measurements live in this
+      // text instead — the installer reads them off the lookup card, so the layout must survive.
+      const project = mapCrmWorkOrderToEgenkontrollProject(withNotes, { workDescriptionVisible: true });
+      expect(project.workDescription).toBe(notes);
+      // Not folded into the one-line summary, which stays a quick identity check.
+      expect(project.description).toBe('Vindsisolering — Vind + snedtak');
+    });
+
+    it('is WITHHELD unless the caller says the session may read the order', () => {
+      // The lookup runs under the service role, and handoff notes carry portkoder. Forgetting to
+      // decide must not hand them to any signed-in account.
+      expect(mapCrmWorkOrderToEgenkontrollProject(withNotes).workDescription).toBeNull();
+      expect(mapCrmWorkOrderToEgenkontrollProject(withNotes, { workDescriptionVisible: false }).workDescription).toBeNull();
+    });
+
+    it('is empty — not withheld — when a reader opens an order that has none', () => {
+      // '' and null render different messages: "the order has none" vs "not shown to you".
+      const visible = { workDescriptionVisible: true };
+      expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: null }), visible).workDescription).toBe('');
+      expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: { handoff_notes: null } }), visible).workDescription).toBe('');
+    });
   });
 
   it('leads with the Fortnox number, falling back to the internal order number', () => {
