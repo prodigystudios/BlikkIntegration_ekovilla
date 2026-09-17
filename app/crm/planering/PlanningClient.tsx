@@ -20,7 +20,7 @@ import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, swedishMonthYear, weeksBetweenMondays,
+  parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -31,6 +31,7 @@ import type { SegmentActions } from './jobCard';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
+import OnOrderNote from './OnOrderNote';
 import ActivityLogModal from './ActivityLogModal';
 import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 import ReceiveDeliveryModal from './ReceiveDeliveryModal';
@@ -1288,7 +1289,8 @@ export default function PlanningClient({
             })),
         );
         if (shortRows.length === 0) return null;
-        const allCovered = shortRows.every(({ f }) => describeShortfallCover(f)?.covered === true);
+        const today = stockholmTodayISO();
+        const allCovered = shortRows.every(({ f }) => describeShortfallCover(f, today)?.covered === true);
         return (
           <div
             className={cn(
@@ -1302,18 +1304,12 @@ export default function PlanningClient({
             </div>
             <ul className="mt-1 grid gap-0.5 pl-0.5">
               {shortRows.map(({ d, r, f }) => {
-                const cover = describeShortfallCover(f);
+                const cover = describeShortfallCover(f, today);
                 return (
                   <li key={`${d.depot_id}-${r.material}`} className={cn('tabular-nums', cover?.covered && !allCovered && 'text-slate-600')}>
                     <strong>{d.depot_name}</strong> · {r.material}: planerat {r.planned}, lager {r.balance} <strong>(−{r.shortfall} säck)</strong>
                     {f?.run_out_day && <> — tar slut <strong>{shortDayISO(f.run_out_day)}</strong></>}
-                    {cover && cover.on_order > 0 && cover.next_arrival && (
-                      <span className={cn(cover.arrives_after_run_out && 'font-semibold text-amber-700')}>
-                        {' · '}
-                        {cover.on_order} säck på väg, väntas {shortDayISO(cover.next_arrival)}
-                        {cover.covered ? ' — täcker bristen' : cover.arrives_after_run_out ? ' — kommer efter att depån tar slut' : ''}
-                      </span>
-                    )}
+                    <OnOrderNote cover={cover} />
                     {f && f.overdue_inflow > 0 && (
                       <span className="font-semibold"> · {f.overdue_inflow} säck beställda men försenade</span>
                     )}

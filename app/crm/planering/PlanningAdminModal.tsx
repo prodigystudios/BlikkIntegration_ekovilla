@@ -8,6 +8,7 @@ import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
 import { shortDayISO, stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
+import OnOrderNote from './OnOrderNote';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
 // `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
@@ -1092,6 +1093,7 @@ const EXCLUSION_TEXT: Record<'no_depot' | 'no_material' | 'no_date', string> = {
  * inte i en logg.
  */
 function ForecastCard({ forecast }: { forecast: DepotForecast }) {
+  const today = stockholmTodayISO();
   const needed = rowsNeedingOrder(forecast);
   const overdue = forecast.rows.filter((r) => r.overdue_inflow > 0);
   if (needed.length === 0 && overdue.length === 0 && forecast.excluded.length === 0) return null;
@@ -1169,17 +1171,7 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
                 {/* Det som redan är inbokat. Lass inom horisonten är inräknade i "behöver" ovan; raden
                     finns så att den som beställer ser att något är på väg, och i gult när det kommer
                     för sent för att hjälpa. */}
-                {(() => {
-                  const cover = describeShortfallCover(r);
-                  if (!cover || cover.on_order === 0 || !cover.next_arrival) return null;
-                  return (
-                    <span className={cover.arrives_after_run_out ? 'font-semibold text-amber-700' : 'text-slate-500'}>
-                      {' · '}
-                      {cover.on_order} säck på väg, väntas {shortDayISO(cover.next_arrival)}
-                      {cover.arrives_after_run_out && ' — kommer efter att depån tar slut'}
-                    </span>
-                  );
-                })()}
+                <OnOrderNote cover={describeShortfallCover(r, today)} />
               </span>
             </li>
           ))}
@@ -1669,7 +1661,7 @@ function StockPanel({
                   Bekräfta den på veckotavlan i stället — annars räknas säckarna två gånger.
                 </p>
               ) : (
-                <p className="mt-1.5 text-[11.5px] text-slate-500">
+                <p className="mt-1.5 text-[11.5px] text-amber-700">
                   Är lasset inbokat? Bekräfta ankomsten på veckotavlan i stället.
                 </p>
               )}

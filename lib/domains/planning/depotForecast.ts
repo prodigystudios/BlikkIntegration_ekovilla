@@ -115,6 +115,13 @@ export type DepotMaterialForecast = {
   on_order: number;
   /** Tidigaste dag (idag eller senare) då en inbokad leverans väntas, eller null. */
   next_arrival: string | null;
+  /**
+   * De inbokade lassen per dag, tidigast först — samma urval som on_order.
+   *
+   * ⚠️ Finns för att on_order är en SUMMA men lassen kommer olika dagar. "1350 säck på väg, väntas 18/9"
+   * sa att allt kom 18/9 när bara 54 gjorde det och resten kom efter att depån tagit slut.
+   */
+  arrivals: { day: string; sacks: number }[];
 };
 
 export type DepotForecast = {
@@ -176,8 +183,8 @@ type Cell = {
   byDay: Map<string, { inflow: number; demand: number }>;
   overdue: number;
   beyond: number;
-  onOrder: number;
-  nextArrival: string | null;
+  /** dag -> inbokade säckar, idag och framåt, oavsett horisont. */
+  arrivals: Map<string, number>;
 };
 
 export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
@@ -196,7 +203,7 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
     }
     let cell = byMat.get(material);
     if (!cell) {
-      cell = { opening: 0, byDay: new Map(), overdue: 0, beyond: 0, onOrder: 0, nextArrival: null };
+      cell = { opening: 0, byDay: new Map(), overdue: 0, beyond: 0, arrivals: new Map() };
       byMat.set(material, cell);
     }
     return cell;
@@ -240,10 +247,10 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
       continue;
     }
     // På väg: räknas ALLTID, oavsett horisont. Bara information — se on_order.
-    cell.onOrder += e.sacks;
-    if (cell.nextArrival === null || e.day < cell.nextArrival) cell.nextArrival = e.day;
-    // Ett inflöde bortom horisonten täcker inget av det vi räknar på. Att räkna in det hade sänkt
-    // dagens brist med material som kommer efter att den redan uppstått — fel riktning.
+    cell.arrivals.set(e.day, (cell.arrivals.get(e.day) ?? 0) + e.sacks);
+    // Bortom horisonten ligger inget behov i dagsvandringen, så ett sådant lass kan ändå inte täcka något
+    // där. Men det får inte VIKAS IN på en tidigare dag — då hade det täckt ett behov inom horisonten
+    // med material som kommer efter det.
     if (e.day <= horizonEnd) day(cell, e.day).inflow += e.sacks;
   }
 
@@ -306,8 +313,9 @@ export function forecastDepotRunOut(input: ForecastInput): DepotForecast {
         supply_known: supplyKnown,
         beyond_horizon: cell.beyond,
         overdue_inflow: cell.overdue,
-        on_order: cell.onOrder,
-        next_arrival: cell.nextArrival,
+        on_order: [...cell.arrivals.values()].reduce((sum, n) => sum + n, 0),
+        next_arrival: cell.arrivals.size > 0 ? [...cell.arrivals.keys()].sort()[0] : null,
+        arrivals: [...cell.arrivals.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([d, sacks]) => ({ day: d, sacks })),
       });
     }
   }
@@ -358,38 +366,54 @@ export function describeSuggestion(row: DepotMaterialForecast): SuggestionParts 
 }
 
 /**
- * Vad bristbanderollen ska säga om en rad med brist i SALDOT, givet prognosraden för samma par.
+ * Vad banderollen och prognoskortet ska säga om de inbokade lassen för en rad.
  *
- * Saldot räknar inte inbokade leveranser (de står inte på depån) — prognosen gör det. En brist i
- * saldot kan alltså redan vara täckt av ett inbokat lass, och då ska raden inte larma som om ingen
- * gjort något. Men bara när prognosen faktiskt KAN säga det:
+ * Saldot räknar inte inbokade leveranser (de står inte på depån) — prognosen gör det. En brist i saldot
+ * kan alltså redan vara täckt av ett inbokat lass, och då ska raden inte larma som om ingen gjort något.
+ * Men bara när prognosen faktiskt KAN säga det:
  *
- * - `covered` kräver att inget behov ligger bortom horisonten. Saldot räknar alla bokade jobb,
- *   prognosen bara 90 dagar fram — ett underskott på 0 där säger inget om jobbet om fem månader.
- * - och att något verkligen är på väg. Utan inbokning finns inget som täcker.
+ * - `covered` kräver att inget behov ligger bortom horisonten. Saldot räknar alla bokade jobb, prognosen
+ *   bara horisonten ut — ett underskott på 0 säger inget om jobbet om fem månader.
+ * - och att något verkligen är inbokat.
+ * - och att INGET lass väntas idag. Prognosen lägger dagens inflöde före dagens förbrukning (rätt för ett
+ *   beställningsförslag), men har lasset inte kommit när bilen ska iväg är banderollen det enda som
+ *   varnar. Ett lass idag räknas som täckande först när ankomsten är bekräftad — då är det lager.
  *
- * `null` när prognosraden saknas (prognosen kunde inte räknas): raden faller då tillbaka på sin
- * gamla text i stället för att påstå något.
+ * Jobb utan startdag kan inte skilja saldo och prognos åt: ops_segments.start_day är NOT NULL.
+ *
+ * `null` när prognosraden saknas (prognosen kunde inte räknas): raden faller då tillbaka på sin gamla text
+ * i stället för att påstå något.
  */
 export type ShortfallCover = {
   covered: boolean;
   on_order: number;
   next_arrival: string | null;
-  /** Nästa inbokade lass kommer först EFTER att depån tar slut. */
-  arrives_after_run_out: boolean;
-  run_out_day: string | null;
-  overdue_inflow: number;
+  /**
+   * Lass som kommer EFTER run-out-dagen, eller null. Ett lass PÅ run-out-dagen kommer i tid: inflöde går
+   * före förbrukning samma dag.
+   */
+  late: { sacks: number; first_day: string; /** Alla inbokade lass kommer för sent. */ all: boolean } | null;
+  /** Inbokade säckar som väntas idag och ännu inte är kvitterade. */
+  due_today: number;
 };
 
-export function describeShortfallCover(row: DepotMaterialForecast | undefined): ShortfallCover | null {
+export function describeShortfallCover(row: DepotMaterialForecast | undefined, today: string): ShortfallCover | null {
   if (!row) return null;
+  const lateArrivals = row.run_out_day ? row.arrivals.filter((a) => a.day > (row.run_out_day as string)) : [];
+  const dueToday = row.arrivals.filter((a) => a.day === today).reduce((sum, a) => sum + a.sacks, 0);
   return {
-    covered: row.worst_deficit === 0 && row.beyond_horizon === 0 && row.on_order > 0,
+    covered: row.worst_deficit === 0 && row.beyond_horizon === 0 && row.on_order > 0 && dueToday === 0,
     on_order: row.on_order,
     next_arrival: row.next_arrival,
-    arrives_after_run_out: row.next_arrival !== null && row.run_out_day !== null && row.next_arrival > row.run_out_day,
-    run_out_day: row.run_out_day,
-    overdue_inflow: row.overdue_inflow,
+    late:
+      lateArrivals.length > 0
+        ? {
+            sacks: lateArrivals.reduce((sum, a) => sum + a.sacks, 0),
+            first_day: lateArrivals[0].day,
+            all: lateArrivals.length === row.arrivals.length,
+          }
+        : null,
+    due_today: dueToday,
   };
 }
 
