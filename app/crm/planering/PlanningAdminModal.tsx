@@ -14,7 +14,8 @@ import { TrashIcon } from './managerModalUi';
 import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
-import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
+import { deliveryVsCount, sacksOnCountDay } from '@/lib/domains/planning/stockCounts';
 import { describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
@@ -1239,6 +1240,9 @@ function StockPanel({
   const [sacks, setSacks] = useState('');
   const [deliveredOn, setDeliveredOn] = useState(today);
   const [note, setNote] = useState('');
+  const deliveryCountedOn =
+    depots.find((d) => d.depot_id === depotId)?.rows.find((r) => r.material === material)?.counted_on ?? null;
+  const deliveryVs = deliveredOn.length === 10 ? deliveryVsCount(deliveredOn, deliveryCountedOn) : 'no_count';
 
   // Väntad leverans — eget formulär, egna fält. Delas de med det ovan blir det oklart vilken
   // knapp som gör vad, och skillnaden mellan "står på depån" och "är på väg" är hela poängen.
@@ -1257,6 +1261,11 @@ function StockPanel({
   const [cntOn, setCntOn] = useState(today);
   const [cntNote, setCntNote] = useState('');
   const [cntBusy, setCntBusy] = useState(false);
+  // Leveranserna PÅ räkningsdagen. En räkning som förs in nu räknar dem som inräknade — också när den bara
+  // rättar en tidigare räkning samma dag — så formuläret måste säga hur många det gäller. Utan det
+  // försvann ett kvitterat lass ur saldot igen vid första rättelsen, tyst (granskningsfynd 2026-09-17).
+  const [cntDayDeliveries, setCntDayDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
+  const [cntDayReload, setCntDayReload] = useState(0);
   const [open, setOpen] = useState<ExpectedDelivery[]>([]);
 
   // Förval när depåregistret landat. Inte ur lagersaldot: det failar stängt, och då hade
@@ -1293,6 +1302,25 @@ function StockPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!canManageDepots || cntOn.length !== 10) return;
+    let cancelled = false;
+    // Ett fel ger ingen rad, inte ett påstående om noll: sacksOnCountDay på en tom lista är 0, och då
+    // visas ingenting. Den fasta texten i formuläret beskriver regeln ändå.
+    fetch(`${DELIVERIES_API}?from=${cntOn}&to=${cntOn}`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((j) => {
+        if (!cancelled) setCntDayDeliveries(j?.ok ? (j.data.deliveries as DepotDeliveryOnBoard[]) : []);
+      })
+      .catch(() => {
+        if (!cancelled) setCntDayDeliveries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageDepots, cntOn, cntDayReload]);
+  const cntSacksOnDay = sacksOnCountDay(cntDayDeliveries, { depotId: cntDepotId, material: cntMaterial, countedOn: cntOn });
+
   async function record(e: FormEvent) {
     e.preventDefault();
     if (!depotId || !material || !(Number(sacks) > 0)) return;
@@ -1308,6 +1336,7 @@ function StockPanel({
       toast.success('Leverans registrerad');
       setSacks('');
       setNote('');
+      setCntDayReload((n) => n + 1);
       await load();
     } finally {
       setBusy(false);
@@ -1426,8 +1455,8 @@ function StockPanel({
           <form onSubmit={record} className={PANEL}>
             <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
             <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Lägger till säckar i saldot — utom när leveransen är daterad på eller före depåns senaste avstämning,
-              då den redan finns i det räknade antalet.
+              Lägger till säckar i saldot — utom när leveransen är daterad före depåns senaste avstämning, då den
+              redan finns i det räknade antalet.
             </p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
@@ -1454,6 +1483,20 @@ function StockPanel({
                   Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
               <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
             </div>
+            {/* Registreringen lyckas även när datumet ligger före avstämningen, men saldot rör sig inte —
+                utan raden ser det ut som att knappen inte gjorde något. */}
+            {deliveryVs === 'before_count' && deliveryCountedOn && (
+              <p className="mt-2 text-[11px] text-amber-700">
+                Depån stämdes av {shortDayISO(deliveryCountedOn)}. En leverans daterad före det finns redan i det räknade
+                antalet, så saldot ändras inte.
+              </p>
+            )}
+            {deliveryVs === 'on_count_day' && deliveryCountedOn && (
+              <p className="mt-2 text-[11px] text-slate-500">
+                Läggs på avstämningen från {shortDayISO(deliveryCountedOn)}. Stod leveransen redan på depån när ni räknade
+                blir saldot för högt — stäm då av igen.
+              </p>
+            )}
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
               <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera</button>
@@ -1497,6 +1540,12 @@ function StockPanel({
                   räknat. Grinden som räknas sitter i stockCountSchema och i databasens insert-policy. */}
               <div><span className={LABEL}>Räknat</span><input type="date" value={cntOn} max={today} onChange={(e) => setCntOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Räknat datum" /></div>
             </div>
+            {cntSacksOnDay > 0 && (
+              <p className="mt-2 text-[11px] text-amber-700">
+                {cntSacksOnDay} säck levererades {shortDayISO(cntOn)} och är redan registrerade. De räknas som inräknade i
+                antalet — skriv in det med dem.
+              </p>
+            )}
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={cntNote} onChange={(e) => setCntNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
               <button
@@ -1512,9 +1561,9 @@ function StockPanel({
                 antalsfältet är "Antal" och inte "0": ett tomt fält är ingen räkning, och en nolla
                 i gråtext såg ut som en. */}
             <p className="mt-2 text-[11px] text-slate-400">
-              Samma dag som räkningen dras förbrukningen av, men leveranser läggs inte på — de kan redan stå i
-              antalet. Blir det fel blir saldot alltså för lågt, aldrig för högt. Förs räkningen över i
-              efterhand: ange dagen den gjordes, inte dagens datum.
+              Samma dag som räkningen dras förbrukningen av. Leveranser den dagen som redan är registrerade räknas
+              som inräknade, och de som registreras efteråt läggs på. Förs räkningen över i efterhand: ange dagen
+              den gjordes, inte dagens datum.
             </p>
           </form>
         )}

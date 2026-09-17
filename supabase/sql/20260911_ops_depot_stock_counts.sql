@@ -22,6 +22,7 @@
 --       avstämning:  saldot räknas FRÅN räkningen; fredagens 50 syns redan i de 400 -> stannar på 400
 --
 -- saldo = räknat + leveranser EFTER räkningsdagen − förbrukning från och med räkningsdagen.
+--   [leveranser PÅ räkningsdagen: se ERSATT-noten nedan]
 --
 -- ⚠️ FÖRBRUKNINGEN RÄKNAS INTE MED ETT DATUMFILTER. Säckrapporteringen har en supersede-regel: finns en
 -- egenkontroll gäller BARA den, och den ersätter delrapporterna. Förbrukningen efter en räkning är
@@ -31,9 +32,15 @@
 -- tidigaste segmentet), så varje pågående jobb hade annars hamnat "före räkningen". Två versioner av
 -- koden gick fel på just det, båda åt det farliga hållet.
 --
+-- ⚠️ ERSATT 2026-09-17 för LEVERANSER (bara kommentar, ingenting att köra om): en leverans PÅ
+-- räkningsdagen avgörs nu av inmatningsordningen — registrerad efter räkningen läggs den på, före
+-- räknas den som inräknad. Den gamla regeln nedan åt ett bekräftat lass i drift (Borlänge 11 sep:
+-- avstämt 486, lasset på 1296 kvitterat 33 sekunder senare, saldot rörde sig inte). Regeln bor i
+-- deliveriesAfterCounts, lib/domains/planning/stockCounts.ts. Förbrukningen är oförändrad.
+--
 -- ⚠️ RÄKNINGSDAGEN ÄR MED FLIT ASYMMETRISK, så att ett fel alltid hamnar åt SAMMA håll:
 --   förbrukning PÅ räkningsdagen  -> dras av  (räknas som EFTER)   fel = saldo för lågt
---   leverans    PÅ räkningsdagen  -> läggs INTE på (räknas som FÖRE)  fel = saldo för lågt
+--   leverans    PÅ räkningsdagen  -> läggs INTE på (räknas som FÖRE)  fel = saldo för lågt   [ERSATT, se ovan]
 -- Kom leveransen på morgonen innan man räknade står den redan i antalet; att lägga på den igen gav ett
 -- för HÖGT saldo, som tystar bristbanderollen. En tidigare version hade "samma regel åt båda håll" —
 -- det gjorde leveransfelet farligt. För lågt betyder något för mycket beställt, aldrig en bil utan

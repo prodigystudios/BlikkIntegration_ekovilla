@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deliveriesAfterCounts, latestCounts, type DatedMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
+import { deliveriesAfterCounts, deliveryVsCount, latestCounts, sacksOnCountDay, type DeliveryMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
 import { computeDepotBalances, consumptionAfterCounts } from '@/lib/domains/planning/depotStock';
 import { stockCountSchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO, addDaysISO } from '@/lib/domains/planning/timezone';
@@ -25,18 +25,25 @@ const EKO = 'EKOVILLA';
 const DEPOTS = [{ id: SYD, name: 'Syd' }];
 const FLEET = new Map<string, string | null>([['truck-syd', SYD], ['truck-norr', NORR]]);
 
+/**
+ * En räkning förs in på eftermiddagen (16:00 svensk tid) och en leverans kvitteras på förmiddagen (10:00)
+ * — om inget annat sägs. Det avgör BARA leveranser på räkningsdagen; testerna för just det fallet sätter
+ * båda tidsstämplarna uttryckligen i stället för att luta sig mot det här förvalet.
+ */
 const count = (sacks: number, counted_on: string, over: Partial<StockCount> = {}): StockCount => ({
   depot_id: SYD,
   material: EKO,
   sacks,
   counted_on,
+  created_at: `${counted_on}T14:00:00Z`,
   ...over,
 });
-const delivery = (sacks: number, day: string, over: Partial<DatedMovement> = {}): DatedMovement => ({
+const delivery = (sacks: number, day: string, over: Partial<DeliveryMovement> = {}): DeliveryMovement => ({
   depot_id: SYD,
   material: EKO,
   sacks,
   day,
+  created_at: `${day}T08:00:00Z`,
   ...over,
 });
 
@@ -74,7 +81,7 @@ function final(sacks: number, jobFirstDay: string, writtenOn: string, over: Reco
 /** PRODUKTIONENS väg: senaste räkning -> leveranser och förbrukning avgränsade -> baslinje. */
 function balanceWith(
   counts: StockCount[],
-  deliveries: DatedMovement[],
+  deliveries: DeliveryMovement[],
   reports: Array<ReturnType<typeof partial>>,
 ) {
   const latest = latestCounts(counts);
@@ -114,7 +121,7 @@ describe('avstämning, inte justering', () => {
   });
 });
 
-describe('räkningsdagen — ASYMMETRISKT, så att ett fel alltid blir för lågt', () => {
+describe('räkningsdagen', () => {
   /**
    * Förbrukning PÅ räkningsdagen dras av (räknas som efter). Blåstes den i själva verket FÖRE räkningen
    * blir saldot för lågt — ofarligt.
@@ -125,13 +132,138 @@ describe('räkningsdagen — ASYMMETRISKT, så att ett fel alltid blir för låg
   });
 
   /**
-   * 🧨 En leverans PÅ räkningsdagen läggs INTE på (räknas som före). Kom den på morgonen innan man räknade
-   * står den redan i antalet — att lägga på den igen gav ett för HÖGT saldo. En tidigare version gjorde
-   * precis det och påstod "samma regel åt båda håll"; det testet stod här och var grönt.
+   * 🧨 FALLET SOM HÄNDE I DRIFT, med produktionens tidsstämplar tecken för tecken. Borlänge stämdes av
+   * till 486 och lasset på 1296 kvitterades 33 sekunder senare, båda daterade 11 sep. Den gamla regeln
+   * räknade varje leverans på räkningsdagen som inräknad, så saldot stod kvar på 486 och ingenting sa
+   * varför.
    */
-  it('en leverans PÅ räkningsdagen läggs INTE på — den kan redan finnas i antalet', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [delivery(1296, '2026-09-14')], []);
+  it('en ankomst kvitterad EFTER att avstämningen förts in läggs på — samma dag', () => {
+    const r = balanceWith(
+      [count(486, '2026-09-11', { created_at: '2026-09-11T10:24:36.181149+00:00' })],
+      [delivery(1296, '2026-09-11', { created_at: '2026-09-11T10:25:09.996837+00:00' })],
+      [],
+    );
+    expect(r.balance).toBe(1782);
+  });
+
+  /**
+   * Månadsinventeringen förs in på kvällen. Lasset som kom och kvitterades på förmiddagen stod då på
+   * depån och finns i det räknade antalet — att lägga på det igen gav ett för HÖGT saldo, som tystar
+   * bristbanderollen.
+   */
+  it('en ankomst kvitterad INNAN avstämningen fördes in räknas som inräknad — samma dag', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-09-30T16:00:00Z' })],
+      [delivery(1296, '2026-09-30', { created_at: '2026-09-30T08:00:00Z' })],
+      [],
+    );
     expect(r.balance).toBe(400);
+  });
+
+  /**
+   * Inmatningsordningen gäller BARA på räkningsdagen. Över dagsgränsen avgör datumet, åt båda håll —
+   * annars flyttar en inventering som förs in i efterhand varje leverans efter räkningsdagen till "före".
+   */
+  it('över dagsgränsen avgör datumet, inte när raderna fördes in', () => {
+    // Inventeringen per 30 sep förs in 2 okt. Lasset 1 okt kvitterades 1 okt — före inmatningen, men
+    // efter räkningsdagen: det ska på.
+    const efter = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-10-02T07:00:00Z' })],
+      [delivery(1296, '2026-10-01', { created_at: '2026-10-01T08:00:00Z' })],
+      [],
+    );
+    expect(efter.balance).toBe(1696);
+
+    // Ett lass daterat 29 sep kvitteras i efterhand 3 okt — efter inmatningen, men före räkningsdagen:
+    // det stod på depån när man räknade.
+    const fore = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-09-30T16:00:00Z' })],
+      [delivery(1296, '2026-09-29', { created_at: '2026-10-03T08:00:00Z' })],
+      [],
+    );
+    expect(fore.balance).toBe(400);
+  });
+
+  it('en tidsstämpel som inte går att tolka ger det gamla svaret — inräknad', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-14', { created_at: '' })],
+      [delivery(1296, '2026-09-14', { created_at: '2026-09-14T18:00:00Z' })],
+      [],
+    );
+    expect(r.balance).toBe(400);
+  });
+});
+
+describe('deliveryVsCount — leveransformulärens förhandsbesked', () => {
+  it('utan räkning: no_count', () => {
+    expect(deliveryVsCount('2026-01-01', null)).toBe('no_count');
+  });
+
+  it('skiljer före, på och efter räkningsdagen', () => {
+    expect(deliveryVsCount('2026-09-13', '2026-09-14')).toBe('before_count');
+    expect(deliveryVsCount('2026-09-14', '2026-09-14')).toBe('on_count_day');
+    expect(deliveryVsCount('2026-09-15', '2026-09-14')).toBe('after_count');
+  });
+
+  /**
+   * Formuläret frågar om en leverans som förs in NU, alltså efter varje räkning som redan finns. Då
+   * måste "saldot ändras inte" stämma med saldot för före, på och efter räkningsdagen. Annars lovar
+   * fönstret en sak och saldot gör en annan, och det är precis den tystnad som skulle bort.
+   */
+  it('before_count är exakt de leveranser saldot inte lägger på', () => {
+    const c = count(400, '2026-09-14', { created_at: '2026-09-14T06:00:00Z' });
+    for (const day of ['2026-09-13', '2026-09-14', '2026-09-15']) {
+      const kept = deliveriesAfterCounts([delivery(10, day, { created_at: '2026-09-17T09:00:00Z' })], latestCounts([c]));
+      expect(deliveryVsCount(day, c.counted_on) === 'before_count').toBe(kept.length === 0);
+    }
+  });
+});
+
+describe('sacksOnCountDay — avstämningsformulärets förhandsbesked', () => {
+  const rows = [
+    { depot_id: SYD, material: EKO, sacks: 1296, delivered_on: '2026-09-11' },
+    { depot_id: SYD, material: EKO, sacks: 54, delivered_on: '2026-09-11' },
+    { depot_id: SYD, material: EKO, sacks: 500, delivered_on: '2026-09-10' },
+    { depot_id: SYD, material: 'KNAUF SUPAFIL', sacks: 24, delivered_on: '2026-09-11' },
+    { depot_id: NORR, material: EKO, sacks: 700, delivered_on: '2026-09-11' },
+  ];
+
+  it('summerar bara depåns och materialets leveranser på räkningsdagen', () => {
+    expect(sacksOnCountDay(rows, { depotId: SYD, material: EKO, countedOn: '2026-09-11' })).toBe(1350);
+  });
+
+  it('ger noll när inget kom den dagen', () => {
+    expect(sacksOnCountDay(rows, { depotId: SYD, material: EKO, countedOn: '2026-09-12' })).toBe(0);
+  });
+
+  /**
+   * 🧨 GRANSKNINGSFYNDET: en rättad räkning samma dag åt lasset igen. Avstämt 486, lasset på 1296
+   * kvitterat, sedan 486 rättat till 468: saldot blir 468, för rättelsen förs in EFTER lasset och räknar
+   * det som inräknat. Det är regeln, inte ett fel i den. Därför måste formuläret visa exakt de säckar som
+   * saldot kommer att räkna som inräknade.
+   */
+  it('visar exakt de säckar som en räkning som förs in nu räknar som inräknade', () => {
+    const day = '2026-09-11';
+    const lasset = delivery(1296, day, { created_at: '2026-09-11T10:25:09.996837+00:00' });
+    const rattelse = balanceWith(
+      [
+        count(486, day, { created_at: '2026-09-11T10:24:36.181149+00:00' }),
+        count(468, day, { created_at: '2026-09-11T10:40:00Z' }),
+      ],
+      [lasset],
+      [],
+    );
+    expect(rattelse.balance).toBe(468);
+
+    const shown = sacksOnCountDay([{ ...lasset, delivered_on: lasset.day }], { depotId: SYD, material: EKO, countedOn: day });
+    expect(shown).toBe(1296);
+    // Skrivs räkningen in MED de visade säckarna blir saldot rätt.
+    const medLasset = balanceWith(
+      [count(486, day, { created_at: '2026-09-11T10:24:36.181149+00:00' }), count(468 + shown, day, { created_at: '2026-09-11T10:40:00Z' })],
+      [lasset],
+      [],
+    );
+    expect(medLasset.balance).toBe(1764);
   });
 });
 

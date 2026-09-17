@@ -7,7 +7,7 @@ import { chunkIds, readAllPages, type ReadError } from './pagedRead';
 import { listOpenExpected } from './expectedDeliveries';
 import { defaultSupplierForMaterial, listSupplyTerms } from './materialSuppliers';
 import { forecastDepotRunOut, supplyKey, type DepotForecast, type ForecastEvent } from './depotForecast';
-import { countFor, deliveriesAfterCounts, latestCounts, listStockCounts, type DatedMovement, type StockCount } from './stockCounts';
+import { countFor, deliveriesAfterCounts, latestCounts, listStockCounts, type DatedMovement, type DeliveryMovement, type StockCount } from './stockCounts';
 
 // Depot stock (slice 12b): per-material balance per depot = sum(deliveries) − consumption, where
 // consumption is derived from ops_segment_reports (a job's blown sacks → its segment's truck → that
@@ -30,7 +30,10 @@ export type DepotMaterialBalance = {
    * över all tid, precis som före avstämningarna.
    */
   counted: number | null;
-  /** 'YYYY-MM-DD', eller null. Räkningen gäller vid dagens början. */
+  /**
+   * 'YYYY-MM-DD', eller null. För förbrukningen gäller räkningen vid dagens början; en leverans samma dag
+   * avgörs av när den fördes in (deliveriesAfterCounts).
+   */
   counted_on: string | null;
   /** (counted ?? 0) + delivered − consumed. */
   balance: number;
@@ -121,23 +124,36 @@ export function computeDepotBalances(
 }
 
 // Raw delivery stock rows (one per delivery; computeDepotBalances aggregates).
-async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: DatedMovement[]; error: ReadError }> {
+async function listDeliveryRows(supabase: SupabaseClient): Promise<{ rows: DeliveryMovement[]; error: ReadError }> {
   // INGET datumfilter, med flit: saldot gäller över all tid. Tavlans remsa, som bara vill ha en
   // veckas leveranser, har en egen datumbegränsad läsning — vidga inte den här.
   //
   // `delivered_on` följer med sedan avstämningarna kom: en leverans FÖRE en räkning syns redan i det
-  // räknade antalet och får inte läggas på en gång till (deliveriesAfterCounts).
-  const { rows, error } = await readAllPages<{ depot_id: string; material: string; sacks: number | string; delivered_on: string }>(
-    (from, to) =>
-      supabase
-        .from('ops_depot_deliveries')
-        .select('depot_id, material, sacks, delivered_on')
-        .order('id', { ascending: true })
-        .range(from, to),
+  // räknade antalet och får inte läggas på en gång till (deliveriesAfterCounts). `created_at` avgör en
+  // leverans PÅ räkningsdagen — tappas den läggs en sådan aldrig på, och en bekräftad ankomst försvinner
+  // tyst ur saldot.
+  const { rows, error } = await readAllPages<{
+    depot_id: string;
+    material: string;
+    sacks: number | string;
+    delivered_on: string;
+    created_at: string;
+  }>((from, to) =>
+    supabase
+      .from('ops_depot_deliveries')
+      .select('depot_id, material, sacks, delivered_on, created_at')
+      .order('id', { ascending: true })
+      .range(from, to),
   );
   if (error) return { rows: [], error };
   return {
-    rows: rows.map((r) => ({ depot_id: r.depot_id, material: r.material, sacks: Number(r.sacks), day: r.delivered_on })),
+    rows: rows.map((r) => ({
+      depot_id: r.depot_id,
+      material: r.material,
+      sacks: Number(r.sacks),
+      day: r.delivered_on,
+      created_at: r.created_at,
+    })),
     error: null,
   };
 }
@@ -800,8 +816,8 @@ export async function getDepotStockWithForecast(
   // Avstämningen: stryk rörelser som redan syns i en räkning, och lägg räkningen som baslinje. SAMMA
   // karta till båda stegen — se varningen vid computeDepotBalances om vad som händer annars.
   const counts = latestCounts(stockCounts.data);
-  // Leveranser har ingen supersede-regel, så där räcker ett datumfilter — men med räkningsdagens
-  // leveranser räknade som FÖRE räkningen. Se deliveriesAfterCounts om asymmetrin.
+  // Leveranser har ingen supersede-regel, så där räcker datumet — utom PÅ räkningsdagen, där
+  // inmatningsordningen avgör. Se deliveriesAfterCounts.
   const deliveredAfter = deliveriesAfterCounts(delivered.rows, counts);
   // 🧨 Förbrukningen går INTE via samma datumfilter. En egenkontroll ersätter delrapporterna och bär
   // sitt EGET datum, så ett filter hade dragit av hela jobbet efter räkningen. Se consumptionAfterCounts.
