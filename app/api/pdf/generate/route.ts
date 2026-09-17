@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { readFile } from 'fs/promises';
 import path from 'path';
 import { z } from 'zod';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -154,7 +155,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     const cardBg = rgb(0.985, 0.992, 0.988);
     const headerBg = rgb(primary.r, primary.g, primary.b);
     const contentWidth = PAGE_WIDTH - PAGE_MARGIN * 2;
-    const printedOn = new Date().toISOString().slice(0, 10);
+    // Svensk dag — utskriftsdatumet står på dokumentet.
+    const printedOn = stockholmTodayISO();
 
     let logoImage: any = null;
     let footerBadgeImage: any = null;
@@ -684,7 +686,13 @@ export async function POST(req: NextRequest): Promise<Response> {
           return `Signerad: ${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${tz}`;
         }
       } catch {}
-      return `Signerad: ${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      // Reserven: svensk tid, inte serverns. Utan zon skrev den UTC, så en signatur strax efter
+      // midnatt daterades dagen före — på samma sida som "Genererad" redan visade rätt dag.
+      const swedish = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'Europe/Stockholm',
+        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      }).formatToParts(date).reduce((acc, part) => { acc[part.type] = part.value; return acc; }, {} as Record<string, string>);
+      return `Signerad: ${swedish.year}-${swedish.month}-${swedish.day} ${swedish.hour}:${swedish.minute}`;
     })();
 
     const signatureHeight = 182;

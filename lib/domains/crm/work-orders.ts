@@ -6,6 +6,7 @@ import { computePricing, type PricingLineItem } from './pricing';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
   evaluateWorkOrderReadiness,
   type ReadinessCustomerSource,
@@ -159,8 +160,12 @@ type QuoteSource = {
   work_order_number: string | null;
 };
 
-function buildWorkOrderNumber(seed: string) {
-  const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+// 🧨 Datumdelen är SVENSK dag, inte UTC-dag. Servern kör UTC, så en order skapad mellan midnatt
+// och kl. 02 svensk sommartid fick gårdagens datum instansat i sitt eget nummer — ett nummer som
+// sedan står på följesedeln och i Fortnox och aldrig går att rätta i efterhand.
+// `now` går att skicka in för att kunna prövas; produktionsanroparen låter den vara.
+export function buildWorkOrderNumber(seed: string, now: Date = new Date()) {
+  const datePart = stockholmTodayISO(now).replace(/-/g, '');
   return `AO-${datePart}-${seed.replace(/-/g, '').slice(0, 6).toUpperCase()}`;
 }
 

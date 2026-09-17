@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { z } from 'zod';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -185,7 +186,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     drawText(page, 'Totalt:', col3, ty, 11, fontBold); drawText(page, formatCurrency(total), col4, ty, 11, fontBold);
 
     // Footer
-    const today = new Date().toISOString().slice(0, 10);
+    // Svensk dag — sidfoten daterar dokumentet kunden får.
+    const today = stockholmTodayISO();
     drawText(page, `Skapad: ${today}`, margin, margin - 4, 9, font, rgb(accent.r, accent.g, accent.b));
 
     const bytes = await pdfDoc.save();

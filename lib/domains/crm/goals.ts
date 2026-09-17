@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 // Budgets are set monthly; the leaderboard derives the weekly target as budget ÷ this.
 export const GOAL_WEEKS_PER_MONTH = 4;
@@ -76,18 +77,22 @@ export function formatLocalDateOnly(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-export function getCurrentWeekStartDate() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const mondayOffset = (start.getDay() + 6) % 7;
-  start.setDate(start.getDate() - mondayOffset);
-  return formatLocalDateOnly(start);
+// 🧨 Båda nycklarna är SVENSKA dagar. De läses på servern (app/crm/installningar/page.tsx och
+// api/crm/goals), och servern kör UTC: strax efter midnatt den 1:a pekade månadsnyckeln på FÖRRA
+// månaden, och ett sparat mål hade då skrivit över den månadens budget med den nyas siffror.
+// `now` går att skicka in för att kunna prövas.
+export function getCurrentWeekStartDate(now: Date = new Date()) {
+  const [year, month, day] = stockholmTodayISO(now).split('-').map(Number);
+  // UTC-förankrad aritmetik: veckan får inte tappa en dag över en sommartidsväxling.
+  const start = new Date(Date.UTC(year, month - 1, day));
+  const mondayOffset = (start.getUTCDay() + 6) % 7;
+  start.setUTCDate(start.getUTCDate() - mondayOffset);
+  return start.toISOString().slice(0, 10);
 }
 
 // First day of the current month (YYYY-MM-01) — the key for a monthly budget.
-export function getCurrentMonthStartDate() {
-  const now = new Date();
-  return formatLocalDateOnly(new Date(now.getFullYear(), now.getMonth(), 1));
+export function getCurrentMonthStartDate(now: Date = new Date()) {
+  return `${stockholmTodayISO(now).slice(0, 7)}-01`;
 }
 
 /**

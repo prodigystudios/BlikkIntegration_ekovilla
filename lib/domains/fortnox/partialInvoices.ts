@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
@@ -581,7 +582,8 @@ export async function createPartialInvoice(
     const response = await fortnoxPost<{ Invoice?: { DocumentNumber?: string | number } }>('/invoices', {
       Invoice: {
         CustomerNumber: String(header.CustomerNumber),
-        InvoiceDate: new Date().toISOString().slice(0, 10),
+        // Svensk dag — fakturadatumet är ett bokföringsdatum och får inte hamna dagen före.
+        InvoiceDate: stockholmTodayISO(),
         Remarks: remarks,
         // "Ert referensnummer" = kundens märkning, speglad ur ordern. Se partialInvoiceReferenceField.
         ...invoiceReference,

@@ -11,6 +11,7 @@ import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnox
 import { ORDER_PDF_MODE, type OrderPdfMode } from './documentPdfMode';
 import type { FortnoxCompanySettingsResponse } from './offerPdf';
 import type { FortnoxOrderResponse } from './orderPdfDesign';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -886,7 +887,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
         Order: {
           CustomerNumber: customerNumber,
-          OrderDate: new Date().toISOString().slice(0, 10),
+          // Svensk dag: UTC-dygnet daterar en order skapad på natten till dagen före.
+          OrderDate: stockholmTodayISO(),
           ...header,
           // No VATType on the payload (Fortnox rejects it on offers; we keep orders consistent):
           // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for

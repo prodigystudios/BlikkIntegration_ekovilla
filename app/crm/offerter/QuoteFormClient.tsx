@@ -37,6 +37,7 @@ import {
   mergeUntouchedCustomerFields,
   pickCustomerDerived,
   buildFollowUpTaskPayload,
+  initialQuoteDates,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
   type CustomerDerivedValues,
@@ -487,9 +488,14 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   return issues;
 }
 
-const initialQuoteDate = new Date().toISOString().slice(0, 10);
-
-const initialDraft: QuoteDraft = {
+// 🧨 ALDRIG `new Date().toISOString().slice(0, 10)` för ett kalenderdatum. Det ger UTC-dygnet, och
+// mellan midnatt och kl. 02 svensk sommartid är det GÅRDAGEN. Offertdatumet går vidare till Fortnox
+// som OfferDate och trycks som "Offertdatum" på kundens PDF — en offert skriven natten till den 16:e
+// daterades den 15:e, alltså möjligen före förfrågan kom in.
+//
+// ⚠️ Och inte som modulkonstant: den beräknas när modulen laddas, så en flik som stått öppen över
+// midnatt hade gett gårdagens datum oavsett zon.
+const BLANK_DRAFT: QuoteDraft = {
   customer_id: null,
   prospect_id: '',
   quote_type: 'business',
@@ -513,11 +519,13 @@ const initialDraft: QuoteDraft = {
   end_contact_phone: '',
   end_contact_email: '',
   label: '',
-  items: [createEmptyLineItem()],
+  // Tom med flit: startraden skapas per draft i createInitialDraft. En delad rad här hade gett två
+  // drafter i samma flik SAMMA rad-id, och en redigering i den ena hade synts i den andra.
+  items: [],
   project_name: '',
   description: '',
   vat_percent: '25',
-  valid_until: addDaysIso(initialQuoteDate, OFFER_VALIDITY_DAYS),
+  valid_until: '',
   rot_enabled: false,
   rot_property_designation: '',
   rot_percent: '30',
@@ -527,12 +535,18 @@ const initialDraft: QuoteDraft = {
   handoff_notes: '',
   work_scope: '',
   status: 'draft',
-  quote_date: initialQuoteDate,
+  quote_date: '',
   follow_up_date: '',
   notes: '',
   create_follow_up_task: true,
   assigned_to: '',
 };
+
+/** En tom offert med dagens SVENSKA datum och en egen tom artikelrad. Ett anrop per mount. */
+function createInitialDraft(): QuoteDraft {
+  // Datumparet kommer ur serializern — se initialQuoteDates för varför de två måste födas ihop.
+  return { ...BLANK_DRAFT, ...initialQuoteDates(), items: [createEmptyLineItem()] };
+}
 
 // ─── ArticlePicker ────────────────────────────────────────────────────────────
 
@@ -1288,6 +1302,14 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const [readinessNonce, setReadinessNonce] = useState(0);
   const [rechecking, setRechecking] = useState(false);
   const [pnValue, setPnValue] = useState('');
+  // Ett värde för hela mountet: draften och den "rena" baslinjen jämförs med JSON.stringify, så
+  // två olika datum hade fått ett orört formulär att se ut som osparat arbete.
+  //
+  // 🧨 Lazy useState och INTE useMemo. React lovar inte att behålla ett memo — kastas det körs
+  // createInitialDraft igen och ger en ny rad-id, medan baslinjen och expandedRowId bär den gamla.
+  // Då är formuläret "smutsigt" för alltid: spökautospar, lämna-varning vid varje navigering och en
+  // återuppta-banner på ett orört formulär. useState-initialiseraren körs exakt en gång.
+  const [initialDraft] = useState(createInitialDraft);
   const [draft, setDraft] = useState<QuoteDraft>(initialDraft);
   // Accordion: id of the single open article row. Starts on the empty starter row; adding
   // or manually opening a row makes it the only open one (others collapse). A stale id
