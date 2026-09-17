@@ -2,16 +2,31 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
+import { MINE, summarizeAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/lib/domains/crm/assigneeFilter';
 
-export type AssigneeOption = { id: string; full_name: string | null };
-// Multi-select: each entry is a user id or the sentinel 'mine'. Empty array = everyone.
-export type AssigneeFilterValue = string[];
+// Reglerna (startvärde, serverparameter, matchning, sammanfattning) bor i en ren modul — JSX går
+// inte att importera i testkörningen, så logik här hade varit oprövbar. Återexporteras så att
+// anropare kan importera allt från komponenten som förut.
+export {
+  MINE,
+  defaultAssigneeFilter,
+  assigneeQueryParam,
+  summarizeAssigneeFilter,
+  matchesAssignee,
+} from '@/lib/domains/crm/assigneeFilter';
+export type { AssigneeOption, AssigneeFilterValue } from '@/lib/domains/crm/assigneeFilter';
 
-export const MINE = 'mine';
-
-// Shared "Ansvarig" filter for CRM list views (quotes, work orders). The list data is
-// loaded in full (RLS lets CRM roles see all); this filters client-side by assigned_to.
+// Shared "Ansvarig" filter for CRM list views (quotes, work orders, säljtavlan).
 // Multi-select so you can show e.g. seller 1 + 4 + 6 at once.
+//
+// ⚠️ I offert- och orderlistan är valet en WHERE-sats, inte en gallring i webbläsaren: det går ut
+// som `?assignee=` och blir `in('assigned_to', …)` server-side — på raderna OCH på varje flikräknare
+// på sidan. Två följder som inte syns i den här filen:
+//   • `in(...)` matchar ALDRIG null, så rader utan ansvarig ("Ej tilldelad") faller bort. Menyn har
+//     ingen egen rad för dem — enda vägen dit är att rensa filtret.
+//   • Sökrutan är OCH:ad med filtret. En kollegas ordernummer ger därför noll träffar, vilket är
+//     varför båda listornas tomma läge måste erbjuda "Visa alla ansvariga".
+// Säljtavlan filtrerar däremot fortfarande i klienten (matchesAssignee) över sin egen laddade data.
 export default function AssigneeFilter({
   value,
   onChange,
@@ -142,32 +157,4 @@ function CheckRow({ label, checked, onToggle }: { label: string; checked: boolea
       <span className="truncate">{label}</span>
     </button>
   );
-}
-
-// Human-readable summary for the trigger button.
-export function summarizeAssigneeFilter(value: AssigneeFilterValue, users: AssigneeOption[]): string {
-  if (value.length === 0) return 'Alla ansvariga';
-  if (value.length === 1) {
-    const only = value[0];
-    if (only === MINE) return 'Mina';
-    return users.find((u) => u.id === only)?.full_name || '1 vald';
-  }
-  return `${value.length} valda`;
-}
-
-// Does an item with this assigned_to pass the filter? Empty selection = show all.
-export function matchesAssignee(
-  assignedTo: string | null | undefined,
-  value: AssigneeFilterValue,
-  currentUserId: string | null,
-): boolean {
-  if (!value || value.length === 0) return true;
-  for (const sel of value) {
-    if (sel === MINE) {
-      if (currentUserId && assignedTo === currentUserId) return true;
-    } else if (assignedTo === sel) {
-      return true;
-    }
-  }
-  return false;
 }
