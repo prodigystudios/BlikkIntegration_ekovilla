@@ -8,6 +8,7 @@ import { cn } from '@/lib/shared/cn';
 import { minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 import type { PersonPeriodSummary } from '@/lib/domains/time/summary';
+import { useWorkOrderSearch } from '@/lib/useWorkOrderSearch';
 
 // Adminrättelse av en tidrad, i en modal.
 //
@@ -83,42 +84,18 @@ export default function TimeCorrectionModal({
   // rättelsen finns för att raden hamnat på fel order, och den rätta ordern är per definition en
   // personen inte var bokad på. (get_my_crm_jobs är dessutom självskopad — den hade gett adminens
   // egna jobb, vilket är fel lista i varje tänkbart fall.)
-  const [query, setQuery] = React.useState('');
-  const [hits, setHits] = React.useState<WorkOrderHit[]>([]);
+  // Själva sökningen bor i useWorkOrderSearch, delad med tidrapportens jobbväljare: fördröjningen,
+  // sekvensnumret som håller ett gammalt svar borta från en nyare term, och skillnaden mellan
+  // "inga träffar" och "svaret kom inte fram". Modalen äger bara VALET.
+  const search = useWorkOrderSearch<WorkOrderHit>({
+    endpoint: '/api/crm/work-orders?limit=8',
+    enabled: kind === 'work_order',
+    map: (row) => row as WorkOrderHit,
+  });
   // ⚠️ Valet måste synas ÄVEN när träfflistan är borta. Förut kunde man klicka en träff för att
   // läsa den, tömma sökrutan så listan försvann, och spara — varpå raden tyst flyttades till det
   // jobbet. Den enda markören satt på träffknappen, som just hade avmonterats.
   const [chosen, setChosen] = React.useState<WorkOrderHit | null>(null);
-  const [searching, setSearching] = React.useState(false);
-  const searchSeq = React.useRef(0);
-
-  React.useEffect(() => {
-    if (kind !== 'work_order') return;
-    const term = query.trim();
-    // setSearching(false) också här: utan den satt "Söker…" kvar för alltid när man backade ned
-    // under två tecken, eftersom den grenen aldrig nådde finally.
-    if (term.length < 2) { setHits([]); setSearching(false); return; }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    // Fördröjning så en sökning inte skickas per tangenttryck.
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/crm/work-orders?q=${encodeURIComponent(term)}&limit=8`, {
-          cache: 'no-store', credentials: 'same-origin',
-        });
-        const body = await res.json().catch(() => null);
-        if (seq !== searchSeq.current) return;
-        setHits(res.ok && body?.ok ? (body.data.items || []) : []);
-      } catch {
-        // Utan den här grenen låg FÖRRA sökningens träffar kvar under den NYA termen, och ett klick
-        // flyttade raden till en order man inte sökt efter.
-        if (seq === searchSeq.current) setHits([]);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [kind, query]);
 
   const parsedBreak = parseBreakMinutes(breakMinutes);
   const absenceValue = Number(String(absenceHours).replace(',', '.'));
@@ -245,11 +222,15 @@ export default function TimeCorrectionModal({
                 </button>
               </div>
             ) : null}
-            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Sök ordernummer eller kund…" />
-            {searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
-            {hits.length > 0 ? (
+            <Input value={search.query} onChange={(e) => search.setQuery(e.target.value)} placeholder="Sök ordernummer eller kund…" />
+            {search.searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
+            {/* Ett trasigt svar såg förut ut som noll träffar, alltså som att ordern inte fanns. */}
+            {!search.searching && search.failed ? (
+              <span className="text-sm text-rose-600">Sökningen svarade inte. Försök igen.</span>
+            ) : null}
+            {search.hits.length > 0 ? (
               <div className="grid gap-1.5">
-                {hits.map((order) => (
+                {search.hits.map((order) => (
                   <button
                     key={order.id}
                     type="button"

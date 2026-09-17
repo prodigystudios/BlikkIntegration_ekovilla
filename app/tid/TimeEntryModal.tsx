@@ -7,6 +7,7 @@ import Select from '@/components/ui/Select';
 import Textarea from '@/components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { DEFAULT_BREAK_MINUTES, minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
+import { MIN_SEARCH_LENGTH, useWorkOrderSearch } from '@/lib/useWorkOrderSearch';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 
 // Formuläret för en tidrad. Tre sorter, samma modal: arbetsorder, intern tid, frånvaro.
@@ -122,10 +123,22 @@ export default function TimeEntryModal({
   // `searchedJob` är träffen man valt; den lever vid sidan av feeden och nollställs med den.
   const [searchedJob, setSearchedJob] = React.useState<MyJob | null>(null);
   const [searchOpen, setSearchOpen] = React.useState(false);
-  const [query, setQuery] = React.useState('');
-  const [hits, setHits] = React.useState<MyJob[]>([]);
-  const [searching, setSearching] = React.useState(false);
-  const searchSeq = React.useRef(0);
+  // Urvalet är RLS på andra sidan — installatören når sina egna jobb, alltså precis de ordrar
+  // insert-policyn på tidraden också släpper igenom. Sökningen kan inte erbjuda ett jobb som
+  // Spara sedan nekar.
+  const search = useWorkOrderSearch<MyJob>({
+    endpoint: '/api/time/work-orders',
+    enabled: kind === 'work_order',
+    map: (row) => ({
+      work_order_id: row.id,
+      order_number: row.fortnox_order_number || row.order_number,
+      project_name: row.project_name,
+      customer: row.client_name,
+    }),
+  });
+  const searchReset = search.reset;
+  /** Dagens feed kunde inte hämtas — skilt från "inga jobb den dagen", som är ett svar. */
+  const [jobsError, setJobsError] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -140,13 +153,17 @@ export default function TimeEntryModal({
     // av vana och spara utan att märka.
     setSearchedJob(null);
     setSearchOpen(false);
-    setQuery('');
-    setHits([]);
+    searchReset();
+    setJobsError(false);
     setJobsLoading(true);
     (async () => {
       const { data, error: rpcError } = await supabase.rpc('get_my_crm_jobs', { start_date: date, end_date: date });
       if (cancelled) return;
       const unique: MyJob[] = [];
+      // ⚠️ Ett fel är inte ett tomt schema. Utan den här flaggan påstod rutan "Inga jobb
+      // schemalagda på dig den dagen" när frågan aldrig kom fram — ett besked om schemat som
+      // ingen kontrollerat, och som leder till att dagen bokförs som intern tid.
+      setJobsError(Boolean(rpcError));
       if (!rpcError) {
         const seen = new Set<string>();
         for (const row of (data ?? []) as any[]) {
@@ -189,40 +206,6 @@ export default function TimeEntryModal({
     return () => { cancelled = true; };
   }, [supabase, kind, date, entry]);
 
-  // Fritextsökning bland de ordrar personen NÅR — RLS avgör urvalet, inte den här koden, och det är
-  // samma gräns som insert-policyn på tidraden. Sekvensnumret finns för att ett långsamt svar på en
-  // gammal term annars lägger sig över en nyare sökning; fördröjningen för att slippa en fråga per
-  // tangenttryck. Båda fällorna är redan betalda i attestens rättningsmodal.
-  React.useEffect(() => {
-    if (kind !== 'work_order') return;
-    const term = query.trim();
-    if (term.length < 2) { setHits([]); setSearching(false); return; }
-    const seq = ++searchSeq.current;
-    setSearching(true);
-    const timer = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/time/work-orders?q=${encodeURIComponent(term)}`, {
-          cache: 'no-store', credentials: 'same-origin',
-        });
-        const body = await res.json().catch(() => null);
-        if (seq !== searchSeq.current) return;
-        const items = (res.ok && body?.ok ? body.data.items : []) as any[];
-        setHits((items ?? []).map((row) => ({
-          work_order_id: row.id,
-          order_number: row.fortnox_order_number || row.order_number,
-          project_name: row.project_name,
-          customer: row.client_name,
-        })));
-      } catch {
-        // Utan den här grenen ligger FÖRRA sökningens träffar kvar under den NYA termen.
-        if (seq === searchSeq.current) setHits([]);
-      } finally {
-        if (seq === searchSeq.current) setSearching(false);
-      }
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [kind, query]);
-
   // Dagens jobb först, den sökta ordern sist. Feeden är alltid huvudspåret.
   const jobOptions = React.useMemo(
     () => (searchedJob && !jobs.some((job) => job.work_order_id === searchedJob.work_order_id)
@@ -234,9 +217,20 @@ export default function TimeEntryModal({
   const pickSearchHit = (hit: MyJob) => {
     setSearchedJob(hit);
     setWorkOrderId(hit.work_order_id);
-    setQuery('');
-    setHits([]);
+    // Rutan lämnas ÖPPEN. Var dagen tom stod den öppen av sig själv, och utan det här försvann den
+    // under fingret i samma stund som första träffen valdes — var det fel träff fanns ingen väg
+    // tillbaka till sökningen man aldrig stängt.
+    setSearchOpen(true);
+    searchReset();
   };
+
+  // Varningen gäller bara ett jobb som INTE ligger den dagen. Söker man fram ett jobb som ändå
+  // står i dagens lista är allt som det ska, och en varning där lär folk att strunta i den.
+  const pickedOffSchedule = Boolean(
+    searchedJob
+      && workOrderId === searchedJob.work_order_id
+      && !jobs.some((job) => job.work_order_id === searchedJob.work_order_id),
+  );
 
   // ⚠️ parseBreakMinutes, ALDRIG `Number(x) || 0` — skälet står på funktionen. Null betyder "går
   // inte att tolka", och då ska summan visa noll och spara-knappen vara stängd. Med `|| 0` blev
@@ -418,7 +412,11 @@ export default function TimeEntryModal({
                   // Tomt läge som går att agera på, inte bara en upplysning: knappen gör det den
                   // föreslår, i stället för att be någon leta rätt på fliken själv.
                   <div className="grid gap-2 rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2.5">
-                    <p className="m-0 text-sm text-amber-900">Inga jobb schemalagda på dig den dagen.</p>
+                    <p className="m-0 text-sm text-amber-900">
+                      {jobsError
+                        ? 'Dagens jobb kunde inte hämtas. Sök fram ordern nedan, eller försök igen.'
+                        : 'Inga jobb schemalagda på dig den dagen.'}
+                    </p>
                     <button
                       type="button"
                       onClick={() => setKind('internal')}
@@ -466,19 +464,24 @@ export default function TimeEntryModal({
                     <label className="grid gap-1">
                       <span className={LABEL}>Sök arbetsorder</span>
                       <Input
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
+                        value={search.query}
+                        onChange={(e) => search.setQuery(e.target.value)}
                         placeholder="Ordernummer eller kund"
                         autoComplete="off"
                       />
                     </label>
-                    {searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
-                    {!searching && query.trim().length >= 2 && hits.length === 0 ? (
+                    {search.searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
+                    {/* Ett trasigt svar får ALDRIG se ut som noll träffar: "ingen träff bland dina
+                        jobb" är ett påstående om vems jobbet är. */}
+                    {!search.searching && search.failed ? (
+                      <span className="text-sm text-rose-600">Sökningen svarade inte. Försök igen.</span>
+                    ) : null}
+                    {!search.searching && !search.failed && search.query.trim().length >= MIN_SEARCH_LENGTH && search.hits.length === 0 ? (
                       // Sökningen når bara de jobb personen är utlagd på — RLS, inte ett filter i
                       // koden — så en tom lista betyder oftast just det, inte att ordern inte finns.
                       <span className="text-sm text-slate-500">Ingen träff bland dina jobb.</span>
                     ) : null}
-                    {hits.map((hit) => (
+                    {search.hits.map((hit) => (
                       <button
                         key={hit.work_order_id}
                         type="button"
@@ -494,7 +497,7 @@ export default function TimeEntryModal({
                 {/* Valt ett jobb som inte ligger den här dagen? Säg det rakt ut. Raden är riktig —
                     besättningen körde jobbet en annan dag — men den ska vara ett medvetet val, inte
                     en felträff man sparar utan att märka. */}
-                {searchedJob && workOrderId === searchedJob.work_order_id ? (
+                {pickedOffSchedule ? (
                   <span className="text-sm text-amber-800">
                     Det här jobbet är inte schemalagt på dig den dagen. Tiden hamnar ändå på ordern.
                   </span>

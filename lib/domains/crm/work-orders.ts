@@ -946,7 +946,15 @@ export async function searchWorkOrdersForTimeReport(
     .or(
       `order_number.ilike.%${term}%,fortnox_order_number.ilike.%${term}%,project_name.ilike.%${term}%,client_name.ilike.%${term}%`,
     )
+    // 🧨 Avbokade ordrar hör inte hit. Dagens lista kan aldrig erbjuda en (get_my_crm_jobs filtrerar
+    // bort dem), men insert-policyn på tidraden frågar inget om status — utan det här går timmar in
+    // på ett inställt jobb och vidare till efterkalkylen.
+    .neq('status', 'cancelled')
+    // Sorteringen behöver ett andra nyckelvärde: rader utan önskat datum är annars lika inför
+    // ORDER BY, och med limit 8 kan två identiska sökningar ge olika åtta. Samma par som
+    // orderlistan använder.
     .order('desired_installation_date', { ascending: false, nullsFirst: false })
+    .order('created_at', { ascending: false })
     .limit(limit);
 
   return { data: (data ?? []) as WorkOrderPickerHit[], error };

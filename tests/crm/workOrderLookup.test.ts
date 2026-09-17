@@ -38,17 +38,15 @@ describe('searchWorkOrdersForTimeReport', () => {
   // Sökningen bakom tidrapportens jobbväljare. Den körs med SESSIONSKLIENTEN, så urvalet är RLS:
   // installatören når sina egna jobb. Det som prövas här är frågan den ställer.
   const spy = () => {
-    const calls: Record<string, any> = {};
+    const calls: Record<string, any> = { order: [] as Array<[string, unknown]>, neq: [] as Array<[string, unknown]> };
+    const chain: any = {
+      or: (filter: string) => { calls.or = filter; return chain; },
+      neq: (column: string, value: unknown) => { calls.neq.push([column, value]); return chain; },
+      order: (column: string, options: unknown) => { calls.order.push([column, options]); return chain; },
+      limit: async (n: number) => { calls.limit = n; return { data: [{ id: 'wo-1' }], error: null }; },
+    };
     const client = {
-      from: (table: string) => { calls.table = table; return {
-        select: (columns: string) => { calls.select = columns; return {
-          or: (filter: string) => { calls.or = filter; return {
-            order: (column: string, options: unknown) => { calls.order = [column, options]; return {
-              limit: async (n: number) => { calls.limit = n; return { data: [{ id: 'wo-1' }], error: null }; },
-            }; },
-          }; },
-        }; },
-      }; },
+      from: (table: string) => { calls.table = table; return { select: (columns: string) => { calls.select = columns; return chain; } }; },
     } as never;
     return { client, calls };
   };
@@ -70,6 +68,20 @@ describe('searchWorkOrdersForTimeReport', () => {
     // Inga parenteser eller kommatecken ur termen får nå filtret — bara de som skiljer villkoren åt.
     expect(calls.or).not.toContain('(');
     expect(calls.or.split(',')).toHaveLength(4);
+  });
+
+  it('🧨 utesluter avbokade ordrar — timmar på ett inställt jobb når efterkalkylen', async () => {
+    // Dagens lista kan aldrig erbjuda en avbokad order (get_my_crm_jobs filtrerar bort dem), och
+    // insert-policyn på tidraden frågar inget om status. Spärren finns bara här.
+    const { client, calls } = spy();
+    await searchWorkOrdersForTimeReport(client, 'Villa');
+    expect(calls.neq).toContainEqual(['status', 'cancelled']);
+  });
+
+  it('sorterar med ett andra nyckelvärde så två identiska sökningar ger samma åtta', async () => {
+    const { client, calls } = spy();
+    await searchWorkOrdersForTimeReport(client, 'Villa');
+    expect(calls.order.map(([column]: [string, unknown]) => column)).toEqual(['desired_installation_date', 'created_at']);
   });
 
   it('frågar inte alls på en tom term', async () => {
