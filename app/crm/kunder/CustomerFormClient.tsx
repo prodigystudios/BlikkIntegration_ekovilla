@@ -159,6 +159,9 @@ function AddressColumn({
   // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
   // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
   // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
+  // Ett anrop, två användningar — annars kan villkoret och texten glida isär vid en framtida ändring.
+  const zipWarning = postalCodeWarning(postalCode, city);
+
   return (
     <div className="grid content-start gap-2">
       <p className={crm.groupTitle}>{label}</p>
@@ -175,8 +178,8 @@ function AddressColumn({
       {/* ⚠️ INTE under låsta fält. Med "Fakturaadress samma som besöksadress" (default) speglar
           fakturakolumnen besöksadressen i disabled inputs — varningen hade då stått två gånger, och
           den ena bett säljaren rätta ett fält som inte går att skriva i. */}
-      {!disabled && postalCodeWarning(postalCode, city) ? (
-        <p className="text-[11px] leading-snug text-amber-700">{postalCodeWarning(postalCode, city)}</p>
+      {!disabled && zipWarning ? (
+        <p className="text-[11px] leading-snug text-amber-700">{zipWarning}</p>
       ) : null}
       {onEmail !== undefined && email !== undefined ? (
         <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" disabled={disabled} />

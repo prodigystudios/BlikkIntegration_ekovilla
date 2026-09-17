@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 // inte drar in env-beroenden — samma mönster som helpers.test.ts.
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 
-import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage, parseFortnoxError } from '@/lib/domains/fortnox/client';
 
 describe('friendlyFortnoxMessage', () => {
   // FortnoxApiError.message ÄR den tekniska loggsträngen. Den får aldrig nå en säljare —
@@ -49,11 +49,18 @@ describe('friendlyFortnoxMessage', () => {
 // åtgärdbar — men beskedet sa ingenting om var.
 describe('2004194 — ogiltigt momsnummer', () => {
   it('pekar ut kundkortet och rätt format i stället för Fortnox tre ord', () => {
+    // ⚠️ KODEN TOLKAS UR DEN RIKTIGA PAYLOADEN, inte inmatad för hand. Ett test som lämnar koden
+    // färdigtolkad hoppar över parseFortnoxError — det steg som avgör om mappningen alls slår till
+    // — och hade förblivit grönt även om Fortnox bytte till versalt `Code`.
+    const body = '{"ErrorInformation":{"error":1,"message":"Ogiltigt VAT-nummer.","code":2004194}}';
+    const parsed = parseFortnoxError(body);
+    expect(parsed.code).toBe(2004194);
+
     const e = new FortnoxApiError(
       400,
-      'Fortnox POST /customers misslyckades (400): {"ErrorInformation":{"error":1,"message":"Ogiltigt VAT-nummer.","code":2004194}}',
-      2004194,
-      'Ogiltigt VAT-nummer.',
+      `Fortnox POST /customers misslyckades (400): ${body}`,
+      parsed.code,
+      parsed.message,
     );
 
     const msg = friendlyFortnoxMessage(e);
@@ -64,5 +71,7 @@ describe('2004194 — ogiltigt momsnummer', () => {
     // …och beskedet ska säga VAR felet sitter och hur det ska se ut.
     expect(msg).toContain('kundkortet');
     expect(msg).toContain('SE');
+    // …och Fortnox egen treordsmening ska vara ersatt, inte kompletterad.
+    expect(msg).not.toBe('Ogiltigt VAT-nummer.');
   });
 });

@@ -219,6 +219,9 @@ function AddressEditColumn({
   // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
   // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
   // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
+  // Ett anrop, två användningar — annars kan villkoret och texten glida isär vid en framtida ändring.
+  const zipWarning = postalCodeWarning(postalCode, city);
+
   return (
     <div className="grid content-start gap-2">
       <p className={crm.groupTitle}>{label}</p>
@@ -229,8 +232,8 @@ function AddressEditColumn({
       </div>
       {/* Samma varning som i nykundsformuläret — se AddressColumn där. Fortnox tar bara siffror i
           ZipCode, och felet syns annars först som ett 400 flera steg senare. */}
-      {postalCodeWarning(postalCode, city) ? (
-        <p className="text-[11px] leading-snug text-amber-700">{postalCodeWarning(postalCode, city)}</p>
+      {zipWarning ? (
+        <p className="text-[11px] leading-snug text-amber-700">{zipWarning}</p>
       ) : null}
       {onEmail !== undefined && email !== undefined ? (
         <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" />

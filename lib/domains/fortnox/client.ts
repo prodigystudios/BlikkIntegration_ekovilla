@@ -46,7 +46,10 @@ export class FortnoxApiError extends Error {
 }
 
 // Fortnox error bodies look like { "ErrorInformation": { "code": 2001243, "message": "..." } }.
-function parseFortnoxError(text: string): { code?: number; message?: string } {
+// Exporterad för test: det är HÄR som avgörs om en FRIENDLY_FORTNOX_MESSAGES-mappning alls kan
+// slå till. Ett test som bygger FortnoxApiError med en redan tolkad kod hoppar över steget, och
+// skulle förbli grönt om Fortnox bytte till versalt `Code`.
+export function parseFortnoxError(text: string): { code?: number; message?: string } {
   try {
     const info = (JSON.parse(text) as { ErrorInformation?: { code?: unknown; message?: unknown } })?.ErrorInformation;
     if (!info) return {};
@@ -108,9 +111,10 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   // inte ens var kontrollsiffre-giltigt, och låg kvar när org.numret rättades. Fortnox säger bara
   // "Ogiltigt VAT-nummer" — beskedet här pekar ut VAR det sitter och hur det ska se ut, eftersom
   // felet alltid är kundkortets och alltid samma åtgärd.
-  2004194: 'Momsregistreringsnumret på kundkortet är ogiltigt. Det är normalt SE + organisationsnumrets '
-    + 'tio siffror + 01 (t.ex. SE556123456701) — koncernregistreringar kan ha 02 eller 03. Rätta det på kunden — eller töm fältet om företaget '
-    + 'inte är momsregistrerat — och försök igen.',
+  // ⚠️ KORT MED FLIT. Beskedet levereras i en toast som försvinner efter fem sekunder, så det måste
+  // gå att läsa i ett svep. Formen (01 är vanligast, koncerner kan ha 02/03) står i orgNumber.ts.
+  2004194: 'Ogiltigt momsregistreringsnummer på kundkortet. Rätta det (normalt SE + org.nr + 01), '
+    + 'eller töm fältet om företaget inte är momsregistrerat.',
   // Fortnox säger "skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen X" —
   // sant, men det pekar ut dokumentet när felet sitter på ARTIKELN. Vi skickar aldrig husarbete på
   // ett icke-ROT-dokument; flaggan (`Housework` på artikeln i Fortnox) ärvs ner på raden och går
