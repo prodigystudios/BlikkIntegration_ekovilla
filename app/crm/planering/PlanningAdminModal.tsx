@@ -8,6 +8,7 @@ import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { useEntityCrud } from './useEntityCrud';
 import { shortDayISO, stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
+import OnOrderNote from './OnOrderNote';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
 // `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
@@ -16,8 +17,8 @@ import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance, DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
 import { deliveryVsCount, sacksOnCountDay } from '@/lib/domains/planning/stockCounts';
-import { describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
-import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
+import { describeShortfallCover, describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
+import { openBookingsFor, type ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { crewInitials, crewColor } from '@/lib/domains/planning/crew';
@@ -28,7 +29,8 @@ import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planni
 // filtered by permission (Option A): admins see the management areas, everyone sees Lager.
 // Reuses the existing domain/API + useEntityCrud — no behaviour change, just one surface.
 
-type AreaKey = 'trucks' | 'depots' | 'suppliers' | 'jobtypes' | 'stock';
+export type AdminAreaKey = 'trucks' | 'depots' | 'suppliers' | 'jobtypes' | 'stock';
+type AreaKey = AdminAreaKey;
 
 const PANEL = 'rounded-2xl border border-[#e0e8dc] bg-white p-4';
 const LABEL = 'mb-1.5 block text-[10.5px] font-bold uppercase tracking-wide text-slate-400';
@@ -37,12 +39,15 @@ export default function PlanningAdminModal({
   canManageTrucks,
   canManageDepots,
   canWrite,
+  initialArea,
   onClose,
   onChanged,
 }: {
   canManageTrucks: boolean;
   canManageDepots: boolean;
   canWrite: boolean;
+  /** Området modalen öppnar på, t.ex. Lager från bristbanderollen. Ogiltigt för rollen → första området. */
+  initialArea?: AreaKey;
   onClose: () => void;
   onChanged: () => void;
 }) {
@@ -114,7 +119,7 @@ export default function PlanningAdminModal({
     [canManageTrucks, canManageDepots, trucksCrud.items.length, depotsCrud.items.length, suppliersCrud.items.length, jobTypesCrud.items.length],
   );
 
-  const [active, setActive] = useState<AreaKey>(areas[0]?.key ?? 'stock');
+  const [active, setActive] = useState<AreaKey>(initialArea ?? areas[0]?.key ?? 'stock');
   // If permissions resolve to fewer areas than the default, keep the active area valid.
   useEffect(() => {
     if (!areas.some((a) => a.key === active)) setActive(areas[0]?.key ?? 'stock');
@@ -1088,6 +1093,7 @@ const EXCLUSION_TEXT: Record<'no_depot' | 'no_material' | 'no_date', string> = {
  * inte i en logg.
  */
 function ForecastCard({ forecast }: { forecast: DepotForecast }) {
+  const today = stockholmTodayISO();
   const needed = rowsNeedingOrder(forecast);
   const overdue = forecast.rows.filter((r) => r.overdue_inflow > 0);
   if (needed.length === 0 && overdue.length === 0 && forecast.excluded.length === 0) return null;
@@ -1162,6 +1168,10 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
                 {r.beyond_horizon > 0 && (
                   <span className="text-slate-400"> · {r.beyond_horizon} säck bokade längre fram</span>
                 )}
+                {/* Det som redan är inbokat. Lass inom horisonten är inräknade i "behöver" ovan; raden
+                    finns så att den som beställer ser att något är på väg, och i gult när det kommer
+                    för sent för att hjälpa. */}
+                <OnOrderNote cover={describeShortfallCover(r, today)} />
               </span>
             </li>
           ))}
@@ -1271,6 +1281,9 @@ function StockPanel({
   const [cntDayDeliveries, setCntDayDeliveries] = useState<DepotDeliveryOnBoard[]>([]);
   const [cntDayReload, setCntDayReload] = useState(0);
   const [open, setOpen] = useState<ExpectedDelivery[]>([]);
+  // Inbokade lass för samma par som den manuella leveransen. Finns ett är det nästan alltid det som
+  // kom — se openBookingsFor.
+  const bookingsForDelivery = openBookingsFor(open, depotId, material);
 
   // Förval när depåregistret landat. Inte ur lagersaldot: det failar stängt, och då hade
   // väljaren stått tom på en yta som ska fungera även när saldot inte gick att räkna ut.
@@ -1628,10 +1641,30 @@ function StockPanel({
                 För ett lass som kom utan att vara inbokat. Säckarna läggs direkt på saldot — utom när leveransen är
                 daterad före depåns senaste avstämning, då den redan finns i det räknade antalet.
               </p>
-              {/* Ett inbokat lass som ÄVEN registreras här räknas två gånger när ankomsten sedan bekräftas. */}
-              <p className="mt-1.5 text-[11.5px] text-amber-700">
-                Är lasset inbokat? Bekräfta ankomsten på veckotavlan i stället.
-              </p>
+              {/* Ett inbokat lass som ÄVEN registreras här räknas två gånger när ankomsten sedan bekräftas.
+                  Finns en inbokning för just den här depån och materialet sägs det med namn och datum. */}
+              {bookingsForDelivery.length > 0 ? (
+                <p className="mt-1.5 text-[11.5px] text-amber-700">
+                  {bookingsForDelivery.length === 1 ? (
+                    <>
+                      Det finns en inbokad leverans av {material} till {bookingsForDelivery[0].depot_name}:{' '}
+                      {bookingsForDelivery[0].sacks} säck, väntas {shortDayISO(bookingsForDelivery[0].expected_on)}. Är det
+                      den som kom?
+                    </>
+                  ) : (
+                    <>
+                      Det finns {bookingsForDelivery.length} inbokade leveranser av {material} till{' '}
+                      {bookingsForDelivery[0].depot_name}, närmast {bookingsForDelivery[0].sacks} säck{' '}
+                      {shortDayISO(bookingsForDelivery[0].expected_on)}. Är det en av dem som kom?
+                    </>
+                  )}{' '}
+                  Bekräfta den på veckotavlan i stället — annars räknas säckarna två gånger.
+                </p>
+              ) : (
+                <p className="mt-1.5 text-[11.5px] text-amber-700">
+                  Är lasset inbokat? Bekräfta ankomsten på veckotavlan i stället.
+                </p>
+              )}
               <div className="mt-3 grid grid-cols-2 gap-2.5">
                 <div><span className={LABEL}>Depå</span>
                   <SelectMenu

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { describeSuggestion, forecastDepotRunOut, rowsNeedingOrder, supplyKey } from '@/lib/domains/planning/depotForecast';
+import { describeShortfallCover, describeSuggestion, forecastDepotRunOut, rowsNeedingOrder, supplyKey } from '@/lib/domains/planning/depotForecast';
 import { addDaysISO } from '@/lib/domains/planning/timezone';
 import { sacksPerPalletFor } from '@/lib/domains/crm/materials';
 
@@ -311,6 +311,246 @@ describe('horisonten', () => {
     });
     expect(rowFor(f).worst_deficit).toBe(10);
     expect(rowFor(f).beyond_horizon).toBe(5000);
+  });
+});
+
+describe('på väg — on_order och next_arrival', () => {
+  const base = {
+    opening: [{ depot_id: SYD, material: EKO, sacks: 50 }],
+    demand: [
+      { depot_id: SYD, material: EKO, sacks: 120, day: '2026-09-20' },
+      { depot_id: SYD, material: EKO, sacks: 900, day: '2027-02-01' }, // bortom horisonten
+    ],
+    inflow: [{ depot_id: SYD, material: EKO, sacks: 54, day: '2026-09-18' }],
+    horizonDays: 90,
+  };
+
+  /**
+   * 🧨 INVARIANTEN. "På väg" är information till den som beställer och får inte röra räkningen. Ett
+   * lass bortom horisonten som smet in i dagsvandringen hade sänkt dagens brist med material som
+   * kommer efter att den uppstått — och ingenting hade sett fel ut, förslaget hade bara blivit mindre.
+   */
+  it('på väg ändrar varken saldo, brist eller förslag', () => {
+    const utan = rowFor(run(base));
+    const med = rowFor(
+      run({ ...base, inflow: [...base.inflow, { depot_id: SYD, material: EKO, sacks: 1296, day: '2027-03-01' }] }),
+    );
+    // De tre informativa fälten får skilja sig — allt annat måste vara identiskt.
+    const { on_order: aOrder, next_arrival: aNext, arrivals: _aArr, ...aRest } = utan;
+    const { on_order: bOrder, next_arrival: bNext, arrivals: _bArr, ...bRest } = med;
+    expect(bRest).toEqual(aRest);
+    // Förutsättning: raden HAR ett underskott, annars prövar jämförelsen ingenting.
+    expect(aRest.worst_deficit).toBeGreaterThan(0);
+    expect(bOrder).toBe(aOrder + 1296);
+    expect(bNext).toBe(aNext);
+  });
+
+  it('räknar in lass bortom horisonten', () => {
+    const r = rowFor(run({ ...base, inflow: [{ depot_id: SYD, material: EKO, sacks: 1296, day: '2027-03-01' }] }));
+    expect(r.on_order).toBe(1296);
+    expect(r.next_arrival).toBe('2027-03-01');
+  });
+
+  it('ett försenat lass är inte på väg — det redovisas som försenat', () => {
+    const r = rowFor(run({ ...base, inflow: [{ depot_id: SYD, material: EKO, sacks: 540, day: '2026-09-13' }] }));
+    expect(r.on_order).toBe(0);
+    expect(r.next_arrival).toBeNull();
+    expect(r.overdue_inflow).toBe(540);
+  });
+
+  it('ett lass som väntas IDAG är på väg', () => {
+    const r = rowFor(run({ ...base, inflow: [{ depot_id: SYD, material: EKO, sacks: 540, day: TODAY }] }));
+    expect(r.on_order).toBe(540);
+    expect(r.next_arrival).toBe(TODAY);
+  });
+
+  it('next_arrival är det tidigaste lasset, oavsett ordning i indata', () => {
+    const r = rowFor(
+      run({
+        ...base,
+        inflow: [
+          { depot_id: SYD, material: EKO, sacks: 10, day: '2026-10-05' },
+          { depot_id: SYD, material: EKO, sacks: 20, day: '2026-09-22' },
+          { depot_id: SYD, material: EKO, sacks: 30, day: '2026-12-24' },
+        ],
+      }),
+    );
+    expect(r.next_arrival).toBe('2026-09-22');
+    expect(r.on_order).toBe(60);
+  });
+
+  it('arrivals summerar per dag, tidigast först', () => {
+    const r = rowFor(
+      run({
+        ...base,
+        inflow: [
+          { depot_id: SYD, material: EKO, sacks: 30, day: '2026-10-05' },
+          { depot_id: SYD, material: EKO, sacks: 10, day: '2026-09-22' },
+          { depot_id: SYD, material: EKO, sacks: 20, day: '2026-10-05' },
+          { depot_id: SYD, material: EKO, sacks: 99, day: '2026-09-01' }, // försenat, inte på väg
+        ],
+      }),
+    );
+    expect(r.arrivals).toEqual([
+      { day: '2026-09-22', sacks: 10 },
+      { day: '2026-10-05', sacks: 50 },
+    ]);
+  });
+
+  /**
+   * Ett lass bortom horisonten får inte vikas in på horisontdagen. Utan den här raden kunde det täcka ett
+   * jobb PÅ horisontdagen med material som kommer dagen efter — och invarianttestet ovan märker inte det,
+   * eftersom dess behov ligger tidigare.
+   */
+  it('ett lass dagen efter horisonten täcker inte ett jobb på horisontdagen', () => {
+    const f = run({
+      opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+      demand: [{ depot_id: SYD, material: EKO, sacks: 500, day: addDaysISO(TODAY, 90) }],
+      inflow: [{ depot_id: SYD, material: EKO, sacks: 1296, day: addDaysISO(TODAY, 91) }],
+      horizonDays: 90,
+    });
+    expect(rowFor(f).worst_deficit).toBe(500);
+    expect(rowFor(f).on_order).toBe(1296);
+  });
+
+  it('ett lass till en annan depå eller ett annat material räknas inte hit', () => {
+    const f = run({
+      ...base,
+      inflow: [
+        { depot_id: NORR, material: EKO, sacks: 100, day: '2026-09-22' },
+        { depot_id: SYD, material: KNAUF, sacks: 48, day: '2026-09-22' },
+      ],
+    });
+    expect(rowFor(f).on_order).toBe(0);
+    expect(rowFor(f, NORR).on_order).toBe(100);
+    expect(rowFor(f, SYD, KNAUF).on_order).toBe(48);
+  });
+});
+
+describe('describeShortfallCover — bristbanderollens rad', () => {
+  it('null när prognosraden saknas — hellre ingen text än en påhittad', () => {
+    expect(describeShortfallCover(undefined, TODAY)).toBeNull();
+  });
+
+  it('täckt när inbokade lass inom horisonten tar bort underskottet', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 50 }],
+        demand: [{ depot_id: SYD, material: EKO, sacks: 120, day: '2026-09-20' }],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 108, day: '2026-09-18' }],
+      }),
+    );
+    expect(r.worst_deficit).toBe(0);
+    expect(describeShortfallCover(r, TODAY)?.covered).toBe(true);
+  });
+
+  /**
+   * Saldot räknar ALLA bokade jobb, prognosen bara horisonten ut. Ett underskott på noll i prognosen
+   * säger då inget om jobbet om fem månader — raden får inte kallas täckt.
+   */
+  it('INTE täckt när behov ligger bortom horisonten', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 50 }],
+        demand: [
+          { depot_id: SYD, material: EKO, sacks: 120, day: '2026-09-20' },
+          { depot_id: SYD, material: EKO, sacks: 900, day: '2027-02-01' },
+        ],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 108, day: '2026-09-18' }],
+        horizonDays: 90,
+      }),
+    );
+    expect(r.worst_deficit).toBe(0);
+    expect(r.beyond_horizon).toBe(900);
+    expect(describeShortfallCover(r, TODAY)?.covered).toBe(false);
+  });
+
+  it('INTE täckt när ingenting är inbokat', () => {
+    const r = rowFor(run({ opening: [{ depot_id: SYD, material: EKO, sacks: 50 }] }));
+    expect(r.worst_deficit).toBe(0);
+    expect(r.beyond_horizon).toBe(0);
+    expect(describeShortfallCover(r, TODAY)?.covered).toBe(false);
+  });
+
+  it('INTE täckt när underskottet står kvar trots inbokning', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+        demand: [{ depot_id: SYD, material: EKO, sacks: 500, day: '2026-09-20' }],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 54, day: '2026-09-18' }],
+      }),
+    );
+    expect(describeShortfallCover(r, TODAY)?.covered).toBe(false);
+  });
+
+  it('flaggar ett lass som kommer först efter att depån tagit slut', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+        demand: [{ depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' }],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 108, day: '2026-09-25' }],
+      }),
+    );
+    expect(r.run_out_day).toBe('2026-09-20');
+    expect(describeShortfallCover(r, TODAY)?.late).toEqual({ sacks: 108, first_day: '2026-09-25', all: true });
+  });
+
+  /**
+   * 🧨 GRANSKNINGSFYNDET. Summan sa "1350 säck på väg, väntas 18/9" — men bara 54 kom i tid, och 1296
+   * kom efter att depån tagit slut. Läsaren beställde inte. Det sena lasset måste stå för sig.
+   */
+  it('ett sent lass syns även när ett tidigare kommer i tid', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+        demand: [{ depot_id: SYD, material: EKO, sacks: 500, day: '2026-09-20' }],
+        inflow: [
+          { depot_id: SYD, material: EKO, sacks: 1296, day: '2026-10-15' },
+          { depot_id: SYD, material: EKO, sacks: 54, day: '2026-09-18' },
+        ],
+      }),
+    );
+    const cover = describeShortfallCover(r, TODAY)!;
+    expect(cover.on_order).toBe(1350);
+    expect(cover.next_arrival).toBe('2026-09-18');
+    expect(cover.late).toEqual({ sacks: 1296, first_day: '2026-10-15', all: false });
+    expect(cover.covered).toBe(false);
+  });
+
+  /**
+   * Prognosen lägger dagens inflöde före dagens förbrukning. För banderollen är det för optimistiskt: har
+   * lasset inte kommit när bilen ska iväg är banderollen det enda som varnar.
+   */
+  it('ett lass som väntas IDAG gör inte raden täckt', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 50 }],
+        demand: [{ depot_id: SYD, material: EKO, sacks: 120, day: TODAY }],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 108, day: TODAY }],
+      }),
+    );
+    expect(r.worst_deficit).toBe(0);
+    const cover = describeShortfallCover(r, TODAY)!;
+    expect(cover.covered).toBe(false);
+    expect(cover.due_today).toBe(108);
+  });
+
+  /** Inflöde före förbrukning samma dag: ett lass PÅ run-out-dagen kommer inte för sent. */
+  it('ett lass samma dag som behovet kommer inte för sent', () => {
+    const r = rowFor(
+      run({
+        opening: [{ depot_id: SYD, material: EKO, sacks: 0 }],
+        demand: [
+          { depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-20' },
+          { depot_id: SYD, material: EKO, sacks: 100, day: '2026-09-25' },
+        ],
+        inflow: [{ depot_id: SYD, material: EKO, sacks: 54, day: '2026-09-20' }],
+      }),
+    );
+    // Saldot går under noll 20/9 (54 − 100) — samma dag som lasset.
+    expect(r.run_out_day).toBe('2026-09-20');
+    expect(r.next_arrival).toBe('2026-09-20');
+    expect(describeShortfallCover(r, TODAY)?.late).toBeNull();
   });
 });
 
