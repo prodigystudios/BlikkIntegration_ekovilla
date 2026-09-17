@@ -63,8 +63,8 @@ export type OpsSegment = {
   placeholder_customer: string | null;
   // Platshållare: publicerad till entreprenaden. Slås på medvetet av planeraren och släpper ut
   // raden i besättningens feed (/mina-jobb + startsidans veckoschema) via get_my_crm_jobs — för
-  // bilens besättning, inte för alla. Läses bara på rader utan arbetsorder: ett riktigt jobb syns
-  // redan för sin besättning via arbetsordern.
+  // bilens besättning de dagarna, inte för alla. Läses bara på rader utan arbetsorder: ett riktigt
+  // jobb syns redan för den som kör det den dagen, utan flagga.
   field_visible: boolean;
   // Vad som ska göras, skrivet av planeraren och läst av grabbarna i fält. Bär hela innehållet på
   // en platshållare som aldrig får en arbetsorder (service av maskiner, interna dagar).

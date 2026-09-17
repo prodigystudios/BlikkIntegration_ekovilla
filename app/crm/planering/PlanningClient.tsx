@@ -911,9 +911,14 @@ export default function PlanningClient({
    * dagarna. Utan den här siffran är "Synlig för entreprenad" en switch utan återkoppling: en bil
    * utan besättning ger noll mottagare, planeraren slår på den och tror att jobbet är ute.
    *
-   * Regeln speglar get_my_crm_jobs → is_user_on_segment: veckans besättning slår standardbemanningen,
-   * och dagarna vidgas till hela ISO-veckor före överlappstestet (samma sak som boardens
-   * crewForTruckInRange gör). Räknar den annorlunda ljuger den om vem som ser vad.
+   * Regeln speglar get_my_crm_jobs → is_user_on_segment_between: veckans besättning slår
+   * standardbemanningen, och varje dag avgörs av besättningen för SIN ISO-vecka (samma sak som
+   * boardens crewForTruckInRange gör per renderad vecka). Räknar den annorlunda ljuger den om vem som
+   * ser vad.
+   *
+   * ⚠️ Exakt för en platshållare inom en vecka — det normala. Går den över en veckogräns ser varje
+   * veckas lag bara sina egna dagar, och siffran nedan (ett uppslag över båda veckorna) är då en
+   * uppskattning av "ser minst en dag", inte ett exakt antal.
    *
    * `null` = vi vet inte. `truckCrew` laddas bara för den synliga perioden, så en platshållare
    * utanför den går inte att uttala sig om — och en varning som inte går att belägga är värre än
