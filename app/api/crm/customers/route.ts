@@ -119,8 +119,12 @@ export async function POST(req: Request) {
         const { data: updated } = await getCrmCustomer(supabase, data.id);
         return ok({ item: updated ?? data }, 201);
       } catch (fortnoxErr: any) {
-        // Fortnox push failed – customer exists in our DB, return with warning
-        return ok({ item: data, fortnox_error: friendlyFortnoxMessage(fortnoxErr) || 'Kunde inte skapa kund i Fortnox' }, 201);
+        // Fortnox push failed – customer exists in our DB, return with warning.
+        // ⚠️ LOGGA DEN TEKNISKA STRÄNGEN. Svaret bär numera bara det begripliga beskedet, så utan
+        // raden här finns Fortnox egen text ingenstans — och en felklass utan kod svarar
+        // "Något gick fel mot Fortnox", vilket lämnar support helt utan spår.
+        console.error('[fortnox] Kundskapande misslyckades:', (fortnoxErr as Error)?.message);
+        return ok({ item: data, fortnox_error: friendlyFortnoxMessage(fortnoxErr) }, 201);
       }
     }
 

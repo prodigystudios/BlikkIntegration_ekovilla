@@ -41,6 +41,18 @@ describe('postalCodeWarning', () => {
     expect(postalCodeWarning('79192 Falun', 'Falun')).not.toContain('(Falun)');
   });
 
+  // 🧨 KONFLIKTEN är värst av lägena: två orter, och Fortnox får den som råkar stå i rätt fält.
+  // Nämns bara den ena ser säljaren aldrig motsägelsen.
+  it('nämner BÅDA orterna när fälten säger olika', () => {
+    const w = postalCodeWarning('79192 Falun', 'Borlänge');
+    expect(w).toContain('Falun');
+    expect(w).toContain('Borlänge');
+  });
+
+  it('läser samma ort med olika skiftläge som dubblering, inte konflikt', () => {
+    expect(postalCodeWarning('79192 FALUN', 'falun')).not.toContain('men Ort säger');
+  });
+
   it('tiger för ett korrekt postnummer', () => {
     expect(postalCodeWarning('79192', 'Falun')).toBeNull();
     expect(postalCodeWarning('791 92', 'Falun')).toBeNull();

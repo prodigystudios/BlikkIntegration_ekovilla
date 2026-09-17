@@ -112,6 +112,8 @@ export async function POST(_req: Request, context: RouteContext) {
         const { data: synced } = await getCrmCustomer(supabase, context.params.id);
         return ok({ item: synced ?? updated, filled });
       } catch (fortnoxErr: any) {
+        // Se kundskapandet: svaret bär bara det begripliga beskedet, loggen bär Fortnox egen text.
+        console.error('[fortnox] Kundberikning misslyckades:', (fortnoxErr as Error)?.message);
         // ⚠️ Läs om raden — `updateFortnoxCustomer` har redan satt sync_status='failed', och
         // `updated` är hämtad FÖRE pushen. Returneras den skriver klienten tillbaka en rad som
         // säger "Synkad" trots att synken just misslyckades. PATCH-routen läser om av exakt
@@ -120,7 +122,7 @@ export async function POST(_req: Request, context: RouteContext) {
         return ok({
           item: latest ?? updated,
           filled,
-          fortnox_error: friendlyFortnoxMessage(fortnoxErr) || 'Kunde inte uppdatera kund i Fortnox',
+          fortnox_error: friendlyFortnoxMessage(fortnoxErr),
         });
       }
     }

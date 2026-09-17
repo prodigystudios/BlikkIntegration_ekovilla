@@ -36,9 +36,11 @@ export function splitPostalCodeAndCity(raw: string | null | undefined): { postal
  * blockerat en adress som är riktig men ovanlig, och den sortens spärr lärs man sig att kringgå.
  * Den som ändå sparar får sitt värde, men har sett vad Fortnox kommer att säga.
  *
- * `city` skickas med för att hålla tillbaka varningen när orten redan står rätt: skriver någon
- * "79192 Falun" OCH "Falun" är siffrorna ändå det Fortnox får, men då är det en dubblering och inte
- * en tappad ort — samma åtgärd, mildare formulering vore bara brus.
+ * `city` skickas med för att skilja tre lägen åt:
+ *   • Ort TOM        → orten är på väg att tappas. Nämn den, så säljaren ser vad som ska flyttas.
+ *   • Ort = samma    → ren dubblering. Säg bara att siffrorna ska stå ensamma.
+ *   • Ort = NÅGOT ANNAT → 🧨 KONFLIKT, och den är värst av de tre: två orter, och Fortnox får den
+ *     som råkar stå i rätt fält. Båda måste nämnas, annars ser säljaren aldrig motsägelsen.
  */
 export function postalCodeWarning(
   postalCode: string | null | undefined,
@@ -50,7 +52,13 @@ export function postalCodeWarning(
 
   const split = splitPostalCodeAndCity(value);
   if (split) {
-    const target = (city ?? '').trim() ? 'Ort-fältet' : `Ort-fältet (${split.city})`;
+    const ort = (city ?? '').trim();
+    const same = ort.toLocaleLowerCase('sv-SE') === split.city.toLocaleLowerCase('sv-SE');
+    if (ort && !same) {
+      return `Postnumret säger "${split.city}" men Ort säger "${ort}". Skriv ${split.postalCode} här `
+        + 'och låt Ort bära orten — Fortnox tar bara siffror i postnummerfältet.';
+    }
+    const target = ort ? 'Ort-fältet' : `Ort-fältet (${split.city})`;
     return `Orten ligger i postnummerfältet. Fortnox tar bara siffror här — skriv ${split.postalCode} `
       + `och flytta orten till ${target}.`;
   }

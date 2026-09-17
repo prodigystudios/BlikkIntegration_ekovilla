@@ -108,8 +108,8 @@ const FRIENDLY_FORTNOX_MESSAGES: Record<number, string> = {
   // inte ens var kontrollsiffre-giltigt, och låg kvar när org.numret rättades. Fortnox säger bara
   // "Ogiltigt VAT-nummer" — beskedet här pekar ut VAR det sitter och hur det ska se ut, eftersom
   // felet alltid är kundkortets och alltid samma åtgärd.
-  2004194: 'Momsregistreringsnumret på kundkortet är ogiltigt. Det ska vara SE + organisationsnumrets '
-    + 'tio siffror + 01 (t.ex. SE556123456701). Rätta det på kunden — eller töm fältet om företaget '
+  2004194: 'Momsregistreringsnumret på kundkortet är ogiltigt. Det är normalt SE + organisationsnumrets '
+    + 'tio siffror + 01 (t.ex. SE556123456701) — koncernregistreringar kan ha 02 eller 03. Rätta det på kunden — eller töm fältet om företaget '
     + 'inte är momsregistrerat — och försök igen.',
   // Fortnox säger "skattereduktionstypen 'none' får inte innehålla rader med husarbetestypen X" —
   // sant, men det pekar ut dokumentet när felet sitter på ARTIKELN. Vi skickar aldrig husarbete på

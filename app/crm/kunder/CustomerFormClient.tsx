@@ -172,7 +172,10 @@ function AddressColumn({
           Fortnox-kundkoppling" på en orderpush. Uppmätt i drift 2026-09-17.
           VARNAR, spärrar inte: fältet bär utländska adresser också, och en hård spärr på ett
           fritextfält lär man sig bara att kringgå. Se lib/domains/crm/postalCode.ts. */}
-      {postalCodeWarning(postalCode, city) ? (
+      {/* ⚠️ INTE under låsta fält. Med "Fakturaadress samma som besöksadress" (default) speglar
+          fakturakolumnen besöksadressen i disabled inputs — varningen hade då stått två gånger, och
+          den ena bett säljaren rätta ett fält som inte går att skriva i. */}
+      {!disabled && postalCodeWarning(postalCode, city) ? (
         <p className="text-[11px] leading-snug text-amber-700">{postalCodeWarning(postalCode, city)}</p>
       ) : null}
       {onEmail !== undefined && email !== undefined ? (
