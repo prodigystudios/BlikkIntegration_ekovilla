@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import {
+  ORDER_EMAIL_LANGUAGES,
+  describeOrderEmailTemplateProblem,
+  orderEmailProblemField,
+  validateOrderEmailTemplate,
+} from '@/lib/domains/planning/materialOrderEmail';
 
 // Planning is a CRM surface, so it shares the CRM route helpers + permission gate directly.
 export { ok, routeError, validationError, invalidUuidParam, requirePermission } from '../_shared';
@@ -292,6 +298,38 @@ export const createSupplierSchema = z.object({
   note: nullableText(300, 'Noteringen är för lång').optional(),
 });
 
+// Beställningsmailets mall (planning.depot.manage). Ämne och text skickas ALLTID ihop: båda strängar =
+// egen mall, båda null = standardtexten. Mallen valideras med samma regler som redigeraren
+// (validateOrderEmailTemplate), så ett anrop förbi gränssnittet inte kan spara en mall utan {orderrader}
+// eller med en felstavad platshållare som sedan går ordagrant till fabriken.
+const orderEmailLanguage = z.enum(ORDER_EMAIL_LANGUAGES, { errorMap: () => ({ message: 'Välj svenska eller engelska' }) });
+const orderEmailTemplateFields = {
+  order_email_subject: z.string().nullable().optional(),
+  order_email_body: z.string().nullable().optional(),
+};
+function refineOrderEmailTemplate(
+  v: { order_email_subject?: string | null; order_email_body?: string | null },
+  ctx: z.RefinementCtx,
+) {
+  const hasSubject = v.order_email_subject !== undefined;
+  const hasBody = v.order_email_body !== undefined;
+  if (!hasSubject && !hasBody) return;
+  if (hasSubject !== hasBody || (v.order_email_subject === null) !== (v.order_email_body === null)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['order_email_body'], message: 'Ämne och text sparas ihop — båda eller ingen' });
+    return;
+  }
+  if (v.order_email_subject === null || v.order_email_body === null) return;
+  for (const problem of validateOrderEmailTemplate({ subject: v.order_email_subject!, body: v.order_email_body! })) {
+    const field = orderEmailProblemField(problem) === 'subject' ? 'order_email_subject' : 'order_email_body';
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: describeOrderEmailTemplateProblem(problem) });
+  }
+}
+
+/** Testmailet skickar UTKASTET, inte det sparade — så man kan prova innan man sparar. */
+export const orderEmailTestSchema = z
+  .object({ order_email_language: orderEmailLanguage, ...orderEmailTemplateFields })
+  .superRefine(refineOrderEmailTemplate);
+
 export const updateSupplierSchema = z
   .object({
     name: z.string().trim().min(1, 'Ange ett namn').max(120, 'Namnet är för långt').optional(),
@@ -304,7 +342,10 @@ export const updateSupplierSchema = z
     // Avveckling sker genom avaktivering — inaktiva leverantörer ligger kvar men blir aldrig
     // mottagare (suppliersForMaterial filtrerar på active).
     active: z.boolean().optional(),
+    order_email_language: orderEmailLanguage.optional(),
+    ...orderEmailTemplateFields,
   })
+  .superRefine(refineOrderEmailTemplate)
   .refine((v) => Object.keys(v).length > 0, 'Inget att spara');
 
 // Avstämning av depålagret (planning.depot.manage): "den här dagen stod det X säckar på depån".

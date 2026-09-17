@@ -9,6 +9,7 @@ import { useEntityCrud } from './useEntityCrud';
 import { shortDayISO, stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
 import OnOrderNote from './OnOrderNote';
+import OrderEmailCard from './OrderEmailCard';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
 // `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
@@ -810,6 +811,9 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
               </p>
               <button onClick={onSave} disabled={busy} className={cn(crm.formButton, 'mt-3.5')} style={{ backgroundColor: 'var(--crm-primary)' }}>Spara</button>
             </div>
+
+            {/* Bara mallfälten läggs in — se OrderEmailCard om varför inte reload(). */}
+            <OrderEmailCard key={supplier.id} supplier={supplier} onSaved={(saved) => patchLocal(supplier.id, saved)} />
 
             <RiskZone
               title="Riskzon"

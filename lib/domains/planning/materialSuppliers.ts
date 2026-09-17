@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
+import { ORDER_EMAIL_LANGUAGES, type OrderEmailLanguage } from './materialOrderEmail';
 
 // Leverantörsregistret: vem materialet beställs FRÅN.
 //
@@ -26,10 +27,17 @@ export type MaterialSupplier = {
   lead_time_days: number;
   note: string | null;
   active: boolean;
+  /** Beställningsmailets språk. Styr också systemets delar av mailet (rader, datum, enheter). */
+  order_email_language: OrderEmailLanguage;
+  /** Egen mall, eller null = standardtexten för språket. Båda eller ingen (databasen vaktar paret). */
+  order_email_subject: string | null;
+  order_email_body: string | null;
 };
 
+// ⚠️ order_email_* kräver 20260917_ops_material_suppliers_order_email.sql. Saknas kolumnerna svarar
+// PostgREST 400 och Leverantörer-fliken visar felrutan — SQL FÖRE KODEN.
 const SUPPLIER_SELECT =
-  'id, name, email, contact_name, phone, materials, lead_time_days, note, active';
+  'id, name, email, contact_name, phone, materials, lead_time_days, note, active, order_email_language, order_email_subject, order_email_body';
 
 /**
  * Det MINSTA en rad behöver bära för att urvalsregeln ska gälla den.
@@ -190,6 +198,13 @@ function toSupplier(row: Record<string, any>): MaterialSupplier {
     lead_time_days: Number(row.lead_time_days ?? 0),
     note: (row.note as string | null) ?? null,
     active: row.active !== false,
+    // Databasen tillåter bara 'sv' och 'en'. Ett okänt värde blir svenska hellre än ett språk koden inte
+    // har några ord för.
+    order_email_language: (ORDER_EMAIL_LANGUAGES as readonly string[]).includes(row.order_email_language)
+      ? (row.order_email_language as OrderEmailLanguage)
+      : 'sv',
+    order_email_subject: (row.order_email_subject as string | null) ?? null,
+    order_email_body: (row.order_email_body as string | null) ?? null,
   };
 }
 
@@ -209,6 +224,19 @@ export async function listAllSuppliers(
     .order('name', { ascending: true });
   if (error) return { data: [], error };
   return { data: ((data as Record<string, any>[]) ?? []).map(toSupplier), error: null };
+}
+
+/**
+ * En leverantör, eller data null när den inte finns eller är osynlig bakom RLS — de två går inte att
+ * skilja åt, och anroparen ska svara 404 på båda.
+ */
+export async function getSupplier(
+  supabase: SupabaseClient,
+  id: string,
+): Promise<{ data: MaterialSupplier | null; error: { message: string } | null }> {
+  const { data, error } = await supabase.from('ops_material_suppliers').select(SUPPLIER_SELECT).eq('id', id).maybeSingle();
+  if (error) return { data: null, error };
+  return { data: data ? toSupplier(data as Record<string, any>) : null, error: null };
 }
 
 export type CreateSupplierInput = {
@@ -249,6 +277,9 @@ export type UpdateSupplierInput = {
   leadTimeDays?: number;
   note?: string | null;
   active?: boolean;
+  orderEmailLanguage?: OrderEmailLanguage;
+  /** null = återställ till standardtexten. Ämne och text skrivs alltid ihop. */
+  orderEmailTemplate?: { subject: string; body: string } | null;
 };
 
 /**
@@ -268,6 +299,11 @@ export async function updateSupplier(supabase: SupabaseClient, id: string, patch
   if (patch.leadTimeDays !== undefined) update.lead_time_days = patch.leadTimeDays;
   if (patch.note !== undefined) update.note = patch.note;
   if (patch.active !== undefined) update.active = patch.active;
+  if (patch.orderEmailLanguage !== undefined) update.order_email_language = patch.orderEmailLanguage;
+  if (patch.orderEmailTemplate !== undefined) {
+    update.order_email_subject = patch.orderEmailTemplate?.subject ?? null;
+    update.order_email_body = patch.orderEmailTemplate?.body ?? null;
+  }
 
   return supabase
     .from('ops_material_suppliers')
