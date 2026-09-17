@@ -535,17 +535,21 @@ type WorkOrderListFilters = {
   customerId?: string;
 };
 
+// ⚠️ KOMMATECKEN OCH PARENTESER MÅSTE BORT ur en term som går in i `or=(...)`. PostgREST läser den
+// som en villkorslista separerad med komma, så ett kundnamn som "Ekbergs Bygg, AB" delar uttrycket
+// mitt itu och hela frågan svarar 400 — vilket väljaren visar som "inga träffar" och orderlistan
+// som ett fel. En term som `x,status.eq.invoiced` hade dessutom smugit in en egen gren i filtret.
+export function sanitizeOrFilterTerm(search: string): string {
+  return search.replace(/[,()]/g, ' ').trim();
+}
+
 // Apply the shared WHERE clauses so the paginated list and the per-filter counts always use
 // the exact same predicates (search, status group, assignee, deep-link, customer scope).
 function applyWorkOrderListFilters<Q extends {
   or: (f: string) => Q; eq: (c: string, v: string) => Q; in: (c: string, v: string[]) => Q;
 }>(query: Q, options: WorkOrderListFilters): Q {
   if (options.search) {
-    // ⚠️ KOMMATECKEN OCH PARENTESER MÅSTE BORT. PostgREST läser `or=(...)` som en villkorslista
-    // separerad med komma, så ett kundnamn som "Ekbergs Bygg, AB" delar uttrycket mitt itu och hela
-    // frågan svarar 400 — vilket väljaren visar som "inga träffar" och orderlistan som ett fel. En
-    // term som `x,status.eq.invoiced` hade dessutom smugit in en egen gren i filtret.
-    const term = options.search.replace(/[,()]/g, ' ').trim();
+    const term = sanitizeOrFilterTerm(options.search);
     if (!term) return query;
 
     // ⚠️ `fortnox_order_number` är med sedan 2026-08-14. Den saknades, vilket betydde att numret
@@ -899,6 +903,53 @@ export async function lookupCrmWorkOrderByNumber(supabase: SupabaseClient, order
     data: { ...narrowLookupRow(row), scheduled_day: (segment as { start_day?: string } | null)?.start_day ?? null },
     error: null,
   };
+}
+
+// Order search for the time report's job picker (/tid → TimeEntryModal).
+//
+// The picker lists the jobs the person is scheduled on THAT DAY (get_my_crm_jobs), which is right
+// nearly always and wrong exactly when the crew works a job on another day than planned — they
+// drove out a day early and then had nowhere to put the hours. This is the way out of that: search
+// by order number or customer instead of by calendar.
+//
+// SCOPE IS RLS, NOT A FILTER HERE. Pass the SESSION client: crm_work_orders SELECT lets an
+// installer see the orders they are crew on (any segment) and nothing else, which is exactly the
+// set they may write time against — the INSERT policy on crm_time_entries asks the same question
+// (is_user_on_work_order). Office roles have crm.workorder.read and therefore see all orders, the
+// same reach the attest correction modal already gives them.
+//
+// The projection is deliberately tiny: this route is field-facing, and a work order row carries
+// personnummer in customer_snapshot / rot_details (see redactWorkOrderForField).
+const WORK_ORDER_PICKER_SELECT = 'id, order_number, fortnox_order_number, project_name, client_name';
+
+export type WorkOrderPickerHit = {
+  id: string;
+  order_number: string | null;
+  fortnox_order_number: string | null;
+  project_name: string | null;
+  client_name: string | null;
+};
+
+export async function searchWorkOrdersForTimeReport(
+  supabase: SupabaseClient,
+  search: string,
+  { limit = 8 }: { limit?: number } = {},
+) {
+  const term = sanitizeOrFilterTerm(search);
+  if (!term) return { data: [] as WorkOrderPickerHit[], error: null };
+
+  // `notes` is searchable in the office list but not here — internal notes are not the field's to
+  // grep through, and the order number or the customer is what the crew has in hand.
+  const { data, error } = await supabase
+    .from('crm_work_orders')
+    .select(WORK_ORDER_PICKER_SELECT)
+    .or(
+      `order_number.ilike.%${term}%,fortnox_order_number.ilike.%${term}%,project_name.ilike.%${term}%,client_name.ilike.%${term}%`,
+    )
+    .order('desired_installation_date', { ascending: false, nullsFirst: false })
+    .limit(limit);
+
+  return { data: (data ?? []) as WorkOrderPickerHit[], error };
 }
 
 // Whether the SESSION may read this work order — the same RLS the field view goes through
