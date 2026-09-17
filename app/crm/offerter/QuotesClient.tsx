@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import { documentRef } from '@/app/crm/lib/format';
@@ -112,15 +112,14 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   const [filter, setFilter] = useState<QuoteFilter>('all');
   const [sort, setSort] = useState<QuoteSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // Startar på den inloggades egna offerter — samma val som säljtavlan gör. Reserven är alla:
-  // utan ett känt id löses MINE upp till tomt, och listan ska då visa allt snarare än ingenting.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
+  // Startar på den inloggades egna offerter — samma val som orderlistan och säljtavlan.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId));
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
-  // 'mine' resolves to the current user before it goes to the server, the same way the order board
-  // does it — the filter is server-side now, so the browser can't be the one deciding who's who.
+  // 'mine' löses upp till ett riktigt id före frågan — filtret är server-side, så webbläsaren får
+  // inte vara den som avgör vem "jag" är. Regeln delas med orderlistan.
   const assigneeParam = useMemo(
-    () => assigneeFilter.map((v) => (v === MINE ? (currentUserId ?? '') : v)).filter(Boolean).join(','),
+    () => assigneeQueryParam(assigneeFilter, currentUserId),
     [assigneeFilter, currentUserId],
   );
 
@@ -408,8 +407,25 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
         {loading ? <div className="text-sm text-slate-500">Laddar offerter…</div> : null}
         {!loading && quotes.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">
-            Inga offerter matchar just nu.
+          // 🧨 Ansvarigfiltret måste NÄMNAS här. Det är OCH:at med sökrutan och står på "Mina" från
+          // start, så en kollegas offertnummer ger noll träffar — och den gamla texten läste sig då
+          // som "offerten finns inte". Rader utan ansvarig faller bort av samma skäl (`in(...)`
+          // matchar aldrig null), och på mobilen är filterraden dessutom hopfälld.
+          <div className="grid justify-items-center gap-3 rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">
+            <span>
+              {assigneeFilter.length > 0
+                ? 'Inga offerter matchar just nu — listan visar bara ett urval av ansvariga.'
+                : 'Inga offerter matchar just nu.'}
+            </span>
+            {assigneeFilter.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setAssigneeFilter([])}
+                className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+              >
+                Visa alla ansvariga
+              </button>
+            ) : null}
           </div>
         ) : null}
 

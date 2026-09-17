@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import AssigneeFilter, { matchesAssignee, MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { defaultAssigneeFilter, matchesAssignee, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { documentRef, formatCurrency } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
@@ -94,10 +94,9 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, 
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
-  // Default to the logged-in seller's own offers ("mina offerter"); the filter can be
-  // widened to other sellers / everyone. Fall back to everyone when the user id is
-  // unknown — [MINE] with a null id would filter every quote out and blank the board.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
+  // Den inloggades egna offerter; filtret kan vidgas till andra säljare eller alla. Regeln och
+  // dess reserv bor i defaultAssigneeFilter, delad med offert- och orderlistan.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId));
   const [movingId, setMovingId] = useState<string | null>(null);
   // Draget är redan släppt när dialogen visas. Flytten läggs undan här och körs först på
   // bekräftelse — avbryts den händer ingenting, för den optimistiska flytten ligger efter

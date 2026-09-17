@@ -6,7 +6,7 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
-import AssigneeFilter, { MINE, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
@@ -128,15 +128,17 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   const [filter, setFilter] = useState<WorkOrderFilter>('all');
   const [sort, setSort] = useState<WorkOrderSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // Startar på den inloggades egna ordrar — samma val som offertlistan och säljtavlan. Reserven är
-  // alla: utan ett känt id löses MINE upp till tomt, och listan ska då visa allt snarare än inget.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(currentUserId ? [MINE] : []);
+  // Startar på den inloggades egna ordrar — samma val som offertlistan och säljtavlan.
+  // 🧨 `assigned_to` på en order är SÄLJAREN (ärvd från offerten), inte den som planerar. En
+  // planerare utan egna ordrar möter alltså en tom tavla tills filtret rensas — därför bär tomma
+  // läget en knapp som gör just det.
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId));
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
-  // 'mine' → the current user id, resolved before the request so status/assignee filtering and
-  // counts are all computed server-side (the list can exceed the PostgREST row cap).
+  // 'mine' → id före frågan, så status, ansvarig och räknare alla avgörs server-side (listan kan
+  // överstiga PostgREST:s radtak). Regeln delas med offertlistan.
   const assigneeParam = useMemo(
-    () => assigneeFilter.map((v) => (v === MINE ? (currentUserId ?? '') : v)).filter(Boolean).join(','),
+    () => assigneeQueryParam(assigneeFilter, currentUserId),
     [assigneeFilter, currentUserId],
   );
 
@@ -424,8 +426,23 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
         {/* List */}
         {loading ? <div className="py-4 text-sm text-slate-500">Laddar arbetsorder…</div> : null}
           {!loading && workOrders.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
-              Inga arbetsorder matchar just nu.
+            // 🧨 Samma skäl som i offertlistan, och skarpare här: `assigned_to` är SÄLJAREN, så en
+            // planerare ser en tom tavla tills filtret rensas. Knappen är vägen ut.
+            <div className="grid justify-items-center gap-3 rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
+              <span>
+                {assigneeFilter.length > 0
+                  ? 'Inga arbetsorder matchar just nu — listan visar bara ett urval av ansvariga.'
+                  : 'Inga arbetsorder matchar just nu.'}
+              </span>
+              {assigneeFilter.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setAssigneeFilter([])}
+                  className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                >
+                  Visa alla ansvariga
+                </button>
+              ) : null}
             </div>
           ) : null}
 
