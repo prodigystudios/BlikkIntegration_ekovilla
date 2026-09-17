@@ -19,7 +19,7 @@ type PageResult = { data: unknown[] | null; error: { message: string } | null };
  * hårdare RLS-grindad än rutten.
  */
 function makeClient(
-  tables: Record<string, (from: number | null) => PageResult>,
+  tables: Record<string, (from: number | null, columns: string) => PageResult>,
   rpcs: Record<string, () => PageResult> = {},
 ) {
   return {
@@ -29,21 +29,39 @@ function makeClient(
     },
     from(table: string) {
       let rangeFrom: number | null = null;
+      let columns = '*';
       const chain: Record<string, unknown> = {};
-      for (const m of ['select', 'in', 'eq', 'is', 'gte', 'lte', 'order', 'limit']) {
+      for (const m of ['in', 'eq', 'is', 'gte', 'lte', 'order', 'limit']) {
         chain[m] = () => chain;
       }
+      // Kolumnlistan skickas vidare till svaret, så att ett test kan svara med BARA de kolumner
+      // produktionskoden bad om (se `project`). De flesta svar struntar i den.
+      chain.select = (cols: string) => {
+        columns = cols;
+        return chain;
+      };
       chain.range = (f: number) => {
         rangeFrom = f;
         return chain;
       };
       chain.then = (ok: (v: PageResult) => unknown, fail: (e: unknown) => unknown) => {
         const responder = tables[table] ?? (() => ({ data: [], error: null }));
-        return Promise.resolve(responder(rangeFrom)).then(ok, fail);
+        return Promise.resolve(responder(rangeFrom, columns)).then(ok, fail);
       };
       return chain;
     },
   } as never;
+}
+
+/**
+ * Svara som PostgREST: bara de kolumner som valdes. Klarar platta listor ("a, b, c"), inte inbäddningar.
+ *
+ * Utan den svarar fejken med hela fixturen oavsett select, och en läsning som tappar en kolumn blir
+ * grön ändå.
+ */
+function project(rows: Record<string, unknown>[], columns: string): Record<string, unknown>[] {
+  const keep = columns.split(',').map((c) => c.trim());
+  return rows.map((r) => Object.fromEntries(keep.filter((k) => k in r).map((k) => [k, r[k]])));
 }
 
 const ok = (data: unknown[]): PageResult => ({ data, error: null });
@@ -56,7 +74,7 @@ const delivery = { depot_id: 'd1', material: 'EKOVILLA', sacks: 1 };
 const TODAY = '2026-09-14';
 
 /** Grundläge: allt svarar tomt och felfritt. */
-const base = (): Record<string, (from: number | null) => PageResult> => ({
+const base = (): Record<string, (from: number | null, columns: string) => PageResult> => ({
   ops_depots: () => ok([depot]),
   ops_trucks: () => ok([]),
   ops_depot_deliveries: () => ok([]),
@@ -184,6 +202,29 @@ describe('getDepotStockWithForecast failar stängt', () => {
     // 400 − 70 (bara det efter räkningen). Datumfiltret gav 280; att jämföra egenkontrollens
     // report_day gav 400. Båda är mutationstestade mot det här testet.
     expect(res.data[0].rows.find((r) => r.material === 'EKOVILLA')?.balance).toBe(330);
+  });
+
+  /**
+   * 🧨 LEVERANSEN PÅ RÄKNINGSDAGEN GENOM HELA LÄSVÄGEN, med Borlänges tidsstämplar från 11 sep.
+   *
+   * Regeln avgörs av `created_at` på BÅDA raderna. deliveriesAfterCounts har egna enhetstester, men de
+   * får tidsstämplarna serverade: tappar någon av de två läsningarna kolumnen ur sin select blir
+   * tidsstämpeln oläsbar, leveransen räknas som inräknad, och det bekräftade lasset försvinner ur saldot
+   * igen utan att något felar. Bara ett test där fejken svarar med de VALDA kolumnerna fångar det.
+   */
+  it('en ankomst kvitterad efter avstämningen samma dag läggs på saldot', async () => {
+    const res = await getDepotStockWithForecast(
+      makeClient({
+        ...base(),
+        ops_depot_deliveries: (_from, columns) =>
+          ok(project([{ depot_id: 'd1', material: 'EKOVILLA', sacks: 1296, delivered_on: '2026-09-11', created_at: '2026-09-11T10:25:09.996837+00:00' }], columns)),
+        ops_depot_stock_counts: (_from, columns) =>
+          ok(project([{ depot_id: 'd1', material: 'EKOVILLA', counted_sacks: 486, counted_on: '2026-09-11', created_at: '2026-09-11T10:24:36.181149+00:00' }], columns)),
+      }),
+      TODAY,
+    );
+    expect(res.error).toBeNull();
+    expect(res.data[0].rows.find((r) => r.material === 'EKOVILLA')?.balance).toBe(1782);
   });
 
   it('propagerar fel från leveransvillkoren', async () => {

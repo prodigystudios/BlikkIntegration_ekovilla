@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { stockholmTodayISO } from './planningDates';
+import { shortDayISO, stockholmTodayISO } from './planningDates';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
+import { deliveryAddsToBalance } from '@/lib/domains/planning/stockCounts';
 
 // Kvittera att en väntad leverans kommit fram. Först här blir den lager.
 //
@@ -11,12 +12,19 @@ import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 // ska in i saldot; skrivs 180 in ändå tror lagret att det finns 60 säckar som inte existerar, och
 // det upptäcks när en bil står tom. Fältet är förifyllt med det beställda eftersom det är det
 // vanliga fallet, inte för att det är sanningen.
+//
+// ⚠️ ETT ANKOMSTDATUM FÖRE DEPÅNS SENASTE AVSTÄMNING ÄNDRAR INTE SALDOT — lasset stod då på depån när man
+// räknade. Kvitteringen lyckas ändå, så utan varningen nedan ser det ut som att knappen inte gjorde något.
+// Det var precis så felet såg ut i drift (Borlänge, 11 sep), då med samma datum på båda.
 export default function ReceiveDeliveryModal({
   chip,
+  countedOn,
   onClose,
   onConfirm,
 }: {
   chip: DeliveryChip;
+  /** Senaste avstämningen för chipets depå och material, eller null (aldrig avstämd, eller okänt). */
+  countedOn: string | null;
   onClose: () => void;
   onConfirm: (input: { delivered_on: string; sacks: number; note: string | null }) => Promise<void>;
 }) {
@@ -31,6 +39,7 @@ export default function ReceiveDeliveryModal({
   const count = Number(sacks);
   const valid = count > 0 && Number.isInteger(count) && deliveredOn.length === 10 && deliveredOn <= today;
   const short = count > 0 && count < chip.sacks;
+  const alreadyCounted = deliveredOn.length === 10 && !deliveryAddsToBalance(deliveredOn, countedOn);
 
   const submit = async () => {
     if (!valid || saving) return;
@@ -72,6 +81,12 @@ export default function ReceiveDeliveryModal({
               className={`${field} tabular-nums`}
               aria-label="Ankomstdatum"
             />
+            {alreadyCounted && countedOn && (
+              <p className="mt-1 text-[11px] text-amber-700">
+                Depån stämdes av {shortDayISO(countedOn)}. En leverans som kom före det finns redan i det räknade
+                antalet, så saldot ändras inte.
+              </p>
+            )}
           </div>
           <div>
             <span className={label}>Antal säckar som kom</span>

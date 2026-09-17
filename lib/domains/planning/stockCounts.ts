@@ -19,8 +19,13 @@ export type StockCount = {
   depot_id: string;
   material: string;
   sacks: number;
-  /** 'YYYY-MM-DD'. Räkningen gäller vid dagens BÖRJAN. */
+  /**
+   * 'YYYY-MM-DD'. För FÖRBRUKNINGEN gäller räkningen vid dagens början. För en LEVERANS samma dag avgör
+   * `created_at` — se deliveriesAfterCounts.
+   */
   counted_on: string;
+  /** När räkningen fördes in (timestamptz). Avgör bara leveranser daterade PÅ räkningsdagen. */
+  created_at: string;
 };
 
 /** En lagerrörelse med sitt datum — leveransens dag eller rapportens arbetsdag. */
@@ -30,6 +35,16 @@ export type DatedMovement = {
   sacks: number;
   /** 'YYYY-MM-DD'. */
   day: string;
+};
+
+/**
+ * En leverans i saldot. `created_at` är OBLIGATORISK, inte valfri: utan den kan en leverans på
+ * räkningsdagen inte placeras, och en läsning som tappar kolumnen ska synas i typkontrollen i stället
+ * för att tyst ge tillbaka felet där bekräftade säckar aldrig nådde saldot.
+ */
+export type DeliveryMovement = DatedMovement & {
+  /** När leveransen fördes in — kvitteringen eller "Registrera leverans" (timestamptz). */
+  created_at: string;
 };
 
 /** Nyckel per depå och material. U+0000 som avgränsare: materialkoderna innehåller mellanslag. */
@@ -66,23 +81,50 @@ export function latestCounts(rows: StockCount[]): Map<string, StockCount> {
  * movementsAfterCounts och drog förbrukningen också; det var fel, och namnet är ändrat så att det inte
  * går att göra om av misstag.
  *
- * ⚠️ `>`, INTE `>=`: EN LEVERANS PÅ RÄKNINGSDAGEN RÄKNAS SOM FÖRE RÄKNINGEN. Kom den på morgonen innan
- * man räknade står den redan i det räknade antalet, och att lägga på den igen gav ett för HÖGT saldo —
- * den farliga riktningen, som tystar bristbanderollen. Kom den i själva verket efter räkningen blir
- * saldot för lågt, vilket är ofarligt.
+ * Regeln:
+ *   leverans FÖRE räkningsdagen  -> redan inräknad, läggs inte på
+ *   leverans EFTER räkningsdagen -> läggs på
+ *   leverans PÅ räkningsdagen    -> INMATNINGSORDNINGEN avgör: förd in efter räkningen läggs den på,
+ *                                   förd in före räkningen räknas den som inräknad
  *
- * Det är AVSIKTLIGT ASYMMETRISKT mot förbrukningen, där räkningsdagens arbete dras av (räknas som
- * efter). Båda reglerna är valda så att ett fel alltid hamnar åt SAMMA håll: för lågt saldo, något för
- * mycket beställt, aldrig en bil utan material. "Samma regel åt båda håll" — som en tidigare version
- * påstod — hade gjort leveransfelet farligt.
+ * 🧨 SAMMA DAG AVGJORDES FÖRUT AV DATUMET ENSAMT, och leveransen räknades alltid som inräknad (`>`).
+ * Tanken var att en morgonleverans annars dubbelräknades. I drift slog det ut åt andra hållet: Borlänge
+ * stämdes av till 486 säck och 33 sekunder senare kvitterades ett lass på 1296 — båda daterade samma
+ * dag. Lagerraden skapades, men saldot rörde sig inte och ingenting sa varför. Ekovilla inventerar i
+ * slutet av månaden och kvitterar när lasset kommer (Williams besked 2026-09-17): knappen ska lägga på
+ * säckarna. Är leveransen kvitterad innan räkningen förs in står den på depån när man räknar, och är
+ * den det inte kommer den efter.
+ *
+ * ⚠️ Kvarvarande risk: en leverans som stod på depån när man räknade men kvitteras först EFTER att
+ * räkningen förts in läggs på en gång till. Kvitteringsfönstret och leveransformuläret visar därför
+ * räkningen de läggs på.
+ *
+ * En tidsstämpel som inte går att tolka ger det gamla svaret — inräknad. Kolumnerna är NOT NULL, så det
+ * ska aldrig hända; typen kräver fältet för att en läsning inte ska kunna tappa det.
  *
  * Depåer och material UTAN räkning passerar orörda — där gäller saldot över all tid som förut.
  */
-export function deliveriesAfterCounts<T extends DatedMovement>(deliveries: T[], counts: Map<string, StockCount>): T[] {
+export function deliveriesAfterCounts<T extends DeliveryMovement>(deliveries: T[], counts: Map<string, StockCount>): T[] {
   return deliveries.filter((m) => {
     const c = counts.get(key(m.depot_id, m.material));
-    return !c || m.day > c.counted_on;
+    if (!c) return true;
+    if (m.day !== c.counted_on) return m.day > c.counted_on;
+    const deliveredAt = Date.parse(m.created_at);
+    const countedAt = Date.parse(c.created_at);
+    if (!Number.isFinite(deliveredAt) || !Number.isFinite(countedAt)) return false;
+    return deliveredAt > countedAt;
   });
+}
+
+/**
+ * Ren: lägger en leverans som förs in NU på saldot, givet depåns senaste räkning?
+ *
+ * För formulären, som vill säga det INNAN någon trycker. Samma regel som deliveriesAfterCounts för en
+ * leverans som förs in efter varje räkning som redan finns — och det gör den alltid, räkningen är redan
+ * inläst. Kvar blir bara datumet: före räkningsdagen är den redan inräknad.
+ */
+export function deliveryAddsToBalance(deliveredOn: string, countedOn: string | null): boolean {
+  return countedOn === null || deliveredOn >= countedOn;
 }
 
 /** Räkningen för en depå och ett material, eller undefined. */
@@ -101,7 +143,9 @@ export async function listStockCounts(
   const { rows, error } = await readAllPages<Record<string, any>>((from, to) =>
     supabase
       .from('ops_depot_stock_counts')
-      .select('depot_id, material, counted_sacks, counted_on')
+      // created_at avgör leveranser på räkningsdagen (deliveriesAfterCounts) — tappas den läggs ingen
+      // leverans på räkningsdagen någonsin på.
+      .select('depot_id, material, counted_sacks, counted_on, created_at')
       // Inmatningsordning är det latestCounts vilar på vid två räkningar samma dag. `id` bryter lika
       // `created_at`, så ordningen är unik och sidorna kan varken dubblera eller hoppa över rader.
       .order('created_at', { ascending: true })
@@ -115,6 +159,7 @@ export async function listStockCounts(
       material: r.material as string,
       sacks: Number(r.counted_sacks),
       counted_on: r.counted_on as string,
+      created_at: r.created_at as string,
     })),
     error: null,
   };

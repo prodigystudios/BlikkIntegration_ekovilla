@@ -15,6 +15,7 @@ import SelectMenu from '@/components/ui/SelectMenu';
 import type { OpsTruck, OpsDepot } from '@/lib/domains/planning/types';
 import type { JobTypeRow } from '@/lib/domains/planning/jobTypes';
 import type { DepotBalance } from '@/lib/domains/planning/depotStock';
+import { deliveryAddsToBalance } from '@/lib/domains/planning/stockCounts';
 import { describeSuggestion, rowsNeedingOrder, type DepotForecast } from '@/lib/domains/planning/depotForecast';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { validateSupplier, type MaterialSupplier, type SupplierProblem } from '@/lib/domains/planning/materialSuppliers';
@@ -1239,6 +1240,8 @@ function StockPanel({
   const [sacks, setSacks] = useState('');
   const [deliveredOn, setDeliveredOn] = useState(today);
   const [note, setNote] = useState('');
+  const deliveryCountedOn =
+    depots.find((d) => d.depot_id === depotId)?.rows.find((r) => r.material === material)?.counted_on ?? null;
 
   // Väntad leverans — eget formulär, egna fält. Delas de med det ovan blir det oklart vilken
   // knapp som gör vad, och skillnaden mellan "står på depån" och "är på väg" är hela poängen.
@@ -1426,8 +1429,8 @@ function StockPanel({
           <form onSubmit={record} className={PANEL}>
             <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
             <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Lägger till säckar i saldot — utom när leveransen är daterad på eller före depåns senaste avstämning,
-              då den redan finns i det räknade antalet.
+              Lägger till säckar i saldot — utom när leveransen är daterad före depåns senaste avstämning, då den
+              redan finns i det räknade antalet.
             </p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
@@ -1454,6 +1457,14 @@ function StockPanel({
                   Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
               <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
             </div>
+            {/* Registreringen lyckas även när datumet ligger före avstämningen, men saldot rör sig inte —
+                utan raden ser det ut som att knappen inte gjorde något. */}
+            {deliveryCountedOn && deliveredOn.length === 10 && !deliveryAddsToBalance(deliveredOn, deliveryCountedOn) && (
+              <p className="mt-2 text-[11px] text-amber-700">
+                Depån stämdes av {shortDayISO(deliveryCountedOn)}. En leverans daterad före det finns redan i det räknade
+                antalet, så saldot ändras inte.
+              </p>
+            )}
             <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
               <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
               <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera</button>
@@ -1469,7 +1480,8 @@ function StockPanel({
             <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Stäm av saldo</h3>
             <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
               Skriv in hur många säckar som faktiskt står på depån. Saldot räknas sedan från det — det som hände
-              före räkningen syns redan i antalet, även rapporter som kommer in i efterhand.
+              före räkningen syns redan i antalet, även rapporter som kommer in i efterhand. Leveranser samma dag
+              som redan är registrerade räknas som inräknade; de som registreras efteråt läggs på.
             </p>
             <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
               <div className="sm:col-span-1">

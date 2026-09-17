@@ -1555,6 +1555,13 @@ export default function PlanningClient({
       {receiving && (
         <ReceiveDeliveryModal
           chip={receiving}
+          // Ur samma saldo som bristbanderollen. Failade den läsningen blir det null och ingen varning —
+          // kvitteringen fungerar ändå, den är inte beroende av saldot.
+          countedOn={
+            depotStock
+              .find((d) => d.depot_id === receiving.depot_id)
+              ?.rows.find((r) => r.material === receiving.material)?.counted_on ?? null
+          }
           onClose={() => setReceiving(null)}
           onConfirm={async (input) => {
             // ⚠️ try/catch, inte bara ok-kontroll. Knappen är alltid synlig just för att appen körs

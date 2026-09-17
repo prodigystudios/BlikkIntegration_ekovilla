@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deliveriesAfterCounts, latestCounts, type DatedMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
+import { deliveriesAfterCounts, deliveryAddsToBalance, latestCounts, type DeliveryMovement, type StockCount } from '@/lib/domains/planning/stockCounts';
 import { computeDepotBalances, consumptionAfterCounts } from '@/lib/domains/planning/depotStock';
 import { stockCountSchema } from '@/app/api/crm/planering/_lib';
 import { stockholmTodayISO, addDaysISO } from '@/lib/domains/planning/timezone';
@@ -25,18 +25,25 @@ const EKO = 'EKOVILLA';
 const DEPOTS = [{ id: SYD, name: 'Syd' }];
 const FLEET = new Map<string, string | null>([['truck-syd', SYD], ['truck-norr', NORR]]);
 
+/**
+ * En räkning förs in på eftermiddagen (16:00 svensk tid) och en leverans kvitteras på förmiddagen (10:00)
+ * — om inget annat sägs. Det avgör BARA leveranser på räkningsdagen; testerna för just det fallet sätter
+ * båda tidsstämplarna uttryckligen i stället för att luta sig mot det här förvalet.
+ */
 const count = (sacks: number, counted_on: string, over: Partial<StockCount> = {}): StockCount => ({
   depot_id: SYD,
   material: EKO,
   sacks,
   counted_on,
+  created_at: `${counted_on}T14:00:00Z`,
   ...over,
 });
-const delivery = (sacks: number, day: string, over: Partial<DatedMovement> = {}): DatedMovement => ({
+const delivery = (sacks: number, day: string, over: Partial<DeliveryMovement> = {}): DeliveryMovement => ({
   depot_id: SYD,
   material: EKO,
   sacks,
   day,
+  created_at: `${day}T08:00:00Z`,
   ...over,
 });
 
@@ -74,7 +81,7 @@ function final(sacks: number, jobFirstDay: string, writtenOn: string, over: Reco
 /** PRODUKTIONENS väg: senaste räkning -> leveranser och förbrukning avgränsade -> baslinje. */
 function balanceWith(
   counts: StockCount[],
-  deliveries: DatedMovement[],
+  deliveries: DeliveryMovement[],
   reports: Array<ReturnType<typeof partial>>,
 ) {
   const latest = latestCounts(counts);
@@ -114,7 +121,7 @@ describe('avstämning, inte justering', () => {
   });
 });
 
-describe('räkningsdagen — ASYMMETRISKT, så att ett fel alltid blir för lågt', () => {
+describe('räkningsdagen', () => {
   /**
    * Förbrukning PÅ räkningsdagen dras av (räknas som efter). Blåstes den i själva verket FÖRE räkningen
    * blir saldot för lågt — ofarligt.
@@ -125,13 +132,87 @@ describe('räkningsdagen — ASYMMETRISKT, så att ett fel alltid blir för låg
   });
 
   /**
-   * 🧨 En leverans PÅ räkningsdagen läggs INTE på (räknas som före). Kom den på morgonen innan man räknade
-   * står den redan i antalet — att lägga på den igen gav ett för HÖGT saldo. En tidigare version gjorde
-   * precis det och påstod "samma regel åt båda håll"; det testet stod här och var grönt.
+   * 🧨 FALLET SOM HÄNDE I DRIFT, med produktionens tidsstämplar tecken för tecken. Borlänge stämdes av
+   * till 486 och lasset på 1296 kvitterades 33 sekunder senare, båda daterade 11 sep. Den gamla regeln
+   * räknade varje leverans på räkningsdagen som inräknad, så saldot stod kvar på 486 och ingenting sa
+   * varför.
    */
-  it('en leverans PÅ räkningsdagen läggs INTE på — den kan redan finnas i antalet', () => {
-    const r = balanceWith([count(400, '2026-09-14')], [delivery(1296, '2026-09-14')], []);
+  it('en ankomst kvitterad EFTER att avstämningen förts in läggs på — samma dag', () => {
+    const r = balanceWith(
+      [count(486, '2026-09-11', { created_at: '2026-09-11T10:24:36.181149+00:00' })],
+      [delivery(1296, '2026-09-11', { created_at: '2026-09-11T10:25:09.996837+00:00' })],
+      [],
+    );
+    expect(r.balance).toBe(1782);
+  });
+
+  /**
+   * Månadsinventeringen förs in på kvällen. Lasset som kom och kvitterades på förmiddagen stod då på
+   * depån och finns i det räknade antalet — att lägga på det igen gav ett för HÖGT saldo, som tystar
+   * bristbanderollen.
+   */
+  it('en ankomst kvitterad INNAN avstämningen fördes in räknas som inräknad — samma dag', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-09-30T16:00:00Z' })],
+      [delivery(1296, '2026-09-30', { created_at: '2026-09-30T08:00:00Z' })],
+      [],
+    );
     expect(r.balance).toBe(400);
+  });
+
+  /**
+   * Inmatningsordningen gäller BARA på räkningsdagen. Över dagsgränsen avgör datumet, åt båda håll —
+   * annars flyttar en inventering som förs in i efterhand varje leverans efter räkningsdagen till "före".
+   */
+  it('över dagsgränsen avgör datumet, inte när raderna fördes in', () => {
+    // Inventeringen per 30 sep förs in 2 okt. Lasset 1 okt kvitterades 1 okt — före inmatningen, men
+    // efter räkningsdagen: det ska på.
+    const efter = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-10-02T07:00:00Z' })],
+      [delivery(1296, '2026-10-01', { created_at: '2026-10-01T08:00:00Z' })],
+      [],
+    );
+    expect(efter.balance).toBe(1696);
+
+    // Ett lass daterat 29 sep kvitteras i efterhand 3 okt — efter inmatningen, men före räkningsdagen:
+    // det stod på depån när man räknade.
+    const fore = balanceWith(
+      [count(400, '2026-09-30', { created_at: '2026-09-30T16:00:00Z' })],
+      [delivery(1296, '2026-09-29', { created_at: '2026-10-03T08:00:00Z' })],
+      [],
+    );
+    expect(fore.balance).toBe(400);
+  });
+
+  it('en tidsstämpel som inte går att tolka ger det gamla svaret — inräknad', () => {
+    const r = balanceWith(
+      [count(400, '2026-09-14', { created_at: '' })],
+      [delivery(1296, '2026-09-14', { created_at: '2026-09-14T18:00:00Z' })],
+      [],
+    );
+    expect(r.balance).toBe(400);
+  });
+});
+
+describe('deliveryAddsToBalance — formulärens förhandsbesked', () => {
+  it('utan räkning läggs allt på', () => {
+    expect(deliveryAddsToBalance('2026-01-01', null)).toBe(true);
+  });
+
+  /**
+   * Formuläret frågar om en leverans som förs in NU, alltså efter varje räkning som redan finns. Då
+   * måste beskedet stämma med saldot för före, på och efter räkningsdagen — annars lovar fönstret en sak
+   * och saldot gör en annan, vilket är exakt den tystnad som skulle bort.
+   */
+  it('säger samma sak som saldot för en leverans som förs in efter räkningen', () => {
+    const c = count(400, '2026-09-14', { created_at: '2026-09-14T06:00:00Z' });
+    for (const day of ['2026-09-13', '2026-09-14', '2026-09-15']) {
+      const kept = deliveriesAfterCounts([delivery(10, day, { created_at: '2026-09-17T09:00:00Z' })], latestCounts([c]));
+      expect(deliveryAddsToBalance(day, c.counted_on)).toBe(kept.length === 1);
+    }
+    // Förutsättning, så att jämförelsen ovan inte kan bli grön med alla svar lika.
+    expect(deliveryAddsToBalance('2026-09-13', c.counted_on)).toBe(false);
+    expect(deliveryAddsToBalance('2026-09-14', c.counted_on)).toBe(true);
   });
 });
 
