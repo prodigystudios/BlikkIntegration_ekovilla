@@ -121,23 +121,22 @@ export default function PlanningAdminModal({
   }, [areas, active]);
 
   return (
-    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-4 sm:p-6" onClick={onClose}>
+    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-3 sm:p-4" onClick={onClose}>
       <div
-        className="flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-xl"
+        // FAST storlek, inte bara ett tak. Med `max-h` krympte modalen till varje områdes innehåll
+        // och centrerades om, så den hoppade i både storlek och läge vid varje byte av område.
+        className="flex h-full w-full max-w-[2400px] flex-col overflow-hidden rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="border-b border-[#e0e8dc] bg-gradient-to-b from-white to-[#f9fbf7] px-5 py-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
+        <div className="border-b border-[#e0e8dc] bg-gradient-to-b from-white to-[#f9fbf7] px-5 py-3">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+              <h2 className="text-[19px] font-extrabold tracking-tight text-[#142c1b]">Administrera planeringen</h2>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-[#cfe3d6] bg-[#e7f0ea] px-2.5 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wider text-[#1f4a2e]">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 Planering admin
               </span>
-              <h2 className="mt-2 text-[20px] font-extrabold tracking-tight text-[#142c1b]">Administrera planeringen</h2>
-              <p className="mt-0.5 max-w-xl text-[12px] text-slate-500">
-                En samlad arbetsyta för bilar, depåer, jobbtyper och lager. Välj ett område — överblick först, redigering när du valt vad du jobbar med.
-              </p>
             </div>
             <button
               onClick={onClose}
@@ -201,6 +200,10 @@ export default function PlanningAdminModal({
 }
 
 // ── shared master-detail shell ──────────────────────────────────────────────
+// Detaljkorten i två spalter när ytan är bred. Modalen är nästan helskärm, och ett formulär i full
+// bredd drar ut fälten över tusen pixlar. `items-start`: korten ska inte sträckas till grannens höjd.
+const DETAIL_GRID = 'grid max-w-[1500px] items-start gap-3.5 xl:grid-cols-2';
+
 function MasterDetail({ list, detail }: { list: React.ReactNode; detail: React.ReactNode }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-[300px_1fr]">
@@ -410,7 +413,7 @@ function TruckPanel({
         !truck ? (
           <EmptyDetail text="Välj en bil för att redigera." />
         ) : (
-          <div className="grid gap-3.5">
+          <div className={DETAIL_GRID}>
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Grundinställningar</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Namn och färg som visas på tavlan.</p>
@@ -505,7 +508,7 @@ function DepotPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCrud
         !depot ? (
           <EmptyDetail text="Välj en depå för att redigera." />
         ) : (
-          <div className="grid gap-3.5">
+          <div className={DETAIL_GRID}>
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Grundinställningar</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Depåns namn och plats.</p>
@@ -568,7 +571,8 @@ const SUPPLIER_PROBLEM_TEXT: Record<SupplierProblem, string> = {
 // Samma klasser som Aktiv-rutorna i den här filen.
 // `columns`: listkolumnen i MasterDetail är 300 px bred, och materialkoderna är långa
 // ('ISOCELL/ISECO', 'KNAUF SUPAFIL', 'HUNTON NATIVO'). I två spalter radbryter de mitt i namnet.
-// Detaljvyn är bred och tar två.
+// Detaljvyn tar så många spalter som ryms utan att namnen bryts — den delar bredden med ett kort till
+// från xl, så en fast tvåspalt bröt dem där också.
 //
 // 🧨 RENDERAR UNIONEN AV KATALOGEN OCH DET VALDA, INTE BARA KATALOGEN. En rad kan bära en kod som
 // inte finns i MATERIAL_SHORTS — seedad via SQL (det finns med flit ingen CHECK), eller efterlämnad
@@ -591,7 +595,7 @@ function MaterialChecklist({
 }) {
   const rows = [...new Set([...MATERIAL_SHORTS, ...selected])];
   return (
-    <div className={cn('grid gap-1.5', columns === 2 && 'sm:grid-cols-2')}>
+    <div className={cn('grid gap-1.5', columns === 2 && 'grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]')}>
       {rows.map((m) => {
         const unknown = !MATERIAL_SHORTS.includes(m);
         return (
@@ -747,7 +751,7 @@ function SupplierPanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityC
         !supplier ? (
           <EmptyDetail text="Välj en leverantör för att redigera." />
         ) : (
-          <div className="grid gap-3.5">
+          <div className={DETAIL_GRID}>
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Grunduppgifter</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
@@ -875,7 +879,7 @@ function JobTypePanel({ crud, onChanged }: { crud: ReturnType<typeof useEntityCr
         !jt ? (
           <EmptyDetail text="Välj en jobbtyp för att redigera." />
         ) : (
-          <div className="grid gap-3.5">
+          <div className={DETAIL_GRID}>
             <div className={PANEL}>
               <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">{jt.label}</h3>
               <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">Färgen styr prickens kulör på planeringskorten.</p>
@@ -990,7 +994,7 @@ function ExpectedRow({
 
   if (!editing) {
     return (
-      <li className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
+      <li className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
         <div className="min-w-0">
           <div className="truncate text-[12.5px] font-semibold text-slate-700">
             {item.depot_name} · {item.sacks} säck {item.material}
@@ -1018,7 +1022,7 @@ function ExpectedRow({
   }
 
   return (
-    <li className="rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
+    <li className="min-w-0 rounded-xl border border-[color:var(--ek-accent)] bg-white px-3 py-2.5">
       <div className="grid gap-2.5 sm:grid-cols-4">
         <div>
           <span className={LABEL}>Depå</span>
@@ -1321,6 +1325,22 @@ function StockPanel({
   }, [canManageDepots, cntOn, cntDayReload]);
   const cntSacksOnDay = sacksOnCountDay(cntDayDeliveries, { depotId: cntDepotId, material: cntMaterial, countedOn: cntOn });
 
+  // Åtgärdsspalten visar ETT formulär i taget. Bara de lägen behörigheten räcker till; utan något alls
+  // försvinner spalten och läget tar hela bredden. Utkasten ligger kvar i sina egna fält vid byte.
+  //
+  // ⚠️ "Leverans" är att BOKA IN ett lass som ska komma, och står först som förval. Det var förr namnet
+  // på den manuella leveransen, och den som lägger in lass läste det som "här lägger jag in leveransen"
+  // (Williams besked 2026-09-17). Den manuella — ett lass som kom utan att vara inbokat, rakt in i
+  // saldot — är undantaget och står sist. Byt inte tillbaka: två lass i saldot för samma leverans är
+  // precis vad förväxlingen ger.
+  const actions = [
+    { key: 'expected' as const, label: 'Leverans', show: canManageDepots },
+    { key: 'count' as const, label: 'Avstämning', show: canManageDepots },
+    { key: 'delivery' as const, label: 'Manuell', show: canWrite },
+  ].filter((a) => a.show);
+  const [action, setAction] = useState<'delivery' | 'count' | 'expected'>('expected');
+  const activeAction = actions.some((a) => a.key === action) ? action : (actions[0]?.key ?? null);
+
   async function record(e: FormEvent) {
     e.preventDefault();
     if (!depotId || !material || !(Number(sacks) > 0)) return;
@@ -1333,7 +1353,7 @@ function StockPanel({
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte registrera leveransen');
-      toast.success('Leverans registrerad');
+      toast.success('Manuell leverans registrerad');
       setSacks('');
       setNote('');
       setCntDayReload((n) => n + 1);
@@ -1367,7 +1387,7 @@ function StockPanel({
       const r = await fetch(`${EXPECTED_API}/${id}`, { method: 'DELETE' });
       const j = await r.json().catch(() => null);
       if (!j?.ok) return toast.error(j?.error || 'Kunde inte avboka leveransen');
-      toast.success('Väntad leverans avbokad');
+      toast.success('Leverans avbokad');
       // Prognosen räknar in väntade leveranser — en avbokning ÖPPNAR en brist som kortet annars
       // fortsatte visa som täckt. Åt det hållet är tystnaden farlig.
       await Promise.all([loadOpen(), load()]);
@@ -1428,8 +1448,8 @@ function StockPanel({
         }),
       });
       const j = await r.json().catch(() => null);
-      if (!j?.ok) return toast.error(j?.error || 'Kunde inte lägga in leveransen');
-      toast.success('Väntad leverans inlagd');
+      if (!j?.ok) return toast.error(j?.error || 'Kunde inte boka in leveransen');
+      toast.success('Leverans inbokad');
       setExpSacks('');
       setExpNote('');
       // ⚠️ SALDOT ändras inte av en väntad leverans — men PROGNOSEN gör det, och de kommer ur samma
@@ -1440,7 +1460,7 @@ function StockPanel({
     } catch {
       // Utan den här grenen gav ett nätverksfel ingen återkoppling alls, och formuläret stod kvar
       // ifyllt — vilket bjuder in till ett andra tryck och en dubblett som ingen kan se.
-      toast.error('Kunde inte lägga in leveransen');
+      toast.error('Kunde inte boka in leveransen');
     } finally {
       setExpBusy(false);
     }
@@ -1449,270 +1469,318 @@ function StockPanel({
   if (loading) return <div className="grid h-full place-items-center text-[12.5px] text-slate-400">Laddar…</div>;
 
   return (
-    <div className="h-full overflow-y-auto bg-gradient-to-b from-[#fcfdfb] to-[#f9fbf7] p-5">
-      <div className="grid gap-3.5">
-        {canWrite && (
-          <form onSubmit={record} className={PANEL}>
-            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Registrera leverans</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Lägger till säckar i saldot — utom när leveransen är daterad före depåns senaste avstämning, då den
-              redan finns i det räknade antalet.
-            </p>
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <div className="sm:col-span-1"><span className={LABEL}>Depå</span>
-                <SelectMenu
-                  value={depotId}
-                  onChange={setDepotId}
-                  className="min-h-9 py-0 text-[13px]"
-                  aria-label="Depå"
-                  placeholder="Ingen depå"
-                  options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
-                />
-              </div>
-              <div><span className={LABEL}>Material</span>
-                <SelectMenu
-                  value={material}
-                  onChange={setMaterial}
-                  className="min-h-9 py-0 text-[13px]"
-                  aria-label="Material"
-                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
-                />
-              </div>
-              <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
-              {/* max: en framtida leverans hade höjt saldot redan idag och tystat bristbanderollen.
-                  Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
-              <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
-            </div>
-            {/* Registreringen lyckas även när datumet ligger före avstämningen, men saldot rör sig inte —
-                utan raden ser det ut som att knappen inte gjorde något. */}
-            {deliveryVs === 'before_count' && deliveryCountedOn && (
-              <p className="mt-2 text-[11px] text-amber-700">
-                Depån stämdes av {shortDayISO(deliveryCountedOn)}. En leverans daterad före det finns redan i det räknade
-                antalet, så saldot ändras inte.
+    // Läget till vänster, en åtgärd i taget till höger. Saldot står kvar i synfältet medan man
+    // registrerar och uppdateras bredvid formuläret när det sparas. Förr stod tre formulär med nästan
+    // samma fält överst, och saldot — det man öppnar fliken för att se — längst ned.
+    //
+    // ⚠️ Under lg är det ETT scrollområde, med formuläret under läget. Två rader i ett grid lät
+    // formulärets auto-rad äta höjden, och på en låg skärm (eller med zoom) blev saldot noll pixlar
+    // högt och gick inte att scrolla fram. `minmax(0,1fr)` på raden från lg: utan den växer raden med
+    // innehållet och spalterna slutar scrolla var för sig.
+    <div
+      className={cn(
+        'h-full min-h-0 overflow-y-auto bg-gradient-to-b from-[#fcfdfb] to-[#f9fbf7] lg:grid lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden',
+        activeAction && 'lg:grid-cols-[minmax(0,1fr)_400px]',
+      )}
+    >
+      <div className="p-5 lg:min-h-0 lg:overflow-y-auto">
+        {/* `minmax(0,1fr)`, inte gridets auto-spår: saldotabellen kan inte krympa under ~490 px, och ett
+            auto-spår växer då med den — hela spalten, prognosen inräknad, tryckte ut åt sidan och klipptes. */}
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-3.5 [&>*]:min-w-0">
+          {loadError ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
+              <div className="font-semibold">Lagersaldot kunde inte räknas ut</div>
+              <p className="mt-0.5 text-rose-600">{loadError}</p>
+              <p className="mt-1 text-[11px] text-rose-500">
+                Siffrorna visas inte, eftersom ett halvt underlag ser ut som ett fullt lager. Ladda om sidan och hör av dig
+                om det står kvar.
               </p>
-            )}
-            {deliveryVs === 'on_count_day' && deliveryCountedOn && (
-              <p className="mt-2 text-[11px] text-slate-500">
-                Läggs på avstämningen från {shortDayISO(deliveryCountedOn)}. Stod leveransen redan på depån när ni räknade
-                blir saldot för högt — stäm då av igen.
-              </p>
-            )}
-            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
-              <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
-              <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera</button>
             </div>
-          </form>
-        )}
+          ) : depots.length === 0 ? (
+            <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
+          ) : (
+            <>
+              {forecast && <ForecastCard forecast={forecast} />}
+              <section>
+                <h3 className="mb-2 px-1 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
+                {/* Så många depåkort i bredd som ytan rymmer, i stället för en brytpunkt: modalen är lika bred
+                    som skärmen, och den varierar mellan en laptop och en stor skärm. `min(…, 100%)`: är ytan
+                    smalare än ett kort ska kortet krympa, inte trycka ut spalten åt sidan och klippa talen. */}
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(460px,100%),1fr))] items-start gap-2.5">
+                  {depots.map((d) => {
+                    const shortfall = d.rows.reduce((s, r) => s + r.shortfall, 0);
+                    return (
+                      <div key={d.depot_id} className="min-w-0 rounded-2xl border border-[#e0e8dc] bg-white p-3.5">
+                        <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-[13.5px] font-bold text-slate-800">{d.depot_name}</span>
+                            {shortfall > 0 && <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[9px] font-bold text-rose-700">Lager räcker inte · −{shortfall}</span>}
+                            {shortfall === 0 && d.rows.some((r) => r.balance < 0) && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[9px] font-bold text-amber-700">Underskott</span>}
+                          </span>
+                          <span className={cn('shrink-0 text-[12.5px] font-bold tabular-nums', balanceClass(d.total_balance))}>{d.total_balance} säck</span>
+                        </div>
+                        {d.rows.length === 0 ? (
+                          <p className="text-[11px] text-slate-400">Inga rörelser än.</p>
+                        ) : (
+                          // Egen sidscroll i ett smalt kort, så att talen går att nå i stället för att klippas.
+                          <div className="overflow-x-auto">
+                          <table className="w-full text-[11.5px]">
+                            <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="font-semibold">Material</th><th className="pl-2 text-right font-semibold">Levererat</th><th className="pl-2 text-right font-semibold">Förbrukat</th><th className="pl-2 text-right font-semibold">Saldo</th><th className="pl-2 text-right font-semibold">Planerat</th><th className="pl-2 text-right font-semibold">Räcker?</th></tr></thead>
+                            <tbody>
+                              {d.rows.map((r) => (
+                                <tr key={r.material} className="border-t border-[#eef3eb]">
+                                  <td className="py-1 font-semibold text-slate-700">
+                                    {r.material}
+                                    {/* ⚠️ Utan den här raden ser "Levererat" och "Förbrukat" ut som all tid —
+                                        men efter en avstämning räknas de från räkningen. Siffrorna går då inte
+                                        ihop för den som läser dem utan att veta om baslinjen. `!= null`, inte
+                                        sanningsvärde: en räkning på NOLL är en baslinje och ska synas. */}
+                                    {r.counted_on != null && r.counted != null && (
+                                      <span className="block text-[10px] font-normal text-slate-400">
+                                        avstämt {r.counted} · {shortDayISO(r.counted_on)}
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-1 text-right tabular-nums text-slate-500">{r.delivered}</td>
+                                  <td className="py-1 text-right tabular-nums text-slate-500">{r.consumed}</td>
+                                  <td className={cn('py-1 text-right font-bold tabular-nums', balanceClass(r.balance))}>{r.balance}</td>
+                                  <td className="py-1 text-right tabular-nums text-slate-500">{r.planned}</td>
+                                  <td className="py-1 text-right font-bold tabular-nums">
+                                    {r.shortfall > 0 ? <span className="text-rose-600">−{r.shortfall}</span> : <span className="text-emerald-600">✓</span>}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 px-1 text-[10.5px] text-slate-400">Planerat = säckar bokade på öppna jobb från depån. "Räcker?" visar om lagret täcker det planerade. Förbrukning fylls i automatiskt när installatörernas säckrapportering är på plats.</p>
+              </section>
+            </>
+          )}
 
-        {/* Avstämning — "det här står på depån". Rättar saldot åt BÅDA hållen, till skillnad från
-            leveransen ovan som bara kan lägga till. Grindad på depot.manage: ett för högt räknat värde
-            tystar bristbanderollen, så det är ett känsligare beslut än att ta emot gods. */}
-        {canManageDepots && (
-          <form onSubmit={recordCount} className={PANEL}>
-            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Stäm av saldo</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Skriv in hur många säckar som faktiskt står på depån. Saldot räknas sedan från det — det som hände
-              före räkningen syns redan i antalet, även rapporter som kommer in i efterhand.
-            </p>
-            <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-              <div className="sm:col-span-1">
-                <span className={LABEL}>Depå</span>
-                <SelectMenu
-                  value={cntDepotId}
-                  onChange={setCntDepotId}
-                  placeholder="Välj depå"
-                  aria-label="Depå"
-                  options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
-                />
-              </div>
-              <div>
-                <span className={LABEL}>Material</span>
-                <SelectMenu
-                  value={cntMaterial}
-                  onChange={setCntMaterial}
-                  aria-label="Material"
-                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
-                />
-              </div>
-              {/* min 0, inte 1: en tom depå är ett svar, och det som ska tända bristbanderollen. */}
-              <div><span className={LABEL}>Antal på depån</span><input type="number" min={0} value={cntSacks} onChange={(e) => setCntSacks(e.target.value)} placeholder="Antal" className={crm.input} aria-label="Antal säckar på depån" /></div>
-              {/* max: en framtidsdaterad räkning blir baslinje direkt och fryser saldot på ett tal ingen
-                  räknat. Grinden som räknas sitter i stockCountSchema och i databasens insert-policy. */}
-              <div><span className={LABEL}>Räknat</span><input type="date" value={cntOn} max={today} onChange={(e) => setCntOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Räknat datum" /></div>
-            </div>
-            {cntSacksOnDay > 0 && (
-              <p className="mt-2 text-[11px] text-amber-700">
-                {cntSacksOnDay} säck levererades {shortDayISO(cntOn)} och är redan registrerade. De räknas som inräknade i
-                antalet — skriv in det med dem.
+          {/* Öppna väntade leveranser. Egen lista, UTAN datumfönster: tavlans remsa visar bara den
+              vecka som ritas, så en leverans som aldrig kom föll tyst ur synfältet när veckan
+              passerade — och det är precis den som behöver jagas. */}
+          {open.length > 0 && (
+            <div className={PANEL}>
+              <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Väntade leveranser</h3>
+              <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
+                Beställt men inte framme. Räknas inte i saldot ovan.
               </p>
-            )}
-            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
-              <input value={cntNote} onChange={(e) => setCntNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
+              <ul className="grid grid-cols-[minmax(0,1fr)] items-start gap-1.5 min-[2000px]:grid-cols-2">
+                {open.map((e) => (
+                  <ExpectedRow
+                    key={e.id}
+                    item={e}
+                    depots={depotOptions}
+                    today={today}
+                    canManage={canManageDepots}
+                    // Både listan OCH prognosen: en ändrad leverans flyttar datumet den täcker.
+                    onSaved={reloadExpectedAndForecast}
+                    onCancel={cancelExpected}
+                  />
+                ))}
+              </ul>
+              {canWrite && (
+                <p className="mt-2 text-[11px] text-slate-400">
+                  Bekräfta ankomst gör du på veckotavlan, där leveransen står på sin dag.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {activeAction && (
+        <aside className="border-t border-[#e0e8dc] bg-white p-5 lg:min-h-0 lg:overflow-y-auto lg:border-l lg:border-t-0">
+          {actions.length > 1 && (
+            <div role="tablist" aria-label="Åtgärd" className="grid auto-cols-fr grid-flow-col gap-1 rounded-xl border border-[#e0e8dc] bg-[#f4f7f2] p-1">
+              {actions.map((a) => {
+                const on = a.key === activeAction;
+                return (
+                  <button
+                    key={a.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={on}
+                    onClick={() => setAction(a.key)}
+                    className={cn(
+                      'h-8 rounded-lg px-2 text-[12px] font-bold transition',
+                      on ? 'bg-[#1a3f26] text-white shadow-sm' : 'text-slate-600 hover:bg-white',
+                    )}
+                  >
+                    {a.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {activeAction === 'delivery' && (
+            <form onSubmit={record} className="mt-4">
+              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Manuell leverans</h3>
+              <p className="mt-0.5 text-[11.5px] text-slate-500">
+                För ett lass som kom utan att vara inbokat. Säckarna läggs direkt på saldot — utom när leveransen är
+                daterad före depåns senaste avstämning, då den redan finns i det räknade antalet.
+              </p>
+              {/* Ett inbokat lass som ÄVEN registreras här räknas två gånger när ankomsten sedan bekräftas. */}
+              <p className="mt-1.5 text-[11.5px] text-amber-700">
+                Är lasset inbokat? Bekräfta ankomsten på veckotavlan i stället.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2.5">
+                <div><span className={LABEL}>Depå</span>
+                  <SelectMenu
+                    value={depotId}
+                    onChange={setDepotId}
+                    className="min-h-9 py-0 text-[13px]"
+                    aria-label="Depå"
+                    placeholder="Ingen depå"
+                    options={depots.map((d) => ({ value: d.depot_id, label: d.depot_name }))}
+                  />
+                </div>
+                <div><span className={LABEL}>Material</span>
+                  <SelectMenu
+                    value={material}
+                    onChange={setMaterial}
+                    className="min-h-9 py-0 text-[13px]"
+                    aria-label="Material"
+                    options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                  />
+                </div>
+                <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={sacks} onChange={(e) => setSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
+                {/* max: en framtida leverans hade höjt saldot redan idag och tystat bristbanderollen.
+                    Grinden som räknas sitter i createDeliverySchema — det här är bara affordansen. */}
+                <div><span className={LABEL}>Datum</span><input type="date" value={deliveredOn} max={today} onChange={(e) => setDeliveredOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Datum" /></div>
+              </div>
+              {/* Registreringen lyckas även när datumet ligger före avstämningen, men saldot rör sig inte —
+                  utan raden ser det ut som att knappen inte gjorde något. */}
+              {deliveryVs === 'before_count' && deliveryCountedOn && (
+                <p className="mt-2 text-[11px] text-amber-700">
+                  Depån stämdes av {shortDayISO(deliveryCountedOn)}. En leverans daterad före det finns redan i det räknade
+                  antalet, så saldot ändras inte.
+                </p>
+              )}
+              {deliveryVs === 'on_count_day' && deliveryCountedOn && (
+                <p className="mt-2 text-[11px] text-slate-500">
+                  Läggs på avstämningen från {shortDayISO(deliveryCountedOn)}. Stod leveransen redan på depån när ni räknade
+                  blir saldot för högt — stäm då av igen.
+                </p>
+              )}
+              <div className="mt-2.5"><span className={LABEL}>Notering</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Valfritt" className={crm.input} aria-label="Notering" /></div>
+              <button type="submit" disabled={busy || !depotId || !(Number(sacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Registrera manuell leverans</button>
+            </form>
+          )}
+
+          {/* Avstämning — "det här står på depån". Rättar saldot åt BÅDA hållen, till skillnad från
+              den manuella leveransen som bara kan lägga till. Grindad på depot.manage: ett för högt räknat värde
+              tystar bristbanderollen, så det är ett känsligare beslut än att ta emot gods. */}
+          {activeAction === 'count' && (
+            <form onSubmit={recordCount} className="mt-4">
+              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Stäm av saldo</h3>
+              <p className="mt-0.5 text-[11.5px] text-slate-500">
+                Skriv in hur många säckar som faktiskt står på depån. Saldot räknas sedan från det — det som hände
+                före räkningen syns redan i antalet, även rapporter som kommer in i efterhand.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2.5">
+                <div>
+                  <span className={LABEL}>Depå</span>
+                  <SelectMenu
+                    value={cntDepotId}
+                    onChange={setCntDepotId}
+                    placeholder="Välj depå"
+                    aria-label="Depå"
+                    options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
+                  />
+                </div>
+                <div>
+                  <span className={LABEL}>Material</span>
+                  <SelectMenu
+                    value={cntMaterial}
+                    onChange={setCntMaterial}
+                    aria-label="Material"
+                    options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                  />
+                </div>
+                {/* min 0, inte 1: en tom depå är ett svar, och det som ska tända bristbanderollen. */}
+                <div><span className={LABEL}>Antal på depån</span><input type="number" min={0} value={cntSacks} onChange={(e) => setCntSacks(e.target.value)} placeholder="Antal" className={crm.input} aria-label="Antal säckar på depån" /></div>
+                {/* max: en framtidsdaterad räkning blir baslinje direkt och fryser saldot på ett tal ingen
+                    räknat. Grinden som räknas sitter i stockCountSchema och i databasens insert-policy. */}
+                <div><span className={LABEL}>Räknat</span><input type="date" value={cntOn} max={today} onChange={(e) => setCntOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Räknat datum" /></div>
+              </div>
+              {cntSacksOnDay > 0 && (
+                <p className="mt-2 text-[11px] text-amber-700">
+                  {cntSacksOnDay} säck levererades {shortDayISO(cntOn)} och är redan registrerade. De räknas som inräknade i
+                  antalet — skriv in det med dem.
+                </p>
+              )}
+              <div className="mt-2.5"><span className={LABEL}>Notering</span><input value={cntNote} onChange={(e) => setCntNote(e.target.value)} placeholder="Valfritt" className={crm.input} aria-label="Notering" /></div>
               <button
                 type="submit"
                 disabled={cntBusy || !cntDepotId || cntSacks.trim() === '' || !(Number(cntSacks) >= 0)}
-                className={crm.formButton}
+                className={cn(crm.formButton, 'mt-3.5 w-full')}
                 style={{ backgroundColor: 'var(--crm-primary)' }}
               >
                 Stäm av
               </button>
-            </div>
-            {/* Konventionen står utskriven, för den avgör åt vilket håll ett fel blir. Platshållaren i
-                antalsfältet är "Antal" och inte "0": ett tomt fält är ingen räkning, och en nolla
-                i gråtext såg ut som en. */}
-            <p className="mt-2 text-[11px] text-slate-400">
-              Samma dag som räkningen dras förbrukningen av. Leveranser den dagen som redan är registrerade räknas
-              som inräknade, och de som registreras efteråt läggs på. Förs räkningen över i efterhand: ange dagen
-              den gjordes, inte dagens datum.
-            </p>
-          </form>
-        )}
-
-        {/* Väntad leverans — beställt men inte framme.
-            Egen ruta, med flit skild från "Registrera leverans" ovan: den ena säger att materialet
-            STÅR på depån och räknas i saldot, den andra att det är på väg och inte gör det.
-            Grindad på depot.manage — att säga att något är beställt är inköpsbeslutet. */}
-        {canManageDepots && (
-          <form onSubmit={recordExpected} className={PANEL}>
-            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Lägg in väntad leverans</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Syns på veckotavlan som <span className="font-semibold text-slate-600">Ankommer</span>. Räknas
-              <span className="font-semibold text-slate-600"> inte </span>
-              i saldot förrän någon bekräftar ankomsten.
-            </p>
-            <div className="grid gap-2.5 sm:grid-cols-4">
-              <div className="sm:col-span-1">
-                <span className={LABEL}>Depå</span>
-                <SelectMenu
-                  value={expDepotId}
-                  onChange={setExpDepotId}
-                  placeholder="Välj depå"
-                  aria-label="Depå"
-                  options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
-                />
-              </div>
-              <div>
-                <span className={LABEL}>Material</span>
-                <SelectMenu
-                  value={expMaterial}
-                  onChange={setExpMaterial}
-                  aria-label="Material"
-                  options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
-                />
-              </div>
-              <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={expSacks} onChange={(e) => setExpSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
-              {/* INGET max här — spegelvänt mot formuläret ovan. En väntad leverans SKA normalt
-                  ligga i framtiden; det är just därför den bor i en egen tabell. */}
-              <div><span className={LABEL}>Väntas</span><input type="date" value={expOn} onChange={(e) => setExpOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" /></div>
-            </div>
-            <div className="mt-2.5 grid grid-cols-[1fr_auto] gap-2.5">
-              <input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
-              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={crm.formButton} style={{ backgroundColor: 'var(--crm-primary)' }}>Lägg in</button>
-            </div>
-          </form>
-        )}
-
-        {/* Öppna väntade leveranser. Egen lista, UTAN datumfönster: tavlans remsa visar bara den
-            vecka som ritas, så en leverans som aldrig kom föll tyst ur synfältet när veckan
-            passerade — och det är precis den som behöver jagas. */}
-        {open.length > 0 && (
-          <div className={PANEL}>
-            <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Väntade leveranser</h3>
-            <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
-              Beställt men inte framme. Räknas inte i saldot nedan.
-            </p>
-            <ul className="grid gap-1.5">
-              {open.map((e) => (
-                <ExpectedRow
-                  key={e.id}
-                  item={e}
-                  depots={depotOptions}
-                  today={today}
-                  canManage={canManageDepots}
-                  // Både listan OCH prognosen: en ändrad leverans flyttar datumet den täcker.
-                  onSaved={reloadExpectedAndForecast}
-                  onCancel={cancelExpected}
-                />
-              ))}
-            </ul>
-            {canWrite && (
-              <p className="mt-2 text-[11px] text-slate-400">
-                Bekräfta ankomst gör du på veckotavlan, där leveransen står på sin dag.
+              {/* Konventionen står utskriven, för den avgör åt vilket håll ett fel blir. Platshållaren i
+                  antalsfältet är "Antal" och inte "0": ett tomt fält är ingen räkning, och en nolla
+                  i gråtext såg ut som en. */}
+              <p className="mt-2.5 text-[11px] text-slate-400">
+                Samma dag som räkningen dras förbrukningen av. Leveranser den dagen som redan är registrerade räknas
+                som inräknade, och de som registreras efteråt läggs på. Förs räkningen över i efterhand: ange dagen
+                den gjordes, inte dagens datum.
               </p>
-            )}
-          </div>
-        )}
+            </form>
+          )}
 
-        {loadError ? (
-          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-[12px] text-rose-700">
-            <div className="font-semibold">Lagersaldot kunde inte räknas ut</div>
-            <p className="mt-0.5 text-rose-600">{loadError}</p>
-            <p className="mt-1 text-[11px] text-rose-500">
-              Siffrorna nedan visas inte, eftersom ett halvt underlag ser ut som ett fullt lager. Ladda om sidan och hör
-              av dig om det står kvar.
-            </p>
-          </div>
-        ) : depots.length === 0 ? (
-          <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
-        ) : (
-          <>
-          {forecast && <ForecastCard forecast={forecast} />}
-          <div className={PANEL}>
-            <h3 className="mb-3 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
-            <div className="grid gap-2.5">
-              {depots.map((d) => {
-                const shortfall = d.rows.reduce((s, r) => s + r.shortfall, 0);
-                return (
-                <div key={d.depot_id} className="rounded-xl border border-[#e0e8dc] bg-[#f9fbf7] p-3">
-                  <div className="mb-1.5 flex items-baseline justify-between gap-2">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-[13px] font-bold text-slate-800">{d.depot_name}</span>
-                      {shortfall > 0 && <span className="rounded-full border border-rose-200 bg-rose-50 px-2 py-px text-[9px] font-bold text-rose-700">Lager räcker inte · −{shortfall}</span>}
-                      {shortfall === 0 && d.rows.some((r) => r.balance < 0) && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[9px] font-bold text-amber-700">Underskott</span>}
-                    </span>
-                    <span className={cn('shrink-0 text-[12px] font-bold tabular-nums', balanceClass(d.total_balance))}>{d.total_balance} säck</span>
-                  </div>
-                  {d.rows.length === 0 ? (
-                    <p className="text-[11px] text-slate-400">Inga rörelser än.</p>
-                  ) : (
-                    <table className="w-full text-[11.5px]">
-                      <thead><tr className="text-left text-[10px] uppercase tracking-wide text-slate-400"><th className="font-semibold">Material</th><th className="text-right font-semibold">Levererat</th><th className="text-right font-semibold">Förbrukat</th><th className="text-right font-semibold">Saldo</th><th className="text-right font-semibold">Planerat</th><th className="text-right font-semibold">Räcker?</th></tr></thead>
-                      <tbody>
-                        {d.rows.map((r) => (
-                          <tr key={r.material} className="border-t border-[#eef3eb]">
-                            <td className="py-1 font-semibold text-slate-700">
-                              {r.material}
-                              {/* ⚠️ Utan den här raden ser "Levererat" och "Förbrukat" ut som all tid —
-                                  men efter en avstämning räknas de från räkningen. Siffrorna går då inte
-                                  ihop för den som läser dem utan att veta om baslinjen. `!= null`, inte
-                                  sanningsvärde: en räkning på NOLL är en baslinje och ska synas. */}
-                              {r.counted_on != null && r.counted != null && (
-                                <span className="block text-[10px] font-normal text-slate-400">
-                                  avstämt {r.counted} · {shortDayISO(r.counted_on)}
-                                </span>
-                              )}
-                            </td>
-                            <td className="py-1 text-right tabular-nums text-slate-500">{r.delivered}</td>
-                            <td className="py-1 text-right tabular-nums text-slate-500">{r.consumed}</td>
-                            <td className={cn('py-1 text-right font-bold tabular-nums', balanceClass(r.balance))}>{r.balance}</td>
-                            <td className="py-1 text-right tabular-nums text-slate-500">{r.planned}</td>
-                            <td className="py-1 text-right font-bold tabular-nums">
-                              {r.shortfall > 0 ? <span className="text-rose-600">−{r.shortfall}</span> : <span className="text-emerald-600">✓</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
+          {/* Boka in leverans — beställt men inte framme. Eget läge, med flit skilt från den manuella
+              leveransen: den ena säger att materialet är på väg och inte räknas i saldot, den andra att
+              det STÅR på depån och gör det. Grindad på depot.manage — att säga att något är beställt är
+              inköpsbeslutet. */}
+          {activeAction === 'expected' && (
+            <form onSubmit={recordExpected} className="mt-4">
+              <h3 className="text-[14px] font-extrabold text-[#142c1b]">Boka in leverans</h3>
+              <p className="mt-0.5 text-[11.5px] text-slate-500">
+                Syns på veckotavlan som <span className="font-semibold text-slate-600">Ankommer</span>. Räknas
+                <span className="font-semibold text-slate-600"> inte </span>
+                i saldot förrän någon bekräftar ankomsten.
+              </p>
+              <div className="mt-3 grid grid-cols-2 gap-2.5">
+                <div>
+                  <span className={LABEL}>Depå</span>
+                  <SelectMenu
+                    value={expDepotId}
+                    onChange={setExpDepotId}
+                    placeholder="Välj depå"
+                    aria-label="Depå"
+                    options={depotOptions.map((d) => ({ value: d.id, label: d.name }))}
+                  />
                 </div>
-                );
-              })}
-              <p className="text-[10.5px] text-slate-400">Planerat = säckar bokade på öppna jobb från depån. "Räcker?" visar om lagret täcker det planerade. Förbrukning fylls i automatiskt när installatörernas säckrapportering är på plats.</p>
-            </div>
-          </div>
-          </>
-        )}
-      </div>
+                <div>
+                  <span className={LABEL}>Material</span>
+                  <SelectMenu
+                    value={expMaterial}
+                    onChange={setExpMaterial}
+                    aria-label="Material"
+                    options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
+                  />
+                </div>
+                <div><span className={LABEL}>Säckar</span><input type="number" min={1} value={expSacks} onChange={(e) => setExpSacks(e.target.value)} placeholder="0" className={crm.input} aria-label="Antal säckar" /></div>
+                {/* INGET max här — spegelvänt mot den manuella leveransen. En inbokad leverans SKA normalt
+                    ligga i framtiden; det är just därför den bor i en egen tabell. */}
+                <div><span className={LABEL}>Väntas</span><input type="date" value={expOn} onChange={(e) => setExpOn(e.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" /></div>
+              </div>
+              <div className="mt-2.5"><span className={LABEL}>Notering</span><input value={expNote} onChange={(e) => setExpNote(e.target.value)} placeholder="Valfritt" className={crm.input} aria-label="Notering" /></div>
+              <button type="submit" disabled={expBusy || !expDepotId || !(Number(expSacks) > 0)} className={cn(crm.formButton, 'mt-3.5 w-full')} style={{ backgroundColor: 'var(--crm-primary)' }}>Boka in leverans</button>
+            </form>
+          )}
+        </aside>
+      )}
     </div>
   );
 }
