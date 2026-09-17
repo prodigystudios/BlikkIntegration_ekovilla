@@ -31,7 +31,36 @@ describe('mapCrmWorkOrderToEgenkontrollProject', () => {
       address: { streetAddress: 'Jobbvägen 1', postalCode: '131 30', city: 'Nacka' },
       installationDate: '2026-08-14',
       description: 'Vindsisolering — Vind + snedtak',
+      workDescription: null,
       lineItems: [],
+    });
+  });
+
+  describe('the arbetsbeskrivning', () => {
+    const notes = 'Totalt: 141 säck\n\nEKOVILLA\n• Vind – 120 m² × 400 mm\n\nÖVRIGT\n• Brandmatta – 4 st';
+    const withNotes = crmRow({ internal_handoff: { work_scope: 'Vind + snedtak', handoff_notes: `  ${notes}\n` } });
+
+    it('keeps its line breaks, trimming only the ends', () => {
+      // When the rows lack area/thickness nothing is prefilled, and the measurements live in this
+      // text instead — the installer reads them off the lookup card, so the layout must survive.
+      const project = mapCrmWorkOrderToEgenkontrollProject(withNotes, { workDescriptionVisible: true });
+      expect(project.workDescription).toBe(notes);
+      // Not folded into the one-line summary, which stays a quick identity check.
+      expect(project.description).toBe('Vindsisolering — Vind + snedtak');
+    });
+
+    it('is WITHHELD unless the caller says the session may read the order', () => {
+      // The lookup runs under the service role, and handoff notes carry portkoder. Forgetting to
+      // decide must not hand them to any signed-in account.
+      expect(mapCrmWorkOrderToEgenkontrollProject(withNotes).workDescription).toBeNull();
+      expect(mapCrmWorkOrderToEgenkontrollProject(withNotes, { workDescriptionVisible: false }).workDescription).toBeNull();
+    });
+
+    it('is empty — not withheld — when a reader opens an order that has none', () => {
+      // '' and null render different messages: "the order has none" vs "not shown to you".
+      const visible = { workDescriptionVisible: true };
+      expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: null }), visible).workDescription).toBe('');
+      expect(mapCrmWorkOrderToEgenkontrollProject(crmRow({ internal_handoff: { handoff_notes: null } }), visible).workDescription).toBe('');
     });
   });
 
@@ -93,6 +122,8 @@ describe('mapBlikkProjectToEgenkontrollProject', () => {
       address: { streetAddress: 'Byggvägen 5', postalCode: '100 00', city: 'Solna' },
       installationDate: '2026-08-12',
       description: 'Vind - 120 m2 x 400 mm - 42 eko',
+      // Blikk's description already is its work description — not repeated.
+      workDescription: '',
       lineItems: null,
     });
   });

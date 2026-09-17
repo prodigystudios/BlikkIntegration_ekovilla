@@ -717,6 +717,24 @@ export default function EgenkontrollPage() {
                     </button>
                   )}
                 </div>
+                {/* After the identity check, not inside it: this is reference material, and the
+                    measurement block can run long. When the rows lacked area/thickness nothing was
+                    prefilled below, and the measurements are usually written here instead.
+                    Blikk has no separate field — its description line above already is this text.
+                    `undefined` (a response without the field) renders nothing rather than claiming
+                    the order has none; null means the server withheld it. */}
+                {foundProject.source === 'crm' && foundProject.workDescription !== undefined && (
+                  <div className="grid min-w-0 gap-1.5 rounded-xl bg-slate-50 px-3 py-2.5">
+                    <div className="text-xs font-extrabold uppercase tracking-[0.28px] text-slate-600">Arbetsbeskrivning</div>
+                    {foundProject.workDescription ? (
+                      <p className="m-0 whitespace-pre-wrap text-[13px] leading-relaxed text-slate-700 [overflow-wrap:anywhere]">{foundProject.workDescription}</p>
+                    ) : foundProject.workDescription === '' ? (
+                      <p className="m-0 text-[13px] text-slate-400">Ingen arbetsbeskrivning angiven på ordern.</p>
+                    ) : (
+                      <p className="m-0 text-[13px] text-slate-500">Arbetsbeskrivningen visas bara för dem som är satta på jobbet.</p>
+                    )}
+                  </div>
+                )}
               </div>
             ) : null}
           </div>

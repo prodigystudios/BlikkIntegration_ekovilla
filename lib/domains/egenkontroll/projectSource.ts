@@ -31,6 +31,15 @@ export type EgenkontrollProject = {
   installationDate: string;
   // Human summary shown on the lookup card.
   description: string;
+  // The order's arbetsbeskrivning (internal_handoff.handoff_notes — the field the readiness gate
+  // calls Arbetsbeskrivning), line breaks kept, ends trimmed. It is the fallback when the rows were
+  // never given area/thickness and no etapp row gets prefilled: the measurements are often written
+  // here instead, and without it on the lookup card the installer has to leave a half-filled
+  // egenkontroll to go and read the order.
+  //   string → the text ('' = the order has none)
+  //   null   → withheld: the caller may not read the order itself (see canSessionReadWorkOrder)
+  // '' for Blikk, whose description IS its work description and is already shown above.
+  workDescription: string | null;
   // CRM only: the order's rows, which already carry area/thickness/density as structured data.
   lineItems: CrmEgenkontrollLineItem[] | null;
 };
@@ -69,7 +78,12 @@ const isoDay = (v: unknown): string => {
 
 // ── CRM work order ──────────────────────────────────────────────────────────
 
-export function mapCrmWorkOrderToEgenkontrollProject(row: CrmWorkOrderLookupRow): EgenkontrollProject {
+// `workDescriptionVisible` has no default that shows the text: the lookup route runs under the
+// service role, so forgetting to decide must withhold it rather than hand it to any account.
+export function mapCrmWorkOrderToEgenkontrollProject(
+  row: CrmWorkOrderLookupRow,
+  { workDescriptionVisible = false }: { workDescriptionVisible?: boolean } = {},
+): EgenkontrollProject {
   // Job-site address first, then a separate delivery address, then the customer's card address —
   // the same precedence as resolveJobAddress, kept as parts because the form has three fields.
   const work = (row.work_address ?? {}) as Record<string, unknown>;
@@ -92,6 +106,7 @@ export function mapCrmWorkOrderToEgenkontrollProject(row: CrmWorkOrderLookupRow)
     address,
     installationDate: isoDay(row.scheduled_day) || isoDay(row.desired_installation_date),
     description: [str(row.project_name), str(handoff.work_scope)].filter(Boolean).join(' — '),
+    workDescription: workDescriptionVisible ? str(handoff.handoff_notes) : null,
     lineItems: Array.isArray(row.line_items) ? row.line_items : [],
   };
 }
@@ -121,6 +136,7 @@ export function mapBlikkProjectToEgenkontrollProject(raw: Record<string, any> | 
     },
     installationDate: isoDay(raw.startDate) || isoDay(raw.created),
     description: str(raw.description),
+    workDescription: '',
     lineItems: null,
   };
 }
