@@ -22,10 +22,12 @@
 --   sent     slutgiltig. Resend tog emot mailet (provider_message_id) eller en människa har verifierat
 --            det (verified_by), och de väntade leveranserna är skapade.
 --
--- ⚠️ STATUSÖVERGÅNGAR SKER BARA I RPC:ERNA NEDAN. Vakttriggern släpper igenom en ändring av status bara
--- när transaktionen satt flaggan `ekovilla.material_order_rpc`, vilket bara funktionerna gör. En direkt
--- PostgREST-skrivning kan alltså redigera ett utkast och bokföra ett felmeddelande — men aldrig markera en
--- order som skickad utan att mailet gått, och aldrig lägga ett utkast i 'sending' förbi claim-logiken.
+-- ⚠️ STATUSÖVERGÅNGAR SKER BARA I RPC:ERNA NEDAN. Vakttriggern släpper igenom en ändring av utskicks-
+-- tillståndet bara när transaktionen satt flaggan `ekovilla.material_order_rpc`, vilket bara funktionerna
+-- gör. En direkt PostgREST-skrivning kan alltså redigera ett utkast och bokföra ett felmeddelande, men inte
+-- flytta status, försök, fönster eller Resend-id förbi funktionernas regler. Funktionerna själva litar på
+-- anroparen i ett avseende: finalize tar emot Resends id som en sträng — routen anropar den först efter
+-- Resends svar, och bara depot.manage kan anropa den alls.
 --
 -- LÄSBARHET
 -- Leverantörsnamn, mottagare och brödtext finns BARA här, bakom planning.depot.manage. De väntade
@@ -144,13 +146,24 @@ begin
   end if;
 
   -- FK-kaskaderna (ON DELETE SET NULL) går genom den här triggern, också för en skickad order. De fyra
-  -- referenserna får därför alltid bli NULL — men aldrig bytas mot någon annan. sent_by och verified_by
+  -- referenserna får därför bli NULL — men BARA när raden de pekar på är borta. En direkt skrivning som
+  -- nollade supplier_id hade annars lyft ordern ur "en öppen order per fabrik" och öppnat för en andra
+  -- beställning till samma fabrik medan den första fortfarande kan skickas om. sent_by och verified_by
   -- sätts dessutom (från null) av RPC:erna.
-  if new.supplier_id is distinct from old.supplier_id and new.supplier_id is not null then
+  if new.supplier_id is distinct from old.supplier_id
+     and (new.supplier_id is not null
+          or exists (select 1 from public.ops_material_suppliers where id = old.supplier_id)) then
     raise exception 'material_order_supplier_is_final' using errcode = '23514';
   end if;
-  if new.created_by is distinct from old.created_by and new.created_by is not null then
+  if new.created_by is distinct from old.created_by
+     and (new.created_by is not null or exists (select 1 from public.profiles where id = old.created_by)) then
     raise exception 'material_order_creator_is_final' using errcode = '23514';
+  end if;
+  if (new.sent_by is distinct from old.sent_by and new.sent_by is null
+      and exists (select 1 from public.profiles where id = old.sent_by))
+     or (new.verified_by is distinct from old.verified_by and new.verified_by is null
+         and exists (select 1 from public.profiles where id = old.verified_by)) then
+    raise exception 'material_order_send_state_via_rpc_only' using errcode = '42501';
   end if;
   if (new.sent_by is distinct from old.sent_by and new.sent_by is not null and not v_rpc)
      or (new.verified_by is distinct from old.verified_by and new.verified_by is not null and not v_rpc) then
@@ -256,6 +269,7 @@ as $$
 begin
   if new.status <> 'draft' or new.send_attempt <> 1 or new.revision <> 1
      or new.provider_message_id is not null or new.sent_at is not null or new.verified_by is not null
+     or new.sent_by is not null or new.sent_by_name is not null or new.verified_by_name is not null
      or new.attempt_started_at is not null or new.last_try_at is not null then
     raise exception 'material_order_insert_must_be_fresh_draft' using errcode = '23514';
   end if;
@@ -387,7 +401,59 @@ create policy ops_expected_deliveries_delete on public.ops_expected_deliveries
 -- ⚠️ ANROPA ALDRIG MED SERVICE-ROLE-KLIENTEN. has_permission nycklar på auth.uid(), som är null under
 -- service-role — grinden nekar då alltid. Sessionsklienten, alltid.
 
+-- Intern: går stockraderna att göra till väntade leveranser? Prövas i claim, INNAN mailet skickas.
+--
+-- ⚠️ ETT FEL HÄR FÅR ALDRIG UPPTÄCKAS FÖRST I FINALIZE. Då har Resend redan tagit emot mailet, varje
+-- omförsök får samma id och finalize felar igen, och enda vägen ur ett fast utskick blir ett nytt försök —
+-- ett andra mail. Omöjliga datum (2027-02-29), heltal utanför integer och en depå som inte finns vägras
+-- därför här.
+create or replace function public._material_order_lines_valid(p_lines jsonb)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  l jsonb;
+  v_sacks numeric;
+begin
+  if jsonb_typeof(p_lines) <> 'array' then
+    return false;
+  end if;
+  for l in select * from jsonb_array_elements(p_lines) loop
+    begin
+      if jsonb_typeof(l->'sacks') <> 'number' then
+        return false;
+      end if;
+      v_sacks := (l->>'sacks')::numeric;
+      if v_sacks <> trunc(v_sacks) or v_sacks < 1 or v_sacks > 100000 then
+        return false;
+      end if;
+      if coalesce(btrim(l->>'material'), '') = '' then
+        return false;
+      end if;
+      -- Datumet måste vara exakt den dag som står: to_char av castet ska ge tillbaka samma sträng.
+      if to_char((l->>'requested_on')::date, 'YYYY-MM-DD') <> (l->>'requested_on') then
+        return false;
+      end if;
+      if not exists (select 1 from public.ops_depots d where d.id = (l->>'depot_id')::uuid) then
+        return false;
+      end if;
+    exception when others then
+      return false;
+    end;
+  end loop;
+  return true;
+end $$;
+
+revoke all on function public._material_order_lines_valid(jsonb) from public, anon, authenticated;
+
 -- Intern: skapa en väntad leverans per stockrad. Anropas bara inifrån funktionerna nedan.
+--
+-- En depå som raderats mellan claim och finalize hoppas över i stället för att fälla hela transaktionen:
+-- mailet har redan gått, och en saknad väntad leverans lämnar bristvarningen tänd (den ofarliga
+-- riktningen). Anroparen ser det på att antalet understiger antalet stockrader.
 create or replace function public._material_order_create_expected(p_order_id uuid, p_lines jsonb)
 returns integer
 language plpgsql
@@ -400,18 +466,29 @@ begin
   insert into public.ops_expected_deliveries (depot_id, material, sacks, expected_on, note, created_by, order_id)
   select (l->>'depot_id')::uuid,
          l->>'material',
-         (l->>'sacks')::integer,
+         ((l->>'sacks')::numeric)::integer,
          (l->>'requested_on')::date,
          -- ⚠️ ALDRIG orderns meddelande här: receive_expected_delivery kopierar noteringen till lagerraden.
          null,
          auth.uid(),
          p_order_id
-  from jsonb_array_elements(p_lines) as l;
+  from jsonb_array_elements(p_lines) as l
+  where exists (select 1 from public.ops_depots d where d.id = (l->>'depot_id')::uuid);
   get diagnostics v_count = row_count;
   return v_count;
 end $$;
 
 revoke all on function public._material_order_create_expected(uuid, jsonb) from public, anon, authenticated;
+
+-- service_role finns i Supabase men inte överallt; får den default-rättigheterna på nya funktioner ska
+-- den ändå inte kunna anropa de interna.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'revoke all on function public._material_order_create_expected(uuid, jsonb) from service_role';
+    execute 'revoke all on function public._material_order_lines_valid(jsonb) from service_role';
+  end if;
+end $$;
 
 -- Ta ett utskick. Svaret styr routen:
 --   claimed          draft -> sending, nytt försök påbörjat
@@ -420,13 +497,22 @@ revoke all on function public._material_order_create_expected(uuid, jsonb) from 
 --   in_progress      ett utskick påbörjades för under 2 minuter sedan
 --   already_sent     slutgiltigt skickad
 --   revision_changed utkastet har ändrats sedan det granskades
+--   attempt_changed  försöket är inte det sidan tror — någon annan har släppt eller avgjort utskicket.
+--                    Utan den här kontrollen hade ett "Försök igen" från en gammal sida blivit ett nytt
+--                    försök med ny nyckel, och ett andra mail.
 --   window_expired   fönstret på 23 h har passerat — en människa avgör (resolve_material_order_send)
 --   not_reviewed     utkastet har inget renderat mail att skicka
+--   lines_invalid    stockraderna går inte att göra till väntade leveranser — ingenting skickas
 --   not_found        finns inte, eller osynlig
 --
 -- Det är en RPC och inte en PostgREST-skrivning: villkoret är en OR mellan tillstånd, och PostgREST godtar
 -- inte `.or()` på mutationer.
-create or replace function public.claim_material_order_send(p_order_id uuid, p_revision integer)
+--
+-- ⚠️ `is distinct from`, aldrig `<>`, mot parametrarna: `x <> null` är null, och ett null-argument hade
+-- hoppat över kontrollen helt.
+drop function if exists public.claim_material_order_send(uuid, integer);
+
+create or replace function public.claim_material_order_send(p_order_id uuid, p_revision integer, p_attempt integer)
 returns text
 language plpgsql
 security definer
@@ -446,17 +532,23 @@ begin
   if v_row.status = 'sent' then
     return 'already_sent';
   end if;
-  if v_row.revision <> p_revision then
+  if v_row.revision is distinct from p_revision then
     return 'revision_changed';
   end if;
-
+  if v_row.send_attempt is distinct from p_attempt then
+    return 'attempt_changed';
+  end if;
   if v_row.status = 'draft' and (v_row.email_subject is null or v_row.email_text is null or v_row.recipient_email is null) then
     return 'not_reviewed';
   end if;
-
-  perform set_config('ekovilla.material_order_rpc', 'on', true);
+  if not public._material_order_lines_valid(v_row.lines) then
+    return 'lines_invalid';
+  end if;
 
   if v_row.status = 'draft' then
+    perform set_config('ekovilla.material_order_rpc', 'on', true);
+    -- attempt_started_at och last_try_at från SAMMA now(): att de skiljer sig är beviset på att försöket
+    -- skickats om (se release_material_order_send).
     update public.ops_material_orders
        set status = 'sending', attempt_started_at = now(), last_try_at = now(),
            send_error = null, send_error_code = null
@@ -467,20 +559,19 @@ begin
 
   -- sending
   if v_row.attempt_started_at is null or v_row.attempt_started_at < now() - interval '23 hours' then
-    perform set_config('ekovilla.material_order_rpc', 'off', true);
     return 'window_expired';
   end if;
   if v_row.last_try_at is not null and v_row.last_try_at > now() - interval '2 minutes' then
-    perform set_config('ekovilla.material_order_rpc', 'off', true);
     return 'in_progress';
   end if;
+  perform set_config('ekovilla.material_order_rpc', 'on', true);
   update public.ops_material_orders set last_try_at = now() where id = p_order_id;
   perform set_config('ekovilla.material_order_rpc', 'off', true);
   return 'reclaimed';
 end $$;
 
-revoke all on function public.claim_material_order_send(uuid, integer) from public, anon;
-grant execute on function public.claim_material_order_send(uuid, integer) to authenticated;
+revoke all on function public.claim_material_order_send(uuid, integer, integer) from public, anon;
+grant execute on function public.claim_material_order_send(uuid, integer, integer) to authenticated;
 
 -- Resend tog emot mailet: skapa de väntade leveranserna och markera ordern skickad, i EN transaktion.
 -- Returnerar antalet skapade rader, 0 om ordern redan var skickad (ett andra anrop skapar inga dubbletter).
@@ -532,7 +623,7 @@ grant execute on function public.finalize_material_order(uuid, text) to authenti
 
 -- Resend avvisade mailet DEFINITIVT (inget gick iväg): tillbaka till utkast, med ett nytt försöksnummer och
 -- därmed en ny idempotensnyckel. Bara för det försök som faktiskt avvisades — ett äldre svar som kommer
--- fram sent får inte släppa ett nyare försök.
+-- fram sent får inte släppa ett nyare försök — och bara om försöket aldrig skickats om ('retried').
 create or replace function public.release_material_order_send(
   p_order_id   uuid,
   p_attempt    integer,
@@ -554,8 +645,17 @@ begin
   if not found then
     return 'not_found';
   end if;
-  if v_row.status <> 'sending' or v_row.send_attempt <> p_attempt then
+  if v_row.status <> 'sending' or v_row.send_attempt is distinct from p_attempt then
     return 'stale';
+  end if;
+  -- ⚠️ ETT AVSLAG PÅ ETT OMFÖRSÖK BEVISAR INGENTING OM DET FÖRSTA ANROPET. Ett tidigare anrop med samma
+  -- nyckel kan ha levererats (t.ex. en timeout där Resend ändå skickade), och ett rate limit-svar på
+  -- omförsöket säger bara att DET anropet inte gick. Släpptes ordern här hade nästa utskick fått en ny
+  -- nyckel — och fabriken ett andra mail. Ett omförsökt försök avgörs i stället av en människa efter
+  -- fönstret. attempt_started_at och last_try_at sätts från samma now() i claim och skiljer sig bara efter
+  -- ett reclaim.
+  if v_row.last_try_at is distinct from v_row.attempt_started_at then
+    return 'retried';
   end if;
 
   perform set_config('ekovilla.material_order_rpc', 'on', true);
@@ -574,7 +674,7 @@ grant execute on function public.release_material_order_send(uuid, integer, text
 -- En människa avgör ett oklart utskick, efter att ha tittat i BCC-kopian i order@:
 --   p_delivered = true   mailet gick fram: skapa de väntade leveranserna och markera skickad (verified_by)
 --   p_delivered = false  mailet gick inte fram: tillbaka till utkast med nytt försök
--- Nekas medan ett utskick pågår (senaste försöket yngre än 2 minuter).
+-- Bara EFTER fönstret på 23 h ('window_open' innan). Nekas medan ett utskick pågår.
 create or replace function public.resolve_material_order_send(p_order_id uuid, p_delivered boolean)
 returns text
 language plpgsql
@@ -604,6 +704,17 @@ begin
   end if;
   if v_row.last_try_at is not null and v_row.last_try_at > now() - interval '2 minutes' then
     return 'in_progress';
+  end if;
+  -- ⚠️ INOM FÖNSTRET AVGÖR INGEN MÄNNISKA. Ett omförsök med samma nyckel är då alltid det säkra valet: gick
+  -- mailet fram svarar Resend med samma id, gick det inte fram skickas det nu. "Gick inte fram" efter tre
+  -- minuter — när kopian i order@ helt enkelt inte kommit än — hade gett ett nytt försök och ett andra mail.
+  if v_row.attempt_started_at is not null and v_row.attempt_started_at >= now() - interval '23 hours' then
+    return 'window_open';
+  end if;
+  if not public._material_order_lines_valid(v_row.lines) and p_delivered then
+    -- Kan inte bli väntade leveranser. Skickad utan dem hade tystat nästa beställning; utkast hade gett ett
+    -- nytt mail. En människa får rätta raderna i databasen — det här ska inte kunna hända efter claim.
+    return 'lines_invalid';
   end if;
 
   select full_name into v_name from public.profiles where id = auth.uid();

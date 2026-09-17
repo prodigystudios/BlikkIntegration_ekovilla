@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ORDER_LINES_MAX,
+  ORDER_LINE_SACKS_MAX,
   buildOrderLines,
   classifySendError,
   describeOrderLineProblem,
@@ -93,6 +94,9 @@ describe('buildOrderLines', () => {
     expect(kinds([line({ sacks: 0 })])).toEqual(['sacks_invalid']);
     expect(kinds([line({ sacks: -54 })])).toEqual(['sacks_invalid']);
     expect(kinds([line({ sacks: 54.5 })])).toEqual(['sacks_invalid']);
+    // Taket delas med databasen: ett större tal går inte att göra till en väntad leverans.
+    expect(kinds([line({ material: PAROC, sacks: ORDER_LINE_SACKS_MAX })])).toEqual([]);
+    expect(kinds([line({ material: PAROC, sacks: ORDER_LINE_SACKS_MAX + 1 })])).toEqual(['sacks_invalid']);
     expect(kinds([line({ sacks: EKO_PALL + 1 })])).toEqual(['sacks_not_pallets']);
     // Okänd pallstorlek: vilket heltal som helst.
     expect(kinds([line({ material: PAROC, sacks: 87 })])).toEqual([]);
@@ -103,6 +107,10 @@ describe('buildOrderLines', () => {
     expect(kinds([line({ requested_on: '2026-09-16' })])).toEqual(['date_in_past']);
     expect(kinds([line({ requested_on: '2026-13-45' })])).toEqual(['date_invalid']);
     expect(kinds([line({ requested_on: '1 oktober' })])).toEqual(['date_invalid']);
+    // 🧨 Date.parse rullar över omöjliga datum i stället för att fela. Mailet hade sagt en annan dag.
+    expect(kinds([line({ requested_on: '2027-02-29' })])).toEqual(['date_invalid']);
+    expect(kinds([line({ requested_on: '2026-04-31' })])).toEqual(['date_invalid']);
+    expect(kinds([line({ requested_on: '2028-02-29' })])).toEqual([]); // skottår
   });
 
   it('samma depå och material två gånger vägras', () => {
@@ -195,6 +203,12 @@ describe('classifySendError', () => {
 });
 
 describe('idempotensnyckeln och adresserna', () => {
+  /** Låst till en literal: en tidsstämpel i nyckeln hade klarat en jämförelse av två anrop i samma millisekund. */
+  it('nyckeln är exakt material-order/<id>/<försök>', () => {
+    expect(materialOrderIdempotencyKey('o1', 1)).toBe('material-order/o1/1');
+    expect(materialOrderIdempotencyKey('4f6c1a2b-0000-4000-8000-000000000001', 3)).toBe('material-order/4f6c1a2b-0000-4000-8000-000000000001/3');
+  });
+
   it('samma order och försök ger samma nyckel, ett nytt försök en ny', () => {
     expect(materialOrderIdempotencyKey('o1', 1)).toBe(materialOrderIdempotencyKey('o1', 1));
     expect(materialOrderIdempotencyKey('o1', 2)).not.toBe(materialOrderIdempotencyKey('o1', 1));

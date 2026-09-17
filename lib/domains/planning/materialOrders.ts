@@ -47,6 +47,8 @@ export type OrderLineProblem =
   | { kind: 'depot_dates_differ'; depot_name: string };
 
 export const ORDER_LINES_MAX = 60;
+/** Samma tak som databasens _material_order_lines_valid. Ett tal utanför det går inte att göra till en väntad leverans. */
+export const ORDER_LINE_SACKS_MAX = 100000;
 
 /**
  * Kontrollera och komplettera orderraderna mot registret. Returnerar antingen de lagringsbara raderna eller
@@ -93,13 +95,15 @@ export function buildOrderLines(
     }
 
     const perPallet = MATERIAL_SHORTS.includes(l.material) ? sacksPerPalletFor(l.material) : null;
-    if (!Number.isInteger(l.sacks) || l.sacks <= 0) {
+    if (!Number.isInteger(l.sacks) || l.sacks <= 0 || l.sacks > ORDER_LINE_SACKS_MAX) {
       problems.push({ kind: 'sacks_invalid', depot_name: name, material: l.material });
     } else if (perPallet && l.sacks % perPallet !== 0) {
       problems.push({ kind: 'sacks_not_pallets', depot_name: name, material: l.material, sacks_per_pallet: perPallet });
     }
 
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(l.requested_on) || Number.isNaN(Date.parse(`${l.requested_on}T12:00:00Z`))) {
+    // ⚠️ Rundresa, inte bara Date.parse: '2027-02-29' tolkas som 1 mars utan att fela. Mailet hade sagt en
+    // annan dag än raden, och databasen hade vägrat raden först när mailet redan gått.
+    if (!isRealDate(l.requested_on)) {
       problems.push({ kind: 'date_invalid', depot_name: name });
     } else if (l.requested_on < ctx.today) {
       problems.push({ kind: 'date_in_past', depot_name: name });
@@ -123,6 +127,13 @@ export function buildOrderLines(
   return unique.length > 0 ? { ok: false, problems: unique } : { ok: true, lines };
 }
 
+/** 'YYYY-MM-DD' som är en verklig kalenderdag — samma sträng tillbaka efter en tolkning. */
+function isRealDate(iso: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return false;
+  const parsed = new Date(`${iso}T12:00:00Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === iso;
+}
+
 export function describeOrderLineProblem(p: OrderLineProblem): string {
   switch (p.kind) {
     case 'no_lines':
@@ -142,7 +153,7 @@ export function describeOrderLineProblem(p: OrderLineProblem): string {
     case 'material_not_supplied':
       return `Leverantören levererar inte ${p.material}`;
     case 'sacks_invalid':
-      return `${p.depot_name} · ${p.material}: ange ett antal säckar större än noll`;
+      return `${p.depot_name} · ${p.material}: ange ett antal säckar mellan 1 och ${ORDER_LINE_SACKS_MAX}`;
     case 'sacks_not_pallets':
       return `${p.depot_name} · ${p.material}: beställ i hela pallar (${p.sacks_per_pallet} säck per pall)`;
     case 'date_invalid':

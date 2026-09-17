@@ -1,5 +1,12 @@
 -- Väntade leveranser: material som är beställt men ännu inte står på depån.
 --
+-- ⚠️ ERSATT DELVIS 2026-09-17 (bara kommentar, DDL:en nedan rörs inte): 20260917_ops_material_orders.sql
+-- ersätter funktionen ops_expected_deliveries_forward_only (order_id och depå/material på en beställd rad
+-- låses) och policyerna ops_expected_deliveries_insert/_delete (order_id is null). KÖR INTE OM DEN HÄR
+-- FILEN efter den — omkörningen hade tyst återställt de svagare reglerna, och en rad med order_id hade gått
+-- att skapa direkt (fantominflöde som tystar en bristvarning). Måste den köras om: kör
+-- 20260917_ops_material_orders.sql direkt efteråt.
+--
 -- BAKGRUND
 -- ops_depot_deliveries (20260612) betyder "står FYSISKT på depån" — varje rad räknas rakt in i
 -- lagersaldot av computeDepotBalances. Något som är på väg har därför ingen plats där, och när
