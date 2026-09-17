@@ -85,6 +85,29 @@ describe('svaret', () => {
     expect(err.message).toBe('Invalid `to` field');
   });
 
+  it('HTTP-koden följer med när felkroppen bär den', async () => {
+    send.mockResolvedValue({ data: null, error: { name: 'rate_limit_exceeded', message: 'Too many', statusCode: 429 } });
+    const err = await sendEmail(base).catch((e) => e);
+    expect(err.statusCode).toBe(429);
+  });
+
+  it('ett felsvar utan namn blir unknown_error — aldrig ett lyckat utskick', async () => {
+    send.mockResolvedValue({ data: null, error: { message: 'Bad gateway' } });
+    const err = await sendEmail(base).catch((e) => e);
+    expect(err).toBeInstanceOf(EmailSendError);
+    expect(err.code).toBe('unknown_error');
+    expect(err.statusCode).toBeNull();
+  });
+
+  /**
+   * SDK:n svarar { data: null, error: null } på ett felsvar vars kropp är JSON null. Det får inte se ut som
+   * ett mottaget mail: id saknas, och skipped är false — anroparen ska läsa det som oklart.
+   */
+  it('ett svar utan id ger id null och skipped false', async () => {
+    send.mockResolvedValue({ data: null, error: null });
+    await expect(sendEmail(base)).resolves.toEqual({ id: null, skipped: false });
+  });
+
   /** Nätverksfel och 5xx kommer från SDK:n som application_error — koden måste överleva oförändrad. */
   it('application_error bärs igenom, så anroparen kan behandla det som oklart', async () => {
     send.mockResolvedValue({
@@ -98,6 +121,8 @@ describe('svaret', () => {
 
 describe('utan konfiguration', () => {
   it('utanför produktion: hoppar över, säger det, och rör inte Resend', async () => {
+    // Pinnad: annars beror testet på vilken NODE_ENV sviten råkar köras under.
+    vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('RESEND_API_KEY', '');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(sendEmail(base, { idempotencyKey: 'k' })).resolves.toEqual({ id: null, skipped: true });

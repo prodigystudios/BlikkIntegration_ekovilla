@@ -10,19 +10,34 @@ type SendEmailArgs = {
 
 export type SendEmailOptions = {
   /**
-   * Skickas som Resends `Idempotency-Key`. Samma nyckel inom 24 timmar ger INTE ett andra mail, utan
-   * samma svar som första gången.
+   * Skickas som Resends `Idempotency-Key`. Samma nyckel med SAMMA innehåll inom 24 timmar ger inte ett
+   * andra mail, utan samma svar som första gången.
    *
    * 🧨 Utan nyckel är varje nytt försök ett nytt mail. För ett utskick där ett andra exemplar kostar
    * något — en materialbeställning blir två lass säckar — är ett nätverksfel annars omöjligt att
-   * försöka igen på säkert: man vet inte om det första gick fram. Bygg nyckeln av det som gör
-   * utskicket unikt (t.ex. `material-order/<id>/<försök>`), aldrig av en tidsstämpel.
+   * försöka igen på säkert: man vet inte om det första gick fram.
+   *
+   * ⚠️ En återanvänd nyckel kan också ge 409, och BÅDA betyder att ett mail kan ha gått iväg:
+   * - `invalid_idempotent_request` — samma nyckel men ANNAT innehåll. Rendera därför mailet en gång,
+   *   lagra det och skicka det lagrade byte för byte vid varje nytt försök. Ett omrenderat mail (en
+   *   tidsstämpel, ett ändrat namn) är ett annat innehåll.
+   * - `concurrent_idempotent_requests` — det första anropet med nyckeln pågår fortfarande.
+   * Behandla aldrig ett 409 som "avvisat, skicka igen".
+   *
+   * Bygg nyckeln av det som gör utskicket unikt (t.ex. `material-order/<id>/<försök>`), där försöket står
+   * STILL genom alla omförsök av samma utskick och bara räknas upp när ett utskick bevisligen inte gick
+   * iväg. Aldrig en tidsstämpel. Bara tecken upp till U+00FF — annat kastar SDK:n när headern byggs.
    */
   idempotencyKey?: string;
 };
 
 export type SendEmailResult = {
-  /** Resends id för mailet, eller null när inget skickades (skipped) eller svaret saknade id. */
+  /**
+   * Resends id för mailet, eller null när inget skickades (skipped) eller svaret saknade id.
+   *
+   * ⚠️ `id === null && !skipped` är OKLART, inte skickat: SDK:n kan svara `{ data: null, error: null }`
+   * på ett felsvar vars kropp är JSON `null`. Räkna ett utskick som mottaget bara när id finns.
+   */
   id: string | null;
   /**
    * true när utskicket HOPPADES ÖVER för att RESEND_API_KEY/MAIL_FROM saknas utanför produktion.
@@ -34,21 +49,31 @@ export type SendEmailResult = {
 };
 
 /**
- * Resend svarade med ett fel. `code` är Resends egna felnamn, oförändrat (t.ex. `validation_error`,
- * `rate_limit_exceeded`, `application_error`), så att anroparen kan skilja ett definitivt avslag från
- * ett oklart utfall.
+ * Resend svarade med ett fel. `code` är Resends egna felnamn, oförändrat, och `statusCode` HTTP-koden när
+ * svaret bar en.
  *
- * ⚠️ `application_error` är OKLART, inte ett avslag: SDK:n använder samma namn för nätverksfel, 5xx och
- * svar som inte gick att tolka. Mailet kan ha gått iväg.
+ * ⚠️ ETT FEL ÄR OKLART TILLS MOTSATSEN ÄR VISAD. Klassificera med en FAST LISTA över koder som bevisligen
+ * betyder "inget skickades" (t.ex. `validation_error`, `missing_required_field`, `invalid_from_address`)
+ * och behandla allt annat som att mailet kan ha gått iväg. Oklart är bland annat:
+ * - `application_error` — SDK:n använder den för nätverksfel, HTML-felsidor och svar som inte gick att
+ *   tolka, också ett 200 som Resend faktiskt tog emot.
+ * - `internal_server_error`, `service_unavailable` och andra namn en 5xx kan bära.
+ * - `unknown_error` — ett felsvar utan namn, t.ex. från en gateway.
+ * - 409-koderna för idempotens, se SendEmailOptions.
+ *
+ * Fel som INTE är EmailSendError (misslyckad import av SDK:n, en nyckel med tecken över U+00FF) kastas
+ * innan något skickats.
  *
  * Ärver Error med samma meddelande som förut, så befintliga anropare som läser `e.message` påverkas inte.
  */
 export class EmailSendError extends Error {
   readonly code: string;
-  constructor(code: string, message: string) {
+  readonly statusCode: number | null;
+  constructor(code: string, message: string, statusCode: number | null = null) {
     super(message);
     this.name = 'EmailSendError';
     this.code = code;
+    this.statusCode = statusCode;
   }
 }
 
@@ -111,7 +136,13 @@ export async function sendEmail(args: SendEmailArgs, options: SendEmailOptions =
   );
 
   if (res.error) {
-    throw new EmailSendError(res.error.name || 'unknown_error', res.error.message || 'Unknown email error');
+    // statusCode finns i Resends felkropp men inte i SDK:ns typ.
+    const statusCode = (res.error as { statusCode?: unknown }).statusCode;
+    throw new EmailSendError(
+      res.error.name || 'unknown_error',
+      res.error.message || 'Unknown email error',
+      typeof statusCode === 'number' ? statusCode : null,
+    );
   }
   return { id: res.data?.id ?? null, skipped: false };
 }
