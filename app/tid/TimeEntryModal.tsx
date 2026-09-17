@@ -7,6 +7,7 @@ import Select from '@/components/ui/Select';
 import Textarea from '@/components/ui/Textarea';
 import { cn } from '@/lib/shared/cn';
 import { DEFAULT_BREAK_MINUTES, minutesToHours, parseBreakMinutes, workedMinutes } from '@/lib/domains/time/hours';
+import { MIN_SEARCH_LENGTH, useWorkOrderSearch } from '@/lib/useWorkOrderSearch';
 import type { TimeReferenceItem } from '@/lib/domains/time/reference';
 
 // Formuläret för en tidrad. Tre sorter, samma modal: arbetsorder, intern tid, frånvaro.
@@ -117,6 +118,27 @@ export default function TimeEntryModal({
 
   const [jobs, setJobs] = React.useState<MyJob[]>([]);
   const [jobsLoading, setJobsLoading] = React.useState(false);
+  // Sökningen: vägen till ett jobb som INTE ligger på den valda dagen. Besättningen åker ibland ut
+  // en dag tidigare än planerat, och då fanns ingen väg alls — dagens lista var hela urvalet.
+  // `searchedJob` är träffen man valt; den lever vid sidan av feeden och nollställs med den.
+  const [searchedJob, setSearchedJob] = React.useState<MyJob | null>(null);
+  const [searchOpen, setSearchOpen] = React.useState(false);
+  // Urvalet är RLS på andra sidan — installatören når sina egna jobb, alltså precis de ordrar
+  // insert-policyn på tidraden också släpper igenom. Sökningen kan inte erbjuda ett jobb som
+  // Spara sedan nekar.
+  const search = useWorkOrderSearch<MyJob>({
+    endpoint: '/api/time/work-orders',
+    enabled: kind === 'work_order',
+    map: (row) => ({
+      work_order_id: row.id,
+      order_number: row.fortnox_order_number || row.order_number,
+      project_name: row.project_name,
+      customer: row.client_name,
+    }),
+  });
+  const searchReset = search.reset;
+  /** Dagens feed kunde inte hämtas — skilt från "inga jobb den dagen", som är ett svar. */
+  const [jobsError, setJobsError] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -126,11 +148,22 @@ export default function TimeEntryModal({
   React.useEffect(() => {
     if (kind !== 'work_order' || !date) return;
     let cancelled = false;
+    // Byter man dag hör gårdagens sökträff inte längre hemma i listan — den nollställs med samma
+    // skäl som valet nedan: en kvarliggande knapp från en annan dag är ett jobb man kan trycka på
+    // av vana och spara utan att märka.
+    setSearchedJob(null);
+    setSearchOpen(false);
+    searchReset();
+    setJobsError(false);
     setJobsLoading(true);
     (async () => {
       const { data, error: rpcError } = await supabase.rpc('get_my_crm_jobs', { start_date: date, end_date: date });
       if (cancelled) return;
       const unique: MyJob[] = [];
+      // ⚠️ Ett fel är inte ett tomt schema. Utan den här flaggan påstod rutan "Inga jobb
+      // schemalagda på dig den dagen" när frågan aldrig kom fram — ett besked om schemat som
+      // ingen kontrollerat, och som leder till att dagen bokförs som intern tid.
+      setJobsError(Boolean(rpcError));
       if (!rpcError) {
         const seen = new Set<string>();
         for (const row of (data ?? []) as any[]) {
@@ -172,6 +205,32 @@ export default function TimeEntryModal({
     })();
     return () => { cancelled = true; };
   }, [supabase, kind, date, entry]);
+
+  // Dagens jobb först, den sökta ordern sist. Feeden är alltid huvudspåret.
+  const jobOptions = React.useMemo(
+    () => (searchedJob && !jobs.some((job) => job.work_order_id === searchedJob.work_order_id)
+      ? [...jobs, searchedJob]
+      : jobs),
+    [jobs, searchedJob],
+  );
+
+  const pickSearchHit = (hit: MyJob) => {
+    setSearchedJob(hit);
+    setWorkOrderId(hit.work_order_id);
+    // Rutan lämnas ÖPPEN. Var dagen tom stod den öppen av sig själv, och utan det här försvann den
+    // under fingret i samma stund som första träffen valdes — var det fel träff fanns ingen väg
+    // tillbaka till sökningen man aldrig stängt.
+    setSearchOpen(true);
+    searchReset();
+  };
+
+  // Varningen gäller bara ett jobb som INTE ligger den dagen. Söker man fram ett jobb som ändå
+  // står i dagens lista är allt som det ska, och en varning där lär folk att strunta i den.
+  const pickedOffSchedule = Boolean(
+    searchedJob
+      && workOrderId === searchedJob.work_order_id
+      && !jobs.some((job) => job.work_order_id === searchedJob.work_order_id),
+  );
 
   // ⚠️ parseBreakMinutes, ALDRIG `Number(x) || 0` — skälet står på funktionen. Null betyder "går
   // inte att tolka", och då ska summan visa noll och spara-knappen vara stängd. Med `|| 0` blev
@@ -349,11 +408,15 @@ export default function TimeEntryModal({
                 <span className={LABEL}>Jobb</span>
                 {jobsLoading ? (
                   <span className="text-sm text-slate-500">Hämtar dagens jobb…</span>
-                ) : jobs.length === 0 ? (
+                ) : jobOptions.length === 0 ? (
                   // Tomt läge som går att agera på, inte bara en upplysning: knappen gör det den
                   // föreslår, i stället för att be någon leta rätt på fliken själv.
                   <div className="grid gap-2 rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2.5">
-                    <p className="m-0 text-sm text-amber-900">Inga jobb schemalagda på dig den dagen.</p>
+                    <p className="m-0 text-sm text-amber-900">
+                      {jobsError
+                        ? 'Dagens jobb kunde inte hämtas. Sök fram ordern nedan, eller försök igen.'
+                        : 'Inga jobb schemalagda på dig den dagen.'}
+                    </p>
                     <button
                       type="button"
                       onClick={() => setKind('internal')}
@@ -364,7 +427,7 @@ export default function TimeEntryModal({
                   </div>
                 ) : (
                   <div className="grid gap-1.5">
-                    {jobs.map((job) => (
+                    {jobOptions.map((job) => (
                       <button
                         key={job.work_order_id}
                         type="button"
@@ -383,6 +446,62 @@ export default function TimeEntryModal({
                     ))}
                   </div>
                 )}
+
+                {/* Sökningen ligger bakom en rad: en vanlig dag har ett enda jobb, och det är redan
+                    valt. Den öppnas av sig själv när dagen är tom, för då ÄR den vägen framåt. */}
+                {!jobsLoading && !searchOpen && jobOptions.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setSearchOpen(true)}
+                    className="justify-self-start text-sm font-semibold text-slate-600 underline underline-offset-2 hover:text-slate-900"
+                  >
+                    Jobbade du på en annan order?
+                  </button>
+                ) : null}
+
+                {!jobsLoading && (searchOpen || jobOptions.length === 0) ? (
+                  <div className="grid gap-1.5 rounded-xl border border-solid border-[#dbe4d6] bg-[#f7f9f5] px-3 py-2.5">
+                    <label className="grid gap-1">
+                      <span className={LABEL}>Sök arbetsorder</span>
+                      <Input
+                        value={search.query}
+                        onChange={(e) => search.setQuery(e.target.value)}
+                        placeholder="Ordernummer eller kund"
+                        autoComplete="off"
+                      />
+                    </label>
+                    {search.searching ? <span className="text-sm text-slate-500">Söker…</span> : null}
+                    {/* Ett trasigt svar får ALDRIG se ut som noll träffar: "ingen träff bland dina
+                        jobb" är ett påstående om vems jobbet är. */}
+                    {!search.searching && search.failed ? (
+                      <span className="text-sm text-rose-600">Sökningen svarade inte. Försök igen.</span>
+                    ) : null}
+                    {!search.searching && !search.failed && search.query.trim().length >= MIN_SEARCH_LENGTH && search.hits.length === 0 ? (
+                      // Sökningen når bara de jobb personen är utlagd på — RLS, inte ett filter i
+                      // koden — så en tom lista betyder oftast just det, inte att ordern inte finns.
+                      <span className="text-sm text-slate-500">Ingen träff bland dina jobb.</span>
+                    ) : null}
+                    {search.hits.map((hit) => (
+                      <button
+                        key={hit.work_order_id}
+                        type="button"
+                        onClick={() => pickSearchHit(hit)}
+                        className="px-3 py-2.5 justify-start text-left w-full rounded-xl border border-solid border-[#dbe4d6] bg-white text-sm text-slate-700 transition hover:border-slate-400"
+                      >
+                        {hit.order_number ? `#${hit.order_number} · ` : ''}{hit.customer || hit.project_name || 'Jobb'}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {/* Valt ett jobb som inte ligger den här dagen? Säg det rakt ut. Raden är riktig —
+                    besättningen körde jobbet en annan dag — men den ska vara ett medvetet val, inte
+                    en felträff man sparar utan att märka. */}
+                {pickedOffSchedule ? (
+                  <span className="text-sm text-amber-800">
+                    Det här jobbet är inte schemalagt på dig den dagen. Tiden hamnar ändå på ordern.
+                  </span>
+                ) : null}
               </div>
             ) : (
               <label className="grid gap-1">
