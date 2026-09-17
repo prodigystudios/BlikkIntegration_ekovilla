@@ -30,7 +30,10 @@ export type DepotMaterialBalance = {
    * över all tid, precis som före avstämningarna.
    */
   counted: number | null;
-  /** 'YYYY-MM-DD', eller null. Räkningen gäller vid dagens början. */
+  /**
+   * 'YYYY-MM-DD', eller null. För förbrukningen gäller räkningen vid dagens början; en leverans samma dag
+   * avgörs av när den fördes in (deliveriesAfterCounts).
+   */
   counted_on: string | null;
   /** (counted ?? 0) + delivered − consumed. */
   balance: number;

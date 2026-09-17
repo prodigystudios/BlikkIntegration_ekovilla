@@ -22,6 +22,7 @@
 --       avstämning:  saldot räknas FRÅN räkningen; fredagens 50 syns redan i de 400 -> stannar på 400
 --
 -- saldo = räknat + leveranser EFTER räkningsdagen − förbrukning från och med räkningsdagen.
+--   [leveranser PÅ räkningsdagen: se ERSATT-noten nedan]
 --
 -- ⚠️ FÖRBRUKNINGEN RÄKNAS INTE MED ETT DATUMFILTER. Säckrapporteringen har en supersede-regel: finns en
 -- egenkontroll gäller BARA den, och den ersätter delrapporterna. Förbrukningen efter en räkning är

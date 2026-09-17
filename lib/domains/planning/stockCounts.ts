@@ -96,8 +96,12 @@ export function latestCounts(rows: StockCount[]): Map<string, StockCount> {
  * den det inte kommer den efter.
  *
  * ⚠️ Kvarvarande risk: en leverans som stod på depån när man räknade men kvitteras först EFTER att
- * räkningen förts in läggs på en gång till. Kvitteringsfönstret och leveransformuläret visar därför
- * räkningen de läggs på.
+ * räkningen förts in läggs på en gång till. Kvitteringsfönstret och leveransformuläret säger därför till
+ * när datumet är räkningsdagen (deliveryVsCount).
+ *
+ * ⚠️ Samma regel gäller en RÄTTAD räkning: skrivs 486 om till 468 efter att lasset kvitterats, räknas
+ * lasset som inräknat i 468. Avstämningsformuläret visar därför säckarna som redan är registrerade på
+ * räkningsdagen (sacksOnCountDay).
  *
  * En tidsstämpel som inte går att tolka ger det gamla svaret — inräknad. Kolumnerna är NOT NULL, så det
  * ska aldrig hända; typen kräver fältet för att en läsning inte ska kunna tappa det.
@@ -116,15 +120,39 @@ export function deliveriesAfterCounts<T extends DeliveryMovement>(deliveries: T[
   });
 }
 
+export type DeliveryVsCount = 'no_count' | 'before_count' | 'on_count_day' | 'after_count';
+
 /**
- * Ren: lägger en leverans som förs in NU på saldot, givet depåns senaste räkning?
+ * Ren: var hamnar en leverans som förs in NU, mot depåns senaste räkning? För formulären, som ska säga
+ * det INNAN någon trycker.
  *
- * För formulären, som vill säga det INNAN någon trycker. Samma regel som deliveriesAfterCounts för en
- * leverans som förs in efter varje räkning som redan finns — och det gör den alltid, räkningen är redan
- * inläst. Kvar blir bara datumet: före räkningsdagen är den redan inräknad.
+ *   before_count           -> redan inräknad, saldot ändras inte
+ *   on_count_day           -> läggs på, men stod lasset på depån när man räknade blir det dubbelt
+ *   after_count / no_count -> läggs på
+ *
+ * Samma regel som deliveriesAfterCounts för en leverans som förs in efter varje räkning som redan finns,
+ * och det gör den alltid eftersom räkningen redan är inläst. Då avgör bara datumet.
  */
-export function deliveryAddsToBalance(deliveredOn: string, countedOn: string | null): boolean {
-  return countedOn === null || deliveredOn >= countedOn;
+export function deliveryVsCount(deliveredOn: string, countedOn: string | null): DeliveryVsCount {
+  if (countedOn === null) return 'no_count';
+  if (deliveredOn < countedOn) return 'before_count';
+  return deliveredOn === countedOn ? 'on_count_day' : 'after_count';
+}
+
+/**
+ * Ren: säckar som redan är registrerade PÅ räkningsdagen för depån och materialet.
+ *
+ * En räkning som förs in NU räknar dem som inräknade (deliveriesAfterCounts), också när den bara rättar
+ * en tidigare räkning samma dag. Avstämningsformuläret visar talet så att det räknade antalet skrivs in
+ * MED dem, annars försvinner ett kvitterat lass ur saldot igen utan att något säger varför.
+ */
+export function sacksOnCountDay(
+  deliveries: Array<{ depot_id: string; material: string; sacks: number; delivered_on: string }>,
+  target: { depotId: string; material: string; countedOn: string },
+): number {
+  return deliveries
+    .filter((d) => d.depot_id === target.depotId && d.material === target.material && d.delivered_on === target.countedOn)
+    .reduce((sum, d) => sum + d.sacks, 0);
 }
 
 /** Räkningen för en depå och ett material, eller undefined. */

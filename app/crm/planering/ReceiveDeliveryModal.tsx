@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { shortDayISO, stockholmTodayISO } from './planningDates';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
-import { deliveryAddsToBalance } from '@/lib/domains/planning/stockCounts';
+import { deliveryVsCount } from '@/lib/domains/planning/stockCounts';
 
 // Kvittera att en väntad leverans kommit fram. Först här blir den lager.
 //
@@ -16,6 +16,9 @@ import { deliveryAddsToBalance } from '@/lib/domains/planning/stockCounts';
 // ⚠️ ETT ANKOMSTDATUM FÖRE DEPÅNS SENASTE AVSTÄMNING ÄNDRAR INTE SALDOT — lasset stod då på depån när man
 // räknade. Kvitteringen lyckas ändå, så utan varningen nedan ser det ut som att knappen inte gjorde något.
 // Det var precis så felet såg ut i drift (Borlänge, 11 sep), då med samma datum på båda.
+//
+// PÅ räkningsdagen läggs lasset på, eftersom kvitteringen förs in efter räkningen. Stod det redan på
+// depån när man räknade blir det dubbelt, och det kan bara den som står där veta. Därav raden om det.
 export default function ReceiveDeliveryModal({
   chip,
   countedOn,
@@ -39,7 +42,7 @@ export default function ReceiveDeliveryModal({
   const count = Number(sacks);
   const valid = count > 0 && Number.isInteger(count) && deliveredOn.length === 10 && deliveredOn <= today;
   const short = count > 0 && count < chip.sacks;
-  const alreadyCounted = deliveredOn.length === 10 && !deliveryAddsToBalance(deliveredOn, countedOn);
+  const vsCount = deliveredOn.length === 10 ? deliveryVsCount(deliveredOn, countedOn) : 'no_count';
 
   const submit = async () => {
     if (!valid || saving) return;
@@ -81,10 +84,16 @@ export default function ReceiveDeliveryModal({
               className={`${field} tabular-nums`}
               aria-label="Ankomstdatum"
             />
-            {alreadyCounted && countedOn && (
+            {vsCount === 'before_count' && countedOn && (
               <p className="mt-1 text-[11px] text-amber-700">
                 Depån stämdes av {shortDayISO(countedOn)}. En leverans som kom före det finns redan i det räknade
                 antalet, så saldot ändras inte.
+              </p>
+            )}
+            {vsCount === 'on_count_day' && countedOn && (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Läggs på avstämningen från {shortDayISO(countedOn)}. Stod lasset redan på depån när ni räknade blir
+                saldot för högt — stäm då av igen.
               </p>
             )}
           </div>
