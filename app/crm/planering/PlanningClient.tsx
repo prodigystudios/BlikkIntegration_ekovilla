@@ -1320,16 +1320,29 @@ export default function PlanningClient({
             {!allCovered && (
               <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-rose-500">
                 {canManageDepots ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setAdminArea('stock');
-                      setAdminOpen(true);
-                    }}
-                    className="inline-flex h-7 items-center rounded-lg border border-rose-200 bg-white px-2.5 text-[11.5px] font-bold text-rose-700 transition hover:bg-rose-100"
-                  >
-                    Boka in leverans
-                  </button>
+                  <>
+                    {/* Beställ = mailet till fabriken. Boka in = ett lass som redan beställts på annat sätt (telefon). */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminArea('orders');
+                        setAdminOpen(true);
+                      }}
+                      className="inline-flex h-7 items-center rounded-lg border border-rose-300 bg-rose-600 px-2.5 text-[11.5px] font-bold text-white transition hover:bg-rose-700"
+                    >
+                      Beställ material
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAdminArea('stock');
+                        setAdminOpen(true);
+                      }}
+                      className="inline-flex h-7 items-center rounded-lg border border-rose-200 bg-white px-2.5 text-[11.5px] font-bold text-rose-700 transition hover:bg-rose-100"
+                    >
+                      Boka in leverans
+                    </button>
+                  </>
                 ) : (
                   <span>Leveranser bokas in under Administrera → Lager.</span>
                 )}

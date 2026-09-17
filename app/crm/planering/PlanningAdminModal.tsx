@@ -10,6 +10,8 @@ import { shortDayISO, stockholmTodayISO } from './planningDates';
 import { TrashIcon } from './managerModalUi';
 import OnOrderNote from './OnOrderNote';
 import OrderEmailCard from './OrderEmailCard';
+import MaterialOrdersPanel from './MaterialOrdersPanel';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 // Husets listbox. En `<select>` duger inte: LISTAN som fälls ut ur en sådan ritas av
 // operativsystemet och går inte att styla — grå och fyrkantig mitt i den här ytan.
 // `min-h-9`, inte `h-9`: se noten i Select.tsx om tailwind-merge-grupperna.
@@ -30,7 +32,7 @@ import { defaultCrewByTruck, type DefaultCrewMember } from '@/lib/domains/planni
 // filtered by permission (Option A): admins see the management areas, everyone sees Lager.
 // Reuses the existing domain/API + useEntityCrud — no behaviour change, just one surface.
 
-export type AdminAreaKey = 'trucks' | 'depots' | 'suppliers' | 'jobtypes' | 'stock';
+export type AdminAreaKey = 'trucks' | 'depots' | 'suppliers' | 'jobtypes' | 'stock' | 'orders';
 type AreaKey = AdminAreaKey;
 
 const PANEL = 'rounded-2xl border border-[#e0e8dc] bg-white p-4';
@@ -116,6 +118,8 @@ export default function PlanningAdminModal({
         { key: 'suppliers' as const, label: 'Leverantörer', sub: 'Fabriker, material och ledtid', count: suppliersCrud.items.length, show: canManageDepots },
         { key: 'jobtypes' as const, label: 'Jobbtyper', sub: 'Färger och materialkoppling', count: jobTypesCrud.items.length, show: canManageTrucks },
         { key: 'stock' as const, label: 'Lager', sub: 'Saldo och leveranser', count: null, show: true },
+        // Hela beställningsflödet ligger bakom planning.depot.manage — raderna bär fabrikens adress och mailets text.
+        { key: 'orders' as const, label: 'Beställningar', sub: 'Materialbeställning till fabrik', count: null, show: canManageDepots },
       ].filter((a) => a.show),
     [canManageTrucks, canManageDepots, trucksCrud.items.length, depotsCrud.items.length, suppliersCrud.items.length, jobTypesCrud.items.length],
   );
@@ -126,8 +130,18 @@ export default function PlanningAdminModal({
     if (!areas.some((a) => a.key === active)) setActive(areas[0]?.key ?? 'stock');
   }, [areas, active]);
 
+  // Osparade ändringar i en beställning. Att byta område eller stänga kastar dem, så modalen frågar först —
+  // en halvfylld beställning som försvinner tyst beställs annars aldrig, eller från början igen med andra tal.
+  const [ordersDirty, setOrdersDirty] = useState(false);
+  const [pendingLeave, setPendingLeave] = useState<(() => void) | null>(null);
+  function guarded(action: () => void) {
+    if (active === 'orders' && ordersDirty) setPendingLeave(() => action);
+    else action();
+  }
+  const close = () => guarded(onClose);
+
   return (
-    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-3 sm:p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[2800] flex items-center justify-center bg-slate-900/40 p-3 sm:p-4" onClick={close}>
       <div
         // FAST storlek, inte bara ett tak. Med `max-h` krympte modalen till varje områdes innehåll
         // och centrerades om, så den hoppade i både storlek och läge vid varje byte av område.
@@ -145,7 +159,7 @@ export default function PlanningAdminModal({
               </span>
             </div>
             <button
-              onClick={onClose}
+              onClick={close}
               className="inline-flex h-9 items-center gap-2 rounded-xl border border-[#e0e8dc] bg-white px-3 text-[12.5px] font-bold text-slate-600 transition hover:border-[#c8d4c3]"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -164,7 +178,8 @@ export default function PlanningAdminModal({
               return (
                 <button
                   key={a.key}
-                  onClick={() => setActive(a.key)}
+                  // Samma område igen är ingen förflyttning — frågan hade nollat skyddet utan att något kastades.
+                  onClick={() => a.key !== active && guarded(() => setActive(a.key))}
                   className={cn(
                     'mb-1.5 block w-full rounded-xl border px-3 py-2.5 text-left transition',
                     on ? 'border-[#1a3f26] bg-[#1a3f26] shadow-sm' : 'border-transparent hover:border-[#e0e8dc] hover:bg-white',
@@ -196,11 +211,43 @@ export default function PlanningAdminModal({
                 // och då hade väljarna stått tomma — trots att väntade leveranser ska gå att
                 // hantera även när saldot inte gick att räkna ut.
                 depotOptions={depotsCrud.items.filter((d) => d.active)}
+                onOpenOrders={canManageDepots ? () => setActive('orders') : undefined}
+              />
+            )}
+            {active === 'orders' && (
+              <MaterialOrdersPanel
+                suppliers={suppliersCrud.items}
+                depots={depotsCrud.items}
+                registryLoading={suppliersCrud.loading || depotsCrud.loading}
+                registryError={suppliersCrud.loadError || depotsCrud.loadError}
+                onChanged={onChanged}
+                onDirtyChange={setOrdersDirty}
               />
             )}
           </div>
         </div>
       </div>
+
+      {pendingLeave && (
+        // stopPropagation: dialogen ligger utanför modalrutan, och ett klick i den hade annars bubblat till
+        // bakgrundens "stäng" — och frågat igen i samma stund som man svarat.
+        <div onClick={(e) => e.stopPropagation()}>
+          <CrmConfirmDialog
+            title="Lämna beställningen?"
+            message="Ändringarna är inte granskade och försvinner. Tryck Granska först om de ska sparas."
+            confirmLabel="Lämna utan att spara"
+            cancelLabel="Stanna kvar"
+            tone="danger"
+            onCancel={() => setPendingLeave(null)}
+            onConfirm={() => {
+              const action = pendingLeave;
+              setPendingLeave(null);
+              setOrdersDirty(false);
+              action();
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -954,6 +1001,10 @@ function ExpectedRow({
 }) {
   const toast = useToast();
   const [editing, setEditing] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  // Kom ur en materialbeställning: depå och material är det fabriken fick i mailet och låsta i databasen.
+  // Datum, antal och notering går att ändra — det är fabrikens svar.
+  const ordered = item.order_id !== null;
   const [depotId, setDepotId] = useState(item.depot_id);
   const [material, setMaterial] = useState(item.material);
   const [sacks, setSacks] = useState(String(item.sacks));
@@ -1005,8 +1056,15 @@ function ExpectedRow({
     return (
       <li className="flex min-w-0 items-center justify-between gap-3 rounded-xl border border-dashed border-[#dce4d8] bg-[#fcfdfb] px-3 py-2">
         <div className="min-w-0">
-          <div className="truncate text-[12.5px] font-semibold text-slate-700">
-            {item.depot_name} · {item.sacks} säck {item.material}
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-[12.5px] font-semibold text-slate-700">
+              {item.depot_name} · {item.sacks} säck {item.material}
+            </span>
+            {ordered && (
+              <span className="shrink-0 rounded-full border border-[#cfe3d6] bg-[#e7f0ea] px-2 py-px text-[10px] font-bold text-[#1f4a2e]">
+                Beställd via mail
+              </span>
+            )}
           </div>
           <div className={cn('text-[11px] tabular-nums', late ? 'font-semibold text-amber-700' : 'text-slate-400')}>
             {late ? 'Skulle ha kommit' : 'Väntas'} {item.expected_on}
@@ -1021,10 +1079,24 @@ function ExpectedRow({
             {/* "Avboka", inte "Avbryt". Samma komponent använder "Avbryt" för det ofarliga
                 stänga-utan-att-spara, och ReceiveDeliveryModal likaså — samma ord för två motsatta
                 handlingar, varav den ena inte går att ångra. */}
-            <button type="button" onClick={() => onCancel(item.id)} className={crm.dangerButton}>
+            {/* En beställd rad avbokas bara här — fabriken får inget besked om det. Därför frågar vi först. */}
+            <button type="button" onClick={() => (ordered ? setConfirmCancel(true) : onCancel(item.id))} className={crm.dangerButton}>
               Avboka
             </button>
           </div>
+        )}
+        {confirmCancel && (
+          <CrmConfirmDialog
+            title="Avboka det beställda lasset?"
+            message="Fabriken får inget besked. Kontakta dem själv om lasset inte ska komma."
+            confirmLabel="Avboka"
+            tone="danger"
+            onCancel={() => setConfirmCancel(false)}
+            onConfirm={() => {
+              setConfirmCancel(false);
+              onCancel(item.id);
+            }}
+          />
         )}
       </li>
     );
@@ -1038,6 +1110,7 @@ function ExpectedRow({
           <SelectMenu
             value={depotId}
             onChange={setDepotId}
+            disabled={ordered}
             aria-label="Depå"
             options={depots.map((d) => ({ value: d.id, label: d.name }))}
           />
@@ -1047,6 +1120,7 @@ function ExpectedRow({
           <SelectMenu
             value={material}
             onChange={setMaterial}
+            disabled={ordered}
             aria-label="Material"
             options={MATERIAL_SHORTS.map((m) => ({ value: m, label: m }))}
           />
@@ -1061,6 +1135,11 @@ function ExpectedRow({
           <input type="date" value={expectedOn} onChange={(ev) => setExpectedOn(ev.target.value)} className={cn(crm.input, 'tabular-nums')} aria-label="Väntat datum" />
         </div>
       </div>
+      {ordered && (
+        <p className="mt-2 text-[11px] text-slate-500">
+          Depå och material är låsta: det är vad fabriken fick i beställningen. Ändra datum eller antal när fabriken svarar.
+        </p>
+      )}
       <div className="mt-2.5 grid grid-cols-[1fr_auto_auto] gap-2.5">
         <input value={note} onChange={(ev) => setNote(ev.target.value)} placeholder="Notering (valfritt)" className={crm.input} aria-label="Notering" />
         <button type="button" onClick={() => setEditing(false)} className={crm.ghostButton}>
@@ -1096,7 +1175,7 @@ const EXCLUSION_TEXT: Record<'no_depot' | 'no_material' | 'no_date', string> = {
  * beställningsförslag som är för lågt utan att någon kan se det — därför står bortfallet i kortet,
  * inte i en logg.
  */
-function ForecastCard({ forecast }: { forecast: DepotForecast }) {
+function ForecastCard({ forecast, onOrder }: { forecast: DepotForecast; onOrder?: () => void }) {
   const today = stockholmTodayISO();
   const needed = rowsNeedingOrder(forecast);
   const overdue = forecast.rows.filter((r) => r.overdue_inflow > 0);
@@ -1104,7 +1183,15 @@ function ForecastCard({ forecast }: { forecast: DepotForecast }) {
 
   return (
     <div className={PANEL}>
-      <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Prognos</h3>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-[13.5px] font-extrabold text-[#142c1b]">Prognos</h3>
+        {/* Bara för den som får beställa (onOrder saknas annars), och bara när något behöver beställas. */}
+        {onOrder && needed.length > 0 && (
+          <button type="button" onClick={onOrder} className={crm.ghostButton}>
+            Beställ material
+          </button>
+        )}
+      </div>
       <p className="mb-3 mt-0.5 text-[11.5px] text-slate-500">
         När depån tar slut, och hur mycket som behöver beställas. Väntade leveranser är inräknade.
       </p>
@@ -1238,10 +1325,13 @@ function StockPanel({
   canWrite,
   canManageDepots,
   depotOptions,
+  onOpenOrders,
 }: {
   canWrite: boolean;
   canManageDepots: boolean;
   depotOptions: OpsDepot[];
+  /** Till Beställningar. Bara för den som får beställa. */
+  onOpenOrders?: () => void;
 }) {
   const toast = useToast();
   const [depots, setDepots] = useState<DepotBalance[]>([]);
@@ -1517,7 +1607,7 @@ function StockPanel({
             <p className="py-6 text-center text-[12px] text-slate-400">Inga depåer upplagda än. Lägg till under Depåer.</p>
           ) : (
             <>
-              {forecast && <ForecastCard forecast={forecast} />}
+              {forecast && <ForecastCard forecast={forecast} onOrder={onOpenOrders} />}
               <section>
                 <h3 className="mb-2 px-1 text-[13.5px] font-extrabold text-[#142c1b]">Saldo per depå</h3>
                 {/* Så många depåkort i bredd som ytan rymmer, i stället för en brytpunkt: modalen är lika bred
