@@ -140,7 +140,13 @@ create policy crm_wo_stages_select
   using (
     exists (
       select 1 from public.crm_work_orders w
-      where w.id = work_order_id
+      -- ⚠️ KOLUMNEN ÄR KVALIFICERAD MED FLIT. Oskrivet (`w.id = work_order_id`) löser Postgres upp
+      -- namnet mot den INRE tabellen först, och faller tillbaka på den yttre bara för att
+      -- crm_work_orders råkar sakna en kolumn som heter work_order_id. crm_quotes HAR en sådan
+      -- (20260530062211), så namnet är i bruk i samma schema. Lades det någon gång till på
+      -- crm_work_orders skulle villkoret tyst bli `w.id = w.work_order_id` — nästan alltid falskt,
+      -- och INGEN skulle kunna läsa en enda etapp. Fail-closed, men obegripligt.
+      where w.id = public.crm_work_order_stages.work_order_id
         and (auth.uid() = w.assigned_to or public.has_permission('crm.workorder.read'))
     )
   );
