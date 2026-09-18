@@ -470,9 +470,21 @@ export const COPY_NAME_PREFIX = 'Kopia av ';
  */
 export function copyDraftFromQuote(item: QuoteItem, now: Date = new Date()): QuoteDraft {
   const source = draftFromQuote(item);
+  const dates = initialQuoteDates(now);
+  // Önskat installationsdatum är kundens önskemål om JOBBET, inte om dokumentet — kopieras samma
+  // jobb samma vecka ska det följa med, till skillnad från offertens egna datum.
+  //
+  // 🧨 Men bara så länge det ligger framåt. Ett passerat datum hade gått rakt igenom
+  // arbetsorderspärren, som bara varnar för ett TOMT fält (se workOrderReadiness), och sedan
+  // landat på arbetsordern — där planeringen genast räknar den som försenad. Jämförelsen är
+  // lexikografisk med flit: båda är YYYY-MM-DD, och två sådana strängar sorterar som datum.
+  // Dagens datum räknas som framåt — det har inte passerat.
+  const desiredDateStillAhead = Boolean(source.desired_installation_date)
+    && source.desired_installation_date >= dates.quote_date;
   return {
     ...source,
-    ...initialQuoteDates(now),
+    ...dates,
+    desired_installation_date: desiredDateStillAhead ? source.desired_installation_date : '',
     // Prefixet läggs på varje gång, även på en kopia av en kopia: två rader i listan ska inte
     // kunna se likadana ut. Det är ett förifyllt värde i ett öppet fält — säljaren döper om.
     project_name: `${COPY_NAME_PREFIX}${item.project_name}`,

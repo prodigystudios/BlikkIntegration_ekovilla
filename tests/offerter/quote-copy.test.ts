@@ -218,6 +218,51 @@ describe('copyDraftFromQuote', () => {
     expect(copy.create_follow_up_task).toBe(true);
   });
 
+  it('önskat installationsdatum följer med när det ligger framåt', () => {
+    // Samma jobb, kopierat samma vecka: kundens önskemål gäller fortfarande.
+    const copy = copyDraftFromQuote(
+      sourceQuote({ internal_handoff: { desired_installation_date: '2026-08-20', handoff_notes: null, work_scope: null } }),
+      AFTER_MIDNIGHT_CEST,
+    );
+
+    expect(copy.desired_installation_date).toBe('2026-08-20');
+  });
+
+  it('ett önskat installationsdatum som redan varit släpps', () => {
+    // 🧨 Ett passerat datum går rakt igenom arbetsorderspärren (den varnar bara för TOMT fält)
+    // och gör den nya ordern försenad i planeringen i samma stund den skapas.
+    const copy = copyDraftFromQuote(
+      sourceQuote({ internal_handoff: { desired_installation_date: '2026-05-04', handoff_notes: null, work_scope: null } }),
+      AFTER_MIDNIGHT_CEST,
+    );
+
+    expect(copy.desired_installation_date).toBe('');
+  });
+
+  it('dagens datum räknas som framåt — det har inte passerat', () => {
+    const copy = copyDraftFromQuote(
+      sourceQuote({ internal_handoff: { desired_installation_date: '2026-06-16', handoff_notes: null, work_scope: null } }),
+      AFTER_MIDNIGHT_CEST,
+    );
+
+    expect(copy.desired_installation_date).toBe('2026-06-16');
+  });
+
+  it('gränsen går vid den SVENSKA dagen, inte vid UTC-dygnet', () => {
+    // 🧨 Ögonblicket är 00:30 svensk sommartid den 16:e — UTC säger fortfarande den 15:e. Ett
+    // önskemål daterat den 15:e är alltså GÅRDAGENS och ska släppas. Jämförs det mot UTC-dygnet
+    // räknas det i stället som "idag" och följer med.
+    //
+    // Skilt från testet ovan med flit: där svarar båda jämförelserna lika, så det prövar inget.
+    // Den här dagen är den enda som skiljer dem åt.
+    const copy = copyDraftFromQuote(
+      sourceQuote({ internal_handoff: { desired_installation_date: '2026-06-15', handoff_notes: null, work_scope: null } }),
+      AFTER_MIDNIGHT_CEST,
+    );
+
+    expect(copy.desired_installation_date).toBe('');
+  });
+
   it('ansvarig blir den som kopierar — tom sträng låter servern fylla i', () => {
     const copy = copyDraftFromQuote(sourceQuote(), AFTER_MIDNIGHT_CEST);
 
