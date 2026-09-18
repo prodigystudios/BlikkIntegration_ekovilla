@@ -88,6 +88,31 @@ export function expandWorkOrderToBacklogItems(
   return items;
 }
 
+/**
+ * Vilka av en orders poster som hör hemma i backloggen, givet dess status.
+ *
+ * En delfakturerad order är förbi installationen SOM HELHET, men inte nödvändigtvis per etapp:
+ * faktureras etapp 1 försvinner hela ordern ur backloggen innan snedtaket hunnit planeras.
+ *
+ * ⚠️ BARA EN UPPDELAD ORDER SLÄPPS IN. Ett första utkast krävde enbart att posten saknade placering,
+ * och QA mot skarp data 2026-09-18 visade vad det gav: order #98 — delfakturerad, noll placeringar,
+ * noll säckar, INGA etapper — dök upp i "Att planera" som ett jobb att boka. Den ordern har ingen
+ * etapp 2 att vänta på; för en odelad order betyder statusen precis vad den säger. Regeln finns för
+ * snedtaket som ännu inte gjorts, inte för varje order som råkar vara delfakturerad.
+ *
+ * ⚠️ Och bara de etapper som ännu inte är utplacerade — annars hade redan utförda etapper dykt upp
+ * som nya jobb att boka.
+ */
+export function backlogItemsForStatus(
+  status: string,
+  stages: WorkOrderStage[],
+  expanded: SchedulableWorkOrder[],
+): SchedulableWorkOrder[] {
+  if (status !== PARTIALLY_INVOICED) return expanded;
+  if (stages.length === 0) return [];
+  return expanded.filter((item) => item.segment_count === 0);
+}
+
 const WORK_ORDER_BACKLOG_SELECT =
   'id, order_number, fortnox_order_number, project_name, client_name, status, desired_installation_date, assigned_to, work_address, customer_snapshot, line_items, ' +
   'crm_work_order_stages(id, stage_number, title, line_quantities)';
@@ -139,14 +164,12 @@ export async function listSchedulableWorkOrders(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const items = rows.flatMap((r) => {
-    const expanded = expandWorkOrderToBacklogItems(r, (stageId) => counts.get(scopeKey(r.id, stageId)) ?? 0);
-    // En delfakturerad order är förbi installationen SOM HELHET, men inte nödvändigtvis per etapp:
-    // faktureras etapp 1 försvann hela ordern ur backloggen innan snedtaket hunnit planeras. Den
-    // släpps in igen, men BARA med de poster som ännu inte är utplacerade — annars hade redan
-    // utförda etapper dykt upp som nya jobb att boka.
-    if (r.status !== PARTIALLY_INVOICED) return expanded;
-    return expanded.filter((item) => item.segment_count === 0);
-  });
+  const items = rows.flatMap((r) =>
+    backlogItemsForStatus(
+      r.status,
+      (r.crm_work_order_stages ?? []) as WorkOrderStage[],
+      expandWorkOrderToBacklogItems(r, (stageId) => counts.get(scopeKey(r.id, stageId)) ?? 0),
+    ),
+  );
   return { data: items, error: null };
 }

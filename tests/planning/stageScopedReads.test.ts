@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { mapWorkOrderJob, scopeForSegment, type WorkOrderJobRow } from '@/lib/domains/planning/display';
-import { expandWorkOrderToBacklogItems, PARTIALLY_INVOICED, SCHEDULABLE_WORK_ORDER_STATUSES } from '@/lib/domains/planning/backlog';
+import {
+  backlogItemsForStatus,
+  expandWorkOrderToBacklogItems,
+  PARTIALLY_INVOICED,
+  SCHEDULABLE_WORK_ORDER_STATUSES,
+} from '@/lib/domains/planning/backlog';
 import type { WorkOrderStage } from '@/lib/domains/crm/workOrderStages';
 
 // Läsmodellerna när en order är uppdelad i etapper.
@@ -145,5 +150,29 @@ describe('delfakturerade ordrar i backloggen', () => {
     expect([...SCHEDULABLE_WORK_ORDER_STATUSES]).toEqual(['draft', 'scheduled', 'in_progress']);
     expect(PARTIALLY_INVOICED).toBe('partially_invoiced');
     expect(SCHEDULABLE_WORK_ORDER_STATUSES as readonly string[]).not.toContain(PARTIALLY_INVOICED);
+  });
+
+  const wall = stage('s1', 1, 'Vägg', [['r-wall', 30]]);
+  const items = (segs: number) => expandWorkOrderToBacklogItems({ ...ORDER, crm_work_order_stages: [wall] }, () => segs);
+
+  it('en schemaläggningsbar order passerar orörd', () => {
+    const all = items(0);
+    expect(backlogItemsForStatus('scheduled', [wall], all)).toBe(all);
+  });
+
+  // 🧨 QA-FYNDET 2026-09-18: order #98 — delfakturerad, noll placeringar, noll säckar, INGA etapper
+  // — dök upp i "Att planera". Backloggen gick från 63 till 64 poster utan att något nytt fanns att
+  // boka. En odelad order har ingen etapp 2 att vänta på.
+  it('en ODELAD delfakturerad order släpps INTE in', () => {
+    const undivided = expandWorkOrderToBacklogItems(ORDER, () => 0);
+    expect(backlogItemsForStatus(PARTIALLY_INVOICED, [], undivided)).toEqual([]);
+  });
+
+  it('en UPPDELAD delfakturerad order släpper in sina oplanerade etapper', () => {
+    expect(backlogItemsForStatus(PARTIALLY_INVOICED, [wall], items(0)).length).toBeGreaterThan(0);
+  });
+
+  it('men inte etapper som redan är utplacerade', () => {
+    expect(backlogItemsForStatus(PARTIALLY_INVOICED, [wall], items(2))).toEqual([]);
   });
 });
