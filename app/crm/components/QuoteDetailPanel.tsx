@@ -222,6 +222,8 @@ export default function QuoteDetailPanel({
   // A work order locks the offer in Fortnox — unless the last sync failed, in which case the
   // re-sync button stays available so the user can recover.
   const offerLocked = Boolean(quote.work_order_id) && quote.fortnox_sync_status !== 'failed';
+  // Står det något annat än "Stäng" i footern? Styr bara bredden på Stäng-knappen.
+  const footerHasActions = canWrite || !offerLocked;
   const display = quoteAmountDisplay(quote.quote_type, resolveQuoteVatBreakdown(quote));
   const customerName = quoteCustomerName(quote);
 
@@ -394,24 +396,40 @@ export default function QuoteDetailPanel({
           </div>
         }
         /* Sticky footer — a locked offer (work order created) can't be edited or
-           re-synced, so the edit action is hidden and "Stäng" fills the row. */
+           re-synced, so the edit action is hidden. Kopieringen står kvar även då: den rör inte
+           originalet, och en låst offert är ofta just den man vill räkna om på nytt material. */
         footer={
           <>
             <button
               type="button"
               onClick={onClose}
               className={cn(
-                'flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300',
-                !offerLocked && 'sm:flex-none sm:px-5',
+                'rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300',
+                // Krymper till sin text så länge det står en handling bredvid. Står Stäng ensam
+                // — låst offert och en roll som inte får skriva — fyller den raden som förut.
+                footerHasActions ? 'flex-none px-4' : 'flex-1',
               )}
             >
               Stäng
             </button>
+            {/* Grindad på crm.write: kopieringen slutar i en POST som kräver crm.offer.write, och
+                de två nycklarna bärs av exakt samma roller (admin, sales). En läsande roll — konsult
+                — hade annars fått en knapp som ser ut att fungera och nekas först vid sparningen,
+                efter att ha fyllt i formuläret. */}
+            {canWrite ? (
+              <button
+                type="button"
+                onClick={() => { onClose(); router.push(withReturnTo(`/crm/offerter/ny?fran=${quote.id}`, returnTo)); }}
+                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:ml-auto sm:flex-none sm:px-5"
+              >
+                Kopiera
+              </button>
+            ) : null}
             {!offerLocked ? (
               <button
                 type="button"
                 onClick={() => { onClose(); router.push(withReturnTo(`/crm/offerter/${quote.id}/redigera`, returnTo)); }}
-                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:ml-auto sm:flex-none sm:px-5"
+                className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:flex-none sm:px-5"
                 style={{ backgroundColor: 'var(--crm-primary)' }}
               >
                 Redigera offert

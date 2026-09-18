@@ -7,6 +7,7 @@
 
 import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import type { ConstructionSlug } from '@/lib/domains/crm/constructions';
 
 // ── Giltighetstid ────────────────────────────────────────────────────────────
 //
@@ -74,6 +75,425 @@ export function matchedValidityPreset(quoteDate: string, validUntil: string): nu
   const days = daysBetweenIso(quoteDate, validUntil);
   if (days === null) return null;
   return (OFFER_VALIDITY_PRESETS as readonly number[]).includes(days) ? days : null;
+}
+
+// ── Offertens draft ──────────────────────────────────────────────────────────
+//
+// Formulärets draft-form och de två mappningarna in i den (en sparad offert → ifyllt formulär, och
+// samma sak igen fast som KOPIA) bor här i stället för i QuoteFormClient.tsx av samma skäl som
+// resten av modulen: mappningen är den mest regressionsbenägna delen av offertformuläret, och i en
+// "use client"-komponent på 3 800 rader gick den inte att pröva i ett test.
+//
+// Sidoeffekterna stannar kvar i komponenten (setCustomWorkAddress, måttblocket, kundchippet) —
+// funktionerna här är rena och tar bara en rad in och ger en draft ut.
+
+export type QuoteCustomerSourceKind = 'prospect' | 'local' | 'fortnox';
+export type QuoteCustomerSyncIntent = 'local_only' | 'on_work_order' | 'linked';
+
+export type QuoteCustomerSource = {
+  kind?: QuoteCustomerSourceKind | null;
+  sync_intent?: QuoteCustomerSyncIntent | null;
+  fortnox_customer_id?: string | null;
+  fortnox_customer_name?: string | null;
+};
+
+export type QuoteLineItem = {
+  id: string;
+  construction: ConstructionSlug | '';
+  m2: string;
+  thickness_mm: string;
+  /**
+   * ⚠️ LÄSES INTE LÄNGRE FÖR PRISSÄTTNING. Flaggan styrde förr om raden fick sitt pris ur
+   * `computeUnitPrice()` — en stub som svarade 900 kr/m³ oavsett konstruktion och tjocklek, medan
+   * alla andra ytor räknade samma rad som 0 kr. Stubben är borta; priset kommer nu alltid ur
+   * `lineItemUnitPrice`.
+   *
+   * Fältet står kvar i typen, Zod-schemat och databasen så att befintliga rader parsar oförändrat
+   * (samma fälla som `is_rot_work` och `written_off` gick i när de föll ur schemat och strippades
+   * tyst vid varje sparning). Ta inte bort det utan en migrering.
+   */
+  auto_price: boolean;
+  unit_price: string;
+  pricing_mode: 'm3' | 'item';
+  quantity: string;
+  article_id: string | null;
+  article_name: string | null;
+  article_number: string | null;
+  // Artikelns beskrivning från registret, kopierad till raden när artikeln väljs — samma
+  // denormalisering som article_price/article_unit_name. INTERN: visas som grå hjälptext under
+  // vald artikel och läses aldrig av Fortnox-pushen (buildOfferRows rör den inte).
+  article_note: string | null;
+  article_price: number | null;
+  article_unit_name: string | null;
+  discount_percent: string;
+  line_note: string;
+  is_rot_work: boolean;
+  house_work_type: string;
+  // Labour carved out of a material row for ROT, as kr PER UNIT ex VAT — ett à-pris precis som
+  // `unit_price`, som räknas mot antalet. Summeras till en enda "Arbetskostnad ROT"-rad på
+  // Fortnox-dokumentet; materialraden sänks med lika mycket, så totalen är oförändrad.
+  //
+  // ⚠️ Det är en UTBRYTNING ur A-priset, inte ett tillägg: A-priset är HELA priset och det här
+  // beloppet den del av det som är arbete. Äter beloppet hela A-priset bryts ingenting ut och
+  // sparningen spärras — se splitRowLabor i lib/domains/crm/pricing.ts, som äger tolkningen.
+  labor_cost: string;
+  density: string;
+  /**
+   * Ska raden stå i arbetsbeskrivningen installatören läser? Gäller BARA antals-/meterrader
+   * (`pricing_mode: 'item'`) — ytorna är själva jobbet och följer alltid med. Vindduk är skälet
+   * valet finns: den lämnas ofta till kunden i förväg och är inget arbetsmoment.
+   *
+   * Standarden kommer ur artikelregistret när artikeln väljs och FRYSES sedan här på raden.
+   * ⚠️ Den läses aldrig retroaktivt: en rad sparad före flaggan fanns saknar den och behandlas som
+   * nej, så måttblocket blir byte-identiskt och offerten öppnas inte låst.
+   */
+  include_in_description: boolean;
+};
+
+/** En offert som servern skickar den (GET /api/crm/quotes/:id). */
+export type QuoteItem = {
+  id: string;
+  quote_number: string | null;
+  prospect_id: string | null;
+  customer_id: string | null;
+  customer_name: string | null;
+  quote_type: 'private' | 'business';
+  customer_source: QuoteCustomerSource | null;
+  customer_snapshot: {
+    customer_name?: string | null;
+    company_name?: string | null;
+    organization_number?: string | null;
+    personal_number?: string | null;
+    contact_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    street_address?: string | null;
+    postal_code?: string | null;
+    city?: string | null;
+    visit_address?: string | null;
+    delivery_address?: string | null;
+    delivery_postal_code?: string | null;
+    delivery_city?: string | null;
+    invoice_address?: string | null;
+    end_contact_name?: string | null;
+    end_contact_phone?: string | null;
+    end_contact_email?: string | null;
+    label?: string | null;
+  } | null;
+  pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
+  line_items: QuoteLineItem[] | null;
+  rot_details: {
+    enabled?: boolean;
+    applicant_name?: string | null;
+    personal_number?: string | null;
+    property_designation?: string | null;
+    rot_percent?: number;
+    max_deduction?: number | null;
+    brf_org_number?: string | null;
+  } | null;
+  internal_handoff: {
+    desired_installation_date?: string | null;
+    handoff_notes?: string | null;
+    work_scope?: string | null;
+  } | null;
+  project_name: string;
+  description: string | null;
+  amount: number | string;
+  currency_code: string;
+  vat_percent: number | string | null;
+  valid_until: string | null;
+  work_order_id: string | null;
+  work_order_number: string | null;
+  converted_to_work_order_at: string | null;
+  status: 'draft' | 'sent' | 'follow_up' | 'won' | 'lost';
+  quote_date: string;
+  follow_up_date: string | null;
+  notes: string | null;
+  assigned_to: string | null;
+};
+
+export type QuoteDraft = {
+  customer_id: string | null;
+  prospect_id: string;
+  quote_type: 'private' | 'business';
+  customer_source: {
+    kind: QuoteCustomerSourceKind;
+    sync_intent: QuoteCustomerSyncIntent;
+    fortnox_customer_id: string;
+    fortnox_customer_name: string;
+  };
+  customer_name: string;
+  company_name: string;
+  organization_number: string;
+  personal_number: string;
+  contact_name: string;
+  email: string;
+  phone: string;
+  street_address: string;
+  postal_code: string;
+  city: string;
+  visit_address: string;
+  delivery_address: string;
+  delivery_postal_code: string;
+  delivery_city: string;
+  invoice_address: string;
+  // Separate on-site contact (slutkund) outside the customer card — see buildCustomerSnapshot.
+  end_contact_name: string;
+  end_contact_phone: string;
+  end_contact_email: string;
+  // Free-text märkning (företag) → Fortnox "Ert referensnummer".
+  label: string;
+  items: QuoteLineItem[];
+  project_name: string;
+  description: string;
+  vat_percent: string;
+  valid_until: string;
+  rot_enabled: boolean;
+  rot_property_designation: string;
+  rot_percent: string;
+  rot_max_deduction: string;
+  rot_brf_org_number: string;
+  desired_installation_date: string;
+  handoff_notes: string;
+  work_scope: string;
+  status: QuoteItem['status'];
+  quote_date: string;
+  follow_up_date: string;
+  notes: string;
+  create_follow_up_task: boolean;
+  // Ansvarig säljare. Tom sträng = "den som skapar offerten" (servern fyller i vid POST).
+  // Bara en administratör kan ändra fältet; för alla andra visas det som text.
+  assigned_to: string;
+};
+
+export function createEmptyLineItem(): QuoteLineItem {
+  return {
+    id: crypto.randomUUID(),
+    construction: '',
+    m2: '',
+    thickness_mm: '',
+    auto_price: true,
+    unit_price: '',
+    pricing_mode: 'm3',
+    quantity: '',
+    article_id: null,
+    article_name: null,
+    article_number: null,
+    article_note: null,
+    article_price: null,
+    article_unit_name: null,
+    discount_percent: '',
+    line_note: '',
+    is_rot_work: false,
+    house_work_type: 'CONSTRUCTION',
+    labor_cost: '',
+    density: '',
+    include_in_description: false,
+  };
+}
+
+export function getDefaultDraftCustomerSource(prospectId?: string | null): QuoteDraft['customer_source'] {
+  return {
+    kind: prospectId ? 'prospect' : 'local',
+    sync_intent: 'local_only',
+    fortnox_customer_id: '',
+    fortnox_customer_name: '',
+  };
+}
+
+export function getDraftCustomerSource(source: QuoteCustomerSource | null | undefined, prospectId?: string | null): QuoteDraft['customer_source'] {
+  const kind = source?.kind === 'prospect' || source?.kind === 'local' || source?.kind === 'fortnox'
+    ? source.kind
+    : (prospectId ? 'prospect' : 'local');
+  const syncIntent = source?.sync_intent === 'on_work_order' || source?.sync_intent === 'linked'
+    ? source.sync_intent
+    : 'local_only';
+  return {
+    kind,
+    sync_intent: kind === 'fortnox' ? 'linked' : syncIntent,
+    fortnox_customer_id: source?.fortnox_customer_id || '',
+    fortnox_customer_name: source?.fortnox_customer_name || '',
+  };
+}
+
+// 🧨 ALDRIG `new Date().toISOString().slice(0, 10)` för ett kalenderdatum. Det ger UTC-dygnet, och
+// mellan midnatt och kl. 02 svensk sommartid är det GÅRDAGEN. Offertdatumet går vidare till Fortnox
+// som OfferDate och trycks som "Offertdatum" på kundens PDF — en offert skriven natten till den 16:e
+// daterades den 15:e, alltså möjligen före förfrågan kom in.
+//
+// ⚠️ Och inte som modulkonstant: den beräknas när modulen laddas, så en flik som stått öppen över
+// midnatt hade gett gårdagens datum oavsett zon. Därför är datumparet TOMT här och sätts först i
+// createInitialDraft / copyDraftFromQuote.
+export const BLANK_DRAFT: QuoteDraft = {
+  customer_id: null,
+  prospect_id: '',
+  quote_type: 'business',
+  customer_source: { kind: 'local', sync_intent: 'local_only', fortnox_customer_id: '', fortnox_customer_name: '' },
+  customer_name: '',
+  company_name: '',
+  organization_number: '',
+  personal_number: '',
+  contact_name: '',
+  email: '',
+  phone: '',
+  street_address: '',
+  postal_code: '',
+  city: '',
+  visit_address: '',
+  delivery_address: '',
+  delivery_postal_code: '',
+  delivery_city: '',
+  invoice_address: '',
+  end_contact_name: '',
+  end_contact_phone: '',
+  end_contact_email: '',
+  label: '',
+  // Tom med flit: startraden skapas per draft i createInitialDraft. En delad rad här hade gett två
+  // drafter i samma flik SAMMA rad-id, och en redigering i den ena hade synts i den andra.
+  items: [],
+  project_name: '',
+  description: '',
+  vat_percent: '25',
+  valid_until: '',
+  rot_enabled: false,
+  rot_property_designation: '',
+  rot_percent: '30',
+  rot_max_deduction: '50000',
+  rot_brf_org_number: '',
+  desired_installation_date: '',
+  handoff_notes: '',
+  work_scope: '',
+  status: 'draft',
+  quote_date: '',
+  follow_up_date: '',
+  notes: '',
+  create_follow_up_task: true,
+  assigned_to: '',
+};
+
+/** En tom offert med dagens SVENSKA datum och en egen tom artikelrad. Ett anrop per mount. */
+export function createInitialDraft(): QuoteDraft {
+  // Datumparet kommer ur initialQuoteDates — se den för varför de två måste födas ihop.
+  return { ...BLANK_DRAFT, ...initialQuoteDates(), items: [createEmptyLineItem()] };
+}
+
+/**
+ * En sparad offert → ett ifyllt formulär.
+ *
+ * ⚠️ Kunduppgifterna kommer ur offertens SNAPSHOT, aldrig ur kundkortet. Snapshoten är vad offerten
+ * skickades med, och det är den som ska stå kvar när den öppnas igen — se
+ * project_crm_snapshot_vs_card. Kortet läses separat och bara för kundchippet (hydrateSelectedCustomer).
+ */
+export function draftFromQuote(item: QuoteItem): QuoteDraft {
+  return {
+    customer_id: item.customer_id || null,
+    prospect_id: item.prospect_id || '',
+    quote_type: item.quote_type || 'business',
+    customer_source: getDraftCustomerSource(item.customer_source, item.prospect_id),
+    customer_name: item.customer_name || '',
+    company_name: item.customer_snapshot?.company_name || '',
+    organization_number: item.customer_snapshot?.organization_number || '',
+    personal_number: item.customer_snapshot?.personal_number || '',
+    contact_name: item.customer_snapshot?.contact_name || '',
+    email: item.customer_snapshot?.email || '',
+    phone: item.customer_snapshot?.phone || '',
+    street_address: item.customer_snapshot?.street_address || '',
+    postal_code: item.customer_snapshot?.postal_code || '',
+    city: item.customer_snapshot?.city || '',
+    visit_address: item.customer_snapshot?.visit_address || '',
+    // A separate work address is stored only when it differs from the customer address,
+    // so its presence directly drives the toggle (set by the caller).
+    delivery_address: item.customer_snapshot?.delivery_address || '',
+    delivery_postal_code: item.customer_snapshot?.delivery_postal_code || '',
+    delivery_city: item.customer_snapshot?.delivery_city || '',
+    invoice_address: item.customer_snapshot?.invoice_address || '',
+    end_contact_name: item.customer_snapshot?.end_contact_name || '',
+    end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
+    end_contact_email: item.customer_snapshot?.end_contact_email || '',
+    label: item.customer_snapshot?.label || '',
+    items: item.line_items?.length
+      // A-priset normaliseras EN gång här: en sparad rad kan bära `article_price` utan
+      // `unit_price`, och då prissätter `lineItemUnitPrice` den korrekt medan A-prisrutan hade
+      // stått tom. Normaliseringen måste ske vid inläsningen, inte i renderingen — ett fält
+      // som fyller i sig självt så fort det töms går inte att skriva om.
+      ? item.line_items.map((line) => ({ ...line, line_note: line.line_note || '', is_rot_work: line.is_rot_work ?? false, house_work_type: line.house_work_type || 'CONSTRUCTION', labor_cost: line.labor_cost || '', density: line.density || '', article_note: line.article_note ?? null, include_in_description: line.include_in_description ?? false, unit_price: line.unit_price || (line.article_price != null ? String(line.article_price) : '') }))
+      : [createEmptyLineItem()],
+    project_name: item.project_name,
+    description: item.description || '',
+    vat_percent: String(item.vat_percent ?? 25),
+    valid_until: item.valid_until || '',
+    rot_enabled: Boolean(item.rot_details?.enabled),
+    rot_property_designation: item.rot_details?.property_designation || '',
+    rot_percent: String(item.rot_details?.rot_percent ?? 30),
+    rot_max_deduction: String(item.rot_details?.max_deduction ?? 50000),
+    rot_brf_org_number: item.rot_details?.brf_org_number || '',
+    desired_installation_date: item.internal_handoff?.desired_installation_date || '',
+    handoff_notes: item.internal_handoff?.handoff_notes || '',
+    work_scope: item.internal_handoff?.work_scope || '',
+    status: item.status,
+    quote_date: item.quote_date,
+    follow_up_date: item.follow_up_date || '',
+    notes: item.notes || '',
+    create_follow_up_task: false,
+    // Ligger med i draften och därmed i baslinjen. Sätts den i stället av en effekt efteråt blir
+    // en nyss öppnad offert omedelbart "ändrad", och det river sönder utkastskyddet — samma fälla
+    // som måttblocket gick i.
+    assigned_to: item.assigned_to || '',
+  };
+}
+
+/** Förifyllt namn på en kopia. Prefixet läggs på varje gång — se copyDraftFromQuote. */
+export const COPY_NAME_PREFIX = 'Kopia av ';
+
+/**
+ * Samma offert igen, som en NY offert — t.ex. samma jobb räknat på ett annat material.
+ *
+ * Ärvs rakt av (poängen är att slippa fylla i allt en gång till):
+ *   • kunduppgifterna som ORIGINALET bar dem, alltså snapshoten — inte en omläsning av kundkortet.
+ *     ⚠️ Avviker medvetet från husregeln i project_crm_snapshot_vs_card: en kopia ska vara
+ *     identisk. Har kunden flyttat sedan dess bär kopian den gamla adressen tills säljaren rättar
+ *     den i formuläret, precis som en redigering av originalet hade gjort.
+ *   • artikelraderna med mått, priser, rabatter och ROT-utbrytning — måttblocket i
+ *     `handoff_notes` är byte-exakt mot raderna, så de MÅSTE följas åt eller låses blocket på fel
+ *     mått (se adoptExistingMeasurementBlock).
+ *   • kundens Fortnox-koppling (`customer_source`). Nollställs den tror kopian att kunden är
+ *     lokal och lägger upp en dubblett i Fortnox när ordern skapas.
+ *
+ * Nollställs:
+ *   • datumen — kopian är skriven IDAG, med husets vanliga giltighetstid räknad därifrån.
+ *   • statusen — en kopia är alltid ett utkast, aldrig ärvd "Vunnen"/"Skickad".
+ *   • uppföljningsdatumet — originalets uppföljning gäller originalet.
+ *   • ansvarig säljare — det blir hens offert (den som kopierar). Tom sträng = servern fyller i.
+ *
+ * Följer aldrig med, för att de inte finns i draften över huvud taget: offertnumret (en GENERERAD
+ * kolumn ur radens id), Fortnox-offertnumret och arbetsorderkopplingen. Se kopieringstesterna.
+ */
+export function copyDraftFromQuote(item: QuoteItem, now: Date = new Date()): QuoteDraft {
+  const source = draftFromQuote(item);
+  const dates = initialQuoteDates(now);
+  // Önskat installationsdatum är kundens önskemål om JOBBET, inte om dokumentet — kopieras samma
+  // jobb samma vecka ska det följa med, till skillnad från offertens egna datum.
+  //
+  // 🧨 Men bara så länge det ligger framåt. Ett passerat datum hade gått rakt igenom
+  // arbetsorderspärren, som bara varnar för ett TOMT fält (se workOrderReadiness), och sedan
+  // landat på arbetsordern — där planeringen genast räknar den som försenad. Jämförelsen är
+  // lexikografisk med flit: båda är YYYY-MM-DD, och två sådana strängar sorterar som datum.
+  // Dagens datum räknas som framåt — det har inte passerat.
+  const desiredDateStillAhead = Boolean(source.desired_installation_date)
+    && source.desired_installation_date >= dates.quote_date;
+  return {
+    ...source,
+    ...dates,
+    desired_installation_date: desiredDateStillAhead ? source.desired_installation_date : '',
+    // Prefixet läggs på varje gång, även på en kopia av en kopia: två rader i listan ska inte
+    // kunna se likadana ut. Det är ett förifyllt värde i ett öppet fält — säljaren döper om.
+    project_name: `${COPY_NAME_PREFIX}${item.project_name}`,
+    status: 'draft',
+    follow_up_date: '',
+    // Som en ny offert: anges ett uppföljningsdatum skapas uppgiften automatiskt.
+    create_follow_up_task: true,
+    assigned_to: '',
+  };
 }
 
 export type QuoteCustomerFields = {
