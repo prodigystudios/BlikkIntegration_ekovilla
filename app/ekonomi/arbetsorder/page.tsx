@@ -55,7 +55,14 @@ export default async function EkonomiWorkOrdersPage() {
         {/* canEdit={false} stänger "+ Ny order"; basePath håller raderna kvar på den här ytan.
             Skickar man någon till /crm/arbetsorder/<id> kastar CRM-layoutens rollgrind ut dem
             till startsidan — en länk som loggar ut dig ur din egen yta. */}
-        <WorkOrdersClient currentUserId={userId} canEdit={false} basePath="/ekonomi/arbetsorder" />
+        <WorkOrdersClient
+          currentUserId={userId}
+          canEdit={false}
+          basePath="/ekonomi/arbetsorder"
+          // 🧨 Byrån står aldrig som ansvarig på en order. Utan den här startar listan på "Mina"
+          // och öppnas TOM — den hade sett ut som att det inte finns några arbetsordrar alls.
+          canBeAssignee={false}
+        />
       </Suspense>
     </PageShell>
   );

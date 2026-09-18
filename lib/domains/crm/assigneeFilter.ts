@@ -15,7 +15,17 @@ export const MINE = 'mine';
 // 🧨 Reserven är ALLA, inte MINE. Utan ett känt id löser MINE upp till tomt — i säljtavlan (som
 // filtrerar i klienten) hade det tömt hela tavlan, och i listorna hade det sett ut som ett register
 // utan rader. "Vi vet inte vem du är" ska visa allt, inte inget.
-export function defaultAssigneeFilter(currentUserId: string | null): AssigneeFilterValue {
+//
+// 🧨 `canBeAssignee: false` för den som ALDRIG kan stå som ansvarig — lönebyrån på
+// /ekonomi/arbetsorder. För dem är "Mina" inte ett snävare urval utan ett tomt: de äger ingen
+// order, så startvärdet hade gett en lista utan en enda rad, och sidan hade sett ut som att det
+// inte finns några arbetsordrar alls. Samma flagga döljer "Mina" i menyn, eftersom ett val vars
+// enda utfall är noll rader inte är ett val.
+export function defaultAssigneeFilter(
+  currentUserId: string | null,
+  opts?: { canBeAssignee?: boolean },
+): AssigneeFilterValue {
+  if (opts?.canBeAssignee === false) return [];
   return currentUserId ? [MINE] : [];
 }
 

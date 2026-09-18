@@ -116,6 +116,7 @@ export default function WorkOrdersClient({
   currentUserId,
   canEdit = true,
   basePath = '/crm/arbetsorder',
+  canBeAssignee = true,
 }: {
   currentUserId: string | null;
   /**
@@ -131,6 +132,15 @@ export default function WorkOrdersClient({
    * till /crm/... kastar CRM-layoutens rollgrind ut dem till startsidan.
    */
   basePath?: string;
+  /**
+   * Kan den som tittar stå som ansvarig på en arbetsorder?
+   *
+   * 🧨 False för lönebyrån. Listan startar annars på "Mina" (se defaultAssigneeFilter), och för
+   * dem är det ett urval som ALDRIG matchar något — de äger ingen order. Sidan hade öppnats tom
+   * och sett ut som att det inte finns några arbetsordrar. Flaggan sätter startvärdet till alla
+   * och tar bort "Mina" ur menyn.
+   */
+  canBeAssignee?: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -151,7 +161,7 @@ export default function WorkOrdersClient({
   // 🧨 `assigned_to` på en order är SÄLJAREN (ärvd från offerten), inte den som planerar. En
   // planerare utan egna ordrar möter alltså en tom tavla tills filtret rensas — därför bär tomma
   // läget en knapp som gör just det.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId));
+  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId, { canBeAssignee }));
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   // 'mine' → id före frågan, så status, ansvarig och räknare alla avgörs server-side (listan kan
@@ -448,7 +458,7 @@ export default function WorkOrdersClient({
               label="Sortera arbetsorder"
               className="w-full sm:w-[180px]"
             />
-            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} showMine={canBeAssignee} className="w-full sm:w-[200px]" />
           </div>
         </div>
 
