@@ -209,6 +209,57 @@ export const createProgressReportSchema = z.object({
     }, 'Samma moment kan bara rapporteras en gång per rapport'),
 });
 
+// ── Etapper ─────────────────────────────────────────────────────────────────
+// ⚠️ `stage`, inte `etapp`: ordet betyder redan konstruktionsdel i egenkontrollen. Se
+// lib/domains/crm/workOrderStages.ts.
+
+// En rads andel av etappen. Antalet är i radens lineItemQuantity-enhet (kubik för m3-rader),
+// exakt som delfakturans rundor. Taket speglar inget i databasen — line_quantities är jsonb — utan
+// finns för att en orimlig siffra ska avvisas här i stället för att bli en etapp ingen kan planera.
+const stageLineQuantitySchema = z.object({
+  line_id: z.string().min(1, 'Raden saknar id').max(80),
+  quantity: z.coerce.number().finite().min(0).max(99999999.99),
+});
+
+// Fälten en etapp äger. Antalen valideras INTE här mot vad som är kvar på ordern — det kräver
+// orderns rader och de andra etapperna, alltså validateStageAllocation i domänen. Schemat ser bara
+// till att formen är rätt.
+const stageBodyFields = {
+  title: z.string().trim().min(1, 'Etappen behöver ett namn').max(80, 'Namnet är för långt'),
+  line_quantities: z.array(stageLineQuantitySchema).min(1, 'Etappen måste innehålla minst en rad').max(200),
+  // Ärvs till placeringen vid utplacering; se migreringens huvud om varför den inte läses parallellt.
+  work_description: z.preprocess(normalizeOptionalText, z.string().max(4000).nullable()).optional().default(null),
+  // Fri text precis som ops_segments.job_type — den bär ops_job_types stabila `key`, och en nyckel
+  // som senare tas bort ska fortsätta rendera (resolveJobTypeFrom).
+  job_type: z.preprocess(normalizeOptionalText, z.string().max(60).nullable()).optional().default(null),
+};
+
+export const createWorkOrderStageSchema = z.object(stageBodyFields);
+
+/**
+ * Ett textfält i en PATCH: utelämnat betyder "rör inte", `null` eller tom sträng betyder "töm".
+ *
+ * 🧨 INGEN `.default(null)` HÄR, till skillnad från skapandeschemat ovan. `.default()` ersätter
+ * uttryckligen `undefined` med sitt värde, så ett fält klienten inte skickade kom ut som ett
+ * uttryckligt null — och rutten skrev det. Att byta namn på en etapp raderade alltså dess
+ * arbetsbeskrivning och jobbtyp, tyst. Skillnaden mellan "skickade inte fältet" och "skickade null"
+ * är hela PATCH-semantiken och får inte suddas ut av ett default.
+ *
+ * (`z.preprocess` är oskyldig och var min första gissning: `.optional()` kortsluter på `undefined`
+ * innan preprocessorn ens körs. Prövat, inte antaget.)
+ */
+const patchOptionalText = (max: number) =>
+  z.preprocess(normalizeOptionalText, z.string().max(max).nullable()).optional();
+
+// PATCH: allt är valfritt, men det som skickas måste vara giltigt. Rutten skriver bara de fält som
+// faktiskt fanns i kroppen.
+export const updateWorkOrderStageSchema = z.object({
+  title: stageBodyFields.title.optional(),
+  line_quantities: stageBodyFields.line_quantities.optional(),
+  work_description: patchOptionalText(4000),
+  job_type: patchOptionalText(60),
+});
+
 export const createWorkOrderCommentSchema = z.object({
   body: z.string().trim().min(1, 'Kommentar krävs'),
   // Ids of users @-mentioned in the body (client-supplied; validated server-side before notifying).
