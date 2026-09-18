@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { mapWorkOrderJob, scopeForSegment, type WorkOrderJobRow } from '@/lib/domains/planning/display';
-import { expandWorkOrderToBacklogItems } from '@/lib/domains/planning/backlog';
+import { expandWorkOrderToBacklogItems, PARTIALLY_INVOICED, SCHEDULABLE_WORK_ORDER_STATUSES } from '@/lib/domains/planning/backlog';
 import type { WorkOrderStage } from '@/lib/domains/crm/workOrderStages';
 
 // Läsmodellerna när en order är uppdelad i etapper.
@@ -134,5 +134,16 @@ describe('expandWorkOrderToBacklogItems', () => {
     expect(items.find((i) => i.stage_id === 's1')?.segment_count).toBe(2);
     // Resten är fortfarande oplanerad — att väggen är utlagd säger ingenting om snedtaket.
     expect(items.find((i) => i.stage_id === null)?.segment_count).toBe(0);
+  });
+});
+
+describe('delfakturerade ordrar i backloggen', () => {
+  // Fel 3 i diagnosen: faktureras etapp 1 försvann HELA ordern ur backloggen innan snedtaket
+  // hunnit planeras. Statusen betyder "förbi installationen som helhet" — sant för en odelad
+  // order, falskt för en uppdelad.
+  it('konstanten utvidgas INTE — den läses av insights och depåprognosen', () => {
+    expect([...SCHEDULABLE_WORK_ORDER_STATUSES]).toEqual(['draft', 'scheduled', 'in_progress']);
+    expect(PARTIALLY_INVOICED).toBe('partially_invoiced');
+    expect(SCHEDULABLE_WORK_ORDER_STATUSES as readonly string[]).not.toContain(PARTIALLY_INVOICED);
   });
 });

@@ -12,6 +12,17 @@ export { resolveJobAddress as resolveBacklogAddress } from './display';
 // and 'cancelled' are past the install and excluded.
 export const SCHEDULABLE_WORK_ORDER_STATUSES = ['draft', 'scheduled', 'in_progress'] as const;
 
+/**
+ * Delfakturerad. ⚠️ MEDVETET UTANFÖR listan ovan.
+ *
+ * Statusen betyder "förbi installationen som helhet", vilket stämmer för en odelad order — men inte
+ * för en uppdelad: faktureras etapp 1 är snedtaket fortfarande osålt arbete som måste bokas. Bara
+ * backloggens lista släpper in den, och bara för poster utan placering. Läggs den i konstanten
+ * börjar insights.OPEN och depotStock.pickDemandSegments räkna delfakturerade ordrar som
+ * kommande omsättning och som depåbehov.
+ */
+export const PARTIALLY_INVOICED = 'partially_invoiced' as const;
+
 type WorkOrderRow = WorkOrderJobRow & {
   id: string;
   desired_installation_date: string | null;
@@ -98,7 +109,11 @@ export async function listSchedulableWorkOrders(
   const { data: orders, error } = await supabase
     .from('crm_work_orders')
     .select(WORK_ORDER_BACKLOG_SELECT)
-    .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[])
+    // ⛔ SCHEDULABLE_WORK_ORDER_STATUSES UTVIDGAS INTE. Konstanten läses också av insights.OPEN och
+    // depotStock.pickDemandSegments; en breddning där hade tyst börjat räkna delfakturerade ordrar
+    // som depåbehov och som insikternas ordervärde. Utvidgningen är lokal, och 'partially_invoiced'
+    // filtreras strax nedan till bara de ordrar som faktiskt har något kvar att planera.
+    .in('status', [...SCHEDULABLE_WORK_ORDER_STATUSES, PARTIALLY_INVOICED] as unknown as string[])
     .order('created_at', { ascending: false });
 
   if (error) return { data: [], error };
@@ -124,8 +139,14 @@ export async function listSchedulableWorkOrders(
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
 
-  const items = rows.flatMap((r) =>
-    expandWorkOrderToBacklogItems(r, (stageId) => counts.get(scopeKey(r.id, stageId)) ?? 0),
-  );
+  const items = rows.flatMap((r) => {
+    const expanded = expandWorkOrderToBacklogItems(r, (stageId) => counts.get(scopeKey(r.id, stageId)) ?? 0);
+    // En delfakturerad order är förbi installationen SOM HELHET, men inte nödvändigtvis per etapp:
+    // faktureras etapp 1 försvann hela ordern ur backloggen innan snedtaket hunnit planeras. Den
+    // släpps in igen, men BARA med de poster som ännu inte är utplacerade — annars hade redan
+    // utförda etapper dykt upp som nya jobb att boka.
+    if (r.status !== PARTIALLY_INVOICED) return expanded;
+    return expanded.filter((item) => item.segment_count === 0);
+  });
   return { data: items, error: null };
 }
