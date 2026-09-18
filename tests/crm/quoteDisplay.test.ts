@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { formatQuantity } from '@/app/crm/lib/format';
-import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
+import { quoteCustomerName, isQuoteOverdue, sortCustomerQuotes } from '@/app/crm/lib/quoteDisplay';
 
 // These helpers used to exist as identical copies in QuotesClient and SaljtavlaClient. Now that the
 // offer list, the Säljtavla board and their shared detail panel all call the same code, a change
@@ -87,5 +87,35 @@ describe('formatQuantity', () => {
 
   it('använder svenskt decimaltecken', () => {
     expect(formatQuantity(1.5)).toBe('1,5');
+  });
+});
+
+describe('sortCustomerQuotes', () => {
+  // Lådan "Kundens offerter" är en HISTORIK: frågan är "vad skickade vi senast?", inte "vad ska
+  // jag göra nu". Listrutten ordnar efter status först — rätt för offertlistans arbetskö, fel här.
+  const row = (id: string, quote_date: string, created_at: string) => ({ id, quote_date, created_at });
+
+  it('lägger nyaste offertdatum först', () => {
+    const sorted = sortCustomerQuotes([
+      row('gammal', '2026-01-10', '2026-01-10T08:00:00Z'),
+      row('ny', '2026-09-10', '2026-09-10T08:00:00Z'),
+      row('mitten', '2026-05-10', '2026-05-10T08:00:00Z'),
+    ]);
+    expect(sorted.map((q) => q.id)).toEqual(['ny', 'mitten', 'gammal']);
+  });
+
+  it('🧨 skiljer två offerter samma DAG på när de skapades', () => {
+    // Utan andra nyckel avgör inmatningsordningen, och två renderingar kan visa olika ordning.
+    const sorted = sortCustomerQuotes([
+      row('förmiddag', '2026-09-10', '2026-09-10T08:00:00Z'),
+      row('eftermiddag', '2026-09-10', '2026-09-10T15:00:00Z'),
+    ]);
+    expect(sorted.map((q) => q.id)).toEqual(['eftermiddag', 'förmiddag']);
+  });
+
+  it('rör inte listan den fick', () => {
+    const input = [row('a', '2026-01-10', '2026-01-10T08:00:00Z'), row('b', '2026-09-10', '2026-09-10T08:00:00Z')];
+    sortCustomerQuotes(input);
+    expect(input.map((q) => q.id)).toEqual(['a', 'b']);
   });
 });

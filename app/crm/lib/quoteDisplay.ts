@@ -71,3 +71,27 @@ export function isQuoteOverdue(item: QuoteOverdueFields, today: Date = new Date(
   const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   return item.follow_up_date < iso;
 }
+
+export type CustomerQuoteOrderFields = {
+  id: string;
+  quote_date: string;
+  created_at: string;
+};
+
+/**
+ * Kundens offerter i den ordning lådan visar dem: nyast offertdatum först.
+ *
+ * ⚠️ Sorteras i klienten med flit. Listrutten ordnar som OFFERTLISTAN vill ha det — status först,
+ * sedan uppföljningsdatum — och det är rätt för en arbetskö men fel för en historik: där är frågan
+ * "vad skickade vi senast?", inte "vad ska jag göra nu". Att lägga till en sorteringsparameter i
+ * rutten hade ändrat en delad väg för en enda vy.
+ *
+ * `created_at` är andra nyckel: två offerter samma dag ska inte byta plats mellan renderingar.
+ */
+export function sortCustomerQuotes<T extends CustomerQuoteOrderFields>(quotes: T[]): T[] {
+  return [...quotes].sort((a, b) => {
+    if (a.quote_date !== b.quote_date) return a.quote_date < b.quote_date ? 1 : -1;
+    if (a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+    return 0;
+  });
+}

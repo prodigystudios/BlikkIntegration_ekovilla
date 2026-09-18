@@ -12,6 +12,7 @@ import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/
 import { quoteCustomerName, isQuoteOverdue, quoteLabel } from '@/app/crm/lib/quoteDisplay';
 import QuoteTasksCard from '@/app/crm/components/QuoteTasksCard';
 import QuoteCallsCard from '@/app/crm/components/QuoteCallsCard';
+import CustomerQuotesDrawer, { type CustomerQuoteItem } from '@/app/crm/components/CustomerQuotesDrawer';
 import QuoteContactCard from '@/app/crm/components/QuoteContactCard';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
@@ -126,6 +127,7 @@ export default function QuoteDetailPanel({
   canWrite,
   canDelegate,
   canEditContacts,
+  onOpenQuote,
 }: {
   quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
@@ -165,9 +167,22 @@ export default function QuoteDetailPanel({
    * nyckel som rutterna gatar på. Läses i sidan och skickas hit av BÅDA ytor som öppnar panelen.
    */
   canEditContacts: boolean;
+  /**
+   * Byt till en annan av kundens offerter, vald i lådan.
+   *
+   * ⚠️ OBLIGATORISK, inte valfri: panelen öppnas från både offertlistan och säljtavlan, och en
+   * valfri prop hade kunnat glömmas på den ena — då hade knappen suttit där och inte gjort något
+   * på just den vägen. Typkontrollen tvingar båda att svara.
+   *
+   * Hela offertraden skickas, inte bara ett id: lådan har redan hämtat den kompletta raden, så
+   * mottagaren slipper en andra rundtur.
+   */
+  onOpenQuote: (quote: CustomerQuoteItem) => void;
 }) {
   const router = useRouter();
   const toast = useToast();
+  // Kundens övriga offerter, i en låda vid sidan. Stängs av Escape före panelen (dokumentordning).
+  const [customerQuotesOpen, setCustomerQuotesOpen] = useState(false);
 
   const [moving, setMoving] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
@@ -359,6 +374,21 @@ export default function QuoteDetailPanel({
             ) : (
               <p className="m-0 truncate text-sm text-slate-500">{customerName}</p>
             )}
+            {/* Vid sidan av kundkortslänken, inte i stället för den: den här går till kundens andra
+                OFFERTER, kundkortet till kunden själv. Två olika frågor. */}
+            <button
+              type="button"
+              onClick={() => setCustomerQuotesOpen(true)}
+              // justify-self-start: ett rutnätsbarn sträcks annars över hela raden, och en <button>
+              // centrerar sitt innehåll — texten hamnade mitt i panelen i stället för under
+              // kundnamnet. Länken ovanför slipper det för att en <a> ärver textjusteringen.
+              className="m-0 inline-flex max-w-full items-center gap-1 justify-self-start text-sm text-slate-500 transition-colors hover:text-emerald-700"
+            >
+              <span className="underline-offset-2 hover:underline">Kundens offerter</span>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+                <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
         }
         /* Sticky footer — a locked offer (work order created) can't be edited or
@@ -697,6 +727,23 @@ export default function QuoteDetailPanel({
           busy={moving}
           onConfirm={() => void moveQuoteToStatus(pendingWonStatus)}
           onCancel={() => setPendingWonStatus(null)}
+        />
+      ) : null}
+
+      {/* Syskon till modalen, inte barn — lådan portalar ändå till <body>, men den står här av
+          samma skäl som bekräftelsedialogen: den ska inte dela panelens bakgrundsklick. */}
+      {customerQuotesOpen ? (
+        <CustomerQuotesDrawer
+          customerId={quote.customer_id}
+          prospectId={quote.prospect_id}
+          currentQuoteId={quote.id}
+          customerLabel={customerName}
+          onClose={() => setCustomerQuotesOpen(false)}
+          onSelect={(next) => {
+            // Lådan lämnas ÖPPEN. Den är vägen tillbaka: syskonoffererna står kvar i listan, så man
+            // kan hoppa mellan dem utan att leta upp den man kom ifrån.
+            onOpenQuote(next);
+          }}
         />
       ) : null}
     </>
