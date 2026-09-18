@@ -31,9 +31,13 @@ export default async function EkonomiWorkOrdersPage() {
     redirect('/ekonomi');
   }
 
+  // Samma regel som på /ekonomi och i appNav.ts: arbetsorderfliken hör till den som INTE redan har
+  // en väg till ordrarna via CRM. En admin som skrivit adressen hit ser därför ingen flikrad —
+  // EkonomiTabs döljer sig själv under två flikar — och går tillbaka via sidomenyn. Två dörrar till
+  // samma ordrar, varav den ena tyst saknar knappar, är en fälla att gå i, inte en genväg.
   const tabs = [
     ...(canReadPayroll(held) ? [{ href: '/ekonomi', label: 'Tid & lön' }] : []),
-    { href: '/ekonomi/arbetsorder', label: 'Arbetsordrar' },
+    ...(held.has('crm.access') ? [] : [{ href: '/ekonomi/arbetsorder', label: 'Arbetsordrar' }]),
   ];
 
   return (

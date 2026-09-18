@@ -54,15 +54,17 @@ export function canReadPayroll(held: Set<string>): boolean {
 /**
  * Fakturaunderlaget — arbetsordrarna på /ekonomi/arbetsorder.
  *
- * ⚠️ BÅDA NYCKLARNA, av samma skäl som ovan: `crm.access` är den grova grinden bakom
- * `requireCrmUser()` som varje CRM-route frågar efter, och `crm.workorder.read` är den RLS öppnar
- * orderraderna på. Med bara den första svarar listan 200 med noll rader — en tom sida som ser ut
- * som att det inte finns några ordrar. Med bara den andra svarar routen 403.
+ * ⛔ Frågar EFTER `crm.workorder.read` och inte efter den grova `crm.access`. Nyckeln gör båda
+ * jobben: den är vad RLS öppnar orderraderna på, och sedan 2026-09-18 vad arbetsorderrutterna
+ * själva grindar på. `crm.access` hade dessutom öppnat /api/crm/reports, /sellers och
+ * /calc-settings — tre rutter som läser med getSupabaseAdmin(), alltså förbi RLS. En extern part
+ * ska inte få företagets försäljningssiffror och inköpspriser på köpet av en orderlista.
  *
- * ⛔ Ingen SKRIVNYCKEL efterfrågas, och ingen ska läggas till här. Byrån läser underlaget; kontoret
- * äger ordern. Vyerna renderas med readOnly och varje skrivingång är avstängd — se
- * 20260918_ekonomi_work_order_read.sql.
+ * ⛔ Ingen SKRIVNYCKEL efterfrågas, och ingen ska läggas till här — inte heller som ett "eller".
+ * En skrivnyckel är inte ett bevis på läsrätt: den som får skriva utan att ha läsnyckeln möts av en
+ * sida där RLS filtrerar bort varenda rad, vilket ser ut som att det inte finns några ordrar.
+ * Byrån läser underlaget; kontoret äger ordern. Se 20260918_ekonomi_work_order_read.sql.
  */
 export function canReadWorkOrders(held: Set<string>): boolean {
-  return held.has('crm.access') && held.has('crm.workorder.read');
+  return held.has('crm.workorder.read');
 }

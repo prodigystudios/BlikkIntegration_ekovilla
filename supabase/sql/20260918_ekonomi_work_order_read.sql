@@ -11,7 +11,7 @@
 -- filen har fått en hänvisning hit så att de två inte läses som motstridiga. Seeden där är
 -- `on conflict do nothing`, så en omkörning av den tar INTE bort nycklarna nedan.
 --
--- ADDITIV. Inga befintliga rader ändras eller tas bort — rollen får tre nya rader i
+-- ADDITIV. Inga befintliga rader ändras eller tas bort — rollen får två nya rader i
 -- role_permissions. Ordningen mot koden är därmed fri, men kör gärna den här FÖRE deployen:
 -- `effective_permissions` failar closed, så en sida som grindar på en nyckel som ännu inte finns
 -- nekar alla. Tvärtom (nyckeln finns, sidan är inte deployad) är harmlöst.
@@ -20,17 +20,25 @@
 
 -- ── Knippet ──────────────────────────────────────────────────────────────────
 --
--- Vad de tre nycklarna öppnar, och varför var och en behövs:
+-- Vad de två nycklarna öppnar, och varför var och en behövs:
 --
---   crm.access          Den grova läsgrinden bakom `requireCrmUser()` i app/api/crm/_shared.ts.
---                       Utan den svarar 403 på arbetsorderlistan, PDF:en och följesedeln, oavsett
---                       vad de andra nycklarna säger.
---   crm.workorder.read  RLS på crm_work_orders: SELECT är "assigned_to = auth.uid() OR
---                       has_permission('crm.workorder.read')" (20260810_crm_work_order_crew_access).
---                       Utan den är varje rad osynlig i databasen — routen svarar 200 med noll rader.
+--   crm.workorder.read  Gör två saker. Dels RLS på crm_work_orders: SELECT är "assigned_to =
+--                       auth.uid() OR has_permission('crm.workorder.read')"
+--                       (20260810_crm_work_order_crew_access) — utan den är varje rad osynlig i
+--                       databasen och routen svarar 200 med noll rader. Dels är den numera grinden
+--                       på arbetsorderrutterna själva (listan, ansvarigkatalogen, PDF:en,
+--                       följesedeln), som tidigare frågade efter den grova `crm.access`.
 --   crm.report.read     Efterkalkylen: TB1/TB2, marginaler och utfall mot plan
 --                       (/api/crm/work-orders/[id]/after-calculation). William 2026-09-18: byrån ska
 --                       se lonsamheten per jobb.
+--
+-- ⛔ `crm.access` ges MEDVETET INTE, och ska inte läggas till "för säkerhets skull". Den är en grov
+-- metanyckel som öppnar /api/crm/reports, /api/crm/sellers och /api/crm/calc-settings — och alla
+-- tre läser med getSupabaseAdmin(), alltså FÖRBI RLS. En extern part hade fått företagets
+-- försäljningssiffror, säljarkatalogen och inköpspriserna genom en nyckel som såg ut att bara
+-- öppna en orderlista. Rutterna arbetsordervyn behöver frågar i stället efter
+-- crm.workorder.read; rollmängden är identisk (admin, konsult, sales), så ingen befintlig roll
+-- märkte bytet.
 --
 -- ⚠️ INGEN SKRIVNYCKEL. `crm.write`, `crm.workorder.write`, `fortnox.invoice.create` och
 -- `fortnox.workorder.push` är MEDVETET utelämnade: byrån läser underlaget, kontoret äger ordern.
@@ -38,15 +46,19 @@
 -- får man en yta där allt svarar 403; ger man nycklarna utan att mena det kan en extern part ändra
 -- priser på en order och skapa fakturor i Fortnox.
 --
--- ⚠️ crm.report.read öppnar ÄVEN /api/crm/reports (försäljningsrapporter och nyckeltal). Själva
--- ytan /crm/rapportering är fortsatt stängd av rollgrinden i app/crm/layout.tsx, så det ger ingen
--- sida att gå till — men API:et svarar. Det är den bredaste av de tre nycklarna; vill man snäva in
--- det är vägen en egen nyckel för efterkalkylen, inte att dela ut den här smalare.
+-- ⚠️ crm.report.read är den bredaste av de två. Den gatar efterkalkylen, som är det byrån ska se —
+-- men samma nyckel används av CRM:s rapporteringsdomän. /api/crm/reports visade sig gata på
+-- crm.access och inte på den här, så den rutten är stängd för byrån; kontrollera ändå vad som
+-- hänger på nyckeln innan fler rutter läggs bakom den. Vill man snäva in det är vägen en egen
+-- nyckel för efterkalkylen.
 insert into public.role_permissions (role, permission_key) values
-  ('ekonomi','crm.access'),
   ('ekonomi','crm.workorder.read'),
   ('ekonomi','crm.report.read')
 on conflict do nothing;
+
+-- ⚠️ HAR crm.access redan delats ut för hand (Admin -> Behörigheter) medan det här utreddes? Ta
+-- bort den då — se resonemanget ovan. Raden är utkommenterad för att den INTE är additiv:
+--   delete from public.role_permissions where role = 'ekonomi' and permission_key = 'crm.access';
 
 -- ── Följd som är värd att känna till ─────────────────────────────────────────
 --
@@ -60,10 +72,12 @@ on conflict do nothing;
 -- etiketten när den finns och markören när den saknas.
 
 -- ── Verifiering ──────────────────────────────────────────────────────────────
---   -- Rollens hela knippe, de tre nya ska ligga med:
+--   -- Rollens hela knippe, de två nya ska ligga med (totalt fem med time.*):
 --   select permission_key from public.role_permissions where role = 'ekonomi' order by 1;
 --
---   -- Ingen skrivnyckel har smugit sig in:
+--   -- Ingen skrivnyckel OCH ingen grov metanyckel har smugit sig in:
 --   select permission_key from public.role_permissions
---   where role = 'ekonomi' and (permission_key like '%.write%' or permission_key like 'fortnox.%');
+--   where role = 'ekonomi'
+--     and (permission_key like '%.write%' or permission_key like 'fortnox.%'
+--         or permission_key = 'crm.access');
 --   -- Förväntat: noll rader.

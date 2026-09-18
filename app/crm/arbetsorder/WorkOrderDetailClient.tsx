@@ -311,6 +311,8 @@ export default function WorkOrderDetailClient({
   // redigering av adress eller kontakt hade fått sitt utkast överskrivet av en åtgärd som inte har
   // med de fälten att göra.
   async function removeSackReport(id: string) {
+    // Skriver via hooken i stället för ett eget fetch — spärren behövs lika mycket för det.
+    if (readOnly) return;
     const removed = await sackReports.remove(id);
     if (!removed) return;
     // Materialkostnaden räknas på samma rader. Utan omhämtningen står efterkalkylen kvar på den

@@ -26,6 +26,10 @@ type NavNode = { href: string; label: string; children?: NavNode[] };
 function isHrefActive(href: string, pathname: string) {
   if (href === '/') return pathname === '/';
   if (href === '/crm') return pathname === '/crm';
+  // ⚠️ Samma undantag som /crm, av samma skäl: /ekonomi/arbetsorder är en EGEN navrad, och utan
+  // exakt matchning här tänds både den och "Tid & lön" samtidigt — två rader med
+  // aria-current="page", vilket för en skärmläsare är två svar på frågan var man befinner sig.
+  if (href === '/ekonomi') return pathname === '/ekonomi';
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 

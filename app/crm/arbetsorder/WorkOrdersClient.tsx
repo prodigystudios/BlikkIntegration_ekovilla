@@ -308,10 +308,15 @@ export default function WorkOrdersClient({
   }, []);
 
   // Legacy deep-link: /crm/arbetsorder?work_order_id=X now lives at its own page.
+  //
+  // ⚠️ `basePath`, inte en hårdkodad /crm-adress. De två andra navigeringarna i filen flyttades när
+  // ekonomiytan tillkom men den här missades — och på den ytan hade den skickat en läsande
+  // användare rakt in i /crm, vars layout studsar ut dem till startsidan. En djuplänk som loggar ut
+  // dig ur din egen yta.
   const deepLinkId = searchParams.get('work_order_id') || '';
   useEffect(() => {
-    if (deepLinkId) router.replace(`/crm/arbetsorder/${deepLinkId}`);
-  }, [deepLinkId, router]);
+    if (deepLinkId) router.replace(`${basePath}/${deepLinkId}`);
+  }, [deepLinkId, router, basePath]);
 
   // Reset + first page whenever the search, status filter, sort or assignee scope changes. The
   // server filters, orders and paginates; the chip counts come back on the first page (offset 0).
