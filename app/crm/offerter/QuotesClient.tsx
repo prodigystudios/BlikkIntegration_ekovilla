@@ -543,6 +543,10 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
       {/* ── Detail panel ── */}
       {detailPanelOpen && detailQuote ? (
         <QuoteDetailPanel
+          /* 🧨 key på offert-id: panelen byter offert på plats via lådan "Kundens offerter", och
+             utan omstart följde förra offertens tillstånd med — tydligast dess
+             arbetsorderspärrar, som då visades som den NYA offertens hinder. */
+          key={detailQuote.id}
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
@@ -564,8 +568,15 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
             // Keep the open panel alive across a reload that may drop its row from the page: hold
             // the patched quote outside the list. Without this, marking a draft "Vunnen" from the
             // "Aktiva" tab would reload the list, lose the row, and unmount the panel mid-click.
+            // ⚠️ Funktionellt, inte ur renderingens ögonblicksbild: en långsam Fortnox-push som
+            // svarar efter en statusändring hade annars skrivit tillbaka den gamla statusen.
+            // QuoteDetailPatch:s egen dokumentation varnar för just det, och lådan gör den
+            // länkade offerten till normalfallet i stället för undantaget.
             const patched = quotes.find((q) => q.id === patch.id) ?? linkedQuote;
-            if (patched && patched.id === patch.id) setLinkedQuote({ ...patched, ...patch });
+            setLinkedQuote((current) => {
+              const base = quotes.find((q) => q.id === patch.id) ?? current;
+              return base && base.id === patch.id ? { ...base, ...patch } : current;
+            });
             // A status change moves the row between tabs and moves two counters. The tabs are
             // server-side now, so the browser can no longer make that happen by re-filtering an
             // array — it has to ask again, counts included.

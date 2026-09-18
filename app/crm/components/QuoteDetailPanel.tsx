@@ -739,11 +739,11 @@ export default function QuoteDetailPanel({
           currentQuoteId={quote.id}
           customerLabel={customerName}
           onClose={() => setCustomerQuotesOpen(false)}
-          onSelect={(next) => {
-            // Lådan lämnas ÖPPEN. Den är vägen tillbaka: syskonoffererna står kvar i listan, så man
-            // kan hoppa mellan dem utan att leta upp den man kom ifrån.
-            onOpenQuote(next);
-          }}
+          /* ⚠️ Lådan STÄNGS av bytet, och det är en följd av `key={quote.id}` hos anroparen:
+             panelen startas om per offert så att inget tillstånd från den förra följer med (dess
+             arbetsorderspärrar syntes annars som den nyas). Vägen tillbaka är knappen
+             "Kundens offerter" igen — ett klick, och den man kom ifrån står i listan. */
+          onSelect={onOpenQuote}
         />
       ) : null}
     </>

@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { cn } from '@/lib/shared/cn';
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import type { QuoteDetailItem } from '@/app/crm/components/QuoteDetailPanel';
-import { documentRef } from '@/app/crm/lib/format';
+import { documentRef, formatCurrency, formatDate } from '@/app/crm/lib/format';
 import { sortCustomerQuotes } from '@/app/crm/lib/quoteDisplay';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { useTopmostEscape } from '@/app/crm/components/useTopmostEscape';
@@ -39,11 +39,8 @@ import { useTopmostEscape } from '@/app/crm/components/useTopmostEscape';
 export type CustomerQuoteItem = QuoteDetailItem & { created_at: string };
 
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return '–';
-  const date = new Date(`${value}T12:00:00`);
-  return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
-}
+/** Taket för hur många rader lådan hämtar. Fler än så och vi säger att listan är kapad. */
+const ROW_LIMIT = 100;
 
 /**
  * Beloppet som offertlistan visar det: rubriktalet plus vilken bas det är.
@@ -54,12 +51,7 @@ function formatDate(value: string | null | undefined) {
  */
 function formatAmount(quote: CustomerQuoteItem) {
   const display = quoteAmountDisplay(quote.quote_type, resolveQuoteVatBreakdown(quote));
-  const amount = new Intl.NumberFormat('sv-SE', {
-    style: 'currency',
-    currency: quote.currency_code || 'SEK',
-    maximumFractionDigits: 0,
-  }).format(display.primary);
-  return `${amount} ${display.basisSuffix}`;
+  return `${formatCurrency(display.primary, quote.currency_code)} ${display.basisSuffix}`;
 }
 
 export default function CustomerQuotesDrawer({
@@ -73,7 +65,7 @@ export default function CustomerQuotesDrawer({
   customerId: string | null;
   /** Reserven för en offert som ännu bara hänger på ett prospekt. */
   prospectId: string | null;
-  /** Den offert panelen visar just nu — markeras i listan i stället för att döljas. */
+  /** Den offert panelen visar just nu. Filtreras BORT ur listan; en fotnot säger att den är det. */
   currentQuoteId: string;
   customerLabel: string;
   /** Hela offertraden, så panelens ägare kan öppna den utan en ny hämtning. */
@@ -81,58 +73,95 @@ export default function CustomerQuotesDrawer({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   useTopmostEscape(ref, onClose);
 
+  // Utan det här låg fokus kvar på knappen i panelen BAKOM: Tab vandrade vidare bland kontroller
+  // under överlägget medan lådan var oåtkomlig, och en skärmläsare sa ingenting när den öppnades.
+  useEffect(() => { closeRef.current?.focus(); }, []);
+
   const [quotes, setQuotes] = useState<CustomerQuoteItem[]>([]);
+  /** Hur många kunden har totalt, för att kunna säga när listan är kapad. */
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
+  // Kund först, prospekt som reserv: en offert skriven innan kunden lades upp hänger bara på
+  // prospektet, och då är det den kopplingen som samlar syskonen.
+  const scope = customerId
+    ? `customer_id=${encodeURIComponent(customerId)}`
+    : prospectId
+      ? `prospect_id=${encodeURIComponent(prospectId)}`
+      : null;
+
   useEffect(() => {
-    // Kund först, prospekt som reserv: en offert skriven innan kunden lades upp hänger bara på
-    // prospektet, och då är det den kopplingen som samlar syskonen.
-    const scope = customerId
-      ? `customer_id=${encodeURIComponent(customerId)}`
-      : prospectId
-        ? `prospect_id=${encodeURIComponent(prospectId)}`
-        : null;
-    if (!scope) { setLoading(false); return; }
+    // ⚠️ `currentQuoteId` i beroendena: raderna ska hämtas OM om panelen byter offert under lådan.
+    // I dag startas panelen om vid byte (`key` hos anroparen) så lådan stängs ändå — men beroendet
+    // står kvar som spärr, för utan det låg raderna kvar som de såg ut när lådan öppnades, och en
+    // syskonoffert vars status ändrats hade skickats tillbaka in i panelen i sitt GAMLA skick.
+    //
+    // Beroendet är `scope`-STRÄNGEN, inte dess två delar: två offerter på samma kund kan ha olika
+    // prospect_id utan att urvalet ändras, och då ska ingen ny hämtning gå ut.
+    if (!scope) {
+      // Varken kund eller prospekt att fråga om. Städa — annars stod förra kundens rader kvar under
+      // den nya offertens rubrik — och SÄG att vi inte vet, i stället för att påstå att det inte
+      // finns några.
+      setQuotes([]);
+      setFailed(false);
+      setLoading(false);
+      return;
+    }
 
     let cancelled = false;
     setLoading(true);
     setFailed(false);
 
-    fetch(`/api/crm/quotes?${scope}&limit=100`, { cache: 'no-store' })
+    // 🧨 `sort=created_desc` MÅSTE med. Rutten ordnar annars efter status, och `limit` kapar då de
+    // hundra med lägst statusordning — en offert vunnen förra veckan kunde falla bort helt ur en
+    // lista som utger sig för att vara kundens historik.
+    fetch(`/api/crm/quotes?${scope}&sort=created_desc&limit=${ROW_LIMIT}`, { cache: 'no-store' })
       .then((r) => r.json().catch(() => ({})))
       .then((json) => {
         if (cancelled) return;
-        if (!json?.ok) { setFailed(true); setQuotes([]); return; }
+        if (!json?.ok) { setFailed(true); setQuotes([]); setTotal(0); return; }
         setQuotes(sortCustomerQuotes((json.data?.items ?? []) as CustomerQuoteItem[]));
+        setTotal(Number(json.data?.total ?? 0));
       })
-      .catch(() => { if (!cancelled) { setFailed(true); setQuotes([]); } })
+      .catch(() => { if (!cancelled) { setFailed(true); setQuotes([]); setTotal(0); } })
       .finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
-  }, [customerId, prospectId]);
+  }, [scope, currentQuoteId]);
 
   const others = quotes.filter((quote) => quote.id !== currentQuoteId);
+  const hasScope = Boolean(scope);
+  const current = quotes.find((quote) => quote.id === currentQuoteId) ?? null;
 
   return createPortal(
-    <div ref={ref} className="fixed inset-0 z-[2900] flex justify-end" role="dialog" aria-label="Kundens offerter">
+    <div ref={ref} className="fixed inset-0 z-[2900] flex justify-end">
       {/* Klick utanför stänger. Ingen mörkläggning: offerten bakom ska gå att läsa medan man
-          jämför, det är hela skälet att lådan ligger vid sidan och inte ovanpå. */}
+          jämför, det är hela skälet att lådan ligger vid sidan och inte ovanpå.
+          ⚠️ UTANFÖR dialognoden — som barn lästes "Stäng listan, knapp" upp som dialogens första
+          innehåll. Samma uppdelning som CrmModal gör. */}
       <button
         type="button"
         aria-label="Stäng listan"
         onClick={onClose}
         className="flex-1 cursor-default border-0 bg-slate-950/20 p-0"
       />
-      <div className="crm-overlay-in flex h-full w-[400px] max-w-[92vw] flex-col border-l border-solid border-[#dce4d8] bg-white shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Kundens offerter"
+        className="crm-overlay-in flex h-full w-[400px] max-w-[92vw] flex-col border-l border-solid border-[#dce4d8] bg-white shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]"
+      >
         <div className="flex items-start justify-between gap-3 border-b border-solid border-[#e3e9df] px-4 py-3">
           <div className="grid min-w-0 gap-0.5">
             <span className="text-sm font-semibold text-slate-900">Kundens offerter</span>
             <span className="truncate text-xs text-slate-500">{customerLabel}</span>
           </div>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
             aria-label="Stäng"
@@ -146,7 +175,12 @@ export default function CustomerQuotesDrawer({
           {loading ? <span className="px-1 text-sm text-slate-500">Hämtar…</span> : null}
           {!loading && failed ? <span className="px-1 text-sm text-rose-600">Kunde inte hämta kundens offerter.</span> : null}
           {!loading && !failed && others.length === 0 ? (
-            <span className="px-1 text-sm text-slate-500">Kunden har inga andra offerter.</span>
+            <span className="px-1 text-sm text-slate-500">
+              {hasScope
+                ? 'Kunden har inga andra offerter.'
+                // Varken kund eller prospekt på offerten — då VET vi inte, och ska inte påstå.
+                : 'Offerten är inte kopplad till någon kund, så det går inte att visa fler.'}
+            </span>
           ) : null}
 
           {others.map((quote) => (
@@ -178,12 +212,18 @@ export default function CustomerQuotesDrawer({
             </button>
           ))}
 
-          {!loading && !failed && quotes.length > others.length ? (
+          {/* Fotnoten säger något bara när det FINNS andra rader — annars stod den under texten
+              "Kunden har inga andra offerter" och motsade den. */}
+          {!loading && !failed && others.length > 0 && current ? (
             <span className="px-1 pt-1 text-xs text-slate-400">
-              Den öppna offerten ({documentRef(
-                quotes.find((q) => q.id === currentQuoteId)?.fortnox_offer_number ?? null,
-                quotes.find((q) => q.id === currentQuoteId)?.quote_number ?? null,
-              )}) visas inte i listan.
+              Den öppna offerten ({documentRef(current.fortnox_offer_number, current.quote_number)}) visas inte i listan.
+            </span>
+          ) : null}
+
+          {/* Kapad lista: säg det hellre än att tiga. Annars ser en gammal offert ut som obefintlig. */}
+          {!loading && !failed && total > quotes.length ? (
+            <span className="px-1 pt-1 text-xs text-amber-700">
+              Visar de {quotes.length} senaste av {total}. Äldre offerter finns på kundkortet.
             </span>
           ) : null}
         </div>

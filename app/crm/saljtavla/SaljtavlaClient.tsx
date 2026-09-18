@@ -364,6 +364,9 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, 
 
       {detailQuote ? (
         <QuoteDetailPanel
+          /* Se offertlistan: panelen startas om per offert, annars bär den med sig förra offertens
+             tillstånd när lådan byter. */
+          key={detailQuote.id}
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/saljtavla?quote_id=${detailQuote.id}`}
