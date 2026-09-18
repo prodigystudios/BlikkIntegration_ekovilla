@@ -28,6 +28,7 @@ import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
 import WorkOrderProgressCard from './WorkOrderProgressCard';
+import WorkOrderStagesCard from './WorkOrderStagesCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
 import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
@@ -1298,6 +1299,16 @@ export default function WorkOrderDetailClient({
                 </div>
               )}
             </Card>
+
+            {/* Etappindelningen. Ligger FÖRE säckspåret och framdriften: de två svarar på vad som
+                HAR gjorts, det här på vad som ska göras och i vilken ordning. Planeringen bokar en
+                etapp i taget, och en oplanerad etapp syns som en egen post i backloggen. */}
+            <WorkOrderStagesCard
+              workOrderId={workOrderId}
+              lineItems={(workOrder.line_items || []) as never}
+              currencyCode={workOrder.currency_code}
+              canWrite={canEdit}
+            />
 
             {/* Spåret bakom snabböversiktens "Säckar (rapporterat)". Ligger efter handoffen
                 (som säger vad teamet SKULLE göra) och före Ekonomi. */}
