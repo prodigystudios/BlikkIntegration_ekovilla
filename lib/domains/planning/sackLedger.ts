@@ -38,6 +38,7 @@
 // partial + final och dubbeldebiterar lagret.
 
 import { CONSTRUCTION_SLUGS, constructionLabel, type ConstructionSlug } from '@/lib/domains/crm/constructions';
+import { isoDayNumber } from './timezone';
 
 // ── Typer ────────────────────────────────────────────────────────────────────
 
@@ -163,16 +164,13 @@ export type SegmentResolution = {
   daysOff: number;
 };
 
-const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
 // Dagnummer, UTC-förankrat. Datumen är rena kalenderdagar utan klockslag, så all aritmetik måste
 // hålla sig borta från runtimens egen zon — annars blir en sommartidsövergång en dags fel i
 // avståndet, och på servern (UTC) skulle svaret dessutom skilja sig från klientens.
-function isoToDayNumber(iso: string | null | undefined): number | null {
-  const m = ISO_DATE_RE.exec((iso ?? '').trim());
-  if (!m) return null;
-  return Math.round(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
-}
+//
+// Låg tidigare som en egen kopia här. Ankringen måste vara densamma som hos alla andra som räknar
+// dagnummer, annars kan två ytor jämföra tal som inte betyder samma sak.
+const isoToDayNumber = isoDayNumber;
 
 /**
  * Vilket segment en rapporterad dag hör till.

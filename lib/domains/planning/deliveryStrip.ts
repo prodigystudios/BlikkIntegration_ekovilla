@@ -1,5 +1,6 @@
 import type { DepotDeliveryOnBoard } from './depotStock';
 import type { ExpectedDelivery } from './expectedDeliveries';
+import { isoDayNumber } from './timezone';
 
 // Leveransremsan på veckotavlan: vilka registrerade leveranser som ska ritas i vilken dagkolumn.
 // Rent och sidoeffektfritt; läsningen ligger hos anroparen (listDeliveriesInRange).
@@ -45,13 +46,7 @@ export type DeliveryChip = {
 //
 // UTC står kvar ändå, för att det förblir rätt den dag någon jämför mot ett dagnummer som räknats
 // någon annanstans. Skriv inga tester som PÅSTÅR att de vaktar ankringen — de blir tomma.
-const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
-
-function isoToDayNumber(iso: string): number | null {
-  const m = ISO_DATE_RE.exec((iso ?? '').trim());
-  if (!m) return null;
-  return Math.round(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
-}
+const isoToDayNumber = isoDayNumber;
 
 /**
  * Grupperar leveranser på den dagkolumn de ska ritas i.

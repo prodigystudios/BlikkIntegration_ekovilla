@@ -71,3 +71,42 @@ export function addDaysISO(iso: string, days: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
+
+const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * Dygnsnummer sedan epok för ett ISO-datum (YYYY-MM-DD). `null` när strängen inte är ett ISO-datum.
+ *
+ * Den kanoniska kopian. Idiomet stod skrivet tre gånger — `sackLedger.isoToDayNumber`,
+ * `deliveryStrip.isoToDayNumber` och `planningDates.daysBetweenInclusive` — och alla tre delegerar
+ * nu hit. Skälet att samla dem är inte snygghet: så fort två ytor jämför dagnummer som räknats på
+ * var sitt håll måste ankringen vara densamma, och tre kopior är tre tillfällen att glida isär.
+ *
+ * ⚠️ `Math.round` är lastbärande, inte kosmetik. Under en sommartidsväxling är dygnet 23 eller 25
+ * timmar; utan avrundningen ger differensen mellan två dagnummer 14,0417 i stället för 14, och en
+ * fördelning som dividerar med det talet tappar kronor. Avrunda FÖRE varje division.
+ *
+ * 🕰️ Ett test som PÅSTÅR att det vaktar UTC-ankringen blir tomt: `Math.round` sväljer både
+ * sommartidens timme och en hel zonförskjutning, så en lokalt förankrad variant ger identiskt
+ * resultat i varje zon (det prövades — se kommentaren i deliveryStrip.ts). UTC står kvar för att
+ * det förblir rätt den dag någon jämför mot ett dagnummer räknat någon annanstans. Det som DÄREMOT
+ * går att vakta är avrundningen, och det testet måste köras under `TZ=Europe/Stockholm`.
+ */
+export function isoDayNumber(iso: string | null | undefined): number | null {
+  const m = ISO_DATE_RE.exec((iso ?? '').trim());
+  if (!m) return null;
+  return Math.round(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
+}
+
+/**
+ * Antal kalenderdagar i [start, end], inklusive båda ändarna. Samma dag ger 1.
+ *
+ * `NaN` när något av datumen inte går att läsa — samma utfall som den tidigare implementationen i
+ * planningDates, så inget anropsställe behöver ändras.
+ */
+export function daysBetweenInclusiveISO(startISO: string, endISO: string): number {
+  const start = isoDayNumber(startISO);
+  const end = isoDayNumber(endISO);
+  if (start === null || end === null) return NaN;
+  return end - start + 1;
+}

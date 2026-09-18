@@ -31,7 +31,6 @@ export function addDaysISO(iso: string, n: number): string {
   return fmtISO(addDays(parseISO(iso), n));
 }
 
-// Inclusive day span between two ISO dates (same day = 1).
 /**
  * '2026-09-24' -> 'tor 24/9'. För banderoller och kort som ska säga NÄR något händer.
  *
@@ -50,10 +49,13 @@ export function shortDayISO(iso: string): string {
   return `${weekday} ${d}/${m}`;
 }
 
-export function daysBetweenInclusive(startISO: string, endISO: string): number {
-  const ms = parseISO(endISO).getTime() - parseISO(startISO).getTime();
-  return Math.round(ms / 86_400_000) + 1;
-}
+// Dagspann mellan två ISO-datum, inklusive båda ändarna (samma dag = 1).
+//
+// Låg tidigare som en egen `parseISO`-baserad implementation här. Den var korrekt — `Math.round`
+// sväljer sommartidens timme — men den var också den tredje kopian av samma dygnsräkning, och
+// fördelningen av omsättning över veckor jämför dagnummer räknade i domänen med spann räknade här.
+// Två ankringar för samma tal är en glidning som väntar på att hända.
+export { daysBetweenInclusiveISO as daysBetweenInclusive } from '@/lib/domains/planning/timezone';
 
 // Monday of the week containing d.
 export function startOfWeek(d: Date): Date {
