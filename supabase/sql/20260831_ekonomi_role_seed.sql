@@ -25,6 +25,12 @@
 --                          godkänner det.
 --   time.reference.manage  Tidkoder och frånvarotyper är kontorets, inte byråns.
 --   crm.* / fortnox.*      Hon ska aldrig se en kund, ett pris eller en faktura. Se punkt 3.
+--                          ⚠️ DELVIS ÖVERSPELAD 2026-09-18. Byrån tar numera fram fakturaunderlag
+--                          och har därför crm.access + crm.workorder.read + crm.report.read, via
+--                          20260918_ekonomi_work_order_read.sql. LÄSNING av arbetsordrar alltså —
+--                          fortfarande ingen skrivnyckel och ingen fortnox.*. Insert:en nedan är
+--                          `on conflict do nothing`, så en omkörning av den HÄR filen tar inte bort
+--                          de nycklarna. Punkt 3 nedan gäller fortfarande i sak: se noten där.
 --   planning.*             Samma sak.
 --
 -- time.payroll.read har hittills varit seedad men OANVÄND i hela kodbasen — den vaktar ingen route
@@ -168,20 +174,35 @@ $$;
 -- crm.workorder.read, assigned_to eller besättning. `ekonomi` har inget av det, så embedden svarar
 -- null och kolumnen "Orsak / jobb" saknar arbetsordern för henne.
 --
--- Det är RÄTT: byrån ska inte få kundnamn per arbetad timme. Lös det INTE genom att ge rollen
--- crm.workorder.read. UI:t visar i stället en neutral markör så att gränsen inte läses som saknad
--- data. Frånvaroorsaker och internprojekt påverkas inte — de tabellerna är läsbara för alla
--- inloggade (20260811_time_reference_tables.sql), och byrån behöver orsaken i klartext.
+-- Det var RÄTT 2026-08-31: byrån skulle inte få kundnamn per arbetad timme, och UI:t visar en
+-- neutral markör så att gränsen inte läses som saknad data. Frånvaroorsaker och internprojekt
+-- påverkas inte — de tabellerna är läsbara för alla inloggade
+-- (20260811_time_reference_tables.sql), och byrån behöver orsaken i klartext.
+--
+-- ⚠️ ÖVERSPELAT 2026-09-18. Byrån tar numera fram fakturaunderlag och HAR crm.workorder.read
+-- (20260918_ekonomi_work_order_read.sql). Kolumnen fylls därför nu med ordernamnet. Det är en känd
+-- och accepterad följd av det beslutet, inte en regression — koden är oförändrad:
+-- `reasonOrJobLabel` visar etiketten när den finns och markören när den saknas. Raden står kvar
+-- här för att förklara varför markören finns kvar i koden.
 
 -- ── Verifiering (kör efter applicering, en fråga i taget) ────────────────────
--- Förväntat: exakt tre rader, alla under time.*.
+-- ⚠️ SIFFRORNA NEDAN GÄLLER DEN HÄR FILEN ENSAM. Har 20260918_ekonomi_work_order_read.sql körts
+-- (vilket den ska ha) ligger ytterligare tre crm-läsnycklar på rollen — se den filens egen
+-- verifiering. Justera förväntningarna därefter i stället för att larma.
+--
+-- Förväntat efter ENBART den här filen: exakt tre rader, alla under time.*.
+-- Förväntat efter båda filerna: sex rader — tre time.*, samt crm.access, crm.workorder.read
+-- och crm.report.read.
 --
 --   select role, permission_key from public.role_permissions where role = 'ekonomi' order by 2;
 --
--- Ingen crm-, fortnox- eller planning-nyckel ska ha smugit in (förväntat: 0):
+-- Ingen SKRIVNYCKEL och ingen fortnox-/planning-nyckel ska ha smugit in (förväntat: 0 i båda
+-- lägena — det är den gräns som fortfarande gäller oförändrat):
 --
 --   select count(*) from public.role_permissions
---   where role = 'ekonomi' and permission_key not like 'time.%';
+--   where role = 'ekonomi'
+--     and (permission_key like '%.write%' or permission_key like 'fortnox.%'
+--          or permission_key like 'planning.%');
 --
 -- Uteslutningen är live (förväntat: true):
 --

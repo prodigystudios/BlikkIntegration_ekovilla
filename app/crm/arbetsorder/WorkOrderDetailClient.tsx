@@ -219,13 +219,43 @@ function roundLineBreakdown(
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
-export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, currentUserId }: { workOrderId: string; fortnoxConnected: boolean; currentUserId: string | null }) {
+export default function WorkOrderDetailClient({
+  workOrderId,
+  fortnoxConnected,
+  currentUserId,
+  readOnly = false,
+  homePath = '/crm/arbetsorder',
+  homeLabel = 'Arbetsorder',
+}: {
+  workOrderId: string;
+  fortnoxConnected: boolean;
+  currentUserId: string | null;
+  /**
+   * Hela vyn utan en enda skrivingång — samma order, men bara att läsa.
+   *
+   * Byggd för ekonomiytan (/ekonomi/arbetsorder), där lönebyrån tar fram fakturaunderlag: de har
+   * crm.workorder.read men INGEN skrivnyckel, så varje knapp här hade slutat i ett 403 efter att de
+   * fyllt i något. Samma felklass som attestvyns "Rätta"-knappar gick i.
+   *
+   * ⚠️ Flaggan är en UI-spärr, inte en säkerhetsgräns. Den finns för att inte visa dörrar som är
+   * låsta; det som faktiskt nekar är rutternas nycklar och RLS. Båda behövs — den här ensam vore
+   * teater, och rutterna ensamma ger en yta full av knappar som inte fungerar.
+   */
+  readOnly?: boolean;
+  /** Vart bakåtknappen går när inget `?returnTo=` finns med. Ekonomiytan har en egen lista. */
+  homePath?: string;
+  homeLabel?: string;
+}) {
   const router = useRouter();
   // Arbetsordern öppnas både från sin egen lista och från planeringskalendern. Utan det här
   // landade planeraren i orderlistan i stället för på tavlan hen kom ifrån.
   const searchParams = useSearchParams();
-  const backTo = safeReturnTo(searchParams.get('returnTo')) ?? '/crm/arbetsorder';
-  const backLabel = backTo.startsWith('/crm/planering') ? 'Planering' : 'Arbetsorder';
+  const backTo = safeReturnTo(searchParams.get('returnTo')) ?? homePath;
+  const backLabel = backTo.startsWith('/crm/planering') ? 'Planering' : homeLabel;
+  // Får den som tittar ändra något? Läses av varje skrivingång nedan, och skickas vidare till
+  // underkomponenterna som `canEdit`. Uttryckt som EN variabel med flit: `!readOnly` utspridd på
+  // femton ställen är femton tillfällen att glömma ett.
+  const canEdit = !readOnly;
   const toast = useToast();
 
   const [workOrder, setWorkOrder] = useState<WorkOrderItem | null>(null);
@@ -501,6 +531,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   }
 
   async function saveWorkOrder() {
+    if (readOnly) return;
     if (!workOrder || !draft) return;
     // 🧨 ROT-REGIMEN ÄR LÅST SÅ FORT ORDERN FINNS I FORTNOX. `TaxReductionType` sätts bara när
     // dokumentet skapas, och ett icke-ROT-dokument avvisar varje husarbetesfält med 2004021 — så
@@ -595,6 +626,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Bara `status` skickas: routen speglar Er referens/arbetsadress/ansvarig till Fortnox-headern
   // och gatear på just de fälten, så en statusändring härifrån blir aldrig en Fortnox-skrivning.
   async function setStatusFromFlow(next: WorkOrderStatus) {
+    if (readOnly) return;
     if (!workOrder || statusSaving) return;
     setStatusSaving(next);
     try {
@@ -634,6 +666,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   }
 
   async function saveArticles(lineItems: ArticleLineItem[]): Promise<boolean> {
+    if (readOnly) return false;
     if (!workOrder) return false;
     // 🧨 RADERNAS ROT-VAL FÅR INTE SPARAS MOT EN ORDER SOM INTE HAR ROT PÅSLAGET.
     //
@@ -685,6 +718,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   }
 
   async function pushToFortnox() {
+    if (readOnly) return;
     if (!workOrder) return;
     setPushingFortnox(true);
     try {
@@ -707,6 +741,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // fönster mitt i CRM:ets egen yta läser som att något gått fel. Dialogen stängs i finally —
   // både lyckat och misslyckat svar avslutar frågan, precis som förut.
   async function createInvoice() {
+    if (readOnly) return;
     if (!workOrder) return;
     setCreatingInvoice(true);
     try {
@@ -724,6 +759,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   // Delfakturering: invoice the chosen per-article quantities now (one round). On success the
   // order becomes "Delfakturerad" — or "Avslutad" when this round bills the last of every line.
   async function submitPartialInvoice(lines: PartialInvoiceLine[]) {
+    if (readOnly) return;
     if (!workOrder) return;
     setSubmittingPartial(true);
     try {
@@ -771,7 +807,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
   const overdue = isWorkOrderOverdue(workOrder.desired_installation_date, workOrder.status);
   // Förloppsstegen sätter status direkt. Låst på en färdigfakturerad order (routen nekar ändå) och
   // medan översikten redigeras (då äger formulärets väljare statusen).
-  const statusFlowEditable = workOrder.status !== 'invoiced' && !editingOverview;
+  const statusFlowEditable = canEdit && workOrder.status !== 'invoiced' && !editingOverview;
   const snapshot = workOrder.customer_snapshot || {};
   // The order's own responsible contact (snapshot) is the source of truth here — it's what the
   // picker below edits, so an edit reflects immediately. Fall back to the resolved customer
@@ -992,7 +1028,11 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
               <span>{workOrder.client_name}</span>
               <span>·</span>
               <span>{workOrder.quote_type === 'private' ? 'Privatkund' : 'Företag'}</span>
-              {workOrder.customer_id ? (
+              {/* ⚠️ `canEdit` gatar en LÄSLÄNK här, till skillnad från överallt annars. Kundkortet
+                  ligger under /crm, vars layout grindar på roll — en ekonomianvändare som klickar
+                  blir tyst utkastad till startsidan. En länk som loggar ut dig ur din egen yta är
+                  värre än ingen länk. Faller bort med resten av rollgrindarna i RBAC-arbetet. */}
+              {canEdit && workOrder.customer_id ? (
                 <a
                   // Bär med varifrån ordern öppnades, annars tappas planeringen vid en sväng
                   // förbi kundkortet: tillbaka till ordern, men ordern vet inte längre om tavlan.
@@ -1012,7 +1052,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           {/* Under redigering äger den klistrade raden längst upp Spara/Avbryt — se kommentaren
               vid den. Här står bara ingången, i samma vikt som Filers "Ladda upp filer":
               samma plats och samma rang ska inte ha två olika knappvikter. */}
-          {activeTab === 'overview' && !editingOverview ? (
+          {canEdit && activeTab === 'overview' && !editingOverview ? (
             <button
               type="button"
               onClick={() => setEditingOverview(true)}
@@ -1260,6 +1300,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
             {/* Spåret bakom snabböversiktens "Säckar (rapporterat)". Ligger efter handoffen
                 (som säger vad teamet SKULLE göra) och före Ekonomi. */}
             <WorkOrderSackTrailCard
+              canEdit={canEdit}
               reports={sackReports.reports}
               loading={sackReports.loading}
               loadError={sackReports.loadError}
@@ -1276,6 +1317,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 rättar, fältet rapporterar. Till skillnad från säckarna, där de två vyerna har egna
                 kort därför att de svarar på olika frågor (grupperat kontra kronologiskt). */}
             <WorkOrderProgressCard
+              canEdit={canEdit}
               reports={progressReports.reports}
               workItems={progressWorkItems}
               loading={progressReports.loading}
@@ -1415,10 +1457,17 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                 // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna
                 // nycklas på radens id, så positionen är betydelselös och projektet kan ändras medan det
                 // pågår. Servern (validateLineItemEdit) skyddar det som redan står på en utställd faktura.
-                canEdit={!workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
-                // Skälet skickas in — komponenten får inte gissa det. Här, och bara här, betyder
-                // canEdit=false verkligen att ordern är färdigfakturerad.
-                lockedReason="Arbetsordern är fakturerad och kan inte ändras."
+                canEdit={canEdit && !workOrder.fortnox_invoice_number && workOrder.status !== 'invoiced'}
+                // Skälet skickas in — komponenten får inte gissa det, och nu finns det TVÅ skäl.
+                //
+                // 🧨 Raden ovan hade ett enda skäl när den skrevs, och texten påstod det rakt ut.
+                // Så fort läsläget la till ett andra skäl ljög den: en order som varken var
+                // fakturerad eller klar att faktureras fick ändå "Arbetsordern är fakturerad och
+                // kan inte ändras" — upptäckt i webbläsaren, inte av ett test. Skälet måste följa
+                // villkoret, annars förklarar texten fel låsning.
+                lockedReason={readOnly
+                  ? 'Arbetsordern visas som underlag. Ändringar görs i CRM.'
+                  : 'Arbetsordern är fakturerad och kan inte ändras.'}
                 // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
                 // färdigfakturerad order, där det inte finns något kvar att skriva av.
                 onSave={saveArticles}
@@ -1503,6 +1552,15 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                         {invoiceRounds.length > 1 ? 'Alla delfakturor finns i Fortnox. Slutför faktureringen där.' : 'Fakturautkast finns i Fortnox. Slutför faktureringen där.'}
                       </p>
                     </>
+                  ) : !canEdit ? (
+                    // Läsläget säger vad som GÄLLER, inte vad man kan göra: byrån tar fram
+                    // underlaget och fakturerar i Fortnox. En avstängd "Fakturera"-knapp hade
+                    // läst som att rätten låg här och bara var tillfälligt borta.
+                    <p className="text-[11px] leading-4 text-slate-400">
+                      {workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' || workOrder.partial_invoicing_started_at
+                        ? 'Ordern är klar att faktureras. Faktureringen görs i Fortnox.'
+                        : 'Ordern är inte klar att faktureras ännu.'}
+                    </p>
                   ) : workOrder.status === 'completed' || workOrder.status === 'partially_invoiced' || workOrder.partial_invoicing_started_at ? (
                     <>
                       <div className="grid gap-2">
@@ -1801,6 +1859,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     Ordern är fakturerad i Fortnox och tar inte emot fler ändringar. Rättningar går
                     att göra här i CRM, men når inte kundens orderbekräftelse eller faktura.
                   </p>
+                ) : !canEdit ? (
+                  // Synkstatusen är fakta som hör till underlaget — knappen som ÄNDRAR den gör det
+                  // inte. Statusbadgen i sidhuvudet bär redan läget.
+                  null
                 ) : workOrder.fortnox_order_sync_status !== 'synced' ? (
                   <button type="button" onClick={pushToFortnox} disabled={pushingFortnox} className={cn(crm.saveButton, 'h-10 w-full')}>
                     {pushingFortnox ? 'Skickar…' : workOrder.fortnox_order_sync_status === 'failed' ? 'Försök igen' : 'Skicka till Fortnox'}
@@ -1834,6 +1896,10 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     >
                       Följesedel
                     </button>
+                    {/* ⚠️ Mejlet LÄMNAR HUSET — det är den enda av de tre som når kunden. Byrån
+                        tar fram underlag; orderbekräftelsen är kontorets att skicka. PDF-knapparna
+                        ovan står kvar: de är ren läsning, och underlaget är hela poängen. */}
+                    {canEdit ? (
                     <button
                       type="button"
                       onClick={() => documentEmail.start({
@@ -1856,7 +1922,12 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
                     >
                       {documentEmail.sendingId === workOrder.id ? 'Mejlar…' : 'Mejla order'}
                     </button>
-                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">Orderbekräftelsen bär priser och summering, följesedeln bara artiklar och antal. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.</p>
+                    ) : null}
+                    <p className="col-span-2 text-[11px] leading-4 text-slate-400">
+                      {canEdit
+                        ? 'Orderbekräftelsen bär priser och summering, följesedeln bara artiklar och antal. Mejlet öppnas i ditt eget mejlprogram – PDF:en laddas ner att bifoga.'
+                        : 'Orderbekräftelsen bär priser och summering, följesedeln bara artiklar och antal.'}
+                    </p>
                   </div>
                 ) : null}
               </Card>
@@ -1927,6 +1998,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       {/* ─── Comments (on the overview, full width below the columns) ─── */}
       {activeTab === 'overview' ? (
         <WorkOrderCommentsTab
+          canEdit={canEdit}
           comments={comments}
           loading={commentsLoading}
           currentUserId={currentUserId}
@@ -1945,9 +2017,9 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
           files={workOrderFiles.files}
           loading={workOrderFiles.loading}
           currentUserId={currentUserId}
-          canUpload={workOrderFiles.canUpload}
-          canMarkInternal={workOrderFiles.canMarkInternal}
-          canDeleteAny={workOrderFiles.canDeleteAny}
+          canUpload={canEdit && workOrderFiles.canUpload}
+          canMarkInternal={canEdit && workOrderFiles.canMarkInternal}
+          canDeleteAny={canEdit && workOrderFiles.canDeleteAny}
           uploadProgress={workOrderFiles.uploadProgress}
           onUpload={workOrderFiles.uploadFiles}
           onDelete={workOrderFiles.deleteFile}
@@ -1957,6 +2029,7 @@ export default function WorkOrderDetailClient({ workOrderId, fortnoxConnected, c
       {/* ─── Time ─── */}
       {activeTab === 'time' ? (
         <WorkOrderTimeTab
+          canEdit={canEdit}
           entries={timeEntries}
           loading={timeEntriesLoading}
           totalHours={totalLoggedHours}

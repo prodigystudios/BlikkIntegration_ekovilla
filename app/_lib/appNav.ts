@@ -105,6 +105,21 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   // man går till, inte något man letar upp i en grupp.
   { href: '/ekonomi', label: 'Tid & lön', roles: ['ekonomi', 'admin'] },
 
+  // Fakturaunderlaget — arbetsordrarna, skrivskyddade. Samma konstruktion som raden ovan: rollen
+  // bär raden, nycklarna (crm.access + crm.workorder.read) bär åtkomsten.
+  //
+  // ⚠️ `roles` MÅSTE nämna 'ekonomi' vid namn. Rollen står i EXPLICIT_ONLY_ROLES nedan, alltså ser
+  // den BARA rader som räknar upp den — en rad utan `roles` (eller med bara 'admin') hade varit
+  // osynlig för just den roll den är byggd för. Det är hela poängen med opt-in-listan, och det är
+  // också den enda vägen den biter fel.
+  //
+  // ⛔ INTE under `/crm`-raden och inte i CRM:ets egen nav (app/crm/_lib/nav.ts): hela /crm ligger
+  // bakom en rollgrind som kastar ut ekonomi till startsidan. Ytan har en egen adress just därför.
+  //
+  // Admin har medvetet INGEN rad här — de når samma ordrar via CRM, med skrivrätt. Två rader till
+  // samma ordrar, varav den ena tyst tar bort knapparna, är en fälla att gå i, inte en genväg.
+  { href: '/ekonomi/arbetsorder', label: 'Arbetsordrar', roles: ['ekonomi'] },
+
   // Admin
   { href: '/admin', label: 'Admin', roles: ['admin'] },
 ];

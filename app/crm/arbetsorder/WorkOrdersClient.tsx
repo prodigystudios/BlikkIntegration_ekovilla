@@ -112,7 +112,26 @@ function MarginChips({ margin }: { margin: WorkOrderMargin | undefined }) {
   );
 }
 
-export default function WorkOrdersClient({ currentUserId }: { currentUserId: string | null }) {
+export default function WorkOrdersClient({
+  currentUserId,
+  canEdit = true,
+  basePath = '/crm/arbetsorder',
+}: {
+  currentUserId: string | null;
+  /**
+   * Får den som tittar skapa en order? False tar bort "+ Ny order".
+   *
+   * Finns för ekonomiytans läslista (/ekonomi/arbetsorder): byrån läser ordrarna för att ta fram
+   * fakturaunderlag men äger dem inte. POST /api/crm/work-orders kräver crm.workorder.write, som de
+   * inte har — knappen hade slutat i ett 403 efter att formuläret fyllts i.
+   */
+  canEdit?: boolean;
+  /**
+   * Vart en rad leder. Ekonomiytan har en egen detaljvy på sin egen adress; skickar man dit någon
+   * till /crm/... kastar CRM-layoutens rollgrind ut dem till startsidan.
+   */
+  basePath?: string;
+}) {
   const router = useRouter();
   const toast = useToast();
   const searchParams = useSearchParams();
@@ -227,6 +246,9 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
   }
 
   async function createOrder() {
+    // Dubbelt skydd: knappen är borta i läsläge, men en funktion som kan köras utan den är en
+    // dörr som står på glänt. Samma mönster som detaljvyns mutationer.
+    if (!canEdit) return;
     if (!newOrderCustomerId) { toast.error('Välj en kund'); return; }
     if (!newOrderName.trim()) { toast.error('Ange ett ordernamn'); return; }
     if (needsPersonalNumber && !newOrderPersonalNumber.trim()) { toast.error('Fyll i personnummer för privatkunden'); return; }
@@ -268,7 +290,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
       const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
       toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
       resetNewOrder();
-      if (item?.id) router.push(`/crm/arbetsorder/${item.id}`);
+      if (item?.id) router.push(`${basePath}/${item.id}`);
     } catch {
       toast.error('Kunde inte skapa order');
     } finally {
@@ -344,14 +366,16 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
             Öppna en order för status, ekonomi, filer, tid och kommentarer.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setNewOrderOpen(true)}
-          className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
-          style={{ backgroundColor: 'var(--crm-primary)' }}
-        >
-          + Ny order
-        </button>
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => setNewOrderOpen(true)}
+            className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
+            style={{ backgroundColor: 'var(--crm-primary)' }}
+          >
+            + Ny order
+          </button>
+        ) : null}
       </div>
 
       {error ? (
@@ -457,7 +481,7 @@ export default function WorkOrdersClient({ currentUserId }: { currentUserId: str
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => router.push(`/crm/arbetsorder/${item.id}`)}
+                    onClick={() => router.push(`${basePath}/${item.id}`)}
                     className={cn(
                       'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
                       overdue ? 'border-rose-200' : 'border-[#e3e9df]',

@@ -6,6 +6,8 @@ import PageShell from '@/components/ui/PageShell';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import TimeApprovals from './TimeApprovals';
+import EkonomiTabs from './EkonomiTabs';
+import { canReadWorkOrders } from './_lib/access';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,6 +83,13 @@ export default async function EkonomiPage() {
     );
   }
 
+  // Flikarna ritas bara när ytan faktiskt har två halvor att välja mellan — se EkonomiTabs.
+  // `held` är redan läst ovan, så det kostar ingen extra rundtur.
+  const tabs = [
+    { href: '/ekonomi', label: 'Tid & lön' },
+    ...(canReadWorkOrders(held) ? [{ href: '/ekonomi/arbetsorder', label: 'Arbetsordrar' }] : []),
+  ];
+
   return (
     // Samma skal som AdminTabsClient ger fliken: PageShell + `crm.card`. Komponenten bär sin egen
     // padding (p-5) med flit och förutsätter ett kort att sitta i — utan det ligger den direkt på
@@ -88,6 +97,7 @@ export default async function EkonomiPage() {
     <PageShell className="max-w-[1460px]">
       <section className={cn(crm.cardInner, 'grid gap-4')}>
         <h1 className={cn('m-0', crm.pageTitle)}>Tid &amp; lön</h1>
+        <EkonomiTabs tabs={tabs} />
       </section>
       <section className={crm.card}>
         <TimeApprovals />

@@ -57,6 +57,13 @@ type Props = {
   isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
   /**
+   * Får den som tittar rätta? False tar bort "Ta bort" per rad.
+   *
+   * Skilt från `canReport`: den säger vem som RAPPORTERAR (fältet), den här vem som får RÄTTA.
+   * Kontoret har canReport={false} men rättar; ekonomiytans läsvy har varken eller.
+   */
+  canEdit?: boolean;
+  /**
    * Fältet rapporterar; kontoret läser och rättar.
    *
    * Styr både formuläret och rubrikens tyngd — fältvyns kort står bland andra `sectionTitle`-kort
@@ -88,6 +95,7 @@ export default function WorkOrderProgressCard({
   loadError,
   isRemoving,
   onDelete,
+  canEdit = true,
   canReport = true,
   saving = false,
   onCreate,
@@ -271,7 +279,7 @@ export default function WorkOrderProgressCard({
                     {/* Noteringen hör till RADEN och är skriven till nästa team — alltså det enda
                         på kortet någon behöver ordagrant. */}
                     {item.note ? <p className="m-0 pl-0.5 italic leading-relaxed">{item.note}</p> : null}
-                    {item.can_delete ? (
+                    {item.can_delete && canEdit ? (
                       confirmId === item.id ? (
                         <div className="flex items-center justify-end gap-2 pt-0.5">
                           <span className="text-slate-500">Ta bort raden?</span>
