@@ -154,7 +154,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     // uppslag mot planning_*-tabellerna med ett CRM-uuid, och ett Blikk-projekt sökt på
     // ordernummer. En platshållare har inget att öppna, och då är rätt svar att inte öppna något.
     if (isCrmItem(it)) {
-      if (it.work_order_id) window.location.href = `/arbetsorder/${it.work_order_id}`;
+      // ⚠️ PLACERINGEN MÅSTE MED. Fältvyn är per arbetsorder och kan inte veta vilken etapp man kom
+      // ifrån utan den — utan ?segment= får en besättning som bara ska göra etapp 1 hela ordern i
+      // handen. Saknas segmentet visas helheten, precis som förut.
+      if (it.work_order_id) {
+        const seg = it.segment_id ? `?segment=${encodeURIComponent(String(it.segment_id))}` : '';
+        window.location.href = `/arbetsorder/${it.work_order_id}${seg}`;
+      }
       return;
     }
     setDetailOpen(true);
