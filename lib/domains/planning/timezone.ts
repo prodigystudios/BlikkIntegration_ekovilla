@@ -110,3 +110,32 @@ export function daysBetweenInclusiveISO(startISO: string, endISO: string): numbe
   if (start === null || end === null) return NaN;
   return end - start + 1;
 }
+
+/** Inversen till isoDayNumber: dygnsnummer tillbaka till YYYY-MM-DD. */
+export function isoFromDayNumber(day: number): string {
+  const d = new Date(day * 86_400_000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/**
+ * Måndagen i veckan som innehåller dygnsnummer `day`.
+ *
+ * 1970-01-01 (dygn 0) var en TORSDAG, därav förskjutningen 3. Rent heltalsräknande — ingen Date,
+ * ingen zon, ingen sommartid.
+ */
+export function mondayDayNumber(day: number): number {
+  return day - ((day + 3) % 7);
+}
+
+/**
+ * Måndagen i veckan som innehåller ett ISO-datum, som ISO-datum. `null` på ogiltig indata.
+ *
+ * insights.mondayOf delegerar hit. Den byggde tidigare en Date och stegade med setUTCDate; svaret
+ * var detsamma, men veckoankaret måste vara EN funktion nu när tavlan och insikterna ska summera
+ * samma dagsandelar till samma veckor.
+ */
+export function mondayOfISO(iso: string): string | null {
+  const day = isoDayNumber(iso);
+  return day === null ? null : isoFromDayNumber(mondayDayNumber(day));
+}

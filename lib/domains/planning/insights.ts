@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
+import { mondayOfISO } from './timezone';
 
 // Forward-looking planning insights: scheduled revenue + sacks per week, per truck, per material,
 // and the value of work still waiting to be planned (unplanned backlog). Pure aggregation here is
@@ -20,10 +21,15 @@ export type PlanningInsights = {
 const OPEN = new Set(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
 
 // Pure: Monday (UTC, date-only/DST-safe) of the week containing an ISO date.
+//
+// Delegerar till domänens veckoankare. Tavlan och insikterna summerar samma dagsandelar till samma
+// veckor (weekValue.ts), och två implementationer av "vilken vecka hör den här dagen till" är
+// exakt det som gör att de två vyerna kan svara olika. Kastar på oläsbart datum, precis som den
+// tidigare Date-baserade varianten gjorde via toISOString.
 export function mondayOf(iso: string): string {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d.toISOString().slice(0, 10);
+  const monday = mondayOfISO(iso);
+  if (monday === null) throw new RangeError(`mondayOf: ogiltigt datum ${JSON.stringify(iso)}`);
+  return monday;
 }
 
 function addDaysISO(iso: string, days: number): string {
