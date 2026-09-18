@@ -45,6 +45,15 @@ export type JobDisplay = {
   revenue: number;
   /** Etappen kortet visar, när ordern är uppdelad. null = hela ordern eller resten av den. */
   stage: { id: string; number: number; title: string } | null;
+  /**
+   * Sant när kortet visar RESTEN av en uppdelad order — alltså allt ingen etapp tagit.
+   *
+   * 🧨 Skiljer "resten av en uppdelad order" från "en order utan etapper". Båda har `stage: null`,
+   * men bara den första behöver säga vad den bär: säckbadgen visar HELA orderns tal (säckboken är
+   * per arbetsorder), så utan ett eget chip var 797 det enda synliga talet på ett kort som i
+   * själva verket bar 447. Etappkortet hade sitt chip och gick fritt; rest-kortet log.
+   */
+  is_rest: boolean;
   /** Hela arbetsorderns säckar, oavsett scope — se kommentaren vid mapWorkOrderJob. */
   order_total_sacks: number;
 };
@@ -137,6 +146,8 @@ export function mapWorkOrderJob(row: WorkOrderJobRow, scope: StageScope = { kind
       scope.kind === 'stage'
         ? { id: scope.stage.id, number: scope.stage.stage_number, title: scope.stage.title }
         : null,
+    // Bara när ordern FAKTISKT är uppdelad. En order utan etapper är inte "resten" av något.
+    is_rest: scope.kind === 'rest' && scope.stages.length > 0,
     // ⛔ Helorderns säckar, ALLTID — även på ett etappkort. Säckrapporteringen är per ARBETSORDER
     // (en egenkontroll är totalen för hela jobbet, se sackLedger), så en nedräkning mot etappens
     // tal hade sagt "kvar 0 / 120" på etapp 2 så fort etapp 1 var färdigblåst. Kortet visar

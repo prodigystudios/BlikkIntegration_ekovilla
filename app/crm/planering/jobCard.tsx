@@ -832,6 +832,20 @@ export function SegmentCardBody({
                 {job.total_sacks > 0 && <> · {job.total_sacks} säck</>}
               </span>
             )}
+            {/* 🧨 RESTEN BEHÖVER OCKSÅ SÄGA VAD DEN BÄR. Säckbadgen nedan visar HELA orderns tal —
+                säckboken är per arbetsorder — så utan det här chipet var jobbets 797 det enda
+                synliga talet på ett kort som i själva verket bär 447. Etappkortet hade sitt chip
+                och gick fritt; rest-kortet såg ut att bära hela ordern. (William 2026-09-18, första
+                skarpa uppdelningen: "står fortfarande fullt säckantal på det".) */}
+            {job.is_rest && (
+              <span
+                className="rounded-full border border-slate-200 bg-slate-50 px-1.5 py-px text-[9px] font-bold text-slate-600"
+                title={`Resten av ordern — ${job.total_sacks} säck av jobbets ${job.order_total_sacks}`}
+              >
+                Resten
+                {job.total_sacks > 0 && <> · {job.total_sacks} säck</>}
+              </span>
+            )}
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
