@@ -18,7 +18,6 @@ import { describeShortfallCover, type DepotForecast } from '@/lib/domains/planni
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
-import { SCHEDULABLE_WORK_ORDER_STATUSES } from '@/lib/domains/planning/backlog';
 import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
@@ -1041,14 +1040,25 @@ export default function PlanningClient({
   // sökrutan sänkte "Veckan totalt" till det jobbets värde. Banornas egna summor filtreras i
   // WeekBoard på bil-id, vilket är en annan sak.
   //
-  // ⚠️ Bara schemaläggningsbara statusar räknas — samma vakt som insikterna har. En avbruten eller
-  // färdig order som ligger kvar i kalendern är inte omsättning. Listan importeras, aldrig skrivs
-  // av: en kopia hade börjat räkna avbrutna order igen så fort den ena listan ändrades.
+  // ⛔ INGEN STATUSVAKT HÄR, och det är ett medvetet val efter QA mot skarp data 2026-09-18.
+  //
+  // Ett första utkast filtrerade på SCHEDULABLE_WORK_ORDER_STATUSES, alltså samma vakt som
+  // insikterna har. Mätt på v.38 stod den för 397 000 av en total skillnad på 444 000 kr — medan
+  // själva fördelningen, som är det den här ändringen handlar om, stod för 47 000.
+  //
+  // Vakten är rätt i INSIKTERNA, som är uttalat framåtblickande ("vad är på väg"). Den är fel här:
+  // tavlan visar vilken vecka som helst, även passerade, och ett jobb som blivit `completed` VAR
+  // omsättning den vecka det utfördes. Med vakten krympte "Veckan totalt" allteftersom veckans jobb
+  // blev klara — talet svarade på "vad är kvar att göra" i stället för "vad omsätter bilen".
+  //
+  // ⚠️ Följden är att en AVBRUTEN order som ligger kvar i kalendern fortfarande räknas som
+  // omsättning här. Det är ett befintligt fel, inte ett nytt — regeln finns som `isDeadWorkOrder`
+  // i lib/domains/crm/work-orders.ts, men den modulen bär serverkod och importeras inte av någon
+  // klientkomponent. Att bryta ut vokabulären är en egen ändring; den hör inte hemma i den här.
   const weekSlices = useMemo<WeekSlice[]>(() => {
-    const counted = new Set<string>(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
     const values = new Map<string, ScopeValue>();
     for (const s of segments) {
-      if (!s.work_order_id || !s.job || !counted.has(s.job.status)) continue;
+      if (!s.work_order_id || !s.job) continue;
       const key = scopeKey(s.work_order_id, s.stage_id ?? null);
       if (!values.has(key)) values.set(key, { key, revenue: s.job.revenue, sacks: s.job.total_sacks });
     }
