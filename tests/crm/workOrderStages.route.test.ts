@@ -205,7 +205,19 @@ describe('DELETE /stages/[stageId]', () => {
     });
 
   beforeEach(() => {
+    // Bindningen etapp↔order prövas FÖRE räkningen, så listan måste innehålla etappen.
+    mockList.mockResolvedValue({ data: [{ id: STAGE_ID, stage_number: 1, title: 'Vägg', line_quantities: [] }], error: null } as never);
     mockDelete.mockResolvedValue({ data: { id: STAGE_ID }, error: null } as never);
+  });
+
+  // 🧨 Räknades placeringarna först svarade routen 409 med en ANNAN orders antal — ett läckage, och
+  // fel svar: en etapp som inte hör till ordern är 404, inte "den är utplacerad".
+  it('svarar 404 för en etapp som hör till en ANNAN order, utan att räkna placeringar', async () => {
+    mockList.mockResolvedValue({ data: [], error: null } as never);
+    const res = await DELETE(delReq(), stageCtx);
+    expect(res.status).toBe(404);
+    expect(mockCount).not.toHaveBeenCalled();
+    expect(mockDelete).not.toHaveBeenCalled();
   });
 
   it('tar bort en oplanerad etapp', async () => {

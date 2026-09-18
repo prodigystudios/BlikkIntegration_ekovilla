@@ -598,7 +598,16 @@ export default function PlanningClient({
       // Append the created segment locally instead of refetching the whole board; bump the source
       // job's backlog count so its badge stays in sync.
       if (j.data?.item) {
-        setSegments((prev) => [...prev, j.data.item as OpsSegment]);
+        const created = j.data.item as OpsSegment;
+        setSegments((prev) => [...prev, created]);
+        // 🧨 SPANNEN MÅSTE FÖLJA MED. `scopeSpans` är nämnaren i veckofördelningen och sätts annars
+        // bara av loadSegments — ett nyss placerat jobb hade då saknat spann helt och bidragit med
+        // NOLL kr till "Veckan totalt" tills sidan laddades om. Den som just la ut ett jobb hade
+        // sett summan stå stilla.
+        setScopeSpans((prev) => [
+          ...prev,
+          { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
+        ]);
         // Matchar på key, inte id: annars hade räknaren tickat upp på ordens ALLA etapper.
         setBacklog((prev) => prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)));
       } else {
@@ -626,6 +635,20 @@ export default function PlanningClient({
             : s,
         ),
       );
+      // Samma skäl som vid placeringen: utan det här ligger jobbets värde kvar i den vecka det
+      // flyttades FRÅN tills sidan laddas om.
+      setScopeSpans((cur) =>
+        cur.map((sp) =>
+          sp.segment_id === id
+            ? {
+                ...sp,
+                ...(patch.truck_id !== undefined ? { truck_id: patch.truck_id } : {}),
+                ...(patch.start_day !== undefined ? { start_day: patch.start_day } : {}),
+                ...(patch.end_day !== undefined ? { end_day: patch.end_day } : {}),
+              }
+            : sp,
+        ),
+      );
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -648,6 +671,7 @@ export default function PlanningClient({
       const seg = segments.find((s) => s.id === id) ?? null;
       const key = seg?.work_order_id ? scopeKey(seg.work_order_id, seg.stage_id ?? null) : null;
       setSegments((prev) => prev.filter((s) => s.id !== id));
+      setScopeSpans((prev) => prev.filter((sp) => sp.segment_id !== id));
       if (key) setBacklog((prev) => prev.map((b) => (b.key === key ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
@@ -916,6 +940,9 @@ export default function PlanningClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           work_order_id: copySeg.work_order_id,
+          // ⚠️ Etappen måste med. Utan den blev kopian rest-scopad: fel säckantal, fel värde, fel
+          // material på den andra bilen — och backloggens räknare tickade på fel post.
+          stage_id: copySeg.stage_id ?? null,
           truck_id: truckId,
           start_day: copySeg.start_day,
           end_day: copySeg.end_day,

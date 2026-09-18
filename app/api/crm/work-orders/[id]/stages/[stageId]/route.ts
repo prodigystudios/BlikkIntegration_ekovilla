@@ -120,6 +120,17 @@ export async function DELETE(req: Request, context: RouteContext) {
 
     const force = new URL(req.url).searchParams.get('force') === '1';
 
+    const supabase = createRouteHandlerClient({ cookies });
+
+    // 🧨 BINDNINGEN PRÖVAS FÖRE RÄKNINGEN. Räknades placeringarna först svarade routen 409 med en
+    // ANNAN orders antal — ett litet läckage, och fel svar: en etapp som inte hör till den här
+    // ordern är 404, inte "den är utplacerad". Sessionsklienten, så RLS avgör om etappen får läsas.
+    const { data: stageRow, error: stageErr } = await listCrmWorkOrderStages(supabase, workOrderId);
+    if (stageErr) return routeError(500, 'crm_work_order_stages_list_failed', stageErr.message);
+    if (!((stageRow || []) as Array<{ id: string }>).some((s) => s.id === stageId)) {
+      return routeError(404, 'crm_work_order_stage_not_found', 'Etappen hittades inte på den här ordern.');
+    }
+
     // ⚠️ RÄKNAS ELEVERAT, OCH FAILAR STÄNGT. Går räkningen sönder vet vi inte om etappen är
     // utplacerad — och att då gå vidare hade kunnat flytta säckantal på kort ingen tittar på.
     const counted = await countSegmentsForStage(getSupabaseAdmin(), stageId);
@@ -141,7 +152,6 @@ export async function DELETE(req: Request, context: RouteContext) {
       );
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await deleteCrmWorkOrderStage(supabase, stageId, workOrderId);
     if (error) {
       if ((error as { code?: string }).code === '42501') {

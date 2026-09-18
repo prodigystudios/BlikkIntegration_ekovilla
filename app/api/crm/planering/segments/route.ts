@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listSegments, listTrucks, placeSegment } from '@/lib/domains/planning/schedule';
+import { listSegments, listTrucks, placeSegment, STAGE_NOT_ON_WORK_ORDER } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, placeSegmentSchema } from '../_lib';
 
@@ -57,7 +57,13 @@ export async function POST(req: Request) {
       actorUserId: gate.currentUser.id,
       actorName: gate.currentUser.name ?? null,
     });
-    if (error) return routeError(500, 'planning_segment_create_failed', error.message);
+    if (error) {
+      // En etapp som inte hör till ordern är ett fel i begäran, inte i servern.
+      if ((error as { code?: string }).code === STAGE_NOT_ON_WORK_ORDER) {
+        return routeError(400, 'planning_segment_stage_mismatch', error.message);
+      }
+      return routeError(500, 'planning_segment_create_failed', error.message);
+    }
 
     await logActivity(supabase, gate.currentUser, {
       action: 'segment.create',

@@ -182,6 +182,7 @@ export default function WorkOrderStagesCard({
                   title: editing.title,
                   work_description: editing.work_description,
                   job_type: editing.job_type,
+                  line_quantities: editing.line_quantities,
                 }
               : null
           }

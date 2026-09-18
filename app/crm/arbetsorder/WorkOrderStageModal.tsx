@@ -54,7 +54,14 @@ export default function WorkOrderStageModal({
   jobTypes: Array<{ key: string; label: string }>;
   currencyCode: string;
   /** Etappen som redigeras. `lineState` ska då vara räknat med excludeStageId. */
-  editing: { stage_number: number; title: string; work_description: string | null; job_type: string | null } | null;
+  editing: {
+    stage_number: number;
+    title: string;
+    work_description: string | null;
+    job_type: string | null;
+    /** Etappens egna antal — förifyller formuläret. Se kommentaren vid `inputs`. */
+    line_quantities: StageLineQuantity[] | null;
+  } | null;
   submitting: boolean;
   onClose: () => void;
   onSubmit: (draft: StageDraft) => void;
@@ -63,10 +70,14 @@ export default function WorkOrderStageModal({
   const [workDescription, setWorkDescription] = useState(editing?.work_description ?? '');
   const [jobType, setJobType] = useState(editing?.job_type ?? '');
 
-  const rows = useMemo(
-    () =>
+  const rows = useMemo(() => {
+    // ⚠️ PARAS PÅ RADENS ID, inte på arrayposition. `lineState` hämtas en gång från servern medan
+    // `lineItems` är orderns levande rader; raderas eller läggs en rad till i artikelfliken utan att
+    // etapperna hämtas om, visade indexparningen ett artikelnamn bredvid en ANNAN rads rest.
+    const byLineId = new Map(lineState.filter((s) => s.lineId).map((s) => [s.lineId as string, s]));
+    return (
       lineItems.map((item, index) => {
-        const state = lineState[index];
+        const state = item.id ? byLineId.get(item.id) : undefined;
         return {
           index,
           item,
@@ -78,15 +89,28 @@ export default function WorkOrderStageModal({
           unallocated: state?.unallocated ?? 0,
           writtenOff: !!item.written_off,
         };
-      }),
-    [lineItems, lineState],
-  );
+      })
+    );
+  }, [lineItems, lineState]);
 
-  // ⚠️ TOMT SOM STARTVÄRDE, inte "allt som är kvar". Delfakturan förifyller med resten eftersom en
-  // faktura nästan alltid tar det som är kvar. En etapp är motsatsen: den finns för att man ska
-  // plocka ut en DEL. Ett förifyllt fält hade gjort "hela ordern" till det lätta svaret och etappen
-  // meningslös.
-  const [inputs, setInputs] = useState<Record<number, string>>({});
+  // ⚠️ TOMT SOM STARTVÄRDE VID NY ETAPP, inte "allt som är kvar". Delfakturan förifyller med resten
+  // eftersom en faktura nästan alltid tar det som är kvar. En etapp är motsatsen: den finns för att
+  // man ska plocka ut en DEL. Ett förifyllt fält hade gjort "hela ordern" till det lätta svaret.
+  //
+  // 🧨 VID REDIGERING FÖRIFYLLS ETAPPENS EGNA ANTAL. Utan det var etappen omöjlig att byta namn på
+  // (Spara låg låst, eftersom inget antal var ifyllt), och skrev man in EN rad skickades bara den —
+  // PATCH ersätter line_quantities, så etappens övriga rader försvann TYST. Formuläret måste visa
+  // hela det som sparas om.
+  const [inputs, setInputs] = useState<Record<number, string>>(() => {
+    if (!editing) return {};
+    const own = new Map((editing.line_quantities ?? []).map((q) => [q.line_id, q.quantity]));
+    const seeded: Record<number, string> = {};
+    lineItems.forEach((item, index) => {
+      const q = item.id ? own.get(item.id) : undefined;
+      if (q != null && q > 0) seeded[index] = fmtQty(q);
+    });
+    return seeded;
+  });
 
   const picked = rows.map((r) => {
     const requested = Math.max(0, parseDecimal(inputs[r.index] ?? '0'));

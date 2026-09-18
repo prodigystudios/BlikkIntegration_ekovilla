@@ -191,6 +191,9 @@ export async function listTrucks(supabase: SupabaseClient) {
     .order('name', { ascending: true });
 }
 
+/** Felkod när en placering hänvisar till en etapp på en annan order. Rutten mappar den till 400. */
+export const STAGE_NOT_ON_WORK_ORDER = 'stage_not_on_work_order';
+
 export type PlaceSegmentInput = {
   workOrderId: string;
   /** Etappen placeringen utför. null = resten av ordern. */
@@ -235,7 +238,7 @@ async function nextSortIndex(supabase: SupabaseClient, truckId: string, startDay
 export async function placeSegment(
   supabase: SupabaseClient,
   input: PlaceSegmentInput,
-): Promise<{ data: OpsSegment | null; error: { message: string } | null }> {
+): Promise<{ data: OpsSegment | null; error: { message: string; code?: string } | null }> {
   // Etappens arbetsbeskrivning och jobbtyp ÄRVS till placeringen, som ett startvärde.
   //
   // ⚠️ KOPIERAS, läses inte parallellt. Fältvyn läser `ops_segments.work_description`
@@ -249,17 +252,29 @@ export async function placeSegment(
   let jobType = input.jobType ?? null;
   let workDescription: string | null = null;
   if (input.stageId) {
-    const { data: stage } = await supabase
+    const { data: stage, error: stageError } = await supabase
       .from('crm_work_order_stages')
       .select('work_description, job_type')
       .eq('id', input.stageId)
+      // 🧨 BUNDEN TILL ORDERN. Utan `.eq('work_order_id', …)` slås etappen upp på id ENSAMT, och en
+      // klient som skickar en annan orders etapp-id fick den orderns arbetsbeskrivning och jobbtyp
+      // kopierade på sin placering — och ett stage_id som pekar tvärs över ordergränsen, vilket
+      // sedan gör att jobbet tappar sitt värde i veckofördelningen (nyckeln hittar inget scope).
+      .eq('work_order_id', input.workOrderId)
       .maybeSingle();
+    if (stageError) return { data: null, error: stageError };
     const row = stage as { work_description?: string | null; job_type?: string | null } | null;
-    if (row) {
-      // Ett uttryckligt val från anroparen vinner över etappens.
-      jobType = input.jobType ?? row.job_type ?? null;
-      workDescription = row.work_description ?? null;
+    if (!row) {
+      // Fail-closed: hellre ett nej än en placering som pekar på en etapp den inte hör till.
+      return {
+        data: null,
+        // `code` så rutten kan svara 400 i stället för 500: kroppen är felaktig, servern är hel.
+        error: { message: 'Etappen hör inte till den här arbetsordern.', code: STAGE_NOT_ON_WORK_ORDER },
+      };
     }
+    // Ett uttryckligt val från anroparen vinner över etappens.
+    jobType = input.jobType ?? row.job_type ?? null;
+    workDescription = row.work_description ?? null;
   }
 
   const { data, error } = await supabase
