@@ -193,6 +193,8 @@ export async function listTrucks(supabase: SupabaseClient) {
 
 export type PlaceSegmentInput = {
   workOrderId: string;
+  /** Etappen placeringen utför. null = resten av ordern. */
+  stageId?: string | null;
   truckId: string;
   startDay: string;
   endDay: string;
@@ -238,6 +240,7 @@ export async function placeSegment(
     .from('ops_segments')
     .insert({
       work_order_id: input.workOrderId,
+      stage_id: input.stageId ?? null,
       truck_id: input.truckId,
       start_day: input.startDay,
       end_day: input.endDay,

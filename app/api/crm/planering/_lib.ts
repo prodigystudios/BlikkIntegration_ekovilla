@@ -33,6 +33,13 @@ export const placeSegmentSchema = z.object({
   end_day: isoDate,
   sort_index: z.coerce.number().int().min(0).optional(),
   job_type: jobType.optional(),
+  // Vilken etapp av ordern placeringen utför. Utelämnad/null = resten, alltså hela ordern på en
+  // order som inte är uppdelad.
+  //
+  // ⛔ moveSegmentSchema får den MEDVETET INTE. Man byter inte etapp genom att dra ett kort över
+  // kalendern — det är en annan sorts ändring, och en tyst omtolkning av ett drag hade flyttat
+  // säckantal och omsättning utan att någon bett om det. Avplanera och placera om.
+  stage_id: z.string().uuid('Ogiltig etapp').nullable().optional(),
 });
 
 // Vad grabbarna ska göra, när platshållaren är publicerad till entreprenaden. Tom text är samma sak

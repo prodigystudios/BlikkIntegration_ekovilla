@@ -817,10 +817,26 @@ export function SegmentCardBody({
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             {seg.on_hold && <HoldBadge />}
+            {/* Etappen som eget chip. ⛔ ALDRIG inbakad i `ref` — den är Fortnox-numret, den matchas
+                av tavlans sökning och den går in i orderbekräftelser. */}
+            {job.stage && (
+              <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-bold text-amber-800" title={`Etapp ${job.stage.number}: ${job.stage.title}`}>
+                Etapp {job.stage.number} · {job.stage.title}
+              </span>
+            )}
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
           </div>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <SackProgress planned={job.total_sacks} reported={seg.sacks_reported} final={seg.sacks_final} />
+            {/* ⛔ `planned` är HELA ARBETSORDERNS säckar, även på ett etappkort — inte job.total_sacks.
+                Säckrapporteringen är per arbetsorder (en egenkontroll är totalen för hela jobbet, se
+                sackLedger), så en nedräkning mot etappens tal hade visat "kvar 0 / 120" på etapp 2
+                så fort etapp 1 var färdigblåst. Etappens eget tal står i chipet nedan. */}
+            <SackProgress planned={job.order_total_sacks} reported={seg.sacks_reported} final={seg.sacks_final} />
+            {job.stage && job.total_sacks > 0 && (
+              <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-1.5 py-px text-[9px] font-bold text-slate-600" title="Planerat i den här etappen">
+                {job.total_sacks} säck i etappen
+              </span>
+            )}
             <ConfirmationBadge confirmation={seg.confirmation} />
             <CreatorBadge name={seg.created_by_name} />
             <div className="ml-auto flex items-center gap-1">

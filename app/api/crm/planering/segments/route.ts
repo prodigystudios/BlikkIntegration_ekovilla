@@ -48,6 +48,7 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await placeSegment(supabase, {
       workOrderId: parsed.data.work_order_id,
+      stageId: parsed.data.stage_id ?? null,
       truckId: parsed.data.truck_id,
       startDay: parsed.data.start_day,
       endDay: parsed.data.end_day,
@@ -64,8 +65,15 @@ export async function POST(req: Request) {
       entityId: data?.id ?? null,
       segmentId: data?.id ?? null,
       workOrderId: parsed.data.work_order_id,
-      summary: `Placerade ${data?.job?.ref ?? 'jobb'} på kalendern`,
-      details: { truck_id: parsed.data.truck_id, start_day: parsed.data.start_day, end_day: parsed.data.end_day },
+      // Etappen med i sammanfattningen: "Placerade #5418 Etapp 2 på kalendern". Utan den går det
+      // inte att se i loggen VILKEN del av ett uppdelat jobb som bokades.
+      summary: `Placerade ${data?.job?.ref ?? 'jobb'}${data?.job?.stage ? ` Etapp ${data.job.stage.number}` : ''} på kalendern`,
+      details: {
+        truck_id: parsed.data.truck_id,
+        start_day: parsed.data.start_day,
+        end_day: parsed.data.end_day,
+        ...(parsed.data.stage_id ? { stage_id: parsed.data.stage_id } : {}),
+      },
     });
 
     return ok({ item: data }, 201);
