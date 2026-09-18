@@ -28,6 +28,17 @@ export type QuoteCall = {
   user_name: string | null;
 };
 
+/**
+ * Nyast först — samma ordning som servern ger.
+ *
+ * ⚠️ Körs också när ett samtal SPARAS. Modalen har ett tidpunktsfält just för att logga ett samtal
+ * som redan hänt, så en bakåtdaterad rad hade annars lagt sig överst och hoppat på plats först när
+ * panelen öppnades om. Samma val som uppgiftskortet gör.
+ */
+function sortCalls(calls: QuoteCall[]): QuoteCall[] {
+  return [...calls].sort((a, b) => (a.call_at < b.call_at ? 1 : a.call_at > b.call_at ? -1 : 0));
+}
+
 export default function QuoteCallsCard({
   quoteId,
   quoteLabel,
@@ -60,7 +71,7 @@ export default function QuoteCallsCard({
       .then((json) => {
         if (cancelled) return;
         if (!json?.ok) { setLoadFailed(true); setCalls([]); return; }
-        setCalls(Array.isArray(json.data?.items) ? json.data.items : []);
+        setCalls(sortCalls(Array.isArray(json.data?.items) ? json.data.items : []));
       })
       .catch(() => { if (!cancelled) { setLoadFailed(true); setCalls([]); } })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -71,6 +82,7 @@ export default function QuoteCallsCard({
   async function saveCall(draft: CallLogDraft) {
     setSaving(true);
     try {
+      const callAt = callAtToIso(draft.call_at);
       const res = await fetch(`/api/crm/quotes/${quoteId}/calls`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -79,15 +91,14 @@ export default function QuoteCallsCard({
           summary: draft.summary.trim(),
           next_step: draft.next_step.trim() || null,
           // Utelämnas när fältet är tomt — då sätter databasen tidpunkten till nu.
-          ...(callAtToIso(draft.call_at) ? { call_at: callAtToIso(draft.call_at) } : {}),
+          ...(callAt ? { call_at: callAt } : {}),
         }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Kunde inte logga samtalet');
 
-      // Nyast först, samma ordning som servern ger. Raden kommer tillbaka med namn påsatt av
-      // routen, så den behöver inte hämtas om.
-      setCalls((current) => [json.data.item as QuoteCall, ...current]);
+      // Sorteras in, inte klistras överst: ett bakåtdaterat samtal hör hemma på sin plats.
+      setCalls((current) => sortCalls([json.data.item as QuoteCall, ...current]));
       setFormOpen(false);
       toast.success('Samtal loggat');
     } catch (e) {
@@ -109,14 +120,17 @@ export default function QuoteCallsCard({
           <div className="grid min-w-0 gap-0.5">
             <span className="text-sm font-semibold text-slate-800">Samtal</span>
             <span className="text-xs leading-5 text-slate-500">
+              {/* ⚠️ Räknaren står över felet när det finns rader att visa. Annars sa kortet "Kunde
+                  inte hämta samtalen" ovanför ett samtal man just hade sparat — och man loggar det
+                  en gång till. Misslyckad hämtning får en egen rad i stället. */}
               {loading
                 ? 'Hämtar…'
-                : loadFailed
-                  ? 'Kunde inte hämta samtalen.'
-                  : calls.length === 0
-                    ? 'Inga samtal loggade på offerten.'
-                    // "samtal" böjs inte, men particip gör det: ett samtal är loggat, flera loggade.
-                    : `${calls.length} samtal ${calls.length === 1 ? 'loggat' : 'loggade'} här.`}
+                : calls.length > 0
+                  // "samtal" böjs inte, men particip gör det: ett samtal är loggat, flera loggade.
+                  ? `${calls.length} samtal ${calls.length === 1 ? 'loggat' : 'loggade'} här.`
+                  : loadFailed
+                    ? 'Kunde inte hämta samtalen.'
+                    : 'Inga samtal loggade på offerten.'}
             </span>
           </div>
         </div>
@@ -130,6 +144,10 @@ export default function QuoteCallsCard({
           </button>
         ) : null}
       </div>
+
+      {!loading && loadFailed && calls.length > 0 ? (
+        <p className="m-0 mt-2 text-xs text-amber-700">Listan kunde inte hämtas — det du ser är bara det som sparats här.</p>
+      ) : null}
 
       {!loading && calls.length > 0 ? (
         <div className="mt-3 grid gap-1.5">

@@ -279,7 +279,7 @@ export async function getCrmQuoteStatus(supabase: SupabaseClient, id: string) {
 export async function getCrmQuoteCallIdentity(supabase: SupabaseClient, id: string) {
   return supabase
     .from('crm_quotes')
-    .select('id, customer_id, prospect_id, customer_name, customer_snapshot')
+    .select('id, customer_id, prospect_id, customer_name, customer_snapshot, prospect:crm_customers!prospect_id(company_name)')
     .eq('id', id)
     .single();
 }

@@ -97,13 +97,24 @@ const CRM_CALLS_DEFAULT_LIMIT = 50;
  * Kontaktfälten är visningsdata på raden (samtalslistan visar företag och kontakt). De kommer ur
  * offertens snapshot, inte från webbläsaren, så de alltid beskriver vem offerten faktiskt gäller.
  */
-export function quoteCallIdentity(quote: {
-  customer_id?: string | null;
-  /** Finns i typen för att visa att den LÄSES OCH IGNORERAS med flit — se ovan. */
-  prospect_id?: string | null;
-  customer_name?: string | null;
-  customer_snapshot?: Record<string, unknown> | null;
-}) {
+export function quoteCallIdentity(
+  quote: {
+    customer_id?: string | null;
+    /** Finns i typen för att visa att den LÄSES OCH IGNORERAS med flit — se ovan. */
+    prospect_id?: string | null;
+    customer_snapshot?: Record<string, unknown> | null;
+  },
+  /**
+   * Vad kunden HETER, avgjort av anroparen med quoteCustomerName — den delade regeln som redan
+   * styr namnet i offertlistan, på säljtavlan och i panelen.
+   *
+   * 🧨 Egen ordning här hade betytt två svar på samma fråga: ett prospektburet offertnamn leder med
+   * prospektets företag, och en kopia i domänen hade lett med snapshotens. Dessutom är
+   * company_name en av fyra kolumner i crm_calls_reference_or_company_check — är alla null nekas
+   * insert, och just en prospektburen offert kan sakna både customer_id och snapshot-namn.
+   */
+  companyName: string | null,
+) {
   const snapshot = (quote.customer_snapshot ?? {}) as Record<string, unknown>;
   const text = (value: unknown): string | null => {
     const trimmed = typeof value === 'string' ? value.trim() : '';
@@ -113,7 +124,7 @@ export function quoteCallIdentity(quote: {
   return {
     prospect_id: null,
     customer_id: quote.customer_id ?? null,
-    company_name: text(snapshot.company_name) ?? text(snapshot.customer_name) ?? text(quote.customer_name),
+    company_name: text(companyName),
     organization_number: text(snapshot.organization_number),
     contact_name: text(snapshot.contact_name),
     phone: text(snapshot.phone),
@@ -184,6 +195,17 @@ export async function listCrmCallsWithFilters(supabase: SupabaseClient, options:
 }
 
 /**
+ * 🧨 EGEN, SMAL PROJEKTION — återanvänd ALDRIG crmCallSelect här. Den bäddar in kundraden med
+ * org.nr, e-post och telefon OCH hela kontaktpersonslistan, och den här frågan körs med
+ * service-rollen. crm_customers och crm_customer_contacts har egen RLS (tilldelad kund eller
+ * crm.admin), så en läsroll som öppnar en kollegas offert hade fått kunduppgifter som samma
+ * användares kontaktkort korrekt nekar. Elevering motiverades av SAMTALEN, inte av joinen.
+ *
+ * Kortet ritar utfall, text, tidpunkt och vem — inget mer.
+ */
+const QUOTE_CALL_SELECT = 'id, outcome, summary, next_step, call_at, user_id, quote_id';
+
+/**
  * Alla samtal som loggats på offerten — även kollegornas.
  *
  * ⚠️ KRÄVER ELEVERAD KLIENT, och det är inte en genväg: crm_calls_select_visible är "eget samtal,
@@ -198,7 +220,7 @@ export async function listCrmCallsWithFilters(supabase: SupabaseClient, options:
 export async function listCrmQuoteCalls(admin: SupabaseClient, quoteId: string) {
   return admin
     .from('crm_calls')
-    .select(crmCallSelect)
+    .select(QUOTE_CALL_SELECT)
     .eq('quote_id', quoteId)
     .order('call_at', { ascending: false })
     .limit(CRM_CALLS_DEFAULT_LIMIT);

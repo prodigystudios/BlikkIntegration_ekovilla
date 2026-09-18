@@ -10,7 +10,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { crm, customerStageLabel as stageLabel, customerStageClass as stageClass } from '@/app/crm/lib/crmTokens';
-import { CALL_OUTCOME_ACCENT, CALL_OUTCOME_META } from '@/app/crm/lib/callDisplay';
+import { CALL_OUTCOMES, CALL_OUTCOME_ACCENT, CALL_OUTCOME_META } from '@/app/crm/lib/callDisplay';
 
 type EntitySearchResult = {
   id: string;
@@ -726,8 +726,10 @@ export default function CallsClient() {
               <div className="grid gap-2">
                 <span className={crm.sectionTitle}>Utfall</span>
                 <div className="grid gap-2 sm:grid-cols-2">
-                  {Object.entries(outcomeMeta).map(([key, meta]) => {
-                    const outcome = key as CallItem['outcome'];
+                  {/* Ordningen kommer ur den delade listan, inte ur nyckelordningen i objektet —
+                      annars kan de två ytorna tyst hamna i olika ordning. */}
+                  {CALL_OUTCOMES.map((outcome) => {
+                    const meta = outcomeMeta[outcome];
                     const active = draft.outcome === outcome;
                     return (
                       <button

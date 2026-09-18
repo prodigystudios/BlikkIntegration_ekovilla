@@ -4,7 +4,8 @@ import { z } from 'zod';
 import { getCrmQuoteCallIdentity } from '@/lib/domains/crm/quotes';
 import { attachCrmCallUserNames, createCrmCall, listCrmQuoteCalls, quoteCallIdentity } from '@/lib/domains/crm/calls';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { invalidUuidParam, ok, requireCrmUser, requireCrmWriter, routeError, validationError } from '../../_lib';
+import { invalidUuidParam, ok, requireCrmUser, requirePermission, routeError, validationError } from '../../_lib';
+import { quoteCustomerName } from '@/app/crm/lib/quoteDisplay';
 
 type RouteContext = {
   params: {
@@ -76,8 +77,11 @@ export async function GET(_req: Request, context: RouteContext) {
 
 export async function POST(req: Request, context: RouteContext) {
   try {
-    // Samma skrivgrind som resten av CRM:et; läsroller kommer inte hit.
-    const writer = await requireCrmWriter();
+    // 🧨 crm.call.write, INTE crm.write. Det är nyckeln POST /api/crm/calls och PATCH
+    // /api/crm/calls/[id] gatar på, och den insert-policyn på crm_calls kräver. Med crm.write hade
+    // routen släppt igenom en roll som databasen sedan nekar — och användaren fått ett fel som
+    // låter som att offerten var problemet.
+    const writer = await requirePermission('crm.call.write');
     if (writer.response || !writer.currentUser) return writer.response;
 
     const badId = invalidUuidParam(context.params.id);
@@ -93,7 +97,8 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const { data, error } = await createCrmCall(supabase, {
-      ...quoteCallIdentity(quote as Parameters<typeof quoteCallIdentity>[0]),
+      // Namnet avgörs av den delade regeln, inte av en egen ordning här.
+      ...quoteCallIdentity(quote as any, quoteCustomerName(quote as any)),
       quote_id: context.params.id,
       user_id: writer.currentUser.id,
       outcome: parsed.data.outcome,
@@ -103,13 +108,18 @@ export async function POST(req: Request, context: RouteContext) {
     });
 
     if (error) {
-      // RLS filtrerar hellre än nekar: insert-policyn kräver sälj/admin i eget namn. Säg det rakt
-      // ut i stället för att låta ett 500 se ut som ett haveri.
-      return routeError(403, 'crm_call_create_denied', 'Samtalet kunde inte loggas på den här offerten');
+      // ⚠️ Skilj NEKAT från TRASIGT. Allt-är-403 gjorde ett brutet villkor (t.ex.
+      // crm_calls_reference_or_company_check) och en tappad anslutning oskiljbara från en
+      // behörighetsspärr — och slängde meddelandet som hade förklarat vilket.
+      const denied = error.code === '42501' || /row-level security/i.test(error.message || '');
+      return denied
+        ? routeError(403, 'crm_call_create_denied', 'Samtalet kunde inte loggas på den här offerten')
+        : routeError(500, 'crm_call_create_failed', error.message);
     }
 
-    const [item] = await attachCrmCallUserNames(getSupabaseAdmin(), [data as { user_id: string }]);
-    return ok({ item });
+    // Raden går tillbaka som den är: kortet skriver "Du" på sitt eget samtal, så ett namnuppslag
+    // mot profiles hade varit en extra rundtur för ett fält ingen ritar.
+    return ok({ item: { ...(data as Record<string, unknown>), user_name: null } }, 201);
   } catch (e: any) {
     return routeError(500, 'crm_quote_call_create_unexpected', e?.message || 'Kunde inte logga samtalet');
   }

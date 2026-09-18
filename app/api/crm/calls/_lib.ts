@@ -1,5 +1,5 @@
 import { z } from 'zod';
-export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission } from '../_shared';
+export { ok, routeError, validationError, requireCrmUser, requireCrmWriter, requirePermission, pickProvidedFields } from '../_shared';
 
 function normalizeOptionalText(value: unknown) {
   if (value == null) return null;

@@ -129,9 +129,9 @@ describe('POST /api/crm/quotes/[id]/calls', () => {
 describe('quoteCallIdentity', () => {
   it('🧨 sätter prospect_id till null — annars nekar RLS ett samtal på en kollegas offert', () => {
     // crm_calls_insert_visible kräver att en satt prospect_id pekar på en kund tilldelad den som
-    // skriver. customer_id har inget sådant villkor, och det är den kundkortet läser.
-    // Offerten HAR ett prospekt här — annars vore testet tomt: en utelämnad nyckel blir null ändå.
-    const identity = quoteCallIdentity({ customer_id: 'cust-1', prospect_id: 'prospect-1', customer_name: 'Brf Almen', customer_snapshot: {} });
+    // skriver. Offerten HAR ett prospekt här — annars vore testet tomt: en utelämnad nyckel blir
+    // null ändå.
+    const identity = quoteCallIdentity({ customer_id: 'cust-1', prospect_id: 'prospect-1', customer_snapshot: {} }, 'Brf Almen');
     expect(identity.prospect_id).toBeNull();
     expect(identity.customer_id).toBe('cust-1');
   });
@@ -139,23 +139,37 @@ describe('quoteCallIdentity', () => {
   it('tar kontaktuppgifterna ur offertens snapshot, inte från webbläsaren', () => {
     const identity = quoteCallIdentity({
       customer_id: 'cust-1',
-      customer_name: 'Fallback AB',
-      customer_snapshot: { company_name: 'Brf Almen', contact_name: 'Anna Ek', phone: '070-1234567', city: 'Nacka' },
-    });
+      customer_snapshot: { contact_name: 'Anna Ek', phone: '070-1234567', city: 'Nacka' },
+    }, 'Brf Almen');
     expect(identity).toMatchObject({ company_name: 'Brf Almen', contact_name: 'Anna Ek', phone: '070-1234567', city: 'Nacka' });
   });
 
-  it('faller tillbaka på offertens kundnamn, och gör tomma strängar till null', () => {
-    expect(quoteCallIdentity({ customer_id: null, customer_name: 'Fallback AB', customer_snapshot: { company_name: '   ' } }).company_name)
-      .toBe('Fallback AB');
-    expect(quoteCallIdentity({ customer_snapshot: null }).company_name).toBeNull();
+  it('🧨 hittar INTE på en egen namnordning — namnet kommer utifrån', () => {
+    // company_name är en av fyra kolumner i crm_calls_reference_or_company_check. Skulle domänen
+    // läsa snapshotens namn i stället för det anroparen räknat fram, hade en prospektburen offert
+    // (utan customer_id och utan snapshot-namn) fått alla fyra null och blivit nekad vid insert.
+    const identity = quoteCallIdentity({ customer_snapshot: { company_name: 'Snapshotnamn' } }, 'Prospektets AB');
+    expect(identity.company_name).toBe('Prospektets AB');
+  });
+
+  it('gör tomt namn till null', () => {
+    expect(quoteCallIdentity({ customer_snapshot: null }, '   ').company_name).toBeNull();
   });
 });
 
 describe('callAtToIso', () => {
-  it('gör om ett lokalt klockslag till samma ögonblick i UTC', () => {
-    // Tolkas i webbläsarens zon med flit: användaren skriver klockslaget hen ringde.
-    expect(callAtToIso('2026-09-18T14:30')).toBe(new Date('2026-09-18T14:30').toISOString());
+  // 🕰️ ZONBEROENDE TEST — biter BARA utanför UTC, och CI och Vercel kör UTC.
+  //
+  // Det är inte en brist i testet utan i frågan: under UTC ÄR lokal tid och UTC samma ögonblick, så
+  // "tolkas strängen lokalt eller som UTC" har inget observerbart svar där. Mutationsprövat:
+  // `new Date(trimmed + 'Z')` i callAtToIso är grönt under TZ=UTC och rött under
+  // TZ=Europe/Stockholm. Kör den zonen om du rör funktionen.
+  //
+  // Förväntan byggs ändå ur lokala komponenter (new Date(år, månad, …)) och inte ur samma sträng
+  // som funktionen får — annars vore raden en ren tautologi i varje zon.
+  it('tolkar klockslaget i LÄSARENS zon, inte som UTC (zonberoende)', () => {
+    expect(callAtToIso('2026-09-18T14:30')).toBe(new Date(2026, 8, 18, 14, 30).toISOString());
+    expect(callAtToIso('2026-01-18T14:30')).toBe(new Date(2026, 0, 18, 14, 30).toISOString());
   });
 
   it('ger null för tomt och för oläsbart — en trasig tidpunkt får inte hindra loggningen', () => {
