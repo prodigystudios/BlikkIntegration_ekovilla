@@ -76,6 +76,15 @@ export type MyJob = {
   // Blikk-projekt. Allt som leder någonstans måste därför grindas på id:t, inte på källan.
   workOrderId: string | null;
   projectId: string | null;
+  /**
+   * Placeringen raden kommer ifrån.
+   *
+   * 🧨 DRIVER ?segment= PÅ LÄNKEN TILL ARBETSORDERN. Fältvyn är per arbetsorder och kan inte veta
+   * vilken ETAPP besättningen kom ifrån utan den — utan segmentet får en besättning som bara ska
+   * göra etapp 1 hela ordern i handen, vilket är precis det etapperna finns för att undvika.
+   * `key` bär det redan, men inbakat i en sträng ingen får plocka isär.
+   */
+  segmentId: string | null;
 };
 
 const str = (v: unknown): string | null => {
@@ -95,6 +104,8 @@ function fromBlikk(row: BlikkJobRow): MyJob | null {
   const orderNumber = str(row.order_number);
   return {
     key: `blikk:${str(row.segment_id) ?? projectId ?? 'x'}:${day}`,
+    // Blikk-rader har ingen CRM-placering att scopa på; länken går via projectId.
+    segmentId: null,
     source: 'blikk',
     day,
     // Legacy rows only ever carry the Blikk order number, and the old card rendered it as '#nnn'.
@@ -122,6 +133,7 @@ function fromCrm(row: CrmJobRow): MyJob | null {
   const ref = row.work_order_id ? workOrderRef(row.fortnox_order_number, row.order_number ?? '').ref || null : null;
   return {
     key: `crm:${row.segment_id}:${day}`,
+    segmentId: row.segment_id,
     source: 'crm',
     day,
     ref,

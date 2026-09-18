@@ -195,3 +195,47 @@ export function hasUnallocatedWork(items: StageLineItem[] | null, stages: WorkOr
   if (stages.length === 0) return (items ?? []).length > 0;
   return computeStageState(items, stages).some((s) => s.unallocated > 0);
 }
+
+/**
+ * Som `scopeLineItems`, men för VISNING: radens eget prisläge behålls.
+ *
+ * 🧨 ANVÄND ALDRIG DEN HÄR TILL MATTE. `scopeLineItems` projicerar raden till `pricing_mode: 'item'`
+ * just för att all befintlig radmatte ska kunna köras oförändrad — det är rätt för säckar, kronor
+ * och materialbehov, men fel så fort raden RENDERAS: en m3-rad ritas då som "Antal 37.5" i stället
+ * för "37,5 m³", och måttdetaljen (150 m² × 250 mm) försvinner. Upptäckt i granskningen 2026-09-18,
+ * första gången projektionen visades för en människa.
+ *
+ * Här skrivs i stället radens EGEN mängd om: `m2` för m3-rader, `quantity` för antalsrader. Då
+ * behåller enheten, tjockleken och formateringen sin mening i vyn.
+ *
+ * ⚠️ En m3-rad utan tjocklek kan inte räknas om (division med noll). En sådan rad har volymen noll
+ * och kan därför aldrig ingå i en etapp, så fallet är omöjligt — men villkoret står kvar som spärr.
+ */
+export function scopeLineItemsForDisplay<T extends StageLineItem & { thickness_mm?: string | null }>(
+  items: T[] | null,
+  scope: StageScope,
+): T[] {
+  if (scope.kind === 'whole') return items ?? [];
+  const scoped = scopeLineItems(items ?? [], scope);
+  const byId = new Map(scoped.map((r) => [r.id ?? '', r]));
+
+  const out: T[] = [];
+  for (const item of items ?? []) {
+    const hit = item.id ? byId.get(item.id) : undefined;
+    if (!hit) continue;
+    // `scopeLineItems` la etappens mängd i `quantity` och satte läget till 'item'.
+    const qty = Number(hit.quantity ?? 0);
+    if (!(qty > 0)) continue;
+
+    const isM3 = (item.pricing_mode ?? 'm3') !== 'item';
+    if (!isM3) {
+      out.push({ ...item, quantity: String(qty) });
+      continue;
+    }
+    const thickness = Number(String(item.thickness_mm ?? '').replace(',', '.'));
+    if (!(thickness > 0)) continue;
+    // Tillbaka från kubik till kvadratmeter, så raden ritas i sin egen enhet.
+    out.push({ ...item, m2: String(Math.round((qty * 1000) / thickness * 1000) / 1000) });
+  }
+  return out;
+}

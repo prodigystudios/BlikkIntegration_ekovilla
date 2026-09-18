@@ -129,23 +129,32 @@ export async function PATCH(req: Request, context: RouteContext) {
     // som glidit isär innan den här koden fanns — mätt i skarp QA: en placering bar bevisligen fel
     // text, och "spara etappen igen" gjorde ingenting. Nu är omsparning en reparation, till priset
     // av en överflödig UPDATE på en handfull rader.
+    // ⛔ BARA work_description, ALDRIG job_type. Premissen "ingenting kan ändra en placering" —
+    // som hela propageringen vilar på — gäller work_description, men INTE jobbtypen:
+    // `moveSegmentSchema` accepterar job_type och tavlan sätter den via onSetJobType. Propagerades
+    // den hade en senare etappsparning tyst backat planerarens val på kalendern. Etappens jobbtyp
+    // är ett STARTVÄRDE vid utplacering; efter det äger planeraren den. (Granskningsfynd 2026-09-18
+    // — min egen kommentar påstod motsatsen.)
     let synced = 0;
-    const fields: Array<'work_description' | 'job_type'> = [];
+    const fields: Array<'work_description'> = [];
     if (parsed.data.work_description !== undefined) fields.push('work_description');
-    if (parsed.data.job_type !== undefined) fields.push('job_type');
 
     if (fields.length > 0) {
       const admin = getSupabaseAdmin();
-      const next: Record<string, unknown> = {};
-      for (const field of fields) {
-        next[field] = field === 'work_description' ? parsed.data.work_description : parsed.data.job_type;
-      }
-      const { data: touched } = await admin
+      const { data: touched, error: syncError } = await admin
         .from('ops_segments')
-        .update(next)
+        .update({ work_description: parsed.data.work_description })
         .eq('stage_id', stageId)
         .eq('work_order_id', workOrderId)
         .select('id');
+      // ⚠️ Felet sväljs INTE tyst. Vi failar fortfarande öppet — etappen är sparad och svaret går
+      // igenom — men en misslyckad propagering återskapar exakt den bugg det här finns för att
+      // laga (kontoret rättar, fältet läser kvar felet), och då måste det finnas ett spår.
+      if (syncError) {
+        console.warn('[stages] kunde inte propagera work_description till placeringarna', {
+          workOrderId, stageId, error: syncError.message,
+        });
+      }
       synced = (touched ?? []).length;
     }
 
