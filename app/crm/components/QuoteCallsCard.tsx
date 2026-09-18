@@ -115,7 +115,8 @@ export default function QuoteCallsCard({
                   ? 'Kunde inte hämta samtalen.'
                   : calls.length === 0
                     ? 'Inga samtal loggade på offerten.'
-                    : `${calls.length} ${calls.length === 1 ? 'samtal' : 'samtal'} loggade här.`}
+                    // "samtal" böjs inte, men particip gör det: ett samtal är loggat, flera loggade.
+                    : `${calls.length} samtal ${calls.length === 1 ? 'loggat' : 'loggade'} här.`}
             </span>
           </div>
         </div>
