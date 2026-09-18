@@ -109,8 +109,26 @@ describe('getVisibleAppNavItems', () => {
     // råkar vara inloggade" — och lönebyrån är inte anställd. Utan opt-in-regeln fick hon Start,
     // Dokument & information, Kontakt & adresser och Felanmälan gratis bara genom att existera,
     // och varje FRAMTIDA ospärrad rad hade tillkommit på samma sätt, tyst.
+    //
+    // ⚠️ Skrivet mot REGELN, inte mot en lista adresser. Den tidigare varianten jämförde med
+    // `['/ekonomi']` rakt av, och när fakturaunderlaget lades till 2026-09-18 föll testet på en
+    // rad som var helt avsiktlig. Ett test som måste redigeras varje gång ytan växer slutar läsas
+    // som en spärr och börjar läsas som ett hinder — och då stryks det förr eller senare. Det här
+    // biter i stället på exakt det som är felet: en rad hon ser UTAN att den nämner henne.
     it('ser INGA ospärrade rader — bara det som nämner ekonomi vid namn', () => {
-      expect(flatten(getVisibleAppNavItems('ekonomi')).map((i) => i.href)).toEqual(['/ekonomi']);
+      const visible = flatten(getVisibleAppNavItems('ekonomi'));
+      expect(visible.length).toBeGreaterThan(0);
+      for (const item of visible) {
+        expect(item.roles, `raden ${item.href} syns för ekonomi utan att nämna rollen`).toContain('ekonomi');
+      }
+    });
+
+    // Fakturaunderlaget: arbetsordrarna, skrivskyddade. Egen adress under /ekonomi — /crm ligger
+    // bakom en rollgrind som kastar ut henne till startsidan.
+    it('ser Arbetsordrar, och den pekar bort från /crm', () => {
+      const entry = flatten(getVisibleAppNavItems('ekonomi')).find((i) => i.label === 'Arbetsordrar');
+      expect(entry?.href).toBe('/ekonomi/arbetsorder');
+      expect(entry?.href.startsWith('/crm')).toBe(false);
     });
 
     // Regeln får inte läcka till någon annan. `null` ser fortfarande de ospärrade raderna: att

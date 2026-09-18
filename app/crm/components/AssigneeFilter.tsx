@@ -32,11 +32,19 @@ export default function AssigneeFilter({
   onChange,
   users,
   className,
+  showMine = true,
 }: {
   value: AssigneeFilterValue;
   onChange: (value: AssigneeFilterValue) => void;
   users: AssigneeOption[];
   className?: string;
+  /**
+   * Visa valet "Mina"? False för den som aldrig kan stå som ansvarig — lönebyrån på
+   * /ekonomi/arbetsorder. Ett val vars enda möjliga utfall är noll rader är inte ett val, det är
+   * en fälla. Att däremot filtrera på en enskild SÄLJARE är fortfarande användbart för dem, så
+   * resten av menyn står kvar. Se defaultAssigneeFilter, som bär samma regel för startvärdet.
+   */
+  showMine?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -108,9 +116,12 @@ export default function AssigneeFilter({
             ) : null}
           </div>
 
-          <CheckRow label="Mina" checked={selected.has(MINE)} onToggle={() => toggle(MINE)} />
-
-          <div className="my-1 border-t border-slate-100" />
+          {showMine ? (
+            <>
+              <CheckRow label="Mina" checked={selected.has(MINE)} onToggle={() => toggle(MINE)} />
+              <div className="my-1 border-t border-slate-100" />
+            </>
+          ) : null}
 
           {users.length === 0 ? (
             <div className="px-2 py-2 text-xs text-slate-400">Inga säljare hittades</div>

@@ -16,6 +16,22 @@ describe('defaultAssigneeFilter', () => {
     // allt, inte inget.
     expect(defaultAssigneeFilter(null)).toEqual([]);
   });
+
+  it('🧨 startar på ALLA för den som aldrig kan stå som ansvarig', () => {
+    // Lönebyrån på /ekonomi/arbetsorder. De äger ingen arbetsorder, så "Mina" är inte ett snävare
+    // urval utan ett TOMT — listan hade öppnats utan en enda rad och sett ut som att det inte finns
+    // några arbetsordrar alls. Ett inloggat id räcker alltså inte för att välja MINE.
+    expect(defaultAssigneeFilter('bureau-1', { canBeAssignee: false })).toEqual([]);
+  });
+
+  it('flaggan måste vara uttryckligen false — allt annat är en vanlig lista', () => {
+    // ⚠️ Default-läget får inte ändras av att någon skickar in ett tomt objekt eller utelämnar
+    // flaggan. Skulle villkoret bli falsy-baserat tappade VARJE lista sitt "Mina"-startvärde, och
+    // regressionen hade synts först som att säljarna plötsligt ser allas ordrar.
+    expect(defaultAssigneeFilter('user-1', {})).toEqual([MINE]);
+    expect(defaultAssigneeFilter('user-1', { canBeAssignee: true })).toEqual([MINE]);
+    expect(defaultAssigneeFilter('user-1', undefined)).toEqual([MINE]);
+  });
 });
 
 describe('assigneeQueryParam', () => {

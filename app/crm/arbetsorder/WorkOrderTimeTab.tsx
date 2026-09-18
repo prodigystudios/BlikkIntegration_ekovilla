@@ -85,6 +85,13 @@ type Props = {
   onCreate: (data: TimeDraft) => Promise<boolean>;
   onUpdate: (id: string, data: TimeDraft) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
+  /**
+   * Får den som tittar skriva? False tar bort "Ny tidrad" och per-rad-åtgärderna.
+   *
+   * Finns för ekonomiytans läsvy (/ekonomi/arbetsorder): byrån läser timmarna som underlag men
+   * rapporterar ingen egen tid och rättar ingen annans — samma gräns som attestvyn redan drar.
+   */
+  canEdit?: boolean;
 };
 
 function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: TimeDraft) => void }) {
@@ -118,7 +125,7 @@ function DraftFields({ draft, onChange }: { draft: TimeDraft; onChange: (next: T
   );
 }
 
-export default function WorkOrderTimeTab({ entries, loading, totalHours, currentUserId, namesById, onCreate, onUpdate, onDelete }: Props) {
+export default function WorkOrderTimeTab({ entries, loading, totalHours, currentUserId, namesById, onCreate, onUpdate, onDelete, canEdit = true }: Props) {
   const [createDraft, setCreateDraft] = useState<TimeDraft>(emptyDraft);
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -162,7 +169,12 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
   return (
     // Samma spaltförhållande som översikten (1.35 / 0.65) — flikarna delade tidigare inte
     // rutnät, så sidan bytte form när man växlade mellan dem.
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)] lg:items-start">
+    <div className={cn(
+      'grid gap-5 lg:items-start',
+      // Utan "Ny tidrad" står den andra spalten tom, och listan hade klämts ihop på 1,35/0,65
+      // med luft bredvid sig. I läsläge tar den hela bredden i stället.
+      canEdit && 'lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]',
+    )}>
       <div className={cn(crm.cardInner, 'grid gap-3')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className={crm.cardTitle}>Tidrapporter</p>
@@ -171,7 +183,9 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
         {loading ? <div className="text-sm text-slate-500">Laddar tid…</div> : null}
         {!loading && entries.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
-            Ingen tid rapporterad på det här jobbet ännu. Lägg till din första rad under “Ny tidrad”.
+            {canEdit
+              ? 'Ingen tid rapporterad på det här jobbet ännu. Lägg till din första rad under ”Ny tidrad”.'
+              : 'Ingen tid är rapporterad på det här jobbet ännu.'}
           </div>
         ) : null}
         {!loading ? entries.map((item) => {
@@ -208,7 +222,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
               {item.note ? <div className="text-slate-600">{item.note}</div> : null}
               <div className="flex items-center justify-between gap-3">
                 <span className="text-xs text-slate-400">Registrerad {formatDateTime(item.created_at)}</span>
-                {isOwn ? (
+                {isOwn && canEdit ? (
                   confirmDeleteId === item.id ? (
                     <span className="flex items-center gap-2 text-xs">
                       <span className="text-slate-500">Ta bort?</span>
@@ -228,6 +242,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
         }) : null}
       </div>
 
+      {canEdit ? (
       <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
         <p className={crm.cardTitle}>Ny tidrad</p>
         <DraftFields draft={createDraft} onChange={setCreateDraft} />
@@ -239,6 +254,7 @@ export default function WorkOrderTimeTab({ entries, loading, totalHours, current
           {creating ? 'Sparar tid…' : 'Rapportera tid'}
         </button>
       </div>
+      ) : null}
     </div>
   );
 }

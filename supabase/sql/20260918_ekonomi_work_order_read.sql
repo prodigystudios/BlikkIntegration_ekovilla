@@ -1,0 +1,83 @@
+-- Rollen `ekonomi` får LÄSA arbetsordrar — fakturaunderlaget.
+--
+-- VARFÖR
+-- Williams beslut 2026-09-18: byrån behöver se ordrarna för att kunna ta fram fakturaunderlag.
+-- Fakturorna skapas fortsatt i Fortnox; det appen ska ge dem är underlaget — vad som är sålt, till
+-- vilket pris, vad som är utfört och vad som redan delfakturerats.
+--
+-- ⚠️ DETTA ÄNDRAR EN TIDIGARE DOKUMENTERAD UTSAGA. `20260831_ekonomi_role_seed.sql:27` säger
+-- "crm.* / fortnox.* — Hon ska aldrig se en kund, ett pris eller en faktura." Den meningen gällde
+-- rollens ursprungliga uppdrag (enbart löneunderlag) och är nu överspelad av beslutet ovan. Den
+-- filen har fått en hänvisning hit så att de två inte läses som motstridiga. Seeden där är
+-- `on conflict do nothing`, så en omkörning av den tar INTE bort nycklarna nedan.
+--
+-- ADDITIV. Inga befintliga rader ändras eller tas bort — rollen får två nya rader i
+-- role_permissions. Ordningen mot koden är därmed fri, men kör gärna den här FÖRE deployen:
+-- `effective_permissions` failar closed, så en sida som grindar på en nyckel som ännu inte finns
+-- nekar alla. Tvärtom (nyckeln finns, sidan är inte deployad) är harmlöst.
+--
+-- Kör i Supabase SQL-editorn.
+
+-- ── Knippet ──────────────────────────────────────────────────────────────────
+--
+-- Vad de två nycklarna öppnar, och varför var och en behövs:
+--
+--   crm.workorder.read  Gör två saker. Dels RLS på crm_work_orders: SELECT är "assigned_to =
+--                       auth.uid() OR has_permission('crm.workorder.read')"
+--                       (20260810_crm_work_order_crew_access) — utan den är varje rad osynlig i
+--                       databasen och routen svarar 200 med noll rader. Dels är den numera grinden
+--                       på arbetsorderrutterna själva (listan, ansvarigkatalogen, PDF:en,
+--                       följesedeln), som tidigare frågade efter den grova `crm.access`.
+--   crm.report.read     Efterkalkylen: TB1/TB2, marginaler och utfall mot plan
+--                       (/api/crm/work-orders/[id]/after-calculation). William 2026-09-18: byrån ska
+--                       se lonsamheten per jobb.
+--
+-- ⛔ `crm.access` ges MEDVETET INTE, och ska inte läggas till "för säkerhets skull". Den är en grov
+-- metanyckel som öppnar /api/crm/reports, /api/crm/sellers och /api/crm/calc-settings — och alla
+-- tre läser med getSupabaseAdmin(), alltså FÖRBI RLS. En extern part hade fått företagets
+-- försäljningssiffror, säljarkatalogen och inköpspriserna genom en nyckel som såg ut att bara
+-- öppna en orderlista. Rutterna arbetsordervyn behöver frågar i stället efter
+-- crm.workorder.read; rollmängden är identisk (admin, konsult, sales), så ingen befintlig roll
+-- märkte bytet.
+--
+-- ⚠️ INGEN SKRIVNYCKEL. `crm.write`, `crm.workorder.write`, `fortnox.invoice.create` och
+-- `fortnox.workorder.push` är MEDVETET utelämnade: byrån läser underlaget, kontoret äger ordern.
+-- Läsvyn i appen speglar det — varje skrivingång är avstängd där. Ger man knapparna utan nycklarna
+-- får man en yta där allt svarar 403; ger man nycklarna utan att mena det kan en extern part ändra
+-- priser på en order och skapa fakturor i Fortnox.
+--
+-- ⚠️ crm.report.read är den bredaste av de två. Den gatar efterkalkylen, som är det byrån ska se —
+-- men samma nyckel används av CRM:s rapporteringsdomän. /api/crm/reports visade sig gata på
+-- crm.access och inte på den här, så den rutten är stängd för byrån; kontrollera ändå vad som
+-- hänger på nyckeln innan fler rutter läggs bakom den. Vill man snäva in det är vägen en egen
+-- nyckel för efterkalkylen.
+insert into public.role_permissions (role, permission_key) values
+  ('ekonomi','crm.workorder.read'),
+  ('ekonomi','crm.report.read')
+on conflict do nothing;
+
+-- ⚠️ HAR crm.access redan delats ut för hand (Admin -> Behörigheter) medan det här utreddes? Ta
+-- bort den då — se resonemanget ovan. Raden är utkommenterad för att den INTE är additiv:
+--   delete from public.role_permissions where role = 'ekonomi' and permission_key = 'crm.access';
+
+-- ── Följd som är värd att känna till ─────────────────────────────────────────
+--
+-- Attestvyns kolumn "Orsak / jobb" var TOM på varje arbetsorderrad, eftersom tidraderna embeddar
+-- crm_work_orders och policyn krävde crm.workorder.read. `reasonOrJobLabel` i
+-- lib/domains/time/summary.ts skrev därför en neutral markör ("Arbetsorder") i stället.
+--
+-- Med nyckeln ovan fylls kolumnen nu med ordernamnet, alltså KUNDNAMN PER ARBETAD TIMME. Det var
+-- 2026-08-31 ett medvetet val att inte visa. Beslutet 2026-09-18 väger tyngre, men följden ska vara
+-- sedd och inte upptäckas i efterhand. Koden behöver ingen ändring: `reasonOrJobLabel` visar
+-- etiketten när den finns och markören när den saknas.
+
+-- ── Verifiering ──────────────────────────────────────────────────────────────
+--   -- Rollens hela knippe, de två nya ska ligga med (totalt fem med time.*):
+--   select permission_key from public.role_permissions where role = 'ekonomi' order by 1;
+--
+--   -- Ingen skrivnyckel OCH ingen grov metanyckel har smugit sig in:
+--   select permission_key from public.role_permissions
+--   where role = 'ekonomi'
+--     and (permission_key like '%.write%' or permission_key like 'fortnox.%'
+--         or permission_key = 'crm.access');
+--   -- Förväntat: noll rader.

@@ -40,6 +40,7 @@ export default function WorkOrderSackTrailCard({
   loadError,
   isRemoving,
   onDelete,
+  canEdit = true,
   egenkontrollUrl = null,
 }: {
   reports: SackReportView[];
@@ -49,6 +50,8 @@ export default function WorkOrderSackTrailCard({
   /** Per rad, inte en delad flagga: två borttagningar i rad får inte låsa upp varandras knappar. */
   isRemoving: (id: string) => boolean;
   onDelete: (id: string) => void;
+  /** Får den som tittar rätta? False tar bort "Ta bort" per rad — se ekonomiytans läsvy. */
+  canEdit?: boolean;
   /**
    * Nedladdningslänk till den inlämnade egenkontrollen, utläst ur orderns kommentarer
    * (findLatestEgenkontrollLink). null när ordern saknar en — då ritas ingen knapp.
@@ -119,7 +122,7 @@ export default function WorkOrderSackTrailCard({
                   {item.superseded ? (
                     <span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-500')}>Ersatt</span>
                   ) : null}
-                  {item.can_delete ? (
+                  {item.can_delete && canEdit ? (
                     <span className="ml-auto flex items-center gap-2 text-xs">
                       {confirmId === item.id ? (
                         <>

@@ -62,9 +62,16 @@ type Props = {
   onCreate: (body: string, mentionedUserIds: string[]) => Promise<boolean>;
   onUpdate: (id: string, body: string) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
+  /**
+   * Får den som tittar skriva? False stänger både composern och per-rad-åtgärderna.
+   *
+   * Finns för ekonomiytans läsvy (/ekonomi/arbetsorder): byrån läser tråden som en del av
+   * fakturaunderlaget men har ingen skrivnyckel, så knapparna hade bara slutat i 403.
+   */
+  canEdit?: boolean;
 };
 
-export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, namesById, onCreate, onUpdate, onDelete }: Props) {
+export default function WorkOrderCommentsTab({ comments, loading, currentUserId, mentionUsers, namesById, onCreate, onUpdate, onDelete, canEdit = true }: Props) {
   const [draft, setDraft] = useState('');
   const [creating, setCreating] = useState(false);
   // Ids picked from the @-autocomplete for the new comment (id → full_name). The id is otherwise
@@ -118,7 +125,12 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
         {loading ? <div className="text-sm text-slate-500">Laddar kommentarer…</div> : null}
         {!loading && comments.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
-            Inga kommentarer ännu. Skriv den första nedan — skriv @ och ett namn så får personen en notis.
+            {/* ⚠️ Texten hänvisade till composern rakt av. I läsläge finns ingen — och ett tomt
+                läge som ber dig skriva "nedan" när det inte går att skriva någonstans läser som en
+                bugg. Samma fälla som tidflikens tomma läge. */}
+            {canEdit
+              ? 'Inga kommentarer ännu. Skriv den första nedan — skriv @ och ett namn så får personen en notis.'
+              : 'Inga kommentarer på den här ordern.'}
           </div>
         ) : null}
         {!loading ? comments.map((item) => {
@@ -145,7 +157,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
                 <span className="text-xs text-slate-400">{formatDateTime(item.created_at)}</span>
               </div>
               <CommentBody body={item.body} />
-              {isOwn ? (
+              {isOwn && canEdit ? (
                 <div className="flex items-center justify-end gap-3 pt-0.5">
                   {confirmDeleteId === item.id ? (
                     <span className="flex items-center gap-2 text-xs">
@@ -166,7 +178,9 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
         }) : null}
       </div>
 
-      {/* Composer at the bottom, below the thread. */}
+      {/* Composer at the bottom, below the thread. Borta helt i läsläge — en avstängd ruta som
+          inte går att skriva i hade bara sett trasig ut. */}
+      {canEdit ? (
       <div className="grid gap-2 border-t border-[#e0e8dc] pt-4">
         <MentionTextarea
           value={draft}
@@ -180,6 +194,7 @@ export default function WorkOrderCommentsTab({ comments, loading, currentUserId,
           {creating ? 'Sparar kommentar…' : 'Spara kommentar'}
         </button>
       </div>
+      ) : null}
     </div>
   );
 }

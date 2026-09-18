@@ -26,6 +26,10 @@ type NavNode = { href: string; label: string; children?: NavNode[] };
 function isHrefActive(href: string, pathname: string) {
   if (href === '/') return pathname === '/';
   if (href === '/crm') return pathname === '/crm';
+  // ⚠️ Samma undantag som /crm, av samma skäl: /ekonomi/arbetsorder är en EGEN navrad, och utan
+  // exakt matchning här tänds både den och "Tid & lön" samtidigt — två rader med
+  // aria-current="page", vilket för en skärmläsare är två svar på frågan var man befinner sig.
+  if (href === '/ekonomi') return pathname === '/ekonomi';
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
@@ -87,6 +91,14 @@ const navIcons: Record<string, JSX.Element> = {
     </svg>
   ),
   '/crm/arbetsorder': (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+    </svg>
+  ),
+  // Samma ikon som /crm/arbetsorder — det ÄR samma sak, sedd av en roll som bara får läsa.
+  // Två olika ikoner för samma sak hade fått dem att läsa som två olika register, och på det
+  // ihopfällda 68 px-spåret är ikonen allt som finns kvar av raden.
+  '/ekonomi/arbetsorder': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
     </svg>

@@ -6,6 +6,8 @@ import PageShell from '@/components/ui/PageShell';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import TimeApprovals from './TimeApprovals';
+import EkonomiTabs from './EkonomiTabs';
+import { canReadWorkOrders } from './_lib/access';
 
 export const dynamic = 'force-dynamic';
 
@@ -81,6 +83,22 @@ export default async function EkonomiPage() {
     );
   }
 
+  // Flikarna ritas bara när ytan faktiskt har två halvor att välja mellan — se EkonomiTabs.
+  // `held` är redan läst ovan, så det kostar ingen extra rundtur.
+  //
+  // ⛔ `!held.has('crm.access')` är inte en extra säkerhetsspärr, utan samma regel som navraden i
+  // appNav.ts: den som redan har en väg till ordrarna via CRM ska inte få en ANDRA väg som tyst
+  // saknar knappar. En admin som klickar sig hit hade landat i en vy där Redigera inte finns och
+  // dragit slutsatsen att något är trasigt. De går via /crm/arbetsorder, där de har full rätt.
+  //
+  // Villkoret säger alltså "du har ingen annan dörr till det här" — inte "du är ekonomi". Det
+  // håller även för en arbetsledare som fått läsnyckeln per användarundantag.
+  const showWorkOrdersTab = canReadWorkOrders(held) && !held.has('crm.access');
+  const tabs = [
+    { href: '/ekonomi', label: 'Tid & lön' },
+    ...(showWorkOrdersTab ? [{ href: '/ekonomi/arbetsorder', label: 'Arbetsordrar' }] : []),
+  ];
+
   return (
     // Samma skal som AdminTabsClient ger fliken: PageShell + `crm.card`. Komponenten bär sin egen
     // padding (p-5) med flit och förutsätter ett kort att sitta i — utan det ligger den direkt på
@@ -88,6 +106,7 @@ export default async function EkonomiPage() {
     <PageShell className="max-w-[1460px]">
       <section className={cn(crm.cardInner, 'grid gap-4')}>
         <h1 className={cn('m-0', crm.pageTitle)}>Tid &amp; lön</h1>
+        <EkonomiTabs tabs={tabs} />
       </section>
       <section className={crm.card}>
         <TimeApprovals />

@@ -2,7 +2,7 @@ import { getFortnoxOrderPdf } from '@/lib/domains/fortnox/orders';
 import { buildDocumentFilename } from '@/lib/domains/crm/documentEmail';
 import { documentErrorPage, isDocumentNavigation } from '@/lib/api/responses';
 import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { requireCrmUser, routeError } from '../../../_lib';
+import { requirePermission, routeError } from '../../../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -18,7 +18,10 @@ export async function GET(req: Request, { params }: RouteContext) {
   );
 
   try {
-    const crmUser = await requireCrmUser();
+    // ⚠️ `crm.workorder.read`, inte den grova `crm.access` — se noten i ../../route.ts. Samma
+    // rollmängd, men en roll som bara ska läsa arbetsordrar får inte rapporter och inköpspriser
+    // på köpet. PDF:en är orderns eget dokument och hör till just den här nyckeln.
+    const crmUser = await requirePermission('crm.workorder.read');
     if (crmUser.response) {
       return isDocumentNavigation(req)
         ? documentErrorPage(crmUser.response.status, crmUser.response.status === 401
