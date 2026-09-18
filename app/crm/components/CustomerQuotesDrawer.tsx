@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from '@/lib/shared/cn';
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
@@ -43,6 +43,15 @@ export type CustomerQuoteItem = QuoteDetailItem & { created_at: string };
 const ROW_LIMIT = 100;
 
 /**
+ * Hur länge utgången får ta. MÅSTE matcha .crm-drawer-out i globals.css.
+ *
+ * 🧨 Stängningen hänger på en TIMER, inte på `animationend`. Den händelsen uteblir helt för den som
+ * bett om mindre rörelse (globals.css stänger av animationen), och lådan hade då aldrig stängts.
+ * En timer säger samma sak oavsett: "nu är utgången över".
+ */
+const EXIT_MS = 180;
+
+/**
  * Beloppet som offertlistan visar det: rubriktalet plus vilken bas det är.
  *
  * ⚠️ `primary` och INTE `total` — för en privatkund är rubriktalet inkl. moms, för ett företag ex
@@ -74,7 +83,25 @@ export default function CustomerQuotesDrawer({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  useTopmostEscape(ref, onClose);
+
+  // Lådan glider ut innan den försvinner, så den måste leva kvar under utgången. `leaving` är det
+  // läget; varje väg ut (Escape, krysset, klick utanför) går genom requestClose.
+  const [leaving, setLeaving] = useState(false);
+  const requestClose = useCallback(() => setLeaving(true), []);
+
+  // onClose kommer typiskt som en pil i renderingen och byter identitet varje gång. Den läses ur en
+  // ref så timern nedan inte startas om vid varje rendering — då hade stängningen kunnat skjutas
+  // upp i all oändlighet av en förälder som renderar om.
+  const closeHandler = useRef(onClose);
+  closeHandler.current = onClose;
+
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => closeHandler.current(), EXIT_MS);
+    return () => clearTimeout(timer);
+  }, [leaving]);
+
+  useTopmostEscape(ref, requestClose);
 
   // Utan det här låg fokus kvar på knappen i panelen BAKOM: Tab vandrade vidare bland kontroller
   // under överlägget medan lådan var oåtkomlig, och en skärmläsare sa ingenting när den öppnades.
@@ -146,14 +173,20 @@ export default function CustomerQuotesDrawer({
       <button
         type="button"
         aria-label="Stäng listan"
-        onClick={onClose}
-        className="flex-1 cursor-default border-0 bg-slate-950/20 p-0"
+        onClick={requestClose}
+        className={cn(
+          'flex-1 cursor-default border-0 bg-slate-950/20 p-0 transition-opacity duration-150',
+          leaving ? 'opacity-0' : 'crm-overlay-in opacity-100',
+        )}
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Kundens offerter"
-        className="crm-overlay-in flex h-full w-[400px] max-w-[92vw] flex-col border-l border-solid border-[#dce4d8] bg-white shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]"
+        className={cn(
+          'flex h-full w-[400px] max-w-[92vw] flex-col border-l border-solid border-[#dce4d8] bg-white shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]',
+          leaving ? 'crm-drawer-out' : 'crm-drawer-in',
+        )}
       >
         <div className="flex items-start justify-between gap-3 border-b border-solid border-[#e3e9df] px-4 py-3">
           <div className="grid min-w-0 gap-0.5">
@@ -163,7 +196,7 @@ export default function CustomerQuotesDrawer({
           <button
             ref={closeRef}
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             aria-label="Stäng"
             className="px-2 py-1 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-600 transition hover:border-[#c8d4c3]"
           >
