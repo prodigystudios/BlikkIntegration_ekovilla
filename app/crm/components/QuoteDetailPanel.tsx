@@ -12,6 +12,7 @@ import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/
 import { quoteCustomerName, isQuoteOverdue, quoteLabel } from '@/app/crm/lib/quoteDisplay';
 import QuoteTasksCard from '@/app/crm/components/QuoteTasksCard';
 import QuoteCallsCard from '@/app/crm/components/QuoteCallsCard';
+import CustomerQuotesDrawer, { type CustomerQuoteItem } from '@/app/crm/components/CustomerQuotesDrawer';
 import QuoteContactCard from '@/app/crm/components/QuoteContactCard';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
@@ -126,6 +127,7 @@ export default function QuoteDetailPanel({
   canWrite,
   canDelegate,
   canEditContacts,
+  onOpenQuote,
 }: {
   quote: QuoteDetailItem;
   /** Fortnox order number for this quote's work order, if the consumer has indexed it. */
@@ -165,9 +167,22 @@ export default function QuoteDetailPanel({
    * nyckel som rutterna gatar på. Läses i sidan och skickas hit av BÅDA ytor som öppnar panelen.
    */
   canEditContacts: boolean;
+  /**
+   * Byt till en annan av kundens offerter, vald i lådan.
+   *
+   * ⚠️ OBLIGATORISK, inte valfri: panelen öppnas från både offertlistan och säljtavlan, och en
+   * valfri prop hade kunnat glömmas på den ena — då hade knappen suttit där och inte gjort något
+   * på just den vägen. Typkontrollen tvingar båda att svara.
+   *
+   * Hela offertraden skickas, inte bara ett id: lådan har redan hämtat den kompletta raden, så
+   * mottagaren slipper en andra rundtur.
+   */
+  onOpenQuote: (quote: CustomerQuoteItem) => void;
 }) {
   const router = useRouter();
   const toast = useToast();
+  // Kundens övriga offerter, i en låda vid sidan. Stängs av Escape före panelen (dokumentordning).
+  const [customerQuotesOpen, setCustomerQuotesOpen] = useState(false);
 
   const [moving, setMoving] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
@@ -359,6 +374,23 @@ export default function QuoteDetailPanel({
             ) : (
               <p className="m-0 truncate text-sm text-slate-500">{customerName}</p>
             )}
+            {/* Vid sidan av kundkortslänken, inte i stället för den: den här går till kundens andra
+                OFFERTER, kundkortet till kunden själv. Två olika frågor. */}
+            <button
+              type="button"
+              onClick={() => setCustomerQuotesOpen(true)}
+              // 🧨 `p-0` OCH `justify-self-start`. Husets globala `button`-regel i globals.css sätter
+              // `padding: 10px 14px` och `justify-content: center` på VARJE knapp — utan p-0 låg
+              // texten indragen 14 px jämfört med kundkortslänken rakt ovanför, som slipper det för
+              // att den är en <a>. Samma fälla som listknapparna i uppgiftskortet redan värjer sig
+              // mot med `justify-start`.
+              className="m-0 inline-flex max-w-full items-center gap-1 justify-self-start p-0 text-sm text-slate-500 transition-colors hover:text-emerald-700"
+            >
+              <span className="underline-offset-2 hover:underline">Kundens offerter</span>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+                <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
           </div>
         }
         /* Sticky footer — a locked offer (work order created) can't be edited or
@@ -697,6 +729,23 @@ export default function QuoteDetailPanel({
           busy={moving}
           onConfirm={() => void moveQuoteToStatus(pendingWonStatus)}
           onCancel={() => setPendingWonStatus(null)}
+        />
+      ) : null}
+
+      {/* Syskon till modalen, inte barn — lådan portalar ändå till <body>, men den står här av
+          samma skäl som bekräftelsedialogen: den ska inte dela panelens bakgrundsklick. */}
+      {customerQuotesOpen ? (
+        <CustomerQuotesDrawer
+          customerId={quote.customer_id}
+          prospectId={quote.prospect_id}
+          currentQuoteId={quote.id}
+          customerLabel={customerName}
+          onClose={() => setCustomerQuotesOpen(false)}
+          /* ⚠️ Lådan STÄNGS av bytet, och det är en följd av `key={quote.id}` hos anroparen:
+             panelen startas om per offert så att inget tillstånd från den förra följer med (dess
+             arbetsorderspärrar syntes annars som den nyas). Vägen tillbaka är knappen
+             "Kundens offerter" igen — ett klick, och den man kom ifrån står i listan. */
+          onSelect={onOpenQuote}
         />
       ) : null}
     </>

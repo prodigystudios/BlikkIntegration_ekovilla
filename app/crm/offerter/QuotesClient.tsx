@@ -12,6 +12,7 @@ import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
+import type { CustomerQuoteItem } from '@/app/crm/components/CustomerQuotesDrawer';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -200,8 +201,14 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   const documentEmail = useDocumentEmail();
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
   const [detailQuoteId, setDetailQuoteId] = useState<string | null>(null);
-  // A quote reached by ?quote_id= that isn't on the loaded page. Feeds the panel only.
-  const [linkedQuote, setLinkedQuote] = useState<QuoteItem | null>(null);
+  // En offert som inte ligger på den laddade sidan: nådd via ?quote_id= eller vald i lådan
+  // "Kundens offerter". Matar BARA panelen — den läggs aldrig in i listan, som ska förbli exakt
+  // den sida servern gav.
+  //
+  // Unionen är avsiktlig: lådans rad bär allt panelen kräver men inte listans egna kolumner
+  // (assigned_to, updated_at …). En cast hade lovat fält ingen lovat leverera, och listans rader
+  // ritas ändå aldrig ur den här.
+  const [linkedQuote, setLinkedQuote] = useState<QuoteItem | CustomerQuoteItem | null>(null);
   const [hasHandledPreset, setHasHandledPreset] = useState(false);
 
   const [hasHandledQuotePreset, setHasHandledQuotePreset] = useState(false);
@@ -536,9 +543,20 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
       {/* ── Detail panel ── */}
       {detailPanelOpen && detailQuote ? (
         <QuoteDetailPanel
+          /* 🧨 key på offert-id: panelen byter offert på plats via lådan "Kundens offerter", och
+             utan omstart följde förra offertens tillstånd med — tydligast dess
+             arbetsorderspärrar, som då visades som den NYA offertens hinder. */
+          key={detailQuote.id}
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
+          onOpenQuote={(next) => {
+            // Raden kommer komplett från lådan, så den kan öppnas direkt. `linkedQuote` är samma
+            // spår som djuplänken använder för en offert utanför den laddade sidan — den läggs
+            // medvetet INTE in i listan, som ska förbli exakt den sida servern gav.
+            setLinkedQuote(next);
+            setDetailQuoteId(next.id);
+          }}
           documentEmail={documentEmail}
           currentUserId={currentUserId}
           canWrite={canWrite}
@@ -550,8 +568,15 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
             // Keep the open panel alive across a reload that may drop its row from the page: hold
             // the patched quote outside the list. Without this, marking a draft "Vunnen" from the
             // "Aktiva" tab would reload the list, lose the row, and unmount the panel mid-click.
+            // ⚠️ Funktionellt, inte ur renderingens ögonblicksbild: en långsam Fortnox-push som
+            // svarar efter en statusändring hade annars skrivit tillbaka den gamla statusen.
+            // QuoteDetailPatch:s egen dokumentation varnar för just det, och lådan gör den
+            // länkade offerten till normalfallet i stället för undantaget.
             const patched = quotes.find((q) => q.id === patch.id) ?? linkedQuote;
-            if (patched && patched.id === patch.id) setLinkedQuote({ ...patched, ...patch });
+            setLinkedQuote((current) => {
+              const base = quotes.find((q) => q.id === patch.id) ?? current;
+              return base && base.id === patch.id ? { ...base, ...patch } : current;
+            });
             // A status change moves the row between tabs and moves two counters. The tabs are
             // server-side now, so the browser can no longer make that happen by re-filtering an
             // array — it has to ask again, counts included.

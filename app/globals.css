@@ -428,6 +428,15 @@ select.select-field.status-select--lost {
 .crm-sheet-in { animation: crmSheetIn .3s cubic-bezier(.22, 1, .36, 1) both; }
 @media (min-width: 640px) { .crm-sheet-in { animation: crmDialogIn .2s ease-out both; } }
 
+/* Sidolådan (app/crm/components/CustomerQuotesDrawer.tsx): glider in från högerkanten och ut
+   samma väg igen. Utgången kräver att komponenten lever kvar under animationen — lådan håller ett
+   `leaving`-läge och stänger på en TIMER, inte på `animationend`: den händelsen uteblir helt när
+   rörelse är avstängd nedan, och lådan hade då blivit omöjlig att stänga. */
+@keyframes crmDrawerIn { from { transform: translateX(100%) } to { transform: translateX(0) } }
+@keyframes crmDrawerOut { from { transform: translateX(0) } to { transform: translateX(100%) } }
+.crm-drawer-in { animation: crmDrawerIn .22s cubic-bezier(.22, 1, .36, 1) both; }
+.crm-drawer-out { animation: crmDrawerOut .18s ease-in both; }
+
 /* Toast (lib/Toast.tsx): kortet glider in från högerkanten, och nedräkningsbaren
    rinner tillbaka in i accentskenan den möter i nedre vänstra hörnet.
    animation-duration sätts per notis i komponenten (= dess ttl), liksom
@@ -445,7 +454,8 @@ select.select-field.status-select--lost {
 .crm-fade-in { animation: crmFadeIn .2s ease-out both; }
 
 @media (prefers-reduced-motion: reduce) {
-  .crm-overlay-in, .crm-sheet-in, .crm-fade-in, .crm-toast-in, .crm-toast-out { animation: none; }
+  .crm-overlay-in, .crm-sheet-in, .crm-fade-in, .crm-toast-in, .crm-toast-out,
+  .crm-drawer-in, .crm-drawer-out { animation: none; }
   /* .crm-toast-timer står med flit KVAR: den bär information (hur länge notisen
      är kvar), inte dekoration, och en 3 px linje som krymper är inte den sortens
      rörelse inställningen finns för. Stänger man av den försvinner funktionen. */

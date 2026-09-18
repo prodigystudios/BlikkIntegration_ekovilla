@@ -12,6 +12,7 @@ import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens'
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
+import type { CustomerQuoteItem } from '@/app/crm/components/CustomerQuotesDrawer';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import {
@@ -179,11 +180,21 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, 
     return m;
   }, [quotes]);
 
+  // En offert vald i lådan "Kundens offerter" som INTE ligger på tavlan — t.ex. en kollegas, eller
+  // en som faller utanför hämtningen. Hålls vid sidan om i stället för att stoppas in bland
+  // korten: tavlan ska visa det den visar, inte växa av att någon tittade på en syskonoffert.
+  // Typad som lådans rad, INTE som BoardQuote: raden bär allt panelen behöver men inte tavlans
+  // egna fält (assigned_to, updated_at). En cast hit hade lovat fält som ingen lovat leverera.
+  const [linkedQuote, setLinkedQuote] = useState<CustomerQuoteItem | null>(null);
+
   // Resolved from the live list rather than stored, so an action inside the panel (status change,
-  // work order, Fortnox push) re-renders it from the same row the board shows.
+  // work order, Fortnox push) re-renders it from the same row the board shows. Reserven är den
+  // länkade offerten, som patchas på samma sätt (se onQuoteChanged nedan).
   const detailQuote = useMemo(
-    () => (detailQuoteId ? quotes.find((q) => q.id === detailQuoteId) ?? null : null),
-    [detailQuoteId, quotes],
+    () => (detailQuoteId
+      ? quotes.find((q) => q.id === detailQuoteId) ?? (linkedQuote?.id === detailQuoteId ? linkedQuote : null)
+      : null),
+    [detailQuoteId, quotes, linkedQuote],
   );
 
   // Scope to the chosen "Ansvarig" filter (default = mine).
@@ -353,6 +364,9 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, 
 
       {detailQuote ? (
         <QuoteDetailPanel
+          /* Se offertlistan: panelen startas om per offert, annars bär den med sig förra offertens
+             tillstånd när lådan byter. */
+          key={detailQuote.id}
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
           returnTo={`/crm/saljtavla?quote_id=${detailQuote.id}`}
@@ -362,7 +376,17 @@ export default function SaljtavlaClient({ currentUserId, canWrite, canDelegate, 
           canDelegate={canDelegate}
           canEditContacts={canEditContacts}
           onClose={() => setDetailQuoteId(null)}
-          onQuoteChanged={(patch) => setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)))}
+          onOpenQuote={(next) => {
+            // Raden kommer komplett från lådan, så den kan visas direkt.
+            setLinkedQuote(next);
+            setDetailQuoteId(next.id);
+          }}
+          onQuoteChanged={(patch) => {
+            setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
+            // ⚠️ Även den länkade: den ligger utanför `quotes`, så utan det här blev en
+            // statusändring på en syskonoffert osynlig tills panelen stängdes.
+            setLinkedQuote((current) => (current && current.id === patch.id ? { ...current, ...patch } : current));
+          }}
         />
       ) : null}
 
