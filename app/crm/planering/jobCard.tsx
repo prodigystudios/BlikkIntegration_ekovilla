@@ -819,9 +819,17 @@ export function SegmentCardBody({
             {seg.on_hold && <HoldBadge />}
             {/* Etappen som eget chip. ⛔ ALDRIG inbakad i `ref` — den är Fortnox-numret, den matchas
                 av tavlans sökning och den går in i orderbekräftelser. */}
+            {/* ⚠️ ETAPPENS SÄCKAR STÅR HÄR, inte i ett eget chip bredvid SackProgress. Kortet är
+                högdbegränsat av dagcellen: ett andra chip på den raden radbröts ut ur den synliga
+                ytan, så kortet visade BARA helorderns 379 säck på en etapp värd 309 — precis
+                tvärtom mot vad planeraren behöver se. Chipet har en egen rad och plats. */}
             {job.stage && (
-              <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-bold text-amber-800" title={`Etapp ${job.stage.number}: ${job.stage.title}`}>
+              <span
+                className="rounded-full border border-amber-200 bg-amber-50 px-1.5 py-px text-[9px] font-bold text-amber-800"
+                title={`Etapp ${job.stage.number}: ${job.stage.title} — ${job.total_sacks} säck av jobbets ${job.order_total_sacks}`}
+              >
                 Etapp {job.stage.number} · {job.stage.title}
+                {job.total_sacks > 0 && <> · {job.total_sacks} säck</>}
               </span>
             )}
             <JobTypeOrMaterial jobType={resolveJobTypeFrom(jobTypes, seg.job_type)} material={job.material} />
@@ -832,11 +840,6 @@ export function SegmentCardBody({
                 sackLedger), så en nedräkning mot etappens tal hade visat "kvar 0 / 120" på etapp 2
                 så fort etapp 1 var färdigblåst. Etappens eget tal står i chipet nedan. */}
             <SackProgress planned={job.order_total_sacks} reported={seg.sacks_reported} final={seg.sacks_final} />
-            {job.stage && job.total_sacks > 0 && (
-              <span className="whitespace-nowrap rounded-full border border-slate-200 bg-slate-50 px-1.5 py-px text-[9px] font-bold text-slate-600" title="Planerat i den här etappen">
-                {job.total_sacks} säck i etappen
-              </span>
-            )}
             <ConfirmationBadge confirmation={seg.confirmation} />
             <CreatorBadge name={seg.created_by_name} />
             <div className="ml-auto flex items-center gap-1">

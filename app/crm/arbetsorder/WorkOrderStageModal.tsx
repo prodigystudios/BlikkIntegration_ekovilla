@@ -212,6 +212,23 @@ export default function WorkOrderStageModal({
                       disabled={done || submitting}
                       placeholder="0"
                       onChange={(e) => setInputs((prev) => ({ ...prev, [p.index]: e.target.value }))}
+                      // 🧨 KLAMPAR VID BLUR, så fältet aldrig visar ett tal som inte sparas.
+                      // Matten klampade redan (`Math.min(unallocated, …)`), men rutan stod kvar på
+                      // det man skrev: 999 i en rad med 18 kvar gav "10 080 kr" bredvid en ruta som
+                      // sa 999. Den som inte räknar i huvudet ser inte att det kapades.
+                      //
+                      // Vid blur och inte vid varje tangenttryck: klampning under skrivningen
+                      // skriver om siffran mitt i inmatningen ("18" blir det man får när man skriver
+                      // det andra tecknet i "19"), vilket är värre än problemet.
+                      //
+                      // ⚠️ Delfakturamodalen har samma brist — dess egen kommentar säger "clamps
+                      // input to [0, remaining]" men den klampar bara matten. Egen ändring.
+                      onBlur={() => {
+                        const raw = inputs[p.index] ?? '';
+                        if (raw.trim() === '') return;
+                        if (parseDecimal(raw) <= p.unallocated) return;
+                        setInputs((prev) => ({ ...prev, [p.index]: fmtQty(p.unallocated) }));
+                      }}
                       aria-label={`Antal i etappen (${name})`}
                     />
                   </div>
