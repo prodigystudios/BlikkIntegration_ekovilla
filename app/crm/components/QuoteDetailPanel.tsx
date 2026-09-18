@@ -11,6 +11,7 @@ import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { quoteCustomerName, isQuoteOverdue, quoteLabel } from '@/app/crm/lib/quoteDisplay';
 import QuoteTasksCard from '@/app/crm/components/QuoteTasksCard';
+import QuoteCallsCard from '@/app/crm/components/QuoteCallsCard';
 import QuoteContactCard from '@/app/crm/components/QuoteContactCard';
 import type { EmailableDocument } from '@/app/crm/components/useDocumentEmail';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
@@ -485,6 +486,15 @@ export default function QuoteDetailPanel({
               currentUserId={currentUserId}
               canWrite={canWrite}
               canDelegate={canDelegate}
+            />
+
+            {/* Samtalsloggen direkt efter uppgifterna: båda svarar på "vad har hänt och vad ska
+                hända" med kunden, innan dokumenten längre ned. */}
+            <QuoteCallsCard
+              quoteId={quote.id}
+              quoteLabel={quoteLabel(quote)}
+              currentUserId={currentUserId}
+              canWrite={canWrite}
             />
 
             {/* Work order */}

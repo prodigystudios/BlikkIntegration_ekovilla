@@ -10,6 +10,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { crm, customerStageLabel as stageLabel, customerStageClass as stageClass } from '@/app/crm/lib/crmTokens';
+import { CALL_OUTCOME_ACCENT, CALL_OUTCOME_META } from '@/app/crm/lib/callDisplay';
 
 type EntitySearchResult = {
   id: string;
@@ -72,36 +73,9 @@ type CallDraft = {
   next_step: string;
 };
 
-const outcomeMeta: Record<CallItem['outcome'], { label: string; className: string; helper: string }> = {
-  no_answer: {
-    label: 'Ej svar',
-    className: 'border-slate-200 bg-slate-100 text-slate-700',
-    helper: 'Ingen kontakt, försök igen senare.',
-  },
-  follow_up: {
-    label: 'Följ upp',
-    className: 'border-amber-200 bg-amber-50 text-amber-700',
-    helper: 'Kontakt fanns, men behöver nytt steg.',
-  },
-  positive: {
-    label: 'Positivt',
-    className: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    helper: 'Bra signal eller tydligt nästa steg.',
-  },
-  negative: {
-    label: 'Negativt',
-    className: 'border-rose-200 bg-rose-50 text-rose-700',
-    helper: 'Inte rätt timing eller tydligt nej.',
-  },
-};
-
-// Solid accent per outcome — used as a left rail on list rows for quick scanning.
-const outcomeAccent: Record<CallItem['outcome'], string> = {
-  no_answer: 'bg-slate-300',
-  follow_up: 'bg-amber-400',
-  positive: 'bg-emerald-500',
-  negative: 'bg-rose-400',
-};
+// Vokabulären delas med offertens samtalskort — se app/crm/lib/callDisplay.ts.
+const outcomeMeta = CALL_OUTCOME_META;
+const outcomeAccent = CALL_OUTCOME_ACCENT;
 
 
 const initialDraft: CallDraft = {

@@ -266,6 +266,24 @@ export async function getCrmQuoteStatus(supabase: SupabaseClient, id: string) {
     .single();
 }
 
+/**
+ * Grinden OCH identiteten för ett samtal loggat från offerten, i en enda läsning.
+ *
+ * ⚠️ Skicka SESSIONSKLIENTEN. Att raden kommer tillbaka är beviset att anroparen får se offerten —
+ * samma grind som offertens uppgiftsflöde. Kommer ingen rad ska routen svara 404 och stanna där.
+ *
+ * Kontaktfälten läses ur offertens snapshot i stället för att skickas från webbläsaren: de är
+ * visningsdata på samtalsraden och ska visa vem offerten faktiskt gäller, inte vad en klient råkade
+ * posta.
+ */
+export async function getCrmQuoteCallIdentity(supabase: SupabaseClient, id: string) {
+  return supabase
+    .from('crm_quotes')
+    .select('id, customer_id, prospect_id, customer_name, customer_snapshot')
+    .eq('id', id)
+    .single();
+}
+
 export async function createCrmQuote(supabase: SupabaseClient, input: CreateCrmQuoteInput) {
   return supabase.from('crm_quotes').insert(input).select(crmQuoteSelect).single();
 }
