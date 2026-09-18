@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { listSegments, listTrucks, placeSegment } from '@/lib/domains/planning/schedule';
+import { listSegments, listTrucks, placeSegment, STAGE_NOT_ON_WORK_ORDER } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, placeSegmentSchema } from '../_lib';
 
@@ -25,7 +25,9 @@ export async function GET(req: Request) {
     if (segRes.error) return routeError(500, 'planning_segments_failed', segRes.error.message);
     if (truckRes.error) return routeError(500, 'planning_trucks_failed', truckRes.error.message);
 
-    return ok({ segments: segRes.data || [], trucks: truckRes.data || [] });
+    // `scopeSpans` är jobbens ALLA placeringar, även de utanför [from, to]. Tavlan behöver dem som
+    // nämnare när den fördelar omsättningen över veckor — se fönsterfällan i listScopeSpans.
+    return ok({ segments: segRes.data || [], trucks: truckRes.data || [], scopeSpans: segRes.scopeSpans || [] });
   } catch (e: any) {
     return routeError(500, 'planning_segments_unexpected', e?.message || 'Failed to load schedule');
   }
@@ -46,6 +48,7 @@ export async function POST(req: Request) {
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await placeSegment(supabase, {
       workOrderId: parsed.data.work_order_id,
+      stageId: parsed.data.stage_id ?? null,
       truckId: parsed.data.truck_id,
       startDay: parsed.data.start_day,
       endDay: parsed.data.end_day,
@@ -54,7 +57,13 @@ export async function POST(req: Request) {
       actorUserId: gate.currentUser.id,
       actorName: gate.currentUser.name ?? null,
     });
-    if (error) return routeError(500, 'planning_segment_create_failed', error.message);
+    if (error) {
+      // En etapp som inte hör till ordern är ett fel i begäran, inte i servern.
+      if ((error as { code?: string }).code === STAGE_NOT_ON_WORK_ORDER) {
+        return routeError(400, 'planning_segment_stage_mismatch', error.message);
+      }
+      return routeError(500, 'planning_segment_create_failed', error.message);
+    }
 
     await logActivity(supabase, gate.currentUser, {
       action: 'segment.create',
@@ -62,8 +71,15 @@ export async function POST(req: Request) {
       entityId: data?.id ?? null,
       segmentId: data?.id ?? null,
       workOrderId: parsed.data.work_order_id,
-      summary: `Placerade ${data?.job?.ref ?? 'jobb'} på kalendern`,
-      details: { truck_id: parsed.data.truck_id, start_day: parsed.data.start_day, end_day: parsed.data.end_day },
+      // Etappen med i sammanfattningen: "Placerade #5418 Etapp 2 på kalendern". Utan den går det
+      // inte att se i loggen VILKEN del av ett uppdelat jobb som bokades.
+      summary: `Placerade ${data?.job?.ref ?? 'jobb'}${data?.job?.stage ? ` Etapp ${data.job.stage.number}` : ''} på kalendern`,
+      details: {
+        truck_id: parsed.data.truck_id,
+        start_day: parsed.data.start_day,
+        end_day: parsed.data.end_day,
+        ...(parsed.data.stage_id ? { stage_id: parsed.data.stage_id } : {}),
+      },
     });
 
     return ok({ item: data }, 201);

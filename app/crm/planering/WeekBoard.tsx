@@ -14,6 +14,7 @@ import { buildDeliveryChipsByDay, type DeliveryChip } from '@/lib/domains/planni
 import type { DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
+import { weekTotals, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
@@ -32,6 +33,15 @@ type WeekBoardProps = {
    */
   allTrucksHidden?: boolean;
   segments: OpsSegment[];
+  /**
+   * Veckovärdena, färdigfördelade över de dagar jobben faktiskt utförs.
+   *
+   * 🧨 KOMMER UTIFRÅN, RÄKNAS INTE HÄR. Brädet renderas en gång per vecka i månadsvyn, och när
+   * varje instans räknade sin egen summa fick ett jobb som spände över två veckor hela sitt värde
+   * i BÅDA. PlanningClient räknar en gång, på alla segment och med jobbens fulla spann som
+   * nämnare (se listScopeSpans), och skivar per vecka.
+   */
+  weekSlices: WeekSlice[];
   todayISO: string;
   canWrite: boolean;
   placing: boolean; // a backlog item is selected → cells are placement targets
@@ -88,7 +98,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 }
 
 export default function WeekBoard({
-  weekDays, showWeekend, trucks, allTrucksHidden, segments, todayISO, canWrite, placing, people, jobTypes,
+  weekDays, showWeekend, trucks, allTrucksHidden, segments, weekSlices, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
   dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
 }: WeekBoardProps) {
@@ -110,20 +120,9 @@ export default function WeekBoard({
   );
   const hasDeliveries = deliveriesByDay.size > 0;
 
-  // Whole-week total across all trucks (deduped by work order, same basis as the per-lane totals).
-  const weekTotals = (() => {
-    const seen = new Set<string>();
-    let sacks = 0;
-    let revenue = 0;
-    for (const s of segments) {
-      if (s.end_day < weekStart || s.start_day > weekEnd) continue;
-      if (!s.job || !s.work_order_id || seen.has(s.work_order_id)) continue;
-      seen.add(s.work_order_id);
-      sacks += s.job.total_sacks;
-      revenue += s.job.revenue;
-    }
-    return { sacks, revenue, jobs: seen.size };
-  })();
+  // Veckan totalt, alla bilar. Fördelad: ett jobb bidrar med den andel av sitt värde som faktiskt
+  // ska utföras den här veckan, inte med hela ordervärdet i varje vecka det är öppet.
+  const totals = weekTotals(weekSlices, weekStart);
 
   // First/last visible-day column a segment occupies (null when it falls entirely on hidden days).
   const segColumns = (seg: OpsSegment): { s: number; e: number } | null => {
@@ -188,11 +187,11 @@ export default function WeekBoard({
         <div className="mb-1.5 grid" style={{ gridTemplateColumns: laneCols }}>
           {/* Whole-week total for all trucks (top-left corner, above the notes row). */}
           <div className="flex flex-col justify-center pl-1 pr-2">
-            {weekTotals.jobs > 0 && (
+            {totals.jobs > 0 && (
               <>
                 <span className="text-[8.5px] font-bold uppercase tracking-wide text-slate-300">Veckan totalt</span>
-                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{weekTotals.sacks}</span> säck</span>
-                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{krFmt.format(weekTotals.revenue)}</span> kr</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{totals.sacks}</span> säck</span>
+                <span className="text-[10px] leading-tight tabular-nums text-slate-500"><span className="font-bold text-slate-700">{krFmt.format(totals.revenue)}</span> kr</span>
               </>
             )}
           </div>
@@ -272,17 +271,14 @@ export default function WeekBoard({
             const overridden = laneWeekly.length > 0;
             const defaultTeam = defaultCrew.filter((m) => m.truck_id === truck.id);
             const laneColor = truck.color || '#94a3b8';
-            // Weekly per-truck totals from the jobs on it, deduped by work order (a multi-segment job
-            // counts once): planned sacks to blow + revenue (omsättning, ex moms).
-            const seenWO = new Set<string>();
-            let plannedSacks = 0;
-            let revenue = 0;
-            for (const s of laneSegs) {
-              if (!s.job || !s.work_order_id || seenWO.has(s.work_order_id)) continue;
-              seenWO.add(s.work_order_id);
-              plannedSacks += s.job.total_sacks;
-              revenue += s.job.revenue;
-            }
+            // Veckans planerade säckar och omsättning (ex moms) på just den här bilen.
+            //
+            // ⛔ INGEN DEDUP PÅ ARBETSORDER LÄNGRE. Dedupen låg inne i den här loopen, alltså per
+            // BANA: ett jobb kopierat till två bilar räknades fullt på båda, medan "Veckan totalt"
+            // räknade det en gång — banornas summor gick inte ihop med veckans. Fördelningen har
+            // redan delat värdet mellan bilarna, så summan av banorna ÄR veckans total.
+            const laneTotals = weekTotals(weekSlices, weekStart, new Set([truck.id]));
+            const { sacks: plannedSacks, revenue } = laneTotals;
             return (
               <div
                 key={truck.id}
@@ -362,7 +358,7 @@ export default function WeekBoard({
                   </div>
 
                   {/* Weekly per-truck totals (planned sacks to blow · revenue ex moms). */}
-                  {seenWO.size > 0 && (
+                  {laneTotals.jobs > 0 && (
                     <div className="mt-0.5 grid gap-0.5 pl-[18px] text-[9px] leading-tight text-slate-400" title="Planerat den här veckan">
                       <span className="tabular-nums"><span className="font-bold text-slate-500">{plannedSacks}</span> säck planerat</span>
                       <span className="tabular-nums"><span className="font-bold text-slate-500">{krFmt.format(revenue)}</span> kr omsättning</span>

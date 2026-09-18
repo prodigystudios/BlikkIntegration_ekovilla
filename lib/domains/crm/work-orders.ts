@@ -1569,3 +1569,117 @@ export async function deleteCrmWorkOrderProgressReport(
 export async function isUserOnWorkOrder(supabase: SupabaseClient, userId: string, workOrderId: string) {
   return supabase.rpc('is_user_on_work_order', { p_uid: userId, p_wo: workOrderId });
 }
+// ── Etapper ─────────────────────────────────────────────────────────────────
+// En order som utförs i omgångar. ⚠️ `stage` i kod och databas, "Etapp" bara i det användaren
+// läser — "etapp" betyder redan KONSTRUKTIONSDEL i egenkontrollen. Se
+// lib/domains/crm/workOrderStages.ts och supabase/sql/20260919_crm_work_order_stages.sql.
+
+const crmWorkOrderStageSelect = `
+  id,
+  work_order_id,
+  stage_number,
+  title,
+  line_quantities,
+  work_description,
+  job_type,
+  created_by,
+  created_by_name,
+  created_at,
+  updated_at
+`;
+
+// Etapperna på en order, i etappordning. Sessionsklienten: SELECT-policyn speglar orderns egen, så
+// den som får läsa ordern får läsa dess etapper.
+export async function listCrmWorkOrderStages(supabase: SupabaseClient, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_stages')
+    .select(crmWorkOrderStageSelect)
+    .eq('work_order_id', workOrderId)
+    .order('stage_number', { ascending: true });
+}
+
+/**
+ * Nästa lediga etappnummer på en order.
+ *
+ * ⚠️ MAX + 1, INTE ANTAL + 1. Numret återanvänds aldrig: det står i orderbekräftelser och i
+ * aktivitetsloggen, så en raderad etapp 2 ska lämna ett hål. `count + 1` hade gett ett nytt "Etapp
+ * 2" som inte är samma jobb som det förra.
+ *
+ * ⚠️ INGET LÅS. Två samtidiga skapanden kan läsa samma max och det andra bryter mot
+ * unique (work_order_id, stage_number); rutten gör om försöket. Samma hållning som nextSortIndex i
+ * planeringens schedule.ts — ett lås här hade kostat mer än felet.
+ */
+export async function nextCrmWorkOrderStageNumber(supabase: SupabaseClient, workOrderId: string) {
+  const { data, error } = await supabase
+    .from('crm_work_order_stages')
+    .select('stage_number')
+    .eq('work_order_id', workOrderId)
+    .order('stage_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { data: null as number | null, error };
+  return { data: ((data as { stage_number?: number } | null)?.stage_number ?? 0) + 1, error: null };
+}
+
+export async function createCrmWorkOrderStage(supabase: SupabaseClient, row: Record<string, unknown>) {
+  return supabase.from('crm_work_order_stages').insert(row).select(crmWorkOrderStageSelect).maybeSingle();
+}
+
+/**
+ * Uppdaterar en etapp.
+ *
+ * `.eq('work_order_id')` utöver id:t: etapp-id:t kommer ur URL:en och ordern ur rutt-parametern, och
+ * utan bindningen hade en etapp på EN ANNAN order kunnat uppdateras av någon som får skriva på den
+ * här. `.select().maybeSingle()` av samma skäl som borttagningen nedan.
+ */
+export async function updateCrmWorkOrderStage(
+  supabase: SupabaseClient,
+  stageId: string,
+  workOrderId: string,
+  patch: Record<string, unknown>,
+) {
+  return supabase
+    .from('crm_work_order_stages')
+    .update(patch)
+    .eq('id', stageId)
+    .eq('work_order_id', workOrderId)
+    .select(crmWorkOrderStageSelect)
+    .maybeSingle();
+}
+
+/**
+ * ⚠️ `.select().maybeSingle()`: en DELETE som inte träffar någon rad svarar `error: null`. Utan
+ * raden tillbaka hade ett RLS-nej sett ut som en lyckad borttagning.
+ */
+export async function deleteCrmWorkOrderStage(supabase: SupabaseClient, stageId: string, workOrderId: string) {
+  return supabase
+    .from('crm_work_order_stages')
+    .delete()
+    .eq('id', stageId)
+    .eq('work_order_id', workOrderId)
+    .select('id')
+    .maybeSingle();
+}
+
+/**
+ * Hur många placeringar som utför en etapp.
+ *
+ * ⚠️ Läses FÖRE en borttagning. `ops_segments.stage_id` är `on delete set null`, så en raderad
+ * etapp lämnar placeringarna kvar men rest-scopade — kortens säckantal HOPPAR. Rutten svarar 409
+ * med antalet så att det blir ett medvetet andra steg i stället för en överraskning.
+ *
+ * 🧨 MÅSTE ANROPAS ELEVERAT (getSupabaseAdmin). `ops_segments` kräver planning.schedule.read, och
+ * RLS gäller för `count` precis som för rader — en läsare utan den nyckeln får tillbaka 0, inte ett
+ * fel. Spärren hade alltså TYSTNAT för exakt de kontorsanvändare som bara bär crm.workorder.write,
+ * och borttagningen gått igenom utan varning. Ett fail-open som inte syns.
+ *
+ * Talet är ofarligt att elevera: det säger bara hur många placeringar en etapp har, på en order
+ * anroparen redan får skriva på. Skrivningen (borttagningen) går fortsatt genom sessionsklienten så
+ * att RLS auktoriserar den — samma tvåklientsmönster som säckrutten.
+ */
+export async function countSegmentsForStage(supabaseAdmin: SupabaseClient, stageId: string) {
+  return supabaseAdmin
+    .from('ops_segments')
+    .select('id', { count: 'exact', head: true })
+    .eq('stage_id', stageId);
+}

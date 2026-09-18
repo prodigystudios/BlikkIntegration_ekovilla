@@ -222,7 +222,10 @@ function CrmJobCard({ job }: { job: MyJob }) {
       <div className="mt-2 flex flex-wrap gap-2">
         {job.workOrderId && (
           <Link
-            href={`/arbetsorder/${job.workOrderId}`}
+            // ⚠️ PLACERINGEN MÅSTE MED. Utan ?segment= kan fältvyn inte veta vilken etapp raden
+            // gäller, och en besättning som bara ska göra etapp 1 får hela ordern. Saknas
+            // segmentet (Blikk-rader) visas helheten, precis som förut.
+            href={`/arbetsorder/${job.workOrderId}${job.segmentId ? `?segment=${encodeURIComponent(job.segmentId)}` : ''}`}
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold text-white no-underline transition hover:opacity-90"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >

@@ -13,7 +13,8 @@ type BacklogProps = {
   items: SchedulableWorkOrder[];
   loading: boolean;
   canWrite: boolean;
-  selectedId: string | null;
+  /** Scope-NYCKELN för den valda posten (`scopeKey`), inte arbetsorder-id:t. */
+  selectedKey: string | null;
   filter: BacklogFilter;
   onFilterChange: (f: BacklogFilter) => void;
   counts: { unplanned: number; planned: number; all: number };
@@ -47,7 +48,7 @@ function shortDate(value: string | null): string | null {
 }
 
 export default function Backlog({
-  items, loading, canWrite, selectedId, filter, onFilterChange, counts, loadError,
+  items, loading, canWrite, selectedKey, filter, onFilterChange, counts, loadError,
   search, onSearchChange, salesFilter, onSalesFilterChange, salesOptions,
   onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
 }: BacklogProps) {
@@ -141,19 +142,20 @@ export default function Backlog({
         ) : (
           <div className="grid gap-2">
             {items.map((item) => {
-              const isSelected = item.id === selectedId;
+              // Identiteten är `key`, inte `id`: en uppdelad order ger flera poster som delar id.
+              const isSelected = item.key === selectedKey;
               return (
                   <div
-                    key={item.id}
+                    key={item.key}
                     role="button"
                     tabIndex={0}
                     draggable={canWrite}
                     onDragStart={(e) => onDragStartItem(e, item)}
-                    onClick={() => canWrite && onSelect(item.id)}
+                    onClick={() => canWrite && onSelect(item.key)}
                     onKeyDown={(e) => {
                       if ((e.key === 'Enter' || e.key === ' ') && canWrite) {
                         e.preventDefault();
-                        onSelect(item.id);
+                        onSelect(item.key);
                       }
                     }}
                     className={cn(
@@ -167,6 +169,15 @@ export default function Backlog({
                       <span className="text-[11px] font-bold text-slate-900">{item.project_name}</span>
                       <JobRef job={item} />
                     </div>
+                    {/* Etappen som eget chip, ALDRIG inbakad i referensen: `ref` är Fortnox-numret,
+                        det matchas av sökningen och går in i orderbekräftelser. */}
+                    {item.stage && (
+                      <div className="mt-1">
+                        <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold text-amber-800">
+                          Etapp {item.stage.number} · {item.stage.title}
+                        </span>
+                      </div>
+                    )}
                     <div className="mt-0.5 text-[10px] text-slate-500">{item.client_name}</div>
                     {item.address && (
                       <div className="flex items-center gap-1 text-[9.5px] text-slate-400">

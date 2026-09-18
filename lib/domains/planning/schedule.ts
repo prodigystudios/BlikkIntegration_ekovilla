@@ -1,8 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { mapWorkOrderJob, workOrderRef, type WorkOrderJobRow } from './display';
+import { mapWorkOrderJob, scopeForSegment, workOrderRef, type WorkOrderJobRow } from './display';
+import type { WorkOrderStage } from '@/lib/domains/crm/workOrderStages';
 import { sackTotalsForWorkOrders } from './reports';
 import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
+import { chunkIds, readAllPages } from './pagedRead';
+import { scopeKey, type ScopeSpan } from './weekValue';
 import type { OpsSegment } from './types';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -15,9 +18,14 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
   return null;
 }
 
+// ⚠️ EN enda inbäddning av crm_work_order_stages, nästlad under arbetsordern. Etapperna behövs i
+// sin HELHET även för ett rest-scopat segment (resten = allt ingen etapp tagit), så en inbäddning
+// filtrerad på segmentets stage_id hade varit fel — och två inbäddningar av samma tabell från samma
+// rad blir tvetydigt för PostgREST.
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, field_visible, work_description, created_at, updated_at, ' +
-  'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, field_visible, work_description, stage_id, created_at, updated_at, ' +
+  'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items, ' +
+  'crm_work_order_stages(id, stage_number, title, line_quantities))';
 
 type RawSegment = {
   id: string;
@@ -34,10 +42,13 @@ type RawSegment = {
   placeholder_customer: string | null;
   field_visible: boolean | null;
   work_description: string | null;
+  stage_id: string | null;
   created_at: string;
   updated_at: string;
-  work_order: WorkOrderJobRow | WorkOrderJobRow[] | null;
+  work_order: WorkOrderEmbed | WorkOrderEmbed[] | null;
 };
+
+type WorkOrderEmbed = WorkOrderJobRow & { crm_work_order_stages?: WorkOrderStage[] | null };
 
 // Map a raw ops_segments row (with the embedded work order) to the OpsSegment the UI renders.
 // Supabase returns a to-one embed as an object, but the generated typing can be an array —
@@ -47,6 +58,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
   return {
     id: row.id,
     work_order_id: row.work_order_id,
+    stage_id: row.stage_id ?? null,
     truck_id: row.truck_id,
     start_day: row.start_day,
     end_day: row.end_day,
@@ -61,7 +73,9 @@ export function mapSegment(row: RawSegment): OpsSegment {
     work_description: row.work_description ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    job: wo ? mapWorkOrderJob(wo) : null,
+    // Beskuret till den etapp placeringen utför. Ingen etapp på ordern → whole, alltså exakt
+    // dagens beteende för de dryga hundra ordrar som inte är uppdelade.
+    job: wo ? mapWorkOrderJob(wo, scopeForSegment(row.stage_id, wo.crm_work_order_stages)) : null,
     sacks_reported: 0,
     sacks_final: false,
     crew: [],
@@ -74,7 +88,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
 export async function listSegments(
   supabase: SupabaseClient,
   range: { from: string; to: string },
-): Promise<{ data: OpsSegment[]; error: { message: string } | null }> {
+): Promise<{ data: OpsSegment[]; scopeSpans: ScopeSpan[]; error: { message: string } | null }> {
   const { data, error } = await supabase
     .from('ops_segments')
     .select(SEGMENT_SELECT)
@@ -87,20 +101,24 @@ export async function listSegments(
     // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
     .order('id', { ascending: true });
 
-  if (error) return { data: [], error };
+  if (error) return { data: [], scopeSpans: [], error };
 
   const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
   // Attach each job's blown-sack total + confirmation state (both summed/keyed by work order), and
   // the crew assigned to each individual placement (keyed by segment id). Placeholders have no work
   // order, so they contribute no ids here.
   const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))].filter((id): id is string => id != null);
-  const [reported, crewBySegment, confirmations] = await Promise.all([
+  const [reported, crewBySegment, confirmations, spans] = await Promise.all([
     // Summan OCH om den är egenkontrollens. `kind` hämtas ändå av supersede-regeln, så flaggan
     // följer med gratis — en egen fråga bara för den hade varit en extra rundtur mot samma tabell.
     sackTotalsForWorkOrders(supabase, workOrderIds),
     listCrewBySegment(supabase, segs.map((s) => s.id)),
     confirmationsByWorkOrder(supabase, workOrderIds),
+    // Jobbens ALLA placeringar, inte bara de i fönstret — nämnaren i veckofördelningen. Se
+    // fönsterfällan i listScopeSpans.
+    listScopeSpans(supabase, workOrderIds),
   ]);
+  if (spans.error) return { data: [], scopeSpans: [], error: spans.error };
   for (const s of segs) {
     const total = s.work_order_id ? reported.get(s.work_order_id) : undefined;
     s.sacks_reported = total?.sacks ?? 0;
@@ -108,7 +126,61 @@ export async function listSegments(
     s.crew = crewBySegment.get(s.id) ?? [];
     s.confirmation = (s.work_order_id && confirmations.get(s.work_order_id)) || { ...EMPTY_CONFIRMATION };
   }
-  return { data: segs, error: null };
+  return { data: segs, scopeSpans: spans.data, error: null };
+}
+
+/**
+ * Alla placeringar för en uppsättning arbetsordrar — nämnaren i veckofördelningen.
+ *
+ * 🧨 SEPARAT LÄSNING, OCH DET ÄR HELA SKÄLET ATT DEN FINNS. listSegments och getPlanningInsights
+ * hämtar bara segment som ÖVERLAPPAR det efterfrågade fönstret. Fördelas ett jobbs värde med de
+ * segmenten som nämnare får ett jobb som sträcker sig utanför fönstret för hög andel i den synliga
+ * veckan — exakt den uppblåsning fördelningen finns för att döda, fast tyst och bara vid
+ * fönsterkanten. Ett femveckorsjobb sett genom ett enveckasfönster hade fått hela sitt värde på den
+ * veckan igen.
+ *
+ * ⚠️ SIDINDELAD OCH CHUNKAD. En kapad spannlista sänker nämnaren och HÖJER veckans omsättning —
+ * ett fel som ser ut som ett bra resultat. Se pagedRead.ts.
+ */
+export async function listScopeSpans(
+  supabase: SupabaseClient,
+  workOrderIds: string[],
+): Promise<{ data: ScopeSpan[]; error: { message: string } | null }> {
+  const ids = [...new Set(workOrderIds)];
+  if (ids.length === 0) return { data: [], error: null };
+
+  const out: ScopeSpan[] = [];
+  for (const chunk of chunkIds(ids)) {
+    const { rows, error } = await readAllPages<{
+      id: string;
+      work_order_id: string | null;
+      stage_id: string | null;
+      truck_id: string;
+      start_day: string;
+      end_day: string;
+    }>((from, to) =>
+      supabase
+        .from('ops_segments')
+        // ⚠️ stage_id MÅSTE med. Utan den hamnar etapp 1 och etapp 2 i samma hink, och etapp 2:s
+        // värde fördelas över etapp 1:s dagar också — alltså fel vecka och fel bil.
+        .select('id, work_order_id, stage_id, truck_id, start_day, end_day')
+        .in('work_order_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (error) return { data: [], error };
+    for (const r of rows) {
+      if (!r.work_order_id) continue; // platshållare bär inget värde
+      out.push({
+        key: scopeKey(r.work_order_id, r.stage_id ?? null),
+        segment_id: r.id,
+        truck_id: r.truck_id,
+        start_day: r.start_day,
+        end_day: r.end_day,
+      });
+    }
+  }
+  return { data: out, error: null };
 }
 
 export async function listTrucks(supabase: SupabaseClient) {
@@ -119,8 +191,13 @@ export async function listTrucks(supabase: SupabaseClient) {
     .order('name', { ascending: true });
 }
 
+/** Felkod när en placering hänvisar till en etapp på en annan order. Rutten mappar den till 400. */
+export const STAGE_NOT_ON_WORK_ORDER = 'stage_not_on_work_order';
+
 export type PlaceSegmentInput = {
   workOrderId: string;
+  /** Etappen placeringen utför. null = resten av ordern. */
+  stageId?: string | null;
   truckId: string;
   startDay: string;
   endDay: string;
@@ -161,16 +238,56 @@ async function nextSortIndex(supabase: SupabaseClient, truckId: string, startDay
 export async function placeSegment(
   supabase: SupabaseClient,
   input: PlaceSegmentInput,
-): Promise<{ data: OpsSegment | null; error: { message: string } | null }> {
+): Promise<{ data: OpsSegment | null; error: { message: string; code?: string } | null }> {
+  // Etappens arbetsbeskrivning och jobbtyp ÄRVS till placeringen, som ett startvärde.
+  //
+  // ⚠️ KOPIERAS, läses inte parallellt. Fältvyn läser `ops_segments.work_description`
+  // (get_my_crm_jobs → myJobs.ts) och kortet renderar den; att i stället låta varje läsare falla
+  // tillbaka på etappen hade gett två källor för samma text. Segmentet går att ändra efteråt utan
+  // att etappen rörs — det är poängen med en kopia.
+  //
+  // ⚠️ EN UTEBLIVEN ÄRVNING FÄLLER INTE PLACERINGEN. Går uppslaget sönder placeras jobbet ändå,
+  // utan beskrivning; planeraren ser det direkt på kortet och kan skriva den. Att avvisa en
+  // placering för att en bekvämlighetsläsning misslyckades vore en sämre affär.
+  let jobType = input.jobType ?? null;
+  let workDescription: string | null = null;
+  if (input.stageId) {
+    const { data: stage, error: stageError } = await supabase
+      .from('crm_work_order_stages')
+      .select('work_description, job_type')
+      .eq('id', input.stageId)
+      // 🧨 BUNDEN TILL ORDERN. Utan `.eq('work_order_id', …)` slås etappen upp på id ENSAMT, och en
+      // klient som skickar en annan orders etapp-id fick den orderns arbetsbeskrivning och jobbtyp
+      // kopierade på sin placering — och ett stage_id som pekar tvärs över ordergränsen, vilket
+      // sedan gör att jobbet tappar sitt värde i veckofördelningen (nyckeln hittar inget scope).
+      .eq('work_order_id', input.workOrderId)
+      .maybeSingle();
+    if (stageError) return { data: null, error: stageError };
+    const row = stage as { work_description?: string | null; job_type?: string | null } | null;
+    if (!row) {
+      // Fail-closed: hellre ett nej än en placering som pekar på en etapp den inte hör till.
+      return {
+        data: null,
+        // `code` så rutten kan svara 400 i stället för 500: kroppen är felaktig, servern är hel.
+        error: { message: 'Etappen hör inte till den här arbetsordern.', code: STAGE_NOT_ON_WORK_ORDER },
+      };
+    }
+    // Ett uttryckligt val från anroparen vinner över etappens.
+    jobType = input.jobType ?? row.job_type ?? null;
+    workDescription = row.work_description ?? null;
+  }
+
   const { data, error } = await supabase
     .from('ops_segments')
     .insert({
       work_order_id: input.workOrderId,
+      stage_id: input.stageId ?? null,
       truck_id: input.truckId,
       start_day: input.startDay,
       end_day: input.endDay,
       sort_index: input.sortIndex ?? (await nextSortIndex(supabase, input.truckId, input.startDay)),
-      job_type: input.jobType ?? null,
+      job_type: jobType,
+      work_description: workDescription,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,
     })

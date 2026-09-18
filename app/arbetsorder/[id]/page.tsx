@@ -9,8 +9,18 @@ export const dynamic = 'force-dynamic';
 // Field view for installers (and anyone). Lives outside /crm (which is office-only) so
 // member-role staff can open it via a direct link. Read-only essentials + write on
 // time/comments; editing the order stays in /crm/arbetsorder/[id] for CRM roles.
-export default async function InstallerWorkOrderPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function InstallerWorkOrderPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ segment?: string }>;
+}) {
   const { id } = await params;
+  // Vilken PLACERING besättningen kom ifrån. Feeden skickar den; en direktlänk gör det inte, och
+  // då visas hela ordern precis som förut. Vidare till klienten som bara läser den — uppslaget
+  // segment → etapp görs av /field-scope, som äger både åtkomstprövningen och elevationen.
+  const { segment } = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect('/auth/sign-in');
 
@@ -34,5 +44,12 @@ export default async function InstallerWorkOrderPage({ params }: { params: Promi
   const canReportTime = Array.isArray(permissions)
     && permissions.some((row) => (typeof row === 'string' ? row : String(row)) === 'time.approve');
 
-  return <WorkOrderInstallerClient workOrderId={id} currentUserId={user.id} canReportTime={canReportTime} />;
+  return (
+    <WorkOrderInstallerClient
+      workOrderId={id}
+      segmentId={typeof segment === 'string' ? segment : null}
+      currentUserId={user.id}
+      canReportTime={canReportTime}
+    />
+  );
 }

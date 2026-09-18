@@ -9,14 +9,27 @@ import type { ConfirmationSummary } from './confirmations';
 
 // A CRM work order eligible to be scheduled, annotated for the planning backlog.
 export type SchedulableWorkOrder = JobDisplay & {
+  /**
+   * Postens identitet i backloggen: `scopeKey(work_order_id, stage_id)`.
+   *
+   * ⚠️ OBLIGATORISK, med flit. En order kan nu ge FLERA poster — en per etapp plus resten — och
+   * `id` ensamt räcker inte längre för att peka ut en av dem. Att göra fältet obligatoriskt gör att
+   * TypeScript pekar ut varje ställe som väljer, drar eller räknar en backlogpost; ett missat
+   * ställe hade blivit ett kort som inte går att placera, eller en räknare som aldrig nollas.
+   */
+  key: string;
+  /** Arbetsorderns id. Betyder samma sak som förut — det är `key` som blivit postens identitet. */
   id: string;
+  /** Etappen posten avser. null = resten av ordern (hela ordern när inga etapper finns). */
+  stage_id: string | null;
   desired_installation_date: string | null;
   contact_email: string | null;
   contact_phone: string | null;
   // The work order's assignee (sales-responsible) user id; mapped to a name via the people list for
   // the backlog sales filter. null when unassigned.
   assigned_to: string | null;
-  // How many ops_segments already cover this order (0 = not yet placed on the calendar).
+  // Hur många ops_segments som redan täcker just DEN HÄR posten (0 = inte utplacerad). Räknas per
+  // (work_order_id, stage_id): att etapp 1 är placerad säger ingenting om etapp 2.
   segment_count: number;
 };
 
@@ -42,6 +55,9 @@ export type OpsDepot = {
 export type OpsSegment = {
   id: string;
   work_order_id: string | null;
+  // Vilken etapp av ordern placeringen utför. null = resten, alltså allt ingen etapp har tagit —
+  // och på en order utan etapper är det hela ordern. Se lib/domains/crm/workOrderStages.ts.
+  stage_id: string | null;
   truck_id: string;
   start_day: string; // 'YYYY-MM-DD'
   end_day: string; // 'YYYY-MM-DD'

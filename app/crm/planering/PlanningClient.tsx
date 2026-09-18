@@ -18,6 +18,7 @@ import { describeShortfallCover, type DepotForecast } from '@/lib/domains/planni
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
+import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
   parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
@@ -160,6 +161,9 @@ export default function PlanningClient({
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
+  // Jobbens ALLA placeringar, även utanför den hämtade veckan — nämnaren när veckans omsättning
+  // fördelas över de dagar jobbet faktiskt utförs. Se fönsterfällan i listScopeSpans.
+  const [scopeSpans, setScopeSpans] = useState<ScopeSpan[]>([]);
   const [people, setPeople] = useState<AssignablePerson[]>([]);
   const [jobTypes, setJobTypes] = useState<JobType[]>(DEFAULT_JOB_TYPES);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
@@ -185,7 +189,8 @@ export default function PlanningClient({
   const [error, setError] = useState<string | null>(null);
   const [backlogError, setBacklogError] = useState<string | null>(null);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Scope-NYCKELN för den valda backlogposten, inte arbetsorder-id:t — en order kan ge flera poster.
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   // Two searches, deliberately separate. One box used to filter both the schedule and the backlog,
   // which broke the one workflow it was meant to serve: searching the backlog for a job to place
   // simultaneously emptied the board, so you could no longer see what was already booked on the
@@ -218,7 +223,7 @@ export default function PlanningClient({
     });
   }, []);
   const [backlogDropActive, setBacklogDropActive] = useState(false);
-  const [truckPicker, setTruckPicker] = useState<{ dayISO: string; workOrderId: string } | null>(null);
+  const [truckPicker, setTruckPicker] = useState<{ dayISO: string; scopeKey: string } | null>(null);
   const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -315,13 +320,14 @@ export default function PlanningClient({
   }, [backlogLoad]);
 
   const loadSegments = useCallback(async (from: string, to: string) => {
-    const data = await fetchLatest<{ segments: OpsSegment[]; trucks: OpsTruck[] }>(
+    const data = await fetchLatest<{ segments: OpsSegment[]; trucks: OpsTruck[]; scopeSpans?: ScopeSpan[] }>(
       segmentsLoad,
       `${API}/segments?from=${from}&to=${to}`,
       'Kunde inte hämta schemat',
     );
     if (!data) return;
     setSegments(data.segments);
+    setScopeSpans(data.scopeSpans ?? []);
     setTrucks(data.trucks);
     setBoardLoaded(true);
     // A good load clears a stale banner. Nothing else in this component ever resets `error`, so
@@ -570,12 +576,20 @@ export default function PlanningClient({
   }, [loadBacklog, loadSegments, range.from, range.to]);
 
   // ── mutations ───────────────────────────────────────────────────────────────
+  // ⚠️ TAR HELA BACKLOGPOSTEN, inte ett arbetsorder-id. En order kan ge flera poster — en per etapp
+  // plus resten — och de delar `id`. Identiteten är `key`; `stage_id` avgör VAD som placeras.
   const place = useCallback(
-    async (workOrderId: string, truckId: string, startDay: string, endDay: string) => {
+    async (item: Pick<SchedulableWorkOrder, 'key' | 'id' | 'stage_id'>, truckId: string, startDay: string, endDay: string) => {
       const r = await fetch(`${API}/segments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ work_order_id: workOrderId, truck_id: truckId, start_day: startDay, end_day: endDay }),
+        body: JSON.stringify({
+          work_order_id: item.id,
+          stage_id: item.stage_id,
+          truck_id: truckId,
+          start_day: startDay,
+          end_day: endDay,
+        }),
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte placera ordern');
@@ -584,8 +598,18 @@ export default function PlanningClient({
       // Append the created segment locally instead of refetching the whole board; bump the source
       // job's backlog count so its badge stays in sync.
       if (j.data?.item) {
-        setSegments((prev) => [...prev, j.data.item as OpsSegment]);
-        setBacklog((prev) => prev.map((b) => (b.id === workOrderId ? { ...b, segment_count: b.segment_count + 1 } : b)));
+        const created = j.data.item as OpsSegment;
+        setSegments((prev) => [...prev, created]);
+        // 🧨 SPANNEN MÅSTE FÖLJA MED. `scopeSpans` är nämnaren i veckofördelningen och sätts annars
+        // bara av loadSegments — ett nyss placerat jobb hade då saknat spann helt och bidragit med
+        // NOLL kr till "Veckan totalt" tills sidan laddades om. Den som just la ut ett jobb hade
+        // sett summan stå stilla.
+        setScopeSpans((prev) => [
+          ...prev,
+          { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
+        ]);
+        // Matchar på key, inte id: annars hade räknaren tickat upp på ordens ALLA etapper.
+        setBacklog((prev) => prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)));
       } else {
         refresh();
       }
@@ -611,6 +635,20 @@ export default function PlanningClient({
             : s,
         ),
       );
+      // Samma skäl som vid placeringen: utan det här ligger jobbets värde kvar i den vecka det
+      // flyttades FRÅN tills sidan laddas om.
+      setScopeSpans((cur) =>
+        cur.map((sp) =>
+          sp.segment_id === id
+            ? {
+                ...sp,
+                ...(patch.truck_id !== undefined ? { truck_id: patch.truck_id } : {}),
+                ...(patch.start_day !== undefined ? { start_day: patch.start_day } : {}),
+                ...(patch.end_day !== undefined ? { end_day: patch.end_day } : {}),
+              }
+            : sp,
+        ),
+      );
       const r = await fetch(`${API}/segments/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -629,9 +667,12 @@ export default function PlanningClient({
     async (id: string) => {
       // Optimistic: drop the card at once + decrement the job's backlog placement count (so it hops
       // back to "Oplanerade" when its last placement is removed); re-sync only if the delete fails.
-      const woId = segments.find((s) => s.id === id)?.work_order_id ?? null;
+      // Nyckeln, inte bara ordern: avplaneras etapp 1 ska etapp 2:s räknare inte röras.
+      const seg = segments.find((s) => s.id === id) ?? null;
+      const key = seg?.work_order_id ? scopeKey(seg.work_order_id, seg.stage_id ?? null) : null;
       setSegments((prev) => prev.filter((s) => s.id !== id));
-      if (woId) setBacklog((prev) => prev.map((b) => (b.id === woId ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
+      setScopeSpans((prev) => prev.filter((sp) => sp.segment_id !== id));
+      if (key) setBacklog((prev) => prev.map((b) => (b.key === key ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
       if (!j.ok) {
@@ -677,8 +718,9 @@ export default function PlanningClient({
 
   // ── drag handlers ───────────────────────────────────────────────────────────
   const onBacklogDragStart = useCallback((e: React.DragEvent, item: SchedulableWorkOrder) => {
-    dragRef.current = { kind: 'backlog', id: item.id };
-    e.dataTransfer.setData('text/plain', item.id);
+    // Nyckeln, inte arbetsorder-id:t: två etapper på samma order delar id.
+    dragRef.current = { kind: 'backlog', id: item.key };
+    e.dataTransfer.setData('text/plain', item.key);
     e.dataTransfer.effectAllowed = 'copyMove';
   }, []);
 
@@ -693,13 +735,16 @@ export default function PlanningClient({
       const d = dragRef.current;
       dragRef.current = null;
       if (!d) return;
-      if (d.kind === 'backlog') void place(d.id, truckId, dayISO, dayISO);
+      if (d.kind === 'backlog') {
+        const item = backlog.find((b) => b.key === d.id);
+        if (item) void place(item, truckId, dayISO, dayISO);
+      }
       else {
         const span = daysBetweenInclusive(d.start, d.end);
         void move(d.id, { truck_id: truckId, start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
       }
     },
-    [place, move],
+    [place, move, backlog],
   );
 
   const onMonthDayDrop = useCallback(
@@ -707,7 +752,7 @@ export default function PlanningClient({
       const d = dragRef.current;
       dragRef.current = null;
       if (!d) return;
-      if (d.kind === 'backlog') setTruckPicker({ dayISO, workOrderId: d.id });
+      if (d.kind === 'backlog') setTruckPicker({ dayISO, scopeKey: d.id });
       else {
         const span = daysBetweenInclusive(d.start, d.end);
         void move(d.id, { start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
@@ -858,29 +903,31 @@ export default function PlanningClient({
   const restoreWeek = useCallback((t: string, f: string, to: string) => weekCrewAction('restore', t, f, to), [weekCrewAction]);
 
   // ── selection / click-to-place ───────────────────────────────────────────────
-  const onSelect = useCallback((id: string) => setSelectedId((cur) => (cur === id ? null : id)), []);
+  const onSelect = useCallback((key: string) => setSelectedKey((cur) => (cur === key ? null : key)), []);
   const onWeekCellClick = useCallback(
     (truckId: string, dayISO: string) => {
-      if (!selectedId) return;
-      void place(selectedId, truckId, dayISO, dayISO);
-      setSelectedId(null);
+      const item = backlog.find((b) => b.key === selectedKey);
+      if (!item) return;
+      void place(item, truckId, dayISO, dayISO);
+      setSelectedKey(null);
     },
-    [selectedId, place],
+    [selectedKey, place, backlog],
   );
   const onMonthDayClick = useCallback(
     (dayISO: string) => {
-      if (selectedId) setTruckPicker({ dayISO, workOrderId: selectedId });
+      if (selectedKey) setTruckPicker({ dayISO, scopeKey: selectedKey });
     },
-    [selectedId],
+    [selectedKey],
   );
   const pickTruck = useCallback(
     (truckId: string) => {
       if (!truckPicker) return;
-      void place(truckPicker.workOrderId, truckId, truckPicker.dayISO, truckPicker.dayISO);
+      const item = backlog.find((b) => b.key === truckPicker.scopeKey);
+      if (item) void place(item, truckId, truckPicker.dayISO, truckPicker.dayISO);
       setTruckPicker(null);
-      setSelectedId(null);
+      setSelectedKey(null);
     },
-    [truckPicker, place],
+    [truckPicker, place, backlog],
   );
 
   // Copy a scheduled job to another truck as a freestanding duplicate (its own ops_segment with the
@@ -893,6 +940,9 @@ export default function PlanningClient({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           work_order_id: copySeg.work_order_id,
+          // ⚠️ Etappen måste med. Utan den blev kopian rest-scopad: fel säckantal, fel värde, fel
+          // material på den andra bilen — och backloggens räknare tickade på fel post.
+          stage_id: copySeg.stage_id ?? null,
           truck_id: truckId,
           start_day: copySeg.start_day,
           end_day: copySeg.end_day,
@@ -1010,6 +1060,37 @@ export default function PlanningClient({
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
     [segments, hiddenTrucks, matchBoard],
   );
+  // Veckans omsättning och säckar, fördelade över de dagar jobben faktiskt utförs.
+  //
+  // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments`. Sökrutan och dolda bilar är VYINSTÄLLNINGAR och
+  // ska inte tyst ändra vad veckan är värd — förut gjorde de det, så att skriva ett kundnamn i
+  // sökrutan sänkte "Veckan totalt" till det jobbets värde. Banornas egna summor filtreras i
+  // WeekBoard på bil-id, vilket är en annan sak.
+  //
+  // ⛔ INGEN STATUSVAKT HÄR, och det är ett medvetet val efter QA mot skarp data 2026-09-18.
+  //
+  // Ett första utkast filtrerade på SCHEDULABLE_WORK_ORDER_STATUSES, alltså samma vakt som
+  // insikterna har. Mätt på v.38 stod den för 397 000 av en total skillnad på 444 000 kr — medan
+  // själva fördelningen, som är det den här ändringen handlar om, stod för 47 000.
+  //
+  // Vakten är rätt i INSIKTERNA, som är uttalat framåtblickande ("vad är på väg"). Den är fel här:
+  // tavlan visar vilken vecka som helst, även passerade, och ett jobb som blivit `completed` VAR
+  // omsättning den vecka det utfördes. Med vakten krympte "Veckan totalt" allteftersom veckans jobb
+  // blev klara — talet svarade på "vad är kvar att göra" i stället för "vad omsätter bilen".
+  //
+  // ⚠️ Följden är att en AVBRUTEN order som ligger kvar i kalendern fortfarande räknas som
+  // omsättning här. Det är ett befintligt fel, inte ett nytt — regeln finns som `isDeadWorkOrder`
+  // i lib/domains/crm/work-orders.ts, men den modulen bär serverkod och importeras inte av någon
+  // klientkomponent. Att bryta ut vokabulären är en egen ändring; den hör inte hemma i den här.
+  const weekSlices = useMemo<WeekSlice[]>(() => {
+    const values = new Map<string, ScopeValue>();
+    for (const s of segments) {
+      if (!s.work_order_id || !s.job) continue;
+      const key = scopeKey(s.work_order_id, s.stage_id ?? null);
+      if (!values.has(key)) values.set(key, { key, revenue: s.job.revenue, sacks: s.job.total_sacks });
+    }
+    return segmentWeekValues([...values.values()], scopeSpans);
+  }, [segments, scopeSpans]);
   const visibleTrucks = useMemo(() => trucks.filter((t) => !hiddenTrucks.has(t.id)), [trucks, hiddenTrucks]);
   // ⚠️ Räknat på BILARNA, inte på `hiddenTrucks.size`. Mängden bär sparade id:n, och ett id för en
   // borttagen bil hade då hållit "Visa alla" uppe för alltid med ett tal som inte motsvarar något
@@ -1085,8 +1166,8 @@ export default function PlanningClient({
   }, [view, scrollToBoardTop]);
 
   const navLabel = view === 'week' ? swedishMonthYear(weekMonday) : swedishMonthYear(monthAnchor);
-  const placing = canWrite && !!selectedId;
-  const selected = backlog.find((b) => b.id === selectedId) ?? null;
+  const placing = canWrite && !!selectedKey;
+  const selected = backlog.find((b) => b.key === selectedKey) ?? null;
 
   // Reorder jobs that share a truck on the same day (sort_index) — nudges one earlier/later and
   // PATCHes the affected segments, then refreshes.
@@ -1367,7 +1448,7 @@ export default function PlanningClient({
           items={visibleBacklog}
           loading={loadingBacklog}
           canWrite={canWrite}
-          selectedId={selectedId}
+          selectedKey={selectedKey}
           filter={backlogFilter}
           onFilterChange={chooseBacklogFilter}
           counts={backlogCounts}
@@ -1444,6 +1525,7 @@ export default function PlanningClient({
                         trucks={visibleTrucks}
                         allTrucksHidden={allTrucksHidden}
                         segments={visibleSegments}
+                        weekSlices={weekSlices}
                         todayISO={todayISO}
                         canWrite={canWrite}
                         placing={placing}

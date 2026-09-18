@@ -8,6 +8,7 @@ import { crm, workOrderStatusLabel, workOrderStatusClass } from '@/app/crm/lib/c
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import WorkOrderCommentsTab from '@/app/crm/arbetsorder/WorkOrderCommentsTab';
 import WorkOrderArticles, { type ArticleLineItem } from '@/app/crm/arbetsorder/WorkOrderArticles';
+import { scopeLineItemsForDisplay } from '@/lib/domains/crm/workOrderStages';
 import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
 import WorkOrderSackReportCard from '@/app/crm/arbetsorder/WorkOrderSackReportCard';
@@ -47,17 +48,84 @@ type InstallerWorkOrder = {
 
 type InstallerTab = 'info' | 'articles' | 'files' | 'time';
 
+/**
+ * Etappen den här placeringen utför, eller null.
+ *
+ * ⚠️ FAILAR ÖPPET, och det är rätt här. Går uppslaget sönder visas HELA ordern — samma sak som
+ * besättningen såg innan etapper fanns. Att i stället visa ingenting hade gjort ett trasigt
+ * uppslag till ett stoppat jobb.
+ */
+function useFieldStage(workOrderId: string, segmentId: string | null) {
+  const [stage, setStage] = useState<FieldStage | null>(null);
+  useEffect(() => {
+    if (!segmentId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const r = await fetch(`/api/crm/work-orders/${workOrderId}/field-scope?segment=${encodeURIComponent(segmentId)}`, { cache: 'no-store' });
+        const j = await r.json();
+        if (alive && j.ok) setStage((j.data?.stage ?? null) as FieldStage | null);
+      } catch {
+        /* hela ordern visas */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workOrderId, segmentId]);
+  return stage;
+}
+
+/**
+ * "Du ser en DEL av ordern." Visas på varje flik vars innehåll är beskuret.
+ *
+ * 🧨 Utan den blir beskärningen tyst, och en tyst beskärning är värre än ingen: besättningen ser en
+ * kortare order och har inget sätt att veta om det är etappen eller ett fel i underlaget.
+ */
+function StageBanner({ stage, withDescription = false }: { stage: FieldStage; withDescription?: boolean }) {
+  return (
+    <div className="grid gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
+      <p className="text-sm font-bold text-amber-900">
+        Etapp {stage.stage_number} · {stage.title}
+      </p>
+      <p className="text-xs text-amber-800">
+        Du ser den här etappens del av ordern. Resten av jobbet utförs vid ett annat tillfälle.
+      </p>
+      {withDescription && stage.work_description ? (
+        <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-900">{stage.work_description}</p>
+      ) : null}
+    </div>
+  );
+}
+
+type FieldStage = {
+  id: string;
+  stage_number: number;
+  title: string;
+  line_quantities: Array<{ line_id: string; quantity: number }> | null;
+  work_description: string | null;
+};
+
 export default function WorkOrderInstallerClient({
   workOrderId,
+  segmentId = null,
   currentUserId,
   canReportTime = false,
 }: {
   workOrderId: string;
+  /**
+   * Placeringen besättningen kom ifrån (?segment= ur feeden). null vid direktlänk.
+   *
+   * Utför placeringen en ETAPP visas orderns innehåll beskuret till den — annars hela ordern,
+   * precis som förut. Se useFieldStage nedan.
+   */
+  segmentId?: string | null;
   currentUserId: string | null;
   /** Testfönstret för Tid-fliken — se app/arbetsorder/[id]/page.tsx. */
   canReportTime?: boolean;
 }) {
   const router = useRouter();
+  const stage = useFieldStage(workOrderId, segmentId);
   const [workOrder, setWorkOrder] = useState<InstallerWorkOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -100,6 +168,30 @@ export default function WorkOrderInstallerClient({
   //
   // Ligger här av samma skäl som summan ovan: `workOrder` är null under laddningen, och en hook
   // efter den tidiga returen körs inte i första rendern.
+  // Orderns rader beskurna till etappen — VISNINGEN, inget annat. Utan etapp: arrayen orörd.
+  //
+  // 🧨 SCOPAR BARA DET SOM VISAS, ALDRIG DET SOM GÅR ATT RAPPORTERA. Se progressWorkItems nedan.
+  const scopedLineItems = useMemo(() => {
+    const rows = (workOrder?.line_items || []) as ArticleLineItem[];
+    if (!stage) return rows;
+    return scopeLineItemsForDisplay(rows as never, {
+      kind: 'stage',
+      stage: { id: stage.id, stage_number: stage.stage_number, title: stage.title, line_quantities: stage.line_quantities },
+      siblings: [],
+    }) as unknown as ArticleLineItem[];
+  }, [workOrder?.line_items, stage]);
+
+  // 🧨 LÄSER HELA ORDERN, ALDRIG DEN BESKURNA ARRAYEN — även när placeringen utför en etapp.
+  //
+  // Säckkortet ställer materialfrågan bara när ordern har MER ÄN ETT material
+  // (`needsMaterial = materialOptions.length > 1`). Beskärs listan till etappen får en tvåmaterials-
+  // order som råkar ha ett material i den här etappen `length === 1` → frågan ställs inte → raden
+  // sparas med `material: null` → attributeReport faller tillbaka på orderns FÖRSTA kända material
+  // och debiterar fel material i depån. Det är exakt den brist materialkolumnen infördes för att
+  // laga (se 20260820_ops_segment_reports_sack_reporting.sql).
+  //
+  // Säckboken är per ARBETSORDER, precis som framdriftens momentlista nedan. Beskärningen gäller
+  // vad besättningen SER, aldrig vad de kan rapportera.
   const materialOptions = useMemo(() => {
     const shorts = (workOrder?.line_items || []).map((item) => inferMaterialFromArticle(item?.article_name)?.short);
     return [...new Set(shorts.filter((short): short is string => Boolean(short)))];
@@ -110,6 +202,12 @@ export default function WorkOrderInstallerClient({
   //
   // Ligger här av samma skäl som memon ovan: `workOrder` är null under laddningen, och en hook
   // efter den tidiga returen körs inte i första rendern.
+  //
+  // 🧨 LÄSER HELA ORDERN, ALDRIG DEN BESKURNA ARRAYEN — även när placeringen utför en etapp.
+  // Exakt samma skäl som att `include_in_description` inte får filtrera listan (se
+  // lib/domains/crm/workOrderProgress.ts): bygger besättningen landgång som råkar ligga i en ANNAN
+  // etapp försvinner momentet ur deras lista, de skriver fritext, och rapporten flaggas
+  // "Ej på ordern". En avvikelse som inte finns är värre än ingen avvikelse.
   const progressWorkItems = useMemo(
     () => progressWorkItemsFromLineItems((workOrder?.line_items || []) as any[]),
     [workOrder?.line_items],
@@ -314,8 +412,17 @@ export default function WorkOrderInstallerClient({
             ) : null}
           </div>
 
+          {/* 🧨 ETAPPEN MÅSTE SÄGAS RAKT UT. Beskärningen nedan tar bort rader ur artikellistan och
+              ur materialvalet; syns inte VARFÖR läser besättningen en kortare order som om det vore
+              hela jobbet — och den som saknar en rad tror att kontoret glömt den. Banderollen säger
+              både vilken del de har och att resten finns.
+
+              Etappens egen arbetsbeskrivning står FÖRE orderns: den är skriven för just den här
+              omgången, medan orderns gäller hela jobbet. Ingen ersätter den andra. */}
+          {stage ? <StageBanner stage={stage} withDescription /> : null}
+
           <div className={cn(crm.cardInner, 'grid gap-2')}>
-            <p className={crm.sectionTitle}>Arbetsbeskrivning</p>
+            <p className={crm.sectionTitle}>Arbetsbeskrivning{stage ? ' för hela ordern' : ''}</p>
             {workScope ? <p className="text-sm font-medium text-slate-800">{workScope}</p> : null}
             {handoffNotes ? (
               <p className="whitespace-pre-wrap text-sm leading-relaxed text-slate-700">{handoffNotes}</p>
@@ -459,8 +566,14 @@ export default function WorkOrderInstallerClient({
 
       {/* Articles (read-only) */}
       {activeTab === 'articles' ? (
+        <div className="grid gap-3">
+          {/* ⚠️ BANDEROLLEN MÅSTE FINNAS HÄR OCKSÅ. Listan nedan är beskuren till etappen; utan en
+              rad som säger varför läser besättningen en kortare order som om det vore hela jobbet,
+              och den som saknar en artikel tror att kontoret glömt den. Info-fliken hjälper inte —
+              man kan stå här utan att ha varit där. Utan beskrivningen, som hör till Info. */}
+          {stage ? <StageBanner stage={stage} /> : null}
         <WorkOrderArticles
-          items={(workOrder.line_items || []) as ArticleLineItem[]}
+          items={scopedLineItems}
           currencyCode={workOrder.currency_code}
           vatPercent={workOrder.vat_percent}
           quoteType={workOrder.quote_type}
@@ -470,6 +583,7 @@ export default function WorkOrderInstallerClient({
           canEdit={false}
           onSave={async () => false}
         />
+        </div>
       ) : null}
 
       {/* Filer — samma komponent som kontorets flik. Interna filer har redan filtrerats bort av

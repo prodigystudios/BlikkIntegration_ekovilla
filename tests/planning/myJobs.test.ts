@@ -53,6 +53,23 @@ const placeholder = (over: Partial<CrmJobRow> = {}): CrmJobRow =>
     ...over,
   });
 
+describe('mergeMyJobs — segmentId', () => {
+  // 🧨 DRIVER ?segment= PÅ LÄNKEN TILL ARBETSORDERN. Fältvyn är per arbetsorder och kan inte veta
+  // vilken ETAPP besättningen kom ifrån utan den — utan segmentet får en besättning som bara ska
+  // göra etapp 1 hela ordern i handen. Granskningsfynd 2026-09-18: feeden bar aldrig fältet, så
+  // etappscopet var kopplat till fel yta och nådde aldrig /mina-jobb.
+  it('en CRM-rad bär sin placering', () => {
+    const [job] = mergeMyJobs([], [crm()]);
+    expect(job.segmentId).toBe(crm().segment_id);
+    expect(job.segmentId).toBeTruthy();
+  });
+
+  it('en Blikk-rad bär ingen — den har ingen CRM-placering att scopa på', () => {
+    const [job] = mergeMyJobs([blikk()], []);
+    expect(job.segmentId).toBeNull();
+  });
+});
+
 describe('mergeMyJobs', () => {
   it('interleaves both sources chronologically and tags each row', () => {
     const merged = mergeMyJobs([blikk({ job_day: '2026-08-13' })], [crm({ job_day: '2026-08-11' })]);
