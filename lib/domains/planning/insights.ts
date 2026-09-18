@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
-import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
+import { mapWorkOrderJob, scopeForSegment, type WorkOrderJobRow } from './display';
+import { expandWorkOrderToBacklogItems, SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { mondayOfISO } from './timezone';
 import { listScopeSpans } from './schedule';
 import { scopeKey, segmentWeekValues, type ScopeValue } from './weekValue';
@@ -92,30 +92,40 @@ export function aggregateInsights(weekStarts: string[], jobs: InsightJob[]): Omi
 }
 
 const JOB_FIELDS =
-  'order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items';
+  'order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items, ' +
+  'crm_work_order_stages(id, stage_number, title, line_quantities)';
 
 // Value (revenue + sacks) of schedulable work orders that have NO segments yet — the work still
 // waiting to be planned.
 async function computeBacklogValue(supabase: SupabaseClient): Promise<{ revenue: number; sacks: number; count: number }> {
   const { data: orders } = await supabase
     .from('crm_work_orders')
-    .select(`id, ${JOB_FIELDS}`)
+    .select(`id, desired_installation_date, assigned_to, ${JOB_FIELDS}`)
     .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
-  const rows = (orders ?? []) as Array<WorkOrderJobRow & { id: string }>;
+  const rows = (orders ?? []) as unknown as Parameters<typeof expandWorkOrderToBacklogItems>[0][];
   if (rows.length === 0) return { revenue: 0, sacks: 0, count: 0 };
 
-  const { data: segs } = await supabase.from('ops_segments').select('work_order_id').in('work_order_id', rows.map((r) => r.id));
-  const scheduled = new Set((segs ?? []).map((s: any) => s.work_order_id as string));
+  // ⚠️ PER SCOPE, inte per order. En order med etapp 1 utplacerad och etapp 2 oplanerad bidrog
+  // tidigare 0 till "Oplanerat värde" — snedtaket såg ut att vara inplanerat bara för att väggen
+  // var det. Samma expansion som backloggens lista använder, så de två kan inte säga olika.
+  const { data: segs } = await supabase
+    .from('ops_segments')
+    .select('work_order_id, stage_id')
+    .in('work_order_id', rows.map((r) => r.id));
+  const scheduled = new Set(
+    (segs ?? []).map((s: any) => scopeKey(s.work_order_id as string, (s.stage_id as string | null) ?? null)),
+  );
 
   let revenue = 0;
   let sacks = 0;
   let count = 0;
-  for (const o of rows) {
-    if (scheduled.has(o.id)) continue;
-    const job = mapWorkOrderJob(o);
-    revenue += job.revenue;
-    sacks += job.total_sacks;
-    count++;
+  for (const row of rows) {
+    for (const item of expandWorkOrderToBacklogItems(row, () => 0)) {
+      if (scheduled.has(item.key)) continue;
+      revenue += item.revenue;
+      sacks += item.total_sacks;
+      count++;
+    }
   }
   return { revenue, sacks, count };
 }
@@ -131,7 +141,7 @@ export async function getPlanningInsights(
 
   const { data: segs, error } = await supabase
     .from('ops_segments')
-    .select(`work_order_id, start_day, truck_id, truck:ops_trucks(name), work_order:crm_work_orders(${JOB_FIELDS})`)
+    .select(`work_order_id, stage_id, start_day, truck_id, truck:ops_trucks(name), work_order:crm_work_orders(${JOB_FIELDS})`)
     .lte('start_day', to)
     .gte('end_day', from)
     .order('start_day', { ascending: true });
@@ -153,9 +163,12 @@ export async function getPlanningInsights(
     if (truck?.name) truckNames.set(s.truck_id, truck.name);
     workOrderIds.add(s.work_order_id);
 
-    const key = scopeKey(s.work_order_id, null);
+    // Per ETAPP, inte per order: två etapper på samma order är två olika saker som ska utföras,
+    // och deras värden hör till var sin vecka.
+    const stageId = (s.stage_id as string | null) ?? null;
+    const key = scopeKey(s.work_order_id, stageId);
     if (values.has(key)) continue;
-    const job = mapWorkOrderJob(wo as WorkOrderJobRow);
+    const job = mapWorkOrderJob(wo as WorkOrderJobRow, scopeForSegment(stageId, wo.crm_work_order_stages));
     values.set(key, { key, revenue: job.revenue, sacks: job.total_sacks });
     labels.set(key, { material: job.material });
   }

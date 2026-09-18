@@ -1,5 +1,11 @@
 import { inferMaterialFromArticle, totalSacks } from '@/lib/domains/crm/materials';
 import { lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import {
+  scopeLineItems,
+  type StageLineItem,
+  type StageScope,
+  type WorkOrderStage,
+} from '@/lib/domains/crm/workOrderStages';
 
 // A work order's revenue (omsättning) = sum of its line-item row totals, ex VAT — the same row math
 // the quote/order/Fortnox use, so the figure can't drift.
@@ -37,6 +43,10 @@ export type JobDisplay = {
   material: string | null;
   // Order value ex VAT (omsättning), summed from the line items.
   revenue: number;
+  /** Etappen kortet visar, när ordern är uppdelad. null = hela ordern eller resten av den. */
+  stage: { id: string; number: number; title: string } | null;
+  /** Hela arbetsorderns säckar, oavsett scope — se kommentaren vid mapWorkOrderJob. */
+  order_total_sacks: number;
 };
 
 function str(value: unknown): string {
@@ -97,9 +107,22 @@ export function matchesJobSearch(
   return [job.ref, job.client_name, job.project_name, job.address].some((v) => (v ?? '').toLowerCase().includes(q));
 }
 
-// Map a crm_work_orders row to the shared display fields shown on a planning card.
-export function mapWorkOrderJob(row: WorkOrderJobRow): JobDisplay {
+/**
+ * Map a crm_work_orders row to the shared display fields shown on a planning card.
+ *
+ * `scope` avgör VAD kortet visar: hela ordern (standard), en etapp, eller resten som ingen etapp
+ * tagit. Beskärningen sker i lib/domains/crm/workOrderStages.ts och returnerar vanliga radobjekt,
+ * så de tre uträkningarna nedan är oförändrade och känner inte till etapper.
+ *
+ * 🧨 `{ kind: 'whole' }` RETURNERAR RADERNA ORÖRDA. En order utan etapper räknas därför bit för bit
+ * som före etappbegreppet — det är bakåtkompatibilitetens gångjärn, och ett test låser det.
+ *
+ * ⚠️ MATERIALET MÅSTE LÄSAS UR DEN BESKURNA ARRAYEN. Läses det ur hela ordern visar etapp 2
+ * (snedtaket, kanske Knauf) etapp 1:s material, och planeraren beställer fel säckar till fel vecka.
+ */
+export function mapWorkOrderJob(row: WorkOrderJobRow, scope: StageScope = { kind: 'whole' }): JobDisplay {
   const { ref, isFortnox } = workOrderRef(row.fortnox_order_number, row.order_number);
+  const items = scopeLineItems((row.line_items ?? []) as StageLineItem[], scope);
   return {
     ref,
     is_fortnox_ref: isFortnox,
@@ -107,8 +130,30 @@ export function mapWorkOrderJob(row: WorkOrderJobRow): JobDisplay {
     client_name: row.client_name,
     status: row.status,
     address: resolveJobAddress(row.work_address, row.customer_snapshot),
-    total_sacks: totalSacks((row.line_items ?? []) as never),
-    material: materialLabelFromLineItems(row.line_items),
-    revenue: lineItemsRevenue(row.line_items),
+    total_sacks: totalSacks(items as never),
+    material: materialLabelFromLineItems(items),
+    revenue: lineItemsRevenue(items),
+    stage:
+      scope.kind === 'stage'
+        ? { id: scope.stage.id, number: scope.stage.stage_number, title: scope.stage.title }
+        : null,
+    // ⛔ Helorderns säckar, ALLTID — även på ett etappkort. Säckrapporteringen är per ARBETSORDER
+    // (en egenkontroll är totalen för hela jobbet, se sackLedger), så en nedräkning mot etappens
+    // tal hade sagt "kvar 0 / 120" på etapp 2 så fort etapp 1 var färdigblåst. Kortet visar
+    // etappens tal som sitt eget och mäter framdriften mot jobbet.
+    order_total_sacks: totalSacks((row.line_items ?? []) as never),
   };
+}
+
+/**
+ * Bygg ett scope ur en placerings `stage_id` och orderns etapper.
+ *
+ * Okänd etapp (raderad mellan läsningarna) behandlas som resten i stället för att kasta — kortet
+ * ska rita något, och resten är det ärligaste svaret när etappen är borta.
+ */
+export function scopeForSegment(stageId: string | null | undefined, stages: WorkOrderStage[] | null | undefined): StageScope {
+  const all = stages ?? [];
+  if (all.length === 0) return { kind: 'whole' };
+  const stage = stageId ? all.find((s) => s.id === stageId) : undefined;
+  return stage ? { kind: 'stage', stage, siblings: all } : { kind: 'rest', stages: all };
 }

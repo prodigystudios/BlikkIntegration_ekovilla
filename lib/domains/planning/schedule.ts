@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { mapWorkOrderJob, workOrderRef, type WorkOrderJobRow } from './display';
+import { mapWorkOrderJob, scopeForSegment, workOrderRef, type WorkOrderJobRow } from './display';
+import type { WorkOrderStage } from '@/lib/domains/crm/workOrderStages';
 import { sackTotalsForWorkOrders } from './reports';
 import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
@@ -17,9 +18,14 @@ export function validateSegmentDates(startDay: string, endDay: string): 'invalid
   return null;
 }
 
+// ⚠️ EN enda inbäddning av crm_work_order_stages, nästlad under arbetsordern. Etapperna behövs i
+// sin HELHET även för ett rest-scopat segment (resten = allt ingen etapp tagit), så en inbäddning
+// filtrerad på segmentets stage_id hade varit fel — och två inbäddningar av samma tabell från samma
+// rad blir tvetydigt för PostgREST.
 const SEGMENT_SELECT =
-  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, field_visible, work_description, created_at, updated_at, ' +
-  'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items)';
+  'id, work_order_id, truck_id, start_day, end_day, sort_index, job_type, on_hold, created_by, created_by_name, placeholder_title, placeholder_customer, field_visible, work_description, stage_id, created_at, updated_at, ' +
+  'work_order:crm_work_orders(order_number, fortnox_order_number, project_name, client_name, status, customer_snapshot, work_address, line_items, ' +
+  'crm_work_order_stages(id, stage_number, title, line_quantities))';
 
 type RawSegment = {
   id: string;
@@ -36,10 +42,13 @@ type RawSegment = {
   placeholder_customer: string | null;
   field_visible: boolean | null;
   work_description: string | null;
+  stage_id: string | null;
   created_at: string;
   updated_at: string;
-  work_order: WorkOrderJobRow | WorkOrderJobRow[] | null;
+  work_order: WorkOrderEmbed | WorkOrderEmbed[] | null;
 };
+
+type WorkOrderEmbed = WorkOrderJobRow & { crm_work_order_stages?: WorkOrderStage[] | null };
 
 // Map a raw ops_segments row (with the embedded work order) to the OpsSegment the UI renders.
 // Supabase returns a to-one embed as an object, but the generated typing can be an array —
@@ -49,6 +58,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
   return {
     id: row.id,
     work_order_id: row.work_order_id,
+    stage_id: row.stage_id ?? null,
     truck_id: row.truck_id,
     start_day: row.start_day,
     end_day: row.end_day,
@@ -63,7 +73,9 @@ export function mapSegment(row: RawSegment): OpsSegment {
     work_description: row.work_description ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
-    job: wo ? mapWorkOrderJob(wo) : null,
+    // Beskuret till den etapp placeringen utför. Ingen etapp på ordern → whole, alltså exakt
+    // dagens beteende för de dryga hundra ordrar som inte är uppdelade.
+    job: wo ? mapWorkOrderJob(wo, scopeForSegment(row.stage_id, wo.crm_work_order_stages)) : null,
     sacks_reported: 0,
     sacks_final: false,
     crew: [],
@@ -142,13 +154,16 @@ export async function listScopeSpans(
     const { rows, error } = await readAllPages<{
       id: string;
       work_order_id: string | null;
+      stage_id: string | null;
       truck_id: string;
       start_day: string;
       end_day: string;
     }>((from, to) =>
       supabase
         .from('ops_segments')
-        .select('id, work_order_id, truck_id, start_day, end_day')
+        // ⚠️ stage_id MÅSTE med. Utan den hamnar etapp 1 och etapp 2 i samma hink, och etapp 2:s
+        // värde fördelas över etapp 1:s dagar också — alltså fel vecka och fel bil.
+        .select('id, work_order_id, stage_id, truck_id, start_day, end_day')
         .in('work_order_id', chunk)
         .order('id', { ascending: true })
         .range(from, to),
@@ -157,7 +172,7 @@ export async function listScopeSpans(
     for (const r of rows) {
       if (!r.work_order_id) continue; // platshållare bär inget värde
       out.push({
-        key: scopeKey(r.work_order_id, null),
+        key: scopeKey(r.work_order_id, r.stage_id ?? null),
         segment_id: r.id,
         truck_id: r.truck_id,
         start_day: r.start_day,
