@@ -176,3 +176,28 @@ describe('delfakturerade ordrar i backloggen', () => {
     expect(backlogItemsForStatus(PARTIALLY_INVOICED, [wall], items(2))).toEqual([]);
   });
 });
+
+describe('rest-scopet märks ut', () => {
+  const wall = stage('s1', 1, 'Vägg', [['r-wall', 30]]);
+
+  // 🧨 William 2026-09-18, första skarpa uppdelningen: "står fortfarande fullt säckantal på det".
+  // Säckbadgen visar HELA orderns tal (säckboken är per arbetsorder), så utan en egen märkning var
+  // jobbets 797 det enda synliga talet på ett kort som bar 447. Etappkortet hade sitt chip och gick
+  // fritt; rest-kortet log.
+  it('resten av en UPPDELAD order är markerad', () => {
+    const job = mapWorkOrderJob(ORDER, { kind: 'rest', stages: [wall] });
+    expect(job.is_rest).toBe(true);
+    expect(job.stage).toBeNull();
+    expect(job.total_sacks).toBeLessThan(job.order_total_sacks);
+  });
+
+  // ⚠️ En order UTAN etapper är inte "resten" av något — då hade varje vanligt kort fått ett chip.
+  it('en odelad order är INTE markerad', () => {
+    expect(mapWorkOrderJob(ORDER).is_rest).toBe(false);
+    expect(mapWorkOrderJob(ORDER, { kind: 'rest', stages: [] }).is_rest).toBe(false);
+  });
+
+  it('ett etappkort är inte heller markerat — det har sitt eget chip', () => {
+    expect(mapWorkOrderJob(ORDER, { kind: 'stage', stage: wall, siblings: [wall] }).is_rest).toBe(false);
+  });
+});

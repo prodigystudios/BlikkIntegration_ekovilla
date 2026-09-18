@@ -171,10 +171,18 @@ export default function Backlog({
                     </div>
                     {/* Etappen som eget chip, ALDRIG inbakad i referensen: `ref` är Fortnox-numret,
                         det matchas av sökningen och går in i orderbekräftelser. */}
-                    {item.stage && (
+                    {(item.stage || item.is_rest) && (
                       <div className="mt-1">
-                        <span className="whitespace-nowrap rounded-full border border-amber-200 bg-amber-50 px-2 py-px text-[10px] font-bold text-amber-800">
-                          Etapp {item.stage.number} · {item.stage.title}
+                        {/* Rest-posten märks lika tydligt som en etapp. Utan den syns bara
+                            kundnamnet och ett säckantal, och två poster för samma order såg ut som
+                            en dubblett i stället för två olika saker att planera. */}
+                        <span
+                          className={cn(
+                            'whitespace-nowrap rounded-full border px-2 py-px text-[10px] font-bold',
+                            item.stage ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-slate-50 text-slate-600',
+                          )}
+                        >
+                          {item.stage ? `Etapp ${item.stage.number} · ${item.stage.title}` : 'Resten av ordern'}
                         </span>
                       </div>
                     )}
