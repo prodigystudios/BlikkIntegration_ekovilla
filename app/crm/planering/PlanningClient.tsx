@@ -18,6 +18,8 @@ import { describeShortfallCover, type DepotForecast } from '@/lib/domains/planni
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
+import { SCHEDULABLE_WORK_ORDER_STATUSES } from '@/lib/domains/planning/backlog';
+import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
   parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
@@ -160,6 +162,9 @@ export default function PlanningClient({
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
+  // Jobbens ALLA placeringar, även utanför den hämtade veckan — nämnaren när veckans omsättning
+  // fördelas över de dagar jobbet faktiskt utförs. Se fönsterfällan i listScopeSpans.
+  const [scopeSpans, setScopeSpans] = useState<ScopeSpan[]>([]);
   const [people, setPeople] = useState<AssignablePerson[]>([]);
   const [jobTypes, setJobTypes] = useState<JobType[]>(DEFAULT_JOB_TYPES);
   const [dayNotes, setDayNotes] = useState<DayNote[]>([]);
@@ -315,13 +320,14 @@ export default function PlanningClient({
   }, [backlogLoad]);
 
   const loadSegments = useCallback(async (from: string, to: string) => {
-    const data = await fetchLatest<{ segments: OpsSegment[]; trucks: OpsTruck[] }>(
+    const data = await fetchLatest<{ segments: OpsSegment[]; trucks: OpsTruck[]; scopeSpans?: ScopeSpan[] }>(
       segmentsLoad,
       `${API}/segments?from=${from}&to=${to}`,
       'Kunde inte hämta schemat',
     );
     if (!data) return;
     setSegments(data.segments);
+    setScopeSpans(data.scopeSpans ?? []);
     setTrucks(data.trucks);
     setBoardLoaded(true);
     // A good load clears a stale banner. Nothing else in this component ever resets `error`, so
@@ -1010,6 +1016,26 @@ export default function PlanningClient({
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
     [segments, hiddenTrucks, matchBoard],
   );
+  // Veckans omsättning och säckar, fördelade över de dagar jobben faktiskt utförs.
+  //
+  // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments`. Sökrutan och dolda bilar är VYINSTÄLLNINGAR och
+  // ska inte tyst ändra vad veckan är värd — förut gjorde de det, så att skriva ett kundnamn i
+  // sökrutan sänkte "Veckan totalt" till det jobbets värde. Banornas egna summor filtreras i
+  // WeekBoard på bil-id, vilket är en annan sak.
+  //
+  // ⚠️ Bara schemaläggningsbara statusar räknas — samma vakt som insikterna har. En avbruten eller
+  // färdig order som ligger kvar i kalendern är inte omsättning. Listan importeras, aldrig skrivs
+  // av: en kopia hade börjat räkna avbrutna order igen så fort den ena listan ändrades.
+  const weekSlices = useMemo<WeekSlice[]>(() => {
+    const counted = new Set<string>(SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+    const values = new Map<string, ScopeValue>();
+    for (const s of segments) {
+      if (!s.work_order_id || !s.job || !counted.has(s.job.status)) continue;
+      const key = scopeKey(s.work_order_id, null);
+      if (!values.has(key)) values.set(key, { key, revenue: s.job.revenue, sacks: s.job.total_sacks });
+    }
+    return segmentWeekValues([...values.values()], scopeSpans);
+  }, [segments, scopeSpans]);
   const visibleTrucks = useMemo(() => trucks.filter((t) => !hiddenTrucks.has(t.id)), [trucks, hiddenTrucks]);
   // ⚠️ Räknat på BILARNA, inte på `hiddenTrucks.size`. Mängden bär sparade id:n, och ett id för en
   // borttagen bil hade då hållit "Visa alla" uppe för alltid med ett tal som inte motsvarar något
@@ -1444,6 +1470,7 @@ export default function PlanningClient({
                         trucks={visibleTrucks}
                         allTrucksHidden={allTrucksHidden}
                         segments={visibleSegments}
+                        weekSlices={weekSlices}
                         todayISO={todayISO}
                         canWrite={canWrite}
                         placing={placing}

@@ -16,8 +16,19 @@ import { mondayOfISO } from './timezone';
 // ⚠️ ATT DELA MODUL RÄCKER INTE. De måste också få SAMMA INDATA: scopets alla placeringar, inte
 // bara de som ligger i det fönster som ritas. Se fönsterfällan i revenueSpread.ts.
 
+/**
+ * Nyckeln ett scope adresseras med överallt: arbetsordern, och etappen när ordern delats upp.
+ *
+ * `rest` (inte t.ex. tom sträng) för det oetappade, så nyckeln alltid har två delar och aldrig kan
+ * kollidera med ett etapp-id. På en order UTAN etapper är resten hela ordern — det är gångjärnet
+ * som gör att dagens beteende bevaras bit för bit tills etapper finns.
+ */
+export function scopeKey(workOrderId: string, stageId: string | null): string {
+  return `${workOrderId}:${stageId ?? 'rest'}`;
+}
+
 export type ScopeValue = {
-  /** `${work_order_id}:${stage_id ?? 'rest'}` — det som ska utföras. */
+  /** `scopeKey(work_order_id, stage_id)` — det som ska utföras. */
   key: string;
   revenue: number;
   sacks: number;

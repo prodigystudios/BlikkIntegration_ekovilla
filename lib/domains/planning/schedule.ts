@@ -3,6 +3,8 @@ import { mapWorkOrderJob, workOrderRef, type WorkOrderJobRow } from './display';
 import { sackTotalsForWorkOrders } from './reports';
 import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
+import { chunkIds, readAllPages } from './pagedRead';
+import { scopeKey, type ScopeSpan } from './weekValue';
 import type { OpsSegment } from './types';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -74,7 +76,7 @@ export function mapSegment(row: RawSegment): OpsSegment {
 export async function listSegments(
   supabase: SupabaseClient,
   range: { from: string; to: string },
-): Promise<{ data: OpsSegment[]; error: { message: string } | null }> {
+): Promise<{ data: OpsSegment[]; scopeSpans: ScopeSpan[]; error: { message: string } | null }> {
   const { data, error } = await supabase
     .from('ops_segments')
     .select(SEGMENT_SELECT)
@@ -87,20 +89,24 @@ export async function listSegments(
     // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
     .order('id', { ascending: true });
 
-  if (error) return { data: [], error };
+  if (error) return { data: [], scopeSpans: [], error };
 
   const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
   // Attach each job's blown-sack total + confirmation state (both summed/keyed by work order), and
   // the crew assigned to each individual placement (keyed by segment id). Placeholders have no work
   // order, so they contribute no ids here.
   const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))].filter((id): id is string => id != null);
-  const [reported, crewBySegment, confirmations] = await Promise.all([
+  const [reported, crewBySegment, confirmations, spans] = await Promise.all([
     // Summan OCH om den är egenkontrollens. `kind` hämtas ändå av supersede-regeln, så flaggan
     // följer med gratis — en egen fråga bara för den hade varit en extra rundtur mot samma tabell.
     sackTotalsForWorkOrders(supabase, workOrderIds),
     listCrewBySegment(supabase, segs.map((s) => s.id)),
     confirmationsByWorkOrder(supabase, workOrderIds),
+    // Jobbens ALLA placeringar, inte bara de i fönstret — nämnaren i veckofördelningen. Se
+    // fönsterfällan i listScopeSpans.
+    listScopeSpans(supabase, workOrderIds),
   ]);
+  if (spans.error) return { data: [], scopeSpans: [], error: spans.error };
   for (const s of segs) {
     const total = s.work_order_id ? reported.get(s.work_order_id) : undefined;
     s.sacks_reported = total?.sacks ?? 0;
@@ -108,7 +114,58 @@ export async function listSegments(
     s.crew = crewBySegment.get(s.id) ?? [];
     s.confirmation = (s.work_order_id && confirmations.get(s.work_order_id)) || { ...EMPTY_CONFIRMATION };
   }
-  return { data: segs, error: null };
+  return { data: segs, scopeSpans: spans.data, error: null };
+}
+
+/**
+ * Alla placeringar för en uppsättning arbetsordrar — nämnaren i veckofördelningen.
+ *
+ * 🧨 SEPARAT LÄSNING, OCH DET ÄR HELA SKÄLET ATT DEN FINNS. listSegments och getPlanningInsights
+ * hämtar bara segment som ÖVERLAPPAR det efterfrågade fönstret. Fördelas ett jobbs värde med de
+ * segmenten som nämnare får ett jobb som sträcker sig utanför fönstret för hög andel i den synliga
+ * veckan — exakt den uppblåsning fördelningen finns för att döda, fast tyst och bara vid
+ * fönsterkanten. Ett femveckorsjobb sett genom ett enveckasfönster hade fått hela sitt värde på den
+ * veckan igen.
+ *
+ * ⚠️ SIDINDELAD OCH CHUNKAD. En kapad spannlista sänker nämnaren och HÖJER veckans omsättning —
+ * ett fel som ser ut som ett bra resultat. Se pagedRead.ts.
+ */
+export async function listScopeSpans(
+  supabase: SupabaseClient,
+  workOrderIds: string[],
+): Promise<{ data: ScopeSpan[]; error: { message: string } | null }> {
+  const ids = [...new Set(workOrderIds)];
+  if (ids.length === 0) return { data: [], error: null };
+
+  const out: ScopeSpan[] = [];
+  for (const chunk of chunkIds(ids)) {
+    const { rows, error } = await readAllPages<{
+      id: string;
+      work_order_id: string | null;
+      truck_id: string;
+      start_day: string;
+      end_day: string;
+    }>((from, to) =>
+      supabase
+        .from('ops_segments')
+        .select('id, work_order_id, truck_id, start_day, end_day')
+        .in('work_order_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (error) return { data: [], error };
+    for (const r of rows) {
+      if (!r.work_order_id) continue; // platshållare bär inget värde
+      out.push({
+        key: scopeKey(r.work_order_id, null),
+        segment_id: r.id,
+        truck_id: r.truck_id,
+        start_day: r.start_day,
+        end_day: r.end_day,
+      });
+    }
+  }
+  return { data: out, error: null };
 }
 
 export async function listTrucks(supabase: SupabaseClient) {

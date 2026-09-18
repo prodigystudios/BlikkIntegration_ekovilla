@@ -25,7 +25,9 @@ export async function GET(req: Request) {
     if (segRes.error) return routeError(500, 'planning_segments_failed', segRes.error.message);
     if (truckRes.error) return routeError(500, 'planning_trucks_failed', truckRes.error.message);
 
-    return ok({ segments: segRes.data || [], trucks: truckRes.data || [] });
+    // `scopeSpans` är jobbens ALLA placeringar, även de utanför [from, to]. Tavlan behöver dem som
+    // nämnare när den fördelar omsättningen över veckor — se fönsterfällan i listScopeSpans.
+    return ok({ segments: segRes.data || [], trucks: truckRes.data || [], scopeSpans: segRes.scopeSpans || [] });
   } catch (e: any) {
     return routeError(500, 'planning_segments_unexpected', e?.message || 'Failed to load schedule');
   }

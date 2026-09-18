@@ -2,11 +2,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
 import { SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { mondayOfISO } from './timezone';
+import { listScopeSpans } from './schedule';
+import { scopeKey, segmentWeekValues, type ScopeValue } from './weekValue';
 
 // Forward-looking planning insights: scheduled revenue + sacks per week, per truck, per material,
 // and the value of work still waiting to be planned (unplanned backlog). Pure aggregation here is
-// unit-tested; the DB read is a thin RLS-scoped query. All figures are deduped by work order so a
-// multi-segment job counts once (attributed to its earliest scheduled week + that segment's truck).
+// unit-tested; the DB read is a thin RLS-scoped query.
+//
+// Ett jobbs värde FÖRDELAS över de dagar det faktiskt utförs (weekValue.ts) — en vecka svarar på
+// "vad ska utföras och omsättas den här veckan". Tidigare deduppades varje jobb till sitt TIDIGASTE
+// segment, så ett femveckorsjobb lade hela ordervärdet på startveckan medan tavlan lade hela värdet
+// på var och en av de fem. Samma modul räknar nu båda vyerna, så de kan inte svara olika.
 
 export type WeekPoint = { weekStart: string; label: string; revenue: number; sacks: number };
 export type TruckPoint = { truck_id: string; truck_name: string; revenue: number; sacks: number };
@@ -133,23 +139,52 @@ export async function getPlanningInsights(
   const empty: PlanningInsights = { weeks: [], byTruck: [], byMaterial: [], backlog: { revenue: 0, sacks: 0, count: 0 } };
   if (error) return { data: empty, error };
 
-  const seen = new Set<string>();
-  const jobs: InsightJob[] = [];
+  // Ett scopes värde och etikett, plus bilnamnen. Dedupen är på SCOPE, inte på placering: samma jobb
+  // kan ligga på flera segment och ska bara bidra med sitt värde en gång — fördelningen avgör sedan
+  // hur det värdet landar över veckor och bilar.
+  const values = new Map<string, ScopeValue>();
+  const labels = new Map<string, { material: string | null }>();
+  const truckNames = new Map<string, string>();
+  const workOrderIds = new Set<string>();
   for (const s of (segs ?? []) as Array<Record<string, any>>) {
     const wo = Array.isArray(s.work_order) ? s.work_order[0] : s.work_order;
-    if (!wo || !OPEN.has(wo.status) || !s.work_order_id || seen.has(s.work_order_id)) continue;
-    seen.add(s.work_order_id);
-    const job = mapWorkOrderJob(wo as WorkOrderJobRow);
+    if (!wo || !OPEN.has(wo.status) || !s.work_order_id) continue;
     const truck = Array.isArray(s.truck) ? s.truck[0] : s.truck;
-    jobs.push({
-      weekStart: mondayOf(s.start_day),
-      truck_id: s.truck_id,
-      truck_name: truck?.name ?? '—',
-      revenue: job.revenue,
-      sacks: job.total_sacks,
-      material: job.material,
-    });
+    if (truck?.name) truckNames.set(s.truck_id, truck.name);
+    workOrderIds.add(s.work_order_id);
+
+    const key = scopeKey(s.work_order_id, null);
+    if (values.has(key)) continue;
+    const job = mapWorkOrderJob(wo as WorkOrderJobRow);
+    values.set(key, { key, revenue: job.revenue, sacks: job.total_sacks });
+    labels.set(key, { material: job.material });
   }
+
+  // 🧨 NÄMNAREN HÄMTAS SEPARAT. Frågan ovan ger bara segment som överlappar fönstret; fördelas
+  // värdet över dem får ett jobb som sträcker sig utanför fönstret för hög andel i den synliga
+  // veckan — samma uppblåsning som fördelningen finns för att döda. Se listScopeSpans.
+  const spans = await listScopeSpans(supabase, [...workOrderIds]);
+  if (spans.error) return { data: empty, error: spans.error };
+
+  // ⚠️ SKIVORNA KLIPPS TILL FÖNSTRET. Nämnaren är jobbets HELA spann, så ett femveckorsjobb ger
+  // skivor även för veckor utanför [from, to]. aggregateInsights hoppar över dem i veckoserien men
+  // räknar dem i bil- och materialtotalerna — utan klippningen hade "Omsättning per bil" dragit in
+  // arbete från veckor som inte ens visas.
+  //
+  // Följd, och den är en förbättring: byTruck summerar nu till samma tal som veckoserien. Förut
+  // gjorde den medvetet inte det (se kommentaren vid aggregateInsights), eftersom dedupen mot
+  // första segmentet kunde peka ut en vecka före fönstret.
+  const inWindow = new Set(weekStarts);
+  const jobs: InsightJob[] = segmentWeekValues([...values.values()], spans.data)
+    .filter((slice) => inWindow.has(slice.weekStart))
+    .map((slice) => ({
+      weekStart: slice.weekStart,
+      truck_id: slice.truck_id,
+      truck_name: truckNames.get(slice.truck_id) ?? '—',
+      revenue: slice.revenue,
+      sacks: slice.sacks,
+      material: labels.get(slice.key)?.material ?? null,
+    }));
 
   const backlog = await computeBacklogValue(supabase);
   return { data: { ...aggregateInsights(weekStarts, jobs), backlog }, error: null };
