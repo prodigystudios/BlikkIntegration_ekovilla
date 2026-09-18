@@ -236,6 +236,32 @@ export async function placeSegment(
   supabase: SupabaseClient,
   input: PlaceSegmentInput,
 ): Promise<{ data: OpsSegment | null; error: { message: string } | null }> {
+  // Etappens arbetsbeskrivning och jobbtyp ÄRVS till placeringen, som ett startvärde.
+  //
+  // ⚠️ KOPIERAS, läses inte parallellt. Fältvyn läser `ops_segments.work_description`
+  // (get_my_crm_jobs → myJobs.ts) och kortet renderar den; att i stället låta varje läsare falla
+  // tillbaka på etappen hade gett två källor för samma text. Segmentet går att ändra efteråt utan
+  // att etappen rörs — det är poängen med en kopia.
+  //
+  // ⚠️ EN UTEBLIVEN ÄRVNING FÄLLER INTE PLACERINGEN. Går uppslaget sönder placeras jobbet ändå,
+  // utan beskrivning; planeraren ser det direkt på kortet och kan skriva den. Att avvisa en
+  // placering för att en bekvämlighetsläsning misslyckades vore en sämre affär.
+  let jobType = input.jobType ?? null;
+  let workDescription: string | null = null;
+  if (input.stageId) {
+    const { data: stage } = await supabase
+      .from('crm_work_order_stages')
+      .select('work_description, job_type')
+      .eq('id', input.stageId)
+      .maybeSingle();
+    const row = stage as { work_description?: string | null; job_type?: string | null } | null;
+    if (row) {
+      // Ett uttryckligt val från anroparen vinner över etappens.
+      jobType = input.jobType ?? row.job_type ?? null;
+      workDescription = row.work_description ?? null;
+    }
+  }
+
   const { data, error } = await supabase
     .from('ops_segments')
     .insert({
@@ -245,7 +271,8 @@ export async function placeSegment(
       start_day: input.startDay,
       end_day: input.endDay,
       sort_index: input.sortIndex ?? (await nextSortIndex(supabase, input.truckId, input.startDay)),
-      job_type: input.jobType ?? null,
+      job_type: jobType,
+      work_description: workDescription,
       created_by: input.actorUserId,
       created_by_name: input.actorName ?? null,
     })
