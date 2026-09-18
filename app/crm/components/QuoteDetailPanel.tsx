@@ -379,10 +379,12 @@ export default function QuoteDetailPanel({
             <button
               type="button"
               onClick={() => setCustomerQuotesOpen(true)}
-              // justify-self-start: ett rutnätsbarn sträcks annars över hela raden, och en <button>
-              // centrerar sitt innehåll — texten hamnade mitt i panelen i stället för under
-              // kundnamnet. Länken ovanför slipper det för att en <a> ärver textjusteringen.
-              className="m-0 inline-flex max-w-full items-center gap-1 justify-self-start text-sm text-slate-500 transition-colors hover:text-emerald-700"
+              // 🧨 `p-0` OCH `justify-self-start`. Husets globala `button`-regel i globals.css sätter
+              // `padding: 10px 14px` och `justify-content: center` på VARJE knapp — utan p-0 låg
+              // texten indragen 14 px jämfört med kundkortslänken rakt ovanför, som slipper det för
+              // att den är en <a>. Samma fälla som listknapparna i uppgiftskortet redan värjer sig
+              // mot med `justify-start`.
+              className="m-0 inline-flex max-w-full items-center gap-1 justify-self-start p-0 text-sm text-slate-500 transition-colors hover:text-emerald-700"
             >
               <span className="underline-offset-2 hover:underline">Kundens offerter</span>
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">

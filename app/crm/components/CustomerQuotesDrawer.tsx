@@ -171,11 +171,14 @@ export default function CustomerQuotesDrawer({
           </button>
         </div>
 
-        <div className="grid content-start gap-1.5 overflow-y-auto p-3">
-          {loading ? <span className="px-1 text-sm text-slate-500">Hämtar…</span> : null}
-          {!loading && failed ? <span className="px-1 text-sm text-rose-600">Kunde inte hämta kundens offerter.</span> : null}
+        {/* Raderna går kant i kant med lådan och skiljs av linjer, inte av kort: en låda är redan en
+            yta, och kort inuti den blev en ram i en ram. Endast över- och underkant — William,
+            2026-09-18. Sidopadding bor därför på RADEN, inte på listan. */}
+        <div className="grid content-start overflow-y-auto border-t border-x-0 border-b-0 border-solid border-[#e3e9df]">
+          {loading ? <span className="px-4 py-3 text-sm text-slate-500">Hämtar…</span> : null}
+          {!loading && failed ? <span className="px-4 py-3 text-sm text-rose-600">Kunde inte hämta kundens offerter.</span> : null}
           {!loading && !failed && others.length === 0 ? (
-            <span className="px-1 text-sm text-slate-500">
+            <span className="px-4 py-3 text-sm text-slate-500">
               {hasScope
                 ? 'Kunden har inga andra offerter.'
                 // Varken kund eller prospekt på offerten — då VET vi inte, och ska inte påstå.
@@ -188,7 +191,14 @@ export default function CustomerQuotesDrawer({
               key={quote.id}
               type="button"
               onClick={() => onSelect(quote)}
-              className="grid gap-1 rounded-xl border border-solid border-[#e3e9df] bg-white px-3 py-2.5 text-left transition hover:border-[#c8d4c3]"
+              // 🧨 `justify-start`: husets globala button-regel sätter `justify-content: center`, och
+              // på ett rutnät centrerar den hela kolumnen — raderna såg ut att flyta omkring på
+              // olika nivåer trots `text-left`. Samma skäl som uppgiftskortets listknappar.
+              //
+              // Linje bara nedtill (listans egen ger den översta): knappar bär redan
+              // `border: 1px solid transparent` från samma globala regel, så ingen fantomkant
+              // uppstår av att bara en sida får färg.
+              className="grid w-full justify-start gap-1 border-x-0 border-t-0 border-b border-solid border-[#e3e9df] bg-white px-4 py-3 text-left transition hover:bg-[#f7f9f5]"
             >
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
@@ -215,14 +225,14 @@ export default function CustomerQuotesDrawer({
           {/* Fotnoten säger något bara när det FINNS andra rader — annars stod den under texten
               "Kunden har inga andra offerter" och motsade den. */}
           {!loading && !failed && others.length > 0 && current ? (
-            <span className="px-1 pt-1 text-xs text-slate-400">
+            <span className="px-4 py-3 text-xs text-slate-400">
               Den öppna offerten ({documentRef(current.fortnox_offer_number, current.quote_number)}) visas inte i listan.
             </span>
           ) : null}
 
           {/* Kapad lista: säg det hellre än att tiga. Annars ser en gammal offert ut som obefintlig. */}
           {!loading && !failed && total > quotes.length ? (
-            <span className="px-1 pt-1 text-xs text-amber-700">
+            <span className="px-4 pb-3 text-xs text-amber-700">
               Visar de {quotes.length} senaste av {total}. Äldre offerter finns på kundkortet.
             </span>
           ) : null}
