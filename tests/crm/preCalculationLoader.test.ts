@@ -101,19 +101,23 @@ describe('collectPreCalculationArticleNumbers', () => {
 });
 
 describe('buildPreCalculationItems', () => {
-  // 🧨 MUTATIONSPRÖVAT: tas `|| parseDecimal(raw, 0) <= 0` bort faller det här testet — och då
-  // räknas lösull som gratis.
-  //
-  // Förkalkylen får INTE ärva efterkalkylens regel att 0 ≠ tomt. Efterkalkylen prissätter lösull
-  // ur kostnadsartikeln och svarar okänt när den saknas; förkalkylen har bara radens egen artikel
-  // att falla tillbaka på, och ett nollpris blir där en materialkostnad på noll kronor.
-  //
-  // Mätt i cachen 2026-09-21: 54 av 292 artiklar har inköpspris 0, INGEN har tomt — ofyllt lagras
-  // som noll. Bland dem ligger 1001–1006 ISOCELL cellulosa. Utan spärren fick 125 av 187 ordrar
-  // för hög täckningsgrad, som mest 35 procentenheter, och en order visade 100,0 %.
-  it('inköpspris 0 är OKÄNT här, inte gratis — ofyllt lagras som noll', () => {
+  // 🧨 MUTATIONSPRÖVAT: läggs `isBlownRow(...)` till som villkor på DEN HÄR raden faller testet.
+  // Etableringen är en tjänst — den har ingen materialkostnad, och TB1 är efter material. Läses
+  // nollan som okänt lyfts raden ut ur BÅDA leden, och talet mäter då bara isoleringsdelen: en
+  // order med EKOVILLA 1 970 kr + etablering 3 500 kr visade 48,4 % i stället för 81,4 %.
+  it('inköpspris 0 på en TJÄNSTERAD är gratis — det finns inget inköp', () => {
     const items = buildPreCalculationItems(order(), new Map([['1010', 0]]));
-    expect(items.find((i) => i.article_number === '1010')?.purchasePrice).toBeNull();
+    expect(items.find((i) => i.article_number === '1010')?.purchasePrice).toBe(0);
+  });
+
+  // 🧨 MUTATIONSPRÖVAT: tas `isBlownRow(...)` bort blir lösull utan kostnadsartikel GRATIS.
+  // ISOCELL (1001–1006) ligger i katalogen med pris 0 och saknar kostnadsartikel; används den blir
+  // hela isoleringen kostnadsfri och ordern visar 100 % täckningsgrad. Samma felklass som i
+  // augusti när 28 av 76 ordrar stod på TG1 100 %.
+  it('inköpspris 0 på en BLÅST rad är okänt — lösull kostar alltid pengar', () => {
+    const isocell = { ...lososull(), article_name: 'ISOCELL cellulosa vind', article_number: '1001' };
+    const items = buildPreCalculationItems(order({ line_items: [isocell] }), new Map([['1001', 0]]));
+    expect(items[0].purchasePrice).toBeNull();
   });
 
   it('artikel som saknas i cachen ger okänt pris, inte noll', () => {
