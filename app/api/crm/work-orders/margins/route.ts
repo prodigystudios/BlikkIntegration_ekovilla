@@ -71,6 +71,13 @@ export async function POST(req: Request) {
     // Bara det de två kalkylerna behöver. Hela crmWorkOrderSelect för hundra ordrar hade dragit med
     // sig kundsnapshots och handoff-texter som ingen här läser.
     //
+    // ⛔ ORDERN ÄR SANNINGEN, INTE OFFERTEN — läs inte om det här mot `crm_quotes`.
+    // När arbetsordern skapas LÅSES offerten: innehållsändringar tillåts bara så länge
+    // `work_order_id` är tomt (app/api/crm/quotes/[id]/route.ts). Priser som ändras efteråt ändras
+    // alltså på ORDERN, och det är orderns rader som beskriver jobbets verkliga status. En
+    // granskning läste plantalet som "vad som såldes in vid signering" och föreslog att hämta den
+    // låsta offerten i stället — det är fel håll (Williams besked 2026-09-21).
+    //
     // ⚠️ `quote_type` och `rot_details` är INTE överflödiga: utan dem kan förkalkylen inte skilja en
     // ROT-flaggad arbetsrad (intäkt utan materialkostnad) från en obedömbar rad, och raden hade
     // lyfts ut ur intäkten i stället för räknats med. Se isRotActive.
