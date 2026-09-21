@@ -3,6 +3,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemRowTotal, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import {
   calculatePreCalculation,
+  isBlownRow,
   type MaterialSackPrice,
   type PreCalculation,
   type PreCalculationLineItem,
@@ -81,23 +82,29 @@ export function buildPreCalculationItems(
       // efterkalkylens laddare följer, och samma funktion: en andra implementation av
       // "vad kostar raden" är en andra chans att räkna fel på rabatten.
       revenue: lineItemRowTotal(item as PricingLineItem),
-      // 🧨 EN NOLLA ÄR OKÄNT HÄR, INTE GRATIS — tvärtemot efterkalkylens regel, och med flit.
+      // 🧨 EN NOLLA BETYDER OLIKA SAKER PÅ EN TJÄNSTERAD OCH PÅ EN BLÅST RAD.
       //
-      // Efterkalkylen får skilja 0 från tomt (afterCalculation.ts: "INKÖPSPRIS 0 ≠ TOMT") eftersom
-      // dess lösull prissätts ur KOSTNADSARTIKELN; saknas den svarar den okänt. Förkalkylen har
-      // ingen sådan reserv: faller den tillbaka på radens egen artikel blir ett nollpris till en
-      // materialkostnad på noll kronor.
+      // Ofyllt lagras som noll: av 292 artiklar i cachen har 54 inköpspris 0 och INGEN har tomt.
+      // Det frestar till slutsatsen att varje nolla är okunskap — men mätt mot orderraderna sitter
+      // ingen av dem på en blåst rad. De åtta som faktiskt används är tjänster: etablering,
+      // sanering, arbetskostnad ROT, frakt, montering, landgång. De har ingen materialkostnad, och
+      // TB1 är per definition efter MATERIAL, så nollan är där ett riktigt svar.
       //
-      // Mätt i cachen 2026-09-21: av 292 artiklar har 54 inköpspris 0 och INGEN har tomt — ofyllt
-      // lagras som noll. Bland nollorna ligger 1001–1006 ISOCELL cellulosa, alltså lösull som
-      // faktiskt kostar pengar. Utan den här raden räknades den som gratis: 125 av 187 ordrar fick
-      // för hög täckningsgrad, som mest 35 procentenheter, och en order visade 100,0 %. Exakt den
-      // felklass efterkalkylen härdades mot i augusti (28 av 76 ordrar på TG1 100 %).
+      // Att läsa dem som okända var en överkorrigering med mätbar skada: en order som BARA bar
+      // sanering (24 300 kr) tappade sitt tal helt i stället för att visa sanna TG1 100 %, och en
+      // order med EKOVILLA 1 970 kr + etablering 3 500 kr visade 48,4 % — isoleringens marginal,
+      // inte orderns 81,4 %. Täckningen föll från 184 till 59 av 187 ordrar.
       //
-      // Offertformuläret gör redan samma sak ett steg tidigare (`purchase_price > 0` i
-      // QuoteFormClient), så det här är dessutom det som får tavlan och offerten att visa SAMMA tal.
-      // ⛔ Vänd inte tillbaka utan att först fylla i de 54 artiklarnas inköpspris i Fortnox.
-      purchasePrice: raw == null || parseDecimal(raw, 0) <= 0 ? null : parseDecimal(raw, 0),
+      // Spärren behövs ändå, men bara där en nolla omöjligt kan vara sann: en BLÅST rad. Lösull
+      // kostar alltid pengar. Har materialet en kostnadsartikel används den ändå (marginCostBasis
+      // väljer säckpriset först); saknas den — ISOCELL, Hunton, PAROC — faller raden tillbaka på
+      // artikelns eget pris, och en nolla där hade gjort isoleringen gratis. ISOCELL 1001–1006
+      // ligger i katalogen med pris 0 och används inte i dag; den här raden är det som gör att de
+      // inte tyst blir till 100 % täckningsgrad den dagen de används.
+      purchasePrice:
+        raw == null || (parseDecimal(raw, 0) <= 0 && isBlownRow(item as any))
+          ? null
+          : parseDecimal(raw, 0),
       isLabor: rotActive && Boolean(item.is_rot_work),
     };
   });
