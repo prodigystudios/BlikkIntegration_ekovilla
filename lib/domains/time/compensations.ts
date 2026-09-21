@@ -166,7 +166,11 @@ export function hasReceipt(item: Pick<CompensationItem, 'receipt_name'>): boolea
 export async function listCompensations(
   supabase: SupabaseClient,
   range: { from: string; to: string },
-  opts?: { userId?: string },
+  opts?: {
+    userId?: string;
+    /** Radfönster (PostgREST `.range()`), av samma skäl som i listTimeEntries — svaret kapas vid 1000. */
+    slice?: { from: number; to: number };
+  },
 ) {
   let query = supabase
     .from('crm_time_compensations')
@@ -177,6 +181,7 @@ export async function listCompensations(
 
   // Utan userId begränsar RLS ändå till den egna raden, om man inte har time.entry.read.all.
   if (opts?.userId) query = query.eq('user_id', opts.userId);
+  if (opts?.slice) query = query.range(opts.slice.from, opts.slice.to);
 
   return query;
 }

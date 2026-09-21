@@ -36,6 +36,14 @@ const nextConfig = {
         './public/brand/fonts/*.ttf',
         './public/brand/Ekovilla_logo_Figma.png',
       ],
+      // Löneunderlaget (attesten → PDF) läser samma typsnitt och logotyp genom lib/pdf/brandAssets.
+      // Den modulen bygger sina sökvägar ur variabler, precis som offertrenderaren gjorde när
+      // typsnitten föll bort i drift — listan här är alltså inte en försiktighetsåtgärd utan det
+      // enda som får filerna att följa med in i serverfunktionen.
+      '/api/admin/time/payroll-pdf': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
     },
   },
 };

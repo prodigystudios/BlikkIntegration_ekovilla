@@ -192,7 +192,18 @@ export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
 export async function listTimeEntries(
   supabase: SupabaseClient,
   range: { from: string; to: string },
-  opts?: { userId?: string },
+  opts?: {
+    userId?: string;
+    /**
+     * Radfönster, noll-indexerat och inklusive båda ändar (PostgREST `.range()`).
+     *
+     * ⚠️ FINNS FÖR ATT SVARET ANNARS KAPAS VID 1000 RADER, tyst. Läsningar som gäller EN person och
+     * EN månad ligger långt under taket och skickar inget fönster, men löneunderlagets PDF läser
+     * hela personalens månad i ett svep och måste kunna bläddra sig igenom den. En kapad lista i
+     * ett löneunderlag är timmar som aldrig betalas ut, i ett dokument som ser komplett ut.
+     */
+    slice?: { from: number; to: number };
+  },
 ) {
   let query = supabase
     .from('crm_time_entries')
@@ -204,6 +215,7 @@ export async function listTimeEntries(
 
   // Utan userId begränsar RLS till den egna raden, om man inte har time.entry.read.all.
   if (opts?.userId) query = query.eq('user_id', opts.userId);
+  if (opts?.slice) query = query.range(opts.slice.from, opts.slice.to);
 
   return query;
 }

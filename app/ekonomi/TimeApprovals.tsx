@@ -89,6 +89,26 @@ const FILTER_LABELS: Record<Filter, string> = {
   empty: 'Inget rapporterat',
 };
 
+/**
+ * Löneunderlaget som PDF — en person, eller flera i ett dokument.
+ *
+ * Fliknavigering och inte en blob: rutten sätter filnamnet i Content-Disposition, och det är det
+ * namn webbläsaren föreslår när byrån sparar från förhandsgranskningen. En blob-URL bär inget
+ * filnamn och hade gett "Unknown" i nedladdningsmappen. Samma val och samma skäl som CRM:ets
+ * dokument-PDF:er (app/crm/lib/fortnoxDoc.ts) — priset är att ett fel landar i fliken, och därför
+ * svarar rutten med en HTML-sida på just fliknavigeringar.
+ *
+ * ⚠️ Id:na skickas ALLTID med, även när "alla" skrivs ut. Utan dem skriver rutten ut periodens hela
+ * översikt, och knappen följer det AKTIVA FILTRET — den som filtrerat fram fyra personer förväntar
+ * sig fyra avsnitt, inte tjugo.
+ */
+function openPayrollPdf(period: string, userIds: string[]): void {
+  const params = new URLSearchParams({ period });
+  if (userIds.length === 1) params.set('user_id', userIds[0]);
+  else if (userIds.length > 1) params.set('user_ids', userIds.join(','));
+  window.open(`/api/admin/time/payroll-pdf?${params.toString()}`, '_blank');
+}
+
 function formatHours(minutes: number): string {
   return minutesToHours(minutes).toFixed(2).replace('.', ',');
 }
@@ -641,6 +661,20 @@ export default function TimeApprovals() {
             </Select>
           </label>
 
+          {/* Skriv ut underlaget för dem filtret visar, i ETT dokument med en person per avsnitt.
+              Samma laddningsvillkor som knapparna nedan och av samma skäl: under en månadsväxling
+              ligger föregående månads rader kvar, och utskriften hade burit FEL månads personer
+              under den nya rubriken. */}
+          {!loading && visible.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => openPayrollPdf(period, visible.map((row) => row.user_id))}
+              className="px-3 py-1.5 rounded-lg border border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+            >
+              {visible.length === 1 ? 'Skriv ut underlag' : `Skriv ut underlag (${visible.length})`}
+            </button>
+          ) : null}
+
           {/* Påminn dem filtret visar. Samma laddningsvillkor som massattesten nedan och av samma
               skäl: under en månadsväxling ligger föregående månads rader kvar, och knappen hade
               annars skickat påminnelser om FEL månad. */}
@@ -715,6 +749,7 @@ export default function TimeApprovals() {
               onApprove={() => void setStatus(row, 'approved')}
               onReopen={() => setReopening(row)}
               onRemind={() => setReminding([row])}
+              onPrint={() => openPayrollPdf(period, [row.user_id])}
               onEdit={setCorrecting}
               onDelete={async (entryId) => {
                 const failure = await correctEntry(entryId, null);
@@ -790,7 +825,7 @@ export default function TimeApprovals() {
  * en månad med mycket frånvaro har kort arbetsstapel av ett skäl man ska kunna se, inte gissa.
  */
 function PersonRow({
-  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, remindedAt, onToggle, onApprove, onReopen, onRemind, onEdit, onDelete,
+  row, scaleMinutes, expanded, detail, busy, canCorrectOthers, remindedAt, onToggle, onApprove, onReopen, onRemind, onPrint, onEdit, onDelete,
 }: {
   row: TimeApprovalOverviewRow;
   scaleMinutes: number;
@@ -805,6 +840,8 @@ function PersonRow({
   onApprove: () => void;
   onReopen: () => void;
   onRemind: () => void;
+  /** Personens löneunderlag som PDF, i en ny flik. */
+  onPrint: () => void;
   onEdit: (day: PersonPeriodSummary['rows'][number]) => void;
   onDelete: (entryId: string) => Promise<boolean>;
 }) {
@@ -899,6 +936,17 @@ function PersonRow({
           </div>
 
           <div className="flex shrink-0 gap-2">
+            {/* ⚠️ INGEN SPÄRR PÅ STATUS. En öppen månad går lika bra att skriva ut som en
+                attesterad: byrån stämmer av underlaget medan det fortfarande går att rätta, och en
+                knapp som bara dyker upp efter attesten hade tvingat fram en attest för att få läsa.
+                Dokumentet bär utskriftsdatum i foten, så vilket underlag man håller i går att se. */}
+            <button
+              type="button"
+              onClick={onPrint}
+              className="px-3 py-1.5 rounded-lg border border-[#dbe4d6] bg-white text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+            >
+              PDF
+            </button>
             {remindable ? (
               <button
                 type="button"
