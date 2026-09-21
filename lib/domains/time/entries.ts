@@ -211,7 +211,18 @@ export async function listTimeEntries(
     .gte('work_date', range.from)
     .lte('work_date', range.to)
     .order('work_date', { ascending: true })
-    .order('start_time', { ascending: true, nullsFirst: true });
+    .order('start_time', { ascending: true, nullsFirst: true })
+    // ⚠️ SISTA SORTERINGSNYCKELN MÅSTE VARA UNIK, annars går `slice` nedan inte att lita på.
+    //
+    // `work_date` + `start_time` är långt ifrån unik — ett lag som stämplar in 07:00 på samma dag
+    // ger en hel knippe identiska nycklar. Postgres får då returnera dem i vilken ordning som
+    // helst, och ordningen behöver inte vara densamma mellan två frågor. Vid en sidgräns betyder
+    // det att samma rad kan komma med två gånger (timmar dubbelräknade) eller falla mellan
+    // sidorna (timmar som aldrig betalas ut) — i ett underlag som ser komplett ut.
+    //
+    // Samma regel som lib/domains/planning/pagedRead.ts skriver ut för sina läsningar. Den gäller
+    // även utan `slice`: en deterministisk ordning kostar ingenting och gör svaret reproducerbart.
+    .order('id', { ascending: true });
 
   // Utan userId begränsar RLS till den egna raden, om man inte har time.entry.read.all.
   if (opts?.userId) query = query.eq('user_id', opts.userId);

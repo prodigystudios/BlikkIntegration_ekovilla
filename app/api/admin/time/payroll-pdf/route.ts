@@ -34,9 +34,13 @@ import { can, getEffectivePermissions, requirePermission, routeError, validation
 // Rollerna `ekonomi` och `admin` har båda seedade, så villkoret biter bara den som fått en enstaka
 // nyckel via set_user_permission — precis som grinden på /ekonomi.
 //
-// ⚠️ SESSIONSKLIENT, ALDRIG getSupabaseAdmin(). Dokumentet visar vad LÄSAREN får se: lönebyrån
-// saknar crm.workorder.read med flit, så hennes utskrift säger "Arbetsorder" där kontorets säger
-// ordernumret. En elevated klient hade lagt kundnamn per arbetad timme i byråns händer, förbi RLS.
+// ⚠️ SESSIONSKLIENT, ALDRIG getSupabaseAdmin(). Dokumentet ska visa vad LÄSAREN får se, och inget
+// mer: når hon inte arbetsordern skriver renderaren "Arbetsorder" i stället för ordernamnet. En
+// elevated klient hade lagt kundnamn per arbetad timme i vilken läsares händer som helst, förbi
+// RLS — och till skillnad från en kolumn på skärmen är det här ett dokument som lämnar appen.
+//
+// (Rollen `ekonomi` har crm.workorder.read sedan 2026-09-18 och ser alltså namnen i dag. Det är
+// ett taget beslut, inte något den här rutten ska kringgå åt något håll — se payrollPdf.ts.)
 //
 // Öppnas som en fliknavigering (window.open), så svaret måste tåla att LANDA i en flik: filnamnet
 // sätts i Content-Disposition och fel svaras ut som HTML i stället för JSON.
@@ -76,6 +80,14 @@ const querySchema = z.object({
  * ut. "Alla anställda × en månad" ligger dessutom nära taket: tjugofem personer med tjugofem
  * rapporterade dagar är 625 rader, och en månad med mycket frånvaro eller flera pass per dag
  * passerar tusen utan att någon gjort något ovanligt.
+ *
+ * ⚠️ FÖRUTSÄTTER EN UNIK SISTA SORTERINGSNYCKEL i frågan som bläddras. Båda listfunktionerna
+ * sorterar på `id` sist av precis det skälet — utan den kan en rad komma med två gånger eller
+ * falla mellan sidorna. Se noten i lib/domains/time/entries.ts.
+ *
+ * Samma form som `readAllPages` i lib/domains/planning/pagedRead.ts, som bär samma resonemang för
+ * lagerläsningarna. Den ligger kvar i planeringsdomänen (skyddad yta) och delas inte härifrån; ska
+ * de slås ihop hör flytten hemma i en egen ändring.
  */
 const PAGE_SIZE = 1000;
 /** 50 sidor = 50 000 rader. Nås det är något annat fel, och en oändlig loop är inte svaret. */
@@ -138,9 +150,15 @@ export async function GET(req: Request) {
     // skiftlägesokänsligt, så databasen svarar med rader — men summarizePersons strikta
     // strängjämförelse (`entry.userId === userId`) filtrerar bort dem allihop. Utfallet hade varit
     // ett tomt löneunderlag med status 200 för någon som rapporterat hela månaden.
-    const requested = [parsed.data.user_id, ...parsed.data.user_ids]
-      .filter((value): value is string => !!value)
-      .map((value) => value.toLowerCase());
+    //
+    // `Set` och inte bara en map: `?user_id=X&user_ids=X,Y` är en giltig fråga som skulle gett X
+    // TVÅ avsnitt i samma dokument — och ett löneunderlag där en person står med två gånger är
+    // precis den sortens fel som läses som en dubbelutbetalning.
+    const requested = [...new Set(
+      [parsed.data.user_id, ...parsed.data.user_ids]
+        .filter((value): value is string => !!value)
+        .map((value) => value.toLowerCase()),
+    )];
 
     const overview = await listTimeApprovalOverview(supabase, periodStart);
     if (overview.error) return fail(500, 'time_overview_failed', 'Kunde inte läsa periodens anställda.');

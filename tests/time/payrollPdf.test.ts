@@ -357,6 +357,32 @@ describe('renderPayrollPdf', () => {
     expect(sawBreakAfterHeader).toBe(true);
   });
 
+  it('lämnar inte rubriken ensam när första posten bryts till FLERA rader', async () => {
+    // 🧨 Samma regel, men det är den här varianten som slapp igenom först: reservationen antog en
+    // ENRADIG post. Ett utlägg med en längre anteckning bryts till två–tre rader, och då rymdes
+    // rubriken plus summeringen sist på sidan medan listan sköts till nästa.
+    const long = compensation({
+      note: 'Skruv, remsa, en ny spikpistolslang och två backar skyddsglasögon till hela laget inför nästa vecka',
+    });
+    let sawBreakAfterHeader = false;
+
+    for (let rowCount = 34; rowCount <= 46; rowCount++) {
+      const rows = Array.from({ length: rowCount }, (_, i) =>
+        shift({ workDate: `2026-08-${String((i % 28) + 1).padStart(2, '0')}` }));
+      const bytes = await render([person(rows, [long])]);
+      const pages = await pageCount(bytes);
+      for (let n = 1; n <= pages; n++) {
+        const text = (await extractPageText(bytes, n)).join(' ');
+        if (text.includes('ERSÄTTNINGAR')) {
+          expect(text).toContain('spikpistolslang');
+          if (n > 1) sawBreakAfterHeader = true;
+        }
+      }
+    }
+
+    expect(sawBreakAfterHeader).toBe(true);
+  });
+
   it('bär utskriftsdatumet i foten', async () => {
     // Vilket underlag man håller i ska gå att se: en öppen månad kan ha rättats sedan utskriften.
     const text = (await extractPageText(await render([person([shift()])]), 1)).join(' ');
@@ -370,9 +396,9 @@ describe('renderPayrollPdf', () => {
   });
 
   it('skriver "Arbetsorder" när läsaren inte når jobbets namn', async () => {
-    // ⚠️ Lönebyrån saknar crm.workorder.read med flit, så embedden svarar null och `label` blir
-    // null på VARJE arbetsorderrad hon tittar på. Ett tankstreck hade lästs som "ingen uppgift
-    // finns" och skickat henne att felanmäla en gräns som fungerar som den ska.
+    // ⚠️ Når läsaren inte ordern svarar embedden null och `label` blir null på raden. Ett
+    // tankstreck hade lästs som "ingen uppgift finns" och skickat den som granskar att felanmäla
+    // en behörighetsgräns som fungerar som den ska.
     const text = (await extractPageText(await render([person([shift({ label: null })])]), 1)).join(' ');
     expect(text).toContain('Arbetsorder');
   });

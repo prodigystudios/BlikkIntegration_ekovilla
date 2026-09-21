@@ -177,7 +177,10 @@ export async function listCompensations(
     .select(compensationSelect)
     .gte('entry_date', range.from)
     .lte('entry_date', range.to)
-    .order('entry_date', { ascending: true });
+    .order('entry_date', { ascending: true })
+    // ⚠️ Unik sista nyckel, annars går `slice` inte att lita på — se noten i listTimeEntries. Här
+    // är dubbletterna närmast garanterade: flera utlägg samma dag är det normala, inte undantaget.
+    .order('id', { ascending: true });
 
   // Utan userId begränsar RLS ändå till den egna raden, om man inte har time.entry.read.all.
   if (opts?.userId) query = query.eq('user_id', opts.userId);

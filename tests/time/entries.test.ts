@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildTimeEntryRow, type TimeEntryInput } from '@/lib/domains/time/entries';
+import { buildTimeEntryRow, listTimeEntries, type TimeEntryInput } from '@/lib/domains/time/entries';
+import { listCompensations } from '@/lib/domains/time/compensations';
 
 // Regeln som gör underlaget trovärdigt: servern räknar minuterna, klienten får inte bestämma dem.
 // I dagens Blikk-flöde räknar webbläsaren timmarna och servern skickar dem vidare som sanning.
@@ -308,5 +309,70 @@ describe('mergeCorrection', () => {
   it('faller tillbaka på hours när minutes_worked är null', () => {
     const legacy = { ...current, minutes_worked: null, hours: 6.5, start_time: null, end_time: null };
     expect(mergeCorrection(legacy, {}).hours).toBe(6.5);
+  });
+});
+
+// ── Sidindelad läsning ───────────────────────────────────────────────────────
+
+/**
+ * En PostgREST-byggare som bara antecknar vad som kedjades på den.
+ *
+ * Frågebyggandet har inte testats tidigare — rutterna mockar listfunktionerna och ser därför aldrig
+ * SQL:en. Det gick bra så länge ingen bläddrade; med `slice` är sorteringen plötsligt en
+ * riktighetsfråga, och då måste den prövas någonstans.
+ */
+function recordingQuery() {
+  const orders: string[] = [];
+  const ranges: Array<[number, number]> = [];
+  const query: Record<string, unknown> = {};
+  const chain = () => query;
+  Object.assign(query, {
+    select: chain,
+    gte: chain,
+    lte: chain,
+    eq: chain,
+    order: (column: string) => { orders.push(column); return query; },
+    range: (from: number, to: number) => { ranges.push([from, to]); return query; },
+  });
+  return { supabase: { from: () => query } as never, orders, ranges };
+}
+
+describe('listTimeEntries — ordningen som sidläsningen vilar på', () => {
+  it('sorterar SIST på id', async () => {
+    // 🧨 `work_date` + `start_time` är inte unik: ett lag som stämplar in 07:00 samma dag ger en
+    // knippe identiska nycklar, och Postgres får returnera dem i vilken ordning som helst — olika
+    // mellan två frågor. Vid en sidgräns betyder det att samma rad kan komma med två gånger
+    // (timmar dubbelräknade) eller falla mellan sidorna (timmar som aldrig betalas ut), i ett
+    // löneunderlag som ser komplett ut. Samma kontrakt som lib/domains/planning/pagedRead.ts.
+    const { supabase, orders } = recordingQuery();
+    await listTimeEntries(supabase, { from: '2026-08-01', to: '2026-08-31' });
+    expect(orders.at(-1)).toBe('id');
+  });
+
+  it('skickar radfönstret vidare när det finns ett', async () => {
+    const { supabase, ranges } = recordingQuery();
+    await listTimeEntries(supabase, { from: '2026-08-01', to: '2026-08-31' }, { slice: { from: 1000, to: 1999 } });
+    expect(ranges).toEqual([[1000, 1999]]);
+  });
+
+  it('begränsar inte fönstret när inget begärts', async () => {
+    const { supabase, ranges } = recordingQuery();
+    await listTimeEntries(supabase, { from: '2026-08-01', to: '2026-08-31' }, { userId: ANNA });
+    expect(ranges).toEqual([]);
+  });
+});
+
+describe('listCompensations — samma ordningskrav', () => {
+  it('sorterar SIST på id', async () => {
+    // Här är dubbletterna närmast garanterade: flera utlägg samma dag är det normala.
+    const { supabase, orders } = recordingQuery();
+    await listCompensations(supabase, { from: '2026-08-01', to: '2026-08-31' });
+    expect(orders.at(-1)).toBe('id');
+  });
+
+  it('skickar radfönstret vidare', async () => {
+    const { supabase, ranges } = recordingQuery();
+    await listCompensations(supabase, { from: '2026-08-01', to: '2026-08-31' }, { slice: { from: 0, to: 999 } });
+    expect(ranges).toEqual([[0, 999]]);
   });
 });

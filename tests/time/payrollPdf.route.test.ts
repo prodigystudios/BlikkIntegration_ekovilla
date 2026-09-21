@@ -220,6 +220,15 @@ describe('GET /api/admin/time/payroll-pdf — urvalet', () => {
     expect(person.summary.workMinutes).toBe(540);
   });
 
+  it('skriver inte ut samma person två gånger', async () => {
+    // `?user_id=X&user_ids=X,Y` är en giltig fråga. Utan deduplicering hade X fått TVÅ avsnitt i
+    // samma dokument — och en person som står med två gånger i ett löneunderlag läser som en
+    // dubbelutbetalning. Den skopade hämtningen faller dessutom bort om antalet ser ut som två.
+    await GET(req(`/api/admin/time/payroll-pdf?period=2026-08&user_id=${ANNA}&user_ids=${ANNA}`));
+    expect(mockRender.mock.calls[0][0].people.map((p) => p.userId)).toEqual([ANNA]);
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ userId: ANNA }));
+  });
+
   it('ignorerar ett id som inte finns i periodens översikt', async () => {
     const stranger = '66666666-6666-4666-8666-666666666666';
     await GET(req(`/api/admin/time/payroll-pdf?period=2026-08&user_ids=${ANNA},${stranger}`));

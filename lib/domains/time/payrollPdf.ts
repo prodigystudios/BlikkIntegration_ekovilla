@@ -37,10 +37,20 @@ import { breakWasDeducted, reasonOrJobLabel, type DayRow, type PersonPeriodSumma
 // summa än den skärmen attesterades på, och då är det utskriften som blir sanningen i lönekörningen.
 // Lägg aldrig en uträkning här; lägg den i summary.ts och läs den härifrån.
 //
-// ⚠️ "ORSAK / JOBB" SÄGER INTE ALLTID VILKET JOBB. Tidraderna embeddar crm_work_orders, vars
-// SELECT-policy kräver crm.workorder.read — som lönebyrån inte har, med flit. `reasonOrJobLabel`
-// svarar då "Arbetsorder" i stället för ett tankstreck, och den regeln gäller här också: dokumentet
-// visar vad läsaren får se, inte mer. Lös det ALDRIG genom att rendera med en elevated klient.
+// ⚠️ "ORSAK / JOBB" SÄGER INTE ALLTID VILKET JOBB, och det är RÄTT. Tidraderna embeddar
+// crm_work_orders, vars SELECT-policy kräver crm.workorder.read. Når läsaren inte ordern svarar
+// embedden null, och `reasonOrJobLabel` skriver då "Arbetsorder" i stället för ett tankstreck —
+// ett "—" hade lästs som "ingen uppgift finns" i stället för som den gräns det är.
+//
+// Dokumentet visar alltså vad LÄSAREN får se, varken mer eller mindre. Lös aldrig en tom kolumn
+// genom att rendera med en elevated klient; rätt svar är en behörighet, taget som ett beslut.
+//
+// ⚠️ Rollen `ekonomi` HAR crm.workorder.read sedan 2026-09-18
+// (supabase/sql/20260918_ekonomi_work_order_read.sql), så lönebyråns utskrift bär i dag riktiga
+// ordernamn — alltså kundnamn per arbetad timme. Det var ett medvetet val 2026-08-31 att INTE visa
+// det, och beslutet som väger över gällde fakturaunderlaget, inte en utskrift som lämnar appen.
+// Följden är känd och sedd; ska den snävas in är vägen att sluta embedda ordern i den här
+// renderingen, inte att ta nyckeln ifrån henne.
 //
 // ⚠️ ATTESTSTATUSEN STÅR MEDVETET INTE I HUVUDET (Williams val 2026-09-21). Dokumentet är
 // löneunderlaget, inte attestkvittot — statusen bor i vyn där den går att ändra.
@@ -593,24 +603,26 @@ function drawDayRow(page: PDFPage, fonts: Fonts, row: DayRow, y: number, reason:
  * slippa lägga ihop enskilda rader för hand.
  */
 function drawCompensations(flow: Flow, fonts: Fonts, items: CompensationItem[]): void {
-  // Rubriken, summeringsraden OCH minst en post måste få plats. Enbart rubrikens höjd hade låtit
-  // "ERSÄTTNINGAR" bli ensam längst ned på en sida medan posterna stod på nästa — en rubrik utan
-  // innehåll läser som att listan är tom.
-  flow.ensure(13 + LINE_STEP + LINE_STEP + 6);
+  const summaryLines = wrapLines(compensationSummaryText(items), fonts.bold, ROW_SIZE, M_RIGHT - M_LEFT);
+  // ⚠️ POSTERNA BRYTS FÖRE platsprövningen, inte i loopen — reservationen måste veta hur hög den
+  // FÖRSTA posten faktiskt är.
+  //
+  // Ett utlägg med en längre anteckning bryts till två eller tre rader, och en reservation som
+  // antog en enradig post lät "ERSÄTTNINGAR" plus summeringen stå ensamma sist på sidan medan
+  // listan började på nästa. En rubrik utan innehåll läser som att listan är tom, och den som
+  // granskar går vidare utan att bläddra. Samma gäller summeringsraden: den kan också brytas.
+  const rows = items.map((item) => ({
+    item,
+    // Bredden lämnar plats åt datumet till vänster och "Kvitto saknas" till höger.
+    lines: cellLines(compensationText(item), fonts.regular, M_RIGHT - M_LEFT - 62 - 60),
+  }));
+  const rowHeight = (lineCount: number) => Math.max(1, lineCount) * LINE_STEP + 1.5;
+
+  flow.ensure(13 + summaryLines.length * LINE_STEP + 4 + rowHeight(rows[0]?.lines.length ?? 1));
   draw(flow.page, 'ERSÄTTNINGAR', M_LEFT, flow.y, fonts.bold, LABEL_SIZE, GREEN_TABLE);
   flow.y -= 13;
 
-  const summaryText = summarizeCompensations(items)
-    .map((total) => {
-      const unit = COMPENSATION_UNITS[total.kind];
-      const parts = [
-        unit ? `${formatQuantity(total.quantity)} ${unit}` : null,
-        total.amount > 0 ? `${formatAmount(total.amount)} kr` : null,
-      ].filter(Boolean);
-      return `${COMPENSATION_LABELS[total.kind]} ${parts.join(' · ')}`;
-    })
-    .join('   ·   ');
-  for (const line of wrapLines(summaryText, fonts.bold, ROW_SIZE, M_RIGHT - M_LEFT)) {
+  for (const line of summaryLines) {
     draw(flow.page, line, M_LEFT, flow.y, fonts.bold, ROW_SIZE, INK);
     flow.y -= LINE_STEP;
   }
@@ -621,22 +633,8 @@ function drawCompensations(flow: Flow, fonts: Fonts, items: CompensationItem[]):
   flow.continuation = (page) =>
     draw(page, 'ERSÄTTNINGAR (forts.)', M_LEFT, TABLE_HEAD_Y_CONT, fonts.bold, LABEL_SIZE, GREEN_TABLE);
 
-  for (const item of items) {
-    const unit = COMPENSATION_UNITS[item.kind];
-    const vatAmount = item.vat_amount == null ? null : Number(item.vat_amount);
-    const parts = [
-      COMPENSATION_LABELS[item.kind] || item.kind,
-      unit && item.quantity != null ? `${formatQuantity(item.quantity)} ${unit}` : null,
-      Number(item.amount) > 0 ? `${formatAmount(item.amount)} kr` : null,
-      // ⚠️ `!= null` och inte en sanningsprövning: 0 kr moms är ett svar (utlandsköp,
-      // vidarefakturerat) och ska inte se ut som ett ouppgivet fält för den som bokför.
-      vatAmount != null ? `varav moms ${formatAmount(vatAmount)} kr` : null,
-      item.note || null,
-    ].filter(Boolean);
-
-    // Bredden lämnar plats åt datumet till vänster och "Kvitto saknas" till höger.
-    const lines = cellLines(parts.join(' · '), fonts.regular, M_RIGHT - M_LEFT - 62 - 60);
-    const height = Math.max(1, lines.length) * LINE_STEP + 1.5;
+  for (const { item, lines } of rows) {
+    const height = rowHeight(lines.length);
     flow.ensure(height);
 
     draw(flow.page, formatEntryDate(item.entry_date), M_LEFT, flow.y, fonts.regular, ROW_SIZE, MUTED);
@@ -650,6 +648,34 @@ function drawCompensations(flow: Flow, fonts: Fonts, items: CompensationItem[]):
     if (isReceiptMissing(item)) drawRight(flow.page, 'Kvitto saknas', M_RIGHT, flow.y, fonts.bold, ROW_SIZE, WARN);
     flow.y -= height;
   }
+}
+
+/** Summan per sort — antalen (mil, dagar) är det byråns fasta satser räknas på. */
+function compensationSummaryText(items: CompensationItem[]): string {
+  return summarizeCompensations(items)
+    .map((total) => {
+      const unit = COMPENSATION_UNITS[total.kind];
+      const parts = [
+        unit ? `${formatQuantity(total.quantity)} ${unit}` : null,
+        total.amount > 0 ? `${formatAmount(total.amount)} kr` : null,
+      ].filter(Boolean);
+      return `${COMPENSATION_LABELS[total.kind]} ${parts.join(' · ')}`;
+    })
+    .join('   ·   ');
+}
+
+function compensationText(item: CompensationItem): string {
+  const unit = COMPENSATION_UNITS[item.kind];
+  const vatAmount = item.vat_amount == null ? null : Number(item.vat_amount);
+  return [
+    COMPENSATION_LABELS[item.kind] || item.kind,
+    unit && item.quantity != null ? `${formatQuantity(item.quantity)} ${unit}` : null,
+    Number(item.amount) > 0 ? `${formatAmount(item.amount)} kr` : null,
+    // ⚠️ `!= null` och inte en sanningsprövning: 0 kr moms är ett svar (utlandsköp,
+    // vidarefakturerat) och ska inte se ut som ett ouppgivet fält för den som bokför.
+    vatAmount != null ? `varav moms ${formatAmount(vatAmount)} kr` : null,
+    item.note || null,
+  ].filter(Boolean).join(' · ');
 }
 
 function drawFoot(
