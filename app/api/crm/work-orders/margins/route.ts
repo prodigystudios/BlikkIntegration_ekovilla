@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import { computePreCalculations, type PreCalculationOrderRow } from '@/lib/domains/crm/preCalculationLoader';
+import { planIsPartial } from '@/lib/domains/crm/marginComparability';
 import { ok, requirePermission, routeError, validationError } from '../_lib';
 
 // Marginalen för FLERA arbetsordrar — planeringstavlans TB-märke.
@@ -9,20 +10,31 @@ import { ok, requirePermission, routeError, validationError } from '../_lib';
 // ── VARFÖR BÅDA KALKYLERNA I ETT SVAR ────────────────────────────────────────
 // Kortet visar TG1 vid insäljning ALLTID, och utfallet så fort det finns. Två rutter hade blivit
 // två anrop per tavelladdning och två tillstånd att hålla synkade i klienten, för ett kort som
-// alltid vill ha båda. De två laddarna delar dessutom underlag (kalkylinställningar,
-// kostnadsartiklar, artikelcachens priser), så ett svar är också färre frågor.
+// alltid vill ha båda.
+//
+// ⚠️ DE DELAR INTE FRÅGOR. Varje laddare hämtar sina egna kalkylinställningar, kostnadsartiklar och
+// artikelpriser — körda under Promise.all ser de inte varandra. Den här rutten gör alltså tre
+// läsningar MER än nödvändigt, inte färre. Att slå ihop dem är fullt görbart (förkalkylens
+// artikelmängd är en äkta övermängd av efterkalkylens) men kräver att laddarna tar emot ett
+// färdigt underlag i stället för att hämta det själva — egen ändring, egen risk.
 //
 // ── ⚠️ NÄR TALEN FÅR JÄMFÖRAS ───────────────────────────────────────────────
 // Förkalkylen lyfter ut rader som saknar inköpspris ur BÅDE täljare och nämnare; efterkalkylen
 // räknar på hela orderns intäkt och svarar okänt så fort NÅGON rad saknar pris. Det låter som två
 // olika nämnare, men de sammanfaller precis där det spelar roll:
 //
-//   `actual_tg1` är icke-null  ⟺  ingen rad saknar inköpspris  ⟹  förkalkylen lyfte inte ut något
+//   `actual_tg1` är icke-null  ⟹  ingen rad saknar inköpspris  ⟹  förkalkylen lyfte inte ut något
 //
-// Finns det alltså ett utfallstal att ställa bredvid plantalet står de två på SAMMA intäkt. Saknas
-// jämförbarheten är utfallet redan null och kortet visar bara planen. Ytan behöver därför ingen
-// egen spärr — men den får heller aldrig visa ett utfall som rutten svarat null på, och sedan
-// fylla luckan med något annat.
+// 🧨 DEN SLUTSATSEN ÄR FALSK, och jag skrev den här själv innan den prövades. En lösullsrad med
+// varumärke men TOM DENSITET (fritext, valideras aldrig) ger noll planerade säckar; saknar dess
+// artikel dessutom inköpspris faller `marginCostBasis` till basis 'none' och förkalkylen lyfter ut
+// HELA radens intäkt ur båda leden. Efterkalkylen ser aldrig raden bland `otherMaterialRows` — den
+// är blåst — så den når aldrig `unpricedLabels`, och intäkten står kvar orörd. Uppmätt i en
+// testrigg: plan tg1 100,0 % på 3 000 kr bedömd intäkt, utfall tg1 50,3 % på orderns 93 000 kr,
+// `gaps: []`. Kortet hade visat ett fall på 50 procentenheter som var ren nämnarartefakt.
+//
+// 0 av 187 skarpa ordrar träffas i dag, alltså latent — men mekanismen finns och spärren är billig:
+// `plan_partial` nedan jämför de två INTÄKTERNA direkt i stället för att lita på en slutledning.
 //
 // ── VARFÖR POST FÖR EN LÄSNING ───────────────────────────────────────────────
 // Samma skäl som efterkalkylens mängdrutt: hundra uuid:n i en query-sträng är ~3 700 tecken, över
@@ -81,16 +93,23 @@ export async function POST(req: Request) {
     // alltså långt mer kostnadsdata än ytan visar. Härledningen hämtas per order när någon öppnar
     // arbetsordern.
     //
-    // Ordrar som inte gick att räkna SAKNAS i svaret i stället för att stå som noll — anropsstället
-    // ska kunna skilja "vet inte" från "inget".
+    // Varje efterfrågad order som FANNS får en post: båda laddarna sätter ovillkorligen en rad per
+    // indata-order, och varje felväg kastar och fäller hela rutten. Okända id:n saknas i svaret
+    // genom att `.in()` inte returnerar dem — anropsstället kan alltså skilja "fanns inte" från
+    // "gick inte att räkna", men aldrig se en halv karta.
     const items: Record<
       string,
       {
+        /**
+         * Planen är räknad på BARA EN DEL av orderns intäkt — rader utan inköpspris är utlyfta ur
+         * både täljare och nämnare. Då är `plan_tg1` inte orderns täckningsgrad utan delmängdens,
+         * och den får varken visas naken eller ställas bredvid utfallet. Kortet har ingen plats att
+         * skriva ut vad som lämnats utanför, till skillnad från offertpanelen.
+         */
+        plan_partial: boolean;
         plan_tg1: number | null;
-        plan_tb1: number | null;
         plan_tb2: number | null;
         actual_tg1: number | null;
-        actual_tb1: number | null;
         actual_tb2: number | null;
       }
     > = {};
@@ -100,12 +119,13 @@ export async function POST(req: Request) {
       const plan = plans.get(id);
       const actual = actuals.get(id);
       if (!plan && !actual) continue;
+      // ⚠️ JÄMFÖR INTÄKTERNA, INTE DERAS LUCKOR — regeln och skälet bor i marginComparability.ts.
+      const planPartial = plan != null && planIsPartial(plan.revenue, actual?.revenue ?? null);
       items[id] = {
-        plan_tg1: plan?.tg1 ?? null,
-        plan_tb1: plan?.tb1 ?? null,
-        plan_tb2: plan?.tb2 ?? null,
+        plan_partial: planPartial,
+        plan_tg1: planPartial ? null : plan?.tg1 ?? null,
+        plan_tb2: planPartial ? null : plan?.tb2 ?? null,
         actual_tg1: actual?.tg1 ?? null,
-        actual_tb1: actual?.tb1 ?? null,
         actual_tb2: actual?.tb2 ?? null,
       };
     }

@@ -30,7 +30,7 @@ const CHUNK = 100;
  * ⚠️ 403 ÄR INTE ETT FEL. Rutterna gatar på crm.report.read; den som saknar nyckeln ska se märket
  * försvinna, inte ett felmeddelande. Efter ett 403 slutar hooken fråga.
  */
-export function useBatchMargins<T>(endpoint: string, workOrderIds: string[]) {
+export function useBatchMargins<T>(endpoint: string, workOrderIds: string[], version = '') {
   const [items, setItems] = useState<Record<string, T>>({});
   const [forbidden, setForbidden] = useState(false);
   // Id:n vi redan bett om — även de som svaret inte innehöll, så en order utan kalkyl inte frågas
@@ -39,6 +39,16 @@ export function useBatchMargins<T>(endpoint: string, workOrderIds: string[]) {
   const forbiddenRef = useRef(false);
 
   const idsKey = workOrderIds.join(',');
+
+  // ⚠️ CACHEN MÅSTE GÅ ATT INVALIDERA. `requestedRef` är append-only och `setItems` slår bara ihop,
+  // så utan det här visade ett id sitt FÖRSTA svar för alltid. På arbetsorderlistan märks det inte
+  // — man navigerar bort — men planeringstavlan står uppe hela arbetsdagen och laddar om sig själv
+  // på realtidshändelser, bland dem `ops_segment_reports`. När besättningen lämnade in
+  // egenkontrollen slog säckbadgen om inom en halv sekund medan marginalmärket på samma kort stod
+  // kvar på gårdagens svar. `version` bärs av anroparen och beskriver det underlag talen vilar på.
+  useEffect(() => {
+    requestedRef.current.clear();
+  }, [version]);
 
   const load = useCallback(
     async (ids: string[]) => {
@@ -100,7 +110,7 @@ export function useBatchMargins<T>(endpoint: string, workOrderIds: string[]) {
       }
     }, 250);
     return () => clearTimeout(timer);
-  }, [idsKey, load]);
+  }, [idsKey, version, load]);
 
   return { items, forbidden };
 }

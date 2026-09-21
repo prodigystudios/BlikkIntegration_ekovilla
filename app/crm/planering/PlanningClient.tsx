@@ -1076,7 +1076,19 @@ export default function PlanningClient({
     () => [...new Set(segments.map((s) => s.work_order_id).filter((id): id is string => Boolean(id)))],
     [segments],
   );
-  const { margins } = useJobMargins(marginOrderIds);
+  // ⚠️ VAD TALEN VILAR PÅ, inte när vi råkade fråga. Marginalen ändras när en rapport kommer in, och
+  // rapporteringen syns i segmentet (`sacks_reported`/`sacks_final`) — samma fält säckbadgen ritar.
+  // Tavlan laddar om sig på realtidshändelser från `ops_segment_reports`, så fingeravtrycket byter
+  // värde i samma andetag som badgen slår om, och märket följer med i stället för att frysa.
+  //
+  // ⏳ Rapporterad TID syns inte här och invaliderar därför ingenting — en tidrad som kommer in
+  // medan tavlan står uppe slår igenom först vid nästa omladdning. Utfallet gatas ändå på
+  // egenkontrollen, så fönstret rör bara TB2 på redan avräknade jobb.
+  const marginVersion = useMemo(
+    () => segments.map((s) => `${s.work_order_id ?? ''}:${s.sacks_reported}:${s.sacks_final ? 1 : 0}`).join('|'),
+    [segments],
+  );
+  const { margins } = useJobMargins(marginOrderIds, marginVersion);
   // Veckans omsättning och säckar, fördelade över de dagar jobben faktiskt utförs.
   //
   // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments`. Sökrutan och dolda bilar är VYINSTÄLLNINGAR och
