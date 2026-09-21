@@ -16,6 +16,8 @@ import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobType
 import type { OpsSegment } from '@/lib/domains/planning/types';
 import { addDaysISO, daysBetweenInclusive } from './planningDates';
 import type { OrderInfo } from '@/lib/domains/planning/order';
+import type { JobMargin } from './useJobMargins';
+import { isMarginLoss } from '@/lib/domains/crm/preCalculation';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -143,6 +145,85 @@ export function SackProgress({
     <span title={title} className={cn(pill, 'border-amber-200 bg-amber-50 text-amber-700')}>
       kvar {sacksRemaining(planned, reported)} / {planned}
     </span>
+  );
+}
+
+// ── Marginalmärket ───────────────────────────────────────────────────────────
+// Kronor utan decimaler, svensk tusenavgränsare — samma format som tavlans omsättningstal.
+const krFmt = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });
+
+/**
+ * Jobbets marginal på kortet: TG1 och TB2 vid insäljning, plus utfallet när det finns.
+ *
+ * ⚠️ PLANEN OCH UTFALLET FÅR STÄLLAS BREDVID VARANDRA — men bara på ruttens villkor. Förkalkylen
+ * lyfter ut rader utan inköpspris ur BÅDE täljare och nämnare; efterkalkylen räknar på hela orderns
+ * intäkt och svarar okänt så fort någon rad saknar pris. De två nämnarna sammanfaller därför exakt
+ * när utfallet finns: `actual_tg1 != null` betyder att ingen rad saknade pris, alltså att
+ * förkalkylen inte lyfte ut något. Saknas utfallet ritas bara planen — och den luckan får ALDRIG
+ * fyllas med ett tal från någon annan källa, för då jämförs två procent som mäter olika saker.
+ *
+ * ⚠️ INGA TRÖSKLAR, samma regel som arbetsorderlistans MarginChip. Offertens 25/40 är satta för
+ * förkalkylens TG och TB2 ligger per definition lägre; återanvänds de lyser varje kort rött. Bara
+ * förlust färgas, för den är sann utan att någon behöver dra en gräns.
+ *
+ * 🧨 TALEN ÄR HELA ARBETSORDERNS, ÄVEN PÅ ETT ETAPPKORT. Samma val som SackProgress redan gör och av
+ * samma skäl: både säckrapporten och tidrapporteringen är per arbetsorder och känner inte till
+ * `stage_id`, så en etappvis marginal hade varit en uträkning utan underlag. Etiketten säger det
+ * rakt ut på etapp- och restkort — ett omärkt tal hade lästs som etappens.
+ */
+function MarginChip({
+  label,
+  percent,
+  tb,
+  title,
+}: {
+  label: string;
+  percent: number | null;
+  tb: number | null;
+  title: string;
+}) {
+  if (percent == null && tb == null) return null;
+  const loss = isMarginLoss(percent, tb);
+  return (
+    <span
+      title={title}
+      className={cn(
+        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-px text-[9px] font-bold tabular-nums',
+        loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
+      )}
+    >
+      <span className="font-extrabold uppercase tracking-wide opacity-70">{label}</span>
+      {percent != null && <>TG1 {percent.toFixed(1).replace('.', ',')} %</>}
+      {percent != null && tb != null && <span className="opacity-40">·</span>}
+      {tb != null && <>TB2 {krFmt.format(tb)}</>}
+    </span>
+  );
+}
+
+export function MarginBadges({ margin, scoped }: { margin: JobMargin | undefined; scoped: boolean }) {
+  if (!margin) return null;
+  const hasPlan = margin.plan_tg1 != null || margin.plan_tb2 != null;
+  const hasActual = margin.actual_tg1 != null || margin.actual_tb2 != null;
+  if (!hasPlan && !hasActual) return null;
+
+  // ⚠️ Etappkortets tal är HELA ORDERNS. Står det omärkt bredvid etappens säckantal läses det som
+  // etappens marginal — och etappen kan vara den lönsamma halvan av ett jobb som går back.
+  const whole = scoped ? ' Avser hela arbetsordern, inte enbart den här etappen.' : '';
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <MarginChip
+        label="Sålt"
+        percent={margin.plan_tg1}
+        tb={margin.plan_tb2}
+        title={`Förkalkyl vid insäljning — täckningsgrad efter material, TB2 efter material och uppskattat arbete.${whole}`}
+      />
+      <MarginChip
+        label="Utfall"
+        percent={margin.actual_tg1}
+        tb={margin.actual_tb2}
+        title={`Efterkalkyl — rapporterade säckar och rapporterad tid. Räknas på samma intäkt som planen.${whole}`}
+      />
+    </div>
   );
 }
 
@@ -756,6 +837,7 @@ export function SegmentCardBody({
   truckColor,
   truckName,
   order,
+  margin,
 }: {
   seg: OpsSegment;
   canWrite: boolean;
@@ -765,6 +847,8 @@ export function SegmentCardBody({
   truckColor?: string;
   truckName?: string;
   order?: OrderInfo;
+  /** Odefinierad = inte hämtad än, eller behörighet saknas. Märket uteblir då helt. */
+  margin?: JobMargin;
 }) {
   const job = seg.job;
   return (
@@ -861,6 +945,10 @@ export function SegmentCardBody({
               <CrewAvatars crew={seg.crew} />
             </div>
           </div>
+          {/* ⚠️ EGEN RAD, inte inklämt bland säck- och besättningsmärkena. Den raden delar redan
+              bredd med besättningens namn, och ett chip till på den radbröts ut ur den synliga ytan
+              — exakt det som hände etappens säckantal (se noten vid etappchipet ovan). */}
+          <MarginBadges margin={margin} scoped={Boolean(job.stage) || job.is_rest} />
           {/* Hover hint — the card opens its work order on double-click. */}
           <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">
             <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-full border border-emerald-300 bg-white/95 px-2 py-0.5 text-[8.5px] font-bold text-emerald-700 shadow-sm">
