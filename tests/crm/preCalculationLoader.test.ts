@@ -101,19 +101,29 @@ describe('collectPreCalculationArticleNumbers', () => {
 });
 
 describe('buildPreCalculationItems', () => {
-  // 🧨 MUTATIONSPRÖVAT: byts `raw == null` mot `!raw` faller det här testet, och etableringsraden
-  // blir OBEDÖMBAR i stället för gratis. Den ligger på nästan varje order, så förkalkylen hade
-  // lyft ut 4 500 kr ur både täljare och nämnare — och därmed hamnat på ett ANNAT intäktsunderlag
-  // än efterkalkylen, vilket är precis det som gör plan och utfall ojämförbara på kortet.
-  it('inköpspris 0 är ett svar, inte en avsaknad', () => {
+  // 🧨 MUTATIONSPRÖVAT: tas `|| parseDecimal(raw, 0) <= 0` bort faller det här testet — och då
+  // räknas lösull som gratis.
+  //
+  // Förkalkylen får INTE ärva efterkalkylens regel att 0 ≠ tomt. Efterkalkylen prissätter lösull
+  // ur kostnadsartikeln och svarar okänt när den saknas; förkalkylen har bara radens egen artikel
+  // att falla tillbaka på, och ett nollpris blir där en materialkostnad på noll kronor.
+  //
+  // Mätt i cachen 2026-09-21: 54 av 292 artiklar har inköpspris 0, INGEN har tomt — ofyllt lagras
+  // som noll. Bland dem ligger 1001–1006 ISOCELL cellulosa. Utan spärren fick 125 av 187 ordrar
+  // för hög täckningsgrad, som mest 35 procentenheter, och en order visade 100,0 %.
+  it('inköpspris 0 är OKÄNT här, inte gratis — ofyllt lagras som noll', () => {
     const items = buildPreCalculationItems(order(), new Map([['1010', 0]]));
-    const row = items.find((i) => i.article_number === '1010');
-    expect(row?.purchasePrice).toBe(0);
+    expect(items.find((i) => i.article_number === '1010')?.purchasePrice).toBeNull();
   });
 
   it('artikel som saknas i cachen ger okänt pris, inte noll', () => {
     const items = buildPreCalculationItems(order(), new Map());
     expect(items.find((i) => i.article_number === '1010')?.purchasePrice).toBeNull();
+  });
+
+  it('ett positivt pris släpps igenom orört', () => {
+    const items = buildPreCalculationItems(order(), new Map([['1010', 499.89]]));
+    expect(items.find((i) => i.article_number === '1010')?.purchasePrice).toBeCloseTo(499.89, 5);
   });
 
   it('numeric som sträng ur PostgREST blir ett tal', () => {

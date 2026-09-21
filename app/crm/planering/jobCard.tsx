@@ -188,14 +188,20 @@ function MarginChip({
     <span
       title={title}
       className={cn(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-px text-[9px] font-bold tabular-nums',
+        // 🧨 FÅR BRYTA RAD, MEN ALDRIG MITT I ETT TAL. Chipet var först `whitespace-nowrap` och
+        // mätte 156–162 px; ett ENDAGSKORT i veckovyn har 153 px innerbredd, så chipet sköt förbi
+        // kanten och klipptes av kortets `overflow-hidden` — talet såg ut att blöda ut ur kortet.
+        // Dagspåren är `minmax(0,1fr)` så kortet kan inte växa; det är chipet som måste ge efter.
+        // Delarna nedan bär sitt EGET `whitespace-nowrap`, alltså bryts raden mellan dem och
+        // "TG1 9,7 %" hålls ihop. `rounded-md` i stället för `rounded-full`: en tvårads-pill med
+        // helrunda gavlar ser ut som ett fel, en rundad ruta ser ut som ett val.
+        'inline-flex flex-wrap items-center gap-x-1 rounded-md border px-2 py-px text-[9px] font-bold tabular-nums',
         loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
       )}
     >
-      <span className="font-extrabold uppercase tracking-wide opacity-70">{label}</span>
-      {percent != null && <>TG1 {percent.toFixed(1).replace('.', ',')} %</>}
-      {percent != null && tb != null && <span className="opacity-40">·</span>}
-      {tb != null && <>TB2 {krFmt.format(tb)}</>}
+      <span className="whitespace-nowrap font-extrabold uppercase tracking-wide opacity-70">{label}</span>
+      {percent != null && <span className="whitespace-nowrap">TG1 {percent.toFixed(1).replace('.', ',')} %</span>}
+      {tb != null && <span className="whitespace-nowrap">TB2 {krFmt.format(tb)}</span>}
     </span>
   );
 }
@@ -234,7 +240,7 @@ export function MarginBadges({
     ? ' Avser hela arbetsordern, inte enbart den här etappen.'
     : ' Avser hela arbetsordern, inte enbart den här dagen.';
   return (
-    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+    <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
       <MarginChip
         label="Sålt"
         percent={margin.plan_tg1}
