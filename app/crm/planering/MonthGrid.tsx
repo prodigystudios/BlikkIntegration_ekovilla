@@ -5,6 +5,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { SegmentCardBody, type SegmentActions } from './jobCard';
+import type { JobMargin } from './useJobMargins';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
@@ -26,6 +27,8 @@ type MonthGridProps = {
   onSegClick: (seg: OpsSegment) => void;
   actions: SegmentActions;
   dayNotes: DayNote[];
+  /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
+  margins: Record<string, JobMargin>;
 };
 
 const WEEKDAYS = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'];
@@ -45,6 +48,7 @@ export default function MonthGrid({
   onSegClick,
   actions,
   dayNotes,
+  margins,
 }: MonthGridProps) {
   const truckColor = new Map(trucks.map((t) => [t.id, t.color || '#94a3b8']));
   const truckName = new Map(trucks.map((t) => [t.id, t.name]));
@@ -170,6 +174,7 @@ export default function MonthGrid({
                           truckColor={truckColor.get(seg.truck_id) || '#94a3b8'}
                           truckName={truckName.get(seg.truck_id) ?? ''}
                           order={orderInfo(segments, seg)}
+                          margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
                         />
                       </div>
                       );

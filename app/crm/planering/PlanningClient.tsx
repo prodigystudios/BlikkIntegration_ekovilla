@@ -29,6 +29,7 @@ import SearchField from './SearchField';
 import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
+import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
@@ -1060,6 +1061,34 @@ export default function PlanningClient({
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
     [segments, hiddenTrucks, matchBoard],
   );
+
+  // Marginalen per jobb: TG1/TB2 vid insäljning, plus utfallet när det finns.
+  //
+  // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments` — samma skäl som veckovärdena nedan i omvänd
+  // riktning: sökrutan och dolda bilar är VYINSTÄLLNINGAR, och att låta dem styra urvalet hade
+  // gjort varje tangenttryck i sökfältet till en ny mängdberäkning över service-role. Hooken frågar
+  // ändå bara om det den inte redan har, så hela veckan hämtas en gång och filtreringen är gratis.
+  //
+  // ⚠️ UNIKA ID:N. En order med flera etapper har ett segment per etapp, och alla delar samma
+  // arbetsorder — utan Set hade samma id skickats flera gånger och ätit av ruttens tak på 200.
+  // Etapperna delar också SVAR: marginalen är per arbetsorder, se noten vid MarginBadges.
+  const marginOrderIds = useMemo(
+    () => [...new Set(segments.map((s) => s.work_order_id).filter((id): id is string => Boolean(id)))],
+    [segments],
+  );
+  // ⚠️ VAD TALEN VILAR PÅ, inte när vi råkade fråga. Marginalen ändras när en rapport kommer in, och
+  // rapporteringen syns i segmentet (`sacks_reported`/`sacks_final`) — samma fält säckbadgen ritar.
+  // Tavlan laddar om sig på realtidshändelser från `ops_segment_reports`, så fingeravtrycket byter
+  // värde i samma andetag som badgen slår om, och märket följer med i stället för att frysa.
+  //
+  // ⏳ Rapporterad TID syns inte här och invaliderar därför ingenting — en tidrad som kommer in
+  // medan tavlan står uppe slår igenom först vid nästa omladdning. Utfallet gatas ändå på
+  // egenkontrollen, så fönstret rör bara TB2 på redan avräknade jobb.
+  const marginVersion = useMemo(
+    () => segments.map((s) => `${s.work_order_id ?? ''}:${s.sacks_reported}:${s.sacks_final ? 1 : 0}`).join('|'),
+    [segments],
+  );
+  const { margins } = useJobMargins(marginOrderIds, marginVersion);
   // Veckans omsättning och säckar, fördelade över de dagar jobben faktiskt utförs.
   //
   // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments`. Sökrutan och dolda bilar är VYINSTÄLLNINGAR och
@@ -1550,6 +1579,7 @@ export default function PlanningClient({
                         onCopyTruckCrew={copyTruckCrew}
                         onForkWeek={forkWeek}
                         onRestoreWeek={restoreWeek}
+                        margins={margins}
                       />
                     </div>
                   );
@@ -1571,6 +1601,7 @@ export default function PlanningClient({
                 onSegClick={onSegClick}
                 actions={actions}
                 dayNotes={dayNotes}
+                margins={margins}
               />
             )}
 

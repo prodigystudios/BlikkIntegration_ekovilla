@@ -177,6 +177,19 @@ function combinationLabel(construction: string | null, material: string | null):
   return `${left} × ${material ?? 'okänt material'}`;
 }
 
+/**
+ * Visar marginalmärket en FÖRLUST?
+ *
+ * 🧨 BÅDA TALEN MÅSTE PRÖVAS, INTE DET FÖRSTA SOM FINNS. TG1 är kvar efter materialet, TB2 efter
+ * materialet OCH arbetet — ett jobb kan mycket väl ha TG1 +35 % och TB2 −5 000 kr, alltså ett
+ * material som bär och ett arbete som äter upp vinsten. En regel som stannar vid TG1 ritar just det
+ * jobbet neutralt, och det är det enda fall märket egentligen finns för. Ren funktion för att
+ * regeln ska gå att pröva utan att rendera ett kort.
+ */
+export function isMarginLoss(percent: number | null, tb: number | null): boolean {
+  return (percent != null && percent < 0) || (tb != null && tb < 0);
+}
+
 export function calculatePreCalculation(input: PreCalculationInput): PreCalculation {
   const gaps: PreCalculationGap[] = [];
 

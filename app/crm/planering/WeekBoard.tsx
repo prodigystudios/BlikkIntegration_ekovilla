@@ -16,6 +16,7 @@ import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { weekTotals, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
+import type { JobMargin } from './useJobMargins';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
 import DeliveryStripCell from './DeliveryStripCell';
@@ -52,6 +53,8 @@ type WeekBoardProps = {
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
   actions: SegmentActions;
+  /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
+  margins: Record<string, JobMargin>;
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
@@ -100,7 +103,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, weekSlices, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
-  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek,
+  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -461,6 +464,7 @@ export default function WeekBoard({
                             people={people}
                             actions={actions}
                             order={orderInfo(segments, seg)}
+                            margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
                           />
                         </div>
                       );
