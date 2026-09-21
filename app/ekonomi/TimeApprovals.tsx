@@ -563,7 +563,15 @@ export default function TimeApprovals() {
       {/* En rad, tre kolumner — inte tre fullbreddsblock under varandra. På en 1200 px-yta blir
           staplade block bara innehåll som klistras mot ytterkanterna med luft i mitten. */}
       <section className="flex flex-wrap items-end gap-x-6 gap-y-3 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-3.5">
-        <label className="grid gap-1">
+        {/* 🧨 `w-auto` ÄR INTE KOSMETIK — utan den är den här etiketten 100 % BRED.
+            globals.css:200 sätter `:where(label) { display: block; width: 100% }` så att ett fält
+            inuti en etikett ska kunna fylla den. `:where()` har noll specificitet, så `.grid`
+            vinner över `display: block` — men `width: 100%` möter INGENTING, eftersom etiketten
+            saknar breddklass. Den lade därför beslag på hela raden och tryckte ned "Attesterade"
+            och "Underlag" på en andra rad: exakt de tre fullbreddsblock kommentaren ovanför säger
+            att sektionen inte ska vara. Samma fälla, samma rad, som sorteringsfältet nedan.
+            Breddklassen vinner på specificitet (0,1,0) mot (0,0,0). */}
+        <label className="grid w-auto gap-1">
           <span className={LABEL}>Period</span>
           <span className="inline-block w-40">
             {/* Låst under massattesten. Loopen tar sekunder, och dess avslutande omladdning gäller
@@ -638,7 +646,12 @@ export default function TimeApprovals() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-2 text-sm text-slate-600">
+          {/* 🧨 `w-auto`, se noten vid Period-etiketten ovan. Utan den blev den här etiketten
+              100 % bred och åt upp hela verktygsraden: "Påminn"-knappen (och sedan även "Skriv ut
+              underlag") tvingades ned på en andra rad, och sorteringsfältet hamnade ensamt ovanför
+              dem. Felet fanns före utskriftsknappen — den gjorde bara gruppen bredare, så
+              sorteringen dessutom gled i sidled och någon lade märke till det. */}
+          <label className="flex w-auto items-center gap-2 text-sm text-slate-600">
             <span className={LABEL}>Sortera</span>
             {/* 🧨 `min-w-*` är inte kosmetik. En `<select>` bredder sig efter sitt LÄNGSTA alternativ
                 och står därför stilla; vår knapp visar bara det VALDA, så utan spärren krympte
