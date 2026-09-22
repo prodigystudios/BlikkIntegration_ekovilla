@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildFortnoxArticlePayload, dedupeArticleNote } from '@/lib/domains/fortnox/articles';
+import { buildFortnoxArticlePayload, dedupeArticleNote, mapFortnoxListArticleToCacheRow } from '@/lib/domains/fortnox/articles';
 import { articleSearchTokens, matchesArticleSearch, sortArticlesFavoritesFirst } from '@/lib/domains/fortnox/articleSearch';
 import {
   fortnoxArticleInputSchema,
@@ -293,5 +293,48 @@ describe('dedupeArticleNote', () => {
 
   it('släpper tomma segment mellan semikolon', () => {
     expect(dedupeArticleNote('A;;B;')).toBe('A; B');
+  });
+});
+
+describe('mapFortnoxListArticleToCacheRow', () => {
+  // Listendpointen skickar femton fält, och varken `Active` eller `Type` är ett av dem.
+  // Verifierat mot skarp data 2026-09-22: 288 av 292 cachade rader saknade `Active` i `raw`.
+  const listRad = {
+    ArticleNumber: '1066',
+    Description: 'XX Använd ej',
+    SalesPrice: 100,
+    PurchasePrice: 40,
+    Unit: 'st',
+  } as any;
+
+  // 🧨 MUTATIONSPRÖVAT: skrivs `active` från `a.Active ?? true` blir en inaktiv artikel aktiv.
+  // Det var buggen: 30 artiklar är inaktiva i Fortnox, 2 var det hos oss, och varje synk slog
+  // tillbaka de manuella rättningarna.
+  it('statusen kommer från FRÅGAN vi ställde, inte från ett fält som aldrig kommer', () => {
+    expect(mapFortnoxListArticleToCacheRow(listRad, '2026-09-22T00:00:00Z', false).active).toBe(false);
+    expect(mapFortnoxListArticleToCacheRow(listRad, '2026-09-22T00:00:00Z', true).active).toBe(true);
+  });
+
+  // 🧨 MUTATIONSPRÖVAT: lämnas `article_type` kvar i payloaden nollas kolumnen vid varje synk, och
+  // artikelregistret skriver "Material" på allt (ArticlesClient.tsx:217). En PostgREST-upsert rör
+  // bara kolumnerna den får — utelämnat står kvar orört, samma knep som `note` redan använder.
+  it('article_type utelämnas helt så synken inte nollar det', () => {
+    const rad = mapFortnoxListArticleToCacheRow(listRad, '2026-09-22T00:00:00Z', true);
+    expect('article_type' in rad).toBe(false);
+  });
+
+  it('fälten listan FAKTISKT bär skrivs som vanligt', () => {
+    const rad = mapFortnoxListArticleToCacheRow(listRad, '2026-09-22T00:00:00Z', true);
+    expect(rad.article_number).toBe('1066');
+    expect(rad.description).toBe('XX Använd ej');
+    expect(rad.purchase_price).toBe(40);
+    expect(rad.unit).toBe('st');
+  });
+
+  // Ett Active i listsvaret (skulle Fortnox börja skicka det) får inte tyst ta över filtrets svar —
+  // filtret är det vi VET, fältet är det vi inte kan lita på att få.
+  it('ett oväntat Active i listsvaret överskuggar inte filtret', () => {
+    const rad = mapFortnoxListArticleToCacheRow({ ...listRad, Active: true }, '2026-09-22T00:00:00Z', false);
+    expect(rad.active).toBe(false);
   });
 });
