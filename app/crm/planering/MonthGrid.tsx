@@ -29,6 +29,8 @@ type MonthGridProps = {
   dayNotes: DayNote[];
   /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
   margins: Record<string, JobMargin>;
+  /** Segment som får skriva ut omsättningen — ett per scope. Se revenueAnchorSegments. */
+  revenueAnchors: Set<string>;
 };
 
 const WEEKDAYS = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'];
@@ -49,6 +51,7 @@ export default function MonthGrid({
   actions,
   dayNotes,
   margins,
+  revenueAnchors,
 }: MonthGridProps) {
   const truckColor = new Map(trucks.map((t) => [t.id, t.color || '#94a3b8']));
   const truckName = new Map(trucks.map((t) => [t.id, t.name]));
@@ -175,6 +178,10 @@ export default function MonthGrid({
                           truckName={truckName.get(seg.truck_id) ?? ''}
                           order={orderInfo(segments, seg)}
                           margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
+                          // Ett kort per scope (revenueAnchors) OCH bara dess första dagcell:
+                          // filtret ovan ritar ett kort i varje dag jobbet täcker, så ett
+                          // femdagarsjobb blir fem kort.
+                          showRevenue={revenueAnchors.has(seg.id) && seg.start_day === cell.iso}
                         />
                       </div>
                       );

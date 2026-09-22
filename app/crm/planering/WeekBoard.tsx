@@ -55,6 +55,8 @@ type WeekBoardProps = {
   actions: SegmentActions;
   /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
   margins: Record<string, JobMargin>;
+  /** Segment som får skriva ut omsättningen — ett per scope. Se revenueAnchorSegments. */
+  revenueAnchors: Set<string>;
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
@@ -103,7 +105,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, weekSlices, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
-  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins,
+  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins, revenueAnchors,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -465,6 +467,12 @@ export default function WeekBoard({
                             actions={actions}
                             order={orderInfo(segments, seg)}
                             margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
+                            // Ett kort per scope (revenueAnchors), och bara veckan det BÖRJAR: ett
+                            // jobb över ett veckoskifte ritas som ett kort i varje vecka.
+                            // ⚠️ Jämförelsen går mot veckans första dag, inte mot `days[span.s]` —
+                            // `days` saknar helgdagarna när helgen är dold, och ett jobb som börjar
+                            // på lördagen hade annars aldrig fått sitt tal.
+                            showRevenue={revenueAnchors.has(seg.id) && seg.start_day >= weekStart}
                           />
                         </div>
                       );

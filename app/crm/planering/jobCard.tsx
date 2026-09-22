@@ -206,13 +206,44 @@ function MarginChip({
   );
 }
 
-export function MarginBadges({
+/**
+ * Jobbets omsättning ex moms.
+ *
+ * 🧨 VISAS BARA EN GÅNG PER JOBB — se `showRevenue` vid anropet. Kortet ritas om i varje dagcell ett
+ * flerdagarsjobb täcker (MonthGrid) och i varje vecka det sträcker sig över (WeekBoard), så ett tal
+ * på varje kort hade visat samma miljon fem gånger medan banans fot visar veckans FÖRDELADE andel.
+ * Det är precis den felläsning #203 byggdes för att ta bort, och den får inte komma in bakvägen här.
+ *
+ * ⚠️ TALET ÄR ETAPPENS PÅ ETT ETAPPKORT, till skillnad från marginalen bredvid som alltid är hela
+ * orderns. `mapWorkOrderJob` beskär raderna med `scopeLineItems` innan summan räknas — samma
+ * beskärning som etappchipets säckantal bygger på. Titeln skriver ut vilket det är, så de två
+ * scopen inte läses som ett.
+ */
+function RevenueChip({ revenue, scopeLabel }: { revenue: number; scopeLabel: string }) {
+  if (!(revenue > 0)) return null;
+  return (
+    <span
+      title={`${scopeLabel} omsättning ex moms. Visas på jobbets första dag — banans fot visar veckans fördelade andel.`}
+      className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-slate-300 bg-white/70 px-2 py-px text-[9px] font-bold tabular-nums text-slate-700"
+    >
+      {krFmt.format(revenue)} kr
+    </span>
+  );
+}
+
+export function JobFigures({
   margin,
   scoped,
   finalReport,
+  revenue,
+  showRevenue,
 }: {
   margin: JobMargin | undefined;
   scoped: boolean;
+  /** Etappens/orderns omsättning ex moms, redan beskuren av mapWorkOrderJob. */
+  revenue: number;
+  /** Kortet är jobbets FÖRSTA i den här vyn — se RevenueChip. */
+  showRevenue: boolean;
   /**
    * Egenkontrollen är inlämnad (`sacks_final`).
    *
@@ -224,13 +255,14 @@ export function MarginBadges({
    */
   finalReport: boolean;
 }) {
-  if (!margin) return null;
-  const hasPlan = margin.plan_tg1 != null || margin.plan_tb2 != null;
+  const hasPlan = margin != null && (margin.plan_tg1 != null || margin.plan_tb2 != null);
   // ⛔ Inget utfall utan egenkontroll. `sacks_final === false` betyder "ej registrerat" och inte
   // "saknas" (se SackProgress), men åt det här hållet är det rätt väg att fela: ett uteblivet märke
   // är ett tomt utrymme, ett uppblåst märke är ett beslutsunderlag.
-  const hasActual = finalReport && (margin.actual_tg1 != null || margin.actual_tb2 != null);
-  if (!hasPlan && !hasActual) return null;
+  const hasActual =
+    margin != null && finalReport && (margin.actual_tg1 != null || margin.actual_tb2 != null);
+  const hasRevenue = showRevenue && revenue > 0;
+  if (!hasRevenue && !hasPlan && !hasActual) return null;
 
   // ⚠️ TALEN ÄR ALLTID HELA ORDERNS, oavsett kort. På ett etappkort läses de annars som etappens —
   // och etappen kan vara den lönsamma halvan av ett jobb som går back. På ett flerdagarsjobb ritas
@@ -241,16 +273,19 @@ export function MarginBadges({
     : ' Avser hela arbetsordern, inte enbart den här dagen.';
   return (
     <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5">
+      {hasRevenue && (
+        <RevenueChip revenue={revenue} scopeLabel={scoped ? 'Etappens' : 'Arbetsorderns'} />
+      )}
       <MarginChip
         label="Sålt"
-        percent={margin.plan_tg1}
-        tb={margin.plan_tb2}
+        percent={margin?.plan_tg1 ?? null}
+        tb={margin?.plan_tb2 ?? null}
         title={`Förkalkyl vid insäljning — täckningsgrad efter material, TB2 efter material och uppskattat arbete.${whole}`}
       />
       <MarginChip
         label="Utfall"
-        percent={margin.actual_tg1}
-        tb={margin.actual_tb2}
+        percent={hasActual ? margin?.actual_tg1 ?? null : null}
+        tb={hasActual ? margin?.actual_tb2 ?? null : null}
         title={`Efterkalkyl — egenkontrollens säckar och rapporterad tid. Arbetstiden kan fortfarande vara ofullständig.${whole}`}
       />
     </div>
@@ -868,6 +903,7 @@ export function SegmentCardBody({
   truckName,
   order,
   margin,
+  showRevenue = false,
 }: {
   seg: OpsSegment;
   canWrite: boolean;
@@ -879,6 +915,8 @@ export function SegmentCardBody({
   order?: OrderInfo;
   /** Odefinierad = inte hämtad än, eller behörighet saknas. Märket uteblir då helt. */
   margin?: JobMargin;
+  /** Kortet är jobbets första i den här vyn — avgör om omsättningen skrivs ut. Se RevenueChip. */
+  showRevenue?: boolean;
 }) {
   const job = seg.job;
   return (
@@ -978,10 +1016,12 @@ export function SegmentCardBody({
           {/* ⚠️ EGEN RAD, inte inklämt bland säck- och besättningsmärkena. Den raden delar redan
               bredd med besättningens namn, och ett chip till på den radbröts ut ur den synliga ytan
               — exakt det som hände etappens säckantal (se noten vid etappchipet ovan). */}
-          <MarginBadges
+          <JobFigures
             margin={margin}
             scoped={Boolean(job.stage) || job.is_rest}
             finalReport={seg.sacks_final}
+            revenue={job.revenue}
+            showRevenue={showRevenue}
           />
           {/* Hover hint — the card opens its work order on double-click. */}
           <span className="pointer-events-none absolute inset-x-0 bottom-0 z-10 flex justify-center pb-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100">

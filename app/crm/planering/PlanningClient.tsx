@@ -18,7 +18,7 @@ import { describeShortfallCover, type DepotForecast } from '@/lib/domains/planni
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import type { DeliveryChip } from '@/lib/domains/planning/deliveryStrip';
 import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/planning/jobTypes';
-import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
+import { revenueAnchorSegments, scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
   parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
@@ -1089,6 +1089,10 @@ export default function PlanningClient({
     [segments],
   );
   const { margins } = useJobMargins(marginOrderIds, marginVersion);
+
+  // Vilka kort som skriver ut omsättningen — ett per scope. Räknat på `visibleSegments` med flit:
+  // ligger ankaret på en bortvald bil ska beloppet flytta till det första kort man kan SE.
+  const revenueAnchors = useMemo(() => revenueAnchorSegments(visibleSegments), [visibleSegments]);
   // Veckans omsättning och säckar, fördelade över de dagar jobben faktiskt utförs.
   //
   // ⛔ RÄKNAT PÅ `segments`, INTE `visibleSegments`. Sökrutan och dolda bilar är VYINSTÄLLNINGAR och
@@ -1580,6 +1584,7 @@ export default function PlanningClient({
                         onForkWeek={forkWeek}
                         onRestoreWeek={restoreWeek}
                         margins={margins}
+                        revenueAnchors={revenueAnchors}
                       />
                     </div>
                   );
@@ -1602,6 +1607,7 @@ export default function PlanningClient({
                 actions={actions}
                 dayNotes={dayNotes}
                 margins={margins}
+                revenueAnchors={revenueAnchors}
               />
             )}
 
