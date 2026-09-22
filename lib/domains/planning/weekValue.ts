@@ -27,6 +27,46 @@ export function scopeKey(workOrderId: string, stageId: string | null): string {
   return `${workOrderId}:${stageId ?? 'rest'}`;
 }
 
+/**
+ * Vilket segment som ska skriva ut scopets omsättning — ett per scope, aldrig fler.
+ *
+ * 🧨 ETT JOBB KAN HA FLERA PLACERINGAR AV SAMMA SCOPE. Första försöket ankrade på segmentets egen
+ * första dag, vilket ser rätt ut tills man räknar: mätt i månadsvyn skrev 9 av 10 flerkortsjobb ut
+ * SAMMA belopp två till tre gånger — #55 stod på 38 045 kr på två kort, #82 på 64 859 kr på två.
+ * Bara ett av tio var ett äkta etappfall med olika belopp. Att dela upp ett jobb på två besök gör
+ * det inte värt dubbelt, och tavlan får inte antyda det.
+ *
+ * Nyckeln är därför `scopeKey` — arbetsordern OCH etappen. Två etapper ÄR två belopp och ska båda
+ * synas; två placeringar av samma etapp är ett belopp som ska synas en gång.
+ *
+ * Ankaret är den tidigaste placeringen, med `sort_index` och id som avgörare precis som
+ * `compareBoardOrder` — ett oavgjort som avgörs av inget avgörs av radordningen i svaret, och den
+ * byter efter en orelaterad UPDATE.
+ *
+ * ⚠️ RÄKNAS PÅ DET SOM SYNS. Anroparen skickar in de segment vyn faktiskt ritar, inte allt som
+ * laddats: ligger ankaret på en bortvald bil eller utanför sökträffen ska beloppet flytta till det
+ * första kort man KAN se, inte försvinna.
+ */
+export function revenueAnchorSegments<
+  T extends { id: string; work_order_id: string | null; stage_id?: string | null; start_day: string; sort_index: number },
+>(segments: T[]): Set<string> {
+  const best = new Map<string, T>();
+  for (const seg of segments) {
+    if (!seg.work_order_id) continue; // platshållare bär ingen omsättning
+    const key = scopeKey(seg.work_order_id, seg.stage_id ?? null);
+    const cur = best.get(key);
+    if (
+      !cur
+      || seg.start_day < cur.start_day
+      || (seg.start_day === cur.start_day
+        && (seg.sort_index - cur.sort_index || seg.id.localeCompare(cur.id)) < 0)
+    ) {
+      best.set(key, seg);
+    }
+  }
+  return new Set([...best.values()].map((s) => s.id));
+}
+
 export type ScopeValue = {
   /** `scopeKey(work_order_id, stage_id)` — det som ska utföras. */
   key: string;
