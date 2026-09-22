@@ -94,11 +94,18 @@ export async function syncArticleNotes(): Promise<number> {
   for (const [i, row] of pending.entries()) {
     const articleNumber = (row as { article_number: string }).article_number;
     let note: string | null = null;
+    let articleType: string | null | undefined;
     try {
       const { Article } = await fortnoxGet<FortnoxArticleWriteResponse>(
         `/articles/${encodeURIComponent(articleNumber)}`,
       );
       note = dedupeArticleNote(Article?.Note);
+      // 🟢 GRATIS PÅ KÖPET. Enskild-GET är den ENDA vägen till `Type` — listsvaret bär det inte, och
+      // artikelregistret skriver "Material" på allt som saknar det (ArticlesClient.tsx:217). Vi har
+      // redan betalat för anropet här, så typen plockas med i samma skrivning.
+      // ⚠️ `undefined` skrivs INTE. Ett saknat fält ska lämna kolumnen orörd — det var precis den
+      // förväxlingen som gjorde `active` fel, se mapFortnoxListArticleToCacheRow.
+      articleType = Article?.Type;
       if (note) fetched++;
     } catch (e) {
       // ⚠️ STÄMPLA INTE vid fel. Ett enda 429 eller timeout hade annars satt note_synced_at på en
@@ -112,7 +119,11 @@ export async function syncArticleNotes(): Promise<number> {
 
     const { error: updateError } = await supabase
       .from('fortnox_articles_cache')
-      .update({ note, note_synced_at: new Date().toISOString() })
+      .update({
+        note,
+        note_synced_at: new Date().toISOString(),
+        ...(articleType === undefined ? {} : { article_type: articleType }),
+      })
       .eq('article_number', articleNumber);
     if (updateError) {
       console.warn(`[Fortnox] kunde inte spara beskrivning för artikel ${articleNumber}:`, updateError.message);
@@ -146,37 +157,74 @@ function mapFortnoxArticleToCacheRow(a: FortnoxArticle, now: string) {
   };
 }
 
+/**
+ * Samma rad, men BARA de fält listendpointen faktiskt skickar.
+ *
+ * 🧨 `?? true` PÅ ETT FÄLT SOM ALDRIG KOMMER ÄR INTE EN DEFAULT, DET ÄR EN ÖVERSKRIVNING.
+ * `/articles` returnerar femton fält och `Active` är inte ett av dem (verifierat mot skarp data
+ * 2026-09-22: 288 av 292 cachade rader saknade `Active` i `raw` — de fyra som hade det kom från
+ * enskild-GET). `a.Active ?? true` gjorde därför varje full synk till "allt är aktivt", och de 30
+ * artiklar som ÄR inaktiva i Fortnox stod som aktiva hos oss tills någon öppnade och sparade dem
+ * en och en. Nästa synk slog tillbaka det.
+ *
+ * `Type` saknas på samma sätt, och `?? null` nollade `article_type` vid varje synk — därför visade
+ * artikelregistret "Material" på i stort sett allt (`ArticlesClient.tsx:217`).
+ *
+ * Båda utelämnas nu ur listpayloaden. En PostgREST-upsert rör bara kolumnerna den får, precis som
+ * `note` redan utnyttjar ovan — utelämnat står kvar orört. `active` sätts i stället explicit av
+ * anroparen, som VET vilken statusfråga den ställde.
+ */
+export function mapFortnoxListArticleToCacheRow(a: FortnoxArticle, now: string, active: boolean) {
+  const { active: _ignoredActive, article_type: _ignoredType, ...rest } = mapFortnoxArticleToCacheRow(a, now);
+  return { ...rest, active };
+}
+
 // Fetch all articles from Fortnox and upsert into fortnox_articles_cache.
 // Uses service role for DB writes (approved: admin-triggered sync job).
 export async function syncFortnoxArticles(): Promise<ArticleSyncResult> {
   const supabase = getSupabaseAdmin();
-  let page = 1;
-  let totalPages = 1;
+  let totalPages = 0;
   let totalSynced = 0;
 
-  do {
-    const response = await fortnoxGet<FortnoxArticleListResponse>('/articles', {
-      limit: String(PAGE_SIZE),
-      page: String(page),
-    });
+  // ── TVÅ PASS, ETT PER STATUS ────────────────────────────────────────────────
+  // Listsvaret bär ingen `Active` (se mapFortnoxListArticleToCacheRow), men endpointen KAN filtrera
+  // på den. Statusen läses därför ur vilken fråga vi ställde i stället för ur ett fält som aldrig
+  // kommer. Verifierat mot skarp data 2026-09-22: utan filter 292, `filter=active` 262,
+  // `filter=inactive` 30 — summan går jämnt ut, alltså täcker de två passen hela registret.
+  //
+  // ⚠️ ALTERNATIVET VAR 292 ENSKILDA GET. Det är den enda andra vägen till `Active`, och det är
+  // ett anrop per artikel mot en API-kvot vi redan sover oss igenom i beskrivningspasset.
+  for (const [filter, active] of [['active', true], ['inactive', false]] as const) {
+    let page = 1;
+    let pagesInPass = 1;
 
-    const articles = response.Articles ?? [];
-    totalPages = response.MetaInformation?.['@TotalPages'] ?? 1;
+    do {
+      const response = await fortnoxGet<FortnoxArticleListResponse>('/articles', {
+        limit: String(PAGE_SIZE),
+        page: String(page),
+        filter,
+      });
 
-    if (articles.length > 0) {
-      const now = new Date().toISOString();
-      const rows = articles.map((a) => mapFortnoxArticleToCacheRow(a, now));
+      const articles = response.Articles ?? [];
+      pagesInPass = response.MetaInformation?.['@TotalPages'] ?? 1;
 
-      const { error } = await supabase
-        .from('fortnox_articles_cache')
-        .upsert(rows, { onConflict: 'article_number' });
+      if (articles.length > 0) {
+        const now = new Date().toISOString();
+        const rows = articles.map((a) => mapFortnoxListArticleToCacheRow(a, now, active));
 
-      if (error) throw new Error(`Kunde inte spara artiklar: ${error.message}`);
-      totalSynced += rows.length;
-    }
+        const { error } = await supabase
+          .from('fortnox_articles_cache')
+          .upsert(rows, { onConflict: 'article_number' });
 
-    page++;
-  } while (page <= totalPages);
+        if (error) throw new Error(`Kunde inte spara artiklar: ${error.message}`);
+        totalSynced += rows.length;
+      }
+
+      page++;
+    } while (page <= pagesInPass);
+
+    totalPages += pagesInPass;
+  }
 
   // Beskrivningarna (Note) finns inte i listsvaret och hämtas per artikel — men bara för dem vi
   // inte redan frågat om. Första körningen är därför långsam (~100 s), därefter snabb igen.
