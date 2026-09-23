@@ -5,6 +5,8 @@ import {
   startOfWeek,
   today,
   reportRange,
+  daysInRange,
+  previousRange,
   REPORT_RANGE_LABELS,
 } from '@/app/crm/rapportering/reportRanges';
 
@@ -132,5 +134,90 @@ describe('reportRange', () => {
     const keys = REPORT_RANGE_LABELS.map(([key]) => key);
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys).toEqual(['week', 'month', 'prevMonth', 'year', 'last12']);
+  });
+});
+
+// ── Jämförelseperioden ───────────────────────────────────────────────────────
+//
+// Två invarianter bär hela jämförelsetalet, och båda går fel tyst:
+//
+//   1. jämförelseperioden är LIKA LÅNG som perioden — annars jämförs en hel månad med en halv
+//      och skillnaden presenteras som en utveckling
+//   2. den slutar dagen INNAN perioden börjar — en dags överlapp dubbelräknar en dags försäljning
+//      i båda leden
+//
+// ⚠️ Testerna nedan är skrivna ur EXPLICITA DYGNSSPANN, inte ur klockslag. `vitest.config.ts`
+// pinnar ingen TZ, så under TZ=UTC (CI och Vercel) är varje dygn exakt 24 timmar och en
+// sommartidsbugg aldrig utsatt. Spannen nedan korsar båda svenska växlingarna 2026 —
+// 29 mars (klockan fram) och 25 oktober (klockan tillbaka) — så de biter i alla zoner.
+
+describe('daysInRange', () => {
+  it('räknar båda ändarna', () => {
+    expect(daysInRange({ from: '2026-09-01', to: '2026-09-22' })).toBe(22);
+  });
+
+  it('en dag är en dag', () => {
+    expect(daysInRange({ from: '2026-09-01', to: '2026-09-01' })).toBe(1);
+  });
+
+  it('håller över VÅRENS växling — dygnet som bara har 23 timmar', () => {
+    // 29 mars 2026 går klockan fram i Sverige. En naiv millisekundsdivision i lokal zon ger
+    // 6,958 dagar här, vilket avrundat nedåt blir 6 och en dag försvinner ur nämnaren.
+    expect(daysInRange({ from: '2026-03-23', to: '2026-03-29' })).toBe(7);
+  });
+
+  it('håller över HÖSTENS växling — dygnet som har 25 timmar', () => {
+    // 25 oktober 2026 går klockan tillbaka. Samma division ger 7,042 dagar.
+    expect(daysInRange({ from: '2026-10-19', to: '2026-10-25' })).toBe(7);
+  });
+
+  it('ett bakvänt intervall ger 0, inte ett negativt antal dagar', () => {
+    expect(daysInRange({ from: '2026-09-22', to: '2026-09-01' })).toBe(0);
+  });
+});
+
+describe('previousRange', () => {
+  it('är lika lång och slutar dagen innan perioden börjar', () => {
+    expect(previousRange({ from: '2026-09-01', to: '2026-09-22' }))
+      .toEqual({ from: '2026-08-10', to: '2026-08-31' });
+  });
+
+  it('en hel månad jämförs med de lika många dagarna dessförinnan', () => {
+    // Augusti har 31 dagar; de 31 föregående sträcker sig in i juli. Att i stället ta "hela juli"
+    // hade jämfört 31 dagar med 31 — av en slump — men 28 med 31 i februari.
+    expect(previousRange({ from: '2026-08-01', to: '2026-08-31' }))
+      .toEqual({ from: '2026-07-01', to: '2026-07-31' });
+  });
+
+  it('februari jämförs med 28 dagar, inte med januaris 31', () => {
+    expect(previousRange({ from: '2026-02-01', to: '2026-02-28' }))
+      .toEqual({ from: '2026-01-04', to: '2026-01-31' });
+  });
+
+  it('rullar bakåt över ett årsskifte', () => {
+    expect(previousRange({ from: '2026-01-01', to: '2026-01-31' }))
+      .toEqual({ from: '2025-12-01', to: '2025-12-31' });
+  });
+
+  for (const range of [
+    { from: '2026-03-23', to: '2026-03-29' }, // korsar vårens växling
+    { from: '2026-10-19', to: '2026-10-25' }, // korsar höstens växling
+    { from: '2026-01-01', to: '2026-12-31' }, // ett helt år
+    { from: '2026-09-22', to: '2026-09-22' }, // en enda dag
+  ]) {
+    it(`håller invarianterna för ${range.from}–${range.to}`, () => {
+      const previous = previousRange(range)!;
+      expect(previous).not.toBeNull();
+      // Lika lång.
+      expect(daysInRange(previous)).toBe(daysInRange(range));
+      // Slutar dagen innan, alltså inget överlapp och inget glapp.
+      expect(previous.to < range.from).toBe(true);
+      expect(daysInRange({ from: previous.to, to: range.from })).toBe(2);
+    });
+  }
+
+  it('ett intervall som inte går att räkna på ger null, inte ett påhittat datum', () => {
+    expect(previousRange({ from: '2026-09-22', to: '2026-09-01' })).toBeNull();
+    expect(previousRange({ from: 'inte-ett-datum', to: '2026-09-01' })).toBeNull();
   });
 });

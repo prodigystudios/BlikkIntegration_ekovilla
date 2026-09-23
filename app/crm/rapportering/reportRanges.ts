@@ -86,6 +86,42 @@ export function reportRange(key: ReportRangeKey, now: Date = new Date()): Report
   }
 }
 
+/**
+ * Antal kalenderdagar i intervallet, båda ändarna inräknade.
+ *
+ * Datumsträngarna tolkas som UTC-midnatt, så subtraktionen är en ren dygnsräkning utan någon
+ * tidszon inblandad — en sommartidsväxling kan inte göra ett dygn 23 eller 25 timmar här.
+ * `Math.round` är ändå kvar som bälte: den dagen någon skickar in ett värde med klockslag ska
+ * svaret bli ett helt antal dagar, inte 6,958.
+ */
+export function daysInRange(range: ReportRange): number {
+  const from = Date.parse(`${range.from}T00:00:00Z`);
+  const to = Date.parse(`${range.to}T00:00:00Z`);
+  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return 0;
+  return Math.round((to - from) / 86_400_000) + 1;
+}
+
+/**
+ * Det lika långa intervallet omedelbart FÖRE det givna — jämförelsetalet på rapportsidan.
+ *
+ * ⚠️ LIKA MÅNGA DAGAR, inte "samma period förra månaden". En period om 22 dagar jämförs med de
+ * 22 dagarna dessförinnan; allt annat hade jämfört en hel månad med en halv och kallat skillnaden
+ * en utveckling. Följden är att "Denna månad" den 22:e jämförs mot 11 aug–1 sep, alltså över en
+ * månadsgräns. Det är avsiktligt: det är det enda som håller nämnaren lika stor.
+ *
+ * Returnerar null för ett intervall som inte går att räkna på, så anroparen kan visa "ingen
+ * jämförelse" i stället för att få ett påhittat datum.
+ */
+export function previousRange(range: ReportRange): ReportRange | null {
+  const days = daysInRange(range);
+  if (days <= 0) return null;
+  const from = new Date(`${range.from}T00:00:00Z`);
+  if (!Number.isFinite(from.getTime())) return null;
+  const previousTo = addDays(from, -1);
+  const previousFrom = addDays(previousTo, -(days - 1));
+  return { from: dayString(previousFrom), to: dayString(previousTo) };
+}
+
 export const REPORT_RANGE_LABELS: Array<[ReportRangeKey, string]> = [
   ['week', 'Denna vecka'],
   ['month', 'Denna månad'],

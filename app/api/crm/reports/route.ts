@@ -1,10 +1,18 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
-import { composeSalesReport, fetchReportData, partitionOrders, type ReportRange } from '@/lib/domains/crm/reports';
+import {
+  buildPeriodTotals,
+  composeSalesReport,
+  fetchReportData,
+  monthsInRange,
+  partitionOrders,
+  type ReportRange,
+} from '@/lib/domains/crm/reports';
+import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
-import { reportRange } from '@/app/crm/rapportering/reportRanges';
+import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -51,6 +59,43 @@ export async function GET(req: Request) {
     const admin = getSupabaseAdmin();
     const data = await fetchReportData(admin, range);
 
+    // ── Referenspunkterna: målen och föregående period ───────────────────────
+    //
+    // ⚠️ VARKEN MÅLEN ELLER JÄMFÖRELSEN FÅR KUNNA SÄNKA RAPPORTEN. Samma regel som lönsamheten
+    // nedan lyder under: felar de ska säljsiffrorna fortfarande visas, och korten stå utan sin
+    // referens. Därför egna try/catch per del i stället för ett Promise.all som river allt.
+    //
+    // Båda degraderar till `null`, aldrig till nollor — ett jämförelsetal på 0 kr hade lästs som
+    // "förra perioden sålde vi ingenting", vilket är ett helt annat påstående än "vi vet inte".
+    const months = monthsInRange(range.from, range.to);
+
+    let goals: ReportGoalRow[] | null = null;
+    try {
+      const { data: goalRows, error } = await admin
+        .from('crm_goals')
+        .select('period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target')
+        .eq('period_type', 'month')
+        .in('period_start', months.map((month) => `${month}-01`));
+      if (error) throw new Error(error.message);
+      goals = (goalRows as ReportGoalRow[]) || [];
+    } catch (e: any) {
+      console.warn(`[Rapport] Målen kunde inte hämtas: ${e?.message || e}`);
+    }
+
+    const comparisonRange = previousRange(range);
+    let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
+    if (comparisonRange) {
+      try {
+        // Bara huvudtalen för föregående period — INGEN efterkalkyl. Lönsamheten räknas på
+        // fakturerade ordrars radrader, och att göra om det arbetet för en period ingen tittar på
+        // hade fördubblat svarstiden för ett jämförelsetal i ett chip.
+        const previousData = await fetchReportData(admin, comparisonRange);
+        previous = { range: comparisonRange, totals: buildPeriodTotals(previousData, comparisonRange) };
+      } catch (e: any) {
+        console.warn(`[Rapport] Jämförelseperioden kunde inte hämtas: ${e?.message || e}`);
+      }
+    }
+
     // ── Lönsamheten ──────────────────────────────────────────────────────────
     // Bara de FAKTURERADE ordrarna efterkalkyleras. Populationen är densamma som "Fakturerat" i
     // serien, och det håller nere arbetet: `line_items` hämtas för en handfull ordrar i stället för
@@ -93,7 +138,11 @@ export async function GET(req: Request) {
       }
     }
 
-    const report = composeSalesReport(data, range, afterCalculations, { profitabilityUnavailable });
+    const report = composeSalesReport(data, range, afterCalculations, {
+      profitabilityUnavailable,
+      goals,
+      previous,
+    });
 
     return ok(report);
   } catch (e: any) {
