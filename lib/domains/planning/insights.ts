@@ -1,9 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, scopeForSegment, type WorkOrderJobRow } from './display';
 import { expandWorkOrderToBacklogItems, SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
+import { isDeadWorkOrder } from '@/lib/domains/crm/work-orders';
 import { mondayOfISO } from './timezone';
 import { listScopeSpans } from './schedule';
-import { scopeKey, segmentWeekValues, type ScopeValue } from './weekValue';
+import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue } from './weekValue';
 
 // Forward-looking planning insights: scheduled revenue + sacks per week, per truck, per material,
 // and the value of work still waiting to be planned (unplanned backlog). Pure aggregation here is
@@ -97,7 +98,7 @@ const JOB_FIELDS =
 
 // Value (revenue + sacks) of schedulable work orders that have NO segments yet — the work still
 // waiting to be planned.
-async function computeBacklogValue(supabase: SupabaseClient): Promise<{ revenue: number; sacks: number; count: number }> {
+export async function computeBacklogValue(supabase: SupabaseClient): Promise<{ revenue: number; sacks: number; count: number }> {
   const { data: orders } = await supabase
     .from('crm_work_orders')
     .select(`id, desired_installation_date, assigned_to, ${JOB_FIELDS}`)
@@ -130,15 +131,45 @@ async function computeBacklogValue(supabase: SupabaseClient): Promise<{ revenue:
   return { revenue, sacks, count };
 }
 
-// Forward window of `weeks` starting from the Monday of `fromISO`. RLS (planning.schedule.read).
-export async function getPlanningInsights(
-  supabase: SupabaseClient,
-  opts: { fromISO: string; weeks: number },
-): Promise<{ data: PlanningInsights; error: { message: string } | null }> {
-  const from = mondayOf(opts.fromISO);
-  const weekStarts = Array.from({ length: opts.weeks }, (_, i) => addDaysISO(from, i * 7));
-  const to = addDaysISO(from, opts.weeks * 7 - 1);
+/** Det schemalagda arbetet i ett fönster, i den form fördelningen behöver. */
+export type ScheduledScopes = {
+  /** Varje scopes värde, deduppat. */
+  values: ScopeValue[];
+  /** Scopets etikett — i dag bara materialet. */
+  labels: Map<string, { material: string | null }>;
+  truckNames: Map<string, string>;
+  /** Placeringarnas HELA spann, inte bara den del som ligger i fönstret. Se varningen nedan. */
+  spans: ScopeSpan[];
+};
 
+/**
+ * Läser det schemalagda arbete som överlappar [from, to] och löser upp varje scopes värde.
+ *
+ * Delad av veckofönstret (getPlanningInsights, planeringens insikter) och av periodvyn
+ * (aggregatePlannedForRange, rapporteringen). ⚠️ EN implementation med flit: modulens egen
+ * kommentar om `mondayOf` säger varför — två sätt att räkna ut vad ett fönster innehåller är
+ * precis det som gör att två vyer kan svara olika på samma fråga.
+ */
+export type ScheduledScopeFilter =
+  /** Bara arbete som fortfarande ska utföras. Framåtblicken — vad väntar. */
+  | 'open'
+  /** Allt utom avbrutet. Historiken — vad VAR planerat, oavsett att ordern sedan fakturerats. */
+  | 'not-cancelled';
+
+export async function loadScheduledScopes(
+  supabase: SupabaseClient,
+  from: string,
+  to: string,
+  /**
+   * ⚠️ VALET ÄR AVGÖRANDE FÖR EN HISTORISK PERIOD, inte en detalj.
+   *
+   * `open` (standard) speglar planeringens insikter: bara draft/scheduled/in_progress. Det är rätt
+   * för ett framåtblickande fönster, men för en period som redan passerat är de flesta ordrar
+   * fakturerade — och då blir "planerat" nästan noll medan utfallet står kvar. Mätt i drift
+   * 2026-09-23: Sandviken 1 visade 150 planerade säckar mot 3 826 blåsta, vilket är omöjligt.
+   */
+  filter: ScheduledScopeFilter = 'open',
+): Promise<{ data: ScheduledScopes | null; error: { message: string } | null }> {
   const { data: segs, error } = await supabase
     .from('ops_segments')
     .select(`work_order_id, stage_id, start_day, truck_id, truck:ops_trucks(name), work_order:crm_work_orders(${JOB_FIELDS})`)
@@ -146,8 +177,7 @@ export async function getPlanningInsights(
     .gte('end_day', from)
     .order('start_day', { ascending: true });
 
-  const empty: PlanningInsights = { weeks: [], byTruck: [], byMaterial: [], backlog: { revenue: 0, sacks: 0, count: 0 } };
-  if (error) return { data: empty, error };
+  if (error) return { data: null, error };
 
   // Ett scopes värde och etikett, plus bilnamnen. Dedupen är på SCOPE, inte på placering: samma jobb
   // kan ligga på flera segment och ska bara bidra med sitt värde en gång — fördelningen avgör sedan
@@ -158,7 +188,9 @@ export async function getPlanningInsights(
   const workOrderIds = new Set<string>();
   for (const s of (segs ?? []) as Array<Record<string, any>>) {
     const wo = Array.isArray(s.work_order) ? s.work_order[0] : s.work_order;
-    if (!wo || !OPEN.has(wo.status) || !s.work_order_id) continue;
+    if (!wo || !s.work_order_id) continue;
+    const keep = filter === 'open' ? OPEN.has(wo.status) : !isDeadWorkOrder(wo.status);
+    if (!keep) continue;
     const truck = Array.isArray(s.truck) ? s.truck[0] : s.truck;
     if (truck?.name) truckNames.set(s.truck_id, truck.name);
     workOrderIds.add(s.work_order_id);
@@ -177,7 +209,27 @@ export async function getPlanningInsights(
   // värdet över dem får ett jobb som sträcker sig utanför fönstret för hög andel i den synliga
   // veckan — samma uppblåsning som fördelningen finns för att döda. Se listScopeSpans.
   const spans = await listScopeSpans(supabase, [...workOrderIds]);
-  if (spans.error) return { data: empty, error: spans.error };
+  if (spans.error) return { data: null, error: spans.error };
+
+  return {
+    data: { values: [...values.values()], labels, truckNames, spans: spans.data },
+    error: null,
+  };
+}
+
+// Forward window of `weeks` starting from the Monday of `fromISO`. RLS (planning.schedule.read).
+export async function getPlanningInsights(
+  supabase: SupabaseClient,
+  opts: { fromISO: string; weeks: number },
+): Promise<{ data: PlanningInsights; error: { message: string } | null }> {
+  const from = mondayOf(opts.fromISO);
+  const weekStarts = Array.from({ length: opts.weeks }, (_, i) => addDaysISO(from, i * 7));
+  const to = addDaysISO(from, opts.weeks * 7 - 1);
+
+  const empty: PlanningInsights = { weeks: [], byTruck: [], byMaterial: [], backlog: { revenue: 0, sacks: 0, count: 0 } };
+  const scheduled = await loadScheduledScopes(supabase, from, to);
+  if (scheduled.error || !scheduled.data) return { data: empty, error: scheduled.error };
+  const { values, labels, truckNames, spans } = scheduled.data;
 
   // ⚠️ SKIVORNA KLIPPS TILL FÖNSTRET. Nämnaren är jobbets HELA spann, så ett femveckorsjobb ger
   // skivor även för veckor utanför [from, to]. aggregateInsights hoppar över dem i veckoserien men
@@ -188,7 +240,7 @@ export async function getPlanningInsights(
   // gjorde den medvetet inte det (se kommentaren vid aggregateInsights), eftersom dedupen mot
   // första segmentet kunde peka ut en vecka före fönstret.
   const inWindow = new Set(weekStarts);
-  const jobs: InsightJob[] = segmentWeekValues([...values.values()], spans.data)
+  const jobs: InsightJob[] = segmentWeekValues(values, spans)
     .filter((slice) => inWindow.has(slice.weekStart))
     .map((slice) => ({
       weekStart: slice.weekStart,

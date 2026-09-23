@@ -23,6 +23,7 @@ import {
   type PeriodSummary,
 } from '@/lib/domains/crm/reportGoals';
 import type { Production } from '@/lib/domains/planning/production';
+import type { PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 
 // ── Types (mirror lib/domains/crm/reports.ts) ──
 type SalesOverTimePoint = { period: string; quoteValue: number; orderValue: number; invoicedValue: number };
@@ -50,6 +51,7 @@ type SalesReport = {
   range: { from: string; to: string };
   periodSummary: PeriodSummary;
   production: Production;
+  planned: PlannedPeriod;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -306,6 +308,9 @@ function goalSubtitle(summary: PeriodSummary): string {
 // ── Produktion ───────────────────────────────────────────────────────────────
 
 const COLOR_SACKS = '#0284c7'; // sky — samma ton som säcklinjen i planeringens insikter
+// Planerat ritas dämpat och utfallet mättat: ögat ska dras till vad som FAKTISKT hände, med planen
+// som bakgrund att läsa det mot — inte tvärtom.
+const COLOR_PLANNED = '#b6c9d9';
 const MATERIAL_UNKNOWN_LABEL = 'Okänt material';
 
 /** Materialets etikett. `null` betyder att raden saknar material — aldrig ett påhittat namn. */
@@ -429,19 +434,66 @@ export default function ReportsClient() {
   );
 
   // Samma etikettregel som försäljningsserien, så månaderna går att läsa mot varandra.
-  const productionMonthData = useMemo(
-    () => (report?.production.byMonth || []).map((p) => ({
+  // Planerat och utfall delar månadsaxel (båda byggs ur `months` på servern), så de kan ställas
+  // i samma punkt utan att någon rad behöver matchas ihop.
+  const productionMonthData = useMemo(() => {
+    if (!report) return [];
+    const plannedByMonth = new Map(report.planned.byMonth.map((p) => [p.period, p.sacks]));
+    return report.production.byMonth.map((p) => ({
       ...p,
-      label: report && report.production.byMonth.length === 1
+      planned: plannedByMonth.get(p.period) ?? 0,
+      label: report.production.byMonth.length === 1
         ? formatRangeLabel(report.range.from, report.range.to)
         : formatMonth(p.period),
-    })),
-    [report],
-  );
-  const productionMaterialData = useMemo(
-    () => (report?.production.byMaterial || []).map((row) => ({ ...row, label: materialLabel(row.material) })),
-    [report],
-  );
+    }));
+  }, [report]);
+
+  // Materialen slås ihop på nyckeln, inte på ordningen: listorna sorteras var för sig och ett
+  // material kan finnas i den ena men inte i den andra (planerat men inte blåst, eller tvärtom).
+  const productionMaterialData = useMemo(() => {
+    if (!report) return [];
+    const keys: Array<string | null> = [];
+    const push = (material: string | null) => { if (!keys.some((k) => k === material)) keys.push(material); };
+    for (const row of report.production.byMaterial) push(row.material);
+    for (const row of report.planned.byMaterial) push(row.material);
+    return keys
+      .map((material) => ({
+        material,
+        label: materialLabel(material),
+        sacks: report.production.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
+        planned: report.planned.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
+      }))
+      // Okänt sist, precis som i de två källistorna.
+      .sort((a, b) => {
+        if ((a.material === null) !== (b.material === null)) return a.material === null ? 1 : -1;
+        return (b.sacks + b.planned) - (a.sacks + a.planned);
+      });
+  }, [report]);
+
+  // Bilraderna: utfallet som grund, planerat inflätat. En bil som var PLANERAD men inte
+  // rapporterade något måste också med — annars försvinner just de rader man vill titta på.
+  const productionTruckRows = useMemo(() => {
+    if (!report) return [];
+    const plannedByTruck = new Map(report.planned.byTruck.map((t) => [t.truck_id, t]));
+    const rows = report.production.byTruck.map((truck) => ({
+      ...truck,
+      plannedSacks: plannedByTruck.get(truck.truck_id)?.sacks ?? 0,
+      plannedRevenue: plannedByTruck.get(truck.truck_id)?.revenue ?? 0,
+    }));
+    for (const planned of report.planned.byTruck) {
+      if (rows.some((r) => r.truck_id === planned.truck_id)) continue;
+      rows.push({
+        truck_id: planned.truck_id,
+        truck_name: planned.truck_name,
+        sacks: 0,
+        bookedDays: 0,
+        utilization: report.production.workingDays > 0 ? 0 : null,
+        plannedSacks: planned.sacks,
+        plannedRevenue: planned.revenue,
+      });
+    }
+    return rows;
+  }, [report]);
 
   const funnelStages = useMemo(() => {
     if (!report) return [];
@@ -680,14 +732,16 @@ export default function ReportsClient() {
 
           {/* 1c. Produktion — vad som faktiskt blåstes */}
           <SectionCard
-            title="Produktion"
-            subtitle="Säckar som faktiskt blåstes i perioden, enligt säckboken: finns en egenkontroll är den jobbets sanning, annars summan av delrapporterna. Beläggningen räknas på bokade arbetsdagar (mån–fre minus röda dagar)."
+            title="Produktion — planerat mot utfall"
+            subtitle="Planerat arbete i perioden mot vad som faktiskt blåstes. Utfallet läses ur säckboken: finns en egenkontroll är den jobbets sanning, annars summan av delrapporterna. Ett jobbs planerade värde fördelas över de dagar det utförs, så bara den del som ligger i perioden räknas. Beläggningen är bokade arbetsdagar (mån–fre minus röda dagar och aftnar)."
             action={<ExportButton onClick={() => downloadCsv(
               `produktion_${report.range.from}_${report.range.to}.csv`,
-              ['Bil', 'Säckar', 'Bokade arbetsdagar', 'Arbetsdagar i perioden', 'Beläggning (%)'],
-              report.production.byTruck.map((truck) => [
+              ['Bil', 'Planerade säckar', 'Blåsta säckar', 'Planerad omsättning (ex moms)', 'Bokade arbetsdagar', 'Arbetsdagar i perioden', 'Beläggning (%)'],
+              productionTruckRows.map((truck) => [
                 truck.truck_name,
+                Math.round(truck.plannedSacks),
                 truck.sacks,
+                Math.round(truck.plannedRevenue),
                 truck.bookedDays,
                 report.production.workingDays,
                 truck.utilization == null ? '' : Math.round(truck.utilization),
@@ -699,29 +753,55 @@ export default function ReportsClient() {
               <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-8 text-center text-sm text-amber-800">
                 Produktionen kunde inte räknas. Övriga siffror på sidan är opåverkade.
               </div>
-            ) : report.production.reportCount === 0 && report.production.byTruck.length === 0 ? (
+            ) : report.production.reportCount === 0 && productionTruckRows.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
                 Inget rapporterat och inget schemalagt i perioden.
               </div>
             ) : (
               <div className="grid gap-5">
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatTile
+                    label="Säckar planerade"
+                    value={report.planned.unavailable ? '–' : formatCount(Math.round(report.planned.sacks))}
+                    sub={report.planned.unavailable ? 'kunde inte räknas' : 'schemalagt i perioden'}
+                  />
                   <StatTile
                     label="Säckar blåsta"
                     value={formatCount(report.production.totalSacks)}
                     sub={`${report.production.reportCount} rapporter som räknas`}
                   />
                   <StatTile
-                    label="Jobb rapporterade"
-                    value={formatCount(report.production.jobs)}
-                    sub="arbetsordrar med rapport"
+                    label="Planerad omsättning"
+                    value={report.planned.unavailable ? '–' : formatCurrency(report.planned.revenue)}
+                    sub={report.planned.unavailable ? 'kunde inte räknas' : 'arbete som utförs i perioden'}
                   />
                   <StatTile
-                    label="Arbetsdagar"
-                    value={formatCount(report.production.workingDays)}
-                    sub="nämnaren i beläggningen"
+                    label="Jobb rapporterade"
+                    value={formatCount(report.production.jobs)}
+                    sub={`${formatCount(report.production.workingDays)} arbetsdagar i perioden`}
                   />
                 </div>
+
+                {/* ⚠️ BACKLOGGEN HAR INGEN PERIOD. Den svarar på "vad väntar just nu" och ändras
+                    inte när man byter periodfilter. Utan etiketten läses den som periodens siffra —
+                    och skulle då säga att det låg 5 Mkr oplanerat i juni, vilket ingen vet. */}
+                {report.planned.backlog ? (
+                  <div className="grid gap-3 rounded-xl border border-dashed border-[#cfdcc9] bg-[#f9fbf7] p-3 sm:grid-cols-2">
+                    <div className="sm:col-span-2 -mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                      Just nu · oberoende av vald period
+                    </div>
+                    <StatTile
+                      label="Oplanerat värde"
+                      value={formatCurrency(report.planned.backlog.revenue)}
+                      sub={`${formatCount(report.planned.backlog.sacks)} säck väntar på planering`}
+                    />
+                    <StatTile
+                      label="Oplanerade jobb"
+                      value={formatCount(report.planned.backlog.count)}
+                      sub="väntar på att placeras"
+                    />
+                  </div>
+                ) : null}
 
                 {/* ⚠️ MÅSTE SYNAS. Utan raden skiljer sig totalen ovan från summan av bilstaplarna
                     utan att något ser trasigt ut, och den som räknar efter för hand får fel svar. */}
@@ -732,7 +812,7 @@ export default function ReportsClient() {
                   </p>
                 ) : null}
 
-                {report.production.totalSacks > 0 ? (
+                {report.production.totalSacks > 0 || report.planned.sacks > 0 ? (
                   <div className="grid gap-5 lg:grid-cols-2">
                     <div>
                       <p className="mb-2 mt-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
@@ -744,8 +824,10 @@ export default function ReportsClient() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" vertical={false} />
                             <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} />
                             <YAxis tick={{ fontSize: 12, fill: '#64748b' }} width={44} />
-                            <Tooltip formatter={(value) => [`${formatCount(Number(value))} säck`, 'Blåsta']} />
-                            <Bar dataKey="sacks" fill={COLOR_SACKS} radius={[4, 4, 0, 0]} maxBarSize={44} />
+                            <Tooltip formatter={(value, name) => [`${formatCount(Math.round(Number(value)))} säck`, name]} />
+                            <Legend wrapperStyle={{ fontSize: 12 }} />
+                            <Bar dataKey="planned" name="Planerat" fill={COLOR_PLANNED} radius={[4, 4, 0, 0]} maxBarSize={28} />
+                            <Bar dataKey="sacks" name="Blåst" fill={COLOR_SACKS} radius={[4, 4, 0, 0]} maxBarSize={28} />
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -761,8 +843,12 @@ export default function ReportsClient() {
                             <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" vertical={false} />
                             <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#64748b' }} />
                             <YAxis tick={{ fontSize: 12, fill: '#64748b' }} width={44} />
-                            <Tooltip formatter={(value) => [`${formatCount(Number(value))} säck`, 'Blåsta']} />
-                            <Bar dataKey="sacks" radius={[4, 4, 0, 0]} maxBarSize={56}>
+                            <Tooltip formatter={(value, name) => [`${formatCount(Math.round(Number(value)))} säck`, name]} />
+                            <Legend wrapperStyle={{ fontSize: 12 }} />
+                            <Bar dataKey="planned" name="Planerat" fill={COLOR_PLANNED} radius={[4, 4, 0, 0]} maxBarSize={36} />
+                            {/* `fill` MÅSTE stå här trots att varje Cell sätter sin egen: utan den
+                                kan legenden inte härleda seriens färg och ritar en svart ruta. */}
+                            <Bar dataKey="sacks" name="Blåst" fill={COLOR_SACKS} radius={[4, 4, 0, 0]} maxBarSize={36}>
                               {productionMaterialData.map((row) => (
                                 // Okänt material i grått: det är en lucka i underlaget, inte ett
                                 // material som ska konkurrera visuellt med de riktiga.
@@ -778,22 +864,26 @@ export default function ReportsClient() {
 
                 {/* Bilarna som tabell, inte som diagram: raden bär två tal (säckar OCH beläggning)
                     som betyder olika saker, och ett diagram hade tvingat fram en gemensam skala. */}
-                {report.production.byTruck.length > 0 ? (
+                {productionTruckRows.length > 0 ? (
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[520px] border-collapse text-sm">
                       <thead>
                         <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-slate-400">
                           <th className="py-2 pr-3">Bil</th>
-                          <th className="py-2 px-3 text-right">Säckar</th>
+                          <th className="py-2 px-3 text-right">Planerat</th>
+                          <th className="py-2 px-3 text-right">Blåst</th>
+                          <th className="py-2 px-3 text-right">Planerad omsättning</th>
                           <th className="py-2 px-3 text-right">Bokade dagar</th>
                           <th className="py-2 pl-3">Beläggning</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {report.production.byTruck.map((truck) => (
+                        {productionTruckRows.map((truck) => (
                           <tr key={truck.truck_id} className="border-b border-slate-100 last:border-b-0">
                             <td className="py-2 pr-3 font-medium text-slate-800">{truck.truck_name}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatCount(truck.sacks)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-500">{formatCount(Math.round(truck.plannedSacks))}</td>
+                            <td className="py-2 px-3 text-right tabular-nums font-semibold text-slate-800">{formatCount(truck.sacks)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatCurrency(truck.plannedRevenue)}</td>
                             <td className="py-2 px-3 text-right tabular-nums text-slate-600">
                               {formatCount(truck.bookedDays)} / {formatCount(report.production.workingDays)}
                             </td>

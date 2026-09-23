@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getPlanningInsights } from '@/lib/domains/planning/insights';
+import { getPlanningInsights, loadScheduledScopes } from '@/lib/domains/planning/insights';
 
 // Läsvägen i insights, till skillnad från den rena aggregateInsights bredvid.
 //
@@ -125,5 +125,60 @@ describe('getPlanningInsights', () => {
       weeks: 2,
     });
     expect(data.weeks.every((w) => w.revenue === 0)).toBe(true);
+  });
+});
+
+// ── Statusfiltret ────────────────────────────────────────────────────────────
+//
+// 🧨 HITTAT I WEBBLÄSAREN 2026-09-23, inte av ett test. Rapporteringens "planerat mot utfall"
+// återanvände insikternas läsning rakt av, och den släpper bara igenom draft/scheduled/in_progress.
+// För en period som redan passerat är de flesta ordrar FAKTURERADE, så det planerade blev nästan
+// noll medan utfallet stod kvar: Sandviken 1 visade 150 planerade säckar mot 3 826 blåsta — ett
+// omöjligt tal som ändå såg ut som en siffra.
+
+describe('loadScheduledScopes — statusfiltret', () => {
+  const invoicedJob = {
+    ...segment('s1', '2026-09-07', '2026-09-11'),
+    truck: { name: 'Bil 1' },
+    work_order: { ...workOrder(500_000), status: 'invoiced' },
+  };
+  const cancelledJob = {
+    ...segment('s1', '2026-09-07', '2026-09-11'),
+    truck: { name: 'Bil 1' },
+    work_order: { ...workOrder(500_000), status: 'cancelled' },
+  };
+
+  it('"open" släpper INTE igenom en fakturerad order — framåtblickens regel', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'open',
+    );
+    expect(data?.values).toEqual([]);
+  });
+
+  it('"not-cancelled" TAR MED den fakturerade ordern — historikens regel', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'not-cancelled',
+    );
+    expect(data?.values).toHaveLength(1);
+    expect(data?.values[0].revenue).toBe(500_000);
+  });
+
+  it('"not-cancelled" släpper ALDRIG igenom en avbruten order', async () => {
+    // En order som aldrig blev av var heller aldrig planerad produktion.
+    const { data } = await loadScheduledScopes(
+      client([cancelledJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'not-cancelled',
+    );
+    expect(data?.values).toEqual([]);
+  });
+
+  it('standardläget är "open", så insikterna är oförändrade', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30',
+    );
+    expect(data?.values).toEqual([]);
   });
 });

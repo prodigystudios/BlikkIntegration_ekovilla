@@ -12,6 +12,8 @@ import {
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
+import { computeBacklogValue, loadScheduledScopes } from '@/lib/domains/planning/insights';
+import { aggregatePlannedForRange, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
@@ -95,6 +97,21 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Produktionen kunde inte räknas: ${e?.message || e}`);
     }
 
+    // Det planerade arbetet i perioden, att ställa utfallet mot. Läsningen delas med planeringens
+    // insikter (loadScheduledScopes) så de två vyerna inte kan ha olika uppfattning om schemat.
+    //
+    // ⚠️ BACKLOGGEN HAR INGEN PERIOD. Den svarar på "vad väntar just nu" och ändras inte med
+    // periodfiltret — gränssnittet märker den så.
+    let planned: PlannedPeriod | null = null;
+    try {
+      const scheduled = await loadScheduledScopes(admin, range.from, range.to, 'not-cancelled');
+      if (scheduled.error || !scheduled.data) throw new Error(scheduled.error?.message || 'schemat kunde inte läsas');
+      const aggregate = aggregatePlannedForRange({ ...scheduled.data, range, months });
+      planned = { ...aggregate, backlog: await computeBacklogValue(admin), unavailable: false };
+    } catch (e: any) {
+      console.warn(`[Rapport] Det planerade arbetet kunde inte räknas: ${e?.message || e}`);
+    }
+
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
     if (comparisonRange) {
@@ -156,6 +173,7 @@ export async function GET(req: Request) {
       goals,
       previous,
       production,
+      planned,
     });
 
     return ok(report);
