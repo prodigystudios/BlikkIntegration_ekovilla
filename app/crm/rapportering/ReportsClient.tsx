@@ -12,6 +12,16 @@ import {
   today,
   type ReportRangeKey,
 } from './reportRanges';
+// Procentreglerna importeras i stället för att skrivas om här: båda har ett null-fall som är lätt
+// att tappa (mål 0 ger inte 0 %, föregående 0 ger inte +100 %), och de är enhetstestade i
+// tests/crm/reportGoals.test.ts. En egen kopia i vyn hade varit den enda ingen prövar.
+import {
+  goalPercent,
+  previousPercentChange,
+  type PeriodMetric,
+  type PeriodMetricKey,
+  type PeriodSummary,
+} from '@/lib/domains/crm/reportGoals';
 
 // ── Types (mirror lib/domains/crm/reports.ts) ──
 type SalesOverTimePoint = { period: string; quoteValue: number; orderValue: number; invoicedValue: number };
@@ -37,6 +47,7 @@ type Profitability = {
 };
 type SalesReport = {
   range: { from: string; to: string };
+  periodSummary: PeriodSummary;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -141,6 +152,153 @@ function MarginStat({ label, percent, amount, jobs, total, color }: {
       </div>
     </div>
   );
+}
+
+// ── Perioden i korthet ───────────────────────────────────────────────────────
+//
+// Sidan har hittills bara visat absoluta tal. "3,2 Mkr" säger ingenting utan något att hålla det
+// emot, och båda referenserna fanns redan i databasen: månadsbudgeten i crm_goals och föregående
+// lika långa period. Korten bär dem bredvid utfallet.
+
+const PERIOD_METRIC_LABELS: Record<PeriodMetricKey, string> = {
+  calls: 'Samtal',
+  quotes: 'Offerter',
+  quoteValue: 'Offertvärde',
+  orders: 'Order',
+  orderValue: 'Ordervärde',
+  invoicedValue: 'Fakturerat',
+};
+
+const CURRENCY_METRICS = new Set<PeriodMetricKey>(['quoteValue', 'orderValue', 'invoicedValue']);
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatSigned(percent: number) {
+  const rounded = Math.round(percent);
+  return `${rounded > 0 ? '+' : ''}${formatCount(rounded)} %`;
+}
+
+/**
+ * Ett av periodens sex huvudtal, med sina två referenser.
+ *
+ * ⚠️ TRE TOMMA LÄGEN MED TRE OLIKA SVAR, av samma skäl som lönsamhetskortet skiljer dem åt:
+ *
+ *   previous == null  jämförelsen kunde inte hämtas      -> ingen rad alls
+ *   previous === 0    föregående period var faktiskt tom -> "mot 0", men ingen procent
+ *   target == null    ingen budget är satt               -> ingen stapel, inte en stapel på 0 %
+ *
+ * Att slå ihop dem gör beskedet till ett påstående om verksamheten även när felet ligger i
+ * hämtningen eller när ingen budget finns.
+ */
+function PeriodMetricCard({
+  metric,
+  goalsApply,
+  daysCovered,
+  daysTotal,
+}: {
+  metric: PeriodMetric;
+  goalsApply: boolean;
+  daysCovered: number;
+  daysTotal: number;
+}) {
+  const isCurrency = CURRENCY_METRICS.has(metric.key);
+  const format = (value: number) => (isCurrency ? formatCurrency(value) : formatCount(value));
+  const change = previousPercentChange(metric);
+  const attainment = goalPercent(metric);
+
+  return (
+    <div className="rounded-xl border border-[#e0e8dc] bg-white p-4">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+        {PERIOD_METRIC_LABELS[metric.key]}
+      </span>
+      <div className="mt-1 text-2xl font-bold tabular-nums text-slate-900">{format(metric.actual)}</div>
+
+      {/* Jämförelsen mot föregående lika långa period. */}
+      {metric.previous == null ? (
+        <div className="mt-1 text-[11px] text-slate-400">Ingen jämförelse</div>
+      ) : (
+        <div className="mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px]">
+          {change == null ? (
+            // Föregående period var noll. Att gå från 0 till 5 är en nyhet, inte en procentuell
+            // ökning — så talet får stå för sig själv utan ett påhittat +100 %.
+            //
+            // ⚠️ "Ny" bara när det FINNS något nytt. Med 0 mot 0 hade etiketten påstått en
+            // nyhet där ingenting alls hänt i någon av perioderna.
+            <span className="font-semibold text-slate-500">{metric.actual > 0 ? 'Ny' : 'Oförändrat'}</span>
+          ) : (
+            <span className={cn('font-semibold tabular-nums', change < 0 ? 'text-rose-700' : 'text-emerald-700')}>
+              {change < 0 ? '↓' : '↑'} {formatSigned(change)}
+            </span>
+          )}
+          <span className="text-slate-400">mot {format(metric.previous)}</span>
+        </div>
+      )}
+
+      {/* Målet. Ingen stapel alls när ingen budget är satt — en stapel på 0 % läses som ett
+          misslyckande, inte som en saknad uppgift.
+
+          ⚠️ `goalsApply` false betyder att HELA sektionen avstår från måluppfyllnad, och varför
+          står i underrubriken. Då tiger kortet: "Inget mål satt" på sex kort hade motsagt en
+          underrubrik som just förklarat att budgeten finns men bara för en del av månaderna. */}
+      {!goalsApply ? null : metric.target == null || attainment == null ? (
+        <div className="mt-3 text-[11px] text-slate-400">Inget mål satt</div>
+      ) : (
+        <div className="mt-3 grid gap-1">
+          <div className="h-1.5 rounded-full bg-slate-100">
+            {/* Stapeln klipps vid 100 %, talet under gör det INTE: 140 % av målet ska synas som
+                140 %, och en stapel som växer förbi sin ram spräcker kortet. */}
+            <div
+              className="h-1.5 rounded-full transition-all"
+              style={{
+                width: `${Math.max(2, Math.min(100, attainment))}%`,
+                backgroundColor: 'var(--crm-primary)',
+              }}
+            />
+          </div>
+          {/* ⚠️ TÄCKNINGEN STÅR BREDVID TALET, inte bara i underrubriken. Budgeten är satt per hel
+              månad; en period som bara är två dagar in i månaden ger 5 % av målet, och utan
+              dagraden läses det som ett misslyckande i stället för som "månaden har knappt
+              börjat". Samma regel som lönsamhetskortets "14 av 19 fakturerade jobb" — caveaten
+              följer med siffran, för det är siffran folk läser.
+
+              Bara när perioden INTE täcker månaderna helt: på en hel månad vore raden brus. */}
+          <div className="text-[11px] tabular-nums text-slate-500">
+            {formatCount(Math.round(attainment))} % av målet {format(metric.target)}
+            {daysCovered < daysTotal ? (
+              <span className="text-slate-400"> · {daysCovered} av {daysTotal} dagar</span>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** "sep -26", eller "sep -25 – aug -26 · 12 månader" när målet spänner över flera. */
+function goalMonthsLabel(months: string[]): string {
+  if (months.length === 0) return '';
+  if (months.length === 1) return formatMonth(months[0]);
+  return `${formatMonth(months[0])} – ${formatMonth(months[months.length - 1])} · ${months.length} månader`;
+}
+
+/**
+ * Varför målstaplarna syns — eller varför de inte gör det.
+ *
+ * ⚠️ TRE OLIKA BESKED, inte ett. "Inget mål satt" på en period där budgeten finns men bara för en
+ * del av månaderna är missvisande: den som läser det fyller i en budget som redan finns. Beskedet
+ * måste peka på vad som faktiskt saknas, annars går det inte att åtgärda.
+ */
+function goalSubtitle(summary: PeriodSummary): string {
+  if (summary.goalMonths.length === 0) {
+    return 'Ingen budget är satt för periodens månader, så måluppfyllnad visas inte.';
+  }
+  if (summary.monthsWithoutGoal.length > 0) {
+    const total = summary.goalMonths.length + summary.monthsWithoutGoal.length;
+    return `Måluppfyllnad visas inte: budget saknas för ${summary.monthsWithoutGoal.length} av periodens ${total} månader, och målet skulle då mäta ett kortare spann än utfallet.`;
+  }
+  return `Mål ur budgeten för ${goalMonthsLabel(summary.goalMonths)} — perioden täcker ${summary.goalDaysCovered} av ${summary.goalDaysTotal} dagar.`;
 }
 
 function SectionCard({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: React.ReactNode; children: React.ReactNode }) {
@@ -319,6 +477,51 @@ export default function ReportsClient() {
         </div>
       ) : report ? (
         <>
+          {/* 0. Perioden i korthet — utfallet mot målet och mot föregående period */}
+          <SectionCard
+            title="Perioden i korthet"
+            subtitle={[
+              report.periodSummary.previousRange
+                ? `Jämfört med lika lång period dessförinnan (${formatRangeLabel(report.periodSummary.previousRange.from, report.periodSummary.previousRange.to)}).`
+                : 'Ingen jämförelseperiod kunde räknas fram.',
+              goalSubtitle(report.periodSummary),
+            ].join(' ')}
+            action={<ExportButton onClick={() => downloadCsv(
+              `perioden-i-korthet_${report.range.from}_${report.range.to}.csv`,
+              ['Tal', 'Utfall', 'Föregående period', 'Förändring (%)', 'Mål', 'Måluppfyllnad (%)'],
+              report.periodSummary.metrics.map((metric) => {
+                const change = previousPercentChange(metric);
+                const attainment = goalPercent(metric);
+                return [
+                  PERIOD_METRIC_LABELS[metric.key],
+                  metric.actual,
+                  // Tomt, inte 0: en nolla i exporten hade lästs som ett uppmätt värde.
+                  metric.previous ?? '',
+                  change == null ? '' : Math.round(change),
+                  metric.target ?? '',
+                  attainment == null ? '' : Math.round(attainment),
+                ];
+              }),
+            )} />}
+          >
+            {/* Tre i bredd, inte sex: krontalen blir sexsiffriga och ett kort per kolumn hade
+                brutit siffran över två rader på en vanlig laptop. */}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {report.periodSummary.metrics.map((metric) => (
+                <PeriodMetricCard
+                  key={metric.key}
+                  metric={metric}
+                  goalsApply={
+                    report.periodSummary.goalMonths.length > 0 &&
+                    report.periodSummary.monthsWithoutGoal.length === 0
+                  }
+                  daysCovered={report.periodSummary.goalDaysCovered}
+                  daysTotal={report.periodSummary.goalDaysTotal}
+                />
+              ))}
+            </div>
+          </SectionCard>
+
           {/* 1. Försäljning över tid */}
           <SectionCard
             title="Försäljning över tid"

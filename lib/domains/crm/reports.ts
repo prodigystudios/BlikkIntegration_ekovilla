@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { netAmount, type NetAmountRow } from './pricing';
 import { isDeadWorkOrder } from './work-orders';
+import {
+  buildPeriodSummary,
+  type PeriodSummary,
+  type PeriodTotals,
+  type ReportGoalRow,
+} from './reportGoals';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -376,8 +382,30 @@ export function buildProfitability(
   };
 }
 
+/**
+ * Periodens sex huvudtal.
+ *
+ * Samma funktion räknar perioden OCH jämförelseperioden, så de två aldrig kan mätas olika. Den tar
+ * rå ReportData och partitionerar själv — en aning dubbelarbete mot composeSalesReport, men
+ * alternativet var att låta anroparen skicka in redan partitionerade order och därmed kunna skicka
+ * in dem partitionerade mot FEL intervall.
+ */
+export function buildPeriodTotals(data: ReportData, range: ReportRange): PeriodTotals {
+  const orders = partitionOrders(data.orders, range);
+  const sum = (rows: NetAmountRow[]) => rows.reduce((total, row) => total + netAmount(row), 0);
+  return {
+    calls: data.calls.length,
+    quotes: data.quotes.length,
+    quoteValue: sum(data.quotes),
+    orders: orders.created.length,
+    orderValue: sum(orders.created),
+    invoicedValue: sum(orders.invoiced),
+  };
+}
+
 export type SalesReport = {
   range: ReportRange;
+  periodSummary: PeriodSummary;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -390,12 +418,25 @@ export function composeSalesReport(
   range: ReportRange,
   /** Efterkalkylen per arbetsorder. Tom karta ger en lönsamhetsdel utan tal — inte ett fel. */
   afterCalculations: Map<string, { revenue: number | null; tb1: number | null; tb2: number | null }> = new Map(),
-  opts?: { profitabilityUnavailable?: boolean },
+  opts?: {
+    profitabilityUnavailable?: boolean;
+    /** Målraderna för periodens månader. Utelämnade ger en sammanställning utan målstaplar. */
+    goals?: ReportGoalRow[] | null;
+    /** Föregående lika långa period. Utelämnad ger kort utan jämförelsetal — inte nollor. */
+    previous?: { range: ReportRange; totals: PeriodTotals } | null;
+  },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
   const orders = partitionOrders(data.orders, range);
   return {
     range,
+    periodSummary: buildPeriodSummary({
+      totals: buildPeriodTotals(data, range),
+      range,
+      months,
+      goals: opts?.goals,
+      previous: opts?.previous,
+    }),
     salesOverTime: buildSalesOverTime(data.quotes, orders.created, orders.invoiced, months),
     perSeller: buildPerSeller(data.quotes, orders.created, orders.invoiced, data.calls, data.sellers),
     funnel: buildFunnel(data.quotes, orders.created),
