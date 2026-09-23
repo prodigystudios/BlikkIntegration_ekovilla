@@ -7,7 +7,7 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
-import { minutesToHours } from '@/lib/domains/time/hours';
+import { minutesToHours, rowMinutes } from '@/lib/domains/time/hours';
 import { parseDecimal } from '@/lib/shared/number';
 import { addDays, buildWeekDays, fmtISO, isoWeek, parseISO, startOfWeek, type WeekDay } from '@/app/crm/planering/planningDates';
 import { carriesAmount, formatQuantity, COMPENSATION_KINDS, COMPENSATION_LABELS, COMPENSATION_UNITS, countMissingReceipts, hasReceipt, isReceiptMissing, summarizeCompensations, type CompensationItem, type CompensationKind } from '@/lib/domains/time/compensations';
@@ -126,8 +126,17 @@ function stockholmToday(): Date {
   return new Date(value('year'), value('month') - 1, value('day'));
 }
 
+/**
+ * Radens minuter.
+ *
+ * ⚠️ REGELN BOR I `rowMinutes`, inte här. Det här var husets TREDJE kopia av "minutes_worked är
+ * sanningen, hours är fallbacken" — och /tid och rapporteringen måste räkna samma månad likadant.
+ * `?? 0` behåller den här ytans befintliga beteende exakt: en rad utan både minuter och timmar
+ * räknades som noll här redan innan. Rapporten redovisar i stället sådana rader som ett känt hål,
+ * och den skillnaden är avsiktlig — dagvyn summerar ett pass, rapporten ett underlag.
+ */
 function entryMinutes(entry: EntryRow): number {
-  return entry.minutes_worked ?? Math.round(Number(entry.hours || 0) * 60);
+  return rowMinutes(entry) ?? 0;
 }
 
 function entryLabel(entry: EntryRow): string {

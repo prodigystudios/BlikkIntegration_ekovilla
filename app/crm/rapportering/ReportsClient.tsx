@@ -54,7 +54,8 @@ type SalesReport = {
   periodSummary: PeriodSummary;
   production: Production;
   planned: PlannedPeriod;
-  time: TimeReport;
+  /** null = användaren saknar `time.entry.read.all`; sektionen visas inte alls. */
+  time: TimeReport | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -321,9 +322,21 @@ const COLOR_WORK_ORDER = '#15803d';
 const COLOR_INTERNAL = '#a3b18a';
 const COLOR_ABSENCE = '#c084fc';
 
-/** Minuter som timmar. Databasen räknar minuter; sidan visar timmar. */
-function formatHours(minutes: number) {
-  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(Math.round(minutes / 60))} h`;
+/**
+ * Minuter som timmar. Databasen räknar minuter; sidan visar timmar.
+ *
+ * ⚠️ HELA TIMMAR BARA I DE STORA TALEN. I listorna och persontabellen visas en decimal, av två
+ * skäl: ett internprojekt på 25 minuter blev annars "0 h" i just den lista som ska visa vart
+ * timmarna tog vägen, och elva rader som var för sig avrundas till hel timme kan tillsammans
+ * ligga flera timmar från totalen ovanför. Minuterna är exakta hela vägen; det här gäller bara
+ * presentationen.
+ */
+function formatHours(minutes: number, decimals: 0 | 1 = 0) {
+  const value = new Intl.NumberFormat('sv-SE', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(minutes / 60);
+  return `${value} h`;
 }
 
 /** Andel som heltalsprocent, eller null när nämnaren är noll. Aldrig 0 %, aldrig Infinity. */
@@ -556,9 +569,9 @@ export default function ReportsClient() {
   }, [report]);
 
   const timeMonthData = useMemo(
-    () => (report?.time.byMonth || []).map((p) => ({
+    () => (report?.time?.byMonth || []).map((p) => ({
       ...p,
-      label: report && report.time.byMonth.length === 1
+      label: report?.time && report.time.byMonth.length === 1
         ? formatRangeLabel(report.range.from, report.range.to)
         : formatMonth(p.period),
     })),
@@ -987,19 +1000,28 @@ export default function ReportsClient() {
             )}
           </SectionCard>
 
-          {/* 1d. Tid — vart timmarna tog vägen */}
+          {/* 1d. Tid — vart timmarna tog vägen.
+
+              ⚠️ `time === null` betyder att användaren saknar `time.entry.read.all`. Sektionen
+              uteblir då HELT — inte som ett "du saknar behörighet"-kort, för en yta som skyltar
+              med vad den döljer inbjuder till att någon ber om nyckeln utan att veta varför den
+              finns. Se kommentaren i reports.ts. */}
+          {report.time ? (
           <SectionCard
             title="Tid"
             subtitle="Rapporterade timmar i perioden, uppdelat på arbetsorder, interntid och frånvaro. Frånvaro räknas inte som arbetad tid. Timmarna är vad som rapporterats — inte vad som attesterats."
             action={<ExportButton onClick={() => downloadCsv(
               `tid_${report.range.from}_${report.range.to}.csv`,
               ['Person', 'Arbetsorder (h)', 'Internt (h)', 'Arbetad tid (h)', 'Frånvaro (h)'],
-              report.time.byPerson.map((person) => [
+              // `?? []`: TypeScripts narrowing av `report.time` når inte in i den här callbacken,
+              // och en non-null-assertion hade dolt just det null-fall grinden finns för.
+              (report.time?.byPerson ?? []).map((person) => [
                 person.userName,
-                Math.round(person.workOrderMinutes / 60),
-                Math.round(person.internalMinutes / 60),
-                Math.round(person.workedMinutes / 60),
-                Math.round(person.absenceMinutes / 60),
+                // En decimal även här: hela timmar per rad summerar inte till totalen.
+                Math.round(person.workOrderMinutes / 6) / 10,
+                Math.round(person.internalMinutes / 6) / 10,
+                Math.round(person.workedMinutes / 6) / 10,
+                Math.round(person.absenceMinutes / 6) / 10,
               ]),
             )} />}
           >
@@ -1017,7 +1039,10 @@ export default function ReportsClient() {
                   <StatTile
                     label="Arbetad tid"
                     value={formatHours(report.time.workedMinutes)}
-                    sub={`${formatCount(report.time.people)} personer · ${formatCount(report.time.entries)} rader`}
+                    // ⚠️ "har rapporterat", inte "personer". Talet räknar alla med minst en rad —
+                    // även den som bara fyllt i frånvaro — och stod det bara "11 personer" under
+                    // rubriken "Arbetad tid" hade det lästs som att elva personer producerade dem.
+                    sub={`${formatCount(report.time.people)} har rapporterat · ${formatCount(report.time.entries)} rader`}
                   />
                   <StatTile
                     label="På arbetsorder"
@@ -1086,7 +1111,7 @@ export default function ReportsClient() {
                               <td className={cn('py-1.5 pr-3', row.label == null && 'text-slate-400')}>
                                 {row.label ?? MISSING_LABEL}
                               </td>
-                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes)}</td>
+                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes, 1)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1106,7 +1131,7 @@ export default function ReportsClient() {
                               <td className={cn('py-1.5 pr-3', row.label == null && 'text-slate-400')}>
                                 {row.label ?? MISSING_LABEL}
                               </td>
-                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes)}</td>
+                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes, 1)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -1131,10 +1156,10 @@ export default function ReportsClient() {
                         {report.time.byPerson.map((person) => (
                           <tr key={person.userId} className="border-b border-slate-100 last:border-b-0">
                             <td className="py-2 pr-3 font-medium text-slate-800">{person.userName}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.workOrderMinutes)}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.internalMinutes)}</td>
-                            <td className="py-2 px-3 text-right tabular-nums font-semibold text-slate-800">{formatHours(person.workedMinutes)}</td>
-                            <td className="py-2 pl-3 text-right tabular-nums text-slate-500">{formatHours(person.absenceMinutes)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.workOrderMinutes, 1)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.internalMinutes, 1)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums font-semibold text-slate-800">{formatHours(person.workedMinutes, 1)}</td>
+                            <td className="py-2 pl-3 text-right tabular-nums text-slate-500">{formatHours(person.absenceMinutes, 1)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1144,6 +1169,7 @@ export default function ReportsClient() {
               </div>
             )}
           </SectionCard>
+          ) : null}
 
           {/* 2. Per säljare */}
           <SectionCard
