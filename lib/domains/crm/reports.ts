@@ -7,6 +7,7 @@ import {
   type PeriodTotals,
   type ReportGoalRow,
 } from './reportGoals';
+import { unavailableProduction, type Production } from '@/lib/domains/planning/production';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -406,6 +407,8 @@ export function buildPeriodTotals(data: ReportData, range: ReportRange): PeriodT
 export type SalesReport = {
   range: ReportRange;
   periodSummary: PeriodSummary;
+  /** Produktionsutfallet — vad som faktiskt blåstes. Se lib/domains/planning/production.ts. */
+  production: Production;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -424,12 +427,15 @@ export function composeSalesReport(
     goals?: ReportGoalRow[] | null;
     /** Föregående lika långa period. Utelämnad ger kort utan jämförelsetal — inte nollor. */
     previous?: { range: ReportRange; totals: PeriodTotals } | null;
+    /** Produktionsutfallet. Utelämnat ger en del som säger att den inte kunde räknas. */
+    production?: Production | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
   const orders = partitionOrders(data.orders, range);
   return {
     range,
+    production: opts?.production ?? unavailableProduction(months, range),
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,

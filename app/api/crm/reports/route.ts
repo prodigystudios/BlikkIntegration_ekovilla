@@ -10,6 +10,8 @@ import {
   type ReportRange,
 } from '@/lib/domains/crm/reports';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
+import { buildProduction, type Production } from '@/lib/domains/planning/production';
+import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
@@ -82,6 +84,17 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Målen kunde inte hämtas: ${e?.message || e}`);
     }
 
+    // Produktionsutfallet. Samma regel som målen och lönsamheten: felar det ska säljsiffrorna
+    // fortfarande visas, och produktionsdelen märka sig som "kunde inte räknas".
+    let production: Production | null = null;
+    try {
+      const { data: productionData, error } = await fetchProductionData(admin, range);
+      if (error) throw new Error(error.message);
+      production = buildProduction({ ...productionData, range, months });
+    } catch (e: any) {
+      console.warn(`[Rapport] Produktionen kunde inte räknas: ${e?.message || e}`);
+    }
+
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
     if (comparisonRange) {
@@ -142,6 +155,7 @@ export async function GET(req: Request) {
       profitabilityUnavailable,
       goals,
       previous,
+      production,
     });
 
     return ok(report);
