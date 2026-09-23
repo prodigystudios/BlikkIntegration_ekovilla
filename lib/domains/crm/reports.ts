@@ -9,6 +9,7 @@ import {
 } from './reportGoals';
 import { unavailableProduction, type Production } from '@/lib/domains/planning/production';
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
+import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -412,6 +413,16 @@ export type SalesReport = {
   production: Production;
   /** Det planerade arbetet i perioden, att ställa utfallet mot. Backloggen i den är "just nu". */
   planned: PlannedPeriod;
+  /**
+   * Rapporterad tid i perioden — vart timmarna tog vägen.
+   *
+   * ⚠️ null = ANROPAREN FÅR INTE SE ANDRAS TID. Delen bär namngiven arbetad tid OCH frånvaro per
+   * person, vilket `crm_time_entries`-policyn öppnar först på `time.entry.read.all` (admin och
+   * ekonomi). Rapportsidan gatas på `crm.access`, som även sales och konsult har — och rutten
+   * läser med service-roll, alltså förbi RLS. Utan grinden hade varje säljare sett sina kollegors
+   * sjukfrånvaro vid namn, vilket policyns egen kommentar säger att den finns för att hindra.
+   */
+  time: TimeReport | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -434,6 +445,11 @@ export function composeSalesReport(
     production?: Production | null;
     /** Det planerade arbetet. Utelämnat ger en del som säger att den inte kunde räknas. */
     planned?: PlannedPeriod | null;
+    /**
+     * Rapporterad tid. `undefined` (utelämnad) ger en del som säger att den inte kunde räknas;
+     * `null` betyder att anroparen saknar behörighet och sektionen ska utebli helt.
+     */
+    time?: TimeReport | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -442,6 +458,7 @@ export function composeSalesReport(
     range,
     production: opts?.production ?? unavailableProduction(months, range),
     planned: opts?.planned ?? unavailablePlanned(),
+    time: opts?.time === undefined ? unavailableTimeReport(months) : opts.time,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,

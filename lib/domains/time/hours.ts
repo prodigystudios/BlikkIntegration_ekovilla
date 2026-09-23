@@ -79,6 +79,27 @@ export function workedMinutes(input: ShiftInput): number {
   return Math.max(0, gross - breakMinutes);
 }
 
+/**
+ * Radens minuter ur databasens två kolumner.
+ *
+ * ⚠️ `minutes_worked` ÄR SANNINGEN, `hours` ÄR FALLBACKEN — och fallbacken måste göras av den som
+ * mappar raden. Kolumnen lades till utan backfill, och kontorets gamla Tid-flik skrev bara `hours`.
+ * En mappning som läser `minutes_worked` rakt av gör de raderna till NOLL TIMMAR tyst, och felet
+ * ser ut som ett tomt underlag i stället för som en bugg (se TIME_AND_PAYROLL.md → Fällor).
+ *
+ * Regeln låg tidigare bara inuti `toSummarizableEntry`. Den bor här nu därför att rapporteringen
+ * behöver exakt samma svar: två implementationer av "hur många minuter är den här raden" är hur
+ * attesten och rapporten börjar visa olika timmar för samma månad.
+ *
+ * Returnerar null när varken minuter eller timmar finns — "vi vet inte", inte noll.
+ */
+export function rowMinutes(row: { minutes_worked?: number | null; hours?: number | string | null }): number | null {
+  if (row.minutes_worked != null) return Math.round(Number(row.minutes_worked));
+  if (row.hours == null) return null;
+  const hours = Number(row.hours);
+  return Number.isFinite(hours) ? Math.round(hours * 60) : null;
+}
+
 // För presentation. Underlaget visar timmar, databasen räknar minuter.
 export function minutesToHours(minutes: number): number {
   return Math.round((minutes / 60) * 100) / 100;

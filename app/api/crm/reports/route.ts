@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
+import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   buildPeriodTotals,
   composeSalesReport,
@@ -14,6 +15,8 @@ import { buildProduction, type Production } from '@/lib/domains/planning/product
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
 import { computeBacklogValue, loadScheduledScopes } from '@/lib/domains/planning/insights';
 import { aggregatePlannedForRange, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
+import { buildTimeReport, type TimeReport } from '@/lib/domains/time/report';
+import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
@@ -117,6 +120,30 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Det planerade arbetet kunde inte räknas: ${e?.message || e}`);
     }
 
+    // ── Rapporterad tid ──────────────────────────────────────────────────────
+    //
+    // ⚠️ EGEN GRIND, INTE SIDANS. Delen bär namngiven arbetad tid OCH frånvaro per person.
+    // `crm_time_entries_select` öppnar andras rader först på `time.entry.read.all` (admin,
+    // ekonomi) — och kommentaren i den policyn säger rakt ut att det är mekanismen som hindrar en
+    // sjukfrånvarorad från att synas för besättningskollegorna. Rapportsidan gatas på
+    // `crm.access`, som sales och konsult också har, och läsningen nedan går med service-roll
+    // alltså FÖRBI RLS. Utan den här grinden hade varje säljare sett kollegornas sjukskrivningar.
+    //
+    // Samma misstag som #202: `crm.access` gav bort försäljningssiffror förbi RLS.
+    //
+    // `undefined` skulle betyda "kunde inte räknas"; här menar vi "får inte visas", och det är
+    // `null`. Sektionen uteblir då helt i stället för att skylta med att den finns.
+    const mayReadAllTime = can(await getEffectivePermissions(), 'time.entry.read.all');
+    let time: TimeReport | null | undefined = mayReadAllTime ? undefined : null;
+    if (mayReadAllTime) try {
+      const { data: timeData, error } = await fetchTimeReportData(admin, range);
+      if (error) throw new Error(error.message);
+      time = buildTimeReport({ ...timeData, range, months });
+    } catch (e: any) {
+      console.warn(`[Rapport] Tiden kunde inte räknas: ${e?.message || e}`);
+      time = undefined;
+    }
+
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
     if (comparisonRange) {
@@ -179,6 +206,7 @@ export async function GET(req: Request) {
       previous,
       production,
       planned,
+      time,
     });
 
     return ok(report);
