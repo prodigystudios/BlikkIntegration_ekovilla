@@ -98,9 +98,13 @@ function percent(part: number, whole: number) {
 
 // ── CSV export (Swedish Excel: ; delimiter + BOM) ──
 function downloadCsv(filename: string, header: string[], rows: Array<Array<string | number>>) {
+  // ⚠️ KOMMATECKEN CITERAS INTE. Filen är `;`-separerad för svenskt Excel, så ett komma är inte
+  // avgränsare och behöver ingen citering (RFC 4180 kräver den bara för avgränsaren, citattecken
+  // och radbrytning). Skillnaden är inte kosmetisk: ett citerat `"40,5"` läses av Excel som TEXT,
+  // och timkolumnerna hade summerat till 0 i stället för till periodens timmar.
   const escape = (cell: string | number) => {
     const s = String(cell ?? '');
-    return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    return /["\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
   const content = [header, ...rows].map((row) => row.map(escape).join(';')).join('\n');
   const blob = new Blob(['﻿' + content], { type: 'text/csv;charset=utf-8;' });
@@ -331,6 +335,14 @@ const COLOR_ABSENCE = '#c084fc';
  * ligga flera timmar från totalen ovanför. Minuterna är exakta hela vägen; det här gäller bara
  * presentationen.
  */
+/**
+ * Timmar för CSV-export: en decimal med KOMMA, som resten av huset
+ * (app/ekonomi/TimeApprovals.tsx). En punkt hade landat som text i svenskt Excel.
+ */
+function csvHours(minutes: number) {
+  return (minutes / 60).toFixed(1).replace('.', ',');
+}
+
 function formatHours(minutes: number, decimals: 0 | 1 = 0) {
   const value = new Intl.NumberFormat('sv-SE', {
     minimumFractionDigits: decimals,
@@ -1018,10 +1030,10 @@ export default function ReportsClient() {
               (report.time?.byPerson ?? []).map((person) => [
                 person.userName,
                 // En decimal även här: hela timmar per rad summerar inte till totalen.
-                Math.round(person.workOrderMinutes / 6) / 10,
-                Math.round(person.internalMinutes / 6) / 10,
-                Math.round(person.workedMinutes / 6) / 10,
-                Math.round(person.absenceMinutes / 6) / 10,
+                csvHours(person.workOrderMinutes),
+                csvHours(person.internalMinutes),
+                csvHours(person.workedMinutes),
+                csvHours(person.absenceMinutes),
               ]),
             )} />}
           >
@@ -1086,8 +1098,23 @@ export default function ReportsClient() {
                       <BarChart data={timeMonthData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" vertical={false} />
                         <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} />
-                        <YAxis tickFormatter={(v) => String(Math.round(Number(v) / 60))} tick={{ fontSize: 12, fill: '#64748b' }} width={44} />
-                        <Tooltip formatter={(value, name) => [formatHours(Number(value)), name]} />
+                        {/* ⚠️ INGEN AVRUNDNING TILL HEL TIMME. Domänen är minuter, och på en liten
+                            skala lägger Recharts sina streck på 0/30/60/90/120 — avrundade blev de
+                            "0","1","1","2","2", alltså en axel med upprepade etiketter. Decimalen
+                            visas bara när den behövs. */}
+                        <YAxis
+                          tickFormatter={(v) => {
+                            const hours = Number(v) / 60;
+                            return new Intl.NumberFormat('sv-SE', {
+                              maximumFractionDigits: Number.isInteger(hours) ? 0 : 1,
+                            }).format(hours);
+                          }}
+                          tick={{ fontSize: 12, fill: '#64748b' }}
+                          width={44}
+                        />
+                        {/* En decimal, samma som tabellen under: ett 25-minuterssegment får inte
+                            säga "0 h" i tooltipen medan raden nedanför säger "0,4 h". */}
+                        <Tooltip formatter={(value, name) => [formatHours(Number(value), 1), name]} />
                         <Legend wrapperStyle={{ fontSize: 12 }} />
                         {/* Staplade: månadens höjd är den rapporterade tiden, och delarna syns i den. */}
                         <Bar dataKey="workOrderMinutes" name="Arbetsorder" stackId="tid" fill={COLOR_WORK_ORDER} maxBarSize={44} />
