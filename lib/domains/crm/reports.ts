@@ -9,6 +9,7 @@ import {
 } from './reportGoals';
 import { unavailableProduction, type Production } from '@/lib/domains/planning/production';
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
+import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -412,6 +413,8 @@ export type SalesReport = {
   production: Production;
   /** Det planerade arbetet i perioden, att ställa utfallet mot. Backloggen i den är "just nu". */
   planned: PlannedPeriod;
+  /** Rapporterad tid i perioden — vart timmarna tog vägen. */
+  time: TimeReport;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -434,6 +437,8 @@ export function composeSalesReport(
     production?: Production | null;
     /** Det planerade arbetet. Utelämnat ger en del som säger att den inte kunde räknas. */
     planned?: PlannedPeriod | null;
+    /** Rapporterad tid. Utelämnad ger en del som säger att den inte kunde räknas. */
+    time?: TimeReport | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -442,6 +447,7 @@ export function composeSalesReport(
     range,
     production: opts?.production ?? unavailableProduction(months, range),
     planned: opts?.planned ?? unavailablePlanned(),
+    time: opts?.time ?? unavailableTimeReport(months),
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,

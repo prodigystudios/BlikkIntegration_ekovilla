@@ -25,6 +25,7 @@ import {
 } from '@/lib/domains/crm/reportGoals';
 import type { Production } from '@/lib/domains/planning/production';
 import type { PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
+import type { TimeReport } from '@/lib/domains/time/report';
 
 // ── Types (mirror lib/domains/crm/reports.ts) ──
 type SalesOverTimePoint = { period: string; quoteValue: number; orderValue: number; invoicedValue: number };
@@ -53,6 +54,7 @@ type SalesReport = {
   periodSummary: PeriodSummary;
   production: Production;
   planned: PlannedPeriod;
+  time: TimeReport;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -312,6 +314,24 @@ const COLOR_SACKS = '#0284c7'; // sky — samma ton som säcklinjen i planeringe
 // Planerat ritas dämpat och utfallet mättat: ögat ska dras till vad som FAKTISKT hände, med planen
 // som bakgrund att läsa det mot — inte tvärtom.
 const COLOR_PLANNED = '#b6c9d9';
+
+// Tidens tre serier. Arbetsorder mättat (det man vill se mest av), internt dämpat, frånvaro i en
+// egen ton så den aldrig läses som arbetad tid.
+const COLOR_WORK_ORDER = '#15803d';
+const COLOR_INTERNAL = '#a3b18a';
+const COLOR_ABSENCE = '#c084fc';
+
+/** Minuter som timmar. Databasen räknar minuter; sidan visar timmar. */
+function formatHours(minutes: number) {
+  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(Math.round(minutes / 60))} h`;
+}
+
+/** Andel som heltalsprocent, eller null när nämnaren är noll. Aldrig 0 %, aldrig Infinity. */
+function share(part: number, whole: number): number | null {
+  return whole > 0 ? (part / whole) * 100 : null;
+}
+
+const MISSING_LABEL = 'Uppgift saknas';
 const MATERIAL_UNKNOWN_LABEL = 'Okänt material';
 
 /** Materialets etikett. `null` betyder att raden saknar material — aldrig ett påhittat namn. */
@@ -534,6 +554,16 @@ export default function ReportsClient() {
     }
     return rows;
   }, [report]);
+
+  const timeMonthData = useMemo(
+    () => (report?.time.byMonth || []).map((p) => ({
+      ...p,
+      label: report && report.time.byMonth.length === 1
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    })),
+    [report],
+  );
 
   const funnelStages = useMemo(() => {
     if (!report) return [];
@@ -947,6 +977,164 @@ export default function ReportsClient() {
                                 </div>
                               )}
                             </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </SectionCard>
+
+          {/* 1d. Tid — vart timmarna tog vägen */}
+          <SectionCard
+            title="Tid"
+            subtitle="Rapporterade timmar i perioden, uppdelat på arbetsorder, interntid och frånvaro. Frånvaro räknas inte som arbetad tid. Timmarna är vad som rapporterats — inte vad som attesterats."
+            action={<ExportButton onClick={() => downloadCsv(
+              `tid_${report.range.from}_${report.range.to}.csv`,
+              ['Person', 'Arbetsorder (h)', 'Internt (h)', 'Arbetad tid (h)', 'Frånvaro (h)'],
+              report.time.byPerson.map((person) => [
+                person.userName,
+                Math.round(person.workOrderMinutes / 60),
+                Math.round(person.internalMinutes / 60),
+                Math.round(person.workedMinutes / 60),
+                Math.round(person.absenceMinutes / 60),
+              ]),
+            )} />}
+          >
+            {report.time.unavailable ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-5 py-8 text-center text-sm text-amber-800">
+                Tiden kunde inte räknas. Övriga siffror på sidan är opåverkade.
+              </div>
+            ) : report.time.entries === 0 && report.time.unreadableEntries === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
+                Ingen tid rapporterad i perioden.
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatTile
+                    label="Arbetad tid"
+                    value={formatHours(report.time.workedMinutes)}
+                    sub={`${formatCount(report.time.people)} personer · ${formatCount(report.time.entries)} rader`}
+                  />
+                  <StatTile
+                    label="På arbetsorder"
+                    value={formatHours(report.time.workOrderMinutes)}
+                    sub={(() => {
+                      const pct = share(report.time.workOrderMinutes, report.time.workedMinutes);
+                      return pct == null ? 'ingen arbetad tid' : `${Math.round(pct)} % av arbetad tid`;
+                    })()}
+                  />
+                  <StatTile
+                    label="Interntid"
+                    value={formatHours(report.time.internalMinutes)}
+                    sub={(() => {
+                      const pct = share(report.time.internalMinutes, report.time.workedMinutes);
+                      return pct == null ? 'ingen arbetad tid' : `${Math.round(pct)} % av arbetad tid`;
+                    })()}
+                  />
+                  <StatTile
+                    label="Frånvaro"
+                    value={formatHours(report.time.absenceMinutes)}
+                    sub="ingår inte i arbetad tid"
+                  />
+                </div>
+
+                {/* ⚠️ MÅSTE SYNAS. En rad utan både minuter och timmar räknas inte, och utan den här
+                    raden skiljer sig summan från antalet rapporterade rader utan att något ser
+                    trasigt ut. */}
+                {report.time.unreadableEntries > 0 ? (
+                  <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                    {formatCount(report.time.unreadableEntries)} tidrader saknar både minuter och
+                    timmar och kunde inte räknas. De ingår inte i summorna ovan.
+                  </p>
+                ) : null}
+
+                <div>
+                  <p className="mb-2 mt-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                    Timmar per månad
+                  </p>
+                  <div className="h-56 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={timeMonthData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#eef2f0" vertical={false} />
+                        <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} />
+                        <YAxis tickFormatter={(v) => String(Math.round(Number(v) / 60))} tick={{ fontSize: 12, fill: '#64748b' }} width={44} />
+                        <Tooltip formatter={(value, name) => [formatHours(Number(value)), name]} />
+                        <Legend wrapperStyle={{ fontSize: 12 }} />
+                        {/* Staplade: månadens höjd är den rapporterade tiden, och delarna syns i den. */}
+                        <Bar dataKey="workOrderMinutes" name="Arbetsorder" stackId="tid" fill={COLOR_WORK_ORDER} maxBarSize={44} />
+                        <Bar dataKey="internalMinutes" name="Internt" stackId="tid" fill={COLOR_INTERNAL} maxBarSize={44} />
+                        <Bar dataKey="absenceMinutes" name="Frånvaro" stackId="tid" fill={COLOR_ABSENCE} radius={[4, 4, 0, 0]} maxBarSize={44} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="grid gap-5 lg:grid-cols-2">
+                  {report.time.byInternalProject.length > 0 ? (
+                    <div>
+                      <p className="mb-2 mt-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Interntid per projekt
+                      </p>
+                      <table className="w-full border-collapse text-sm">
+                        <tbody>
+                          {report.time.byInternalProject.map((row) => (
+                            <tr key={row.label ?? '(saknas)'} className="border-b border-slate-100 last:border-b-0">
+                              <td className={cn('py-1.5 pr-3', row.label == null && 'text-slate-400')}>
+                                {row.label ?? MISSING_LABEL}
+                              </td>
+                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+
+                  {report.time.byAbsenceReason.length > 0 ? (
+                    <div>
+                      <p className="mb-2 mt-0 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                        Frånvaro per orsak
+                      </p>
+                      <table className="w-full border-collapse text-sm">
+                        <tbody>
+                          {report.time.byAbsenceReason.map((row) => (
+                            <tr key={row.label ?? '(saknas)'} className="border-b border-slate-100 last:border-b-0">
+                              <td className={cn('py-1.5 pr-3', row.label == null && 'text-slate-400')}>
+                                {row.label ?? MISSING_LABEL}
+                              </td>
+                              <td className="py-1.5 text-right tabular-nums text-slate-700">{formatHours(row.minutes)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+
+                {report.time.byPerson.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] border-collapse text-sm">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-left text-[11px] font-bold uppercase tracking-[0.1em] text-slate-400">
+                          <th className="py-2 pr-3">Person</th>
+                          <th className="py-2 px-3 text-right">Arbetsorder</th>
+                          <th className="py-2 px-3 text-right">Internt</th>
+                          <th className="py-2 px-3 text-right">Arbetad tid</th>
+                          <th className="py-2 pl-3 text-right">Frånvaro</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {report.time.byPerson.map((person) => (
+                          <tr key={person.userId} className="border-b border-slate-100 last:border-b-0">
+                            <td className="py-2 pr-3 font-medium text-slate-800">{person.userName}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.workOrderMinutes)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatHours(person.internalMinutes)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums font-semibold text-slate-800">{formatHours(person.workedMinutes)}</td>
+                            <td className="py-2 pl-3 text-right tabular-nums text-slate-500">{formatHours(person.absenceMinutes)}</td>
                           </tr>
                         ))}
                       </tbody>

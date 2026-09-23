@@ -14,6 +14,8 @@ import { buildProduction, type Production } from '@/lib/domains/planning/product
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
 import { computeBacklogValue, loadScheduledScopes } from '@/lib/domains/planning/insights';
 import { aggregatePlannedForRange, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
+import { buildTimeReport, type TimeReport } from '@/lib/domains/time/report';
+import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
@@ -117,6 +119,16 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Det planerade arbetet kunde inte räknas: ${e?.message || e}`);
     }
 
+    // Rapporterad tid. Samma regel som övriga delar: får inte kunna sänka säljsiffrorna.
+    let time: TimeReport | null = null;
+    try {
+      const { data: timeData, error } = await fetchTimeReportData(admin, range);
+      if (error) throw new Error(error.message);
+      time = buildTimeReport({ ...timeData, range, months });
+    } catch (e: any) {
+      console.warn(`[Rapport] Tiden kunde inte räknas: ${e?.message || e}`);
+    }
+
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
     if (comparisonRange) {
@@ -179,6 +191,7 @@ export async function GET(req: Request) {
       previous,
       production,
       planned,
+      time,
     });
 
     return ok(report);

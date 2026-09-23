@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { workedMinutes } from './hours';
+import { workedMinutes, rowMinutes } from './hours';
 import type { SummarizableEntry, TimeEntryKind } from './summary';
 
 // Tidrader — läsning, skrivning och den regel som gör underlaget trovärdigt:
@@ -177,7 +177,8 @@ export function toSummarizableEntry(row: TimeEntryRow): SummarizableEntry {
     startTime: row.start_time,
     endTime: row.end_time,
     breakMinutes: row.break_minutes ?? 0,
-    minutesWorked: row.minutes_worked ?? (row.hours != null ? Math.round(row.hours * 60) : null),
+    // Delad regel — se rowMinutes. Attesten och rapporteringen måste räkna raden likadant.
+    minutesWorked: rowMinutes(row),
     kind: row.kind,
     userId: row.user_id,
     absenceReason: row.absence_type?.name ?? null,
