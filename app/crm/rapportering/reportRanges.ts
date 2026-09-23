@@ -122,6 +122,39 @@ export function previousRange(range: ReportRange): ReportRange | null {
   return { from: dayString(previousFrom), to: dayString(previousTo) };
 }
 
+/**
+ * Snabbknappens KALENDERSLUT, till skillnad från `reportRange` som slutar idag.
+ *
+ * ⚠️ FINNS FÖR ATT PLANERAT ARBETE LIGGER I FRAMTIDEN. Kommentaren vid `reportRange` säger att de
+ * öppna perioderna slutar idag eftersom "rapporten har ingen framtida data" — det var sant när
+ * sidan bara visade försäljning och utfall, men inte längre: produktionssektionen visar också vad
+ * som är PLANERAT, och planen sträcker sig förbi idag.
+ *
+ * Perioden ändras INTE av det. Skulle planerat räknas till söndag medan utfallet slutar på onsdag
+ * hade en hel veckas plan ställts mot tre dagars utfall, och jobbet sett ut att ligga efter varje
+ * gång man tittade mitt i veckan — samma feltyp som målstapeln spärrar i "Perioden i korthet".
+ * Funktionen finns bara för att gränssnittet ska kunna SÄGA att resten av perioden inte räknas.
+ *
+ * null när knappen inte har något senare kalenderslut: "Senaste 12 mån" är ett rullande fönster
+ * som slutar nu, och "Förra månaden" är redan avslutad.
+ */
+export function reportPeriodEnd(key: ReportRangeKey, now: Date = new Date()): string | null {
+  const day = stockholmDay(now);
+  switch (key) {
+    case 'week':
+      // Söndagen i veckan måndagen tillhör.
+      return dayString(addDays(startOfWeek(day), 6));
+    case 'month':
+      // Dag 0 i nästa månad är den sista i den här — hanterar både skottår och december.
+      return dayString(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0)));
+    case 'year':
+      return dayString(new Date(Date.UTC(day.getUTCFullYear(), 11, 31)));
+    case 'prevMonth':
+    case 'last12':
+      return null;
+  }
+}
+
 export const REPORT_RANGE_LABELS: Array<[ReportRangeKey, string]> = [
   ['week', 'Denna vecka'],
   ['month', 'Denna månad'],

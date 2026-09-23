@@ -8,6 +8,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import {
   REPORT_RANGE_LABELS,
+  reportPeriodEnd,
   reportRange,
   today,
   type ReportRangeKey,
@@ -316,6 +317,36 @@ const MATERIAL_UNKNOWN_LABEL = 'Okänt material';
 /** Materialets etikett. `null` betyder att raden saknar material — aldrig ett påhittat namn. */
 function materialLabel(material: string | null): string {
   return material ?? MATERIAL_UNKNOWN_LABEL;
+}
+
+/**
+ * "Perioden slutar idag — resten räknas inte."
+ *
+ * ⚠️ FINNS FÖR ATT PLANERAT ARBETE LIGGER I FRAMTIDEN. På en onsdag visade "Denna vecka"
+ * 45 175 kr planerat för Södertälje-bilen medan planeringskalendern visade 102 877 kr för hela
+ * veckan — båda rätt, men bara den ena syntes, och etiketten "Denna vecka" inbjöd till fel läsning.
+ *
+ * Perioden ändras INTE. Att låta planerat räknas till söndag medan utfallet slutar på onsdag hade
+ * ställt en hel veckas plan mot tre dagars utfall, och jobbet sett ut att ligga efter varje gång
+ * någon tittade mitt i veckan. I stället skrivs avgränsningen ut.
+ */
+function PeriodEndsTodayNote({ activeRangeKey, rangeTo }: { activeRangeKey: ReportRangeKey | null; rangeTo: string }) {
+  // Bara för snabbknapparna: en egen vald slutdag är ett medvetet val och behöver ingen förklaring.
+  if (!activeRangeKey) return null;
+  const periodEnd = reportPeriodEnd(activeRangeKey);
+  if (!periodEnd || periodEnd <= rangeTo) return null;
+
+  const label = REPORT_RANGE_LABELS.find(([key]) => key === activeRangeKey)?.[1] ?? 'Perioden';
+  // Resten börjar dagen EFTER periodens slut — idag är redan medräknad. UTC-förankrat: datumen är
+  // kalenderdagar, aldrig tidpunkter.
+  const restFrom = new Date(Date.parse(`${rangeTo}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+  return (
+    <p className="m-0 rounded-lg border border-[#cfdcc9] bg-[#f9fbf7] px-3 py-2 text-[12px] text-slate-600">
+      <strong className="font-semibold text-slate-800">Perioden slutar idag ({formatRangeLabel(rangeTo, rangeTo)}).</strong>{' '}
+      Resten av perioden ({formatRangeLabel(restFrom, periodEnd)}) räknas inte — varken planerat
+      eller utfall. Planeringskalendern visar hela {label.toLowerCase()}, så dess siffror är högre.
+    </p>
+  );
 }
 
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
@@ -759,6 +790,8 @@ export default function ReportsClient() {
               </div>
             ) : (
               <div className="grid gap-5">
+                <PeriodEndsTodayNote activeRangeKey={activeRangeKey} rangeTo={report.range.to} />
+
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <StatTile
                     label="Säckar planerade"
