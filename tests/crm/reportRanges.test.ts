@@ -7,6 +7,7 @@ import {
   reportRange,
   daysInRange,
   previousRange,
+  reportPeriodEnd,
   REPORT_RANGE_LABELS,
 } from '@/app/crm/rapportering/reportRanges';
 
@@ -219,5 +220,56 @@ describe('previousRange', () => {
   it('ett intervall som inte går att räkna på ger null, inte ett påhittat datum', () => {
     expect(previousRange({ from: '2026-09-22', to: '2026-09-01' })).toBeNull();
     expect(previousRange({ from: 'inte-ett-datum', to: '2026-09-01' })).toBeNull();
+  });
+});
+
+// ── Periodens kalenderslut ───────────────────────────────────────────────────
+//
+// Finns bara för att gränssnittet ska kunna SÄGA att resten av perioden inte räknas — planerat
+// arbete ligger i framtiden, men perioden slutar idag. Se kommentaren vid reportPeriodEnd.
+
+describe('reportPeriodEnd', () => {
+  const wednesday = midday('2026-09-23'); // onsdag
+
+  it('veckan slutar på söndagen, inte idag', () => {
+    expect(reportPeriodEnd('week', wednesday)).toBe('2026-09-27');
+    // Rapportens egen period slutar samma dag man tittar.
+    expect(reportRange('week', wednesday).to).toBe('2026-09-23');
+  });
+
+  it('månaden slutar på sista dagen', () => {
+    expect(reportPeriodEnd('month', wednesday)).toBe('2026-09-30');
+  });
+
+  it('februari i skottår slutar den 29:e', () => {
+    expect(reportPeriodEnd('month', midday('2028-02-10'))).toBe('2028-02-29');
+  });
+
+  it('december rullar inte över till nästa år', () => {
+    expect(reportPeriodEnd('month', midday('2026-12-10'))).toBe('2026-12-31');
+  });
+
+  it('året slutar den 31 december', () => {
+    expect(reportPeriodEnd('year', wednesday)).toBe('2026-12-31');
+  });
+
+  it('en söndag har inget kalenderslut KVAR — periodslutet är samma dag', () => {
+    // Noten ska inte visas då; anroparen jämför mot range.to.
+    const sunday = midday('2026-09-27');
+    expect(reportPeriodEnd('week', sunday)).toBe(reportRange('week', sunday).to);
+  });
+
+  it('rullande och avslutade perioder har inget senare slut', () => {
+    // "Senaste 12 mån" slutar per definition nu; "Förra månaden" är redan färdig.
+    expect(reportPeriodEnd('last12', wednesday)).toBeNull();
+    expect(reportPeriodEnd('prevMonth', wednesday)).toBeNull();
+  });
+
+  it('kalenderslutet ligger ALDRIG före periodens slut', () => {
+    for (const [key] of REPORT_RANGE_LABELS) {
+      const end = reportPeriodEnd(key, wednesday);
+      if (end == null) continue;
+      expect(end >= reportRange(key, wednesday).to).toBe(true);
+    }
   });
 });

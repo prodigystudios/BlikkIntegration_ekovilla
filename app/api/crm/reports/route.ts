@@ -10,6 +10,10 @@ import {
   type ReportRange,
 } from '@/lib/domains/crm/reports';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
+import { buildProduction, type Production } from '@/lib/domains/planning/production';
+import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
+import { computeBacklogValue, loadScheduledScopes } from '@/lib/domains/planning/insights';
+import { aggregatePlannedForRange, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
 import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
@@ -82,6 +86,37 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Målen kunde inte hämtas: ${e?.message || e}`);
     }
 
+    // Produktionsutfallet. Samma regel som målen och lönsamheten: felar det ska säljsiffrorna
+    // fortfarande visas, och produktionsdelen märka sig som "kunde inte räknas".
+    let production: Production | null = null;
+    try {
+      const { data: productionData, error } = await fetchProductionData(admin, range);
+      if (error) throw new Error(error.message);
+      production = buildProduction({ ...productionData, range, months });
+    } catch (e: any) {
+      console.warn(`[Rapport] Produktionen kunde inte räknas: ${e?.message || e}`);
+    }
+
+    // Det planerade arbetet i perioden, att ställa utfallet mot. Läsningen delas med planeringens
+    // insikter (loadScheduledScopes) så de två vyerna inte kan ha olika uppfattning om schemat.
+    //
+    // ⚠️ BACKLOGGEN HAR INGEN PERIOD. Den svarar på "vad väntar just nu" och ändras inte med
+    // periodfiltret — gränssnittet märker den så.
+    let planned: PlannedPeriod | null = null;
+    try {
+      const scheduled = await loadScheduledScopes(admin, range.from, range.to, 'not-cancelled');
+      if (scheduled.error || !scheduled.data) throw new Error(scheduled.error?.message || 'schemat kunde inte läsas');
+      const aggregate = aggregatePlannedForRange({ ...scheduled.data, range, months });
+      // ⚠️ BACKLOGGEN FÅR VARA null UTAN ATT FÄLLA RESTEN. Går den inte att läsa döljs kortet —
+      // "Oplanerat värde 0 kr" hade varit ett påstående om verksamheten, inte ett saknat värde.
+      // Periodens planerade siffror är oberoende av backloggen och ska stå kvar.
+      const backlog = await computeBacklogValue(admin);
+      if (backlog.error) console.warn(`[Rapport] Backloggen kunde inte läsas: ${backlog.error.message}`);
+      planned = { ...aggregate, backlog: backlog.data, unavailable: false };
+    } catch (e: any) {
+      console.warn(`[Rapport] Det planerade arbetet kunde inte räknas: ${e?.message || e}`);
+    }
+
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
     if (comparisonRange) {
@@ -142,6 +177,8 @@ export async function GET(req: Request) {
       profitabilityUnavailable,
       goals,
       previous,
+      production,
+      planned,
     });
 
     return ok(report);

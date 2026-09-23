@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getPlanningInsights } from '@/lib/domains/planning/insights';
+import { computeBacklogValue, getPlanningInsights, loadScheduledScopes } from '@/lib/domains/planning/insights';
 
 // Läsvägen i insights, till skillnad från den rena aggregateInsights bredvid.
 //
@@ -125,5 +125,133 @@ describe('getPlanningInsights', () => {
       weeks: 2,
     });
     expect(data.weeks.every((w) => w.revenue === 0)).toBe(true);
+  });
+});
+
+// ── Statusfiltret ────────────────────────────────────────────────────────────
+//
+// 🧨 HITTAT I WEBBLÄSAREN 2026-09-23, inte av ett test. Rapporteringens "planerat mot utfall"
+// återanvände insikternas läsning rakt av, och den släpper bara igenom draft/scheduled/in_progress.
+// För en period som redan passerat är de flesta ordrar FAKTURERADE, så det planerade blev nästan
+// noll medan utfallet stod kvar: Sandviken 1 visade 150 planerade säckar mot 3 826 blåsta — ett
+// omöjligt tal som ändå såg ut som en siffra.
+
+describe('loadScheduledScopes — statusfiltret', () => {
+  const invoicedJob = {
+    ...segment('s1', '2026-09-07', '2026-09-11'),
+    truck: { name: 'Bil 1' },
+    work_order: { ...workOrder(500_000), status: 'invoiced' },
+  };
+  const cancelledJob = {
+    ...segment('s1', '2026-09-07', '2026-09-11'),
+    truck: { name: 'Bil 1' },
+    work_order: { ...workOrder(500_000), status: 'cancelled' },
+  };
+
+  it('"open" släpper INTE igenom en fakturerad order — framåtblickens regel', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'open',
+    );
+    expect(data?.values).toEqual([]);
+  });
+
+  it('"not-cancelled" TAR MED den fakturerade ordern — historikens regel', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'not-cancelled',
+    );
+    expect(data?.values).toHaveLength(1);
+    expect(data?.values[0].revenue).toBe(500_000);
+  });
+
+  it('"not-cancelled" släpper ALDRIG igenom en avbruten order', async () => {
+    // En order som aldrig blev av var heller aldrig planerad produktion.
+    const { data } = await loadScheduledScopes(
+      client([cancelledJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30', 'not-cancelled',
+    );
+    expect(data?.values).toEqual([]);
+  });
+
+  it('standardläget är "open", så insikterna är oförändrade', async () => {
+    const { data } = await loadScheduledScopes(
+      client([invoicedJob], [segment('s1', '2026-09-07', '2026-09-11')]),
+      '2026-09-01', '2026-09-30',
+    );
+    expect(data?.values).toEqual([]);
+  });
+});
+
+// ── Fynd ur grenreviewen 2026-09-23 ──────────────────────────────────────────
+
+describe('loadScheduledScopes — sidindelning', () => {
+  it('läser ALLA sidor; en kapad första sida får inte bli hela svaret', () => {
+    // 🧨 PostgREST kapar vid max-rows (1000) UTAN att fela. Rutten kallar hit för intervall upp
+    // till ett år, medan enda tidigare anroparen var insikternas 26-veckorsfönster. En kapad
+    // läsning sänker planerade säckar och kronor tyst — medan listScopeSpans, som ÄR sidindelad,
+    // fortfarande ger varje spann.
+    const page1 = Array.from({ length: 1000 }, (_, i) => ({
+      ...segment(`s${i}`, '2026-09-07', '2026-09-11'),
+      work_order_id: `wo-${i}`,
+      truck: { name: 'Bil 1' },
+      work_order: workOrder(1_000),
+    }));
+    const page2 = [{
+      ...segment('s1000', '2026-09-07', '2026-09-11'),
+      work_order_id: 'wo-1000',
+      truck: { name: 'Bil 1' },
+      work_order: workOrder(1_000),
+    }];
+
+    const sb = makeClient((table, columns, rangeFrom) => {
+      if (table !== 'ops_segments') return { data: [], error: null };
+      if (!columns.includes('work_order:crm_work_orders')) return { data: [], error: null };
+      if (rangeFrom === 0) return { data: page1, error: null };
+      if (rangeFrom === 1000) return { data: page2, error: null };
+      return { data: [], error: null };
+    });
+
+    return loadScheduledScopes(sb, '2026-09-01', '2026-09-30', 'open').then(({ data }) => {
+      // 1001 unika arbetsordrar, inte 1000.
+      expect(data?.values).toHaveLength(1001);
+    });
+  });
+});
+
+describe('computeBacklogValue — fel sväljs inte', () => {
+  it('en nekad orderläsning ger ett FEL, inte noll oplanerat', () => {
+    // 🧨 Funktionen destrukturerade bara `data`, så en trasig läsning gav {0,0,0} — och
+    // rapportens kort skrev "Oplanerat värde 0 kr · 0 säck väntar på planering" som ett faktum.
+    const sb = makeClient((table) =>
+      table === 'crm_work_orders' ? { data: null, error: { message: 'nekad' } } : { data: [], error: null });
+    return computeBacklogValue(sb).then(({ data, error }) => {
+      expect(data).toBeNull();
+      expect(error?.message).toBe('nekad');
+    });
+  });
+
+  it('en nekad segmentläsning ger också fel — inte ett för högt oplanerat värde', () => {
+    // Faller segmentläsningen ser INGET jobb ut som planerat, och hela orderstocken hade
+    // räknats som oplanerad. Det felet pekar åt andra hållet men är lika osant.
+    //
+    // ⚠️ Orderläsningen MÅSTE ge en rad här. Med tom orderstock returnerar funktionen innan
+    // segmentfrågan ens ställs, och testet hade blivit grönt utan att pröva något.
+    const sb = makeClient((table) =>
+      table === 'crm_work_orders'
+        ? { data: [{ id: 'wo-1', ...workOrder(100_000) }], error: null }
+        : { data: null, error: { message: 'nekad' } });
+    return computeBacklogValue(sb).then(({ data, error }) => {
+      expect(data).toBeNull();
+      expect(error?.message).toBe('nekad');
+    });
+  });
+
+  it('tom orderstock är noll oplanerat — och det är ett svar, inte ett fel', () => {
+    const sb = makeClient(() => ({ data: [], error: null }));
+    return computeBacklogValue(sb).then(({ data, error }) => {
+      expect(error).toBeNull();
+      expect(data).toEqual({ revenue: 0, sacks: 0, count: 0 });
+    });
   });
 });
