@@ -4,6 +4,7 @@ import { expandWorkOrderToBacklogItems, SCHEDULABLE_WORK_ORDER_STATUSES } from '
 import { isDeadWorkOrder } from '@/lib/domains/crm/work-orders';
 import { mondayOfISO } from './timezone';
 import { listScopeSpans } from './schedule';
+import { chunkIds, readAllPages } from './pagedRead';
 import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue } from './weekValue';
 
 // Forward-looking planning insights: scheduled revenue + sacks per week, per truck, per material,
@@ -98,24 +99,42 @@ const JOB_FIELDS =
 
 // Value (revenue + sacks) of schedulable work orders that have NO segments yet — the work still
 // waiting to be planned.
-export async function computeBacklogValue(supabase: SupabaseClient): Promise<{ revenue: number; sacks: number; count: number }> {
-  const { data: orders } = await supabase
+export type BacklogValue = { revenue: number; sacks: number; count: number };
+
+/**
+ * ⚠️ FEL RETURNERAS, DE SVÄLJS INTE. Funktionen destrukturerade tidigare bara `data`, så en nekad
+ * eller trasig läsning gav `{0, 0, 0}` — och rapportens nya kort skrev ut "Oplanerat värde 0 kr ·
+ * 0 säck väntar på planering" som ett faktum. Noll oplanerat arbete är ett PÅSTÅENDE om
+ * verksamheten; "vi vet inte" är något annat, och anroparen måste kunna skilja dem åt.
+ */
+export async function computeBacklogValue(
+  supabase: SupabaseClient,
+): Promise<{ data: BacklogValue | null; error: { message: string } | null }> {
+  const { data: orders, error: ordersError } = await supabase
     .from('crm_work_orders')
     .select(`id, desired_installation_date, assigned_to, ${JOB_FIELDS}`)
     .in('status', SCHEDULABLE_WORK_ORDER_STATUSES as unknown as string[]);
+  if (ordersError) return { data: null, error: ordersError };
   const rows = (orders ?? []) as unknown as Parameters<typeof expandWorkOrderToBacklogItems>[0][];
-  if (rows.length === 0) return { revenue: 0, sacks: 0, count: 0 };
+  if (rows.length === 0) return { data: { revenue: 0, sacks: 0, count: 0 }, error: null };
 
   // ⚠️ PER SCOPE, inte per order. En order med etapp 1 utplacerad och etapp 2 oplanerad bidrog
   // tidigare 0 till "Oplanerat värde" — snedtaket såg ut att vara inplanerat bara för att väggen
   // var det. Samma expansion som backloggens lista använder, så de två kan inte säga olika.
-  const { data: segs } = await supabase
-    .from('ops_segments')
-    .select('work_order_id, stage_id')
-    .in('work_order_id', rows.map((r) => r.id));
-  const scheduled = new Set(
-    (segs ?? []).map((s: any) => scopeKey(s.work_order_id as string, (s.stage_id as string | null) ?? null)),
-  );
+  //
+  // ⚠️ KLUMPAR. `.in()` ligger i query-strängen; en lista med hundratals uuid:n à 37 tecken
+  // spränger URL:en och svaret blir ett 414. Samma tak som resten av repot delar (IN_CHUNK).
+  const scheduled = new Set<string>();
+  for (const chunk of chunkIds(rows.map((r) => r.id))) {
+    const { data: segs, error: segsError } = await supabase
+      .from('ops_segments')
+      .select('work_order_id, stage_id')
+      .in('work_order_id', chunk);
+    if (segsError) return { data: null, error: segsError };
+    for (const s of (segs ?? []) as any[]) {
+      scheduled.add(scopeKey(s.work_order_id as string, (s.stage_id as string | null) ?? null));
+    }
+  }
 
   let revenue = 0;
   let sacks = 0;
@@ -128,7 +147,7 @@ export async function computeBacklogValue(supabase: SupabaseClient): Promise<{ r
       count++;
     }
   }
-  return { revenue, sacks, count };
+  return { data: { revenue, sacks, count }, error: null };
 }
 
 /** Det schemalagda arbetet i ett fönster, i den form fördelningen behöver. */
@@ -170,12 +189,23 @@ export async function loadScheduledScopes(
    */
   filter: ScheduledScopeFilter = 'open',
 ): Promise<{ data: ScheduledScopes | null; error: { message: string } | null }> {
-  const { data: segs, error } = await supabase
-    .from('ops_segments')
-    .select(`work_order_id, stage_id, start_day, truck_id, truck:ops_trucks(name), work_order:crm_work_orders(${JOB_FIELDS})`)
-    .lte('start_day', to)
-    .gte('end_day', from)
-    .order('start_day', { ascending: true });
+  // ⚠️ SIDINDELAD. PostgREST kapar vid max-rows (1000) UTAN att fela, och rutten kallar hit för
+  // intervall upp till ett år — tidigare var enda anroparen insikternas 26-veckorsfönster. En kapad
+  // läsning hade tyst sänkt planerade säckar och kronor, medan listScopeSpans (som ÄR sidindelad)
+  // fortfarande gav varje spann: exakt den felklass den här grenen finns för att stänga.
+  //
+  // `id` som sista sortering: `start_day` är inte unik, och utan en unik nyckel är det odefinierat
+  // vilka rader som hamnar på vilken sida — rader kan både dubbleras och hoppas över.
+  const { rows: segs, error } = await readAllPages<Record<string, any>>((pageFrom, pageTo) =>
+    supabase
+      .from('ops_segments')
+      .select(`work_order_id, stage_id, start_day, truck_id, truck:ops_trucks(name), work_order:crm_work_orders(${JOB_FIELDS})`)
+      .lte('start_day', to)
+      .gte('end_day', from)
+      .order('start_day', { ascending: true })
+      .order('id', { ascending: true })
+      .range(pageFrom, pageTo),
+  );
 
   if (error) return { data: null, error };
 
@@ -186,7 +216,7 @@ export async function loadScheduledScopes(
   const labels = new Map<string, { material: string | null }>();
   const truckNames = new Map<string, string>();
   const workOrderIds = new Set<string>();
-  for (const s of (segs ?? []) as Array<Record<string, any>>) {
+  for (const s of segs) {
     const wo = Array.isArray(s.work_order) ? s.work_order[0] : s.work_order;
     if (!wo || !s.work_order_id) continue;
     const keep = filter === 'open' ? OPEN.has(wo.status) : !isDeadWorkOrder(wo.status);
@@ -251,6 +281,13 @@ export async function getPlanningInsights(
       material: labels.get(slice.key)?.material ?? null,
     }));
 
+  // ⚠️ TAVLANS BETEENDE ÄR OFÖRÄNDRAT MED FLIT. Insikterna har visat nollor vid en trasig
+  // backloggsläsning sedan de byggdes; att ändra det här hade varit en beteendeändring i
+  // planeringen som ingen bett om. Rapporten, som är ny, tar i stället felet och döljer kortet.
+  // Den lenient-grenen är alltså ett medvetet val, inte ett förbiseende — se computeBacklogValue.
   const backlog = await computeBacklogValue(supabase);
-  return { data: { ...aggregateInsights(weekStarts, jobs), backlog }, error: null };
+  return {
+    data: { ...aggregateInsights(weekStarts, jobs), backlog: backlog.data ?? { revenue: 0, sacks: 0, count: 0 } },
+    error: null,
+  };
 }

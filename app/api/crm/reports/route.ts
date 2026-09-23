@@ -107,7 +107,12 @@ export async function GET(req: Request) {
       const scheduled = await loadScheduledScopes(admin, range.from, range.to, 'not-cancelled');
       if (scheduled.error || !scheduled.data) throw new Error(scheduled.error?.message || 'schemat kunde inte läsas');
       const aggregate = aggregatePlannedForRange({ ...scheduled.data, range, months });
-      planned = { ...aggregate, backlog: await computeBacklogValue(admin), unavailable: false };
+      // ⚠️ BACKLOGGEN FÅR VARA null UTAN ATT FÄLLA RESTEN. Går den inte att läsa döljs kortet —
+      // "Oplanerat värde 0 kr" hade varit ett påstående om verksamheten, inte ett saknat värde.
+      // Periodens planerade siffror är oberoende av backloggen och ska stå kvar.
+      const backlog = await computeBacklogValue(admin);
+      if (backlog.error) console.warn(`[Rapport] Backloggen kunde inte läsas: ${backlog.error.message}`);
+      planned = { ...aggregate, backlog: backlog.data, unavailable: false };
     } catch (e: any) {
       console.warn(`[Rapport] Det planerade arbetet kunde inte räknas: ${e?.message || e}`);
     }

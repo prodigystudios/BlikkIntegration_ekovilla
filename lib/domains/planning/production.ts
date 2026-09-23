@@ -181,14 +181,22 @@ export function buildProduction(input: {
   // 2) Beläggningen räknas ur SEGMENTEN, inte ur rapporterna. En bil som var bokad hela veckan men
   //    vars jobb ännu inte rapporterats ska synas som bokad — beläggning och utfall är två olika
   //    frågor, och att låta den ena tysta den andra hade dolt just de bilar man vill titta på.
+  //
+  // ⚠️ POSTEN SKAPAS FÖRST NÄR SEGMENTET FAKTISKT RÖR PERIODEN. Laddaren hämtar också segment som
+  // ligger UTANFÖR perioden — de behövs för att kunna knyta en rapport till rätt bil (se steg 3b i
+  // productionLoader). Skapades posten innan snittet räknats fick varje sådan bil en spökrad
+  // "0 säck · 0/N dagar · 0 %" i tabellen och i CSV-exporten, alltså en bil som ser sysslolös ut
+  // fast den bara inte hade något i perioden.
   const bookedByTruck = new Map<string, Set<string>>();
   for (const segment of input.segments) {
-    let days = bookedByTruck.get(segment.truck_id);
-    if (!days) {
-      days = new Set<string>();
-      bookedByTruck.set(segment.truck_id, days);
+    const days = bookedWorkingDays(segment, workingDays);
+    if (days.length === 0) continue;
+    let booked = bookedByTruck.get(segment.truck_id);
+    if (!booked) {
+      booked = new Set<string>();
+      bookedByTruck.set(segment.truck_id, booked);
     }
-    for (const day of bookedWorkingDays(segment, workingDays)) days.add(day);
+    for (const day of days) booked.add(day);
   }
 
   const truckIds = new Set<string>([...truckSacks.keys(), ...bookedByTruck.keys()]);

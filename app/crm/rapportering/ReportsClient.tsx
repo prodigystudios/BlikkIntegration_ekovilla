@@ -470,9 +470,12 @@ export default function ReportsClient() {
   const productionMonthData = useMemo(() => {
     if (!report) return [];
     const plannedByMonth = new Map(report.planned.byMonth.map((p) => [p.period, p.sacks]));
+    // ⚠️ null, INTE 0, när det planerade inte gick att läsa. Recharts hoppar över null och ritar
+    // ingen stapel; en nolla hade ritat en tom stapel som läses som "inget var planerat".
+    const plannedUnknown = report.planned.unavailable;
     return report.production.byMonth.map((p) => ({
       ...p,
-      planned: plannedByMonth.get(p.period) ?? 0,
+      planned: plannedUnknown ? null : plannedByMonth.get(p.period) ?? 0,
       label: report.production.byMonth.length === 1
         ? formatRangeLabel(report.range.from, report.range.to)
         : formatMonth(p.period),
@@ -492,12 +495,14 @@ export default function ReportsClient() {
         material,
         label: materialLabel(material),
         sacks: report.production.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
-        planned: report.planned.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
+        planned: report.planned.unavailable
+          ? null
+          : report.planned.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
       }))
       // Okänt sist, precis som i de två källistorna.
       .sort((a, b) => {
         if ((a.material === null) !== (b.material === null)) return a.material === null ? 1 : -1;
-        return (b.sacks + b.planned) - (a.sacks + a.planned);
+        return (b.sacks + (b.planned ?? 0)) - (a.sacks + (a.planned ?? 0));
       });
   }, [report]);
 
@@ -506,10 +511,14 @@ export default function ReportsClient() {
   const productionTruckRows = useMemo(() => {
     if (!report) return [];
     const plannedByTruck = new Map(report.planned.byTruck.map((t) => [t.truck_id, t]));
+    // ⚠️ null = "gick inte att läsa", 0 = "inget planerat". Tabellen, exporten och diagrammen
+    // måste skilja dem åt precis som brickorna ovan gör — annars läses en trasig läsning som att
+    // ingenting var inplanerat, vilket är ett påstående om verksamheten.
+    const unknown = report.planned.unavailable;
     const rows = report.production.byTruck.map((truck) => ({
       ...truck,
-      plannedSacks: plannedByTruck.get(truck.truck_id)?.sacks ?? 0,
-      plannedRevenue: plannedByTruck.get(truck.truck_id)?.revenue ?? 0,
+      plannedSacks: unknown ? null : plannedByTruck.get(truck.truck_id)?.sacks ?? 0,
+      plannedRevenue: unknown ? null : plannedByTruck.get(truck.truck_id)?.revenue ?? 0,
     }));
     for (const planned of report.planned.byTruck) {
       if (rows.some((r) => r.truck_id === planned.truck_id)) continue;
@@ -519,8 +528,8 @@ export default function ReportsClient() {
         sacks: 0,
         bookedDays: 0,
         utilization: report.production.workingDays > 0 ? 0 : null,
-        plannedSacks: planned.sacks,
-        plannedRevenue: planned.revenue,
+        plannedSacks: planned.sacks as number | null,
+        plannedRevenue: planned.revenue as number | null,
       });
     }
     return rows;
@@ -770,9 +779,9 @@ export default function ReportsClient() {
               ['Bil', 'Planerade säckar', 'Blåsta säckar', 'Planerad omsättning (ex moms)', 'Bokade arbetsdagar', 'Arbetsdagar i perioden', 'Beläggning (%)'],
               productionTruckRows.map((truck) => [
                 truck.truck_name,
-                Math.round(truck.plannedSacks),
+                truck.plannedSacks == null ? '' : Math.round(truck.plannedSacks),
                 truck.sacks,
-                Math.round(truck.plannedRevenue),
+                truck.plannedRevenue == null ? '' : Math.round(truck.plannedRevenue),
                 truck.bookedDays,
                 report.production.workingDays,
                 truck.utilization == null ? '' : Math.round(truck.utilization),
@@ -914,9 +923,9 @@ export default function ReportsClient() {
                         {productionTruckRows.map((truck) => (
                           <tr key={truck.truck_id} className="border-b border-slate-100 last:border-b-0">
                             <td className="py-2 pr-3 font-medium text-slate-800">{truck.truck_name}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-500">{formatCount(Math.round(truck.plannedSacks))}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-500">{truck.plannedSacks == null ? '–' : formatCount(Math.round(truck.plannedSacks))}</td>
                             <td className="py-2 px-3 text-right tabular-nums font-semibold text-slate-800">{formatCount(truck.sacks)}</td>
-                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{formatCurrency(truck.plannedRevenue)}</td>
+                            <td className="py-2 px-3 text-right tabular-nums text-slate-600">{truck.plannedRevenue == null ? '–' : formatCurrency(truck.plannedRevenue)}</td>
                             <td className="py-2 px-3 text-right tabular-nums text-slate-600">
                               {formatCount(truck.bookedDays)} / {formatCount(report.production.workingDays)}
                             </td>

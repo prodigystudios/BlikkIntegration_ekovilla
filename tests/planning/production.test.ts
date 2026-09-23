@@ -257,6 +257,38 @@ describe('buildProduction — beläggningsgrad', () => {
     expect(t1.utilization).toBe(20);
   });
 
+  it('ett segment HELT UTANFÖR perioden ger ingen spökrad', () => {
+    // 🧨 Fynd i grenreview 2026-09-23. Laddaren hämtar också segment utanför perioden — de behövs
+    // för att knyta en rapport till rätt bil (productionLoader steg 3b). Skapades bilposten innan
+    // snittet räknats fick varje sådan bil en rad "0 säck · 0/N dagar · 0 %" i tabellen och i
+    // CSV-exporten, alltså en bil som ser sysslolös ut fast den bara inte hade något i perioden.
+    const result = buildProduction({
+      reports: [],
+      segments: [
+        segment({ id: 's1', truck_id: 't1', start_day: '2026-09-07', end_day: '2026-09-08' }),
+        segment({ id: 's2', truck_id: 't2', start_day: '2026-11-02', end_day: '2026-11-06' }),
+      ],
+      trucks,
+      range: { from: '2026-09-07', to: '2026-09-11' },
+      months: ['2026-09'],
+    });
+    expect(result.byTruck.map((t) => t.truck_id)).toEqual(['t1']);
+  });
+
+  it('en bil vars enda segment ligger utanför perioden syns ändå OM den har rapporterade säckar', () => {
+    // Rapporten ligger i perioden även om segmentet sträcker sig utanför den — då är bilen
+    // relevant och ska med, med sina säckar men utan bokade dagar.
+    const result = buildProduction({
+      reports: [report({ work_order_id: 'wo1', report_day: '2026-09-09', sacks_blown: 50, kind: 'final', segment_id: 's2' })],
+      segments: [segment({ id: 's2', truck_id: 't2', start_day: '2026-09-09', end_day: '2026-09-09' })],
+      trucks,
+      range: { from: '2026-09-09', to: '2026-09-09' },
+      months: ['2026-09'],
+    });
+    const t2 = result.byTruck.find((t) => t.truck_id === 't2')!;
+    expect(t2.sacks).toBe(50);
+  });
+
   it('en bokad bil UTAN rapport syns ändå — beläggning och utfall är olika frågor', () => {
     const result = buildProduction({
       reports: [],
