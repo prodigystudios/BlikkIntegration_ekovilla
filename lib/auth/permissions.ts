@@ -52,6 +52,9 @@ export const PERMISSION_KEYS = [
   // företagets kostnad — och `time.approve` innehas av lönebyrån, som är en extern part.
   // Seedad admin-only i 20260908_time_reminder_sms_permission.sql.
   'time.reminder.sms',
+  // Skyddsronder (20260924_safety_rounds.sql). Inte crm.*: en rondledare kan vara en arbetsledare
+  // (member) utan CRM-åtkomst, som får nyckeln personligt. Läs + skriv seedas till admin och sales.
+  'safety.round.read', 'safety.round.write',
   // Coarse meta keys backing the legacy requireCrmUser/Writer/Admin guards 1:1
   'crm.access', 'crm.write', 'crm.admin',
 ] as const;

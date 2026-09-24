@@ -52,6 +52,12 @@ const nextConfig = {
         './public/brand/Ekovilla_logo_Figma.png',
         './public/brand/Isoleringslandslaget_logo.jpg',
       ],
+      // Skyddsrondens protokoll ritas med samma blockrenderare och samma sidhuvud (lib/pdf/blocks.ts).
+      '/api/safety-rounds/[id]/pdf': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+        './public/brand/Isoleringslandslaget_logo.jpg',
+      ],
     },
   },
 };

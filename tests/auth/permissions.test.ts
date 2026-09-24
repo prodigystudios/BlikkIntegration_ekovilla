@@ -20,7 +20,7 @@ describe('PERMISSION_KEYS catalog', () => {
   // Mirrors the SQL `permissions` catalog in 20260608_permissions_model.sql. If you add a key
   // there, add it here too (and to the seed + parity assert) — this guards the count.
   it('has the expected count and no duplicates', () => {
-    expect(PERMISSION_KEYS.length).toBe(46);
+    expect(PERMISSION_KEYS.length).toBe(48);
     expect(new Set(PERMISSION_KEYS).size).toBe(PERMISSION_KEYS.length);
   });
 

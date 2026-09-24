@@ -29,6 +29,7 @@ import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
 import WorkOrderProgressCard from './WorkOrderProgressCard';
 import WorkOrderKmaCard from './WorkOrderKmaCard';
+import WorkOrderSafetyRoundsCard from './WorkOrderSafetyRoundsCard';
 import WorkOrderStagesCard from './WorkOrderStagesCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
 import { useAfterCalculation } from './useAfterCalculation';
@@ -228,6 +229,7 @@ export default function WorkOrderDetailClient({
   readOnly = false,
   homePath = '/crm/arbetsorder',
   homeLabel = 'Arbetsorder',
+  showSafetyRounds = false,
 }: {
   workOrderId: string;
   fortnoxConnected: boolean;
@@ -247,6 +249,11 @@ export default function WorkOrderDetailClient({
   /** Vart bakåtknappen går när inget `?returnTo=` finns med. Ekonomiytan har en egen lista. */
   homePath?: string;
   homeLabel?: string;
+  /**
+   * Har den som tittar en skyddsrondsnyckel? Läses av sidan på servern. Utan den ritas kortet inte
+   * alls — i stället för att fråga och få 403.
+   */
+  showSafetyRounds?: boolean;
 }) {
   const router = useRouter();
   // Arbetsordern öppnas både från sin egen lista och från planeringskalendern. Utan det här
@@ -1957,6 +1964,11 @@ export default function WorkOrderDetailClient({
               canEdit={canEdit}
               salesName={workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name || null) : null}
             />
+
+            {/* Skyddsronder — checklista och handlingsplan för arbetsmiljön på plats. Under KMA-planen:
+                båda hör till arbetsmiljön kring jobbet. Kortet äger sin hämtning; själva ronden
+                fylls i på /skyddsrond/[id]. */}
+            <WorkOrderSafetyRoundsCard workOrderId={workOrder.id} visible={showSafetyRounds} />
 
             {/* Snapshot */}
             <Card className="grid gap-3">

@@ -95,6 +95,15 @@ plus `time.reminder.sms` (`20260908_time_reminder_sms_permission.sql`).
 **Planning** (Wave 7, seeded in `20260611_planning_permissions.sql`): `planning.schedule.read` /
 `planning.schedule.write`, `planning.truck.manage`, `planning.depot.manage`.
 
+**Safety rounds** (skyddsronder, seeded in `20260924_safety_rounds.sql`): `safety.round.read` /
+`safety.round.write`.
+
+> Also deliberately **not** `crm.*`. A round leader may be a supervisor (`member`) with no CRM
+> access, who gets the keys as a personal grant. There is **no crew branch**: being on the job does
+> not let you start rounds. The work order is read through two narrow SECURITY DEFINER lookups gated
+> on `safety.round.write` (`safety_round_order_lookup` / `safety_round_order_header`), never by
+> widening RLS on `crm_work_orders`.
+
 ---
 
 ## Role seed
@@ -117,6 +126,7 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | `time.entry.read.all` / `time.approve` / `time.payroll.read` | – | – | – | **✓** | ✓ |
 | `time.reference.manage` / `time.entry.write.all` | – | – | – | – | ✓ |
 | `time.reminder.sms` | – | – | – | **–** | ✓ |
+| `safety.round.read` / `safety.round.write` | – | ✓ | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work

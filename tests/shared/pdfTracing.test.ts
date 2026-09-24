@@ -43,8 +43,12 @@ describe('outputFileTracingIncludes', () => {
     }
   });
 
-  it('KMA-planens PDF-route har typsnitten och båda bolagens loggor', () => {
-    const patterns = includes['/api/crm/work-orders/[id]/kma-plans/[planId]/pdf'];
+  // Båda ritas av lib/pdf/blocks.ts, som läser typsnitten och BÅDA loggorna från disk.
+  it.each([
+    '/api/crm/work-orders/[id]/kma-plans/[planId]/pdf',
+    '/api/safety-rounds/[id]/pdf',
+  ])('%s har typsnitten och båda bolagens loggor', (route) => {
+    const patterns = includes[route];
     expect(patterns).toBeDefined();
     expect(patterns).toEqual(
       expect.arrayContaining([

@@ -13,6 +13,7 @@ import WorkOrderTimeTab from '@/app/crm/arbetsorder/WorkOrderTimeTab';
 import WorkOrderFilesTab from '@/app/crm/arbetsorder/WorkOrderFilesTab';
 import WorkOrderSackReportCard from '@/app/crm/arbetsorder/WorkOrderSackReportCard';
 import WorkOrderProgressCard from '@/app/crm/arbetsorder/WorkOrderProgressCard';
+import WorkOrderSafetyRoundsCard from '@/app/crm/arbetsorder/WorkOrderSafetyRoundsCard';
 import { useSackReports } from '@/app/crm/arbetsorder/useSackReports';
 import { useProgressReports } from '@/app/crm/arbetsorder/useProgressReports';
 import { progressWorkItemsFromLineItems } from '@/lib/domains/crm/workOrderProgress';
@@ -111,6 +112,7 @@ export default function WorkOrderInstallerClient({
   segmentId = null,
   currentUserId,
   canReportTime = false,
+  showSafetyRounds = false,
 }: {
   workOrderId: string;
   /**
@@ -123,6 +125,8 @@ export default function WorkOrderInstallerClient({
   currentUserId: string | null;
   /** Testfönstret för Tid-fliken — se app/arbetsorder/[id]/page.tsx. */
   canReportTime?: boolean;
+  /** Har den som tittar en skyddsrondsnyckel? Se app/arbetsorder/[id]/page.tsx. */
+  showSafetyRounds?: boolean;
 }) {
   const router = useRouter();
   const stage = useFieldStage(workOrderId, segmentId);
@@ -518,6 +522,11 @@ export default function WorkOrderInstallerClient({
               </p>
             )}
           </div>
+
+          {/* Skyddsrond — bara för den som har en skyddsrondsnyckel (rondledaren, ofta en arbetsledare
+              med nyckeln personligt). Efter egenkontrollen: samma slags pappersarbete på plats, och
+              ronden görs med ordern öppen i handen. Besättningen i övrigt ser inget kort alls. */}
+          <WorkOrderSafetyRoundsCard workOrderId={workOrderId} visible={showSafetyRounds} />
 
           {/* Var tiden rapporteras. Besättningen har ingen Tid-flik här (den är öppen bara för
               attestansvariga), så utan den här rutan öppnar de jobbet, hittar ingen tidyta och
