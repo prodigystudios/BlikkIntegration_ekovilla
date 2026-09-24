@@ -31,6 +31,9 @@ export const KMA_TEMPLATE_VERSION = '2.0';
 
 export const KMA_FOOTER = 'Ekovilla AB / Isoleringslandslaget AB - 020-44 66 40 - Info@ekovilla.se';
 
+/** Taket på kontaktlistans egna rader — schemat, förifyllnaden och dialogen delar det. */
+export const KMA_MAX_CONTACTS = 30;
+
 /** Den fasta första raden i kontaktlistan (§2 och bilaga 7). */
 export const KMA_CEO_CONTACT = { name: 'Andreas Östlund', role: 'VD / Teknisk expert', phone: '072-459 99 98' } as const;
 

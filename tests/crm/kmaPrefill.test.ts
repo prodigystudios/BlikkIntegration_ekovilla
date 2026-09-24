@@ -119,10 +119,16 @@ describe('buildKmaPrefill — Revidera', () => {
     expect(result.suggestions.crewContacts[0].phone).toBe('070-111 11 11');
   });
 
-  it('en trasig sparad plan fäller inte dialogen — förifyllnaden går vidare som ny plan', () => {
-    const result = buildKmaPrefill({ ...base, order: order(), orderLatest: stored({ input: { v: 99 } }) });
+  it('en trasig sparad plan fäller inte dialogen — men det SYNS att förra revisionen inte gick att läsa', () => {
+    const result = buildKmaPrefill({ ...base, order: order(), orderLatest: stored({ input: { v: 99 }, revision: 3 }) });
     expect(result.source).toEqual({ kind: 'blank' });
+    expect(result.unreadableRevision).toBe(3);
     expect(result.form.project.projectNumber).toBe('6579');
+  });
+
+  it('en läsbar revision flaggas inte, och en ny order har ingen revision att flagga', () => {
+    expect(buildKmaPrefill({ ...base, order: order(), orderLatest: stored() }).unreadableRevision).toBeNull();
+    expect(buildKmaPrefill({ ...base, order: order() }).unreadableRevision).toBeNull();
   });
 });
 
@@ -220,6 +226,13 @@ describe('buildKmaPrefill — ny plan', () => {
     const { form } = buildKmaPrefill({ ...base, order: order(), crew });
     expect(form.signers.ongoing).toHaveLength(10);
     expect(form.contacts).toHaveLength(12);
+  });
+
+  it('kontakterna kapas vid schemats tak — annars kunde förifyllnaden inte sparas', () => {
+    const crew = Array.from({ length: 40 }, (_, i) => crewPerson(`Montör ${i + 1}`));
+    const { form } = buildKmaPrefill({ ...base, order: order({ assignee: { full_name: 'Sara Säljare' } }), crew });
+    expect(form.contacts).toHaveLength(30);
+    expect(form.contacts[0].name).toBe('Sara Säljare');
   });
 
   it('arbetsbeskrivningen läses aldrig — portkoden når inte förifyllnaden', () => {

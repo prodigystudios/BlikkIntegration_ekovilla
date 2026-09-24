@@ -205,6 +205,49 @@ describe('buildKmaDocument — projektets uppgifter', () => {
 });
 
 describe('schemas', () => {
+  it('ALLT formuläret släpper igenom ger ett dokument som går att rendera', () => {
+    // 🧨 Dokumentschemat hade 2000 tecken per cell medan bilaga 8:s projektcell (kund + projekt +
+    // tio fastigheter) kan bli ~2 420: planen sparades, men PDF:en svarade med ett fel för alltid.
+    // Här byggs dokumentet ur ett MAXIMALT formulär — varje fält vid sitt tak, varje lista full.
+    const max = (n: number) => 'x'.repeat(n);
+    const form = kmaFormSchema.parse({
+      v: 1,
+      project: {
+        projectName: max(200),
+        customerName: max(200),
+        projectNumber: max(60),
+        properties: Array.from({ length: 10 }, () => max(200)),
+        workType: max(120),
+        commitment: max(200),
+        materials: ['EKOVILLA', 'KNAUF SUPAFIL', 'ISOCELL/ISECO', 'HUNTON NATIVO', 'PAROC'],
+      },
+      organisation: {
+        // E-posten exakt vid taket: 149 + '@example.se' = 160 tecken.
+        projectManager: { name: max(120), phone: max(40), email: `${'a'.repeat(149)}@example.se` },
+        workEnvironment: { name: max(120), phone: max(40), email: '' },
+        environment: { name: max(120), phone: max(40), email: '' },
+        quality: { name: max(120), phone: max(40), email: '' },
+        siteRoundsBy: max(120),
+        deviationRecipient: max(200),
+      },
+      selfCheckResponsible: {
+        incomingMaterial: max(80),
+        density: max(80),
+        thickness: max(80),
+        airGaps: max(80),
+        finalInspection: max(80),
+      },
+      contacts: Array.from({ length: 30 }, () => ({ name: max(120), role: max(80), phone: max(40) })),
+      signers: {
+        ongoing: Array.from({ length: 10 }, () => ({ name: max(120), role: max(80) })),
+        verifying: Array.from({ length: 7 }, () => ({ name: max(120), role: max(80) })),
+      },
+      extraRisks: Array.from({ length: 10 }, () => ({ risk: max(300), action: max(400) })),
+    });
+    const doc = buildKmaDocument(form, { revision: 99, issuedOn: '2026-09-24', firstIssuedOn: '2026-01-01' });
+    expect(parseStoredKmaDocument(doc)).not.toBeNull();
+  });
+
   it('ett byggt dokument klarar dokumentschemat (det som prövas före rendering)', () => {
     expect(parseStoredKmaDocument(buildKmaDocument(kmaForm(), CTX))).not.toBeNull();
   });

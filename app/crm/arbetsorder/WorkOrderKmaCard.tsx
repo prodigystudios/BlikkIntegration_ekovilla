@@ -32,7 +32,7 @@ export default function WorkOrderKmaCard({ workOrderId, canEdit, salesName }: Pr
   // Läget och revisionsnumret LÅSES när dialogen öppnas. Härleddes de vid varje rendering bytte
   // rubriken från "Ny KMA-plan" till "Revidera" i ögonblicket efter sparningen — listan hämtas om
   // innan dialogen hunnit stängas.
-  const [dialog, setDialog] = useState<{ prefill: KmaPrefillResponse; nextRevision: number } | null>(null);
+  const [dialog, setDialog] = useState<{ prefill: KmaPrefillResponse; nextRevision: number; mode: 'create' | 'revise' } | null>(null);
   const [opening, setOpening] = useState(false);
 
   const action = kmaCardAction({ canEdit, canCreate, hasPlans: items.length > 0, loadError });
@@ -40,9 +40,12 @@ export default function WorkOrderKmaCard({ workOrderId, canEdit, salesName }: Pr
   async function openDialog() {
     setOpening(true);
     const nextRevision = (items[0]?.revision ?? 0) + 1;
+    // Läget kommer ur LISTAN, inte ur förifyllnadens källa: går förra revisionen inte att läsa in är
+    // det fortfarande en revidering, och rubriken ska säga det.
+    const mode = items.length > 0 ? 'revise' : 'create';
     const data = await loadPrefill(salesName);
     setOpening(false);
-    if (data) setDialog({ prefill: data, nextRevision });
+    if (data) setDialog({ prefill: data, nextRevision, mode });
   }
 
   return (
@@ -93,6 +96,7 @@ export default function WorkOrderKmaCard({ workOrderId, canEdit, salesName }: Pr
 
       {dialog ? (
         <WorkOrderKmaDialog
+          mode={dialog.mode}
           nextRevision={dialog.nextRevision}
           prefill={dialog.prefill}
           saving={saving}

@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 
-import { KMA_A8_ONGOING_ROWS, KMA_A8_VERIFYING_ROWS } from './template';
+import { KMA_A8_ONGOING_ROWS, KMA_A8_VERIFYING_ROWS, KMA_MAX_CONTACTS } from './template';
 import type { KmaDocument, KmaFormValues } from './types';
 
 // Validering av KMA-planens formulär (POST-kroppen) och av ett sparat dokument (före rendering).
@@ -77,7 +77,7 @@ export const kmaFormSchema = z.object({
         phone: text(40),
       }),
     )
-    .max(30, 'Högst 30 kontakter'),
+    .max(KMA_MAX_CONTACTS, `Högst ${KMA_MAX_CONTACTS} kontakter`),
   signers: z.object({
     ongoing: z.array(signer).max(KMA_A8_ONGOING_ROWS, `Högst ${KMA_A8_ONGOING_ROWS} personer`),
     verifying: z.array(signer).max(KMA_A8_VERIFYING_ROWS, `Högst ${KMA_A8_VERIFYING_ROWS} personer`),
@@ -108,14 +108,18 @@ export function parseStoredKmaInput(raw: unknown): KmaFormValues | null {
 
 // ── Dokumentet ───────────────────────────────────────────────────────────────
 
-const cell = z.string().max(2000);
+// Taken här prövar dokumentets FORM, inte innehållets längd — de måste rymma allt formuläret släpper
+// igenom. 🧨 De var 2000, och bilaga 8:s projektcell (kund + projekt + tio fastigheter) blir upp
+// till ~2 420 tecken: planen sparades, men PDF:en svarade med ett fel för alltid. Ett test bygger nu
+// dokumentet ur ett maximalt formulär och kräver att det klarar schemat.
+const cell = z.string().max(8000);
 
 const block = z.discriminatedUnion('t', [
   z.object({ t: z.literal('title'), text: cell, sub: cell.optional() }),
   z.object({ t: z.literal('h1'), text: cell }),
   z.object({ t: z.literal('h2'), text: cell }),
   z.object({ t: z.literal('h3'), text: cell }),
-  z.object({ t: z.literal('p'), text: z.string().max(10000), lead: cell.optional() }),
+  z.object({ t: z.literal('p'), text: z.string().max(20000), lead: cell.optional() }),
   z.object({ t: z.literal('list'), items: z.array(cell).max(100) }),
   z.object({ t: z.literal('fields'), rows: z.array(z.tuple([cell, cell])).max(50), form: z.boolean().optional() }),
   z.object({

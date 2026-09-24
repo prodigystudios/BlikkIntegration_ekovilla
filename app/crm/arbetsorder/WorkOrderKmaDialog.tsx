@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Input from '@/components/ui/Input';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -10,15 +10,15 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate } from '@/app/crm/lib/format';
 import { downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
-import { KMA_MATERIAL_INFO } from '@/lib/domains/crm/kmaPlans/materials';
+import { KMA_MATERIAL_INFO } from '@/lib/domains/crm/kmaPlans/materialInfo';
 import { kmaFormSchema } from '@/lib/domains/crm/kmaPlans/schemas';
-import { kmaFieldErrors, kmaMissingCrewCount, kmaSourceNote, mergeKmaCrew } from '@/lib/domains/crm/kmaPlans/dialog';
-import { lookupDirectoryPhone } from '@/lib/domains/crm/kmaPlans/prefill';
+import { kmaFieldErrors, kmaMissingCrewCount, kmaSourceNote, mergeKmaCrew, renameKmaRow } from '@/lib/domains/crm/kmaPlans/dialog';
 import {
   KMA_A8_ONGOING_ROWS,
   KMA_A8_VERIFYING_ROWS,
   KMA_CEO_CONTACT,
   KMA_COMPANY,
+  KMA_MAX_CONTACTS,
   KMA_SELF_CHECK_POINTS,
 } from '@/lib/domains/crm/kmaPlans/template';
 import type { KmaFormValues, KmaPerson } from '@/lib/domains/crm/kmaPlans/types';
@@ -33,10 +33,17 @@ import type { KmaPrefillResponse } from './useKmaPlans';
 // ⚠️ ENTER SPARAR INTE. En revision kan inte ändras eller tas bort (den går till kund), så en
 // tangent i ett namnfält får inte skapa en. Formuläret förhindrar submit; bara knappen sparar.
 //
-// 📐 PORTAL till `body` inuti `crm-shell`, som ContactFormModal: sidokolumnen är sticky, och
-// `--crm-primary` finns bara inuti skalet — utanför blir sparknappen vit text på ingenting.
+// ⚠️ KNAPPEN ÄR LÅST TILLS DIALOGEN STÄNGT — inte bara medan POST:en pågår. Efter sparningen laddas
+// PDF:en ned (servern renderar den, det tar sekunder), och en knapp som släpptes när POST:en svarat
+// sparade en revision till vid ett andra klick. En ref, inte bara state: två klick hinner före en
+// omrendering.
+//
+// 📐 PORTAL till `body` inuti `crm-shell`, som ContactFormModal: sidokolumnen är sticky och klipper
+// annars dialogen. Färgerna är `--ek-*` på :root — inget nytt får peka på `--crm-*`.
 
 type Props = {
+  /** Från kortet: ordern HAR redan en plan. Avgör rubriken även när förra revisionen inte gick att läsa. */
+  mode: 'create' | 'revise';
   nextRevision: number;
   prefill: KmaPrefillResponse;
   saving: boolean;
@@ -70,8 +77,10 @@ const fieldId = (path: string) => `kma-${path.replace(/\./g, '-')}`;
 function FieldError({ path, errors }: { path: string; errors: Record<string, string> }) {
   const message = errors[path];
   if (!message) return null;
+  // tabIndex -1: ett fel på en hel lista ("högst 30 kontakter") har inget eget fält att fokusera,
+  // så fokus hamnar på meddelandet i stället — utanför tabbordningen.
   return (
-    <p id={`${fieldId(path)}-error`} className="m-0 mt-1 text-xs text-rose-700">
+    <p id={`${fieldId(path)}-error`} tabIndex={-1} className="m-0 mt-1 text-xs text-rose-700 outline-none">
       {message}
     </p>
   );
@@ -144,7 +153,7 @@ function Section({ title, hint, children }: { title: string; hint?: ReactNode; c
 
 // ── Dialogen ─────────────────────────────────────────────────────────────────
 
-export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSubmit, onClose }: Props) {
+export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving, onSubmit, onClose }: Props) {
   const toast = useToast();
   const uid = useId();
   const directoryId = `${uid}-kma-directory`;
@@ -158,27 +167,41 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
     },
   }));
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [phase, setPhase] = useState<'idle' | 'saving' | 'downloading'>('idle');
+  const busy = useRef(false);
 
   useEffect(() => setMounted(true), []);
 
-  const revise = prefill.source.kind === 'revision';
+  const revise = mode === 'revise';
   const missingCrew = kmaMissingCrewCount(form, prefill.suggestions.crewContacts);
 
-  /** Uppdaterar formuläret och släcker felen på de fält som just ändrats. */
+  /**
+   * Uppdaterar formuläret och släcker felen på de fält som just ändrats. En nyckel som slutar på
+   * `.*` släcker hela listan: felen är nycklade på RADENS INDEX, och tas en rad bort flyttar de
+   * annars över till fel rad.
+   */
   function update(fn: (current: KmaFormValues) => KmaFormValues, ...clear: string[]) {
     setForm(fn);
     if (clear.length === 0) return;
     setErrors((current) => {
       const next = { ...current };
-      for (const key of clear) delete next[key];
+      for (const key of clear) {
+        if (key.endsWith('.*')) {
+          const prefix = key.slice(0, -2);
+          for (const existing of Object.keys(next)) {
+            if (existing === prefix || existing.startsWith(`${prefix}.`)) delete next[existing];
+          }
+        } else {
+          delete next[key];
+        }
+      }
       return next;
     });
   }
 
-  /** Namnet ändrat: fyll i telefonen ur Kontaktlistan när den är tom och namnet ger ett entydigt nummer. */
-  function withDirectoryPhone<T extends { name: string; phone: string }>(row: T, name: string): T {
-    const phone = row.phone.trim() ? row.phone : lookupDirectoryPhone(prefill.directory, name) || row.phone;
-    return { ...row, name, phone };
+  /** Namnet ändrat — telefonen (och e-posten) följer namnet, se renameKmaRow. */
+  function rename<T extends { name: string; phone: string; email?: string }>(row: T, name: string): T {
+    return renameKmaRow(row, name, prefill.directory);
   }
 
   function setProject<K extends keyof KmaFormValues['project']>(key: K, value: KmaFormValues['project'][K]) {
@@ -189,10 +212,11 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
     update(
       (c) => {
         const current = c.organisation[key];
-        const person = field === 'name' ? withDirectoryPhone(current, value) : { ...current, [field]: value };
+        const person = field === 'name' ? rename(current, value) : { ...current, [field]: value };
         return { ...c, organisation: { ...c.organisation, [key]: person } };
       },
       `organisation.${key}.${field}`,
+      ...(field === 'name' ? [`organisation.${key}.phone`, `organisation.${key}.email`] : []),
     );
   }
 
@@ -210,17 +234,31 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
   }
 
   async function save() {
+    if (busy.current) return;
     const parsed = kmaFormSchema.safeParse(form);
     if (!parsed.success) {
       const found = kmaFieldErrors(parsed.error);
       setErrors(found);
       const first = Object.keys(found)[0];
       // Fältet fokuseras efter renderingen, när felmeddelandet står under det.
-      if (first) requestAnimationFrame(() => document.getElementById(fieldId(first))?.focus());
+      if (first) {
+        requestAnimationFrame(() =>
+          (document.getElementById(fieldId(first)) ?? document.getElementById(`${fieldId(first)}-error`))?.focus(),
+        );
+      }
       return;
     }
+    busy.current = true;
+    setPhase('saving');
     const saved = await onSubmit(parsed.data);
-    if (!saved) return;
+    if (!saved) {
+      // Inget sparades — knappen släpps så man kan rätta och försöka igen.
+      busy.current = false;
+      setPhase('idle');
+      return;
+    }
+    // Sparat. Knappen förblir låst tills dialogen stängt: ett klick till nu hade blivit en revision till.
+    setPhase('downloading');
     // En nedladdning (inte en ny flik): den startar efter en await, och en popup därifrån blockeras.
     await downloadFortnoxPdf(saved.pdfUrl, saved.filename, (message) => toast.error(message));
     onClose();
@@ -257,11 +295,10 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
             <button
               type="button"
               onClick={() => void save()}
-              disabled={saving}
-              className="flex-1 rounded-xl border-0 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-              style={{ backgroundColor: 'var(--crm-primary)' }}
+              disabled={saving || phase !== 'idle'}
+              className="flex-1 rounded-xl border-0 bg-[color:var(--ek-green)] py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[color:var(--ek-green-strong)] disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
             >
-              {saving ? 'Sparar…' : `Spara revision ${nextRevision} och ladda ned`}
+              {phase === 'downloading' ? 'Laddar ned…' : phase === 'saving' || saving ? 'Sparar…' : `Spara revision ${nextRevision} och ladda ned`}
             </button>
           </>
         }
@@ -280,6 +317,12 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
             ))}
           </datalist>
 
+          {prefill.unreadableRevision !== null ? (
+            <p className="m-0 rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2.5 text-sm leading-relaxed text-amber-900">
+              Revision {prefill.unreadableRevision} gick inte att läsa in, så formuläret är förifyllt på nytt från ordern.
+              Öppna den förra revisionen och kontrollera allt innan du sparar.
+            </p>
+          ) : null}
           <p className="m-0 rounded-xl border border-solid border-[#dce4d8] bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-700">
             {kmaSourceNote(prefill.source, formatDate)}
           </p>
@@ -316,7 +359,12 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
                   {form.project.properties.length > 1 ? (
                     <RemoveButton
                       label={`Ta bort fastighet ${index + 1}`}
-                      onClick={() => setProject('properties', form.project.properties.filter((_, i) => i !== index))}
+                      onClick={() =>
+                        update(
+                          (c) => ({ ...c, project: { ...c.project, properties: c.project.properties.filter((_, i) => i !== index) } }),
+                          'project.properties.*',
+                        )
+                      }
                     />
                   ) : null}
                 </div>
@@ -433,7 +481,13 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
                   placeholder="Namn"
                   value={contact.name}
                   list={directoryId}
-                  onChange={(v) => update((c) => ({ ...c, contacts: c.contacts.map((row, i) => (i === index ? withDirectoryPhone(row, v) : row)) }), `contacts.${index}.name`)}
+                  onChange={(v) =>
+                    update(
+                      (c) => ({ ...c, contacts: c.contacts.map((row, i) => (i === index ? rename(row, v) : row)) }),
+                      `contacts.${index}.name`,
+                      `contacts.${index}.phone`,
+                    )
+                  }
                   errors={errors}
                 />
                 <div className="col-span-2 row-start-2 grid grid-cols-2 gap-2 sm:contents">
@@ -460,21 +514,25 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
                 <div className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto">
                   <RemoveButton
                     label={`Ta bort ${contact.name || `kontakt ${index + 1}`}`}
-                    onClick={() => update((c) => ({ ...c, contacts: c.contacts.filter((_, i) => i !== index) }))}
+                    onClick={() => update((c) => ({ ...c, contacts: c.contacts.filter((_, i) => i !== index) }), 'contacts.*')}
                   />
                 </div>
               </div>
             ))}
             <div className="flex flex-wrap gap-2">
-              <AddButton onClick={() => update((c) => ({ ...c, contacts: [...c.contacts, { name: '', role: '', phone: '' }] }))} disabled={form.contacts.length >= 30}>
+              <AddButton
+                onClick={() => update((c) => ({ ...c, contacts: [...c.contacts, { name: '', role: '', phone: '' }] }))}
+                disabled={form.contacts.length >= KMA_MAX_CONTACTS}
+              >
                 Lägg till kontakt
               </AddButton>
-              {missingCrew > 0 ? (
-                <AddButton onClick={() => update((c) => mergeKmaCrew(c, prefill.suggestions))}>
+              {missingCrew > 0 && form.contacts.length < KMA_MAX_CONTACTS ? (
+                <AddButton onClick={() => update((c) => mergeKmaCrew(c, prefill.suggestions), 'contacts.*', 'signers.ongoing.*')}>
                   Lägg till besättningen från planeringen ({missingCrew})
                 </AddButton>
               ) : null}
             </div>
+            <FieldError path="contacts" errors={errors} />
             {prefill.crew_count === 0 ? (
               <p className={cn('m-0', crm.meta)}>Planeringen har ingen besättning på ordern. Lägg till installatörerna för hand.</p>
             ) : prefill.crew_count === null ? (
@@ -530,11 +588,14 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
                     <div className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto">
                       <RemoveButton
                         label={`Ta bort ${signer.name || `rad ${index + 1}`}`}
-                        onClick={() => update((c) => ({ ...c, signers: { ...c.signers, [key]: c.signers[key].filter((_, i) => i !== index) } }))}
+                        onClick={() =>
+                          update((c) => ({ ...c, signers: { ...c.signers, [key]: c.signers[key].filter((_, i) => i !== index) } }), `signers.${key}.*`)
+                        }
                       />
                     </div>
                   </div>
                 ))}
+                <FieldError path={`signers.${key}`} errors={errors} />
                 <AddButton
                   onClick={() => update((c) => ({ ...c, signers: { ...c.signers, [key]: [...c.signers[key], { name: '', role: key === 'ongoing' ? 'Installatör' : 'Arbetsledare' }] } }))}
                   disabled={form.signers[key].length >= max}
@@ -572,11 +633,12 @@ export default function WorkOrderKmaDialog({ nextRevision, prefill, saving, onSu
                 <div className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto">
                   <RemoveButton
                     label={`Ta bort risk ${index + 1}`}
-                    onClick={() => update((c) => ({ ...c, extraRisks: c.extraRisks.filter((_, i) => i !== index) }))}
+                    onClick={() => update((c) => ({ ...c, extraRisks: c.extraRisks.filter((_, i) => i !== index) }), 'extraRisks.*')}
                   />
                 </div>
               </div>
             ))}
+            <FieldError path="extraRisks" errors={errors} />
             <AddButton
               onClick={() => update((c) => ({ ...c, extraRisks: [...c.extraRisks, { risk: '', action: '' }] }))}
               disabled={form.extraRisks.length >= 10}

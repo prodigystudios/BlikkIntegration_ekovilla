@@ -1,10 +1,12 @@
 import { resolveJobAddress } from '@/lib/domains/planning/display';
 import type { WorkOrderCrewPerson } from '@/lib/domains/planning/workOrderCrew';
 
+import { lookupDirectoryPhone, type KmaDirectoryEntry } from './directory';
 import { kmaMaterialsFromLineItems } from './materials';
 import { parseStoredKmaInput } from './schemas';
 import {
   KMA_A8_ONGOING_ROWS,
+  KMA_MAX_CONTACTS,
   KMA_DEFAULT_COMMITMENT,
   KMA_DEFAULT_DEVIATION_RECIPIENT,
   KMA_DEFAULT_WORK_TYPE,
@@ -25,14 +27,13 @@ import type { KmaContactRow, KmaFormValues, KmaPerson, KmaSelfCheckKey, KmaSigne
 //     varifrån blocket kom, så ett ärvt fel syns innan det sprids.
 //   * Besättningen och säljaren ur planeringen och ordern; telefonnummer ur Kontaktlistan.
 //
-// ⚠️ TELEFON BARA VID EXAKT, ENTYDIG NAMNTRÄFF. Ett felaktigt nummer i ett dokument som går till
-// beställaren är värre än ett tomt fält — medvetet strängare än notify-customer-routens mer
-// förlåtande matchning. Stavas namnet olika, eller finns två personer med samma namn och olika
-// nummer, lämnas fältet tomt att fylla i.
+// ⚠️ TELEFON BARA VID EXAKT, ENTYDIG NAMNTRÄFF — regeln bor i directory.ts, som även dialogen läser.
 //
 // ⚠️ LÄSER ALDRIG handoff_notes, work_scope eller personnummer. Arbetsbeskrivningen bär portkoder,
 // och dokumentet går ut ur huset. Ordertypen nedan är smal med flit: fälten som inte finns här kan
 // inte råka hamna i planen.
+
+export { lookupDirectoryPhone, type KmaDirectoryEntry } from './directory';
 
 /** De delar av arbetsordern förifyllnaden får se. */
 export type KmaOrderSource = {
@@ -45,13 +46,6 @@ export type KmaOrderSource = {
   rot_details: { property_designation?: string | null } | null;
   line_items: unknown;
   assignee: { full_name?: string | null } | null;
-};
-
-/** En post i Kontaktlistan (public.contacts). */
-export type KmaDirectoryEntry = {
-  name: string;
-  phone: string | null;
-  role: string | null;
 };
 
 /** En tidigare sparad plan, som källa till förifyllnaden. */
@@ -72,21 +66,15 @@ export type KmaPrefill = {
   form: KmaFormValues;
   /** Varifrån organisationsblocket kom — visas i dialogen. */
   source: KmaPrefillSource;
+  /**
+   * Ordern HAR en tidigare revision, men dess formulär gick inte att läsa (en äldre form). Då
+   * förifylls dialogen på nytt — och det måste SYNAS, annars ser en revidering ut som en helt ny
+   * plan och allt den förra sa försvinner utan förvarning.
+   */
+  unreadableRevision: number | null;
   /** Planeringens besättning, för "Hämta besättning från planeringen" vid revidering. */
   suggestions: { crewContacts: KmaContactRow[]; crewSigners: KmaSignerRow[] };
 };
-
-const normalizeName = (name: string) => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('sv');
-const normalizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
-
-/** Telefon ur Kontaktlistan — bara när namnet ger exakt ETT nummer. */
-export function lookupDirectoryPhone(directory: readonly KmaDirectoryEntry[], name: string): string {
-  const wanted = normalizeName(name);
-  if (!wanted) return '';
-  const matches = directory.filter((entry) => normalizeName(entry.name) === wanted && entry.phone?.trim());
-  const distinct = new Set(matches.map((entry) => normalizePhone(entry.phone as string)));
-  return distinct.size === 1 ? (matches[0].phone as string).trim() : '';
-}
 
 const blankPerson = (): KmaPerson => ({ name: '', phone: '', email: '' });
 
@@ -146,9 +134,11 @@ export function buildKmaPrefill(input: {
     return {
       form: revised,
       source: { kind: 'revision', revision: input.orderLatest.revision, issuedOn: input.orderLatest.issued_on },
+      unreadableRevision: null,
       suggestions,
     };
   }
+  const unreadableRevision = input.orderLatest ? input.orderLatest.revision : null;
 
   // ── Ny plan ────────────────────────────────────────────────────────────────
   const inheritedFrom = [
@@ -195,7 +185,8 @@ export function buildKmaPrefill(input: {
           deviationRecipient: KMA_DEFAULT_DEVIATION_RECIPIENT,
         },
     selfCheckResponsible: inherited ? { ...inherited.selfCheckResponsible } : defaultSelfCheck(),
-    contacts: [...salesContact, ...suggestions.crewContacts],
+    // Kapad vid schemats tak — annars kunde en stor besättning ge ett formulär som inte går att spara.
+    contacts: [...salesContact, ...suggestions.crewContacts].slice(0, KMA_MAX_CONTACTS),
     signers: {
       ongoing: suggestions.crewSigners,
       verifying: inherited ? inherited.signers.verifying.map((s) => ({ ...s })) : [],
@@ -214,5 +205,5 @@ export function buildKmaPrefill(input: {
         }
       : { kind: 'blank' };
 
-  return { form, source, suggestions };
+  return { form, source, unreadableRevision, suggestions };
 }

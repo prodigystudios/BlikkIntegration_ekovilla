@@ -4,7 +4,7 @@ import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { buildKmaDocument } from '@/lib/domains/crm/kmaPlans/document';
 import { kmaPlanFilename } from '@/lib/domains/crm/kmaPlans/pdf';
-import { kmaFormSchema } from '@/lib/domains/crm/kmaPlans/schemas';
+import { kmaFormSchema, parseStoredKmaDocument } from '@/lib/domains/crm/kmaPlans/schemas';
 import { insertKmaPlan, kmaRevisionState, listKmaPlans, type KmaPlanListRow } from '@/lib/domains/crm/kmaPlans/store';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { invalidUuidParam, isNoRowsError, ok, requirePermission, routeError, validationError } from '../../_lib';
@@ -87,6 +87,13 @@ export async function POST(req: Request, context: RouteContext) {
     const revision = state.next;
     const firstIssuedOn = state.firstIssuedOn ?? issuedOn;
     const document = buildKmaDocument(form, { revision, issuedOn, firstIssuedOn });
+    // Invariant: det som sparas måste gå att rendera. Spara ALDRIG en revision som PDF-routen sedan
+    // avvisar — raden går inte att ändra eller ta bort från appen, och ordern hade burit en plan som
+    // aldrig kan öppnas.
+    if (!parseStoredKmaDocument(document)) {
+      console.error('[kma] byggt dokument klarar inte dokumentschemat', workOrderId);
+      return routeError(500, 'crm_work_order_kma_invalid_document', 'KMA-planen kunde inte byggas. Inget sparades.');
+    }
 
     const { data, error } = await insertKmaPlan(supabase, {
       // Ur rutt-parametern, aldrig ur kroppen.

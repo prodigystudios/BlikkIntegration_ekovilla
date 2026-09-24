@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 
-import { isoWeeksTouching, resolveWorkOrderCrew, type CrewSegment } from '@/lib/domains/planning/workOrderCrew';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+import { isoWeeksTouching, listWorkOrderCrew, resolveWorkOrderCrew, type CrewSegment } from '@/lib/domains/planning/workOrderCrew';
 import type { CrewMember } from '@/lib/domains/planning/crew';
 import type { DefaultCrewMember } from '@/lib/domains/planning/defaultCrew';
 import type { TruckCrewMember } from '@/lib/domains/planning/truckCrew';
@@ -195,5 +197,50 @@ describe('resolveWorkOrderCrew', () => {
       ],
     });
     expect(names(people)).toEqual(['Cecilia Standard', 'Erik Bil B']);
+  });
+});
+
+// Laddaren: varje tabell svarar med sitt eget { data, error }. En falsk klient räcker — frågorna
+// är tunna och det som prövas är vad laddaren gör med svaren.
+function fakeSupabase(results: Record<string, { data: unknown; error: unknown }>): SupabaseClient {
+  return {
+    from(table: string) {
+      const result = results[table] ?? { data: [], error: null };
+      const chain: Record<string, unknown> = {};
+      for (const method of ['select', 'eq', 'in', 'lte', 'gte', 'order']) chain[method] = () => chain;
+      chain.then = (resolve: (value: unknown) => void) => resolve(result);
+      return chain;
+    },
+  } as unknown as SupabaseClient;
+}
+
+describe('listWorkOrderCrew', () => {
+  const segmentRow = { id: 'seg-one', truck_id: TRUCK_A, start_day: '2026-09-21', end_day: '2026-09-23', on_hold: false };
+
+  it('placeringarnas besättning följer med', async () => {
+    const supabase = fakeSupabase({
+      ops_segments: { data: [segmentRow], error: null },
+      ops_segment_crew: { data: [{ id: 'sc1', segment_id: 'seg-one', member_id: 'user-extra', member_name: 'Extra Snickare' }], error: null },
+    });
+    const result = await listWorkOrderCrew(supabase, 'wo-1');
+    expect(result.error).toBeNull();
+    expect(names(result.data)).toEqual(['Extra Snickare']);
+  });
+
+  it('ett fel på placeringarnas besättning är ett FEL — inte "ingen är tillagd"', async () => {
+    // listCrewBySegment sväljer sitt fel och svarar med en tom karta. Hade laddaren använt den hade
+    // dialogen sagt att planeringen saknar besättning, i stället för att den inte gick att läsa.
+    const supabase = fakeSupabase({
+      ops_segments: { data: [segmentRow], error: null },
+      ops_segment_crew: { data: null, error: { message: 'timeout' } },
+    });
+    const result = await listWorkOrderCrew(supabase, 'wo-1');
+    expect(result.error).toEqual({ message: 'timeout' });
+    expect(result.data).toEqual([]);
+  });
+
+  it('en order utan placeringar har ingen besättning — och inget fel', async () => {
+    const result = await listWorkOrderCrew(fakeSupabase({ ops_segments: { data: [], error: null } }), 'wo-1');
+    expect(result).toEqual({ data: [], error: null });
   });
 });

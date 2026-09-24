@@ -1,6 +1,7 @@
 import { isBlownInsulationRow } from '@/lib/domains/crm/afterCalculationLoader';
 import { MATERIALS, MATERIAL_SHORTS, inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
+import { KMA_MATERIAL_INFO, type KmaMaterialKind } from './materialInfo';
 import { KMA_A6_EKOVILLA_NOTE, KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAUF } from './template';
 
 // Materialet i KMA-planen: vilken sorts isolering, vilket certifikat, och vilka meningar som
@@ -12,40 +13,9 @@ import { KMA_A6_EKOVILLA_NOTE, KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAU
 // ett test (tests/crm/kmaMaterials.test.ts) kräver att varje nummer här står i sin MATERIALS-nyckel,
 // så en omdöpt artikel i materialtabellen fångas i stället för att glida isär tyst.
 
-export type KmaMaterialKind = 'cellulosa' | 'glasull' | 'stenull' | 'trafiber';
-
-export type KmaMaterialInfo = {
-  kind: KmaMaterialKind;
-  /** Varumärket i §3:s materialrad: "Endast godkänd cellulosaisolering (Ekovilla, …)". */
-  brand: string;
-  /** Produktraden i egenkontrollmallen (bilaga 6). */
-  product: string;
-  certificate: string;
-};
-
-/** Per materialkod (MATERIAL_SHORTS). Varje kod MÅSTE finnas här — ett test vaktar det. */
-export const KMA_MATERIAL_INFO: Record<string, KmaMaterialInfo> = {
-  EKOVILLA: { kind: 'cellulosa', brand: 'Ekovilla', product: 'Ekovilla Cellulosaisolering Lösull', certificate: 'CE ETA-09/0081' },
-  'KNAUF SUPAFIL': {
-    kind: 'glasull',
-    brand: 'Knauf Supafil',
-    product: 'Knauf Supafil Frame Glasullsisolering Lösull',
-    certificate: 'B0709EPCR',
-  },
-  'ISOCELL/ISECO': {
-    kind: 'cellulosa',
-    brand: 'Isocell/isEco',
-    product: 'Isocell/isEco Cellulosaisolering Lösull',
-    certificate: 'CE ETA-06/0076',
-  },
-  'HUNTON NATIVO': {
-    kind: 'trafiber',
-    brand: 'Hunton Nativo',
-    product: 'Hunton Nativo Träfiberisolering Lösull',
-    certificate: 'DoP 02-04-01',
-  },
-  PAROC: { kind: 'stenull', brand: 'PAROC SHT 1', product: 'PAROC SHT 1 Stenullsisolering Lösull', certificate: '0809-CPR-1014' },
-};
+// Materialfakta (kind, varumärke, produkt, certifikat) bor i materialInfo.ts — ren data som även
+// dialogen i webbläsaren läser. Återexporteras här för domänens egna anropare.
+export { KMA_MATERIAL_INFO, type KmaMaterialInfo, type KmaMaterialKind } from './materialInfo';
 
 const KIND_LABEL: Record<KmaMaterialKind, string> = {
   cellulosa: 'cellulosaisolering',

@@ -41,6 +41,11 @@ vi.mock('@/lib/domains/planning/workOrderCrew', async (importOriginal) => {
   return { ...actual, listWorkOrderCrew: vi.fn() };
 });
 
+vi.mock('@/lib/domains/crm/kmaPlans/schemas', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/crm/kmaPlans/schemas')>();
+  return { ...actual, parseStoredKmaDocument: vi.fn(actual.parseStoredKmaDocument) };
+});
+
 vi.mock('@/lib/domains/crm/kmaPlans/pdf', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/kmaPlans/pdf')>();
   return { ...actual, renderKmaPdf: vi.fn(async () => new Uint8Array([37, 80, 68, 70])) };
@@ -64,6 +69,7 @@ import {
 import { listWorkOrderCrew } from '@/lib/domains/planning/workOrderCrew';
 import { renderKmaPdf } from '@/lib/domains/crm/kmaPlans/pdf';
 import { buildKmaDocument } from '@/lib/domains/crm/kmaPlans/document';
+import { parseStoredKmaDocument } from '@/lib/domains/crm/kmaPlans/schemas';
 
 const { GET: LIST, POST } = await import('@/app/api/crm/work-orders/[id]/kma-plans/route');
 const { GET: PREFILL } = await import('@/app/api/crm/work-orders/[id]/kma-plans/prefill/route');
@@ -81,6 +87,7 @@ const mockDocument = vi.mocked(getKmaPlanDocument);
 const mockDirectory = vi.mocked(listKmaDirectory);
 const mockCrew = vi.mocked(listWorkOrderCrew);
 const mockRender = vi.mocked(renderKmaPdf);
+const mockParseDocument = vi.mocked(parseStoredKmaDocument);
 
 const WORK_ORDER_ID = '55555555-5555-4555-8555-555555555555';
 const PLAN_ID = '66666666-6666-4666-8666-666666666666';
@@ -241,6 +248,16 @@ describe('POST /kma-plans (skapa)', () => {
     mockInsert.mockResolvedValue({ data: null, error: { code: '23505', message: 'duplicate key' } } as never);
     const res = await POST(postReq(kmaForm()), ctx);
     expect(res.status).toBe(409);
+  });
+
+  it('ett dokument som PDF-routen skulle avvisa sparas ALDRIG', async () => {
+    // Invariant: en revision går inte att ändra eller ta bort från appen, så det som sparas måste
+    // gå att rendera. Byggaren ska aldrig ge ett ogiltigt dokument — men gör den det, sparas inget.
+    asRole(office);
+    mockParseDocument.mockReturnValueOnce(null);
+    const res = await POST(postReq(kmaForm()), ctx);
+    expect(res.status).toBe(500);
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 
   it('RLS som nekar (42501) blir 403', async () => {

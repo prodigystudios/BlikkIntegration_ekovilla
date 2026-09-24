@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { kmaCardAction, kmaFieldErrors, kmaMissingCrewCount, kmaSourceNote, mergeKmaCrew } from '@/lib/domains/crm/kmaPlans/dialog';
+import { kmaCardAction, kmaFieldErrors, kmaMissingCrewCount, kmaSourceNote, mergeKmaCrew, renameKmaRow } from '@/lib/domains/crm/kmaPlans/dialog';
 import { kmaFormSchema } from '@/lib/domains/crm/kmaPlans/schemas';
 
 import { kmaForm } from './helpers/kmaFixtures';
@@ -98,5 +98,46 @@ describe('mergeKmaCrew', () => {
   it('antalet som saknas styr knappen', () => {
     expect(kmaMissingCrewCount(kmaForm(), crew.crewContacts)).toBe(1);
     expect(kmaMissingCrewCount(mergeKmaCrew(kmaForm(), crew), crew.crewContacts)).toBe(0);
+  });
+});
+
+describe('renameKmaRow — telefonen och e-posten följer namnet', () => {
+  const directory = [
+    { name: 'Anna Berg', phone: '070-111 11 11', role: null },
+    { name: 'Anna Bergström', phone: '070-222 22 22', role: null },
+  ];
+
+  it('ett nytt namn tar bort förra personens nummer och e-post', () => {
+    const inherited = { name: 'Erik Lund', phone: '070-999 99 99', email: 'erik@example.se' };
+    expect(renameKmaRow(inherited, 'Per Ek', directory)).toEqual({ name: 'Per Ek', phone: '', email: '' });
+  });
+
+  it('numret sätts om när man skriver sig förbi ett kortare namn i listan', () => {
+    let row = { name: '', phone: '', email: '' };
+    for (const typed of ['Anna Berg', 'Anna Bergs', 'Anna Bergström']) row = renameKmaRow(row, typed, directory);
+    expect(row.phone).toBe('070-222 22 22');
+  });
+
+  it('en ändring bara i blanksteg eller skiftläge rör inte numret', () => {
+    const row = { name: 'Erik Lund', phone: '070-999 99 99', email: 'erik@example.se' };
+    expect(renameKmaRow(row, 'erik  lund ', directory)).toEqual({ name: 'erik  lund ', phone: '070-999 99 99', email: 'erik@example.se' });
+  });
+
+  it('rader utan e-post (kontaktlistan) får ingen', () => {
+    expect(renameKmaRow({ name: 'X', role: 'Installatör', phone: '1' }, 'Anna Berg', directory)).toEqual({
+      name: 'Anna Berg',
+      role: 'Installatör',
+      phone: '070-111 11 11',
+    });
+  });
+});
+
+describe('mergeKmaCrew — taket', () => {
+  it('kontaktlistan stannar vid schemats tak', () => {
+    const form = kmaForm({ contacts: Array.from({ length: 25 }, (_, i) => ({ name: `Person ${i}`, role: 'Installatör', phone: '' })) });
+    const crewContacts = Array.from({ length: 8 }, (_, i) => ({ name: `Ny ${i}`, role: 'Installatör', phone: '' }));
+    const merged = mergeKmaCrew(form, { crewContacts, crewSigners: [] });
+    expect(merged.contacts).toHaveLength(30);
+    expect(kmaFormSchema.safeParse(merged).success).toBe(true);
   });
 });

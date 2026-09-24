@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-import { listCrewBySegment, type CrewMember } from './crew';
+import type { CrewMember } from './crew';
 import { listAllDefaultCrew, type DefaultCrewMember } from './defaultCrew';
 import { addDaysISO, mondayOfISO } from './timezone';
 import { crewForTruckInRange, type TruckCrewMember } from './truckCrew';
@@ -145,8 +145,20 @@ export async function listWorkOrderCrew(
   // Veckoraderna läses per BIL, inte för alla bilar som listTruckCrew gör: ett etappjobb kan ligga
   // utspritt över månader, och alla bilars rader över ett halvår närmar sig PostgRESTs tysta tak
   // på 1000 rader. Ett kapat svar hade tappat folk utan att någon märker det.
-  const [segmentCrew, weekly, defaults] = await Promise.all([
-    listCrewBySegment(supabase, segments.map((s) => s.id)),
+  //
+  // 🧨 Placeringarnas besättning läses HÄR och inte med listCrewBySegment: den sväljer sitt fel och
+  // svarar med en tom karta, och då hade ett misslyckat svar sett ut som "ingen är tillagd på
+  // placeringen" — dialogen hade sagt att planeringen saknar besättning i stället för att den inte
+  // gick att läsa.
+  const [segmentCrewRows, weekly, defaults] = await Promise.all([
+    supabase
+      .from('ops_segment_crew')
+      .select('id, segment_id, member_id, member_name')
+      .in(
+        'segment_id',
+        segments.map((s) => s.id),
+      )
+      .order('id', { ascending: true }),
     supabase
       .from('ops_truck_crew')
       .select(TRUCK_CREW_SELECT)
@@ -156,8 +168,16 @@ export async function listWorkOrderCrew(
       .order('id', { ascending: true }),
     listAllDefaultCrew(supabase),
   ]);
+  if (segmentCrewRows.error) return { data: [], error: segmentCrewRows.error };
   if (weekly.error) return { data: [], error: weekly.error };
   if (defaults.error) return { data: [], error: defaults.error };
+
+  const segmentCrew = new Map<string, CrewMember[]>();
+  for (const row of (segmentCrewRows.data ?? []) as Array<CrewMember & { segment_id: string }>) {
+    const list = segmentCrew.get(row.segment_id) ?? [];
+    list.push({ id: row.id, member_id: row.member_id, member_name: row.member_name });
+    segmentCrew.set(row.segment_id, list);
+  }
 
   return {
     data: resolveWorkOrderCrew({

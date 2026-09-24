@@ -1,6 +1,7 @@
 import type { ZodError } from 'zod';
 
-import { KMA_A8_ONGOING_ROWS } from './template';
+import { lookupDirectoryPhone, normalizeKmaName, type KmaDirectoryEntry } from './directory';
+import { KMA_A8_ONGOING_ROWS, KMA_MAX_CONTACTS } from './template';
 import type { KmaContactRow, KmaFormValues, KmaSignerRow } from './types';
 import type { KmaPrefillSource } from './prefill';
 
@@ -52,12 +53,35 @@ export function kmaFieldErrors(error: ZodError): Record<string, string> {
   return out;
 }
 
-const normalizeName = (name: string) => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('sv');
+const normalizeName = normalizeKmaName;
+
+/**
+ * Ett namn har ändrats: telefonen (och e-posten, där raden har en) FÖLJER NAMNET.
+ *
+ * 🧨 Det räcker inte att fylla i ett tomt nummer. Ärvs "Erik Lund, 070-111…" och namnet byts till
+ * "Per Ek" stod Eriks nummer kvar under Pers namn i planen som går till beställaren — och med både
+ * "Anna Berg" och "Anna Bergström" i Kontaktlistan fastnade Anna Bergs nummer när man skrev sig
+ * förbi hennes namn. Vid ett nytt namn sätts därför numret om ur Kontaktlistan (tomt om namnet inte
+ * ger ett entydigt svar) och e-posten töms. Priset: ett handskrivet nummer eller en e-post får skrivas
+ * om efter en namnrättning. Ett tomt fält är bättre än en annan persons uppgifter.
+ *
+ * En ändring bara i blanksteg eller skiftläge är samma namn och rör ingenting annat.
+ */
+export function renameKmaRow<T extends { name: string; phone: string; email?: string }>(
+  row: T,
+  name: string,
+  directory: readonly KmaDirectoryEntry[],
+): T {
+  if (normalizeName(name) === normalizeName(row.name)) return { ...row, name };
+  const next = { ...row, name, phone: lookupDirectoryPhone(directory, name) };
+  if ('email' in row) (next as { email?: string }).email = '';
+  return next;
+}
 
 /**
  * "Hämta besättning från planeringen" vid revidering. LÄGGER TILL de som saknas, tar aldrig bort:
  * listan kan vara redigerad för hand sedan förra revisionen, och en knapp som skrev över den hade
- * kastat det arbetet. Löpande signerare stannar vid mallens tio rader.
+ * kastat det arbetet. Löpande signerare stannar vid mallens tio rader, kontakterna vid schemats tak.
  */
 export function mergeKmaCrew(
   form: KmaFormValues,
@@ -65,7 +89,12 @@ export function mergeKmaCrew(
 ): KmaFormValues {
   const contactNames = new Set(form.contacts.map((c) => normalizeName(c.name)));
   const signerNames = new Set(form.signers.ongoing.map((s) => normalizeName(s.name)));
-  const contacts = [...form.contacts, ...crew.crewContacts.filter((c) => !contactNames.has(normalizeName(c.name)))];
+  // Båda listorna stannar vid schemats tak — en knapp som gav ett formulär som inte går att spara
+  // hade varit en återvändsgränd med ett fel utan fält att visa det i.
+  const contacts = [...form.contacts, ...crew.crewContacts.filter((c) => !contactNames.has(normalizeName(c.name)))].slice(
+    0,
+    KMA_MAX_CONTACTS,
+  );
   const ongoing = [...form.signers.ongoing, ...crew.crewSigners.filter((s) => !signerNames.has(normalizeName(s.name)))].slice(
     0,
     KMA_A8_ONGOING_ROWS,

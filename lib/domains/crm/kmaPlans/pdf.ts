@@ -270,7 +270,9 @@ function leadingHeight(blocks: KmaBlock[], index: number, fonts: Fonts): number 
       return first ? layoutFieldRow(first, fieldsLabelWidth(block.rows, fonts), fonts, block.form === true).height : 0;
     }
     case 'table': {
-      const layout = layoutTable(block, fonts);
+      // Bara huvudet och första raden läggs ut — det är allt platsprövningen frågar om, och hela
+      // tabellen läggs ändå ut när den ritas.
+      const layout = layoutTable({ ...block, rows: block.rows.slice(0, 1), minRows: Math.min(block.minRows ?? 0, 1) }, fonts);
       return layout.headHeight + (layout.rows[0]?.height ?? 0);
     }
     case 'signature':
