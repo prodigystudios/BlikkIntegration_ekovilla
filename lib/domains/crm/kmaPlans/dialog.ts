@@ -1,6 +1,6 @@
 import type { ZodError } from 'zod';
 
-import { lookupDirectoryPhone, normalizeKmaName, type KmaDirectoryEntry } from './directory';
+import { lookupDirectoryPhone, normalizeKmaName, normalizeKmaPhone, type KmaDirectoryEntry } from './directory';
 import { KMA_A8_ONGOING_ROWS, KMA_MAX_CONTACTS } from './template';
 import type { KmaContactRow, KmaFormValues, KmaSignerRow } from './types';
 import type { KmaPrefillSource } from './prefill';
@@ -46,15 +46,24 @@ export function kmaSourceNote(source: KmaPrefillSource, formatDate: (iso: string
 /**
  * Ett val i förslagslistan: namnet OCH just den postens nummer. Till skillnad från en uppslagning på
  * namnet (renameKmaRow) vet vi här exakt vilken person som valdes — två med samma namn och olika
- * nummer går att skilja åt, där en namnuppslagning hade svarat tomt för båda. E-posten följer
- * samma regel som vid ett skrivet namnbyte.
+ * nummer går att skilja åt, där en namnuppslagning hade svarat tomt för båda.
+ *
+ * E-posten står kvar bara om det är SAMMA person: samma namn, och raden har inget nummer ännu eller
+ * samma nummer som valet. 🧨 Att jämföra namnen räckte inte — valdes den ANDRA "Johan Andersson"
+ * fick raden hans nummer men den förstes e-post, och planen parade ihop två personers uppgifter.
+ *
+ * Rollen rörs inte: den hör till PLATSEN i planen ("Ledande installatör"), inte till personen — den
+ * som byter person på raden byter vem som fyller platsen. Kontaktlistans titlar ("Säljare /
+ * Ledning") är dessutom ett annat ordförråd än planens.
  */
-export function pickKmaDirectoryEntry<T extends { name: string; phone: string; email?: string }>(
-  row: T,
-  entry: KmaDirectoryEntry,
-  directory: readonly KmaDirectoryEntry[],
-): T {
-  return { ...renameKmaRow(row, entry.name, directory), phone: entry.phone?.trim() ?? '' };
+export function pickKmaDirectoryEntry<T extends { name: string; phone: string; email?: string }>(row: T, entry: KmaDirectoryEntry): T {
+  const phone = entry.phone?.trim() ?? '';
+  const samePerson =
+    normalizeName(row.name) === normalizeName(entry.name) &&
+    (!row.phone.trim() || normalizeKmaPhone(row.phone) === normalizeKmaPhone(phone));
+  const next = { ...row, name: entry.name, phone };
+  if (!samePerson && 'email' in row) (next as { email?: string }).email = '';
+  return next;
 }
 
 /** Zod-felen per fält, nycklade på sökvägen ("organisation.projectManager.name"). Första vinner. */

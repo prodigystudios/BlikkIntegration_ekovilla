@@ -230,7 +230,7 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
 
   /** Ett val i förslagslistan — namnet och just den personens nummer, se pickKmaDirectoryEntry. */
   function pickInto<T extends { name: string; phone: string; email?: string }>(row: T, entry: KmaDirectoryEntry): T {
-    return pickKmaDirectoryEntry(row, entry, prefill.directory);
+    return pickKmaDirectoryEntry(row, entry);
   }
 
   function setProject<K extends keyof KmaFormValues['project']>(key: K, value: KmaFormValues['project'][K]) {

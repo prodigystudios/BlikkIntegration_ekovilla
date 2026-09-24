@@ -64,8 +64,13 @@ export default function KmaNameCombobox({ id, value, onChange, onPick, entries, 
     // 271 px under ett fält nära dialogens botten, och listan hängde ut under dialogen över den mörka
     // bakgrunden. Innanför dialogen fälls den i stället upp när det är där platsen finns.
     const bounds = el.closest('[role="dialog"]')?.getBoundingClientRect();
-    const floor = bounds ? Math.min(window.innerHeight, bounds.bottom) : window.innerHeight;
-    const ceiling = bounds ? Math.max(0, bounds.top) : 0;
+    // Den SYNLIGA ytan, inte layoutens: på en telefon krymper inte `innerHeight` när tangentbordet
+    // fälls upp, och listan hade öppnats nedåt in under tangenterna. `visualViewport` gör det.
+    const vv = window.visualViewport;
+    const viewTop = vv ? vv.offsetTop : 0;
+    const viewBottom = vv ? Math.min(window.innerHeight, vv.offsetTop + vv.height) : window.innerHeight;
+    const floor = bounds ? Math.min(viewBottom, bounds.bottom) : viewBottom;
+    const ceiling = bounds ? Math.max(viewTop, bounds.top) : viewTop;
     const below = floor - r.bottom - MENU_MARGIN - VIEWPORT_PAD;
     const above = r.top - ceiling - MENU_MARGIN - VIEWPORT_PAD;
     // Personraderna är höga (namn, nummer, roll) och listan når 300 px: fälls den ned med bara ~200 px
@@ -92,9 +97,14 @@ export default function KmaNameCombobox({ id, value, onChange, onPick, entries, 
     const onMove = () => measure();
     window.addEventListener('scroll', onMove, true);
     window.addEventListener('resize', onMove);
+    // Tangentbordet som fälls upp eller ned ändrar bara den synliga ytan.
+    window.visualViewport?.addEventListener('resize', onMove);
+    window.visualViewport?.addEventListener('scroll', onMove);
     return () => {
       window.removeEventListener('scroll', onMove, true);
       window.removeEventListener('resize', onMove);
+      window.visualViewport?.removeEventListener('resize', onMove);
+      window.visualViewport?.removeEventListener('scroll', onMove);
     };
   }, [showList, measure]);
 
@@ -116,6 +126,9 @@ export default function KmaNameCombobox({ id, value, onChange, onPick, entries, 
       if (!open) setOpen(true);
       setActiveIndex((i) => (matches.length === 0 ? -1 : Math.min(i + 1, matches.length - 1)));
     } else if (e.key === 'ArrowUp') {
+      // Bara i en ÖPPEN lista. I en stängd flyttade den tyst markeringen till första raden, och när
+      // listan sedan öppnades valde nästa Enter den — en person man aldrig pekat på.
+      if (!showList) return;
       e.preventDefault();
       setActiveIndex((i) => Math.max(i - 1, 0));
     } else if (e.key === 'Enter') {
@@ -159,10 +172,13 @@ export default function KmaNameCombobox({ id, value, onChange, onPick, entries, 
         aria-activedescendant={activeId}
         aria-invalid={invalid || undefined}
         aria-describedby={describedBy}
-        onFocus={() => setOpen(true)}
-        // Ett klick i ett fält som REDAN har fokus (efter Escape eller ett val) ger ingen focus-händelse
-        // — listan öppnas då på klicket i stället.
-        onClick={() => setOpen(true)}
+        // Öppnas på KLICK, skrivning och pil ned — inte på fokus. 🧨 Sparningen fokuserar det första
+        // felaktiga fältet, och en lista som öppnades på fokus lade sig då över felmeddelandet den
+        // skulle visa. Ett klick fångar också fältet som redan har fokus (efter Escape eller ett val).
+        onClick={() => {
+          setOpen(true);
+          setActiveIndex(-1);
+        }}
         onBlur={() => {
           setOpen(false);
           setActiveIndex(-1);
@@ -183,6 +199,9 @@ export default function KmaNameCombobox({ id, value, onChange, onPick, entries, 
               id={listId}
               role="listbox"
               aria-label="Förslag ur Kontaktlistan"
+              // Hela listan, inte bara raderna: ett klick på kanten eller scrollisten hade annars tagit
+              // fokus från fältet, blur hade stängt listan mitt i en scrollning.
+              onMouseDown={(e) => e.preventDefault()}
               style={{
                 position: 'fixed',
                 left: pos.left,

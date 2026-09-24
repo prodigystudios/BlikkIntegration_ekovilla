@@ -18,25 +18,52 @@ export type KmaDirectoryEntry = {
 
 export const normalizeKmaName = (name: string) => name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('sv');
 
-const normalizePhone = (phone: string) => phone.replace(/[^\d+]/g, '');
+export const normalizeKmaPhone = (phone: string) => phone.replace(/[^\d+]/g, '');
 
 /**
  * Kontaktlistan utan dubbletter, i namnordning. Samma namn med samma nummer är samma person — listan
  * bär sådana rader (en person under två kategorier), och i förslagslistan hade hen stått två gånger.
  * Rollen tas från den rad som har en. Samma namn med OLIKA nummer är två personer och står kvar båda.
+ *
+ * En rad UTAN nummer bär ingenting som skiljer den från en rad med samma namn och ett nummer — den
+ * slås ihop med den (och bidrar med sin roll). Hade den stått kvar var den en andra "Johan Borres"
+ * vars val skrev in ett tomt nummer. Finns två olika personer med namnet går den inte att tillskriva
+ * någon av dem, och faller bort hellre än att gissa.
  */
 export function dedupeDirectory(entries: readonly KmaDirectoryEntry[]): KmaDirectoryEntry[] {
-  const byKey = new Map<string, KmaDirectoryEntry>();
+  const withPhone = new Map<string, KmaDirectoryEntry>();
+  const phoneless: KmaDirectoryEntry[] = [];
   for (const entry of entries) {
     const name = entry.name?.trim();
     if (!name) continue;
     const role = entry.role?.trim() || null;
-    const key = `${normalizeKmaName(name)}|${normalizePhone(entry.phone ?? '')}`;
-    const existing = byKey.get(key);
-    if (!existing) byKey.set(key, { name, phone: entry.phone?.trim() || null, role });
-    else if (!existing.role && role) byKey.set(key, { ...existing, role });
+    const phone = entry.phone?.trim() || null;
+    if (!phone) {
+      phoneless.push({ name, phone: null, role });
+      continue;
+    }
+    const key = `${normalizeKmaName(name)}|${normalizeKmaPhone(phone)}`;
+    const existing = withPhone.get(key);
+    if (!existing) withPhone.set(key, { name, phone, role });
+    else if (!existing.role && role) withPhone.set(key, { ...existing, role });
   }
-  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv'));
+
+  const withoutPhone = new Map<string, KmaDirectoryEntry>();
+  for (const entry of phoneless) {
+    const name = normalizeKmaName(entry.name);
+    const sameName = [...withPhone.entries()].filter(([key]) => key.startsWith(`${name}|`));
+    if (sameName.length === 1) {
+      const [key, person] = sameName[0];
+      if (!person.role && entry.role) withPhone.set(key, { ...person, role: entry.role });
+      continue;
+    }
+    if (sameName.length > 1) continue;
+    const existing = withoutPhone.get(name);
+    if (!existing) withoutPhone.set(name, entry);
+    else if (!existing.role && entry.role) withoutPhone.set(name, { ...existing, role: entry.role });
+  }
+
+  return [...withPhone.values(), ...withoutPhone.values()].sort((a, b) => a.name.localeCompare(b.name, 'sv'));
 }
 
 /**
@@ -63,6 +90,6 @@ export function lookupDirectoryPhone(directory: readonly KmaDirectoryEntry[], na
   const wanted = normalizeKmaName(name);
   if (!wanted) return '';
   const matches = directory.filter((entry) => normalizeKmaName(entry.name) === wanted && entry.phone?.trim());
-  const distinct = new Set(matches.map((entry) => normalizePhone(entry.phone as string)));
+  const distinct = new Set(matches.map((entry) => normalizeKmaPhone(entry.phone as string)));
   return distinct.size === 1 ? (matches[0].phone as string).trim() : '';
 }

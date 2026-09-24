@@ -25,6 +25,24 @@ describe('dedupeDirectory', () => {
     expect(dedupeDirectory([entry('Johan Andersson', '070-1'), entry('Johan Andersson', '070-2')])).toHaveLength(2);
   });
 
+  it('en rad UTAN nummer slås ihop med samma namn MED nummer, och bidrar med sin roll', () => {
+    const list = dedupeDirectory([entry('Johan Borres', '070-290 06 05'), entry('Johan Borres', null, 'Ledning')]);
+    expect(list).toEqual([entry('Johan Borres', '070-290 06 05', 'Ledning')]);
+  });
+
+  it('en person som bara finns utan nummer står kvar — en gång', () => {
+    const list = dedupeDirectory([entry('Ny Person', null), entry('ny  person', '  ', 'Installatör')]);
+    expect(list).toEqual([entry('Ny Person', null, 'Installatör')]);
+  });
+
+  it('en rad utan nummer tillskrivs inte någon av två OLIKA personer med samma namn', () => {
+    const list = dedupeDirectory([entry('Johan Andersson', '070-1'), entry('Johan Andersson', '070-2'), entry('Johan Andersson', null, 'VD')]);
+    expect(list.map((e) => [e.phone, e.role])).toEqual([
+      ['070-1', null],
+      ['070-2', null],
+    ]);
+  });
+
   it('i namnordning, och rader utan namn faller bort', () => {
     const list = dedupeDirectory([entry('Örjan Ek', '1'), entry('Anna Berg', '2'), entry('  ', '3'), entry('Åsa Ek', '4')]);
     expect(list.map((e) => e.name)).toEqual(['Anna Berg', 'Åsa Ek', 'Örjan Ek']);
@@ -65,12 +83,26 @@ describe('pickKmaDirectoryEntry', () => {
     // En uppslagning på namnet svarar tomt för båda; valet vet vilken som menades.
     expect(lookupDirectoryPhone(directory, 'Johan Andersson')).toBe('');
     const row = { name: '', phone: '', email: '' };
-    expect(pickKmaDirectoryEntry(row, directory[1], directory)).toEqual({ name: 'Johan Andersson', phone: '070-222 22 22', email: '' });
+    expect(pickKmaDirectoryEntry(row, directory[1])).toEqual({ name: 'Johan Andersson', phone: '070-222 22 22', email: '' });
+  });
+
+  it('den ANDRA personen med samma namn får inte den förstes e-post', () => {
+    const row = { name: 'Johan Andersson', phone: '070-111 11 11', email: 'johan1@example.se' };
+    expect(pickKmaDirectoryEntry(row, entry('Johan Andersson', '070-222 22 22'))).toEqual({
+      name: 'Johan Andersson',
+      phone: '070-222 22 22',
+      email: '',
+    });
+  });
+
+  it('samma namn OCH samma nummer är samma person — e-posten står kvar', () => {
+    const row = { name: 'Johan Andersson', phone: '0701111111', email: 'johan1@example.se' };
+    expect(pickKmaDirectoryEntry(row, entry('Johan Andersson', '070-111 11 11')).email).toBe('johan1@example.se');
   });
 
   it('en annan person tömmer förra personens e-post', () => {
     const row = { name: 'Erik Lund', phone: '070-999', email: 'erik@example.se' };
-    expect(pickKmaDirectoryEntry(row, entry('Patrik Vall', '070-694 31 30'), [])).toEqual({
+    expect(pickKmaDirectoryEntry(row, entry('Patrik Vall', '070-694 31 30'))).toEqual({
       name: 'Patrik Vall',
       phone: '070-694 31 30',
       email: '',
@@ -79,7 +111,7 @@ describe('pickKmaDirectoryEntry', () => {
 
   it('samma person igen behåller e-posten och får listans nummer', () => {
     const row = { name: 'Patrik Vall', phone: '', email: 'patrik@example.se' };
-    expect(pickKmaDirectoryEntry(row, entry('Patrik Vall', '070-694 31 30'), [])).toEqual({
+    expect(pickKmaDirectoryEntry(row, entry('Patrik Vall', '070-694 31 30'))).toEqual({
       name: 'Patrik Vall',
       phone: '070-694 31 30',
       email: 'patrik@example.se',
@@ -88,6 +120,6 @@ describe('pickKmaDirectoryEntry', () => {
 
   it('en post utan nummer lämnar numret tomt, aldrig det förra', () => {
     const row = { name: 'Erik Lund', role: 'Installatör', phone: '070-999' };
-    expect(pickKmaDirectoryEntry(row, entry('Ny Person', null), [])).toEqual({ name: 'Ny Person', role: 'Installatör', phone: '' });
+    expect(pickKmaDirectoryEntry(row, entry('Ny Person', null))).toEqual({ name: 'Ny Person', role: 'Installatör', phone: '' });
   });
 });
