@@ -1,3 +1,5 @@
+import type { PdfBlock, PdfSection, PdfTableColumn } from '@/lib/pdf/blocks';
+
 // KMA-planens två former: FORMULÄRET (det som fylls i på arbetsordern) och DOKUMENTET (det som
 // renderas till PDF). Båda sparas på varje revision i crm_work_order_kma_plans — formuläret för att
 // nästa revision ska börja där den förra slutade, dokumentet för att en omladdning ska visa exakt
@@ -80,44 +82,11 @@ export type KmaFormValues = {
 // (document.ts) vet vad som står var. Ingen text byggs i renderaren — allt som skrivs ut finns i
 // dokumentet, och det är därför det räcker att spara dokumentet för att en omladdning ska bli lika.
 
-export type KmaTableColumn = {
-  head: string;
-  /** Relativ bredd. Renderaren fördelar sidans bredd i proportion. */
-  width: number;
-};
-
-export type KmaBlock =
-  /** Dokumentets stora rubrik, med valfri underrubrik. */
-  | { t: 'title'; text: string; sub?: string }
-  /** Avsnittsrubrik: "1. Inledning och syfte", "Bilaga 1 – …". */
-  | { t: 'h1'; text: string }
-  /** Underrubrik i fetstil: "Kvalitetspolicy". */
-  | { t: 'h2'; text: string }
-  /** Mellanrubrik i brödtextens färg: "Ordning på arbetsplatsen" i bilaga 1. */
-  | { t: 'h3'; text: string }
-  /** Stycke. `lead` skrivs i fetstil först på raden ("Syfte:"). Radbrytningar i `text` bevaras. */
-  | { t: 'p'; text: string; lead?: string }
-  | { t: 'list'; items: string[] }
-  /**
-   * Etikett–värde-rader. `form` ritar dem som en BLANKETT: varje rad får en linje att skriva på, och
-   * ett ifyllt värde står på sin linje (egenkontrollmallens huvud).
-   */
-  | { t: 'fields'; rows: Array<[string, string]>; form?: boolean }
-  /**
-   * Tabell. `minRows` fyller på med tomma rader (signaturlistor att skriva på), `rowMinHeight` ger
-   * skrivutrymme i en blankett.
-   */
-  | { t: 'table'; columns: KmaTableColumn[]; rows: string[][]; minRows?: number; rowMinHeight?: number }
-  /** En linje att skriva sin namnteckning på, med etiketten ovanför. */
-  | { t: 'signature'; label: string }
-  | { t: 'gap'; h: number };
-
-export type KmaSection = {
-  key: string;
-  /** Avsnittet börjar på en ny sida (varje bilaga). */
-  newPage: boolean;
-  blocks: KmaBlock[];
-};
+// Blockformen delas med skyddsronden och bor i lib/pdf/blocks.ts. Namnen här är kvar så att KMA-koden
+// och den sparade dokumentformen (schemas.ts) läser som förut.
+export type KmaTableColumn = PdfTableColumn;
+export type KmaBlock = PdfBlock;
+export type KmaSection = PdfSection;
 
 export type KmaDocument = {
   v: 1;
