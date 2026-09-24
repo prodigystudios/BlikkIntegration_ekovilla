@@ -41,8 +41,11 @@ export default async function InstallerWorkOrderPage({
   // i en server-komponent.
   const supabase = createServerComponentClient({ cookies });
   const { data: permissions } = await supabase.rpc('effective_permissions');
-  const canReportTime = Array.isArray(permissions)
-    && permissions.some((row) => (typeof row === 'string' ? row : String(row)) === 'time.approve');
+  const granted = new Set(Array.isArray(permissions) ? permissions.map((row) => (typeof row === 'string' ? row : String(row))) : []);
+  const canReportTime = granted.has('time.approve');
+  // Skyddsronden ritas bara för den som har en av dess nycklar — rondledaren, ofta en arbetsledare
+  // som fått dem personligt. Ingen besättningsgren: att köra jobbet ger inte rätt att leda ronden.
+  const showSafetyRounds = granted.has('safety.round.read') || granted.has('safety.round.write');
 
   return (
     <WorkOrderInstallerClient
@@ -50,6 +53,7 @@ export default async function InstallerWorkOrderPage({
       segmentId={typeof segment === 'string' ? segment : null}
       currentUserId={user.id}
       canReportTime={canReportTime}
+      showSafetyRounds={showSafetyRounds}
     />
   );
 }
