@@ -214,9 +214,10 @@ describe('skyddsronder (SQL)', () => {
       'safety_round_order_header(uuid)',
       'start_safety_round(uuid, date, text, text, text)',
     ]) {
-      const escaped = fn.replace(/[()]/g, '\\$&');
-      expect(sql, fn).toMatch(new RegExp(`revoke all on function public\\.${escaped} from public, anon`));
-      expect(sql, fn).toMatch(new RegExp(`grant execute on function public\\.${escaped} to authenticated`));
+      // Ren textjämförelse, inget RegExp: `sql` är redan normaliserad (kommentarer bort, blanksteg
+      // hopslagna, gemener), och signaturen innehåller parenteser som annars måste escapas.
+      expect(sql, fn).toContain(`revoke all on function public.${fn} from public, anon;`);
+      expect(sql, fn).toContain(`grant execute on function public.${fn} to authenticated;`);
     }
   });
 
