@@ -7,14 +7,15 @@
 //
 // Pure and dependency-free so the wording and the URL encoding are unit-testable.
 
-export type CrmDocumentKind = 'offer' | 'order' | 'delivery';
+export type CrmDocumentKind = 'offer' | 'order' | 'delivery' | 'kma';
 
 /**
  * Dokumenttyperna som kan MEJLAS. Följesedeln hämtas och skrivs ut — den följer med materialet till
- * arbetsplatsen och har ingen mottagare att välja. Skild från `CrmDocumentKind` så mejlflödet inte
- * behöver bära en mottagaretikett för ett dokument som aldrig når det.
+ * arbetsplatsen och har ingen mottagare att välja. KMA-planen laddas ned och skickas till
+ * beställaren den vägen de kommit överens om — inte heller den har någon mejlväg här. Skild från
+ * `CrmDocumentKind` så mejlflödet inte behöver bära en mottagaretikett för dokument som aldrig når det.
  */
-export type EmailableDocumentKind = Exclude<CrmDocumentKind, 'delivery'>;
+export type EmailableDocumentKind = Exclude<CrmDocumentKind, 'delivery' | 'kma'>;
 
 // `definite` is spelled out rather than built by appending "en" — "Orderbekräftelse" takes
 // only an -n, and the naive suffix produced "Orderbekräftelseen".
@@ -28,6 +29,8 @@ export const DOCUMENT_LABELS: Record<CrmDocumentKind, {
   // Följesedeln har ingen mejlväg idag — den hämtas och skrivs ut. Ordlydelsen finns ändå, så
   // filnamnet ("Foljesedel 113 - …") kommer från samma ställe som de andra dokumentens.
   delivery: { subject: 'Följesedel', sentence: 'följesedel', definite: 'Följesedeln' },
+  // KMA-planen (lib/domains/crm/kmaPlans/) — bara filnamnet används, se EmailableDocumentKind.
+  kma: { subject: 'KMA-plan', sentence: 'KMA-plan', definite: 'KMA-planen' },
 };
 
 // Ett filnamn passerar tre lager som alla har egna åsikter: `a.download` på en blob,

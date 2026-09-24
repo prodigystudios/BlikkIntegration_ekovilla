@@ -128,6 +128,20 @@ describe('arbetsordervyns läsläge', () => {
     expect(body, 'createOrder() saknar "if (!canEdit) return"').toContain('if (!canEdit) return');
   });
 
+  it('KMA-kortet får vyns läsläge — och dess knapp kräver det', () => {
+    // KMA-kortet äger sin egen skrivning (useKmaPlans), så mönstren ovan ser den inte i detaljvyn.
+    // Skyddet är att kortet får `canEdit` och att dess enda knapp går genom kmaCardAction, som
+    // kräver både läsläget och serverns svar på skrivnyckeln (tests/crm/kmaDialog.test.ts).
+    const detail = readFileSync(DETAIL_CLIENT, 'utf8');
+    const mount = detail.slice(detail.indexOf('<WorkOrderKmaCard'), detail.indexOf('/>', detail.indexOf('<WorkOrderKmaCard')));
+    expect(mount, 'KMA-kortet monteras inte längre i detaljvyn').toContain('<WorkOrderKmaCard');
+    expect(mount, 'KMA-kortet får inte vyns läsläge').toContain('canEdit={canEdit}');
+
+    const card = readFileSync(join(process.cwd(), 'app/crm/arbetsorder/WorkOrderKmaCard.tsx'), 'utf8');
+    expect(card).toMatch(/kmaCardAction\(\{\s*canEdit,\s*canCreate/);
+    expect(card, 'knappen ritas utan att gå genom kmaCardAction').toContain('{action ? (');
+  });
+
   it('vyerna tar emot flaggan utifrån i stället för att gissa rollen själva', () => {
     // ⛔ Vyn får ALDRIG läsa rollen direkt. Gör den det finns behörighetsregeln på två ställen som
     // kan säga emot varandra — samma felklass som isReadonlyRole + is_konsult_user(), det dyraste

@@ -2,6 +2,7 @@ import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib';
 
 import { loadDesignFonts, loadDesignLogo } from '@/lib/pdf/brandAssets';
+import { createFlow, type Flow } from '@/lib/pdf/flow';
 import { cleanText, wrapLines } from '@/lib/pdf/text';
 
 import { periodLabel, periodRange } from './approvals';
@@ -257,27 +258,6 @@ export type PayrollPdfInput = {
 
 type Fonts = { regular: PDFFont; bold: PDFFont };
 
-/**
- * Var nästa rad hamnar — sidan och baslinjen tillsammans.
- *
- * `ensure(height)` byter till en ny sida när raden inte får plats, och eftersom både `page` och `y`
- * bor i samma objekt kan ingen ritfunktion råka behålla en gammal sidreferens över brytningen.
- */
-type Flow = {
-  page: PDFPage;
-  y: number;
-  /**
-   * Vad som ritas överst på en FORTSÄTTNINGSSIDA, under sidhuvudet.
-   *
-   * ⚠️ Måste följa med det som faktiskt flödar. Tabellhuvudet låg först fast på varje ny sida, och
-   * en månad vars ersättningslista bröt till sida två fick då "DATUM · KLOCKSLAG · RAST · ARBETAT"
-   * över fyra utläggsrader — kolumnrubriker som inte beskrev något på sidan. `null` betyder att
-   * sidan börjar tom under huvudet.
-   */
-  continuation: ((page: PDFPage) => void) | null;
-  ensure(height: number): void;
-};
-
 // ── Ritning ──────────────────────────────────────────────────────────────────
 
 function draw(page: PDFPage, text: string, x: number, y: number, font: PDFFont, size: number, color: RGB) {
@@ -375,23 +355,16 @@ function renderPerson(
     return page;
   };
 
-  // ⚠️ SIDAN OCH BASLINJEN BOR I ETT OBJEKT, inte i två lokala variabler.
-  //
-  // Med `let page` i den här funktionen och en hjälpare som tar `page` som argument ritar hjälparen
-  // vidare på den sida den FICK, även efter att `ensure` bytt till en ny — ersättningslistan hade
-  // hamnat osynlig ovanpå sidan före. Felklassen syns inte i en liten testfixtur, bara i en månad
-  // som råkar brytas på rätt ställe.
-  const flow: Flow = {
+  // ⚠️ SIDAN OCH BASLINJEN BOR I ETT OBJEKT — se lib/pdf/flow.ts för varför. Läs `flow.page` och
+  // `flow.y` på nytt efter varje `ensure`, aldrig en sidreferens som togs före brytningen.
+  const flow = createFlow({
     page: newPage(false),
-    y: BODY_TOP_FIRST,
+    top: BODY_TOP_FIRST,
+    continuationTop: BODY_TOP_CONT,
+    bottom: BODY_BOTTOM,
+    newPage: () => newPage(true),
     continuation: (page) => drawTableHead(page, fonts, TABLE_HEAD_Y_CONT, TABLE_HEAD_RULE_Y_CONT),
-    ensure(height: number) {
-      if (this.y - height >= BODY_BOTTOM) return;
-      this.page = newPage(true);
-      this.continuation?.(this.page);
-      this.y = BODY_TOP_CONT;
-    },
-  };
+  });
   drawSummaryStrip(flow.page, fonts, summary);
   drawTableHead(flow.page, fonts, TABLE_HEAD_Y, TABLE_HEAD_RULE_Y);
 

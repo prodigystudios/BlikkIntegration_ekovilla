@@ -28,6 +28,7 @@ import WorkOrderArticles, { type ArticleLineItem } from './WorkOrderArticles';
 import WorkOrderFilesTab from './WorkOrderFilesTab';
 import WorkOrderSackTrailCard from './WorkOrderSackTrailCard';
 import WorkOrderProgressCard from './WorkOrderProgressCard';
+import WorkOrderKmaCard from './WorkOrderKmaCard';
 import WorkOrderStagesCard from './WorkOrderStagesCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
 import { useAfterCalculation } from './useAfterCalculation';
@@ -1945,6 +1946,17 @@ export default function WorkOrderDetailClient({
                 ) : null}
               </Card>
             ) : null}
+
+            {/* KMA-plan — kvalitets-, miljö- och arbetsmiljöplanen till beställaren, som PDF.
+                INTE i Fortnox-kortet ovan: det ritas bara när Fortnox är anslutet, och planen har
+                ingenting med Fortnox att göra. Kortet äger sin egen hämtning och skrivning
+                (useKmaPlans); härifrån får det bara läsläget och säljarens namn, som sidan redan
+                har — profiles är self-read, så servern kan inte slå upp det själv. */}
+            <WorkOrderKmaCard
+              workOrderId={workOrder.id}
+              canEdit={canEdit}
+              salesName={workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name || null) : null}
+            />
 
             {/* Snapshot */}
             <Card className="grid gap-3">

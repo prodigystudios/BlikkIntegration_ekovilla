@@ -51,3 +51,20 @@ export async function loadDesignLogo(): Promise<Uint8Array | null> {
     return null;
   }
 }
+
+// Isoleringslandslagets logotyp (JPEG), ur sidhuvudet i deras KMA-mall. KMA-planen står alltid på
+// Isoleringslandslaget AB (lib/domains/crm/kmaPlans/), och mallens huvud bär båda bolagens loggor.
+//
+// ⚠️ Sökvägen byggs med ENBART LITERALER, som LOGO_PATH ovan — Next spårar bara en sådan. Routen
+// som läser filen står ändå i outputFileTracingIncludes (next.config.js), eftersom listan är per
+// route och spåraren inte är något att luta sig mot ensam.
+const ISOLERINGSLANDSLAGET_LOGO_PATH = path.join(process.cwd(), 'public', 'brand', 'Isoleringslandslaget_logo.jpg');
+
+/** Valfri, som Ekovillas: saknas filen ritas dokumentet utan den. */
+export async function loadIsoleringslandslagetLogo(): Promise<Uint8Array | null> {
+  try {
+    return new Uint8Array(await readFile(ISOLERINGSLANDSLAGET_LOGO_PATH));
+  } catch {
+    return null;
+  }
+}
