@@ -2,7 +2,8 @@ import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
-import { FOLLOW_UP_FIELDS, actionPatchSchema } from '@/lib/domains/safetyRounds/schemas';
+import { isFollowUpOnlyPatch } from '@/lib/domains/safetyRounds/rules';
+import { actionPatchSchema } from '@/lib/domains/safetyRounds/schemas';
 import { deleteAction, getSafetyRound, itemBelongsToRound, updateAction } from '@/lib/domains/safetyRounds/store';
 import { writeFailure } from '../../../_lib';
 
@@ -31,8 +32,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (roundError) return routeError(500, 'safety_round_read_failed', roundError.message);
     if (!round) return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
 
-    const followUpOnly = Object.keys(parsed.data).every((key) => (FOLLOW_UP_FIELDS as readonly string[]).includes(key));
-    if (round.status === 'completed' && !followUpOnly) {
+    if (round.status === 'completed' && !isFollowUpOnlyPatch(parsed.data)) {
       return routeError(409, 'safety_round_locked', 'Ronden är slutförd. Bara uppföljningen av åtgärden kan ändras.');
     }
 

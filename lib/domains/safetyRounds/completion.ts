@@ -1,3 +1,4 @@
+import { needsDetails } from './form';
 import type { SafetyRoundBundle, SafetyRoundItem } from './types';
 
 // Summeringen (mallens rad "SUMMERING (räknas automatiskt)") och reglerna för att få slutföra en
@@ -9,6 +10,20 @@ import type { SafetyRoundBundle, SafetyRoundItem } from './types';
 //   * Delvis/Brist ska ha ett svar på "Förs till handlingsplan?" (Ja / Nej / Direkt åtgärdad).
 //   * "Ja" betyder att en rad finns i handlingsplanen för punkten.
 //   * Handlingsplanen: "En person per åtgärd, riktigt datum" — åtgärd, ansvarig och klart senast.
+
+/**
+ * Punktens detaljer SOM DE GÄLLER. Risknivå, beskrivning, "åtgärdat på plats" och "förs till
+ * handlingsplan" hör bara till Delvis och Brist. Byts en punkt tillbaka till OK ligger de gamla valen
+ * kvar i databasen — formuläret raderar inte det man skrivit, så ett feltryck går att ångra — men de
+ * räknas inte i summeringen, skrivs inte ut och spärrar inte slutförandet. Utan den här regeln stod en
+ * OK-punkt kvar som "Hög" och "Till handlingsplan: Ja", och ronden gick inte att slutföra förrän man
+ * bytt tillbaka till Brist för att nå frågan som spärrade.
+ */
+export function effectiveDetails(item: Pick<SafetyRoundItem, 'status' | 'risk' | 'description' | 'fixed_on_site' | 'to_action_plan'>) {
+  return needsDetails(item)
+    ? { risk: item.risk, description: item.description, fixed_on_site: item.fixed_on_site, to_action_plan: item.to_action_plan }
+    : { risk: null, description: null, fixed_on_site: null, to_action_plan: null };
+}
 
 export type SafetyRoundSummary = {
   ok: number;
@@ -27,8 +42,9 @@ export function summarizeItems(items: readonly SafetyRoundItem[]): SafetyRoundSu
   for (const item of items) {
     if (item.status === null) summary.unassessed += 1;
     else summary[item.status] += 1;
-    if (item.risk === 'high' || item.risk === 'severe') summary.highOrSevere += 1;
-    if (item.to_action_plan === 'yes') summary.toActionPlan += 1;
+    const details = effectiveDetails(item);
+    if (details.risk === 'high' || details.risk === 'severe') summary.highOrSevere += 1;
+    if (details.to_action_plan === 'yes') summary.toActionPlan += 1;
   }
   return summary;
 }
@@ -70,10 +86,11 @@ export function completionProblems(bundle: Pick<SafetyRoundBundle, 'round' | 'pa
   }
 
   for (const item of items) {
-    if ((item.status === 'partial' || item.status === 'defect') && item.to_action_plan === null) {
+    const details = effectiveDetails(item);
+    if (needsDetails(item) && details.to_action_plan === null) {
       problems.push({ step: 'checklist', message: `${describeItem(item)}: svara om den förs till handlingsplanen.` });
     }
-    if (item.to_action_plan === 'yes' && !actions.some((a) => a.item_id === item.id)) {
+    if (details.to_action_plan === 'yes' && !actions.some((a) => a.item_id === item.id)) {
       problems.push({ step: 'actions', message: `${describeItem(item)} ska till handlingsplanen men saknar åtgärd.` });
     }
   }

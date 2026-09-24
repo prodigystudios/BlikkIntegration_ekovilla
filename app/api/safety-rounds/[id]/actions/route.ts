@@ -4,7 +4,7 @@ import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/res
 import { requirePermission } from '@/lib/auth/guards';
 import { actionCreateSchema } from '@/lib/domains/safetyRounds/schemas';
 import { ACTIONS, insertAction, itemBelongsToRound, nextPosition } from '@/lib/domains/safetyRounds/store';
-import { writeFailure } from '../../_lib';
+import { insertFailure } from '../../_lib';
 
 // Ny rad i handlingsplanen — bara i ett utkast (insert-policyn). Uppföljningen sker på raden efteråt.
 export const dynamic = 'force-dynamic';
@@ -38,11 +38,7 @@ export async function POST(req: Request, context: RouteContext) {
     }
 
     const { data, error } = await insertAction(supabase, { ...parsed.data, round_id: roundId, position: position.data });
-    if (error || !data) {
-      if (error?.code === '42501') return routeError(409, 'safety_round_locked', 'Ronden är slutförd. Handlingsplanen kan bara följas upp.');
-      if (error?.code === '23503') return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
-      return writeFailure(error, 'åtgärden');
-    }
+    if (error || !data) return insertFailure(error, 'åtgärden');
     return ok({ action: data }, 201);
   } catch (e: unknown) {
     console.error('[safety-rounds] ny åtgärd:', e instanceof Error ? e.stack ?? e.message : e);

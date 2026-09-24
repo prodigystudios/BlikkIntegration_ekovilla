@@ -20,6 +20,10 @@ import { requireSafetyRoundReader } from './_lib';
 // är den första av två spärrar. Ingen admin-klient någonstans.
 export const dynamic = 'force-dynamic';
 
+function cancelledOrder() {
+  return routeError(409, 'safety_round_order_cancelled', 'Arbetsordern är avbruten. En skyddsrond kan inte startas på den.');
+}
+
 export async function GET(req: Request) {
   try {
     const guard = await requireSafetyRoundReader();
@@ -69,6 +73,9 @@ export async function POST(req: Request) {
       return routeError(500, 'safety_round_order_read_failed', orderError.message);
     }
     if (!order) return routeError(404, 'safety_round_order_not_found', 'Arbetsordern hittades inte.');
+    // En avbruten order är inget jobb — sökningen döljer dem, och start_safety_round() nekar dem
+    // också (andra spärren). Svaret här är bara det begripliga meddelandet i förväg.
+    if (order.status === 'cancelled') return cancelledOrder();
 
     const { data: roundId, error } = await startSafetyRound(supabase, {
       workOrderId,
@@ -84,6 +91,7 @@ export async function POST(req: Request) {
       }
       if (error?.code === '42501') return routeError(403, 'safety_round_forbidden', 'Du har inte behörighet att starta skyddsronder.');
       if (error?.code === 'P0002') return routeError(404, 'safety_round_order_not_found', 'Arbetsordern hittades inte.');
+      if (error?.code === '55000') return cancelledOrder();
       return routeError(500, 'safety_round_start_failed', error?.message || 'Kunde inte starta skyddsronden.');
     }
 

@@ -28,6 +28,13 @@ function grantsFor(table: string): string[] {
   return matches.flatMap((m) => m[1].split(',').map((p) => p.trim())).sort();
 }
 
+/** Kolumnerna i `grant update (…) on public.<table>`. */
+function updateColumns(table: string): string[] {
+  const match = sql.match(new RegExp(`grant update \\(([^)]*)\\) on public\\.${table} to authenticated`));
+  if (!match) throw new Error(`kolumnvis update saknas för ${table}`);
+  return match[1].split(',').map((c) => c.trim()).sort();
+}
+
 function policyCommands(table: string): string[] {
   return [...sql.matchAll(new RegExp(`create policy \\S+ on public\\.${table} for (\\w+)`, 'g'))].map((m) => m[1]).sort();
 }
@@ -59,14 +66,44 @@ describe('skyddsronder (SQL)', () => {
   });
 
   it('safety_rounds har INGEN insert-grant och ingen insert-policy — ronden skapas bara av start_safety_round()', () => {
-    expect(grantsFor('safety_rounds')).toEqual(['delete', 'select', 'update']);
+    expect(grantsFor('safety_rounds')).toEqual(['delete', 'select']);
     expect(policyCommands('safety_rounds')).toEqual(['delete', 'select', 'update']);
   });
 
-  it('barntabellerna: grant och policy följs åt', () => {
+  it('barntabellerna: grant och policy följs åt (update kolumnvis)', () => {
     for (const table of CHILD_TABLES) {
-      expect(grantsFor(table), table).toEqual(['delete', 'insert', 'select', 'update']);
+      expect(grantsFor(table), table).toEqual(['delete', 'insert', 'select']);
+      expect(updateColumns(table).length, table).toBeGreaterThan(0);
       expect(policyCommands(table), table).toEqual(['delete', 'insert', 'select', 'update']);
+    }
+  });
+
+  it('revoke all FÖRE grant på varje tabell — projektets default privileges ger annars anon och authenticated allt', () => {
+    for (const table of ['safety_checklist_categories', 'safety_checklist_items', 'safety_rounds', ...CHILD_TABLES]) {
+      const revoke = sql.indexOf(`revoke all on public.${table} from anon, authenticated`);
+      const grant = sql.indexOf(` on public.${table} to authenticated`);
+      expect(revoke, table).toBeGreaterThan(-1);
+      expect(revoke, table).toBeLessThan(grant);
+    }
+    expect(sql).not.toMatch(/grant [a-z, ()_]+ on (public\.)?\S+ to [a-z, ]*anon/);
+  });
+
+  it('UPDATE är kolumnvis: order, nummer, snapshot, skapare och round_id går inte att skriva', () => {
+    expect(updateColumns('safety_rounds')).toEqual(
+      [
+        'site_address', 'object_label', 'held_on', 'held_at', 'client_label', 'contract_step', 'employer', 'work_type',
+        'weather', 'leader_id', 'leader_name', 'safety_rep_name', 'next_round_due', 'previous_followed_up', 'status',
+      ].sort(),
+    );
+    expect(updateColumns('safety_round_participants')).toEqual(['comment', 'company', 'initials', 'name', 'present', 'role']);
+    expect(updateColumns('safety_round_items')).toEqual(['comment', 'description', 'fixed_on_site', 'risk', 'status', 'to_action_plan']);
+    expect(updateColumns('safety_round_actions')).toEqual(
+      ['action', 'cost_note', 'due_on', 'effect', 'finding', 'followed_up_on', 'item_id', 'position', 'responsible_name', 'risk', 'status'],
+    );
+    for (const table of ['safety_rounds', ...CHILD_TABLES]) {
+      for (const locked of ['round_id', 'work_order_id', 'round_number', 'created_by', 'catalog_item_id', 'text', 'project_name', 'completed_at']) {
+        expect(updateColumns(table), `${table}.${locked}`).not.toContain(locked);
+      }
     }
   });
 
@@ -106,12 +143,23 @@ describe('skyddsronder (SQL)', () => {
     const update = policyBody('safety_round_actions_update');
     expect(update).not.toContain('safety_round_is_draft');
     const trigger = functionBody('safety_round_actions_before_update');
-    for (const column of ['finding', 'risk', 'action', 'responsible_id', 'responsible_name', 'due_on', 'item_id']) {
+    for (const column of ['finding', 'risk', 'action', 'responsible_name', 'due_on']) {
       expect(trigger, column).toContain(`new.${column} is distinct from old.${column}`);
     }
     for (const column of ['status', 'followed_up_on', 'effect', 'cost_note']) {
       expect(trigger, column).not.toContain(`new.${column} is distinct from`);
     }
+  });
+
+  it('on delete set null går igenom triggrarna — annars går varken en användare eller en punkt att ta bort', () => {
+    const actions = functionBody('safety_round_actions_before_update');
+    // Främmande nycklar får NOLLAS (databasens städning), aldrig bytas.
+    expect(actions).toContain('(new.item_id is distinct from old.item_id and new.item_id is not null)');
+    expect(actions).toContain('(new.responsible_id is distinct from old.responsible_id and new.responsible_id is not null)');
+    // Ronden: ingen spärr på created_by/leader_id/completed_by alls — kolumnlistan gör det jobbet.
+    const rounds = functionBody('safety_rounds_before_update');
+    expect(rounds).not.toMatch(/created_by is distinct|leader_id is distinct|completed_by is distinct/);
+    expect(rounds).not.toContain('raise exception');
   });
 
   it('bara egna punkter läggs till och tas bort från appen', () => {
@@ -141,6 +189,17 @@ describe('skyddsronder (SQL)', () => {
     }
   });
 
+  it('ordersöket behandlar söktexten som text: % och _ escapas', () => {
+    const body = functionBody('safety_round_order_lookup');
+    expect(body).toContain("replace(replace(replace(v_q, '\\', '\\\\'), '%', '\\%'), '_', '\\_')");
+    expect(body).toMatch(/wo\.order_number ilike v_pattern/);
+    expect(body).not.toMatch(/ilike '%' \|\| v_q/);
+  });
+
+  it('en avbruten order får ingen rond (andra spärren efter rutten)', () => {
+    expect(functionBody('start_safety_round')).toMatch(/if v_wo\.status = 'cancelled' then raise exception '[^']+' using errcode = '55000'/);
+  });
+
   it('start_safety_round kräver en riktig person (auth.uid()) och kopierar bara aktiva punkter', () => {
     const body = functionBody('start_safety_round');
     expect(body).toMatch(/if v_uid is null or not public\.has_permission\('safety\.round\.write'\)/);
@@ -156,7 +215,7 @@ describe('skyddsronder (SQL)', () => {
       'start_safety_round(uuid, date, text, text, text)',
     ]) {
       const escaped = fn.replace(/[()]/g, '\\$&');
-      expect(sql, fn).toMatch(new RegExp(`revoke all on function public\\.${escaped} from public`));
+      expect(sql, fn).toMatch(new RegExp(`revoke all on function public\\.${escaped} from public, anon`));
       expect(sql, fn).toMatch(new RegExp(`grant execute on function public\\.${escaped} to authenticated`));
     }
   });

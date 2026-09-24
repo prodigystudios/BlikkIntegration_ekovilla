@@ -104,6 +104,28 @@ describe('skyddsrondens protokoll', () => {
   });
 });
 
+describe('metadatans titel', () => {
+  it('utan ordernummer blir det inget dubbelt mellanslag', () => {
+    const bundle = completeBundle();
+    bundle.round = { ...bundle.round, order_number: null, fortnox_order_number: null };
+    expect(buildSafetyRoundDocument(bundle, { printedOn: PRINTED_ON }).title).toBe('Skyddsrond – Vindsbjälklag Hus A–C');
+    expect(buildSafetyRoundDocument(completeBundle(), { printedOn: PRINTED_ON }).title).toBe('Skyddsrond 6579 – Vindsbjälklag Hus A–C');
+  });
+
+  it('en OK-punkt med inaktuella brist-val skrivs ut som OK — utan risk och handlingsplan', async () => {
+    const bundle = completeBundle();
+    bundle.items.push(makeItem({ number: 77, text: 'Stale punkt?', status: 'ok', risk: 'severe', to_action_plan: 'yes', description: 'Inaktuell text' }));
+    const { pages } = await render(bundle, 'inaktuell');
+    const all = pages.map(bodyText).join(' ');
+    expect(all).not.toContain('Inaktuell text');
+    // Raden: OK och "–", ingen risknivå och inget "Ja" efter den.
+    expect(all).toMatch(/77 Stale punkt\? OK – (B\.|$)/);
+    // Summeringen räknar bara den riktiga bristen (Hög), inte den inaktuella (Allvarlig).
+    expect(all).toContain('Hög + Allvarlig 1');
+    expect(all).toContain('Till handlingsplan 1');
+  });
+});
+
 describe('safetyRoundFilename', () => {
   it('ASCII, ordernummer och rondnummer', () => {
     expect(safetyRoundFilename(completeBundle().round)).toBe('Skyddsrond 6579 rond2 - Vindsbjalklag Hus AC.pdf');

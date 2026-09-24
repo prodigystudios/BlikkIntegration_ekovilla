@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  isCalendarDate,
   actionCreateSchema,
   actionPatchSchema,
   customItemCreateSchema,
@@ -40,6 +41,21 @@ describe('roundPatchSchema', () => {
     expect(roundPatchSchema.parse({ held_on: '2026-09-24', held_at: '09:30' })).toEqual({ held_on: '2026-09-24', held_at: '09:30' });
     expect(roundPatchSchema.parse({ held_at: '' })).toEqual({ held_at: null });
     expect(roundPatchSchema.safeParse({ held_at: '9.30' }).success).toBe(false);
+  });
+});
+
+describe('datum som inte finns i kalendern', () => {
+  it('nekas i schemat — annars blev de ett 500 från Postgres (22008)', () => {
+    expect(roundPatchSchema.safeParse({ held_on: '2026-02-30' }).success).toBe(false);
+    expect(roundPatchSchema.safeParse({ next_round_due: '2026-13-01' }).success).toBe(false);
+    expect(actionPatchSchema.safeParse({ due_on: '2026-04-31' }).success).toBe(false);
+    expect(actionPatchSchema.safeParse({ followed_up_on: '2026-00-10' }).success).toBe(false);
+  });
+
+  it('skottdagen finns bara på skottår', () => {
+    expect(isCalendarDate('2028-02-29')).toBe(true);
+    expect(isCalendarDate('2026-02-29')).toBe(false);
+    expect(isCalendarDate('2026-12-31')).toBe(true);
   });
 });
 

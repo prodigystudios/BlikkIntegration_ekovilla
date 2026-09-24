@@ -159,6 +159,18 @@ describe('POST /api/safety-rounds (starta)', () => {
     expect(s.startSafetyRound).not.toHaveBeenCalled();
   });
 
+  it('en avbruten order får ingen rond — rutten svarar i förväg, och databasens nej (55000) blir samma svar', async () => {
+    s.getSafetyRoundOrderHeader.mockResolvedValue({ data: { ...header, status: 'cancelled' }, error: null } as never);
+    const early = await START(json({ work_order_id: WORK_ORDER_ID }));
+    expect(early.status).toBe(409);
+    expect((await early.json()).error).toContain('avbruten');
+    expect(s.startSafetyRound).not.toHaveBeenCalled();
+
+    s.getSafetyRoundOrderHeader.mockResolvedValue({ data: header, error: null } as never);
+    s.startSafetyRound.mockResolvedValue({ data: null, error: { code: '55000', message: 'work order cancelled' } } as never);
+    expect((await START(json({ work_order_id: WORK_ORDER_ID }))).status).toBe(409);
+  });
+
   it('två som startar samtidigt ger 409 — inte två ronder med samma nummer', async () => {
     s.getSafetyRoundOrderHeader.mockResolvedValue({ data: header, error: null } as never);
     s.startSafetyRound.mockResolvedValue({ data: null, error: { code: '23505', message: 'duplicate' } } as never);
@@ -277,6 +289,20 @@ describe('handlingsplanen', () => {
     expect(res.status).toBe(400);
     expect(s.insertAction).not.toHaveBeenCalled();
     expect(s.itemBelongsToRound).toHaveBeenCalledWith(expect.anything(), ROUND_ID, ITEM_ID);
+  });
+
+  it('en insert som RLS nekar (slutförd ELLER borttagen rond) säger båda — gissar inte', async () => {
+    s.insertAction.mockResolvedValue({ data: null, error: { code: '42501', message: 'new row violates row-level security policy' } } as never);
+    const res = await ADD_ACTION(json({ finding: 'Räcke saknas' }), roundCtx);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe('Ronden är slutförd eller finns inte längre. Ladda om sidan.');
+  });
+
+  it('ett datum Postgres inte godtar blir 400, inte 500', async () => {
+    s.getSafetyRound.mockResolvedValue({ data: makeRound(), error: null } as never);
+    s.updateAction.mockResolvedValue({ data: null, error: { code: '22008', message: 'date/time field value out of range' } } as never);
+    const res = await PATCH_ACTION(json({ followed_up_on: '2026-09-30' }, 'PATCH'), actionCtx);
+    expect(res.status).toBe(400);
   });
 
   it('round_id kommer ur rutten, aldrig ur kroppen', async () => {

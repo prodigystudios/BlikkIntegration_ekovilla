@@ -3,7 +3,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { completionProblems, summarizeItems } from '@/lib/domains/safetyRounds/completion';
-import { normalizeKmaName } from '@/lib/domains/crm/kmaPlans/directory';
+import { leaderIdForName } from '@/lib/domains/safetyRounds/rules';
 import { roundPatchSchema } from '@/lib/domains/safetyRounds/schemas';
 import { deleteSafetyRound, getSafetyRoundBundle, listChecklistCategories, updateSafetyRound } from '@/lib/domains/safetyRounds/store';
 import type { SafetyRound } from '@/lib/domains/safetyRounds/types';
@@ -59,15 +59,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (!parsed.success) return validationError(parsed.error);
 
     const patch: Partial<SafetyRound> = { ...parsed.data };
-    // Rondledaren är ett namn (ur Kontaktlistan eller skrivet), inte en profil. Personen bakom
-    // leader_id följer bara med så länge namnet är den inloggades eget; skrivs ett annat namn in
-    // släpps kopplingen, så att ingen senare påminnelse (PR 3) går till fel person.
-    if ('leader_name' in parsed.data) {
-      const same = parsed.data.leader_name != null
-        && guard.currentUser.name != null
-        && normalizeKmaName(parsed.data.leader_name) === normalizeKmaName(guard.currentUser.name);
-      patch.leader_id = same ? guard.currentUser.id : null;
-    }
+    // Rondledarens profil följer namnet — se leaderIdForName.
+    if ('leader_name' in parsed.data) patch.leader_id = leaderIdForName(parsed.data.leader_name ?? null, guard.currentUser);
 
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await updateSafetyRound(supabase, context.params.id, patch);

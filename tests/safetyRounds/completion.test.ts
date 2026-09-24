@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { completionProblems, describeItem, summarizeItems } from '@/lib/domains/safetyRounds/completion';
+import { completionProblems, describeItem, effectiveDetails, summarizeItems } from '@/lib/domains/safetyRounds/completion';
 import { completeBundle, makeAction, makeItem } from './helpers/fixtures';
 
 // Reglerna för att få slutföra en rond. Samma lista visas i formuläret och nekar i rutten, så varje
@@ -68,6 +68,35 @@ describe('completionProblems', () => {
       { step: 'info', message: 'Ange rondledare.' },
       { step: 'participants', message: 'Minst en deltagare ska vara närvarande.' },
     ]);
+  });
+});
+
+describe('inaktuella detaljer efter byte till OK', () => {
+  // Formuläret raderar inte det man skrivit när en punkt byts från Brist till OK (ett feltryck ska
+  // gå att ångra). De gamla valen får då varken räknas, spärra eller skrivas ut.
+  const staleOk = () =>
+    makeItem({ number: 5, status: 'ok', risk: 'severe', to_action_plan: 'yes', fixed_on_site: true, description: 'Gammal text' });
+
+  it('räknas inte i summeringen', () => {
+    expect(summarizeItems([staleOk()])).toMatchObject({ ok: 1, highOrSevere: 0, toActionPlan: 0 });
+  });
+
+  it('spärrar inte slutförandet ("Ja" utan åtgärd på en OK-punkt)', () => {
+    const bundle = completeBundle();
+    bundle.items.push(staleOk());
+    expect(completionProblems(bundle)).toEqual([]);
+  });
+
+  it('gäller igen så fort punkten är Brist', () => {
+    const bundle = completeBundle();
+    bundle.items.push({ ...staleOk(), status: 'defect' });
+    expect(completionProblems(bundle)).toEqual([{ step: 'actions', message: 'Punkt 5 ska till handlingsplanen men saknar åtgärd.' }]);
+  });
+
+  it('effectiveDetails nollar bara för OK, Ej relevant och obedömd', () => {
+    const item = staleOk();
+    expect(effectiveDetails(item)).toEqual({ risk: null, description: null, fixed_on_site: null, to_action_plan: null });
+    expect(effectiveDetails({ ...item, status: 'partial' })).toEqual({ risk: 'severe', description: 'Gammal text', fixed_on_site: true, to_action_plan: 'yes' });
   });
 });
 

@@ -22,6 +22,18 @@ import {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^\d{2}:\d{2}(:\d{2})?$/;
 
+/**
+ * Finns dagen i kalendern? Formen räcker inte: '2026-02-30' ser ut som ett datum, och Postgres hade
+ * svarat 22008 — ett 500 med databasens råa text i stället för ett valideringsfel. Date.UTC och inte
+ * `new Date(iso)`: samma svar i varje tidszon.
+ */
+export function isCalendarDate(value: string): boolean {
+  if (!DATE_RE.test(value)) return false;
+  const [y, m, d] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(y, m - 1, d));
+  return date.getUTCFullYear() === y && date.getUTCMonth() === m - 1 && date.getUTCDate() === d;
+}
+
 /** Fritext som får vara tom: trimmas, tom -> null. */
 const optionalText = (max: number) =>
   z
@@ -35,11 +47,11 @@ const requiredText = (max: number, message: string) => z.string().trim().min(1, 
 
 const optionalDate = z
   .string()
-  .regex(DATE_RE, 'Ogiltigt datum')
+  .refine(isCalendarDate, 'Ogiltigt datum')
   .nullable()
   .or(z.literal('').transform(() => null));
 
-const requiredDate = z.string().regex(DATE_RE, 'Ogiltigt datum');
+const requiredDate = z.string().refine(isCalendarDate, 'Ogiltigt datum');
 
 // ── Rondinfo ─────────────────────────────────────────────────────────────────
 

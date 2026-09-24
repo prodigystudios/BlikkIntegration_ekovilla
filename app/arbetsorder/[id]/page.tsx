@@ -1,7 +1,6 @@
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { getCurrentUser } from '@/lib/auth/route';
+import { hasCrmPermissions } from '@/app/crm/lib/pagePermissions';
 import WorkOrderInstallerClient from '../WorkOrderInstallerClient';
 
 export const dynamic = 'force-dynamic';
@@ -36,16 +35,14 @@ export default async function InstallerWorkOrderPage({
   // Behörigheten läses här och inte i klienten: sidan är rätt ställe för åtkomstbeslut, och en
   // klient som frågar själv hade blinkat till med fel flikrad medan svaret var på väg.
   //
-  // `createServerComponentClient` och inte getEffectivePermissions(): den senare bygger en
-  // route-handler-klient, som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma
-  // i en server-komponent.
-  const supabase = createServerComponentClient({ cookies });
-  const { data: permissions } = await supabase.rpc('effective_permissions');
-  const granted = new Set(Array.isArray(permissions) ? permissions.map((row) => (typeof row === 'string' ? row : String(row))) : []);
-  const canReportTime = granted.has('time.approve');
+  // hasCrmPermissions och inte getEffectivePermissions(): den senare bygger en route-handler-klient,
+  // som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma i en server-komponent.
+  // Hjälparen läser alla nycklarna på EN rundtur och failar stängt (allt false) vid ett fel.
+  const keys = await hasCrmPermissions(['time.approve', 'safety.round.read', 'safety.round.write']);
+  const canReportTime = keys['time.approve'];
   // Skyddsronden ritas bara för den som har en av dess nycklar — rondledaren, ofta en arbetsledare
   // som fått dem personligt. Ingen besättningsgren: att köra jobbet ger inte rätt att leda ronden.
-  const showSafetyRounds = granted.has('safety.round.read') || granted.has('safety.round.write');
+  const showSafetyRounds = keys['safety.round.read'] || keys['safety.round.write'];
 
   return (
     <WorkOrderInstallerClient

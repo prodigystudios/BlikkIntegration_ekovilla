@@ -1,7 +1,7 @@
 import type { PdfBlock, PdfSection } from '@/lib/pdf/blocks';
 import { KMA_FOOTER } from '@/lib/domains/crm/kmaPlans/template';
 
-import { describeItem, summarizeItems } from './completion';
+import { describeItem, effectiveDetails, summarizeItems } from './completion';
 import { groupItemsByCategory } from './form';
 import {
   ACTION_EFFECT_LABELS,
@@ -40,10 +40,12 @@ const riskText = (risk: RiskLevel | null) => (risk ? RISK_LABELS[risk] : '–');
 const yesNo = (value: boolean | null) => (value === null ? '–' : value ? 'Ja' : 'Nej');
 const clock = (value: string | null) => (value ? value.slice(0, 5) : '–');
 
+/** Beskrivning, "åtgärdat på plats" och kommentar — detaljerna bara när de gäller (effectiveDetails). */
 function observation(item: SafetyRoundItem): string {
+  const details = effectiveDetails(item);
   return [
-    item.description?.trim(),
-    item.fixed_on_site === true ? 'Åtgärdat på plats.' : null,
+    details.description?.trim(),
+    details.fixed_on_site === true ? 'Åtgärdat på plats.' : null,
     item.comment?.trim() ? `Kommentar: ${item.comment.trim()}` : null,
   ]
     .filter(Boolean)
@@ -136,14 +138,17 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
         { head: 'Beskrivning av brist / observation', width: 29 },
         { head: 'Till handlingsplan', width: 14 },
       ],
-      rows: group.items.map((item) => [
-        item.number != null ? String(item.number) : '',
-        item.text,
-        item.status ? ITEM_STATUS_LABELS[item.status] : '–',
-        riskText(item.risk),
-        observation(item),
-        item.to_action_plan ? TO_ACTION_PLAN_LABELS[item.to_action_plan] : '',
-      ]),
+      rows: group.items.map((item) => {
+        const details = effectiveDetails(item);
+        return [
+          item.number != null ? String(item.number) : '',
+          item.text,
+          item.status ? ITEM_STATUS_LABELS[item.status] : '–',
+          riskText(details.risk),
+          observation(item),
+          details.to_action_plan ? TO_ACTION_PLAN_LABELS[details.to_action_plan] : '',
+        ];
+      }),
     });
   }
 
@@ -214,7 +219,7 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
     running: ['Skyddsrond', orderRef || null, `Rond ${round.round_number}`, `Utskriven ${ctx.printedOn}`]
       .filter(Boolean)
       .join(' · '),
-    title: `Skyddsrond ${orderRef} – ${round.project_name}`.trim(),
+    title: [`Skyddsrond${orderRef ? ` ${orderRef}` : ''}`, round.project_name].join(' – '),
     subject: `Rond ${round.round_number}, ${round.held_on}`,
     date: ctx.printedOn,
   };

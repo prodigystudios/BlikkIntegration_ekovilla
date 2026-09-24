@@ -96,6 +96,12 @@ alter table public.safety_checklist_categories enable row level security;
 alter table public.safety_checklist_items enable row level security;
 
 -- Läses av alla inloggade (texten är ingen hemlighet). Ingen skrivväg förrän PR 4.
+--
+-- ⚠️ `grant select` ENSAMT BEGRÄNSAR INGENTING. En tabell som skapas i Supabase SQL-editorn får
+-- projektets default privileges — `grant all ... to anon, authenticated` (se
+-- 20260911_ops_depot_stock_counts.sql). Därför revoke all först, sedan exakt det som ska finnas.
+revoke all on public.safety_checklist_categories from anon, authenticated;
+revoke all on public.safety_checklist_items from anon, authenticated;
 grant select on public.safety_checklist_categories to authenticated;
 grant select on public.safety_checklist_items to authenticated;
 
@@ -314,11 +320,16 @@ as $$
   select exists (select 1 from public.safety_rounds r where r.id = p_round_id and r.status = 'draft');
 $$;
 
-revoke all on function public.safety_round_is_draft(uuid) from public;
+revoke all on function public.safety_round_is_draft(uuid) from public, anon;
 grant execute on function public.safety_round_is_draft(uuid) to authenticated;
 
 -- updated_at + låset på åtgärden. Uppföljningsfälten får ändras efter slutförd rond; själva
 -- åtgärden, den ansvarige och datumet får det inte — de är det protokollet sa.
+--
+-- ⚠️ item_id och responsible_id får NOLLAS även i en slutförd rond: det är databasens egen städning
+-- (`on delete set null` när punkten eller profilen tas bort, t.ex. när admin raderar en rond eller
+-- en användare). En spärr på nollningen hade stoppat raderingen. Att BYTA till en annan punkt eller
+-- person är fortfarande spärrat.
 create or replace function public.safety_round_actions_before_update()
 returns trigger
 language plpgsql
@@ -329,11 +340,11 @@ begin
     raise exception 'safety_round_actions: round_id kan inte ändras' using errcode = '42501';
   end if;
   if not public.safety_round_is_draft(old.round_id) and (
-       new.item_id          is distinct from old.item_id
+       (new.item_id is distinct from old.item_id and new.item_id is not null)
     or new.finding          is distinct from old.finding
     or new.risk             is distinct from old.risk
     or new.action           is distinct from old.action
-    or new.responsible_id   is distinct from old.responsible_id
+    or (new.responsible_id is distinct from old.responsible_id and new.responsible_id is not null)
     or new.responsible_name is distinct from old.responsible_name
     or new.due_on           is distinct from old.due_on
     or new.position         is distinct from old.position
@@ -352,17 +363,18 @@ create trigger safety_round_actions_before_update
   for each row execute function public.safety_round_actions_before_update();
 
 -- updated_at på ronden, och vem/när den slutfördes sätts HÄR — inte ur klienten.
+--
+-- ⚠️ INGEN SPÄRR PÅ created_by ELLER ANDRA FRÄMMANDE NYCKLAR HÄR. `created_by`, `leader_id` och
+-- `completed_by` är `on delete set null`, och den nollningen är en UPDATE som går genom den här
+-- triggern. En spärr ("skaparen kan inte ändras") hade alltså gjort det omöjligt att ta bort en
+-- användare som någon gång startat en rond. Att klienten inte kan skriva kolumnerna sköts av
+-- kolumnlistan i grant-avsnittet, som databasens egen städning inte berörs av.
 create or replace function public.safety_rounds_before_update()
 returns trigger
 language plpgsql
 set search_path = public
 as $$
 begin
-  if new.work_order_id is distinct from old.work_order_id
-     or new.round_number is distinct from old.round_number
-     or new.created_by is distinct from old.created_by then
-    raise exception 'safety_rounds: order, rondnummer och skapare kan inte ändras' using errcode = '42501';
-  end if;
   if new.status = 'completed' and old.status = 'draft' then
     new.completed_at := now();
     new.completed_by := auth.uid();
@@ -382,10 +394,48 @@ create trigger safety_rounds_before_update
 -- ---------------------------------------------------------------------------
 -- En radpolicy gör INGENTING utan tabellprivilegiet, och ett privilegium utan policy ger 0 rader.
 -- Både-eller-ingen. safety_rounds saknar insert med flit (se huvudet).
-grant select, update, delete on public.safety_rounds to authenticated;
-grant select, insert, update, delete on public.safety_round_participants to authenticated;
-grant select, insert, update, delete on public.safety_round_items to authenticated;
-grant select, insert, update, delete on public.safety_round_actions to authenticated;
+--
+-- ⚠️ REVOKE ALL FÖRST. Tabellerna får projektets default privileges när de skapas i SQL-editorn —
+-- `grant all ... to anon, authenticated` (se 20260911_ops_depot_stock_counts.sql) — så en `grant`
+-- ensam hade lämnat INSERT på safety_rounds och ALLT åt anon. RLS hade nekat ändå, men "bara det
+-- som står här" ska vara sant på båda nivåerna.
+--
+-- UPDATE ÄR KOLUMNVIS. Policyerna säger VILKA RADER som får ändras (ett utkast, med skrivnyckeln);
+-- kolumnlistan säger VAD. Det som inte står i listan går inte att skriva från appen alls, inte ens
+-- med egna PostgREST-anrop förbi rutterna:
+--   * rondens order, nummer, snapshot (projekt, kund, ordernummer), skapare och slutförd-stämpeln,
+--   * en rads round_id — en punkt eller deltagare kan inte flyttas till en annan rond,
+--   * en punkts katalogkoppling och text — en katalogpunkt kan inte göras om till en egen punkt för
+--     att sedan tas bort (delete-policyn släpper bara egna punkter),
+--   * åtgärdens responsible_id (sätts inte i PR 1; PR 3 lägger till den med notisen).
+-- Databasens egen städning (on delete set null när en profil eller punkt tas bort) körs som
+-- tabellägaren och berörs inte av listorna.
+--
+-- Det som MEDVETET inte spärras här: att sätta status = 'completed' förbi slutför-rutten. Reglerna
+-- för att få slutföra (completion.ts) är en datakvalitetsregel, och den som har skrivnyckeln kan
+-- ändå skriva vad som helst i formuläret — samma bedömning som för KMA-planens dokument.
+revoke all on public.safety_rounds from anon, authenticated;
+revoke all on public.safety_round_participants from anon, authenticated;
+revoke all on public.safety_round_items from anon, authenticated;
+revoke all on public.safety_round_actions from anon, authenticated;
+
+grant select, delete on public.safety_rounds to authenticated;
+grant update (
+  site_address, object_label, held_on, held_at, client_label, contract_step, employer, work_type,
+  weather, leader_id, leader_name, safety_rep_name, next_round_due, previous_followed_up, status
+) on public.safety_rounds to authenticated;
+
+grant select, insert, delete on public.safety_round_participants to authenticated;
+grant update (name, role, company, present, initials, comment) on public.safety_round_participants to authenticated;
+
+grant select, insert, delete on public.safety_round_items to authenticated;
+grant update (status, risk, description, fixed_on_site, to_action_plan, comment) on public.safety_round_items to authenticated;
+
+grant select, insert, delete on public.safety_round_actions to authenticated;
+grant update (
+  item_id, position, finding, risk, action, responsible_name, due_on,
+  status, followed_up_on, effect, cost_note
+) on public.safety_round_actions to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- 6. Policyer
@@ -557,6 +607,7 @@ set search_path = public
 as $$
 declare
   v_q text := btrim(coalesce(p_query, ''));
+  v_pattern text;
 begin
   if not public.has_permission('safety.round.write') then
     raise exception 'not authorized' using errcode = '42501';
@@ -564,6 +615,9 @@ begin
   if length(v_q) < 2 then
     return;
   end if;
+  -- Söktexten är TEXT, inte ett mönster: % och _ i den ska matcha sig själva ("6_79" ska inte hitta
+  -- 6579). Backslash är LIKE:s standardescape.
+  v_pattern := '%' || replace(replace(replace(v_q, '\', '\\'), '%', '\%'), '_', '\_') || '%';
 
   return query
   select
@@ -589,17 +643,17 @@ begin
   from public.crm_work_orders wo
   where wo.status <> 'cancelled'
     and (
-      wo.order_number ilike '%' || v_q || '%'
-      or wo.fortnox_order_number ilike '%' || v_q || '%'
-      or wo.project_name ilike '%' || v_q || '%'
-      or wo.client_name ilike '%' || v_q || '%'
+      wo.order_number ilike v_pattern
+      or wo.fortnox_order_number ilike v_pattern
+      or wo.project_name ilike v_pattern
+      or wo.client_name ilike v_pattern
     )
   order by wo.created_at desc
   limit 20;
 end;
 $$;
 
-revoke all on function public.safety_round_order_lookup(text) from public;
+revoke all on function public.safety_round_order_lookup(text) from public, anon;
 grant execute on function public.safety_round_order_lookup(text) to authenticated;
 
 create or replace function public.safety_round_order_header(p_work_order_id uuid)
@@ -649,7 +703,7 @@ begin
 end;
 $$;
 
-revoke all on function public.safety_round_order_header(uuid) from public;
+revoke all on function public.safety_round_order_header(uuid) from public, anon;
 grant execute on function public.safety_round_order_header(uuid) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -696,6 +750,11 @@ begin
   if not found then
     raise exception 'work order not found' using errcode = 'P0002';
   end if;
+  -- En avbruten order är inget jobb (sökningen döljer dem, fältfeeden och planeringen likaså).
+  -- 55000 = object_not_in_prerequisite_state; rutten svarar 409.
+  if v_wo.status = 'cancelled' then
+    raise exception 'work order cancelled' using errcode = '55000';
+  end if;
 
   select nullif(btrim(p.full_name), '') into v_name from public.profiles p where p.id = v_uid;
 
@@ -739,7 +798,7 @@ begin
 end;
 $$;
 
-revoke all on function public.start_safety_round(uuid, date, text, text, text) from public;
+revoke all on function public.start_safety_round(uuid, date, text, text, text) from public, anon;
 grant execute on function public.start_safety_round(uuid, date, text, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------------
@@ -756,12 +815,24 @@ grant execute on function public.start_safety_round(uuid, date, text, text, text
 --      select (select count(*) from public.safety_checklist_categories) as categories,
 --             (select count(*) from public.safety_checklist_items) as items;
 --
--- 3. Grants för authenticated. safety_rounds ska sakna INSERT; katalogen ska bara ha SELECT.
+-- 3. Grants. Tabellnivån för authenticated ska vara exakt: katalogen SELECT, safety_rounds SELECT +
+--    DELETE (INGEN insert, INGEN tabellvid update), barntabellerna SELECT + INSERT + DELETE. anon ska
+--    inte stå med alls. Står UPDATE, INSERT på safety_rounds, TRUNCATE eller anon här har revoke-raden
+--    inte körts:
 --
---      select table_name, string_agg(privilege_type, ', ' order by privilege_type)
+--      select table_name, grantee, string_agg(privilege_type, ', ' order by privilege_type)
 --      from information_schema.role_table_grants
---      where table_schema = 'public' and grantee = 'authenticated'
+--      where table_schema = 'public' and grantee in ('anon', 'authenticated')
 --        and (table_name like 'safety_round%' or table_name like 'safety_checklist%')
+--      group by table_name, grantee order by table_name, grantee;
+--
+--    UPDATE är kolumnvis. Förväntat: bara kolumnerna i grant-avsnittet — aldrig round_id,
+--    work_order_id, round_number, created_by, project_name, catalog_item_id eller text:
+--
+--      select table_name, string_agg(column_name, ', ' order by column_name)
+--      from information_schema.column_privileges
+--      where table_schema = 'public' and grantee = 'authenticated' and privilege_type = 'UPDATE'
+--        and table_name like 'safety_round%'
 --      group by table_name order by table_name;
 --
 -- 4. RLS på alla sex tabellerna:
@@ -772,7 +843,11 @@ grant execute on function public.start_safety_round(uuid, date, text, text, text
 -- 5. Låset: i en transaktion, starta en rond som dig själv, slutför den, och försök sedan ändra en
 --    punkt (ska ge 0 rader) och åtgärdens text (ska kasta 42501). Rulla tillbaka.
 --
--- 6. En installatör (member, utan nycklarna) ska se NOLL ronder och få 42501 från
+-- 6. on delete set null går igenom: i en transaktion, ta bort en testprofil som skapat en rond (och
+--    är ansvarig på en åtgärd i en SLUTFÖRD rond) — raderingen ska lyckas och kolumnerna bli null.
+--    Rulla tillbaka.
+--
+-- 7. En installatör (member, utan nycklarna) ska se NOLL ronder och få 42501 från
 --    safety_round_order_lookup. Impersonera enligt metoden i
 --    20260811_crm_work_order_rls_perf_probe.sql — rollbytet, frågan och avläsningen MÅSTE ligga i
 --    EN sats:

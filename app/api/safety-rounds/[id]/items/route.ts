@@ -4,7 +4,7 @@ import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/res
 import { requirePermission } from '@/lib/auth/guards';
 import { customItemCreateSchema } from '@/lib/domains/safetyRounds/schemas';
 import { ITEMS, insertCustomItem, listChecklistCategories, nextPosition } from '@/lib/domains/safetyRounds/store';
-import { writeFailure } from '../../_lib';
+import { insertFailure } from '../../_lib';
 
 // Lägg till en EGEN punkt i checklistan ("Lägg till fler risker…"). Katalogens punkter kommer in när
 // ronden startas; härifrån går bara egna punkter, och insert-policyn kräver catalog_item_id = null.
@@ -44,11 +44,7 @@ export async function POST(req: Request, context: RouteContext) {
       text: parsed.data.text,
       position: position.data,
     });
-    if (error || !data) {
-      if (error?.code === '42501') return routeError(409, 'safety_round_locked', 'Ronden är slutförd. Checklistan kan inte ändras.');
-      if (error?.code === '23503') return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
-      return writeFailure(error, 'punkten');
-    }
+    if (error || !data) return insertFailure(error, 'punkten');
     return ok({ item: data }, 201);
   } catch (e: unknown) {
     console.error('[safety-rounds] ny punkt:', e instanceof Error ? e.stack ?? e.message : e);
