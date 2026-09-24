@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import Input from '@/components/ui/Input';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -12,7 +12,15 @@ import { downloadFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import { KMA_MATERIAL_INFO } from '@/lib/domains/crm/kmaPlans/materialInfo';
 import { kmaFormSchema } from '@/lib/domains/crm/kmaPlans/schemas';
-import { kmaFieldErrors, kmaMissingCrewCount, kmaSourceNote, mergeKmaCrew, renameKmaRow } from '@/lib/domains/crm/kmaPlans/dialog';
+import {
+  kmaFieldErrors,
+  kmaMissingCrewCount,
+  kmaSourceNote,
+  mergeKmaCrew,
+  pickKmaDirectoryEntry,
+  renameKmaRow,
+} from '@/lib/domains/crm/kmaPlans/dialog';
+import { dedupeDirectory, type KmaDirectoryEntry } from '@/lib/domains/crm/kmaPlans/directory';
 import {
   KMA_A8_ONGOING_ROWS,
   KMA_A8_VERIFYING_ROWS,
@@ -23,6 +31,7 @@ import {
 } from '@/lib/domains/crm/kmaPlans/template';
 import type { KmaFormValues, KmaPerson } from '@/lib/domains/crm/kmaPlans/types';
 import type { KmaPrefillResponse } from './useKmaPlans';
+import KmaNameCombobox from './KmaNameCombobox';
 
 // Dialogen där en KMA-plan fylls i och sparas som en ny revision.
 //
@@ -93,28 +102,42 @@ function TextField(props: {
   onChange: (value: string) => void;
   errors: Record<string, string>;
   placeholder?: string;
-  list?: string;
   inputMode?: 'tel' | 'email' | 'text';
   srOnlyLabel?: boolean;
+  /** Namnfält: förslag ur Kontaktlistan, och vad ett val gör med raden. */
+  suggest?: { entries: readonly KmaDirectoryEntry[]; onPick: (entry: KmaDirectoryEntry) => void };
 }) {
   const id = fieldId(props.path);
   const invalid = Boolean(props.errors[props.path]);
+  const describedBy = invalid ? `${id}-error` : undefined;
   return (
     <div className="min-w-0">
       <label htmlFor={id} className={cn('block', props.srOnlyLabel ? 'sr-only' : crm.label)}>
         {props.label}
       </label>
-      <Input
-        id={id}
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-        placeholder={props.placeholder}
-        list={props.list}
-        inputMode={props.inputMode}
-        aria-invalid={invalid || undefined}
-        aria-describedby={invalid ? `${id}-error` : undefined}
-        className={cn('min-h-10', invalid && 'border-rose-400')}
-      />
+      {props.suggest ? (
+        <KmaNameCombobox
+          id={id}
+          value={props.value}
+          onChange={props.onChange}
+          onPick={props.suggest.onPick}
+          entries={props.suggest.entries}
+          placeholder={props.placeholder}
+          invalid={invalid}
+          describedBy={describedBy}
+        />
+      ) : (
+        <Input
+          id={id}
+          value={props.value}
+          onChange={(e) => props.onChange(e.target.value)}
+          placeholder={props.placeholder}
+          inputMode={props.inputMode}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
+          className={cn('min-h-10', invalid && 'border-rose-400')}
+        />
+      )}
       <FieldError path={props.path} errors={props.errors} />
     </div>
   );
@@ -156,8 +179,9 @@ function Section({ title, hint, children }: { title: string; hint?: ReactNode; c
 export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving, onSubmit, onClose }: Props) {
   const toast = useToast();
   const uid = useId();
-  const directoryId = `${uid}-kma-directory`;
   const [mounted, setMounted] = useState(false);
+  // Kontaktlistan utan dubbletter — samma person under två kategorier står en gång i förslagen.
+  const people = useMemo(() => dedupeDirectory(prefill.directory), [prefill.directory]);
   // En tom fastighetsrad att skriva i när ordern inte gav någon — schemat filtrerar bort tomma rader.
   const [form, setForm] = useState<KmaFormValues>(() => ({
     ...prefill.form,
@@ -202,6 +226,11 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
   /** Namnet ändrat — telefonen (och e-posten) följer namnet, se renameKmaRow. */
   function rename<T extends { name: string; phone: string; email?: string }>(row: T, name: string): T {
     return renameKmaRow(row, name, prefill.directory);
+  }
+
+  /** Ett val i förslagslistan — namnet och just den personens nummer, se pickKmaDirectoryEntry. */
+  function pickInto<T extends { name: string; phone: string; email?: string }>(row: T, entry: KmaDirectoryEntry): T {
+    return pickKmaDirectoryEntry(row, entry, prefill.directory);
   }
 
   function setProject<K extends keyof KmaFormValues['project']>(key: K, value: KmaFormValues['project'][K]) {
@@ -309,14 +338,6 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
           noValidate
           onSubmit={(e) => e.preventDefault()}
         >
-          <datalist id={directoryId}>
-            {prefill.directory.map((entry, index) => (
-              <option key={`${entry.name}-${index}`} value={entry.name}>
-                {entry.role ?? ''}
-              </option>
-            ))}
-          </datalist>
-
           {prefill.unreadableRevision !== null ? (
             <p className="m-0 rounded-xl border border-solid border-amber-200 bg-amber-50 px-3 py-2.5 text-sm leading-relaxed text-amber-900">
               Revision {prefill.unreadableRevision} gick inte att läsa in, så formuläret är förifyllt på nytt från ordern.
@@ -407,7 +428,23 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
               <fieldset key={key} className="m-0 grid gap-2 border-0 p-0">
                 <legend className={cn('mb-1 p-0', crm.bodyStrong)}>{label}</legend>
                 <div className="grid gap-2 sm:grid-cols-[1.3fr_1fr_1.3fr]">
-                  <TextField path={`organisation.${key}.name`} label="Namn" value={form.organisation[key].name} onChange={(v) => setPerson(key, 'name', v)} errors={errors} list={directoryId} />
+                  <TextField
+                    path={`organisation.${key}.name`}
+                    label="Namn"
+                    value={form.organisation[key].name}
+                    onChange={(v) => setPerson(key, 'name', v)}
+                    errors={errors}
+                    suggest={{
+                      entries: people,
+                      onPick: (entry) =>
+                        update(
+                          (c) => ({ ...c, organisation: { ...c.organisation, [key]: pickInto(c.organisation[key], entry) } }),
+                          `organisation.${key}.name`,
+                          `organisation.${key}.phone`,
+                          `organisation.${key}.email`,
+                        ),
+                    }}
+                  />
                   <TextField path={`organisation.${key}.phone`} label="Telefon" value={form.organisation[key].phone} onChange={(v) => setPerson(key, 'phone', v)} errors={errors} inputMode="tel" />
                   <TextField path={`organisation.${key}.email`} label="E-post" value={form.organisation[key].email} onChange={(v) => setPerson(key, 'email', v)} errors={errors} inputMode="email" />
                 </div>
@@ -425,7 +462,11 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
                 value={form.organisation.siteRoundsBy}
                 onChange={(v) => update((c) => ({ ...c, organisation: { ...c.organisation, siteRoundsBy: v } }), 'organisation.siteRoundsBy')}
                 errors={errors}
-                list={directoryId}
+                suggest={{
+                  entries: people,
+                  onPick: (entry) =>
+                    update((c) => ({ ...c, organisation: { ...c.organisation, siteRoundsBy: entry.name } }), 'organisation.siteRoundsBy'),
+                }}
               />
               <TextField
                 path="organisation.deviationRecipient"
@@ -480,7 +521,15 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
                   srOnlyLabel
                   placeholder="Namn"
                   value={contact.name}
-                  list={directoryId}
+                  suggest={{
+                    entries: people,
+                    onPick: (entry) =>
+                      update(
+                        (c) => ({ ...c, contacts: c.contacts.map((row, i) => (i === index ? pickInto(row, entry) : row)) }),
+                        `contacts.${index}.name`,
+                        `contacts.${index}.phone`,
+                      ),
+                  }}
                   onChange={(v) =>
                     update(
                       (c) => ({ ...c, contacts: c.contacts.map((row, i) => (i === index ? rename(row, v) : row)) }),
@@ -560,7 +609,17 @@ export default function WorkOrderKmaDialog({ mode, nextRevision, prefill, saving
                       srOnlyLabel
                       placeholder="Namn"
                       value={signer.name}
-                      list={directoryId}
+                      suggest={{
+                        entries: people,
+                        onPick: (entry) =>
+                          update(
+                            (c) => ({
+                              ...c,
+                              signers: { ...c.signers, [key]: c.signers[key].map((row, i) => (i === index ? { ...row, name: entry.name } : row)) },
+                            }),
+                            `signers.${key}.${index}.name`,
+                          ),
+                      }}
                       onChange={(v) =>
                         update(
                           (c) => ({ ...c, signers: { ...c.signers, [key]: c.signers[key].map((row, i) => (i === index ? { ...row, name: v } : row)) } }),

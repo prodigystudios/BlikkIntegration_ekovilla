@@ -43,6 +43,20 @@ export function kmaSourceNote(source: KmaPrefillSource, formatDate: (iso: string
   }
 }
 
+/**
+ * Ett val i förslagslistan: namnet OCH just den postens nummer. Till skillnad från en uppslagning på
+ * namnet (renameKmaRow) vet vi här exakt vilken person som valdes — två med samma namn och olika
+ * nummer går att skilja åt, där en namnuppslagning hade svarat tomt för båda. E-posten följer
+ * samma regel som vid ett skrivet namnbyte.
+ */
+export function pickKmaDirectoryEntry<T extends { name: string; phone: string; email?: string }>(
+  row: T,
+  entry: KmaDirectoryEntry,
+  directory: readonly KmaDirectoryEntry[],
+): T {
+  return { ...renameKmaRow(row, entry.name, directory), phone: entry.phone?.trim() ?? '' };
+}
+
 /** Zod-felen per fält, nycklade på sökvägen ("organisation.projectManager.name"). Första vinner. */
 export function kmaFieldErrors(error: ZodError): Record<string, string> {
   const out: Record<string, string> = {};
