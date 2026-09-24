@@ -73,6 +73,8 @@ const SALES_KEYS: PermissionKey[] = [
   // här raderna mätte route-testerna en säljare som inte når planeringen — och därmed inte heller
   // kontorets vägar in i ops_*-tabellerna, som gatar på just planning.schedule.write.
   'planning.schedule.read', 'planning.schedule.write',
+  // Skyddsronderna (20260924_safety_rounds.sql): sales läser och skriver, som admin.
+  'safety.round.read', 'safety.round.write',
 ];
 const KONSULT_KEYS: PermissionKey[] = [
   'crm.prospect.read', 'crm.call.read', 'crm.customer.read', 'crm.contact.read',
