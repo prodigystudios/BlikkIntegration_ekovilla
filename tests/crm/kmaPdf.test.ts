@@ -5,7 +5,7 @@ import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PDFDocument } from 'pdf-lib';
 
 import { buildKmaDocument, type KmaDocumentContext } from '@/lib/domains/crm/kmaPlans/document';
-import { kmaPdfFilename, renderKmaPdf } from '@/lib/domains/crm/kmaPlans/pdf';
+import { renderKmaPdf } from '@/lib/domains/crm/kmaPlans/pdf';
 import type { KmaDocument, KmaFormValues } from '@/lib/domains/crm/kmaPlans/types';
 
 import { kmaForm } from './helpers/kmaFixtures';
@@ -176,15 +176,6 @@ describe('renderKmaPdf', () => {
   it('en okänd layout kastar i stället för att ritas fel', async () => {
     const doc = { ...buildKmaDocument(kmaForm(), CTX), layout: 2 } as unknown as KmaDocument;
     await expect(renderKmaPdf(doc)).rejects.toThrow(/stöds inte/);
-  });
-});
-
-describe('kmaPdfFilename', () => {
-  it('nummer, revision och projekt — utan tecken som filsystem inte tål', () => {
-    const doc = buildKmaDocument(kmaForm(), { revision: 2, issuedOn: '2026-10-01', firstIssuedOn: '2026-09-24' });
-    expect(kmaPdfFilename(doc)).toBe('KMA-plan 6579 rev2 - Vindsbjälklag Hus A–C.pdf');
-    const odd = { meta: { ...doc.meta, projectName: 'Hus A/B: "etapp 1"' } };
-    expect(kmaPdfFilename(odd)).toBe('KMA-plan 6579 rev2 - Hus A B etapp 1.pdf');
   });
 });
 

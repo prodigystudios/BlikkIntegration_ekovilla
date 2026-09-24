@@ -1,6 +1,7 @@
 import fontkit from '@pdf-lib/fontkit';
 import { PDFDocument, rgb, type PDFFont, type PDFImage, type PDFPage, type RGB } from 'pdf-lib';
 
+import { buildDocumentFilename } from '@/lib/domains/crm/documentEmail';
 import { loadDesignFonts, loadDesignLogo, loadIsoleringslandslagetLogo } from '@/lib/pdf/brandAssets';
 import { createFlow, type Flow } from '@/lib/pdf/flow';
 import { cleanText, wrapLines } from '@/lib/pdf/text';
@@ -535,9 +536,15 @@ export async function renderKmaPdf(doc: KmaDocument, assets: KmaPdfAssets = {}):
   return pdf.save();
 }
 
-/** Filnamnet: "KMA-plan 6579 rev2 - Vindsbjälklag.pdf". Tecken som filsystem inte tål bort. */
-export function kmaPdfFilename(doc: Pick<KmaDocument, 'meta'>): string {
-  const safe = (value: string) => value.replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const project = safe(doc.meta.projectName).slice(0, 80);
-  return `KMA-plan ${safe(doc.meta.projectNumber)} rev${doc.meta.revision}${project ? ` - ${project}` : ''}.pdf`;
+/**
+ * Filnamnet: "KMA-plan 6579 rev2 - Vindsbjalklag Hus AC.pdf". Samma ASCII-regel som orderns andra
+ * dokument (buildDocumentFilename) — å/ä/ö renderas olika per webbläsare och filsystem. Revisionen
+ * står i namnet så att två revisioner inte skriver över varandra i Hämtade filer.
+ */
+export function kmaPlanFilename(meta: Pick<KmaDocument['meta'], 'projectNumber' | 'revision' | 'projectName'>): string {
+  return buildDocumentFilename({
+    kind: 'kma',
+    ref: [meta.projectNumber, `rev${meta.revision}`].filter(Boolean).join(' '),
+    projectName: meta.projectName,
+  });
 }

@@ -44,6 +44,14 @@ const nextConfig = {
         './public/brand/fonts/*.ttf',
         './public/brand/Ekovilla_logo_Figma.png',
       ],
+      // KMA-planen (lib/domains/crm/kmaPlans/pdf.ts) — samma typsnitt genom lib/pdf/brandAssets, och
+      // BÅDA bolagens loggor: planens sidhuvud bär Ekovillas och Isoleringslandslagets, som Word-mallen.
+      // tests/shared/pdfTracing.test.ts vaktar att posten finns och att varje mönster hittar en fil.
+      '/api/crm/work-orders/[id]/kma-plans/[planId]/pdf': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+        './public/brand/Isoleringslandslaget_logo.jpg',
+      ],
     },
   },
 };

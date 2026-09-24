@@ -76,6 +76,13 @@ describe('buildDocumentFilename', () => {
     expect(buildDocumentFilename({ kind: 'offer', ref: '12345' })).toBe('Offert 12345.pdf');
   });
 
+  // KMA-planen: numret bär revisionen, så två revisioner av samma plan inte skriver över varandra
+  // i Hämtade filer.
+  it('KMA-plan: nummer och revision, ASCII', () => {
+    expect(buildDocumentFilename({ kind: 'kma', ref: '6579 rev2', projectName: 'Vindsbjälklag Hus A–C' }))
+      .toBe('KMA-plan 6579 rev2 - Vindsbjalklag Hus AC.pdf');
+  });
+
   // Ett långt projektnamn får inte spränga filnamnslängden på mottagarens filsystem.
   it('kapar ett långt projektnamn', () => {
     const name = buildDocumentFilename({ kind: 'offer', ref: '1', projectName: 'A'.repeat(200) });
