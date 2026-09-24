@@ -98,8 +98,11 @@ export type KmaBlock =
   /** Stycke. `lead` skrivs i fetstil först på raden ("Syfte:"). Radbrytningar i `text` bevaras. */
   | { t: 'p'; text: string; lead?: string }
   | { t: 'list'; items: string[] }
-  /** Etikett–värde-rader. Ett tomt värde ritas som en skrivlinje (blanketter). */
-  | { t: 'fields'; rows: Array<[string, string]> }
+  /**
+   * Etikett–värde-rader. `form` ritar dem som en BLANKETT: varje rad får en linje att skriva på, och
+   * ett ifyllt värde står på sin linje (egenkontrollmallens huvud).
+   */
+  | { t: 'fields'; rows: Array<[string, string]>; form?: boolean }
   /**
    * Tabell. `minRows` fyller på med tomma rader (signaturlistor att skriva på), `rowMinHeight` ger
    * skrivutrymme i en blankett.

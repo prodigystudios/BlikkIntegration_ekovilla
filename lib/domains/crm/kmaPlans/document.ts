@@ -285,6 +285,7 @@ function appendix6(form: KmaFormValues): KmaSection {
       { t: 'h1', text: appendixHeading(6) },
       {
         t: 'fields',
+        form: true,
         rows: [
           ['Utförandedatum', ''],
           ['Isolerentreprenör', KMA_COMPANY.name],
@@ -316,11 +317,13 @@ function appendix6(form: KmaFormValues): KmaSection {
           { head: 'Etapp (öppet)', width: 1.4 },
           { head: 'Yta m²', width: 1 },
           { head: 'Beställd tjocklek ex. sättningspåslag', width: 1.3 },
-          { head: 'Sättningspåslag %', width: 1.1 },
+          // Uttrycklig brytning efter bindestrecket: kolumnen är för smal för ordet, och utan den
+          // delades det mitt i ("Sättningspås / lag").
+          { head: 'Sättnings-\npåslag %', width: 1.1 },
           { head: 'Installerad tjocklek inkl. sättningspåslag', width: 1.3 },
           { head: 'Installerad densitet kg/m³', width: 1.2 },
           { head: 'Antal säck', width: 0.9 },
-          { head: 'Lambdavärde W/m²K', width: 1.1 },
+          { head: 'Lambda-\nvärde W/m²K', width: 1.1 },
         ],
         rows: [withLambda(8), withLambda(8)],
         rowMinHeight: 18,

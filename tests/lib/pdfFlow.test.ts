@@ -7,7 +7,7 @@ import { createFlow } from '@/lib/pdf/flow';
 // mot: SIDAN och BASLINJEN byter tillsammans, och fortsättningshuvudet hamnar på den NYA sidan.
 // Ett fel här syns inte i en textextraktion — texten finns kvar, bara på fel blad.
 
-async function setup(continuation?: (page: PDFPage) => void) {
+async function setup(continuation?: (page: PDFPage, top: number) => number | void) {
   const doc = await PDFDocument.create();
   const first = doc.addPage();
   const created: PDFPage[] = [];
@@ -54,7 +54,9 @@ describe('createFlow', () => {
 
   it('ritar fortsättningshuvudet på den NYA sidan, inte på den gamla', async () => {
     const drawnOn: PDFPage[] = [];
-    const { first, created, flow } = await setup((page) => drawnOn.push(page));
+    const { first, created, flow } = await setup((page) => {
+      drawnOn.push(page);
+    });
     flow.y = 90;
     flow.ensure(20);
     expect(drawnOn).toEqual([created[0]]);
@@ -63,7 +65,9 @@ describe('createFlow', () => {
 
   it('en nollställd continuation ritar ingenting på nästa sida', async () => {
     const drawnOn: PDFPage[] = [];
-    const { created, flow } = await setup((page) => drawnOn.push(page));
+    const { created, flow } = await setup((page) => {
+      drawnOn.push(page);
+    });
     flow.continuation = null;
     flow.y = 90;
     flow.ensure(20);
@@ -83,6 +87,38 @@ describe('createFlow', () => {
     const drawnOn = drawRow(flow);
     expect(drawnOn).not.toBe(first);
     expect(drawnOn).toBe(flow.page);
+  });
+
+  it('ett fortsättningshuvud som anger sin höjd flyttar ned första raden', async () => {
+    const { flow } = await setup((_page, top) => {
+      expect(top).toBe(760);
+      return 24;
+    });
+    flow.y = 90;
+    flow.ensure(20);
+    expect(flow.y).toBe(736);
+  });
+
+  it('ett huvud med fast plats (inget returvärde) lämnar baslinjen vid continuationTop', async () => {
+    const { flow } = await setup(() => undefined);
+    flow.y = 90;
+    flow.ensure(20);
+    expect(flow.y).toBe(760);
+  });
+
+  it('breakPage byter sida utan att rita fortsättningshuvudet', async () => {
+    const drawnOn: PDFPage[] = [];
+    const { first, created, flow } = await setup((page) => {
+      drawnOn.push(page);
+      return 30;
+    });
+    flow.y = 500; // gott om plats — brytningen är avsiktlig, inte platsbrist
+    flow.breakPage();
+    expect(created).toHaveLength(1);
+    expect(flow.page).toBe(created[0]);
+    expect(flow.page).not.toBe(first);
+    expect(flow.y).toBe(760);
+    expect(drawnOn).toHaveLength(0);
   });
 
   it('ensure fungerar även utplockad ur objektet', async () => {

@@ -25,10 +25,19 @@ export type Flow = {
    * en månad vars ersättningslista bröt till sida två fick då "DATUM · KLOCKSLAG · RAST · ARBETAT"
    * över fyra utläggsrader — kolumnrubriker som inte beskrev något på sidan. `null` betyder att
    * sidan börjar tom under huvudet. Nollställ den när tabellen är slut.
+   *
+   * Får `top` (första baslinjen på fortsättningssidan) och kan returnera hur många punkter den
+   * använde — då börjar flödet så långt under. En rubrik med fast plats (löneunderlaget) returnerar
+   * inget; en tabellrubrik vars höjd beror på texten (KMA-planen) returnerar sin höjd.
    */
-  continuation: ((page: PDFPage) => void) | null;
+  continuation: ((page: PDFPage, top: number) => number | void) | null;
   /** Byter till en fortsättningssida när `height` punkter inte ryms ovanför `bottom`. */
   ensure(height: number): void;
+  /**
+   * Avsiktlig sidbrytning — ett nytt avsnitt, som en bilaga. Ritar INGET fortsättningshuvud: det
+   * hör till något som flödar över en brytning, och här börjar något nytt.
+   */
+  breakPage(): void;
 };
 
 export type FlowOptions = {
@@ -42,7 +51,7 @@ export type FlowOptions = {
   bottom: number;
   /** Skapar en fortsättningssida, sidhuvudet inräknat. */
   newPage: () => PDFPage;
-  continuation?: ((page: PDFPage) => void) | null;
+  continuation?: ((page: PDFPage, top: number) => number | void) | null;
 };
 
 export function createFlow(options: FlowOptions): Flow {
@@ -56,7 +65,11 @@ export function createFlow(options: FlowOptions): Flow {
     ensure(height: number) {
       if (flow.y - height >= bottom) return;
       flow.page = newPage();
-      flow.continuation?.(flow.page);
+      const used = flow.continuation?.(flow.page, continuationTop);
+      flow.y = continuationTop - (typeof used === 'number' ? used : 0);
+    },
+    breakPage() {
+      flow.page = newPage();
       flow.y = continuationTop;
     },
   };

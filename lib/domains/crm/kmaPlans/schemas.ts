@@ -117,7 +117,7 @@ const block = z.discriminatedUnion('t', [
   z.object({ t: z.literal('h3'), text: cell }),
   z.object({ t: z.literal('p'), text: z.string().max(10000), lead: cell.optional() }),
   z.object({ t: z.literal('list'), items: z.array(cell).max(100) }),
-  z.object({ t: z.literal('fields'), rows: z.array(z.tuple([cell, cell])).max(50) }),
+  z.object({ t: z.literal('fields'), rows: z.array(z.tuple([cell, cell])).max(50), form: z.boolean().optional() }),
   z.object({
     t: z.literal('table'),
     columns: z.array(z.object({ head: cell, width: z.number().positive() })).min(1).max(12),
