@@ -8,6 +8,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate } from '@/app/crm/lib/format';
 import { completionProblems, summarizeItems } from '@/lib/domains/safetyRounds/completion';
 import { stepCounts } from '@/lib/domains/safetyRounds/form';
+import { photoNumbersByItem } from '@/lib/domains/safetyRounds/photoRules';
 import { safetyRoundOrderRef } from '@/lib/domains/safetyRounds/types';
 import { ROUND_STATUS_BADGE, ROUND_STATUS_LABEL } from '../_components/safetyUi';
 import ActionsStep from './ActionsStep';
@@ -67,6 +68,7 @@ export default function SafetyRoundClient({ roundId }: { roundId: string }) {
       counts: stepCounts(data),
       summary: summarizeItems(data.items),
       problems: completionProblems(data),
+      photoNumbers: photoNumbersByItem(data.photos),
     };
   }, [data]);
 
@@ -99,7 +101,7 @@ export default function SafetyRoundClient({ roundId }: { roundId: string }) {
     );
   }
 
-  const { round, participants, items, actions, canWrite, categories } = data;
+  const { round, participants, items, actions, photos, canWrite, categories } = data;
   const completed = round.status === 'completed';
   const readOnly = completed || !canWrite;
   const orderRef = safetyRoundOrderRef(round);
@@ -225,6 +227,11 @@ export default function SafetyRoundClient({ roundId }: { roundId: string }) {
           onRemoveCustomItem={(id) => void controller.removeCustomItem(id)}
           onAddAction={controller.addAction}
           onGoToActions={() => goTo('actions')}
+          photos={photos}
+          photoUrls={controller.photoUrls}
+          photoUploads={controller.photoUploads}
+          onUploadPhotos={(itemId, files) => void controller.uploadPhotos(itemId, files)}
+          onRemovePhoto={(id) => void controller.removePhoto(id)}
         />
       ) : step === 'actions' ? (
         <ActionsStep
@@ -233,6 +240,7 @@ export default function SafetyRoundClient({ roundId }: { roundId: string }) {
           lockedCore={readOnly}
           canFollowUp={canWrite}
           directory={suggestions.directory}
+          photoNumbersByItem={derived.photoNumbers}
           onAdd={controller.addAction}
           onPatch={(id, patch) => void controller.patchAction(id, patch)}
           onRemove={(id) => void controller.removeAction(id)}

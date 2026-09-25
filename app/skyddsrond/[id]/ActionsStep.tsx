@@ -8,6 +8,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { KmaDirectoryEntry } from '@/lib/domains/crm/kmaPlans/directory';
 import { describeItem } from '@/lib/domains/safetyRounds/completion';
+import { formatPhotoRefs } from '@/lib/domains/safetyRounds/photoRules';
 import {
   ACTION_EFFECTS,
   ACTION_EFFECT_LABELS,
@@ -41,6 +42,8 @@ type Props = {
   /** Uppföljningen går att föra in (skrivnyckeln, även efter slutförd rond). */
   canFollowUp: boolean;
   directory: readonly KmaDirectoryEntry[];
+  /** Fotonumren per punkt — åtgärden visar sin punkts foton ("Foto 1, 2"), som protokollet. */
+  photoNumbersByItem: ReadonlyMap<string, number[]>;
   onAdd: (input: { finding: string }) => Promise<unknown>;
   onPatch: (id: string, patch: Partial<SafetyRoundAction>) => void;
   onRemove: (id: string) => void;
@@ -64,10 +67,12 @@ const EFFECT_OPTIONS = ACTION_EFFECTS.map((value) => ({
           : 'border-slate-600 bg-slate-600 text-white',
 }));
 
-function ActionCard({ action, index, item, lockedCore, canFollowUp, directory, onPatch, onRemove }: {
+function ActionCard({ action, index, item, photoRefs, lockedCore, canFollowUp, directory, onPatch, onRemove }: {
   action: SafetyRoundAction;
   index: number;
   item: SafetyRoundItem | undefined;
+  /** "Foto 1, 2" — tom sträng utan foton. */
+  photoRefs: string;
 } & Pick<Props, 'lockedCore' | 'canFollowUp' | 'directory' | 'onPatch' | 'onRemove'>) {
   const dueId = useId();
   const statusId = useId();
@@ -93,6 +98,7 @@ function ActionCard({ action, index, item, lockedCore, canFollowUp, directory, o
           {item ? <span className={cn('ml-2 font-normal', crm.meta)}>från {describeItem(item).toLowerCase()}</span> : null}
         </p>
         <span className={cn(crm.badge, ACTION_STATUS_BADGE[action.status])}>{ACTION_STATUS_LABELS[action.status]}</span>
+        {photoRefs ? <p className={cn('m-0 basis-full', crm.meta)}>{photoRefs}</p> : null}
       </div>
 
       <TextAreaField label="Risk / brist" value={action.finding} onCommit={text('finding')} readOnly={lockedCore} maxLength={500} />
@@ -231,7 +237,7 @@ function AddAction({ onAdd }: { onAdd: Props['onAdd'] }) {
   );
 }
 
-export default function ActionsStep({ actions, items, lockedCore, canFollowUp, directory, onAdd, onPatch, onRemove }: Props) {
+export default function ActionsStep({ actions, items, lockedCore, canFollowUp, directory, photoNumbersByItem, onAdd, onPatch, onRemove }: Props) {
   const itemById = useMemo(() => new Map(items.map((item) => [item.id, item])), [items]);
 
   return (
@@ -257,6 +263,7 @@ export default function ActionsStep({ actions, items, lockedCore, canFollowUp, d
               action={action}
               index={index}
               item={action.item_id ? itemById.get(action.item_id) : undefined}
+              photoRefs={action.item_id ? formatPhotoRefs(photoNumbersByItem.get(action.item_id) ?? []) : ''}
               lockedCore={lockedCore}
               canFollowUp={canFollowUp}
               directory={directory}
