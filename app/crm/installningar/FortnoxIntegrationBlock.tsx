@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'next/navigation';
 import type { FortnoxConnectionStatus } from '@/lib/domains/fortnox/types';
 
 type SyncState = 'idle' | 'loading' | 'success' | 'error';
@@ -19,6 +20,9 @@ export default function FortnoxIntegrationBlock({
   initialStatus: FortnoxConnectionStatus;
 }) {
   const [status, setStatus] = useState(initialStatus);
+  // OAuth-flödet (/api/fortnox/auth och dess callback) redirectar hit med ?fortnox_error=<skäl> när
+  // kopplingen inte sparades — t.ex. när spärren utanför produktion avvisar fel bolag.
+  const connectError = useSearchParams().get('fortnox_error');
   const [disconnecting, setDisconnecting] = useState(false);
   const [articleSync, setArticleSync] = useState<SyncResult>(defaultSync);
   const [customerSync, setCustomerSync] = useState<SyncResult>(defaultSync);
@@ -187,6 +191,15 @@ export default function FortnoxIntegrationBlock({
           </span>
         </div>
       </div>
+
+      {connectError && !status.connected && (
+        <p
+          role="alert"
+          className="m-0 mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
+        >
+          Fortnox kopplades inte: {connectError}
+        </p>
+      )}
 
       {status.connected ? (
         <div className="grid gap-3">
