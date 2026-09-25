@@ -65,3 +65,8 @@ design-underlag/
 # den inte bli committad. Bilagorna produktionen läser heter 13949-* och allmanna-villkor-*.
 public/documents/templates/Ekovilla-Offert-*
 public/documents/templates/Offert *
+
+# Supabase CLI:ns lokala cache (supabase link, db push …): CLI-, Postgres- och tjänsteversioner,
+# projektets ref och pooler-adressen. Maskinens läge, inte kod — varje CLI-körning skriver om den.
+# Samma rad som `supabase init` själv lägger i supabase/.gitignore.
+supabase/.temp/
