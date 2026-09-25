@@ -11,3 +11,14 @@
 -- inte. PUBLIC tas med för säkerhets skull (idempotent — prod har den redan inte).
 
 revoke execute on function public.set_user_tags(uuid, text[]) from anon, public;
+
+-- Efterkontroll. REVOKE tar bara bort rättigheter som den körande rollen (eller ägaren) har delat ut;
+-- går det inte blir det bara en WARNING, och pushen hade registrerats som körd med hålet kvar. Då ska
+-- den i stället avbrytas.
+do $$
+begin
+  if has_function_privilege('anon', 'public.set_user_tags(uuid, text[])', 'execute')
+     or has_function_privilege('authenticated', 'public.set_user_tags(uuid, text[])', 'execute') then
+    raise exception 'set_user_tags är fortfarande körbar för anon eller authenticated — revoke tog inte';
+  end if;
+end $$;
