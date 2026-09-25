@@ -9,7 +9,7 @@ import { cookies } from 'next/headers';
 const cache: typeof reactCache = typeof reactCache === 'function' ? reactCache : ((fn: any) => fn) as typeof reactCache;
 
 // Permission-based access (RBAC), CRM + Fortnox scope. This is the TS half of the single
-// source of truth defined in supabase/sql/20260608_permissions_model.sql: the same effective
+// source of truth defined in supabase/archive/sql/20260608_permissions_model.sql: the same effective
 // permissions that drive RLS (via has_permission()) drive the app guards here.
 //
 // PERMISSION_KEYS mirrors the SQL `permissions` catalog. Keep them in sync — the parity test

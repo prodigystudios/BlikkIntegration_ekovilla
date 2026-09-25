@@ -3,7 +3,7 @@ import type { PdfBlock, PdfSection, PdfTableColumn } from '@/lib/pdf/blocks';
 // KMA-planens två former: FORMULÄRET (det som fylls i på arbetsordern) och DOKUMENTET (det som
 // renderas till PDF). Båda sparas på varje revision i crm_work_order_kma_plans — formuläret för att
 // nästa revision ska börja där den förra slutade, dokumentet för att en omladdning ska visa exakt
-// det innehåll kunden fick. Se supabase/sql/20260924_crm_work_order_kma_plans.sql.
+// det innehåll kunden fick. Se supabase/archive/sql/20260924_crm_work_order_kma_plans.sql.
 //
 // Versionsfälten (`v`, `layout`) finns för att en sparad rad ska gå att läsa även efter att formen
 // ändrats: en okänd version avvisas i stället för att feltolkas.

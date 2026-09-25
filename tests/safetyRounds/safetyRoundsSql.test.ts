@@ -14,7 +14,7 @@ import { resolve } from 'node:path';
  *   * Grant och policy följs åt — både-eller-ingen.
  */
 
-const FILE = resolve(process.cwd(), 'supabase/sql/20260924_safety_rounds.sql');
+const FILE = resolve(process.cwd(), 'supabase/archive/sql/20260924_safety_rounds.sql');
 
 // Kommentarerna bort: huvudet FÖRKLARAR varför saker saknas, och en textmatchning på förklaringen
 // hade gjort vakten omöjlig att uppfylla (eller lurat den att bli grön).

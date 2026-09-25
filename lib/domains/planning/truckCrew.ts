@@ -34,7 +34,7 @@ export function crewForTruckInRange(
  * om de är färre än standardteamet: en forkad vecka är ett medvetet undantag, och att lägga ihop
  * dem hade räknat in någon som uttryckligen bytts bort. Samma ordning som boarden ritar och som
  * `is_user_on_segment_between` släpper igenom på
- * (supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql) — de tre måste svara likadant, annars
+ * (supabase/archive/sql/20260917_get_my_crm_jobs_crew_per_day.sql) — de tre måste svara likadant, annars
  * lovar planeringen en mottagare som feeden inte har.
  *
  * 🧨 Räknar UNIKA member_id, inte rader, och hoppar över `member_id: null`. Två skäl, båda får

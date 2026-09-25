@@ -4,7 +4,7 @@ import type { MaterialCostArticle } from '@/lib/domains/crm/afterCalculation';
 
 // Efterkalkylens två inställningar — läs- och skrivvägen.
 //
-// Tabellerna kommer från supabase/sql/20260828_crm_cost_settings.sql:
+// Tabellerna kommer från supabase/archive/sql/20260828_crm_cost_settings.sql:
 //
 //   crm_calc_settings            singleton, timkostnaden i kr per MAN-timme
 //   crm_material_cost_articles   material (kortkod) -> kostnadsartikel i Fortnox

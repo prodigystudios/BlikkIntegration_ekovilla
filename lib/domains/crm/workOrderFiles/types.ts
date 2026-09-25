@@ -2,7 +2,7 @@
 //
 // Kategorierna bor HÄR och ingen annanstans: Zod-schemat i app/api/crm/work-orders/_lib.ts läser
 // arrayen, UI:t läser etikettkartan, och ett test låser båda mot CHECK-listan i
-// supabase/sql/20260815_crm_work_order_files.sql. En array, tre konsumenter.
+// supabase/archive/sql/20260815_crm_work_order_files.sql. En array, tre konsumenter.
 
 export const WORK_ORDER_FILE_CATEGORIES = [
   'drawing',

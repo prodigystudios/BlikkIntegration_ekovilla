@@ -23,12 +23,15 @@ import { join } from 'node:path';
  * projektet har fastnat på just 🧨. Därför en mekanisk vakt i stället för ett åtagande att minnas.
  *
  * Testet ligger under tests/planning/ eftersom det var där felet uppstod, men det granskar hela
- * supabase/-trädet rekursivt (supabase/sql och supabase/migrations, inklusive underkataloger som
- * supabase/sql/manual). Ligger .sql-filer någon annanstans i repot omfattas de INTE — lägg i så
+ * supabase/-trädet rekursivt (supabase/migrations och supabase/archive, inklusive underkataloger som
+ * supabase/archive/sql/manual). Ligger .sql-filer någon annanstans i repot omfattas de INTE — lägg i så
  * fall till roten i SQL_ROOTS nedan.
+ *
+ * Arkivet körs aldrig av migreringskedjan, men granskas ändå: engångsskripten i archive/sql/manual
+ * körs för hand, och det är just i SQL-editorn felet uppstår.
  */
 
-const SQL_ROOTS = ['supabase/sql', 'supabase/migrations'];
+const SQL_ROOTS = ['supabase/migrations', 'supabase/archive'];
 
 function sqlFilesUnder(dir: string): string[] {
   let entries: string[];

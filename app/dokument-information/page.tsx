@@ -96,7 +96,7 @@ export default async function DokumentInformationPage() {
   try {
     groups = await loadInfoPage(supabase);
   } catch {
-    // Migreringen ska köras FÖRE den här koden (se supabase/sql/20260821_info_sections.sql):
+    // Migreringen ska köras FÖRE den här koden (se supabase/archive/sql/20260821_info_sections.sql):
     // det hårdkodade innehållet är borta, så utan tabellerna finns inget att falla tillbaka på.
     // Den här grenen är skyddsnätet för den ordningen och för ett tillfälligt databasfel — en
     // sida som ligger i menyn för varenda roll ska säga det lugnt, inte kasta ett femhundrafel.

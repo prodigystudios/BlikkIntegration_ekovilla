@@ -1,7 +1,7 @@
 // Skyddsrondens former och etiketter — ren modul, inga beroenden, så att klientformuläret kan
 // importera den utan att dra med sig servern.
 //
-// Värdena är databasens (check constraints i supabase/sql/20260924_safety_rounds.sql); etiketterna
+// Värdena är databasens (check constraints i supabase/archive/sql/20260924_safety_rounds.sql); etiketterna
 // är Excel-mallens ("Skyddsrond_mall_arbetsplats.xlsx"). Skalan är OK / Delvis / Brist / Ej relevant
 // — mallens rullista, inte dess instruktionstext (Williams beslut 2026-09-24).
 

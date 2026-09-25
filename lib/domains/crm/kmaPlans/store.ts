@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { KmaDirectoryEntry, KmaStoredPlanSource } from './prefill';
 
 // Databasen för KMA-planerna — tunna frågor med SESSIONSKLIENTEN. RLS gör hela auktoriseringen
-// (supabase/sql/20260924_crm_work_order_kma_plans.sql): läsning kräver crm.workorder.read,
+// (supabase/archive/sql/20260924_crm_work_order_kma_plans.sql): läsning kräver crm.workorder.read,
 // skapande crm.workorder.write. Ingen fråga här eleverar sig, och ingen behöver: namn och nummer
 // kommer ur Kontaktlistan, som varje inloggad redan läser.
 

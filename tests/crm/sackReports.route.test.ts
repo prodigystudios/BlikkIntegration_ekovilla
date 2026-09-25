@@ -645,7 +645,7 @@ describe('DELETE /sack-reports/[reportId]', () => {
 describe('paritet med DELETE-policyn i databasen', () => {
   const policy = (() => {
     const sql = readFileSync(
-      resolve(process.cwd(), 'supabase/sql/20260825_ops_segment_reports_delete_own_partial.sql'),
+      resolve(process.cwd(), 'supabase/archive/sql/20260825_ops_segment_reports_delete_own_partial.sql'),
       'utf8',
     );
     return sql.match(/create policy ops_segment_reports_delete_own_partial[\s\S]*?using \(([\s\S]*?)\n  \);/)?.[1] ?? '';

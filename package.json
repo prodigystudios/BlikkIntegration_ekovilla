@@ -12,7 +12,10 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "db:start": "supabase start",
+    "db:reset": "supabase db reset --local",
+    "db:diff": "supabase db diff --local"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // Attest — perioden som ett tillstånd, och låset som gör löneunderlaget trovärdigt.
 //
 // En månad går open → submitted → approved. Så länge den är `open` är den arbetsmaterial; från
-// `submitted` är den fryst (se supabase/sql/20260812_time_approvals.sql — både RLS-policy och
+// `submitted` är den fryst (se supabase/archive/sql/20260812_time_approvals.sql — både RLS-policy och
 // trigger). Det som står här är appsidans spegling: samma matris, så knappen kan vara rätt innan
 // anropet görs. DATABASEN ÄR GARANTIN; det här är läsbarheten. Samma uppdelning som mellan
 // buildTimeEntryRow och CHECK:en på crm_time_entries.

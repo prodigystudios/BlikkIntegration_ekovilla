@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // samma form, så en uppsättning funktioner betjänar alla tre — `kind` väljer tabellen.
 //
 // Listorna bodde i Blikk fram till fas 4 och hämtades live vid varje modalöppning. Nu är de våra
-// (supabase/sql/20260811_time_reference_tables.sql), fyllda en gång från Blikk och underhållna av
+// (supabase/archive/sql/20260811_time_reference_tables.sql), fyllda en gång från Blikk och underhållna av
 // admin. `payroll_code` är den enda kolumn som betyder något för lönebyrån, och den är fritext med
 // flit: ingen sats, inget belopp och ingen avtalsregel får bo i koden.
 

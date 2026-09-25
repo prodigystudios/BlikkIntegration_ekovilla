@@ -7,7 +7,7 @@ import { lineItemQuantity } from './lineItems';
 // lib/domains/planning/sackLedger.ts är en "etapprad" en KONSTRUKTIONSDEL - vind, vägg, snedtak.
 // Det här är något annat: en TIDSETAPP, som kan innehålla flera konstruktionsdelar, och där samma
 // konstruktionsdel kan delas mellan två etapper. Därför `stage` i kod och databas, "Etapp" bara i
-// det användaren läser. Se även huvudet i supabase/sql/20260919_crm_work_order_stages.sql.
+// det användaren läser. Se även huvudet i supabase/archive/sql/20260919_crm_work_order_stages.sql.
 //
 // ── MODELLEN ────────────────────────────────────────────────────────────────
 // En etapp äger en delmängd av orderns rader MED ANTAL, i samma form som delfakturans rundor

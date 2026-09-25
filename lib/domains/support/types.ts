@@ -3,7 +3,7 @@
 //
 // Skilt från lib/domains/fault-reports/* med flit: felanmälan gäller företagets utrustning och
 // fan-outar till flera arbetsledare, det här gäller appen och går till utvecklaren. Se
-// supabase/sql/20260812_app_tickets.sql för resonemanget.
+// supabase/archive/sql/20260812_app_tickets.sql för resonemanget.
 
 export const TICKET_KINDS = ['bug', 'idea'] as const;
 export type TicketKind = (typeof TICKET_KINDS)[number];

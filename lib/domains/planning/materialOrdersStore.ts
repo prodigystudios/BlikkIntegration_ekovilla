@@ -4,7 +4,7 @@ import type { ExpectedDeliveryStatus } from './expectedDeliveries';
 import type { OrderEmailLanguage } from './materialOrderEmail';
 
 // Materialbeställningarnas läsningar och skrivningar. Tunna: reglerna bor i ./materialOrders.ts och i
-// databasen (supabase/sql/20260917_ops_material_orders.sql).
+// databasen (supabase/archive/sql/20260917_ops_material_orders.sql).
 //
 // 🧨 SESSIONSKLIENTEN, ALLTID. RLS kräver planning.depot.manage, och RPC:erna prövar has_permission på
 // auth.uid() — under service-role är den null och grinden nekar. Mottagare, mailtext och leverantörsnamn finns

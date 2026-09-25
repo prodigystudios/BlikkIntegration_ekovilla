@@ -12,7 +12,7 @@ import type {
 } from './types';
 
 // Databasen för skyddsronderna — tunna frågor med SESSIONSKLIENTEN. RLS gör auktoriseringen
-// (supabase/sql/20260924_safety_rounds.sql): läsning kräver safety.round.read eller .write,
+// (supabase/archive/sql/20260924_safety_rounds.sql): läsning kräver safety.round.read eller .write,
 // skrivning .write och — på rondinfo, deltagare och punkter — att ronden är ett utkast.
 //
 // ⚠️ En UPDATE eller DELETE som RLS stoppar ger INGET fel från PostgREST, bara noll rader. Därför

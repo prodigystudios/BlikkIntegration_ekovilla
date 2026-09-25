@@ -10,7 +10,7 @@ import { MAX_PHOTOS_PER_ROUND } from '@/lib/domains/safetyRounds/photoRules';
  * sammansatt nyckel som håller fotot i samma rond som sin punkt.
  */
 
-const sql = readFileSync(resolve(process.cwd(), 'supabase/sql/20260925_safety_round_photos.sql'), 'utf8')
+const sql = readFileSync(resolve(process.cwd(), 'supabase/archive/sql/20260925_safety_round_photos.sql'), 'utf8')
   .replace(/--.*$/gm, '')
   .replace(/\s+/g, ' ')
   .toLowerCase();
@@ -96,7 +96,7 @@ describe('safety_round_photos (SQL)', () => {
     });
 
     it('räknaren går inte att skriva från appen (inte i rondernas kolumnvisa update)', () => {
-      const rounds = readFileSync(resolve(process.cwd(), 'supabase/sql/20260924_safety_rounds.sql'), 'utf8').toLowerCase();
+      const rounds = readFileSync(resolve(process.cwd(), 'supabase/archive/sql/20260924_safety_rounds.sql'), 'utf8').toLowerCase();
       const grant = rounds.slice(rounds.indexOf('grant update ('), rounds.indexOf(') on public.safety_rounds to authenticated'));
       expect(grant).not.toContain('last_photo_no');
     });

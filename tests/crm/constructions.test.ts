@@ -97,7 +97,7 @@ describe('inferConstructionFromArticle', () => {
 describe('paritet med databasens CHECK', () => {
   it('ops_segment_reports_construction_chk listar exakt CONSTRUCTION_SLUGS', () => {
     const sql = readFileSync(
-      resolve(process.cwd(), 'supabase/sql/20260820_ops_segment_reports_sack_reporting.sql'),
+      resolve(process.cwd(), 'supabase/archive/sql/20260820_ops_segment_reports_sack_reporting.sql'),
       'utf8',
     );
     const match = sql.match(/ops_segment_reports_construction_chk[\s\S]*?check \(construction is null or construction in \(([^)]*)\)\)/);

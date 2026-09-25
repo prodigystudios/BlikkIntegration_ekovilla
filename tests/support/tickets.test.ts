@@ -331,7 +331,7 @@ describe('notismottagare', () => {
 // blir felet TYST i utvecklingen och ett 500 i drift — formuläret erbjuder ett värde som databasen
 // vägrar ta emot. Den här kontrollen är hela skyddet mot det.
 describe('TS-nycklarna matchar CHECK-villkoren i migrationen', () => {
-  const sql = readFileSync(join(process.cwd(), 'supabase/sql/20260812_app_tickets.sql'), 'utf8');
+  const sql = readFileSync(join(process.cwd(), 'supabase/archive/sql/20260812_app_tickets.sql'), 'utf8');
 
   function allowedValues(constraint: string): string[] {
     const start = sql.indexOf(constraint);
