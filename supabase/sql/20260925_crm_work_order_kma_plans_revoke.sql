@@ -1,0 +1,48 @@
+-- KMA-planerna: grant-nivån ska säga detsamma som filen redan påstod — bara SELECT och INSERT.
+--
+-- VARFÖR
+-- 20260924_crm_work_order_kma_plans.sql skrev `grant select, insert ... to authenticated` och
+-- beskrev tabellen som "INGEN UPDATE OCH INGEN DELETE — varken grant eller policy". Men en tabell som
+-- skapas i Supabase SQL-editorn får projektets default privileges — `grant all ... to anon,
+-- authenticated` (se 20260911_ops_depot_stock_counts.sql) — och en `grant` tar aldrig bort något.
+-- I praktiken har authenticated alltså UPDATE, DELETE och TRUNCATE på tabellen, och anon ALLT.
+--
+-- Ingen har kunnat ändra eller ta bort en plan: RLS har inga update- eller delete-policyer, och anon
+-- har inga policyer alls, så varje sådan sats har gett noll rader eller nekats. Men "bara select +
+-- insert" ska vara sant på båda nivåerna, inte hänga på att ingen någonsin lägger till en policy.
+-- Upptäckt i grenreviewen av skyddsronden (20260924_safety_rounds.sql gör revoke all först).
+--
+-- VAD SOM ÄNDRAS: bara privilegierna. Tabellen, policyerna och datan rörs inte.
+--
+-- DEPLOY-ORDNING: VALFRI. Appen läser och skapar planer med sessionsklienten (SELECT + INSERT,
+-- lib/domains/crm/kmaPlans/store.ts) och använder varken anon, service-roll, UPDATE eller DELETE mot
+-- tabellen — båda privilegierna appen använder står kvar efter filen.
+--
+-- Kör i Supabase SQL editor. Idempotent: revoke all och grant ger samma slutläge varje gång.
+--
+-- ⚠️ INGA EMOJI UTANFÖR BMP I DEN HÄR FILEN — se tests/planning/sqlNoAstralChars.test.ts.
+
+revoke all on public.crm_work_order_kma_plans from anon, authenticated;
+grant select, insert on public.crm_work_order_kma_plans to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Verifiering (kör efter applicering)
+-- ---------------------------------------------------------------------------
+--
+-- 1. Exakt INSERT och SELECT för authenticated, och ingenting för anon:
+--
+--      select grantee, string_agg(privilege_type, ', ' order by privilege_type)
+--      from information_schema.role_table_grants
+--      where table_schema = 'public' and table_name = 'crm_work_order_kma_plans'
+--        and grantee in ('anon', 'authenticated')
+--      group by grantee order by grantee;
+--
+--    Förväntat: EN rad, authenticated | INSERT, SELECT.
+--
+-- 2. Policyerna är orörda — fortfarande exakt select + insert:
+--
+--      select policyname, cmd from pg_policies
+--      where schemaname = 'public' and tablename = 'crm_work_order_kma_plans'
+--      order by cmd, policyname;
+--
+-- 3. KMA-kortet på en arbetsorder listar planerna, och "Revidera" sparar en ny revision.

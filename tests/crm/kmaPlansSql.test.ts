@@ -67,3 +67,31 @@ describe('crm_work_order_kma_plans (SQL)', () => {
     expect(sql).toMatch(/work_order_id uuid not null references public\.crm_work_orders\(id\) on delete cascade/);
   });
 });
+
+/**
+ * Grant-rättelsen. Tabellen skapades i SQL-editorn och fick projektets default privileges (`grant
+ * all ... to anon, authenticated`), så `grant select, insert` i ursprungsfilen tog aldrig bort
+ * något. Rättelsen gör revoke all FÖRE grant — i den ordningen, annars tar den bort det den just gav.
+ */
+describe('crm_work_order_kma_plans — grant-rättelsen (SQL)', () => {
+  const fix = readFileSync(resolve(process.cwd(), 'supabase/sql/20260925_crm_work_order_kma_plans_revoke.sql'), 'utf8')
+    .replace(/--.*$/gm, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+
+  it('revoke all från anon och authenticated FÖRE grant', () => {
+    const revoke = fix.indexOf(`revoke all on ${TABLE} from anon, authenticated;`);
+    const grant = fix.indexOf(`grant select, insert on ${TABLE} to authenticated;`);
+    expect(revoke).toBeGreaterThan(-1);
+    expect(grant).toBeGreaterThan(revoke);
+  });
+
+  it('ger tillbaka exakt select + insert, och ingenting till anon', () => {
+    const grants = [...fix.matchAll(/grant ([a-z, ]+) on (\S+) to ([a-z, ]+);/g)];
+    expect(grants.map((m) => [m[1], m[2], m[3]])).toEqual([['select, insert', TABLE, 'authenticated']]);
+  });
+
+  it('rör varken tabellen eller policyerna', () => {
+    expect(fix).not.toMatch(/\b(create|alter|drop) (table|policy)\b/);
+  });
+});
