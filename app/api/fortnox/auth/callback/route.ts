@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { requireCrmAdmin } from '@/app/api/fortnox/_shared';
 import { exchangeCodeForToken, saveFortnoxIntegration } from '@/lib/domains/fortnox/auth';
+import { assertFortnoxCompanyAllowed } from '@/lib/domains/fortnox/connectionGuard';
 
 const SETTINGS_URL = '/crm/installningar';
 
@@ -45,6 +46,8 @@ export async function GET(req: Request) {
 
   try {
     const tokenData = await exchangeCodeForToken(code);
+    // Utanför produktion: bara testbolaget. Före sparandet, så att fel bolags tokens aldrig lagras.
+    await assertFortnoxCompanyAllowed(tokenData.access_token);
     await saveFortnoxIntegration(tokenData, currentUser.id);
     return NextResponse.redirect(new URL(`${SETTINGS_URL}?fortnox_connected=1`, req.url));
   } catch (e: any) {
