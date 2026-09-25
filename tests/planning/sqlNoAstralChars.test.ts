@@ -23,15 +23,13 @@ import { join } from 'node:path';
  * projektet har fastnat på just 🧨. Därför en mekanisk vakt i stället för ett åtagande att minnas.
  *
  * Testet ligger under tests/planning/ eftersom det var där felet uppstod, men det granskar hela
- * supabase/-trädet rekursivt (supabase/migrations och supabase/archive, inklusive underkataloger som
- * supabase/archive/sql/manual). Ligger .sql-filer någon annanstans i repot omfattas de INTE — lägg i så
- * fall till roten i SQL_ROOTS nedan.
- *
- * Arkivet körs aldrig av migreringskedjan, men granskas ändå: engångsskripten i archive/sql/manual
- * körs för hand, och det är just i SQL-editorn felet uppstår.
+ * supabase/-trädet rekursivt: migrations, archive (engångsskripten i archive/sql/manual körs för
+ * hand), seed och checks (körs med psql). Ligger .sql-filer någon annanstans i repot omfattas de
+ * INTE — lägg i så fall till roten i SQL_ROOTS nedan. Lokala, gitignorerade filer (*.local.sql,
+ * *.tmp) hoppas över, så att resultatet inte beror på vilken maskin testet körs på.
  */
 
-const SQL_ROOTS = ['supabase/migrations', 'supabase/archive'];
+const SQL_ROOTS = ['supabase'];
 
 function sqlFilesUnder(dir: string): string[] {
   let entries: string[];
@@ -43,7 +41,7 @@ function sqlFilesUnder(dir: string): string[] {
   return entries.flatMap((name) => {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) return sqlFilesUnder(full);
-    return full.endsWith('.sql') ? [full] : [];
+    return full.endsWith('.sql') && !full.endsWith('.local.sql') ? [full] : [];
   });
 }
 

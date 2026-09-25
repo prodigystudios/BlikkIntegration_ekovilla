@@ -375,8 +375,9 @@ guard with should align with the table the route writes, so the route check and 
 Replace each `EXISTS(select 1 from public.profiles p where p.id = auth.uid() and p.role …)`
 with `public.has_permission('<key>')` where the key's seed equals the roles that predicate
 admitted. **Leave every ownership branch untouched.** Never widen. Read the *latest* policy
-file per table (grep `on public.<table>` across **both** `supabase/sql/` and
-`supabase/migrations/`, sort by date) — the filename does not tell you which table it edits.
+per table in `supabase/migrations/` (grep `on public.<table>`, and `"public"."<table>"` in the
+baseline, sort by filename) — the baseline holds every policy as it stood in prod on 2026-09-25.
+`supabase/archive/` is history and never runs; the filename does not tell you which table it edits.
 
 ---
 

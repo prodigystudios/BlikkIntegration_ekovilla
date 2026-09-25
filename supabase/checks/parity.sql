@@ -39,7 +39,7 @@ select c.relname,
   join pg_namespace n on n.oid = c.relnamespace
  cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) a
  where n.nspname = 'public'
-   and c.relkind in ('r', 'p', 'v', 'm')
+   and c.relkind in ('r', 'p', 'v', 'm', 'S')  -- S = sekvenser (t.ex. ordernummer)
    and a.grantee <> 0
    and pg_get_userbyid(a.grantee) in ('anon', 'authenticated', 'service_role')
  group by 1, 2
@@ -79,8 +79,10 @@ select c.relname, c.relrowsecurity, c.relforcerowsecurity
  where n.nspname = 'public' and c.relkind in ('r', 'p')
  order by 1;
 
+-- Hela policyn, inte bara namnet: ett villkor som skiljer, eller en RESTRICTIVE som blivit PERMISSIVE,
+-- ska synas här.
 \echo '== policies i public och storage'
-select schemaname, tablename, policyname, cmd, roles::text
+select schemaname, tablename, policyname, permissive, cmd, roles::text, qual, with_check
   from pg_policies
  where schemaname in ('public', 'storage')
  order by 1, 2, 3;

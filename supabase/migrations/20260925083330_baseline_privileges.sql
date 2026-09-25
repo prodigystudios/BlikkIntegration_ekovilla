@@ -67,5 +67,16 @@ grant update (client_label, contract_step, employer, held_at, held_on, leader_id
 -- men i CREATE TABLE — där stryker Postgres tyst ett unikhetsvillkor som dubblerar primärnyckeln.
 -- I prod kom det till med ALTER TABLE, som inte städar. Överflödigt, men prod och lokalt ska vara
 -- identiska: en framtida migrering som rör villkoret ska bete sig likadant på båda.
-alter table public.planning_project_meta
-  add constraint planning_project_meta_project_id_key unique (project_id);
+-- Villkorat, så att filen är en no-op även mot prod där villkoret redan finns (en naken ADD
+-- CONSTRAINT hade avbrutit en push med "relation already exists").
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'planning_project_meta_project_id_key'
+       and conrelid = 'public.planning_project_meta'::regclass
+  ) then
+    alter table public.planning_project_meta
+      add constraint planning_project_meta_project_id_key unique (project_id);
+  end if;
+end $$;
