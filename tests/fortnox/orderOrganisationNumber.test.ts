@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Kundens nummer på Fortnox-ORDERN.
 //
@@ -16,9 +16,9 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 });
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxPut } from '@/lib/domains/fortnox/client';
+import { fortnoxPost, fortnoxPut } from '@/lib/domains/fortnox/client';
 import { documentOrganisationNumber, resolveDocumentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
-import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
+import { pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 describe('documentOrganisationNumber', () => {
   it('ger personnumret för en privatkund', () => {
@@ -72,6 +72,10 @@ function makeChain(result: { data: unknown; error: unknown }) {
 }
 
 describe('resolveDocumentOrganisationNumber', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('frågar inte databasen utan kund', async () => {
     const from = vi.fn();
     const supabase = { from } as unknown as ReturnType<typeof getSupabaseAdmin>;
@@ -89,7 +93,10 @@ describe('resolveDocumentOrganisationNumber', () => {
   });
 });
 
-describe('pushWorkOrderToFortnox — ordern skapad ur en offert', () => {
+// Numret byggs i buildOrderHeader, som delas av tre vägar med VAR SIN läsning av arbetsordern.
+// Varje väg har ett eget test: tappar en av dem `customer_id` ur sin select faller numret tyst bort
+// just där, och de andra två vägarnas tester märker ingenting.
+describe('kundens nummer på Fortnox-ordern', () => {
   const workOrderRow = {
     id: 'wo-1',
     quote_id: 'quote-1',
@@ -107,16 +114,31 @@ describe('pushWorkOrderToFortnox — ordern skapad ur en offert', () => {
     rot_details: null,
   };
 
-  function mockDatabase(card: Record<string, unknown>) {
+  function mockDatabase(
+    card: Record<string, unknown>,
+    opts: { offerNumber?: string | null; row?: Record<string, unknown> } = {},
+  ) {
+    const row: Record<string, unknown> = { ...workOrderRow, ...opts.row };
     const workOrders = makeChain({ data: [{ id: 'wo-1' }], error: null });
-    workOrders.single = vi.fn().mockResolvedValue({ data: workOrderRow, error: null });
-    workOrders.maybeSingle = vi.fn().mockResolvedValue({ data: workOrderRow, error: null });
+    // ⚠️ Raden lämnas ut SOM DEN BEGÄRDES, bara de kolumner select:en nämner. Annars märks det inte
+    // när en väg tappar `customer_id` ur sin select — fejken hade gett hela raden ändå.
+    let columns: string[] = Object.keys(row);
+    workOrders.select = vi.fn((list: string) => {
+      columns = list.split(',').map((c) => c.trim());
+      return workOrders;
+    });
+    const asSelected = async () => ({
+      data: Object.fromEntries(columns.filter((c) => c in row).map((c) => [c, row[c]])),
+      error: null,
+    });
+    workOrders.single = vi.fn(asSelected);
+    workOrders.maybeSingle = vi.fn(asSelected);
     const tables: Record<string, ReturnType<typeof makeChain>> = {
       crm_work_orders: workOrders,
-      // Offerten HAR ett Fortnox-nummer → createorder-grenen, där felet satt.
+      // Har offerten ett Fortnox-nummer går pushen createorder-grenen, där felet satt.
       crm_quotes: makeChain({
         data: {
-          fortnox_offer_number: '31',
+          fortnox_offer_number: opts.offerNumber === undefined ? '31' : opts.offerNumber,
           customer_id: 'cust-1',
           customer_source: null,
           assigned_to: null,
@@ -125,7 +147,8 @@ describe('pushWorkOrderToFortnox — ordern skapad ur en offert', () => {
         },
         error: null,
       }),
-      crm_customers: makeChain({ data: card, error: null }),
+      // Samma rad svarar både på numret och på Fortnox-kundnumret (fristående ordern).
+      crm_customers: makeChain({ data: { fortnox_customer_id: '17', ...card }, error: null }),
     };
     vi.mocked(getSupabaseAdmin).mockReturnValue({
       from: vi.fn((table: string) => tables[table] ?? makeChain({ data: null, error: null })),
@@ -136,6 +159,7 @@ describe('pushWorkOrderToFortnox — ordern skapad ur en offert', () => {
     vi.clearAllMocks();
     vi.mocked(fortnoxPut).mockImplementation(async (path: string) =>
       (path.endsWith('/createorder') ? { Order: { DocumentNumber: 20 } } : {}) as never);
+    vi.mocked(fortnoxPost).mockResolvedValue({ Order: { DocumentNumber: '22' } } as never);
   });
 
   function orderPutBody(): Record<string, unknown> {
@@ -168,5 +192,41 @@ describe('pushWorkOrderToFortnox — ordern skapad ur en offert', () => {
     await pushWorkOrderToFortnox('wo-1');
 
     expect(orderPutBody()).not.toHaveProperty('OrganisationNumber');
+  });
+
+  it('fristående order (offerten saknar Fortnox-nummer): numret går med i POST:en', async () => {
+    mockDatabase({ customer_type: 'private', personal_number: '19121212-1212', organization_number: null }, { offerNumber: null });
+
+    await pushWorkOrderToFortnox('wo-1');
+
+    const [path, body] = vi.mocked(fortnoxPost).mock.calls[0];
+    expect(path).toBe('/orders');
+    expect((body as { Order: Record<string, unknown> }).Order.OrganisationNumber).toBe('19121212-1212');
+  });
+
+  // "Synka om" — vägen som lagar en order som redan skapats med tomt nummer.
+  it('"Synka om" skickar numret på en order som redan finns i Fortnox', async () => {
+    mockDatabase(
+      { customer_type: 'private', personal_number: '19121212-1212', organization_number: null },
+      { row: { fortnox_order_number: '20' } },
+    );
+
+    await updateWorkOrderInFortnox('wo-1', { recheckAfterPush: false });
+
+    expect(fortnoxPut).not.toHaveBeenCalledWith('/offers/31/createorder');
+    expect(orderPutBody().OrganisationNumber).toBe('19121212-1212');
+  });
+
+  // Header-synken (efter en kontakt- eller adressändring) läser arbetsordern med en EGEN, smalare
+  // select. Den vägen skickar bara huvudet.
+  it('header-synken skickar numret på en order som redan finns i Fortnox', async () => {
+    mockDatabase(
+      { customer_type: 'private', personal_number: '19121212-1212', organization_number: null },
+      { row: { fortnox_order_number: '20', status: 'scheduled', fortnox_invoice_number: null, partial_invoicing_started_at: null } },
+    );
+
+    await syncWorkOrderHeaderToFortnox('wo-1');
+
+    expect(orderPutBody().OrganisationNumber).toBe('19121212-1212');
   });
 });

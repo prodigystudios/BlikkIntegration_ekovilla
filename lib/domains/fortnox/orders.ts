@@ -349,8 +349,9 @@ export function orderReferenceNumberField(
 
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
-  // Kundkortet, för dokumentets OrganisationNumber. Alla tre anropare läser redan kolumnen.
-  customer_id?: string | null;
+  // Kundkortet, för dokumentets OrganisationNumber. OBLIGATORISK med flit: en anropare som inte
+  // läser kolumnen hade annars kompilerat och tyst tappat numret på varje push.
+  customer_id: string | null;
   /** Orderns titel — blir en textrad på dokumentet (buildOrderProjectNote). */
   project_name?: string | null;
   customer_snapshot: CustomerSnapshot | null;
@@ -426,10 +427,12 @@ async function buildOrderHeader(
   opts?: { allowReferenceClear?: boolean },
 ): Promise<{ header: FortnoxOrderHeaderFields; documentNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
-  const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
-  // Ur KUNDKORTET, inte ur snapshoten: numret går inte att redigera på offerten eller ordern, så
-  // kopiorna där är kortet som det såg ut när kunden valdes. Samma regel som workOrderReadiness.
-  const organisationNumber = await resolveDocumentOrganisationNumber(supabase, workOrder.customer_id);
+  // Numret ur KUNDKORTET, inte ur snapshoten: det går inte att redigera på offerten eller ordern,
+  // så kopiorna där är kortet som det såg ut när kunden valdes. Samma regel som workOrderReadiness.
+  const [ourReference, organisationNumber] = await Promise.all([
+    resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase),
+    resolveDocumentOrganisationNumber(supabase, workOrder.customer_id),
+  ]);
   const { referenceNumber, propertyNote } = resolveRotReference(
     resolveOrderRotDetails(workOrder, linkedQuote), snapshot?.label, rotEnabled);
 
