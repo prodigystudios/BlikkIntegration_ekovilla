@@ -6,3 +6,7 @@
 .env.keys
 .env.local
 .env.*.local
+
+# Seed-filer som inte ska committas (t.ex. Fortnox-artiklar med inköpspriser)
+seed/*.local.sql
+seed/*.tmp
