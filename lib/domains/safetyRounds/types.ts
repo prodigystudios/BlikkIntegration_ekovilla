@@ -151,12 +151,29 @@ export type SafetyRoundAction = {
   cost_note: string | null;
 };
 
+/** Ett foto på en punkt. Två objekt i lagringen: den fulla bilden och den lilla till PDF:en. */
+export type SafetyRoundPhoto = {
+  id: string;
+  round_id: string;
+  item_id: string;
+  /** "Foto-nr" i mallen — löpnummer per rond, aldrig återanvänt. */
+  photo_no: number;
+  storage_path: string;
+  print_path: string;
+  size_bytes: number;
+  print_size_bytes: number;
+  created_by: string | null;
+  created_by_name: string;
+  created_at: string;
+};
+
 /** Allt formuläret och protokollet behöver om EN rond. */
 export type SafetyRoundBundle = {
   round: SafetyRound;
   participants: SafetyRoundParticipant[];
   items: SafetyRoundItem[];
   actions: SafetyRoundAction[];
+  photos: SafetyRoundPhoto[];
 };
 
 /** En rad i listorna (/skyddsrond och kortet på arbetsordern). */

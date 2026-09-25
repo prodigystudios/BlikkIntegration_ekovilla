@@ -5,7 +5,15 @@ import { requirePermission } from '@/lib/auth/guards';
 import { completionProblems, summarizeItems } from '@/lib/domains/safetyRounds/completion';
 import { leaderIdForName } from '@/lib/domains/safetyRounds/rules';
 import { roundPatchSchema } from '@/lib/domains/safetyRounds/schemas';
-import { deleteSafetyRound, getSafetyRoundBundle, listChecklistCategories, updateSafetyRound } from '@/lib/domains/safetyRounds/store';
+import { removePhotoObjects, signPhotoUrls } from '@/lib/domains/safetyRounds/photoStorage';
+import {
+  deleteSafetyRound,
+  getSafetyRoundBundle,
+  listChecklistCategories,
+  listPhotoPaths,
+  updateSafetyRound,
+} from '@/lib/domains/safetyRounds/store';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import type { SafetyRound } from '@/lib/domains/safetyRounds/types';
 import { requireSafetyRoundReader, writeFailure } from '../_lib';
 
@@ -31,7 +39,13 @@ export async function GET(_req: Request, context: RouteContext) {
     if (!data) return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
     if (categories.error) console.warn('[safety-rounds] kategorierna:', categories.error.message);
 
+    // Fotonas läs-URL:er signeras HÄR, efter att RLS släppt igenom läsningen av raderna ovan —
+    // bucketen har inga egna policyer. 30 minuter; formuläret hämtar om ronden innan de går ut.
+    const signed = data.photos.length > 0 ? await signPhotoUrls(getSupabaseAdmin(), data.photos.map((p) => p.storage_path)) : new Map();
+    const photoUrls = Object.fromEntries(data.photos.map((p) => [p.id, signed.get(p.storage_path) ?? null]));
+
     return ok({
+      photo_urls: photoUrls,
       ...data,
       // Katalogens kategorier — var en egen punkt kan läggas. Bästa-försök: utan dem går det bara att
       // lägga egna punkter i kategorier som ronden redan har.
@@ -82,8 +96,12 @@ export async function DELETE(_req: Request, context: RouteContext) {
 
     // Bara ett utkast går att ta bort (policyn). En slutförd rond är ett protokoll.
     const supabase = createRouteHandlerClient({ cookies });
+    // Fotonas sökvägar läses FÖRE borttagningen: raderna kaskaderar bort med ronden, och efteråt
+    // finns inget kvar som säger vilka objekt i lagringen som hörde till den.
+    const photoPaths = await listPhotoPaths(supabase, context.params.id);
     const { data, error } = await deleteSafetyRound(supabase, context.params.id);
     if (error || !data) return writeFailure(error, 'ronden');
+    await removePhotoObjects(getSupabaseAdmin(), photoPaths);
     return ok({ id: data.id });
   } catch (e: unknown) {
     console.error('[safety-rounds] ta bort:', e instanceof Error ? e.stack ?? e.message : e);

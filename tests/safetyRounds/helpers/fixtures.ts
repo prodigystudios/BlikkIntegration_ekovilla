@@ -4,6 +4,7 @@ import type {
   SafetyRoundBundle,
   SafetyRoundItem,
   SafetyRoundParticipant,
+  SafetyRoundPhoto,
 } from '@/lib/domains/safetyRounds/types';
 
 // Påhittade rader — inga riktiga kunder eller personer (skyddsrondsmallen och kunddata hör aldrig
@@ -124,5 +125,26 @@ export function completeBundle(): SafetyRoundBundle {
     participants: [makeParticipant({ name: 'Rolf Rondledare', role: 'leader' }), makeParticipant({ name: 'Sara Skyddsombud', role: 'safety_rep' })],
     items: [makeItem({ number: 1 }), makeItem({ number: 2, status: 'na' }), defect],
     actions: [makeAction({ item_id: defect.id })],
+    photos: [],
+  };
+}
+
+let photoSeq = 0;
+export function makePhoto(overrides: Partial<SafetyRoundPhoto> = {}): SafetyRoundPhoto {
+  photoSeq += 1;
+  const uid = `00000000-0000-4000-8000-${String(photoSeq).padStart(12, '0')}`;
+  return {
+    id: `photo-${photoSeq}`,
+    round_id: ROUND_ID,
+    item_id: 'item-1',
+    photo_no: photoSeq,
+    storage_path: `${ROUND_ID}/user-1/${uid}.jpg`,
+    print_path: `${ROUND_ID}/user-1/${uid}.print.jpg`,
+    size_bytes: 400_000,
+    print_size_bytes: 90_000,
+    created_by: 'user-1',
+    created_by_name: 'Rolf Rondledare',
+    created_at: '2026-09-25T08:00:00Z',
+    ...overrides,
   };
 }
