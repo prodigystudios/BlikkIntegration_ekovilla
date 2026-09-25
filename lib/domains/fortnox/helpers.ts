@@ -1,6 +1,8 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemRotLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
+import { isValidSwedishOrgNumber } from '@/lib/domains/crm/orgNumber';
+import { isValidPersonalNumber } from '@/lib/domains/crm/personalNumber';
 import { FortnoxApiError } from './client';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from './types';
 
@@ -305,6 +307,59 @@ export async function resolveCustomerPersonalNumber(
   fortnoxCustomerNumber: string | null | undefined,
 ): Promise<string | null> {
   return readCustomerTextColumn(supabase, 'personal_number', customerId, fortnoxCustomerNumber);
+}
+
+type CustomerIdentityCard = {
+  customer_type?: string | null;
+  organization_number?: string | null;
+  personal_number?: string | null;
+};
+
+/**
+ * Det nummer ett Fortnox-dokument ska bära som `OrganisationNumber`: kundkortets, valt på samma
+ * sätt som `buildFortnoxCustomerPayload` väljer det för kunden (företag → org.nr, privat →
+ * personnummer). Alltså exakt det Fortnox själv hade kopierat in i ett dokument som skapades NU.
+ *
+ * 🧨 VARFÖR ORDERN MÅSTE FÅ DET SKICKAT: Fortnox kopierar kunduppgifterna in i dokumentet när det
+ * skapas, och `createorder` kopierar dem ur OFFERTEN — inte ur kundkortet. Skapades offerten innan
+ * kunden hade sitt nummer fick ordern ett tomt `OrganisationNumber` fast kunden hos Fortnox hade
+ * numret (mätt i testbolaget 2026-09-25: kund 17 bar numret, offert 31 och order 20 var tomma).
+ * Fakturan ärver ordern, och ett tomt nummer dödar ROT tyst.
+ *
+ * ⚠️ BARA ETT GILTIGT NUMMER, annars null — och null betyder "utelämna fältet", så Fortnox behåller
+ * det dokumentet redan har. Kortet kan bära platshållare (`11111`) och tiosiffriga personnummer;
+ * skickade vi dem kunde en PUT som i dag går igenom börja avvisas, och ordern fastna på 'failed'
+ * med faktureringen spärrad. Samma krav som spärren inför orderskapandet ställer.
+ */
+export function documentOrganisationNumber(card: CustomerIdentityCard | null | undefined): string | null {
+  if (!card) return null;
+  const isBusiness = card.customer_type === 'business';
+  const value = (isBusiness ? card.organization_number : card.personal_number)?.trim();
+  if (!value) return null;
+  const valid = isBusiness ? isValidSwedishOrgNumber(value) : isValidPersonalNumber(value);
+  return valid ? value : null;
+}
+
+/**
+ * `documentOrganisationNumber` ur kundkortet i databasen. Ett läsfel ger null — fältet utelämnas
+ * och dokumentet behåller sitt värde, vilket är samma läge som före den här läsningen fanns. En
+ * orderpush ska aldrig falla på att kortet inte gick att läsa.
+ */
+export async function resolveDocumentOrganisationNumber(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  customerId: string | null | undefined,
+): Promise<string | null> {
+  if (!customerId) return null;
+  const { data, error } = await supabase
+    .from('crm_customers')
+    .select('customer_type, organization_number, personal_number')
+    .eq('id', customerId)
+    .maybeSingle();
+  if (error) {
+    console.warn(`[fortnox] kunde inte läsa kundens nummer för dokumentet (id=${customerId}): ${error.message}`);
+    return null;
+  }
+  return documentOrganisationNumber(data as CustomerIdentityCard | null);
 }
 
 /**
