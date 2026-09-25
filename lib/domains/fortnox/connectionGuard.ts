@@ -33,8 +33,8 @@ export function isFortnoxProductionRuntime(env: Env): boolean {
   return true;
 }
 
-/** Samma URL som getSupabaseAdmin skriver kopplingen till. */
-function isLocalSupabaseUrl(url: string | undefined): boolean {
+/** Samma URL som getSupabaseAdmin skriver kopplingen till. Delas med skripten under scripts/fortnox/. */
+export function isLocalSupabaseUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
     return ['127.0.0.1', 'localhost', '0.0.0.0', '[::1]'].includes(new URL(url).hostname);

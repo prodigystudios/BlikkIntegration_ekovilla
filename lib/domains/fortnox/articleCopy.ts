@@ -1,3 +1,4 @@
+import { parseDecimal } from '@/lib/shared/number';
 import type { FortnoxArticleInput, FortnoxArticlePriceInput } from './types';
 
 /**
@@ -8,6 +9,11 @@ import type { FortnoxArticleInput, FortnoxArticlePriceInput } from './types';
  * Cachen är inte en fullständig Fortnox-artikel: listendpointen skickar varken `Type` eller
  * prislistornas priser (bara standardlistans SalesPrice). Det som saknas blir Fortnox standardvärden,
  * och planen räknar hur många artiklar det gäller så att det syns innan något skrivs.
+ *
+ * 🧨 Listendpointen skickar `VAT` som STRÄNG ("25", "0") och `Housework` som boolean. Momsen måste
+ * tolkas — annars skickas ingen, och en 0 %-artikel skapas med Fortnox standardmoms. Husarbete kan
+ * inte skickas vid skapandet (buildFortnoxArticlePayload tar inte med fältet) utan sätts i ett eget
+ * anrop efteråt av skriptet — Fortnox godtar det utan HouseworkType (provat 2026-09-25).
  */
 
 /** En rad ur fortnox_articles_cache, som PostgREST levererar den (numeric kan komma som sträng). */
@@ -28,6 +34,8 @@ export type ArticleCopyItem = {
   input: FortnoxArticleInput;
   prices: FortnoxArticlePriceInput[];
   typeKnown: boolean;
+  /** Prod-artikeln är markerad som husarbete (ROT/RUT); sätts efter skapandet. */
+  housework: boolean;
 };
 
 export type ArticleCopyPlan = {
@@ -40,9 +48,11 @@ export type ArticleCopyPlan = {
   alreadyPresent: number;
 };
 
-function toNumber(value: number | string | null | undefined): number | null {
-  if (value === null || value === undefined || value === '') return null;
-  const n = typeof value === 'number' ? value : Number(value);
+/** Tal eller null: tomt/ogiltigt = null, inte 0. Komma och mellanslag som i parseDecimal. */
+function toNumber(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const n = parseDecimal(value, Number.NaN);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -55,7 +65,7 @@ export function pickDefaultPriceList(lists: { code: string }[]): string | null {
 export function cachedArticleToInput(
   row: CachedArticleRow,
   unit: string | null,
-): { input: FortnoxArticleInput; typeKnown: boolean } {
+): { input: FortnoxArticleInput; typeKnown: boolean; housework: boolean } {
   const raw = row.raw ?? {};
   const typeKnown = row.article_type === 'STOCK' || row.article_type === 'SERVICE';
   return {
@@ -67,13 +77,14 @@ export function cachedArticleToInput(
       // Okänd typ blir STOCK — samma som Fortnox eget standardval för en ny artikel.
       Type: typeKnown ? (row.article_type as FortnoxArticleInput['Type']) : 'STOCK',
       Active: row.active,
-      VAT: typeof raw.VAT === 'number' ? raw.VAT : null,
+      VAT: toNumber(raw.VAT),
       EAN: typeof raw.EAN === 'string' && raw.EAN.trim() ? raw.EAN.trim() : null,
       Manufacturer: null,
       ManufacturerArticleNumber: null,
       Note: row.note ?? null,
     },
     typeKnown,
+    housework: raw.Housework === true || raw.Housework === 'true',
   };
 }
 
@@ -108,10 +119,10 @@ export function planArticleCopy(
   const items = missing
     .sort((a, b) => a.article_number.localeCompare(b.article_number, 'sv', { numeric: true }))
     .map((row) => {
-      const { input, typeKnown } = cachedArticleToInput(row, resolveUnit(row.unit));
+      const { input, typeKnown, housework } = cachedArticleToInput(row, resolveUnit(row.unit));
       const price = toNumber(row.sales_price);
       const prices = defaultPriceList && price !== null ? [{ priceList: defaultPriceList, price }] : [];
-      return { articleNumber: row.article_number, input, prices, typeKnown };
+      return { articleNumber: row.article_number, input, prices, typeKnown, housework };
     });
 
   return {

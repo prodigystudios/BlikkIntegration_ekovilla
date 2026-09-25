@@ -16,7 +16,8 @@ function row(overrides: Partial<CachedArticleRow>): CachedArticleRow {
     unit: 'M3',
     article_type: null,
     active: true,
-    raw: { VAT: 25, EAN: '' },
+    // Prods verkliga form: listendpointen skickar VAT som STRÄNG.
+    raw: { VAT: '25', EAN: '', Housework: false },
     ...overrides,
   };
 }
@@ -45,6 +46,24 @@ describe('cachedArticleToInput', () => {
       ManufacturerArticleNumber: null,
       Note: null,
     });
+  });
+
+  it('tolkar momsen som sträng — en 0 %-artikel får inte bli Fortnox standardmoms', () => {
+    expect(cachedArticleToInput(row({ raw: { VAT: '0' } }), null).input.VAT).toBe(0);
+    expect(cachedArticleToInput(row({ raw: { VAT: '12' } }), null).input.VAT).toBe(12);
+    expect(cachedArticleToInput(row({ raw: { VAT: 25 } }), null).input.VAT).toBe(25);
+    expect(cachedArticleToInput(row({ raw: {} }), null).input.VAT).toBeNull();
+    expect(cachedArticleToInput(row({ raw: { VAT: ' ' } }), null).input.VAT).toBeNull();
+  });
+
+  it('läser priser med komma, och tomt blir null — inte 0', () => {
+    expect(cachedArticleToInput(row({ purchase_price: '1,5' }), null).input.PurchasePrice).toBe(1.5);
+    expect(cachedArticleToInput(row({ purchase_price: ' ' }), null).input.PurchasePrice).toBeNull();
+  });
+
+  it('bär med husarbete-flaggan från prod', () => {
+    expect(cachedArticleToInput(row({ raw: { VAT: '25', Housework: true } }), null).housework).toBe(true);
+    expect(cachedArticleToInput(row({}), null).housework).toBe(false);
   });
 
   it('behåller känd typ och säger när typen är okänd', () => {
