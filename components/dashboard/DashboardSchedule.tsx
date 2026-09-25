@@ -793,7 +793,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                           )}
                           {/* ⚠️ Grindad på ORDER-ID:t, inte på källan. En CRM-rad kan sakna
                               arbetsorder sedan platshållare kan publiceras till entreprenaden
-                              (supabase/sql/20260908_ops_segments_field_visible.sql), och kortets
+                              (supabase/archive/sql/20260908_ops_segments_field_visible.sql), och kortets
                               klick (`isCrmItem(it) && it.work_order_id` längre upp) gör då
                               ingenting — knappen hade lovat något den inte kan hålla. */}
                           {isCrmItem(it) && it.work_order_id && (

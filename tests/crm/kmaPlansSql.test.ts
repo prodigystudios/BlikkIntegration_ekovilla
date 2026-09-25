@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
  * når, så testet läser filen.
  */
 
-const FILE = resolve(process.cwd(), 'supabase/sql/20260924_crm_work_order_kma_plans.sql');
+const FILE = resolve(process.cwd(), 'supabase/archive/sql/20260924_crm_work_order_kma_plans.sql');
 
 // Kommentarerna bort: huvudet FÖRKLARAR varför update och delete saknas, och en textmatchning på
 // förklaringen hade gjort vakten omöjlig att uppfylla.
@@ -74,7 +74,7 @@ describe('crm_work_order_kma_plans (SQL)', () => {
  * något. Rättelsen gör revoke all FÖRE grant — i den ordningen, annars tar den bort det den just gav.
  */
 describe('crm_work_order_kma_plans — grant-rättelsen (SQL)', () => {
-  const fix = readFileSync(resolve(process.cwd(), 'supabase/sql/20260925_crm_work_order_kma_plans_revoke.sql'), 'utf8')
+  const fix = readFileSync(resolve(process.cwd(), 'supabase/archive/sql/20260925_crm_work_order_kma_plans_revoke.sql'), 'utf8')
     .replace(/--.*$/gm, '')
     .replace(/\s+/g, ' ')
     .toLowerCase();

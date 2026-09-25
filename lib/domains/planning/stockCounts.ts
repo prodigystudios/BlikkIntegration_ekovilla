@@ -12,7 +12,7 @@ import { readAllPages, type ReadError } from './pagedRead';
 // rapport för arbete FÖRE räkningen kommer in efteråt: räknat 400 på måndagen, fredagens 50 säckar
 // rapporteras på tisdagen, och saldot blir 350 fast det står 400 på depån. Här räknas saldot i
 // stället FRÅN räkningen: det som hände före den syns redan i det räknade antalet. Se
-// supabase/sql/20260911_ops_depot_stock_counts.sql för hela resonemanget.
+// supabase/archive/sql/20260911_ops_depot_stock_counts.sql för hela resonemanget.
 
 /** En räkning, som den används i saldot. */
 export type StockCount = {

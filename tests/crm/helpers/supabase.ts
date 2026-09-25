@@ -58,7 +58,7 @@ export const memberUser: CurrentUser = { id: 'user-member-1', role: 'member' };
 export const konsultUser: CurrentUser = { id: 'user-konsult-1', role: 'konsult' };
 export const ekonomiUser: CurrentUser = { id: 'user-ekonomi-1', role: 'ekonomi' };
 
-// Mirrors the role seed in supabase/sql/20260608_permissions_model.sql. Route guards now
+// Mirrors the role seed in supabase/archive/sql/20260608_permissions_model.sql. Route guards now
 // resolve effective permissions instead of reading the role directly, so route tests mock
 // getEffectivePermissions with this to reproduce the same allow/deny outcomes per role.
 const SALES_KEYS: PermissionKey[] = [

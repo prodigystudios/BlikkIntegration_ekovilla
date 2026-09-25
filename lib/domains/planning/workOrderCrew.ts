@@ -12,7 +12,7 @@ import { crewForTruckInRange, type TruckCrewMember } from './truckCrew';
 // skapar planen redigerar alltid listan. Därför är det här best effort och aldrig en spärr.
 //
 // ⚠️ REGELN ÄR EN SPEGEL AV SQL:EN — de måste svara likadant. Samma tre grenar som
-// `is_user_on_segment_between` (supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql) släpper
+// `is_user_on_segment_between` (supabase/archive/sql/20260917_get_my_crm_jobs_crew_per_day.sql) släpper
 // igenom på, och samma veckoregel som `crewSizeForRange` (truckCrew.ts) räknar med:
 //
 //   1. placeringens egen besättning (ops_segment_crew) — hela placeringen, oavsett vecka;

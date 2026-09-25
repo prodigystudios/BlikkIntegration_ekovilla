@@ -11,7 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // retroaktivt när satsen justeras.
 //
 // KVITTO OCH MOMS (2026-08-22) hör till UTLÄGG och bara dit. Kvittot är kolumner på posten och inte
-// en sidotabell — skälet står i supabase/sql/20260822_time_compensation_receipts.sql, kort: bara så
+// en sidotabell — skälet står i supabase/archive/sql/20260822_time_compensation_receipts.sql, kort: bara så
 // fryser kvittot med perioden av sig självt. Ett utlägg utan kvitto går att spara, men flaggas
 // (isReceiptMissing) i både /tid och attesten så kontoret hinner jaga pappret före låsningen.
 // Lagring och sökvägar bor i lib/domains/time/receipts.ts.

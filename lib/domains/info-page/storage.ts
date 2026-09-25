@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // Lagring för filerna på /dokument-information.
 //
 // "images" i namnen är tabellens: raderna bor i info_section_images, som sedan 2026-08-21 även
-// bär pdf:er (se supabase/sql/20260821_info_section_files.sql). Namnen följer databasen med
+// bär pdf:er (se supabase/archive/sql/20260821_info_section_files.sql). Namnen följer databasen med
 // flit — att döpa om helperna men inte tabellen hade gett två vokabulärer för samma rad.
 //
 // INGEN EGEN BUCKET, av samma skäl som arbetsorderfilerna och appärendena: den befintliga

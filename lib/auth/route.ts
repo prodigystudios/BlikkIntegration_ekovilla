@@ -22,7 +22,7 @@ export type CurrentUser = {
 // write-policyerna på planning_segments och grannarna. De vaktar OLIKA vägar till samma tabeller —
 // den här servervägen, tvillingen den direkta klientvägen — så en roll som bara läggs till på ett
 // ställe är fortfarande skrivbehörig via det andra. Ändra alltid båda.
-// Tvillingen ägs numera av supabase/sql/20260831_ekonomi_role_seed.sql.
+// Tvillingen ägs numera av supabase/archive/sql/20260831_ekonomi_role_seed.sql.
 //
 // Exporterad sedan 2026-09-09: listan bär numera också en LÄS-grind. Fältvyns säljarkort
 // (work-orders/[id]/assignee-contact) lämnar ut personalens egna telefonnummer, och det är samma

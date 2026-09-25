@@ -18,7 +18,7 @@
 // etiketterna uttömmande på typnivå: lägger du till en slug utan etikett vägrar type-check.
 //
 // ⚠️ DATABASEN HAR EN KOPIA SOM TYPSYSTEMET INTE NÅR. ops_segment_reports.construction har en CHECK
-// på exakt de här slug:arna (supabase/sql/20260820_ops_segment_reports_sack_reporting.sql). Ändras
+// på exakt de här slug:arna (supabase/archive/sql/20260820_ops_segment_reports_sack_reporting.sql). Ändras
 // listan här MÅSTE en ny migrering ändra CHECK:en — annars avvisar databasen ett värde som resten
 // av appen anser giltigt, mitt i installatörens sparning. De får aldrig glida isär.
 

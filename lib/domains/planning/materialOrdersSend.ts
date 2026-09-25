@@ -13,7 +13,7 @@ import { composeFromRegistry, draftInputOf, warningsForOrder } from './materialO
 
 // Utskicket av en materialbeställning till fabriken.
 //
-// Server-side. Kontraktet med databasen står i supabase/sql/20260917_ops_material_orders.sql och i planen
+// Server-side. Kontraktet med databasen står i supabase/archive/sql/20260917_ops_material_orders.sql och i planen
 // (~/.claude/plans/etapp4-bestallningsmail.md, "BYGGT 2026-09-17"). Reglerna som INTE får brytas:
 //
 // 🧨 ETT NÄTVERKSFEL FÅR ALDRIG BLI TVÅ LASS. Samma order + samma försök = samma idempotensnyckel, och det

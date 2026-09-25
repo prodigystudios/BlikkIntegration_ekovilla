@@ -47,7 +47,7 @@ import { breakWasDeducted, reasonOrJobLabel, type DayRow, type PersonPeriodSumma
 // genom att rendera med en elevated klient; rätt svar är en behörighet, taget som ett beslut.
 //
 // ⚠️ Rollen `ekonomi` HAR crm.workorder.read sedan 2026-09-18
-// (supabase/sql/20260918_ekonomi_work_order_read.sql), så lönebyråns utskrift bär i dag riktiga
+// (supabase/archive/sql/20260918_ekonomi_work_order_read.sql), så lönebyråns utskrift bär i dag riktiga
 // ordernamn — alltså kundnamn per arbetad timme. Det var ett medvetet val 2026-08-31 att INTE visa
 // det, och beslutet som väger över gällde fakturaunderlaget, inte en utskrift som lämnar appen.
 // Följden är känd och sedd; ska den snävas in är vägen att sluta embedda ordern i den här

@@ -31,7 +31,7 @@ import {
 //
 // ⚠️ REVISIONSLOGGEN SKRIVS AV EN DATABASTRIGGER, inte här. Det är avsiktligt: en serverväg som
 // glömmer logga, eller en UPDATE körd direkt i SQL-editorn, ska inte kunna gå förbi den.
-// Se supabase/sql/20260814_time_admin_corrections.sql.
+// Se supabase/archive/sql/20260814_time_admin_corrections.sql.
 
 type RouteContext = { params: { id: string } };
 

@@ -3,7 +3,7 @@ import type { SafetyRoundPhoto } from './types';
 // Fotonas regler — rena, utan lagringsanrop, så att både rutterna och telefonens formulär kan
 // importera dem. Lagringen själv bor i photoStorage.ts (bara servern).
 
-/** Egen privat bucket — se supabase/sql/20260925_safety_round_photos.sql. */
+/** Egen privat bucket — se supabase/archive/sql/20260925_safety_round_photos.sql. */
 export const SAFETY_ROUND_PHOTO_BUCKET = 'safety-round-photos';
 
 export const PHOTO_CONTENT_TYPE = 'image/jpeg';

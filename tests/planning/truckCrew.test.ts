@@ -67,7 +67,7 @@ describe('shiftISO', () => {
 
 // Hur många som ser en publicerad platshållare. Siffran står i platshållarmodalen och avgör om
 // planeraren varnas för att ingen ser bokningen — så den måste svara exakt som
-// `is_user_on_segment_between` i supabase/sql/20260917_get_my_crm_jobs_crew_per_day.sql släpper igenom på.
+// `is_user_on_segment_between` i supabase/archive/sql/20260917_get_my_crm_jobs_crew_per_day.sql släpper igenom på.
 // Räknar de olika lovar modalen en mottagare som feeden inte har.
 describe('crewSizeForRange', () => {
   const weekly = [

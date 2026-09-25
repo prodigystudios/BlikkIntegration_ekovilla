@@ -14,7 +14,7 @@ import type { DepotMaterialForecast } from './depotForecast';
 import { addDaysISO } from './timezone';
 
 // Materialbeställningar till fabriken: de rena reglerna. Tabellen och dess spärrar bor i
-// supabase/sql/20260917_ops_material_orders.sql; mailets text i ./materialOrderEmail.ts.
+// supabase/archive/sql/20260917_ops_material_orders.sql; mailets text i ./materialOrderEmail.ts.
 //
 // Ren, utan sidoeffekter och utan databasanrop. API:t (etapp 4d) läser ur databasen, anropar reglerna här
 // och skriver. Plan: ~/.claude/plans/etapp4-bestallningsmail.md.

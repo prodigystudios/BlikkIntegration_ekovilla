@@ -73,7 +73,7 @@ describe('POST /api/push/subscription — origin-stämpling', () => {
     // Regressionsvakt. getPublicOrigin svarar alltid med den kanoniska domänen, och hade den
     // använts här skulle en prenumeration skapad på den gamla adressen stämplats som om den hörde
     // hemma på den nya. Då blir kolumnen oanvändbar för att skilja gamla rader från nya, och
-    // städningen i supabase/sql/manual/ skulle rensa fel rader.
+    // städningen i supabase/archive/sql/manual/ skulle rensa fel rader.
     process.env.NEXT_PUBLIC_SITE_URL = NEW;
     await POST(req(OLD));
     expect(captured?.payload.origin).toBe(OLD);

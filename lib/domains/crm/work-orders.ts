@@ -1572,7 +1572,7 @@ export async function isUserOnWorkOrder(supabase: SupabaseClient, userId: string
 // ── Etapper ─────────────────────────────────────────────────────────────────
 // En order som utförs i omgångar. ⚠️ `stage` i kod och databas, "Etapp" bara i det användaren
 // läser — "etapp" betyder redan KONSTRUKTIONSDEL i egenkontrollen. Se
-// lib/domains/crm/workOrderStages.ts och supabase/sql/20260919_crm_work_order_stages.sql.
+// lib/domains/crm/workOrderStages.ts och supabase/archive/sql/20260919_crm_work_order_stages.sql.
 
 const crmWorkOrderStageSelect = `
   id,

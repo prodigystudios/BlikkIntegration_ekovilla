@@ -132,7 +132,7 @@ describe('isWorkOrderFilePath', () => {
 describe('kategorikatalogen', () => {
   // En källa, tre konsumenter: Zod-schemat, UI:t och CHECK:en i databasen. Glider de isär blir
   // felet ett 500 vid insert, inte ett rött test — därför låses listan mot strängliteralen ur
-  // supabase/sql/20260815_crm_work_order_files.sql.
+  // supabase/archive/sql/20260815_crm_work_order_files.sql.
   it('matchar CHECK-listan i migrationen', () => {
     expect([...WORK_ORDER_FILE_CATEGORIES]).toEqual([
       'drawing', 'preparation', 'photo_before', 'photo_after', 'other',

@@ -12,7 +12,7 @@ import { ORDER_EMAIL_LANGUAGES, type OrderEmailLanguage } from './materialOrderE
 // en kontaktperson. Rollen `konsult` håller planning.schedule.read, och Lager-området i
 // planeringsadmin är öppet för alla — hade SELECT varit board-nivå (som ops_depots) vore
 // fabrikernas adresser läsbara för varje konsult. Se RLS-noten i
-// supabase/sql/20260910_ops_material_suppliers.sql.
+// supabase/archive/sql/20260910_ops_material_suppliers.sql.
 //
 // Rena hjälpare enhetstestas; DB-funktionerna är tunna RLS-avgränsade läsningar och skrivningar.
 
@@ -67,7 +67,7 @@ export type SupplyTerms = MaterialSupply & {
  * INTE — den filtrerar: för `sales` och `konsult` kom noll rader tillbaka UTAN FEL, och prognosen
  * föll tyst tillbaka på ingen ledtid och ingen avrundning. Utfallet var "beställ senast den dag
  * depån är tom", bara för dem som inte var admin. Se filhuvudet i
- * supabase/sql/20260911_planning_supply_terms.sql.
+ * supabase/archive/sql/20260911_planning_supply_terms.sql.
  *
  * ⚠️ SESSIONSKLIENTEN, ALDRIG ADMIN-KLIENTEN: funktionen prövar has_permission, som nycklar på
  * auth.uid() — null under service-role, alltså alltid nekad.
