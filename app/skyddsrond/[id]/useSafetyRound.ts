@@ -78,6 +78,8 @@ export function useSafetyRound(roundId: string) {
 
   const loadSeq = useRef(0);
   const rowSeq = useRef(new Map<string, number>());
+  // När fotonas URL:er senast signerades — se refreshPhotoUrls.
+  const urlsSignedAt = useRef(Date.now());
 
   const refresh = useCallback(async () => {
     const seq = ++loadSeq.current;
@@ -93,6 +95,7 @@ export function useSafetyRound(roundId: string) {
     const { round, participants, items, actions, photos, can_write: canWrite, categories, photo_urls: urls } = result.data;
     setData({ round, participants, items, actions, photos: photos ?? [], canWrite, categories: categories ?? [] });
     setPhotoUrls(urls ?? {});
+    urlsSignedAt.current = Date.now();
     setLoadError(null);
     setLoading(false);
   }, [base]);
@@ -102,21 +105,32 @@ export function useSafetyRound(roundId: string) {
   }, [refresh]);
 
   // Fotonas URL:er är signerade i 30 minuter, och en rond ligger ofta uppe längre än så (man går
-  // runt på bygget). Hämtas om var 25:e minut och när fliken kommer tillbaka — en telefon som
-  // sovit pausar timers. Samma skäl och intervall som arbetsorderns filer (useWorkOrderFiles).
+  // runt på bygget). De förnyas när de börjar bli gamla — var 25:e minut, och när fliken kommer
+  // tillbaka efter mer än 20.
+  //
+  // 🧨 BARA URL:ERNA, ALDRIG RONDEN. På en telefon göms fliken varje gång "+ Foto" öppnar kameran,
+  // och en omläsning av hela ronden i det ögonblicket hade kunnat landa efter att fotot sparats —
+  // och skrivit över det, liksom varje ändring som ännu var på väg. URL:erna slås ihop med de man
+  // har; inget tas bort.
+  const refreshPhotoUrls = useCallback(async () => {
+    urlsSignedAt.current = Date.now();
+    const result = await call<{ photo_urls: Record<string, string | null> }>(`${base}/photos`, 'GET');
+    if (result.ok) setPhotoUrls((u) => ({ ...u, ...result.data.photo_urls }));
+  }, [base]);
+
   const hasPhotos = (data?.photos.length ?? 0) > 0;
   useEffect(() => {
     if (!hasPhotos) return;
-    const interval = setInterval(() => void refresh(), 25 * 60 * 1000);
+    const interval = setInterval(() => void refreshPhotoUrls(), 25 * 60 * 1000);
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void refresh();
+      if (document.visibilityState === 'visible' && Date.now() - urlsSignedAt.current > 20 * 60 * 1000) void refreshPhotoUrls();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       clearInterval(interval);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [hasPhotos, refresh]);
+  }, [hasPhotos, refreshPhotoUrls]);
 
   // Namnförslagen hämtas en gång, och bara när de kan användas (skrivnyckel + utkast).
   const wantsSuggestions = data?.canWrite === true && data.round.status === 'draft';

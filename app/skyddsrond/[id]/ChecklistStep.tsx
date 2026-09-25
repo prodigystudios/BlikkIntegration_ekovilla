@@ -26,7 +26,7 @@ import {
   type SafetyRoundPhoto,
   type ToActionPlan,
 } from '@/lib/domains/safetyRounds/types';
-import { MAX_PHOTOS_PER_ROUND } from '@/lib/domains/safetyRounds/photoRules';
+import { MAX_PHOTOS_PER_ROUND, photosByItem as groupPhotosByItem } from '@/lib/domains/safetyRounds/photoRules';
 import PhotoStrip, { INLINE_ACTION_CLASS } from '../_components/PhotoStrip';
 import { TextAreaField, TextField } from '../_components/fields';
 import SegmentedChoice from '../_components/SegmentedChoice';
@@ -327,13 +327,7 @@ export default function ChecklistStep({
     const own = groupItemsByCategory(items);
     return readOnly ? own : withEmptyCategories(own, categories);
   }, [items, categories, readOnly]);
-  const photosByItem = useMemo(() => {
-    const byItem = new Map<string, SafetyRoundPhoto[]>();
-    for (const photo of [...photos].sort((a, b) => a.photo_no - b.photo_no)) {
-      byItem.set(photo.item_id, [...(byItem.get(photo.item_id) ?? []), photo]);
-    }
-    return byItem;
-  }, [photos]);
+  const photosByItem = useMemo(() => groupPhotosByItem(photos), [photos]);
   // Uppladdningar som pågår räknas in, så att två punkter samtidigt inte kan gå förbi taket.
   const photoLimitReached = photos.length + Object.values(photoUploads).reduce((n, u) => n + (u.total - u.done), 0) >= MAX_PHOTOS_PER_ROUND;
 

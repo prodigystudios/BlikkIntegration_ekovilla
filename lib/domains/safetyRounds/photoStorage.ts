@@ -90,3 +90,29 @@ export async function removePhotoObjects(admin: SupabaseClient, paths: string[])
     console.warn('[safety-rounds] foton kunde inte städas bort:', e instanceof Error ? e.message : e);
   }
 }
+
+/**
+ * Allt under <round_id>/ i bucketen — när ett utkast tas bort. Städningen går på PREFIXET, inte på
+ * raderna: den tar även med objekt som laddades upp men aldrig bekräftades (fliken stängdes mitt i).
+ * Två nivåer: <round_id>/<uppladdare>/<fil>. Best-effort, som all städning här.
+ */
+export async function removeRoundPhotoObjects(admin: SupabaseClient, roundId: string): Promise<void> {
+  try {
+    const bucket = admin.storage.from(SAFETY_ROUND_PHOTO_BUCKET);
+    const { data: folders, error } = await bucket.list(roundId, { limit: 1000 });
+    if (error || !folders) {
+      if (error) console.warn('[safety-rounds] rondens foton kunde inte listas:', error.message);
+      return;
+    }
+    const paths: string[] = [];
+    for (const folder of folders) {
+      const { data: files } = await bucket.list(`${roundId}/${folder.name}`, { limit: 1000 });
+      for (const file of files ?? []) paths.push(`${roundId}/${folder.name}/${file.name}`);
+    }
+    for (let start = 0; start < paths.length; start += 100) {
+      await removePhotoObjects(admin, paths.slice(start, start + 100));
+    }
+  } catch (e) {
+    console.warn('[safety-rounds] rondens foton kunde inte städas bort:', e instanceof Error ? e.message : e);
+  }
+}

@@ -1,4 +1,4 @@
-import { compressImageToBlob, compressImageUnderCap } from '@/lib/shared/imageCompression';
+import { compressImageVariants } from '@/lib/shared/imageCompression';
 import { PHOTO_MAX_BYTES, PRINT_PHOTO_MAX_BYTES } from '@/lib/domains/safetyRounds/photoRules';
 
 // Fotots två varianter, gjorda i telefonen före uppladdningen. Båda blir JPEG — det löser tre saker
@@ -11,13 +11,28 @@ import { PHOTO_MAX_BYTES, PRINT_PHOTO_MAX_BYTES } from '@/lib/domains/safetyRoun
 
 const FULL_TARGET_BYTES = 700_000;
 
+// Samma trappsteg som compressImageUnderCap (intrimmade mot riktiga mobilbilder) för den fulla; den
+// lilla behöver bara räcka till en halv A4-bredd i protokollet.
+const FULL_STEPS = [
+  { maxDim: 1600, q: 0.72 },
+  { maxDim: 1280, q: 0.65 },
+  { maxDim: 1024, q: 0.6 },
+  { maxDim: 800, q: 0.6 },
+];
+const PRINT_STEPS = [
+  { maxDim: 900, q: 0.6 },
+  { maxDim: 640, q: 0.55 },
+];
+
 export class UnreadablePhotoError extends Error {}
 
 export async function preparePhotoVariants(file: File): Promise<{ full: Blob; print: Blob }> {
   try {
-    const full = await compressImageUnderCap(file, FULL_TARGET_BYTES);
-    let print = await compressImageToBlob(file, 900, 0.6);
-    if (print.size > PRINT_PHOTO_MAX_BYTES) print = await compressImageToBlob(file, 640, 0.55);
+    // EN avkodning för båda varianterna (se compressImageVariants).
+    const [full, print] = await compressImageVariants(file, [
+      { steps: FULL_STEPS, capBytes: FULL_TARGET_BYTES },
+      { steps: PRINT_STEPS, capBytes: PRINT_PHOTO_MAX_BYTES },
+    ]);
     if (full.size > PHOTO_MAX_BYTES || print.size > PRINT_PHOTO_MAX_BYTES) {
       throw new UnreadablePhotoError('Bilden gick inte att göra tillräckligt liten. Ta ett nytt foto.');
     }

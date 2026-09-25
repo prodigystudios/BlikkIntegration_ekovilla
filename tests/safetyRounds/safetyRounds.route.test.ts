@@ -41,9 +41,9 @@ vi.mock('@/lib/domains/safetyRounds/store', async (importOriginal) => {
     nextPosition: vi.fn(),
     listChecklistCategories: vi.fn(),
     listPhotos: vi.fn(),
-    listPhotoPaths: vi.fn(),
+    listItemPhotoPaths: vi.fn(),
     findPhotoByPath: vi.fn(),
-    insertPhoto: vi.fn(),
+    addPhoto: vi.fn(),
     deletePhoto: vi.fn(),
   };
 });
@@ -54,6 +54,7 @@ vi.mock('@/lib/domains/safetyRounds/photoStorage', () => ({
   signPhotoUrls: vi.fn(async () => new Map()),
   downloadPhotos: vi.fn(async () => new Map()),
   removePhotoObjects: vi.fn(async () => undefined),
+  removeRoundPhotoObjects: vi.fn(async () => undefined),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
@@ -80,7 +81,7 @@ const { PATCH: PATCH_ACTION } = await import('@/app/api/safety-rounds/[id]/actio
 const { DELETE: DELETE_ITEM } = await import('@/app/api/safety-rounds/[id]/items/[itemId]/route');
 const { GET: PDF } = await import('@/app/api/safety-rounds/[id]/pdf/route');
 const { POST: PHOTO_UPLOAD_URL } = await import('@/app/api/safety-rounds/[id]/photos/upload-url/route');
-const { POST: PHOTO_CONFIRM } = await import('@/app/api/safety-rounds/[id]/photos/route');
+const { POST: PHOTO_CONFIRM, GET: PHOTO_URLS } = await import('@/app/api/safety-rounds/[id]/photos/route');
 const { DELETE: PHOTO_DELETE } = await import('@/app/api/safety-rounds/[id]/photos/[photoId]/route');
 const { DELETE: DELETE_ROUND } = await import('@/app/api/safety-rounds/[id]/route');
 
@@ -109,7 +110,7 @@ beforeEach(() => {
   asUser(leader, effectivePermissionsForRole('sales'));
   s.nextPosition.mockResolvedValue({ data: 1, error: null });
   s.listChecklistCategories.mockResolvedValue({ data: [], error: null } as never);
-  s.listPhotoPaths.mockResolvedValue([]);
+  s.listItemPhotoPaths.mockResolvedValue({ data: [], error: null });
   s.listPhotos.mockResolvedValue({ data: [], error: null } as never);
 });
 
@@ -413,20 +414,21 @@ describe('foton', () => {
   });
 
   describe('bekräfta', () => {
-    it('en ny rad med nästa nummer och storlekarna UR LAGRINGEN', async () => {
-      s.listPhotos.mockResolvedValue({ data: [makePhoto({ photo_no: 1 }), makePhoto({ photo_no: 4 })], error: null } as never);
-      s.insertPhoto.mockImplementation(async (_sb, row) => ({ data: { ...row, id: 'new', created_at: 'x' }, error: null }) as never);
+    it('sparas via add_safety_round_photo med storlekarna UR LAGRINGEN — numret sätts av databasen', async () => {
+      s.addPhoto.mockImplementation(async (_sb, input) => ({
+        data: makePhoto({ storage_path: input.storagePath, print_path: input.printPath, photo_no: 7 }),
+        error: null,
+      }));
       const res = await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath, size_bytes: 1 }), roundCtx);
       expect(res.status).toBe(201);
-      expect(s.insertPhoto.mock.calls[0][1]).toMatchObject({
-        round_id: ROUND_ID,
-        item_id: ITEM_ID,
-        photo_no: 5,
-        storage_path: fullPath,
-        print_path: printPath,
-        size_bytes: 450_000,
-        print_size_bytes: 90_000,
-        created_by: photographer.id,
+      expect((await res.json()).data.photo.photo_no).toBe(7);
+      expect(s.addPhoto.mock.calls[0][1]).toEqual({
+        roundId: ROUND_ID,
+        itemId: ITEM_ID,
+        storagePath: fullPath,
+        printPath: printPath,
+        sizeBytes: 450_000,
+        printSizeBytes: 90_000,
       });
       expect(ps.removePhotoObjects).not.toHaveBeenCalled();
     });
@@ -435,13 +437,20 @@ describe('foton', () => {
       const foreign = `${ROUND_ID}/77777777-7777-4777-8777-777777777777/${UID}.jpg`;
       expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: foreign }), roundCtx)).status).toBe(400);
       expect(ps.removePhotoObjects).not.toHaveBeenCalled();
-      expect(s.insertPhoto).not.toHaveBeenCalled();
+      expect(s.addPhoto).not.toHaveBeenCalled();
     });
 
-    it('en redan registrerad sökväg ger 409 och städas inte (objektet tillhör en rad)', async () => {
+    it('en redan registrerad sökväg ger 409 och städas inte (objekten tillhör en rad)', async () => {
       s.findPhotoByPath.mockResolvedValue({ data: { id: 'someone' }, error: null } as never);
       expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(409);
       expect(ps.removePhotoObjects).not.toHaveBeenCalled();
+    });
+
+    it('ett fel i uppslaget "redan registrerad?" svaras ut utan att något städas', async () => {
+      s.findPhotoByPath.mockResolvedValue({ data: null, error: { message: 'timeout' } } as never);
+      expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(500);
+      expect(ps.removePhotoObjects).not.toHaveBeenCalled();
+      expect(s.addPhoto).not.toHaveBeenCalled();
     });
 
     it('en variant som aldrig kom fram, eller fel typ, städar bort BÅDA och sparar inget', async () => {
@@ -452,24 +461,44 @@ describe('foton', () => {
       ps.readPhotoInfo.mockResolvedValue({ size: 450_000, contentType: 'image/heic' });
       expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(400);
       expect(ps.removePhotoObjects).toHaveBeenCalledTimes(2);
-      expect(s.insertPhoto).not.toHaveBeenCalled();
+      expect(s.addPhoto).not.toHaveBeenCalled();
     });
 
-    it('två foton samtidigt med samma nummer: räkna om och försök igen', async () => {
-      s.insertPhoto
-        .mockResolvedValueOnce({ data: null, error: { code: '23505', message: 'duplicate key value violates unique constraint "safety_round_photos_no_uniq"' } } as never)
-        .mockImplementationOnce(async (_sb, row) => ({ data: { ...row, id: 'new', created_at: 'x' }, error: null }) as never);
-      const res = await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx);
-      expect(res.status).toBe(201);
-      expect(s.insertPhoto).toHaveBeenCalledTimes(2);
+    it('databasens nej blir begripliga svar — och bara ett oregistrerat foto städas', async () => {
+      const cases: Array<[string, number]> = [['55000', 409], ['54000', 409], ['23503', 400], ['22023', 400], ['42501', 403]];
+      for (const [code, status] of cases) {
+        vi.mocked(ps.removePhotoObjects).mockClear();
+        s.addPhoto.mockResolvedValue({ data: null, error: { code, message: code } });
+        const res = await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx);
+        expect(res.status, code).toBe(status);
+        expect(ps.removePhotoObjects, code).toHaveBeenCalledWith(expect.anything(), [fullPath, printPath]);
+      }
+    });
+
+    it('"redan sparat" från databasen (en annan bekräftelse hann före) städar ALDRIG', async () => {
+      s.addPhoto.mockResolvedValue({ data: null, error: { code: '23505', message: 'photo already registered' } });
+      expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(409);
       expect(ps.removePhotoObjects).not.toHaveBeenCalled();
     });
 
-    it('en punkt i en annan rond (23503) nekas och städas', async () => {
-      s.insertPhoto.mockResolvedValue({ data: null, error: { code: '23503', message: 'violates foreign key constraint' } } as never);
-      expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(400);
-      expect(ps.removePhotoObjects).toHaveBeenCalledWith(expect.anything(), [fullPath, printPath]);
+    it('städningen prövar om registreringen i sista stund — har fotot hunnit sparas rörs det inte', async () => {
+      // Första uppslaget: inte registrerat. När städningen ska göras: registrerat av en annan bekräftelse.
+      s.findPhotoByPath
+        .mockResolvedValueOnce({ data: null, error: null } as never)
+        .mockResolvedValueOnce({ data: { id: 'raced' }, error: null } as never);
+      s.addPhoto.mockResolvedValue({ data: null, error: { code: '54000', message: 'photo limit reached' } });
+      expect((await PHOTO_CONFIRM(json({ item_id: ITEM_ID, storage_path: fullPath }), roundCtx)).status).toBe(409);
+      expect(ps.removePhotoObjects).not.toHaveBeenCalled();
     });
+  });
+
+  it('GET ../photos ger bara nya URL:er — för raderna sessionen ser', async () => {
+    const photo = makePhoto({ storage_path: fullPath });
+    s.listPhotos.mockResolvedValue({ data: [photo], error: null } as never);
+    ps.signPhotoUrls.mockResolvedValue(new Map([[fullPath, 'https://signed/new']]));
+    const res = await PHOTO_URLS(new Request('http://localhost'), roundCtx);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ photo_urls: { [photo.id]: 'https://signed/new' } });
   });
 
   describe('ta bort', () => {
@@ -497,11 +526,23 @@ describe('foton', () => {
     expect(ps.signPhotoUrls).toHaveBeenCalledWith(expect.anything(), [fullPath]);
   });
 
-  it('ett borttaget utkast tar fotona med sig ur lagringen — sökvägarna läses FÖRE borttagningen', async () => {
-    s.listPhotoPaths.mockResolvedValue([fullPath, printPath]);
+  it('ett borttaget utkast städar hela <round_id>/ i lagringen — efter att raden är borta', async () => {
     s.deleteSafetyRound.mockResolvedValue({ data: { id: ROUND_ID }, error: null } as never);
     expect((await DELETE_ROUND(new Request('http://localhost', { method: 'DELETE' }), roundCtx)).status).toBe(200);
-    expect(s.listPhotoPaths.mock.invocationCallOrder[0]).toBeLessThan(s.deleteSafetyRound.mock.invocationCallOrder[0]);
-    expect(ps.removePhotoObjects).toHaveBeenCalledWith(expect.anything(), [fullPath, printPath]);
+    expect(ps.removeRoundPhotoObjects).toHaveBeenCalledWith(expect.anything(), ROUND_ID);
+    expect(s.deleteSafetyRound.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(ps.removeRoundPhotoObjects).mock.invocationCallOrder[0]);
+  });
+
+  it('ett utkast som RLS inte släpper (slutfört) rör inga foton', async () => {
+    s.deleteSafetyRound.mockResolvedValue({ data: null, error: null } as never);
+    expect((await DELETE_ROUND(new Request('http://localhost', { method: 'DELETE' }), roundCtx)).status).toBe(409);
+    expect(ps.removeRoundPhotoObjects).not.toHaveBeenCalled();
+  });
+
+  it('en egen punkt vars foton inte går att läsa tas inte bort (fotona hade aldrig städats)', async () => {
+    s.listItemPhotoPaths.mockResolvedValue({ data: null, error: { message: 'timeout' } });
+    const res = await DELETE_ITEM(new Request('http://localhost', { method: 'DELETE' }), { params: { id: ROUND_ID, itemId: ITEM_ID } });
+    expect(res.status).toBe(500);
+    expect(s.deleteCustomItem).not.toHaveBeenCalled();
   });
 });

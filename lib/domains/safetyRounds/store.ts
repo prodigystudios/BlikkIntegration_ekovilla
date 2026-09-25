@@ -210,11 +210,25 @@ export async function findPhotoByPath(supabase: SupabaseClient, storagePath: str
   return supabase.from(PHOTOS).select('id').eq('storage_path', storagePath).maybeSingle<{ id: string }>();
 }
 
-export async function insertPhoto(
+/**
+ * Sparar ett uppladdat foto via add_safety_round_photo() — den enda vägen in (ingen INSERT-grant).
+ * Funktionen låser ronden och sätter numret ur räknaren; se 20260925_safety_round_photos.sql för
+ * felkoderna (22023 sökväg, 55000 slutförd, 23505 redan sparad, 54000 taket, 23503 fel punkt).
+ * Sessionsklienten: funktionen kräver auth.uid().
+ */
+export async function addPhoto(
   supabase: SupabaseClient,
-  row: Omit<SafetyRoundPhoto, 'id' | 'created_at'>,
-) {
-  return supabase.from(PHOTOS).insert(row).select('*').single<SafetyRoundPhoto>();
+  input: { roundId: string; itemId: string; storagePath: string; printPath: string; sizeBytes: number; printSizeBytes: number },
+): Promise<{ data: SafetyRoundPhoto | null; error: { code?: string; message: string } | null }> {
+  const { data, error } = await supabase.rpc('add_safety_round_photo', {
+    p_round_id: input.roundId,
+    p_item_id: input.itemId,
+    p_storage_path: input.storagePath,
+    p_print_path: input.printPath,
+    p_size_bytes: input.sizeBytes,
+    p_print_size_bytes: input.printSizeBytes,
+  });
+  return { data: (data as SafetyRoundPhoto | null) ?? null, error };
 }
 
 /** Tar bort raden (RLS: skrivnyckeln och ett utkast) och svarar med sökvägarna att städa. */
@@ -229,12 +243,21 @@ export async function deletePhoto(supabase: SupabaseClient, roundId: string, id:
 }
 
 /**
- * Sökvägarna under en rond (eller en punkt i den). Läses FÖRE en borttagning som kaskaderar till
- * fotona — efteråt finns raderna inte längre, och objekten hade blivit kvar i lagringen.
+ * Sökvägarna under en punkt i ronden. Läses FÖRE borttagningen av en egen punkt, som kaskaderar
+ * till fotona — efteråt finns raderna inte längre, och objekten hade blivit kvar i lagringen. Ett
+ * fel här ska stoppa borttagningen (anroparen), inte svaras med en tom lista.
  */
-export async function listPhotoPaths(supabase: SupabaseClient, roundId: string, itemId?: string): Promise<string[]> {
-  let query = supabase.from(PHOTOS).select('storage_path, print_path').eq('round_id', roundId);
-  if (itemId) query = query.eq('item_id', itemId);
-  const { data } = await query.returns<Array<Pick<SafetyRoundPhoto, 'storage_path' | 'print_path'>>>();
-  return (data ?? []).flatMap((row) => [row.storage_path, row.print_path]);
+export async function listItemPhotoPaths(
+  supabase: SupabaseClient,
+  roundId: string,
+  itemId: string,
+): Promise<{ data: string[] | null; error: { message: string } | null }> {
+  const { data, error } = await supabase
+    .from(PHOTOS)
+    .select('storage_path, print_path')
+    .eq('round_id', roundId)
+    .eq('item_id', itemId)
+    .returns<Array<Pick<SafetyRoundPhoto, 'storage_path' | 'print_path'>>>();
+  if (error) return { data: null, error };
+  return { data: (data ?? []).flatMap((row) => [row.storage_path, row.print_path]), error: null };
 }

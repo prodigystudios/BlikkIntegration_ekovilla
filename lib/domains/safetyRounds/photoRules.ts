@@ -62,18 +62,24 @@ export function validatePhotoObject(info: { size: number; contentType: string | 
   return null;
 }
 
-/** Nästa "Foto-nr" i ronden. Hål efter borttagna foton fylls aldrig: ett nummer byter aldrig foto. */
-export function nextPhotoNo(photos: ReadonlyArray<Pick<SafetyRoundPhoto, 'photo_no'>>): number {
-  return photos.reduce((max, p) => Math.max(max, p.photo_no), 0) + 1;
+/**
+ * Fotona per punkt, i nummerordning. EN källa till grupperingen — formuläret, handlingsplanen och
+ * protokollet läser alla härifrån, så ordningen aldrig kan gå isär.
+ *
+ * (Numret sätts av add_safety_round_photo() ur en räknare på ronden som bara går uppåt — ett
+ * borttaget fotos nummer ges aldrig till ett annat foto. Därför räknar koden aldrig fram ett nummer.)
+ */
+export function photosByItem<P extends Pick<SafetyRoundPhoto, 'item_id' | 'photo_no'>>(photos: readonly P[]): Map<string, P[]> {
+  const byItem = new Map<string, P[]>();
+  for (const photo of [...photos].sort((a, b) => a.photo_no - b.photo_no)) {
+    byItem.set(photo.item_id, [...(byItem.get(photo.item_id) ?? []), photo]);
+  }
+  return byItem;
 }
 
 /** Fotonumren per punkt, i nummerordning. */
 export function photoNumbersByItem(photos: ReadonlyArray<Pick<SafetyRoundPhoto, 'item_id' | 'photo_no'>>): Map<string, number[]> {
-  const byItem = new Map<string, number[]>();
-  for (const photo of [...photos].sort((a, b) => a.photo_no - b.photo_no)) {
-    byItem.set(photo.item_id, [...(byItem.get(photo.item_id) ?? []), photo.photo_no]);
-  }
-  return byItem;
+  return new Map([...photosByItem(photos)].map(([itemId, list]) => [itemId, list.map((p) => p.photo_no)]));
 }
 
 /** "Foto 3" / "Foto 1, 2, 5" — mallens hänvisning. Tom sträng utan foton. */

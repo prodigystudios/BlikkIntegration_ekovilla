@@ -5,9 +5,9 @@ import {
   PRINT_PHOTO_MAX_BYTES,
   buildPhotoPaths,
   formatPhotoRefs,
-  nextPhotoNo,
   parsePhotoPath,
   photoNumbersByItem,
+  photosByItem,
   selectPhotosForPdf,
   validatePhotoObject,
 } from '@/lib/domains/safetyRounds/photoRules';
@@ -59,10 +59,13 @@ describe('validatePhotoObject', () => {
 });
 
 describe('numreringen', () => {
-  it('nästa nummer är max + 1 — ett hål efter ett borttaget foto fylls aldrig', () => {
-    expect(nextPhotoNo([])).toBe(1);
-    expect(nextPhotoNo([{ photo_no: 1 }, { photo_no: 2 }])).toBe(3);
-    expect(nextPhotoNo([{ photo_no: 1 }, { photo_no: 5 }])).toBe(6);
+  it('fotona per punkt, i nummerordning — EN källa för formuläret, handlingsplanen och protokollet', () => {
+    const a1 = makePhoto({ item_id: 'a', photo_no: 1 });
+    const a3 = makePhoto({ item_id: 'a', photo_no: 3 });
+    const b2 = makePhoto({ item_id: 'b', photo_no: 2 });
+    const grouped = photosByItem([a3, b2, a1]);
+    expect(grouped.get('a')).toEqual([a1, a3]);
+    expect(grouped.get('b')).toEqual([b2]);
   });
 
   it('fotonumren per punkt, i nummerordning, och mallens hänvisning', () => {

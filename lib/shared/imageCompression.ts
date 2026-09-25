@@ -29,8 +29,9 @@ async function loadBitmap(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
   });
 }
 
-export async function compressImageToBlob(file: Blob, maxDim = 1600, quality = 0.72): Promise<Blob> {
-  const bmp = await loadBitmap(file);
+// Ritar en redan avkodad bild i en canvas i vald storlek och kodar den som JPEG. Delas av
+// compressImageToBlob (en variant) och compressImageVariants (flera ur samma avkodning).
+async function encodeBitmap(bmp: ImageBitmap | HTMLImageElement, maxDim: number, quality: number): Promise<Blob> {
   const sw = 'width' in bmp ? (bmp as any).width : (bmp as any).naturalWidth;
   const sh = 'height' in bmp ? (bmp as any).height : (bmp as any).naturalHeight;
   const scale = Math.min(1, maxDim / Math.max(sw, sh));
@@ -47,9 +48,47 @@ export async function compressImageToBlob(file: Blob, maxDim = 1600, quality = 0
   ctx.drawImage(bmp as any, 0, 0, tw, th);
 
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
-  try { (bmp as any).close?.(); } catch { /* ignoreras */ }
   if (!blob) throw new Error('Kunde inte komprimera bilden');
   return blob;
+}
+
+function closeBitmap(bmp: ImageBitmap | HTMLImageElement) {
+  try { (bmp as any).close?.(); } catch { /* ignoreras */ }
+}
+
+export async function compressImageToBlob(file: Blob, maxDim = 1600, quality = 0.72): Promise<Blob> {
+  const bmp = await loadBitmap(file);
+  try {
+    return await encodeBitmap(bmp, maxDim, quality);
+  } finally {
+    closeBitmap(bmp);
+  }
+}
+
+// Flera varianter ur EN avkodning. Avkodningen är det dyra — en 12 MP-bild tar sekunder i en
+// telefon — och varje variant som trappar nedåt mot sitt tak hade annars avkodat originalet igen,
+// fem, sex gånger per foto. Varje variant provar sina steg i ordning och stannar på det första som
+// ryms under taket; ryms inget blir det sista steget.
+export async function compressImageVariants(
+  file: Blob,
+  variants: ReadonlyArray<{ steps: ReadonlyArray<{ maxDim: number; q: number }>; capBytes: number }>,
+): Promise<Blob[]> {
+  const bmp = await loadBitmap(file);
+  try {
+    const out: Blob[] = [];
+    for (const variant of variants) {
+      let last: Blob | null = null;
+      for (const step of variant.steps) {
+        last = await encodeBitmap(bmp, step.maxDim, step.q);
+        if (last.size <= variant.capBytes) break;
+      }
+      if (!last) throw new Error('Kunde inte komprimera bilden');
+      out.push(last);
+    }
+    return out;
+  } finally {
+    closeBitmap(bmp);
+  }
 }
 
 // Trappa nedåt tills filen ryms under taket. Samma steg som egenkontrollen använder — de är
