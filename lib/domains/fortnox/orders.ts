@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -233,6 +233,11 @@ export type FortnoxOrderHeaderFields = {
   DeliveryAddress1?: string;
   DeliveryZipCode?: string;
   DeliveryCity?: string;
+  // Kundens org.nr/personnummer. Sätts av Fortnox vid skapandet, men `createorder` tar det ur
+  // OFFERTEN — se documentOrganisationNumber i helpers.ts för varför vi skickar det ändå.
+  // ⛔ Går INTE att tömma: `null` avvisas (2005095 "Fältet är av typen string") och `''` accepteras
+  // men rensar inte (båda uppmätta i testbolaget 2026-09-25). Utelämna fältet i stället.
+  OrganisationNumber?: string;
 };
 
 // The job site as Fortnox delivery address — or nothing, when the job happens at the customer's
@@ -344,6 +349,8 @@ export function orderReferenceNumberField(
 
 type OrderHeaderWorkOrder = {
   assigned_to: string | null;
+  // Kundkortet, för dokumentets OrganisationNumber. Alla tre anropare läser redan kolumnen.
+  customer_id?: string | null;
   /** Orderns titel — blir en textrad på dokumentet (buildOrderProjectNote). */
   project_name?: string | null;
   customer_snapshot: CustomerSnapshot | null;
@@ -420,6 +427,9 @@ async function buildOrderHeader(
 ): Promise<{ header: FortnoxOrderHeaderFields; documentNote: string | null }> {
   const snapshot = workOrder.customer_snapshot ?? linkedQuote?.customer_snapshot ?? null;
   const ourReference = await resolveOurReference(workOrder.assigned_to ?? linkedQuote?.assigned_to ?? null, supabase);
+  // Ur KUNDKORTET, inte ur snapshoten: numret går inte att redigera på offerten eller ordern, så
+  // kopiorna där är kortet som det såg ut när kunden valdes. Samma regel som workOrderReadiness.
+  const organisationNumber = await resolveDocumentOrganisationNumber(supabase, workOrder.customer_id);
   const { referenceNumber, propertyNote } = resolveRotReference(
     resolveOrderRotDetails(workOrder, linkedQuote), snapshot?.label, rotEnabled);
 
@@ -443,6 +453,10 @@ async function buildOrderHeader(
       // anyway), and the customer contact is deliberately CRM-internal — see the removal of
       // buildEndContactNote.
       ...buildOrderDeliveryFields(workOrder.work_address, snapshot),
+      // ⚠️ Utan det här bar en order skapad ur en offert från FÖRE kundens nummer ett tomt
+      // OrganisationNumber för alltid — `createorder` kopierar offertens, och fakturan ärver ordern.
+      // Utelämnas när kortet saknar ett giltigt nummer, så Fortnox behåller sitt.
+      ...(organisationNumber ? { OrganisationNumber: organisationNumber } : {}),
     },
     documentNote,
   };
