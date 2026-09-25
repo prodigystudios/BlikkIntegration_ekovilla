@@ -170,3 +170,16 @@ export const startRoundSchema = z.object({
 export const orderSearchSchema = z.object({
   q: z.string().trim().min(2, 'Skriv minst två tecken').max(80),
 });
+
+// ── Foton ────────────────────────────────────────────────────────────────────
+// Kroppen bär bara punkten och (vid bekräftelsen) sökvägen. Storlek och typ läses ur LAGRINGEN, och
+// sökvägen prövas mot ronden och uppladdaren (parsePhotoPath) — inget annat ur kroppen litas på.
+
+export const photoUploadUrlSchema = z.object({
+  item_id: z.string().uuid('Ogiltig punkt'),
+});
+
+export const photoConfirmSchema = z.object({
+  item_id: z.string().uuid('Ogiltig punkt'),
+  storage_path: z.string().min(1).max(300),
+});

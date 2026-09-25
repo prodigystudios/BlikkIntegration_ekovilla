@@ -23,12 +23,15 @@ import {
   type RiskLevel,
   type SafetyRoundAction,
   type SafetyRoundItem,
+  type SafetyRoundPhoto,
   type ToActionPlan,
 } from '@/lib/domains/safetyRounds/types';
+import { MAX_PHOTOS_PER_ROUND, photosByItem as groupPhotosByItem } from '@/lib/domains/safetyRounds/photoRules';
+import PhotoStrip, { INLINE_ACTION_CLASS } from '../_components/PhotoStrip';
 import { TextAreaField, TextField } from '../_components/fields';
 import SegmentedChoice from '../_components/SegmentedChoice';
 import { ITEM_STATUS_RAIL, ITEM_STATUS_SELECTED, RISK_SELECTED } from '../_components/safetyUi';
-import type { ChecklistCategory } from './useSafetyRound';
+import type { ChecklistCategory, PhotoUploadProgress } from './useSafetyRound';
 
 // Steg 3 — Checklistan, som mallens flik 2: kategori för kategori, en rad per kontrollpunkt.
 //
@@ -47,6 +50,11 @@ type Props = {
   onRemoveCustomItem: (id: string) => void;
   onAddAction: (input: { finding: string; item_id: string; risk: RiskLevel | null }) => Promise<unknown>;
   onGoToActions: () => void;
+  photos: SafetyRoundPhoto[];
+  photoUrls: Record<string, string | null>;
+  photoUploads: Record<string, PhotoUploadProgress>;
+  onUploadPhotos: (itemId: string, files: File[]) => void;
+  onRemovePhoto: (photoId: string) => void;
 };
 
 const STATUS_OPTIONS = ITEM_STATUSES.map((value) => ({
@@ -77,10 +85,30 @@ function DetailLabel({ children }: { children: string }) {
   return <p className={cn('m-0 mb-1', crm.label)}>{children}</p>;
 }
 
-function ItemRow({ item, actions, readOnly, onPatchItem, onRemoveCustomItem, onAddAction, onGoToActions }: {
+function ItemRow({
+  item,
+  actions,
+  readOnly,
+  onPatchItem,
+  onRemoveCustomItem,
+  onAddAction,
+  onGoToActions,
+  itemPhotos,
+  photoUrls,
+  upload,
+  photoLimitReached,
+  onUploadPhotos,
+  onRemovePhoto,
+}: {
   item: SafetyRoundItem;
   actions: SafetyRoundAction[];
-} & Pick<Props, 'readOnly' | 'onPatchItem' | 'onRemoveCustomItem' | 'onAddAction' | 'onGoToActions'>) {
+  itemPhotos: SafetyRoundPhoto[];
+  upload: PhotoUploadProgress | undefined;
+  photoLimitReached: boolean;
+} & Pick<
+  Props,
+  'readOnly' | 'onPatchItem' | 'onRemoveCustomItem' | 'onAddAction' | 'onGoToActions' | 'photoUrls' | 'onUploadPhotos' | 'onRemovePhoto'
+>) {
   const [showComment, setShowComment] = useState(false);
   const [creatingAction, setCreatingAction] = useState(false);
   const details = needsDetails(item);
@@ -190,15 +218,27 @@ function ItemRow({ item, actions, readOnly, onPatchItem, onRemoveCustomItem, onA
         <div className="sm:ml-10">
           <TextField label="Kommentar" value={item.comment} onCommit={text('comment')} readOnly={readOnly} maxLength={500} />
         </div>
-      ) : !readOnly ? (
-        <button
-          type="button"
-          onClick={() => setShowComment(true)}
-          className="min-h-11 w-fit p-0 px-1 text-sm font-semibold text-slate-600 hover:text-slate-900 sm:ml-10"
-        >
-          + Kommentar
-        </button>
       ) : null}
+
+      {/* Foton — på varje punkt, oavsett status: mallen har Foto-nr på alla rader. "+ Kommentar" står
+          på samma rad som "+ Foto" när punkten inte har några detaljer att visa. */}
+      <PhotoStrip
+        addonBefore={
+          !details && !item.comment && !showComment ? (
+            <button type="button" onClick={() => setShowComment(true)} className={INLINE_ACTION_CLASS}>
+              + Kommentar
+            </button>
+          ) : null
+        }
+        photos={itemPhotos}
+        urls={photoUrls}
+        readOnly={readOnly}
+        itemLabel={numberLabel.toLowerCase()}
+        uploading={upload}
+        limitReached={photoLimitReached}
+        onUpload={(files) => onUploadPhotos(item.id, files)}
+        onRemove={onRemovePhoto}
+      />
 
       {item.catalog_item_id === null && !readOnly ? (
         <button type="button" onClick={() => onRemoveCustomItem(item.id)} className={cn(crm.dangerButton, 'w-fit sm:ml-10')}>
@@ -267,11 +307,29 @@ function AddCustomItem({ group, onAdd }: { group: ItemGroup; onAdd: Props['onAdd
   );
 }
 
-export default function ChecklistStep({ items, actions, categories, readOnly, onPatchItem, onAddCustomItem, onRemoveCustomItem, onAddAction, onGoToActions }: Props) {
+export default function ChecklistStep({
+  items,
+  actions,
+  categories,
+  readOnly,
+  onPatchItem,
+  onAddCustomItem,
+  onRemoveCustomItem,
+  onAddAction,
+  onGoToActions,
+  photos,
+  photoUrls,
+  photoUploads,
+  onUploadPhotos,
+  onRemovePhoto,
+}: Props) {
   const groups = useMemo(() => {
     const own = groupItemsByCategory(items);
     return readOnly ? own : withEmptyCategories(own, categories);
   }, [items, categories, readOnly]);
+  const photosByItem = useMemo(() => groupPhotosByItem(photos), [photos]);
+  // Uppladdningar som pågår räknas in, så att två punkter samtidigt inte kan gå förbi taket.
+  const photoLimitReached = photos.length + Object.values(photoUploads).reduce((n, u) => n + (u.total - u.done), 0) >= MAX_PHOTOS_PER_ROUND;
 
   return (
     <div className="grid gap-4">
@@ -307,6 +365,12 @@ export default function ChecklistStep({ items, actions, categories, readOnly, on
                     onRemoveCustomItem={onRemoveCustomItem}
                     onAddAction={onAddAction}
                     onGoToActions={onGoToActions}
+                    itemPhotos={photosByItem.get(item.id) ?? []}
+                    photoUrls={photoUrls}
+                    upload={photoUploads[item.id]}
+                    photoLimitReached={photoLimitReached}
+                    onUploadPhotos={onUploadPhotos}
+                    onRemovePhoto={onRemovePhoto}
                   />
                 ))}
               </ul>

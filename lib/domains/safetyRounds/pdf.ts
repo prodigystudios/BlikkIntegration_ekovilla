@@ -7,7 +7,11 @@ import { safetyRoundOrderRef, type SafetyRound } from './types';
 // Skyddsrondens protokoll som PDF. Ritningen bor i lib/pdf/blocks.ts (samma som KMA-planen); här
 // finns bara dokumentets metadata och filnamnet.
 
-export async function renderSafetyRoundPdf(doc: SafetyRoundDocument, assets: PdfAssets = {}): Promise<Uint8Array> {
+/** Dokumentet och fotonas bytes (per ref, se SafetyRoundDocument.photoDownloads). */
+export async function renderSafetyRoundPdf(
+  doc: SafetyRoundDocument & { images?: ReadonlyMap<string, Uint8Array> },
+  assets: PdfAssets = {},
+): Promise<Uint8Array> {
   return renderBlocksPdf(doc, assets);
 }
 

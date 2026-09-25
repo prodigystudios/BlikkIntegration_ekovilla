@@ -8,6 +8,7 @@ import type {
   SafetyRoundListRow,
   SafetyRoundOrder,
   SafetyRoundParticipant,
+  SafetyRoundPhoto,
 } from './types';
 
 // Databasen för skyddsronderna — tunna frågor med SESSIONSKLIENTEN. RLS gör auktoriseringen
@@ -22,6 +23,7 @@ const ROUNDS = 'safety_rounds';
 export const PARTICIPANTS = 'safety_round_participants';
 export const ITEMS = 'safety_round_items';
 export const ACTIONS = 'safety_round_actions';
+export const PHOTOS = 'safety_round_photos';
 
 const LIST_SELECT =
   'id, work_order_id, round_number, status, order_number, fortnox_order_number, project_name, held_on, leader_name, next_round_due, created_at';
@@ -60,13 +62,14 @@ export async function getSafetyRoundBundle(
   supabase: SupabaseClient,
   id: string,
 ): Promise<{ data: SafetyRoundBundle | null; error: { message: string } | null }> {
-  const [round, participants, items, actions] = await Promise.all([
+  const [round, participants, items, actions, photos] = await Promise.all([
     getSafetyRound(supabase, id),
     supabase.from(PARTICIPANTS).select('*').eq('round_id', id).order('position').order('created_at').order('id').returns<SafetyRoundParticipant[]>(),
     supabase.from(ITEMS).select('*').eq('round_id', id).order('position').order('id').returns<SafetyRoundItem[]>(),
     supabase.from(ACTIONS).select('*').eq('round_id', id).order('position').order('created_at').order('id').returns<SafetyRoundAction[]>(),
+    supabase.from(PHOTOS).select('*').eq('round_id', id).order('photo_no').returns<SafetyRoundPhoto[]>(),
   ]);
-  const error = round.error ?? participants.error ?? items.error ?? actions.error;
+  const error = round.error ?? participants.error ?? items.error ?? actions.error ?? photos.error;
   if (error) return { data: null, error };
   if (!round.data) return { data: null, error: null };
   return {
@@ -75,6 +78,7 @@ export async function getSafetyRoundBundle(
       participants: participants.data ?? [],
       items: items.data ?? [],
       actions: actions.data ?? [],
+      photos: photos.data ?? [],
     },
     error: null,
   };
@@ -193,4 +197,67 @@ export async function nextPosition(
 export async function itemBelongsToRound(supabase: SupabaseClient, roundId: string, itemId: string) {
   const { data, error } = await supabase.from(ITEMS).select('id').eq('id', itemId).eq('round_id', roundId).maybeSingle();
   return { data: data !== null, error };
+}
+
+// ── Foton ────────────────────────────────────────────────────────────────────
+
+export async function listPhotos(supabase: SupabaseClient, roundId: string) {
+  return supabase.from(PHOTOS).select('*').eq('round_id', roundId).order('photo_no').returns<SafetyRoundPhoto[]>();
+}
+
+/** Redan registrerad? Då tillhör objektet en rad och får aldrig städas bort av bekräftelsesteget. */
+export async function findPhotoByPath(supabase: SupabaseClient, storagePath: string) {
+  return supabase.from(PHOTOS).select('id').eq('storage_path', storagePath).maybeSingle<{ id: string }>();
+}
+
+/**
+ * Sparar ett uppladdat foto via add_safety_round_photo() — den enda vägen in (ingen INSERT-grant).
+ * Funktionen låser ronden och sätter numret ur räknaren; se 20260925_safety_round_photos.sql för
+ * felkoderna (22023 sökväg, 55000 slutförd, 23505 redan sparad, 54000 taket, 23503 fel punkt).
+ * Sessionsklienten: funktionen kräver auth.uid().
+ */
+export async function addPhoto(
+  supabase: SupabaseClient,
+  input: { roundId: string; itemId: string; storagePath: string; printPath: string; sizeBytes: number; printSizeBytes: number },
+): Promise<{ data: SafetyRoundPhoto | null; error: { code?: string; message: string } | null }> {
+  const { data, error } = await supabase.rpc('add_safety_round_photo', {
+    p_round_id: input.roundId,
+    p_item_id: input.itemId,
+    p_storage_path: input.storagePath,
+    p_print_path: input.printPath,
+    p_size_bytes: input.sizeBytes,
+    p_print_size_bytes: input.printSizeBytes,
+  });
+  return { data: (data as SafetyRoundPhoto | null) ?? null, error };
+}
+
+/** Tar bort raden (RLS: skrivnyckeln och ett utkast) och svarar med sökvägarna att städa. */
+export async function deletePhoto(supabase: SupabaseClient, roundId: string, id: string) {
+  return supabase
+    .from(PHOTOS)
+    .delete()
+    .eq('id', id)
+    .eq('round_id', roundId)
+    .select('storage_path, print_path')
+    .maybeSingle<Pick<SafetyRoundPhoto, 'storage_path' | 'print_path'>>();
+}
+
+/**
+ * Sökvägarna under en punkt i ronden. Läses FÖRE borttagningen av en egen punkt, som kaskaderar
+ * till fotona — efteråt finns raderna inte längre, och objekten hade blivit kvar i lagringen. Ett
+ * fel här ska stoppa borttagningen (anroparen), inte svaras med en tom lista.
+ */
+export async function listItemPhotoPaths(
+  supabase: SupabaseClient,
+  roundId: string,
+  itemId: string,
+): Promise<{ data: string[] | null; error: { message: string } | null }> {
+  const { data, error } = await supabase
+    .from(PHOTOS)
+    .select('storage_path, print_path')
+    .eq('round_id', roundId)
+    .eq('item_id', itemId)
+    .returns<Array<Pick<SafetyRoundPhoto, 'storage_path' | 'print_path'>>>();
+  if (error) return { data: null, error };
+  return { data: (data ?? []).flatMap((row) => [row.storage_path, row.print_path]), error: null };
 }

@@ -54,7 +54,14 @@ export type PdfBlock =
   | { t: 'table'; columns: PdfTableColumn[]; rows: string[][]; minRows?: number; rowMinHeight?: number }
   /** En linje att skriva sin namnteckning på, med etiketten ovanför. */
   | { t: 'signature'; label: string }
-  | { t: 'gap'; h: number };
+  | { t: 'gap'; h: number }
+  /**
+   * Foton i ett rutnät, två per rad, med bildtext under varje. `ref` slås upp i renderarens
+   * `images` (bytesen följer aldrig med i dokumentet). En rad bryts aldrig mitt i. Ett foto som
+   * saknas i `images` ritas som en ruta som säger det — protokollet ska inte tappa en hänvisning tyst.
+   * Används av skyddsronden; KMA-planens lagrade dokumentschema godtar inte blocket.
+   */
+  | { t: 'photos'; items: Array<{ ref: string; caption: string }> };
 
 export type PdfSection = {
   key: string;
@@ -328,11 +335,24 @@ function leadingHeight(blocks: PdfBlock[], index: number, fonts: Fonts): number 
       return TITLE_HEIGHT;
     case 'gap':
       return 0;
+    case 'photos':
+      return block.items.length > 0 ? PHOTO_ROW_ESTIMATE : 0;
   }
 }
 
 const TITLE_HEIGHT = 44;
 const SIGNATURE_HEIGHT = 46;
+
+/** Fotorutnätet: två per rad. En stående mobilbild skalas efter höjden, en liggande efter bredden. */
+const PHOTO_GAP = 14;
+const PHOTO_MAX_H = 230;
+const PHOTO_MISSING_H = 120;
+const PHOTO_CAPTION_SIZE = 8;
+const PHOTO_CAPTION_LINE = 10;
+const PHOTO_CAPTION_GAP = 4;
+const PHOTO_ROW_GAP = 14;
+/** Platsprövningen före bilderna är inbäddade: den högsta tänkbara raden. */
+const PHOTO_ROW_ESTIMATE = PHOTO_MAX_H + PHOTO_CAPTION_GAP + 2 * PHOTO_CAPTION_LINE + PHOTO_ROW_GAP;
 
 /** Rubrikernas form — EN källa för både platsprövningen och ritningen, så de aldrig räknar olika. */
 const HEADING = {
@@ -363,12 +383,15 @@ function gapBefore(block: PdfBlock | undefined): number {
   if (!block) return 0;
   if (block.t === 'h1' || block.t === 'h2' || block.t === 'h3') return HEADING[block.t].before;
   if (block.t === 'table') return TABLE_GAP_BEFORE;
+  if (block.t === 'photos') return TABLE_GAP_BEFORE;
   return 0;
 }
 
 // ── Blocken ──────────────────────────────────────────────────────────────────
 
-function drawBlocks(blocks: PdfBlock[], fonts: Fonts, flow: Flow) {
+type EmbeddedImages = ReadonlyMap<string, PDFImage | null>;
+
+function drawBlocks(blocks: PdfBlock[], fonts: Fonts, flow: Flow, images: EmbeddedImages) {
   for (const [index, block] of blocks.entries()) {
     switch (block.t) {
       case 'title': {
@@ -514,8 +537,72 @@ function drawBlocks(blocks: PdfBlock[], fonts: Fonts, flow: Flow) {
       case 'gap':
         flow.y -= block.h;
         break;
+
+      case 'photos': {
+        const cellW = (WIDTH - PHOTO_GAP) / 2;
+        flow.y -= TABLE_GAP_BEFORE;
+        for (let start = 0; start < block.items.length; start += 2) {
+          const cells = block.items.slice(start, start + 2).map((item) => {
+            const image = images.get(item.ref) ?? null;
+            const scale = image ? Math.min(cellW / image.width, PHOTO_MAX_H / image.height) : 0;
+            return {
+              image,
+              w: image ? image.width * scale : cellW,
+              h: image ? image.height * scale : PHOTO_MISSING_H,
+              caption: capLines(wrapLines(item.caption, fonts.regular, PHOTO_CAPTION_SIZE, cellW), 2),
+            };
+          });
+          const rowH = Math.max(...cells.map((c) => c.h + PHOTO_CAPTION_GAP + c.caption.length * PHOTO_CAPTION_LINE)) + PHOTO_ROW_GAP;
+          // Raden hålls ihop: ett foto och dess bildtext på olika sidor går inte att läsa ihop.
+          flow.ensure(rowH);
+          const top = flow.y;
+          cells.forEach((cell, col) => {
+            const x = M_LEFT + col * (cellW + PHOTO_GAP);
+            if (cell.image) {
+              flow.page.drawImage(cell.image, { x, y: top - cell.h, width: cell.w, height: cell.h });
+            } else {
+              flow.page.drawRectangle({ x, y: top - cell.h, width: cell.w, height: cell.h, borderColor: BORDER, borderWidth: 0.5, color: BOX });
+              draw(flow.page, 'Fotot kunde inte hämtas.', x + CELL_PAD * 2, top - cell.h / 2, fonts.regular, BODY_SIZE, MUTED);
+            }
+            let y = top - cell.h - PHOTO_CAPTION_GAP - PHOTO_CAPTION_SIZE * 0.8;
+            for (const line of cell.caption) {
+              draw(flow.page, line, x, y, fonts.regular, PHOTO_CAPTION_SIZE, MUTED);
+              y -= PHOTO_CAPTION_LINE;
+            }
+          });
+          flow.y -= rowH;
+        }
+        break;
+      }
     }
   }
+}
+
+/**
+ * Bäddar in fotona som dokumentet hänvisar till, en gång per ref. JPEG och PNG känns igen på sina
+ * första bytes, inte på ett påstående. Ett foto som inte går att bädda in blir null — rutnätet ritar
+ * då en ruta som säger det, i stället för att hela PDF:en fallerar.
+ */
+async function embedPhotos(pdf: PDFDocument, sections: PdfSection[], bytes: ReadonlyMap<string, Uint8Array>): Promise<EmbeddedImages> {
+  const embedded = new Map<string, PDFImage | null>();
+  for (const section of sections) {
+    for (const block of section.blocks) {
+      if (block.t !== 'photos') continue;
+      for (const { ref } of block.items) {
+        if (embedded.has(ref)) continue;
+        const data = bytes.get(ref);
+        let image: PDFImage | null = null;
+        try {
+          if (data && data[0] === 0xff && data[1] === 0xd8) image = await pdf.embedJpg(data);
+          else if (data && data[0] === 0x89 && data[1] === 0x50) image = await pdf.embedPng(data);
+        } catch (e) {
+          console.warn('[pdf] fotot kunde inte bäddas in:', ref, e instanceof Error ? e.message : e);
+        }
+        embedded.set(ref, image);
+      }
+    }
+  }
+  return embedded;
 }
 
 async function embedLogo(pdf: PDFDocument, bytes: Uint8Array | null, kind: 'png' | 'jpg'): Promise<PDFImage | null> {
@@ -542,6 +629,8 @@ export type RenderBlocksPdfInput = PdfFooterText & {
   subject: string;
   /** 'ÅÅÅÅ-MM-DD' — skapelse- och ändringsdatum i metadatan. */
   date: string;
+  /** Bytes till fotoblocken, per `ref`. */
+  images?: ReadonlyMap<string, Uint8Array>;
 };
 
 export async function renderBlocksPdf(input: RenderBlocksPdfInput, assets: PdfAssets = {}): Promise<Uint8Array> {
@@ -572,10 +661,12 @@ export async function renderBlocksPdf(input: RenderBlocksPdfInput, assets: PdfAs
     return page;
   };
 
+  const images = await embedPhotos(pdf, input.sections, input.images ?? new Map());
+
   const flow = createFlow({ page: newPage(), top: BODY_TOP, continuationTop: BODY_TOP, bottom: BODY_BOTTOM, newPage });
   for (const [index, section] of input.sections.entries()) {
     if (section.newPage && index > 0) flow.breakPage();
-    drawBlocks(section.blocks, fonts, flow);
+    drawBlocks(section.blocks, fonts, flow, images);
   }
 
   for (const [index, page] of pages.entries()) drawFooter(page, fonts, input, index + 1, pages.length);

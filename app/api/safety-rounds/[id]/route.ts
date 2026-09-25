@@ -5,7 +5,15 @@ import { requirePermission } from '@/lib/auth/guards';
 import { completionProblems, summarizeItems } from '@/lib/domains/safetyRounds/completion';
 import { leaderIdForName } from '@/lib/domains/safetyRounds/rules';
 import { roundPatchSchema } from '@/lib/domains/safetyRounds/schemas';
-import { deleteSafetyRound, getSafetyRoundBundle, listChecklistCategories, updateSafetyRound } from '@/lib/domains/safetyRounds/store';
+import { signedPhotoUrls } from '@/lib/domains/safetyRounds/photos';
+import { removeRoundPhotoObjects } from '@/lib/domains/safetyRounds/photoStorage';
+import {
+  deleteSafetyRound,
+  getSafetyRoundBundle,
+  listChecklistCategories,
+  updateSafetyRound,
+} from '@/lib/domains/safetyRounds/store';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import type { SafetyRound } from '@/lib/domains/safetyRounds/types';
 import { requireSafetyRoundReader, writeFailure } from '../_lib';
 
@@ -31,7 +39,12 @@ export async function GET(_req: Request, context: RouteContext) {
     if (!data) return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
     if (categories.error) console.warn('[safety-rounds] kategorierna:', categories.error.message);
 
+    // Fotonas läs-URL:er signeras HÄR, efter att RLS släppt igenom läsningen av raderna ovan —
+    // bucketen har inga egna policyer. 30 minuter; formuläret förnyar dem via GET ../photos.
+    const photoUrls = await signedPhotoUrls(getSupabaseAdmin(), data.photos);
+
     return ok({
+      photo_urls: photoUrls,
       ...data,
       // Katalogens kategorier — var en egen punkt kan läggas. Bästa-försök: utan dem går det bara att
       // lägga egna punkter i kategorier som ronden redan har.
@@ -84,6 +97,9 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const supabase = createRouteHandlerClient({ cookies });
     const { data, error } = await deleteSafetyRound(supabase, context.params.id);
     if (error || !data) return writeFailure(error, 'ronden');
+    // Fotona städas på PREFIXET <round_id>/ — även bilder som laddades upp men aldrig bekräftades.
+    // Först när raden är borta (RLS sa ja).
+    await removeRoundPhotoObjects(getSupabaseAdmin(), context.params.id);
     return ok({ id: data.id });
   } catch (e: unknown) {
     console.error('[safety-rounds] ta bort:', e instanceof Error ? e.stack ?? e.message : e);

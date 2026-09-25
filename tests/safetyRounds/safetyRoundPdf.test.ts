@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 
 import { buildSafetyRoundDocument } from '@/lib/domains/safetyRounds/document';
 import { renderSafetyRoundPdf, safetyRoundFilename } from '@/lib/domains/safetyRounds/pdf';
 import type { SafetyRoundBundle } from '@/lib/domains/safetyRounds/types';
-import { completeBundle, makeItem } from './helpers/fixtures';
+import { completeBundle, makeItem, makePhoto } from './helpers/fixtures';
 
 // Skyddsrondens protokoll. Som KMA-planens test frågar det VAR något står (vilken sida, fot eller
 // kropp) — en text på fel blad går fortfarande att extrahera.
@@ -40,9 +40,9 @@ async function pagesOf(bytes: Uint8Array): Promise<TextItem[][]> {
 const bodyText = (page: TextItem[]) => page.filter((it) => it.y > FOOTER_TOP).map((it) => it.str).join(' ');
 const footerText = (page: TextItem[]) => page.filter((it) => it.y <= FOOTER_TOP).map((it) => it.str).join(' ');
 
-async function render(bundle: SafetyRoundBundle, name: string) {
+async function render(bundle: SafetyRoundBundle, name: string, images?: ReadonlyMap<string, Uint8Array>) {
   const doc = buildSafetyRoundDocument(bundle, { printedOn: PRINTED_ON });
-  const bytes = await renderSafetyRoundPdf(doc);
+  const bytes = await renderSafetyRoundPdf({ ...doc, images });
   const dir = process.env.SAFETY_PDF_PREVIEW_DIR;
   if (dir) {
     await mkdir(dir, { recursive: true });
@@ -135,5 +135,60 @@ describe('safetyRoundFilename', () => {
     expect(safetyRoundFilename({ ...completeBundle().round, fortnox_order_number: null })).toBe(
       'Skyddsrond AO-20260924-AB12CD rond2 - Vindsbjalklag Hus AC.pdf',
     );
+  });
+});
+
+describe('foton i protokollet', () => {
+  // En riktig JPEG (Isoleringslandslagets logga) får spela foto.
+  const jpeg = () => readFile(join(process.cwd(), 'public/brand/Isoleringslandslaget_logo.jpg')).then((b) => new Uint8Array(b));
+
+  function withPhotos() {
+    const bundle = completeBundle();
+    const defect = bundle.items[2];
+    bundle.photos = [
+      makePhoto({ item_id: defect.id, photo_no: 1 }),
+      makePhoto({ item_id: defect.id, photo_no: 2 }),
+      makePhoto({ item_id: bundle.items[0].id, photo_no: 3 }),
+    ];
+    return bundle;
+  }
+
+  it('en fotobilaga sist, med nummer och punkt — och ett foto som saknas sägs rakt ut', async () => {
+    const bundle = withPhotos();
+    const bytes = await jpeg();
+    const images = new Map([
+      [bundle.photos[0].id, bytes],
+      [bundle.photos[1].id, bytes],
+      // Foto 3 kunde inte hämtas.
+    ]);
+    const { pages } = await render(bundle, 'foton', images);
+    const last = bodyText(pages[pages.length - 1]);
+    expect(last).toContain('Foton');
+    expect(last).toContain('Foto 1 – Punkt 4:');
+    expect(last).toContain('Foto 2 – Punkt 4:');
+    expect(last).toContain('Fotot kunde inte hämtas.');
+  });
+
+  it('checklistan och handlingsplanen hänvisar till fotonumren, som i mallen', async () => {
+    const { pages } = await render(withPhotos(), 'foto-hanvisningar');
+    const all = pages.map(bodyText).join(' ');
+    // Bristen (punkt 4): i checklistan och på åtgärden. OK-punkten: bara i checklistan.
+    expect(all.match(/Foto 1, 2/g)?.length).toBe(2);
+    expect(all).toContain('Foto 3');
+  });
+
+  it('ryms inte alla i budgeten listas resten, och bara de som ryms hämtas', () => {
+    const bundle = withPhotos();
+    bundle.photos = bundle.photos.map((p, i) => ({ ...p, print_size_bytes: i === 0 ? 1_000_000 : 3_000_000 }));
+    const doc = buildSafetyRoundDocument(bundle, { printedOn: PRINTED_ON });
+    expect(doc.photoDownloads).toEqual([{ ref: bundle.photos[0].id, path: bundle.photos[0].print_path }]);
+    const texts = doc.sections.flatMap((section) => section.blocks).filter((b) => b.t === 'p').map((b) => (b as { text: string }).text);
+    expect(texts).toContain('Foto 2, 3 ryms inte i PDF:en. De finns i ronden i appen.');
+  });
+
+  it('utan foton: ingen bilaga och inget att hämta', () => {
+    const doc = buildSafetyRoundDocument(completeBundle(), { printedOn: PRINTED_ON });
+    expect(doc.photoDownloads).toEqual([]);
+    expect(doc.sections.map((section) => section.key)).toEqual(['info', 'checklist', 'plan']);
   });
 });
