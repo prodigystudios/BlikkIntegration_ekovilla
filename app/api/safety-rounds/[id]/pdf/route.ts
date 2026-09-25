@@ -4,7 +4,9 @@ import { documentErrorPage, invalidUuidParam, isDocumentNavigation, routeError }
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { buildSafetyRoundDocument } from '@/lib/domains/safetyRounds/document';
 import { renderSafetyRoundPdf, safetyRoundFilename } from '@/lib/domains/safetyRounds/pdf';
+import { downloadPhotos } from '@/lib/domains/safetyRounds/photoStorage';
 import { getSafetyRoundBundle } from '@/lib/domains/safetyRounds/store';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSafetyRoundReader } from '../../_lib';
 
 // Skyddsrondens protokoll som PDF, byggt ur tabellerna vid varje utskrift (se document.ts: en
@@ -45,7 +47,19 @@ export async function GET(req: Request, { params }: RouteContext) {
     if (!data) return fail(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
 
     const document = buildSafetyRoundDocument(data, { printedOn: stockholmTodayISO() });
-    const bytes = await renderSafetyRoundPdf(document);
+
+    // Fotonas lilla variant hämtas med service-rollen — EFTER att RLS släppt igenom läsningen av
+    // raderna ovan (bucketen har inga egna policyer). Bara de som ryms i budgeten (document.ts).
+    const downloaded = document.photoDownloads.length > 0
+      ? await downloadPhotos(getSupabaseAdmin(), document.photoDownloads.map((p) => p.path))
+      : new Map<string, Uint8Array>();
+    const images = new Map<string, Uint8Array>();
+    for (const { ref, path } of document.photoDownloads) {
+      const photo = downloaded.get(path);
+      if (photo) images.set(ref, photo);
+    }
+
+    const bytes = await renderSafetyRoundPdf({ ...document, images });
     return new Response(bytes, {
       status: 200,
       headers: {

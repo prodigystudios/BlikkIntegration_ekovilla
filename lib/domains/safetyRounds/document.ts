@@ -3,6 +3,7 @@ import { KMA_FOOTER } from '@/lib/domains/crm/kmaPlans/template';
 
 import { describeItem, effectiveDetails, summarizeItems } from './completion';
 import { groupItemsByCategory } from './form';
+import { formatPhotoRefs, photoNumbersByItem, selectPhotosForPdf } from './photoRules';
 import {
   ACTION_EFFECT_LABELS,
   ACTION_STATUS_LABELS,
@@ -33,6 +34,11 @@ export type SafetyRoundDocument = {
   subject: string;
   /** Utskriftsdagen — metadatans datum. */
   date: string;
+  /**
+   * Fotona som ska bäddas in: `ref` är fotoblockets nyckel, `path` den lilla variantens sökväg.
+   * PDF-routen hämtar exakt de här — urvalet (budgeten) görs här, en gång.
+   */
+  photoDownloads: Array<{ ref: string; path: string }>;
 };
 
 const dash = (value: string | null | undefined) => (value && value.trim() ? value.trim() : '–');
@@ -40,13 +46,17 @@ const riskText = (risk: RiskLevel | null) => (risk ? RISK_LABELS[risk] : '–');
 const yesNo = (value: boolean | null) => (value === null ? '–' : value ? 'Ja' : 'Nej');
 const clock = (value: string | null) => (value ? value.slice(0, 5) : '–');
 
-/** Beskrivning, "åtgärdat på plats" och kommentar — detaljerna bara när de gäller (effectiveDetails). */
-function observation(item: SafetyRoundItem): string {
+/**
+ * Beskrivning, "åtgärdat på plats", kommentar och fotonumren. Detaljerna bara när de gäller
+ * (effectiveDetails); fotona alltid — mallen har Foto-nr på varje rad, oavsett status.
+ */
+function observation(item: SafetyRoundItem, photoNumbers: readonly number[]): string {
   const details = effectiveDetails(item);
   return [
     details.description?.trim(),
     details.fixed_on_site === true ? 'Åtgärdat på plats.' : null,
     item.comment?.trim() ? `Kommentar: ${item.comment.trim()}` : null,
+    formatPhotoRefs(photoNumbers) || null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -58,6 +68,7 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
   const summary = summarizeItems(items);
   const draft = round.status !== 'completed';
   const itemById = new Map(items.map((item) => [item.id, item]));
+  const photosByItem = photoNumbersByItem(bundle.photos);
 
   // ── 1. Rondinfo och deltagare ──────────────────────────────────────────────
   const info: PdfBlock[] = [
@@ -145,7 +156,7 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
           item.text,
           item.status ? ITEM_STATUS_LABELS[item.status] : '–',
           riskText(details.risk),
-          observation(item),
+          observation(item, photosByItem.get(item.id) ?? []),
           details.to_action_plan ? TO_ACTION_PLAN_LABELS[details.to_action_plan] : '',
         ];
       }),
@@ -176,7 +187,8 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
       ],
       rows: actions.map((action, index) => {
         const item = action.item_id ? itemById.get(action.item_id) : undefined;
-        const finding = item ? `${describeItem(item)}: ${action.finding}` : action.finding;
+        const refs = item ? formatPhotoRefs(photosByItem.get(item.id) ?? []) : '';
+        const finding = [item ? `${describeItem(item)}: ${action.finding}` : action.finding, refs].filter(Boolean).join('\n');
         const followUp = [
           ACTION_STATUS_LABELS[action.status],
           action.followed_up_on ? `Uppföljt ${action.followed_up_on}` : null,
@@ -209,12 +221,37 @@ export function buildSafetyRoundDocument(bundle: SafetyRoundBundle, ctx: { print
     { t: 'signature', label: 'Skyddsombud' },
   ];
 
+  // ── 4. Fotona ──────────────────────────────────────────────────────────────
+  // Den lilla varianten, i nummerordning, så många som ryms inom PDF-budgeten. Resten sägs rakt ut —
+  // ett protokoll som tyst tappar Foto 14 hänvisar till något som inte finns.
+  const { embed, omitted } = selectPhotosForPdf(bundle.photos);
+  const photoBlocks: PdfBlock[] = [];
+  if (bundle.photos.length > 0) {
+    photoBlocks.push({ t: 'h1', text: 'Foton' });
+    if (omitted.length > 0) {
+      photoBlocks.push({
+        t: 'p',
+        text: `${formatPhotoRefs(omitted.map((p) => p.photo_no))} ryms inte i PDF:en. ${omitted.length === 1 ? 'Det finns' : 'De finns'} i ronden i appen.`,
+      });
+    }
+    photoBlocks.push({
+      t: 'photos',
+      items: embed.map((photo) => {
+        const item = itemById.get(photo.item_id);
+        const where = item ? (item.number != null ? `${describeItem(item)}: ${item.text}` : item.text) : '';
+        return { ref: photo.id, caption: [`Foto ${photo.photo_no}`, where].filter(Boolean).join(' – ') };
+      }),
+    });
+  }
+
   return {
     sections: [
       { key: 'info', newPage: false, blocks: info },
       { key: 'checklist', newPage: true, blocks: checklist },
       { key: 'plan', newPage: true, blocks: plan },
+      ...(photoBlocks.length > 0 ? [{ key: 'photos', newPage: true, blocks: photoBlocks }] : []),
     ],
+    photoDownloads: embed.map((photo) => ({ ref: photo.id, path: photo.print_path })),
     footer: KMA_FOOTER,
     running: ['Skyddsrond', orderRef || null, `Rond ${round.round_number}`, `Utskriven ${ctx.printedOn}`]
       .filter(Boolean)
