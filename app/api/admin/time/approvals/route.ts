@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { toSwedishE164 } from '@/lib/phone';
 import { listTimeApprovalOverview, normalizeOverviewRow, periodStartOf, type TimeApprovalOverviewRow } from '@/lib/domains/time/approvals';
@@ -26,7 +25,7 @@ export async function GET(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
 
     const periodStart = periodStartOf(parsed.data.period);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listTimeApprovalOverview(supabase, periodStart);
     if (error) return routeError(500, 'time_approval_overview_failed', error.message);
 

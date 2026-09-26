@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteCrmWorkOrderTimeEntry, updateCrmWorkOrderTimeEntry } from '@/lib/domains/crm/work-orders';
 import { buildTimeEntryRow } from '@/lib/domains/time/entries';
 import { explainWriteMiss, periodLockError } from '@/lib/domains/time/approvals';
@@ -49,7 +48,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     }, currentUser.currentUser.id);
     if (built.error || !built.row) return routeError(400, 'crm_work_order_time_entry_invalid', built.error || 'Ogiltig tidrad');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateCrmWorkOrderTimeEntry(supabase, context.params.entryId, currentUser.currentUser.id, built.row);
 
     if (error) {
@@ -70,7 +69,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const currentUser = await requireSignedInUser();
     if (currentUser.response || !currentUser.currentUser) return currentUser.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteCrmWorkOrderTimeEntry(supabase, context.params.entryId, currentUser.currentUser.id);
 
     if (error) {

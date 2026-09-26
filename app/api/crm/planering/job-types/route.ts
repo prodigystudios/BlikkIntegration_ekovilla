@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listJobTypes, createJobType } from '@/lib/domains/planning/jobTypes';
 import { ok, routeError, validationError, requirePermission, createJobTypeSchema } from '../_lib';
 
@@ -9,7 +8,7 @@ export async function GET() {
     const gate = await requirePermission('planning.schedule.read');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listJobTypes(supabase);
     if (error) return routeError(500, 'planning_job_types_failed', error.message);
 
@@ -28,7 +27,7 @@ export async function POST(req: Request) {
     const parsed = createJobTypeSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createJobType(supabase, { label: parsed.data.label, color: parsed.data.color });
     if (error) {
       if ((error as { code?: string }).code === '23505') {

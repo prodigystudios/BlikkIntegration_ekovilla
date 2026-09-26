@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listActivityEvents } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listActivityQuerySchema } from '../_lib';
 
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listActivityEvents(supabase, {
       limit: parsed.data.limit ?? 100,
       before: parsed.data.before ?? null,

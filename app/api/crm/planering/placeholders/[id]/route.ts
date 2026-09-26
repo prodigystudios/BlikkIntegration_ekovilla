@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updatePlaceholderSegment } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updatePlaceholderSchema } from '../../_lib';
@@ -30,7 +29,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error, notFound, previousFieldVisible } = await updatePlaceholderSegment(supabase, context.params.id, {
       title: parsed.data.title,
       customer: parsed.data.customer,

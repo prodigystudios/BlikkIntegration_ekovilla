@@ -1,5 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { PermissionKey } from '@/lib/auth/permissions';
 
 /**
@@ -8,10 +8,10 @@ import type { PermissionKey } from '@/lib/auth/permissions';
  * Behörigheten läses i sidan och inte i klienten: sidan är rätt ställe för åtkomstbeslut, och en
  * klient som frågar själv hade blinkat till med fel UI medan svaret var på väg.
  *
- * ⚠️ `createServerComponentClient` och INTE getEffectivePermissions() från lib/auth/permissions:
- * den senare bygger en route-handler-klient, som försöker skriva cookies vid tokenförnyelse och
- * därför inte hör hemma i en server-komponent. Samma mönster och samma skäl som
- * app/crm/offerter/quotePermissions.ts och app/arbetsorder/[id]/page.tsx.
+ * Läser `effective_permissions` själv i stället för via getEffectivePermissions() från
+ * lib/auth/permissions. Skälet var att den senare byggde en route-handler-klient som kastade vid
+ * tokenförnyelse i en server-komponent — borta sedan bytet till @supabase/ssr, där samma
+ * sessionsklient gäller överallt. Sammanslagningen av läsningarna hör till RBAC-passet.
  *
  * Failar closed: ett fel i RPC:n ger `false`, alltså läsläge.
  *
@@ -40,7 +40,7 @@ export async function hasCrmPermissions<K extends PermissionKey>(keys: readonly 
   const out = Object.fromEntries(keys.map((key) => [key, false])) as Record<K, boolean>;
 
   try {
-    const supabase = createServerComponentClient({ cookies });
+    const supabase = createSessionClient();
     const { data: permissions } = await supabase.rpc('effective_permissions');
     if (!Array.isArray(permissions)) return out;
 

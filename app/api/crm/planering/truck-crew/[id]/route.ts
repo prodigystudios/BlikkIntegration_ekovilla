@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { unassignTruckCrew } from '@/lib/domains/planning/truckCrew';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, invalidUuidParam, requirePermission } from '../../_lib';
@@ -19,7 +18,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await unassignTruckCrew(supabase, context.params.id);
     if (error) return routeError(500, 'planning_truck_crew_unassign_failed', error.message);
 

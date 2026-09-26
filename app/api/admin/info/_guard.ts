@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getCurrentUser } from '@/lib/auth/route';
 import { routeError } from '@/lib/api/responses';
@@ -14,7 +13,7 @@ export async function requireAdmin(): Promise<{ client: SupabaseClient; userId: 
   const currentUser = await getCurrentUser();
   if (!currentUser) return routeError(401, 'unauthorized', 'Unauthorized');
   if (currentUser.role !== 'admin') return routeError(403, 'forbidden', 'Forbidden');
-  return { client: createRouteHandlerClient({ cookies }), userId: currentUser.id };
+  return { client: createSessionClient(), userId: currentUser.id };
 }
 
 export async function readJson(req: Request): Promise<unknown> {

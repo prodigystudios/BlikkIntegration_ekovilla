@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, invalidUuidParam } from '@/lib/api/responses';
@@ -21,7 +20,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     const badId = invalidUuidParam(params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // RLS släpper igenom rapportören (egen rad) eller admin (alla). En rad man inte får se blir
     // null — svara 404, inte 500.
     const { data, error } = await getTicket(supabase, params.id);
@@ -68,7 +67,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     // updated_at ligger alltid i patchen; finns inget mer är det en tom sparning.
     if (Object.keys(patch).length <= 1) return routeError(400, 'nothing_to_update', 'Inget att spara.');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: current, error: readError } = await getTicket(supabase, params.id);
     if (readError) return routeError(500, 'app_ticket_get_failed', readError.message);
     if (!current) return routeError(404, 'not_found', 'Ärendet hittades inte.');
@@ -106,7 +105,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     const badId = invalidUuidParam(params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteTicket(supabase, params.id);
     if (error) return routeError(500, 'app_ticket_delete_failed', error.message);
     // Noll rader: raden fanns inte, eller RLS nekade. Grinden ovan har redan avgjort behörigheten,

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { cancelExpectedDelivery, updateExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateExpectedDeliverySchema } from '../../_lib';
@@ -28,7 +27,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateExpectedDeliverySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateExpectedDelivery(supabase, context.params.id, {
       depotId: parsed.data.depot_id,
       material: parsed.data.material,
@@ -83,7 +82,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await cancelExpectedDelivery(supabase, context.params.id);
     if (error) return routeError(500, 'planning_expected_delivery_cancel_failed', error.message);
     // ⚠️ PostgREST svarar `error: null` när noll rader matchade — raden kan vara redan kvitterad,

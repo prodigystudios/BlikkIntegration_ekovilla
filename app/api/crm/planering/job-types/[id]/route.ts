@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateJobType, deleteJobType } from '@/lib/domains/planning/jobTypes';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateJobTypeSchema } from '../../_lib';
 
@@ -21,7 +20,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateJobTypeSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateJobType(supabase, context.params.id, {
       label: parsed.data.label,
       color: parsed.data.color,
@@ -45,7 +44,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await deleteJobType(supabase, context.params.id);
     if (error) return routeError(500, 'planning_job_type_delete_failed', error.message);
 

@@ -1,5 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
 
 import { documentErrorPage, isDocumentNavigation } from '@/lib/api/responses';
@@ -144,7 +144,7 @@ export async function GET(req: Request) {
 
     const periodStart = periodStartOf(parsed.data.period);
     const range = periodRange(periodStart);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // ⚠️ GEMENER. `zod.uuid()` släpper igenom versaler och Postgres jämför `uuid`
     // skiftlägesokänsligt, så databasen svarar med rader — men summarizePersons strikta

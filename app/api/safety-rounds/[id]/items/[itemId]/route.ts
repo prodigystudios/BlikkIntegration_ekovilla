@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { itemPatchSchema } from '@/lib/domains/safetyRounds/schemas';
@@ -24,7 +23,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = itemPatchSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateItem(supabase, context.params.id, context.params.itemId, parsed.data);
     if (error || !data) return writeFailure(error, 'punkten');
     return ok({ item: data });
@@ -43,7 +42,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     // Policyn släpper bara egna punkter (catalog_item_id = null) — en katalogpunkt ger noll rader.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // Punktens foton kaskaderar bort med den; sökvägarna läses först, annars blir objekten kvar. Går
     // de inte att läsa tas punkten inte bort — hellre ett nytt försök än foton som aldrig städas.
     const photoPaths = await listItemPhotoPaths(supabase, context.params.id, context.params.itemId);

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmWorkOrder, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -22,7 +21,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // 🧨 EN FAKTURERAD ORDER FÅR INTE SYNKAS OM — försöket kan bara göra skada.
     //

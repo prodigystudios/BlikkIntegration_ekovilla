@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { resolveMaterialOrder } from '@/lib/domains/planning/materialOrdersSend';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, materialOrderResolveSchema } from '../../../_lib';
@@ -18,7 +17,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = materialOrderResolveSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const outcome = await resolveMaterialOrder(supabase, context.params.id, parsed.data.delivered);
     switch (outcome.kind) {
       case 'marked_sent':

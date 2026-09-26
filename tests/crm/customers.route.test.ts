@@ -18,8 +18,8 @@ vi.mock('@/lib/domains/crm/customers', () => ({
   CRM_CUSTOMERS_PAGE_SIZE: 50,
 }));
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({
-  createRouteHandlerClient: vi.fn(() => ({})),
+vi.mock('@/lib/supabase/session', () => ({
+  createSessionClient: vi.fn(() => ({})),
 }));
 
 vi.mock('next/headers', () => ({

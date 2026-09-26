@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 type EventRow = {
   id: string;
@@ -41,7 +41,7 @@ export default function ActivityLogModal({
   endISO: string;
   projectOrderMap?: Record<string, string>;
 }) {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [events, setEvents] = useState<EventRow[]>([]);

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createSackReports,
   deleteSackReportsByIds,
@@ -64,7 +63,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsedBody = createFinalSackReportSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Vilka finaler ersätter vi? Fångas FÖRE insert:en så raderingen efteråt kan gå på id och
     // omöjligt kan råka ta med det vi just skrev.

@@ -48,8 +48,8 @@ vi.mock('@/lib/domains/planning/materialOrdersStore', () => ({
 const ADMIN_CLIENT = { __client: 'admin' } as any;
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ADMIN_CLIENT) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
-vi.mock('@supabase/auth-helpers-nextjs', () => ({
-  createRouteHandlerClient: vi.fn(() => ({ __client: 'session' })),
+vi.mock('@/lib/supabase/session', () => ({
+  createSessionClient: vi.fn(() => ({ __client: 'session' })),
 }));
 
 import { getCurrentUser } from '@/lib/auth/route';

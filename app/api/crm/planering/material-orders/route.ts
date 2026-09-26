@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { expectedStatusesForOrders, listOrders } from '@/lib/domains/planning/materialOrdersStore';
 import { createDraft, warningsForOrder } from '@/lib/domains/planning/materialOrdersService';
 import { describeOrderWarning, orderDeliveryState, warningsFingerprint } from '@/lib/domains/planning/materialOrders';
@@ -20,7 +19,7 @@ export async function GET() {
     const gate = await requirePermission('planning.depot.manage');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listOrders(supabase, { sentLimit: 50 });
     if (error) return routeError(500, 'material_orders_list_failed', error.message);
 
@@ -48,7 +47,7 @@ export async function POST(req: Request) {
     const parsed = materialOrderCreateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const today = stockholmTodayISO();
     const result = await createDraft(supabase, {
       supplierId: parsed.data.supplier_id,

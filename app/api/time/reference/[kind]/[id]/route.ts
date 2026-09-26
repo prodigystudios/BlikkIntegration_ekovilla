@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateTimeReference } from '@/lib/domains/time/reference';
 import { invalidUuidParam, ok, requirePermission, routeError, timeReferenceKindSchema, updateTimeReferenceSchema, validationError } from '../../../_lib';
 
@@ -32,7 +31,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     if (parsedKind.data !== 'time_code') delete (patch as Record<string, unknown>).billable;
     if (Object.keys(patch).length === 0) return routeError(400, 'time_reference_empty_patch', 'Inget att uppdatera');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateTimeReference(supabase, parsedKind.data, context.params.id, patch);
     if (error) return routeError(500, 'time_reference_update_failed', error.message);
     if (!data) return routeError(404, 'time_reference_not_found', 'Raden hittades inte');

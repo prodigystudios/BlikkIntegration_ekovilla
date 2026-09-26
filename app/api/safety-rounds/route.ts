@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { resolveJobAddress } from '@/lib/domains/planning/display';
@@ -35,7 +34,7 @@ export async function GET(req: Request) {
       if (badId) return badId;
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [list, open] = await Promise.all([
       listSafetyRounds(supabase, { workOrderId: workOrderId ?? undefined }),
       workOrderId ? countOpenActionsForOrder(supabase, workOrderId) : Promise.resolve(null),
@@ -63,7 +62,7 @@ export async function POST(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
     const { work_order_id: workOrderId } = parsed.data;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Adressen löses upp HÄR, med samma regel som resten av appen (resolveJobAddress), ur de smala
     // adressfälten funktionen lämnar ut. SQL:en kopierar den som fritext.

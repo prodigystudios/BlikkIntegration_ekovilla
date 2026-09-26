@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteSackReport, getSackReport, type SackReportRow } from '@/lib/domains/planning/reports';
 import { sackReportKind } from '@/lib/domains/planning/sackLedger';
 import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../../_lib';
@@ -40,7 +39,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id) || invalidUuidParam(context.params.reportId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Läses först för att kunna skilja de tre nejen åt. Utan den här läsningen blir "finns inte",
     // "är en egenkontroll" och "inte din" samma noll rader, och användaren får ett besked som inte

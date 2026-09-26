@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { sendMaterialOrder } from '@/lib/domains/planning/materialOrdersSend';
 import { describeOrderWarning } from '@/lib/domains/planning/materialOrders';
 import { logActivity } from '@/lib/domains/planning/activity';
@@ -25,7 +24,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = materialOrderSendSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const outcome = await sendMaterialOrder(
       { supabase, env: process.env, today: stockholmTodayISO(), actor: { id: gate.currentUser.id, name: gate.currentUser.name ?? null } },
       {

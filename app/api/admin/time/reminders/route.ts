@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getPublicOrigin } from '@/lib/publicOrigin';
 import { toSwedishE164 } from '@/lib/phone';
@@ -56,7 +55,7 @@ export async function POST(req: Request) {
     }
 
     const periodStart = periodStartOf(parsed.data.period);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Underlaget, hämtat med SESSIONSKLIENTEN: RPC:n är security definer med has_permission som
     // första rad, alltså samma säkerhetsgräns som attestvyn själv läser bakom.

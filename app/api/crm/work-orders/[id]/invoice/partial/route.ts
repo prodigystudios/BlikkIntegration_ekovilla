@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmWorkOrder, listWorkOrderInvoiceRounds } from '@/lib/domains/crm/work-orders';
 import { createPartialInvoice, PartialInvoiceError } from '@/lib/domains/fortnox/partialInvoices';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -23,7 +22,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = partialInvoiceSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: current, error: readError } = await getCrmWorkOrder(supabase, context.params.id);
     if (readError) return routeError(500, 'crm_work_order_fetch_failed', readError.message);
     if (!current) return routeError(404, 'crm_work_order_not_found', 'Arbetsordern hittades inte.');

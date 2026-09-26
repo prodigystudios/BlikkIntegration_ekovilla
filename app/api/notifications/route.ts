@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser } from '@/lib/auth/route';
 import { ok, routeError, validationError } from '@/lib/api/responses';
 import { listNotificationsQuerySchema } from '@/lib/domains/notifications/schemas';
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listNotifications(supabase, parsed.data);
     if (error) return routeError(500, 'notifications_list_failed', error.message);
 

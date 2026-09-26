@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   canTransition,
   getTimeApproval,
@@ -40,7 +39,7 @@ export async function GET(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
 
     const periodStart = periodStartOf(parsed.data.period);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getTimeApproval(supabase, user.currentUser.id, periodStart);
     if (error) return routeError(500, 'time_approval_read_failed', error.message);
 
@@ -71,7 +70,7 @@ export async function POST(req: Request) {
     // Snabb återvändo innan något läses: att röra någon annans period kräver nyckeln, punkt.
     if (!isSelf && !canApprove) return routeError(403, 'forbidden', 'Forbidden');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Utgångsläget måste läsas för att övergången ska kunna prövas — matrisen beror på BÅDE var
     // perioden står och vem som frågar. Den som får läsa raden är den själv eller någon med

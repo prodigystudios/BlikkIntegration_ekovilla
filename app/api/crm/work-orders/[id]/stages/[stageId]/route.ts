@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   countSegmentsForStage,
@@ -53,7 +52,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateWorkOrderStageSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Bindningskontrollen etapp↔order, FÖRE något skrivs — och etappraderna som allokeringen nedan
     // behöver. `updateCrmWorkOrderStage` binder också på work_order_id, men ett 404 här är ett
@@ -177,7 +176,7 @@ export async function DELETE(req: Request, context: RouteContext) {
 
     const force = new URL(req.url).searchParams.get('force') === '1';
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // 🧨 BINDNINGEN PRÖVAS FÖRE RÄKNINGEN. Räknades placeringarna först svarade routen 409 med en
     // ANNAN orders antal — ett litet läckage, och fel svar: en etapp som inte hör till den här

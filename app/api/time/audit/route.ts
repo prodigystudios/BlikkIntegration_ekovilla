@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { auditInRange, listTimeEntryAudit, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { ok, rangeQuerySchema, requireSignedInUser, routeError, validationError } from '@/app/api/time/_lib';
 
@@ -27,7 +26,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listTimeEntryAudit(supabase, { userId: user.currentUser.id });
     if (error) return routeError(500, 'time_audit_failed', error.message);
 

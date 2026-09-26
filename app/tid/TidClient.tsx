@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import PageShell from '@/components/ui/PageShell';
 import Badge from '@/components/ui/Badge';
 import Input from '@/components/ui/Input';
@@ -801,7 +801,7 @@ function CompensationSection({
   onChanged: () => Promise<void> | void;
   onError: (message: string) => void;
 }) {
-  const supabase = React.useMemo(() => createClientComponentClient(), []);
+  const supabase = React.useMemo(() => getBrowserClient(), []);
   const [open, setOpen] = React.useState(false);
   const [kind, setKind] = React.useState<CompensationKind>('travel');
   // Förifyllt datum måste ligga i den månad listan visar, annars sparas posten och FÖRSVINNER

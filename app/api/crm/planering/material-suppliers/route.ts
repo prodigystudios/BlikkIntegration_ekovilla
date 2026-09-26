@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listAllSuppliers, createSupplier } from '@/lib/domains/planning/materialSuppliers';
 import { ok, routeError, validationError, requirePermission, createSupplierSchema } from '../_lib';
 
@@ -29,7 +28,7 @@ export async function GET() {
     const gate = await requirePermission('planning.depot.manage');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listAllSuppliers(supabase);
     if (error) return routeError(500, 'planning_suppliers_list_failed', error.message);
 
@@ -48,7 +47,7 @@ export async function POST(req: Request) {
     const parsed = createSupplierSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createSupplier(supabase, {
       name: parsed.data.name,
       email: parsed.data.email,

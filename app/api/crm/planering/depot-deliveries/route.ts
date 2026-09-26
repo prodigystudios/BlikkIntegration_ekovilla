@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { createDelivery, listDeliveriesInRange } from '@/lib/domains/planning/depotStock';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, createDeliverySchema } from '../_lib';
 
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listDeliveriesInRange(supabase, { from: parsed.data.from, to: parsed.data.to });
     if (error) return routeError(500, 'planning_depot_deliveries_failed', error.message);
 
@@ -39,7 +38,7 @@ export async function POST(req: Request) {
     const parsed = createDeliverySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createDelivery(supabase, {
       depotId: parsed.data.depot_id,
       material: parsed.data.material,

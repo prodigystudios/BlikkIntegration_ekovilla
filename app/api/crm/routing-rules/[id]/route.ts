@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteRoutingRule } from '@/lib/domains/crm/routingRules';
 import { ok, requireCrmAdmin, routeError } from '../../_shared';
 
@@ -8,7 +7,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     const crmAdmin = await requireCrmAdmin();
     if (crmAdmin.response) return crmAdmin.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await deleteRoutingRule(supabase, params.id);
     if (error) return routeError(500, 'routing_rules_delete_failed', error.message);
     return ok({ deleted: true });

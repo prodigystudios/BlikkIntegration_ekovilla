@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { cache as reactCache } from 'react';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 
 // React's request-scoped cache() dedupes the RPC across every guard in one request. It's a
 // server-only API; in non-server contexts (e.g. unit tests that import this module) it may be
@@ -67,7 +66,7 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 // permission migration hasn't been applied yet — so access is never granted by accident.
 export const getEffectivePermissions = cache(async (): Promise<Set<PermissionKey>> => {
   try {
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await supabase.rpc('effective_permissions');
     if (error) {
       console.error('[permissions] effective_permissions RPC failed:', error.message);

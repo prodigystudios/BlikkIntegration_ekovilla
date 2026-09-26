@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createCrmAiProspectSuggestion,
   listCrmAiProspectSuggestions,
@@ -26,7 +25,7 @@ export async function GET(req: Request) {
     });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const query = await listCrmAiProspectSuggestions(supabase, {
       search: parsedQuery.data.q,
       status: parsedQuery.data.status,
@@ -50,7 +49,7 @@ export async function POST(req: Request) {
     const parsedBody = createCrmAiProspectSuggestionSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createCrmAiProspectSuggestion(supabase, {
       ...parsedBody.data,
       created_by: crmUser.currentUser.id,

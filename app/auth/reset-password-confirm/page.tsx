@@ -1,8 +1,8 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import {
   decodeRecoveryMark,
   describeRecoveryError,
@@ -78,7 +78,7 @@ function swapMarkedInThisTab(): string | null {
 }
 
 export default function ResetPasswordConfirmPage() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [hasSession, setHasSession] = useState<boolean>(false);
@@ -209,7 +209,7 @@ export default function ResetPasswordConfirmPage() {
 
         if (link.kind === 'session') {
           // Implicit länk: färdiga tokens i fragmentet. Vi sätter dem SJÄLVA i stället för att
-          // låta `detectSessionInUrl` göra det — auth-helpers-klienten är låst till `pkce` och
+          // låta `detectSessionInUrl` göra det — webbläsarklienten (@supabase/ssr) är låst till `pkce` och
           // kastar på varje fragment-länk (GoTrueClient.js:1070). Den kastar redan innan den
           // hunnit skrubba fragmentet, så tokens ligger kvar åt oss här.
           const { data, error: setErr } = await supabase.auth.setSession({

@@ -1,5 +1,4 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
 
 export type UserRole = 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
@@ -33,7 +32,7 @@ export function isReadonlyRole(role: unknown) {
 }
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -70,7 +69,7 @@ export async function requireFaultReportRecipient() {
     return { currentUser: null, response: NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 }) };
   }
 
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const { data, error } = await supabase
     .from('fault_report_recipients')
     .select('user_id')

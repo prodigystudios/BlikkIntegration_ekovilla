@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateCrmProspect } from '@/lib/domains/crm/prospects';
 import {
   ok,
@@ -23,7 +22,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmProspectSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateCrmProspect(supabase, context.params.id, parsedBody.data);
 
     if (error) {

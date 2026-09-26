@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listTimeReference, TIME_REFERENCE_KINDS, type TimeReferenceItem } from '@/lib/domains/time/reference';
 import { ok, requireSignedInUser, routeError } from '../_lib';
 
@@ -21,7 +20,7 @@ export async function GET(req: Request) {
     // att återaktivera i adminvyn.
     const includeInactive = new URL(req.url).searchParams.get('includeInactive') === '1';
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const results = await Promise.all(
       TIME_REFERENCE_KINDS.map(async (kind) => {
         const { data, error } = await listTimeReference(supabase, kind, { includeInactive });

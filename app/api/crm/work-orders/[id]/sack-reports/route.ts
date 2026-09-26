@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createSackReports,
   listSackReports,
@@ -94,7 +93,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listSackReports(supabase, context.params.id);
     if (error) {
       return routeError(500, 'crm_work_order_sack_reports_list_failed', error.message);
@@ -142,7 +141,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsedBody = createSackReportSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // ── Spärr: finns en final är jobbet redan avräknat ───────────────────────
     // Utan den här blir en sen delrapport en TYST NOLLOPERATION: installatören skriver tio säckar,

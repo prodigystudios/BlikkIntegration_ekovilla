@@ -1,8 +1,8 @@
 'use client';
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
@@ -504,7 +504,7 @@ export default function PlanningClient({
   // avoid double-bookings + missed updates. Subscribe once to ops_* changes and debounce-refetch
   // the visible board (RLS still applies, so we only receive rows we may read). The ref keeps the
   // handler pointed at the current range/loaders without re-subscribing on every nav.
-  const [supabase] = useState(() => createClientComponentClient());
+  const [supabase] = useState(() => getBrowserClient());
   const reloadBoardRef = useRef<() => void>(() => {});
   reloadBoardRef.current = () => {
     // A failed reload normally costs nothing visible — the board keeps the segments it already has,

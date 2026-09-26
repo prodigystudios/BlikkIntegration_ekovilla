@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmQuote, getCrmQuoteStatus, markCrmQuoteWon, updateCrmQuote, type UpdateCrmQuoteInput } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -38,7 +37,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const crmUser = await requireCrmUser();
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getCrmQuote(supabase, context.params.id);
 
     if (error) return routeError(404, 'crm_quote_not_found', error.message);
@@ -58,7 +57,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmQuoteSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Persist only the fields the client actually sent, so a partial PATCH such as a
     // status change or a "clear articles" save doesn't overwrite untouched columns.

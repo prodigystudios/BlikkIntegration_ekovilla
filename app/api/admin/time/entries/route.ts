@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { periodRange, periodStartOf } from '@/lib/domains/time/approvals';
 import { listCompensations } from '@/lib/domains/time/compensations';
 import { auditInRange, listTimeEntryAudit, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
@@ -43,7 +42,7 @@ export async function GET(req: Request) {
     // strikta jämförelse sedan filtrerat bort allihop. Svaret hade blivit en tom månad med status
     // 200: "har inte rapporterat något" om någon som rapporterat hela augusti.
     const userId = parsed.data.user_id.toLowerCase();
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Sessionsklient, inte getSupabaseAdmin(): read.all-grenen i RLS är redan svaret på "får den
     // här personen se andras tid", och service-role hade öppnat hela databasen för att slippa den.

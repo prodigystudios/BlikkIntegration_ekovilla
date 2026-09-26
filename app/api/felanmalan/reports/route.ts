@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser, requireFaultReportRecipient } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/email';
@@ -31,7 +30,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     if (parsed.data.scope === 'inbox') {
       const recipient = await requireFaultReportRecipient();
@@ -57,7 +56,7 @@ export async function POST(req: Request) {
     const parsed = createFaultReportSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createFaultReport(supabase, {
       ...parsed.data,
       reporter_id: currentUser.id,

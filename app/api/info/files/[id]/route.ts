@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCurrentUser } from '@/lib/auth/route';
 import { invalidUuidParam, routeError } from '@/lib/api/responses';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
@@ -32,7 +31,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
   try {
     // Sessionsklienten läser raden: RLS avgör vem som får se den. Först därefter signerar vi.
-    const file = await loadInfoFileSource(createRouteHandlerClient({ cookies }), params.id);
+    const file = await loadInfoFileSource(createSessionClient(), params.id);
     if (!file) return routeError(404, 'info_file_not_found', 'Filen hittades inte.');
 
     // De seedade raderna pekar på en fil som redan ligger publikt i appen.

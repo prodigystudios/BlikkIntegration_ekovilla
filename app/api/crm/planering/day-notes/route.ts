@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listDayNotes, createDayNote } from '@/lib/domains/planning/dayNotes';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, createDayNoteSchema } from '../_lib';
@@ -17,7 +16,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listDayNotes(supabase, { from: parsed.data.from, to: parsed.data.to });
     if (error) return routeError(500, 'planning_day_notes_failed', error.message);
 
@@ -36,7 +35,7 @@ export async function POST(req: Request) {
     const parsed = createDayNoteSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createDayNote(supabase, {
       noteDay: parsed.data.note_day,
       body: parsed.data.body,

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { buildTimeEntryRow, deleteTimeEntry, updateTimeEntry } from '@/lib/domains/time/entries';
 import { createTimeEntrySchema, explainWriteMiss, invalidUuidParam, ok, periodLockError, requirePermission, routeError, validationError } from '../../_lib';
 
@@ -24,7 +23,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const built = buildTimeEntryRow(parsed.data, gate.currentUser.id);
     if (built.error || !built.row) return routeError(400, 'time_entry_invalid', built.error || 'Ogiltig tidrad');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateTimeEntry(supabase, context.params.id, gate.currentUser.id, built.row);
     if (error) {
       const locked = periodLockError(error);
@@ -56,7 +55,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteTimeEntry(supabase, context.params.id, gate.currentUser.id);
     if (error) {
       const locked = periodLockError(error);

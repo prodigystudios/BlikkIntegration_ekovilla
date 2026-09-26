@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError } from '@/lib/api/responses';
@@ -33,7 +32,7 @@ export async function GET(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
 
     const { scope, ...filters } = parsed.data;
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Backloggen är adminytan. Grinden sitter både här och i RLS (app_tickets_select) — routen
     // svarar 403 med ett begripligt fel i stället för att låta RLS returnera en tom lista, vilket
@@ -131,7 +130,7 @@ export async function POST(req: Request) {
       uploaded = { bucket: result.bucket, path: result.path };
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createTicket(supabase, {
       ...parsed.data,
       reporter_id: currentUser.id,

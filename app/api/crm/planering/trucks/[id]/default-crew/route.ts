@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { replaceDefaultCrew, validateDefaultCrew } from '@/lib/domains/planning/defaultCrew';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, replaceDefaultCrewSchema } from '../../../_lib';
@@ -22,7 +21,7 @@ export async function PUT(req: Request, context: RouteContext) {
     if (invalid === 'too_many_leaders') return routeError(400, 'too_many_leaders', 'Ett team kan bara ha en teamledare.');
     if (invalid === 'empty_name') return routeError(400, 'empty_name', 'Alla i teamet måste ha ett namn.');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await replaceDefaultCrew(supabase, context.params.id, parsed.data.members, gate.currentUser.id);
     if (error) return routeError(500, 'planning_default_crew_save_failed', error.message);
 

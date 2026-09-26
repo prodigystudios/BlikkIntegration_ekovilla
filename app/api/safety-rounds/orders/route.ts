@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { resolveJobAddress } from '@/lib/domains/planning/display';
@@ -20,7 +19,7 @@ export async function GET(req: Request) {
     const parsed = orderSearchSchema.safeParse({ q: new URL(req.url).searchParams.get('q') ?? '' });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await lookupSafetyRoundOrders(supabase, parsed.data.q);
     if (error) {
       if (error.code === '42501') return routeError(403, 'safety_round_forbidden', 'Du har inte behörighet att starta skyddsronder.');

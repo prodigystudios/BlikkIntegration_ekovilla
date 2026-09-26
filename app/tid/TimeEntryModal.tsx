@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import CrmModal from '@/app/crm/components/CrmModal';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
@@ -97,7 +97,7 @@ export default function TimeEntryModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const supabase = React.useMemo(() => createClientComponentClient(), []);
+  const supabase = React.useMemo(() => getBrowserClient(), []);
 
   const [kind, setKind] = React.useState<TimeEntryKind>(entry?.kind ?? 'work_order');
   const [date, setDate] = React.useState(entry?.work_date ?? defaultDate);

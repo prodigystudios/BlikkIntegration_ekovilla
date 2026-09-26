@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { createTimeReference } from '@/lib/domains/time/reference';
 import { createTimeReferenceSchema, ok, requirePermission, routeError, timeReferenceKindSchema, validationError } from '../../_lib';
 
@@ -26,7 +25,7 @@ export async function POST(req: Request, context: RouteContext) {
     const { billable, ...rest } = parsed.data;
     const input = parsedKind.data === 'time_code' ? { ...rest, billable: billable ?? null } : rest;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createTimeReference(supabase, parsedKind.data, input);
     if (error) return routeError(500, 'time_reference_create_failed', error.message);
 

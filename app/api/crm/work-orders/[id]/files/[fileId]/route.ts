@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { deleteCrmWorkOrderFile, getCrmWorkOrderFile } from '@/lib/domains/crm/work-orders';
 import { removeWorkOrderFileObject, signWorkOrderFileUrl } from '@/lib/domains/crm/workOrderFiles/storage';
 import type { WorkOrderFileRow } from '@/lib/domains/crm/workOrderFiles/types';
@@ -42,7 +41,7 @@ export async function GET(req: Request, context: RouteContext) {
 
     // Läses med SESSIONSKLIENTEN: RLS avgör om den här användaren över huvud taget får se raden.
     // Först därefter signerar vi med service-role.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getCrmWorkOrderFile(supabase, context.params.fileId, context.params.id);
 
     if (error) return routeError(500, 'crm_work_order_file_read_failed', error.message);
@@ -81,7 +80,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const perms = await getEffectivePermissions();
     const ownerId = can(perms, 'crm.workorder.write') ? null : currentUser.currentUser.id;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteCrmWorkOrderFile(
       supabase,
       context.params.fileId,

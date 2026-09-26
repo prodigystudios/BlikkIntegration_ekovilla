@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { searchWorkOrdersForTimeReport } from '@/lib/domains/crm/work-orders';
 import { ok, requirePermission, routeError, validationError } from '../_lib';
@@ -34,7 +33,7 @@ export async function GET(req: Request) {
     const parsed = QuerySchema.safeParse({ q: new URL(req.url).searchParams.get('q') ?? '' });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await searchWorkOrdersForTimeReport(supabase, parsed.data.q);
     if (error) return routeError(500, 'time_work_order_search_failed', error.message);
 

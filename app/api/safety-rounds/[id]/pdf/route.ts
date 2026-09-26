@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { documentErrorPage, invalidUuidParam, isDocumentNavigation, routeError } from '@/lib/api/responses';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { buildSafetyRoundDocument } from '@/lib/domains/safetyRounds/document';
@@ -41,7 +40,7 @@ export async function GET(req: Request, { params }: RouteContext) {
 
     if (invalidUuidParam(params.id)) return fail(400, 'invalid_id', 'Ogiltig länk till skyddsronden.');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getSafetyRoundBundle(supabase, params.id);
     if (error) return fail(500, 'safety_round_read_failed', 'Kunde inte hämta skyddsronden.');
     if (!data) return fail(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');

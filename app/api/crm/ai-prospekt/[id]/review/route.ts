@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   approveCrmAiProspectSuggestion,
   getCrmAiProspectSuggestion,
@@ -16,7 +15,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const parsedBody = reviewCrmAiProspectSuggestionSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const suggestionResult = await getCrmAiProspectSuggestion(supabase, params.id);
 
     if (suggestionResult.error) {

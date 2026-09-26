@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getWorkOrderCustomerContact } from '@/lib/domains/crm/work-orders';
 import { sendOrderConfirmation } from '@/lib/domains/planning/confirmationsSend';
 import { getSegmentRef } from '@/lib/domains/planning/schedule';
@@ -22,7 +21,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: seg, error: segErr } = await supabase
       .from('ops_segments')
       .select('work_order_id, start_day, end_day')
@@ -64,7 +63,7 @@ export async function POST(req: Request, context: RouteContext) {
     if (send_email && !recipient_email) return routeError(400, 'missing_email', 'Ange en e-postadress för mejlet.');
     if (send_sms && !recipient_phone) return routeError(400, 'missing_phone', 'Ange ett telefonnummer för SMS:et.');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await sendOrderConfirmation(supabase, {
       segmentId: context.params.id,
       sendEmail: send_email,

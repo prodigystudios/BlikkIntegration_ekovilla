@@ -1,6 +1,6 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { getUserProfile } from '@/lib/getUserProfile';
 import PageShell from '@/components/ui/PageShell';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -28,15 +28,12 @@ export const dynamic = 'force-dynamic';
 // Följden, medveten: den som når sidan via ett användarundantag får INGEN menyrad, eftersom menyn
 // gatar på roll. Hon når den genom att skriva adressen. Samma glapp som /tid har i dag.
 //
-// ⚠️ `createServerComponentClient` och INTE getEffectivePermissions(): den senare bygger en
-// route-handler-klient som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma i en
-// server-komponent. Samma skäl och samma mönster som app/arbetsorder/[id]/page.tsx.
+// Läser `effective_permissions` själv i stället för via getEffectivePermissions(). Skälet var att den
+// senare byggde en route-handler-klient som kastade vid tokenförnyelse i en server-komponent — borta
+// sedan bytet till @supabase/ssr. Sammanslagningen av läsningarna hör till RBAC-passet.
 export default async function EkonomiPage() {
-  // EN klient för både sessionen och behörigheterna. Att kalla getCurrentUser() här hade byggt en
-  // route-handler-klient — precis det kommentaren ovan säger att man inte får göra i en
-  // server-komponent — och en cookie-skrivning vid tokenförnyelse hade kastat mitt i renderingen,
-  // så sidan svarat 500 i stället för att skicka någon till inloggningen.
-  const supabase = createServerComponentClient({ cookies });
+  // EN klient för både sessionen och behörigheterna.
+  const supabase = createSessionClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect('/auth/sign-in');
 

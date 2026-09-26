@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listCrmWorkOrdersWithFilters, getCrmWorkOrderFilterCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
 import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requirePermission, routeError, validationError } from './_lib';
 
@@ -45,7 +44,7 @@ export async function GET(req: Request) {
     const offset = parsedQuery.data.offset ?? 0;
     const limit = parsedQuery.data.limit ?? CRM_WORK_ORDERS_PAGE_SIZE;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const query = await listCrmWorkOrdersWithFilters(supabase, {
       search,
       status: parsedQuery.data.status,
@@ -84,7 +83,7 @@ export async function POST(req: Request) {
     const parsed = createStandaloneWorkOrderSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await createStandaloneCrmWorkOrder(supabase, {
       customerId: parsed.data.customer_id,
       projectName: parsed.data.project_name,

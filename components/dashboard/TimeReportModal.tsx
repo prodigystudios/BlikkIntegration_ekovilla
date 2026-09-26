@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React, { useEffect, useMemo, useState, useCallback, useRef } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import CrmModal from '@/app/crm/components/CrmModal';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -89,7 +89,7 @@ export default function TimeReportModal({ open, onClose, onSubmit, initialProjec
   const [aError, setAError] = useState<string | null>(null);
   const [selectedAbsenceId, setSelectedAbsenceId] = useState<string>('');
   // Today's jobs quick-select state
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const [todayJobs, setTodayJobs] = useState<Array<{ project_id: string; project_name: string | null; order_number: string | null; customer: string | null }>>([]);

@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import Badge from '../ui/Badge';
@@ -86,7 +86,7 @@ export function DashboardNotes({ compact, desktopMode }: { compact?: boolean; de
   const [pushPanelOpen, setPushPanelOpen] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [crmProspectNames, setCrmProspectNames] = useState<Record<string, string>>({});
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const mounted = useRef(false);
   const [userId, setUserId] = useState<string | null>(null);
 

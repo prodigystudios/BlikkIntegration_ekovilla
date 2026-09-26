@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer } from '@/lib/domains/crm/customers';
 import { createFortnoxCustomer, updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import { invalidUuidParam, ok, requirePermission, routeError } from '../../_lib';
@@ -17,7 +16,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: existing, error } = await getCrmCustomer(supabase, context.params.id);
     if (error || !existing) {
       return routeError(404, 'crm_customer_not_found', error?.message || 'Kund hittades inte');

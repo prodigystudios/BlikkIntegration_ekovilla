@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { actionCreateSchema } from '@/lib/domains/safetyRounds/schemas';
@@ -23,7 +22,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = actionCreateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // "Från punkt" måste vara en punkt i SAMMA rond — foreign key:n ser bara att punkten finns.
     if (parsed.data.item_id) {

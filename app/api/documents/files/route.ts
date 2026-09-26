@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../_util';
 import { deleteFile, DocumentsFilesRouteError, uploadFile } from './_domain';
 import { deleteFileQuerySchema, uploadFileInputSchema } from './_lib';
@@ -23,7 +22,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_form_data' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const file = await uploadFile(supabase, {
       ...parsed.data,
       currentUserId: current.id,
@@ -49,7 +48,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_query' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     await deleteFile(supabase, parsed.data.id);
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error: any) {

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmWorkOrder, saveWorkOrderLineItems } from '@/lib/domains/crm/work-orders';
 import { updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -26,7 +25,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateWorkOrderLineItemsSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await saveWorkOrderLineItems(supabase, context.params.id, parsedBody.data.line_items);
 
     if (result.error) {

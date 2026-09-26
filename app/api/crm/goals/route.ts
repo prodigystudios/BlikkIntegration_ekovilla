@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { listCrmGoals, mapCrmGoalRows, upsertCrmGoals } from '@/lib/domains/crm/goals';
 import {
@@ -54,7 +53,7 @@ export async function POST(req: Request) {
     const parsedBody = upsertCrmGoalsSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await upsertCrmGoals(
       supabase,
       parsedBody.data.goals.map((item) => ({

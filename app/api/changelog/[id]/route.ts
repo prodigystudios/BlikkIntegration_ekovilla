@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser } from '@/lib/auth/route';
 import { ok, routeError, validationError, invalidUuidParam } from '@/lib/api/responses';
 import { updateChangelogEntrySchema } from '@/lib/domains/changelog/schemas';
@@ -31,7 +30,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
     const sentKeys = rawBody && typeof rawBody === 'object' && !Array.isArray(rawBody) ? Object.keys(rawBody) : [];
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // Nuläget behövs för att avgöra publiceringstidpunkten: en redan publicerad post ska BEHÅLLA
     // sin, annars flyttas gamla poster till toppen så fort man rättar ett stavfel.
     const { data: current, error: readError } = await getEntry(supabase, params.id);
@@ -63,7 +62,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     const badId = invalidUuidParam(params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteChangelogEntry(supabase, params.id);
     if (error) return routeError(500, 'changelog_delete_failed', error.message);
     if (!data) return routeError(404, 'not_found', 'Posten hittades inte.');

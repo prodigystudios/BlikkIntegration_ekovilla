@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs';
+import { createServerClient } from '@supabase/ssr';
 
 const PUBLIC_FILE = /\.(.*)$/;
 
@@ -54,32 +54,54 @@ export async function middleware(req: NextRequest) {
   if (isTwilioSmsStatusApi) return NextResponse.next();
   if (isPublicCustomerOffertPage || isPublicCustomerOffertApi) return NextResponse.next();
 
-  const res = NextResponse.next();
-  const supabase = createMiddlewareClient({ req, res });
+  // En förnyad session skrivs på TVÅ ställen: på begäran (så att sidan och routen i samma request
+  // läser den nya token i stället för att förnya en gång till med samma refresh-token — utanför
+  // Supabase 10-sekundersfönster är det reuse detection och utloggning av hela token-familjen) och
+  // på svaret (så att webbläsaren får den). `res` byggs därför om när kakor sätts.
+  let res = NextResponse.next({ request: req });
+  const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+    cookies: {
+      getAll() {
+        return req.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        for (const { name, value } of cookiesToSet) req.cookies.set(name, value);
+        res = NextResponse.next({ request: req });
+        for (const { name, value, options } of cookiesToSet) res.cookies.set(name, value, options);
+      },
+    },
+  });
 
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
+  // Redirect och JSON är NYA svar — kakor som satts på `res` följer inte med av sig själva. Utan det
+  // här tappas en förnyad (eller rensad) session precis när användaren skickas vidare.
+  const withSessionCookies = (target: NextResponse) => {
+    for (const cookie of res.cookies.getAll()) target.cookies.set(cookie);
+    return target;
+  };
+
   if (!session && !isAuthPage) {
     if (isApi) {
-      return NextResponse.json(
+      return withSessionCookies(NextResponse.json(
         { ok: false, error: 'unauthorized' },
         { status: 401 }
-      );
+      ));
     }
 
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = '/auth/sign-in';
     redirectUrl.searchParams.set('next', pathname);
-    return NextResponse.redirect(redirectUrl);
+    return withSessionCookies(NextResponse.redirect(redirectUrl));
   }
 
   if (session && isAuthPage && !isPasswordRecoveryPage) {
     const redirectUrl = req.nextUrl.clone();
     redirectUrl.pathname = '/';
     redirectUrl.search = '';
-    return NextResponse.redirect(redirectUrl);
+    return withSessionCookies(NextResponse.redirect(redirectUrl));
   }
 
   return res;

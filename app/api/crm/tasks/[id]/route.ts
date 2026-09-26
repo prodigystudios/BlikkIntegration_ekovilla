@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { attachCrmTaskContacts, updateCrmTask } from '@/lib/domains/crm/tasks';
 import {
   ok,
@@ -23,7 +22,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmTaskSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const payload = {
       ...parsedBody.data,
       completed_at: parsedBody.data.status === 'done' ? new Date().toISOString() : null,

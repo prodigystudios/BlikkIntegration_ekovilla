@@ -1,3 +1,4 @@
+import { createSessionClient } from '@/lib/supabase/session';
 // Vem på kontoret som äger arbetsordern — namn + telefon, för fältvyns "ansvarig säljare"-kort.
 //
 // ACCESS MODEL: RLS ÄR GRINDEN, och den frågas med SESSIONSKLIENTEN. Läsaren måste kunna se
@@ -16,8 +17,6 @@
 // ⚠️ Systerrutten ../customer-contact bygger fortfarande på den ÄLDRE modellen ("inloggad + har
 // länken", UUID:t som capability). Den kommentaren skrevs i juni, innan crew-policyn fanns i
 // augusti — kopiera inte upplägget hit tillbaka.
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { isReadonlyRole } from '@/lib/auth/route';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
@@ -41,7 +40,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const session = createRouteHandlerClient({ cookies });
+    const session = createSessionClient();
 
     // ⛔ DE EXTERNA ROLLERNA FÅR INTE PERSONALENS NUMMER. `konsult` håller `crm.workorder.read`,
     // alltså skulle RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är

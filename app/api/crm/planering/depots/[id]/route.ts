@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateDepot, deleteDepot } from '@/lib/domains/planning/depots';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateDepotSchema } from '../../_lib';
 
@@ -21,7 +20,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateDepotSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateDepot(supabase, context.params.id, {
       name: parsed.data.name,
       location: parsed.data.location,
@@ -44,7 +43,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await deleteDepot(supabase, context.params.id);
     if (error) {
       // ops_expected_deliveries.depot_id är ON DELETE RESTRICT, och den spärren vet inget om status

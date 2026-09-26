@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { expectedStatusesForOrders, getOrder } from '@/lib/domains/planning/materialOrdersStore';
 import { discardDraft, updateDraft, warningsForOrder } from '@/lib/domains/planning/materialOrdersService';
 import { describeOrderWarning, orderDeliveryState, warningsFingerprint } from '@/lib/domains/planning/materialOrders';
@@ -19,7 +18,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: order, error } = await getOrder(supabase, context.params.id);
     if (error) return routeError(500, 'material_order_read_failed', error.message);
     if (!order) return routeError(404, 'material_order_not_found', 'Beställningen finns inte');
@@ -55,7 +54,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = materialOrderUpdateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const today = stockholmTodayISO();
     const result = await updateDraft(supabase, {
       orderId: context.params.id,
@@ -99,7 +98,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await discardDraft(supabase, context.params.id);
     if (result.kind === 'db_error') return routeError(500, 'material_order_delete_failed', result.message);
     // Noll rader: skickas, skickad, redan slängd eller osynlig. Tigande hade lästs som "slängd".

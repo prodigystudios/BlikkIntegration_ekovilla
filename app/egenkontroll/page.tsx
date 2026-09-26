@@ -1,8 +1,8 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
 import { useEffect, useMemo, useRef, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { MATERIALS } from '@/lib/domains/crm/materials';
 import {
   calculateOpenRowDensity,
@@ -38,7 +38,7 @@ const MAX_ETAPP_ROWS = 6;
 
 export default function EgenkontrollPage() {
   // Supabase client (used to persist actual_bags_used to planning_project_meta)
-  const supabase = useMemo(() => createClientComponentClient(), []);
+  const supabase = useMemo(() => getBrowserClient(), []);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isNarrow, setIsNarrow] = useState(false);
   useEffect(() => {

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   compensationConstraintError,
   createCompensation,
@@ -29,7 +28,7 @@ export async function GET(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
     if (parsed.data.from > parsed.data.to) return routeError(400, 'invalid_range', 'Från-datum är efter till-datum');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listCompensations(supabase, parsed.data, { userId: user.currentUser.id });
     if (error) return routeError(500, 'time_compensations_list_failed', error.message);
 
@@ -73,7 +72,7 @@ export async function POST(req: Request) {
     // fält som inte betyder något på sorten ska inte gå att fylla i via API:et heller.
     const vatAmount = isExpense ? (parsed.data.vat_amount ?? null) : null;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     let receiptColumns: Partial<CompensationReceiptPatch> = {};
     if (receipt && isExpense) {

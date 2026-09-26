@@ -1,8 +1,7 @@
+import { createSessionClient } from '@/lib/supabase/session';
 export const dynamic = "force-dynamic";
 
 import type { ReactNode } from 'react';
-import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { loadInfoPage, type InfoGroup, type InfoImage } from '@/lib/domains/info-page/queries';
@@ -89,7 +88,7 @@ function SectionFile({ file }: { file: InfoImage }) {
 }
 
 export default async function DokumentInformationPage() {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createSessionClient();
 
   let groups: InfoGroup[] = [];
   let loadFailed = false;

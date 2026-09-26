@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   compensationConstraintError,
   deleteCompensation,
@@ -44,7 +43,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const patch = Object.fromEntries(Object.entries(parsed.data).filter(([key]) => sentKeys.includes(key)));
     if ((patch as { kind?: string }).kind === 'expense') (patch as Record<string, unknown>).quantity = null;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Kvittot är inte ett vanligt fält: kroppens `receipt` är ett PÅSTÅENDE om ett objekt i
     // lagringen och blir sex kolumner först efter att sökvägen prövats mot ägaren och objektet
@@ -272,7 +271,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteCompensation(supabase, context.params.id, gate.currentUser.id);
     if (error) {
       const locked = periodLockError(error);

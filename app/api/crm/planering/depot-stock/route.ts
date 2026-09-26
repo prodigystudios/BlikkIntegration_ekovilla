@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getDepotStockWithForecast } from '@/lib/domains/planning/depotStock';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { ok, routeError, requirePermission } from '../_lib';
@@ -14,7 +13,7 @@ export async function GET() {
     const gate = await requirePermission('planning.schedule.read');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // stockholmTodayISO(), aldrig new Date() nere i domänen: servern kör UTC, och mellan midnatt
     // och 02:00 svensk tid är de olika kalenderdagar. "Idag" avgör vad som räknas som en försenad
     // leverans och vad som är ett behov som viks in — en dag fel flyttar båda.

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { buildTimeEntryRow, createTimeEntry, listTimeEntries } from '@/lib/domains/time/entries';
 import { createTimeEntrySchema, ok, periodLockError, rangeQuerySchema, requirePermission, requireSignedInUser, routeError, validationError } from '../_lib';
 
@@ -19,7 +18,7 @@ export async function GET(req: Request) {
     if (!parsed.success) return validationError(parsed.error);
     if (parsed.data.from > parsed.data.to) return routeError(400, 'invalid_range', 'Från-datum är efter till-datum');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listTimeEntries(supabase, parsed.data, { userId: user.currentUser.id });
     if (error) return routeError(500, 'time_entries_list_failed', error.message);
 
@@ -42,7 +41,7 @@ export async function POST(req: Request) {
     const built = buildTimeEntryRow(parsed.data, gate.currentUser.id);
     if (built.error || !built.row) return routeError(400, 'time_entry_invalid', built.error || 'Ogiltig tidrad');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createTimeEntry(supabase, built.row);
     if (error) {
       // Periodlåset först: låstriggern kastar (P0001) INNAN RLS:ens with check hinner utvärderas —

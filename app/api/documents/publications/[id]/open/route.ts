@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../../../_util';
 import { createPublicationOpenRedirectUrl, markPublicationOpenedForUser, PublicationsRouteError } from '../../_domain';
 
@@ -13,7 +12,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
     const publicationId = String(params.id || '').trim();
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     await markPublicationOpenedForUser(supabase, publicationId, current.id);
 
     return NextResponse.json({ ok: true }, { status: 200 });
@@ -30,7 +29,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
     const publicationId = String(params.id || '').trim();
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     await markPublicationOpenedForUser(supabase, publicationId, current.id);
     const signedUrl = await createPublicationOpenRedirectUrl(supabase, publicationId);
 

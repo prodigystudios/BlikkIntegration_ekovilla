@@ -1,9 +1,9 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { mapNotificationRow } from '@/lib/domains/notifications/mappers';
 import type { NotificationRow, NotificationView } from '@/lib/domains/notifications/types';
@@ -13,7 +13,7 @@ import { usePushSubscription } from './usePushSubscription';
 // Realtime so the badge and list stay live. Reusable for any notification type. Rendered in
 // AppSidebar (mobile top bar + desktop account footer).
 export default function NotificationBell({ className, collapsed = false }: { className?: string; collapsed?: boolean }) {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const router = useRouter();
   // Unique per instance: the mobile top-bar bell and the desktop sidebar bell are BOTH mounted
   // (CSS-hidden, not unmounted) on one singleton client, so a shared channel name would collide

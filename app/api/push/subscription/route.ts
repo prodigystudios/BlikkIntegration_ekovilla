@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
 import { getRequestOrigin } from '@/lib/publicOrigin';
 
@@ -45,7 +44,7 @@ function routeError(status: number, code: string, message: string, details?: unk
 }
 
 async function getAuthedSupabase() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { user },
     error,

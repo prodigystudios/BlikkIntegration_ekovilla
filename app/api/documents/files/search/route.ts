@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../../_util';
 import { DocumentsFilesRouteError, searchFiles } from '../_domain';
 import { searchFilesQuerySchema } from '../_lib';
@@ -23,7 +22,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_query' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const results = await searchFiles(supabase, parsed.data);
     return NextResponse.json({ ok: true, q: parsed.data.q, results }, { status: 200, headers: new Headers({ 'Cache-Control': 'no-store' }) });
   } catch (error: any) {

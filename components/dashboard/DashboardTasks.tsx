@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
@@ -20,7 +20,7 @@ type Task = {
 };
 
 export default function DashboardTasks({ compact, hideWhenEmpty, onVisibilityChange }: { compact?: boolean; hideWhenEmpty?: boolean; onVisibilityChange?: (visible: boolean) => void }) {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [userId, setUserId] = useState<string | null>(null);
   const [items, setItems] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);

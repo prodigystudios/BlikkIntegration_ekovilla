@@ -24,7 +24,7 @@ vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
 });
 
 const sessionClient = { marker: 'session' };
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => sessionClient) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => sessionClient) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { preparePhotoUpload } from '@/lib/domains/safetyRounds/photos';
@@ -25,7 +24,7 @@ export async function POST(req: Request, context: RouteContext) {
     if (!parsed.success) return validationError(parsed.error);
 
     const result = await preparePhotoUpload(
-      { supabase: createRouteHandlerClient({ cookies }), admin: getSupabaseAdmin() },
+      { supabase: createSessionClient(), admin: getSupabaseAdmin() },
       { roundId: context.params.id, userId: guard.currentUser.id, itemId: parsed.data.item_id },
     );
     if (!result.ok) return routeError(result.status, result.code, result.message);

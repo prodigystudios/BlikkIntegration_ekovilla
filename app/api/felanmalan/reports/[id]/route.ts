@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser, requireFaultReportRecipient } from '@/lib/auth/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, invalidUuidParam, isNoRowsError } from '@/lib/api/responses';
@@ -20,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
     const badId = invalidUuidParam(params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // RLS lets reporter OR recipient read; a hidden row returns null.
     const { data, error } = await getFaultReport(supabase, params.id);
     if (error) return routeError(500, 'fault_report_get_failed', error.message);
@@ -48,7 +47,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const parsed = updateFaultReportSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateFaultReport(supabase, params.id, {
       ...parsed.data,
       responder_id: recipient.currentUser.id,

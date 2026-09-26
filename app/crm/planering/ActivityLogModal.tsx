@@ -1,7 +1,7 @@
 'use client';
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Select from '@/components/ui/Select';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -75,7 +75,7 @@ function dayKey(iso: string): string {
 }
 
 export default function ActivityLogModal({ onClose }: { onClose: () => void }) {
-  const [supabase] = useState(() => createClientComponentClient());
+  const [supabase] = useState(() => getBrowserClient());
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);

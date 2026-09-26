@@ -4,10 +4,11 @@ import { createClient } from "@supabase/supabase-js";
 import { useToast } from "@/lib/Toast";
 
 export default function ResetPasswordPage() {
-  // EGEN klient, med flit — inte `createClientComponentClient`.
+  // EGEN klient, med flit — inte `getBrowserClient()`.
   //
-  // auth-helpers hårdkodar `flowType: "pkce"` och gör det EFTER att den spridit anroparens
-  // options, så det går inte att överrida (@supabase/auth-helpers-shared/dist/index.js:385).
+  // @supabase/ssr hårdkodar `flowType: "pkce"` och gör det EFTER att den spridit anroparens
+  // options, så det går inte att överrida (@supabase/ssr/dist/main/createBrowserClient.js:38;
+  // auth-helpers gjorde likadant).
   // Under PKCE skickar `resetPasswordForEmail` ett `code_challenge` (auth-js GoTrueClient.js:1244),
   // och då gör GoTrue två saker vi inte vill ha:
   //

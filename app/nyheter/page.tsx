@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { redirect } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -8,7 +7,7 @@ import { listNewsItems } from '@/lib/domains/news/queries';
 export const dynamic = 'force-dynamic';
 
 export default async function NewsArchivePage() {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createSessionClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect('/auth/sign-in');
 

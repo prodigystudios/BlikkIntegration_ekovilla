@@ -19,7 +19,7 @@ vi.mock('@/lib/domains/time/reference', async (importOriginal) => {
   return { ...actual, listTimeReference: vi.fn(), createTimeReference: vi.fn(), updateTimeReference: vi.fn() };
 });
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';

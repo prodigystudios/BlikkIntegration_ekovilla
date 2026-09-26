@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listSegments, listTrucks, placeSegment, STAGE_NOT_ON_WORK_ORDER } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, placeSegmentSchema } from '../_lib';
@@ -17,7 +16,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [segRes, truckRes] = await Promise.all([
       listSegments(supabase, { from: parsed.data.from, to: parsed.data.to }),
       listTrucks(supabase),
@@ -45,7 +44,7 @@ export async function POST(req: Request) {
       return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await placeSegment(supabase, {
       workOrderId: parsed.data.work_order_id,
       stageId: parsed.data.stage_id ?? null,

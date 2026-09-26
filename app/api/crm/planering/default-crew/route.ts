@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listAllDefaultCrew } from '@/lib/domains/planning/defaultCrew';
 import { ok, routeError, requirePermission } from '../_lib';
 
@@ -9,7 +8,7 @@ export async function GET() {
     const gate = await requirePermission('planning.schedule.read');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listAllDefaultCrew(supabase);
     if (error) return routeError(500, 'planning_default_crew_failed', error.message);
 

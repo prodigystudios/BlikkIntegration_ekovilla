@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   getCalcSettings,
@@ -34,7 +33,7 @@ export async function GET() {
     const crmUser = await requireCrmUser();
     if (crmUser.response) return crmUser.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [settingsResult, mappingResult, ratesResult] = await Promise.all([
       getCalcSettings(supabase),
       listMaterialCostArticles(supabase),
@@ -94,7 +93,7 @@ export async function PUT(req: Request) {
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     // Sessionsklienten med flit: RLS (crm.admin) är garantin, gaten ovan är det läsbara felet.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await upsertCalcSettings(supabase, {
       laborCostPerHour: parsedBody.data.labor_cost_per_hour,
       teamSize: parsedBody.data.team_size,

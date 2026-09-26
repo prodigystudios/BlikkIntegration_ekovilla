@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { redirect } from 'next/navigation';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 import type { ReactNode } from 'react';
 import { getUserProfile } from '@/lib/getUserProfile';
 import { toEffectiveRole } from '@/lib/roles';
@@ -11,7 +10,7 @@ export const dynamic = 'force-dynamic';
 // root layout. This layout only keeps CRM's access gate: authenticated AND
 // sales/admin (konsult == sales). Everyone else is bounced to the start page.
 export default async function CrmLayout({ children }: { children: ReactNode }) {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { session },
   } = await supabase.auth.getSession();

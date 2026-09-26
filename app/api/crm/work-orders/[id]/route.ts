@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderDocumentNoteChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -45,7 +44,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const currentUser = await requireSignedInUser();
     if (currentUser.response) return currentUser.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getCrmWorkOrder(supabase, context.params.id);
 
     if (error) return routeError(404, 'crm_work_order_not_found', error.message);
@@ -86,7 +85,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmWorkOrderSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // Persist only fields the client actually sent, so a partial PATCH (e.g. a status-only
     // change) doesn't wipe untouched columns (internal_handoff, work_address) with defaults.
     const updateInput = pickProvidedFields(parsedBody.data, rawBody);
