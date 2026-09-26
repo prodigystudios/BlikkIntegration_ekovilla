@@ -35,18 +35,14 @@ Required environment variables for internal tasks
 - SUPABASE_SERVICE_ROLE_KEY
 - TASKS_DEFAULT_ASSIGNEE_UUID — UUID of the default assignee for clothing orders (e.g., Patrik Valls). You can find this in Supabase auth.users. Set it in .env.local and in your deployment environment.
 
-### Offert: kunduppgifter via länk (token-form)
-
-Kunden fyller i uppgifter + ritad signatur via en engångslänk. Vid inskick skickas mail till Andreas och säljaren.
+### E-post och publika länkar
 
 Miljövariabler:
 
 - RESEND_API_KEY
 - MAIL_FROM
-- OFFERT_CUSTOMER_NOTIFY_TO — mottagare (Andreas)
-- OFFERT_CUSTOMER_TOKEN_PEPPER — (valfri) extra “pepper” för token-hash
 - FELANMALAN_NOTIFY_TO — (valfri) extra e-postmottagare för felanmälan, kommaseparerat. Primära mottagare styrs av tabellen `fault_report_recipients`; denna env är bara fallback/override.
-- NEXT_PUBLIC_SITE_URL — **kanonisk app-URL** (`https://app.ekovilla.se`). Används av `getPublicOrigin()` för allt som lämnar appen: kundoffertlänkar, mejl (inkl. felanmälan), lösenordsåterställning och nedladdningslänken som skrivs in i Blikk-kommentarer. Utan den härleds domänen ur requestens host — och den gamla `blikk-integration-ekovilla.vercel.app` svarar fortfarande, så länkar skickade därifrån bär fel domän permanent.
+- NEXT_PUBLIC_SITE_URL — **kanonisk app-URL** (`https://app.ekovilla.se`). Används av `getPublicOrigin()` för allt som lämnar appen: mejl (inkl. felanmälan), lösenordsåterställning och nedladdningslänken som skrivs in i Blikk-kommentarer. Utan den härleds domänen ur requestens host — och den gamla `blikk-integration-ekovilla.vercel.app` svarar fortfarande, så länkar skickade därifrån bär fel domän permanent.
 - NEXT_PUBLIC_APP_URL — **krävs i produktion.** Bygger Fortnox `redirect_uri`, som måste vara tecken-för-tecken identisk med den registrerade adressen och därför inte kan härledas ur requesten. Saknas den kastar `lib/domains/fortnox/auth.ts` i stället för att tyst bygga en localhost-adress.
 - Båda är `NEXT_PUBLIC_*` och **bakas in vid bygget** — en ändring i Vercel kräver ny deploy.
 
@@ -106,10 +102,6 @@ annanstans får de ett eget, ärligt felmeddelande i stället för ett generiskt
 timme.
 
 Felanmälan-uppsättning (efter migrationer): kör `supabase/sql/20260703_notifications.sql` och sedan `supabase/sql/20260703_fault_reports.sql`, och seeda arbetsledarna i `fault_report_recipients` (se seed-blocket i slutet av fault_reports-filen, eller lägg till via admin senare).
-
-Supabase migrering:
-
-- supabase/sql/20260316_offert_customer_requests_and_responses.sql
 
 ## Try it
 - Open the app, enter an Order ID, and click "Lookup Project"

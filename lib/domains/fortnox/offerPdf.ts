@@ -133,12 +133,10 @@ export type FortnoxCompanySettingsResponse = {
 // Fortnox exponerar inte utskriftsmallens fasta texter, så de måste bo här. Det är den enda
 // verkliga dubbleringen i lösningen: ändrar någon texten i Fortnox ändras den inte här.
 //
-// ⚠️ Texten nedan speglar FORTNOX offertmall, inte kalkylatorns PDF. De är LIKA MEN INTE LIKA:
-// `STANDARD_TEXT` i app/api/pdf/offert-kalkylator/[id]/route.ts inleds med ett fjärde stycke
-// ("Betalningsvillkor: 10 dagar, alternativt finansiering via vår bankpartner SVEA BANK.") som
-// Fortnox offert INTE har — betalningsvillkoret står där i referensblocket i stället. Kopiera
-// alltså inte den ena till den andra utan att jämföra mot en riktig rendering; det här dokumentet
-// ska vara omöjligt att skilja från den Fortnox-offert det ersätter.
+// ⚠️ Texten nedan speglar FORTNOX offertmall. (Den borttagna offertkalkylatorns PDF hade en liknande
+// text med ett fjärde stycke om betalningsvillkor och SVEA BANK — Fortnox offert har det INTE, där står
+// betalningsvillkoret i referensblocket.) Ändra bara mot en riktig rendering: det här dokumentet ska
+// vara omöjligt att skilja från den Fortnox-offert det ersätter.
 
 const SALES_TEXT = [
   'Vi tackar för förtroendet och har härmed nöjet att offerera er följande lösullsentreprenad.',

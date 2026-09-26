@@ -45,14 +45,11 @@ export async function middleware(req: NextRequest) {
   const isReminderDispatchApi = pathname === '/api/dashboard-notes/reminders/dispatch';
   const isNotificationsCleanupApi = pathname === '/api/notifications/cleanup';
   const isTwilioSmsStatusApi = pathname === '/api/twilio/sms-status';
-  const isPublicCustomerOffertPage = pathname.startsWith('/kund/offert/');
-  const isPublicCustomerOffertApi = pathname.startsWith('/api/kund/offert/');
 
   if (isApiAuth) return NextResponse.next();
   if (isReminderDispatchApi) return NextResponse.next();
   if (isNotificationsCleanupApi) return NextResponse.next();
   if (isTwilioSmsStatusApi) return NextResponse.next();
-  if (isPublicCustomerOffertPage || isPublicCustomerOffertApi) return NextResponse.next();
 
   // En förnyad session skrivs på TVÅ ställen: på begäran (så att sidan och routen i samma request
   // läser den nya token i stället för att förnya en gång till med samma refresh-token — utanför

@@ -18,9 +18,6 @@ export function guessAreaFromPath(pathname: string): TicketArea {
   }
   if (path.startsWith('/crm')) return 'crm';
 
-  // Offertkalkylatorn är säljarnas verktyg och hör till samma värld som offerterna.
-  if (path.startsWith('/offert')) return 'crm';
-
   if (path.startsWith('/mina-jobb') || path.startsWith('/arbetsorder')) return 'field';
   if (path.startsWith('/egenkontroll') || path.startsWith('/archive')) return 'self_check';
 

@@ -75,12 +75,6 @@ describe('getVisibleAppNavItems', () => {
     }
   });
 
-  it('keeps the offer calculator out of the menu while the surface is unused', () => {
-    for (const role of [...ROLES, null]) {
-      expect(flatten(nav(role)).map((i) => i.href)).not.toContain('/offert/kalkylator');
-    }
-  });
-
   // Cutovern 2026-09-01: raden "Tidrapport" pekar på vår egen /tid, och Blikks /tidrapport har
   // ingen rad alls. Båda halvorna prövas — en rad som pekar rätt är värdelös om den gamla ligger
   // kvar bredvid och delar besättningen mellan två system mitt i en löneperiod.

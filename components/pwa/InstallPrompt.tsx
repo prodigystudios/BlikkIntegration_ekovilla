@@ -13,7 +13,7 @@ import { usePathname } from 'next/navigation';
 
 const DISMISS_KEY = 'ekovilla_install_prompt_dismissed_v1';
 // Logged-out / public surfaces where an install nudge doesn't belong.
-const HIDDEN_PREFIXES = ['/auth', '/kund/offert'];
+const HIDDEN_PREFIXES = ['/auth'];
 // App chrome green (var(--crm-primary) is scoped to .crm-shell, which doesn't wrap this banner).
 const BRAND_GREEN = '#1a3f26';
 

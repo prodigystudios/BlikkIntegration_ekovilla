@@ -37,8 +37,7 @@ export async function GET(req: Request, { params }: RouteContext) {
     const filename = buildDocumentFilename({ kind: 'offer', ref: offerNumber, projectName });
 
     // Svaret STRÖMMAS. Med bilagorna blir dokumentet några megabyte, och en serverlös funktion har
-    // en gräns för hur stort ett buffrat svar får vara — en ström räknas inte mot den. Samma grepp
-    // som app/api/pdf/offert-kalkylator använder.
+    // en gräns för hur stort ett buffrat svar får vara — en ström räknas inte mot den.
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(bytes);

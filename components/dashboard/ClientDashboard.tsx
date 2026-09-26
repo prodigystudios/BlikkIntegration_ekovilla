@@ -96,14 +96,6 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M6 12h.01M18 12h.01" strokeLinecap="round" />
     </svg>
   ) },
-  '/offert/kalkylator': { desc: 'Kalkylera offert (ROT, marginal, etablering)', icon: (
-    <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor" fill="none" aria-hidden>
-      <path d="M4 2h16a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/>
-      <line x1="8" y1="6" x2="16" y2="6"/>
-      <line x1="8" y1="10" x2="16" y2="10"/>
-      <line x1="8" y1="14" x2="12" y2="14"/>
-    </svg>
-  ) },
   // Vår egen tidrapport sedan cutovern 2026-09-01. Ikonen och beskrivningen följde med från
   // Blikk-kortet med flit: samma plats i rutnätet, samma utseende, ny adress.
   '/tid': { desc: 'Veckovy & rapportera tid', icon: (
@@ -204,7 +196,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
     }
     if (role === 'konsult') {
       return [
-        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
@@ -230,7 +221,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/kontakt-lista', title: 'Kontakt', ...baseExtra['/kontakt-lista'] },
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
-        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
         { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
       ];
     }
@@ -245,7 +235,6 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
         { href: '/mina-dokument', title: 'Mina dokument', ...baseExtra['/mina-dokument'] },
         { href: '/crm/dokument', title: 'Dokument', ...baseExtra['/crm/dokument'] },
         { href: '/admin', title: 'Admin', ...baseExtra['/admin'] },
-        { href: '/offert/kalkylator', title: 'Kalkylator Försäljning Privat', ...baseExtra['/offert/kalkylator'] },
         { href: '/felanmalan', title: 'Felanmälan', ...baseExtra['/felanmalan'] },
       ];
     }
