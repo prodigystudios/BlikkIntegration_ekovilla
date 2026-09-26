@@ -3,9 +3,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { computePricing, lineItemEffectiveUnitPrice, lineItemRotLabor, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { computePricing, lineItemEffectiveUnitPrice, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { isBlankLineItem, isConfiguredLineItem, lineItemQuantity, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
 import { workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
+import { invoicedLineIds, type InvoicedRound } from '@/lib/domains/crm/invoicedLines';
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
@@ -94,11 +95,16 @@ function rowDetails(item: ArticleLineItem): string {
   const { material } = sackInfo(item);
   const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
   const volume = lineItemQuantity(item as PricingLineItem);
+  // Styckrader: ANTALET står här. Den hopfällda raden gömmer "mängd × pris" på smal skärm, så utan
+  // det här såg installatören i fältvyn inte hur många brandmattor som skulle upp.
   const measure = mode === 'm3'
     ? (item.m2 || item.thickness_mm
       ? `${item.m2 || '0'} m² × ${item.thickness_mm || '0'} mm${volume > 0 ? ` = ${formatQuantity(volume)} m³` : ''}`
       : null)
-    : (item.thickness_mm ? `${item.thickness_mm} mm` : null);
+    : [
+        item.quantity?.trim() ? `${item.quantity.trim()} ${item.article_unit_name?.trim() || 'st'}` : null,
+        item.thickness_mm ? `${item.thickness_mm} mm` : null,
+      ].filter(Boolean).join(' · ') || null;
   // Måtten FÖRST — det är dem installatören letar efter. Artikelnumret sist, och bara när det finns:
   // "Utan artikelnummer" i en översiktsrad är brus, och på en telefon tog det platsen från måtten.
   return [
@@ -111,10 +117,15 @@ function rowDetails(item: ArticleLineItem): string {
 
 const pill = 'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold';
 
-function rowBadges(item: ArticleLineItem) {
-  const { sacks } = sackInfo(item);
-  if (item.written_off) return <span className={cn(pill, 'border-slate-300 bg-white text-slate-500')}>Avskriven</span>;
-  return sacks > 0 ? <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span> : null;
+function rowBadges(item: ArticleLineItem, sacks: number, invoiced: boolean) {
+  return (
+    <>
+      {invoiced ? <span className={cn(pill, 'border-amber-200 bg-amber-50 text-amber-700')}>Fakturerad</span> : null}
+      {item.written_off
+        ? <span className={cn(pill, 'border-slate-300 bg-white text-slate-500')}>Avskriven</span>
+        : sacks > 0 ? <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span> : null}
+    </>
+  );
 }
 
 // ─── Artiklar (läs- + redigeringsläge) ─────────────────────────────────────────
@@ -150,10 +161,15 @@ type Props = {
   // Omvänd skattskyldighet (byggmoms): momsraden läses då som ett eget faktum, inte som
   // "Moms 0 kr". Utelämnas den härleds den ur den beräknade momssatsen — se isReverseCharge.
   reverseCharge?: boolean;
+  /**
+   * Delfaktureringens rundor. Rader som redan står på en utställd faktura låses i editorn — samma
+   * regel som servern (validateLineItemEdit) — i stället för att hela sparningen nekas efteråt.
+   */
+  invoiceRounds?: InvoicedRound[];
   onSave: (items: ArticleLineItem[]) => Promise<boolean>;
 };
 
-export default function WorkOrderArticles({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, lockedReason, embedded = false, reverseCharge, onSave }: Props) {
+export default function WorkOrderArticles({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, lockedReason, embedded = false, reverseCharge, invoiceRounds, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
   // Dragspel som i offerten: EN utfälld rad i taget, ägd här så att en ny rad fäller ihop de andra.
@@ -172,7 +188,14 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // inte får skriva över översiktens utkast — är `keepDraft` i WorkOrderDetailClient.)
   useEffect(() => { if (!editing) setRows(items); }, [items, editing]);
 
-  const dirty = useMemo(() => JSON.stringify(rows) !== JSON.stringify(items), [rows, items]);
+  // Tomma rader räknas inte — de sparas aldrig (se save), så ett oanvänt "+ Lägg till rad" är ingen
+  // ändring och ska varken tända "Osparade ändringar" eller låta Spara köra en Fortnox-push i onödan.
+  const dirty = useMemo(
+    () => JSON.stringify(rows.filter((r) => !isBlankLineItem(r))) !== JSON.stringify(items),
+    [rows, items],
+  );
+  // Mot de SPARADE raderna, som servern: det är den utställda fakturan som låser, inte utkastet.
+  const invoicedIds = useMemo(() => invoicedLineIds(items, invoiceRounds), [items, invoiceRounds]);
   const isPrivate = quoteType === 'private';
   const rotEnabled = isPrivate && Boolean(rotDetails?.enabled);
 
@@ -185,18 +208,19 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     () => computePricing(activeRows as PricingLineItem[], vatPercent, { isPrivate, rot: rotDetails }),
     [activeRows, vatPercent, isPrivate, rotDetails],
   );
-  // Arbetet som bryts ut ur materialraderna och blir den genererade "Arbetskostnad ROT"-raden.
-  // Samma regel som computePricing och pushen: helt flaggade ROT-rader går inte hit.
-  const carvedLabor = useMemo(
-    () => (rotEnabled
-      ? activeRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(lineItemRotLabor(r as PricingLineItem), lineItemRowTotal(r as PricingLineItem))), 0)
-      : 0),
-    [activeRows, rotEnabled],
-  );
   const configuredCount = useMemo(() => activeRows.filter((r) => isConfiguredLineItem(r)).length, [activeRows]);
+  // Radens tal, material och säckar — EN gång per rad och rendering. Detaljraden, märkena, den
+  // utfällda raden och säcktotalen läser alla härifrån i stället för att härleda materialet var för sig.
+  const rowInfo = useMemo(
+    () => new Map(source.map((r) => [r.id, { metrics: metricsFor(r), details: rowDetails(r), ...sackInfo(r) }])),
+    [source],
+  );
   // ⚠️ `source`, inte `items`. Räknat på de sparade raderna stod säcktalet stilla medan man
   // redigerade just de fält som bestämmer det — samma fel som `totals` redan undvek.
-  const totalSacks = useMemo(() => activeRows.reduce((sum, it) => sum + sackInfo(it).sacks, 0), [activeRows]);
+  const totalSacks = useMemo(
+    () => activeRows.reduce((sum, it) => sum + (rowInfo.get(it.id)?.sacks ?? 0), 0),
+    [activeRows, rowInfo],
+  );
 
   // Det SPARADE artikelnamnet per rad, för att kunna varna när en omdöpning slår sönder
   // materialhärledningen (se materialRenameEffect). `items` byts bara ut vid omladdning, alltså
@@ -365,7 +389,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
             total={totals.total}
             toPay={totals.toPay}
             rowCount={configuredCount}
-            carvedLabor={carvedLabor}
+            carvedLabor={totals.carvedLabor}
             rotDeduction={totals.rotDeduction}
             isPrivate={isPrivate}
             reverseCharge={isReverseCharge}
@@ -381,17 +405,20 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
         {/* ── Läsläge: samma hopfällda rader som editorn, utan fäll ut och ta bort ── */}
         {!editing && items.length > 0 ? (
           <div className="grid gap-2">
-            {items.map((item, index) => (
-              <LineItemReadRow
-                key={item.id}
-                row={item as LineItemRowItem}
-                index={index}
-                metrics={metricsFor(item)}
-                details={rowDetails(item)}
-                badges={rowBadges(item)}
-                struck={!!item.written_off}
-              />
-            ))}
+            {items.map((item, index) => {
+              const info = rowInfo.get(item.id);
+              return (
+                <LineItemReadRow
+                  key={item.id}
+                  row={item as LineItemRowItem}
+                  index={index}
+                  metrics={info?.metrics}
+                  details={info?.details}
+                  badges={rowBadges(item, info?.sacks ?? 0, invoicedIds.has(item.id))}
+                  struck={!!item.written_off}
+                />
+              );
+            })}
           </div>
         ) : null}
 
@@ -400,7 +427,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
           <div className="grid gap-2">
             {rows.map((row, index) => {
               const mode = row.pricing_mode === 'item' ? 'item' : 'm3';
-              const { sacks, material } = sackInfo(row);
+              const info = rowInfo.get(row.id);
+              const sacks = info?.sacks ?? 0;
+              const material = info?.material ?? null;
+              const invoiced = invoicedIds.has(row.id);
               const savedName = savedNameById.get(row.id);
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedName, row.article_name);
@@ -415,8 +445,9 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   key={row.id}
                   row={row as LineItemRowItem}
                   index={index}
-                  metrics={metricsFor(row)}
+                  metrics={info?.metrics}
                   rotEnabled={rotEnabled}
+                  invoicedLock={invoiced}
                   documentNoun="ordern"
                   // Benämningen visas när raden har ett SPARAT namn eller en vald artikel — aldrig
                   // villkorat på utkastets namn, som fältet självt redigerar (en backspace till tomt
@@ -453,8 +484,8 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                       Pris per {mode === 'm3' ? 'm³' : 'st'}
                     </button>
                   )}
-                  details={rowDetails(row)}
-                  badges={rowBadges(row)}
+                  details={info?.details}
+                  badges={rowBadges(row, sacks, invoiced)}
                   totalAside={(
                     <>
                       {mode === 'm3' ? (
@@ -468,9 +499,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   // Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte till
                   // Fortnox, men raden ligger kvar så skillnaden mot offerten går att förklara. En rad
                   // som aldrig fakturerats kan lika gärna tas bort helt.
+                  // En fakturerad rad kan inte skrivas av — pengarna är redan krävda (validateLineItemEdit).
                   extraFlags={(
                     <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
-                      <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
+                      <input type="checkbox" checked={!!row.written_off} disabled={invoiced} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
                       Avskriven (utförs ej)
                     </label>
                   )}
@@ -478,7 +510,9 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   onMeasureBlur={(key) => normalizeField(row.id, key)}
                   expanded={expandedRowId === row.id}
                   onToggle={(next) => setExpandedRowId(next ? row.id : null)}
-                  onChange={(patch) => updateRow(row.id, patch as Partial<ArticleLineItem>)}
+                  // `auto_price` är offertens legacy-flagga och läses aldrig. A-prisfältet skriver den, men
+                  // här hade den bara gjort varje orörd prisändring till en permanent "ändring".
+                  onChange={({ auto_price: _legacy, ...patch }) => updateRow(row.id, patch as Partial<ArticleLineItem>)}
                   onSelectArticle={(article) => selectArticle(row.id, article)}
                   onClearArticle={() => clearArticle(row.id)}
                   onRemove={() => requestRemove(row)}
@@ -488,9 +522,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
           </div>
         ) : null}
 
-        {/* Den genererade arbetskostnadsraden — sist, som på Fortnox-ordern. Se GeneratedRotLaborRow. */}
-        {rotEnabled && carvedLabor > 0 ? (
-          <GeneratedRotLaborRow position={source.length + 1} amount={carvedLabor} documentLabel="Fortnox-ordern" />
+        {/* Den genererade arbetskostnadsraden — sist, som på Fortnox-ordern. Se GeneratedRotLaborRow.
+            Bara på kontorets vy: i fältvyn är den ett Fortnox-begrepp utan betydelse för jobbet. */}
+        {embedded && totals.carvedLabor > 0 ? (
+          <GeneratedRotLaborRow position={source.length + 1} amount={totals.carvedLabor} documentLabel="Fortnox-ordern" />
         ) : null}
 
         {editing ? (

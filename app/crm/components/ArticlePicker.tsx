@@ -33,7 +33,7 @@ export function getArticleUnitName(unit: ArticleLite['unit']) {
   return String(unit.name || unit.objectiveName || '');
 }
 
-export default function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice, onSelect, onClear }: {
+export default function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice, onSelect, onClear, locked = false }: {
   value: string;
   articleNumber?: string | null;
   price?: number | null;
@@ -45,6 +45,8 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
   purchasePrice?: number | null;
   onSelect: (article: ArticleLite) => void;
   onClear: () => void;
+  /** Artikeln kan inte bytas (raden står på en utställd faktura): kortet utan Byt/Rensa. */
+  locked?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -113,7 +115,7 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
 
   // Solid "selected article" card — makes a chosen article unmistakable (vs the old
   // faded-placeholder look). "Byt" reopens the search; "Rensa" empties the row's article.
-  if (value && !searching) {
+  if ((value || locked) && !searching) {
     const meta = [
       articleNumber || 'Utan artikelnummer',
       typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
@@ -126,7 +128,7 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
       <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
         <div className="grid min-w-0 gap-0.5">
           <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
-          <span className="truncate text-sm font-semibold text-slate-900">{value}</span>
+          <span className="truncate text-sm font-semibold text-slate-900">{value || 'Utan artikel'}</span>
           {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
           {/* Artikelns beskrivning ur registret — INTERN. Ett stöd för säljaren att se vad artikeln
               faktiskt innehåller; den skickas aldrig med till Fortnox och syns inte på offerten.
@@ -141,7 +143,7 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
             <span className="line-clamp-3 text-xs leading-relaxed text-slate-500">{note.trim()}</span>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        {locked ? null : <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
@@ -156,7 +158,7 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
           >
             Rensa
           </button>
-        </div>
+        </div>}
       </div>
     );
   }

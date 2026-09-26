@@ -9,8 +9,12 @@ type IssueRow = LineItemContentSource & {
 };
 
 /**
- * Vad som hindrar arbetsorderns artikelrader från att sparas — samma två spärrar, med samma ord,
- * som offertformulärets getValidationIssues.
+ * Vad som hindrar arbetsorderns artikelrader från att sparas — samma tre spärrar som
+ * offertformulärets getValidationIssues (mängd, pris, ROT-utbrytning), med radnummer.
+ *
+ * Körs på BÅDA sidor: artikeleditorn visar beskeden och stänger Spara, och saveWorkOrderLineItems
+ * nekar samma rader — en gammal flik eller ett direkt API-anrop ska inte kunna spara det editorn
+ * spärrar.
  *
  * ⚠️ Spärrar och inte varningar. Utan dem sparades raden och FÖRST Fortnox-pushen sa nej
  * (assertLineItemsArePriced, 409) — efter att raderna redan låg i databasen, med ordern stämplad
@@ -24,6 +28,13 @@ export function workOrderLineItemIssues(rows: IssueRow[], opts: { rotEnabled: bo
     .map((row, i) => ({ row, n: i + 1 }))
     .filter(({ row }) => !row.written_off && !isBlankLineItem(row) && isConfiguredLineItem(row));
   const issues: string[] = [];
+
+  // En ifylld rad utan mängd är 0 kr i Fortnox och i ordervärdet — tyst. Offerten spärrar samma sak
+  // ("Ofullständiga rader — mängd och pris krävs"); här med radnummer, som de andra beskeden.
+  const noQuantity = checked.filter(({ row }) => !(lineItemQuantity(row) > 0));
+  if (noQuantity.length) {
+    issues.push(`${noQuantity.length === 1 ? 'Rad' : 'Rader'} ${noQuantity.map(({ n }) => n).join(', ')}: mängd saknas — fyll i m² och tjocklek, eller antal`);
+  }
 
   // "Skriv 0 om raden ingår" står med för att det är ett riktigt fall — en skriven nolla ÄR ett pris
   // (se isUnpricedLineItem). Utan meningen läses spärren som att gratisrader inte går att göra.

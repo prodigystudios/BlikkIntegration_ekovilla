@@ -30,11 +30,15 @@ export async function PATCH(req: Request, context: RouteContext) {
     const result = await saveWorkOrderLineItems(supabase, context.params.id, parsedBody.data.line_items);
 
     if (result.error) {
+      // invalid_rows = rader utan pris/mängd eller med en arbetskostnad som äter A-priset — samma
+      // besked som editorn visar, så 422 och meddelandet rakt av (workOrderLineItemIssues).
       const status = result.reason === 'not_found' ? 404
         : result.reason === 'order_closed' || result.reason === 'line_invoiced' ? 409
+        : result.reason === 'invalid_rows' ? 422
         : 500;
       const code = result.reason === 'order_closed' ? 'work_order_locked'
         : result.reason === 'line_invoiced' ? 'work_order_line_invoiced'
+        : result.reason === 'invalid_rows' ? 'work_order_line_items_invalid'
         : `crm_work_order_line_items_${result.reason}`;
       return routeError(status, code, result.error.message);
     }

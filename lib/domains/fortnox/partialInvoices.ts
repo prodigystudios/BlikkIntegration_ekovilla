@@ -2,6 +2,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
+// Radmatchningen delas med ordersidans artikeleditor, som låser samma rader i förväg.
+import { invoicedOnLine } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
@@ -94,20 +96,10 @@ export class PartialInvoiceError extends Error {
   }
 }
 
-// Hur mycket en runda fakturerade på EN rad. Matchar på radens id när posten bär ett (allt skrivet
-// efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en rad som
-// saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
-function invoicedOnLine(rounds: InvoiceRound[], lineId: string | null, index: number): number {
-  return roundQty(
-    rounds.reduce((sum, round) => {
-      const entries = round.line_quantities ?? [];
-      const match = lineId
-        ? entries.find((q) => q.line_id === lineId) ?? entries.find((q) => !q.line_id && q.index === index)
-        : entries.find((q) => q.index === index);
-      return sum + (match ? Math.max(0, match.quantity) : 0);
-    }, 0),
-  );
-}
+// Hur mycket en runda fakturerade på EN rad: invoicedOnLine, i lib/domains/crm/invoicedLines.ts så
+// att ordersidans artikeleditor kan låsa samma rader. Matchar på radens id när posten bär ett (allt
+// skrivet efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en
+// rad som saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
 
 // Fakturerat hittills + återstående per rad, mot arbetsorderns AKTUELLA rader och alla tidigare
 // rundor. `total` är radens hela antal (m³-volym eller angivet antal, via den delade resolvern).

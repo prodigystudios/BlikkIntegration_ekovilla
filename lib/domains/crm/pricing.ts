@@ -42,6 +42,13 @@ export type PricingSummary = {
   vatPercent: number;
   rotDeduction: number;
   toPay: number;
+  /**
+   * Arbetet som bryts ut ur materialraderna (varje rads "Varav arbetskostnad") och blir den
+   * genererade "Arbetskostnad ROT"-raden på Fortnox-dokumentet. Ex moms. 0 utan aktiv ROT.
+   * Helt flaggade ROT-rader räknas INTE hit — de blir egna husarbetesrader. Redan INRÄKNAT i
+   * subtotal: det är en utbrytning, inget tillägg.
+   */
+  carvedLabor: number;
 };
 
 // Raw per-unit price: the explicit override when set, else the article's catalogue price.
@@ -165,6 +172,9 @@ export function computePricing(
   // Mirrors the Fortnox push, where the same split becomes the single "Arbetskostnad ROT" row plus
   // the fully-flagged rows' husarbete flags.
   const rotActive = Boolean(opts?.isPrivate && opts?.rot?.enabled);
+  const carvedLabor = rotActive
+    ? items.reduce((sum, i) => (i.is_rot_work ? sum : sum + Math.min(lineItemRotLabor(i), lineItemRowTotal(i))), 0)
+    : 0;
   const rotBaseInclVat = rotActive
     ? items.reduce((sum, i) => {
         const rowTotal = lineItemRowTotal(i);
@@ -176,7 +186,7 @@ export function computePricing(
   const maxDeduction = parseDecimal(opts?.rot?.max_deduction ?? 50000, 50000);
   const rotDeduction = rotActive ? Math.min(maxDeduction, Math.floor(rotBaseInclVat * (rotPercent / 100))) : 0;
 
-  return { subtotal, vat, total, vatPercent, rotDeduction, toPay: total - rotDeduction };
+  return { subtotal, vat, total, vatPercent, rotDeduction, toPay: total - rotDeduction, carvedLabor };
 }
 
 // ─── Momsbas: nettot ur ett lagrat bruttobelopp ────────────────────────────────

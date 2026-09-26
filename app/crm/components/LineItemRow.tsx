@@ -153,7 +153,7 @@ type MeasureKey = 'm2' | 'thickness_mm' | 'density' | 'quantity';
 // De delar av den hopfällda raden som läsraden och den klickbara raden har gemensamt: nummer, namn,
 // mängd × pris, märken och summa.
 function CollapsedContent({
-  row, index, metrics, details, badges, struck,
+  row, index, metrics, details, badges, struck, emptyName,
 }: {
   row: LineItemRowItem;
   index: number;
@@ -161,9 +161,11 @@ function CollapsedContent({
   details?: React.ReactNode;
   badges?: React.ReactNode;
   struck?: boolean;
+  /** Vad som står när raden saknar namn. Editorn uppmanar; en läsvy kan inte välja något. */
+  emptyName?: string;
 }) {
   const strike = struck ? 'line-through decoration-slate-400' : '';
-  const name = row.article_name || <span className="text-slate-400">Välj artikel…</span>;
+  const name = row.article_name || <span className="text-slate-400">{emptyName ?? 'Välj artikel…'}</span>;
   return (
     <>
       <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
@@ -211,7 +213,8 @@ export function LineItemReadRow({
 }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-slate-100 px-3.5 py-2.5">
-      <CollapsedContent row={row} index={index} metrics={metrics} details={details} badges={badges} struck={struck} />
+      {/* En namnlös rad är en ren textrad — visa texten, inte editorns uppmaning "Välj artikel…". */}
+      <CollapsedContent row={row} index={index} metrics={metrics} details={details} badges={badges} struck={struck} emptyName={row.line_note?.trim() || 'Offert-rad'} />
     </div>
   );
 }
@@ -240,6 +243,7 @@ export default function LineItemRow({
   extraFlags,
   struck,
   onMeasureBlur,
+  invoicedLock = false,
 }: {
   row: LineItemRowItem;
   index: number;
@@ -284,6 +288,13 @@ export default function LineItemRow({
   struck?: boolean;
   /** När ett måttfält lämnas (arbetsordern normaliserar decimaltecknet då). */
   onMeasureBlur?: (key: MeasureKey) => void;
+  /**
+   * Raden står redan på en utställd delfaktura. Samma lås som servern (validateLineItemEdit):
+   * artikel, pris, rabatt och ROT kan inte ändras, och raden kan inte tas bort. Antalet får höjas,
+   * eller sänkas ner till det fakturerade. Utan låset i UI:t nekades HELA sparningen med 409 —
+   * alla andra ändringar i samma redigering gick förlorade.
+   */
+  invoicedLock?: boolean;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
   // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
@@ -305,11 +316,16 @@ export default function LineItemRow({
             <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         </button>
-        <button type="button" onClick={onRemove} aria-label="Ta bort rad" className="shrink-0 px-1 text-slate-300 transition-colors hover:text-rose-600">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
+        {invoicedLock ? (
+          // Platshållare i krysset bredd, så summorna står i linje med raderna som har ett.
+          <span aria-hidden className="w-[22px] shrink-0" />
+        ) : (
+          <button type="button" onClick={onRemove} aria-label="Ta bort rad" className="shrink-0 px-1 text-slate-300 transition-colors hover:text-rose-600">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+              <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        )}
       </div>
     );
   }
@@ -326,11 +342,20 @@ export default function LineItemRow({
           <button type="button" onClick={() => onToggle(false)} className="whitespace-nowrap text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
             Fäll ihop ▴
           </button>
-          <button type="button" onClick={onRemove} className="whitespace-nowrap text-xs text-slate-400 transition-colors hover:text-rose-600">
-            Ta bort
-          </button>
+          {invoicedLock ? null : (
+            <button type="button" onClick={onRemove} className="whitespace-nowrap text-xs text-slate-400 transition-colors hover:text-rose-600">
+              Ta bort
+            </button>
+          )}
         </div>
       </div>
+
+      {invoicedLock ? (
+        <p className="m-0 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-snug text-amber-800">
+          Raden är fakturerad. Artikel, pris, rabatt och ROT kan inte ändras — lägg det som skiljer på en
+          ny rad. Antalet kan höjas, eller sänkas ner till det som fakturerats.
+        </p>
+      ) : null}
 
       {/* Kortet "Vald artikel" står kvar på artikelnumret när benämningen töms — annars byttes det
           mot en tom sökruta mitt i skrivandet i fältet under. */}
@@ -343,6 +368,7 @@ export default function LineItemRow({
         purchasePrice={purchasePrice}
         onSelect={onSelectArticle}
         onClear={onClearArticle}
+        locked={invoicedLock}
       />
 
       {/* Editable display name (Description) for the picked article — e.g. rename a generic
@@ -365,11 +391,11 @@ export default function LineItemRow({
         {isM3 ? (
           <>
             <Field label="m²"><Input value={row.m2 ?? ''} onChange={(e) => onChange({ m2: e.target.value })} onBlur={blur('m2')} inputMode="decimal" placeholder="0" /></Field>
-            <Field label="Tjocklek mm"><Input value={row.thickness_mm ?? ''} onChange={(e) => onChange({ thickness_mm: e.target.value })} onBlur={blur('thickness_mm')} inputMode="decimal" placeholder="200" /></Field>
+            <Field label="Tjocklek mm"><Input value={row.thickness_mm ?? ''} onChange={(e) => onChange({ thickness_mm: e.target.value })} onBlur={blur('thickness_mm')} inputMode="decimal" placeholder="0" /></Field>
             <Field label="Densitet (kg/m³)"><Input value={row.density ?? ''} onChange={(e) => onChange({ density: e.target.value })} onBlur={blur('density')} inputMode="decimal" placeholder="t.ex. 45" /></Field>
           </>
         ) : (
-          <Field label="Antal"><Input value={row.quantity ?? ''} onChange={(e) => onChange({ quantity: e.target.value })} onBlur={blur('quantity')} inputMode="decimal" placeholder="1" /></Field>
+          <Field label="Antal"><Input value={row.quantity ?? ''} onChange={(e) => onChange({ quantity: e.target.value })} onBlur={blur('quantity')} inputMode="decimal" placeholder="0" /></Field>
         )}
       </div>
 
@@ -388,6 +414,7 @@ export default function LineItemRow({
           <Input
             value={row.unit_price ?? ''}
             onChange={(e) => onChange({ unit_price: e.target.value, auto_price: false })}
+            disabled={invoicedLock}
             inputMode="decimal"
             // ⚠️ ALDRIG "0" som platshållare här. Ett tomt fält renderade då en grå nolla, och en
             // säljare som läste den som ett satt pris rörde aldrig fältet — så sparades raden utan
@@ -417,7 +444,7 @@ export default function LineItemRow({
             />
           </Field>
         ) : null}
-        <Field label="Rabatt %"><Input value={row.discount_percent ?? ''} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
+        <Field label="Rabatt %"><Input value={row.discount_percent ?? ''} onChange={(e) => onChange({ discount_percent: e.target.value })} disabled={invoicedLock} inputMode="decimal" placeholder="0" /></Field>
       </div>
 
       {/* 🧨 `w-auto` PÅ VARJE ETIKETT HÄR — utan den staplas raden vertikalt. `app/globals.css`
@@ -442,14 +469,14 @@ export default function LineItemRow({
         ) : null}
         {rotEnabled ? (
           <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
-            <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
+            <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} disabled={invoicedLock} className="h-3.5 w-3.5 rounded border-slate-300" />
             ROT-arbete
           </label>
         ) : null}
         {rotEnabled && row.is_rot_work ? (
           <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
             Typ
-            <Select value={row.house_work_type || 'CONSTRUCTION'} onChange={(e) => onChange({ house_work_type: e.target.value })} className="min-h-8 py-0 text-xs">
+            <Select value={row.house_work_type || 'CONSTRUCTION'} onChange={(e) => onChange({ house_work_type: e.target.value })} disabled={invoicedLock} className="min-h-8 py-0 text-xs">
               {ROT_HOUSE_WORK_TYPES.map((type) => (<option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>))}
             </Select>
           </label>

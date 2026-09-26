@@ -46,6 +46,14 @@ describe('workOrderLineItemIssues', () => {
       .toBe('Rader 1, 3: pris saknas — välj artikel, ange A-pris, eller skriv 0 om raden ingår');
   });
 
+  // En ifylld rad utan mängd är 0 kr — i Fortnox och i ordervärdet. Offerten spärrar den också.
+  it('spärrar en ifylld rad utan mängd', () => {
+    expect(workOrderLineItemIssues([
+      { id: 'm', article_name: 'Lösull', unit_price: '700', pricing_mode: 'm3', m2: '40', thickness_mm: '' },
+      { id: 'i', article_name: 'Brandmatta', unit_price: '90', pricing_mode: 'item', quantity: '' },
+    ], { rotEnabled: false })).toEqual(['Rader 1, 2: mängd saknas — fyll i m² och tjocklek, eller antal']);
+  });
+
   // En arbetskostnad som äter hela A-priset bryter inte ut något — ordern hade gått till Fortnox
   // utan det ROT-underlag säljaren tror att den har.
   it('spärrar en arbetskostnad som äter hela A-priset när ROT är på', () => {

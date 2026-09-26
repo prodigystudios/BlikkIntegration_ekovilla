@@ -115,6 +115,29 @@ describe('computePricing', () => {
     );
     expect(p.rotDeduction).toBe(112);
   });
+
+  // Den genererade "Arbetskostnad ROT"-raden visar det här beloppet. Arbetsordern räknade det förut
+  // själv bredvid computePricing — två kopior av samma utbrytningsregel.
+  it('redovisar den utbrutna arbetskostnaden, utan helt flaggade ROT-rader', () => {
+    const rot = { isPrivate: true, rot: { enabled: true, rot_percent: 30, max_deduction: 50000 } };
+    const p = computePricing([
+      // 10 m³ × 300 kr arbete = 3 000 kr utbrutet ur en rad på 12 000.
+      { pricing_mode: 'm3', m2: '50', thickness_mm: '200', unit_price: '1200', labor_cost: '300' },
+      // Helt flaggad rad: blir en egen husarbetesrad, inte en del av den genererade.
+      { pricing_mode: 'item', quantity: '1', unit_price: '5000', is_rot_work: true, labor_cost: '100' },
+      // Arbete som äter hela A-priset bryter inte ut något.
+      { pricing_mode: 'item', quantity: '1', unit_price: '1000', labor_cost: '99999' },
+    ], 25, rot);
+    expect(p.carvedLabor).toBe(3000);
+    // Utbrytningen är inget tillägg — delsumman är radernas fulla priser.
+    expect(p.subtotal).toBe(12000 + 5000 + 1000);
+  });
+
+  it('bryter inte ut något utan aktiv ROT', () => {
+    const row = { pricing_mode: 'item' as const, quantity: '1', unit_price: '1000', labor_cost: '300' };
+    expect(computePricing([row], 25, { isPrivate: true, rot: { enabled: false } }).carvedLabor).toBe(0);
+    expect(computePricing([row], 25, { isPrivate: false, rot: { enabled: true } }).carvedLabor).toBe(0);
+  });
 });
 
 describe('resolveQuoteVatBreakdown', () => {

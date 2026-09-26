@@ -3,6 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, resolveDocumentContact, type CrmContactSource, type DocumentContactSnapshot } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
+import { workOrderLineItemIssues } from './lineItemIssues';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
@@ -1217,6 +1218,16 @@ export async function saveWorkOrderLineItems(
   // och bokföringen att säga olika saker.
   if (wo.status === 'invoiced' || wo.fortnox_invoice_number) {
     return { data: null, error: { message: 'Arbetsordern är färdigfakturerad och kan inte ändras.' }, reason: 'order_closed' as const };
+  }
+
+  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en rad utan pris eller mängd, och
+  // FÖRST Fortnox-pushen sa nej (assertLineItemsArePriced, 409) — med raderna redan i databasen,
+  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar.
+  const rowIssues = workOrderLineItemIssues(nextLineItems, {
+    rotEnabled: wo.quote_type === 'private' && (wo.rot_details as { enabled?: unknown } | null)?.enabled === true,
+  });
+  if (rowIssues.length) {
+    return { data: null, error: { message: rowIssues.join(' · ') }, reason: 'invalid_rows' as const };
   }
 
   // Rundorna behövs både för redigeringsreglerna och för att avgöra om ordern stänger sig.
