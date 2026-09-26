@@ -1,5 +1,6 @@
 "use client";
 import { getBrowserClient } from '@/lib/supabase/browser';
+import { navigateAfterAuthChange } from '@/lib/auth/navigateAfterAuthChange';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useToast } from '@/lib/Toast';
@@ -89,7 +90,8 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
 
   const logout = async () => {
     await supabase.auth.signOut();
-    router.replace('/auth/sign-in');
+    // Full sidladdning: en mjuk navigering lämnar kvar den här användarens profil i skalet.
+    navigateAfterAuthChange('/auth/sign-in');
   };
 
   function closePwd() {

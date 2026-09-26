@@ -1,12 +1,11 @@
 "use client";
 import { getBrowserClient } from '@/lib/supabase/browser';
+import { navigateAfterAuthChange } from '@/lib/auth/navigateAfterAuthChange';
 export const dynamic = 'force-dynamic';
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function SignInPage() {
   const supabase = getBrowserClient();
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -28,16 +27,10 @@ export default function SignInPage() {
     }
   // Ensure server session cookie is synced before navigating (important for PWA)
   try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
-  router.replace("/");
-    // In case the app shell cached page doesn’t pick up the session instantly, do a delayed refresh once.
-    setTimeout(() => {
-      try {
-        // Only attempt if still on sign-in route
-        if (window.location.pathname.startsWith('/auth')) {
-          window.location.href = '/';
-        }
-      } catch {}
-    }, 250);
+    // Full sidladdning, inte router.replace: skalet bär annars inloggningssidans tomma profil. Den
+    // gamla 250 ms-reserven laddade bara om när servern var långsam — svarade den snabbare vann den
+    // mjuka navigeringen, och användaren landade utan roll.
+    navigateAfterAuthChange('/');
   };
 
   return (
