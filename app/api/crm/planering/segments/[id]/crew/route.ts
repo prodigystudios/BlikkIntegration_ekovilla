@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { assignCrew, unassignCrew } from '@/lib/domains/planning/crew';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, assignCrewSchema } from '../../../_lib';
@@ -22,7 +21,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = assignCrewSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await assignCrew(supabase, {
       segmentId: context.params.id,
       memberId: parsed.data.member_id,
@@ -63,7 +62,7 @@ export async function DELETE(req: Request, context: RouteContext) {
     const badMember = invalidUuidParam(memberId);
     if (badMember) return badMember;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await unassignCrew(supabase, context.params.id, memberId as string);
     if (error) return routeError(500, 'planning_crew_unassign_failed', error.message);
 

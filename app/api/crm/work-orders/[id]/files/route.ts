@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createCrmWorkOrderFile,
   findCrmWorkOrderFileByPath,
@@ -45,7 +44,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listCrmWorkOrderFiles(supabase, context.params.id);
 
     if (error) {
@@ -138,7 +137,7 @@ export async function POST(req: Request, context: RouteContext) {
       return routeError(400, 'crm_work_order_file_path_invalid', 'Filen hör inte till den här arbetsordern.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Redan registrerad? Då är objektet någon annans (eller vårt eget, redan sparat) och får inte
     // röras. Svara innan `uploadedPath` sätts, så ingen felgren kan städa bort det.

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCurrentUser } from '@/lib/auth/route';
 import { ok, routeError, validationError } from '@/lib/api/responses';
 import { createChangelogEntrySchema, listChangelogQuerySchema } from '@/lib/domains/changelog/schemas';
@@ -23,7 +22,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Adminvyn: fria poster inklusive utkast, INTE sammanslagna med ärendena. Ärendehärledda rader
     // redigeras på sitt ärende — att visa dem som redigerbara här hade inbjudit till två vägar in
@@ -66,7 +65,7 @@ export async function POST(req: Request) {
     const parsed = createChangelogEntrySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createChangelogEntry(supabase, {
       ...parsed.data,
       created_by: currentUser.id,

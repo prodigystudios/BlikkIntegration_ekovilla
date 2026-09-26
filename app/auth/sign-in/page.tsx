@@ -1,11 +1,11 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 export default function SignInPage() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

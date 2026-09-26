@@ -1,7 +1,6 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
 import { z } from 'zod';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { requireAdminUser } from '@/lib/auth/route';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { PERMISSION_KEYS } from '@/lib/auth/permissions';
@@ -47,6 +46,6 @@ export async function requirePermsAdmin() {
   const admin = getOptionalSupabaseAdmin();
   if (!admin) return { response: routeError(500, 'service_role_missing', 'Service role not configured') };
 
-  const session = createRouteHandlerClient({ cookies });
+  const session = createSessionClient();
   return { currentUser, admin, session };
 }

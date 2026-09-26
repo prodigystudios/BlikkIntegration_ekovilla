@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 
 // Vem tittar på ekonomiytan, och vad får de se?
 //
@@ -8,10 +7,9 @@ import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
 // de inte driver isär. Det var precis så skrivspärren en gång hamnade i två oberoende kopior som
 // vaktade olika vägar till samma tabeller.
 //
-// ⚠️ `createServerComponentClient` och INTE getEffectivePermissions(): den senare bygger en
-// route-handler-klient som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma i
-// en server-komponent — den kastar mitt i renderingen och sidan svarar 500 i stället för att skicka
-// någon till inloggningen. Samma skäl och samma mönster som app/arbetsorder/[id]/page.tsx.
+// Läser `effective_permissions` själv i stället för via getEffectivePermissions(). Skälet var att den
+// senare byggde en route-handler-klient som kastade vid tokenförnyelse i en server-komponent — borta
+// sedan bytet till @supabase/ssr. Sammanslagningen av läsningarna hör till RBAC-passet.
 //
 // ⚠️ app/ekonomi/page.tsx gör i dag samma läsning inline, med sin egen utförliga motivering. Den är
 // medvetet orörd: den fungerar, den bär lockout-resonemanget i klartext, och att skriva om en
@@ -26,7 +24,7 @@ export type EkonomiAccess = {
 };
 
 export async function readEkonomiAccess(): Promise<EkonomiAccess> {
-  const supabase = createServerComponentClient({ cookies });
+  const supabase = createSessionClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { userId: null, held: new Set() };
 

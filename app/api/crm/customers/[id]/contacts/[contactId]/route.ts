@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteCrmCustomerContact, updateCrmCustomerContact } from '@/lib/domains/crm/customers';
 import { invalidUuidParam, ok, requirePermission, routeError, updateCrmCustomerContactSchema, validationError } from '../../../_lib';
 
@@ -16,7 +15,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmCustomerContactSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateCrmCustomerContact(supabase, context.params.contactId, parsedBody.data);
 
     if (error) {
@@ -37,7 +36,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id) || invalidUuidParam(context.params.contactId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await deleteCrmCustomerContact(supabase, context.params.contactId);
 
     if (error) {

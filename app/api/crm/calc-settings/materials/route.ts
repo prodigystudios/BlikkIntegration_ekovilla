@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteMaterialCostArticle, upsertMaterialCostArticle } from '@/lib/domains/crm/calcSettings';
 import {
   deleteMaterialCostArticleSchema,
@@ -25,7 +24,7 @@ export async function PUT(req: Request) {
     const parsedBody = upsertMaterialCostArticleSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await upsertMaterialCostArticle(supabase, {
       material: parsedBody.data.material,
       articleNumber: parsedBody.data.article_number,
@@ -54,7 +53,7 @@ export async function DELETE(req: Request) {
     const parsedQuery = deleteMaterialCostArticleSchema.safeParse({ material: url.searchParams.get('material') });
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteMaterialCostArticle(supabase, parsedQuery.data.material);
     if (error) {
       return routeError(500, 'crm_material_cost_article_delete_failed', error.message);

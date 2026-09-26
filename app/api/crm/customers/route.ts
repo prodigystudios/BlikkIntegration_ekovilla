@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { createCrmCustomer, getCrmCustomer, listCrmCustomers, getCrmCustomerStageCounts, CRM_CUSTOMERS_PAGE_SIZE } from '@/lib/domains/crm/customers';
 import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { createFortnoxCustomer } from '@/lib/domains/fortnox/customers';
@@ -39,7 +38,7 @@ export async function GET(req: Request) {
     const limit = parsedQuery.data.limit ?? CRM_CUSTOMERS_PAGE_SIZE;
     const offset = parsedQuery.data.offset ?? 0;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error, count } = await listCrmCustomers(supabase, {
       search,
       status,
@@ -96,7 +95,7 @@ export async function POST(req: Request) {
       null,
     ).vat_number;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createCrmCustomer(supabase, {
       ...customerData,
       ...(derivedVat ? { vat_number: derivedVat } : {}),

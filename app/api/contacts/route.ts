@@ -1,7 +1,6 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 
 export const dynamic = 'force-dynamic';
 
@@ -41,7 +40,7 @@ async function loadContactsDataset(client: { from: (...args: any[]) => any }) {
 }
 
 export async function GET() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const admin = getOptionalSupabaseAdmin();
 
   const [{ data: cats, error: catErr }, { data: people, error: peopleErr }, { data: addresses, error: addrErr }] = await loadContactsDataset(supabase);

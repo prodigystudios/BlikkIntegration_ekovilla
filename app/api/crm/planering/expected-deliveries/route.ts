@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listExpectedInRange, listOpenExpected, createExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, createExpectedDeliverySchema } from '../_lib';
@@ -14,7 +13,7 @@ export async function GET(req: Request) {
     if (gate.response) return gate.response;
 
     const url = new URL(req.url);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Utan from/to: ALLA öppna, oavsett datum. Lagerpanelens lista behöver det — en leverans som
     // aldrig kom faller annars ur synfältet så fort veckan passerat, och det är just den som ska
@@ -53,7 +52,7 @@ export async function POST(req: Request) {
     const parsed = createExpectedDeliverySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createExpectedDelivery(supabase, {
       depotId: parsed.data.depot_id,
       material: parsed.data.material,

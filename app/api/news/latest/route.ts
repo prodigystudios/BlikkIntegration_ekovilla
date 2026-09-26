@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +22,7 @@ function routeError(status: number, code: string, message: string, details?: unk
 
 // GET /api/news/latest
 export async function GET() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return routeError(401, 'unauthorized', 'unauthorized');
 

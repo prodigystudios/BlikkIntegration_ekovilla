@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { buildKmaDocument } from '@/lib/domains/crm/kmaPlans/document';
@@ -39,7 +38,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(workOrderId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listKmaPlans(supabase, workOrderId);
     if (error) return routeError(500, 'crm_work_order_kma_list_failed', error.message);
 
@@ -68,7 +67,7 @@ export async function POST(req: Request, context: RouteContext) {
     if (!parsed.success) return validationError(parsed.error);
     const form = parsed.data;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Ordern läses med sessionen: den som inte ser ordern ska få 404, inte en plan på den.
     const { data: order, error: orderError } = await getCrmWorkOrder(supabase, workOrderId);

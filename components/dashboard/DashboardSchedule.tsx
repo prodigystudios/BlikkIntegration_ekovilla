@@ -1,7 +1,7 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useProjectComments, formatRelativeTime } from '../../lib/useProjectComments';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
@@ -68,7 +68,7 @@ type ContactDirectoryEntry = {
 };
 
 export default function DashboardSchedule({ compact = false, onReportTime }: { compact?: boolean; onReportTime?: (info: { projectId?: string; projectName?: string; orderNumber?: string; day?: string }) => void }) {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);

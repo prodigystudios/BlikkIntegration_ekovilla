@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import { useToast } from '@/lib/Toast';
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
@@ -1149,7 +1149,7 @@ export default function PlanneringPage() {
   }, []);
 
   // Load persisted schedule + meta
-  const [supabase] = useState(() => createClientComponentClient());
+  const [supabase] = useState(() => getBrowserClient());
   const [syncing, setSyncing] = useState(false);
   const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'live' | 'error'>('connecting');
   const [realtimePaused, setRealtimePaused] = useState(false);

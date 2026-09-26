@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { isFollowUpOnlyPatch } from '@/lib/domains/safetyRounds/rules';
@@ -27,7 +26,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = actionPatchSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: round, error: roundError } = await getSafetyRound(supabase, context.params.id);
     if (roundError) return routeError(500, 'safety_round_read_failed', roundError.message);
     if (!round) return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');
@@ -59,7 +58,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id) ?? invalidUuidParam(context.params.actionId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteAction(supabase, context.params.id, context.params.actionId);
     if (error || !data) return writeFailure(error, 'åtgärden');
     return ok({ id: data.id });

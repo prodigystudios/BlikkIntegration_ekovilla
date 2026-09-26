@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -44,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Who is creating the task? Use the current session user as created_by
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) {
       return routeError(401, 'unauthorized', 'Ej inloggad');

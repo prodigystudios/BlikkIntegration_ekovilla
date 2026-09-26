@@ -34,7 +34,7 @@ vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
   };
 });
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({ kind: 'session' })) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({ kind: 'session' })) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({ kind: 'admin' })) }));
 

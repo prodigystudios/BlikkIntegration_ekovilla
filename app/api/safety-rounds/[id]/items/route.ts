@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { customItemCreateSchema } from '@/lib/domains/safetyRounds/schemas';
@@ -24,7 +23,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = customItemCreateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Kategorins rubrik snapshottas ur katalogen, inte ur kroppen.
     const categories = await listChecklistCategories(supabase);

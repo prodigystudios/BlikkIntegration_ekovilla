@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../../../_util';
 import { approvePublicationInputSchema } from '../../_lib';
 import { approvePublicationForUser, PublicationsRouteError } from '../../_domain';
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_body' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     await approvePublicationForUser(supabase, {
       publicationId,
       userId: current.id,

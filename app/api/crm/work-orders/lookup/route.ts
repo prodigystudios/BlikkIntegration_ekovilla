@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { forbidIfReadonly } from '@/lib/auth/route';
@@ -61,7 +60,7 @@ export async function GET(req: Request) {
     if (!data) return routeError(404, 'crm_work_order_not_found', 'No CRM work order with that number');
 
     const row = data as unknown as CrmWorkOrderLookupRow;
-    const workDescriptionVisible = await canSessionReadWorkOrder(createRouteHandlerClient({ cookies }), row.id);
+    const workDescriptionVisible = await canSessionReadWorkOrder(createSessionClient(), row.id);
 
     return ok({ item: mapCrmWorkOrderToEgenkontrollProject(row, { workDescriptionVisible }) });
   } catch (e: any) {

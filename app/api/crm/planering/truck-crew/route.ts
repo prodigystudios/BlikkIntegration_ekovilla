@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listTruckCrew, assignTruckCrew } from '@/lib/domains/planning/truckCrew';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, assignTruckCrewSchema } from '../_lib';
@@ -17,7 +16,7 @@ export async function GET(req: Request) {
     });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listTruckCrew(supabase, { from: parsed.data.from, to: parsed.data.to });
     if (error) return routeError(500, 'planning_truck_crew_failed', error.message);
 
@@ -39,7 +38,7 @@ export async function POST(req: Request) {
       return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await assignTruckCrew(supabase, {
       truckId: parsed.data.truck_id,
       memberId: parsed.data.member_id,

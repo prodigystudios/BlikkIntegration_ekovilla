@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { participantPatchSchema } from '@/lib/domains/safetyRounds/schemas';
@@ -22,7 +21,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = participantPatchSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateParticipant(supabase, context.params.id, context.params.participantId, parsed.data);
     if (error || !data) return writeFailure(error, 'deltagaren');
     return ok({ participant: data });
@@ -40,7 +39,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id) ?? invalidUuidParam(context.params.participantId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteParticipant(supabase, context.params.id, context.params.participantId);
     if (error || !data) return writeFailure(error, 'deltagaren');
     return ok({ id: data.id });

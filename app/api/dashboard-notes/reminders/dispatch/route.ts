@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { isWebPushConfigured, sendWebPush } from '@/lib/webPush';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -26,7 +25,7 @@ type PushRow = {
 };
 
 async function getUserId() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmCustomer, saveCrmCustomerCreditReport } from '@/lib/domains/crm/customers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fetchTicCreditReport, TicCompanyNotFoundError } from '@/lib/domains/tic/credit';
@@ -19,7 +18,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: existing, error } = await getCrmCustomer(supabase, context.params.id);
     if (error || !existing) {
       return routeError(404, 'crm_customer_not_found', error?.message || 'Kund hittades inte');

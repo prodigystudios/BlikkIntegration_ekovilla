@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createCrmWorkOrderProgressReports,
   getCrmWorkOrderLineItems,
@@ -105,7 +104,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listCrmWorkOrderProgressReports(supabase, context.params.id);
     if (error) {
       return routeError(500, 'crm_work_order_progress_list_failed', error.message);
@@ -146,7 +145,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsedBody = createProgressReportSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // ── Momenten hämtas ur ORDERN, inte ur kroppen ───────────────────────────
     // Etikett och enhet för ett kopplat moment snapshottas här. Tillåts klienten sätta dem kan en

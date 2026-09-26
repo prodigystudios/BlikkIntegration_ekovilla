@@ -35,9 +35,7 @@ export default async function InstallerWorkOrderPage({
   // Behörigheten läses här och inte i klienten: sidan är rätt ställe för åtkomstbeslut, och en
   // klient som frågar själv hade blinkat till med fel flikrad medan svaret var på väg.
   //
-  // hasCrmPermissions och inte getEffectivePermissions(): den senare bygger en route-handler-klient,
-  // som försöker skriva cookies vid tokenförnyelse och därför inte hör hemma i en server-komponent.
-  // Hjälparen läser alla nycklarna på EN rundtur och failar stängt (allt false) vid ett fel.
+  // hasCrmPermissions läser alla nycklarna på EN rundtur och failar stängt (allt false) vid ett fel.
   const keys = await hasCrmPermissions(['time.approve', 'safety.round.read', 'safety.round.write']);
   const canReportTime = keys['time.approve'];
   // Skyddsronden ritas bara för den som har en av dess nycklar — rondledaren, ofta en arbetsledare

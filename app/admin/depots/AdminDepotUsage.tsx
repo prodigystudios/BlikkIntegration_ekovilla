@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React, { useEffect, useMemo, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import { crm } from '../../crm/lib/crmTokens';
@@ -22,7 +22,7 @@ type Depot = { id: string; name: string; material_total: number | null };
 type ProjectLookupMeta = { orderNumber: string | null; projectName: string | null };
 
 export default function AdminDepotUsage() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<UsageRow[]>([]);

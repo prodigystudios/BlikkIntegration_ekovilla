@@ -37,7 +37,7 @@ vi.mock('@/lib/domains/time/payrollPdf', async (importOriginal) => {
   return { ...actual, renderPayrollPdf: vi.fn(async () => new Uint8Array([0x25, 0x50, 0x44, 0x46])) };
 });
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';

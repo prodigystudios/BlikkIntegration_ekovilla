@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { createCrmQuote, getCrmQuote, getCrmQuoteFilterCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -49,7 +48,7 @@ export async function GET(req: Request) {
       customerId: parsedQuery.data.customer_id,
     };
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const query = await listCrmQuotesWithFilters(supabase, {
       ...scope,
       status: parsedQuery.data.status,
@@ -90,7 +89,7 @@ export async function POST(req: Request) {
     const assignee = await authorizeQuoteAssignee(parsedBody.data.assigned_to, crmUser.currentUser.id);
     if (assignee.response) return assignee.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const payload = {
       ...parsedBody.data,
       created_by: crmUser.currentUser.id,

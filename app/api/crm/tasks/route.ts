@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { attachCrmTaskContacts, createCrmTask, listCrmTasks, listCrmTasksDelegatedBy, mapCrmTaskRows } from '@/lib/domains/crm/tasks';
 import { buildCrmTaskAssignedNotification } from '@/lib/domains/notifications/payload';
@@ -33,7 +32,7 @@ export async function GET(req: Request) {
 
     if (!parsedQuery.success) return validationError(parsedQuery.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Uppgifter man delegerat tillhör mottagaren och ligger utanför den egna RLS-vyn. Skaparen
     // kommer alltid från sessionen, aldrig från frågesträngen — filtret är slutet om anroparen.
@@ -125,7 +124,7 @@ export async function POST(req: Request) {
     // elevated klient: dashboard_work_items WITH CHECK är egen-bara, och policyn lämnas
     // medvetet orörd (se 20260817_dashboard_work_items_created_by.sql). Behörighetsbeslutet är
     // redan fattat ovan — crm.admin plus en mottagare verifierad mot säljarkatalogen.
-    const sessionClient = createRouteHandlerClient({ cookies });
+    const sessionClient = createSessionClient();
     const supabase = owner.ownerId ? getSupabaseAdmin() : sessionClient;
     const { data, error } = await createCrmTask(supabase, payload);
 

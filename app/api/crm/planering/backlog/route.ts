@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { listSchedulableWorkOrders } from '@/lib/domains/planning/backlog';
 import { ok, routeError, requirePermission } from '../_lib';
 
@@ -9,7 +8,7 @@ export async function GET() {
     const gate = await requirePermission('planning.schedule.read');
     if (gate.response) return gate.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listSchedulableWorkOrders(supabase);
     if (error) return routeError(500, 'planning_backlog_failed', error.message);
 

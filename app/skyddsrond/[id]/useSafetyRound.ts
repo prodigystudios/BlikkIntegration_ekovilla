@@ -1,7 +1,7 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useToast } from '@/lib/Toast';
 import type { KmaDirectoryEntry } from '@/lib/domains/crm/kmaPlans/directory';
 import type { WorkOrderCrewPerson } from '@/lib/domains/planning/workOrderCrew';
@@ -65,7 +65,7 @@ export type PhotoUploadProgress = { done: number; total: number };
 
 export function useSafetyRound(roundId: string) {
   const toast = useToast();
-  const supabase = useMemo(() => createClientComponentClient(), []);
+  const supabase = useMemo(() => getBrowserClient(), []);
   const [data, setData] = useState<Loaded | null>(null);
   // Fotonas signerade läs-URL:er, per foto-id. De gäller i 30 minuter — ronden hämtas om före det.
   const [photoUrls, setPhotoUrls] = useState<Record<string, string | null>>({});

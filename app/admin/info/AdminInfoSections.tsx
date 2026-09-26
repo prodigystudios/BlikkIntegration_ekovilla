@@ -1,7 +1,7 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { ADMIN_CARD, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, ADMIN_INSET, ADMIN_LABEL, ADMIN_NOTICE_BOX } from '../components/adminUi';
@@ -349,7 +349,7 @@ export default function AdminInfoSections() {
         body: JSON.stringify({ fileName: file.name, contentType: file.type || undefined }),
       });
 
-      const supabase = createClientComponentClient();
+      const supabase = getBrowserClient();
       const { error } = await supabase.storage
         .from(signed.bucket)
         .uploadToSignedUrl(signed.path, signed.token, file, { contentType: file.type || undefined });

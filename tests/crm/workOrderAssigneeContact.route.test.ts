@@ -35,8 +35,8 @@ vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 let readerRole: string | null = 'member';
 let readerError: { message: string } | null = null;
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({
-  createRouteHandlerClient: vi.fn(() => ({
+vi.mock('@/lib/supabase/session', () => ({
+  createSessionClient: vi.fn(() => ({
     __client: 'session',
     from: () => {
       const builder: any = {

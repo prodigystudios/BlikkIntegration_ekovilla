@@ -1,12 +1,12 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 // Lightweight account creation page (not linked in main navigation)
 // Used to self-provision new member accounts. New users default to role 'member'.
 export default function CreateAccountPage() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const router = useRouter();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');

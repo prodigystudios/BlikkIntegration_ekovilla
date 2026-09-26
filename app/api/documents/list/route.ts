@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../_util';
 import { DocumentsListRouteError, getDocumentsListData } from './_domain';
 
@@ -12,7 +11,7 @@ export async function GET(req: NextRequest) {
     const current = await getCurrentUser();
     if (!current) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { searchParams } = new URL(req.url);
     const folderId = (searchParams.get('folderId') || '').trim() || null;
     const result = await getDocumentsListData(supabase, {

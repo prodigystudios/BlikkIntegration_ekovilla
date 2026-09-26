@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
 import { fetchCrmOverviewSummary, type CrmOverviewWindow } from '@/lib/domains/crm/overviewSummary';
@@ -63,7 +62,7 @@ export async function GET(req: Request) {
 
     // Session client on purpose: RLS decides what the reader may count, exactly as it did when the
     // page counted list rows. The task figures are personal precisely because of that policy.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const summary = await fetchCrmOverviewSummary(supabase, window);
 
     return ok({ summary });

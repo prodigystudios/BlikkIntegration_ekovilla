@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { searchCrmCustomers, getCrmCustomerDisplayName } from '@/lib/domains/crm/customers';
 import { resolveCrmContact, type CrmContactSource } from '@/lib/domains/crm/contacts';
 import { ok, requireCrmUser, routeError, validationError, searchCrmCustomersQuerySchema } from '../_lib';
@@ -13,7 +12,7 @@ export async function GET(req: Request) {
     const parsed = searchCrmCustomersQuerySchema.safeParse({ q: url.searchParams.get('q') || '' });
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await searchCrmCustomers(supabase, parsed.data.q);
 
     if (error) return routeError(500, 'crm_customers_search_failed', error.message);

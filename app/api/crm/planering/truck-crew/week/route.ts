@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { materializeDefaultCrew, clearTruckCrewRange } from '@/lib/domains/planning/truckCrew';
 import { ok, routeError, validationError, requirePermission, truckCrewWeekSchema } from '../../_lib';
 
@@ -15,7 +14,7 @@ export async function POST(req: Request) {
     const { action, truck_id, start_day, end_day } = parsed.data;
     if (end_day < start_day) return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     if (action === 'restore') {
       const { error } = await clearTruckCrewRange(supabase, truck_id, start_day, end_day);

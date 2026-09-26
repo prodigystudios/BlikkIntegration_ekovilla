@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { getCrmQuoteCallIdentity } from '@/lib/domains/crm/quotes';
 import { attachCrmCallUserNames, createCrmCall, listCrmQuoteCalls, quoteCallIdentity } from '@/lib/domains/crm/calls';
@@ -55,7 +54,7 @@ export async function GET(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     // Grinden. Sessionsklienten med flit — det är den som bär anroparens RLS.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: quote, error: quoteError } = await getCrmQuoteCallIdentity(supabase, context.params.id);
     if (quoteError || !quote) {
       return routeError(404, 'crm_quote_not_found', 'Offerten hittades inte');
@@ -90,7 +89,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = CreateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: quote, error: quoteError } = await getCrmQuoteCallIdentity(supabase, context.params.id);
     if (quoteError || !quote) {
       return routeError(404, 'crm_quote_not_found', 'Offerten hittades inte');

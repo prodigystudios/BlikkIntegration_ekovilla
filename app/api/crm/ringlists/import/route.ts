@@ -1,10 +1,9 @@
+import { createSessionClient } from '@/lib/supabase/session';
 // getSupabaseAdmin: bulk ringlist import creates prospects on behalf of other users and
 // requires elevated access beyond what the importer's own RLS policies allow.
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { importCrmProspects } from '@/lib/domains/crm/ringlists';
 import { resolveRoutingUser } from '@/lib/domains/crm/routingRules';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import {
   importCrmRinglistRowsSchema,
   ok,
@@ -24,7 +23,7 @@ export async function POST(req: Request) {
     // Resolve assigned_to via routing rule if county provided but no explicit user
     let resolvedAssignedTo = parsedBody.data.assigned_to;
     if (!resolvedAssignedTo && parsedBody.data.county) {
-      const sessionSupabase = createRouteHandlerClient({ cookies });
+      const sessionSupabase = createSessionClient();
       resolvedAssignedTo = await resolveRoutingUser(sessionSupabase, parsedBody.data.county);
     }
 

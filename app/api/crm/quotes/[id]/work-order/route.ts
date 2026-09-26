@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { createCrmWorkOrderFromQuote, getWorkOrderReadinessForQuote } from '@/lib/domains/crm/work-orders';
 import { workOrderReadinessErrorCode } from '@/lib/domains/crm/workOrderReadiness';
 import { pushWorkOrderToFortnox } from '@/lib/domains/fortnox/orders';
@@ -27,7 +26,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await getWorkOrderReadinessForQuote(supabase, context.params.id);
 
     if (result.error || !result.data) {
@@ -51,7 +50,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const result = await createCrmWorkOrderFromQuote(supabase, context.params.id, crmUser.currentUser.id);
 
     if (result.error || !result.data) {

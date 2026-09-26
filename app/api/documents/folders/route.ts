@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
 import { getCurrentUser } from '../_util';
 import { createFolderInputSchema, deleteFolderQuerySchema, renameFolderInputSchema } from './_lib';
 import { createFolder, deleteFolder, DocumentsFoldersRouteError, renameFolder } from './_domain';
@@ -20,7 +19,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_body' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const folder = await createFolder(supabase, { ...parsed.data, createdBy: current.id });
     return NextResponse.json({ ok: true, folder }, { status: 201 });
   } catch (error: any) {
@@ -46,7 +45,7 @@ export async function DELETE(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_query' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     await deleteFolder(supabase, parsed.data.id);
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error: any) {
@@ -68,7 +67,7 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ ok: false, error: parsed.error.issues[0]?.message || 'invalid_body' }, { status: 400 });
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const folder = await renameFolder(supabase, parsed.data);
     return NextResponse.json({ ok: true, folder }, { status: 200 });
   } catch (error: any) {

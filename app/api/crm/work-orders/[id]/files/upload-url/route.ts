@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { isUserOnWorkOrder } from '@/lib/domains/crm/work-orders';
 import {
   buildWorkOrderFilePath,
@@ -59,7 +58,7 @@ export async function POST(req: Request, context: RouteContext) {
     });
     if (claimError) return routeError(400, 'crm_work_order_file_invalid', claimError);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const perms = await getEffectivePermissions();
 
     let allowed = can(perms, 'crm.workorder.write');

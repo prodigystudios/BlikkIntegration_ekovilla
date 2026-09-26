@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { registerUploadedPhoto, signedPhotoUrls } from '@/lib/domains/safetyRounds/photos';
@@ -26,7 +25,7 @@ export async function GET(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     // Raderna läses med sessionen (RLS) — först DÅ signeras URL:erna med service-rollen.
-    const { data, error } = await listPhotos(createRouteHandlerClient({ cookies }), context.params.id);
+    const { data, error } = await listPhotos(createSessionClient(), context.params.id);
     if (error) return routeError(500, 'safety_round_photo_failed', error.message);
     return ok({ photo_urls: await signedPhotoUrls(getSupabaseAdmin(), data ?? []) });
   } catch (e: unknown) {
@@ -47,7 +46,7 @@ export async function POST(req: Request, context: RouteContext) {
     if (!parsed.success) return validationError(parsed.error);
 
     const result = await registerUploadedPhoto(
-      { supabase: createRouteHandlerClient({ cookies }), admin: getSupabaseAdmin() },
+      { supabase: createSessionClient(), admin: getSupabaseAdmin() },
       { roundId: context.params.id, userId: guard.currentUser.id, itemId: parsed.data.item_id, storagePath: parsed.data.storage_path },
     );
     if (!result.ok) return routeError(result.status, result.code, result.message);

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getTimeApproval, isPeriodLocked, periodStartOf, statusOf, type TimeApprovalRow } from '@/lib/domains/time/approvals';
 import {
   buildReceiptPath,
@@ -44,7 +43,7 @@ export async function POST(req: Request) {
     // Periodlåset, i förväg. Databasen stoppar skrivningen i steg 3 ändå — det är den spärr som
     // gäller — men utan den här kontrollen laddar användaren upp ett kvitto över mobilnätet och får
     // sitt "månaden är inlämnad" EFTERÅT, med bytena redan betalda och ett objekt kvar i bucketen.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const approval = await getTimeApproval(supabase, gate.currentUser.id, periodStartOf(parsed.data.entry_date));
     // statusOf och inte en rå kolumnläsning: en period utan attestrad är 'open', och den
     // normaliseringen ska ske på samma ställe som överallt annars.

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getOrder } from '@/lib/domains/planning/materialOrdersStore';
 import { EmailSendError, sendEmail } from '@/lib/email';
 import { ok, routeError, invalidUuidParam, requirePermission } from '../../../_lib';
@@ -17,7 +16,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: order, error } = await getOrder(supabase, context.params.id);
     if (error) return routeError(500, 'material_order_read_failed', error.message);
     if (!order) return routeError(404, 'material_order_not_found', 'Beställningen finns inte');

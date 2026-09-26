@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmQuoteStatus } from '@/lib/domains/crm/quotes';
 import { attachCrmTaskParticipantNames, listCrmQuoteTasks, mapCrmTaskRows } from '@/lib/domains/crm/tasks';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -45,7 +44,7 @@ export async function GET(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     // Grinden. Sessionsklienten med flit — det är den som bär anroparens RLS.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: quote, error: quoteError } = await getCrmQuoteStatus(supabase, context.params.id);
     if (quoteError || !quote) {
       return routeError(404, 'crm_quote_not_found', 'Offerten hittades inte');

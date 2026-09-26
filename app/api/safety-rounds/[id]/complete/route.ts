@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { completionProblems } from '@/lib/domains/safetyRounds/completion';
@@ -21,7 +20,7 @@ export async function POST(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: bundle, error } = await getSafetyRoundBundle(supabase, context.params.id);
     if (error) return routeError(500, 'safety_round_read_failed', error.message);
     if (!bundle) return routeError(404, 'safety_round_not_found', 'Skyddsronden hittades inte.');

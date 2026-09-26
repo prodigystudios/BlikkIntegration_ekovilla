@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getCrmWorkOrderLineItems } from '@/lib/domains/crm/work-orders';
 import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../_lib';
@@ -47,7 +46,7 @@ export async function GET(req: Request, context: RouteContext) {
     if (badSegment) return badSegment;
 
     // Grinden: kan anroparen läsa ordern alls?
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: order, error: orderError } = await getCrmWorkOrderLineItems(supabase, workOrderId);
     if (orderError) return routeError(500, 'crm_work_order_field_scope_read_failed', orderError.message);
     if (!order) return routeError(404, 'crm_work_order_not_found', 'Arbetsordern hittades inte.');

@@ -13,8 +13,8 @@ vi.mock('@/lib/domains/crm/prospects', () => ({
   updateCrmProspect: vi.fn(),
 }));
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({
-  createRouteHandlerClient: vi.fn(() => ({})),
+vi.mock('@/lib/supabase/session', () => ({
+  createSessionClient: vi.fn(() => ({})),
 }));
 
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));

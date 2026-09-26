@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   createCrmWorkOrderStage,
   getCrmWorkOrderLineItems,
@@ -43,7 +42,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [stagesRes, orderRes] = await Promise.all([
       listCrmWorkOrderStages(supabase, context.params.id),
       getCrmWorkOrderLineItems(supabase, context.params.id),
@@ -78,7 +77,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = createWorkOrderStageSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [stagesRes, orderRes] = await Promise.all([
       listCrmWorkOrderStages(supabase, workOrderId),
       getCrmWorkOrderLineItems(supabase, workOrderId),

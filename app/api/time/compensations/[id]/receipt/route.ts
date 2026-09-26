@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCompensationReceiptRef, type CompensationReceiptRef } from '@/lib/domains/time/compensations';
 import { getReceiptBucket, signReceiptUrl } from '@/lib/domains/time/receipts';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -47,7 +46,7 @@ export async function GET(req: Request, context: RouteContext) {
     const wantsRedirect = searchParams.get('redirect') === '1';
     const wantsDownload = searchParams.get('download') === '1';
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getCompensationReceiptRef(supabase, context.params.id);
     if (error) return routeError(500, 'time_receipt_read_failed', error.message);
 

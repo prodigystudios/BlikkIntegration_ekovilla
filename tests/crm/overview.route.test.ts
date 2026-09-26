@@ -4,7 +4,7 @@ import { salesUser, memberUser, effectivePermissionsForRole } from './helpers/su
 // Mockar före modulimporter.
 vi.mock('@/lib/auth/route', () => ({ getCurrentUser: vi.fn() }));
 vi.mock('@/lib/domains/crm/overviewSummary', () => ({ fetchCrmOverviewSummary: vi.fn() }));
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 vi.mock('@/lib/auth/permissions', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/permissions')>();

@@ -17,7 +17,7 @@ import { prepareFileForUpload } from '@/lib/shared/imageCompression';
 export type UploadedReceipt = { storage_path: string; file_name: string };
 
 // Bara den skiva av supabase-klienten som faktiskt används. Strukturell typ och inte
-// `ReturnType<typeof createClientComponentClient>`: den senare löser ut till klientens
+// `ReturnType<typeof createBrowserClient>`: den senare löser ut till klientens
 // DEFAULTGENERIK (`SupabaseClient<unknown, never, GenericSchema>`), som inte tar emot den faktiska
 // `SupabaseClient<any, 'public', any>` anroparen har — ett fel som bara syns i type-check, inte i
 // lint eller test. Skivan gör dessutom funktionen testbar utan en riktig klient.

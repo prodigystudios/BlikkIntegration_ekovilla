@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateSupplier, deleteSupplier } from '@/lib/domains/planning/materialSuppliers';
 import { findOpenOrderForSupplier } from '@/lib/domains/planning/materialOrdersStore';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateSupplierSchema } from '../../_lib';
@@ -27,7 +26,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateSupplierSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateSupplier(supabase, context.params.id, {
       name: parsed.data.name,
       email: parsed.data.email,
@@ -82,7 +81,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // 🧨 En öppen beställning (utkast eller ett utskick med oklart utfall) spärrar fabriken med flit. Raderingen
     // nollar supplier_id och lyfter den ur spärren — en ny beställning till samma fabrik hade då kunnat gå medan
     // den gamla fortfarande kan skickas om: två lass. Avgör den öppna först.

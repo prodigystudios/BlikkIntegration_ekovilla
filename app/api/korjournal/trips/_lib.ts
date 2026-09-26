@@ -1,6 +1,5 @@
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { z } from 'zod';
 
 export const tripIdParamsSchema = z.object({
@@ -52,7 +51,7 @@ export function routeError(status: number, code: string, message: string, detail
 }
 
 export async function getKorjournalRouteContext() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

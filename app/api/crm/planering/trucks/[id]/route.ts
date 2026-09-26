@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateTruck, deleteTruck } from '@/lib/domains/planning/trucks';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, updateTruckSchema } from '../../_lib';
 
@@ -21,7 +20,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = updateTruckSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateTruck(supabase, context.params.id, {
       name: parsed.data.name,
       color: parsed.data.color,
@@ -46,7 +45,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await deleteTruck(supabase, context.params.id);
     if (error) {
       if ((error as { code?: string }).code === '23503') {

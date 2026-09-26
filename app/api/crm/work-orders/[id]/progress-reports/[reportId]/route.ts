@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import {
   deleteCrmWorkOrderProgressReport,
   getCrmWorkOrderProgressReport,
@@ -47,7 +46,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id) || invalidUuidParam(context.params.reportId);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Läses först för att kunna skilja "finns inte" från "får inte". Utan den här läsningen blir
     // båda samma noll rader, och användaren får ett besked som inte säger vad hen ska göra i stället.

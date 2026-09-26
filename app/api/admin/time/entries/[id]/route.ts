@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { explainWriteMiss, periodLockError } from '@/lib/domains/time/approvals';
 import {
   adminDeleteTimeEntry,
@@ -49,7 +48,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsed = correctTimeEntrySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Ägaren läses ur DATABASEN, aldrig ur anropet. Kom user_id från klienten kunde en rättelse
     // flytta någons timmar till en annan persons löneunderlag med en handskriven request.
@@ -95,7 +94,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Ägaren behövs innan raderingen: efteråt finns ingen rad att förklara ett låst svar med.
     const existing = await getTimeEntryForCorrection(supabase, context.params.id);

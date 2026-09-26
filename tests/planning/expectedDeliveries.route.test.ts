@@ -18,7 +18,7 @@ vi.mock('@/lib/domains/planning/expectedDeliveries', async (importOriginal) => {
 });
 vi.mock('@/lib/domains/planning/activity', () => ({ logActivity: vi.fn(async () => {}) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({ __client: 'session' })) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({ __client: 'session' })) }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';

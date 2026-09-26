@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { receiveExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, receiveExpectedDeliverySchema } from '../../../_lib';
@@ -29,7 +28,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = receiveExpectedDeliverySchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { deliveryId, error } = await receiveExpectedDelivery(supabase, {
       expectedId: context.params.id,
       deliveredOn: parsed.data.delivered_on,

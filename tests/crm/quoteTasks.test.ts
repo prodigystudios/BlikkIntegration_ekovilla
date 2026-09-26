@@ -16,7 +16,7 @@ vi.mock('@/lib/domains/crm/tasks', async (importOriginal) => {
 
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
 
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 

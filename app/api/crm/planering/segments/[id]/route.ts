@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { moveSegment, removeSegment, getSegmentRef } from '@/lib/domains/planning/schedule';
 import { logActivity, describeSegmentPatch } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, moveSegmentSchema } from '../../_lib';
@@ -25,7 +24,7 @@ export async function PATCH(req: Request, context: RouteContext) {
       return routeError(400, 'invalid_range', 'Slutdatum kan inte vara före startdatum.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const patch = {
       truckId: parsed.data.truck_id,
       startDay: parsed.data.start_day,
@@ -70,7 +69,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // Read the job reference before the row is gone, so the audit line names the unscheduled job.
     const { workOrderId, ref } = await getSegmentRef(supabase, context.params.id);
     const { error } = await removeSegment(supabase, context.params.id);

@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { generateCoachReply, loadCoachContext } from '@/lib/domains/crm/coach';
 import { coachRequestSchema, ok, requireCrmWriter, routeError, validationError } from './_lib';
 
@@ -11,7 +10,7 @@ export async function POST(req: Request) {
     const parsedBody = coachRequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const contextResult = parsedBody.data.context ? await loadCoachContext(supabase, parsedBody.data.context) : { data: null, error: null };
 
     if (contextResult.error) {

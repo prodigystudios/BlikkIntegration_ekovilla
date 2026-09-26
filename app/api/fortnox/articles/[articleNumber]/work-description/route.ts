@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { ok, routeError, requireCrmWriter } from '../../../_shared';
 
 type RouteContext = { params: { articleNumber: string } };
@@ -18,7 +17,7 @@ export async function POST(_req: Request, context: RouteContext) {
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const articleNumber = decodeURIComponent(context.params.articleNumber);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     // 🧨 `ignoreDuplicates` → ON CONFLICT DO NOTHING, inte DO UPDATE. En vanlig upsert kräver
     // UPDATE-rättighet och en UPDATE-policy, och migreringen ger med flit bara select/insert/delete
     // — att kryssa i en redan ikryssad artikel hade då gett 500 och en tillbakarullad kryssruta.
@@ -44,7 +43,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     if (crmUser.response || !crmUser.currentUser) return crmUser.response;
 
     const articleNumber = decodeURIComponent(context.params.articleNumber);
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { error } = await supabase
       .from('fortnox_article_work_description_defaults')
       .delete()

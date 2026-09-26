@@ -64,7 +64,7 @@ vi.mock('@/lib/domains/safetyRounds/pdf', async (importOriginal) => {
   return { ...actual, renderSafetyRoundPdf: vi.fn(async () => new Uint8Array([37, 80, 68, 70])) };
 });
 
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';

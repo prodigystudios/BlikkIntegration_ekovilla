@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { listRoutingRules, upsertRoutingRule, SWEDISH_COUNTIES } from '@/lib/domains/crm/routingRules';
 import { ok, requireCrmAdmin, requireCrmUser, routeError, validationError } from '../_shared';
@@ -14,7 +13,7 @@ export async function GET() {
     const crmUser = await requireCrmUser();
     if (crmUser.response) return crmUser.response;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await listRoutingRules(supabase);
     if (error) return routeError(500, 'routing_rules_list_failed', error.message);
     return ok({ items: data ?? [] });
@@ -31,7 +30,7 @@ export async function POST(req: Request) {
     const parsed = upsertSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await upsertRoutingRule(supabase, {
       county: parsed.data.county,
       user_id: parsed.data.user_id,

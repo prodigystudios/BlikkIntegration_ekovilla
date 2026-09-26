@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { createStockCount } from '@/lib/domains/planning/stockCounts';
 import { ok, routeError, validationError, requirePermission, stockCountSchema } from '../_lib';
 
@@ -27,7 +26,7 @@ export async function POST(req: Request) {
     const parsed = stockCountSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await createStockCount(supabase, {
       depotId: parsed.data.depot_id,
       material: parsed.data.material,

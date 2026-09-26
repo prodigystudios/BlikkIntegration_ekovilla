@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getPlanningInsights } from '@/lib/domains/planning/insights';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { ok, routeError, requirePermission } from '../_lib';
@@ -18,7 +17,7 @@ export async function GET(req: Request) {
     // rendered right beside it.
     const fromISO = stockholmTodayISO();
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getPlanningInsights(supabase, { fromISO, weeks });
     if (error) return routeError(500, 'planning_insights_failed', error.message);
 

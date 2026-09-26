@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { completionProblems, summarizeItems } from '@/lib/domains/safetyRounds/completion';
@@ -30,7 +29,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const [{ data, error }, categories] = await Promise.all([
       getSafetyRoundBundle(supabase, context.params.id),
       listChecklistCategories(supabase),
@@ -75,7 +74,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Rondledarens profil följer namnet — se leaderIdForName.
     if ('leader_name' in parsed.data) patch.leader_id = leaderIdForName(parsed.data.leader_name ?? null, guard.currentUser);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateSafetyRound(supabase, context.params.id, patch);
     if (error || !data) return writeFailure(error, 'rondinfo');
     return ok({ round: data });
@@ -94,7 +93,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     // Bara ett utkast går att ta bort (policyn). En slutförd rond är ett protokoll.
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await deleteSafetyRound(supabase, context.params.id);
     if (error || !data) return writeFailure(error, 'ronden');
     // Fotona städas på PREFIXET <round_id>/ — även bilder som laddades upp men aldrig bekräftades.

@@ -2,12 +2,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mockar före modulimporter.
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
-vi.mock('@supabase/auth-helpers-nextjs', () => ({ createRouteHandlerClient: vi.fn() }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn() }));
 
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { POST } from '@/app/api/push/subscription/route';
 
-const mockClient = vi.mocked(createRouteHandlerClient);
+const mockClient = vi.mocked(createSessionClient);
 
 type Captured = { table: string; payload: any; options: any } | null;
 let captured: Captured = null;

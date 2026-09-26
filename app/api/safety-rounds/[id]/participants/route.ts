@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { invalidUuidParam, ok, routeError, validationError } from '@/lib/api/responses';
 import { requirePermission } from '@/lib/auth/guards';
 import { participantCreateSchema } from '@/lib/domains/safetyRounds/schemas';
@@ -24,7 +23,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = participantCreateSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const position = await nextPosition(supabase, PARTICIPANTS, roundId);
     if (position.error || position.data == null) {
       return routeError(500, 'safety_round_participant_failed', position.error?.message || 'Kunde inte lägga till deltagaren.');

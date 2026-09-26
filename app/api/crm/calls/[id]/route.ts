@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { updateCrmCall } from '@/lib/domains/crm/calls';
 import {
   ok,
@@ -32,7 +31,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     // skydd som offert- och orderrutterna redan har.
     const patch = pickProvidedFields(parsedBody.data, rawBody);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await updateCrmCall(supabase, context.params.id, patch as Parameters<typeof updateCrmCall>[2]);
 
     if (error) {

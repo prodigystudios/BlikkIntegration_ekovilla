@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { buildKmaPrefill, type KmaOrderSource } from '@/lib/domains/crm/kmaPlans/prefill';
@@ -46,7 +45,7 @@ export async function GET(req: Request, context: RouteContext) {
     const query = querySchema.safeParse({ sales_name: url.searchParams.get('sales_name') ?? undefined });
     if (!query.success) return validationError(query.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     const { data: order, error: orderError } = await getCrmWorkOrder(supabase, workOrderId);
     if (orderError && !isNoRowsError(orderError)) {

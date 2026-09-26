@@ -1,9 +1,9 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useProjectComments, formatRelativeTime } from '@/lib/useProjectComments';
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { mergeMyJobs, type BlikkJobRow, type CrmJobRow, type MyJob } from "@/lib/domains/planning/myJobs";
 import { crm, workOrderStatusLabel, workOrderStatusClass, type WorkOrderStatus } from "@/app/crm/lib/crmTokens";
 import { cn } from "@/lib/shared/cn";
@@ -39,7 +39,7 @@ function isToday(iso: string): boolean {
 }
 
 export default function MinaJobbPage() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [jobs, setJobs] = useState<MyJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

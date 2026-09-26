@@ -32,7 +32,7 @@
  *     Frågar sidan då bara "finns en session?" räcker det att skriva `?code=vadsomhelst` i
  *     adressfältet i en inloggad webbläsare för att få upp formuläret — och byta NÅGON ANNANS
  *     lösenord. Sessionen måste komma från den här laddningen, inte från lagringen.
- *   • Klienten är auth-helpers, som hårdkodar `flowType: 'pkce'`. Rad 1070 kastar då
+ *   • Klienten (@supabase/ssr, liksom auth-helpers före den) hårdkodar `flowType: 'pkce'`. Rad 1070 kastar då
  *     "Not a valid PKCE flow url" för varje fragment-länk och river sessionen. Implicita länkar
  *     kan alltså aldrig lösas in av den vägen.
  */

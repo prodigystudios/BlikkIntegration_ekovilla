@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { getSupplier } from '@/lib/domains/planning/materialSuppliers';
 import { DEFAULT_ORDER_EMAIL, exampleOrderEmailData, renderOrderEmail } from '@/lib/domains/planning/materialOrderEmail';
 import { EmailSendError, sendEmail } from '@/lib/email';
@@ -36,7 +35,7 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = orderEmailTestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data: supplier, error } = await getSupplier(supabase, context.params.id);
     if (error) return routeError(500, 'planning_supplier_test_mail_read_failed', error.message);
     if (!supplier) return routeError(404, 'planning_supplier_not_found', 'Leverantören finns inte längre');

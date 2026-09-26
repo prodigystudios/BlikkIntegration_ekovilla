@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { deleteProductivityRate, upsertProductivityRate } from '@/lib/domains/crm/calcSettings';
 import { ok, requireCrmAdmin, routeError, upsertProductivityRateSchema, validationError } from '../_lib';
 
@@ -19,7 +18,7 @@ export async function PUT(req: Request) {
     if (!parsedBody.success) return validationError(parsedBody.error);
 
     const { construction, material, m3_per_hour: rate } = parsedBody.data;
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     if (rate == null) {
       const { error } = await deleteProductivityRate(supabase, construction, material);

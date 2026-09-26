@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// createCrmQuoteSchema drar in rutt-lagrets auth-helpers via _lib. Testet rör aldrig dem — mockas
+// createCrmQuoteSchema drar in rutt-lagrets sessionsklient via _lib. Testet rör aldrig dem — mockas
 // bort så schemat kan importeras utan env-beroenden. Samma uppsättning som tests/crm/quotes.test.ts.
 vi.mock('@/lib/domains/crm/customers', () => ({ listCrmSellers: vi.fn() }));
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));

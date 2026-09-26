@@ -1,7 +1,7 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useToast } from '@/lib/Toast';
 import { prepareFileForUpload } from '@/lib/shared/imageCompression';
 import type { WorkOrderFileCategory, WorkOrderFileView } from '@/lib/domains/crm/workOrderFiles/types';
@@ -25,7 +25,7 @@ import type { WorkOrderFileCategory, WorkOrderFileView } from '@/lib/domains/crm
 export function useWorkOrderFiles(workOrderId: string, options?: { enabled?: boolean }) {
   const enabled = options?.enabled !== false;
   const toast = useToast();
-  const supabase = useMemo(() => createClientComponentClient(), []);
+  const supabase = useMemo(() => getBrowserClient(), []);
   const [files, setFiles] = useState<WorkOrderFileView[]>([]);
   const [loading, setLoading] = useState(true);
   const [canUpload, setCanUpload] = useState(false);

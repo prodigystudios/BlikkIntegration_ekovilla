@@ -1,5 +1,4 @@
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
@@ -57,7 +56,7 @@ export function validationError(parsedError: z.ZodError) {
 }
 
 export async function getProfileRouteContext() {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const admin = getOptionalSupabaseAdmin();
   const { data: authData, error: authError } = await supabase.auth.getUser();
 

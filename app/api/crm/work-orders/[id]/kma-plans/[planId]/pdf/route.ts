@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { documentErrorPage, isDocumentNavigation } from '@/lib/api/responses';
 import { kmaPlanFilename, renderKmaPdf } from '@/lib/domains/crm/kmaPlans/pdf';
 import { parseStoredKmaDocument } from '@/lib/domains/crm/kmaPlans/schemas';
@@ -39,7 +38,7 @@ export async function GET(req: Request, { params }: RouteContext) {
       return fail(400, 'invalid_id', 'Ogiltig länk till KMA-planen.');
     }
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getKmaPlanDocument(supabase, params.id, params.planId);
     if (error) return fail(500, 'crm_work_order_kma_read_failed', 'Kunde inte hämta KMA-planen.');
     if (!data) return fail(404, 'crm_work_order_kma_not_found', 'KMA-planen hittades inte.');

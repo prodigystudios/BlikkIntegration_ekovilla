@@ -1,8 +1,8 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import { useState, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useToast } from '@/lib/Toast';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import { useRouter } from 'next/navigation';
 import type { UserRole } from '@/lib/roles';
 
@@ -24,7 +24,7 @@ export default function ProfileMenu({ fullName, role, placement = 'down' }: { fu
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const toast = useToast();
   const [email, setEmail] = useState<string | null>(null);
 

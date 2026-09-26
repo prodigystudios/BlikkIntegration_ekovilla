@@ -1,6 +1,5 @@
-import { cookies } from 'next/headers';
+import { createSessionClient } from '@/lib/supabase/session';
 import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
@@ -16,7 +15,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await getCrmCustomer(supabase, context.params.id);
 
     if (error) {
@@ -41,7 +40,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     const parsedBody = updateCrmCustomerSchema.safeParse(rawBody);
     if (!parsedBody.success) return validationError(parsedBody.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
 
     // Persist only fields the client actually sent, so a partial PATCH (e.g. an
     // account-manager-only or personnummer-only change) doesn't wipe untouched columns

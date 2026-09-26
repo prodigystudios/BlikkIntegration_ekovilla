@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { adminSupabase } from '@/lib/adminSupabase';
 
 export type OffertAccessContext = {
@@ -12,7 +11,7 @@ export type OffertAccessContext = {
 };
 
 export async function getOffertAccessContext(): Promise<OffertAccessContext> {
-  const supabase = createRouteHandlerClient({ cookies });
+  const supabase = createSessionClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();

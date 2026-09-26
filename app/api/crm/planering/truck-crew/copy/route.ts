@@ -1,5 +1,4 @@
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { createSessionClient } from '@/lib/supabase/session';
 import { copyTruckCrewWeek } from '@/lib/domains/planning/truckCrew';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, copyTruckCrewSchema } from '../../_lib';
@@ -14,7 +13,7 @@ export async function POST(req: Request) {
     const parsed = copyTruckCrewSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) return validationError(parsed.error);
 
-    const supabase = createRouteHandlerClient({ cookies });
+    const supabase = createSessionClient();
     const { data, error } = await copyTruckCrewWeek(supabase, {
       truckId: parsed.data.truck_id,
       sourceFrom: parsed.data.source_start,

@@ -1,6 +1,6 @@
 "use client";
+import { getBrowserClient } from '@/lib/supabase/browser';
 import React, { useEffect, useMemo, useState } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 import Badge from '../../../components/ui/Badge';
 import Button from '../../../components/ui/Button';
 import EmptyState from '../../../components/ui/EmptyState';
@@ -14,7 +14,7 @@ type Row = { job_type: string; color_hex: string };
 const DEFAULT_JOB_TYPES = ['Ekovilla', 'Vitull', 'Leverans', 'Utsugning', 'Snickerier', 'Övrigt'];
 
 export default function AdminJobTypes() {
-  const supabase = createClientComponentClient();
+  const supabase = getBrowserClient();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
