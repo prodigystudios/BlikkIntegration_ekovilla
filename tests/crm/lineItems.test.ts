@@ -167,3 +167,12 @@ describe('pricingModeFromUnit', () => {
     expect(pricingModeFromUnit(undefined)).toBe('item');
   });
 });
+
+// 🧨 En gammal rad i JSONB kan bära m2/quantity som TAL. Artikeleditorn kör isBlankLineItem vid
+// varje rendering — `.trim()` på ett tal hade kraschat hela ordersidan, fältvyn inräknad.
+describe('isBlankLineItem — tal i gamla rader', () => {
+  it('kastar inte på numeriska fält, och läser dem som innehåll', () => {
+    expect(isBlankLineItem({ m2: 40 as unknown as string, quantity: 0 as unknown as string })).toBe(false);
+    expect(isBlankLineItem({ m2: null, quantity: undefined })).toBe(true);
+  });
+});

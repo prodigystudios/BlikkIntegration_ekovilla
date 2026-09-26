@@ -47,28 +47,38 @@ describe('saveWorkOrderLineItems — spärren före skrivningen', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('nekar en rad utan mängd', async () => {
+  // Antal 0 = inget levererades. Det är hur en delfakturerad order stängs, och servern får inte neka det.
+  it('sparar en rad med antal 0', async () => {
     const { client, update } = fakeSupabase(order);
 
     const result = await saveWorkOrderLineItems(client, 'wo-1', [
-      { id: 'a', article_name: 'Lösull', pricing_mode: 'm3', m2: '', thickness_mm: '', unit_price: '700' },
+      { id: 'a', article_name: 'Brandmatta', pricing_mode: 'item', quantity: '0', unit_price: '90' },
     ]);
 
-    expect(result.reason).toBe('invalid_rows');
-    expect(update).not.toHaveBeenCalled();
+    expect(result.reason).toBeNull();
+    expect(update).toHaveBeenCalledTimes(1);
   });
 
-  // ROT-spärren gäller bara när ORDERN har ROT påslaget — samma villkor som prissättningen.
-  it('prövar arbetskostnaden bara på en ROT-order', async () => {
+  // 🧨 En gammal rad utan pris får inte låsa en sparning som rör en ANNAN rad.
+  it('låter en orörd gammal rad utan pris ligga kvar', async () => {
+    const legacy = { id: 'old', article_name: 'Frakt', pricing_mode: 'item', quantity: '1', unit_price: '' };
+    const { client, update } = fakeSupabase({ ...order, line_items: [legacy] });
+
+    const result = await saveWorkOrderLineItems(client, 'wo-1', [
+      legacy,
+      { id: 'new', article_name: 'Lösull', pricing_mode: 'item', quantity: '2', unit_price: '700' },
+    ]);
+
+    expect(result.reason).toBeNull();
+    expect(update).toHaveBeenCalledTimes(1);
+  });
+
+  // ROT-spärren är editorns — den läser översiktens UTKAST. Servern ser bara det sparade läget och
+  // hade kunnat neka en rad editorn inte ens visar arbetskostnaden för.
+  it('prövar inte arbetskostnaden på servern', async () => {
     const row = { id: 'a', article_name: 'Lösull', pricing_mode: 'item', quantity: '1', unit_price: '700', labor_cost: '700' };
-
-    const off = fakeSupabase({ ...order, quote_type: 'private', rot_details: { enabled: false } });
-    expect((await saveWorkOrderLineItems(off.client, 'wo-1', [row])).reason).toBeNull();
-
     const on = fakeSupabase({ ...order, quote_type: 'private', rot_details: { enabled: true } });
-    const result = await saveWorkOrderLineItems(on.client, 'wo-1', [row]);
-    expect(result.reason).toBe('invalid_rows');
-    expect(on.update).not.toHaveBeenCalled();
+    expect((await saveWorkOrderLineItems(on.client, 'wo-1', [row])).reason).toBeNull();
   });
 
   it('sparar prissatta rader som vanligt', async () => {

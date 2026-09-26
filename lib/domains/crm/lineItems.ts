@@ -51,7 +51,10 @@ export type LineItemContentSource = {
 // `auto_price` och `house_work_type` räknas medvetet INTE som innehåll — de bär defaultvärden som
 // en orörd rad har utan att någon valt dem, och hade gjort varje ny rad "ifylld".
 export function isBlankLineItem(item: LineItemContentSource): boolean {
-  const empty = (v: string | null | undefined) => !v || !v.trim();
+  // String() och inte v.trim() rakt av, samma skäl som isConfiguredLineItem: en gammal rad i JSONB
+  // kan bära m2/quantity som TAL. `.trim()` på ett tal kastar — och arbetsorderns artikeleditor
+  // kör det här vid varje rendering, även i installatörens fältvy.
+  const empty = (v: unknown) => v == null || String(v).trim() === '';
   return (
     empty(item.article_name) &&
     empty(item.article_number) &&

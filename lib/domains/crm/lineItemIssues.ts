@@ -2,52 +2,84 @@ import { isBlankLineItem, isConfiguredLineItem, isUnpricedLineItem, lineItemQuan
 import { lineItemDiscountPercent, lineItemUnitPrice, splitRowLabor } from './pricing';
 
 type IssueRow = LineItemContentSource & {
-  id?: string;
+  id?: string | null;
   pricing_mode?: string | null;
   article_price?: number | null;
   written_off?: boolean | null;
 };
 
+// Fälten spärrarna läser, normaliserade så att en rad som bara passerat Zod (nycklar i annan
+// ordning, defaultvärden ifyllda, tal gjorda till strängar) inte läses som ändrad.
+function sameForChecks(a: IssueRow, b: IssueRow): boolean {
+  const text = (v: unknown) => (v == null ? '' : String(v).trim());
+  const texts: Array<keyof IssueRow> = ['article_name', 'article_number', 'unit_price', 'discount_percent', 'labor_cost', 'quantity', 'm2', 'thickness_mm'];
+  return texts.every((k) => text(a[k]) === text(b[k]))
+    && (a.article_price ?? null) === (b.article_price ?? null)
+    && (a.pricing_mode || 'm3') === (b.pricing_mode || 'm3')
+    && (a.is_rot_work === true) === (b.is_rot_work === true)
+    && (a.written_off === true) === (b.written_off === true);
+}
+
 /**
- * Vad som hindrar arbetsorderns artikelrader från att sparas — samma tre spärrar som
- * offertformulärets getValidationIssues (mängd, pris, ROT-utbrytning), med radnummer.
+ * Raderna spärrarna ska pröva: ifyllda, inte avskrivna, och NYA eller ÄNDRADE mot den sparade
+ * raden med samma id. Numrerade på sin plats i listan (1-baserat), som i editorn.
  *
- * Körs på BÅDA sidor: artikeleditorn visar beskeden och stänger Spara, och saveWorkOrderLineItems
- * nekar samma rader — en gammal flik eller ett direkt API-anrop ska inte kunna spara det editorn
- * spärrar.
- *
- * ⚠️ Spärrar och inte varningar. Utan dem sparades raden och FÖRST Fortnox-pushen sa nej
- * (assertLineItemsArePriced, 409) — efter att raderna redan låg i databasen, med ordern stämplad
- * 'failed' och faktureringen spärrad, och ett besked som inte pekade ut vilken rad det gällde.
- *
- * Raderna numreras på sin plats i listan (1-baserat), som i editorn. Avskrivna rader skickas inte
- * till Fortnox och tomma rader sparas inte alls, så ingen av dem prövas.
+ * ⚠️ BARA ÄNDRADE RADER, med flit. En äldre rad som redan ligger sparad utan pris hade annars
+ * låst VARJE sparning av ordern — även en som bara skriver av en helt annan rad — tills någon
+ * rättat en rad hen aldrig tänkt röra. Spärren ska göra det omöjligt att lägga till ett nytt fel,
+ * inte göra ordern oredigerbar. (Den gamla raden får pushen att fallera precis som förut.)
  */
-export function workOrderLineItemIssues(rows: IssueRow[], opts: { rotEnabled: boolean }): string[] {
-  const checked = rows
+function rowsToCheck(rows: IssueRow[], savedRows: IssueRow[] | null | undefined) {
+  const saved = new Map((savedRows ?? []).filter((r) => r.id).map((r) => [r.id as string, r]));
+  return rows
     .map((row, i) => ({ row, n: i + 1 }))
-    .filter(({ row }) => !row.written_off && !isBlankLineItem(row) && isConfiguredLineItem(row));
+    .filter(({ row }) => !row.written_off && !isBlankLineItem(row) && isConfiguredLineItem(row))
+    .filter(({ row }) => {
+      const before = row.id ? saved.get(row.id) : undefined;
+      return !before || !sameForChecks(before, row);
+    });
+}
+
+/**
+ * En ifylld rad utan prisförankring — varken A-pris eller artikel.
+ *
+ * Den enda spärren som körs på SERVERN också (saveWorkOrderLineItems): det är den som annars
+ * sparas och FÖRST därefter får Fortnox-pushen att säga nej (assertLineItemsArePriced, 409), med
+ * ordern stämplad 'failed' och faktureringen spärrad. "Skriv 0 om raden ingår" står med för att
+ * det är ett riktigt fall — en skriven nolla ÄR ett pris (se isUnpricedLineItem).
+ */
+export function unpricedRowsIssue(rows: IssueRow[], savedRows?: IssueRow[] | null): string | null {
+  const unpriced = rowsToCheck(rows, savedRows).filter(({ row }) => isUnpricedLineItem(row));
+  if (!unpriced.length) return null;
+  return `${unpriced.length === 1 ? 'Rad' : 'Rader'} ${unpriced.map(({ n }) => n).join(', ')}: pris saknas — välj artikel, ange A-pris, eller skriv 0 om raden ingår`;
+}
+
+/**
+ * Vad som hindrar arbetsorderns artikelrader från att sparas i editorn — offertformulärets spärrar
+ * för pris och ROT-utbrytning (getValidationIssues), med radnummer.
+ *
+ * ⚠️ INGEN MÄNGDSPÄRR, till skillnad från offerten. En rad med antal 0 är ett riktigt läge på en
+ * order: det levererades inget, och att sänka antalet till det levererade är hur en delfakturerad
+ * order stängs (se saveWorkOrderLineItems). Spärren prövades och backades i grenreviewen.
+ *
+ * ROT-spärren körs bara här, inte på servern: den läser ÖVERSIKTENS utkast (är ROT påslaget just
+ * nu?), och servern ser bara det sparade läget. En order där utkastet och databasen säger olika
+ * hade annars fått ett 422 om ett fält editorn inte ens visade. Pushen tål raden — den bryter
+ * bara inte ut något.
+ */
+export function workOrderLineItemIssues(
+  rows: IssueRow[],
+  opts: { rotEnabled: boolean; savedRows?: IssueRow[] | null },
+): string[] {
   const issues: string[] = [];
-
-  // En ifylld rad utan mängd är 0 kr i Fortnox och i ordervärdet — tyst. Offerten spärrar samma sak
-  // ("Ofullständiga rader — mängd och pris krävs"); här med radnummer, som de andra beskeden.
-  const noQuantity = checked.filter(({ row }) => !(lineItemQuantity(row) > 0));
-  if (noQuantity.length) {
-    issues.push(`${noQuantity.length === 1 ? 'Rad' : 'Rader'} ${noQuantity.map(({ n }) => n).join(', ')}: mängd saknas — fyll i m² och tjocklek, eller antal`);
-  }
-
-  // "Skriv 0 om raden ingår" står med för att det är ett riktigt fall — en skriven nolla ÄR ett pris
-  // (se isUnpricedLineItem). Utan meningen läses spärren som att gratisrader inte går att göra.
-  const unpriced = checked.filter(({ row }) => isUnpricedLineItem(row));
-  if (unpriced.length) {
-    issues.push(`${unpriced.length === 1 ? 'Rad' : 'Rader'} ${unpriced.map(({ n }) => n).join(', ')}: pris saknas — välj artikel, ange A-pris, eller skriv 0 om raden ingår`);
-  }
+  const unpriced = unpricedRowsIssue(rows, opts.savedRows);
+  if (unpriced) issues.push(unpriced);
 
   // En arbetskostnad över A-priset bryter inte ut något (splitRowLabor), så ordern hade gått till
   // Fortnox utan det ROT-underlag säljaren tror att den har. Helt flaggade ROT-rader har ingen
   // utbrytning att pröva.
   if (opts.rotEnabled) {
-    const over = checked.filter(({ row }) => !row.is_rot_work && splitRowLabor({
+    const over = rowsToCheck(rows, opts.savedRows).filter(({ row }) => !row.is_rot_work && splitRowLabor({
       laborCostPerUnit: row.labor_cost,
       unitPrice: lineItemUnitPrice(row),
       discountPercent: lineItemDiscountPercent(row),

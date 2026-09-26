@@ -30,8 +30,8 @@ export async function PATCH(req: Request, context: RouteContext) {
     const result = await saveWorkOrderLineItems(supabase, context.params.id, parsedBody.data.line_items);
 
     if (result.error) {
-      // invalid_rows = rader utan pris/mängd eller med en arbetskostnad som äter A-priset — samma
-      // besked som editorn visar, så 422 och meddelandet rakt av (workOrderLineItemIssues).
+      // invalid_rows = en ny eller ändrad rad utan pris — samma besked som editorn visar, så 422 och
+      // meddelandet rakt av (unpricedRowsIssue).
       const status = result.reason === 'not_found' ? 404
         : result.reason === 'order_closed' || result.reason === 'line_invoiced' ? 409
         : result.reason === 'invalid_rows' ? 422

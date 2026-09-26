@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, resolveDocumentContact, type CrmContactSource, type DocumentContactSnapshot } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
-import { workOrderLineItemIssues } from './lineItemIssues';
+import { unpricedRowsIssue } from './lineItemIssues';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
@@ -1220,14 +1220,13 @@ export async function saveWorkOrderLineItems(
     return { data: null, error: { message: 'Arbetsordern är färdigfakturerad och kan inte ändras.' }, reason: 'order_closed' as const };
   }
 
-  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en rad utan pris eller mängd, och
+  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en ny eller ändrad rad utan pris, och
   // FÖRST Fortnox-pushen sa nej (assertLineItemsArePriced, 409) — med raderna redan i databasen,
-  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar.
-  const rowIssues = workOrderLineItemIssues(nextLineItems, {
-    rotEnabled: wo.quote_type === 'private' && (wo.rot_details as { enabled?: unknown } | null)?.enabled === true,
-  });
-  if (rowIssues.length) {
-    return { data: null, error: { message: rowIssues.join(' · ') }, reason: 'invalid_rows' as const };
+  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar, och
+  // bara på rader som ändrats: en gammal rad ska inte kunna låsa varje sparning (unpricedRowsIssue).
+  const unpriced = unpricedRowsIssue(nextLineItems, wo.line_items);
+  if (unpriced) {
+    return { data: null, error: { message: unpriced }, reason: 'invalid_rows' as const };
   }
 
   // Rundorna behövs både för redigeringsreglerna och för att avgöra om ordern stänger sig.

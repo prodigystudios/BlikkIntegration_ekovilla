@@ -6,7 +6,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { computePricing, lineItemEffectiveUnitPrice, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { isBlankLineItem, isConfiguredLineItem, lineItemQuantity, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
 import { workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
-import { invoicedLineIds, type InvoicedRound } from '@/lib/domains/crm/invoicedLines';
+import { invoicedFloorIssues, invoicedLineIds, type InvoicedRound } from '@/lib/domains/crm/invoicedLines';
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
@@ -102,7 +102,8 @@ function rowDetails(item: ArticleLineItem): string {
       ? `${item.m2 || '0'} m² × ${item.thickness_mm || '0'} mm${volume > 0 ? ` = ${formatQuantity(volume)} m³` : ''}`
       : null)
     : [
-        item.quantity?.trim() ? `${item.quantity.trim()} ${item.article_unit_name?.trim() || 'st'}` : null,
+        // String(): en gammal rad i JSONB kan bära antalet som TAL — `.trim()` hade kraschat vyn.
+        String(item.quantity ?? '').trim() ? `${String(item.quantity).trim()} ${item.article_unit_name?.trim() || 'st'}` : null,
         item.thickness_mm ? `${item.thickness_mm} mm` : null,
       ].filter(Boolean).join(' · ') || null;
   // Måtten FÖRST — det är dem installatören letar efter. Artikelnumret sist, och bara när det finns:
@@ -190,8 +191,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
 
   // Tomma rader räknas inte — de sparas aldrig (se save), så ett oanvänt "+ Lägg till rad" är ingen
   // ändring och ska varken tända "Osparade ändringar" eller låta Spara köra en Fortnox-push i onödan.
+  // Filtreras på BÅDA sidor: ligger en tom rad redan sparad (äldre editor, API) hade jämförelsen
+  // annars tänt "Osparade ändringar" i samma stund redigeringen öppnades.
   const dirty = useMemo(
-    () => JSON.stringify(rows.filter((r) => !isBlankLineItem(r))) !== JSON.stringify(items),
+    () => JSON.stringify(rows.filter((r) => !isBlankLineItem(r))) !== JSON.stringify(items.filter((r) => !isBlankLineItem(r))),
     [rows, items],
   );
   // Mot de SPARADE raderna, som servern: det är den utställda fakturan som låser, inte utkastet.
@@ -230,10 +233,13 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     [items],
   );
 
-  // Samma spärrar som offertformulärets, med samma ord — se workOrderLineItemIssues.
+  // Offertens spärrar för pris och ROT (på nya och ändrade rader, se workOrderLineItemIssues) plus
+  // golvet för fakturerade rader — samma regler som servern, visade FÖRE sparningen.
   const issues = useMemo(
-    () => (editing ? workOrderLineItemIssues(rows, { rotEnabled }) : []),
-    [editing, rows, rotEnabled],
+    () => (editing
+      ? [...workOrderLineItemIssues(rows, { rotEnabled, savedRows: items }), ...invoicedFloorIssues(rows, items, invoiceRounds)]
+      : []),
+    [editing, rows, rotEnabled, items, invoiceRounds],
   );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
@@ -288,7 +294,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   function normalizeField(id: string, key: 'm2' | 'thickness_mm' | 'density' | 'quantity') {
     setRows((rs) => rs.map((r) => {
       if (r.id !== id) return r;
-      const before = r[key] || '';
+      const before = String(r[key] ?? '');
       const after = normalizeDecimalInput(before);
       return after !== before ? { ...r, [key]: after } : r;
     }));
@@ -432,6 +438,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const material = info?.material ?? null;
               const invoiced = invoicedIds.has(row.id);
               const savedName = savedNameById.get(row.id);
+              const savedWrittenOff = items.some((it) => it.id === row.id && it.written_off);
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedName, row.article_name);
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
@@ -472,7 +479,9 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   ) : null}
                   // Prisläget går att byta här, till skillnad från offerten där det följer artikelns
                   // enhet: på ordern rättas ofta en rad som sålts per styck till en yta, eller tvärtom.
-                  headerActions={(
+                  // ⚠️ INTE på en fakturerad rad: bytet läser om det fakturerade antalet i en annan
+                  // enhet (8 m³ blir 0 st), och servern nekar hela sparningen.
+                  headerActions={invoiced ? null : (
                     <button
                       type="button"
                       onClick={() => updateRow(row.id, { pricing_mode: mode === 'm3' ? 'item' : 'm3' })}
@@ -499,10 +508,11 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   // Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte till
                   // Fortnox, men raden ligger kvar så skillnaden mot offerten går att förklara. En rad
                   // som aldrig fakturerats kan lika gärna tas bort helt.
-                  // En fakturerad rad kan inte skrivas av — pengarna är redan krävda (validateLineItemEdit).
+                  // En fakturerad rad kan inte skrivas av — pengarna är redan krävda. Men en avskrivning
+                  // som redan är SPARAD får hävas: servern nekar bara en ny (validateLineItemEdit).
                   extraFlags={(
                     <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
-                      <input type="checkbox" checked={!!row.written_off} disabled={invoiced} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
+                      <input type="checkbox" checked={!!row.written_off} disabled={invoiced && !savedWrittenOff} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
                       Avskriven (utförs ej)
                     </label>
                   )}
