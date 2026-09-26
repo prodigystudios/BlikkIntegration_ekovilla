@@ -18,6 +18,11 @@
 -- standardbemanningen skapar dev.sql mot testanvändarna; säljrouting och artikelfavoriter lämnas tomma.
 -- fortnox_integrations tas ALDRIG med: prods tokens.
 --
+-- `on conflict do nothing` på varje insert: `db reset` kör migreringarna FÖRE seeden, och en migrering
+-- som lägger in data (t.ex. nya behörighetsnycklar) har redan skrivit raden som prods export — tagen efter
+-- att migreringen körts i prod — innehåller igen. Utan det hade första exporten efter en sådan push
+-- stoppat `db reset` på en dubblett. Raden från migreringen vinner; den är densamma.
+--
 -- Varje tabell blir en insert från JSON med UTTRYCKLIG kolumnlista (JSON-nycklarna vid exporten).
 -- En kolumn som en senare migrering lägger till får då sin DEFAULT — med `select *` hade den fått
 -- NULL, och en ny NOT NULL-kolumn hade stoppat `db reset` tills prod fått kolumnen. Tomma tabeller
@@ -34,7 +39,7 @@ begin transaction read only;
 -- Behörighetskatalogen (RBAC). Utan den når ingen användare något.
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.key), '[]') as rows from public.permissions t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'permissions', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -42,7 +47,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.role, t.permission_key), '[]') as rows from public.role_permissions t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'role_permissions', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -52,7 +57,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- Jobbtyper och färger (planeringen, nya och gamla).
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.ops_job_types t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'ops_job_types', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -60,7 +65,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'created_by'
        order by t.job_type), '[]') as rows from public.planning_job_type_colors t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'planning_job_type_colors', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -71,7 +76,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- — namn på anställda — och läses inte av appen.
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.crm_absence_types t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_absence_types', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -79,7 +84,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.crm_time_codes t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_time_codes', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -87,7 +92,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.crm_internal_projects t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_internal_projects', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -95,7 +100,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'source'
        order by t.id), '[]') as rows from public.blikk_timecodes t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'blikk_timecodes', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -103,7 +108,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'source'
        order by t.id), '[]') as rows from public.blikk_activities t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'blikk_activities', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -113,7 +118,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- Kalkylinställningarna i CRM.
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'updated_by'
        order by t.id), '[]') as rows from public.crm_calc_settings t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_calc_settings', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -121,7 +126,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'updated_by'
        order by t.construction, t.material), '[]') as rows from public.crm_productivity_rates t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_productivity_rates', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -129,7 +134,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'updated_by'
        order by t.material), '[]') as rows from public.crm_material_cost_articles t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'crm_material_cost_articles', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -139,7 +144,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- Depåer och bilar (nya planeringen). Depåerna före bilarna — främmande nyckel.
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.ops_depots t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'ops_depots', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -147,7 +152,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.ops_trucks t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'ops_trucks', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -159,7 +164,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 with r as (select coalesce(jsonb_agg((to_jsonb(t) - 'created_by' - 'contact_name' - 'phone' - 'note')
        || jsonb_build_object('email', 'leverantor-' || left(t.id::text, 8) || '@example.invalid')
        order by t.id), '[]') as rows from public.ops_material_suppliers t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'ops_material_suppliers', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -169,7 +174,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- Depåer och bilar (gamla /plannering). Bilarnas besättning — personer — bort.
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'created_by'
        order by t.id), '[]') as rows from public.planning_depots t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'planning_depots', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -178,7 +183,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'created_by' - 'team_member1' - 'team_member2' - 'team_member1_name'
        - 'team_member2_name' - 'team1_id' - 'team2_id'
        order by t.id), '[]') as rows from public.planning_trucks t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'planning_trucks', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -188,7 +193,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 -- Skyddsrondens checklista. Kategorierna före punkterna — främmande nyckel.
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.safety_checklist_categories t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'safety_checklist_categories', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -196,7 +201,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.id), '[]') as rows from public.safety_checklist_items t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'safety_checklist_items', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -209,7 +214,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.article_number), '[]') as rows from public.fortnox_articles_cache t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'fortnox_articles_cache', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -217,7 +222,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t) - 'created_by'
        order by t.article_number), '[]') as rows from public.fortnox_article_work_description_defaults t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'fortnox_article_work_description_defaults', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
