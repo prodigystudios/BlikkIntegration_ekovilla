@@ -436,6 +436,7 @@ turns the page into a bare 500.
 | `/api/storage/list-all`, `list` | `app.archive.read` | all employees |
 | `/api/storage/download` | `app.archive.read` **or** `crm.workorder.read` | links live permanently in Blikk + work-order comments and on the order's sack card; `ekonomi` reads orders (invoicing) without the archive and could download before — she gets the file she has a link to, not the listing |
 | `/api/storage/save` | `app.access` | same as the `/egenkontroll` page that calls it (sales reach it from the field view) |
+| `/api/material-quality/list`, `ingest` | `app.access` | same as the `/material-kvalitet` and `/egenkontroll` pages that call them (added with the table's RLS, advisor fix 2026-09-26 — before that the table was also open to `anon` directly through REST) |
 | `/api/contacts`, `/api/phone-list` | `app.contacts.read` | the contact list |
 | `GET /api/planning/truck-assignments` | `planning.schedule.read` | only legacy `/plannering` + `/admin/trucks/assignments` read it; the root-layout provider skips the fetch without the key |
 | `/api/crm/work-orders/[id]/customer-contact` | — (RLS) | reads the order with the **session** client first (crew policy / `crm.workorder.read`), only then the contact with service-role — same model as `assignee-contact` |

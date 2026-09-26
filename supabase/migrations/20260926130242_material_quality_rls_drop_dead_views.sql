@@ -7,7 +7,8 @@
 --    läsa, ändra och tömma tabellen direkt via /rest/v1/material_quality_samples, förbi appen.
 --    All kod når tabellen med service-role: /api/material-quality/list och /ingest via
 --    getMaterialQualityAdminOrThrow() (2026-09-26). service_role har BYPASSRLS, så varken RLS utan policyer eller
---    revoke påverkar den. Ingen trigger, vy, funktion eller realtime-publicering rör tabellen.
+--    revoke påverkar den. Ingen trigger, vy, funktion eller realtime-publicering rör tabellen. Routerna krävde
+--    bara inloggning och grindas i samma PR på app.access, som sidorna som anropar dem.
 --
 -- 2. current_user_role och current_user_dashboard_notes är SECURITY DEFINER-vyer (ägare postgres, utan
 --    security_invoker), alltså läser de förbi RLS. Båda filtrerar på auth.uid() och visar bara anroparens egna
@@ -29,8 +30,10 @@ drop view if exists public.current_user_dashboard_notes;
 
 -- Efterkontroll. REVOKE tar bara bort det den körande rollen har delat ut; går det inte blir det bara en WARNING,
 -- och pushen hade registrerats som körd med hålet kvar. Då ska den i stället avbrytas. has_table_privilege räknar
--- även med en grant till PUBLIC. service_role prövas också: utan SELECT och INSERT slutar listan och inmatningen
--- att fungera. Varje rättighet prövas för sig, eftersom en kommaseparerad lista svarar sant om NÅGON finns.
+-- även med en grant till PUBLIC. MAINTAIN finns sedan Postgres 17 och delades ut av baslinjen. has_table_privilege
+-- ser inte kolumnrättigheter, så de prövas för sig. service_role prövas också: utan SELECT och INSERT slutar listan
+-- och inmatningen att fungera. Varje rättighet prövas för sig, eftersom en kommaseparerad lista svarar sant om NÅGON
+-- finns.
 do $$
 declare
   who text;
@@ -41,9 +44,14 @@ begin
   end if;
 
   foreach who in array array['anon', 'authenticated'] loop
-    foreach priv in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'] loop
+    foreach priv in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'] loop
       if has_table_privilege(who, 'public.material_quality_samples', priv) then
         raise exception 'material_quality_samples: % har fortfarande %', who, priv;
+      end if;
+    end loop;
+    foreach priv in array array['SELECT', 'INSERT', 'UPDATE', 'REFERENCES'] loop
+      if has_any_column_privilege(who, 'public.material_quality_samples', priv) then
+        raise exception 'material_quality_samples: % har fortfarande % på någon kolumn', who, priv;
       end if;
     end loop;
   end loop;

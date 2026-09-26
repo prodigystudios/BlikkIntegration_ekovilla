@@ -63,6 +63,17 @@ const ROUTES: { name: string; key: string; call: () => Promise<Response> }[] = [
     call: async () => (await import('@/app/api/storage/save/route')).POST(post('/api/storage/save')),
   },
   {
+    name: 'GET /api/material-quality/list',
+    key: 'app.access',
+    call: async () => (await import('@/app/api/material-quality/list/route')).GET(get('/api/material-quality/list')),
+  },
+  {
+    name: 'POST /api/material-quality/ingest',
+    key: 'app.access',
+    call: async () =>
+      (await import('@/app/api/material-quality/ingest/route')).POST(post('/api/material-quality/ingest')),
+  },
+  {
     name: 'GET /api/contacts',
     key: 'app.contacts.read',
     call: async () => (await import('@/app/api/contacts/route')).GET(),
