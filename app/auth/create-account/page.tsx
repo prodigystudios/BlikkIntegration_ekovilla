@@ -28,7 +28,7 @@ export default function CreateAccountPage() {
       const { data, error: signError } = await supabase.auth.signUp({
         email: normalizedEmail,
         password,
-        options: { data: { full_name: fullName.trim(), display_name: fullName.trim(), role: 'member' } }
+        options: { data: { full_name: fullName.trim(), display_name: fullName.trim() } }
       });
       if (signError) { setError(signError.message); setSubmitting(false); return; }
 

@@ -149,7 +149,8 @@ describe('set_user_tags i migreringarna', () => {
  * når båda rollerna. Slutläget ska vara exakt vitlistan som /api/profile skriver med användarens session.
  */
 describe('profiles UPDATE i migreringarna', () => {
-  const CREATE = /^create table (?:if not exists )?public\.profiles \(/;
+  // `public.` är valfritt: search_path är public, så en handskriven `grant ... on profiles` biter lika mycket.
+  const CREATE = /^create table (?:if not exists )?(?:public\.)?profiles \(/;
   const GRANT_OR_REVOKE = /^(grant|revoke) (grant option for )?(.+?) on (?:table )?(.+?) (?:to|from) (.+)$/;
   const PRIVILEGE = /^([a-z]+(?: privileges)?) ?(?:\(([^)]*)\))?$/;
   const TRACKED = ['public', 'anon', 'authenticated'] as const;
@@ -190,16 +191,13 @@ describe('profiles UPDATE i migreringarna', () => {
       }
       const m = stmt.match(GRANT_OR_REVOKE);
       if (!m || m[2]) continue; // "revoke grant option for" tar inte bort rätten
-      const targets = m[4].split(/, ?/);
-      if (!targets.includes('public.profiles') && m[4] !== 'all tables in schema public') continue;
-      const roles = m[5]
-        .replace(/ with grant option$| granted by .*$| cascade$| restrict$/, '')
-        .split(/, ?/)
-        .map((r) => r.trim());
+      const targets = m[4].split(/, ?/).map((t) => t.replace(/^public\./, ''));
+      if (!targets.includes('profiles') && m[4] !== 'all tables in schema public') continue;
+      const grantees = roles(m[5].replace(/ with grant option$| granted by .*$| cascade$| restrict$/, ''));
       for (const priv of privileges(m[3])) {
         if (priv.name !== 'update' && priv.name !== 'all' && priv.name !== 'all privileges') continue;
         for (const role of TRACKED) {
-          if (!roles.includes(role)) continue;
+          if (!grantees.includes(role)) continue;
           if (m[1] === 'grant') {
             if (priv.columns) priv.columns.forEach((c) => columns[role].add(c));
             else {
@@ -222,18 +220,20 @@ describe('profiles UPDATE i migreringarna', () => {
     return { created, sawTableGrant, anon: effective('anon'), authenticated: effective('authenticated') };
   }
 
+  const RESULT = simulate();
+
   // Baslinjen skapar tabellen och ger UPDATE på tabellnivå. Ser simuleringen inte det är testet tomt.
   it('hittar tabellen och baslinjens tabellgrant — annars är testet tomt', () => {
-    const { created, sawTableGrant } = simulate();
+    const { created, sawTableGrant } = RESULT;
     expect({ created, sawTableGrant }).toEqual({ created: true, sawTableGrant: true });
   });
 
   it('anon kan inte uppdatera någonting', () => {
-    expect(simulate().anon).toEqual({ wholeTable: false, columns: [] });
+    expect(RESULT.anon).toEqual({ wholeTable: false, columns: [] });
   });
 
   it('authenticated kan bara uppdatera vitlistan som /api/profile skriver', () => {
-    expect(simulate().authenticated).toEqual({
+    expect(RESULT.authenticated).toEqual({
       wholeTable: false,
       columns: [...SELF_EDITABLE_PROFILE_FIELDS].sort(),
     });
@@ -241,5 +241,15 @@ describe('profiles UPDATE i migreringarna', () => {
 
   it('rollen står aldrig på vitlistan', () => {
     expect(SELF_EDITABLE_PROFILE_FIELDS).not.toContain('role');
+  });
+
+  // Efterkontrollen i migreringen bär en egen kopia av listan (DO-blocket kan inte läsa granten). Simuleringen
+  // ovan skalar bort DO-block, så utan det här testet hade en glidning först märkts som en avbruten push i prod.
+  it('efterkontrollens lista är samma som vitlistan', () => {
+    const sql = readFileSync(join(DIR, '20260926084111_profiles_role_column_lock.sql'), 'utf8');
+    const array = sql.match(/editable constant text\[\] := array\[([^\]]*)\]/);
+    expect(array, 'hittar inte editable-listan i efterkontrollen').not.toBeNull();
+    const listed = [...array![1].matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]).sort();
+    expect(listed).toEqual([...SELF_EDITABLE_PROFILE_FIELDS].sort());
   });
 });
