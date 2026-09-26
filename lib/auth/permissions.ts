@@ -58,6 +58,10 @@ export const PERMISSION_KEYS = [
   // (rader utan roller). tests/auth/permissionCatalog.test.ts vaktar katalog och seed.
   'app.access', 'app.contacts.read', 'app.news.read', 'app.material.read', 'app.documents.read',
   'app.archive.read', 'app.jobs.read', 'app.egenkontroll.write', 'app.clothing.order',
+  // Intern personal, till skillnad från externa parter (konsult, lönebyrån). Ersätter isReadonlyRole():
+  // skrivspärren på planeringens service-role-rutter + orderuppslaget, och personalens telefonnummer i
+  // fältvyn (20260926122102_rbac_app_staff_key.sql). Seed: member, sales, admin.
+  'app.staff',
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];

@@ -1,7 +1,9 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
+import { getEffectivePermissions } from './permissions';
+import type { UserRole } from '@/lib/roles';
 
-export type UserRole = 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
+export type { UserRole } from '@/lib/roles';
 
 export type CurrentUser = {
   id: string;
@@ -9,27 +11,6 @@ export type CurrentUser = {
   name?: string | null;
 };
 
-// ⚠️ Den här listan är enda vakten på sex routes som sedan kör getSupabaseAdmin() — service-role,
-// alltså helt förbi RLS: planeringens truck-assignments create/update/delete, day-notes,
-// consume-bags, samt work-orders/lookup. Det som INTE står här får skriva.
-//
-// `ekonomi` (lönebyrån) står därför här: hon är extern och ska inte skriva någonting i appen. Den
-// enda skrivning hon gör alls är attesten, och den går genom set_time_period_status() som prövar
-// time.approve internt — aldrig genom den här helpern.
-//
-// ⚠️ LISTAN HAR EN TVILLING I DATABASEN: `public.is_konsult_user()`, som bär `NOT ...` i
-// write-policyerna på planning_segments och grannarna. De vaktar OLIKA vägar till samma tabeller —
-// den här servervägen, tvillingen den direkta klientvägen — så en roll som bara läggs till på ett
-// ställe är fortfarande skrivbehörig via det andra. Ändra alltid båda.
-// Tvillingen ägs numera av supabase/archive/sql/20260831_ekonomi_role_seed.sql.
-//
-// Exporterad sedan 2026-09-09: listan bär numera också en LÄS-grind. Fältvyns säljarkort
-// (work-orders/[id]/assignee-contact) lämnar ut personalens egna telefonnummer, och det är samma
-// fråga som ställs här — "är den här läsaren en utomstående?". Kopiera inte rollistan dit i stället;
-// den har redan en tvilling att hålla i synk, och en tredje hade drivit isär i tysthet.
-export function isReadonlyRole(role: unknown) {
-  return role === 'konsult' || role === 'readonly' || role === 'ekonomi';
-}
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const supabase = createSessionClient();
@@ -84,13 +65,25 @@ export async function requireFaultReportRecipient() {
   return { currentUser, response: null as null };
 }
 
+// Skrivspärren för externa parter. ⚠️ Enda vakten på sex routes som sedan kör getSupabaseAdmin() —
+// service-role, helt förbi RLS: planeringens truck-assignments create/update/delete, day-notes,
+// consume-bags, samt work-orders/lookup.
+//
+// Kräver app.staff (intern personal: member, sales, admin). konsult och lönebyrån (ekonomi) saknar
+// den. Förr en rollista (isReadonlyRole) — och den failade ÖPPET: getCurrentUser() svarar
+// `role || 'member'` när profilläsningen fallerar, så en konsult blev 'member' och släpptes igenom.
+// Nyckeln failar STÄNGT: ett fel i effective_permissions ger en tom mängd och 403.
+//
+// Tvillingen i databasen, public.is_konsult_user() (NOT … i write-policyerna på planning_*), är
+// fortfarande en rollista. Den skyddar bara gamla planeringens tabeller och tas bort med dem.
 export async function forbidIfReadonly() {
   const currentUser = await getCurrentUser();
   if (!currentUser) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  if (isReadonlyRole(currentUser.role)) {
+  const permissions = await getEffectivePermissions();
+  if (!permissions.has('app.staff')) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 });
   }
 

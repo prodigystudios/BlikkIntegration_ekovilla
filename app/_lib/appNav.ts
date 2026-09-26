@@ -8,9 +8,9 @@ import type { PermissionKey } from '@/lib/auth/permissions';
 // Två sorters grind, rad för rad:
 //   * `permission` — raden syns för den som HAR nyckeln (effektiva behörigheter: rollens knippe,
 //     minus nekanden, plus undantag per användare). Samma nyckel som sidan eller dess API gatar på.
-//   * `roles` — den gamla rollgrinden, kvar på de rader som medvetet inte flyttats: Start, /tid,
-//     /admin, /crm/dokument, gamla /plannering och lönebyråns två rader. Den använder den *effektiva*
-//     rollen (konsult blir sales uppströms).
+//   * `roles` — den gamla rollgrinden, kvar på de rader som medvetet inte flyttats: Start (ingen grind),
+//     /tid, /admin och lönebyråns två rader. Den läser profilens roll som den är — ingen av raderna
+//     nämner sales, så konsult (som förr lästes som sales) påverkas inte.
 // En rad med `permission` läser ALDRIG `roles`. Nycklarnas seed är dagens rollmängd
 // (20260926101919_rbac_app_permission_keys.sql), så bytet flyttar ingen rad för någon roll —
 // tests/auth/permissionCatalog.test.ts jämför menyn per roll mot hur den såg ut före bytet.
@@ -48,7 +48,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   // BÅDA: sidan ligger bakom CRM-layoutens crm.access, datan bakom planning.schedule.read. En
   // arbetsledare med bara planeringsnyckeln hade annars fått en rad som studsar till Start.
   { href: '/crm/planering', label: 'Planering', permission: ['crm.access', 'planning.schedule.read'] },
-  { href: '/plannering', label: 'Planering (äldre)', roles: ['sales', 'admin'] },
+  { href: '/plannering', label: 'Planering (äldre)', permission: 'planning.schedule.read' },
   { href: '/crm/korjournal', label: 'Körjournal', permission: 'crm.access' },
 
   // Installer / member block
@@ -83,7 +83,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     children: [
       { href: '/mina-dokument', label: 'Mina dokument', permission: 'app.documents.read' },
       // Was "Dokument", which read as a fourth sibling of the three document rows.
-      { href: '/crm/dokument', label: 'Dokumentbibliotek', roles: ['sales', 'admin'] },
+      { href: '/crm/dokument', label: 'Dokumentbibliotek', permission: 'crm.access' },
       { href: '/dokument-information', label: 'Dokument & information', permission: 'app.access' },
     ],
   },
@@ -172,7 +172,7 @@ function collapseGroup(item: AppNavItem, role: UserRole | null, can: CanFn): App
   return [{ ...item, children }];
 }
 
-// `role` är den EFFEKTIVA rollen (toEffectiveRole) och styr bara rader utan `permission`. `can` svarar
+// `role` är profilens roll och styr bara rader utan `permission`. `can` svarar
 // för den inloggades effektiva behörigheter — tom mängd (utloggad, eller läsningen misslyckades) ger
 // bara de rollstyrda raderna, aldrig en tom meny: Start har ingen nyckel med flit.
 export function getVisibleAppNavItems(role: UserRole | null, can: CanFn): AppNavItem[] {

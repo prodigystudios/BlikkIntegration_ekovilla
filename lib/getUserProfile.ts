@@ -1,9 +1,10 @@
 import { requestCache } from '@/lib/requestCache';
+import type { UserRole } from '@/lib/roles';
 import { createSessionClient } from '@/lib/supabase/session';
 
 export interface UserProfile {
   id: string;
-  role: 'member' | 'sales' | 'admin' | 'konsult' | 'ekonomi';
+  role: UserRole;
   full_name: string | null;
   phone?: string | null;
 }
