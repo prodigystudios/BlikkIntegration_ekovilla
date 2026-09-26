@@ -253,3 +253,89 @@ describe('profiles UPDATE i migreringarna', () => {
     expect(listed).toEqual([...SELF_EDITABLE_PROFILE_FIELDS].sort());
   });
 });
+
+/**
+ * Default privileges: det som ett NYTT objekt i public får. Supabase börjar öppet — allt postgres skapar i public
+ * ger anon och authenticated alla rättigheter (per schema), och Postgres ger EXECUTE till PUBLIC på varje ny
+ * funktion (globalt). 20260926134651_default_privileges_closed.sql vänder på det.
+ *
+ * `supabase db pull` tar inte med default privileges — baslinjen, pull:ad ur prod, har inga. En ny baslinje hade
+ * alltså tyst öppnat standarden igen i varje databas byggd ur kedjan. Kedjan simuleras privilegium för privilegium,
+ * med Postgres regler: globala och per-schema-värden är SEPARATA och läggs ihop (en revoke i det ena omfånget når
+ * aldrig en grant i det andra), och anon/authenticated når allt som ges till PUBLIC. Satser för andra roller än
+ * postgres och andra scheman än public räknas inte — men en `alter default privileges` som testet inte kan tolka
+ * fäller det, i stället för att tyst hoppas över.
+ *
+ * Utgångsläget är hårdkodat (Supabases standard, se pg_default_acl lokalt 2026-09-26). Den faktiska effekten prövas
+ * av migreringens efterkontroll vid push, och parity.sql jämför mot prod.
+ */
+describe('default privileges i migreringarna', () => {
+  const STMT = new RegExp(
+    String.raw`^alter default privileges(?: for (?:role|user) ([a-z_, ]+?))?(?: in schema ([a-z_, ]+?))? (grant|revoke) (grant option for )?([a-z, ]+?) on (tables|sequences|functions|routines) (?:to|from) (.+)$`,
+  );
+  const ALL: Record<string, string[]> = {
+    tables: ['select', 'insert', 'update', 'delete', 'truncate', 'references', 'trigger', 'maintain'],
+    sequences: ['select', 'update', 'usage'],
+    functions: ['execute'],
+  };
+  const GRANTEES = ['anon', 'authenticated', 'public'] as const;
+
+  function simulate() {
+    const state = new Map<string, Set<string>>(); // `${omfång}:${typ}:${mottagare}` → privilegier
+    const at = (scope: string, type: string, grantee: string) => {
+      const key = `${scope}:${type}:${grantee}`;
+      if (!state.has(key)) state.set(key, new Set());
+      return state.get(key)!;
+    };
+    // Supabases utgångsläge för rollen postgres.
+    for (const type of Object.keys(ALL)) for (const g of ['anon', 'authenticated']) ALL[type].forEach((p) => at('public', type, g).add(p));
+    at('global', 'functions', 'public').add('execute');
+
+    let seen = 0;
+    const unparsed: string[] = [];
+    for (const stmt of STATEMENTS) {
+      if (!stmt.startsWith('alter default privileges')) continue;
+      const m = stmt.match(STMT);
+      if (!m) {
+        unparsed.push(stmt);
+        continue;
+      }
+      seen += 1;
+      const [, forRoles, schemas, action, grantOption, privList, rawType, rawGrantees] = m;
+      if (grantOption) continue; // "revoke grant option for" tar inte bort rätten
+      if (forRoles && !roles(forRoles).includes('postgres')) continue;
+      if (schemas && !roles(schemas).includes('public')) continue;
+      const scope = schemas ? 'public' : 'global';
+      const type = rawType === 'routines' ? 'functions' : rawType;
+      const privs = roles(privList).flatMap((p) => (p === 'all' || p === 'all privileges' ? ALL[type] : [p]));
+      for (const grantee of roles(rawGrantees.replace(/ with grant option$| cascade$| restrict$/, ''))) {
+        if (!(GRANTEES as readonly string[]).includes(grantee)) continue;
+        const set = at(scope, type, grantee);
+        for (const p of privs) (action === 'grant' ? set.add(p) : set.delete(p));
+      }
+    }
+
+    // Vad anon/authenticated faktiskt får på ett nytt objekt i public: båda omfången, egen grant eller via PUBLIC.
+    const open: string[] = [];
+    for (const type of Object.keys(ALL)) {
+      for (const role of ['anon', 'authenticated']) {
+        const effective = new Set<string>();
+        for (const scope of ['public', 'global']) for (const g of [role, 'public']) at(scope, type, g).forEach((p) => effective.add(p));
+        if (effective.size) open.push(`${type}:${role}: ${[...effective].sort().join(',')}`);
+      }
+    }
+    return { seen, unparsed, open };
+  }
+
+  it('hittar default privileges-satser i kedjan — annars är testet tomt', () => {
+    expect(simulate().seen).toBeGreaterThanOrEqual(4);
+  });
+
+  it('varje alter default privileges i kedjan går att tolka', () => {
+    expect(simulate().unparsed).toEqual([]);
+  });
+
+  it('nya tabeller, vyer, sekvenser och funktioner i public ger anon och authenticated ingenting efter hela kedjan', () => {
+    expect(simulate().open, 'default privileges öppnar nya objekt — se 20260926134651_default_privileges_closed.sql').toEqual([]);
+  });
+});

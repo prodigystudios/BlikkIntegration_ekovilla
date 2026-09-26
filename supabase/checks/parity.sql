@@ -72,6 +72,21 @@ select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as f
    and (a.grantee = 0 or pg_get_userbyid(a.grantee) in ('anon', 'authenticated', 'service_role'))
  order by 1, 2;
 
+-- Vad ett NYTT objekt får. `db pull` tar inte med default privileges, så en ny baslinje kan tyst skilja sig från
+-- prod här (20260926134651_default_privileges_closed.sql). Globala rader (utan schema) visas som '(globalt)';
+-- saknas en global rad för postgres/funktioner gäller Postgres inbyggda EXECUTE till PUBLIC.
+\echo '== default privileges för postgres (public + globalt)'
+select case when d.defaclnamespace = 0 then '(globalt)' else d.defaclnamespace::regnamespace::text end as schema,
+       d.defaclobjtype as objtype,
+       case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end as grantee,
+       string_agg(a.privilege_type || case when a.is_grantable then '*' else '' end, ',' order by a.privilege_type) as privileges
+  from pg_default_acl d
+ cross join lateral aclexplode(d.defaclacl) a
+ where d.defaclrole = 'postgres'::regrole
+   and (d.defaclnamespace = 0 or d.defaclnamespace = 'public'::regnamespace)
+ group by 1, 2, 3
+ order by 1, 2, 3;
+
 \echo '== public: RLS per tabell'
 select c.relname, c.relrowsecurity, c.relforcerowsecurity
   from pg_class c
