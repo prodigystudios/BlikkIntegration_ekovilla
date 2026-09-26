@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unpricedRowsIssue, workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
+import { unpricedRowsIssue, untouchedUnpricedWarning, workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
 
 // Arbetsorderns spärrar före sparning. Utan prisspärren sparades raderna och FÖRST Fortnox-pushen
 // sa nej — med ordern stämplad 'failed', faktureringen spärrad och ett 409 som inte pekade ut raden.
@@ -29,11 +29,17 @@ describe('workOrderLineItemIssues', () => {
     expect(workOrderLineItemIssues([{ id: 'b', article_name: 'Frakt', article_price: 500, pricing_mode: 'item', quantity: '1' }], { rotEnabled: false })).toEqual([]);
   });
 
-  // ⚖️ INGEN MÄNGDSPÄRR. Antal 0 = inget levererades, och att sänka antalet till det levererade är
-  // hur en delfakturerad order stängs. Prövad som spärr och backad i grenreviewen.
-  it('godtar en rad med antal 0', () => {
-    expect(workOrderLineItemIssues([{ ...priced, pricing_mode: 'item', quantity: '0' }], { rotEnabled: false })).toEqual([]);
-    expect(workOrderLineItemIssues([{ ...priced, m2: '' }], { rotEnabled: false })).toEqual([]);
+  // ⚖️ Antal 0 på en BEFINTLIG rad = inget levererades, och att sänka antalet till det levererade är
+  // hur en delfakturerad order stängs. Ingen spärr där — prövad och backad i grenreviewen.
+  it('godtar antal 0 på en befintlig rad', () => {
+    const saved = { ...priced, pricing_mode: 'item' as const, quantity: '4' };
+    expect(workOrderLineItemIssues([{ ...saved, quantity: '0' }], { rotEnabled: false, savedRows: [saved] })).toEqual([]);
+  });
+
+  // …men en NY rad utan mängd är ett glömt fält: 0 kr, tyst ur ordervärdet. Offerten spärrar den.
+  it('spärrar en ny rad utan mängd', () => {
+    expect(workOrderLineItemIssues([{ ...priced, id: 'ny', m2: '' }], { rotEnabled: false, savedRows: [priced] }))
+      .toEqual(['Rad 1: mängd saknas — fyll i m² och tjocklek, eller antal']);
   });
 
   // Avskrivna rader skickas inte till Fortnox, och en ren radtext pushas som textrad — ingen av dem
@@ -63,6 +69,20 @@ describe('workOrderLineItemIssues', () => {
     expect(workOrderLineItemIssues([row], { rotEnabled: false })).toEqual([]);
     expect(workOrderLineItemIssues([{ ...row, is_rot_work: true }], { rotEnabled: true })).toEqual([]);
   });
+
+  // 🧨 ALLA rader, inte bara ändrade: det är ROT-påslaget i översikten som gör en gammal rad fel, så
+  // en spärr på bara ändrade rader hade tigit just när den behövs.
+  it('prövar arbetskostnaden även på en orörd rad', () => {
+    const row = { ...priced, labor_cost: '700' };
+    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [row] })).toHaveLength(1);
+  });
+
+  // …utom på en fakturerad (låst) rad: dess arbetskostnad går inte att ändra, och en spärr man inte
+  // kan åtgärda hade låst hela ordern.
+  it('hoppar över låsta rader i ROT-spärren', () => {
+    const row = { ...priced, labor_cost: '700' };
+    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [row], lockedIds: new Set(['a']) })).toEqual([]);
+  });
 });
 
 // 🧨 BARA NYA OCH ÄNDRADE RADER. En gammal rad som redan ligger sparad fel hade annars låst varje
@@ -78,11 +98,30 @@ describe('unpricedRowsIssue — bara nya och ändrade rader', () => {
     expect(unpricedRowsIssue([{ ...legacy, quantity: '2' }], [legacy])).toContain('Rad 1: pris saknas');
   });
 
-  // Servern får raderna GENOM Zod: tal blir strängar, defaults fylls i, nyckelordningen ändras. En
-  // sådan rad är samma rad — annars hade den gamla raden räknats som ändrad vid varje sparning.
+  // Servern får raderna GENOM Zod: tal blir strängar, defaults fylls i, nyckelordningen ändras och
+  // ett tomt artikelpris blir null. En sådan rad är samma rad — annars hade den gamla raden räknats
+  // som ändrad vid varje sparning och nekats med 422.
   it('läser en rad som bara passerat schemat som oförändrad', () => {
-    const stored = { id: 'old', article_name: 'Lösull', m2: 40 as unknown as string, thickness_mm: '200', unit_price: '' };
-    const parsed = { thickness_mm: '200', m2: '40', unit_price: '', article_name: 'Lösull', id: 'old', pricing_mode: 'm3', is_rot_work: false, written_off: false, quantity: '' };
+    const stored = { id: 'old', article_name: 'Lösull', m2: 40 as unknown as string, thickness_mm: '200', unit_price: '', article_price: '' as unknown as number };
+    const parsed = { thickness_mm: '200', m2: '40', unit_price: '', article_name: 'Lösull', id: 'old', pricing_mode: 'm3', is_rot_work: false, written_off: false, quantity: '', article_price: null };
     expect(unpricedRowsIssue([parsed], [stored])).toBeNull();
+  });
+});
+
+// Den orörda gamla raden spärrar inget — men synken kommer att fallera, och det ska sägas FÖRE.
+describe('untouchedUnpricedWarning', () => {
+  const legacy = { id: 'old', article_name: 'Frakt', pricing_mode: 'item', quantity: '1', unit_price: '' };
+
+  it('varnar för en orörd rad utan pris', () => {
+    expect(untouchedUnpricedWarning([legacy], [legacy])).toMatch(/^Rad 1 saknar pris sedan tidigare/);
+  });
+
+  // En ÄNDRAD rad är spärrens sak, inte varningens — samma rad ska inte sägas två gånger.
+  it('tiger om en ändrad rad', () => {
+    expect(untouchedUnpricedWarning([{ ...legacy, quantity: '2' }], [legacy])).toBeNull();
+  });
+
+  it('tiger när allt är prissatt', () => {
+    expect(untouchedUnpricedWarning([{ ...legacy, unit_price: '500' }], [{ ...legacy, unit_price: '500' }])).toBeNull();
   });
 });

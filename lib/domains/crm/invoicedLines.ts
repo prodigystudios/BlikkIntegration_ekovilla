@@ -12,6 +12,20 @@ export type InvoicedRoundLine = { line_id?: string | null; index?: number | null
 export type InvoicedRound = { line_quantities: InvoicedRoundLine[] | null };
 
 const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
+const QTY_EPS = 1e-6;
+
+/**
+ * Golvet för en fakturerad rad: antalet får inte sänkas UNDER det fakturerade — då säger ordern att
+ * vi levererat mindre än vi redan krävt betalt för. Ner TILL det är däremot hur ordern stängs.
+ * Regeln och ordalydelsen delas av servern (validateLineItemEdit) och editorn (invoicedFloorIssues).
+ */
+export function isBelowInvoiced(quantity: number, invoiced: number): boolean {
+  return roundQty(quantity) + QTY_EPS < invoiced;
+}
+
+export function invoicedFloorMessage(rowNumber: number, invoiced: number): string {
+  return `Rad ${rowNumber} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.`;
+}
 
 /**
  * Fakturerat antal på en rad, summerat över alla rundor. Raden matchas på sitt stabila id; en
@@ -43,12 +57,13 @@ export function invoicedLineIds(
 }
 
 /**
- * Fakturerade rader vars antal sänkts under det fakturerade — samma regel och samma ord som
- * validateLineItemEdit. Editorn visar det före sparningen, i stället för att hela sparningen nekas
- * med 409 efteråt (och alla andra ändringar i samma redigering går förlorade).
+ * Fakturerade rader vars antal sänkts under det fakturerade — samma regel som validateLineItemEdit
+ * (isBelowInvoiced). Editorn visar det före sparningen, i stället för att hela sparningen nekas med
+ * 409 efteråt (och alla andra ändringar i samma redigering går förlorade).
  *
- * Det fakturerade läses mot de SPARADE raderna, som servern gör; raden numreras på sin plats i
- * utkastet, som i editorn. Ner TILL det fakturerade är tillåtet — det är hur ordern stängs.
+ * Det fakturerade läses mot de SPARADE raderna, som servern gör. ⚠️ Men raden numreras på sin plats
+ * i UTKASTET, som i editorn — servern numrerar efter den sparade listan. De skiljer sig bara om rader
+ * tagits bort ovanför, och då är det editorns nummer användaren ser.
  */
 export function invoicedFloorIssues(
   rows: Array<LineItemQuantitySource & { id?: string | null }>,
@@ -66,9 +81,7 @@ export function invoicedFloorIssues(
   rows.forEach((row, i) => {
     const invoiced = row.id ? invoicedById.get(row.id) : undefined;
     if (invoiced == null) return;
-    if (roundQty(lineItemQuantity(row)) + 1e-6 < invoiced) {
-      issues.push(`Rad ${i + 1} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.`);
-    }
+    if (isBelowInvoiced(lineItemQuantity(row), invoiced)) issues.push(invoicedFloorMessage(i + 1, invoiced));
   });
   return issues;
 }

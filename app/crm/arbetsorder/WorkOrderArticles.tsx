@@ -5,7 +5,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { computePricing, lineItemEffectiveUnitPrice, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { isBlankLineItem, isConfiguredLineItem, lineItemQuantity, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
-import { workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
+import { untouchedUnpricedWarning, workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
 import { invoicedFloorIssues, invoicedLineIds, type InvoicedRound } from '@/lib/domains/crm/invoicedLines';
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
@@ -199,6 +199,11 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   );
   // Mot de SPARADE raderna, som servern: det är den utställda fakturan som låser, inte utkastet.
   const invoicedIds = useMemo(() => invoicedLineIds(items, invoiceRounds), [items, invoiceRounds]);
+  // Sparade avskrivningar — en sådan får hävas även på en fakturerad rad (se Avskriven-rutan).
+  const savedWrittenOffIds = useMemo(
+    () => new Set(items.filter((it) => it.written_off).map((it) => it.id)),
+    [items],
+  );
   const isPrivate = quoteType === 'private';
   const rotEnabled = isPrivate && Boolean(rotDetails?.enabled);
 
@@ -237,9 +242,17 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // golvet för fakturerade rader — samma regler som servern, visade FÖRE sparningen.
   const issues = useMemo(
     () => (editing
-      ? [...workOrderLineItemIssues(rows, { rotEnabled, savedRows: items }), ...invoicedFloorIssues(rows, items, invoiceRounds)]
+      ? [
+          ...workOrderLineItemIssues(rows, { rotEnabled, savedRows: items, lockedIds: invoicedIds }),
+          ...invoicedFloorIssues(rows, items, invoiceRounds),
+        ]
       : []),
-    [editing, rows, rotEnabled, items, invoiceRounds],
+    [editing, rows, rotEnabled, items, invoicedIds, invoiceRounds],
+  );
+  // Spärrar inget — men sägs FÖRE sparningen, inte som ett Fortnox-fel efteråt.
+  const staleWarning = useMemo(
+    () => (editing ? untouchedUnpricedWarning(rows, items) : null),
+    [editing, rows, items],
   );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
@@ -438,7 +451,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               const material = info?.material ?? null;
               const invoiced = invoicedIds.has(row.id);
               const savedName = savedNameById.get(row.id);
-              const savedWrittenOff = items.some((it) => it.id === row.id && it.written_off);
+              const savedWrittenOff = savedWrittenOffIds.has(row.id);
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
               const renameEffect = materialRenameEffect(savedName, row.article_name);
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
@@ -480,7 +493,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   // Prisläget går att byta här, till skillnad från offerten där det följer artikelns
                   // enhet: på ordern rättas ofta en rad som sålts per styck till en yta, eller tvärtom.
                   // ⚠️ INTE på en fakturerad rad: bytet läser om det fakturerade antalet i en annan
-                  // enhet (8 m³ blir 0 st), och servern nekar hela sparningen.
+                  // enhet (8 m³ blir "10 st"). Servern nekar det också (validateLineItemEdit).
                   headerActions={invoiced ? null : (
                     <button
                       type="button"
@@ -549,6 +562,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                 + Lägg till rad
               </button>
             </div>
+
+            {staleWarning ? (
+              <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-medium text-amber-800">{staleWarning}</p>
+            ) : null}
 
             {issues.length ? (
               <div className="grid gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5">

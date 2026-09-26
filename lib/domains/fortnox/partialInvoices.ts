@@ -3,7 +3,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 // Radmatchningen delas med ordersidans artikeleditor, som låser samma rader i förväg.
-import { invoicedOnLine } from '@/lib/domains/crm/invoicedLines';
+import { invoicedFloorMessage, invoicedOnLine, isBelowInvoiced } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
@@ -155,9 +155,8 @@ export function validateLineItemEdit(
     // Under det fakturerade skulle betyda att ordern säger att vi levererat mindre än vi redan
     // krävt betalt för. Ner TILL det fakturerade är däremot precis hur en order stängs på det som
     // faktiskt blev gjort — då blir återstående noll.
-    const nextQty = roundQty(lineItemQuantity(next));
-    if (nextQty + QTY_EPS < invoiced) {
-      return { ok: false, message: `Rad ${index + 1} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.` };
+    if (isBelowInvoiced(lineItemQuantity(next), invoiced)) {
+      return { ok: false, message: invoicedFloorMessage(index + 1, invoiced) };
     }
     // Priset och artikeln är låsta när något av raden gått ut på faktura. Vi har ETT pris per rad,
     // så att ändra det skriver om vad den redan utställda fakturan påstås ha kostat — CRM och
@@ -174,6 +173,14 @@ export function validateLineItemEdit(
     if (changed('unit_price') || changed('discount_percent') || changed('article_number')
       || rotFlag(cur) !== rotFlag(next)) {
       return { ok: false, message: `Rad ${index + 1} är fakturerad — pris, rabatt, artikel och ROT-markering kan inte ändras. Lägg det som skiljer på en ny rad.` };
+    }
+    // PRISLÄGET hör till samma lås. Ett byte m³ ↔ st läser om det redan fakturerade antalet i en
+    // annan enhet — 8 m³ på fakturan blir "10 st" på raden, med 2 st kvar att fakturera. Golvet ovan
+    // fångar bara det fall där det nya antalet råkar hamna under det fakturerade.
+    // Normaliserat: en rad utan läge ÄR m³ (lineItemQuantity), och det ska inte läsas som ett byte.
+    const mode = (item: PartialInvoiceLineItem | undefined) => (item?.pricing_mode === 'item' ? 'item' : 'm3');
+    if (mode(cur) !== mode(next)) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad — prisläget (m³ eller styck) kan inte ändras. Lägg det som skiljer på en ny rad.` };
     }
     // ROT-TYPEN hör till samma lås, men den kan inte prövas med `changed()` ovan.
     //
