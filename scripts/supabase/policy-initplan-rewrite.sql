@@ -9,6 +9,7 @@
 -- Omskrivningen är rent textuell på pg_policies (pg_get_expr) och rör BARA anrop med fasta argument:
 --   auth.<fn>()                 -> (select auth.<fn>())
 --   has_permission('x'::text)   -> (select has_permission('x'::text))
+--   is_<namn>()                 -> (select is_<namn>())   (bara parameterlösa, och bara STABLE — generatorn vägrar annars)
 -- Anrop med kolumnargument (is_user_on_work_order(auth.uid(), id), is_time_locked(user_id, work_date)) står kvar; bara
 -- ett auth.uid() INUTI dem skrivs om. Roller, kommando och PERMISSIVE/RESTRICTIVE rörs inte (alter policy).
 -- Policyer som redan är helt inslagna hoppas över; delvis inslagna tas med och blir helt inslagna.
@@ -38,20 +39,29 @@ set local search_path = public, extensions;
 
 -- Samma definition skrivs in i migreringen (se nedan) — ändra båda tillsammans.
 create function pg_temp.unwrap(e text) returns text language sql immutable as $f$
-  select regexp_replace(regexp_replace(e,
+  select regexp_replace(regexp_replace(regexp_replace(e,
            '\( SELECT (auth\.([a-z_]+)\(\)) AS \2\)', '\1', 'g'),
-           '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g')
+           '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g'),
+           '\( SELECT ((is_[a-z_]+)\(\)) AS \2\)', '\1', 'g')
 $f$;
 create function pg_temp.wrap(e text) returns text language sql immutable as $f$
-  select regexp_replace(regexp_replace(pg_temp.unwrap(e),
+  select regexp_replace(regexp_replace(regexp_replace(pg_temp.unwrap(e),
            '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\))', '\1(select \2)', 'g'),
-           '(^|[^.a-z0-9_])(has_permission\(''[a-z0-9._]+''::text\))', '\1(select \2)', 'g')
+           '(^|[^.a-z0-9_])(has_permission\(''[a-z0-9._]+''::text\))', '\1(select \2)', 'g'),
+           '(^|[^.a-z0-9_])(is_[a-z_]+\(\))', '\1(select \2)', 'g')
 $f$;
 -- Antal oinslagna anrop: alla anrop minus de inslagna.
 create function pg_temp.bare(e text) returns int language sql immutable as $f$
-  select coalesce((select count(*) from regexp_matches(e, '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\()', 'g'))
-                - (select count(*) from regexp_matches(e, '\( SELECT (auth\.[a-z_]+\(\)|has_permission\()', 'g')), 0)::int
+  select coalesce((select count(*) from regexp_matches(e, '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))', 'g'))
+                - (select count(*) from regexp_matches(e, '\( SELECT (auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))', 'g')), 0)::int
 $f$;
+
+-- Bara STABLE/IMMUTABLE får köras en gång per fråga. En VOLATILE parameterlös is_*() hade ändrat beteende.
+do $vol$ begin
+  if exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and proname like 'is\_%' and pronargs = 0 and provolatile = 'v') then
+    raise exception 'en parameterlös is_*()-funktion i public är VOLATILE — den får inte slås in';
+  end if;
+end $vol$;
 
 create temp view __targets as
   select tablename, policyname, qual, with_check
@@ -80,9 +90,10 @@ select concat_ws(E'\n',
     || ';',
   '',
   'create function pg_temp.__initplan_unwrap(e text) returns text language sql immutable as $f$',
-  '  select regexp_replace(regexp_replace(e,',
+  '  select regexp_replace(regexp_replace(regexp_replace(e,',
   '           ''\( SELECT (auth\.([a-z_]+)\(\)) AS \2\)'', ''\1'', ''g''),',
-  '           ''\( SELECT (has_permission\(''''[a-z0-9._]+''''::text\)) AS has_permission\)'', ''\1'', ''g'')',
+  '           ''\( SELECT (has_permission\(''''[a-z0-9._]+''''::text\)) AS has_permission\)'', ''\1'', ''g''),',
+  '           ''\( SELECT ((is_[a-z_]+)\(\)) AS \2\)'', ''\1'', ''g'')',
   '$f$;',
   '',
   '-- Förkontroll: policyerna ska vara exakt de som omskrivningen utgår från (med ev. inslagning borttagen).',
@@ -91,6 +102,9 @@ select concat_ws(E'\n',
   '  r record;',
   'begin',
   '  perform set_config(''search_path'', ''public, extensions'', true);',
+  '  if exists (select 1 from pg_proc where pronamespace = ''public''::regnamespace and proname like ''is\_%'' and pronargs = 0 and provolatile = ''v'') then',
+  '    raise exception ''en parameterlös is_*()-funktion i public är VOLATILE — omskrivningen förutsätter STABLE'';',
+  '  end if;',
   '  for r in select e.*, p.policyname as found, p.qual, p.with_check',
   '             from __initplan_expected e',
   '             left join pg_policies p on p.schemaname = ''public'' and p.tablename = e.tbl and p.policyname = e.pol loop',
@@ -133,14 +147,14 @@ select concat_ws(E'\n',
   '  end loop;',
   '',
   '  select coalesce(sum(',
-  '           (select count(*) from regexp_matches(x.e, ''(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\()'', ''g''))',
-  '         - (select count(*) from regexp_matches(x.e, ''\( SELECT (auth\.[a-z_]+\(\)|has_permission\()'', ''g''))',
+  '           (select count(*) from regexp_matches(x.e, ''(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))'', ''g''))',
+  '         - (select count(*) from regexp_matches(x.e, ''\( SELECT (auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))'', ''g''))',
   '         ), 0) into bare',
   '    from (select coalesce(p.qual, '''') || '' '' || coalesce(p.with_check, '''') as e',
   '            from pg_policies p',
   '           where p.schemaname = ''public'' and p.tablename in (select tbl from __initplan_expected)) x;',
   '  if bare <> 0 then',
-  '    raise exception ''% oinslagna auth.*()/has_permission()-anrop kvar'', bare;',
+  '    raise exception ''% oinslagna auth.*()/has_permission()/is_*()-anrop kvar'', bare;',
   '  end if;',
   'end $post$;',
   '',
