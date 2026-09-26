@@ -5,8 +5,9 @@ import { join } from 'node:path';
 /**
  * RLS-policyer ska anropa auth.*(), has_permission() och parameterlösa is_*() (STABLE SECURITY DEFINER, t.ex.
  * is_app_ticket_admin()) inslagna i en skalär delfråga — `(select auth.uid())`, `(select has_permission('x'))` — så
- * att anropet blir en InitPlan som körs EN gång per fråga. Skrivet rakt körs det för varje rad; has_permission (SQL + SECURITY DEFINER, byggs aldrig in) gör dessutom tre egna uppslag per anrop.
- * Mätt 2026-09-26 på crm_customers i prods storlek: 20 ms -> 0,3 ms.
+ * att anropet blir en InitPlan som körs EN gång per fråga. Skrivet rakt körs det för varje rad; has_permission
+ * (SQL + SECURITY DEFINER, byggs aldrig in) gör dessutom tre egna uppslag per anrop. Mätt 2026-09-26 på
+ * crm_customers i prods storlek: 20 ms -> 0,3 ms.
  *
  * Äldre policyer skrivs om domän för domän (20260926142144_crm_policy_initplan.sql är CRM, med
  * scripts/supabase/policy-initplan-rewrite.sql). Testet vaktar framåt: från och med den filen får ingen
