@@ -1304,7 +1304,10 @@ export async function updateWorkOrderInFortnox(
 }
 
 // Push ONLY the header (references, on-site contact note, delivery address) of an already-synced
-// Fortnox order. Called after the order's contact person, work address or ansvarig is edited.
+// Fortnox order. Called after the order's Er referens, work address or ansvarig is edited.
+//
+// ⚠️ NOT after the title or märkning: both are in the text row `Projekt: X  Märkning: Y`, which
+// this path never sends — the PATCH route sends them the full push (workOrderDocumentNoteChanged).
 //
 // Rows are deliberately NOT sent. A contact correction has to be possible on an order whose rows
 // are frozen by delfakturering, and re-PUTting rows there would break the array-index match that
@@ -1351,7 +1354,8 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
     // half of resolveRotReference is a ROW and belongs to the row path, so it's dropped here.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
     const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
-    // Enda vägen som får försöka rensa "Ert referensnummer" — se buildOrderHeader.
+    // Får rensa "Ert referensnummer" — liksom radvägen (putOrderHeaderAndRows), men inte
+    // skapandevägen. Se buildOrderHeader.
     const { header } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase, {
       allowReferenceClear: true,
     });

@@ -604,11 +604,34 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
   // faktureras (och stängas) medan pushen pågick. Läses "kastade inte" som framgång blir just de
   // fallen tysta: ändringen finns i CRM, Fortnox vet inget, och svaret är grönt.
   //
-  // ⚠️ Märkningen står också i textraden och går därför RADVÄGEN i efterkontrollen sedan
-  // titelgrenen. Den vägen har ingen egen stängd-spärr, så testet vaktar nu spärren i
-  // resyncHeaderIfSnapshotChangedDuringPush: utan den PUT:as ett stängt dokument och en fakturerad
-  // order stämplas 'failed' utan väg tillbaka (omsynken nekar fakturerade ordrar).
+  // Ansvarig är ett rent huvudfält, så det här går HEADER-vägen. (Märkningen gick hit förut, men
+  // står också i textraden och går radvägen sedan titelgrenen — se testet efter det här.)
   it('rapporterar inte framgång när header-synken inte skickade något', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        // Ordern hann helfaktureras → header-synken svarar null utan att skicka något.
+        status: 'invoiced',
+        fortnox_invoice_number: '2026',
+        partial_invoicing_started_at: null,
+        assigned_to: 'user-2',
+      },
+    });
+
+    const result = await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+    expect(result.mirrorFailed).toBe(true);
+  });
+
+  // 🧨 RADVÄGEN HAR INGEN EGEN STÄNGD-SPÄRR — till skillnad från header-synken. Utan spärren i
+  // efterkontrollen PUT:as ett helfakturerat dokument, Fortnox säger nej, och en fakturerad order
+  // stämplas 'failed' utan väg tillbaka (omsynken nekar fakturerade ordrar). Märkningen i textraden
+  // gör vägen nåbar på varje företagsorder.
+  it('rör inte ett dokument som hann stängas när en radändring ska speglas om', async () => {
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
       afterClaim: { ...baseRow, customer_snapshot: { ...baseRow.customer_snapshot, label: null } },

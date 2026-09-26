@@ -120,7 +120,7 @@ type WorkOrderItem = {
 };
 
 type WorkOrderDraft = {
-  // Orderns titel. Blir textraden `Projekt: X` på Fortnox-ordern — se workOrderTitleChanged.
+  // Orderns titel. Blir textraden `Projekt: X` på Fortnox-ordern — se workOrderDocumentNoteChanged.
   project_name: string;
   status: WorkOrderStatus;
   assigned_to: string;
