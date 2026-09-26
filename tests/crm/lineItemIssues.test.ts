@@ -144,9 +144,13 @@ describe('workOrderLineItemWarnings', () => {
     expect(workOrderLineItemWarnings([{ ...legacy, quantity: '2' }], { ...base, savedRows: [legacy] })).toEqual([]);
   });
 
-  // Ett råd om att ge raden ett pris går inte att följa på en fakturerad rad — priset är låst.
-  it('ger inget omöjligt råd om en låst rad', () => {
-    expect(workOrderLineItemWarnings([legacy], { ...base, savedRows: [legacy], lockedIds: new Set(['old']) })).toEqual([]);
+  // Ett råd om att ge raden ett pris går inte att följa på en fakturerad rad — priset är låst. Men
+  // synken fallerar ändå, och det ska sägas.
+  it('säger att en låst rad utan pris fäller synken, utan omöjligt råd', () => {
+    const warnings = workOrderLineItemWarnings([legacy], { ...base, savedRows: [legacy], lockedIds: new Set(['old']) });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/är fakturerad men saknar pris/);
+    expect(warnings[0]).not.toMatch(/tills raden fått ett pris/);
   });
 
   it('varnar för en orörd rad vars arbetskostnad äter A-priset när ROT är på', () => {
@@ -160,6 +164,13 @@ describe('workOrderLineItemWarnings', () => {
     const row = { id: 'r', article_name: 'Lösull', pricing_mode: 'item', quantity: '2', unit_price: '500', labor_cost: '200' };
     expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [], partiallyInvoiced: true }).join(' ')).toMatch(/stoppar nästa delfaktura/);
     expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [], partiallyInvoiced: false })).toEqual([]);
+  });
+
+  // Delfakturans spärr läser orderns HELA radlista — en avskriven rad med utbrutet arbete spärrar
+  // fortfarande, så varningen får inte släckas av att raden skrivs av.
+  it('släcker inte delfaktura-varningen för att raden skrivs av', () => {
+    const row = { id: 'r', article_name: 'Lösull', pricing_mode: 'item', quantity: '2', unit_price: '500', labor_cost: '200', written_off: true };
+    expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [row], partiallyInvoiced: true }).join(' ')).toMatch(/stoppar nästa delfaktura/);
   });
 
   it('tiger när allt är i ordning', () => {

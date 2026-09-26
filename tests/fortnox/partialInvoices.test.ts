@@ -332,6 +332,20 @@ describe('validateLineItemEdit', () => {
     expect(validateLineItemEdit([a, legacy], [a, { ...legacy, pricing_mode: 'm3' }], rounds).ok).toBe(true);
   });
 
+  // 🧨 ARTIKELPRISET. En rad utan A-pris prissätts av article_price — att nolla det var att nolla
+  // radens pris, och det gick igenom låset.
+  it('nekar att artikelpriset ändras på en fakturerad rad', () => {
+    const byArticle = { id: 'line-b', pricing_mode: 'item', unit_price: '', article_price: 200, quantity: '5' };
+    const res = validateLineItemEdit([a, byArticle], [a, { ...byArticle, article_price: null }], rounds);
+    expect(res.ok).toBe(false);
+  });
+
+  // Tomt och null är samma frånvaro — schemat gör om det ena till det andra vid varje sparning.
+  it('läser tomt och null artikelpris som samma värde', () => {
+    const legacy = { id: 'line-b', pricing_mode: 'item', unit_price: '200', article_price: '' as unknown as number, quantity: '5' };
+    expect(validateLineItemEdit([a, legacy], [a, { ...legacy, article_price: null }], rounds).ok).toBe(true);
+  });
+
   // …och ett OFAKTURERAT prislägesbyte är fritt, som allt annat på en ofakturerad rad.
   it('tillåter prislägesbyte på en ofakturerad rad', () => {
     expect(validateLineItemEdit([a, b], [{ ...a, pricing_mode: 'm3', m2: '10', thickness_mm: '100' }, b], rounds).ok).toBe(true);

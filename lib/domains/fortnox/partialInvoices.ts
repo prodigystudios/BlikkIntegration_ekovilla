@@ -168,7 +168,16 @@ export function validateLineItemEdit(
     // antalssänkning på en gammal delfakturerad order. Reproducerat mot den riktiga funktionen.
     // Samma normalisering som ROT-typen nedan, och av exakt samma skäl.
     const rotFlag = (item: PartialInvoiceLineItem | undefined) => item?.is_rot_work === true;
+    // ⚠️ ARTIKELPRISET hör till priset. En rad utan A-pris prissätts av `article_price`
+    // (lineItemUnitPrice), så att bara jämföra `unit_price` lämnade radens faktiska pris olåst — en
+    // gammal flik eller ett API-anrop kunde nolla det och spara en fakturerad rad utan pris, som
+    // sedan fällde pushen. Tomt och null är samma frånvaro (schemat gör om det ena till det andra).
+    const articlePrice = (item: PartialInvoiceLineItem | undefined) => {
+      const v = item?.article_price as unknown;
+      return v == null || v === '' ? null : Number(v);
+    };
     if (changed('unit_price') || changed('discount_percent') || changed('article_number')
+      || articlePrice(cur) !== articlePrice(next)
       || rotFlag(cur) !== rotFlag(next)) {
       return { ok: false, message: `Rad ${index + 1} är fakturerad — pris, rabatt, artikel och ROT-markering kan inte ändras. Lägg det som skiljer på en ny rad.` };
     }

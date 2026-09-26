@@ -159,11 +159,20 @@ export function workOrderLineItemWarnings(
 ): string[] {
   const warnings: string[] = [];
   const changed = new Set(changedRows(rows, opts.savedRows).map(({ row }) => row));
-  const untouched = configuredRows(rows).filter(({ row }) => !changed.has(row)).filter(unlocked(opts.lockedIds));
+  const untouchedAll = configuredRows(rows).filter(({ row }) => !changed.has(row));
+  const untouched = untouchedAll.filter(unlocked(opts.lockedIds));
 
   const stale = untouched.filter(({ row }) => priceMissingAfterSave(row));
   if (stale.length) {
     warnings.push(`${rowsLabel(stale)} saknar pris sedan tidigare. Sparningen går igenom, men Fortnox-synken misslyckas tills raden fått ett pris (eller 0 om den ingår).`);
+  }
+  // En FAKTURERAD rad utan pris kan inte få ett (priset är låst) — men synken fallerar ändå, och det
+  // ska sägas. Inget råd om att prissätta den: det går inte att följa.
+  const staleLocked = untouchedAll
+    .filter(({ row }) => row.id && opts.lockedIds?.has(row.id))
+    .filter(({ row }) => priceMissingAfterSave(row));
+  if (staleLocked.length) {
+    warnings.push(`${rowsLabel(staleLocked)} är fakturerad men saknar pris. Fortnox-synken misslyckas efter sparningen, och priset går inte att ändra på en fakturerad rad.`);
   }
 
   if (opts.rotEnabled) {
@@ -173,8 +182,10 @@ export function workOrderLineItemWarnings(
     }
   }
 
+  // ⚠️ ALLA rader, även avskrivna — samma underlag som hasCarvedRotLabor (orderns hela radlista).
+  // Att skriva av raden släcker alltså inte spärren; varningen får inte heller släckas av det.
   if (opts.rotEnabled && opts.partiallyInvoiced
-    && configuredRows(rows).some(({ row }) => !row.is_rot_work && lineItemRotLabor(row as PricingLineItem) > 0)) {
+    && rows.some((row) => !isBlankLineItem(row) && !row.is_rot_work && lineItemRotLabor(row as PricingLineItem) > 0)) {
     warnings.push('Ordern delfaktureras. En utbruten arbetskostnad ("Varav arbetskostnad") stoppar nästa delfaktura — delfakturering med utbrutet ROT-arbete stöds inte än.');
   }
 
