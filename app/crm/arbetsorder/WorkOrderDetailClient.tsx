@@ -120,6 +120,8 @@ type WorkOrderItem = {
 };
 
 type WorkOrderDraft = {
+  // Orderns titel. Blir textraden `Projekt: X` på Fortnox-ordern — se workOrderTitleChanged.
+  project_name: string;
   status: WorkOrderStatus;
   assigned_to: string;
   desired_installation_date: string;
@@ -471,6 +473,7 @@ export default function WorkOrderDetailClient({
       return;
     }
     setDraft({
+      project_name: item.project_name || '',
       status: item.status,
       assigned_to: item.assigned_to || '',
       desired_installation_date: item.desired_installation_date || '',
@@ -549,11 +552,21 @@ export default function WorkOrderDetailClient({
     // ett påslag i efterhand hade sänkt varje efterföljande radsynk. Samma villkor som reglaget
     // i formuläret; servern gör om kontrollen.
     const rotToggleLocked = Boolean(workOrder.fortnox_order_number);
+    // Titeln skickas BARA när den ändrats. Varje ändring kostar en full rad-PUT mot Fortnox (titeln
+    // är en textrad), och en äldre order med tom titel ska fortfarande gå att spara — schemat nekar
+    // en tom titel, så en alltid-skickad hade låst varje annan redigering på den ordern.
+    const nextTitle = draft.project_name.trim();
+    const titleChanged = nextTitle !== (workOrder.project_name || '').trim();
+    if (titleChanged && !nextTitle) {
+      toast.error('Ordernamn krävs');
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...(titleChanged ? { project_name: nextTitle } : {}),
           status: draft.status,
           assigned_to: draft.assigned_to || null,
           desired_installation_date: draft.desired_installation_date || null,
@@ -1157,6 +1170,20 @@ export default function WorkOrderDetailClient({
             <Card className="grid gap-4 md:grid-cols-2">
               {editingOverview ? (
                 <>
+                  {/* Titeln redigeras här och inte i sidhuvudet: där står det SPARADE namnet kvar
+                      under redigeringen, precis som statusbrickan bredvid, så man ser vad man ändrar
+                      ifrån. Samma etikett som "Ny order"-rutan i listan. */}
+                  <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+                    <span className={crm.sectionTitle}>Ordernamn / projekt</span>
+                    <Input
+                      value={draft.project_name}
+                      onChange={(e) => setField('project_name', e.target.value)}
+                      placeholder="Ex. Takisolering villa Norrköping"
+                    />
+                    <span className="text-[11px] leading-snug text-slate-500">
+                      Syns i planeringen och tidrapporten, och som textrad på Fortnox-ordern. Offerten behåller sitt namn.
+                    </span>
+                  </label>
                   <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Status</span>
                     {/* invoiced / partially_invoiced are system-managed by the invoicing flow and

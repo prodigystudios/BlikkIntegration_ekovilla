@@ -21,6 +21,7 @@ export {
   isFortnoxOrderClosed,
   workOrderMirroredFieldsChanged,
   workOrderClearIsUnexpressible,
+  workOrderTitleChanged,
   MIRRORED_WORK_ADDRESS_KEYS,
   MIRRORED_SNAPSHOT_KEYS,
   ROT_DOCUMENT_KEYS,
@@ -128,6 +129,7 @@ type WorkOrderUpdateInput = {
   internal_handoff: Record<string, any>;
   work_address: WorkOrderAddress;
   assigned_to?: string | null;
+  project_name?: string;
 };
 
 type CreateWorkOrderCommentInput = {

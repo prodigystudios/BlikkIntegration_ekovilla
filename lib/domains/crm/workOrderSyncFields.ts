@@ -205,3 +205,22 @@ export function workOrderMirroredFieldsChanged(
 
   return false;
 }
+
+/**
+ * Ändrades orderns TITEL (`project_name`) på ett sätt som syns på dokumentet?
+ *
+ * 🧨 TITELN ÄR EN RAD, INTE ETT HUVUDFÄLT. Fortnox har inget fält för projektnamnet, så den går som
+ * textraden `Projekt: X  Märkning: Y` sist i radlistan (buildOrderProjectNote). Header-synken
+ * släpper medvetet raderna — en titelrättning som gick den vägen hade sparats i CRM, rapporterats
+ * grön och aldrig nått orderbekräftelsen eller fakturan. Alltså full push, samma som ROT.
+ *
+ * ⚠️ JÄMFÖRS PÅ VÄRDET, inte på närvaron. Den fulla pushen skriver om hela radlistan positionellt
+ * och kan stämpla 'failed' (assertLineItemsArePriced), så den ska bara köras när dokumentet faktiskt
+ * får en ny text. Blanktecken runt om räknas inte — buildOrderProjectNote trimmar dem ändå.
+ */
+export function workOrderTitleChanged(
+  current: { project_name?: string | null } | null | undefined,
+  next: string | null | undefined,
+): boolean {
+  return mirroredText(next) !== mirroredText(current?.project_name);
+}

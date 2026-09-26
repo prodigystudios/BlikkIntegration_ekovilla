@@ -363,6 +363,49 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(puttedOrder()).toHaveProperty('OrderRows');
   });
 
+  // 🧨 TITELN ÄR EN RAD. Den står bara i textraden `Projekt: X` — aldrig i huvudet — så en titel
+  // som rättades mitt i pushen hade "reparerats" med en header-PUT som inte bär den, och ordern
+  // stämplats 'synced' med den gamla titeln kvar på orderbekräftelsen och fakturan.
+  it('går den fulla pushen när titeln ändrades medan pushen pågick', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        project_name: 'SPARAD-UNDER-PUSHEN',
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).toHaveBeenCalled();
+    const rows = puttedOrder().OrderRows as Array<Record<string, unknown>>;
+    expect(rows[rows.length - 1].Description).toBe('Projekt: SPARAD-UNDER-PUSHEN  Märkning: 58184');
+  });
+
+  // …men blanktecken runt titeln är ingen ändring — buildOrderProjectNote trimmar dem ändå, och en
+  // spurios rad-PUT är den farligaste skrivningen i hela pushen.
+  it('reparerar inte för en titel som bara skiljer i blanktecken', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        project_name: `  ${baseRow.project_name}  `,
+      },
+    });
+
+    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
   // 🧨 ETT MISSLYCKAT REPARATIONSFÖRSÖK MÅSTE NÅ ANROPAREN. Reparationen har då redan stämplat ner
   // synkstatusen — men svarade pushen ändå "skapad" visade routen en grön toast medan brickan läste
   // Misslyckad och faktureringen var spärrad utan att något förklarade varför. Precis den tysta

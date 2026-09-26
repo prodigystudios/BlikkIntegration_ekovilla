@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderTitleChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -104,6 +104,11 @@ export async function PATCH(req: Request, context: RouteContext) {
     // sparad ut men aldrig når kundens dokument.
     const touchesRot = 'rot_details' in updateInput;
 
+    // ⚠️ TITELN går inte heller header-vägen. Den står på dokumentet som textraden
+    // `Projekt: X  Märkning: Y` (buildOrderProjectNote) — Fortnox har inget huvudfält för den — och
+    // header-synken släpper raderna. Full push, samma som ROT. Se workOrderTitleChanged.
+    const touchesTitle = 'project_name' in updateInput;
+
     // Load the current row once — the snapshot merges and the status guard all need it.
     type WoCurrent = {
       status?: string | null;
@@ -116,6 +121,8 @@ export async function PATCH(req: Request, context: RouteContext) {
       // Speglade fält vi måste kunna JÄMFÖRA mot, inte bara skriva — se mirroredFieldChanged.
       assigned_to?: string | null;
       work_address?: Record<string, unknown> | null;
+      // Titeln jämförs på värdet: bara en ändrad text får kosta den fulla rad-PUT:en.
+      project_name?: string | null;
     };
     let current: WoCurrent | null = null;
     const touchesSnapshot =
@@ -125,7 +132,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Fortnox men vandrar inte genom snapshoten, så en PATCH som bara bär dem hade lämnat `current`
     // null — och då hade både `invoicedInFortnox` och `mirroredFieldChanged` läst tomt och tigit.
     // Att det inte syns i drift beror bara på att varje anropare råkar skicka `status` också.
-    if (touchesSnapshot || touchesRot || touchesFortnox || updateInput.status) {
+    if (touchesSnapshot || touchesRot || touchesTitle || touchesFortnox || updateInput.status) {
       const currentRead = await getCrmWorkOrder(supabase, context.params.id);
       // 🧨 FAIL-CLOSED PÅ LÄSFELET. Snapshoten skrivs read-merge-write, så en misslyckad läsning
       // gav `null` → merge mot `{}` → kolumnen ersattes av BARA överlagringarna. Personnummer,
@@ -158,6 +165,8 @@ export async function PATCH(req: Request, context: RouteContext) {
       ...('your_reference' in updateInput ? { your_reference: updateInput.your_reference } : {}),
       ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
     });
+
+    const titleChanged = touchesTitle && workOrderTitleChanged(current, updateInput.project_name);
 
     const mirroredFieldChanged = workOrderMirroredFieldsChanged(current, {
       ...('label' in updateInput ? { label: updateInput.label } : {}),
@@ -313,9 +322,9 @@ export async function PATCH(req: Request, context: RouteContext) {
     //    stämplats 'failed' av en sparning som egentligen bara rörde CRM.
     // ⚠️ SAMMA stängd-regel som larmet ovan. Med det gamla testet (`!fortnox_invoice_number &&
     // status !== 'invoiced'`) föll en DELfakturerad order mellan stolarna: `invoicedInFortnox` var
-    // falskt (inget larm) och `rotPush` falskt (ingen push), så ett rättat BRF org.nr sparades,
+    // falskt (inget larm) och `rowPush` falskt (ingen push), så ett rättat BRF org.nr sparades,
     // rapporterades grönt och nådde aldrig ROT-textraden i Fortnox.
-    const rotPush = rotChanged
+    const rowPush = (rotChanged || titleChanged)
       && Boolean(current?.fortnox_order_number)
       && !isFortnoxOrderClosed(current);
     if (invoicedInFortnox) {
@@ -325,28 +334,44 @@ export async function PATCH(req: Request, context: RouteContext) {
       // ⚠️ `rotChanged` hör med. ROT-fälten står inte i FORTNOX_MIRRORED_FIELDS (de går den fulla
       // pushen, inte header-vägen), så en rättad fastighetsbeteckning — villaorderns
       // `YourOrderNumber` — hade annars hoppat över hela blocket och rapporterats som ren framgång.
-      if (mirroredFieldChanged || rotChanged) {
+      //
+      // Titeln av samma skäl: den är en textrad, inte ett speglat huvudfält.
+      if (mirroredFieldChanged || rotChanged || titleChanged) {
         fortnoxError = 'Ordern är fakturerad i Fortnox och dokumentet kan inte längre ändras. '
           + 'Ändringen är sparad i CRM, men syns inte på kundens orderbekräftelse eller faktura.';
       }
-    } else if (rotPush || touchesFortnox) {
+    } else if (rowPush || touchesFortnox) {
       attemptedPush = true;
       try {
-        // ROT vinner över header-vägen när båda ändrats i samma sparning: den fulla pushen bär
-        // headern också, så en header-synk därtill hade varit ett andra anrop som skriver samma
-        // fält. Se touchesRot ovan för varför ROT inte kan gå header-vägen ensam.
+        // ROT och titeln vinner över header-vägen när båda ändrats i samma sparning: den fulla
+        // pushen bär headern också, så en header-synk därtill hade varit ett andra anrop som skriver
+        // samma fält. Se touchesRot och touchesTitle ovan för varför ingen av dem kan gå
+        // header-vägen ensam.
         // ⚠️ RESULTATET MÅSTE LÄSAS. Den här grenen är fjärde anroparen av updateWorkOrderInFortnox,
         // och kastas svaret bort stämplas raden 'failed' av en misslyckad omspegling medan routen
         // svarar `fortnox_error: null` och klienten visar grön toast — med faktureringen spärrad av
         // assertOrderRowsSynced och ingenting som förklarar varför.
-        if (rotPush) {
+        if (rowPush) {
           const pushed = await updateWorkOrderInFortnox(context.params.id);
+          // 🧨 EN TÖMD MÄRKNING KAN BARA RENSAS AV HEADER-SYNKEN. Den fulla pushen får medvetet inte
+          // skicka `YourOrderNumber: null` (se allowReferenceClear i buildOrderHeader), så en
+          // företagsorder vars titel och märkning ändrades i samma sparning hade burit kvar den gamla
+          // märkningen hos Fortnox — med grönt svar. ROT slapp frågan (märkningen skickas bara för
+          // företag, ROT bara för privat); titeln gör det inte. Minnet släcks av den genomförda PUT:en.
+          const labelClearPending =
+            (updateInput as { customer_snapshot?: Record<string, unknown> }).customer_snapshot?.label_cleared === true;
+          if (labelClearPending) await syncWorkOrderHeaderToFortnox(context.params.id);
           if (pushed.mirrorFailed) {
             fortnoxError = pushed.mirrorNeedsManualFix
               ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '
                 + 'synken — rätta fältet direkt i Fortnox.'
               : 'Ändringen är sparad, men något som ändrades under synken kunde inte speglas till '
                 + 'Fortnox. Synka om arbetsordern och kontrollera uppgifterna.';
+          } else if (clearIsUnexpressible) {
+            // Samma besked som header-grenen nedan. Den fulla pushen bygger huvudet med samma
+            // utelämnande regel, så en tömd Er referens eller arbetsadress når inte fram här heller.
+            fortnoxError = 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte '
+              + 'nollas via synken — rätta fältet direkt i Fortnox.';
           }
         } else {
           await syncWorkOrderHeaderToFortnox(context.params.id);

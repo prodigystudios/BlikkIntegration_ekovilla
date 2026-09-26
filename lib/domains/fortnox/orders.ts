@@ -592,6 +592,7 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
     assigned_to: string | null;
     rot_details: RotDetails | null;
     line_items: unknown;
+    project_name: string | null;
   },
 ): Promise<{ mirrorFailed?: boolean; mirrorNeedsManualFix?: boolean }> {
   // ⚠️ ALLA INGÅNGARNA till dokumentet, inte bara de två uppenbara: `assigned_to` bär OurReference
@@ -607,7 +608,7 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // `assertOrderRowsSynced` släpper igenom, och `createinvoice` fakturerar de gamla.
   const { data } = await supabase
     .from('crm_work_orders')
-    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, quote_id')
+    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, project_name, quote_id')
     .eq('id', workOrderId)
     .maybeSingle();
 
@@ -646,8 +647,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   };
 
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
+  // Titeln likaså: den står bara i textraden `Projekt: X` (buildOrderProjectNote), aldrig i huvudet,
+  // så en titel som rättades mitt i pushen hade annars "reparerats" med en PUT som inte bär den.
   const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
-    || !same(fresh.line_items, atBuild.line_items);
+    || !same(fresh.line_items, atBuild.line_items)
+    || !same(subset(fresh, ['project_name']), subset(atBuild, ['project_name']));
   const headerDiffers = !same(subset(fresh.customer_snapshot, MIRRORED_SNAPSHOT_KEYS), subset(atBuild.customer_snapshot, MIRRORED_SNAPSHOT_KEYS))
     || !same(subset(fresh.work_address, MIRRORED_WORK_ADDRESS_KEYS), subset(atBuild.work_address, MIRRORED_WORK_ADDRESS_KEYS))
     || !same(fresh.assigned_to, atBuild.assigned_to);
@@ -947,6 +951,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         assigned_to: workOrder.assigned_to,
         rot_details: workOrder.rot_details ?? null,
         line_items: workOrder.line_items ?? null,
+        project_name: workOrder.project_name ?? null,
       },
     );
 
@@ -1261,6 +1266,7 @@ export async function updateWorkOrderInFortnox(
           assigned_to: workOrder.assigned_to,
           rot_details: workOrder.rot_details ?? null,
           line_items: workOrder.line_items ?? null,
+          project_name: workOrder.project_name ?? null,
         },
       );
       if (mirrorFailed) {
