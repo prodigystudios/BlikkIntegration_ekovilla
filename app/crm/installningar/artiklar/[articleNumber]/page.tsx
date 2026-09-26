@@ -1,6 +1,5 @@
-import { redirect } from 'next/navigation';
-import { getUserProfile } from '@/lib/getUserProfile';
 import { getFortnoxArticleForEdit } from '@/lib/domains/fortnox/articles';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { listFortnoxUnits } from '@/lib/domains/fortnox/units';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import ArticleFormClient, { type ArticleFormInitial } from '../ArticleFormClient';
@@ -9,8 +8,7 @@ import type { FortnoxArticlePriceRow } from '@/lib/domains/fortnox/types';
 export const dynamic = 'force-dynamic';
 
 export default async function RedigeraArtikelPage({ params }: { params: Promise<{ articleNumber: string }> }) {
-  const profile = await getUserProfile();
-  if (profile?.role !== 'admin') redirect('/crm');
+  await requirePagePermission('crm.article.manage', '/crm');
 
   const { articleNumber: raw } = await params;
   const articleNumber = decodeURIComponent(raw);

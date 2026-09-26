@@ -1,14 +1,12 @@
-import { redirect } from 'next/navigation';
-import { getUserProfile } from '@/lib/getUserProfile';
 import { listCachedFortnoxArticles } from '@/lib/domains/fortnox/articles';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import ArticlesClient from './ArticlesClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CrmArticlesPage() {
-  const profile = await getUserProfile();
-  if (profile?.role !== 'admin') redirect('/crm');
+  await requirePagePermission('crm.article.manage', '/crm');
 
   const [articles, fortnoxStatus] = await Promise.all([
     listCachedFortnoxArticles({ activeOnly: false }),

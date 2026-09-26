@@ -7,6 +7,8 @@ import { cn } from '@/lib/shared/cn';
 import { toEffectiveRole, type UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../crm/_lib/nav';
 import { getVisibleAppNavItems } from '../_lib/appNav';
+import { usePermissions } from '@/lib/UserProfileContext';
+import type { PermissionKey } from '@/lib/auth/permissions';
 import ProfileMenu from './ProfileMenu';
 import NotificationBell from '@/components/notifications/NotificationBell';
 
@@ -297,18 +299,21 @@ export default function AppSidebar({
   const pathname = usePathname();
   const inCrm = pathname === '/crm' || pathname.startsWith('/crm/');
   const effRole: UserRole | null = toEffectiveRole(role);
+  // Appmenyns rader gatas på nycklar (se appNav.ts); CRM-navet är fortfarande rollstyrt.
+  const permissions = usePermissions();
+  const can = useCallback((key: PermissionKey) => permissions.has(key), [permissions]);
 
   // Båda navkällorna har samma form, så projektionen till NavNode görs på ett ställe —
   // en andra kopia skulle drifta första gången någon lägger till ett fält i bara den
   // gren hon råkade felsöka.
   const items: NavNode[] = useMemo(() => {
-    const source = inCrm ? getVisibleCrmNavItems(effRole) : getVisibleAppNavItems(effRole);
+    const source = inCrm ? getVisibleCrmNavItems(effRole) : getVisibleAppNavItems(effRole, can);
     return source.map((item) => ({
       href: item.href,
       label: item.label,
       children: item.children?.map((c) => ({ href: c.href, label: c.label })),
     }));
-  }, [inCrm, effRole]);
+  }, [inCrm, effRole, can]);
 
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
