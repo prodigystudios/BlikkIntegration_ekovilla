@@ -28,7 +28,7 @@ export default function CreateAccountPage() {
       const { data, error: signError } = await supabase.auth.signUp({
         email: normalizedEmail,
         password,
-        options: { data: { full_name: fullName.trim(), display_name: fullName.trim(), role: 'member' } }
+        options: { data: { full_name: fullName.trim(), display_name: fullName.trim() } }
       });
       if (signError) { setError(signError.message); setSubmitting(false); return; }
 
@@ -36,10 +36,11 @@ export default function CreateAccountPage() {
       const needsConfirmation = !data.session;
 
       // If we DO have an active session (email confirm not required), patch profile row immediately (trigger already sets it anyway).
+      // Never write `role` here: users cannot update their own role (column grant), and the column default is 'member'.
       if (data.user && data.session) {
         try {
           await supabase.from('profiles')
-            .update({ full_name: fullName.trim(), role: 'member' })
+            .update({ full_name: fullName.trim() })
             .eq('id', data.user.id);
         } catch {/* ignore */}
       }
