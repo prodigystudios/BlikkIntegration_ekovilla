@@ -76,7 +76,7 @@ select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as f
 -- prod här (20260926134651_default_privileges_closed.sql). Globala rader (utan schema) visas som '(globalt)';
 -- saknas en global rad för postgres/funktioner gäller Postgres inbyggda EXECUTE till PUBLIC.
 \echo '== default privileges för postgres (public + globalt)'
-select coalesce(d.defaclnamespace::regnamespace::text, '(globalt)') as schema,
+select case when d.defaclnamespace = 0 then '(globalt)' else d.defaclnamespace::regnamespace::text end as schema,
        d.defaclobjtype as objtype,
        case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end as grantee,
        string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
