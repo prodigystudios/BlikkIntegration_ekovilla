@@ -79,7 +79,7 @@ select p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' as f
 select case when d.defaclnamespace = 0 then '(globalt)' else d.defaclnamespace::regnamespace::text end as schema,
        d.defaclobjtype as objtype,
        case when a.grantee = 0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end as grantee,
-       string_agg(a.privilege_type, ',' order by a.privilege_type) as privileges
+       string_agg(a.privilege_type || case when a.is_grantable then '*' else '' end, ',' order by a.privilege_type) as privileges
   from pg_default_acl d
  cross join lateral aclexplode(d.defaclacl) a
  where d.defaclrole = 'postgres'::regrole
