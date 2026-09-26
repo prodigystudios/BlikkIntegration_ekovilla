@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 
 type QuoteLineItem = {
@@ -107,7 +107,7 @@ type FortnoxOfferRow = {
 // i stället för att utelämnas — se FORTNOX_TEXT_ROW i helpers.ts. Utan dem ärvde raden artikel,
 // pris och husarbete-flagga från raden som låg på samma position före ändringen.
 export function offerTextRow(description: string, vat = 0): FortnoxOfferRow {
-  return { ...fortnoxTextRowFields(), Description: description, Quantity: 0, VAT: vat };
+  return { ...fortnoxTextRowFields(), Description: fortnoxRowText(description), Quantity: 0, VAT: vat };
 }
 
 // Free-text description of a line item's measurements (m² + thickness), shown as its
@@ -159,7 +159,8 @@ export function buildOfferRows(
       // ett utelämnat fält ärver värdet från raden som låg på positionen förut. `null` rensar
       // artikelnumret, `Unit` måste vara tom sträng (null ger 2000699).
       ArticleNumber: item.article_number || null,
-      Description: item.article_name || item.line_note || 'Artikel',
+      // Fritext (benämning eller radtext) — em-streck fäller hela pushen, se fortnoxRowText.
+      Description: fortnoxRowText(item.article_name || item.line_note || 'Artikel'),
       Quantity: quantity,
       Price: price,
       Unit: item.article_unit_name || '',

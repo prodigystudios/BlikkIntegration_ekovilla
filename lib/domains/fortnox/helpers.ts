@@ -542,6 +542,23 @@ export function fortnoxTextRowFields() {
   };
 }
 
+/**
+ * Text som ska stå i en rads Description hos Fortnox.
+ *
+ * 🧨 Fortnox avvisar em-streck (—) i en radbeskrivning med 2000359 "otillåtna tecken" (uppmätt, se
+ * FORTNOX_INTEGRATION.md sekt. 4). Ett enda streck i ett ordernamn, en benämning eller en radtext
+ * fällde alltså HELA pushen — ordern stämplades 'failed' och faktureringen spärrades. Sedan
+ * ordernamnet blev redigerbart efter att ordern skapats (#223) nås det också i efterhand. Strecket
+ * byts mot ett bindestreck på dokumentet; CRM behåller texten som den skrevs.
+ *
+ * ⚠️ BARA EM-STRECKET ÄR UPPMÄTT. Tankstrecket (–) byts av samma skäl: det är vad svensk text och
+ * macOS autokorrektur skriver mellan ord, det ser likadant ut på dokumentet, och bytet kostar
+ * ingenting om Fortnox skulle godta det — men att Fortnox avvisar det är inte bevisat.
+ */
+export function fortnoxRowText(text: string): string {
+  return text.replace(/[\u2013\u2014]/g, '-');
+}
+
 // Appends a document-level text note to a Fortnox row list WITHOUT creating two consecutive
 // text rows — Fortnox treats a second consecutive text row (Description only, no amounts) as a
 // new priced product row. If the last row is already a text row we merge the note into it
@@ -554,11 +571,13 @@ export function appendFortnoxTextNote<T extends { Description: string }>(
   rows: T[], note: string | null | undefined, textRowFields: Omit<T, 'Description'> | null = null,
 ): T[] {
   if (!note) return rows;
+  // Dokumentets textrad bär orderns titel och kundens märkning — fritext, se fortnoxRowText.
+  const text = fortnoxRowText(note);
   const last = rows[rows.length - 1] as (T & { [FORTNOX_TEXT_ROW]?: true }) | undefined;
   if (last?.[FORTNOX_TEXT_ROW]) {
-    last.Description = `${last.Description}  ${note}`;
+    last.Description = `${last.Description}  ${text}`;
   } else {
-    rows.push({ ...(textRowFields ?? {}), Description: note } as T);
+    rows.push({ ...(textRowFields ?? {}), Description: text } as T);
   }
   return rows;
 }

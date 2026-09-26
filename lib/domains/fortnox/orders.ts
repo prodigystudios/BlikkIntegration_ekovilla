@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -138,7 +138,7 @@ type FortnoxOrderRow = {
 // the Radtext to the article row's Description instead — the offer side is unaffected.
 function orderTextRow(description: string, vat = 0): FortnoxOrderRow {
   // Uttryckliga tomvärden i stället för utelämnade fält — se FORTNOX_TEXT_ROW i helpers.ts.
-  return { ...fortnoxTextRowFields(), Description: description, OrderedQuantity: 0, DeliveredQuantity: 0, VAT: vat };
+  return { ...fortnoxTextRowFields(), Description: fortnoxRowText(description), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: vat };
 }
 
 // Exported for tests. NOTE: Fortnox order rows use `OrderedQuantity` (offer rows use
@@ -175,7 +175,8 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
     const row: FortnoxOrderRow = {
       // ⚠️ Sätts ALLTID, även tomt: ett utelämnat fält ärver raden som låg på positionen förut.
       ArticleNumber: item.article_number || null,
-      Description: item.article_name || item.line_note || 'Artikel',
+      // Fritext (benämning eller radtext) — em-streck fäller hela pushen, se fortnoxRowText.
+      Description: fortnoxRowText(item.article_name || item.line_note || 'Artikel'),
       // Fortnox invoices the DELIVERED quantity. A work order is the basis for invoicing
       // the full completed job, so delivered = ordered (otherwise the row sum stays 0 /
       // stale on new or edited rows).

@@ -6,7 +6,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
@@ -272,7 +272,8 @@ export function buildInvoiceRows(
     const discount = lineItemDiscountPercent(item);
     rows.push({
       ...(item.article_number ? { ArticleNumber: item.article_number } : {}),
-      Description: item.article_name || item.line_note || 'Artikel',
+      // Fritext (benämning eller radtext) — em-streck fäller hela pushen, se fortnoxRowText.
+      Description: fortnoxRowText(item.article_name || item.line_note || 'Artikel'),
       DeliveredQuantity: qty,
       Price: lineItemUnitPrice(item),
       // Reverse charge (byggmoms) → 0 % VAT; the invoice's VAT regime comes from the customer
