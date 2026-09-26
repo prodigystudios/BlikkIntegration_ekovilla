@@ -153,6 +153,12 @@ describe('workOrderLineItemWarnings', () => {
     expect(warnings[0]).not.toMatch(/tills raden fått ett pris/);
   });
 
+  // …även när raden ÄNDRAS — att sänka antalet för att stänga ordern är den vanligaste ändringen.
+  it('varnar för en låst rad utan pris även när dess antal sänks', () => {
+    const warnings = workOrderLineItemWarnings([{ ...legacy, quantity: '0' }], { ...base, savedRows: [legacy], lockedIds: new Set(['old']) });
+    expect(warnings.join(' ')).toMatch(/är fakturerad men saknar pris/);
+  });
+
   it('varnar för en orörd rad vars arbetskostnad äter A-priset när ROT är på', () => {
     const row = { id: 'r', article_name: 'Lösull', pricing_mode: 'item', quantity: '1', unit_price: '500', labor_cost: '700' };
     expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [row] })[0]).toMatch(/arbetskostnaden äter hela A-priset/);

@@ -1239,7 +1239,11 @@ export async function saveWorkOrderLineItems(
     return { data: null, error: { message: unpriced }, reason: 'invalid_rows' as const };
   }
 
-  if (wo.partial_invoicing_started_at) {
+  // ⚠️ Så fort RUNDOR finns, inte bara när kolumnen är satt. createPartialInvoice skriver
+  // `partial_invoicing_started_at` EFTER att rundan lagts in, och en misslyckad skrivning där lämnade
+  // rundor utan kolumn — då låstes ingenting, medan prisspärren nedan redan hoppar över fakturerade
+  // rader i tron att de är låsta. Utan fakturerade rader svarar funktionen ok ändå.
+  if (wo.partial_invoicing_started_at || rounds.length > 0) {
     const verdict = validateLineItemEdit(wo.line_items as any, nextLineItems as any, rounds);
     if (!verdict.ok) return { data: null, error: { message: verdict.message }, reason: 'line_invoiced' as const };
   }

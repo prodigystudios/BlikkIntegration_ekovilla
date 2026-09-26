@@ -168,7 +168,10 @@ export function workOrderLineItemWarnings(
   }
   // En FAKTURERAD rad utan pris kan inte få ett (priset är låst) — men synken fallerar ändå, och det
   // ska sägas. Inget råd om att prissätta den: det går inte att följa.
-  const staleLocked = untouchedAll
+  // ⚠️ ÄNDRAD ELLER INTE. Den vanligaste ändringen på en sådan rad är att sänka antalet för att
+  // stänga ordern — och varken prisspärren (hoppar över låsta) eller en varning bara för orörda
+  // rader hade då sagt något.
+  const staleLocked = configuredRows(rows)
     .filter(({ row }) => row.id && opts.lockedIds?.has(row.id))
     .filter(({ row }) => priceMissingAfterSave(row));
   if (staleLocked.length) {

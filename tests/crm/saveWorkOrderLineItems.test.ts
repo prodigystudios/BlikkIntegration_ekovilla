@@ -88,6 +88,21 @@ describe('saveWorkOrderLineItems — spärren före skrivningen', () => {
     expect(update).toHaveBeenCalledTimes(1);
   });
 
+  // 🧨 Rundor utan kolumn (createPartialInvoice skriver kolumnen EFTER rundan, utan felkontroll):
+  // låset måste gälla ändå, annars kan en fakturerad rads pris nollas — prisspärren hoppar över den.
+  it('låser fakturerade rader så fort rundor finns, även utan partial_invoicing_started_at', async () => {
+    const invoiced = { id: 'inv', article_name: 'Frakt', pricing_mode: 'item', quantity: '5', unit_price: '500' };
+    const { client, update } = fakeSupabase(
+      { ...order, line_items: [invoiced], partial_invoicing_started_at: null },
+      [{ line_quantities: [{ line_id: 'inv', index: 0, quantity: 3 }] }],
+    );
+
+    const result = await saveWorkOrderLineItems(client, 'wo-1', [{ ...invoiced, unit_price: '' }]);
+
+    expect(result.reason).toBe('line_invoiced');
+    expect(update).not.toHaveBeenCalled();
+  });
+
   // ROT-spärren är editorns — den läser översiktens UTKAST. Servern ser bara det sparade läget och
   // hade kunnat neka en rad editorn inte ens visar arbetskostnaden för.
   it('prövar inte arbetskostnaden på servern', async () => {
