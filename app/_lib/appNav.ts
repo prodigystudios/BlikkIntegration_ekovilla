@@ -51,13 +51,6 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/plannering', label: 'Planering (äldre)', roles: ['sales', 'admin'] },
   { href: '/crm/korjournal', label: 'Körjournal', permission: 'crm.access' },
 
-  // Kalkylatorn (/offert/kalkylator) är MEDVETET UTE UR MENYN. Ytan används inte alls just nu och
-  // ska byggas om eller tas bort — en meny-rad till något ingen ska använda är bara en väg att
-  // råka gå fel. Rutten lever kvar, så gamla bokmärken och länkar fungerar som förut. Lägg tillbaka
-  // raden här när ytan är ombyggd och beslutad:
-  //   { href: '/offert/kalkylator', label: 'Kalkylator', roles: ['sales', 'admin'] },
-  // (⚠️ startsidans snabblänkar i components/dashboard/ClientDashboard.tsx pekar fortfarande dit.)
-
   // Installer / member block
   { href: '/mina-jobb', label: 'Mina jobb', permission: 'app.jobs.read' },
   // Egenkontrollerna delade tidigare toppnivå som "Egenkontroll" och "Egenkontroller" — en bokstav

@@ -6,12 +6,12 @@ import type { UserRole } from '@/lib/roles';
 import AppSidebar from './AppSidebar';
 
 // Single app shell for all authenticated pages. A few routes render bare, with no
-// chrome: the public auth + customer quote-signing pages, and the installer
+// chrome: the public auth pages, and the installer
 // work-order field view (a focused mobile view opened via direct link; it's still
 // auth-gated in its own page.tsx, it just doesn't want the sidebar). Everywhere
 // else gets the unified context-aware sidebar + content area. The `crm-shell` class
 // carries the sidebar/theme CSS variables app-wide.
-const CHROMELESS_PREFIXES = ['/auth', '/kund/offert', '/arbetsorder'];
+const CHROMELESS_PREFIXES = ['/auth', '/arbetsorder'];
 
 function isChromelessPath(pathname: string) {
   return CHROMELESS_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

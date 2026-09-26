@@ -407,18 +407,6 @@ select.select-field:focus-visible { outline: 2px solid var(--ek-accent); outline
 select.select-field:disabled { opacity: 0.6; cursor: not-allowed; }
 select.select-field option { color: #111827; background-color: #ffffff; }
 
-/* Status color coding (offert-kalkylator sparade) */
-select.select-field.status-select--confirmed {
-  border-color: #16a34a; /* same as .btn--success */
-  color: #16a34a;
-  font-weight: 600;
-}
-select.select-field.status-select--lost {
-  border-color: #dc2626; /* same as .btn--danger */
-  color: #dc2626;
-  font-weight: 600;
-}
-
 /* Modal entrance (CrmModal): overlay fades in; the panel rises as a sheet on phones
    and fades + scales in on desktop. Respects prefers-reduced-motion. */
 @keyframes crmOverlayIn { from { opacity: 0 } to { opacity: 1 } }

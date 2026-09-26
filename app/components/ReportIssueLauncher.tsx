@@ -33,7 +33,7 @@ import {
 // /arbetsorder saknar sidomeny men ÄR en inloggad yta — installatörerna är de som ser flest buggar,
 // så knappen ska finnas där. Därför renderas komponenten utanför AppShell (i root-layouten),
 // bredvid InstallPrompt.
-const HIDDEN_PREFIXES = ['/auth', '/kund/offert'];
+const HIDDEN_PREFIXES = ['/auth'];
 
 function isHiddenPath(pathname: string) {
   return HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));

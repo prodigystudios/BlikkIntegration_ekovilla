@@ -151,14 +151,6 @@ const navIcons: Record<string, JSX.Element> = {
       <circle cx="17.5" cy="17.5" r="4.5" /><path d="M17.5 15.5v2l1.5 1" />
     </svg>
   ),
-  // Ligger kvar fast raden är ute ur menyn: kalkylatorn ska tillbaka när ytan är
-  // ombyggd (se den utkommenterade raden i app/_lib/appNav.ts). Ta bort båda
-  // samtidigt om beslutet i stället blir att skrota ytan.
-  '/offert/kalkylator': (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="4" y="2" width="16" height="20" rx="2" /><line x1="8" y1="6" x2="16" y2="6" /><line x1="8" y1="10" x2="10" y2="10" /><line x1="14" y1="10" x2="16" y2="10" /><line x1="8" y1="14" x2="10" y2="14" /><line x1="14" y1="14" x2="16" y2="14" />
-    </svg>
-  ),
   '/egenkontroll': (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
