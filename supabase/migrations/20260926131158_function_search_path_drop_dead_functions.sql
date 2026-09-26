@@ -50,8 +50,9 @@ drop function if exists public.set_timestamp_crm_prospects();
 
 -- Efterkontroll, samma villkor som advisorn: en funktion i public utan search_path, som inte hör till en extension
 -- (pg_trgm ligger i public). Efteråt får bara de kvarlämnade stå där. Listan prövas som en övre gräns, inte exakt:
--- städningen kan ha tagit bort några av dem före den här filen. En ny funktion utan search_path som dyker upp här
--- avbryter pushen i stället för att tyst bli advisor-varning nummer 34.
+-- städningen kan ha tagit bort några av dem före den här filen. Kontrollen gäller databasen som den ser ut när filen
+-- körs: finns en funktion utan search_path som inte står här (t.ex. något som bara finns i prod) avbryts pushen. En
+-- funktion som en SENARE migrering skapar ser den inte, den syns bara i advisorn.
 do $$
 declare
   kept constant text[] := array[
