@@ -1,6 +1,7 @@
 "use client";
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { TruckAssignment, normalizeAssignments, resolveCrewForDay, ResolvedCrew, getAssignmentsWindowStart, getAssignmentsWindowEnd } from './truckAssignments';
+import { useCan } from './UserProfileContext';
 
 export type TruckAssignmentsState = {
   assignments: TruckAssignment[];
@@ -16,6 +17,10 @@ export function TruckAssignmentsProvider({ children, from, to }: { children: Rea
   const [assignments, setAssignments] = useState<TruckAssignment[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // Providern sitter i rotlayouten, alltså på VARJE sida för VARJE inloggad. Bara de som ser
+  // planeringen (samma nyckel som rutten kräver) hämtar — för alla andra hade det varit ett onödigt
+  // anrop och en 403 per sidladdning. Konsumenterna är gamla /plannering och /admin/trucks/assignments.
+  const canRead = useCan('planning.schedule.read');
 
   const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
   const defaultFrom = useMemo(() => from ?? getAssignmentsWindowStart(todayISO, 60), [from, todayISO]);
@@ -40,9 +45,10 @@ export function TruckAssignmentsProvider({ children, from, to }: { children: Rea
   }
 
   useEffect(() => {
+    if (!canRead) return;
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultFrom, defaultTo]);
+  }, [defaultFrom, defaultTo, canRead]);
 
   const resolveCrew = (truckId: string, dayISO: string): ResolvedCrew => {
     return resolveCrewForDay(truckId, dayISO, assignments);

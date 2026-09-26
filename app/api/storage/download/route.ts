@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { downloadQuerySchema, getStorageAdminOrThrow, routeError, sanitizeStoragePath } from '../_lib';
+import { requireAnyPermission } from '@/lib/auth/guards';
+import { ARCHIVE_DOWNLOAD_KEYS, downloadQuerySchema, getStorageAdminOrThrow, routeError, sanitizeStoragePath } from '../_lib';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    // Service-role, förbi RLS — grinden är den enda. Arkivläsarna ELLER den som läser arbetsordern där
+    // länken står; varför: ../_lib.ts.
+    const access = await requireAnyPermission(ARCHIVE_DOWNLOAD_KEYS);
+    if (access.response) return access.response;
     const parsedQuery = downloadQuerySchema.safeParse({
       path: req.nextUrl.searchParams.get('path') || undefined,
     });

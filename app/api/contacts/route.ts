@@ -1,5 +1,6 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/auth/guards';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
@@ -40,6 +41,10 @@ async function loadContactsDataset(client: { from: (...args: any[]) => any }) {
 }
 
 export async function GET() {
+  // Kontaktlistan (personalens nummer, depåer, adresser). Läses med en förhöjd reserv nedan, så grinden
+  // får inte vara bara "inloggad": app.contacts.read = alla anställda, inte lönebyrån.
+  const access = await requirePermission('app.contacts.read');
+  if (access.response) return access.response;
   const supabase = createSessionClient();
   const admin = getOptionalSupabaseAdmin();
 

@@ -19,9 +19,11 @@ export type CustomerContact = {
 };
 
 // Loads the customer contact (name/phone/email) to show on a work order. Goes through the
-// work-order-scoped endpoint (open to any signed-in user) rather than the CRM-gated
-// customer endpoint, so installers/member also get the contact — and only these three
-// fields are exposed, not the full customer record. Shared by editor + installer view.
+// work-order-scoped endpoint rather than the CRM-gated customer endpoint, so the crew (installers,
+// member) also get the contact — and only these three fields are exposed, not the full customer
+// record. The endpoint answers only for an order the reader can see under their own RLS (crew policy
+// or crm.workorder.read); otherwise `null`, same as an order without a contact. Shared by editor +
+// installer view.
 export function useCustomerContact(workOrderId: string | null | undefined): CustomerContact | null {
   const [contact, setContact] = useState<CustomerContact | null>(null);
 

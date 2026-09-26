@@ -1,9 +1,14 @@
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { requirePermission } from '@/lib/auth/guards';
 
 // GET /api/planning/truck-assignments?from=YYYY-MM-DD&to=YYYY-MM-DD
 export async function GET(req: Request) {
   try {
+    // Service-role, förbi RLS — grinden här är den enda. planning.schedule.read = de som ser
+    // planeringen (sales, admin, konsult); montörer och lönebyrån läser inte bilarnas bemanning här.
+    const access = await requirePermission('planning.schedule.read');
+    if (access.response) return access.response;
     const url = new URL(req.url);
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');

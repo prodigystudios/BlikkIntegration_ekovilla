@@ -44,6 +44,18 @@ export function routeError(status: number, code: string, message: string, detail
   );
 }
 
+// ── Grindarna ──────────────────────────────────────────────────────────────────────────────────
+// Arkivet ligger i en privat bucket och läses med service-role — FÖRBI RLS. Grinden i varje route är
+// därför den enda. app.archive.read = alla anställda (member, sales, admin, konsult), inte lönebyrån
+// och inte ett okänt konto.
+//
+// ⚠️ NEDLADDNINGEN släpper också igenom den som läser arbetsordrar (crm.workorder.read): länkar till
+// egenkontroller ligger permanent i Blikk- och arbetsorderkommentarer och på orderns säckkort, och
+// lönebyrån (ekonomi) läser ordrarna för fakturaunderlaget utan att ha arkivet. Hon kunde ladda ned
+// dem förut; att stänga det vore ett eget beslut. Listan (list, list-all) kräver arkivnyckeln.
+export const ARCHIVE_READ_KEY = 'app.archive.read' as const;
+export const ARCHIVE_DOWNLOAD_KEYS = [ARCHIVE_READ_KEY, 'crm.workorder.read'] as const;
+
 export function getStorageAdminOrThrow() {
   // Service role is required here because archive files live in a private bucket
   // and list-all may query storage.objects directly when the storage API view is incomplete.

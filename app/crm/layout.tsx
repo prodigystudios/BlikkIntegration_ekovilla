@@ -8,5 +8,5 @@ export const dynamic = 'force-dynamic';
 // (/ekonomi/arbetsorder) just för att hela /crm ligger bakom den här grinden.
 export default async function CrmLayout({ children }: { children: ReactNode }) {
   await requirePagePermission('crm.access');
-  return <>{children}</>;
+  return children;
 }
