@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
 
 describe('lineItemQuantity', () => {
   it('computes m³ volume from m² × thickness/1000', () => {
@@ -145,5 +145,25 @@ describe('isConfiguredLineItem – råa databasvärden', () => {
     expect(() => isConfiguredLineItem({ m2: 120 as unknown as string })).not.toThrow();
     expect(isConfiguredLineItem({ m2: 120 as unknown as string })).toBe(true);
     expect(isConfiguredLineItem({ quantity: 0 as unknown as string })).toBe(true);
+  });
+});
+
+// Prissättningsläget ur artikelns enhet. Offerten och arbetsordern hade var sin kopia av regeln;
+// nu delar de den, och därmed också vad en felstavad enhet blir.
+describe('pricingModeFromUnit', () => {
+  it('läser kubikenheterna som m³-prissättning', () => {
+    expect(pricingModeFromUnit('m3')).toBe('m3');
+    expect(pricingModeFromUnit('m³')).toBe('m3');
+    expect(pricingModeFromUnit(' M3 ')).toBe('m3');
+    expect(pricingModeFromUnit('m ³')).toBe('m3');
+  });
+
+  it('läser allt annat — och ingen enhet alls — som styckpris', () => {
+    expect(pricingModeFromUnit('st')).toBe('item');
+    expect(pricingModeFromUnit('m')).toBe('item');
+    expect(pricingModeFromUnit('m2')).toBe('item');
+    expect(pricingModeFromUnit('')).toBe('item');
+    expect(pricingModeFromUnit(null)).toBe('item');
+    expect(pricingModeFromUnit(undefined)).toBe('item');
   });
 });

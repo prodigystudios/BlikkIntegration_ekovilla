@@ -21,6 +21,14 @@ export function lineItemQuantity(item: LineItemQuantitySource): number {
   return parseDecimal(item.quantity);
 }
 
+// Prissättningsläget en artikels enhet ger: m³-artiklar prissätts per kubik (yta × tjocklek),
+// allt annat per styck. Sätts när en artikel väljs på en rad — i offerten och på arbetsordern, som
+// tidigare hade var sin kopia av samma regex.
+export function pricingModeFromUnit(unit: string | null | undefined): 'm3' | 'item' {
+  const u = (unit || '').trim().toLowerCase();
+  return u === 'm3' || u === 'm³' || /m\s*³/.test(u) ? 'm3' : 'item';
+}
+
 export type LineItemContentSource = {
   article_name?: string | null;
   article_number?: string | null;

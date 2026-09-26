@@ -8,16 +8,18 @@ import DatePicker from '../../../components/ui/DatePicker';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
-import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem } from '@/lib/domains/crm/lineItems';
+import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
 import { constructionLabel, inferConstructionFromArticle, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import {
   rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
-  type MarginRow, type MarginTier,
+  type MarginRow,
 } from '@/lib/domains/crm/pricing';
 import { calculatePreCalculation, marginCostBasis } from '@/lib/domains/crm/preCalculation';
+import { getArticleUnitName } from '@/app/crm/components/ArticlePicker';
+import LineItemRow, { MarginBadge } from '@/app/crm/components/LineItemRow';
+import { LineItemTotalsBar, GeneratedRotLaborRow } from '@/app/crm/components/LineItemSummary';
 import { useCalcSettings } from './useCalcSettings';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { formatQuantity } from '@/app/crm/lib/format';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
@@ -59,7 +61,6 @@ import {
   hasMeasurementBlock,
   replaceMeasurementBlock,
 } from '@/lib/domains/crm/measurementBlock';
-import { ROT_HOUSE_WORK_TYPES, ROT_HOUSE_WORK_LABELS, ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -78,23 +79,6 @@ type EffectiveRow = QuoteLineItem & {
   // getValidationIssues och splitRowLabor.
   rotLaborLeavesNoMaterial: boolean;
   isConfigured: boolean;
-};
-
-type ArticleLite = {
-  id?: string;
-  name?: string;
-  articleNumber?: string;
-  price?: number | null;
-  unit?: string | { name?: string | null; objectiveName?: string | null } | null;
-  isFavorite?: boolean;
-  // Artikelns beskrivning ur registret. INTERN hjälptext för säljaren — se article_note på raden.
-  note?: string | null;
-  // Inköpspris ur artikelcachen, för täckningsgraden. Lagras ALDRIG på offertraden (se pricing.ts):
-  // line_items följer med till fältvyn, och där har installatörerna inget med inköpspriser att göra.
-  purchasePrice?: number | null;
-  // Artikelregistrets standard för "ta med i arbetsbeskrivningen". Bara ett utgångsläge för en NY
-  // rad — se include_in_description på QuoteLineItem.
-  includeInWorkDescription?: boolean;
 };
 
 type CrmCustomerLite = {
@@ -128,12 +112,6 @@ const quoteStatusMeta: Record<QuoteItem['status'], { label: string; className: s
   won: { label: 'Vunnen', className: 'border-emerald-200 bg-emerald-50 text-emerald-900' },
   lost: { label: 'Förlorad', className: 'border-rose-200 bg-rose-50 text-rose-800' },
 };
-
-function getArticleUnitName(unit: ArticleLite['unit']) {
-  if (!unit) return '';
-  if (typeof unit === 'string') return unit;
-  return String(unit.name || unit.objectiveName || '');
-}
 
 function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
@@ -265,200 +243,6 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     }
   }
   return issues;
-}
-
-// ─── ArticlePicker ────────────────────────────────────────────────────────────
-
-function ArticlePicker({ value, articleNumber, price, unit, note, purchasePrice, onSelect, onClear }: {
-  value: string;
-  articleNumber?: string | null;
-  price?: number | null;
-  unit?: string | null;
-  /** Artikelns beskrivning ur registret — INTERN hjälptext, når aldrig Fortnox. */
-  note?: string | null;
-  /** Inköpspris per enhet ur artikelregistret. Visas som underlag till täckningsgraden — utan
-   *  kronorna är procenten svår att förhandla mot. Lagras aldrig på raden (se pricing.ts). */
-  purchasePrice?: number | null;
-  onSelect: (article: ArticleLite) => void;
-  onClear: () => void;
-}) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<ArticleLite[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  // When an article is picked we show a solid "selected" card instead of the search box.
-  // "Byt" flips into search mode; selecting or cancelling returns to the card.
-  const [searching, setSearching] = useState(false);
-
-  // Toggle a global favorite (shared across sellers). Optimistic; floats favorites to the top.
-  // onMouseDown + preventDefault so the star click doesn't blur the search input (which would
-  // close the dropdown before the toggle registers), and doesn't select the article.
-  async function toggleFavorite(item: ArticleLite, e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const articleNumber = item.articleNumber;
-    if (!articleNumber) return;
-    const next = !item.isFavorite;
-    setItems((prev) => {
-      const updated = prev.map((a) => (a.articleNumber === articleNumber ? { ...a, isFavorite: next } : a));
-      return [...updated.filter((a) => a.isFavorite), ...updated.filter((a) => !a.isFavorite)];
-    });
-    try {
-      await fetch(`/api/fortnox/articles/${encodeURIComponent(articleNumber)}/favorite`, { method: next ? 'POST' : 'DELETE' });
-    } catch { /* best-effort — keep the optimistic state */ }
-  }
-
-  useEffect(() => {
-    // Open with no query → default list (recent articles); typed query → search.
-    if (!open) { setItems([]); return; }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    const q = query.trim();
-    // Debounce typed queries so a fast typist doesn't fire a cache query per keystroke;
-    // the initial open (empty query) loads immediately.
-    const timer = setTimeout(() => {
-      const url = q.length >= 1
-        ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20`
-        : `/api/fortnox/articles?limit=20`;
-      fetch(url, { cache: 'no-store' })
-        .then((r) => r.json().catch(() => ({})))
-        .then((json) => {
-          if (!cancelled) {
-            const raw: Array<{ article_number: string; description: string | null; note?: string | null; sales_price: number | null; purchase_price?: number | null; unit: string | null; is_favorite?: boolean; include_in_work_description?: boolean }> =
-              Array.isArray(json?.data?.items) ? json.data.items : [];
-            setItems(raw.map((a) => ({
-              id: a.article_number,
-              name: a.description ?? undefined,
-              articleNumber: a.article_number,
-              price: a.sales_price,
-              unit: a.unit ?? undefined,
-              isFavorite: a.is_favorite ?? false,
-              note: a.note ?? null,
-              purchasePrice: a.purchase_price ?? null,
-              includeInWorkDescription: a.include_in_work_description ?? false,
-            })));
-          }
-        })
-        .catch(() => { if (!cancelled) { setError('Kunde inte hämta artiklar'); setItems([]); } })
-        .finally(() => { if (!cancelled) setLoading(false); });
-    }, q.length >= 1 ? 250 : 0);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [open, query]);
-
-  // Solid "selected article" card — makes a chosen article unmistakable (vs the old
-  // faded-placeholder look). "Byt" reopens the search; "Rensa" empties the row's article.
-  if (value && !searching) {
-    const meta = [
-      articleNumber || 'Utan artikelnummer',
-      typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
-      getArticleUnitName(unit) || null,
-      // Inköpspriset som underlag till TG-märket på raden: procenten säger att marginalen är tunn,
-      // kronorna säger hur mycket utrymme som faktiskt finns kvar att förhandla med.
-      typeof purchasePrice === 'number' ? `Inköp ${purchasePrice.toFixed(2)} kr` : null,
-    ].filter(Boolean).join(' · ');
-    return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
-        <div className="grid min-w-0 gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
-          <span className="truncate text-sm font-semibold text-slate-900">{value}</span>
-          {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
-          {/* Artikelns beskrivning ur registret — INTERN. Ett stöd för säljaren att se vad artikeln
-              faktiskt innehåller; den skickas aldrig med till Fortnox och syns inte på offerten.
-              Inte truncate: hela poängen är att kunna läsa texten. Tre rader räcker för de
-              beskrivningar som finns och hindrar en lång text från att svälla ut raden. */}
-          {/* text-xs/slate-500 är repots hjälptext-token, inte 11px/slate-400 som stod här först:
-              slate-400 på vitt ligger kring 3:1 i kontrast, under gränsen för läsbar brödtext.
-              Beskrivningen är dessutom den längsta texten i kortet och den enda man faktiskt läser
-              — meta-raden ovanför är siffror man skummar. Att göra den minst och ljusast var
-              bakvänt. */}
-          {note?.trim() ? (
-            <span className="line-clamp-3 text-xs leading-relaxed text-slate-500">{note.trim()}</span>
-          ) : null}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300"
-          >
-            Byt
-          </button>
-          <button
-            type="button"
-            onClick={onClear}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-rose-300 hover:text-rose-600"
-          >
-            Rensa
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="relative">
-      <div className="flex gap-2">
-        <Input
-          value={query}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setTimeout(() => { setOpen(false); setSearching(false); }, 150)}
-          placeholder="Sök eller välj artikel…"
-          autoFocus={searching}
-        />
-        {value ? (
-          <button type="button" onClick={() => setSearching(false)} className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition-colors hover:border-slate-300">
-            Avbryt
-          </button>
-        ) : null}
-      </div>
-      {open ? (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
-          {loading ? <div className="px-4 py-3 text-sm text-slate-400">Söker…</div> : null}
-          {error ? <div className="px-4 py-3 text-sm text-rose-600">{error}</div> : null}
-          {!loading && !error && items.length === 0 ? <div className="px-4 py-3 text-sm text-slate-400">Inga artiklar hittades.</div> : null}
-          {!loading && !error && query.trim().length === 0 && items.length > 0 ? (
-            <p className="px-4 pt-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Senaste artiklar</p>
-          ) : null}
-          {!loading && !error ? items.map((item) => (
-            <div
-              key={item.id || item.articleNumber || item.name}
-              className="flex items-center gap-1 border-b border-slate-100 pr-2 transition last:border-b-0 hover:bg-slate-50"
-            >
-              <button
-                type="button"
-                aria-label={item.isFavorite ? 'Ta bort favorit' : 'Markera som favorit'}
-                aria-pressed={item.isFavorite}
-                title={item.isFavorite ? 'Favorit — visas överst' : 'Markera som favorit'}
-                onMouseDown={(e) => toggleFavorite(item, e)}
-                className="shrink-0 rounded-md px-2 py-2 text-lg leading-none transition-colors hover:bg-amber-50"
-              >
-                <span className={item.isFavorite ? 'text-amber-400' : 'text-slate-300'}>{item.isFavorite ? '★' : '☆'}</span>
-              </button>
-              <button
-                type="button"
-                // onMouseDown (not onClick) so the selection commits on press — before the
-                // input's blur-timeout closes the list and before a pending debounce refetch
-                // swaps the row out from under the click. Mirrors CustomerSearchPicker and the
-                // favorite star above. preventDefault keeps input focus so no blur fires.
-                onMouseDown={(e) => { e.preventDefault(); onSelect(item); setOpen(false); setQuery(''); setSearching(false); }}
-                className="flex min-w-0 flex-1 flex-col items-start gap-0.5 py-2.5 pr-2 text-left"
-              >
-                <span className="truncate text-sm font-medium text-slate-900">{item.name || 'Artikel'}</span>
-                <span className="text-xs text-slate-400">
-                  {item.articleNumber || 'Utan artikelnummer'}
-                  {typeof item.price === 'number' ? ` · ${item.price.toFixed(2)} kr` : ''}
-                  {getArticleUnitName(item.unit) ? ` · ${getArticleUnitName(item.unit)}` : ''}
-                </span>
-              </button>
-            </div>
-          )) : null}
-        </div>
-      ) : null}
-    </div>
-  );
 }
 
 // ─── CustomerSearchPicker ─────────────────────────────────────────────────────
@@ -645,7 +429,7 @@ function SectionHeader({
   );
 }
 
-// ─── LineItemRow (one product/price row) ──────────────────────────────────────
+// ─── SortableLineItem (drag-and-drop wrapper for the shared LineItemRow) ───────
 
 // Sortable wrapper for a line item (drag-and-drop reordering). Owns the sortable node ref +
 // transform; hands a drag-handle button (wired to the sensor listeners) to LineItemRow so the
@@ -671,306 +455,6 @@ function SortableLineItem({ id, children }: { id: string; children: (dragHandle:
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.6 : 1, zIndex: isDragging ? 20 : undefined }} className="relative">
       {children(handle)}
-    </div>
-  );
-}
-
-// ─── MarginBadge ──────────────────────────────────────────────────────────────
-//
-// Täckningsgrad per rad, färgad efter MARGIN_THRESHOLDS. Ett stöd för säljaren att se när en
-// rabatt äter marginalen — inte en spärr: rött hindrar ingen från att spara eller skicka, det
-// säger att offerten behöver godkännas.
-//
-// Saknas inköpspris visas INGET märke alls (61 av 289 artiklar har inget). Ett grått "?" på var
-// femte rad hade blivit brus, och en avsaknad av pris är inte en dålig affär.
-function MarginBadge({ marginPercent, className }: { marginPercent: number | null; className?: string }) {
-  const tier = marginTier(marginPercent);
-  if (tier === 'unknown' || marginPercent == null) return null;
-
-  // Egna klasser i stället för Badge-primitiven: den här ska vara liten och sifferorienterad
-  // (tabular-nums så procenten inte hoppar i sidled när säljaren skriver i prisfältet).
-  const styles: Record<Exclude<MarginTier, 'unknown'>, string> = {
-    good: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-    watch: 'border-amber-200 bg-amber-50 text-amber-700',
-    bad: 'border-rose-200 bg-rose-50 text-rose-700',
-  };
-  const titles: Record<Exclude<MarginTier, 'unknown'>, string> = {
-    good: `Täckningsgrad ${marginPercent.toFixed(1)} % – över ${MARGIN_THRESHOLDS.good} %`,
-    watch: `Täckningsgrad ${marginPercent.toFixed(1)} % – grönt kräver över ${MARGIN_THRESHOLDS.good} %, se över priset`,
-    bad: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.watch} %, offerten kräver godkännande`,
-  };
-
-  return (
-    <span
-      title={titles[tier]}
-      className={cn(
-        // En decimal, inte toFixed(0): 34,6 % är rött men avrundades till "TG 35 %" — märket
-        // påstod exakt den tröskel det låg under. Siffran måste hamna på samma sida som färgen.
-        'inline-flex items-center gap-1 rounded-md border border-solid px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
-        styles[tier],
-        className,
-      )}
-    >
-      TG {marginPercent.toFixed(1)} %
-    </span>
-  );
-}
-
-// Hur "Varav arbetskostnad" delar radens pris, i klartext under fältet.
-//
-// Två saker har lästs fel i verkligheten, och raden här finns för att båda ska synas direkt:
-// beloppet är ett À-PRIS som räknas mot kubiken (500 kr arbete på 10 m³ blir 5 000 kr, på 30 m³
-// blir det 15 000), och det är en UTBRYTNING ur A-priset, inte ett tillägg ovanpå det.
-function LaborCarveoutHint({
-  laborCost, unitPrice, discountPercent, quantity, unitLabel,
-}: {
-  laborCost: string;
-  unitPrice: number;
-  discountPercent: number;
-  quantity: number;
-  unitLabel: string;
-}) {
-  const { labor, material, rowTotal, leavesNoMaterial } = splitRowLabor({
-    laborCostPerUnit: laborCost, unitPrice, discountPercent, quantity,
-  });
-
-  if (leavesNoMaterial) {
-    return (
-      <p className="m-0 mt-1 text-[11px] leading-snug text-rose-700">
-        Arbetet är hela A-priset ({formatCurrency(unitPrice, 'SEK')}/{unitLabel}) — inget material blir
-        kvar. Ingen arbetskostnad bryts ut förrän det rättas. A-priset ska vara HELA priset, och det
-        här beloppet den del av det som är arbete.
-      </p>
-    );
-  }
-  if (labor > 0) {
-    return (
-      <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">
-        {formatCurrency(labor, 'SEK')} arbete av radens {formatCurrency(rowTotal, 'SEK')} — resten,
-        {' '}{formatCurrency(material, 'SEK')}, är material.
-      </p>
-    );
-  }
-  return (
-    <p className="m-0 mt-1 text-[11px] leading-snug text-slate-400">
-      Per {unitLabel}, som A-priset. Bryts ut ur det — höjer det inte.
-    </p>
-  );
-}
-
-function LineItemRow({
-  row,
-  index,
-  metrics,
-  rotEnabled,
-  marginPercent,
-  purchasePrice,
-  expanded,
-  onToggle,
-  onChange,
-  onSelectArticle,
-  onClearArticle,
-  onRemove,
-  dragHandle,
-}: {
-  row: QuoteLineItem;
-  index: number;
-  metrics: EffectiveRow | undefined;
-  rotEnabled: boolean;
-  /** Radens täckningsgrad i procent, eller null när artikeln saknar inköpspris. */
-  marginPercent: number | null;
-  /** Artikelns inköpspris per enhet, visat som underlag till täckningsgraden. */
-  purchasePrice: number | null;
-  // Accordion: which row is open is owned by the parent so opening one collapses the rest.
-  expanded: boolean;
-  onToggle: (next: boolean) => void;
-  onChange: (patch: Partial<QuoteLineItem>) => void;
-  onSelectArticle: (article: ArticleLite) => void;
-  onClearArticle: () => void;
-  onRemove: () => void;
-  dragHandle?: React.ReactNode;
-}) {
-  const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
-  // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
-  // is on and the row isn't already flagged as full ROT work (its whole price is then the labour).
-  const showLaborField = rotEnabled && !row.is_rot_work;
-  // Samma enhet som raden prissätts i, så "kr/m³" respektive "kr/st" står bredvid rätt tal.
-  const laborUnitLabel = isM3 ? 'm³' : (row.article_unit_name?.trim() || 'st');
-
-  // ── Collapsed: single overview line ──────────────────────────────────────────
-  if (!expanded) {
-    return (
-      <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
-        {dragHandle}
-        <button type="button" onClick={() => onToggle(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-            {row.article_name || <span className="text-slate-400">Välj artikel…</span>}
-          </span>
-          {metrics?.isConfigured ? (
-            <span className="hidden shrink-0 text-xs tabular-nums text-slate-400 sm:inline">
-              {formatQuantity(metrics.amount)} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
-            </span>
-          ) : null}
-          {row.is_rot_work ? (
-            <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">ROT</span>
-          ) : null}
-          <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-900">
-            {formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
-          </span>
-          <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden className="shrink-0 text-slate-300">
-            <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </button>
-        <button type="button" onClick={onRemove} aria-label="Ta bort rad" className="shrink-0 px-1 text-slate-300 transition-colors hover:text-rose-600">
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-        </button>
-      </div>
-    );
-  }
-
-  // ── Expanded: full editor ────────────────────────────────────────────────────
-  return (
-    <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={() => onToggle(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
-            Fäll ihop ▴
-          </button>
-          <button type="button" onClick={onRemove} className="text-xs text-slate-400 transition-colors hover:text-rose-600">
-            Ta bort
-          </button>
-        </div>
-      </div>
-
-      <ArticlePicker
-        value={row.article_name || ''}
-        articleNumber={row.article_number}
-        price={row.article_price}
-        unit={row.article_unit_name}
-        note={row.article_note}
-        purchasePrice={purchasePrice}
-        onSelect={onSelectArticle}
-        onClear={onClearArticle}
-      />
-
-      {/* Editable display name (Description) for the picked article — e.g. rename a generic
-          "Övrigt" article to something descriptive. Only the row's Description changes; the
-          article number/price/unit stay intact, and this text is what buildOfferRows sends to
-          Fortnox as the row Description. Shown once an article is selected. */}
-      {row.article_name ? (
-        <Field label="Benämning på offerten">
-          <Input
-            value={row.article_name}
-            onChange={(e) => onChange({ article_name: e.target.value })}
-            placeholder="Namn som visas på offerten"
-          />
-        </Field>
-      ) : null}
-
-      {/* Mätning: area/thickness/density (m³) or quantity (styckepris). */}
-      <div className="grid gap-3 sm:grid-cols-3">
-        {isM3 ? (
-          <>
-            <Field label="m²"><Input value={row.m2} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
-            <Field label="Tjocklek mm"><Input value={row.thickness_mm} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" /></Field>
-            <Field label="Densitet (kg/m³)"><Input value={row.density} onChange={(e) => onChange({ density: e.target.value })} inputMode="decimal" placeholder="t.ex. 45" /></Field>
-          </>
-        ) : (
-          <Field label="Antal"><Input value={row.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
-        )}
-      </div>
-
-      {/* Ekonomi: A-pris, (ROT-arbetskostnad), rabatt on one straight row. */}
-      <div className={cn('grid gap-3', showLaborField ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}>
-        {/* A-priset är ETT fält, alltid skrivbart. Att välja en artikel kopierar in dess pris i
-            `unit_price` (se onSelectArticle), så en artikelrad ser ut precis som förut — men
-            fältet är inte längre låst mot ett påhittat värde. Kryssrutan "Manuellt pris" som stod
-            här växlade bara mellan 900-stubben och ett skrivet pris och har därför tagits bort.
-
-            ⚠️ Fältet speglar `unit_price` RAKT AV och får aldrig falla tillbaka på `article_price` i
-            renderingen. En sådan reserv gör fältet omöjligt att tömma: tomt värde → artikelpriset
-            fylls i igen → nästa tecken läggs till på slutet (900 blir 900750). En sparad rad som
-            bär artikelpris utan A-pris normaliseras i stället EN gång vid inläsningen. */}
-        <Field label="A-pris">
-          <Input
-            value={row.unit_price}
-            onChange={(e) => onChange({ unit_price: e.target.value, auto_price: false })}
-            inputMode="decimal"
-            // ⚠️ ALDRIG "0" som platshållare här. Ett tomt fält renderade då en grå nolla, och en
-            // säljare som läste den som ett satt pris rörde aldrig fältet — så sparades raden utan
-            // prisuppgift. Det har hänt skarpt: en fraktrad som skulle vara "ingår" blev en rad helt
-            // utan pris, vilket ser likadant ut i summan men betyder något annat. Vill man verkligen
-            // ha noll ska nollan SKRIVAS, för då är den ett beslut och inte en tom ruta.
-            placeholder="t.ex. 750"
-          />
-        </Field>
-        {/* Carve out the labour portion of a material row for ROT: the amount here is moved onto the
-            separate "Arbetskostnad ROT" row and deducted from this row (total unchanged).
-
-            ⚠️ Hjälptexten under fältet är inte pynt. "Varav" har lästs som "plus": säljaren sänkte
-            A-priset från 500 till 300 kr/m³ och skrev 200 här i tron att raden landade på 500 igen.
-            Den gör den inte — raden blir 300 kr/m³, offerten blir billigare än den skulle, och ROT
-            begärs på 200 kr i stället för 200 kr × volymen. Texten visar delningen i kronor så fort
-            ett belopp finns, så felet syns i samma ögonblick det görs. */}
-        {showLaborField ? (
-          <Field label={`Varav arbetskostnad (ROT, kr/${laborUnitLabel})`}>
-            <Input value={row.labor_cost} onChange={(e) => onChange({ labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
-            <LaborCarveoutHint
-              laborCost={row.labor_cost}
-              unitPrice={metrics?.unit ?? 0}
-              discountPercent={parseDecimal(row.discount_percent)}
-              quantity={metrics?.amount ?? 0}
-              unitLabel={laborUnitLabel}
-            />
-          </Field>
-        ) : null}
-        <Field label="Rabatt %"><Input value={row.discount_percent} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        {/* Bara antals-/meterrader. En yta är själva jobbet och står alltid i beskrivningen — ett
-            kryss där hade varit ett dött val, eller värre: en väg att råka dölja måttet. */}
-        {!isM3 ? (
-          <label
-            className="inline-flex items-center gap-2 text-xs text-slate-500"
-            title="Tas med som eget moment i arbetsbeskrivningen installatören läser"
-          >
-            <input
-              type="checkbox"
-              checked={row.include_in_description}
-              onChange={(e) => onChange({ include_in_description: e.target.checked })}
-              className="h-3.5 w-3.5 accent-[color:var(--ek-accent)]"
-            />
-            I arbetsbeskrivningen
-          </label>
-        ) : null}
-        {rotEnabled ? (
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-            <input type="checkbox" checked={row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
-            ROT-arbete
-          </label>
-        ) : null}
-        {rotEnabled && row.is_rot_work ? (
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
-            Typ
-            <Select value={row.house_work_type} onChange={(e) => onChange({ house_work_type: e.target.value })} className="min-h-8 py-0 text-xs">
-              {ROT_HOUSE_WORK_TYPES.map((type) => (<option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>))}
-            </Select>
-          </label>
-        ) : null}
-        {/* ml-auto MÅSTE sitta på summan, inte på märket: MarginBadge renderar null när
-            inköpspriset saknas (61 av 289 artiklar, plus varje rad utan vald artikel), och då
-            tappade beloppet sin högerställning och hoppade i sidled mellan raderna. */}
-        <span className="ml-auto flex items-center gap-2 text-sm font-semibold tabular-nums text-slate-900">
-          <MarginBadge marginPercent={marginPercent} />{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
-        </span>
-      </div>
-
-      <Field label="Radtext"><Input value={row.line_note} onChange={(e) => onChange({ line_note: e.target.value })} placeholder="Fritext för raden" /></Field>
     </div>
   );
 }
@@ -2715,48 +2199,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
 
           {/* Totals bar */}
           {hasAnyLineItemInput ? (
-            <div className="mb-6 flex items-center gap-8 rounded-xl bg-slate-50 px-5 py-4">
-              <div className="grid gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Delsumma</span>
-                <span className="text-sm font-semibold text-slate-900">{formatCurrency(totals.subtotal, 'SEK')}</span>
-              </div>
-              <div className="grid gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Moms ({vatPct} %)</span>
-                <span className="text-sm font-semibold text-slate-900">{formatCurrency(totals.vat, 'SEK')}</span>
-              </div>
-              <div className="grid gap-0.5">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Rader</span>
-                <span className="text-sm font-semibold text-slate-900">{configuredRows.length} st</span>
-              </div>
-              {/* Labour carved out of the material rows (each row's "Varav arbetskostnad"), which is
-                  summed into one "Arbetskostnad ROT" row (art. 10058) on the Fortnox offer. Shown here
-                  with the other line totals so all prices sit in one place. */}
-              {totals.carvedLabor > 0 ? (
-                <div className="grid gap-0.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Arbetskostnad ROT</span>
-                  <span className="text-sm font-semibold text-emerald-700">{formatCurrency(totals.carvedLabor, 'SEK')}</span>
-                </div>
-              ) : null}
-              {totals.rotDeduction > 0 ? (
-                <div className="grid gap-0.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Avgår ROT</span>
-                  <span className="text-sm font-semibold text-emerald-700">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
-                </div>
-              ) : null}
-              <div className="ml-auto grid gap-0.5 text-right">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                  {headlineLabel}
-                </span>
-                <span className="text-base font-bold text-slate-950">
-                  {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
-                </span>
-                {isPrivateQuote && totals.rotDeduction > 0 ? (
-                  <span className="text-[11px] text-slate-400">Kund betalar efter ROT {formatCurrency(totals.toPay, 'SEK')}</span>
-                ) : !isPrivateQuote ? (
-                  <span className="text-[11px] text-slate-400">Inkl. moms {formatCurrency(totals.total, 'SEK')}</span>
-                ) : null}
-              </div>
-            </div>
+            <LineItemTotalsBar
+              subtotal={totals.subtotal}
+              vat={totals.vat}
+              vatPercent={vatPct}
+              total={totals.total}
+              toPay={totals.toPay}
+              rowCount={configuredRows.length}
+              carvedLabor={totals.carvedLabor}
+              rotDeduction={totals.rotDeduction}
+              isPrivate={isPrivateQuote}
+            />
           ) : (
             <p className="mb-6 text-sm text-slate-400">
               Grundbelopp används om inga rader läggs till. Lägg till rader för att bygga offertens summering.
@@ -2786,8 +2239,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 onSelectArticle={(article) => {
                   const construction = inferConstructionFromArticle(article.name);
                   const unitName = getArticleUnitName(article.unit);
-                  const normalizedUnit = unitName.trim().toLowerCase();
-                  const pricingMode: 'm3' | 'item' = normalizedUnit === 'm3' || normalizedUnit === 'm³' || /m\s*³/i.test(normalizedUnit) ? 'm3' : 'item';
+                  const pricingMode = pricingModeFromUnit(unitName);
                   if (article.articleNumber && typeof article.purchasePrice === 'number' && article.purchasePrice > 0) {
                     // Inköpspriset stannar i komponent-state, aldrig i draft — se purchasePrices.
                     setPurchasePrices((prev) => ({ ...prev, [article.articleNumber!]: article.purchasePrice! }));
@@ -2844,21 +2296,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               Visas bara när något faktiskt bryts ut. Rader med "ROT-arbete" ikryssad går INTE hit —
               de blir egna husarbete-rader med sin egen artikel, precis som i pushen. */}
           {rotActive && totals.carvedLabor > 0 ? (
-            <div className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 px-3.5 py-2.5">
-              <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-600/60">{draft.items.length + 1}</span>
-              <div className="min-w-0 flex-1">
-                <p className="m-0 truncate text-sm font-medium text-emerald-900">
-                  {ROT_LABOR_DESCRIPTION} <span className="font-normal text-emerald-700/70">({ROT_LABOR_ARTICLE_NUMBER})</span>
-                </p>
-                <p className="m-0 text-[11px] leading-snug text-emerald-700/70">
-                  Skapas automatiskt på Fortnox-offerten. Beloppet är redan utbrutet ur raderna ovan.
-                </p>
-              </div>
-              <span className="shrink-0 text-right text-sm font-semibold tabular-nums text-emerald-900">
-                <span className="mr-1 text-[11px] font-normal text-emerald-700/70">Varav</span>
-                {formatCurrency(totals.carvedLabor, 'SEK')}
-              </span>
-            </div>
+            <GeneratedRotLaborRow position={draft.items.length + 1} amount={totals.carvedLabor} />
           ) : null}
 
           <button
