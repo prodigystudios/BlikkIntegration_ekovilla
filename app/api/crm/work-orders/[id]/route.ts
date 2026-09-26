@@ -1,6 +1,6 @@
 import { cookies } from 'next/headers';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderTitleChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderDocumentNoteChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
@@ -106,7 +106,7 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     // ⚠️ TITELN går inte heller header-vägen. Den står på dokumentet som textraden
     // `Projekt: X  Märkning: Y` (buildOrderProjectNote) — Fortnox har inget huvudfält för den — och
-    // header-synken släpper raderna. Full push, samma som ROT. Se workOrderTitleChanged.
+    // header-synken släpper raderna. Full push, samma som ROT. Se workOrderDocumentNoteChanged.
     const touchesTitle = 'project_name' in updateInput;
 
     // Load the current row once — the snapshot merges and the status guard all need it.
@@ -166,7 +166,13 @@ export async function PATCH(req: Request, context: RouteContext) {
       ...('work_address' in updateInput ? { work_address: updateInput.work_address } : {}),
     });
 
-    const titleChanged = touchesTitle && workOrderTitleChanged(current, updateInput.project_name);
+    // Titeln eller märkningen — de två som bildar textraden. Märkningen är dessutom ett huvudfält
+    // och står därför även i mirroredFieldChanged nedan; den fulla pushen bär båda halvorna.
+    // ⚠️ Beräknas här, före merge-blocket, som raderna nedan: det raderar `label` ur updateInput.
+    const documentNoteChanged = workOrderDocumentNoteChanged(current, {
+      ...(touchesTitle ? { project_name: updateInput.project_name } : {}),
+      ...('label' in updateInput ? { label: updateInput.label } : {}),
+    });
 
     const mirroredFieldChanged = workOrderMirroredFieldsChanged(current, {
       ...('label' in updateInput ? { label: updateInput.label } : {}),
@@ -324,7 +330,7 @@ export async function PATCH(req: Request, context: RouteContext) {
     // status !== 'invoiced'`) föll en DELfakturerad order mellan stolarna: `invoicedInFortnox` var
     // falskt (inget larm) och `rowPush` falskt (ingen push), så ett rättat BRF org.nr sparades,
     // rapporterades grönt och nådde aldrig ROT-textraden i Fortnox.
-    const rowPush = (rotChanged || titleChanged)
+    const rowPush = (rotChanged || documentNoteChanged)
       && Boolean(current?.fortnox_order_number)
       && !isFortnoxOrderClosed(current);
     if (invoicedInFortnox) {
@@ -336,31 +342,24 @@ export async function PATCH(req: Request, context: RouteContext) {
       // `YourOrderNumber` — hade annars hoppat över hela blocket och rapporterats som ren framgång.
       //
       // Titeln av samma skäl: den är en textrad, inte ett speglat huvudfält.
-      if (mirroredFieldChanged || rotChanged || titleChanged) {
+      if (mirroredFieldChanged || rotChanged || documentNoteChanged) {
         fortnoxError = 'Ordern är fakturerad i Fortnox och dokumentet kan inte längre ändras. '
           + 'Ändringen är sparad i CRM, men syns inte på kundens orderbekräftelse eller faktura.';
       }
     } else if (rowPush || touchesFortnox) {
       attemptedPush = true;
       try {
-        // ROT och titeln vinner över header-vägen när båda ändrats i samma sparning: den fulla
-        // pushen bär headern också, så en header-synk därtill hade varit ett andra anrop som skriver
-        // samma fält. Se touchesRot och touchesTitle ovan för varför ingen av dem kan gå
-        // header-vägen ensam.
+        // ROT och textraden vinner över header-vägen när båda ändrats i samma sparning: den fulla
+        // pushen bär headern också — rensningen av märkningen inräknad (putOrderHeaderAndRows
+        // bygger den med allowReferenceClear) — så en header-synk därtill hade varit ett andra
+        // anrop som skriver samma fält. Se touchesRot och touchesTitle ovan för varför ingen av dem
+        // kan gå header-vägen ensam.
         // ⚠️ RESULTATET MÅSTE LÄSAS. Den här grenen är fjärde anroparen av updateWorkOrderInFortnox,
         // och kastas svaret bort stämplas raden 'failed' av en misslyckad omspegling medan routen
         // svarar `fortnox_error: null` och klienten visar grön toast — med faktureringen spärrad av
         // assertOrderRowsSynced och ingenting som förklarar varför.
         if (rowPush) {
           const pushed = await updateWorkOrderInFortnox(context.params.id);
-          // 🧨 EN TÖMD MÄRKNING KAN BARA RENSAS AV HEADER-SYNKEN. Den fulla pushen får medvetet inte
-          // skicka `YourOrderNumber: null` (se allowReferenceClear i buildOrderHeader), så en
-          // företagsorder vars titel och märkning ändrades i samma sparning hade burit kvar den gamla
-          // märkningen hos Fortnox — med grönt svar. ROT slapp frågan (märkningen skickas bara för
-          // företag, ROT bara för privat); titeln gör det inte. Minnet släcks av den genomförda PUT:en.
-          const labelClearPending =
-            (updateInput as { customer_snapshot?: Record<string, unknown> }).customer_snapshot?.label_cleared === true;
-          if (labelClearPending) await syncWorkOrderHeaderToFortnox(context.params.id);
           if (pushed.mirrorFailed) {
             fortnoxError = pushed.mirrorNeedsManualFix
               ? 'Ändringen är sparad, men en tömd referens eller arbetsadress kan inte nollas via '

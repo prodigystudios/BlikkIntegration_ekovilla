@@ -282,9 +282,13 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
 
     // POST:en hann aldrig få märkningen …
     expect('YourOrderNumber' in postedOrder()).toBe(false);
-    // … men den efterföljande header-PUT:en bär den.
+    // … men den efterföljande PUT:en bär den.
     expect(fortnoxPut).toHaveBeenCalled();
     expect(puttedOrder().YourOrderNumber).toBe('SPARAD-UNDER-PUSHEN');
+    // 🧨 OCH TEXTRADEN. Märkningen står också i `Projekt: X  Märkning: Y`, så reparationen måste gå
+    // den fulla vägen — en header-PUT hade rättat huvudet och lämnat raden utan märkning.
+    const rows = puttedOrder().OrderRows as Array<Record<string, unknown>> | undefined;
+    expect(rows?.[rows.length - 1].Description).toBe('Projekt: Beställning från Ekovilla Lager  Märkning: SPARAD-UNDER-PUSHEN');
   });
 
   // ⚠️ ALLA FYRA INGÅNGARNA till huvudet måste bevakas, inte bara snapshot + adress. `assigned_to`
@@ -599,6 +603,11 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
   // 🧨 `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — här för att ordern hann
   // faktureras (och stängas) medan pushen pågick. Läses "kastade inte" som framgång blir just de
   // fallen tysta: ändringen finns i CRM, Fortnox vet inget, och svaret är grönt.
+  //
+  // ⚠️ Märkningen står också i textraden och går därför RADVÄGEN i efterkontrollen sedan
+  // titelgrenen. Den vägen har ingen egen stängd-spärr, så testet vaktar nu spärren i
+  // resyncHeaderIfSnapshotChangedDuringPush: utan den PUT:as ett stängt dokument och en fakturerad
+  // order stämplas 'failed' utan väg tillbaka (omsynken nekar fakturerade ordrar).
   it('rapporterar inte framgång när header-synken inte skickade något', async () => {
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
@@ -707,6 +716,29 @@ describe('updateWorkOrderInFortnox — efterkontrollen på omsynken', () => {
     expect(result.fortnox_order_number).toBe('131');
     // Reparationen körde och bar den nya märkningen.
     expect(vi.mocked(fortnoxPut).mock.calls.length).toBeGreaterThan(1);
+  });
+
+  // ⚖️ RENSNINGEN GÅR ÄVEN DEN FULLA VÄGEN. PATCH-rutten skickar en ändrad titel eller märkning
+  // hit och ALDRIG till header-synken därtill — det bygger på att radvägen själv skickar
+  // `YourOrderNumber: null` när märkningen tömts (allowReferenceClear i putOrderHeaderAndRows).
+  // Faller det bort står den gamla märkningen kvar hos Fortnox efter en grön sparning.
+  it('rensar märkningen på den fulla pushen och tar bort den ur textraden', async () => {
+    installSupabaseMock({
+      beforeClaim: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, label: null, label_cleared: true },
+      },
+    });
+
+    await updateWorkOrderInFortnox(WORK_ORDER_ID);
+
+    const order = puttedOrder();
+    expect(order.YourOrderNumber).toBeNull();
+    const rows = order.OrderRows as Array<Record<string, unknown>>;
+    expect(rows[rows.length - 1].Description).toBe('Projekt: Beställning från Ekovilla Lager');
   });
 
   // ⚠️ Efterkontrollen anropar SJÄLV den här vägen när raderna skiljer sig. Utan spärren blir det

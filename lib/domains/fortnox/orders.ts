@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
-import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS } from '@/lib/domains/crm/workOrderSyncFields';
+import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS, workOrderDocumentNoteChanged } from '@/lib/domains/crm/workOrderSyncFields';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
@@ -414,7 +414,10 @@ async function buildOrderHeader(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   // Får den här pushen försöka RENSA "Ert referensnummer" (`YourOrderNumber: null`)?
   //
-  // ⛔ Standard false, och bara header-synken sätter true. Två skäl:
+  // ⛔ Standard false. Header-synken och radvägen (putOrderHeaderAndRows — "Synka om",
+  // artikelsparningen och den fulla pushen från ordersidan) sätter true; bara SKAPANDEVÄGEN låter
+  // bli. Radvägen fick rensa först när `YourOrderNumber: null` var uppmätt (2026-08-26) — skälen
+  // nedan var varför den INTE fick det innan dess, och det första gäller fortfarande:
   //   • SKAPANDEVÄGEN har inget att rensa — dokumentet finns inte än — så ett null där vore ren
   //     risk på det enda anrop som saknar dedup-skydd.
   //   • RADSYNKEN och "Synka om" måste förbli körbara. Skulle Fortnox avvisa null (som den redan
@@ -608,11 +611,16 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // `assertOrderRowsSynced` släpper igenom, och `createinvoice` fakturerar de gamla.
   const { data } = await supabase
     .from('crm_work_orders')
-    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, project_name, quote_id')
+    .select('customer_snapshot, work_address, assigned_to, rot_details, line_items, project_name, quote_id, status, fortnox_invoice_number, partial_invoicing_started_at')
     .eq('id', workOrderId)
     .maybeSingle();
 
-  const fresh = data as (typeof atBuild & { quote_id: string | null }) | null;
+  const fresh = data as (typeof atBuild & {
+    quote_id: string | null;
+    status?: string | null;
+    fortnox_invoice_number?: string | null;
+    partial_invoicing_started_at?: string | null;
+  }) | null;
   // Läsfel → gör ingenting. Vi vet inte att något ändrats, och en spekulativ PUT vore värre.
   if (!fresh) return {};
 
@@ -647,11 +655,14 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   };
 
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
-  // Titeln likaså: den står bara i textraden `Projekt: X` (buildOrderProjectNote), aldrig i huvudet,
-  // så en titel som rättades mitt i pushen hade annars "reparerats" med en PUT som inte bär den.
+  // Textraden likaså: titeln står BARA där (buildOrderProjectNote), och märkningen står där utöver
+  // huvudet — en header-PUT hade "reparerat" dem utan att röra raden. Samma regel som PATCH-rutten.
   const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
     || !same(fresh.line_items, atBuild.line_items)
-    || !same(subset(fresh, ['project_name']), subset(atBuild, ['project_name']));
+    || workOrderDocumentNoteChanged(atBuild, {
+      project_name: fresh.project_name,
+      label: (fresh.customer_snapshot as { label?: string | null } | null)?.label ?? null,
+    });
   const headerDiffers = !same(subset(fresh.customer_snapshot, MIRRORED_SNAPSHOT_KEYS), subset(atBuild.customer_snapshot, MIRRORED_SNAPSHOT_KEYS))
     || !same(subset(fresh.work_address, MIRRORED_WORK_ADDRESS_KEYS), subset(atBuild.work_address, MIRRORED_WORK_ADDRESS_KEYS))
     || !same(fresh.assigned_to, atBuild.assigned_to);
@@ -697,8 +708,14 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   try {
     // ⚠️ `null` FRÅN HEADER-SYNKEN BETYDER ATT INGENTING SKICKADES — en tom header, eller en order
     // som hunnit stängas. Att läsa "kastade inte" som framgång hade gjort just de fallen tysta.
+    //
+    // 🧨 RADVÄGEN HAR INGEN EGEN STÄNGD-SPÄRR — header-synken har det (den svarar null på ett
+    // helfakturerat dokument). Hann ordern faktureras medan pushen pågick hade den fulla pushen
+    // PUT:at mot ett stängt dokument, fått nej, och stämplat en fakturerad order 'failed' — utan
+    // någon väg tillbaka, för omsynken nekar fakturerade ordrar. Samma null här, samma besked.
+    // (Blev skarpt när märkningen flyttade till radvägen; ROT och artiklar hade samma hål.)
     const mirrored = rowsDiffer
-      ? await updateWorkOrderInFortnox(workOrderId, { recheckAfterPush: false })
+      ? (isFortnoxOrderClosed(fresh) ? null : await updateWorkOrderInFortnox(workOrderId, { recheckAfterPush: false }))
       : await syncWorkOrderHeaderToFortnox(workOrderId);
     if (unexpressibleClear) return { mirrorFailed: true, mirrorNeedsManualFix: true };
     if (mirrored === null) return { mirrorFailed: true };

@@ -121,13 +121,30 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
   });
 
   // Grinden får inte slå till på en ÖPPEN order — då vore märkningen omöjlig att spegla alls.
+  //
+  // 🧨 DEN FULLA PUSHEN, inte header-synken. Märkningen står i huvudet (`YourOrderNumber`) OCH i
+  // textraden `Projekt: X  Märkning: Y`. Header-vägen — som den gick fram till titelgrenen — rättade
+  // bara huvudet, och raden på orderbekräftelsen och fakturan sa fortfarande den gamla märkningen.
   it('speglar märkningen som vanligt på en öppen order', async () => {
     install(openOrder);
 
     const json = await (await PATCH(patchReq({ status: 'in_progress', label: '58184' }), ctx)).json();
 
-    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
     expect(json.data.fortnox_error).toBeNull();
+  });
+
+  // ⚠️ …men bara när märkningen faktiskt ÄNDRAS. Ordervyn skickar den vid varje sparning av en
+  // företagsorder, och den fulla pushen skriver om hela radlistan positionellt. En oförändrad
+  // märkning bredvid en rättad Er referens är header-vägens sak.
+  it('går header-vägen när märkningen skickas oförändrad', async () => {
+    install(openOrder);
+
+    await PATCH(patchReq({ status: 'in_progress', label: 'GAMMAL', your_reference: 'Anna Berg' }), ctx);
+
+    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
   // ⚠️ Och inte på en sparning som inte rör ett speglat fält. Annars hade varje statusändring på
@@ -309,25 +326,14 @@ describe('PATCH arbetsorder — titeln', () => {
     expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
-  // 🧨 TITEL + TÖMD MÄRKNING I SAMMA SPARNING. Den fulla pushen får inte skicka
-  // `YourOrderNumber: null` (allowReferenceClear), så utan en header-synk efteråt hade den gamla
-  // märkningen stått kvar hos Fortnox — med grönt svar. ROT slapp frågan (privat vs företag),
-  // titeln gör det inte.
-  it('rensar märkningen via header-synken när titeln ändras i samma sparning', async () => {
+  // Titel + tömd märkning i samma sparning: EN full push, ingen header-synk därtill. Den fulla
+  // pushen bygger huvudet med allowReferenceClear och skickar själv `YourOrderNumber: null` (se
+  // 'rensar märkningen på den fulla pushen' i tests/fortnox/orderPayload.test.ts). Ett andra anrop
+  // vore en skrivning till som kan stämpla ner en order den första just stämplat 'synced'.
+  it('går EN full push när titeln ändras och märkningen töms i samma sparning', async () => {
     install(titledOrder);
 
     await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken', label: null }), ctx);
-
-    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
-    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
-  });
-
-  // …men bara då. En satt märkning bärs av den fulla pushens huvud; ett andra anrop vore en onödig
-  // skrivning som kan stämpla 'failed'.
-  it('kör ingen extra header-synk när märkningen inte töms', async () => {
-    install(titledOrder);
-
-    await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken', label: 'NY' }), ctx);
 
     expect(updateWorkOrderInFortnox).toHaveBeenCalledTimes(1);
     expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();

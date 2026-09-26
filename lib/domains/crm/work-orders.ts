@@ -21,7 +21,7 @@ export {
   isFortnoxOrderClosed,
   workOrderMirroredFieldsChanged,
   workOrderClearIsUnexpressible,
-  workOrderTitleChanged,
+  workOrderDocumentNoteChanged,
   MIRRORED_WORK_ADDRESS_KEYS,
   MIRRORED_SNAPSHOT_KEYS,
   ROT_DOCUMENT_KEYS,
