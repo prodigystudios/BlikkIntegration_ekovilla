@@ -19,6 +19,7 @@ export function LineItemTotalsBar({
   carvedLabor,
   rotDeduction,
   isPrivate,
+  reverseCharge = false,
   className,
 }: {
   subtotal: number;
@@ -31,6 +32,12 @@ export function LineItemTotalsBar({
   carvedLabor: number;
   rotDeduction: number;
   isPrivate: boolean;
+  /**
+   * Omvänd skattskyldighet (byggmoms): momsen står som ett eget faktum i stället för "0 kr", och
+   * "Inkl. moms" utelämnas — beloppet vore detsamma. Arbetsordern skickar det ur den sparade
+   * prissättningen; offerten visar sin 0-procentsmoms som förut.
+   */
+  reverseCharge?: boolean;
   className?: string;
 }) {
   // VAT display convention (agreed with finance): private leads with the price INCL moms;
@@ -44,15 +51,24 @@ export function LineItemTotalsBar({
   const headlineAmount = isPrivate ? total : subtotal;
 
   return (
-    <div className={cn('mb-6 flex items-center gap-8 rounded-xl bg-slate-50 px-5 py-4', className)}>
+    // flex-wrap: på arbetsordern ligger raden i en smalare spalt än i offertformuläret, och sex
+    // värden plus "Omvänd skattskyldighet" rymdes inte på en rad. Får den plats ser den ut som förut.
+    <div className={cn('mb-6 flex flex-wrap items-center gap-x-8 gap-y-3 rounded-xl bg-slate-50 px-5 py-4', className)}>
       <div className="grid gap-0.5">
         <span className={eyebrow}>Delsumma</span>
         <span className="text-sm font-semibold text-slate-900">{formatCurrency(subtotal, 'SEK')}</span>
       </div>
-      <div className="grid gap-0.5">
-        <span className={eyebrow}>Moms ({vatPercent} %)</span>
-        <span className="text-sm font-semibold text-slate-900">{formatCurrency(vat, 'SEK')}</span>
-      </div>
+      {reverseCharge ? (
+        <div className="grid gap-0.5">
+          <span className={eyebrow}>Moms</span>
+          <span className="text-sm font-semibold text-amber-700">Omvänd skattskyldighet</span>
+        </div>
+      ) : (
+        <div className="grid gap-0.5">
+          <span className={eyebrow}>Moms ({vatPercent} %)</span>
+          <span className="text-sm font-semibold text-slate-900">{formatCurrency(vat, 'SEK')}</span>
+        </div>
+      )}
       <div className="grid gap-0.5">
         <span className={eyebrow}>Rader</span>
         <span className="text-sm font-semibold text-slate-900">{rowCount} st</span>
@@ -77,7 +93,7 @@ export function LineItemTotalsBar({
         <span className="text-base font-bold text-slate-950">{formatCurrency(headlineAmount, 'SEK')}</span>
         {isPrivate && rotDeduction > 0 ? (
           <span className="text-[11px] text-slate-400">Kund betalar efter ROT {formatCurrency(toPay, 'SEK')}</span>
-        ) : !isPrivate ? (
+        ) : !isPrivate && !reverseCharge ? (
           <span className="text-[11px] text-slate-400">Inkl. moms {formatCurrency(total, 'SEK')}</span>
         ) : null}
       </div>

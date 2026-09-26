@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from 'react';
-import Input from '../../../components/ui/Input';
-import Select from '../../../components/ui/Select';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { computePricing, lineItemRowTotal, lineItemUnitPrice, splitRowLabor, type PricingLineItem } from '@/lib/domains/crm/pricing';
-import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
+import { computePricing, lineItemEffectiveUnitPrice, lineItemRotLabor, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
+import { isBlankLineItem, isConfiguredLineItem, lineItemQuantity, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
+import { workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
-import { ROT_HOUSE_WORK_TYPES, ROT_HOUSE_WORK_LABELS } from '@/lib/domains/fortnox/types';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
+import LineItemRow, { LineItemReadRow, type LineItemRowItem, type LineItemRowMetrics } from '@/app/crm/components/LineItemRow';
+import { GeneratedRotLaborRow, LineItemTotalsBar } from '@/app/crm/components/LineItemSummary';
+import { getArticleUnitName, type ArticleLite } from '@/app/crm/components/ArticlePicker';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 
 export type ArticleLineItem = {
   id: string;
@@ -19,6 +21,8 @@ export type ArticleLineItem = {
   article_number?: string | null;
   article_price?: number | null;
   article_unit_name?: string | null;
+  // Artikelns beskrivning ur registret — INTERN hjälptext i artikelväljaren, når aldrig Fortnox.
+  article_note?: string | null;
   pricing_mode?: 'm3' | 'item';
   // VAR i huset raden sitter. Sätts av offertformuläret när en artikel väljs ur Fortnox
   // (härledd ur namnet) och följer med hit. ⚠️ Skrivs INTE här: det finns ingen väljare
@@ -44,88 +48,80 @@ export type ArticleLineItem = {
   // räknas bort ur summan och skickas inte till Fortnox.
   written_off?: boolean;
   // Ska raden stå i arbetsbeskrivningen? Gäller BARA antals-/meterrader — ytorna är själva jobbet
-  // och följer alltid med. Sätts från artikelregistrets standard när raden skapas och fryses här.
-  // ⚠️ Måste finnas i typen: `addArticle` skapar rader här, och utan fältet hade en rad som lagts
-  // till direkt på ordern aldrig kunnat komma med i beskrivningen.
+  // och följer alltid med. Sätts från artikelregistrets standard när en artikel väljs och fryses här.
   include_in_description?: boolean;
-};
-
-type FortnoxArticle = {
-  article_number: string;
-  description: string | null;
-  sales_price: number | null;
-  unit: string | null;
-  include_in_work_description?: boolean;
+  // Legacy från offertens 900-stub, läses aldrig. Skrivs av A-prisfältet i den delade raden.
+  auto_price?: boolean;
 };
 
 function newId() {
   try { return crypto.randomUUID(); } catch { return `row-${Date.now()}-${Math.round(Math.random() * 1e6)}`; }
 }
-function pricingModeFromUnit(unit: string | null): 'm3' | 'item' {
-  const u = (unit || '').trim().toLowerCase();
-  return u === 'm3' || u === 'm³' || /m\s*³/.test(u) ? 'm3' : 'item';
+
+// En tom rad att välja artikel på — samma utgångsläge som offertens "+ Lägg till rad".
+// ⚠️ Ingen `construction`: se typen ovan.
+function createEmptyRow(): ArticleLineItem {
+  return {
+    id: newId(),
+    article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null, article_note: null,
+    pricing_mode: 'm3',
+    quantity: '', m2: '', thickness_mm: '', density: '', unit_price: '', discount_percent: '', line_note: '', labor_cost: '',
+    is_rot_work: false, house_work_type: 'CONSTRUCTION', include_in_description: false,
+  };
 }
+
 function sackInfo(item: ArticleLineItem) {
   const material = inferMaterialFromArticle(item.article_name);
-  const sacks = material ? sacksFor(lineItemQuantity(item as any), parseDecimal(item.density), material.bagWeight) : 0;
+  const sacks = material ? sacksFor(lineItemQuantity(item as PricingLineItem), parseDecimal(item.density), material.bagWeight) : 0;
   return { material, sacks };
 }
-// Swedish-formatted volume (m³) — m³ rows are priced per cubic metre, so the calculation shows
-// the computed volume (m² × thickness), not the area.
-// ─── Article search (compact Fortnox picker) ───────────────────────────────────
-function ArticleSearch({ onSelect }: { onSelect: (a: FortnoxArticle) => void }) {
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<FortnoxArticle[]>([]);
 
-  useEffect(() => {
-    if (!open) { setItems([]); return; }
-    let cancelled = false;
-    setLoading(true);
-    const q = query.trim();
-    const url = q.length >= 1 ? `/api/fortnox/articles?q=${encodeURIComponent(q)}&limit=20` : '/api/fortnox/articles?limit=20';
-    fetch(url, { cache: 'no-store' })
-      .then((r) => r.json().catch(() => ({})))
-      .then((json) => { if (!cancelled) setItems(Array.isArray(json?.data?.items) ? json.data.items : []); })
-      .catch(() => { if (!cancelled) setItems([]); })
-      .finally(() => { if (!cancelled) setLoading(false); });
-    return () => { cancelled = true; };
-  }, [open, query]);
+// Radens tal, ur SAMMA priskällor som computePricing, pushen och delfakturan använder.
+function metricsFor(item: ArticleLineItem): LineItemRowMetrics {
+  const row = item as PricingLineItem;
+  return {
+    amount: lineItemQuantity(row),
+    unit: lineItemUnitPrice(row),
+    effectiveUnit: lineItemEffectiveUnitPrice(row),
+    rowTotal: lineItemRowTotal(row),
+    isConfigured: isConfiguredLineItem(item),
+  };
+}
 
-  return (
-    <div className="relative">
-      <Input
-        value={query}
-        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Sök artikel att lägga till…"
-      />
-      {open ? (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-y-auto rounded-xl border border-[#e0e8dc] bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
-          {loading ? <div className="px-4 py-3 text-sm text-slate-400">Söker…</div> : null}
-          {!loading && items.length === 0 ? <div className="px-4 py-3 text-sm text-slate-400">Inga artiklar.</div> : null}
-          {items.map((a) => (
-            <button
-              key={a.article_number}
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); onSelect(a); setQuery(''); setOpen(false); }}
-              className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-2.5 text-left transition last:border-b-0 hover:bg-[#f1f5ee]"
-            >
-              <span className="text-sm font-medium text-slate-800">{a.description || a.article_number}</span>
-              <span className="text-xs text-slate-400">{a.article_number}{a.sales_price != null ? ` · ${formatCurrency(a.sales_price, 'SEK')}` : ''}{a.unit ? ` / ${a.unit}` : ''}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
+// Andra raden i den hopfällda raden: det installatören och den som granskar behöver utan att fälla
+// ut — mått, material, densitet och artikelnummer. Offerten har den inte; där fälls raden ut.
+function rowDetails(item: ArticleLineItem): string {
+  const { material } = sackInfo(item);
+  const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
+  const volume = lineItemQuantity(item as PricingLineItem);
+  const measure = mode === 'm3'
+    ? (item.m2 || item.thickness_mm
+      ? `${item.m2 || '0'} m² × ${item.thickness_mm || '0'} mm${volume > 0 ? ` = ${formatQuantity(volume)} m³` : ''}`
+      : null)
+    : (item.thickness_mm ? `${item.thickness_mm} mm` : null);
+  // Måtten FÖRST — det är dem installatören letar efter. Artikelnumret sist, och bara när det finns:
+  // "Utan artikelnummer" i en översiktsrad är brus, och på en telefon tog det platsen från måtten.
+  return [
+    measure,
+    material?.short ?? null,
+    item.density ? `${item.density} kg/m³` : null,
+    item.article_number || null,
+  ].filter(Boolean).join(' · ');
+}
+
+const pill = 'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold';
+
+function rowBadges(item: ArticleLineItem) {
+  const { sacks } = sackInfo(item);
+  if (item.written_off) return <span className={cn(pill, 'border-slate-300 bg-white text-slate-500')}>Avskriven</span>;
+  return sacks > 0 ? <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span> : null;
 }
 
 // ─── Artiklar (läs- + redigeringsläge) ─────────────────────────────────────────
-// Hette WorkOrderArticlesTab. Den är ingen flik längre — Ekonomi och Artiklar slutade
-// vara egna flikar när de flyttade in i översiktens Ekonomi-kort. Två anropsplatser:
+// Raderna är offertens egen radkomponent (LineItemRow) — hopfällda i en lista, en utfälld i taget,
+// artikeln vald I raden med Byt/Rensa och favoriter. Arbetsordern lägger till det offerten saknar:
+// säckar och mått i översikten, prisläget m³/st, avskrivning och varningen när en omdöpning slår
+// sönder materialet. Två anropsplatser:
 //   • WorkOrderDetailClient — `embedded`, avsnitt inne i Ekonomi-kortet, redigerbar.
 //   • WorkOrderInstallerClient — fristående kort + summeringskolumn, `canEdit={false}`.
 //     ⚠️ Den ytan ligger UTANFÖR `.crm-shell`, så `--crm-*` är odefinierade där.
@@ -147,9 +143,9 @@ type Props = {
    * order var fakturerad, för varje installatör som öppnade den.
    */
   lockedReason?: string;
-  // Inbäddat läge: fliken ligger inne i ett annat kort (arbetsorderns Ekonomi-kort) och ritar
-  // därför varken egen kortyta eller egen sidokolumn — rubrik, rader och summering staplas i en
-  // spalt och knapparna flyttar upp i rubrikraden. Fristående anrop (fältvyn) är oförändrade.
+  // Inbäddat läge: listan ligger inne i ett annat kort (arbetsorderns Ekonomi-kort) och ritar
+  // därför varken egen kortyta eller egen sidokolumn — summeringen står överst, som i offerten.
+  // Fristående anrop (fältvyn) behåller sin summeringskolumn.
   embedded?: boolean;
   // Omvänd skattskyldighet (byggmoms): momsraden läses då som ett eget faktum, inte som
   // "Moms 0 kr". Utelämnas den härleds den ur den beräknade momssatsen — se isReverseCharge.
@@ -160,6 +156,10 @@ type Props = {
 export default function WorkOrderArticles({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, lockedReason, embedded = false, reverseCharge, onSave }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
+  // Dragspel som i offerten: EN utfälld rad i taget, ägd här så att en ny rad fäller ihop de andra.
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
+  // Raden som väntar på bekräftelse innan den tas bort. Tomma rader hoppar över frågan.
+  const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
 
   // Resync from source when the work order reloads (e.g. after a successful save).
   //
@@ -173,22 +173,30 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   useEffect(() => { if (!editing) setRows(items); }, [items, editing]);
 
   const dirty = useMemo(() => JSON.stringify(rows) !== JSON.stringify(items), [rows, items]);
-  const rotEnabled = quoteType === 'private' && Boolean(rotDetails?.enabled);
+  const isPrivate = quoteType === 'private';
+  const rotEnabled = isPrivate && Boolean(rotDetails?.enabled);
 
   // Summary reflects the live edit when editing, otherwise the saved articles.
   const source = editing ? rows : items;
   // Avskrivna rader räknas inte — varken i pengar eller i säckar. Ordervärdet ska visa det som
   // faktiskt levereras, annars stämmer inte CRM med fakturorna.
+  const activeRows = useMemo(() => source.filter((r) => !r.written_off), [source]);
   const totals = useMemo(
-    () => computePricing(source.filter((r) => !r.written_off) as PricingLineItem[], vatPercent, { isPrivate: quoteType === 'private', rot: rotDetails }),
-    [source, vatPercent, quoteType, rotDetails],
+    () => computePricing(activeRows as PricingLineItem[], vatPercent, { isPrivate, rot: rotDetails }),
+    [activeRows, vatPercent, isPrivate, rotDetails],
   );
+  // Arbetet som bryts ut ur materialraderna och blir den genererade "Arbetskostnad ROT"-raden.
+  // Samma regel som computePricing och pushen: helt flaggade ROT-rader går inte hit.
+  const carvedLabor = useMemo(
+    () => (rotEnabled
+      ? activeRows.reduce((sum, r) => (r.is_rot_work ? sum : sum + Math.min(lineItemRotLabor(r as PricingLineItem), lineItemRowTotal(r as PricingLineItem))), 0)
+      : 0),
+    [activeRows, rotEnabled],
+  );
+  const configuredCount = useMemo(() => activeRows.filter((r) => isConfiguredLineItem(r)).length, [activeRows]);
   // ⚠️ `source`, inte `items`. Räknat på de sparade raderna stod säcktalet stilla medan man
   // redigerade just de fält som bestämmer det — samma fel som `totals` redan undvek.
-  const totalSacks = useMemo(
-    () => source.filter((it) => !it.written_off).reduce((sum, it) => sum + sackInfo(it).sacks, 0),
-    [source],
-  );
+  const totalSacks = useMemo(() => activeRows.reduce((sum, it) => sum + sackInfo(it).sacks, 0), [activeRows]);
 
   // Det SPARADE artikelnamnet per rad, för att kunna varna när en omdöpning slår sönder
   // materialhärledningen (se materialRenameEffect). `items` byts bara ut vid omladdning, alltså
@@ -198,17 +206,52 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     [items],
   );
 
-  // Bekräftelse innan en prissatt rad försvinner. Samma inline-mönster som grannflikarna
-  // (WorkOrderTimeTab, WorkOrderCommentsTab) — "Ta bort" var här radens SVAGASTE kontroll och
-  // samtidigt den enda destruktiva.
-  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  // Samma spärrar som offertformulärets, med samma ord — se workOrderLineItemIssues.
+  const issues = useMemo(
+    () => (editing ? workOrderLineItemIssues(rows, { rotEnabled }) : []),
+    [editing, rows, rotEnabled],
+  );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
   function removeRow(id: string) {
     setRows((rs) => rs.filter((r) => r.id !== id));
-    setConfirmRemoveId(null);
+    setPendingRemoveId(null);
+    setExpandedRowId((cur) => (cur === id ? null : cur));
+  }
+  function requestRemove(row: ArticleLineItem) {
+    if (isBlankLineItem(row)) removeRow(row.id);
+    else setPendingRemoveId(row.id);
+  }
+  function addRow() {
+    const row = createEmptyRow();
+    setRows((rs) => [...rs, row]);
+    setExpandedRowId(row.id);
+  }
+  // Artikeln väljs I raden — ny rad eller byte på en befintlig. Samma fält som offertens
+  // onSelectArticle, UTOM `construction` (se typen) och `auto_price` (läses aldrig).
+  function selectArticle(id: string, article: ArticleLite) {
+    const unitName = getArticleUnitName(article.unit);
+    const mode = pricingModeFromUnit(unitName);
+    setRows((rs) => rs.map((r) => (r.id !== id ? r : {
+      ...r,
+      article_id: article.id || null,
+      article_name: article.name || null,
+      article_number: article.articleNumber || null,
+      article_price: typeof article.price === 'number' ? article.price : null,
+      article_unit_name: unitName || null,
+      article_note: article.note ?? null,
+      pricing_mode: mode,
+      // Artikelregistrets standard skriver ovillkorligt, som prisläget: artikeln ÄR radens
+      // identitet, och byter man artikel ska den nya artikelns egenskaper gälla.
+      include_in_description: article.includeInWorkDescription ?? false,
+      unit_price: article.price != null ? String(article.price) : r.unit_price,
+      quantity: mode === 'item' && (!r.quantity || Number(r.quantity) <= 0) ? '1' : r.quantity,
+    })));
+  }
+  function clearArticle(id: string) {
+    updateRow(id, { article_id: null, article_name: null, article_number: null, article_price: null, article_unit_name: null, article_note: null });
   }
   // Normalisering vid blur. Skriver BARA när strängen faktiskt ändras — annars hade en tur genom
   // fälten utan att röra något markerat formuläret som ändrat och tänt "Osparade ändringar".
@@ -218,39 +261,27 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // EXAKTA STRÄNGAR på en delfakturerad order. Att bara tabba förbi À-pris hade skrivit om
   // "1200,00" till "1200" — samma tal, men sparningen nekas med "Rad 1 är fakturerad" och hela
   // redigeringen går förlorad. Måtten jämförs numeriskt (lineItemQuantity) och är därför trygga.
-  function normalizeField(id: string, key: 'm2' | 'thickness_mm' | 'density' | 'quantity', current: string | undefined) {
-    const before = current || '';
-    const after = normalizeDecimalInput(before);
-    if (after !== before) updateRow(id, { [key]: after });
-  }
-  function addArticle(a: FortnoxArticle) {
-    setRows((rs) => [...rs, {
-      id: newId(),
-      article_number: a.article_number,
-      article_name: a.description || a.article_number,
-      article_price: typeof a.sales_price === 'number' ? a.sales_price : null,
-      article_unit_name: a.unit || null,
-      unit_price: a.sales_price != null ? String(a.sales_price) : '',
-      pricing_mode: pricingModeFromUnit(a.unit),
-      // Artikelregistrets standard, samma som i offertformuläret. Utan den hade en rad som lagts
-      // till direkt här aldrig kunnat hamna i arbetsbeskrivningen — kontoret rättar ofta artiklar
-      // först efter att ordern skapats, och offerten är låst vid det laget.
-      include_in_description: a.include_in_work_description ?? false,
-      quantity: '', m2: '', thickness_mm: '', discount_percent: '', is_rot_work: false,
-    }]);
+  function normalizeField(id: string, key: 'm2' | 'thickness_mm' | 'density' | 'quantity') {
+    setRows((rs) => rs.map((r) => {
+      if (r.id !== id) return r;
+      const before = r[key] || '';
+      const after = normalizeDecimalInput(before);
+      return after !== before ? { ...r, [key]: after } : r;
+    }));
   }
 
   async function save() {
-    const ok = await onSave(rows);
-    if (ok) { setEditing(false); setConfirmRemoveId(null); }
+    if (issues.length) return;
+    // En tom rad är ett oanvänt "+ Lägg till rad" — ingenting att spara, och ingenting Fortnox ska se.
+    const ok = await onSave(rows.filter((r) => !isBlankLineItem(r)));
+    if (ok) { setEditing(false); setExpandedRowId(null); setPendingRemoveId(null); }
   }
   function cancel() {
     setRows(items);
     setEditing(false);
-    setConfirmRemoveId(null);
+    setExpandedRowId(null);
+    setPendingRemoveId(null);
   }
-
-  // ── Delar som ser olika ut fristående och inbäddat ────────────────────────
 
   // Omvänd skattskyldighet (byggmoms) = företagsorder utan moms. Samma regel som pricing.ts
   // (`!isPrivate && vatPercent === 0`), räknad på samma siffror som summeringen visar, så
@@ -258,14 +289,11 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // arbetsorderns detaljsida härleder det ur den SPARADE prissättningen och är därmed robust
   // mot en vat_percent-kolumn som drivit iväg till 25 på en byggmomsorder.
   const isReverseCharge = reverseCharge ?? (quoteType === 'business' && totals.vatPercent === 0 && totals.subtotal > 0);
-  // "25.00" → "25". Momssatsen står i etiketten så summeringen bär det Ekonomi-flikens egen
-  // ruta bar innan den slogs ihop hit.
+  // "25.00" → "25".
   const vatPercentLabel = Number.isFinite(Number(vatPercent)) ? String(Number(vatPercent)) : String(vatPercent ?? '');
 
-  // ⚠️ Säcktalet står kvar UNDER redigering, inte bara i läsläget. Förut byttes det mot
-  // "Osparade ändringar", vilket betydde att medan man ändrade m², tjocklek och densitet — de
-  // tre fälten vars enda syfte är säckantalet — fanns säckantalet ingenstans på sidan. Nu räknar
-  // det live (se totalSacks) och står bredvid ändringsmarkören i stället för under den.
+  // ⚠️ Säcktalet står kvar UNDER redigering, inte bara i läsläget: medan man ändrar m², tjocklek och
+  // densitet — de tre fälten vars enda syfte är säckantalet — ska säckantalet synas.
   const headerBadge = (
     <>
       {totalSacks > 0 ? (
@@ -283,6 +311,16 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
 
   const lockedHint = lockedReason ? <p className="text-xs text-slate-500">{lockedReason}</p> : null;
 
+  const editButtons = (
+    <div className="flex items-center gap-2">
+      <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
+      <button type="button" onClick={save} disabled={saving || !dirty || issues.length > 0} className={cn(crm.saveButton, 'h-8 w-auto px-4')}>
+        {saving ? 'Sparar…' : 'Spara artiklar'}
+      </button>
+    </div>
+  );
+
+  // Den fristående summeringskolumnen (fältvyn). Inbäddat står summeringsraden överst i stället.
   const summaryRows = (
     <div className="grid gap-2 text-sm">
       <div className="flex items-center justify-between gap-3"><span className="text-slate-500">Delsumma</span><span className="font-semibold text-slate-900">{formatCurrency(totals.subtotal, currencyCode)}</span></div>
@@ -301,6 +339,8 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     </div>
   );
 
+  const pendingRemoveRow = pendingRemoveId ? rows.find((r) => r.id === pendingRemoveId) ?? null : null;
+
   return (
     <div className={embedded ? 'grid gap-3' : 'grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start'}>
       <div className={cn(!embedded && crm.cardInner, 'grid gap-3')}>
@@ -309,394 +349,204 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
             <p className={crm.sectionTitle}>Artiklar</p>
             {headerBadge}
           </div>
-          {/* Inbäddat finns ingen sidokolumn att lägga knapparna i — de hör till artiklarna och
-              sitter därför i deras rubrikrad, skilda från översiktens egen Spara högst upp. */}
-          {embedded ? (
-            editing ? (
-              <div className="flex items-center gap-2">
-                <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
-                <button type="button" onClick={save} disabled={saving || !dirty} className={cn(crm.saveButton, 'h-8 w-auto px-4')}>
-                  {saving ? 'Sparar…' : 'Spara artiklar'}
-                </button>
-              </div>
-            ) : canEdit ? (
-              <button type="button" onClick={() => setEditing(true)} className={crm.ghostButton}>Redigera artiklar</button>
-            ) : null
+          {editing ? editButtons : canEdit ? (
+            <button type="button" onClick={() => setEditing(true)} className={crm.ghostButton}>Redigera artiklar</button>
           ) : null}
         </div>
 
-        {/* ── Read mode ── */}
-        {!editing ? (
-          items.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga artiklar.</div>
-          ) : (
-            <div className="grid gap-2">
-              {items.map((item) => {
-                const { material, sacks } = sackInfo(item);
-                const mode = item.pricing_mode === 'item' ? 'item' : 'm3';
-                const writtenOff = !!item.written_off;
-                return (
-                  <div key={item.id} className={cn(
-                    'flex flex-wrap items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-sm',
-                    writtenOff ? 'border-transparent bg-[#eef1ec] text-slate-500' : 'border-[#e0e8dc] bg-[#f1f5ee]',
-                  )}>
-                    <div className="grid min-w-0 gap-0.5">
-                      <strong className={cn('truncate text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{item.article_name || 'Offert-rad'}</strong>
-                      <span className="text-xs text-slate-500">
-                        {item.article_number || 'Utan artikelnummer'}
-                        {mode === 'm3'
-                          ? (item.m2 || item.thickness_mm ? ` · ${item.m2 || '0'} m² × ${item.thickness_mm || '0'} mm` : '')
-                          : (item.thickness_mm ? ` · ${item.thickness_mm} mm` : '')}
-                        {material ? ` · ${material.short}` : ''}{item.density ? ` · ${item.density} kg/m³` : ''}
-                      </span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      {writtenOff ? <span className="rounded-full border border-slate-300 bg-white px-2 py-0.5 font-semibold text-slate-500">Avskriven</span> : null}
-                      {sacks > 0 && !writtenOff ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{sacks} säck</span> : null}
-                      {/* m³ rows are priced per m³, so show the computed volume × à-pris (not the area). */}
-                      <span>{mode === 'm3' ? `${formatQuantity(lineItemQuantity(item as any))} m³` : `Antal ${item.quantity || '0'}`} · à {formatCurrency(parseDecimal(item.unit_price), currencyCode)}</span>
-                      <span className={cn('font-semibold text-slate-900', writtenOff && 'line-through decoration-slate-400')}>{formatCurrency(lineItemRowTotal(item as PricingLineItem), currencyCode)}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )
-        ) : (
-          /* ── Edit mode ── */
-          <>
-            {rows.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">Inga artiklar — lägg till nedan.</div>
-            ) : null}
+        {/* Summeringen ÖVERST, som i offerten — och i båda lägena, så att siffrorna står på samma
+            ställe när man går in i redigeringen och ser dem ändras. */}
+        {embedded && configuredCount > 0 ? (
+          <LineItemTotalsBar
+            className="mb-0"
+            subtotal={totals.subtotal}
+            vat={totals.vat}
+            vatPercent={totals.vatPercent}
+            total={totals.total}
+            toPay={totals.toPay}
+            rowCount={configuredCount}
+            carvedLabor={carvedLabor}
+            rotDeduction={totals.rotDeduction}
+            isPrivate={isPrivate}
+            reverseCharge={isReverseCharge}
+          />
+        ) : null}
 
-            {rows.map((row) => {
+        {source.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
+            {editing ? 'Inga artiklar — lägg till en rad nedan.' : 'Inga artiklar.'}
+          </div>
+        ) : null}
+
+        {/* ── Läsläge: samma hopfällda rader som editorn, utan fäll ut och ta bort ── */}
+        {!editing && items.length > 0 ? (
+          <div className="grid gap-2">
+            {items.map((item, index) => (
+              <LineItemReadRow
+                key={item.id}
+                row={item as LineItemRowItem}
+                index={index}
+                metrics={metricsFor(item)}
+                details={rowDetails(item)}
+                badges={rowBadges(item)}
+                struck={!!item.written_off}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {/* ── Redigeringsläge ── */}
+        {editing && rows.length > 0 ? (
+          <div className="grid gap-2">
+            {rows.map((row, index) => {
               const mode = row.pricing_mode === 'item' ? 'item' : 'm3';
-              const rowTotal = lineItemRowTotal(row as PricingLineItem);
-              const rowSacks = sackInfo(row).sacks;
-              const laborUnitLabel = mode === 'm3' ? 'm³' : (row.article_unit_name?.trim() || 'st');
+              const { sacks, material } = sackInfo(row);
+              const savedName = savedNameById.get(row.id);
               // Slår omdöpningen sönder materialhärledningen? Jämförs mot det SPARADE namnet.
-              const renameEffect = materialRenameEffect(savedNameById.get(row.id), row.article_name);
-              // Har raden ett redigerbart namn? Villkoret är det SPARADE namnet, ALDRIG utkastets —
-              // se den långa noten vid fältet. Utbrutet hit eftersom radrubriken behöver samma svar.
-              //
-              // 🧨 En nytillagd rad (finns inte i kartan) svarar alltid ja, utan att titta på
-              // utkastet. Villkorade den på `row.article_name` avmonterades inputen mitt i
-              // skrivandet av en backspace till tomt — samma självförstörande fält som noten vid
-              // fältet beskriver, bara på den gren som slapp igenom förra gången. Ofarligt: enda
-              // vägen att lägga till en rad är `addArticle`, som alltid sätter ett namn OCH ett
-              // artikelnummer, så en ny rad är aldrig den namnlösa textrad 409-risken gäller.
-              const nameEditable = savedNameById.has(row.id)
-                ? Boolean(savedNameById.get(row.id))
-                : true;
+              const renameEffect = materialRenameEffect(savedName, row.article_name);
               // …och radens NUVARANDE tillstånd, oberoende av om något just ändrats: en m³-rad med
               // volym vars namn inte ger något material räknar noll säckar, och noll säckar SER UT
               // som ett svar ("inget material gick åt") fast det bara betyder att namnet inte gick
               // att tyda. Måste vara tillståndsbaserat — en jämförelse mot det sparade namnet tystnar
               // i samma stund den trasiga omdöpningen sparas.
-              const noMaterialOnVolumeRow =
-                mode === 'm3' && !sackInfo(row).material && lineItemQuantity(row as PricingLineItem) > 0;
-              const laborSplit = splitRowLabor({
-                laborCostPerUnit: row.labor_cost,
-                // Samma priskälla som rowTotal ovan, computePricing i den här fliken och pushen:
-                // explicit unit_price när det finns, annars artikelns pris. Läste vi bara
-                // unit_price här skulle en rad som prissätts av artikeln visa "inget material blir
-                // kvar" bredvid en radtotal som säger något helt annat.
-                unitPrice: lineItemUnitPrice(row as PricingLineItem),
-                discountPercent: parseDecimal(row.discount_percent),
-                quantity: lineItemQuantity(row as PricingLineItem),
-              });
+              const noMaterialOnVolumeRow = mode === 'm3' && !material && lineItemQuantity(row as PricingLineItem) > 0;
               return (
-                <div key={row.id} className="grid gap-2 rounded-xl border border-[#e0e8dc] bg-[#f1f5ee] px-3 py-3">
-                  <div className="flex items-start justify-between gap-2">
-                    {/* Rubriken skrev ut `row.article_name` — samma sträng som fältet "Benämning på
-                        ordern" tjugo pixlar längre ner redigerar, live och tecken för tecken. En
-                        rubrik som speglar sitt eget fält säger ingenting; fältet ÄR radens namn här.
-                        Kvar står artikelnumret, som är radens stabila identitet.
-                        Rader UTAN redigerbart namn (rena textrader) behåller rubriken — där finns
-                        inget fält som bär namnet. */}
-                    <div className="min-w-0">
-                      {nameEditable ? null : (
-                        <strong className="block truncate text-sm text-slate-900">{row.article_name || 'Namnlös rad'}</strong>
-                      )}
-                      {row.article_number ? <span className="text-xs text-slate-400">{row.article_number}</span> : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-3">
-                      {/* Knappen bytte prissättningsläge — och därmed VILKA FÄLT som visas — men
-                          såg ut som en etikett: ett litet pill med bara "m³" i, granne med
-                          "Ta bort". Nu står det vad den betyder, och title/aria säger vad ett
-                          klick gör. */}
-                      <button
-                        type="button"
-                        onClick={() => updateRow(row.id, { pricing_mode: mode === 'm3' ? 'item' : 'm3' })}
-                        title={`Byt till pris per ${mode === 'm3' ? 'styck' : 'm³'}`}
-                        // ⚠️ Aria-etiketten måste INNEHÅLLA den synliga texten (WCAG 2.5.3):
-                        // röststyrning aktiverar knappen på det som står på den, och en etikett
-                        // utan "Pris per m³" gör den omöjlig att träffa med rösten.
-                        aria-label={`Pris per ${mode === 'm3' ? 'm³' : 'st'} — byt till pris per ${mode === 'm3' ? 'styck' : 'm³'}`}
-                        className="rounded-full border border-[#cfdcc9] bg-white px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 transition hover:border-[#1a3f26] hover:bg-[#eef3ec] hover:text-slate-900"
-                      >
-                        Pris per {mode === 'm3' ? 'm³' : 'st'}
-                      </button>
-                      {confirmRemoveId === row.id ? (
-                        <span className="flex items-center gap-2 text-xs">
-                          <span className="text-slate-500">Ta bort raden?</span>
-                          <button type="button" onClick={() => removeRow(row.id)} className="font-semibold text-rose-600 transition hover:text-rose-700">Ja</button>
-                          <button type="button" onClick={() => setConfirmRemoveId(null)} className="text-slate-500 transition hover:text-slate-700">Nej</button>
-                        </span>
-                      ) : (
-                        <button type="button" onClick={() => setConfirmRemoveId(row.id)} className="text-xs font-medium text-slate-500 transition hover:text-rose-600">Ta bort</button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Benämningen på dokumentet. Samma fält som offertens "Benämning på offerten" —
-                      en generisk "Övrigt"-artikel behöver ofta ett begripligt namn — och det gick
-                      fram till nu bara att sätta i offerten, som låses vid orderskapandet.
-
-                      ⚠️ VILLKORAT PÅ DET SPARADE NAMNET, inte på utkastets. En ren TEXTRAD (bara
-                      radtext, ingen artikel, inget pris) är tillåten och pushas som textrad — men
-                      ger man den ett namn blir den `isConfiguredLineItem` utan att bli prissatt,
-                      och `assertLineItemsArePriced` kastar 409 inne i Fortnox-synken. Sparningen
-                      har då redan gått igenom, så raden ligger i databasen medan ordern stämplas
-                      'failed' med gamla rader kvar i Fortnox. Därför visas fältet aldrig för en rad
-                      som sparats utan namn.
-
-                      Att villkora på `row.article_name` (utkastet) stängde hålet men gjorde fältet
-                      självförstörande: fältet redigerar samma värde det villkoras på, så en
-                      backspace till tomt AVMONTERADE inputen mitt i skrivandet och namnet gick inte
-                      att skriva tillbaka. Enda vägen ut var Avbryt, som kastar alla andra
-                      radändringar. `savedNameById` ändras bara vid omladdning och är därför en
-                      stabil grund. `has()`-grenen håller nytillagda rader (som ännu inte finns i
-                      kartan) redigerbara — de får alltid ett namn av addArticle.
-
-                      🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens
-                      material, och materialet ger säckvikten. Tappas varumärkesordet blir
-                      säckantalet NOLL — tyst. Därför de två raderna under fältet. */}
-                  {nameEditable ? (
-                    <label className="grid gap-1">
-                      <span className={crm.sectionTitle}>Benämning på ordern</span>
-                      <Input
-                        value={row.article_name || ''}
-                        onChange={(e) => updateRow(row.id, { article_name: e.target.value })}
-                        placeholder="Namn som visas på ordern"
-                      />
-                      {/* Två olika påståenden, aldrig samtidigt:
-                          • gult = du håller på att ändra något (jämfört med det SPARADE namnet)
-                          • grått = radens nuvarande tillstånd, och det står kvar efter sparning
-                          Bara det gula räcker inte: sparar man den trasiga omdöpningen försvinner
-                          jämförelsepunkten, och varningen med den — just i det läge den gäller. */}
-                      {renameEffect ? (
-                        <span className="text-[11px] leading-snug text-amber-700">
-                          {renameEffect.kind === 'lost'
-                            ? `Namnet känns inte längre igen som ${renameEffect.from} — raden ger inga säckar och materialrubriken faller ur arbetsbeskrivningen. Behåll materialnamnet i benämningen.`
-                            : `Materialet läses nu som ${renameEffect.to} i stället för ${renameEffect.from} — säckvikten skiljer, så antalet säckar ändras.`}
-                        </span>
-                      ) : noMaterialOnVolumeRow ? (
-                        <span className="text-[11px] leading-snug text-slate-500">
-                          Inget material känns igen i benämningen, så raden ger inga säckar.
-                        </span>
-                      ) : null}
-                    </label>
+                <LineItemRow
+                  key={row.id}
+                  row={row as LineItemRowItem}
+                  index={index}
+                  metrics={metricsFor(row)}
+                  rotEnabled={rotEnabled}
+                  documentNoun="ordern"
+                  // Benämningen visas när raden har ett SPARAT namn eller en vald artikel — aldrig
+                  // villkorat på utkastets namn, som fältet självt redigerar (en backspace till tomt
+                  // hade avmonterat det). En sparad ren TEXTRAD (bara radtext, ingen artikel) får
+                  // inget namnfält: med ett namn blir den `isConfiguredLineItem` utan att bli
+                  // prissatt, och pushen svarar 409 efter att sparningen redan gått igenom.
+                  nameEditable={Boolean(savedName) || Boolean(row.article_number)}
+                  // 🧨 NAMNET ÄR BÄRANDE, INTE EN ETIKETT. Det är enda källan till radens material,
+                  // och materialet ger säckvikten. Tappas varumärkesordet blir säckantalet NOLL — tyst.
+                  // Gult = du håller på att ändra något; grått = radens tillstånd, står kvar efter
+                  // sparning.
+                  nameHint={renameEffect ? (
+                    <span className="text-[11px] leading-snug text-amber-700">
+                      {renameEffect.kind === 'lost'
+                        ? `Namnet känns inte längre igen som ${renameEffect.from} — raden ger inga säckar och materialrubriken faller ur arbetsbeskrivningen. Behåll materialnamnet i benämningen.`
+                        : `Materialet läses nu som ${renameEffect.to} i stället för ${renameEffect.from} — säckvikten skiljer, så antalet säckar ändras.`}
+                    </span>
+                  ) : noMaterialOnVolumeRow ? (
+                    <span className="text-[11px] leading-snug text-slate-500">
+                      Inget material känns igen i benämningen, så raden ger inga säckar.
+                    </span>
                   ) : null}
-
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                    {mode === 'm3' ? (
-                      <>
-                        <label className="grid gap-1">
-                          <span className={crm.sectionTitle}>m²</span>
-                          <Input value={row.m2 || ''} onChange={(e) => updateRow(row.id, { m2: e.target.value })} onBlur={() => normalizeField(row.id, 'm2', row.m2)} inputMode="decimal" placeholder="0" />
-                        </label>
-                        <label className="grid gap-1">
-                          <span className={crm.sectionTitle}>Tjocklek mm</span>
-                          <Input value={row.thickness_mm || ''} onChange={(e) => updateRow(row.id, { thickness_mm: e.target.value })} onBlur={() => normalizeField(row.id, 'thickness_mm', row.thickness_mm)} inputMode="decimal" placeholder="0" />
-                        </label>
-                        <label className="grid gap-1">
-                          <span className={crm.sectionTitle}>Densitet kg/m³</span>
-                          <Input value={row.density || ''} onChange={(e) => updateRow(row.id, { density: e.target.value })} onBlur={() => normalizeField(row.id, 'density', row.density)} inputMode="decimal" placeholder="t.ex. 45" />
-                        </label>
-                      </>
-                    ) : (
-                      <label className="grid gap-1">
-                        <span className={crm.sectionTitle}>Antal</span>
-                        <Input value={row.quantity || ''} onChange={(e) => updateRow(row.id, { quantity: e.target.value })} onBlur={() => normalizeField(row.id, 'quantity', row.quantity)} inputMode="decimal" placeholder="0" />
-                      </label>
-                    )}
-                    <label className="grid gap-1">
-                      <span className={crm.sectionTitle}>À-pris</span>
-                      <Input value={row.unit_price || ''} onChange={(e) => updateRow(row.id, { unit_price: e.target.value })} inputMode="decimal" placeholder="0" />
-                    </label>
-                    <label className="grid gap-1">
-                      <span className={crm.sectionTitle}>Rabatt %</span>
-                      <Input value={row.discount_percent || ''} onChange={(e) => updateRow(row.id, { discount_percent: e.target.value })} inputMode="decimal" placeholder="0" />
-                    </label>
-                  </div>
-
-                  {/* 🧨 `w-auto` PÅ VARJE ETIKETT HÄR — utan den staplar raden vertikalt.
-                      `app/globals.css` sätter `:where(label) { width: 100% }` så att ett fält kan
-                      fylla sin etikett. Selektorn har noll specificitet, men ingen klass sätter
-                      bredd på de här inline-etiketterna, alltså vinner 100 % ändå över `auto`.
-                      Varje etikett fyllde då sin rad, och `flex-wrap`-föräldern krympte till
-                      max-content (~239 px) i stället för att lägga dem sida vid sida. En klass
-                      slår `:where()`, så `w-auto` räcker. Samma felfamilj som knapparnas
-                      preflight-krock — kolla alltid om ett element-selektor rör samma property. */}
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-3">
-                      {/* Bara antals-/meterrader. Ytorna är själva jobbet och står alltid i
-                          beskrivningen. ⚠️ Ändringen syns först efter "Hämta mått från rader" —
-                          artiklarna och översikten har skilda spar-cykler här. */}
-                      {(row.pricing_mode ?? 'm3') === 'item' ? (
-                        <label
-                          className="flex w-auto items-center gap-2 text-xs text-slate-600"
-                          title="Tas med som eget moment i arbetsbeskrivningen. Hämta om måtten för att uppdatera texten."
-                        >
-                          <input
-                            type="checkbox"
-                            checked={!!row.include_in_description}
-                            onChange={(e) => updateRow(row.id, { include_in_description: e.target.checked })}
-                            className="h-4 w-4 accent-[color:var(--ek-accent)]"
-                          />
-                          I arbetsbeskrivningen
-                        </label>
-                      ) : null}
-                      {rotEnabled ? (
-                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
-                          <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => updateRow(row.id, { is_rot_work: e.target.checked })} className="h-4 w-4 accent-[color:var(--ek-accent)]" />
-                          ROT-arbete
-                        </label>
-                      ) : null}
-                      {/* Typen av husarbete — det Skatteverket får veta att arbetet VAR
-                          (HouseWorkType på Fortnox-raden). Visas bara när raden är ROT-arbete, av
-                          samma skäl som i offerten: utan flaggan läses fältet aldrig.
-
-                          ⚠️ Låst av validateLineItemEdit när raden gått ut på faktura — typen är
-                          ROT-identiteten, och den får inte skilja sig från vad fakturan sa. */}
-                      {rotEnabled && row.is_rot_work ? (
-                        <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
-                          Typ
-                          <Select
-                            value={row.house_work_type || 'CONSTRUCTION'}
-                            onChange={(e) => updateRow(row.id, { house_work_type: e.target.value })}
-                            // min-h-8, inte h-8 — se noten i components/ui/Select.tsx.
-                            className="min-h-8 py-0 text-xs"
-                          >
-                            {ROT_HOUSE_WORK_TYPES.map((type) => (
-                              <option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>
-                            ))}
-                          </Select>
-                        </label>
-                      ) : null}
-                      {/* Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte
-                          till Fortnox, men raden ligger kvar så skillnaden mot offerten går att
-                          förklara. En rad som aldrig fakturerats kan lika gärna tas bort helt. */}
-                      <label className="flex w-auto items-center gap-2 text-xs text-slate-600">
-                        <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-4 w-4 accent-slate-500" />
-                        Avskriven (utförs ej)
-                      </label>
-                    </div>
-                    {/* ⚠️ Uträkningen syns nu MEDAN den redigeras. Läsläget visade
-                        "115 säck · 30,78 m³", editorn bara kronbeloppet — alltså försvann
-                        säckantalet och volymen precis när man ändrade m², tjocklek och densitet,
-                        de tre fälten vars enda syfte är att ge dem. */}
-                    <div className="flex flex-wrap items-center justify-end gap-2">
+                  // Prisläget går att byta här, till skillnad från offerten där det följer artikelns
+                  // enhet: på ordern rättas ofta en rad som sålts per styck till en yta, eller tvärtom.
+                  headerActions={(
+                    <button
+                      type="button"
+                      onClick={() => updateRow(row.id, { pricing_mode: mode === 'm3' ? 'item' : 'm3' })}
+                      title={`Byt till pris per ${mode === 'm3' ? 'styck' : 'm³'}`}
+                      // ⚠️ Aria-etiketten måste INNEHÅLLA den synliga texten (WCAG 2.5.3).
+                      aria-label={`Pris per ${mode === 'm3' ? 'm³' : 'st'} — byt till pris per ${mode === 'm3' ? 'styck' : 'm³'}`}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                    >
+                      Pris per {mode === 'm3' ? 'm³' : 'st'}
+                    </button>
+                  )}
+                  details={rowDetails(row)}
+                  badges={rowBadges(row)}
+                  totalAside={(
+                    <>
                       {mode === 'm3' ? (
-                        <span className="text-xs tabular-nums text-slate-500">{formatQuantity(lineItemQuantity(row as PricingLineItem))} m³</span>
+                        <span className="text-xs font-normal tabular-nums text-slate-500">{formatQuantity(lineItemQuantity(row as PricingLineItem))} m³</span>
                       ) : null}
-                      {rowSacks > 0 && !row.written_off ? (
-                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">{rowSacks} säck</span>
+                      {sacks > 0 && !row.written_off ? (
+                        <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span>
                       ) : null}
-                      <span className={cn('text-sm font-semibold tabular-nums text-slate-900', row.written_off && 'line-through decoration-slate-400')}>{formatCurrency(rowTotal, currencyCode)}</span>
-                    </div>
-                  </div>
-
-                  {/* Carve out the labour portion of a material row → the aggregated "Arbetskostnad
-                      ROT" Fortnox row (row reduced by it, total unchanged). Hidden when the whole row
-                      is flagged as ROT-arbete.
-
-                      ⚠️ Beloppet är ett À-PRIS som räknas mot antalet, precis som À-priset ovanför,
-                      och det bryts UT ur det — det läggs inte till. Samma fält och samma räkning som
-                      i offertformuläret; texten under står här av samma skäl som där. */}
-                  {rotEnabled && !row.is_rot_work ? (
-                    <label className="grid gap-1">
-                      <span className={crm.sectionTitle}>
-                        Varav arbetskostnad (ROT, kr/{laborUnitLabel})
-                      </span>
-                      <Input value={row.labor_cost || ''} onChange={(e) => updateRow(row.id, { labor_cost: e.target.value })} inputMode="decimal" placeholder="0" />
-                      {laborSplit.leavesNoMaterial ? (
-                        <span className="text-[11px] leading-snug text-rose-700">
-                          Arbetet är hela à-priset ({formatCurrency(lineItemUnitPrice(row as PricingLineItem), currencyCode)}/{laborUnitLabel}) — inget material blir kvar. Ingen arbetskostnad bryts ut förrän det rättas.
-                        </span>
-                      ) : laborSplit.labor > 0 ? (
-                        <span className="text-[11px] leading-snug text-slate-500">
-                          {formatCurrency(laborSplit.labor, currencyCode)} arbete av radens {formatCurrency(rowTotal, currencyCode)}.
-                        </span>
-                      ) : (
-                        <span className="text-[11px] leading-snug text-slate-400">
-                          Per {laborUnitLabel}, som à-priset. Bryts ut ur det.
-                        </span>
-                      )}
+                    </>
+                  )}
+                  // Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte till
+                  // Fortnox, men raden ligger kvar så skillnaden mot offerten går att förklara. En rad
+                  // som aldrig fakturerats kan lika gärna tas bort helt.
+                  extraFlags={(
+                    <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
+                      <input type="checkbox" checked={!!row.written_off} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
+                      Avskriven (utförs ej)
                     </label>
-                  ) : null}
-
-                  {/* Radtext — fritext under artikelraden, samma fält som offertens. KUNDVÄND:
-                      buildOrderRows lägger den som en egen textrad under artikeln (och som radens
-                      Description när artikelnamn saknas), så den står på orderbekräftelsen.
-                      Gick fram till nu bara att sätta i offerten. */}
-                  <label className="grid gap-1">
-                    <span className={crm.sectionTitle}>Radtext</span>
-                    <Input
-                      value={row.line_note || ''}
-                      onChange={(e) => updateRow(row.id, { line_note: e.target.value })}
-                      placeholder="Fritext för raden"
-                    />
-                  </label>
-                </div>
+                  )}
+                  struck={!!row.written_off}
+                  onMeasureBlur={(key) => normalizeField(row.id, key)}
+                  expanded={expandedRowId === row.id}
+                  onToggle={(next) => setExpandedRowId(next ? row.id : null)}
+                  onChange={(patch) => updateRow(row.id, patch as Partial<ArticleLineItem>)}
+                  onSelectArticle={(article) => selectArticle(row.id, article)}
+                  onClearArticle={() => clearArticle(row.id)}
+                  onRemove={() => requestRemove(row)}
+                />
               );
             })}
+          </div>
+        ) : null}
 
-            <div className="border-t border-[#e0e8dc] pt-3">
-              <ArticleSearch onSelect={addArticle} />
+        {/* Den genererade arbetskostnadsraden — sist, som på Fortnox-ordern. Se GeneratedRotLaborRow. */}
+        {rotEnabled && carvedLabor > 0 ? (
+          <GeneratedRotLaborRow position={source.length + 1} amount={carvedLabor} documentLabel="Fortnox-ordern" />
+        ) : null}
+
+        {editing ? (
+          <>
+            <div>
+              <button
+                type="button"
+                onClick={addRow}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                + Lägg till rad
+              </button>
             </div>
 
-            {/* Spara/Avbryt EN GÅNG TILL, här nere.
-                Knapparna i rubrikraden räcker inte: sex rader à ~200 px plus ROT-fältet gör att
-                de är långt utanför skärmen när man är klar. Bottenknappar i stället för en
-                klistrad rad — översiktens redigering har redan en klistrad rad högst upp, och två
-                sådana samtidigt (lägena är oberoende) hade legat på varandra. */}
-            {embedded ? (
-              <div className="flex items-center justify-end gap-2 border-t border-[#e0e8dc] pt-3">
-                <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
-                <button type="button" onClick={save} disabled={saving || !dirty} className={cn(crm.saveButton, 'h-8 w-auto px-4')}>
-                  {saving ? 'Sparar…' : 'Spara artiklar'}
-                </button>
+            {issues.length ? (
+              <div className="grid gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2.5">
+                {issues.map((issue) => (
+                  <p key={issue} className="m-0 text-xs font-medium text-rose-700">{issue}</p>
+                ))}
               </div>
             ) : null}
+
+            {/* Spara/Avbryt EN GÅNG TILL, här nere. Knapparna i rubrikraden räcker inte: med ett
+                dussin rader och en utfälld är de långt utanför skärmen när man är klar. Bottenknappar
+                i stället för en klistrad rad — översiktens redigering har redan en klistrad rad högst
+                upp, och två sådana samtidigt (lägena är oberoende) hade legat på varandra. */}
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#e0e8dc] pt-3">
+              <p className="m-0 text-xs text-slate-400">{saveHint}</p>
+              {editButtons}
+            </div>
           </>
-        )}
+        ) : canEdit ? null : lockedHint}
       </div>
 
-      {/* Summering — egen kortkolumn fristående, ett avsnitt under raderna inbäddat. */}
-      <div className={embedded ? 'grid gap-2 border-t border-[#e0e8dc] pt-3' : cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
-        {embedded ? null : <p className={crm.sectionTitle}>Summering</p>}
-        {summaryRows}
+      {/* Fristående (fältvyn): summeringen i egen kolumn, som förut. */}
+      {embedded ? null : (
+        <div className={cn(crm.cardInner, 'grid gap-3 lg:content-start')}>
+          <p className={crm.sectionTitle}>Summering</p>
+          {summaryRows}
+        </div>
+      )}
 
-        {embedded ? (
-          editing ? <p className="text-xs text-slate-400">{saveHint}</p> : canEdit ? null : lockedHint
-        ) : editing ? (
-          <div className="grid gap-2">
-            <button type="button" onClick={save} disabled={saving || !dirty} className={crm.saveButton}>
-              {saving ? 'Sparar…' : 'Spara artiklar'}
-            </button>
-            <button type="button" onClick={cancel} disabled={saving} className={crm.ghostButton}>Avbryt</button>
-            <p className="text-xs text-slate-400">{saveHint}</p>
-          </div>
-        ) : canEdit ? (
-          <button type="button" onClick={() => setEditing(true)} className={cn(crm.ghostButton, 'w-full justify-center')}>
-            Redigera artiklar
-          </button>
-        ) : (
-          lockedHint
-        )}
-      </div>
+      {pendingRemoveRow ? (
+        <CrmConfirmDialog
+          title="Ta bort raden?"
+          message={
+            pendingRemoveRow.article_name
+              ? `${pendingRemoveRow.article_name} tas bort från ordern.`
+              : 'Raden tas bort från ordern.'
+          }
+          confirmLabel="Ta bort rad"
+          tone="danger"
+          onConfirm={() => removeRow(pendingRemoveRow.id)}
+          onCancel={() => setPendingRemoveId(null)}
+        />
+      ) : null}
     </div>
   );
 }

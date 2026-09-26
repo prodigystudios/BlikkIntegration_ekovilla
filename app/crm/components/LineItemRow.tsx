@@ -51,10 +51,13 @@ export type LineItemRowMetrics = {
 };
 
 // Samma etikettrecept som offertformulärets Field — varje fil i repot bär sin egen lilla variant.
+//
+// `content-start` på båda nivåerna: i ekonomiraden står "Varav arbetskostnad" med hjälptext under
+// sig, gridraden blir högre, och utan det töjdes A-pris- och rabattfältens INPUTS ut till samma höjd.
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid gap-1.5">
-      <label className="grid gap-1.5">
+    <div className="grid content-start gap-1.5">
+      <label className="grid content-start gap-1.5">
         <span className="text-xs font-semibold text-slate-600">{label}</span>
         {children}
       </label>
@@ -145,13 +148,81 @@ function LaborCarveoutHint({
   );
 }
 
+type MeasureKey = 'm2' | 'thickness_mm' | 'density' | 'quantity';
+
+// De delar av den hopfällda raden som läsraden och den klickbara raden har gemensamt: nummer, namn,
+// mängd × pris, märken och summa.
+function CollapsedContent({
+  row, index, metrics, details, badges, struck,
+}: {
+  row: LineItemRowItem;
+  index: number;
+  metrics: LineItemRowMetrics | undefined;
+  details?: React.ReactNode;
+  badges?: React.ReactNode;
+  struck?: boolean;
+}) {
+  const strike = struck ? 'line-through decoration-slate-400' : '';
+  const name = row.article_name || <span className="text-slate-400">Välj artikel…</span>;
+  return (
+    <>
+      <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
+      {details ? (
+        <span className="grid min-w-0 flex-1 gap-0.5">
+          <span className={cn('truncate text-sm font-medium', struck ? 'text-slate-500' : 'text-slate-800', strike)}>{name}</span>
+          {/* Radbryts, kapas inte: på telefonen är det här måtten installatören läser. */}
+          <span className="text-xs leading-snug text-slate-500 [overflow-wrap:anywhere]">{details}</span>
+        </span>
+      ) : (
+        <span className={cn('min-w-0 flex-1 truncate text-sm font-medium', struck ? 'text-slate-500' : 'text-slate-800', strike)}>
+          {name}
+        </span>
+      )}
+      {metrics?.isConfigured ? (
+        <span className="hidden shrink-0 text-xs tabular-nums text-slate-400 sm:inline">
+          {formatQuantity(metrics.amount)} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
+        </span>
+      ) : null}
+      {row.is_rot_work ? (
+        <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">ROT</span>
+      ) : null}
+      {badges}
+      <span className={cn('w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-900', strike)}>
+        {formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
+      </span>
+    </>
+  );
+}
+
+/**
+ * En artikelrad i läsläge — samma hopfällda rad som i editorn, utan fäll ut och ta bort.
+ * Arbetsordern visar sina rader så utanför redigeringen, så att läs- och redigeringsläget är samma
+ * lista och man ser vad man ändrar ifrån.
+ */
+export function LineItemReadRow({
+  row, index, metrics, details, badges, struck,
+}: {
+  row: LineItemRowItem;
+  index: number;
+  metrics: LineItemRowMetrics | undefined;
+  details?: React.ReactNode;
+  badges?: React.ReactNode;
+  struck?: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-100 px-3.5 py-2.5">
+      <CollapsedContent row={row} index={index} metrics={metrics} details={details} badges={badges} struck={struck} />
+    </div>
+  );
+}
+
 export default function LineItemRow({
   row,
   index,
   metrics,
   rotEnabled,
-  marginPercent,
-  purchasePrice,
+  marginPercent = null,
+  purchasePrice = null,
   expanded,
   onToggle,
   onChange,
@@ -159,15 +230,25 @@ export default function LineItemRow({
   onClearArticle,
   onRemove,
   dragHandle,
+  documentNoun = 'offerten',
+  nameEditable,
+  nameHint,
+  headerActions,
+  details,
+  badges,
+  totalAside,
+  extraFlags,
+  struck,
+  onMeasureBlur,
 }: {
   row: LineItemRowItem;
   index: number;
   metrics: LineItemRowMetrics | undefined;
   rotEnabled: boolean;
-  /** Radens täckningsgrad i procent, eller null när artikeln saknar inköpspris. */
-  marginPercent: number | null;
-  /** Artikelns inköpspris per enhet, visat som underlag till täckningsgraden. */
-  purchasePrice: number | null;
+  /** Radens täckningsgrad i procent, eller null när artikeln saknar inköpspris. Bara offerten. */
+  marginPercent?: number | null;
+  /** Artikelns inköpspris per enhet, visat som underlag till täckningsgraden. Bara offerten. */
+  purchasePrice?: number | null;
   // Accordion: which row is open is owned by the parent so opening one collapses the rest.
   expanded: boolean;
   onToggle: (next: boolean) => void;
@@ -176,6 +257,33 @@ export default function LineItemRow({
   onClearArticle: () => void;
   onRemove: () => void;
   dragHandle?: React.ReactNode;
+  /** Dokumentet i etiketterna: "Benämning på offerten" eller "…på ordern". */
+  documentNoun?: 'offerten' | 'ordern';
+  /**
+   * Visas benämningsfältet? Standard: så fort raden har en vald artikel.
+   *
+   * 🧨 VILLKORA ALDRIG PÅ VÄRDET FÄLTET SJÄLVT REDIGERAR. Standardregeln frågade förut bara efter
+   * `article_name` — samma sträng fältet ändrar — så en backspace till tomt AVMONTERADE fältet mitt i
+   * skrivandet, och namnet gick inte att skriva tillbaka. `article_number` rörs inte av fältet och är
+   * därför en stabil grund. Arbetsordern skickar en egen regel på det SPARADE namnet (se där).
+   */
+  nameEditable?: boolean;
+  /** Text under benämningsfältet (arbetsordern: varningen när materialet inte längre känns igen). */
+  nameHint?: React.ReactNode;
+  /** Fler knappar i den utfällda radens huvud, före "Fäll ihop" (arbetsordern: prisläget). */
+  headerActions?: React.ReactNode;
+  /** En andra rad under namnet i den hopfällda raden (arbetsordern: mått, material, densitet). */
+  details?: React.ReactNode;
+  /** Märken i den hopfällda raden efter ROT-märket (arbetsordern: säckar, Avskriven). */
+  badges?: React.ReactNode;
+  /** Visas bredvid radsumman i den utfällda raden (arbetsordern: volym och säckar). */
+  totalAside?: React.ReactNode;
+  /** Fler kryssrutor i flaggraden (arbetsordern: Avskriven). */
+  extraFlags?: React.ReactNode;
+  /** Raden räknas inte (avskriven): namn och summa stryks. */
+  struck?: boolean;
+  /** När ett måttfält lämnas (arbetsordern normaliserar decimaltecknet då). */
+  onMeasureBlur?: (key: MeasureKey) => void;
 }) {
   const isM3 = (row.pricing_mode ?? 'm3') === 'm3';
   // The ROT labour carve-out field sits on the economy row next to A-pris/Rabatt, but only when ROT
@@ -183,6 +291,8 @@ export default function LineItemRow({
   const showLaborField = rotEnabled && !row.is_rot_work;
   // Samma enhet som raden prissätts i, så "kr/m³" respektive "kr/st" står bredvid rätt tal.
   const laborUnitLabel = isM3 ? 'm³' : (row.article_unit_name?.trim() || 'st');
+  const showNameField = nameEditable ?? Boolean(row.article_number || row.article_name);
+  const blur = (key: MeasureKey) => (onMeasureBlur ? () => onMeasureBlur(key) : undefined);
 
   // ── Collapsed: single overview line ──────────────────────────────────────────
   if (!expanded) {
@@ -190,21 +300,7 @@ export default function LineItemRow({
       <div className="flex items-center gap-2 rounded-xl border border-slate-100 px-3.5 py-2.5 transition-colors hover:border-slate-200">
         {dragHandle}
         <button type="button" onClick={() => onToggle(true)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-          <span className="shrink-0 text-xs font-semibold tabular-nums text-slate-300">{index + 1}</span>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-            {row.article_name || <span className="text-slate-400">Välj artikel…</span>}
-          </span>
-          {metrics?.isConfigured ? (
-            <span className="hidden shrink-0 text-xs tabular-nums text-slate-400 sm:inline">
-              {formatQuantity(metrics.amount)} × {formatCurrency(metrics.effectiveUnit, 'SEK')}
-            </span>
-          ) : null}
-          {row.is_rot_work ? (
-            <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">ROT</span>
-          ) : null}
-          <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-slate-900">
-            {formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
-          </span>
+          <CollapsedContent row={row} index={index} metrics={metrics} details={details} badges={badges} struck={struck} />
           <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden className="shrink-0 text-slate-300">
             <path d="M3 5l4 4 4-4" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
@@ -221,20 +317,25 @@ export default function LineItemRow({
   // ── Expanded: full editor ────────────────────────────────────────────────────
   return (
     <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50/40 p-4">
-      <div className="flex items-center justify-between gap-3">
-        <span className="flex items-center gap-2 text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
-        <div className="flex items-center gap-3">
-          <button type="button" onClick={() => onToggle(false)} className="text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
+      {/* flex-wrap + nowrap: med arbetsorderns prislägesknapp rymdes huvudet inte på en telefon, och
+          knapparna bröts mitt i ordet ("Fäll / ihop"). Nu bryts raden MELLAN dem. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <span className="flex items-center gap-2 whitespace-nowrap text-xs font-semibold text-slate-400">{dragHandle}Rad {index + 1}</span>
+        <div className="flex flex-wrap items-center gap-3">
+          {headerActions}
+          <button type="button" onClick={() => onToggle(false)} className="whitespace-nowrap text-xs font-medium text-slate-500 transition-colors hover:text-slate-800">
             Fäll ihop ▴
           </button>
-          <button type="button" onClick={onRemove} className="text-xs text-slate-400 transition-colors hover:text-rose-600">
+          <button type="button" onClick={onRemove} className="whitespace-nowrap text-xs text-slate-400 transition-colors hover:text-rose-600">
             Ta bort
           </button>
         </div>
       </div>
 
+      {/* Kortet "Vald artikel" står kvar på artikelnumret när benämningen töms — annars byttes det
+          mot en tom sökruta mitt i skrivandet i fältet under. */}
       <ArticlePicker
-        value={row.article_name || ''}
+        value={row.article_name || row.article_number || ''}
         articleNumber={row.article_number}
         price={row.article_price}
         unit={row.article_unit_name}
@@ -246,15 +347,16 @@ export default function LineItemRow({
 
       {/* Editable display name (Description) for the picked article — e.g. rename a generic
           "Övrigt" article to something descriptive. Only the row's Description changes; the
-          article number/price/unit stay intact, and this text is what buildOfferRows sends to
+          article number/price/unit stay intact, and this text is what the push sends to
           Fortnox as the row Description. Shown once an article is selected. */}
-      {row.article_name ? (
-        <Field label="Benämning på offerten">
+      {showNameField ? (
+        <Field label={`Benämning på ${documentNoun}`}>
           <Input
-            value={row.article_name}
+            value={row.article_name ?? ''}
             onChange={(e) => onChange({ article_name: e.target.value })}
-            placeholder="Namn som visas på offerten"
+            placeholder={`Namn som visas på ${documentNoun}`}
           />
+          {nameHint}
         </Field>
       ) : null}
 
@@ -262,12 +364,12 @@ export default function LineItemRow({
       <div className="grid gap-3 sm:grid-cols-3">
         {isM3 ? (
           <>
-            <Field label="m²"><Input value={row.m2 ?? ''} onChange={(e) => onChange({ m2: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
-            <Field label="Tjocklek mm"><Input value={row.thickness_mm ?? ''} onChange={(e) => onChange({ thickness_mm: e.target.value })} inputMode="decimal" placeholder="200" /></Field>
-            <Field label="Densitet (kg/m³)"><Input value={row.density ?? ''} onChange={(e) => onChange({ density: e.target.value })} inputMode="decimal" placeholder="t.ex. 45" /></Field>
+            <Field label="m²"><Input value={row.m2 ?? ''} onChange={(e) => onChange({ m2: e.target.value })} onBlur={blur('m2')} inputMode="decimal" placeholder="0" /></Field>
+            <Field label="Tjocklek mm"><Input value={row.thickness_mm ?? ''} onChange={(e) => onChange({ thickness_mm: e.target.value })} onBlur={blur('thickness_mm')} inputMode="decimal" placeholder="200" /></Field>
+            <Field label="Densitet (kg/m³)"><Input value={row.density ?? ''} onChange={(e) => onChange({ density: e.target.value })} onBlur={blur('density')} inputMode="decimal" placeholder="t.ex. 45" /></Field>
           </>
         ) : (
-          <Field label="Antal"><Input value={row.quantity ?? ''} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" placeholder="1" /></Field>
+          <Field label="Antal"><Input value={row.quantity ?? ''} onChange={(e) => onChange({ quantity: e.target.value })} onBlur={blur('quantity')} inputMode="decimal" placeholder="1" /></Field>
         )}
       </div>
 
@@ -318,12 +420,15 @@ export default function LineItemRow({
         <Field label="Rabatt %"><Input value={row.discount_percent ?? ''} onChange={(e) => onChange({ discount_percent: e.target.value })} inputMode="decimal" placeholder="0" /></Field>
       </div>
 
+      {/* 🧨 `w-auto` PÅ VARJE ETIKETT HÄR — utan den staplas raden vertikalt. `app/globals.css`
+          sätter `:where(label) { width: 100% }`; selektorn har noll specificitet men ingen klass
+          satte bredd här, så varje etikett fyllde sin rad. En klass slår `:where()`. */}
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         {/* Bara antals-/meterrader. En yta är själva jobbet och står alltid i beskrivningen — ett
             kryss där hade varit ett dött val, eller värre: en väg att råka dölja måttet. */}
         {!isM3 ? (
           <label
-            className="inline-flex items-center gap-2 text-xs text-slate-500"
+            className="inline-flex w-auto items-center gap-2 text-xs text-slate-500"
             title="Tas med som eget moment i arbetsbeskrivningen installatören läser"
           >
             <input
@@ -336,24 +441,27 @@ export default function LineItemRow({
           </label>
         ) : null}
         {rotEnabled ? (
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+          <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
             <input type="checkbox" checked={!!row.is_rot_work} onChange={(e) => onChange({ is_rot_work: e.target.checked })} className="h-3.5 w-3.5 rounded border-slate-300" />
             ROT-arbete
           </label>
         ) : null}
         {rotEnabled && row.is_rot_work ? (
-          <label className="inline-flex items-center gap-2 text-xs text-slate-500">
+          <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
             Typ
             <Select value={row.house_work_type || 'CONSTRUCTION'} onChange={(e) => onChange({ house_work_type: e.target.value })} className="min-h-8 py-0 text-xs">
               {ROT_HOUSE_WORK_TYPES.map((type) => (<option key={type} value={type}>{ROT_HOUSE_WORK_LABELS[type]}</option>))}
             </Select>
           </label>
         ) : null}
+        {extraFlags}
         {/* ml-auto MÅSTE sitta på summan, inte på märket: MarginBadge renderar null när
             inköpspriset saknas (61 av 289 artiklar, plus varje rad utan vald artikel), och då
             tappade beloppet sin högerställning och hoppade i sidled mellan raderna. */}
         <span className="ml-auto flex items-center gap-2 text-sm font-semibold tabular-nums text-slate-900">
-          <MarginBadge marginPercent={marginPercent} />{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}
+          {totalAside}
+          <MarginBadge marginPercent={marginPercent} />
+          <span className={cn(struck && 'line-through decoration-slate-400')}>{formatCurrency(metrics?.rowTotal ?? 0, 'SEK')}</span>
         </span>
       </div>
 
