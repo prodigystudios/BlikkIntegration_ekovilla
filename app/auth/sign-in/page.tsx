@@ -20,11 +20,13 @@ export default function SignInPage() {
     setLoading(true);
     setError(null);
   const { error } = await supabase.auth.signInWithPassword({ email: normalizedEmail, password });
-    setLoading(false);
     if (error) {
+      setLoading(false);
       setError(error.message);
       return;
     }
+    // Knappen står kvar på "Loggar in…" tills omladdningen tar över — annars ser formuläret orört ut
+    // under den, och ett andra klick loggar in en gång till.
   // Ensure server session cookie is synced before navigating (important for PWA)
   try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
     // Full sidladdning, inte router.replace: skalet bär annars inloggningssidans tomma profil. Den

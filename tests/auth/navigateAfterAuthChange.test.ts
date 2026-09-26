@@ -34,40 +34,38 @@ describe('navigateAfterAuthChange', () => {
   });
 });
 
-function pagesUnder(dir: string): string[] {
+// .ts med: en hook i app/auth som lindar useRouter hade annars tagit tillbaka racet förbi vakten.
+function sourcesUnder(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) return pagesUnder(full);
-    return name.endsWith('.tsx') ? [full] : [];
+    if (statSync(full).isDirectory()) return sourcesUnder(full);
+    return /\.tsx?$/.test(name) ? [full] : [];
   });
 }
 
+// Sidorna som släpper in användaren i appen efter ett auth-byte.
+const ENTRY_PAGES = [
+  'app/auth/sign-in/page.tsx',
+  'app/auth/create-account/page.tsx',
+  'app/auth/reset-password-confirm/page.tsx',
+];
+
 describe('auth-sidorna navigerar aldrig mjukt', () => {
-  const authPages = pagesUnder('app/auth');
+  const authSources = sourcesUnder('app/auth');
 
   it('hittar sidorna (annars är vakten tom)', () => {
-    expect(authPages).toEqual(
-      expect.arrayContaining([
-        'app/auth/sign-in/page.tsx',
-        'app/auth/create-account/page.tsx',
-        'app/auth/reset-password-confirm/page.tsx',
-      ]),
-    );
+    expect(authSources).toEqual(expect.arrayContaining(ENTRY_PAGES));
   });
 
   // Varje väg ut från en auth-sida korsar auth-gränsen: in i appen efter inloggning, nytt konto eller
   // nytt lösenord. Behöver en framtida auth-sida länka till en annan auth-sida duger en <a href>.
-  it.each(authPages)('%s använder inte useRouter', (file) => {
+  it.each(authSources)('%s använder inte useRouter', (file) => {
     const src = readFileSync(file, 'utf8');
     expect(src).not.toMatch(/\buseRouter\b/);
     expect(src).not.toMatch(/\brouter\.(replace|push)\(/);
   });
 
-  it.each([
-    'app/auth/sign-in/page.tsx',
-    'app/auth/create-account/page.tsx',
-    'app/auth/reset-password-confirm/page.tsx',
-  ])('%s går in i appen med navigateAfterAuthChange', (file) => {
+  it.each(ENTRY_PAGES)('%s går in i appen med navigateAfterAuthChange', (file) => {
     expect(readFileSync(file, 'utf8')).toContain("navigateAfterAuthChange('/')");
   });
 
