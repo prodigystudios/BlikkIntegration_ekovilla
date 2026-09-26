@@ -10,11 +10,11 @@ import DashboardTasks from './DashboardTasks';
 import DashboardDocumentApprovals from './DashboardDocumentApprovals';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { toEffectiveRole, type UserRole } from '../../lib/roles';
+import type { UserRole } from '../../lib/roles';
 import NewsModal, { type NewsItem } from './NewsModal';
 import PushReactivationNotice from '@/components/notifications/PushReactivationNotice';
 
-// Base mapping of NAV_LINKS (contains all). We'll adapt to QuickLink shape.
+// Snabblänkarnas beskrivning och ikon per adress.
 const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
   '/egenkontroll': { desc: 'Skapa & arkivera egenkontroller', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
@@ -146,8 +146,9 @@ export function ClientDashboard({ role }: { role: UserRole | null }) {
   const NEWS_SEEN_KEY = 'dashboard.news.lastSeenId';
   const router = useRouter();
 
-  // konsult should have the same viewing permissions as sales.
-  const effectiveRole: UserRole | null = toEffectiveRole(role);
+  // PRESENTATION, inte åtkomst: konsult får startsidan uppställd som sälj (snabblänkarna har en egen
+  // gren för konsult ovanför). Vad någon NÅR avgör nycklarna i sidorna och rutterna, inte den här raden.
+  const effectiveRole: UserRole | null = role === 'konsult' ? 'sales' : role;
 
   const [isSmall, setIsSmall] = useState(false);
   useEffect(() => {

@@ -101,7 +101,8 @@ plus `time.reminder.sms` (`20260908_time_reminder_sms_permission.sql`).
 **App surfaces outside the CRM** (RBAC pass step 2a, `supabase/migrations/20260926101919_rbac_app_permission_keys.sql`):
 `app.access` (all employees — Dokument & information, Felanmälan), `app.contacts.read`, `app.news.read`,
 `app.material.read`, `app.documents.read` (Mina dokument), `app.archive.read` (saved self-inspections),
-`app.jobs.read` (Mina jobb), `app.egenkontroll.write`, `app.clothing.order`; plus `crm.settings.manage`
+`app.jobs.read` (Mina jobb), `app.egenkontroll.write`, `app.clothing.order`, `app.staff` (internal staff vs
+external parties — PR 3, `20260926122102_rbac_app_staff_key.sql`); plus `crm.settings.manage`
 (the CRM settings hub + calculation settings, admin-only today). Seeded to reproduce **today's menu**
 exactly; nothing reads them until the menu and page gates move over (2b).
 
@@ -149,6 +150,7 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | `safety.round.read` / `safety.round.write` | – | ✓ | – | – | ✓ |
 | `app.access` / `app.contacts.read` / `app.news.read` / `app.material.read` / `app.documents.read` / `app.archive.read` | ✓ | ✓ | **✓** | – | ✓ |
 | `app.jobs.read` / `app.egenkontroll.write` / `app.clothing.order` | ✓ | – | – | – | ✓ |
+| `app.staff` (internal staff — replaces `isReadonlyRole`) | ✓ | ✓ | **–** | **–** | ✓ |
 | `crm.settings.manage` | – | – | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
@@ -403,7 +405,9 @@ await requirePagePermission('crm.article.manage', '/crm'); // no session → sig
 
 **Menu rows** (`app/_lib/appNav.ts`) take `permission: '<key>'` — visible iff held, `roles` ignored.
 Rows still on `roles`: Start (no gate on purpose — an empty menu is the worse failure), `/tid`,
-`/admin`, `/crm/dokument`, legacy `/plannering`, and the two `ekonomi` rows.
+`/admin`, and the two `ekonomi` rows — none of them names `sales`, so the old konsult→sales mapping
+(`toEffectiveRole`, removed in PR 3) is no longer needed anywhere. The CRM's own sidebar
+(`app/crm/_lib/nav.ts`) is fully on keys, each row on the key of the page it opens.
 
 **Employee pages are gated wider than their menu row** (decided 2026-09-26): `/mina-jobb`,
 `/egenkontroll`, `/mina-dokument`, `/nyheter`, `/material-kvalitet`, `/bestallning-klader`,
@@ -436,11 +440,25 @@ turns the page into a bare 500.
 | `GET /api/planning/truck-assignments` | `planning.schedule.read` | only legacy `/plannering` + `/admin/trucks/assignments` read it; the root-layout provider skips the fetch without the key |
 | `/api/crm/work-orders/[id]/customer-contact` | — (RLS) | reads the order with the **session** client first (crew policy / `crm.workorder.read`), only then the contact with service-role — same model as `assignee-contact` |
 
-⚠️ **Still role-based, drift possible with per-user overrides:** the CRM's own sidebar
-(`app/crm/_lib/nav.ts`), the `/crm/dokument` row and the start page's quick links. With role bundles
-only (no overrides) they agree with the key gates exactly. A per-user grant/revoke of `crm.access`
-or `crm.settings.manage` can show rows that bounce, or hide rows that still open. Move them before
-handing out such overrides.
+**Where the role still decides something (PR 3, 2026-09-26)** — deliberately, and never access:
+- **Presentation:** the start page's quick links and their order (`components/dashboard/ClientDashboard.tsx`
+  reads konsult as sales for layout only). With per-user overrides a tile can bounce to Start.
+- **Admin surfaces** — moved as one, later: `/admin` (page + its tabs' APIs on `requireAdminUser`), and
+  the admin-only APIs outside it: `/api/changelog` (+ `[id]`), `/api/support/tickets` admin actions,
+  `/api/blikk/contacts/probe`, `/api/profiles/by-tag` (all `role === 'admin'` / `requireAdminUser`).
+- **Documents domain** — moved as one, later: `/crm/dokument` `canEdit`, `/api/documents/files`,
+  `/folders`, `/list` (`canEdit`), `/publications` (`requireAdminUser`) + their RLS.
+- **Notification links in work-order comments** (`comments/route.ts` `hasCrmAccess`): picks the CRM or
+  the field-view link per RECIPIENT by role — presentation, and another user's keys aren't readable
+  without a new SQL function.
+- **Legacy `/plannering`** reads `profiles.role` client-side, and its RLS twin `public.is_konsult_user()`
+  guards the `planning_*` write policies — both go when the legacy board is removed.
+- Displaying someone's role (team lists, admin badges) and crew roles (`leader`/`member`) are data.
+
+Moved to keys in PR 3: the readonly guard (`forbidIfReadonly` → `app.staff`), the staff phone number in
+the field view (`assignee-contact` → `app.staff`), the work-order GET redaction (full row only with
+`crm.workorder.read`), the CRM sidebar, `/crm/ringlistor` (`crm.admin`), the CRM overview's team view
+(`crm.admin`) and its goals link (`crm.settings.manage`).
 
 ### Guard a route with a granular key
 
@@ -509,7 +527,7 @@ is a manual delete of the offending `role_permissions` / `user_permissions` row.
 | 3 | RLS swap (CRM/Fortnox tables) | ✅ |
 | 4 | Granular route keys (resource writes + Fortnox actions) | ✅ |
 | 5 | Admin UI + lockout guard | ✅ |
-| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b ✅ menu + page gates · 2c ✅ ungated routes · PR 3 remove the role layer |
+| 6 | The rest of the app (planning, documents, admin, contacts, news) | ✅ 2a keys + shell (`useCan`) · 2b menu + page gates · 2c ungated routes · PR 3 role layer out of menus, page gates, the readonly guard and work-order redaction. ⏳ Admin surfaces + documents domain (listed below) |
 
 **Left on the `crm.write` meta key intentionally:** the prospects routes (they write
 `crm_customers` — `crm_prospects` was removed), the tasks routes (their table isn't RLS-migrated

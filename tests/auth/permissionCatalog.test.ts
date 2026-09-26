@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PERMISSION_KEYS } from '@/lib/auth/permissions';
 import { keysForRole, rolesWithKey, sqlCatalog } from '../helpers/permissionSeed';
 import { getVisibleAppNavItems } from '@/app/_lib/appNav';
-import { toEffectiveRole, type UserRole } from '@/lib/roles';
+import type { UserRole } from '@/lib/roles';
 
 /**
  * Katalogen finns på två ställen: SQL-tabellen `permissions` och PERMISSION_KEYS i koden. De måste vara
@@ -47,7 +47,7 @@ const MENU_BEFORE_KEYS: Record<UserRole, MenuShape> = {
 
 function menuShape(role: UserRole): MenuShape {
   const keys = keysForRole(role);
-  return getVisibleAppNavItems(toEffectiveRole(role), (key) => keys.has(key)).map((item) =>
+  return getVisibleAppNavItems(role, (key) => keys.has(key)).map((item) =>
     item.children ? { [item.href]: item.children.map((c) => c.href) } : item.href,
   );
 }
@@ -74,5 +74,16 @@ describe('appnycklarnas seed', () => {
   // /crm/installningar och /crm/installningar/kalkyl krävde role = 'admin'.
   it('crm.settings.manage är bara admin', () => {
     expect(rolesWithKey('crm.settings.manage')).toEqual(['admin']);
+  });
+
+  // Intern personal — ersätter isReadonlyRole (konsult, ekonomi = externa).
+  it('app.staff är member, sales och admin — aldrig en extern roll', () => {
+    expect(rolesWithKey('app.staff')).toEqual(['admin', 'member', 'sales']);
+  });
+
+  // ⚠️ Lönebyrån är extern och hålls UTANFÖR CRM:et av att hon saknar crm.access (hela /crm gatas på
+  // den). Förr bar toEffectiveRole den vakten — att `ekonomi` inte mappades till sales. Nu är det seeden.
+  it('lönebyrån (ekonomi) har aldrig crm.access', () => {
+    expect(rolesWithKey('crm.access')).not.toContain('ekonomi');
   });
 });

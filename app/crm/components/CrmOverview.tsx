@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import EmptyState from '../../../components/ui/EmptyState';
 import ChangelogCard from './ChangelogCard';
-import type { UserRole } from '@/lib/roles';
+import { useCan } from '@/lib/UserProfileContext';
 import { cn } from '@/lib/shared/cn';
 import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type QuoteStatus, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
@@ -317,7 +317,12 @@ function buildOverviewActions(args: { overdueTasks: number; followUpCalls: numbe
   return actions.slice(0, 3);
 }
 
-export default function CrmOverview({ role, userId }: { role: UserRole | null; userId: string | null }) {
+export default function CrmOverview({ userId }: { userId: string | null }) {
+  // Admin ser hela teamets samtal, säljaren sina egna — samma nyckel (crm.admin) som styr vad API:t
+  // lämnar ut. Förr en jämförelse mot rollen.
+  const seesWholeTeam = useCan('crm.admin');
+  // Länken till målen öppnar /crm/installningar — samma nyckel som den sidan kräver.
+  const canAdjustGoals = useCan('crm.settings.manage');
   const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -446,9 +451,9 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
     if (summary.callsLast7Days > 0 || state.calls.length === 0) return null;
     // Antalet dygn är däremot bara en detalj och får komma ur listan när det går. Ligger den egna
     // raden utanför de fem säger kortet "över en vecka" i stället för att gissa en siffra.
-    const scoped = role === 'admin' ? state.calls : state.calls.filter((call) => call.user_id === userId);
+    const scoped = seesWholeTeam ? state.calls : state.calls.filter((call) => call.user_id === userId);
     return { days: daysSince(scoped[0]?.call_at) };
-  }, [summary.callsLast7Days, state.calls, role, userId]);
+  }, [summary.callsLast7Days, state.calls, seesWholeTeam, userId]);
   // Uppgifterna kommer nu färdigfiltrerade (status=open) och färdigsorterade från rutten, som
   // redan ordnar på status, förfallodatum (null sist) och skapandedatum. Att sortera om dem här
   // hade gett två konkurrerande definitioner av samma korts ordning, med frågans parametrar
@@ -786,7 +791,7 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                       {/* Urvalet är RLS-filtrerat: en admin ser allas samtal, alla andra sina egna
                           plus kollegors på prospekt de äger. Påståendet måste följa med — "ingen
                           har loggat" vore fel när det bara betyder att DU inte har det. */}
-                      {role === 'admin' ? 'Ingen har loggat ett samtal på ' : 'Du har inte loggat ett samtal på '}
+                      {seesWholeTeam ? 'Ingen har loggat ett samtal på ' : 'Du har inte loggat ett samtal på '}
                       {staleCalls.days != null ? `${staleCalls.days} dagar.` : 'över en vecka.'}
                     </p>
                   ) : null}
@@ -834,10 +839,9 @@ export default function CrmOverview({ role, userId }: { role: UserRole | null; u
                     remsan inte gör det, i stället för två gånger på samma skärm. */}
                 <p className={cn('m-0 mt-0.5 sm:hidden', crm.meta)}>{MONEY_NOTE}</p>
               </div>
-              {/* Bara admin. /crm/installningar är rollspärrad i _lib/nav.ts och målen är
-                  crm_goals_insert_admin_only i RLS — länken skickade en säljare till en sida hen
-                  inte kommer in på. */}
-              {role === 'admin' ? (
+              {/* Samma nyckel som /crm/installningar kräver (crm.settings.manage) — länken skickade
+                  förr en säljare till en sida hen inte kommer in på. */}
+              {canAdjustGoals ? (
                 <Link href="/crm/installningar" className={cn('shrink-0 text-xs', crm.link)}>Justera mål</Link>
               ) : null}
             </div>

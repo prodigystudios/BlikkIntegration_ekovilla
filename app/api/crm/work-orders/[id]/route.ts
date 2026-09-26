@@ -1,4 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderDocumentNoteChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -51,8 +52,11 @@ export async function GET(_req: Request, context: RouteContext) {
 
     // Installers reach this through the crew RLS policy, which is row-level and therefore cannot
     // keep personnummer or order economics out of the payload — that line is drawn here instead.
-    // Office roles (sales/admin/konsult) get the full row as before.
-    if (currentUser.currentUser?.role === 'member') {
+    // The full row goes to the office read key (crm.workorder.read: sales, admin, konsult, ekonomi);
+    // everyone else — the crew, who read via the crew policy — gets the field view. Fails closed: an
+    // error reading the keys is an empty set, i.e. the redacted view. (Was `role === 'member'`.)
+    const permissions = await getEffectivePermissions();
+    if (!permissions.has('crm.workorder.read')) {
       return ok({ item: redactWorkOrderForField(data as Record<string, unknown>), rounds: [] });
     }
 

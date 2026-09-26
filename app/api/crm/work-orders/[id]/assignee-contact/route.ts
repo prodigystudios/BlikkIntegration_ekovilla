@@ -17,7 +17,7 @@ import { createSessionClient } from '@/lib/supabase/session';
 // Systerrutten ../customer-contact följer samma modell sedan 2026-09-26 (förr: "inloggad + har
 // länken", UUID:t som capability — skrivet i juni, innan crew-policyn fanns).
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { isReadonlyRole } from '@/lib/auth/route';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
 import { invalidUuidParam, ok, requireSignedInUser, routeError } from '../../_lib';
 
@@ -39,38 +39,18 @@ export async function GET(_req: Request, context: RouteContext) {
 
     const session = createSessionClient();
 
-    // ⛔ DE EXTERNA ROLLERNA FÅR INTE PERSONALENS NUMMER. `konsult` håller `crm.workorder.read`,
+    // ⛔ DE EXTERNA PARTERNA FÅR INTE PERSONALENS NUMMER. `konsult` håller `crm.workorder.read`,
     // alltså skulle RLS-grinden nedan släppa igenom hen på varje order. Numret som faller ut är
     // personalens eget, ur `profiles` — och det delas i dag bara via Kontaktlistan, en KURERAD
-    // tabell där administrationen valt vad som publiceras. `listAssignableCrmUsers`, kontorets
-    // egen personallista, väljer också medvetet bort telefonen (`id, full_name, role`).
+    // tabell där administrationen valt vad som publiceras. Beslutet är Williams och gällde "de
+    // anställda" (2026-09-09); konsulten arbetar i CRM, inte i fält — kortet finns bara i fältvyn.
     //
-    // ⚠️ `isReadonlyRole` OCH INTE EN LITERAL `=== 'konsult'`. Listan bär också `ekonomi`
-    // (lönebyrån, likaså extern) och legacy `readonly`. Ekonomi når ingen arbetsorder i dag — hon
-    // har bara `time.*`-nycklar, så RLS stoppar henne — men hennes yta har vidgats flera gånger,
-    // och den dagen hon når en order ska hon inte plötsligt få personalens privata mobilnummer på
-    // köpet. Grinden ska inte behöva ändras igen för att en rolldefinition rörde sig.
-    //
-    // Beslutet är Williams och gällde "de anställda" (2026-09-09). En extern part faller utanför
-    // det, och konsulten arbetar i CRM, inte i fält — kortet finns bara i fältvyn.
-    //
-    // 🧨 EGEN LÄSNING, INTE `currentUser.role` — den grinden failade OPEN. `getCurrentUser()`
-    // kastar sitt profiles-läsfel (lib/auth/route.ts: `const { data: profile }`, ingen error) och
-    // svarar `role || 'member'`, så en misslyckad rolluppslagning hade sett ut som en installatör
-    // och släppt konsulten förbi — medan RLS fortsatte att admittera hen. Här är ett läsfel i
-    // stället ett nej. Läsningen är self-read och går under `profiles_select_self`, alltså den
-    // enda profilfråga som alltid får svara.
-    //
-    // ⚠️ EN ROLLGRIND, alltså precis det lager RBAC-arbetet river (se project_full_rbac_frontend).
-    // Den står här tills det finns en nyckel att fråga efter i stället; byt till nyckeln då,
-    // ta inte bort grinden.
-    // Grinden kräver ett POSITIVT bevis: en läst, intern roll. Läsfel OCH saknad profilrad är båda
-    // "obevisad", alltså nej — nekade grinden bara på en igenkänd extern roll vore varje utfall som
-    // inte råkade matcha ett ja, inklusive tomma svar.
-    const { data: reader, error: readerError } = await session
-      .from('profiles').select('role').eq('id', currentUser.currentUser!.id).maybeSingle();
-    const readerRole = (reader as { role?: string } | null)?.role ?? null;
-    if (readerError || !readerRole || isReadonlyRole(readerRole)) {
+    // Grinden är nyckeln app.staff (intern personal: member, sales, admin), inte en rollista. Den
+    // failar STÄNGT: ett fel i effective_permissions ger en tom mängd och inget nummer. (Förr en egen
+    // profilläsning + isReadonlyRole — skälet var att getCurrentUser() failar ÖPPET på rollen och
+    // hade gjort en konsult med trasig profilläsning till 'member'. Nyckeln har inte det problemet.)
+    const permissions = await getEffectivePermissions();
+    if (!permissions.has('app.staff')) {
       return ok({ contact: null });
     }
 

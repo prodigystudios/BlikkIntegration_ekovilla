@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
-import { toEffectiveRole, type UserRole } from '@/lib/roles';
+import type { UserRole } from '@/lib/roles';
 import { getVisibleCrmNavItems } from '../crm/_lib/nav';
 import { getVisibleAppNavItems } from '../_lib/appNav';
 import { usePermissions } from '@/lib/UserProfileContext';
@@ -290,8 +290,8 @@ export default function AppSidebar({
 }) {
   const pathname = usePathname();
   const inCrm = pathname === '/crm' || pathname.startsWith('/crm/');
-  const effRole: UserRole | null = toEffectiveRole(role);
-  // Appmenyns rader gatas på nycklar (se appNav.ts); CRM-navet är fortfarande rollstyrt.
+  // Båda menyerna gatas på nycklar (appNav.ts, crm/_lib/nav.ts). Rollen styr bara appmenyns få
+  // kvarvarande rollrader (Start, /tid, /admin, lönebyråns).
   const permissions = usePermissions();
   const can = useCallback((key: PermissionKey) => permissions.has(key), [permissions]);
 
@@ -299,13 +299,13 @@ export default function AppSidebar({
   // en andra kopia skulle drifta första gången någon lägger till ett fält i bara den
   // gren hon råkade felsöka.
   const items: NavNode[] = useMemo(() => {
-    const source = inCrm ? getVisibleCrmNavItems(effRole) : getVisibleAppNavItems(effRole, can);
+    const source = inCrm ? getVisibleCrmNavItems(can) : getVisibleAppNavItems(role, can);
     return source.map((item) => ({
       href: item.href,
       label: item.label,
       children: item.children?.map((c) => ({ href: c.href, label: c.label })),
     }));
-  }, [inCrm, effRole, can]);
+  }, [inCrm, role, can]);
 
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -426,7 +426,7 @@ export default function AppSidebar({
 
   // Etiketten under logotypen säger VILKEN app man står i. "Arbetsyta" är startsidans namn, och
   // lönebyrån har ingen startsida — hennes app är Tid & lön och inget annat.
-  const brandSub = inCrm ? 'CRM' : effRole === 'ekonomi' ? 'Tid & lön' : 'Arbetsyta';
+  const brandSub = inCrm ? 'CRM' : role === 'ekonomi' ? 'Tid & lön' : 'Arbetsyta';
 
   const renderLink = (node: NavNode, active: boolean, isChild: boolean) => {
     const pending = pendingHref === node.href && !active;

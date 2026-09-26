@@ -1,21 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { konsultUser, memberUser, salesUser } from './helpers/supabase';
+import { memberUser, salesUser } from './helpers/supabase';
+import { keysForRole } from '../helpers/permissionSeed';
 
 // Routen bakom fältvyns "ansvarig säljare"-kort. Domänfunktionen har egna tester
 // (workOrderAssigneeContact.test.ts); det som prövas HÄR är den rad som bär själva
-// integritetsbeslutet — att en extern konsult inte får personalens telefonnummer.
+// integritetsbeslutet — att en extern part inte får personalens telefonnummer.
 //
-// 🧨 Raden är en enda `if`, och utan det här testet är den osynlig för sviten. Filens egen
-// kommentar förutser dessutom att någon vill "harmonisera" routen med systern customer-contact
-// intill; görs det utan denna fil faller grinden bort med allt grönt.
+// 🧨 Raden är en enda `if`, och utan det här testet är den osynlig för sviten. Systerrutten
+// customer-contact har en annan grind (kunddata, inte personalens); "harmoniseras" den här med den
+// faller spärren bort med allt grönt.
+//
+// Grinden är nyckeln app.staff (intern personal: member, sales, admin) sedan 2026-09-26 — förr en
+// rollista (isReadonlyRole). `effective` sätts per test: det är mängden getEffectivePermissions svarar.
 
-// Bara `getCurrentUser` mockas. `isReadonlyRole` behålls ÄKTA med flit: det är den delade
-// rollistan (konsult/ekonomi/readonly) grinden vilar på, och en mockad kopia hade gjort testet
-// blint för precis den ändring det finns för att fånga — att någon lägger till eller tar bort en
-// extern roll i lib/auth/route.ts.
+const h = vi.hoisted(() => ({ effective: new Set<string>(['app.staff']) }));
+
 vi.mock('@/lib/auth/route', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/auth/route')>();
   return { ...actual, getCurrentUser: vi.fn() };
+});
+
+vi.mock('@/lib/auth/permissions', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/auth/permissions')>();
+  return { ...actual, getEffectivePermissions: vi.fn(async () => h.effective) };
 });
 
 vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
@@ -28,28 +35,7 @@ vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
 // längst ner.
 const ADMIN_CLIENT = { __client: 'admin' } as any;
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ADMIN_CLIENT) }));
-vi.mock('next/headers', () => ({ cookies: vi.fn() }));
-
-// Sessionsklienten svarar med läsarens EGEN profilrad — det är den rollen grinden frågar efter.
-// `readerRole`/`readerError` sätts per test.
-let readerRole: string | null = 'member';
-let readerError: { message: string } | null = null;
-
-vi.mock('@/lib/supabase/session', () => ({
-  createSessionClient: vi.fn(() => ({
-    __client: 'session',
-    from: () => {
-      const builder: any = {
-        select: () => builder,
-        eq: () => builder,
-        maybeSingle: () => Promise.resolve(
-          readerError ? { data: null, error: readerError } : { data: readerRole ? { role: readerRole } : null, error: null },
-        ),
-      };
-      return builder;
-    },
-  })),
-}));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({ __client: 'session' })) }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
@@ -58,14 +44,23 @@ import { GET } from '@/app/api/crm/work-orders/[id]/assignee-contact/route';
 const WO = '11111111-2222-4333-8444-555555555555';
 const ANDERS = { name: 'Anders Säljare', phone: '070-123 45 67' };
 
+// Rollernas RIKTIGA knippen, som de ser ut i prod (seed + migreringar). Externa parter håller
+// crm.workorder.read — RLS släpper alltså igenom dem på ordern — men aldrig app.staff. Ger en migrering
+// konsult nyckeln fälls testet nedan, inte bara katalogtestet.
+const KEYS = {
+  member: [...keysForRole('member')],
+  sales: [...keysForRole('sales')],
+  konsult: [...keysForRole('konsult')],
+  ekonomi: [...keysForRole('ekonomi')],
+};
+
 function call(id = WO) {
   return GET(new Request('http://localhost/x'), { params: { id } });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  readerRole = 'member';
-  readerError = null;
+  h.effective = new Set(KEYS.member);
   (getWorkOrderAssigneeContact as any).mockResolvedValue({ data: ANDERS, error: null });
 });
 
@@ -79,54 +74,29 @@ describe('GET /api/crm/work-orders/[id]/assignee-contact', () => {
 
   it('kontoret får det också', async () => {
     (getCurrentUser as any).mockResolvedValue(salesUser);
-    readerRole = 'sales';
+    h.effective = new Set(KEYS.sales);
     expect((await (await call()).json()).data.contact).toEqual(ANDERS);
   });
 
-  // ⛔ HUVUDVAKTEN. konsult är en EXTERN part som ändå håller crm.workorder.read, alltså skulle
-  // RLS släppa igenom hen på varje order. Numret är personalens eget och delas i dag bara via
+  // ⛔ HUVUDVAKTEN. konsult och lönebyrån är EXTERNA parter som ändå håller crm.workorder.read, alltså
+  // skulle RLS släppa igenom dem på varje order. Numret är personalens eget och delas i dag bara via
   // Kontaktlistan, en kurerad tabell. Uppslaget får inte ens göras.
-  it('konsult får inget nummer — och uppslaget görs inte alls', async () => {
-    (getCurrentUser as any).mockResolvedValue(konsultUser);
-    readerRole = 'konsult';
+  it.each(['konsult', 'ekonomi'] as const)('%s får inget nummer — och uppslaget görs inte alls', async (role) => {
+    (getCurrentUser as any).mockResolvedValue({ id: `user-${role}`, role });
+    h.effective = new Set(KEYS[role]);
     const res = await call();
-    const json = await res.json();
     expect(res.status).toBe(200);
-    expect(json.data.contact).toBeNull();
+    expect((await res.json()).data.contact).toBeNull();
     expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
   });
 
-  // ⚠️ HELA `isReadonlyRole`-LISTAN, inte bara konsult. `ekonomi` (lönebyrån) är likaså extern och
-  // når ingen arbetsorder i dag — hon har bara `time.*`-nycklar, så RLS stoppar henne innan
-  // grinden ens spelar roll. Testet finns för den dagen det ändras: hennes yta har vidgats flera
-  // gånger, och en grind som bara kände 'konsult' hade släppt igenom henne tyst, med sviten grön.
-  it.each(['ekonomi', 'readonly'])('extern roll %s får heller inget nummer', async (role) => {
-    (getCurrentUser as any).mockResolvedValue({ id: 'user-x', role: 'member' });
-    readerRole = role;
-    expect((await (await call()).json()).data.contact).toBeNull();
-    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
-  });
-
-  // 🧨 FAIL-CLOSED, och HELA POÄNGEN LIGGER I MOCKEN. Grinden läste först `currentUser.role`.
-  // `getCurrentUser()` kastar sitt profiles-läsfel (lib/auth/route.ts: `const { data: profile }`)
-  // och svarar `role || 'member'` — så en konsult vars rolluppslag failade kom hit MASKERAD SOM
-  // INSTALLATÖR, passerade grinden, och RLS fortsatte admittera hen på ordern.
-  //
-  // Därför säger mocken 'member' här, inte 'konsult': det är vad verkligheten skickar in i just
-  // det fönstret. Ett test som satte 'konsult' hade varit grönt även med den gamla trasiga
-  // grinden — det var precis det misstaget den här raden fick rätta.
-  it('ett trasigt rolluppslag nekar, även när sessionen ser ut som en installatör', async () => {
-    (getCurrentUser as any).mockResolvedValue({ id: konsultUser.id, role: 'member' });
-    readerError = { message: 'tillfälligt fel' };
-    const json = await (await call()).json();
-    expect(json.data.contact).toBeNull();
-    expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
-  });
-
-  // Samma sak när raden helt saknas: ingen roll bevisad, alltså inget nummer.
-  it('en läsare utan profilrad får heller inget', async () => {
-    (getCurrentUser as any).mockResolvedValue(memberUser);
-    readerRole = null;
+  // 🧨 FAIL-CLOSED. Den gamla grinden läste rollen, och getCurrentUser() svarar `role || 'member'`
+  // när profilläsningen fallerar — en konsult kom då hit MASKERAD SOM INSTALLATÖR. Därför säger mocken
+  // 'member' här. Nyckeluppslaget failar stängt: ett fel i effective_permissions ger en tom mängd
+  // (lib/auth/permissions.ts), och en tom mängd ska neka.
+  it('ett trasigt behörighetsuppslag nekar, även när sessionen ser ut som en installatör', async () => {
+    (getCurrentUser as any).mockResolvedValue({ id: 'user-konsult-1', role: 'member' });
+    h.effective = new Set();
     expect((await (await call()).json()).data.contact).toBeNull();
     expect(getWorkOrderAssigneeContact).not.toHaveBeenCalled();
   });
@@ -152,11 +122,7 @@ describe('GET /api/crm/work-orders/[id]/assignee-contact', () => {
   // 🧨 VILKEN KLIENT SOM GÅR VART ÄR HELA SÄKERHETSMODELLEN, och den avgörs HÄR i routen — inte
   // i domänfunktionen, som bara tar emot det den får. Skickas admin-klienten som första argument
   // läses arbetsordern förbi RLS, och routen svarar med den ansvariges namn och privata mobil för
-  // vilket order-UUID som helst, åt vilket inloggat icke-externt konto som helst.
-  //
-  // Utan den här assertionen är den mutationen OSYNLIG: domänfunktionen är mockad, och varje annat
-  // test frågar bara OM den anropades. Granskningen körde precis den mutationen och fick alla tio
-  // testerna gröna.
+  // vilket order-UUID som helst, åt vilket inloggat internt konto som helst.
   it('arbetsordern läses med sessionsklienten, profilen med admin', async () => {
     (getCurrentUser as any).mockResolvedValue(memberUser);
     await call();
