@@ -1,28 +1,12 @@
-import { createSessionClient } from '@/lib/supabase/session';
-import { redirect } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { getUserProfile } from '@/lib/getUserProfile';
-import { toEffectiveRole } from '@/lib/roles';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 
 export const dynamic = 'force-dynamic';
 
-// The shell (sidebar + content area) now comes from the app-wide AppShell in the
-// root layout. This layout only keeps CRM's access gate: authenticated AND
-// sales/admin (konsult == sales). Everyone else is bounced to the start page.
+// Hela CRM:et: crm.access (sales, admin, konsult — konsult läser). Nekad → Start, som alltid renderar.
+// ⛔ Lönebyrån (ekonomi) har INTE crm.access, och ska inte ha den: fakturaunderlaget har en egen yta
+// (/ekonomi/arbetsorder) just för att hela /crm ligger bakom den här grinden.
 export default async function CrmLayout({ children }: { children: ReactNode }) {
-  const supabase = createSessionClient();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-
-  if (!session) redirect('/auth/sign-in');
-
-  const profile = await getUserProfile();
-  const effectiveRole = toEffectiveRole(profile?.role);
-
-  if (!(effectiveRole === 'sales' || effectiveRole === 'admin')) {
-    redirect('/');
-  }
-
+  await requirePagePermission('crm.access');
   return <>{children}</>;
 }

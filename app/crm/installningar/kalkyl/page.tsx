@@ -1,6 +1,5 @@
-import { redirect } from 'next/navigation';
-import { getUserProfile } from '@/lib/getUserProfile';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 import {
   getCalcSettings,
   listCostArticlePrices,
@@ -27,8 +26,7 @@ import CalcSettingsClient from './CalcSettingsClient';
 export const dynamic = 'force-dynamic';
 
 export default async function KalkylPage() {
-  const profile = await getUserProfile();
-  if (profile?.role !== 'admin') redirect('/crm');
+  await requirePagePermission('crm.settings.manage', '/crm');
 
   // Samma admin-klient som systersidorna. Artikelcachens SELECT-policy är rollbaserad, och de två
   // inställningstabellerna läses ändå bäst genom samma klient som skrev dem.

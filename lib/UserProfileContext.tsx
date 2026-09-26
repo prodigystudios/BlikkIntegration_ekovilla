@@ -43,3 +43,8 @@ export function useUserProfile() {
 export function useCan(key: PermissionKey): boolean {
   return useContext(Ctx).permissions.has(key);
 }
+
+/** Hela mängden, för den som behöver fråga om flera nycklar (t.ex. menyn). Samma regler som useCan. */
+export function usePermissions(): ReadonlySet<string> {
+  return useContext(Ctx).permissions;
+}

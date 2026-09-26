@@ -1,21 +1,23 @@
-import { getCurrentUser } from '@/lib/auth/route';
-import { hasCrmPermission } from '@/app/crm/lib/pagePermissions';
+import { getEffectivePermissions } from '@/lib/auth/permissions';
 import PlanningClient from './PlanningClient';
 
 export const dynamic = 'force-dynamic';
 
 // NEW CRM-first planning (Wave 7), as a CRM surface under the CRM layout (sidebar + auth gate).
-// The CRM layout already restricts access to sales/admin (konsult passes as read-only). The API
-// enforces the real planning.* permissions; konsult cannot write.
+// The CRM layout gates on crm.access (konsult passes as read-only). The API enforces the real
+// planning.* permissions; these flags are only the UI affordances.
 export default async function CrmPlaneringPage() {
-  const user = await getCurrentUser().catch(() => null);
-  const canWrite = user?.role === 'admin' || user?.role === 'sales';
-  // Fleet + depot management are seeded to admins (planning.truck.manage / planning.depot.manage).
-  // The API enforces the real permissions; these are just the UI affordances.
-  const canManageTrucks = user?.role === 'admin';
-  // Depåhanteringen läses ur NYCKELN, inte rollen: den bär inköpsbeslutet (boka in leveranser, stämma
-  // av, snart beställa material), och getCurrentUser() failar öppet på rollen. hasCrmPermission failar
-  // stängt. canWrite och canManageTrucks följer med i RBAC-passet.
-  const canManageDepots = await hasCrmPermission('planning.depot.manage');
-  return <PlanningClient canWrite={canWrite} canManageTrucks={canManageTrucks} canManageDepots={canManageDepots} />;
+  // Alla tre ur NYCKLARNA, inte rollen — samma effektiva behörigheter som API:t, request-cachade
+  // (rotlayouten har redan läst dem). Failar stängt: ett fel ger en tom mängd och läsläge.
+  // Seeden: planning.schedule.write = sales + admin (konsult kan inte skriva), planning.truck.manage
+  // och planning.depot.manage = admin. Depåhanteringen bär inköpsbeslutet (boka in leveranser,
+  // stämma av, beställa material).
+  const permissions = await getEffectivePermissions();
+  return (
+    <PlanningClient
+      canWrite={permissions.has('planning.schedule.write')}
+      canManageTrucks={permissions.has('planning.truck.manage')}
+      canManageDepots={permissions.has('planning.depot.manage')}
+    />
+  );
 }

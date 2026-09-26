@@ -1,6 +1,5 @@
-import { redirect } from 'next/navigation';
-import { getUserProfile } from '@/lib/getUserProfile';
 import { getCurrentMonthStartDate, mapCrmGoalRows, type CrmGoalRow } from '@/lib/domains/crm/goals';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
 import CrmSettingsView from './CrmSettingsView';
@@ -8,8 +7,7 @@ import CrmSettingsView from './CrmSettingsView';
 export const dynamic = 'force-dynamic';
 
 export default async function CrmSettingsPage() {
-  const profile = await getUserProfile();
-  if (profile?.role !== 'admin') redirect('/crm');
+  await requirePagePermission('crm.settings.manage', '/crm');
 
   const supabase = getSupabaseAdmin();
   const currentMonthStart = getCurrentMonthStartDate();

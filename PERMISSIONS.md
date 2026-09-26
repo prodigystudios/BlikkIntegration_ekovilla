@@ -389,6 +389,29 @@ already honors it.
 3. Use it: in a route via `requirePermission('<key>')`, and/or in an RLS policy via
    `has_permission('<key>')`.
 
+### Guard a page
+
+Server components (a page, or a segment `layout.tsx` when the page is a client component):
+
+```ts
+import { requirePagePermission } from '@/lib/auth/pageGuards';
+await requirePagePermission('crm.article.manage', '/crm'); // no session → sign-in; no key → deniedTo
+```
+
+⚠️ `deniedTo` must never be a page that redirects the denied user back — that is
+`ERR_TOO_MANY_REDIRECTS` and no page at all. `/` (the default) has no gate and always renders.
+
+**Menu rows** (`app/_lib/appNav.ts`) take `permission: '<key>'` — visible iff held, `roles` ignored.
+Rows still on `roles`: Start (no gate on purpose — an empty menu is the worse failure), `/tid`,
+`/admin`, `/crm/dokument`, legacy `/plannering`, and the two `ekonomi` rows.
+
+**Employee pages are gated wider than their menu row** (decided 2026-09-26): `/mina-jobb`,
+`/egenkontroll`, `/mina-dokument`, `/nyheter`, `/material-kvalitet`, `/bestallning-klader`,
+`/kontakt-lista`, `/felanmalan`, `/dokument-information` require `app.access` (all employees), while
+their menu rows use the narrower `app.*` key. No employee loses a path they had (e.g. the field view
+links sales to `/egenkontroll`); only `ekonomi` and unknown accounts are shut out. Tightening a page to
+its own key is a separate, deliberate decision.
+
 ### Guard a route with a granular key
 
 ```ts
@@ -456,7 +479,7 @@ is a manual delete of the offending `role_permissions` / `user_permissions` row.
 | 3 | RLS swap (CRM/Fortnox tables) | ✅ |
 | 4 | Granular route keys (resource writes + Fortnox actions) | ✅ |
 | 5 | Admin UI + lockout guard | ✅ |
-| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b menu + page gates · 2c ungated routes |
+| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b ✅ menu + page gates · 2c ungated routes |
 
 **Left on the `crm.write` meta key intentionally:** the prospects routes (they write
 `crm_customers` — `crm_prospects` was removed), the tasks routes (their table isn't RLS-migrated

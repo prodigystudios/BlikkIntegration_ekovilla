@@ -1,11 +1,19 @@
 import type { UserRole } from '@/lib/roles';
+import type { PermissionKey } from '@/lib/auth/permissions';
 
 // App-level navigation shown OUTSIDE the CRM context (start page + the per-role
 // destinations that used to live in the global header / dashboard). The CRM
 // context reuses its own nav (app/crm/_lib/nav.ts) when the path is under /crm.
 //
-// Role gating uses the *effective* role (konsult is resolved to sales upstream,
-// consistent with lib/roles.ts filterLinks and the CRM layout).
+// Två sorters grind, rad för rad:
+//   * `permission` — raden syns för den som HAR nyckeln (effektiva behörigheter: rollens knippe,
+//     minus nekanden, plus undantag per användare). Samma nyckel som sidan eller dess API gatar på.
+//   * `roles` — den gamla rollgrinden, kvar på de rader som medvetet inte flyttats: Start, /tid,
+//     /admin, /crm/dokument, gamla /plannering och lönebyråns två rader. Den använder den *effektiva*
+//     rollen (konsult blir sales uppströms).
+// En rad med `permission` läser ALDRIG `roles`. Nycklarnas seed är dagens rollmängd
+// (20260926101919_rbac_app_permission_keys.sql), så bytet flyttar ingen rad för någon roll —
+// tests/auth/permissionCatalog.test.ts jämför menyn per roll mot hur den såg ut före bytet.
 //
 // Shape mirrors CrmNavItem: an item with `children` renders as an expandable group
 // in the sidebar. The frequent destinations stay flat on purpose — the collapsed
@@ -20,7 +28,8 @@ export type AppNavItem = {
   // render `group:…` as an href.
   href: string;
   label: string;
-  roles?: UserRole[]; // omitted = visible to all authenticated roles
+  roles?: UserRole[]; // omitted = visible to all authenticated roles (see EXPLICIT_ONLY_ROLES)
+  permission?: PermissionKey; // set = visible iff the user holds the key; `roles` is then ignored
   children?: AppNavItem[];
 };
 
@@ -28,15 +37,15 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   { href: '/', label: 'Start' },
 
   // Sales / admin block
-  { href: '/crm', label: 'CRM', roles: ['sales', 'admin'] },
+  { href: '/crm', label: 'CRM', permission: 'crm.access' },
   // Two planning worlds are live during the CRM cutover: new jobs are planned in CRM, the legacy
   // Blikk-backed board runs its remaining jobs to completion. Both are listed so the office can
   // reach either; the legacy one is labelled so nobody plans new work there by mistake. They stay
   // flat and adjacent — putting the current one behind a group would hide the destination people
   // actually want and leave the legacy board as the one you reach by reflex.
-  { href: '/crm/planering', label: 'Planering', roles: ['sales', 'admin'] },
+  { href: '/crm/planering', label: 'Planering', permission: 'planning.schedule.read' },
   { href: '/plannering', label: 'Planering (äldre)', roles: ['sales', 'admin'] },
-  { href: '/crm/korjournal', label: 'Körjournal', roles: ['sales', 'admin'] },
+  { href: '/crm/korjournal', label: 'Körjournal', permission: 'crm.access' },
 
   // Kalkylatorn (/offert/kalkylator) är MEDVETET UTE UR MENYN. Ytan används inte alls just nu och
   // ska byggas om eller tas bort — en meny-rad till något ingen ska använda är bara en väg att
@@ -46,7 +55,7 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   // (⚠️ startsidans snabblänkar i components/dashboard/ClientDashboard.tsx pekar fortfarande dit.)
 
   // Installer / member block
-  { href: '/mina-jobb', label: 'Mina jobb', roles: ['member', 'admin'] },
+  { href: '/mina-jobb', label: 'Mina jobb', permission: 'app.jobs.read' },
   // Egenkontrollerna delade tidigare toppnivå som "Egenkontroll" och "Egenkontroller" — en bokstav
   // isär för två olika saker. De hör ihop, så de bor i en egen grupp med namnen utskrivna.
   // Sälj ser bara arkivet; enbarnsregeln nedan fäller då ihop gruppen till just den raden.
@@ -54,8 +63,8 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     href: 'group:egenkontroll',
     label: 'Egenkontroll',
     children: [
-      { href: '/egenkontroll', label: 'Ny egenkontroll', roles: ['member', 'admin'] },
-      { href: '/archive', label: 'Sparade egenkontroller', roles: ['member', 'sales', 'admin'] },
+      { href: '/egenkontroll', label: 'Ny egenkontroll', permission: 'app.egenkontroll.write' },
+      { href: '/archive', label: 'Sparade egenkontroller', permission: 'app.archive.read' },
     ],
   },
   // ⚠️ TIDRAPPORTEN PEKAR PÅ VÅR EGEN /tid — bytet gjordes 2026-09-01 på Williams uttryckliga
@@ -75,22 +84,22 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
     href: 'group:dokument',
     label: 'Dokument',
     children: [
-      { href: '/mina-dokument', label: 'Mina dokument', roles: ['member', 'sales', 'admin'] },
+      { href: '/mina-dokument', label: 'Mina dokument', permission: 'app.documents.read' },
       // Was "Dokument", which read as a fourth sibling of the three document rows.
       { href: '/crm/dokument', label: 'Dokumentbibliotek', roles: ['sales', 'admin'] },
-      { href: '/dokument-information', label: 'Dokument & information' },
+      { href: '/dokument-information', label: 'Dokument & information', permission: 'app.access' },
     ],
   },
   {
     href: 'group:ovrigt',
     label: 'Övrigt',
     children: [
-      { href: '/kontakt-lista', label: 'Kontakt & adresser' },
-      { href: '/nyheter', label: 'Nyheter', roles: ['member', 'sales', 'admin'] },
-      { href: '/material-kvalitet', label: 'Materialkvalitet', roles: ['member', 'sales', 'admin'] },
-      { href: '/bestallning-klader', label: 'Beställ kläder', roles: ['member', 'admin'] },
+      { href: '/kontakt-lista', label: 'Kontakt & adresser', permission: 'app.contacts.read' },
+      { href: '/nyheter', label: 'Nyheter', permission: 'app.news.read' },
+      { href: '/material-kvalitet', label: 'Materialkvalitet', permission: 'app.material.read' },
+      { href: '/bestallning-klader', label: 'Beställ kläder', permission: 'app.clothing.order' },
       // Sist i gruppen: det man söker upp när något är fel, inte något man gör i förbifarten.
-      { href: '/felanmalan', label: 'Felanmälan' },
+      { href: '/felanmalan', label: 'Felanmälan', permission: 'app.access' },
     ],
   },
 
@@ -138,9 +147,16 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 //
 // Rör INTE de andra rollerna. `null` (okänd roll) ser fortfarande de ospärrade raderna — ett test
 // vaktar det, och att logga in och se en tom meny är ett sämre fel än att se Start.
+//
+// Sedan nycklarna (2026-09-26) gäller listan bara rader UTAN `permission`: Dokument & information,
+// Kontakt & adresser och Felanmälan gatas nu på app.access / app.contacts.read, som ekonomi inte har.
+// Start är den enda raden helt utan grind — med flit, se getVisibleAppNavItems.
 const EXPLICIT_ONLY_ROLES: UserRole[] = ['ekonomi'];
 
-function isItemVisible(item: AppNavItem, role: UserRole | null) {
+export type CanFn = (key: PermissionKey) => boolean;
+
+function isItemVisible(item: AppNavItem, role: UserRole | null, can: CanFn) {
+  if (item.permission) return can(item.permission);
   if (role && EXPLICIT_ONLY_ROLES.includes(role)) return !!item.roles?.includes(role);
   return !item.roles || (!!role && item.roles.includes(role));
 }
@@ -150,16 +166,19 @@ function isItemVisible(item: AppNavItem, role: UserRole | null) {
 // not a URL to fall back on — drop it, or the sidebar's plain-link branch would render
 // `href="group:…"`. One: a chevron that opens onto a single link is a click for nothing,
 // so the child takes the row and names it.
-function collapseGroup(item: AppNavItem, role: UserRole | null): AppNavItem[] {
+function collapseGroup(item: AppNavItem, role: UserRole | null, can: CanFn): AppNavItem[] {
   if (!item.children) return [item];
-  const children = item.children.filter((child) => isItemVisible(child, role));
+  const children = item.children.filter((child) => isItemVisible(child, role, can));
   if (children.length === 0) return [];
   if (children.length === 1) return [children[0]];
   return [{ ...item, children }];
 }
 
-export function getVisibleAppNavItems(role: UserRole | null): AppNavItem[] {
-  return APP_NAV_ITEMS.filter((item) => isItemVisible(item, role)).flatMap((item) =>
-    collapseGroup(item, role),
+// `role` är den EFFEKTIVA rollen (toEffectiveRole) och styr bara rader utan `permission`. `can` svarar
+// för den inloggades effektiva behörigheter — tom mängd (utloggad, eller läsningen misslyckades) ger
+// bara de rollstyrda raderna, aldrig en tom meny: Start har ingen nyckel med flit.
+export function getVisibleAppNavItems(role: UserRole | null, can: CanFn): AppNavItem[] {
+  return APP_NAV_ITEMS.filter((item) => isItemVisible(item, role, can)).flatMap((item) =>
+    collapseGroup(item, role, can),
   );
 }
