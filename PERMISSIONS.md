@@ -443,12 +443,22 @@ turns the page into a bare 500.
 **Where the role still decides something (PR 3, 2026-09-26)** — deliberately, and never access:
 - **Presentation:** the start page's quick links and their order (`components/dashboard/ClientDashboard.tsx`
   reads konsult as sales for layout only). With per-user overrides a tile can bounce to Start.
-- **`/admin`** (page + its tabs' APIs on `requireAdminUser`) — moves as one surface, later.
-- **`/crm/dokument` `canEdit`** (`role === 'admin'`, and the documents write APIs + RLS) — the documents
-  domain moves as one, later.
+- **Admin surfaces** — moved as one, later: `/admin` (page + its tabs' APIs on `requireAdminUser`), and
+  the admin-only APIs outside it: `/api/changelog` (+ `[id]`), `/api/support/tickets` admin actions,
+  `/api/blikk/contacts/probe`, `/api/profiles/by-tag` (all `role === 'admin'` / `requireAdminUser`).
+- **Documents domain** — moved as one, later: `/crm/dokument` `canEdit`, `/api/documents/files`,
+  `/folders`, `/list` (`canEdit`), `/publications` (`requireAdminUser`) + their RLS.
+- **Notification links in work-order comments** (`comments/route.ts` `hasCrmAccess`): picks the CRM or
+  the field-view link per RECIPIENT by role — presentation, and another user's keys aren't readable
+  without a new SQL function.
 - **Legacy `/plannering`** reads `profiles.role` client-side, and its RLS twin `public.is_konsult_user()`
   guards the `planning_*` write policies — both go when the legacy board is removed.
 - Displaying someone's role (team lists, admin badges) and crew roles (`leader`/`member`) are data.
+
+Moved to keys in PR 3: the readonly guard (`forbidIfReadonly` → `app.staff`), the staff phone number in
+the field view (`assignee-contact` → `app.staff`), the work-order GET redaction (full row only with
+`crm.workorder.read`), the CRM sidebar, `/crm/ringlistor` (`crm.admin`), the CRM overview's team view
+(`crm.admin`) and its goals link (`crm.settings.manage`).
 
 ### Guard a route with a granular key
 
@@ -517,7 +527,7 @@ is a manual delete of the offending `role_permissions` / `user_permissions` row.
 | 3 | RLS swap (CRM/Fortnox tables) | ✅ |
 | 4 | Granular route keys (resource writes + Fortnox actions) | ✅ |
 | 5 | Admin UI + lockout guard | ✅ |
-| 6 | The rest of the app (planning, documents, admin, contacts, news) | ✅ 2a keys + shell (`useCan`) · 2b menu + page gates · 2c ungated routes · PR 3 role layer removed |
+| 6 | The rest of the app (planning, documents, admin, contacts, news) | ✅ 2a keys + shell (`useCan`) · 2b menu + page gates · 2c ungated routes · PR 3 role layer out of menus, page gates, the readonly guard and work-order redaction. ⏳ Admin surfaces + documents domain (listed below) |
 
 **Left on the `crm.write` meta key intentionally:** the prospects routes (they write
 `crm_customers` — `crm_prospects` was removed), the tasks routes (their table isn't RLS-migrated

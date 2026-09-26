@@ -321,6 +321,8 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
   // Admin ser hela teamets samtal, säljaren sina egna — samma nyckel (crm.admin) som styr vad API:t
   // lämnar ut. Förr en jämförelse mot rollen.
   const seesWholeTeam = useCan('crm.admin');
+  // Länken till målen öppnar /crm/installningar — samma nyckel som den sidan kräver.
+  const canAdjustGoals = useCan('crm.settings.manage');
   const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -837,10 +839,9 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
                     remsan inte gör det, i stället för två gånger på samma skärm. */}
                 <p className={cn('m-0 mt-0.5 sm:hidden', crm.meta)}>{MONEY_NOTE}</p>
               </div>
-              {/* Bara admin. /crm/installningar är rollspärrad i _lib/nav.ts och målen är
-                  crm_goals_insert_admin_only i RLS — länken skickade en säljare till en sida hen
-                  inte kommer in på. */}
-              {seesWholeTeam ? (
+              {/* Samma nyckel som /crm/installningar kräver (crm.settings.manage) — länken skickade
+                  förr en säljare till en sida hen inte kommer in på. */}
+              {canAdjustGoals ? (
                 <Link href="/crm/installningar" className={cn('shrink-0 text-xs', crm.link)}>Justera mål</Link>
               ) : null}
             </div>

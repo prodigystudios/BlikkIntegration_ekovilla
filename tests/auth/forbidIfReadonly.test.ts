@@ -54,6 +54,14 @@ describe('forbidIfReadonly', () => {
     expect((await forbidIfReadonly())?.status).toBe(403);
   });
 
+  // Det VERKLIGA fallet: profilläsningen fallerar (rollen blir 'member'), men behörighetsuppslaget
+  // lyckas och svarar med konsultens nycklar. En grind som föll tillbaka på rollen hade släppt igenom.
+  it('nekar en konsult vars profil inte gick att läsa', async () => {
+    h.profile = null;
+    h.effective = new Set(['crm.access', 'crm.workorder.read', 'fortnox.read']);
+    expect((await forbidIfReadonly())?.status).toBe(403);
+  });
+
   it('401 utan inloggning', async () => {
     h.user = null;
     expect((await forbidIfReadonly())?.status).toBe(401);

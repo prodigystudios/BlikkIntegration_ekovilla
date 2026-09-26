@@ -33,7 +33,8 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
     href: '/crm/installningar',
     label: 'Inställningar',
     description: 'Mål, användare och integrationer',
-    permission: 'crm.settings.manage',
+    // Ingen egen nyckel: gruppen avgörs av sina barn (se getVisibleCrmNavItems), så den som bara har
+    // artikel- eller enhetsnyckeln ser just den raden.
     children: [
       { href: '/crm/installningar', label: 'Översikt', description: 'Mål, användare och integrationer', permission: 'crm.settings.manage' },
       { href: '/crm/installningar/artiklar', label: 'Artiklar', description: 'Skapa och redigera Fortnox-artiklar', permission: 'crm.article.manage' },
@@ -52,9 +53,10 @@ function isItemVisible(item: CrmNavItem, can: CanFn) {
 // `can` svarar för den inloggades effektiva behörigheter (tom mängd → inga rader: den som saknar
 // crm.access når inte CRM:et alls).
 export function getVisibleCrmNavItems(can: CanFn): CrmNavItem[] {
-  return CRM_NAV_ITEMS.filter((item) => isItemVisible(item, can)).map((item) =>
-    item.children
-      ? { ...item, children: item.children.filter((child) => isItemVisible(child, can)) }
-      : item,
-  );
+  return CRM_NAV_ITEMS.filter((item) => isItemVisible(item, can)).flatMap((item) => {
+    if (!item.children) return [item];
+    // En grupp utan synliga barn har inget att erbjuda — släpp den hellre än att rita en tom grupp.
+    const children = item.children.filter((child) => isItemVisible(child, can));
+    return children.length ? [{ ...item, children }] : [];
+  });
 }

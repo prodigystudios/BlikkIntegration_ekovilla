@@ -29,6 +29,14 @@ describe('CRM-menyn med nycklar = CRM-menyn före bytet', () => {
     expect(shape(role)).toEqual(CRM_NAV_BEFORE_KEYS[role]);
   });
 
+  // En grupp utan egen nyckel avgörs av sina barn: den som bara har artikelnyckeln (personligt
+  // undantag) ser Inställningar med just Artiklar — sidan öppnas ju för hen.
+  it('Inställningar visar bara de barn man har nyckeln till', () => {
+    const held = new Set(['crm.access', 'crm.article.manage']);
+    const group = getVisibleCrmNavItems((key) => held.has(key)).find((i) => i.href === '/crm/installningar');
+    expect(group?.children?.map((c) => c.href)).toEqual(['/crm/installningar/artiklar']);
+  });
+
   it('utan nycklar syns ingen CRM-rad', () => {
     expect(getVisibleCrmNavItems(() => false)).toEqual([]);
   });

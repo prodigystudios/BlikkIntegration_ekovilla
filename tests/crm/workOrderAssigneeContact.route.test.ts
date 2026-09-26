@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { memberUser, salesUser } from './helpers/supabase';
+import { keysForRole } from '../helpers/permissionSeed';
 
 // Routen bakom fältvyns "ansvarig säljare"-kort. Domänfunktionen har egna tester
 // (workOrderAssigneeContact.test.ts); det som prövas HÄR är den rad som bär själva
@@ -43,13 +44,14 @@ import { GET } from '@/app/api/crm/work-orders/[id]/assignee-contact/route';
 const WO = '11111111-2222-4333-8444-555555555555';
 const ANDERS = { name: 'Anders Säljare', phone: '070-123 45 67' };
 
-// Rollernas knippen, som de relevanta delarna ser ut i seeden. Externa parter håller
-// crm.workorder.read — RLS släpper alltså igenom dem på ordern — men aldrig app.staff.
+// Rollernas RIKTIGA knippen, som de ser ut i prod (seed + migreringar). Externa parter håller
+// crm.workorder.read — RLS släpper alltså igenom dem på ordern — men aldrig app.staff. Ger en migrering
+// konsult nyckeln fälls testet nedan, inte bara katalogtestet.
 const KEYS = {
-  member: ['app.staff', 'time.entry.write'],
-  sales: ['app.staff', 'crm.access', 'crm.workorder.read'],
-  konsult: ['crm.access', 'crm.workorder.read'],
-  ekonomi: ['crm.workorder.read', 'time.approve'],
+  member: [...keysForRole('member')],
+  sales: [...keysForRole('sales')],
+  konsult: [...keysForRole('konsult')],
+  ekonomi: [...keysForRole('ekonomi')],
 };
 
 function call(id = WO) {
