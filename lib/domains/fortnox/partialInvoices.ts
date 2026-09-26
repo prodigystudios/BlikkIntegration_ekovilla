@@ -3,7 +3,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
 // Radmatchningen delas med ordersidans artikeleditor, som låser samma rader i förväg.
-import { invoicedFloorMessage, invoicedOnLine, isBelowInvoiced } from '@/lib/domains/crm/invoicedLines';
+import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
@@ -25,11 +25,9 @@ import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 // Den beprövade en-shot-vägen (createInvoiceFromWorkOrder → order createinvoice) är orörd och
 // används bara innan någon delfakturarunda startat.
 
-// Quantity floating-point tolerance (m³ volumes are fractional). Below this two quantities are
-// treated as equal — used for the "remaining" comparison and the final-round test.
-const QTY_EPS = 1e-6;
-
-const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
+// Quantity floating-point tolerance (m³ volumes are fractional) and rounding: QTY_EPS and roundQty,
+// imported from lib/domains/crm/invoicedLines so the editor's invoiced floor measures against the
+// same boundary as "remaining" and the final-round test here.
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
 export type PartialInvoiceLineItem = {

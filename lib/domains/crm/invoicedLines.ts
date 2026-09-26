@@ -11,8 +11,11 @@ import { lineItemQuantity, type LineItemQuantitySource } from './lineItems';
 export type InvoicedRoundLine = { line_id?: string | null; index?: number | null; quantity: number };
 export type InvoicedRound = { line_quantities: InvoicedRoundLine[] | null };
 
-const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
-const QTY_EPS = 1e-6;
+// Avrundning och tolerans för antal — EN definition, som partialInvoices också importerar. Golvet
+// här och "återstående" där måste mäta mot samma gräns, annars godtas en sänkning till exakt det
+// fakturerade medan ordern ändå inte stänger.
+export const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
+export const QTY_EPS = 1e-6;
 
 /**
  * Golvet för en fakturerad rad: antalet får inte sänkas UNDER det fakturerade — då säger ordern att

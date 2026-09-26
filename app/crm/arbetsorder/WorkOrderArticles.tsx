@@ -5,7 +5,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { computePricing, lineItemEffectiveUnitPrice, lineItemRowTotal, lineItemUnitPrice, type PricingLineItem } from '@/lib/domains/crm/pricing';
 import { isBlankLineItem, isConfiguredLineItem, lineItemQuantity, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
-import { untouchedUnpricedWarning, workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
+import { workOrderLineItemIssues, workOrderLineItemWarnings } from '@/lib/domains/crm/lineItemIssues';
 import { invoicedFloorIssues, invoicedLineIds, type InvoicedRound } from '@/lib/domains/crm/invoicedLines';
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
@@ -250,9 +250,13 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     [editing, rows, rotEnabled, items, invoicedIds, invoiceRounds],
   );
   // Spärrar inget — men sägs FÖRE sparningen, inte som ett Fortnox-fel efteråt.
-  const staleWarning = useMemo(
-    () => (editing ? untouchedUnpricedWarning(rows, items) : null),
-    [editing, rows, items],
+  const warnings = useMemo(
+    () => (editing
+      ? workOrderLineItemWarnings(rows, {
+          rotEnabled, savedRows: items, lockedIds: invoicedIds, partiallyInvoiced: (invoiceRounds?.length ?? 0) > 0,
+        })
+      : []),
+    [editing, rows, rotEnabled, items, invoicedIds, invoiceRounds],
   );
 
   function updateRow(id: string, patch: Partial<ArticleLineItem>) {
@@ -563,8 +567,12 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
               </button>
             </div>
 
-            {staleWarning ? (
-              <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-medium text-amber-800">{staleWarning}</p>
+            {warnings.length ? (
+              <div className="grid gap-1 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5">
+                {warnings.map((warning) => (
+                  <p key={warning} className="m-0 text-xs font-medium text-amber-800">{warning}</p>
+                ))}
+              </div>
             ) : null}
 
             {issues.length ? (

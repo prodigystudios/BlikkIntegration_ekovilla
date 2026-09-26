@@ -4,6 +4,7 @@ import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, resolveDocumentContact, type CrmContactSource, type DocumentContactSnapshot } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
 import { unpricedRowsIssue } from './lineItemIssues';
+import { invoicedLineIds } from './invoicedLines';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
@@ -1220,21 +1221,23 @@ export async function saveWorkOrderLineItems(
     return { data: null, error: { message: 'Arbetsordern är färdigfakturerad och kan inte ändras.' }, reason: 'order_closed' as const };
   }
 
-  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en ny eller ändrad rad utan pris, och
-  // FÖRST Fortnox-pushen sa nej (assertLineItemsArePriced, 409) — med raderna redan i databasen,
-  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar, och
-  // bara på rader som ändrats: en gammal rad ska inte kunna låsa varje sparning (unpricedRowsIssue).
-  const unpriced = unpricedRowsIssue(nextLineItems, wo.line_items);
-  if (unpriced) {
-    return { data: null, error: { message: unpriced }, reason: 'invalid_rows' as const };
-  }
-
   // Rundorna behövs både för redigeringsreglerna och för att avgöra om ordern stänger sig.
   const { data: roundsData, error: roundsError } = await listWorkOrderInvoiceRounds(supabase, workOrderId);
   // Fail closed: ett svalt läsfel hade sett ut som "inget är fakturerat" och släppt igenom en
   // radering av en rad som redan står på kundens faktura.
   if (roundsError) return { data: null, error: roundsError, reason: 'rounds_read_failed' as const };
   const rounds = (roundsData ?? []) as unknown as InvoiceRound[];
+
+  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en ny eller ändrad rad utan pris, och
+  // FÖRST Fortnox-pushen sa nej (assertLineItemsArePriced, 409) — med raderna redan i databasen,
+  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar, och
+  // bara på rader som ändrats: en gammal rad ska inte kunna låsa varje sparning (unpricedRowsIssue).
+  // ⚠️ Fakturerade rader prövas inte: deras pris går inte att ändra (validateLineItemEdit), och en
+  // spärr där hade hindrat att antalet sänks till det fakturerade — alltså att ordern stängs.
+  const unpriced = unpricedRowsIssue(nextLineItems, wo.line_items, invoicedLineIds(wo.line_items, rounds));
+  if (unpriced) {
+    return { data: null, error: { message: unpriced }, reason: 'invalid_rows' as const };
+  }
 
   if (wo.partial_invoicing_started_at) {
     const verdict = validateLineItemEdit(wo.line_items as any, nextLineItems as any, rounds);

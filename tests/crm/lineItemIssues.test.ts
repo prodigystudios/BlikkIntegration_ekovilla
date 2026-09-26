@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { unpricedRowsIssue, untouchedUnpricedWarning, workOrderLineItemIssues } from '@/lib/domains/crm/lineItemIssues';
+import { unpricedRowsIssue, workOrderLineItemIssues, workOrderLineItemWarnings } from '@/lib/domains/crm/lineItemIssues';
 
 // Arbetsorderns spärrar före sparning. Utan prisspärren sparades raderna och FÖRST Fortnox-pushen
 // sa nej — med ordern stämplad 'failed', faktureringen spärrad och ett 409 som inte pekade ut raden.
@@ -70,18 +70,18 @@ describe('workOrderLineItemIssues', () => {
     expect(workOrderLineItemIssues([{ ...row, is_rot_work: true }], { rotEnabled: true })).toEqual([]);
   });
 
-  // 🧨 ALLA rader, inte bara ändrade: det är ROT-påslaget i översikten som gör en gammal rad fel, så
-  // en spärr på bara ändrade rader hade tigit just när den behövs.
-  it('prövar arbetskostnaden även på en orörd rad', () => {
+  // En ORÖRD rad spärrar aldrig — den får en varning (workOrderLineItemWarnings). Annars hade en
+  // gammal rad låst varje sparning av ordern, även en som rör en annan rad.
+  it('spärrar inte en orörd rad vars arbetskostnad äter A-priset', () => {
     const row = { ...priced, labor_cost: '700' };
-    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [row] })).toHaveLength(1);
+    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [row] })).toEqual([]);
   });
 
-  // …utom på en fakturerad (låst) rad: dess arbetskostnad går inte att ändra, och en spärr man inte
-  // kan åtgärda hade låst hela ordern.
+  // En fakturerad (låst) rad kan inte få sin arbetskostnad ändrad — en spärr där gick inte att åtgärda.
   it('hoppar över låsta rader i ROT-spärren', () => {
+    const saved = { ...priced, labor_cost: '100' };
     const row = { ...priced, labor_cost: '700' };
-    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [row], lockedIds: new Set(['a']) })).toEqual([]);
+    expect(workOrderLineItemIssues([row], { rotEnabled: true, savedRows: [saved], lockedIds: new Set(['a']) })).toEqual([]);
   });
 });
 
@@ -108,20 +108,62 @@ describe('unpricedRowsIssue — bara nya och ändrade rader', () => {
   });
 });
 
-// Den orörda gamla raden spärrar inget — men synken kommer att fallera, och det ska sägas FÖRE.
-describe('untouchedUnpricedWarning', () => {
+// 🧨 Fakturerade rader prövas inte. Deras pris går inte att ändra, och en spärr hade hindrat att
+// antalet sänks till det fakturerade — alltså att ordern stängs.
+describe('unpricedRowsIssue — låsta rader', () => {
+  it('spärrar inte en fakturerad rad utan pris vars antal sänks', () => {
+    const invoiced = { id: 'inv', article_name: 'Frakt', pricing_mode: 'item', quantity: '5', unit_price: '' };
+    expect(unpricedRowsIssue([{ ...invoiced, quantity: '3' }], [invoiced], new Set(['inv']))).toBeNull();
+  });
+
+  // Schemat gör om ett tomt artikelpris till null — frågan ställs mot det som faktiskt sparas.
+  it('läser ett tomt artikelpris som frånvaro', () => {
+    const row = { id: 'n', article_name: 'Frakt', pricing_mode: 'item', quantity: '1', unit_price: '', article_price: '' as unknown as number };
+    expect(unpricedRowsIssue([row], [])).toContain('pris saknas');
+  });
+});
+
+// Det editorn ska SÄGA men inte spärra.
+describe('workOrderLineItemWarnings', () => {
   const legacy = { id: 'old', article_name: 'Frakt', pricing_mode: 'item', quantity: '1', unit_price: '' };
+  const base = { rotEnabled: false };
 
   it('varnar för en orörd rad utan pris', () => {
-    expect(untouchedUnpricedWarning([legacy], [legacy])).toMatch(/^Rad 1 saknar pris sedan tidigare/);
+    expect(workOrderLineItemWarnings([legacy], { ...base, savedRows: [legacy] })[0]).toMatch(/^Rad 1 saknar pris sedan tidigare/);
+  });
+
+  // Rå JSONB kan bära '' som artikelpris. Editorn läste det som prissatt — schemat gör det till null,
+  // och pushen fallerar efter sparningen. Varningen ska säga det FÖRE.
+  it('varnar även när artikelpriset är en tom sträng', () => {
+    const row = { ...legacy, article_price: '' as unknown as number };
+    expect(workOrderLineItemWarnings([row], { ...base, savedRows: [row] })).toHaveLength(1);
   });
 
   // En ÄNDRAD rad är spärrens sak, inte varningens — samma rad ska inte sägas två gånger.
   it('tiger om en ändrad rad', () => {
-    expect(untouchedUnpricedWarning([{ ...legacy, quantity: '2' }], [legacy])).toBeNull();
+    expect(workOrderLineItemWarnings([{ ...legacy, quantity: '2' }], { ...base, savedRows: [legacy] })).toEqual([]);
   });
 
-  it('tiger när allt är prissatt', () => {
-    expect(untouchedUnpricedWarning([{ ...legacy, unit_price: '500' }], [{ ...legacy, unit_price: '500' }])).toBeNull();
+  // Ett råd om att ge raden ett pris går inte att följa på en fakturerad rad — priset är låst.
+  it('ger inget omöjligt råd om en låst rad', () => {
+    expect(workOrderLineItemWarnings([legacy], { ...base, savedRows: [legacy], lockedIds: new Set(['old']) })).toEqual([]);
+  });
+
+  it('varnar för en orörd rad vars arbetskostnad äter A-priset när ROT är på', () => {
+    const row = { id: 'r', article_name: 'Lösull', pricing_mode: 'item', quantity: '1', unit_price: '500', labor_cost: '700' };
+    expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [row] })[0]).toMatch(/arbetskostnaden äter hela A-priset/);
+    expect(workOrderLineItemWarnings([row], { rotEnabled: false, savedRows: [row] })).toEqual([]);
+  });
+
+  // Delfakturering proportionerar inte utbrutet ROT-arbete (hasCarvedRotLabor) — nästa runda stoppas.
+  it('varnar när en delfakturerad ROT-order får en utbruten arbetskostnad', () => {
+    const row = { id: 'r', article_name: 'Lösull', pricing_mode: 'item', quantity: '2', unit_price: '500', labor_cost: '200' };
+    expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [], partiallyInvoiced: true }).join(' ')).toMatch(/stoppar nästa delfaktura/);
+    expect(workOrderLineItemWarnings([row], { rotEnabled: true, savedRows: [], partiallyInvoiced: false })).toEqual([]);
+  });
+
+  it('tiger när allt är i ordning', () => {
+    const ok = { ...legacy, unit_price: '500' };
+    expect(workOrderLineItemWarnings([ok], { ...base, savedRows: [ok] })).toEqual([]);
   });
 });
