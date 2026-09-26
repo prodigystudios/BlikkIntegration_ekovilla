@@ -1500,6 +1500,8 @@ export default function WorkOrderDetailClient({
                 // raderna inte flaggas förrän påslaget sparats, utan att något sa det.
                 rotDetails={articleRotDetails}
                 reverseCharge={reverseCharge}
+                // Rader som redan står på en delfaktura låses i editorn — se invoicedLineIds.
+                invoiceRounds={invoiceRounds}
                 saving={savingArticles}
                 fortnoxConnected={fortnoxConnected}
                 // Bara en FÄRDIGfakturerad order är låst. En delfakturerad går att redigera — rundorna

@@ -21,6 +21,14 @@ export function lineItemQuantity(item: LineItemQuantitySource): number {
   return parseDecimal(item.quantity);
 }
 
+// Prissättningsläget en artikels enhet ger: m³-artiklar prissätts per kubik (yta × tjocklek),
+// allt annat per styck. Sätts när en artikel väljs på en rad — i offerten och på arbetsordern, som
+// tidigare hade var sin kopia av samma regex.
+export function pricingModeFromUnit(unit: string | null | undefined): 'm3' | 'item' {
+  const u = (unit || '').trim().toLowerCase();
+  return u === 'm3' || u === 'm³' || /m\s*³/.test(u) ? 'm3' : 'item';
+}
+
 export type LineItemContentSource = {
   article_name?: string | null;
   article_number?: string | null;
@@ -43,7 +51,10 @@ export type LineItemContentSource = {
 // `auto_price` och `house_work_type` räknas medvetet INTE som innehåll — de bär defaultvärden som
 // en orörd rad har utan att någon valt dem, och hade gjort varje ny rad "ifylld".
 export function isBlankLineItem(item: LineItemContentSource): boolean {
-  const empty = (v: string | null | undefined) => !v || !v.trim();
+  // String() och inte v.trim() rakt av, samma skäl som isConfiguredLineItem: en gammal rad i JSONB
+  // kan bära m2/quantity som TAL. `.trim()` på ett tal kastar — och arbetsorderns artikeleditor
+  // kör det här vid varje rendering, även i installatörens fältvy.
+  const empty = (v: unknown) => v == null || String(v).trim() === '';
   return (
     empty(item.article_name) &&
     empty(item.article_number) &&

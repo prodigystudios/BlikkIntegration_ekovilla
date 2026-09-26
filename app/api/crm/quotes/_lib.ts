@@ -93,7 +93,11 @@ export const quoteLineItemSchema = z.object({
   thickness_mm: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   auto_price: z.boolean().optional().default(true),
   unit_price: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
-  pricing_mode: lineItemPricingSchema.optional().default('item'),
+  // ⚠️ 'm3', inte 'item'. En rad UTAN prisläge räknas som m³ överallt där den läses
+  // (lineItemQuantity, prissättningen, pushen, artikeleditorn). Defaulten här var 'item', så en
+  // gammal m³-rad som sparades om fick sitt läge omskrivet: antalet lästes då ur det tomma
+  // quantity-fältet och radens värde föll till 0 kr — tyst. Offertformuläret skickar alltid läget.
+  pricing_mode: lineItemPricingSchema.optional().default('m3'),
   quantity: z.preprocess((value) => normalizeOptionalText(value) ?? '', z.string()).optional().default(''),
   article_id: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   article_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),

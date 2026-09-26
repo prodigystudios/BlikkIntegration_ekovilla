@@ -3,6 +3,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { crmQuoteSelect } from './quotes';
 import { resolveCrmContact, resolveDocumentContact, type CrmContactSource, type DocumentContactSnapshot } from './contacts';
 import { computePricing, type PricingLineItem } from './pricing';
+import { unpricedRowsIssue } from './lineItemIssues';
+import { invoicedLineIds } from './invoicedLines';
 import { activeLineItems, computeInvoiceState, validateLineItemEdit, type InvoiceRound } from '@/lib/domains/fortnox/partialInvoices';
 import { isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from './personalNumber';
 import { reportedSacksByWorkOrder } from '@/lib/domains/planning/reports';
@@ -1228,7 +1230,22 @@ export async function saveWorkOrderLineItems(
   if (roundsError) return { data: null, error: roundsError, reason: 'rounds_read_failed' as const };
   const rounds = (roundsData ?? []) as unknown as InvoiceRound[];
 
-  if (wo.partial_invoicing_started_at) {
+  // 🧨 SPÄRREN FÖRE SKRIVNINGEN, inte efter. Utan den sparades en ny eller ändrad rad utan pris, och
+  // FÖRST Fortnox-pushen sa nej (assertLineItemsArePriced, 409) — med raderna redan i databasen,
+  // ordern stämplad 'failed' och faktureringen spärrad. Samma regel som artikeleditorn visar, och
+  // bara på rader som ändrats: en gammal rad ska inte kunna låsa varje sparning (unpricedRowsIssue).
+  // ⚠️ Fakturerade rader prövas inte: deras pris går inte att ändra (validateLineItemEdit), och en
+  // spärr där hade hindrat att antalet sänks till det fakturerade — alltså att ordern stängs.
+  const unpriced = unpricedRowsIssue(nextLineItems, wo.line_items, invoicedLineIds(wo.line_items, rounds));
+  if (unpriced) {
+    return { data: null, error: { message: unpriced }, reason: 'invalid_rows' as const };
+  }
+
+  // ⚠️ Så fort RUNDOR finns, inte bara när kolumnen är satt. createPartialInvoice skriver
+  // `partial_invoicing_started_at` EFTER att rundan lagts in, och en misslyckad skrivning där lämnade
+  // rundor utan kolumn — då låstes ingenting, medan prisspärren nedan redan hoppar över fakturerade
+  // rader i tron att de är låsta. Utan fakturerade rader svarar funktionen ok ändå.
+  if (wo.partial_invoicing_started_at || rounds.length > 0) {
     const verdict = validateLineItemEdit(wo.line_items as any, nextLineItems as any, rounds);
     if (!verdict.ok) return { data: null, error: { message: verdict.message }, reason: 'line_invoiced' as const };
   }

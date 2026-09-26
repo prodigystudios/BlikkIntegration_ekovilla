@@ -2,6 +2,8 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/lib/domains/crm/lineItems';
+// Radmatchningen delas med ordersidans artikeleditor, som låser samma rader i förväg.
+import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
@@ -23,11 +25,9 @@ import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 // Den beprövade en-shot-vägen (createInvoiceFromWorkOrder → order createinvoice) är orörd och
 // används bara innan någon delfakturarunda startat.
 
-// Quantity floating-point tolerance (m³ volumes are fractional). Below this two quantities are
-// treated as equal — used for the "remaining" comparison and the final-round test.
-const QTY_EPS = 1e-6;
-
-const roundQty = (n: number) => Math.round(n * 1e6) / 1e6;
+// Quantity floating-point tolerance (m³ volumes are fractional) and rounding: QTY_EPS and roundQty,
+// imported from lib/domains/crm/invoicedLines so the editor's invoiced floor measures against the
+// same boundary as "remaining" and the final-round test here.
 const roundMoney = (n: number) => Math.round(n * 100) / 100;
 
 export type PartialInvoiceLineItem = {
@@ -94,20 +94,10 @@ export class PartialInvoiceError extends Error {
   }
 }
 
-// Hur mycket en runda fakturerade på EN rad. Matchar på radens id när posten bär ett (allt skrivet
-// efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en rad som
-// saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
-function invoicedOnLine(rounds: InvoiceRound[], lineId: string | null, index: number): number {
-  return roundQty(
-    rounds.reduce((sum, round) => {
-      const entries = round.line_quantities ?? [];
-      const match = lineId
-        ? entries.find((q) => q.line_id === lineId) ?? entries.find((q) => !q.line_id && q.index === index)
-        : entries.find((q) => q.index === index);
-      return sum + (match ? Math.max(0, match.quantity) : 0);
-    }, 0),
-  );
-}
+// Hur mycket en runda fakturerade på EN rad: invoicedOnLine, i lib/domains/crm/invoicedLines.ts så
+// att ordersidans artikeleditor kan låsa samma rader. Matchar på radens id när posten bär ett (allt
+// skrivet efter id-migreringen), annars på arrayposition — men positionsvägen används BARA för en
+// rad som saknar id, så en migrerad runda kan aldrig råka matcha på fel sätt.
 
 // Fakturerat hittills + återstående per rad, mot arbetsorderns AKTUELLA rader och alla tidigare
 // rundor. `total` är radens hela antal (m³-volym eller angivet antal, via den delade resolvern).
@@ -163,9 +153,8 @@ export function validateLineItemEdit(
     // Under det fakturerade skulle betyda att ordern säger att vi levererat mindre än vi redan
     // krävt betalt för. Ner TILL det fakturerade är däremot precis hur en order stängs på det som
     // faktiskt blev gjort — då blir återstående noll.
-    const nextQty = roundQty(lineItemQuantity(next));
-    if (nextQty + QTY_EPS < invoiced) {
-      return { ok: false, message: `Rad ${index + 1} är fakturerad med ${invoiced} och antalet kan inte sänkas under det.` };
+    if (isBelowInvoiced(lineItemQuantity(next), invoiced)) {
+      return { ok: false, message: invoicedFloorMessage(index + 1, invoiced) };
     }
     // Priset och artikeln är låsta när något av raden gått ut på faktura. Vi har ETT pris per rad,
     // så att ändra det skriver om vad den redan utställda fakturan påstås ha kostat — CRM och
@@ -179,9 +168,26 @@ export function validateLineItemEdit(
     // antalssänkning på en gammal delfakturerad order. Reproducerat mot den riktiga funktionen.
     // Samma normalisering som ROT-typen nedan, och av exakt samma skäl.
     const rotFlag = (item: PartialInvoiceLineItem | undefined) => item?.is_rot_work === true;
+    // ⚠️ ARTIKELPRISET hör till priset. En rad utan A-pris prissätts av `article_price`
+    // (lineItemUnitPrice), så att bara jämföra `unit_price` lämnade radens faktiska pris olåst — en
+    // gammal flik eller ett API-anrop kunde nolla det och spara en fakturerad rad utan pris, som
+    // sedan fällde pushen. Tomt och null är samma frånvaro (schemat gör om det ena till det andra).
+    const articlePrice = (item: PartialInvoiceLineItem | undefined) => {
+      const v = item?.article_price as unknown;
+      return v == null || v === '' ? null : Number(v);
+    };
     if (changed('unit_price') || changed('discount_percent') || changed('article_number')
+      || articlePrice(cur) !== articlePrice(next)
       || rotFlag(cur) !== rotFlag(next)) {
       return { ok: false, message: `Rad ${index + 1} är fakturerad — pris, rabatt, artikel och ROT-markering kan inte ändras. Lägg det som skiljer på en ny rad.` };
+    }
+    // PRISLÄGET hör till samma lås. Ett byte m³ ↔ st läser om det redan fakturerade antalet i en
+    // annan enhet — 8 m³ på fakturan blir "10 st" på raden, med 2 st kvar att fakturera. Golvet ovan
+    // fångar bara det fall där det nya antalet råkar hamna under det fakturerade.
+    // Normaliserat: en rad utan läge ÄR m³ (lineItemQuantity), och det ska inte läsas som ett byte.
+    const mode = (item: PartialInvoiceLineItem | undefined) => (item?.pricing_mode === 'item' ? 'item' : 'm3');
+    if (mode(cur) !== mode(next)) {
+      return { ok: false, message: `Rad ${index + 1} är fakturerad — prisläget (m³ eller styck) kan inte ändras. Lägg det som skiljer på en ny rad.` };
     }
     // ROT-TYPEN hör till samma lås, men den kan inte prövas med `changed()` ovan.
     //

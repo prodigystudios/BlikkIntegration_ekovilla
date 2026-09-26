@@ -317,6 +317,40 @@ describe('validateLineItemEdit', () => {
     expect(validateLineItemEdit([a, b], [a, { ...b, quantity: '9' }], rounds).ok).toBe(true);
   });
 
+  // 🧨 PRISLÄGET. Ett byte m³ ↔ st läser om det fakturerade antalet i en annan enhet: 2 m³ på
+  // fakturan blir "5 st" på raden. Golvet fångar det inte när det nya antalet råkar ligga över.
+  it('nekar att prisläget byts på en fakturerad rad', () => {
+    const m3 = { id: 'line-b', pricing_mode: 'm3', m2: '10', thickness_mm: '200', unit_price: '200', quantity: '5' };
+    const res = validateLineItemEdit([a, m3], [a, { ...m3, pricing_mode: 'item' }], rounds);
+    expect(res.ok).toBe(false);
+    expect((res as any).message).toMatch(/prisläget/);
+  });
+
+  // En rad UTAN läge ÄR m³ (lineItemQuantity) — schemat fyller i 'm3' vid sparning, och det är inget byte.
+  it('läser en lägeslös rad och m³ som samma prisläge', () => {
+    const legacy = { id: 'line-b', m2: '10', thickness_mm: '200', unit_price: '200' };
+    expect(validateLineItemEdit([a, legacy], [a, { ...legacy, pricing_mode: 'm3' }], rounds).ok).toBe(true);
+  });
+
+  // 🧨 ARTIKELPRISET. En rad utan A-pris prissätts av article_price — att nolla det var att nolla
+  // radens pris, och det gick igenom låset.
+  it('nekar att artikelpriset ändras på en fakturerad rad', () => {
+    const byArticle = { id: 'line-b', pricing_mode: 'item', unit_price: '', article_price: 200, quantity: '5' };
+    const res = validateLineItemEdit([a, byArticle], [a, { ...byArticle, article_price: null }], rounds);
+    expect(res.ok).toBe(false);
+  });
+
+  // Tomt och null är samma frånvaro — schemat gör om det ena till det andra vid varje sparning.
+  it('läser tomt och null artikelpris som samma värde', () => {
+    const legacy = { id: 'line-b', pricing_mode: 'item', unit_price: '200', article_price: '' as unknown as number, quantity: '5' };
+    expect(validateLineItemEdit([a, legacy], [a, { ...legacy, article_price: null }], rounds).ok).toBe(true);
+  });
+
+  // …och ett OFAKTURERAT prislägesbyte är fritt, som allt annat på en ofakturerad rad.
+  it('tillåter prislägesbyte på en ofakturerad rad', () => {
+    expect(validateLineItemEdit([a, b], [{ ...a, pricing_mode: 'm3', m2: '10', thickness_mm: '100' }, b], rounds).ok).toBe(true);
+  });
+
   // 🧨 REGRESSION, reproducerad i granskningen: `is_rot_work` jämfördes som sträng. En rad sparad
   // innan flaggan fanns saknar den, schemat fyller i `false` vid nästa sparning, och '' ≠ 'false'
   // lästes som en ändring — alltså NEKADES en helt legitim antalssänkning på en gammal
