@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/auth/guards';
 import { revalidateTag } from 'next/cache';
 import { getPublicOrigin } from '@/lib/publicOrigin';
 import { buildArchiveDownloadUrl, getStorageAdminOrThrow, routeError, saveBodySchema } from '../_lib';
@@ -8,6 +9,10 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    // Skrivningen till arkivet (service-role, förbi RLS — grinden här är den enda). app.access = alla
+    // anställda, samma som sidan /egenkontroll som anropar den: sälj når den via fältvyns länk.
+    const access = await requirePermission('app.access');
+    if (access.response) return access.response;
     const supa = getStorageAdminOrThrow();
     // Diagnostics: capture env presence (not values) for debugging intermittent 'No API key' issues
     try {

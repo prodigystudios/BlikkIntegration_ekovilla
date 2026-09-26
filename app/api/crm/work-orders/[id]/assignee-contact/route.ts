@@ -14,9 +14,8 @@ import { createSessionClient } from '@/lib/supabase/session';
 // vilket inloggat konto som helst. Och "inloggad" är inte "anställd": `/auth/create-account` delar
 // ut `role='member'` åt vem som helst.
 //
-// ⚠️ Systerrutten ../customer-contact bygger fortfarande på den ÄLDRE modellen ("inloggad + har
-// länken", UUID:t som capability). Den kommentaren skrevs i juni, innan crew-policyn fanns i
-// augusti — kopiera inte upplägget hit tillbaka.
+// Systerrutten ../customer-contact följer samma modell sedan 2026-09-26 (förr: "inloggad + har
+// länken", UUID:t som capability — skrivet i juni, innan crew-policyn fanns).
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { isReadonlyRole } from '@/lib/auth/route';
 import { getWorkOrderAssigneeContact } from '@/lib/domains/crm/work-orders';
@@ -33,10 +32,8 @@ export async function GET(_req: Request, context: RouteContext) {
     const currentUser = await requireSignedInUser();
     if (currentUser.response) return currentUser.response;
 
-    // ⚠️ Denna grind finns INTE i customer-contact intill. Det är inte en avvikelse att
-    // harmonisera bort åt andra hållet: varje annan [id]-route här har den, och utan den når ett
-    // icke-UUID PostgREST och kommer tillbaka som en rå 500 med "invalid input syntax for type
-    // uuid" i klartext. 400 är rätt svar på ett trasigt id.
+    // Varje [id]-route här har den: utan den når ett icke-UUID PostgREST och kommer tillbaka som en
+    // rå 500 med "invalid input syntax for type uuid" i klartext. 400 är rätt svar på ett trasigt id.
     const badId = invalidUuidParam(context.params.id);
     if (badId) return badId;
 

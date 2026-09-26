@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/auth/guards';
 import { unstable_noStore as noStore } from 'next/cache';
 import { getStorageAdminOrThrow, listAllQuerySchema, routeError, sanitizePrefix, sanitizeStoragePath } from '../_lib';
 
@@ -112,6 +113,12 @@ export async function GET(req: NextRequest) {
   try {
   // Ensure this route is never cached by Vercel Data Cache
   noStore();
+    // Arkivet ligger i en privat bucket och läses med service-role — FÖRBI RLS. Den här grinden är
+    // därför den enda. app.archive.read = alla anställda (member, sales, admin, konsult), inte
+    // lönebyrån och inte ett okänt konto. ⚠️ Nedladdningslänkar ligger permanent i Blikk- och
+    // arbetsorderkommentarer; nyckeln måste täcka alla som kan få en sådan länk.
+    const access = await requirePermission('app.archive.read');
+    if (access.response) return access.response;
     const parsedQuery = listAllQuerySchema.safeParse({
       prefix: req.nextUrl.searchParams.get('prefix') || undefined,
       debug: req.nextUrl.searchParams.get('debug') || undefined,

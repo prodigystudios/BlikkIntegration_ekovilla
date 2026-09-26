@@ -412,9 +412,20 @@ their menu rows use the narrower `app.*` key. No employee loses a path they had 
 links sales to `/egenkontroll`); only `ekonomi` and unknown accounts are shut out. Tightening a page to
 its own key is a separate, deliberate decision.
 
-⚠️ **`/archive` is NOT gated yet** — it is gated in step 2c together with `/api/storage/*` (the route is
-the actual leak) and an error boundary, in one commit: a page gate alone would leave the files readable
-through the route, and a route gate alone turns the page into a bare 500.
+**`/archive`** is gated on `app.archive.read` together with `/api/storage/*` and an error boundary (step
+2c, one commit): a page gate alone leaves the files readable through the route, and a route gate alone
+turns the page into a bare 500.
+
+**Service-role routes that used to check only "signed in"** (step 2c) — the gate in the route is the
+*only* line of defence, since service-role bypasses RLS:
+
+| Route | Key | Why that key |
+| --- | --- | --- |
+| `/api/storage/list-all`, `list`, `download` | `app.archive.read` | all employees; download links live permanently in Blikk + work-order comments |
+| `/api/storage/save` | `app.access` | same as the `/egenkontroll` page that calls it (sales reach it from the field view) |
+| `/api/contacts`, `/api/phone-list` | `app.contacts.read` | the contact list |
+| `GET /api/planning/truck-assignments` | `planning.schedule.read` | only legacy `/plannering` + `/admin/trucks/assignments` read it; the root-layout provider skips the fetch without the key |
+| `/api/crm/work-orders/[id]/customer-contact` | — (RLS) | reads the order with the **session** client first (crew policy / `crm.workorder.read`), only then the contact with service-role — same model as `assignee-contact` |
 
 ⚠️ **Still role-based, drift possible with per-user overrides:** the CRM's own sidebar
 (`app/crm/_lib/nav.ts`), the `/crm/dokument` row and the start page's quick links. With role bundles
@@ -489,7 +500,7 @@ is a manual delete of the offending `role_permissions` / `user_permissions` row.
 | 3 | RLS swap (CRM/Fortnox tables) | ✅ |
 | 4 | Granular route keys (resource writes + Fortnox actions) | ✅ |
 | 5 | Admin UI + lockout guard | ✅ |
-| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b ✅ menu + page gates · 2c ungated routes |
+| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b ✅ menu + page gates · 2c ✅ ungated routes · PR 3 remove the role layer |
 
 **Left on the `crm.write` meta key intentionally:** the prospects routes (they write
 `crm_customers` — `crm_prospects` was removed), the tasks routes (their table isn't RLS-migrated
