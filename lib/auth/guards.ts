@@ -32,6 +32,23 @@ export async function requirePermission(key: PermissionKey) {
   return { currentUser, response: null };
 }
 
+// Samma grind, men EN av flera nycklar räcker. För en yta som två olika grupper når av olika skäl —
+// t.ex. arkivets nedladdning: arkivläsarna, och den som läser arbetsordern där länken står.
+export async function requireAnyPermission(keys: readonly PermissionKey[]) {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser) {
+    return { currentUser: null, response: routeError(401, 'unauthorized', 'Unauthorized') };
+  }
+
+  const perms = await getEffectivePermissions();
+  if (!keys.some((key) => can(perms, key))) {
+    return { currentUser: null, response: routeError(403, 'forbidden', 'Forbidden') };
+  }
+
+  return { currentUser, response: null };
+}
+
 export async function requireSignedInUser() {
   const currentUser = await getCurrentUser();
 

@@ -407,12 +407,20 @@ Rows still on `roles`: Start (no gate on purpose — an empty menu is the worse 
 
 **Employee pages are gated wider than their menu row** (decided 2026-09-26): `/mina-jobb`,
 `/egenkontroll`, `/mina-dokument`, `/nyheter`, `/material-kvalitet`, `/bestallning-klader`,
-`/kontakt-lista`, `/felanmalan`, `/dokument-information` require `app.access` (all employees), while
+`/felanmalan`, `/dokument-information` require `app.access` (all employees), while
 their menu rows use the narrower `app.*` key. No employee loses a path they had (e.g. the field view
 links sales to `/egenkontroll`); only `ekonomi` and unknown accounts are shut out. Tightening a page to
 its own key is a separate, deliberate decision.
 
-**`/archive`** is gated on `app.archive.read` together with `/api/storage/*` and an error boundary (step
+**`/archive`** and **`/kontakt-lista`** are gated on the same key as the route the page fetches from
+(`app.archive.read` / `app.contacts.read` — same seed as `app.access`), so page and route answer alike.
+⚠️ **A layout gate does not stop the page's server code.** Next renders the layout and the page in
+parallel: the layout's redirect decides the response (nothing of the page reaches the user), but the
+page's own fetches and side effects still run. Harmless for a read behind a gated route (it just 403s),
+not for a write. A page that fetches or writes calls the same `requirePagePermission` first — it is
+request-cached, so the second check is free (`/archive` does).
+
+`/archive` got its gate together with `/api/storage/*` and an error boundary (step
 2c, one commit): a page gate alone leaves the files readable through the route, and a route gate alone
 turns the page into a bare 500.
 
@@ -421,7 +429,8 @@ turns the page into a bare 500.
 
 | Route | Key | Why that key |
 | --- | --- | --- |
-| `/api/storage/list-all`, `list`, `download` | `app.archive.read` | all employees; download links live permanently in Blikk + work-order comments |
+| `/api/storage/list-all`, `list` | `app.archive.read` | all employees |
+| `/api/storage/download` | `app.archive.read` **or** `crm.workorder.read` | links live permanently in Blikk + work-order comments and on the order's sack card; `ekonomi` reads orders (invoicing) without the archive and could download before — she gets the file she has a link to, not the listing |
 | `/api/storage/save` | `app.access` | same as the `/egenkontroll` page that calls it (sales reach it from the field view) |
 | `/api/contacts`, `/api/phone-list` | `app.contacts.read` | the contact list |
 | `GET /api/planning/truck-assignments` | `planning.schedule.read` | only legacy `/plannering` + `/admin/trucks/assignments` read it; the root-layout provider skips the fetch without the key |

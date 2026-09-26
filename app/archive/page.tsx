@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { headers } from 'next/headers';
 import { getRequestOriginFromHeaders } from '@/lib/publicOrigin';
 import nextDynamic from 'next/dynamic';
+import { requirePagePermission } from '@/lib/auth/pageGuards';
 const ArchiveList = nextDynamic(() => import('./ArchiveList'), { ssr: false });
 
 async function fetchFiles(search: string) {
@@ -26,6 +27,11 @@ async function fetchFiles(search: string) {
 }
 
 export default async function ArchivePage({ searchParams }: { searchParams: Record<string, string | string[] | undefined> }) {
+  // Samma grind som layout.tsx, MED FLIT två gånger: Next renderar layout och sida PARALLELLT, så
+  // layoutens redirect hindrar inte att koden här körs — den nekade fick förr hämtningen nedan gjord
+  // (403 från rutten, ett kast i loggen). Svaret blev ändå redirecten; det här gör att den inte ens
+  // försöker. Läsningen är request-cachad och kostar inget extra.
+  await requirePagePermission('app.archive.read');
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(searchParams || {})) {
     if (Array.isArray(v)) {

@@ -3,10 +3,10 @@ import { requirePagePermission } from '@/lib/auth/pageGuards';
 
 export const dynamic = 'force-dynamic';
 
-// Alla anställda (app.access) — inte lönebyrån, inte ett okänt konto. Menyraden gatas på en egen,
-// snävare nyckel; sidan gatas medvetet bredare, så att ingen anställd tappar en väg hit som hen har
-// i dag (t.ex. länkar från fältvyn). Beslut 2026-09-26.
+// app.contacts.read — samma nyckel som /api/contacts, som sidan hämtar listan ifrån: sidan och rutten
+// ska svara lika, annars landar en nekad i felgränsen i stället för på Start. (Seeden är densamma som
+// app.access — alla anställda + konsult, inte lönebyrån — så det här stänger ingen anställd ute.)
 export default async function Layout({ children }: { children: ReactNode }) {
-  await requirePagePermission('app.access');
+  await requirePagePermission('app.contacts.read');
   return children;
 }

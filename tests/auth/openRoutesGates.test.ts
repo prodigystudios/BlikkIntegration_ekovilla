@@ -111,3 +111,23 @@ describe.each(ROUTES)('$name', ({ key, call }) => {
     expect(h.clientCalls).toBe(0);
   });
 });
+
+// Nedladdningen släpper också igenom den som läser arbetsordrar: egenkontrollens länk står på orderns
+// säckkort och i kommentarerna, och lönebyrån (ekonomi) läser ordrarna utan att ha arkivet. Listan
+// gör det INTE — hon får hämta filen hon fått länken till, inte bläddra i hela arkivet.
+describe('arkivets nedladdning vs listning', () => {
+  const download = ROUTES.find((r) => r.name === 'GET /api/storage/download')!;
+  const listAll = ROUTES.find((r) => r.name === 'GET /api/storage/list-all')!;
+
+  it('nedladdningen släpper igenom med bara crm.workorder.read', async () => {
+    h.held = new Set(['crm.workorder.read']);
+    await download.call().catch(() => undefined);
+    expect(h.clientCalls).toBeGreaterThan(0);
+  });
+
+  it('listningen nekar med bara crm.workorder.read', async () => {
+    h.held = new Set(['crm.workorder.read']);
+    expect((await listAll.call()).status).toBe(403);
+    expect(h.clientCalls).toBe(0);
+  });
+});

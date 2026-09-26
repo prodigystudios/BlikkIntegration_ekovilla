@@ -1114,6 +1114,15 @@ export async function getWorkOrderAssigneeContact(
   return { data: normalizeAssigneeContact(profile), error: null };
 }
 
+// Syns ordern för läsaren under hens EGEN RLS? Besättningen via crew-policyn
+// (20260810_crm_work_order_crew_access.sql), kontoret via `crm.workorder.read`. Anropas med
+// SESSIONSKLIENTEN, före varje förhöjd läsning om ordern. `maybeSingle` + RLS: en order läsaren inte får
+// se ger noll rader, inte ett fel — alltså `false`.
+export async function isWorkOrderReadable(supabase: SupabaseClient, workOrderId: string) {
+  const { data, error } = await supabase.from('crm_work_orders').select('id').eq('id', workOrderId).maybeSingle();
+  return { data: !!data, error };
+}
+
 // Resolve just the customer contact (name/phone/email) for a work order. Pass an ADMIN
 // client: the field view (installers/member) needs to know who to call but has no CRM
 // read access to the full customer record — this exposes only the three contact fields.
@@ -1126,15 +1135,6 @@ export async function getWorkOrderAssigneeContact(
 // med separat. Visa den aldrig som kontaktpersonens; prefilla ett mottagarfält med den.
 //
 // Returns { data: null } when there is nothing at all to show.
-// Syns ordern för läsaren under hens EGEN RLS? Besättningen via crew-policyn
-// (20260810_crm_work_order_crew_access.sql), kontoret via `crm.workorder.read`. Anropas med
-// SESSIONSKLIENTEN, före varje förhöjd läsning om ordern. `maybeSingle` + RLS: en order läsaren inte får
-// se ger noll rader, inte ett fel — alltså `false`.
-export async function isWorkOrderReadable(supabase: SupabaseClient, workOrderId: string) {
-  const { data, error } = await supabase.from('crm_work_orders').select('id').eq('id', workOrderId).maybeSingle();
-  return { data: !!data, error };
-}
-
 export async function getWorkOrderCustomerContact(supabase: SupabaseClient, workOrderId: string) {
   const { data: wo, error: woError } = await supabase
     .from('crm_work_orders').select('customer_id, customer_snapshot').eq('id', workOrderId).maybeSingle();
