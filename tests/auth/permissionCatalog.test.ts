@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { PERMISSION_KEYS } from '@/lib/auth/permissions';
-import { keysForRole, migrationSeed, sqlCatalog } from '../helpers/permissionSeed';
+import { keysForRole, rolesWithKey, sqlCatalog } from '../helpers/permissionSeed';
 import { getVisibleAppNavItems } from '@/app/_lib/appNav';
 import { toEffectiveRole, type UserRole } from '@/lib/roles';
 
@@ -9,8 +9,8 @@ import { toEffectiveRole, type UserRole } from '@/lib/roles';
  * SAMMA mängd. En nyckel som bara finns i koden 403:ar alla (getEffectivePermissions failar closed); en
  * som bara finns i SQL går inte att använda i en grind utan att kompilatorn protesterar.
  *
- * SQL-sidan läses som `db reset` bygger den: prods katalog ur supabase/seed/reference.sql plus varje
- * `insert into public.permissions` i supabase/migrations.
+ * SQL-sidan läses som PROD ser ut: prods export (supabase/seed/reference.sql) med varje migrering
+ * pålagd — se tests/helpers/permissionSeed.ts.
  */
 
 describe('behörighetskatalogen', () => {
@@ -65,16 +65,14 @@ describe('menyn med nycklar = menyn före bytet', () => {
 });
 
 describe('appnycklarnas seed', () => {
-  const seed = migrationSeed();
-
   it('ger aldrig lönebyrån (ekonomi) en appnyckel', () => {
     for (const key of PERMISSION_KEYS.filter((k) => k.startsWith('app.'))) {
-      expect(seed.get(key) ?? [], key).not.toContain('ekonomi');
+      expect(rolesWithKey(key), key).not.toContain('ekonomi');
     }
   });
 
   // /crm/installningar och /crm/installningar/kalkyl krävde role = 'admin'.
   it('crm.settings.manage är bara admin', () => {
-    expect(seed.get('crm.settings.manage')).toEqual(['admin']);
+    expect(rolesWithKey('crm.settings.manage')).toEqual(['admin']);
   });
 });

@@ -1,11 +1,20 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Behörigheterna som `db reset` bygger dem: migreringarna i filnamnsordning, sedan prods seed
-// (supabase/seed/reference.sql, som bara kan lägga till). Delas av katalog- och menytesterna.
+/**
+ * Behörighetsläget som i PROD: prods ögonblicksbild (supabase/seed/reference.sql, exporterad ur prod)
+ * först, sedan varje migrering i filnamnsordning — insert OCH delete. Migreringar från före exporten
+ * är redan med i bilden; att spela dem igen är ofarligt (inserts är idempotenta, en delete av något
+ * som redan är borta gör ingenting). Migreringar efter exporten läggs på. Så blir en nyckel som dras
+ * tillbaka i en migrering också borta här, fast den står kvar i en äldre export.
+ *
+ * (`db reset` lokalt kör i motsatt ordning — migreringarna, sedan seeden — och kan därför ha kvar en
+ * tillbakadragen rad tills nästa export. Det som ska stämma mot koden är prod.)
+ *
+ * Läses och parsas EN gång per testkörning. Delas av katalog- och menytesterna.
+ */
 
 const MIGRATIONS = 'supabase/migrations';
-const migrationFiles = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort();
 
 /**
  * En migrering, normaliserad för mönstren nedan: utan hela kommentarsrader, DO-block och
@@ -20,62 +29,66 @@ function migrationSql(file: string): string {
     .replace(/\b(INSERT INTO|DELETE FROM|VALUES|WHERE|AND|IN)\b/g, (w) => w.toLowerCase());
 }
 
-export function sqlCatalog(): Set<string> {
-  // Samma ordning som `db reset`: migreringarna först, sedan seeden (som bara kan lägga till).
-  const keys = new Set<string>();
-  for (const file of migrationFiles) {
-    const sql = migrationSql(file);
-    for (const block of sql.matchAll(/insert into public\.permissions\s*\([^)]*\)\s*values([\s\S]*?)(?:on conflict|;)/g)) {
-      for (const m of block[1].matchAll(/\(\s*'([a-z0-9_.]+)'\s*,/g)) keys.add(m[1]);
-    }
-    for (const m of sql.matchAll(/delete from public\.permissions\s+where\s+key\s*(?:=\s*'([a-z0-9_.]+)'|in\s*\(([^)]*)\))/g)) {
-      for (const k of m[1] ? [m[1]] : [...m[2].matchAll(/'([a-z0-9_.]+)'/g)].map((x) => x[1])) keys.delete(k);
-    }
-  }
+function referenceRows<T>(table: 'permissions' | 'role_permissions'): T[] {
   const seed = readFileSync('supabase/seed/reference.sql', 'utf8');
-  const line = seed.split('\n').find((l) => l.startsWith('insert into public.permissions '));
-  const json = line?.match(/jsonb_populate_recordset\(null::public\.permissions, '(.*)'::jsonb\)/)?.[1];
-  for (const row of JSON.parse((json ?? '[]').replace(/''/g, "'")) as { key: string }[]) keys.add(row.key);
-  return keys;
+  const line = seed.split('\n').find((l) => l.startsWith(`insert into public.${table} `));
+  const json = line?.match(new RegExp(`jsonb_populate_recordset\\(null::public\\.${table}, '(.*)'::jsonb\\)`))?.[1];
+  return JSON.parse((json ?? '[]').replace(/''/g, "'"));
 }
 
+type PermissionState = { catalog: Set<string>; roleKeys: Map<string, Set<string>> };
 
-export function migrationSeed(): Map<string, string[]> {
-  const seed = new Map<string, Set<string>>();
-  for (const file of migrationFiles) {
+function build(): PermissionState {
+  const catalog = new Set(referenceRows<{ key: string }>('permissions').map((r) => r.key));
+  const roleKeys = new Map<string, Set<string>>();
+  const grant = (role: string, key: string) => roleKeys.set(role, (roleKeys.get(role) ?? new Set()).add(key));
+  for (const r of referenceRows<{ role: string; permission_key: string }>('role_permissions')) grant(r.role, r.permission_key);
+
+  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
     const sql = migrationSql(file);
-    for (const block of sql.matchAll(/insert into public\.role_permissions\s*\([^)]*\)\s*values([\s\S]*?)(?:on conflict|;)/g)) {
-      for (const m of block[1].matchAll(/\(\s*'([a-z]+)'\s*,\s*'([a-z0-9_.]+)'\s*\)/g)) {
-        seed.set(m[2], (seed.get(m[2]) ?? new Set()).add(m[1]));
+    for (const block of sql.matchAll(/insert into public\.permissions\s*\([^)]*\)\s*values([\s\S]*?)(?:on conflict|;)/g)) {
+      for (const m of block[1].matchAll(/\(\s*'([a-z0-9_.]+)'\s*,/g)) catalog.add(m[1]);
+    }
+    for (const m of sql.matchAll(/delete from public\.permissions\s+where\s+key\s*(?:=\s*'([a-z0-9_.]+)'|in\s*\(([^)]*)\))/g)) {
+      const keys = m[1] ? [m[1]] : [...m[2].matchAll(/'([a-z0-9_.]+)'/g)].map((x) => x[1]);
+      for (const key of keys) {
+        catalog.delete(key);
+        for (const held of roleKeys.values()) held.delete(key); // FK on delete cascade
       }
+    }
+    for (const block of sql.matchAll(/insert into public\.role_permissions\s*\([^)]*\)\s*values([\s\S]*?)(?:on conflict|;)/g)) {
+      for (const m of block[1].matchAll(/\(\s*'([a-z]+)'\s*,\s*'([a-z0-9_.]+)'\s*\)/g)) grant(m[1], m[2]);
     }
     for (const m of sql.matchAll(/delete from public\.role_permissions\s+where\s+([^;]*)/g)) {
       const role = m[1].match(/role\s*=\s*'([a-z]+)'/)?.[1];
       const key = m[1].match(/permission_key\s*=\s*'([a-z0-9_.]+)'/)?.[1];
       if (!role && !key) continue;
-      for (const [k, roles] of seed) {
-        if (key && k !== key) continue;
-        if (role) roles.delete(role);
-        else roles.clear();
+      for (const [r, held] of roleKeys) {
+        if (role && r !== role) continue;
+        if (key) held.delete(key);
+        else held.clear();
       }
     }
   }
-  return new Map([...seed].map(([k, roles]) => [k, [...roles].sort()]));
+  return { catalog, roleKeys };
 }
 
-
-/** Prods rollrader ur seeden. */
-function referenceRoleRows(): { role: string; permission_key: string }[] {
-  const seed = readFileSync('supabase/seed/reference.sql', 'utf8');
-  const line = seed.split('\n').find((l) => l.startsWith('insert into public.role_permissions '));
-  const json = line?.match(/jsonb_populate_recordset\(null::public\.role_permissions, '(.*)'::jsonb\)/)?.[1];
-  return JSON.parse((json ?? '[]').replace(/''/g, "'"));
+let cached: PermissionState | undefined;
+function state(): PermissionState {
+  return (cached ??= build());
 }
 
-/** Nycklarna en roll har efter `db reset` (rollens knippe — utan per-användarundantag). */
+/** Nyckelkatalogen i prod. */
+export function sqlCatalog(): Set<string> {
+  return new Set(state().catalog);
+}
+
+/** Nycklarna en roll har i prod (rollens knippe — utan per-användarundantag). */
 export function keysForRole(role: string): Set<string> {
-  const keys = new Set<string>();
-  for (const [key, roles] of migrationSeed()) if (roles.includes(role)) keys.add(key);
-  for (const row of referenceRoleRows()) if (row.role === role) keys.add(row.permission_key);
-  return keys;
+  return new Set(state().roleKeys.get(role) ?? []);
+}
+
+/** Rollerna som har en nyckel i prod, sorterade. */
+export function rolesWithKey(key: string): string[] {
+  return [...state().roleKeys].filter(([, held]) => held.has(key)).map(([role]) => role).sort();
 }

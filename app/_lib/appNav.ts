@@ -29,7 +29,9 @@ export type AppNavItem = {
   href: string;
   label: string;
   roles?: UserRole[]; // omitted = visible to all authenticated roles (see EXPLICIT_ONLY_ROLES)
-  permission?: PermissionKey; // set = visible iff the user holds the key; `roles` is then ignored
+  // set = visible iff the user holds the key (ALL of them, for an array); `roles` is then ignored.
+  // An array is for a row whose page sits behind one gate and reads data behind another.
+  permission?: PermissionKey | PermissionKey[];
   children?: AppNavItem[];
 };
 
@@ -43,7 +45,9 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
   // reach either; the legacy one is labelled so nobody plans new work there by mistake. They stay
   // flat and adjacent — putting the current one behind a group would hide the destination people
   // actually want and leave the legacy board as the one you reach by reflex.
-  { href: '/crm/planering', label: 'Planering', permission: 'planning.schedule.read' },
+  // BÅDA: sidan ligger bakom CRM-layoutens crm.access, datan bakom planning.schedule.read. En
+  // arbetsledare med bara planeringsnyckeln hade annars fått en rad som studsar till Start.
+  { href: '/crm/planering', label: 'Planering', permission: ['crm.access', 'planning.schedule.read'] },
   { href: '/plannering', label: 'Planering (äldre)', roles: ['sales', 'admin'] },
   { href: '/crm/korjournal', label: 'Körjournal', permission: 'crm.access' },
 
@@ -145,8 +149,9 @@ export const APP_NAV_ITEMS: AppNavItem[] = [
 // öppen dörr för varje NY roll.** Vändningen är att göra det opt-in i stället: en roll här ser bara
 // rader som nämner den vid namn, så nästa externa roll ärver ingenting av misstag.
 //
-// Rör INTE de andra rollerna. `null` (okänd roll) ser fortfarande de ospärrade raderna — ett test
-// vaktar det, och att logga in och se en tom meny är ett sämre fel än att se Start.
+// Rör INTE de andra rollerna. `null` (okänd roll) ser fortfarande de ospärrade raderna — sedan
+// nycklarna är det bara Start — ett test vaktar det, och att logga in och se en tom meny är ett sämre
+// fel än att se Start.
 //
 // Sedan nycklarna (2026-09-26) gäller listan bara rader UTAN `permission`: Dokument & information,
 // Kontakt & adresser och Felanmälan gatas nu på app.access / app.contacts.read, som ekonomi inte har.
@@ -156,7 +161,7 @@ const EXPLICIT_ONLY_ROLES: UserRole[] = ['ekonomi'];
 export type CanFn = (key: PermissionKey) => boolean;
 
 function isItemVisible(item: AppNavItem, role: UserRole | null, can: CanFn) {
-  if (item.permission) return can(item.permission);
+  if (item.permission) return (Array.isArray(item.permission) ? item.permission : [item.permission]).every(can);
   if (role && EXPLICIT_ONLY_ROLES.includes(role)) return !!item.roles?.includes(role);
   return !item.roles || (!!role && item.roles.includes(role));
 }
@@ -178,7 +183,14 @@ function collapseGroup(item: AppNavItem, role: UserRole | null, can: CanFn): App
 // för den inloggades effektiva behörigheter — tom mängd (utloggad, eller läsningen misslyckades) ger
 // bara de rollstyrda raderna, aldrig en tom meny: Start har ingen nyckel med flit.
 export function getVisibleAppNavItems(role: UserRole | null, can: CanFn): AppNavItem[] {
-  return APP_NAV_ITEMS.filter((item) => isItemVisible(item, role, can)).flatMap((item) =>
+  return APP_NAV_ITEMS.filter((item) => isGroupWithoutGate(item) || isItemVisible(item, role, can)).flatMap((item) =>
     collapseGroup(item, role, can),
   );
+}
+
+// En grupp utan egen grind avgörs HELT av sina barn (collapseGroup släpper den om inget barn syns).
+// Utan det här föll gruppen på rollregeln först — och för en EXPLICIT_ONLY-roll (ekonomi), som bara ser
+// rader som nämner den, försvann då varje nyckelstyrt barn, även med ett personligt undantag.
+function isGroupWithoutGate(item: AppNavItem) {
+  return !!item.children && !item.roles && !item.permission;
 }

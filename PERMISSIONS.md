@@ -412,6 +412,16 @@ their menu rows use the narrower `app.*` key. No employee loses a path they had 
 links sales to `/egenkontroll`); only `ekonomi` and unknown accounts are shut out. Tightening a page to
 its own key is a separate, deliberate decision.
 
+⚠️ **`/archive` is NOT gated yet** — it is gated in step 2c together with `/api/storage/*` (the route is
+the actual leak) and an error boundary, in one commit: a page gate alone would leave the files readable
+through the route, and a route gate alone turns the page into a bare 500.
+
+⚠️ **Still role-based, drift possible with per-user overrides:** the CRM's own sidebar
+(`app/crm/_lib/nav.ts`), the `/crm/dokument` row and the start page's quick links. With role bundles
+only (no overrides) they agree with the key gates exactly. A per-user grant/revoke of `crm.access`
+or `crm.settings.manage` can show rows that bounce, or hide rows that still open. Move them before
+handing out such overrides.
+
 ### Guard a route with a granular key
 
 ```ts

@@ -19,6 +19,17 @@ function flatten(items: ReturnType<typeof nav>) {
 }
 
 describe('getVisibleAppNavItems', () => {
+  // Planeringssidan ligger bakom CRM-layoutens crm.access och läser data bakom planning.schedule.read.
+  // En arbetsledare med bara planeringsnyckeln (personligt undantag) ska INTE få en rad som studsar.
+  it('a row with several keys needs all of them', () => {
+    const only = (...held: string[]) => (key: string) => held.includes(key);
+    const hrefs = (can: (key: string) => boolean) =>
+      flatten(getVisibleAppNavItems('member', can)).map((i) => i.href);
+    expect(hrefs(only('planning.schedule.read'))).not.toContain('/crm/planering');
+    expect(hrefs(only('crm.access'))).not.toContain('/crm/planering');
+    expect(hrefs(only('crm.access', 'planning.schedule.read'))).toContain('/crm/planering');
+  });
+
   // The sidebar renders a group as a <button> and only reaches the plain-link branch
   // when children is empty — at which point it would emit `href="group:…"`. Role gating
   // is the one thing that can empty a group, so the guard has to hold for every role.
