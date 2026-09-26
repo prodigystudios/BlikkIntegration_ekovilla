@@ -2,7 +2,7 @@
 import { getBrowserClient } from '@/lib/supabase/browser';
 export const dynamic = 'force-dynamic';
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { navigateAfterAuthChange } from '@/lib/auth/navigateAfterAuthChange';
 import {
   decodeRecoveryMark,
   describeRecoveryError,
@@ -79,7 +79,6 @@ function swapMarkedInThisTab(): string | null {
 
 export default function ResetPasswordConfirmPage() {
   const supabase = getBrowserClient();
-  const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [hasSession, setHasSession] = useState<boolean>(false);
   const [linkError, setLinkError] = useState<string | null>(null);
@@ -303,7 +302,8 @@ export default function ResetPasswordConfirmPage() {
       setSuccess(true);
       // Sync cookie and redirect
       try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
-      setTimeout(() => { router.replace('/'); }, 600);
+      // Full sidladdning — se navigateAfterAuthChange.
+      setTimeout(() => { navigateAfterAuthChange('/'); }, 600);
     } catch (e: any) {
       setError(e?.message || 'Kunde inte uppdatera lösenord. Länken kan vara förbrukad.');
     } finally {

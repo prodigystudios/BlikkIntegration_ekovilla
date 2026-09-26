@@ -1,13 +1,12 @@
 "use client";
 import { getBrowserClient } from '@/lib/supabase/browser';
+import { navigateAfterAuthChange } from '@/lib/auth/navigateAfterAuthChange';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 
 // Lightweight account creation page (not linked in main navigation)
 // Used to self-provision new member accounts. New users default to role 'member'.
 export default function CreateAccountPage() {
   const supabase = getBrowserClient();
-  const router = useRouter();
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,7 +49,8 @@ export default function CreateAccountPage() {
       // If immediate session present, sync cookie then redirect after short delay
       if (!needsConfirmation) {
         try { await fetch('/api/auth/callback', { method: 'POST', cache: 'no-store' }); } catch {}
-        setTimeout(()=>{ router.replace('/'); }, 800);
+        // Full sidladdning — se navigateAfterAuthChange.
+        setTimeout(()=>{ navigateAfterAuthChange('/'); }, 800);
       }
     } catch (e: any) {
       setError(e.message || 'Något gick fel.');
