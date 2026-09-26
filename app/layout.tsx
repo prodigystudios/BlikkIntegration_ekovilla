@@ -79,7 +79,8 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // effective_permissions en tom lista (anon får anropa den; den svarar bara för anroparen själv).
   const [profile, permissionSet] = await Promise.all([getUserProfile(), getEffectivePermissions()]);
   // Array och inte Set: en Set överlever inte gränsen server → klient (se UserProfileProvider).
-  const permissions = [...permissionSet].sort();
+  // Ingen profil ⇒ inga nycklar, så att skalet aldrig ser en utloggad användare med behörigheter.
+  const permissions = profile ? [...permissionSet].sort() : [];
   const role = profile?.role || null;
   const fullName = profile?.full_name || null;
   const userInitial = fullName ? fullName.charAt(0).toUpperCase() : 'U';

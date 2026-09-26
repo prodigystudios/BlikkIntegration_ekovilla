@@ -69,6 +69,11 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 export const getEffectivePermissions = cache(async (): Promise<Set<PermissionKey>> => {
   try {
     const supabase = createSessionClient();
+    // Utan session finns inget att fråga om — och rotlayouten anropar den här på varje sida, även
+    // inloggningen och kundens offertlänk. getSession() läser bara kakan (inget nätanrop när token är
+    // giltig); RPC:n validerar ändå JWT:n själv, så den avgör aldrig åtkomst här.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return new Set();
     const { data, error } = await supabase.rpc('effective_permissions');
     if (error) {
       console.error('[permissions] effective_permissions RPC failed:', error.message);

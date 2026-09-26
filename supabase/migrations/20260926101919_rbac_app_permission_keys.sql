@@ -10,7 +10,7 @@
 -- ⚠️ DEPLOY-ORDNING: KÖR DENNA FÖRE koden som läser nycklarna (2b/2c). getEffectivePermissions()
 -- failar closed — en nyckel som saknas i databasen hade stängt ytan för alla.
 --
--- ADDITIV och idempotent — inget befintligt rörs.
+-- ADDITIV och idempotent — inget befintligt rörs. En omkörning lägger bara tillbaka rader som saknas.
 -- Speglar lib/auth/permissions.ts PERMISSION_KEYS (48 → 58); tests/auth/permissionCatalog.test.ts
 -- vaktar att katalogen och koden har samma nycklar, och att seeden nedan är menyns rollmängd.
 --
@@ -62,8 +62,11 @@ insert into public.role_permissions (role, permission_key) values
   ('admin','crm.settings.manage')
 on conflict do nothing;
 
--- Efterkontroll: exakt den här seeden, varken mer eller mindre. En roll som redan hade en av nycklarna
--- (per-roll-ändring i admin före pushen) hade annars gett en tyst avvikelse från menyns rollmängd.
+-- Efterkontroll: varje förväntad nyckel och rollrad finns. Nycklarna är nya, så inga rollrader kan ha
+-- funnits före pushen (role_permissions har FK mot permissions) — vid första körningen är seeden alltså
+-- exakt den här. Kontrollen kräver därför bara att raderna FINNS och tillåter fler: en omkörning efter
+-- att någon gett en roll en nyckel i admin ska inte avbrytas. Att lönebyrån aldrig får en appnyckel
+-- prövas för sig.
 do $$
 declare
   expected constant jsonb := '{
@@ -79,16 +82,19 @@ declare
     "crm.settings.manage":    ["admin"]
   }';
   k text;
-  actual jsonb;
+  r text;
 begin
   for k in select jsonb_object_keys(expected) loop
     if not exists (select 1 from public.permissions where key = k) then
       raise exception 'permissions saknar %', k;
     end if;
-    select coalesce(jsonb_agg(role::text order by role::text), '[]'::jsonb) into actual
-      from public.role_permissions where permission_key = k;
-    if actual <> expected -> k then
-      raise exception 'seeden för % är %, väntat %', k, actual, expected -> k;
+    for r in select jsonb_array_elements_text(expected -> k) loop
+      if not exists (select 1 from public.role_permissions where permission_key = k and role::text = r) then
+        raise exception 'rollen % saknar %', r, k;
+      end if;
+    end loop;
+    if exists (select 1 from public.role_permissions where permission_key = k and role::text = 'ekonomi') then
+      raise exception 'ekonomi (lönebyrån) har %', k;
     end if;
   end loop;
 end $$;

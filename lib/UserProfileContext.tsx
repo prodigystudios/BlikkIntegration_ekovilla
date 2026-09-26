@@ -35,6 +35,9 @@ export function useUserProfile() {
  * has_permission() — rollens knippe, minus nekanden, plus undantag per användare. Failar stängt: utan
  * inloggning, eller om läsningen misslyckades på servern, är mängden tom.
  *
+ * Läses en gång per full sidladdning (rotlayouten renderas inte om vid klientnavigering) — precis som
+ * rollen. En ändrad behörighet syns i skalet först efter omladdning.
+ *
  * ⚠️ En UI-spärr, aldrig en säkerhetsgräns. Grinden sitter i rutten och i RLS.
  */
 export function useCan(key: PermissionKey): boolean {
