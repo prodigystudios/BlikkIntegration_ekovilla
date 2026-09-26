@@ -90,10 +90,10 @@ tom. Lokal utveckling får länkar till produktion — `http://localhost:3000` �
 allow-listad under Authentication → URL Configuration.
 
 ⚠️ **Mallen hänger ihop med klienten i `app/auth/reset-password/page.tsx`.** Den sidan skapar en egen
-supabase-klient med `flowType: 'implicit'` i stället för att använda `createClientComponentClient`,
-som hårdkodar `pkce` och inte går att överrida. Skälet är just `{{ .TokenHash }}`: under PKCE skickar
+supabase-klient med `flowType: 'implicit'` i stället för att använda `getBrowserClient()` (`lib/supabase/browser.ts`,
+`@supabase/ssr`), som hårdkodar `pkce` och inte går att överrida. Skälet är just `{{ .TokenHash }}`: under PKCE skickar
 `resetPasswordForEmail` ett `code_challenge`, och då prefixar GoTrue token med `pkce_` — en sådan
-token kan inte lösas in med `verifyOtp`. Byter någon tillbaka till auth-helpers-klienten där slutar
+token kan inte lösas in med `verifyOtp`. Byter någon till den delade webbläsarklienten där slutar
 alltså mallen ovan att fungera, tyst.
 
 **Deployordning: koden FÖRST, mallen sedan.** Koden hanterar båda formerna — `?token_hash=` och den

@@ -2,10 +2,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
 // Middleware efter bytet till @supabase/ssr. Klienten mockas så att getSession() gör det riktiga
-// klienten gör när token gått ut: skriver om kakorna via setAll, och svarar sedan med eller utan session.
+// klienten gör vid en förnyelse: TOKEN_REFRESHED skriver de nya kakorna via setAll, SIGNED_OUT (en
+// förnyelse som misslyckas, t.ex. återkallad refresh-token) rensar dem via setAll. Sedan svarar den med
+// eller utan session.
 
+type Cookie = { name: string; value: string; options: Record<string, unknown> };
 const h = vi.hoisted(() => ({
-  refreshed: [] as { name: string; value: string; options: Record<string, unknown> }[],
+  refreshed: [] as Cookie[],
+  laterBatch: [] as Cookie[],
   session: null as null | { access_token: string },
 }));
 
@@ -14,6 +18,7 @@ vi.mock('@supabase/ssr', () => ({
     auth: {
       getSession: async () => {
         if (h.refreshed.length) options.cookies.setAll(h.refreshed);
+        if (h.laterBatch.length) options.cookies.setAll(h.laterBatch);
         return { data: { session: h.session } };
       },
     },
@@ -31,6 +36,7 @@ function request(path: string) {
 describe('middleware och sessionskakorna', () => {
   beforeEach(() => {
     h.refreshed = [];
+    h.laterBatch = [];
     h.session = null;
   });
 
@@ -44,8 +50,10 @@ describe('middleware och sessionskakorna', () => {
     expect(res.headers.get('x-middleware-request-cookie')).toContain(`${TOKEN}=base64-new`);
   });
 
-  // En kaka som inte går att läsa (t.ex. auth-helpers gamla format) rensas under getSession. Rensningen
-  // måste följa med redirecten, annars ligger den trasiga kakan kvar och varje sidladdning börjar om.
+  // En förnyelse som misslyckas (SIGNED_OUT) rensar kakan. Rensningen måste följa med redirecten, annars
+  // ligger den döda sessionen kvar i webbläsaren och varje sidladdning försöker förnya den igen.
+  // (En OLÄSBAR kaka — auth-helpers gamla format — rensas däremot inte av servern: _removeSession()
+  // skickar ingen händelse. Den försvinner när inloggningssidans webbläsarklient läser den.)
   it('låter en rensad kaka följa med redirecten till inloggningen', async () => {
     h.refreshed = [{ name: TOKEN, value: '', options: { path: '/', maxAge: 0 } }];
     const res = await middleware(request('/crm'));
@@ -61,6 +69,21 @@ describe('middleware och sessionskakorna', () => {
     const res = await middleware(request('/api/crm/customers'));
     expect(res.status).toBe(401);
     expect(res.cookies.get(TOKEN)?.maxAge).toBe(0);
+  });
+
+  it('tappar inga kakor när setAll körs flera gånger i samma request', async () => {
+    h.refreshed = [{ name: `${TOKEN}.0`, value: 'base64-part0', options: { path: '/' } }];
+    h.laterBatch = [{ name: `${TOKEN}.1`, value: 'part1', options: { path: '/' } }];
+    h.session = { access_token: 'new' };
+    const res = await middleware(request('/crm'));
+    expect(res.cookies.get(`${TOKEN}.0`)?.value).toBe('base64-part0');
+    expect(res.cookies.get(`${TOKEN}.1`)?.value).toBe('part1');
+  });
+
+  it('skickar inte om begärans headrar när inga kakor ändrats', async () => {
+    h.session = { access_token: 'still-valid' };
+    const res = await middleware(request('/crm'));
+    expect(res.headers.get('x-middleware-override-headers')).toBeNull();
   });
 
   it('låter kakorna följa med när en inloggad skickas bort från inloggningssidan', async () => {

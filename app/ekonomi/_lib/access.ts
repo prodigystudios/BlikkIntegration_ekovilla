@@ -1,5 +1,4 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { cookies } from 'next/headers';
 
 // Vem tittar på ekonomiytan, och vad får de se?
 //

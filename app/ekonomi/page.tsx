@@ -1,5 +1,4 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { getUserProfile } from '@/lib/getUserProfile';
 import PageShell from '@/components/ui/PageShell';

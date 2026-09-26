@@ -1,5 +1,4 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { cookies } from 'next/headers';
 import { z } from 'zod';
 
 import { documentErrorPage, isDocumentNavigation } from '@/lib/api/responses';

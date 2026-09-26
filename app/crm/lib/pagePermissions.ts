@@ -1,5 +1,4 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { cookies } from 'next/headers';
 import type { PermissionKey } from '@/lib/auth/permissions';
 
 /**

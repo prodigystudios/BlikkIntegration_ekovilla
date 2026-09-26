@@ -57,8 +57,9 @@ export async function middleware(req: NextRequest) {
   // En förnyad session skrivs på TVÅ ställen: på begäran (så att sidan och routen i samma request
   // läser den nya token i stället för att förnya en gång till med samma refresh-token — utanför
   // Supabase 10-sekundersfönster är det reuse detection och utloggning av hela token-familjen) och
-  // på svaret (så att webbläsaren får den). `res` byggs därför om när kakor sätts.
-  let res = NextResponse.next({ request: req });
+  // på svaret (så att webbläsaren får den). Begärans headrar skickas bara om när kakor faktiskt
+  // ändrats, och kakor från ett tidigare setAll i samma request följer med när `res` byggs om.
+  let res = NextResponse.next();
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
     cookies: {
       getAll() {
@@ -66,7 +67,9 @@ export async function middleware(req: NextRequest) {
       },
       setAll(cookiesToSet) {
         for (const { name, value } of cookiesToSet) req.cookies.set(name, value);
+        const earlier = res.cookies.getAll();
         res = NextResponse.next({ request: req });
+        for (const cookie of earlier) res.cookies.set(cookie);
         for (const { name, value, options } of cookiesToSet) res.cookies.set(name, value, options);
       },
     },
