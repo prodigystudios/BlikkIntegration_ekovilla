@@ -288,6 +288,13 @@ export const listCrmWorkOrdersQuerySchema = z.object({
 
 export const updateCrmWorkOrderSchema = z.object({
   status: workOrderStatusSchema,
+  // Orderns titel. Samma regel som när ordern skapas (createStandaloneWorkOrderSchema): den får
+  // inte vara tom — kolumnen är `not null`, och titeln är det planeringen, tidrapporten och
+  // Fortnox-textraden visar. Optional UTAN default: utelämnad betyder "rör inte".
+  //
+  // ⚠️ Offertens titel rörs inte. Ordern är sanningen om jobbet efter att den skapats; offerten är
+  // vad kunden tackade ja till och är låst (se resolveOrderRotDetails för samma regel).
+  project_name: z.string().trim().min(1, 'Ordernamn krävs').optional(),
   assigned_to: z.preprocess((value) => normalizeOptionalText(value), z.string().uuid('Ogiltig användare').nullable()).optional(),
   desired_installation_date: z.preprocess((value) => normalizeOptionalText(value), dateSchema.nullable()).optional().default(null),
   notes: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),

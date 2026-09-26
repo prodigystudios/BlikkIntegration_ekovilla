@@ -121,13 +121,30 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
   });
 
   // Grinden får inte slå till på en ÖPPEN order — då vore märkningen omöjlig att spegla alls.
+  //
+  // 🧨 DEN FULLA PUSHEN, inte header-synken. Märkningen står i huvudet (`YourOrderNumber`) OCH i
+  // textraden `Projekt: X  Märkning: Y`. Header-vägen — som den gick fram till titelgrenen — rättade
+  // bara huvudet, och raden på orderbekräftelsen och fakturan sa fortfarande den gamla märkningen.
   it('speglar märkningen som vanligt på en öppen order', async () => {
     install(openOrder);
 
     const json = await (await PATCH(patchReq({ status: 'in_progress', label: '58184' }), ctx)).json();
 
-    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
     expect(json.data.fortnox_error).toBeNull();
+  });
+
+  // ⚠️ …men bara när märkningen faktiskt ÄNDRAS. Ordervyn skickar den vid varje sparning av en
+  // företagsorder, och den fulla pushen skriver om hela radlistan positionellt. En oförändrad
+  // märkning bredvid en rättad Er referens är header-vägens sak.
+  it('går header-vägen när märkningen skickas oförändrad', async () => {
+    install(openOrder);
+
+    await PATCH(patchReq({ status: 'in_progress', label: 'GAMMAL', your_reference: 'Anna Berg' }), ctx);
+
+    expect(syncWorkOrderHeaderToFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
   });
 
   // ⚠️ Och inte på en sparning som inte rör ett speglat fält. Annars hade varje statusändring på
@@ -239,6 +256,98 @@ describe('PATCH arbetsorder — speglingen mot Fortnox', () => {
 
     expect(json.data.fortnox_error).toBeTruthy();
     expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+});
+
+// Orderns titel. Fortnox har inget huvudfält för den — den står som textraden `Projekt: X` sist i
+// radlistan (buildOrderProjectNote) — så en rättning måste gå den FULLA pushen, som ROT.
+describe('PATCH arbetsorder — titeln', () => {
+  const titledOrder = { ...openOrder, project_name: 'Takisolering Sandviken' };
+
+  // ⚖️ KÄRNAN. Header-synken släpper raderna: gick titeln den vägen hade den sparats i CRM,
+  // rapporterats grön och aldrig nått orderbekräftelsen eller fakturan.
+  it('går den fulla pushen när titeln ändras, inte header-synken', async () => {
+    install(titledOrder);
+
+    const json = await (await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken' }), ctx)).json();
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledWith(WORK_ORDER_ID);
+    expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
+    expect(json.data.fortnox_error).toBeNull();
+  });
+
+  // Titeln skrivs till kolumnen — trimmad, som alla andra textfält i schemat.
+  it('sparar den nya titeln trimmad', async () => {
+    install(titledOrder);
+
+    await PATCH(patchReq({ status: 'in_progress', project_name: '  Vindsisolering Sandviken  ' }), ctx);
+
+    expect(vi.mocked(updateCrmWorkOrder).mock.calls[0][2]).toMatchObject({ project_name: 'Vindsisolering Sandviken' });
+  });
+
+  // ⚠️ VÄRDE, INTE NÄRVARO. Den fulla pushen skriver om hela radlistan positionellt och kan stämpla
+  // 'failed' — den får inte kosta något när dokumentets text är densamma.
+  it('pushar inte när titeln skickas oförändrad', async () => {
+    install(titledOrder);
+
+    await PATCH(patchReq({ status: 'in_progress', project_name: 'Takisolering Sandviken' }), ctx);
+
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+    expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
+  });
+
+  // Kolumnen är `not null`, och titeln är det planeringen och tidrapporten visar.
+  it('nekar en tom titel', async () => {
+    install(titledOrder);
+
+    const res = await PATCH(patchReq({ status: 'in_progress', project_name: '   ' }), ctx);
+
+    expect(res.status).toBe(400);
+    expect(updateCrmWorkOrder).not.toHaveBeenCalled();
+  });
+
+  // En redigering på ordersidan får aldrig SKAPA Fortnox-dokumentet — updateWorkOrderInFortnox
+  // faller tillbaka på create när numret saknas. Ordern får sin titel vid create ändå.
+  it('pushar inte en order som ännu inte ligger i Fortnox', async () => {
+    install({ ...titledOrder, fortnox_order_number: null });
+
+    await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken' }), ctx);
+
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+
+  // Samma larm som märkningen och ROT: en ändring som inte kan nå dokumentet ska SÄGAS.
+  it('säger ifrån när titeln ändras på en fakturerad order', async () => {
+    install({ ...titledOrder, status: 'invoiced', fortnox_invoice_number: '2026' });
+
+    const json = await (await PATCH(patchReq({ status: 'invoiced', project_name: 'Vindsisolering Sandviken' }), ctx)).json();
+
+    expect(String(json.data.fortnox_error)).toContain('fakturerad');
+    expect(updateWorkOrderInFortnox).not.toHaveBeenCalled();
+  });
+
+  // Titel + tömd märkning i samma sparning: EN full push, ingen header-synk därtill. Den fulla
+  // pushen bygger huvudet med allowReferenceClear och skickar själv `YourOrderNumber: null` (se
+  // 'rensar märkningen på den fulla pushen' i tests/fortnox/orderPayload.test.ts). Ett andra anrop
+  // vore en skrivning till som kan stämpla ner en order den första just stämplat 'synced'.
+  it('går EN full push när titeln ändras och märkningen töms i samma sparning', async () => {
+    install(titledOrder);
+
+    await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken', label: null }), ctx);
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalledTimes(1);
+    expect(syncWorkOrderHeaderToFortnox).not.toHaveBeenCalled();
+  });
+
+  // 🧨 Den fulla pushen bygger huvudet med samma utelämnande regel som header-synken, så en tömd
+  // Er referens når inte fram den här vägen heller — och rådet måste bli detsamma.
+  it('säger att en tömd Er referens måste rättas i Fortnox även på den fulla vägen', async () => {
+    install(titledOrder);
+
+    const json = await (await PATCH(patchReq({ status: 'in_progress', project_name: 'Vindsisolering Sandviken', your_reference: null }), ctx)).json();
+
+    expect(updateWorkOrderInFortnox).toHaveBeenCalled();
+    expect(String(json.data.fortnox_error)).toContain('direkt i Fortnox');
   });
 });
 

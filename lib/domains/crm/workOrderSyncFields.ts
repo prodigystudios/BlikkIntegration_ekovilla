@@ -205,3 +205,39 @@ export function workOrderMirroredFieldsChanged(
 
   return false;
 }
+
+/**
+ * Ändrades något i orderns TEXTRAD — titeln (`project_name`) eller märkningen?
+ *
+ * 🧨 TEXTRADEN ÄR EN RAD, INTE ETT HUVUDFÄLT. Fortnox har inget fält för projektnamnet, så titeln
+ * och märkningen står som textraden `Projekt: X  Märkning: Y` sist i radlistan
+ * (buildOrderProjectNote). Header-synken släpper medvetet raderna: en ändring som gick den vägen
+ * hade sparats i CRM, rapporterats grön och stått kvar med den gamla texten på orderbekräftelsen och
+ * fakturan. Alltså full push, samma som ROT.
+ *
+ * ⚠️ MÄRKNINGEN HÖR HIT OCKSÅ, fast den dessutom är ett huvudfält (`YourOrderNumber`). Från
+ * 2026-09-16 (textraden infördes) till att den här regeln kom gick en ändrad märkning bara
+ * header-vägen — `YourOrderNumber` rättades, men raden sa fortfarande "Märkning: <gamla>". Den fulla
+ * pushen bär huvudet också, rensningen inräknad (putOrderHeaderAndRows, allowReferenceClear).
+ *
+ * ⚠️ JÄMFÖRS PÅ VÄRDET, inte på närvaron. Ordervyn skickar märkningen vid varje sparning av en
+ * företagsorder, och den fulla pushen skriver om hela radlistan positionellt — den ska bara köras
+ * när texten faktiskt blir en annan. Blanktecken räknas inte: buildOrderProjectNote trimmar dem.
+ *
+ * Används av både PATCH-rutten (ska sparningen pusha raderna?) och efterkontrollen i pushen (hann
+ * något ändras medan vi skrev?), så de två inte kan börja svara olika.
+ */
+export function workOrderDocumentNoteChanged(
+  current: {
+    project_name?: string | null;
+    customer_snapshot?: Record<string, unknown> | null;
+  } | null | undefined,
+  // Bara nycklar som FAKTISKT skickades får finnas här — `undefined` betyder "rör inte".
+  overrides: { project_name?: string | null; label?: string | null },
+): boolean {
+  if ('project_name' in overrides && mirroredText(overrides.project_name) !== mirroredText(current?.project_name)) {
+    return true;
+  }
+  const snapshot = (current?.customer_snapshot ?? {}) as Record<string, unknown>;
+  return 'label' in overrides && mirroredText(overrides.label) !== mirroredText(snapshot.label);
+}
