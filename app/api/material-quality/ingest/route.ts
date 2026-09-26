@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/auth/guards';
 import { getMaterialQualityAdminOrThrow, materialQualityIngestSchema, ok, parseJsonBody, routeError } from '../_lib';
 
 export const runtime = 'nodejs';
@@ -23,6 +24,10 @@ type IngestPayload = {
 
 export async function POST(req: NextRequest) {
   try {
+    // Skrivningen går med service-role, förbi RLS — grinden här är den enda. app.access = alla anställda,
+    // samma som sidan /egenkontroll som anropar den (sälj når den via fältvyns länk).
+    const access = await requirePermission('app.access');
+    if (access.response) return access.response;
     const parsedBody = await parseJsonBody(req, materialQualityIngestSchema);
     if (!parsedBody.success) {
       return routeError(400, 'validation_error', 'Invalid ingest payload', parsedBody.error.flatten());
