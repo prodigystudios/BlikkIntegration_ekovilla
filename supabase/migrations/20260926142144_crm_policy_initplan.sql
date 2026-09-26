@@ -24,114 +24,122 @@
 --
 -- Idempotent, kan köras om.
 
+-- pg_get_expr skriver ut schemanamn för allt som inte syns i sökvägen; kontrollerna nedan förutsätter den här.
+set local search_path = public, extensions;
+
+-- Varje policys original (md5 av texten med all inslagning borttagen), som för- och efterkontrollen jämför mot.
+create temp table __initplan_expected (tbl text, pol text, md5_q text, md5_c text);
+insert into __initplan_expected values
+  ('crm_absence_types', 'crm_absence_types_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
+  ('crm_absence_types', 'crm_absence_types_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
+  ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_insert_admin_only', NULL, '370daa7ac8d1890f6de208aeb650f687'),
+  ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_select_visible', 'c431e7ac49f5fe67b9a963283913669c', NULL),
+  ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_update_admin_only', 'e40a540aaa9a119614f06c5eb89a896f', 'e40a540aaa9a119614f06c5eb89a896f'),
+  ('crm_calc_settings', 'crm_calc_settings_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_calc_settings', 'crm_calc_settings_select', '429e93947a01a4cada7fe7db3293a606', NULL),
+  ('crm_calc_settings', 'crm_calc_settings_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_calls', 'crm_calls_insert_visible', NULL, 'd1dd386e45d18b49e3aece3b4fc0a333'),
+  ('crm_calls', 'crm_calls_select_visible', '3ceb698ce99b73659f624af2786ce663', NULL),
+  ('crm_calls', 'crm_calls_update_visible', '2915b5ccc31b49de60b41f0473f6ae15', 'd1dd386e45d18b49e3aece3b4fc0a333'),
+  ('crm_customer_contacts', 'crm_customer_contacts_delete_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
+  ('crm_customer_contacts', 'crm_customer_contacts_insert_sales_or_admin', NULL, '490198cba4af465ee57aed24e1d393ed'),
+  ('crm_customer_contacts', 'crm_customer_contacts_select_visible', '511cbb206404ee411942943c20126f3c', NULL),
+  ('crm_customer_contacts', 'crm_customer_contacts_update_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
+  ('crm_customers', 'crm_customers_delete_admin', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
+  ('crm_customers', 'crm_customers_insert_sales_or_admin', NULL, '5a2318a920784672f02f9998944a2f85'),
+  ('crm_customers', 'crm_customers_select_visible', '4947d68831cf824f2958916e8e60acef', NULL),
+  ('crm_customers', 'crm_customers_update_assigned_or_admin', 'd8db0d3e9afeb4fa0356d1900c4f26c7', 'd8db0d3e9afeb4fa0356d1900c4f26c7'),
+  ('crm_goals', 'crm_goals_insert_admin_only', NULL, '93347aacd46dbfbae3c7162cfff2d1c0'),
+  ('crm_goals', 'crm_goals_select_visible', 'dcc59cdbec66d28655974ad1385bbaea', NULL),
+  ('crm_goals', 'crm_goals_update_admin_only', '93347aacd46dbfbae3c7162cfff2d1c0', '93347aacd46dbfbae3c7162cfff2d1c0'),
+  ('crm_internal_projects', 'crm_internal_projects_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
+  ('crm_internal_projects', 'crm_internal_projects_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
+  ('crm_material_cost_articles', 'crm_material_cost_articles_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
+  ('crm_material_cost_articles', 'crm_material_cost_articles_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_material_cost_articles', 'crm_material_cost_articles_select', '429e93947a01a4cada7fe7db3293a606', NULL),
+  ('crm_material_cost_articles', 'crm_material_cost_articles_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_productivity_rates', 'crm_productivity_rates_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
+  ('crm_productivity_rates', 'crm_productivity_rates_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_productivity_rates', 'crm_productivity_rates_select', '429e93947a01a4cada7fe7db3293a606', NULL),
+  ('crm_productivity_rates', 'crm_productivity_rates_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
+  ('crm_quotes', 'crm_quotes_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
+  ('crm_quotes', 'crm_quotes_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
+  ('crm_quotes', 'crm_quotes_insert_sales_or_admin', NULL, '8d91a9fa8a8255a0d28658964d9a662e'),
+  ('crm_quotes', 'crm_quotes_select_visible', '407ed772afe395deb8b5412972ed0d88', NULL),
+  ('crm_quotes', 'crm_quotes_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
+  ('crm_routing_rules', 'crm_routing_rules_manage_admin', 'f7c59d452c33c528eac72c041093aee2', 'f7c59d452c33c528eac72c041093aee2'),
+  ('crm_routing_rules', 'crm_routing_rules_select_crm', 'e248ac00fadba7f00e27db0ef8cddaee', NULL),
+  ('crm_time_approvals', 'crm_time_approvals_select', '2a1c8327d53fa0ec9d05b778e6951a03', NULL),
+  ('crm_time_codes', 'crm_time_codes_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
+  ('crm_time_codes', 'crm_time_codes_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
+  ('crm_time_compensations', 'crm_time_compensations_delete_own', '8f315d261bf05994091d1c3efc0e8d04', NULL),
+  ('crm_time_compensations', 'crm_time_compensations_insert', NULL, '83c8627d454d53a739c08dfb48e80168'),
+  ('crm_time_compensations', 'crm_time_compensations_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
+  ('crm_time_compensations', 'crm_time_compensations_update_own', '8f315d261bf05994091d1c3efc0e8d04', '8f315d261bf05994091d1c3efc0e8d04'),
+  ('crm_time_entries', 'crm_time_entries_delete_own', '95ac5069544962dbd1296f963f638e45', NULL),
+  ('crm_time_entries', 'crm_time_entries_insert', NULL, 'd53f4ef2d998f23c0a540f68df441a51'),
+  ('crm_time_entries', 'crm_time_entries_select', 'e3df07d1274017383e4617541708bc2f', NULL),
+  ('crm_time_entries', 'crm_time_entries_update_own', '95ac5069544962dbd1296f963f638e45', 'de2d093580434cddc0ece28915e53b85'),
+  ('crm_time_entry_audit', 'crm_time_entry_audit_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
+  ('crm_work_order_comments', 'crm_wo_comments_delete_own', '987767fc803474751ce44a4235a12922', NULL),
+  ('crm_work_order_comments', 'crm_wo_comments_insert_crew', NULL, '7466d0a9d9822662218d3d386905f8e1'),
+  ('crm_work_order_comments', 'crm_wo_comments_select_crew', '14318e2211b2bb6b5cc62740fe66f661', NULL),
+  ('crm_work_order_comments', 'crm_wo_comments_update_own', '987767fc803474751ce44a4235a12922', '987767fc803474751ce44a4235a12922'),
+  ('crm_work_order_comments', 'crm_work_order_comments_delete_self_or_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
+  ('crm_work_order_comments', 'crm_work_order_comments_insert_self', NULL, '7a055d54ad0878ebbc2a4951ae69ae6e'),
+  ('crm_work_order_comments', 'crm_work_order_comments_select_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
+  ('crm_work_order_files', 'crm_wo_files_delete', '592eb1bbd9dd0222c92a4e7274038841', NULL),
+  ('crm_work_order_files', 'crm_wo_files_insert', NULL, 'f3391b46458a724d9857a48235ced033'),
+  ('crm_work_order_files', 'crm_wo_files_select', '79cd9bdeed14e184cf155447bf5b93a0', NULL),
+  ('crm_work_order_invoices', 'crm_wo_invoices_select_visible', 'df5fb3601a8623540ad9e212d634c8de', NULL),
+  ('crm_work_order_kma_plans', 'crm_wo_kma_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
+  ('crm_work_order_kma_plans', 'crm_wo_kma_select', 'df5b851e4bf05761c6f56edf4f00abe2', NULL),
+  ('crm_work_order_progress_reports', 'crm_wo_progress_delete', 'c687a03934aad71c942f919772f8f16d', NULL),
+  ('crm_work_order_progress_reports', 'crm_wo_progress_insert', NULL, 'e1e7f749604ad6b5940a4e493356cd43'),
+  ('crm_work_order_progress_reports', 'crm_wo_progress_select', '30b3d57d4a885d537601174c541b25cf', NULL),
+  ('crm_work_order_stages', 'crm_wo_stages_delete', '53a5fa671decf77a21edaf3256fef627', NULL),
+  ('crm_work_order_stages', 'crm_wo_stages_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
+  ('crm_work_order_stages', 'crm_wo_stages_select', 'c8b59e130995b3ac307848dd235c5ee9', NULL),
+  ('crm_work_order_stages', 'crm_wo_stages_update', '53a5fa671decf77a21edaf3256fef627', '53a5fa671decf77a21edaf3256fef627'),
+  ('crm_work_orders', 'crm_work_orders_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
+  ('crm_work_orders', 'crm_work_orders_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
+  ('crm_work_orders', 'crm_work_orders_insert_sales_or_admin', NULL, '32fcff6bd539600aabe5410934255a37'),
+  ('crm_work_orders', 'crm_work_orders_select_crew', 'b8c75761e6fc9a75bdb2cdbe82b8075b', NULL),
+  ('crm_work_orders', 'crm_work_orders_select_visible', 'd8d43d2b77e4becb14d8567e724ac74e', NULL),
+  ('crm_work_orders', 'crm_work_orders_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
+  ('fortnox_article_favorites', 'fortnox_article_favorites_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
+  ('fortnox_article_favorites', 'fortnox_article_favorites_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
+  ('fortnox_article_favorites', 'fortnox_article_favorites_select', '429e93947a01a4cada7fe7db3293a606', NULL),
+  ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
+  ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
+  ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_select', '429e93947a01a4cada7fe7db3293a606', NULL),
+  ('fortnox_articles_cache', 'CRM users can read fortnox_articles_cache', '2600e03739ddea1af87ffec02e42dd11', NULL),
+  ('fortnox_integrations', 'Admins can read fortnox_integrations', '5f8606278ab086948a00e990adb1cb98', NULL),
+  ('korjournal_trips', 'korjournal delete own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
+  ('korjournal_trips', 'korjournal read own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
+  ('korjournal_trips', 'korjournal update own', 'cb36b1a0770728f01fd9e4744dd633c9', 'cb36b1a0770728f01fd9e4744dd633c9'),
+  ('korjournal_trips', 'korjournal write own', NULL, 'cb36b1a0770728f01fd9e4744dd633c9');
+
+create function pg_temp.__initplan_unwrap(e text) returns text language sql immutable as $f$
+  select regexp_replace(regexp_replace(e,
+           '\( SELECT (auth\.([a-z_]+)\(\)) AS \2\)', '\1', 'g'),
+           '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g')
+$f$;
+
 -- Förkontroll: policyerna ska vara exakt de som omskrivningen utgår från (med ev. inslagning borttagen).
 do $pre$
 declare
   r record;
-  cur_q text;
-  cur_c text;
 begin
-  for r in select * from (values
-    ('crm_absence_types', 'crm_absence_types_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_absence_types', 'crm_absence_types_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_insert_admin_only', NULL, '370daa7ac8d1890f6de208aeb650f687'),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_select_visible', 'c431e7ac49f5fe67b9a963283913669c', NULL),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_update_admin_only', 'e40a540aaa9a119614f06c5eb89a896f', 'e40a540aaa9a119614f06c5eb89a896f'),
-    ('crm_calc_settings', 'crm_calc_settings_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_calc_settings', 'crm_calc_settings_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_calc_settings', 'crm_calc_settings_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_calls', 'crm_calls_insert_visible', NULL, 'd1dd386e45d18b49e3aece3b4fc0a333'),
-    ('crm_calls', 'crm_calls_select_visible', '3ceb698ce99b73659f624af2786ce663', NULL),
-    ('crm_calls', 'crm_calls_update_visible', '2915b5ccc31b49de60b41f0473f6ae15', 'd1dd386e45d18b49e3aece3b4fc0a333'),
-    ('crm_customer_contacts', 'crm_customer_contacts_delete_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
-    ('crm_customer_contacts', 'crm_customer_contacts_insert_sales_or_admin', NULL, '490198cba4af465ee57aed24e1d393ed'),
-    ('crm_customer_contacts', 'crm_customer_contacts_select_visible', '511cbb206404ee411942943c20126f3c', NULL),
-    ('crm_customer_contacts', 'crm_customer_contacts_update_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
-    ('crm_customers', 'crm_customers_delete_admin', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_customers', 'crm_customers_insert_sales_or_admin', NULL, '5a2318a920784672f02f9998944a2f85'),
-    ('crm_customers', 'crm_customers_select_visible', '4947d68831cf824f2958916e8e60acef', NULL),
-    ('crm_customers', 'crm_customers_update_assigned_or_admin', 'd8db0d3e9afeb4fa0356d1900c4f26c7', 'd8db0d3e9afeb4fa0356d1900c4f26c7'),
-    ('crm_goals', 'crm_goals_insert_admin_only', NULL, '93347aacd46dbfbae3c7162cfff2d1c0'),
-    ('crm_goals', 'crm_goals_select_visible', 'dcc59cdbec66d28655974ad1385bbaea', NULL),
-    ('crm_goals', 'crm_goals_update_admin_only', '93347aacd46dbfbae3c7162cfff2d1c0', '93347aacd46dbfbae3c7162cfff2d1c0'),
-    ('crm_internal_projects', 'crm_internal_projects_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_internal_projects', 'crm_internal_projects_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_productivity_rates', 'crm_productivity_rates_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_productivity_rates', 'crm_productivity_rates_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_productivity_rates', 'crm_productivity_rates_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_productivity_rates', 'crm_productivity_rates_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_quotes', 'crm_quotes_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
-    ('crm_quotes', 'crm_quotes_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
-    ('crm_quotes', 'crm_quotes_insert_sales_or_admin', NULL, '8d91a9fa8a8255a0d28658964d9a662e'),
-    ('crm_quotes', 'crm_quotes_select_visible', '407ed772afe395deb8b5412972ed0d88', NULL),
-    ('crm_quotes', 'crm_quotes_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
-    ('crm_routing_rules', 'crm_routing_rules_manage_admin', 'f7c59d452c33c528eac72c041093aee2', 'f7c59d452c33c528eac72c041093aee2'),
-    ('crm_routing_rules', 'crm_routing_rules_select_crm', 'e248ac00fadba7f00e27db0ef8cddaee', NULL),
-    ('crm_time_approvals', 'crm_time_approvals_select', '2a1c8327d53fa0ec9d05b778e6951a03', NULL),
-    ('crm_time_codes', 'crm_time_codes_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_time_codes', 'crm_time_codes_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_time_compensations', 'crm_time_compensations_delete_own', '8f315d261bf05994091d1c3efc0e8d04', NULL),
-    ('crm_time_compensations', 'crm_time_compensations_insert', NULL, '83c8627d454d53a739c08dfb48e80168'),
-    ('crm_time_compensations', 'crm_time_compensations_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
-    ('crm_time_compensations', 'crm_time_compensations_update_own', '8f315d261bf05994091d1c3efc0e8d04', '8f315d261bf05994091d1c3efc0e8d04'),
-    ('crm_time_entries', 'crm_time_entries_delete_own', '95ac5069544962dbd1296f963f638e45', NULL),
-    ('crm_time_entries', 'crm_time_entries_insert', NULL, 'd53f4ef2d998f23c0a540f68df441a51'),
-    ('crm_time_entries', 'crm_time_entries_select', 'e3df07d1274017383e4617541708bc2f', NULL),
-    ('crm_time_entries', 'crm_time_entries_update_own', '95ac5069544962dbd1296f963f638e45', 'de2d093580434cddc0ece28915e53b85'),
-    ('crm_time_entry_audit', 'crm_time_entry_audit_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_delete_own', '987767fc803474751ce44a4235a12922', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_insert_crew', NULL, '7466d0a9d9822662218d3d386905f8e1'),
-    ('crm_work_order_comments', 'crm_wo_comments_select_crew', '14318e2211b2bb6b5cc62740fe66f661', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_update_own', '987767fc803474751ce44a4235a12922', '987767fc803474751ce44a4235a12922'),
-    ('crm_work_order_comments', 'crm_work_order_comments_delete_self_or_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
-    ('crm_work_order_comments', 'crm_work_order_comments_insert_self', NULL, '7a055d54ad0878ebbc2a4951ae69ae6e'),
-    ('crm_work_order_comments', 'crm_work_order_comments_select_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
-    ('crm_work_order_files', 'crm_wo_files_delete', '592eb1bbd9dd0222c92a4e7274038841', NULL),
-    ('crm_work_order_files', 'crm_wo_files_insert', NULL, 'f3391b46458a724d9857a48235ced033'),
-    ('crm_work_order_files', 'crm_wo_files_select', '79cd9bdeed14e184cf155447bf5b93a0', NULL),
-    ('crm_work_order_invoices', 'crm_wo_invoices_select_visible', 'df5fb3601a8623540ad9e212d634c8de', NULL),
-    ('crm_work_order_kma_plans', 'crm_wo_kma_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
-    ('crm_work_order_kma_plans', 'crm_wo_kma_select', 'df5b851e4bf05761c6f56edf4f00abe2', NULL),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_delete', 'c687a03934aad71c942f919772f8f16d', NULL),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_insert', NULL, 'e1e7f749604ad6b5940a4e493356cd43'),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_select', '30b3d57d4a885d537601174c541b25cf', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_delete', '53a5fa671decf77a21edaf3256fef627', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
-    ('crm_work_order_stages', 'crm_wo_stages_select', 'c8b59e130995b3ac307848dd235c5ee9', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_update', '53a5fa671decf77a21edaf3256fef627', '53a5fa671decf77a21edaf3256fef627'),
-    ('crm_work_orders', 'crm_work_orders_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
-    ('crm_work_orders', 'crm_work_orders_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
-    ('crm_work_orders', 'crm_work_orders_insert_sales_or_admin', NULL, '32fcff6bd539600aabe5410934255a37'),
-    ('crm_work_orders', 'crm_work_orders_select_crew', 'b8c75761e6fc9a75bdb2cdbe82b8075b', NULL),
-    ('crm_work_orders', 'crm_work_orders_select_visible', 'd8d43d2b77e4becb14d8567e724ac74e', NULL),
-    ('crm_work_orders', 'crm_work_orders_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('fortnox_articles_cache', 'CRM users can read fortnox_articles_cache', '2600e03739ddea1af87ffec02e42dd11', NULL),
-    ('fortnox_integrations', 'Admins can read fortnox_integrations', '5f8606278ab086948a00e990adb1cb98', NULL),
-    ('korjournal_trips', 'korjournal delete own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
-    ('korjournal_trips', 'korjournal read own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
-    ('korjournal_trips', 'korjournal update own', 'cb36b1a0770728f01fd9e4744dd633c9', 'cb36b1a0770728f01fd9e4744dd633c9'),
-    ('korjournal_trips', 'korjournal write own', NULL, 'cb36b1a0770728f01fd9e4744dd633c9')
-  ) as t(tbl, pol, md5_q, md5_c) loop
-    select regexp_replace(regexp_replace(p.qual, '\( SELECT auth\.uid\(\) AS uid\)', 'auth.uid()', 'g'),
-                          '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g'),
-           regexp_replace(regexp_replace(p.with_check, '\( SELECT auth\.uid\(\) AS uid\)', 'auth.uid()', 'g'),
-                          '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g')
-      into cur_q, cur_c
-      from pg_policies p where p.schemaname = 'public' and p.tablename = r.tbl and p.policyname = r.pol;
-    if not found then
+  perform set_config('search_path', 'public, extensions', true);
+  for r in select e.*, p.policyname as found, p.qual, p.with_check
+             from __initplan_expected e
+             left join pg_policies p on p.schemaname = 'public' and p.tablename = e.tbl and p.policyname = e.pol loop
+    if r.found is null then
       raise exception 'policy saknas: %.%', r.tbl, r.pol;
     end if;
-    if md5(cur_q) is distinct from r.md5_q or md5(cur_c) is distinct from r.md5_c then
+    if md5(pg_temp.__initplan_unwrap(r.qual)) is distinct from r.md5_q
+       or md5(pg_temp.__initplan_unwrap(r.with_check)) is distinct from r.md5_c then
       raise exception 'policy %.% skiljer sig från den omskrivningen utgår från — skriver inte över', r.tbl, r.pol;
     end if;
   end loop;
@@ -467,135 +475,47 @@ alter policy "korjournal write own" on public.korjournal_trips
   with check ((((select auth.uid()))::text = user_id));
 
 -- Efterkontroll: med inslagningen borttagen är varje policy identisk med originalet, och inga oinslagna anrop
--- finns kvar på de berörda tabellerna (antal anrop minus antal inslagna ska vara noll).
+-- finns kvar på de berörda tabellerna (alla anrop minus de inslagna ska vara noll).
 do $post$
 declare
   r record;
-  cur_q text;
-  cur_c text;
   bare int;
 begin
-  for r in select * from (values
-    ('crm_absence_types', 'crm_absence_types_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_absence_types', 'crm_absence_types_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_insert_admin_only', NULL, '370daa7ac8d1890f6de208aeb650f687'),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_select_visible', 'c431e7ac49f5fe67b9a963283913669c', NULL),
-    ('crm_ai_prospect_suggestions', 'crm_ai_prospect_suggestions_update_admin_only', 'e40a540aaa9a119614f06c5eb89a896f', 'e40a540aaa9a119614f06c5eb89a896f'),
-    ('crm_calc_settings', 'crm_calc_settings_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_calc_settings', 'crm_calc_settings_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_calc_settings', 'crm_calc_settings_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_calls', 'crm_calls_insert_visible', NULL, 'd1dd386e45d18b49e3aece3b4fc0a333'),
-    ('crm_calls', 'crm_calls_select_visible', '3ceb698ce99b73659f624af2786ce663', NULL),
-    ('crm_calls', 'crm_calls_update_visible', '2915b5ccc31b49de60b41f0473f6ae15', 'd1dd386e45d18b49e3aece3b4fc0a333'),
-    ('crm_customer_contacts', 'crm_customer_contacts_delete_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
-    ('crm_customer_contacts', 'crm_customer_contacts_insert_sales_or_admin', NULL, '490198cba4af465ee57aed24e1d393ed'),
-    ('crm_customer_contacts', 'crm_customer_contacts_select_visible', '511cbb206404ee411942943c20126f3c', NULL),
-    ('crm_customer_contacts', 'crm_customer_contacts_update_sales_or_admin', '490198cba4af465ee57aed24e1d393ed', NULL),
-    ('crm_customers', 'crm_customers_delete_admin', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_customers', 'crm_customers_insert_sales_or_admin', NULL, '5a2318a920784672f02f9998944a2f85'),
-    ('crm_customers', 'crm_customers_select_visible', '4947d68831cf824f2958916e8e60acef', NULL),
-    ('crm_customers', 'crm_customers_update_assigned_or_admin', 'd8db0d3e9afeb4fa0356d1900c4f26c7', 'd8db0d3e9afeb4fa0356d1900c4f26c7'),
-    ('crm_goals', 'crm_goals_insert_admin_only', NULL, '93347aacd46dbfbae3c7162cfff2d1c0'),
-    ('crm_goals', 'crm_goals_select_visible', 'dcc59cdbec66d28655974ad1385bbaea', NULL),
-    ('crm_goals', 'crm_goals_update_admin_only', '93347aacd46dbfbae3c7162cfff2d1c0', '93347aacd46dbfbae3c7162cfff2d1c0'),
-    ('crm_internal_projects', 'crm_internal_projects_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_internal_projects', 'crm_internal_projects_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_material_cost_articles', 'crm_material_cost_articles_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_productivity_rates', 'crm_productivity_rates_delete', 'e1f73d5c604c3449bcb2bbbf85a58e6a', NULL),
-    ('crm_productivity_rates', 'crm_productivity_rates_insert', NULL, 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_productivity_rates', 'crm_productivity_rates_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('crm_productivity_rates', 'crm_productivity_rates_update', 'e1f73d5c604c3449bcb2bbbf85a58e6a', 'e1f73d5c604c3449bcb2bbbf85a58e6a'),
-    ('crm_quotes', 'crm_quotes_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
-    ('crm_quotes', 'crm_quotes_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
-    ('crm_quotes', 'crm_quotes_insert_sales_or_admin', NULL, '8d91a9fa8a8255a0d28658964d9a662e'),
-    ('crm_quotes', 'crm_quotes_select_visible', '407ed772afe395deb8b5412972ed0d88', NULL),
-    ('crm_quotes', 'crm_quotes_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
-    ('crm_routing_rules', 'crm_routing_rules_manage_admin', 'f7c59d452c33c528eac72c041093aee2', 'f7c59d452c33c528eac72c041093aee2'),
-    ('crm_routing_rules', 'crm_routing_rules_select_crm', 'e248ac00fadba7f00e27db0ef8cddaee', NULL),
-    ('crm_time_approvals', 'crm_time_approvals_select', '2a1c8327d53fa0ec9d05b778e6951a03', NULL),
-    ('crm_time_codes', 'crm_time_codes_insert', NULL, '552d8dedc45b92499c902141113b9cff'),
-    ('crm_time_codes', 'crm_time_codes_update', '552d8dedc45b92499c902141113b9cff', '552d8dedc45b92499c902141113b9cff'),
-    ('crm_time_compensations', 'crm_time_compensations_delete_own', '8f315d261bf05994091d1c3efc0e8d04', NULL),
-    ('crm_time_compensations', 'crm_time_compensations_insert', NULL, '83c8627d454d53a739c08dfb48e80168'),
-    ('crm_time_compensations', 'crm_time_compensations_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
-    ('crm_time_compensations', 'crm_time_compensations_update_own', '8f315d261bf05994091d1c3efc0e8d04', '8f315d261bf05994091d1c3efc0e8d04'),
-    ('crm_time_entries', 'crm_time_entries_delete_own', '95ac5069544962dbd1296f963f638e45', NULL),
-    ('crm_time_entries', 'crm_time_entries_insert', NULL, 'd53f4ef2d998f23c0a540f68df441a51'),
-    ('crm_time_entries', 'crm_time_entries_select', 'e3df07d1274017383e4617541708bc2f', NULL),
-    ('crm_time_entries', 'crm_time_entries_update_own', '95ac5069544962dbd1296f963f638e45', 'de2d093580434cddc0ece28915e53b85'),
-    ('crm_time_entry_audit', 'crm_time_entry_audit_select', 'd07ea997eba315900eca419fb72fd42e', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_delete_own', '987767fc803474751ce44a4235a12922', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_insert_crew', NULL, '7466d0a9d9822662218d3d386905f8e1'),
-    ('crm_work_order_comments', 'crm_wo_comments_select_crew', '14318e2211b2bb6b5cc62740fe66f661', NULL),
-    ('crm_work_order_comments', 'crm_wo_comments_update_own', '987767fc803474751ce44a4235a12922', '987767fc803474751ce44a4235a12922'),
-    ('crm_work_order_comments', 'crm_work_order_comments_delete_self_or_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
-    ('crm_work_order_comments', 'crm_work_order_comments_insert_self', NULL, '7a055d54ad0878ebbc2a4951ae69ae6e'),
-    ('crm_work_order_comments', 'crm_work_order_comments_select_visible', '18e81a07a39c64a07accdb91f5766cc6', NULL),
-    ('crm_work_order_files', 'crm_wo_files_delete', '592eb1bbd9dd0222c92a4e7274038841', NULL),
-    ('crm_work_order_files', 'crm_wo_files_insert', NULL, 'f3391b46458a724d9857a48235ced033'),
-    ('crm_work_order_files', 'crm_wo_files_select', '79cd9bdeed14e184cf155447bf5b93a0', NULL),
-    ('crm_work_order_invoices', 'crm_wo_invoices_select_visible', 'df5fb3601a8623540ad9e212d634c8de', NULL),
-    ('crm_work_order_kma_plans', 'crm_wo_kma_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
-    ('crm_work_order_kma_plans', 'crm_wo_kma_select', 'df5b851e4bf05761c6f56edf4f00abe2', NULL),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_delete', 'c687a03934aad71c942f919772f8f16d', NULL),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_insert', NULL, 'e1e7f749604ad6b5940a4e493356cd43'),
-    ('crm_work_order_progress_reports', 'crm_wo_progress_select', '30b3d57d4a885d537601174c541b25cf', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_delete', '53a5fa671decf77a21edaf3256fef627', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_insert', NULL, 'dc0de2cfdd4d3f8028e84815cc87e60c'),
-    ('crm_work_order_stages', 'crm_wo_stages_select', 'c8b59e130995b3ac307848dd235c5ee9', NULL),
-    ('crm_work_order_stages', 'crm_wo_stages_update', '53a5fa671decf77a21edaf3256fef627', '53a5fa671decf77a21edaf3256fef627'),
-    ('crm_work_orders', 'crm_work_orders_delete_assigned_or_admin', '047f244b5e7e6589371bf1c21c24e57d', NULL),
-    ('crm_work_orders', 'crm_work_orders_insert_admin_manage', NULL, '505b506e1aec95794e77f68d76b9e3ed'),
-    ('crm_work_orders', 'crm_work_orders_insert_sales_or_admin', NULL, '32fcff6bd539600aabe5410934255a37'),
-    ('crm_work_orders', 'crm_work_orders_select_crew', 'b8c75761e6fc9a75bdb2cdbe82b8075b', NULL),
-    ('crm_work_orders', 'crm_work_orders_select_visible', 'd8d43d2b77e4becb14d8567e724ac74e', NULL),
-    ('crm_work_orders', 'crm_work_orders_update_visible', '047f244b5e7e6589371bf1c21c24e57d', '047f244b5e7e6589371bf1c21c24e57d'),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
-    ('fortnox_article_favorites', 'fortnox_article_favorites_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_delete', '0ed4497bbfc22a553867760b76ede0cb', NULL),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_insert', NULL, '0ed4497bbfc22a553867760b76ede0cb'),
-    ('fortnox_article_work_description_defaults', 'fortnox_article_work_description_defaults_select', '429e93947a01a4cada7fe7db3293a606', NULL),
-    ('fortnox_articles_cache', 'CRM users can read fortnox_articles_cache', '2600e03739ddea1af87ffec02e42dd11', NULL),
-    ('fortnox_integrations', 'Admins can read fortnox_integrations', '5f8606278ab086948a00e990adb1cb98', NULL),
-    ('korjournal_trips', 'korjournal delete own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
-    ('korjournal_trips', 'korjournal read own', 'cb36b1a0770728f01fd9e4744dd633c9', NULL),
-    ('korjournal_trips', 'korjournal update own', 'cb36b1a0770728f01fd9e4744dd633c9', 'cb36b1a0770728f01fd9e4744dd633c9'),
-    ('korjournal_trips', 'korjournal write own', NULL, 'cb36b1a0770728f01fd9e4744dd633c9')
-  ) as t(tbl, pol, md5_q, md5_c) loop
-    select regexp_replace(regexp_replace(p.qual, '\( SELECT auth\.uid\(\) AS uid\)', 'auth.uid()', 'g'),
-                          '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g'),
-           regexp_replace(regexp_replace(p.with_check, '\( SELECT auth\.uid\(\) AS uid\)', 'auth.uid()', 'g'),
-                          '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g')
-      into cur_q, cur_c
-      from pg_policies p where p.schemaname = 'public' and p.tablename = r.tbl and p.policyname = r.pol;
-    if md5(cur_q) is distinct from r.md5_q or md5(cur_c) is distinct from r.md5_c then
+  perform set_config('search_path', 'public, extensions', true);
+  for r in select e.*, p.qual, p.with_check
+             from __initplan_expected e
+             join pg_policies p on p.schemaname = 'public' and p.tablename = e.tbl and p.policyname = e.pol loop
+    if md5(pg_temp.__initplan_unwrap(r.qual)) is distinct from r.md5_q
+       or md5(pg_temp.__initplan_unwrap(r.with_check)) is distinct from r.md5_c then
       raise exception 'policy %.% ändrades mer än inslagningen', r.tbl, r.pol;
     end if;
   end loop;
 
   select coalesce(sum(
-           (length(e) - length(replace(e, 'auth.uid()', ''))) / length('auth.uid()')
-         - (length(e) - length(replace(e, '( SELECT auth.uid() AS uid)', ''))) / length('( SELECT auth.uid() AS uid)')
-         + (length(e) - length(replace(e, 'has_permission(', ''))) / length('has_permission(')
-         - (length(e) - length(replace(e, '( SELECT has_permission(', ''))) / length('( SELECT has_permission(')
+           (select count(*) from regexp_matches(x.e, '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\()', 'g'))
+         - (select count(*) from regexp_matches(x.e, '\( SELECT (auth\.[a-z_]+\(\)|has_permission\()', 'g'))
          ), 0) into bare
-    from (select coalesce(qual, '') || ' ' || coalesce(with_check, '') as e
-            from pg_policies
-           where schemaname = 'public' and tablename ~ '^(crm_|fortnox_|korjournal_)') x;
+    from (select coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '') as e
+            from pg_policies p
+           where p.schemaname = 'public' and p.tablename in (select tbl from __initplan_expected)) x;
   if bare <> 0 then
-    raise exception '% oinslagna auth.uid()/has_permission()-anrop kvar', bare;
+    raise exception '% oinslagna auth.*()/has_permission()-anrop kvar', bare;
   end if;
 end $post$;
 
--- Dubblettindexen. Tvillingen måste finnas och vara identisk innan dess dubblett tas bort.
+drop function pg_temp.__initplan_unwrap(text);
+drop table __initplan_expected;
+
+-- Dubblettindexen. Tvillingen måste finnas, vara giltig och vara identisk innan dess dubblett tas bort.
 do $idx$
 begin
   if to_regclass('public.crm_customers_stage_idx') is null or to_regclass('public.crm_work_orders_prospect_id_idx') is null then
     raise exception 'tvillingindexet saknas — tar inte bort dubbletten';
+  end if;
+  if exists (select 1 from pg_index
+              where indexrelid in ('public.crm_customers_stage_idx'::regclass, 'public.crm_work_orders_prospect_id_idx'::regclass)
+                and not (indisvalid and indisready)) then
+    raise exception 'tvillingindexet är inte giltigt (t.ex. ett misslyckat create index concurrently) — tar inte bort dubbletten';
   end if;
   if to_regclass('public.crm_customers_customer_stage_idx') is not null
      and regexp_replace(pg_get_indexdef(to_regclass('public.crm_customers_customer_stage_idx')), '^CREATE INDEX \S+', '')

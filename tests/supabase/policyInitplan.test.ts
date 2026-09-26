@@ -10,44 +10,51 @@ import { join } from 'node:path';
  *
  * Äldre policyer skrivs om domän för domän (20260926142144_crm_policy_initplan.sql är CRM, med
  * scripts/supabase/policy-initplan-rewrite.sql). Testet vaktar framåt: från och med den filen får ingen
- * `create policy` eller `alter policy` skriva ett oinslaget anrop, annars kryper kostnaden per rad tillbaka.
+ * `create policy` eller `alter policy` skriva ett anrop som körs per rad — inte heller inuti ett DO-block
+ * (`execute 'create policy …'`). Bara de exakta formerna godkänns: `(select auth.uid() = user_id)` refererar raden
+ * och blir en SubPlan per rad, inte en InitPlan.
  */
 
 const DIR = 'supabase/migrations';
 const FROM = '20260926142144';
 
-/** Policy-satserna i filer från och med FROM, normaliserade: utan kommentarer och DO-block, gemener, ett blanksteg. */
-function policyStatements(): { file: string; stmt: string }[] {
+/** Varje create/alter policy i filer från och med FROM, i hela filtexten (även i DO-block och execute-strängar). */
+function policySegments(): { file: string; policy: string; text: string }[] {
   return readdirSync(DIR)
     .filter((f) => f.endsWith('.sql') && f.slice(0, FROM.length) >= FROM)
     .sort()
-    .flatMap((file) =>
-      readFileSync(join(DIR, file), 'utf8')
-        .replace(/\$(\w*)\$[\s\S]*?\$\1\$/g, '')
+    .flatMap((file) => {
+      const text = readFileSync(join(DIR, file), 'utf8')
         .replace(/--.*$/gm, '')
-        .split(';')
-        .map((s) => s.replace(/"/g, '').replace(/\s+/g, ' ').trim().toLowerCase())
-        .filter((stmt) => /^(create|alter) policy /.test(stmt))
-        .map((stmt) => ({ file, stmt })),
-    );
+        .replace(/\s+/g, ' ')
+        .replace(/''/g, "'") // citattecken dubblerade i en execute-sträng
+        .toLowerCase();
+      return [...text.matchAll(/\b(?:create|alter) policy ("[^"]+"|\S+)[^;]*/g)].map((m) => ({
+        file,
+        policy: m[1].replace(/"/g, ''),
+        text: m[0],
+      }));
+    });
 }
 
-// Ett anrop som inte föregås av "select " — dvs. inte står först i en skalär delfråga.
-const BARE = /(?<!select )\b(auth\.[a-z_]+\(\)|has_permission\()/g;
+// De enda godkända formerna: hela delfrågan är anropet och inget annat.
+const WRAPPED = /\(select (?:auth\.[a-z_]+\(\)|has_permission\('[^']*'(?:::text)?\))\)/g;
+// Ett anrop (inte en del av ett längre namn eller schema-kvalificerat på annat sätt).
+const CALL = /(?<![.\w])(?:auth\.[a-z_]+\(\)|has_permission\()/g;
 
 describe('RLS-policyer i nya migreringar', () => {
-  const statements = policyStatements();
+  const segments = policySegments();
 
   it('hittar policy-satserna — annars är testet tomt', () => {
     // CRM-omskrivningen ensam har 89 alter policy.
-    expect(statements.length).toBeGreaterThanOrEqual(89);
+    expect(segments.length).toBeGreaterThanOrEqual(89);
   });
 
-  it('anropar auth.*() och has_permission() inslagna i (select …), aldrig per rad', () => {
-    const bare = statements
-      .map(({ file, stmt }) => ({ file, hits: [...stmt.matchAll(BARE)].map((m) => m[1]), policy: stmt.split(' ')[2] }))
+  it('anropar auth.*() och has_permission() bara som (select …) — aldrig per rad', () => {
+    const bare = segments
+      .map((s) => ({ ...s, hits: s.text.replace(WRAPPED, '').match(CALL) ?? [] }))
       .filter((s) => s.hits.length > 0)
       .map((s) => `${s.file}: ${s.policy} (${s.hits.join(', ')})`);
-    expect(bare, 'skriv (select auth.uid()) / (select has_permission(\'x\')) — se policyInitplan.test.ts').toEqual([]);
+    expect(bare, "skriv (select auth.uid()) / (select has_permission('x')) — se policyInitplan.test.ts").toEqual([]);
   });
 });
