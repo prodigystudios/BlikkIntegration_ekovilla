@@ -1,6 +1,7 @@
 import './globals.css';
 import Script from 'next/script';
 import { getUserProfile } from '../lib/getUserProfile';
+import { getEffectivePermissions } from '../lib/auth/permissions';
 import { UserProfileProvider } from '../lib/UserProfileContext';
 import { ToastProvider } from '../lib/Toast';
 import { TruckAssignmentsProvider } from '../lib/TruckAssignmentsContext';
@@ -73,8 +74,13 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
-  // Single consolidated profile fetch (includes role + name)
-  const profile = await getUserProfile();
+  // Profilen (roll + namn) och de effektiva behörigheterna, parallellt. Båda är request-cachade, så
+  // sidor och hjälpare som läser dem igen i samma request kostar ingenting extra. Utan inloggning ger
+  // effective_permissions en tom lista (anon får anropa den; den svarar bara för anroparen själv).
+  const [profile, permissionSet] = await Promise.all([getUserProfile(), getEffectivePermissions()]);
+  // Array och inte Set: en Set överlever inte gränsen server → klient (se UserProfileProvider).
+  // Ingen profil ⇒ inga nycklar, så att skalet aldrig ser en utloggad användare med behörigheter.
+  const permissions = profile ? [...permissionSet].sort() : [];
   const role = profile?.role || null;
   const fullName = profile?.full_name || null;
   const userInitial = fullName ? fullName.charAt(0).toUpperCase() : 'U';
@@ -83,7 +89,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   return (
     <html lang="en">
     <body style={{ fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif', margin: 0, width: '100%', overflowX: 'hidden', minHeight: '100dvh', background: '#fff', paddingBottom: 'env(safe-area-inset-bottom)' }} data-has-user={!!profile}>
-      <UserProfileProvider profile={profile}>
+      <UserProfileProvider profile={profile} permissions={permissions}>
         <ToastProvider>
           <TruckAssignmentsProvider>
             <AppShell role={role} fullName={fullName} userInitial={userInitial}>

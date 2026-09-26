@@ -1,3 +1,4 @@
+import { requestCache } from '@/lib/requestCache';
 import { createSessionClient } from '@/lib/supabase/session';
 
 export interface UserProfile {
@@ -7,7 +8,9 @@ export interface UserProfile {
   phone?: string | null;
 }
 
-export async function getUserProfile(): Promise<UserProfile | null> {
+// Request-cachad: layouten, sidan och deras hjälpare läser profilen var för sig (upp till tre gånger
+// i samma request på /crm/installningar). En läsning per request räcker.
+export const getUserProfile = requestCache(async (): Promise<UserProfile | null> => {
   const supabase = createSessionClient();
   try {
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
@@ -29,4 +32,4 @@ export async function getUserProfile(): Promise<UserProfile | null> {
   } catch {
     return null;
   }
-}
+});

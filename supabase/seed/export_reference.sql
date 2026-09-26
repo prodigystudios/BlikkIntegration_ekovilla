@@ -18,6 +18,17 @@
 -- standardbemanningen skapar dev.sql mot testanvändarna; säljrouting och artikelfavoriter lämnas tomma.
 -- fortnox_integrations tas ALDRIG med: prods tokens.
 --
+-- `on conflict do nothing` på BEHÖRIGHETSTABELLERNA (permissions, role_permissions): `db reset` kör
+-- migreringarna FÖRE seeden, och en migrering som lägger in nycklar har redan skrivit raderna som prods
+-- export — tagen efter att migreringen körts i prod — innehåller igen. Utan det hade första exporten
+-- efter en sådan push stoppat `db reset` på en dubblett. En nyckel eller rollrad är en ren fakta-rad,
+-- så det spelar ingen roll vem som skrev den. (Ett nekande i prod — en borttagen rollrad — följer
+-- däremot inte med: seeden kan bara lägga till. Lokalt har rollen då kvar nyckeln tills nästa reset
+-- efter en export som saknar migreringens rad. Harmlöst lokalt, men värt att veta.)
+-- ⚠️ INTE på övriga tabeller med flit: för konfiguration (kalkylinställningar, leverantörer m.m.) hade
+-- en migrerings standardrad tyst vunnit över prods redigerade värden. Där är en krasch vid `db reset`
+-- rätt signal — rätta i så fall exporten eller migreringen.
+--
 -- Varje tabell blir en insert från JSON med UTTRYCKLIG kolumnlista (JSON-nycklarna vid exporten).
 -- En kolumn som en senare migrering lägger till får då sin DEFAULT — med `select *` hade den fått
 -- NULL, och en ny NOT NULL-kolumn hade stoppat `db reset` tills prod fått kolumnen. Tomma tabeller
@@ -34,7 +45,7 @@ begin transaction read only;
 -- Behörighetskatalogen (RBAC). Utan den når ingen användare något.
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.key), '[]') as rows from public.permissions t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'permissions', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c
@@ -42,7 +53,7 @@ select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_re
 
 with r as (select coalesce(jsonb_agg(to_jsonb(t)
        order by t.role, t.permission_key), '[]') as rows from public.role_permissions t)
-select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb);',
+select format('insert into public.%1$I (%2$s) select %2$s from jsonb_populate_recordset(null::public.%1$I, %3$L::jsonb) on conflict do nothing;',
        'role_permissions', c.cols, r.rows)
   from r, lateral (select string_agg(quote_ident(k), ', ' order by n) as cols
                      from jsonb_object_keys(r.rows->0) with ordinality as x(k, n)) c

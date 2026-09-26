@@ -1,11 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { cache as reactCache } from 'react';
-
-// React's request-scoped cache() dedupes the RPC across every guard in one request. It's a
-// server-only API; in non-server contexts (e.g. unit tests that import this module) it may be
-// absent — fall back to identity so importing the module never throws. getEffectivePermissions
-// isn't called in those contexts anyway.
-const cache: typeof reactCache = typeof reactCache === 'function' ? reactCache : ((fn: any) => fn) as typeof reactCache;
+import { requestCache as cache } from '@/lib/requestCache';
 
 // Permission-based access (RBAC), CRM + Fortnox scope. This is the TS half of the single
 // source of truth defined in supabase/archive/sql/20260608_permissions_model.sql: the same effective
@@ -56,6 +50,14 @@ export const PERMISSION_KEYS = [
   'safety.round.read', 'safety.round.write',
   // Coarse meta keys backing the legacy requireCrmUser/Writer/Admin guards 1:1
   'crm.access', 'crm.write', 'crm.admin',
+  // CRM:ets inställningsnav + kalkylinställningarna (i dag role = 'admin' på sidorna). Egen nyckel och
+  // inte crm.goal.manage: navet bär teamet och Fortnox-kopplingen, inte bara målen.
+  'crm.settings.manage',
+  // Appens egna ytor utanför CRM (20260926101919_rbac_app_permission_keys.sql). Seed = radens roller i
+  // app/_lib/appNav.ts ∪ {konsult om sales står där}; ekonomi får ingen. `app.access` = "alla anställda"
+  // (rader utan roller). tests/auth/permissionCatalog.test.ts vaktar katalog och seed.
+  'app.access', 'app.contacts.read', 'app.news.read', 'app.material.read', 'app.documents.read',
+  'app.archive.read', 'app.jobs.read', 'app.egenkontroll.write', 'app.clothing.order',
 ] as const;
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
@@ -67,6 +69,11 @@ export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 export const getEffectivePermissions = cache(async (): Promise<Set<PermissionKey>> => {
   try {
     const supabase = createSessionClient();
+    // Utan session finns inget att fråga om — och rotlayouten anropar den här på varje sida, även
+    // inloggningen och kundens offertlänk. getSession() läser bara kakan (inget nätanrop när token är
+    // giltig); RPC:n validerar ändå JWT:n själv, så den avgör aldrig åtkomst här.
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return new Set();
     const { data, error } = await supabase.rpc('effective_permissions');
     if (error) {
       console.error('[permissions] effective_permissions RPC failed:', error.message);

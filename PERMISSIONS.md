@@ -98,6 +98,26 @@ plus `time.reminder.sms` (`20260908_time_reminder_sms_permission.sql`).
 **Safety rounds** (skyddsronder, seeded in `20260924_safety_rounds.sql`): `safety.round.read` /
 `safety.round.write`.
 
+**App surfaces outside the CRM** (RBAC pass step 2a, `supabase/migrations/20260926101919_rbac_app_permission_keys.sql`):
+`app.access` (all employees — Dokument & information, Felanmälan), `app.contacts.read`, `app.news.read`,
+`app.material.read`, `app.documents.read` (Mina dokument), `app.archive.read` (saved self-inspections),
+`app.jobs.read` (Mina jobb), `app.egenkontroll.write`, `app.clothing.order`; plus `crm.settings.manage`
+(the CRM settings hub + calculation settings, admin-only today). Seeded to reproduce **today's menu**
+exactly; nothing reads them until the menu and page gates move over (2b).
+
+> ⚠️ **Seed rule for app keys: the row's `roles` in `app/_lib/appNav.ts` ∪ {`konsult` if `sales` is
+> among them}.** The sidebar resolves konsult → sales *before* filtering, so the string `'konsult'`
+> appears in no `roles` array; seeding the literal roles would silently drop konsult from the archive,
+> news, material quality, documents and contacts. A row with no `roles` means "all employees"
+> (member, sales, admin — `ekonomi` never sees it, `EXPLICIT_ONLY_ROLES`) and so includes konsult.
+> `tests/auth/permissionCatalog.test.ts` recomputes each seed from the menu and fails on drift.
+>
+> Deliberately **no** key for `/tid` (row and `time.entry.write` differ on purpose), `/admin` (stays on
+> role until the whole admin surface moves), `/crm/dokument` (the documents domain moves as one),
+> legacy `/plannering` (being retired), `/crm/korjournal` (already behind `crm.access`).
+> ⚠️ `crm.ringlist.manage` is seeded to **sales + admin**, but `/crm/ringlistor` is admin-only today —
+> don't gate that page on it without deciding who should see it.
+
 > Also deliberately **not** `crm.*`. A round leader may be a supervisor (`member`) with no CRM
 > access, who gets the keys as a personal grant. There is **no crew branch**: being on the job does
 > not let you start rounds. The work order is read through two narrow SECURITY DEFINER lookups gated
@@ -127,6 +147,9 @@ The seed reproduces the pre-migration role behavior exactly. (Parity is asserted
 | `time.reference.manage` / `time.entry.write.all` | – | – | – | – | ✓ |
 | `time.reminder.sms` | – | – | – | **–** | ✓ |
 | `safety.round.read` / `safety.round.write` | – | ✓ | – | – | ✓ |
+| `app.access` / `app.contacts.read` / `app.news.read` / `app.material.read` / `app.documents.read` / `app.archive.read` | ✓ | ✓ | **✓** | – | ✓ |
+| `app.jobs.read` / `app.egenkontroll.write` / `app.clothing.order` | ✓ | – | – | – | ✓ |
+| `crm.settings.manage` | – | – | – | – | ✓ |
 
 **Asymmetries to remember:** `crm.routingrule.read` excludes konsult (its RLS SELECT did too);
 `crm.aiprospect.*` is admin-only; `member` gets no CRM keys (installers reach their own work
@@ -231,6 +254,11 @@ issues `member`.
   module's exports but cannot intercept a call a module makes to itself — merging the two files
   makes the session mock stop applying, and ~65 guard tests start asserting against a real
   lookup instead of the scenario they name.
+- **Client components:** `useCan(key)` from `lib/UserProfileContext.tsx`. `app/layout.tsx` loads the
+  effective permissions once per request (in parallel with the profile) and hands them to
+  `UserProfileProvider` as a sorted **array** — a `Set` does not survive the server → client boundary
+  (it arrives as `{}` and every check silently says no); the prop type rejects one. A UI hint only —
+  the gate is always the route and RLS.
 
 ### Database (RLS)
 
@@ -352,9 +380,10 @@ already honors it.
 
 ### Add a new permission key
 
-1. Add the key + description to the `permissions` insert in a new dated migration (or extend
-   the catalog) **and** to `PERMISSION_KEYS` in `lib/auth/permissions.ts` (keep them in sync —
-   the unit test guards the count).
+1. Add the key + description to the `permissions` insert in a new migration
+   (`supabase migration new …`) **and** to `PERMISSION_KEYS` in `lib/auth/permissions.ts` —
+   `tests/auth/permissionCatalog.test.ts` fails unless the SQL catalog (seed + migrations) and the
+   code hold exactly the same keys. The migration runs **before** the code that reads the key.
 2. Seed it onto the roles that should have it (`role_permissions`), and update the parity
    assert / `tests/auth/permissions.test.ts` if needed.
 3. Use it: in a route via `requirePermission('<key>')`, and/or in an RLS policy via
@@ -427,7 +456,7 @@ is a manual delete of the offending `role_permissions` / `user_permissions` row.
 | 3 | RLS swap (CRM/Fortnox tables) | ✅ |
 | 4 | Granular route keys (resource writes + Fortnox actions) | ✅ |
 | 5 | Admin UI + lockout guard | ✅ |
-| 6 | The rest of the app (planning, documents, admin, contacts, news) | ⏳ later |
+| 6 | The rest of the app (planning, documents, admin, contacts, news) | 🔄 2a ✅ keys + shell (`useCan`) · 2b menu + page gates · 2c ungated routes |
 
 **Left on the `crm.write` meta key intentionally:** the prospects routes (they write
 `crm_customers` — `crm_prospects` was removed), the tasks routes (their table isn't RLS-migrated
