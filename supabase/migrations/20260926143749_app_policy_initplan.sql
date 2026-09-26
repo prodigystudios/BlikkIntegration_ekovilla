@@ -1,5 +1,7 @@
--- Övriga policyer (startsida, dokument, information, kontakter, felanmälan, nyheter, skyddsronder, uppgifter m.fl.)
--- anropar auth.uid() och has_permission() EN gång per fråga i stället för en gång per rad.
+-- Övriga policyer (startsida, dokument, information, kontakter, felanmälan, nyheter, skyddsronder, uppgifter,
+-- appärenden m.fl.) anropar auth.uid(), has_permission() och de parameterlösa is_app_ticket_admin() /
+-- is_fault_report_recipient() EN gång per fråga i stället för en gång per rad. De två senare är, som has_permission,
+-- STABLE SECURITY DEFINER och kan aldrig byggas in i frågan.
 --
 -- Del 3 av advisor-genomgången, domän 3 av 3. Samma omskrivning, kontroller och skäl som CRM i
 -- 20260926142144_crm_policy_initplan.sql — se den och scripts/supabase/policy-initplan-rewrite.sql. Genererad så här
@@ -27,8 +29,12 @@ create temp table __initplan_expected (tbl text, pol text, md5_q text, md5_c tex
 insert into __initplan_expected values
   ('addresses', 'addr_admin_write', 'd95a2bb3c7f1c0549285160cd9eb8e05', 'd95a2bb3c7f1c0549285160cd9eb8e05'),
   ('addresses', 'addr_select_all', 'c234a76aa097b04184d7d2dd5eb550f4', NULL),
+  ('app_changelog_entries', 'app_changelog_select', '0f71b4b8b91a8a71780f85dedb68bdf7', NULL),
+  ('app_changelog_entries', 'app_changelog_write', 'fc0a5eb81ddd9bb5df9e64140fd0056e', 'fc0a5eb81ddd9bb5df9e64140fd0056e'),
+  ('app_tickets', 'app_tickets_delete', 'fc0a5eb81ddd9bb5df9e64140fd0056e', NULL),
   ('app_tickets', 'app_tickets_insert', NULL, '98339647bd831fb2495e4a039e48b462'),
   ('app_tickets', 'app_tickets_select', 'f77017a4fd5b9e170fc6dacfc685bfb8', NULL),
+  ('app_tickets', 'app_tickets_update', 'fc0a5eb81ddd9bb5df9e64140fd0056e', 'fc0a5eb81ddd9bb5df9e64140fd0056e'),
   ('contact_categories', 'cat_admin_write', 'd95a2bb3c7f1c0549285160cd9eb8e05', 'd95a2bb3c7f1c0549285160cd9eb8e05'),
   ('contact_categories', 'cat_select_all', 'c234a76aa097b04184d7d2dd5eb550f4', NULL),
   ('contacts', 'contacts_admin_write', 'd95a2bb3c7f1c0549285160cd9eb8e05', 'd95a2bb3c7f1c0549285160cd9eb8e05'),
@@ -57,6 +63,7 @@ insert into __initplan_expected values
   ('fault_report_updates', 'fault_report_updates_select', 'e49d3c0bb70b385523ece8df8b770109', NULL),
   ('fault_reports', 'fault_reports_insert', NULL, '98339647bd831fb2495e4a039e48b462'),
   ('fault_reports', 'fault_reports_select', '699845a1bac99a881c59349dd9d1f386', NULL),
+  ('fault_reports', 'fault_reports_update', 'dcd2799602a96596c908e2b3cba6902e', 'dcd2799602a96596c908e2b3cba6902e'),
   ('info_groups', 'info_groups_admin_write', 'd95a2bb3c7f1c0549285160cd9eb8e05', 'd95a2bb3c7f1c0549285160cd9eb8e05'),
   ('info_groups', 'info_groups_select', 'c234a76aa097b04184d7d2dd5eb550f4', NULL),
   ('info_section_images', 'info_section_images_admin_write', 'd95a2bb3c7f1c0549285160cd9eb8e05', 'd95a2bb3c7f1c0549285160cd9eb8e05'),
@@ -91,9 +98,10 @@ insert into __initplan_expected values
   ('user_permissions', 'user_permissions_select_self', '3a807491e0a912fbfbee0ffa087b82f6', NULL);
 
 create function pg_temp.__initplan_unwrap(e text) returns text language sql immutable as $f$
-  select regexp_replace(regexp_replace(e,
+  select regexp_replace(regexp_replace(regexp_replace(e,
            '\( SELECT (auth\.([a-z_]+)\(\)) AS \2\)', '\1', 'g'),
-           '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g')
+           '\( SELECT (has_permission\(''[a-z0-9._]+''::text\)) AS has_permission\)', '\1', 'g'),
+           '\( SELECT ((is_[a-z_]+)\(\)) AS \2\)', '\1', 'g')
 $f$;
 
 -- Förkontroll: policyerna ska vara exakt de som omskrivningen utgår från (med ev. inslagning borttagen).
@@ -102,6 +110,9 @@ declare
   r record;
 begin
   perform set_config('search_path', 'public, extensions', true);
+  if exists (select 1 from pg_proc where pronamespace = 'public'::regnamespace and proname like 'is\_%' and pronargs = 0 and provolatile = 'v') then
+    raise exception 'en parameterlös is_*()-funktion i public är VOLATILE — omskrivningen förutsätter STABLE';
+  end if;
   for r in select e.*, p.policyname as found, p.qual, p.with_check
              from __initplan_expected e
              left join pg_policies p on p.schemaname = 'public' and p.tablename = e.tbl and p.policyname = e.pol loop
@@ -126,11 +137,25 @@ alter policy addr_admin_write on public.addresses
 alter policy addr_select_all on public.addresses
   using (((select auth.role()) = 'authenticated'::text));
 
+alter policy app_changelog_select on public.app_changelog_entries
+  using (((published_at IS NOT NULL) OR (select is_app_ticket_admin())));
+
+alter policy app_changelog_write on public.app_changelog_entries
+  using ((select is_app_ticket_admin()))
+  with check ((select is_app_ticket_admin()));
+
+alter policy app_tickets_delete on public.app_tickets
+  using ((select is_app_ticket_admin()));
+
 alter policy app_tickets_insert on public.app_tickets
   with check ((reporter_id = (select auth.uid())));
 
 alter policy app_tickets_select on public.app_tickets
-  using (((reporter_id = (select auth.uid())) OR is_app_ticket_admin()));
+  using (((reporter_id = (select auth.uid())) OR (select is_app_ticket_admin())));
+
+alter policy app_tickets_update on public.app_tickets
+  using ((select is_app_ticket_admin()))
+  with check ((select is_app_ticket_admin()));
 
 alter policy cat_admin_write on public.contact_categories
   using ((EXISTS ( SELECT 1
@@ -266,10 +291,10 @@ alter policy fault_report_recipients_write on public.fault_report_recipients
   WHERE ((p.id = (select auth.uid())) AND (p.role = 'admin'::user_role)))));
 
 alter policy fault_report_updates_insert on public.fault_report_updates
-  with check ((is_fault_report_recipient() AND (responder_id = (select auth.uid()))));
+  with check (((select is_fault_report_recipient()) AND (responder_id = (select auth.uid()))));
 
 alter policy fault_report_updates_select on public.fault_report_updates
-  using ((is_fault_report_recipient() OR (EXISTS ( SELECT 1
+  using (((select is_fault_report_recipient()) OR (EXISTS ( SELECT 1
    FROM fault_reports fr
   WHERE ((fr.id = fault_report_updates.report_id) AND (fr.reporter_id = (select auth.uid())))))));
 
@@ -277,7 +302,11 @@ alter policy fault_reports_insert on public.fault_reports
   with check ((reporter_id = (select auth.uid())));
 
 alter policy fault_reports_select on public.fault_reports
-  using (((reporter_id = (select auth.uid())) OR is_fault_report_recipient()));
+  using (((reporter_id = (select auth.uid())) OR (select is_fault_report_recipient())));
+
+alter policy fault_reports_update on public.fault_reports
+  using ((select is_fault_report_recipient()))
+  with check ((select is_fault_report_recipient()));
 
 alter policy info_groups_admin_write on public.info_groups
   using ((EXISTS ( SELECT 1
@@ -419,14 +448,14 @@ begin
   end loop;
 
   select coalesce(sum(
-           (select count(*) from regexp_matches(x.e, '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\()', 'g'))
-         - (select count(*) from regexp_matches(x.e, '\( SELECT (auth\.[a-z_]+\(\)|has_permission\()', 'g'))
+           (select count(*) from regexp_matches(x.e, '(^|[^.a-z0-9_])(auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))', 'g'))
+         - (select count(*) from regexp_matches(x.e, '\( SELECT (auth\.[a-z_]+\(\)|has_permission\(|is_[a-z_]+\(\))', 'g'))
          ), 0) into bare
     from (select coalesce(p.qual, '') || ' ' || coalesce(p.with_check, '') as e
             from pg_policies p
            where p.schemaname = 'public' and p.tablename in (select tbl from __initplan_expected)) x;
   if bare <> 0 then
-    raise exception '% oinslagna auth.*()/has_permission()-anrop kvar', bare;
+    raise exception '% oinslagna auth.*()/has_permission()/is_*()-anrop kvar', bare;
   end if;
 end $post$;
 
