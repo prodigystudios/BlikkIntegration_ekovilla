@@ -40,6 +40,10 @@ begin transaction read only;
 \o supabase/seed/reference.sql.tmp
 \qecho '-- Referensdata ur prod. GENERERAD av supabase/seed/export_reference.sql — redigera inte för hand.'
 \qecho '-- Kolumner som pekar på prods användare eller bär personuppgifter är bortplockade eller utbytta.'
+-- Tidsstämpeln i migreringarnas format (UTC). tests/helpers/permissionSeed.ts spelar bara migreringar
+-- som är NYARE än exporten ovanpå den — äldre är redan med, och att spela dem igen hade återställt
+-- behörigheter som en admin tagit bort i prod efter att migreringen kördes.
+select '-- Exporterad: ' || to_char(now() at time zone 'utc', 'YYYYMMDDHH24MISS');
 \qecho
 
 -- Behörighetskatalogen (RBAC). Utan den når ingen användare något.

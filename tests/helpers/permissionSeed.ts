@@ -3,10 +3,13 @@ import { join } from 'node:path';
 
 /**
  * Behörighetsläget som i PROD: prods ögonblicksbild (supabase/seed/reference.sql, exporterad ur prod)
- * först, sedan varje migrering i filnamnsordning — insert OCH delete. Migreringar från före exporten
- * är redan med i bilden; att spela dem igen är ofarligt (inserts är idempotenta, en delete av något
- * som redan är borta gör ingenting). Migreringar efter exporten läggs på. Så blir en nyckel som dras
- * tillbaka i en migrering också borta här, fast den står kvar i en äldre export.
+ * först, sedan migreringarna som är NYARE än exporten, i filnamnsordning — insert OCH delete. Så blir
+ * en nyckel som dras tillbaka i en migrering också borta här, fast den står kvar i exporten.
+ *
+ * Exporten stämplar sig själv (`-- Exporterad: YYYYMMDDHHMMSS`, samma format som migreringarnas
+ * version). Äldre migreringar spelas INTE: de är redan med, och att spela dem igen hade återställt en
+ * behörighet som en admin tagit bort i prod efter att migreringen kördes. ⚠️ En export utan stämpel
+ * (från före 2026-09-26) spelar alla — då kan en sådan borttagning döljas. Exportera om.
  *
  * (`db reset` lokalt kör i motsatt ordning — migreringarna, sedan seeden — och kan därför ha kvar en
  * tillbakadragen rad tills nästa export. Det som ska stämma mot koden är prod.)
@@ -44,7 +47,11 @@ function build(): PermissionState {
   const grant = (role: string, key: string) => roleKeys.set(role, (roleKeys.get(role) ?? new Set()).add(key));
   for (const r of referenceRows<{ role: string; permission_key: string }>('role_permissions')) grant(r.role, r.permission_key);
 
-  for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
+  const exportedAt = readFileSync('supabase/seed/reference.sql', 'utf8').match(/^-- Exporterad: (\d{14})$/m)?.[1] ?? '';
+  const newer = readdirSync(MIGRATIONS)
+    .filter((f) => f.endsWith('.sql') && f.slice(0, 14) > exportedAt)
+    .sort();
+  for (const file of newer) {
     const sql = migrationSql(file);
     for (const block of sql.matchAll(/insert into public\.permissions\s*\([^)]*\)\s*values([\s\S]*?)(?:on conflict|;)/g)) {
       for (const m of block[1].matchAll(/\(\s*'([a-z0-9_.]+)'\s*,/g)) catalog.add(m[1]);
