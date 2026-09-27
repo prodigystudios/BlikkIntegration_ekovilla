@@ -1,6 +1,6 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/auth/route';
+import { requirePermission } from '@/lib/auth/guards';
 import { invalidUuidParam, routeError } from '@/lib/api/responses';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
 import { loadInfoFileSource } from '@/lib/domains/info-page/queries';
@@ -23,8 +23,9 @@ export const dynamic = 'force-dynamic';
 // Bilderna använder den INTE: de hämtas direkt vid sidladdningen, medan urlen är färsk, och en
 // rutt per bild hade blivit ett funktionsanrop per miniatyr.
 export async function GET(req: Request, { params }: { params: { id: string } }) {
-  const currentUser = await getCurrentUser();
-  if (!currentUser) return routeError(401, 'unauthorized', 'Unauthorized');
+  // Samma nyckel som sidan (layouten) och som info_*-tabellernas läspolicy (20260927080615).
+  const access = await requirePermission('app.access');
+  if (access.response) return access.response;
 
   const badId = invalidUuidParam(params.id);
   if (badId) return badId;

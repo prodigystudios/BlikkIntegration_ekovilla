@@ -276,6 +276,28 @@ seed equals the role set the old predicate admitted, so behavior is identical):
 | routing/goals/ai-prospect admin branches | the resource's `.read` / `.manage` key |
 | `auth.uid() = assigned_to` / `user_id` / customer-ownership joins | **unchanged** |
 
+**Blanket "signed in" reads moved to the app keys (2026-09-27,
+`20260927080615_rls_read_policies_app_keys.sql`).** The RBAC pass gated pages and routes, but nine
+SELECT policies were still `auth.role() = 'authenticated'` — so `ekonomi`, which holds none of the app
+keys, could read them directly through `/rest/v1` with its own session. Each policy uses the key of the
+**page** that reads the table (the employee pages are deliberately wider than their menu rows, see
+*Guard a page*), so a policy never makes a page render empty where its gate let the user in:
+
+| Tables | Read policy |
+| --- | --- |
+| `contacts`, `addresses`, `contact_categories` | `app.contacts.read` |
+| `news_items` | `app.access` (`/nyheter`) |
+| `info_groups`, `info_sections`, `info_section_images` | `app.access` (Dokument & information) |
+| `documents_folders`, `documents_files` | `crm.access` **or** `app.access` (the library, and a recipient opening a publication from `/mina-dokument`) |
+
+Only `ekonomi` lost anything (verified per test role). The write policies (`profiles.role = 'admin'`)
+were left as they are. Files in the private `pdfs` bucket have no `storage.objects` policies and are
+only signed by service-role *after* a session read of the row, so these policies are also the files'
+gate. Still `auth.role()`: the `planning_*` tables — they go with the legacy cleanup.
+⚠️ The keys follow the role bundle, and a self-registered account gets `member`
+(`/auth/create-account`) — these policies keep out `ekonomi`, not a stranger. That rests on sign-up
+being disabled in the Supabase dashboard.
+
 ---
 
 ### Crew access — the one path that is NOT permission-based ⚠️
@@ -441,6 +463,10 @@ turns the page into a bare 500.
 | `GET /api/planning/truck-assignments` | `planning.schedule.read` | only legacy `/plannering` + `/admin/trucks/assignments` read it; the root-layout provider skips the fetch without the key |
 | `/api/crm/work-orders/[id]/customer-contact` | — (RLS) | reads the order with the **session** client first (crew policy / `crm.workorder.read`), only then the contact with service-role — same model as `assignee-contact` |
 
+Two **session** routes that checked only "signed in" got the same key as their table's read policy
+when those moved (2026-09-27): `/api/news/latest` (`app.access`) and `/api/info/files/[id]`
+(`app.access`; it signs with service-role after the session read).
+
 **Where the role still decides something (PR 3, 2026-09-26)** — deliberately, and never access:
 - **Presentation:** the start page's quick links and their order (`components/dashboard/ClientDashboard.tsx`
   reads konsult as sales for layout only). With per-user overrides a tile can bounce to Start.
@@ -448,7 +474,8 @@ turns the page into a bare 500.
   the admin-only APIs outside it: `/api/changelog` (+ `[id]`), `/api/support/tickets` admin actions,
   `/api/blikk/contacts/probe`, `/api/profiles/by-tag` (all `role === 'admin'` / `requireAdminUser`).
 - **Documents domain** — moved as one, later: `/crm/dokument` `canEdit`, `/api/documents/files`,
-  `/folders`, `/list` (`canEdit`), `/publications` (`requireAdminUser`) + their RLS.
+  `/folders`, `/list` (`canEdit`), `/publications` (`requireAdminUser`) + their write RLS. (The read
+  policies moved to keys on 2026-09-27; see *Database (RLS)*.)
 - **Notification links in work-order comments** (`comments/route.ts` `hasCrmAccess`): picks the CRM or
   the field-view link per RECIPIENT by role — presentation, and another user's keys aren't readable
   without a new SQL function.

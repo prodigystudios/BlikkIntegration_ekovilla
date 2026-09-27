@@ -63,7 +63,7 @@ export function buildInfoImagePath(sectionId: string, fileName: string, uniqueId
  * 🧨 Registreringsrutten tar emot en sökväg från klienten, och servern signerar den sedan med
  * service-role — utan den här kontrollen kunde en rad peka på vilket objekt som helst i
  * bucketen (Arbetsorder/, Documents/, Support/). Eftersom info_section_images_select släpper
- * igenom VARJE inloggad hade en privat arbetsorderritning då blivit synlig för alla på
+ * igenom VARJE anställd (app.access) hade en privat arbetsorderritning då blivit synlig för alla på
  * /dokument-information. Samma vakt som arbetsorderfilerna har, av samma skäl: den ska anropas
  * på varje väg som tar emot en sökväg utifrån.
  */
@@ -144,7 +144,7 @@ export function resolveFileKind(
  * 🧨 Vakten fick först fråga resolveFileKind, och det var fel: den svarar på MIME-typen FÖRST
  * och når aldrig ändelsen. En klient som skickade { fileName: "x.html", contentType:
  * "image/png" } passerade alltså båda stegen, och sökvägen vi reserverade slutade på .html —
- * i en bucket vars SELECT-policy släpper igenom varje inloggad.
+ * och radens SELECT-policy släpper igenom varje anställd (app.access).
  *
  * Därför krävs här att BÅDA pekar åt samma håll: ändelsen måste vara en vi känner igen, och
  * en MIME-typ som säger något annat än ändelsen gör att filen avvisas — då ljuger en av dem

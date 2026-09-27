@@ -163,7 +163,7 @@ export async function requireSection(client: SupabaseClient, id: string) {
  * Zod-schema eftersom det är samma funktion som läsvägen väljer renderare med.
  *
  * Varför det är mer än städning: filen serveras inline från storage-ursprunget, och
- * SELECT-policyn släpper igenom varje inloggad. En html- eller svg-fil hade blivit ett
+ * SELECT-policyn släpper igenom varje anställd (app.access). En html- eller svg-fil hade blivit ett
  * skriptdokument som alla i appen kan öppna.
  */
 export function assertSupportedFile(contentType: string | null | undefined, nameOrPath: string): void {
@@ -179,7 +179,7 @@ export async function registerImage(
 ) {
   // 🧨 Sökvägen kommer utifrån och signeras sedan med service-role. Utan den här vakten kunde
   // raden peka på vilket objekt som helst i bucketen — och eftersom SELECT-policyn släpper
-  // igenom varje inloggad hade en privat arbetsorderritning blivit synlig för alla.
+  // igenom varje anställd (app.access) hade en privat arbetsorderritning blivit synlig för alla.
   if (!isInfoImagePath(sectionId, input.path)) {
     throw new InfoPageError(400, 'invalid_path', 'Sökvägen hör inte till den här fliken.');
   }

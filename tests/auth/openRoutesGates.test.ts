@@ -4,7 +4,8 @@ import { memberUser } from '../crm/helpers/supabase';
 
 /**
  * Rutterna som förr bara krävde "inloggad" och sedan läste med service-role — förbi RLS, alltså utan
- * någon andra försvarslinje (RBAC steg 2c). För varje rutt:
+ * någon andra försvarslinje (RBAC steg 2c) — och två som läser med sessionen men vars tabeller var
+ * "inloggad = läs" tills 20260927080615. För varje rutt:
  *   - utan nyckeln: 403, och INGEN klient har byggts — ingen dataåtkomst före grinden;
  *   - med nyckeln: grinden släpper igenom till dataåtkomsten;
  *   - utan inloggning: 401.
@@ -82,6 +83,21 @@ const ROUTES: { name: string; key: string; call: () => Promise<Response> }[] = [
     name: 'GET /api/phone-list',
     key: 'app.contacts.read',
     call: async () => (await import('@/app/api/phone-list/route')).GET(),
+  },
+  // Läser med sessionen, men krävde bara inloggning medan tabellens policy var "inloggad" — grindade i samma PR
+  // som läspolicyerna flyttades till nycklarna (20260927080615). Filrutten signerar dessutom med service-role.
+  {
+    name: 'GET /api/news/latest',
+    key: 'app.access',
+    call: async () => (await import('@/app/api/news/latest/route')).GET(),
+  },
+  {
+    name: 'GET /api/info/files/[id]',
+    key: 'app.access',
+    call: async () =>
+      (await import('@/app/api/info/files/[id]/route')).GET(get('/api/info/files/x'), {
+        params: { id: '00000000-0000-4000-8000-000000000001' },
+      }),
   },
   {
     name: 'GET /api/planning/truck-assignments',

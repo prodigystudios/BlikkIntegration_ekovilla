@@ -9,7 +9,7 @@ import { getSafetyRound } from '@/lib/domains/safetyRounds/store';
 // Namnförslagen i ronden: Kontaktlistan (rondledare, skyddsombud, ansvarig för en åtgärd) och
 // besättningen på ordern (deltagare med profil, så att PR 3 kan låta dem kvittera själva).
 //
-// Båda källorna är bästa-försök. Kontaktlistan läser varje inloggad; besättningen kräver
+// Båda källorna är bästa-försök. Kontaktlistan kräver app.contacts.read (RLS); besättningen kräver
 // planning.schedule.read, och utan den blir listan tom — en rondledare utan planeringsåtkomst skriver
 // namnen själv. Ett fel i en källa loggas och ger en tom lista, aldrig ett fel i formuläret.
 export const dynamic = 'force-dynamic';
