@@ -5,17 +5,15 @@
  *   npx -y tsx scripts/fortnox/copy-articles-to-test-company.ts           torrkörning, skriver inget
  *   npx -y tsx scripts/fortnox/copy-articles-to-test-company.ts --apply   skapar enheter och artiklar
  *
- * 🧨 Skriptet skriver i det Fortnox-bolag som den lokala databasen är kopplad till. Det vägrar därför om
- *   - databasen inte är lokal (.env.development.local måste finnas — utan den pekar .env.local på PROD), eller
- *   - Fortnox svarar med ett bolag som inte står i FORTNOX_NONPROD_ALLOWED_ORG_NUMBERS.
- * Samma två frågor som spärren i OAuth-callbacken (lib/domains/fortnox/connectionGuard.ts).
+ * 🧨 Skriptet skriver i det Fortnox-bolag som den lokala databasen är kopplad till. Spärrarna mot fel
+ * databas och fel bolag står i scripts/fortnox/testCompany.ts.
  *
  * Bara artiklar som SAKNAS i testbolagets levande register skapas; befintliga rörs inte. Enheterna skapas
  * först, husarbete-flaggan sätts efter skapandet. Varje skapad artikel speglas in i den lokala cachen
  * (createFortnoxArticle gör det). Exitkoden är 1 om något misslyckades.
  */
 import { loadEnvConfig } from '@next/env';
-import type { FortnoxCompanySettingsResponse } from '@/lib/domains/fortnox/offerPdf';
+import { abort, errorText, fortnoxReason, assertLocalFortnoxTestCompany } from './testCompany';
 
 // Samma filer och ordning som `next dev`: .env.development.local vinner över .env.local.
 loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
@@ -25,42 +23,19 @@ loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
 const PAUSE_BETWEEN_ARTICLES_MS = 1000;
 const CACHE_PAGE = 1000; // PostgREST kapar vid 1000 rader — läs sida för sida.
 
-function abort(message: string): never {
-  console.error(`\n⛔ ${message}\n`);
-  process.exit(1);
-}
-
-/** Råa felet för en utvecklare — friendlyFortnoxMessage gör allt icke-Fortnox till "Något gick fel". */
-function errorText(e: unknown): string {
-  return e instanceof Error ? e.message.replace(/\s+/g, ' ').slice(0, 200) : String(e);
-}
-
 async function main() {
   const apply = process.argv.includes('--apply');
 
   // Importerna först NU: modulerna ska se miljön som laddades ovan.
-  const { fortnoxConnectionPolicy, judgeFortnoxCompany, isLocalSupabaseUrl } = await import(
-    '@/lib/domains/fortnox/connectionGuard'
-  );
   const { fortnoxGet, fortnoxPut, fortnoxSleep, FortnoxApiError } = await import('@/lib/domains/fortnox/client');
   const { listFortnoxUnits, createFortnoxUnit } = await import('@/lib/domains/fortnox/units');
   const { listFortnoxPriceLists } = await import('@/lib/domains/fortnox/customers');
-  const { createFortnoxArticle } = await import('@/lib/domains/fortnox/articles');
+  const { createFortnoxArticle, listFortnoxArticleNumbers } = await import('@/lib/domains/fortnox/articles');
   const { planArticleCopy, pickDefaultPriceList } = await import('@/lib/domains/fortnox/articleCopy');
   const { getSupabaseAdmin } = await import('@/lib/supabase/server');
 
-  // Spärr 1: databasen. Tokens och cache läses och skrivs här — den får aldrig vara prods.
-  const dbUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!isLocalSupabaseUrl(dbUrl)) abort(`Databasen är inte lokal (${dbUrl ?? 'ingen URL'}). Kör bara mot den lokala stacken.`);
-
-  // Spärr 2: bolaget. Med en lokal databas är policyn alltid tillåtelselistan; frågan är vilket bolag
-  // kopplingen faktiskt gäller.
-  const policy = fortnoxConnectionPolicy(process.env);
-  const company = await fortnoxGet<{ CompanySettings?: FortnoxCompanySettingsResponse }>('/settings/company');
-  const orgNumber = company.CompanySettings?.OrganizationNumber ?? null;
-  const verdict = judgeFortnoxCompany(policy, orgNumber);
-  if (!verdict.ok) abort(verdict.message);
-  console.log(`Fortnox-bolag: ${company.CompanySettings?.Name ?? '?'} (${orgNumber}) — godkänt testbolag.`);
+  // Spärrarna: lokal databas (tokens och cache läses och skrivs här) och ett godkänt testbolag.
+  await assertLocalFortnoxTestCompany();
 
   // Underlaget: cachen (prods artiklar) och testbolagets levande register.
   const rows: Parameters<typeof planArticleCopy>[0] = [];
@@ -75,15 +50,7 @@ async function main() {
     if ((data ?? []).length < CACHE_PAGE) break;
   }
 
-  const present = new Set<string>();
-  for (let page = 1, pages = 1; page <= pages; page++) {
-    const res = await fortnoxGet<{
-      Articles?: { ArticleNumber: string }[];
-      MetaInformation?: { '@TotalPages'?: number };
-    }>('/articles', { limit: '500', page: String(page) });
-    for (const a of res.Articles ?? []) present.add(a.ArticleNumber);
-    pages = res.MetaInformation?.['@TotalPages'] ?? 1;
-  }
+  const present = await listFortnoxArticleNumbers();
   const units = (await listFortnoxUnits()).map((u) => u.code);
   const priceList = pickDefaultPriceList(await listFortnoxPriceLists());
 
@@ -142,7 +109,7 @@ async function main() {
       }
       failures.push({
         articleNumber: item.articleNumber,
-        reason: exists ? `SKAPAD men ofullständig (pris/husarbete/cache) — rätta i Fortnox: ${errorText(e)}` : errorText(e),
+        reason: exists ? `SKAPAD men ofullständig (pris/husarbete/cache) — rätta i Fortnox: ${fortnoxReason(e)}` : fortnoxReason(e),
       });
     }
     if ((index + 1) % 25 === 0) console.log(`  ${index + 1}/${plan.items.length}…`);

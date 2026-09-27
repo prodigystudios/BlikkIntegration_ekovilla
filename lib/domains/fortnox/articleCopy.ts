@@ -1,4 +1,4 @@
-import { parseDecimal } from '@/lib/shared/number';
+import { parseOptionalDecimal } from '@/lib/shared/number';
 import type { FortnoxArticleInput, FortnoxArticlePriceInput } from './types';
 
 /**
@@ -48,14 +48,6 @@ export type ArticleCopyPlan = {
   alreadyPresent: number;
 };
 
-/** Tal eller null: tomt/ogiltigt = null, inte 0. Komma och mellanslag som i parseDecimal. */
-function toNumber(value: unknown): number | null {
-  if (typeof value !== 'number' && typeof value !== 'string') return null;
-  if (typeof value === 'string' && !value.trim()) return null;
-  const n = parseDecimal(value, Number.NaN);
-  return Number.isFinite(n) ? n : null;
-}
-
 /** Standardprislistan: "A" om testbolaget har den (Fortnox standard), annars den första. */
 export function pickDefaultPriceList(lists: { code: string }[]): string | null {
   if (lists.some((l) => l.code === 'A')) return 'A';
@@ -72,12 +64,12 @@ export function cachedArticleToInput(
     input: {
       ArticleNumber: row.article_number,
       Description: (row.description ?? '').trim() || row.article_number,
-      PurchasePrice: toNumber(row.purchase_price),
+      PurchasePrice: parseOptionalDecimal(row.purchase_price),
       Unit: unit,
       // Okänd typ blir STOCK — samma som Fortnox eget standardval för en ny artikel.
       Type: typeKnown ? (row.article_type as FortnoxArticleInput['Type']) : 'STOCK',
       Active: row.active,
-      VAT: toNumber(raw.VAT),
+      VAT: parseOptionalDecimal(raw.VAT),
       EAN: typeof raw.EAN === 'string' && raw.EAN.trim() ? raw.EAN.trim() : null,
       Manufacturer: null,
       ManufacturerArticleNumber: null,
@@ -120,7 +112,7 @@ export function planArticleCopy(
     .sort((a, b) => a.article_number.localeCompare(b.article_number, 'sv', { numeric: true }))
     .map((row) => {
       const { input, typeKnown, housework } = cachedArticleToInput(row, resolveUnit(row.unit));
-      const price = toNumber(row.sales_price);
+      const price = parseOptionalDecimal(row.sales_price);
       const prices = defaultPriceList && price !== null ? [{ priceList: defaultPriceList, price }] : [];
       return { articleNumber: row.article_number, input, prices, typeKnown, housework };
     });

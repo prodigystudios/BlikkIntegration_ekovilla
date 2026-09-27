@@ -12,6 +12,15 @@ export function parseDecimal(value: string | number | null | undefined, fallback
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+// Tal eller null, för värden där "tomt" betyder "vet inte" och inte 0 — t.ex. ett pris som saknas.
+// Samma tolkning som parseDecimal (komma, mellanslag), men tomt, null och ogiltigt blir null.
+export function parseOptionalDecimal(value: unknown): number | null {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !value.trim()) return null;
+  const n = parseDecimal(value, Number.NaN);
+  return Number.isFinite(n) ? n : null;
+}
+
 // Städar ett sifferfält när användaren lämnar det: "162m" → "162", " 52 " → "52", "67.5" → "67,5".
 //
 // ⚠️ Fälten är fritext och `parseDecimal` räddar matten, så skräp överlever tyst i databasen och

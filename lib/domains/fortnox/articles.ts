@@ -362,8 +362,9 @@ async function getArticlePrice(articleNumber: string, priceList: string): Promis
 
 // Upsert the article's base price on one price list. The row may or may not
 // already exist (a fresh article has none), so probe with a GET and either PUT
-// (update) or POST (create). Requires the `price` scope.
-async function setArticlePrice(articleNumber: string, priceList: string, price: number): Promise<void> {
+// (update) or POST (create). Requires the `price` scope. Exported for
+// scripts/fortnox/copy-price-list-160-to-test-company.ts.
+export async function setArticlePrice(articleNumber: string, priceList: string, price: number): Promise<void> {
   let exists = false;
   try {
     await fortnoxGet<FortnoxPriceResponse>(pricePath(articleNumber, priceList));
@@ -441,6 +442,21 @@ export async function getFortnoxArticleForEdit(
   );
 
   return { article, priceLists };
+}
+
+// Every article number in the connected company's register, all pages of the unfiltered
+// `/articles` list. Used by the test-company copy scripts to see what already exists there.
+export async function listFortnoxArticleNumbers(): Promise<Set<string>> {
+  const numbers = new Set<string>();
+  for (let page = 1, pages = 1; page <= pages; page++) {
+    const res = await fortnoxGet<Partial<FortnoxArticleListResponse>>('/articles', {
+      limit: String(PAGE_SIZE),
+      page: String(page),
+    });
+    for (const a of res.Articles ?? []) numbers.add(a.ArticleNumber);
+    pages = res.MetaInformation?.['@TotalPages'] ?? 1;
+  }
+  return numbers;
 }
 
 // List the account's price lists with empty prices, for the create page.
