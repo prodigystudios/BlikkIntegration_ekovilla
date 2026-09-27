@@ -6,14 +6,10 @@ import type { FortnoxListPrice } from './priceLists';
  * kan testas. Körs av scripts/fortnox/copy-price-list-160-to-test-company.ts, som äger spärrarna
  * mot fel databas och fel bolag.
  *
- * Lista 160 är återförsäljarnas inpris och det CRM:et ska publicera till återförsäljarportalen
- * (RESELLER_PORTAL_CRM_PLAN.md, fas 2b). Källan är portalens handinlästa kopia av prods lista,
- * `PRICELIST` i portalrepots `lib/data/mock/seed.ts`. Prods Fortnox läses aldrig härifrån: en
- * tokenförnyelse roterar refresh-token och kopplar ur prod.
+ * Källan är portalens handinlästa kopia av prods lista, `PRICELIST` i portalrepots
+ * `lib/data/mock/seed.ts`. Prods Fortnox läses aldrig härifrån: en tokenförnyelse roterar
+ * refresh-token och kopplar ur prod.
  */
-
-export const RESELLER_PRICE_LIST_CODE = '160';
-export const RESELLER_PRICE_LIST_DESCRIPTION = 'Byggvaruhandel';
 
 export type SourcePrice = { articleNumber: string; price: number };
 
@@ -28,6 +24,8 @@ export type PriceListCopyPlan = {
   missingArticles: string[];
   /** Rader i källan som inte skickas alls. */
   rejected: { articleNumber: string; reason: string }[];
+  /** Grundpriser på listan vars artikel inte står i källan. Rörs inte, men listan avviker från källan. */
+  notInSource: string[];
 };
 
 // Portalens `Pricelist`: bara fälten som behövs här; resten av artikeln får finnas.
@@ -51,10 +49,15 @@ export function parsePortalPricelist(value: unknown): { validFrom: string; price
   };
 }
 
-/** Kronor → hela ören. Jämförelsen och det som skickas går på ören, så flyttalsbrus aldrig blir en ändring. */
-export function toOre(kronor: number): number {
-  return Math.round(kronor * 100);
+/**
+ * Samma pris på öret. Jämförs med en halv öres marginal i stället för att avrunda båda, så att
+ * flyttalsbrus (1.1 + 2.2) inte blir en ändring och priset aldrig behöver avrundas innan det skickas.
+ */
+export function samePrice(a: number, b: number): boolean {
+  return Math.abs(a - b) < 0.005;
 }
+
+const byArticleNumber = (a: string, b: string) => a.localeCompare(b, 'sv', { numeric: true });
 
 /**
  * Vad som ska göras på testbolagets lista: jämför källans pris med listans GRUNDPRIS
@@ -66,18 +69,31 @@ export function planPriceListCopy(
   existing: FortnoxListPrice[],
 ): PriceListCopyPlan {
   const basePrice = new Map(existing.filter((p) => p.fromQuantity === 0).map((p) => [p.articleNumber, p.price]));
-  const plan: PriceListCopyPlan = { toCreate: [], toUpdate: [], unchanged: 0, missingArticles: [], rejected: [] };
-  const seen = new Set<string>();
+  const plan: PriceListCopyPlan = {
+    toCreate: [],
+    toUpdate: [],
+    unchanged: 0,
+    missingArticles: [],
+    rejected: [],
+    notInSource: [],
+  };
 
-  const sorted = [...source].sort((a, b) => a.articleNumber.localeCompare(b.articleNumber, 'sv', { numeric: true }));
+  // En artikel som står flera gånger får inget pris alls: vilket pris som gäller går inte att veta.
+  const occurrences = new Map<string, number>();
+  for (const item of source) occurrences.set(item.articleNumber, (occurrences.get(item.articleNumber) ?? 0) + 1);
+
+  const sorted = [...source].sort((a, b) => byArticleNumber(a.articleNumber, b.articleNumber));
   for (const item of sorted) {
-    if (seen.has(item.articleNumber)) {
-      plan.rejected.push({ articleNumber: item.articleNumber, reason: 'står flera gånger i källan' });
+    const count = occurrences.get(item.articleNumber) ?? 0;
+    if (count > 1) {
+      if (!plan.rejected.some((r) => r.articleNumber === item.articleNumber)) {
+        plan.rejected.push({ articleNumber: item.articleNumber, reason: `står ${count} gånger i källan, inget pris sätts` });
+      }
       continue;
     }
-    seen.add(item.articleNumber);
 
-    if (!Number.isFinite(item.price) || item.price < 0) {
+    // 0 kr är inget inpris — det hade publicerats till portalen som ett riktigt pris.
+    if (!Number.isFinite(item.price) || item.price <= 0) {
       plan.rejected.push({ articleNumber: item.articleNumber, reason: `ogiltigt pris ${item.price}` });
       continue;
     }
@@ -86,15 +102,16 @@ export function planPriceListCopy(
       continue;
     }
 
-    const price = toOre(item.price) / 100;
     const current = basePrice.get(item.articleNumber);
     if (current === undefined) {
-      plan.toCreate.push({ articleNumber: item.articleNumber, price });
-    } else if (toOre(current) === toOre(price)) {
+      plan.toCreate.push({ articleNumber: item.articleNumber, price: item.price });
+    } else if (samePrice(current, item.price)) {
       plan.unchanged += 1;
     } else {
-      plan.toUpdate.push({ articleNumber: item.articleNumber, price, current });
+      plan.toUpdate.push({ articleNumber: item.articleNumber, price: item.price, current });
     }
   }
+
+  plan.notInSource = [...basePrice.keys()].filter((n) => !occurrences.has(n)).sort(byArticleNumber);
   return plan;
 }

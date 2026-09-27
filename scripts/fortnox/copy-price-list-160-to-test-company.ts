@@ -10,19 +10,18 @@
  * kopia av prods lista 160. Prods Fortnox läses aldrig härifrån — en tokenförnyelse roterar
  * refresh-token och kopplar ur prod.
  *
- * 🧨 Skriptet skriver i det Fortnox-bolag som den lokala databasen är kopplad till. Det vägrar därför om
- *   - databasen inte är lokal (.env.development.local måste finnas — utan den pekar .env.local på PROD), eller
- *   - Fortnox svarar med ett bolag som inte står i FORTNOX_NONPROD_ALLOWED_ORG_NUMBERS.
- * Samma spärrar som copy-articles-to-test-company.ts.
+ * 🧨 Skriptet skriver i det Fortnox-bolag som den lokala databasen är kopplad till. Spärrarna mot fel
+ * databas och fel bolag står i scripts/fortnox/testCompany.ts.
  *
  * Skapar listan om den saknas och sätter grundpriset (FromQuantity 0) för varje artikel vars pris
  * saknas eller skiljer sig. Rör inga andra listor, inga mängdrabatter och inga artiklar. Artiklar som
  * saknas i testbolaget listas — kör copy-articles-to-test-company.ts först. Exitkoden är 1 om något
- * misslyckades.
+ * misslyckades eller om listan blir ofullständig.
  */
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadEnvConfig } from '@next/env';
+import { abort, errorText, assertLocalFortnoxTestCompany } from './testCompany';
 
 // Samma filer och ordning som `next dev`: .env.development.local vinner över .env.local.
 loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
@@ -30,18 +29,10 @@ loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
 // Ett pris kostar två anrop (setArticlePrice läser först). Fortnox tillåter ~4 anrop/s.
 const PAUSE_BETWEEN_PRICES_MS = 600;
 
-function abort(message: string): never {
-  console.error(`\n⛔ ${message}\n`);
-  process.exit(1);
-}
-
-function errorText(e: unknown): string {
-  return e instanceof Error ? e.message.replace(/\s+/g, ' ').slice(0, 200) : String(e);
-}
-
 function argValue(name: string): string | null {
   const index = process.argv.indexOf(name);
-  return index >= 0 ? process.argv[index + 1] ?? null : null;
+  const value = index >= 0 ? process.argv[index + 1] : undefined;
+  return value && !value.startsWith('--') ? value : null;
 }
 
 async function main() {
@@ -49,52 +40,41 @@ async function main() {
   const sourcePath = argValue('--source');
   if (!sourcePath) abort('Ange portalens lista: --source <portalrepot>/lib/data/mock/seed.ts');
 
-  // Importerna först NU: modulerna ska se miljön som laddades ovan.
-  const { fortnoxConnectionPolicy, judgeFortnoxCompany, isLocalSupabaseUrl } = await import(
-    '@/lib/domains/fortnox/connectionGuard'
-  );
-  const { fortnoxGet, fortnoxSleep } = await import('@/lib/domains/fortnox/client');
+  const { fortnoxSleep, FortnoxApiError } = await import('@/lib/domains/fortnox/client');
   const { listFortnoxPriceLists } = await import('@/lib/domains/fortnox/customers');
-  const { setArticlePrice } = await import('@/lib/domains/fortnox/articles');
-  const { listFortnoxPriceListPrices, createFortnoxPriceList } = await import('@/lib/domains/fortnox/priceLists');
-  const { parsePortalPricelist, planPriceListCopy, RESELLER_PRICE_LIST_CODE, RESELLER_PRICE_LIST_DESCRIPTION } =
-    await import('@/lib/domains/fortnox/priceListCopy');
+  const { setArticlePrice, listFortnoxArticleNumbers } = await import('@/lib/domains/fortnox/articles');
+  const { listFortnoxPriceListPrices, createFortnoxPriceList, RESELLER_PRICE_LIST_CODE, RESELLER_PRICE_LIST_DESCRIPTION } =
+    await import('@/lib/domains/fortnox/priceLists');
+  const { parsePortalPricelist, planPriceListCopy } = await import('@/lib/domains/fortnox/priceListCopy');
 
-  // Spärr 1: databasen. Tokens läses och skrivs här — den får aldrig vara prods.
-  const dbUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!isLocalSupabaseUrl(dbUrl)) abort(`Databasen är inte lokal (${dbUrl ?? 'ingen URL'}). Kör bara mot den lokala stacken.`);
-
-  // Spärr 2: bolaget.
-  const company = await fortnoxGet<{ CompanySettings?: { Name?: string; OrganizationNumber?: string } }>(
-    '/settings/company',
-  );
-  const orgNumber = company.CompanySettings?.OrganizationNumber ?? null;
-  const verdict = judgeFortnoxCompany(fortnoxConnectionPolicy(process.env), orgNumber);
-  if (!verdict.ok) abort(verdict.message);
-  console.log(`Fortnox-bolag: ${company.CompanySettings?.Name ?? '?'} (${orgNumber}) — godkänt testbolag.`);
-
-  // Källan: portalens PRICELIST. Filen har bara typimporter, så den går att importera direkt.
-  const sourceModule = (await import(pathToFileURL(resolve(sourcePath)).href)) as { PRICELIST?: unknown };
+  // Källan först: ett fel i sökvägen eller i portalens form ska stoppa skriptet innan Fortnox anropas.
+  // Filen har bara typimporter, så den går att importera direkt.
   let source: ReturnType<typeof parsePortalPricelist>;
   try {
+    const sourceModule = (await import(pathToFileURL(resolve(sourcePath)).href)) as { PRICELIST?: unknown };
     source = parsePortalPricelist(sourceModule.PRICELIST);
   } catch (e) {
-    abort(errorText(e));
+    // Hela meddelandet: parsePortalPricelist räknar upp det som inte stämmer.
+    abort(`Källan ${sourcePath} gick inte att läsa: ${e instanceof Error ? e.message : String(e)}`);
   }
+
+  await assertLocalFortnoxTestCompany();
   console.log(`Källa: ${sourcePath} — lista giltig från ${source.validFrom}, ${source.prices.length} artiklar.`);
 
   // Testbolagets läge: finns listan, vilka artiklar finns, vilka priser står redan på listan.
   const listExists = (await listFortnoxPriceLists()).some((l) => l.code === RESELLER_PRICE_LIST_CODE);
-  const present = new Set<string>();
-  for (let page = 1, pages = 1; page <= pages; page++) {
-    const res = await fortnoxGet<{
-      Articles?: { ArticleNumber: string }[];
-      MetaInformation?: { '@TotalPages'?: number };
-    }>('/articles', { limit: '500', page: String(page) });
-    for (const a of res.Articles ?? []) present.add(a.ArticleNumber);
-    pages = res.MetaInformation?.['@TotalPages'] ?? 1;
+  const present = await listFortnoxArticleNumbers();
+  let existing: Awaited<ReturnType<typeof listFortnoxPriceListPrices>> = [];
+  if (listExists) {
+    try {
+      existing = await listFortnoxPriceListPrices(RESELLER_PRICE_LIST_CODE);
+    } catch (e) {
+      // Hur Fortnox svarar för en befintlig lista UTAN priser är inte provat. Här är 404 ofarligt —
+      // listan finns, så inga priser betyder att allt ska skapas. Läsaren i biblioteket kastar med flit.
+      if (!(e instanceof FortnoxApiError && e.status === 404)) throw e;
+      console.log(`Lista ${RESELLER_PRICE_LIST_CODE} gav 404 på prisläsningen — räknas som tom.`);
+    }
   }
-  const existing = listExists ? await listFortnoxPriceListPrices(RESELLER_PRICE_LIST_CODE) : [];
 
   const plan = planPriceListCopy(source.prices, present, existing);
 
@@ -107,6 +87,14 @@ async function main() {
     console.log(`Saknas i testbolaget (inget pris sätts): ${plan.missingArticles.join(', ')}`);
   }
   for (const r of plan.rejected) console.log(`  hoppas över: ${r.articleNumber} — ${r.reason}`);
+  if (plan.notInSource.length) {
+    console.log(`På listan men inte i källan (rörs inte): ${plan.notInSource.join(', ')}`);
+  }
+  const incomplete = plan.missingArticles.length + plan.rejected.length;
+  if (incomplete) {
+    console.log(`⚠️ Listan blir ofullständig: ${incomplete} av källans artiklar får inget pris.`);
+    process.exitCode = 1;
+  }
 
   if (!apply) {
     console.log('\nTorrkörning — ingenting skrevs. Kör igen med --apply för att skriva.\n');

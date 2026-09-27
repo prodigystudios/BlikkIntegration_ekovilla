@@ -6,7 +6,12 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 });
 
 import { fortnoxGet, fortnoxPost } from '@/lib/domains/fortnox/client';
-import { createFortnoxPriceList, listFortnoxPriceListPrices } from '@/lib/domains/fortnox/priceLists';
+import {
+  createFortnoxPriceList,
+  listFortnoxPriceListPrices,
+  RESELLER_PRICE_LIST_CODE,
+  RESELLER_PRICE_LIST_DESCRIPTION,
+} from '@/lib/domains/fortnox/priceLists';
 
 const get = vi.mocked(fortnoxGet);
 
@@ -56,6 +61,11 @@ describe('listFortnoxPriceListPrices', () => {
     expect(await listFortnoxPriceListPrices('160')).toEqual([{ articleNumber: '1012', fromQuantity: 0, price: 99.5 }]);
   });
 
+  it('ett fel från Fortnox kastas — en lista som inte gick att läsa är inte tom', async () => {
+    get.mockRejectedValueOnce(new Error('Fortnox 404'));
+    await expect(listFortnoxPriceListPrices('160')).rejects.toThrow('Fortnox 404');
+  });
+
   it('en lista utan priser ger en tom lista', async () => {
     get.mockResolvedValueOnce({ MetaInformation: { '@TotalPages': 0 }, Prices: [] });
     expect(await listFortnoxPriceListPrices('160')).toEqual([]);
@@ -66,7 +76,7 @@ describe('listFortnoxPriceListPrices', () => {
 describe('createFortnoxPriceList', () => {
   it('skickar Fortnox fältnamn exakt', async () => {
     vi.mocked(fortnoxPost).mockResolvedValueOnce({});
-    await createFortnoxPriceList('160', 'Byggvaruhandel');
+    await createFortnoxPriceList(RESELLER_PRICE_LIST_CODE, RESELLER_PRICE_LIST_DESCRIPTION);
     expect(fortnoxPost).toHaveBeenCalledWith('/pricelists', { PriceList: { Code: '160', Description: 'Byggvaruhandel' } });
   });
 });

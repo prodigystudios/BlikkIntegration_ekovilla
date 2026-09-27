@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePortalPricelist, planPriceListCopy, toOre } from '@/lib/domains/fortnox/priceListCopy';
+import { parsePortalPricelist, planPriceListCopy, samePrice } from '@/lib/domains/fortnox/priceListCopy';
 
 const present = new Set(['1010', '13003', '2410509', '2410508']);
 
@@ -33,10 +33,11 @@ describe('parsePortalPricelist', () => {
   });
 });
 
-describe('toOre', () => {
-  it('avrundar till hela ören', () => {
-    expect(toOre(105.34)).toBe(10534);
-    expect(toOre(0.1 + 0.2)).toBe(30);
+describe('samePrice', () => {
+  it('är samma pris inom en halv öre, och annars inte', () => {
+    expect(samePrice(0.1 + 0.2, 0.3)).toBe(true);
+    expect(samePrice(335.3, 335.31)).toBe(false);
+    expect(samePrice(12.345, 12.345)).toBe(true);
   });
 });
 
@@ -59,6 +60,12 @@ describe('planPriceListCopy', () => {
     expect(plan.unchanged).toBe(1);
     expect(plan.missingArticles).toEqual([]);
     expect(plan.rejected).toEqual([]);
+    expect(plan.notInSource).toEqual([]);
+  });
+
+  it('skickar priset som det står i källan, utan att avrunda det', () => {
+    const plan = planPriceListCopy([{ articleNumber: '13003', price: 12.345 }], present, []);
+    expect(plan.toCreate).toEqual([{ articleNumber: '13003', price: 12.345 }]);
   });
 
   it('jämför på ören: flyttalsbrus är ingen ändring', () => {
@@ -90,20 +97,46 @@ describe('planPriceListCopy', () => {
     expect(plan.toCreate).toEqual([]);
   });
 
-  it('hoppar över dubbletter och ogiltiga priser och säger varför', () => {
+  it('en artikel som står flera gånger får inget pris alls — vilket som gäller går inte att veta', () => {
     const plan = planPriceListCopy(
       [
         { articleNumber: '1010', price: 2900 },
         { articleNumber: '1010', price: 2500 },
+        { articleNumber: '13003', price: 335.3 },
+      ],
+      present,
+      [],
+    );
+    expect(plan.toCreate).toEqual([{ articleNumber: '13003', price: 335.3 }]);
+    expect(plan.rejected).toEqual([{ articleNumber: '1010', reason: 'står 2 gånger i källan, inget pris sätts' }]);
+  });
+
+  it('avvisar 0 kr, negativa och ogiltiga priser och säger varför', () => {
+    const plan = planPriceListCopy(
+      [
+        { articleNumber: '1010', price: 0 },
         { articleNumber: '2410508', price: -1 },
         { articleNumber: '13003', price: Number.NaN },
       ],
       present,
       [],
     );
-    expect(plan.toCreate).toEqual([{ articleNumber: '1010', price: 2900 }]);
-    // Sorterat på artikelnummer; den första av dubbletterna behålls (sorteringen är stabil).
+    expect(plan.toCreate).toEqual([]);
     expect(plan.rejected.map((r) => r.articleNumber)).toEqual(['1010', '13003', '2410508']);
+  });
+
+  it('rapporterar grundpriser på listan som inte står i källan, utan att röra dem', () => {
+    const plan = planPriceListCopy(
+      [{ articleNumber: '1010', price: 2900 }],
+      present,
+      [
+        { articleNumber: '1010', fromQuantity: 0, price: 2900 },
+        { articleNumber: '99', fromQuantity: 0, price: 10 },
+        { articleNumber: '98', fromQuantity: 5, price: 10 },
+      ],
+    );
+    expect(plan.notInSource).toEqual(['99']);
+    expect(plan.unchanged).toBe(1);
   });
 
   it('sorterar artikelnumren som tal, som artikelkopieringen', () => {

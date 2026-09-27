@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseDecimal } from '@/lib/shared/number';
+import { parseDecimal, parseOptionalDecimal } from '@/lib/shared/number';
 
 describe('parseDecimal', () => {
   it('parses a Swedish comma decimal that plain parseFloat would truncate', () => {
@@ -32,5 +32,25 @@ describe('parseDecimal', () => {
     expect(parseDecimal(undefined)).toBe(0);
     expect(parseDecimal('abc')).toBe(0);
     expect(parseDecimal('', 1)).toBe(1);
+  });
+});
+
+describe('parseOptionalDecimal', () => {
+  it('gives null — not 0 — for empty, null and invalid values', () => {
+    expect(parseOptionalDecimal(null)).toBeNull();
+    expect(parseOptionalDecimal(undefined)).toBeNull();
+    expect(parseOptionalDecimal('')).toBeNull();
+    expect(parseOptionalDecimal('   ')).toBeNull();
+    expect(parseOptionalDecimal('abc')).toBeNull();
+    expect(parseOptionalDecimal(Number.NaN)).toBeNull();
+    expect(parseOptionalDecimal({})).toBeNull();
+  });
+
+  it('reads numbers, dot and Swedish comma decimals like parseDecimal', () => {
+    expect(parseOptionalDecimal(0)).toBe(0);
+    expect(parseOptionalDecimal(99.5)).toBe(99.5);
+    expect(parseOptionalDecimal('99.5')).toBe(99.5);
+    expect(parseOptionalDecimal('99,5')).toBe(99.5);
+    expect(parseOptionalDecimal('1 200,50')).toBe(1200.5);
   });
 });
