@@ -360,11 +360,14 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 - Skapad som "Byggvaruhandel", med 44 grundpriser ur portalens kopia (giltig från 2026-09-25):
   `npx -y tsx scripts/fortnox/copy-price-list-160-to-test-company.ts --source <portalrepot>/lib/data/mock/seed.ts`
   (torrkörning; `--apply` skriver). En ny torrkörning gav "stämmer redan: 44".
-- ⚠️ Sju av portalens 51 artiklar finns inte i testbolaget och har därför inget pris: **1010
-  (Etablering)**, 13400, 16765, 16766, 16767, 2410521, 2410522. Hela 47 av prods artiklar saknas
-  fortfarande där, eftersom Fortnox svarade "används redan" vid förra kopieringen. Kör
-  `copy-articles-to-test-company.ts --apply` igen, och sedan prislisteskriptet, innan jobben byggs
-  (fas 3b). Etableringen finns på nästan varje jobb.
+- **1010 Etablering** fick sitt pris efter att William bytt den från vara till tjänst i Fortnox; då
+  började API:t se den. Nu har 45 av portalens 51 artiklar pris på lista 160.
+- ⚠️ **Sex saknas fortfarande:** 13400, 16765, 16766, 16767, 2410521, 2410522. Totalt 46 av prods
+  artiklar är osynliga för API:t i testbolaget: `GET /articles/{nr}` ger 404, men att skapa dem ger
+  `Artikelnummer "…" används redan` (kod 2000013). De finns alltså i Fortnox men inte för API:t.
+  Typen är inte förklaringen, eftersom andra varor (`STOCK`) syns. Troligen fastnade de i ett läge
+  vid importen i Fortnox som ett sparande i Fortnox löser. Prov: öppna 13400 i testbolaget, spara
+  utan ändring, och läs om den syns. Kör sedan prislisteskriptet igen. Klart före fas 3b.
 
 **Nominatim, för länet i fördelningen (fas 3a):**
 - `addressdetails=1` ger både `county` ("Gävleborgs län") och `ISO3166-2-lvl4` ("SE-X"). Koden

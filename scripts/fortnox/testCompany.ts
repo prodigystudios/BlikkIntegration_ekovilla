@@ -23,6 +23,21 @@ export function errorText(e: unknown): string {
   return e instanceof Error ? e.message.replace(/\s+/g, ' ').slice(0, 200) : String(e);
 }
 
+/**
+ * Orsaken till ett misslyckat Fortnox-anrop, för en människa: Fortnox eget meddelande och kod när
+ * svaret har dem ('Artikelnummer "16770" används redan. (kod 2000013)'), annars det råa felet.
+ * Den råa texten bär hela JSON-kroppen och går inte att gruppera på.
+ */
+export function fortnoxReason(e: unknown): string {
+  // Fälten på FortnoxApiError, utan att importera klienten här: modulen importeras innan skriptet
+  // laddat miljön, och klienten ska se den miljön.
+  const { fortnoxMessage, fortnoxCode } = (e ?? {}) as { fortnoxMessage?: unknown; fortnoxCode?: unknown };
+  if (typeof fortnoxMessage === 'string' && fortnoxMessage) {
+    return `${fortnoxMessage}${typeof fortnoxCode === 'number' ? ` (kod ${fortnoxCode})` : ''}`;
+  }
+  return errorText(e);
+}
+
 /** Avbryter skriptet om databasen inte är lokal eller bolaget inte är ett godkänt testbolag. */
 export async function assertLocalFortnoxTestCompany(): Promise<{ name: string; orgNumber: string }> {
   const { fortnoxConnectionPolicy, judgeFortnoxCompany, isLocalSupabaseUrl } = await import(

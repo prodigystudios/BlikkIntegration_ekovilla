@@ -13,7 +13,7 @@
  * (createFortnoxArticle gör det). Exitkoden är 1 om något misslyckades.
  */
 import { loadEnvConfig } from '@next/env';
-import { abort, errorText, assertLocalFortnoxTestCompany } from './testCompany';
+import { abort, errorText, fortnoxReason, assertLocalFortnoxTestCompany } from './testCompany';
 
 // Samma filer och ordning som `next dev`: .env.development.local vinner över .env.local.
 loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
@@ -109,7 +109,7 @@ async function main() {
       }
       failures.push({
         articleNumber: item.articleNumber,
-        reason: exists ? `SKAPAD men ofullständig (pris/husarbete/cache) — rätta i Fortnox: ${errorText(e)}` : errorText(e),
+        reason: exists ? `SKAPAD men ofullständig (pris/husarbete/cache) — rätta i Fortnox: ${fortnoxReason(e)}` : fortnoxReason(e),
       });
     }
     if ((index + 1) % 25 === 0) console.log(`  ${index + 1}/${plan.items.length}…`);

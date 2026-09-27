@@ -21,7 +21,7 @@
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadEnvConfig } from '@next/env';
-import { abort, errorText, assertLocalFortnoxTestCompany } from './testCompany';
+import { abort, errorText, fortnoxReason, assertLocalFortnoxTestCompany } from './testCompany';
 
 // Samma filer och ordning som `next dev`: .env.development.local vinner över .env.local.
 loadEnvConfig(process.cwd(), true, { info: () => {}, error: console.error });
@@ -117,7 +117,7 @@ async function main() {
       await setArticlePrice(item.articleNumber, RESELLER_PRICE_LIST_CODE, item.price);
       written++;
     } catch (e) {
-      failures.push({ articleNumber: item.articleNumber, reason: errorText(e) });
+      failures.push({ articleNumber: item.articleNumber, reason: fortnoxReason(e) });
     }
     await fortnoxSleep(PAUSE_BETWEEN_PRICES_MS);
   }
