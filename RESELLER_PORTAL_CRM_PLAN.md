@@ -329,7 +329,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | Fas | Innehåll | Kräver |
 | --- | --- | --- |
 | **0** ✅ | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? Resultaten står under tabellen | — |
-| **1a** | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
+| **1a** ✅ | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
 | **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts` | 1a |
 | **1c** | Undantaget i middleware, signerad `ping`, vakttestet för `app/api/portal/**` | 1a |
 | **2a** | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`) | — |
@@ -360,14 +360,16 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 - Skapad som "Byggvaruhandel", med 44 grundpriser ur portalens kopia (giltig från 2026-09-25):
   `npx -y tsx scripts/fortnox/copy-price-list-160-to-test-company.ts --source <portalrepot>/lib/data/mock/seed.ts`
   (torrkörning; `--apply` skriver). En ny torrkörning gav "stämmer redan: 44".
-- **1010 Etablering** fick sitt pris efter att William bytt den från vara till tjänst i Fortnox; då
-  började API:t se den. Nu har 45 av portalens 51 artiklar pris på lista 160.
-- ⚠️ **Sex saknas fortfarande:** 13400, 16765, 16766, 16767, 2410521, 2410522. Totalt 46 av prods
-  artiklar är osynliga för API:t i testbolaget: `GET /articles/{nr}` ger 404, men att skapa dem ger
-  `Artikelnummer "…" används redan` (kod 2000013). De finns alltså i Fortnox men inte för API:t.
-  Typen är inte förklaringen, eftersom andra varor (`STOCK`) syns. Troligen fastnade de i ett läge
-  vid importen i Fortnox som ett sparande i Fortnox löser. Prov: öppna 13400 i testbolaget, spara
-  utan ändring, och läs om den syns. Kör sedan prislisteskriptet igen. Klart före fas 3b.
+- ✅ **Alla 51 artiklar har pris på lista 160.** Sju av dem syntes först inte för API:t:
+  `GET /articles/{nr}` gav 404, men att skapa dem gav `Artikelnummer "…" används redan` (kod 2000013).
+- **Orsaken: de var satta som paketartiklar i testbolaget**, och `/articles` visar inte paket. Det
+  bekräftades på 13400: ett vanligt sparande räckte inte, men att ändra den till vanlig artikel gjorde
+  den synlig direkt. Typen och lagerföringen är inte orsaken; varor och lagerförda artiklar syns.
+- 🧨 Vid ändringen kan artikeln tappa sin enhet (13400 gjorde det). Kontrollera enheten, eftersom
+  publiceringen hoppar över artiklar utan enhet.
+- ⏸️ 40 andra av prods artiklar är fortfarande paket i testbolaget, bland dem **1050 FRAKT** (behövs i
+  fas 8) och ROT-artiklarna 1024 och 10060. De ändras när de behövs. Torrkörningen av
+  `copy-articles-to-test-company.ts` visar hur många som är kvar.
 
 **Nominatim, för länet i fördelningen (fas 3a):**
 - `addressdetails=1` ger både `county` ("Gävleborgs län") och `ISO3166-2-lvl4` ("SE-X"). Koden
@@ -410,6 +412,14 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 10. **`job.message.department`** behöver ett bestämt värde.
 11. **Förslag:** `POST /api/ekovilla/ping` i portalen, så att CRM:et kan prova kopplingen från
     portalsidan.
+12. **En gemensam testvektor för signaturen**, så att båda sidor prövar samma sak. Räknad med Pythons
+    `hmac`, inte med någon av apparnas kod (`tests/portal/fixtures/contract.ts`):
+    - hemlighet `portal-kontraktsvektor-0123456789abcdef0123456789abcdef`, tidsstämpel `1790000000`
+    - kropp `{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}`
+      (126 tecken, 130 byte i UTF-8)
+    - signatur `v1=d5d87ef08b18bb2d5286335a54405c2b79f80fb291fc1640e32f746b9f2a3c30`
+13. **Hemligheten ska vara minst 32 tecken.** CRM:et räknar en kortare som saknad, svarar 503 och
+    signerar inget.
 
 ## Öppna frågor
 
