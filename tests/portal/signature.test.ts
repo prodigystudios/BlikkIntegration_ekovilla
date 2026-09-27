@@ -5,7 +5,7 @@ import {
   signPortalRequest,
   verifyPortalSignature,
 } from '@/lib/domains/portal/signature';
-import { CONTRACT_JOB, SIGNATURE_VECTOR } from './fixtures/contract';
+import { CONTRACT_JOB, SIGNATURE_VECTOR } from './helpers/contractFixtures';
 
 const { secret, timestamp, body, signature } = SIGNATURE_VECTOR;
 const now = Number(timestamp);
@@ -46,6 +46,14 @@ describe('signPortalRequest', () => {
   it('vägrar signera med en tom eller kort hemlighet — en sådan signatur går att gissa', () => {
     expect(() => signPortalRequest('', body, now)).toThrow();
     expect(() => signPortalRequest('för-kort', body, now)).toThrow();
+  });
+
+  it('vägrar signera när klockan inte är ett tal', () => {
+    expect(() => signPortalRequest(secret, body, Number.NaN)).toThrow();
+  });
+
+  it('trimmar hemligheten: en avslutande radbrytning ger samma signatur', () => {
+    expect(signPortalRequest(`${secret}\n`, body, now)[PORTAL_SIGNATURE_HEADER]).toBe(signature);
   });
 });
 
@@ -109,6 +117,16 @@ describe('verifyPortalSignature', () => {
   it('godtar versaler i hex och mellanslag runt headervärdena', () => {
     expect(verify({ signatureHeader: `v1=${signature.slice(3).toUpperCase()}` })).toEqual({ ok: true });
     expect(verify({ signatureHeader: ` ${signature} `, timestampHeader: ` ${timestamp}` })).toEqual({ ok: true });
+  });
+
+  it('🧨 faller stängt när klockan inte är ett tal — NaN får inte släppa igenom en gammal signatur', () => {
+    expect(verify({ nowSeconds: Number.NaN })).toEqual({ ok: false, reason: 'stale_timestamp' });
+    expect(verify({ nowSeconds: Number.POSITIVE_INFINITY })).toEqual({ ok: false, reason: 'stale_timestamp' });
+  });
+
+  it('trimmar hemligheten som den prövas: en radbrytning från Vercel ger inte 401 på allt', () => {
+    expect(verify({ secret: `${secret}\n` })).toEqual({ ok: true });
+    expect(verify({ secret: `  ${secret}  ` })).toEqual({ ok: true });
   });
 
   it('säger att hemligheten saknas i stället för att pröva mot en tom — det blir 503, inte 401', () => {

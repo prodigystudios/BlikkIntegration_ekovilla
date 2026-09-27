@@ -2,10 +2,20 @@
  * Exemplen ur kontraktet, RESELLER_PORTAL_INTEGRATION_PLAN.md, ordagrant. Portalen genererade dem ur
  * sin egen kod (`toEkovillaOrder()`, `toEkovillaStoreOrder()`); kundnumret är påhittat. Ändras
  * kontraktet ändras de här — de är CRM:ets bild av vad portalen skickar.
+ *
+ * Frysta, så att ett test inte kan ändra dem för nästa. Behövs en variant: `structuredClone(CONTRACT_JOB)`.
  */
 
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) deepFreeze(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** "Flöde 1: prislistan" — CRM → portal. */
-export const CONTRACT_PRICELIST = {
+export const CONTRACT_PRICELIST = deepFreeze({
   validFrom: '2026-10-01',
   resellerId: null,
   articles: [
@@ -21,10 +31,10 @@ export const CONTRACT_PRICELIST = {
       sortOrder: 10,
     },
   ],
-};
+});
 
 /** "Flöde 2: jobb" — portal → CRM, `POST /api/portal/jobs`. */
-export const CONTRACT_JOB = {
+export const CONTRACT_JOB = deepFreeze({
   quoteId: 'q-2026-015',
   quoteNumber: '2026-015',
   store: {
@@ -63,10 +73,10 @@ export const CONTRACT_JOB = {
     },
   ],
   costTotal: 14270,
-};
+});
 
 /** "Flöde 3: butiksbeställningar" — portal → CRM, `POST /api/portal/store-orders`. */
-export const CONTRACT_STORE_ORDER = {
+export const CONTRACT_STORE_ORDER = deepFreeze({
   orderId: 'so-b-2026-003',
   orderNumber: 'B-2026-003',
   store: {
@@ -88,7 +98,7 @@ export const CONTRACT_STORE_ORDER = {
     { articleNumber: '13102', name: 'ISOLERINGSSÅG EKOVILLA LEVY', unit: 'st', quantity: 2, unitCost: 195.3, lineCost: 390.6 },
   ],
   costTotal: 4414.2,
-};
+});
 
 /**
  * En signatur räknad med Pythons `hmac` (inte med CRM:ets kod), så att testet prövar kontraktet och
@@ -96,11 +106,19 @@ export const CONTRACT_STORE_ORDER = {
  * 130 byte i UTF-8, så en signatur över tecken i stället för byte blir fel. Portalen kan pröva sin
  * halva mot samma vektor.
  *
- *   python3 -c 'import hmac,hashlib; print(hmac.new(SECRET.encode(), (TS+"."+BODY).encode("utf-8"), hashlib.sha256).hexdigest())'
+ * Att räkna om den, med värdena nedan:
+ *
+ *   python3 - <<'PY'
+ *   import hmac, hashlib
+ *   secret = "portal-kontraktsvektor-0123456789abcdef0123456789abcdef"
+ *   timestamp = "1790000000"
+ *   body = '{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}'
+ *   print("v1=" + hmac.new(secret.encode(), (timestamp + "." + body).encode("utf-8"), hashlib.sha256).hexdigest())
+ *   PY
  */
-export const SIGNATURE_VECTOR = {
+export const SIGNATURE_VECTOR = deepFreeze({
   secret: 'portal-kontraktsvektor-0123456789abcdef0123456789abcdef',
   timestamp: '1790000000',
   body: '{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}',
   signature: 'v1=d5d87ef08b18bb2d5286335a54405c2b79f80fb291fc1640e32f746b9f2a3c30',
-};
+});

@@ -36,13 +36,16 @@ export function isUsablePortalSecret(secret: string | null | undefined): secret 
   return typeof secret === 'string' && secret.trim().length >= PORTAL_SECRET_MIN_LENGTH;
 }
 
-/** Kroppen som den skickas: en sträng kodas som UTF-8, byte används som de är. */
-function bodyBytes(rawBody: string | Uint8Array): Uint8Array {
-  return typeof rawBody === 'string' ? Buffer.from(rawBody, 'utf8') : rawBody;
-}
-
-function hmacHex(secret: string, timestamp: string, rawBody: string | Uint8Array): string {
-  return createHmac('sha256', secret).update(`${timestamp}.`, 'utf8').update(bodyBytes(rawBody)).digest('hex');
+/**
+ * HMAC:en, som byte. Hemligheten trimmas här, samma trimning som prövningen av längden gör: en
+ * hemlighet med en avslutande radbrytning (vanligt när den klistras in i Vercel) ska inte ge 401 på
+ * allt. Kroppen: en sträng kodas som UTF-8, byte används som de är.
+ */
+function hmacDigest(secret: string, timestamp: string, rawBody: string | Uint8Array): Buffer {
+  const hmac = createHmac('sha256', secret.trim()).update(`${timestamp}.`, 'utf8');
+  if (typeof rawBody === 'string') hmac.update(rawBody, 'utf8');
+  else hmac.update(rawBody);
+  return hmac.digest();
 }
 
 /**
@@ -55,10 +58,11 @@ export function signPortalRequest(
   nowSeconds: number,
 ): { [PORTAL_TIMESTAMP_HEADER]: string; [PORTAL_SIGNATURE_HEADER]: string } {
   if (!isUsablePortalSecret(secret)) throw new Error('Portalhemligheten saknas eller är för kort — inget signeras.');
+  if (!Number.isFinite(nowSeconds)) throw new Error('Klockan är inget tal — inget signeras.');
   const timestamp = String(Math.floor(nowSeconds));
   return {
     [PORTAL_TIMESTAMP_HEADER]: timestamp,
-    [PORTAL_SIGNATURE_HEADER]: `${SIGNATURE_VERSION}${hmacHex(secret, timestamp, rawBody)}`,
+    [PORTAL_SIGNATURE_HEADER]: `${SIGNATURE_VERSION}${hmacDigest(secret, timestamp, rawBody).toString('hex')}`,
   };
 }
 
@@ -92,16 +96,17 @@ export function verifyPortalSignature(input: {
   if (!timestamp || !signature) return { ok: false, reason: 'missing_headers' };
 
   if (!UNIX_SECONDS.test(timestamp)) return { ok: false, reason: 'bad_timestamp' };
-  if (Math.abs(Math.floor(nowSeconds) - Number(timestamp)) > PORTAL_SIGNATURE_TOLERANCE_SECONDS) {
-    return { ok: false, reason: 'stale_timestamp' };
-  }
+  // Skrivet så att det faller stängt: med `NaN` som klocka är varje jämförelse falsk, och
+  // `Math.abs(NaN) > 300` hade släppt igenom en signatur hur gammal som helst.
+  const skew = Math.abs(Math.floor(nowSeconds) - Number(timestamp));
+  if (!(skew <= PORTAL_SIGNATURE_TOLERANCE_SECONDS)) return { ok: false, reason: 'stale_timestamp' };
 
   // Formen prövas före avkodningen: Buffer.from(x, 'hex') slutar tyst vid första ogiltiga tecknet.
   if (!signature.startsWith(SIGNATURE_VERSION)) return { ok: false, reason: 'bad_signature_format' };
   const receivedHex = signature.slice(SIGNATURE_VERSION.length);
   if (!HEX_SHA256.test(receivedHex)) return { ok: false, reason: 'bad_signature_format' };
 
-  const expected = Buffer.from(hmacHex(secret, timestamp, rawBody), 'hex');
+  const expected = hmacDigest(secret, timestamp, rawBody);
   const received = Buffer.from(receivedHex, 'hex');
   // timingSafeEqual kastar vid olika längd. Formkontrollen ovan gör längderna lika, men kontrollen står
   // kvar så att en ändring där inte kan göra jämförelsen till ett kast.

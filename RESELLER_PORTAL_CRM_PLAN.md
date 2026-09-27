@@ -65,12 +65,15 @@ Räkna med ungefär en halv dag, och börja lite innan någon ska testa.
 **T1. Spärren för utgående trafik, först och som egen PR.**
 - `NODE_ENV` är `production` även i Vercels Preview. Då **kastar** `lib/email.ts` när Resend-nyckeln
   saknas, och sms och push kastar när de inte är konfigurerade.
-- Ny `lib/env.ts` med `isProductionEnvironment()` = `VERCEL_ENV === 'production'`.
+- `lib/env.ts` finns sedan fas 1a: `isProductionDeployment()` kräver `NODE_ENV=production`,
+  `VERCEL_ENV=production` och en databas som inte är lokal, och faller alltså stängt. Spärren
+  använder den.
 - Spärren läggs i transportlagret, `lib/email.ts`, `lib/sms.ts` och `lib/webPush.ts`, inte i
   anroparna. Utanför prod: mejl bara till `NONPROD_MAIL_ALLOWLIST`, sms och push loggas, och saknade
   nycklar ger "skipped" i stället för ett kast. Prods beteende ändras inte.
-- Portalklienten får samma sorts spärr: utanför prod vägrar den skicka till `partner.ekovilla.se`, och
-  i prod vägrar den allt annat.
+- Portalklienten har redan sin spärr (fas 1a, `resolvePortalTarget` i `lib/domains/portal/config.ts`):
+  en lista över tillåtna värdar per miljö. Prod skickar bara till `partner.ekovilla.se`, alla andra
+  miljöer bara till `test.partner.ekovilla.se` eller den här datorn.
 - Mutationstesta spärren: byt den tillfälligt mot `return true` och se testerna bli röda.
 
 **T2. Supabase-projektet `ekovilla-crm-test`.**
@@ -419,7 +422,17 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
       (126 tecken, 130 byte i UTF-8)
     - signatur `v1=d5d87ef08b18bb2d5286335a54405c2b79f80fb291fc1640e32f746b9f2a3c30`
 13. **Hemligheten ska vara minst 32 tecken.** CRM:et räknar en kortare som saknad, svarar 503 och
-    signerar inget.
+    signerar inget. Den trimmas på båda sidor.
+14. **Förslag: signera också metod och sökväg**, till exempel `tidsstämpel + "." + METOD + " " +
+    sökväg + "." + råkropp`. I dag gäller en signatur för vilken route som helst, åt båda hållen, i
+    300 sekunder. Den som ser ett anrop, till exempel i en logg, kan skicka om samma headers till en
+    annan route med samma kropp. Tydligast är det med tomma kroppar: en signerad `ping` duger då
+    också till `store-orders/{orderId}/withdraw` för en annan beställning. Ingen sida har byggt
+    transporten än, så nu är ändringen billig. Beslutas med portalen.
+15. **Ett nej på signaturen (401) ska göras om, inte ges upp.** Kontraktet säger att 4xx inte görs om.
+    Då tappas varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget,
+    eller om en klocka går fel mer än 300 sekunder. Förslag: 401 räknas som tillfälligt och görs om
+    med backoff, som 5xx. Byt hemligheten i båda apparna i samma stund, en lugn stund.
 
 ## Öppna frågor
 

@@ -1,4 +1,4 @@
-import { isFortnoxProductionRuntime } from '@/lib/domains/fortnox/connectionGuard';
+import { isProductionDeployment, LOCAL_HOSTNAMES } from '@/lib/env';
 import { isUsablePortalSecret } from './signature';
 
 /**
@@ -10,18 +10,18 @@ import { isUsablePortalSecret } from './signature';
  * Saknas hemligheten är integrationen AV: portalens routes svarar 503 och inget skickas. Så går koden
  * ut mörk i prod tills hemligheten sätts (RESELLER_PORTAL_CRM_PLAN.md, fas 9).
  *
- * 🧨 Spärren: prod får bara skicka till prodportalen, och ingen annan miljö får skicka dit. Lokalt och
- * i testmiljön finns riktiga butiker i prodportalen, och ett testjobbs status eller en testprislista
- * får aldrig nå dem. Prod avgörs som i Fortnox-spärren (`isFortnoxProductionRuntime`), så att "prod"
- * betyder samma sak i båda.
+ * 🧨 Spärren är en lista över TILLÅTNA värdar per miljö, inte en förbudslista: prod skickar bara
+ * till prodportalen; lokalt och testmiljön bara till portalens testmiljö eller den här datorn. I
+ * prodportalen finns riktiga butiker, och ett testjobbs status eller en testprislista får aldrig nå
+ * dem. En förbudslista hade släppt igenom andra stavningar av samma värd, som `partner.ekovilla.se.`
+ * med avslutande punkt, eller portalens egna Vercel-adresser. Prod avgörs med
+ * `isProductionDeployment` (lib/env.ts), som faller stängt.
  */
 
-/** Prodportalens värd. Den enda som prod får skicka till, och den enda som ingen annan miljö får. */
 export const PRODUCTION_PORTAL_HOST = 'partner.ekovilla.se';
+export const TEST_PORTAL_HOST = 'test.partner.ekovilla.se';
 
 type Env = Record<string, string | undefined>;
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 /** Hemligheten, trimmad, eller null om den saknas eller är för kort för att vara säker. */
 export function readPortalSecret(env: Env): string | null {
@@ -30,15 +30,17 @@ export function readPortalSecret(env: Env): string | null {
 }
 
 export type PortalTarget =
-  | { ok: true; baseUrl: string }
+  | { ok: true; baseUrl: string; secret: string }
   | { ok: false; reason: 'not_configured' | 'invalid_url' | 'insecure_url' | 'wrong_environment'; message: string };
 
 /**
- * Vart CRM:et får skicka i den här miljön. `baseUrl` saknar avslutande snedstreck; anroparen lägger
- * till sökvägen (`/api/ekovilla/events`).
+ * Vart CRM:et får skicka i den här miljön, och med vilken hemlighet. `baseUrl` saknar avslutande
+ * snedstreck; anroparen lägger till sökvägen (`/api/ekovilla/events`). Meddelandena upprepar aldrig
+ * variabelns värde: har variablerna förväxlats står hemligheten där.
  */
 export function resolvePortalTarget(env: Env): PortalTarget {
-  if (!readPortalSecret(env)) {
+  const secret = readPortalSecret(env);
+  if (!secret) {
     return { ok: false, reason: 'not_configured', message: 'PORTAL_CRM_SHARED_SECRET saknas eller är för kort.' };
   }
   const raw = env.RESELLER_PORTAL_URL?.trim();
@@ -48,30 +50,27 @@ export function resolvePortalTarget(env: Env): PortalTarget {
   try {
     url = new URL(raw);
   } catch {
-    return { ok: false, reason: 'invalid_url', message: `RESELLER_PORTAL_URL är ingen adress: ${raw}` };
+    return { ok: false, reason: 'invalid_url', message: 'RESELLER_PORTAL_URL är ingen giltig adress.' };
   }
-  const host = url.hostname.toLowerCase();
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOCAL_HOSTS.has(host))) {
-    return { ok: false, reason: 'insecure_url', message: 'RESELLER_PORTAL_URL måste vara https (http bara mot localhost).' };
+  // `partner.ekovilla.se.` (med avslutande punkt) är samma värd i DNS.
+  const host = url.hostname.replace(/\.$/, '');
+  const local = LOCAL_HOSTNAMES.has(host);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
+    return { ok: false, reason: 'insecure_url', message: 'RESELLER_PORTAL_URL måste vara https (http bara mot den här datorn).' };
   }
 
-  const production = isFortnoxProductionRuntime(env);
-  const isProductionPortal = host === PRODUCTION_PORTAL_HOST;
-  if (production && !isProductionPortal) {
+  if (isProductionDeployment(env)) {
+    if (host !== PRODUCTION_PORTAL_HOST) {
+      return { ok: false, reason: 'wrong_environment', message: `Prod skickar bara till ${PRODUCTION_PORTAL_HOST}, inte till ${host}.` };
+    }
+  } else if (host !== TEST_PORTAL_HOST && !local) {
     return {
       ok: false,
       reason: 'wrong_environment',
-      message: `Prod skickar bara till ${PRODUCTION_PORTAL_HOST}, inte till ${host}.`,
-    };
-  }
-  if (!production && isProductionPortal) {
-    return {
-      ok: false,
-      reason: 'wrong_environment',
-      message: `Bara prod får skicka till ${PRODUCTION_PORTAL_HOST}. Den här miljön är inte prod.`,
+      message: `Utanför prod skickar CRM:et bara till ${TEST_PORTAL_HOST} eller den här datorn, inte till ${host}.`,
     };
   }
 
   // Sökväg och frågesträng i variabeln tas inte med: anroparen bygger sökvägen själv.
-  return { ok: true, baseUrl: url.origin };
+  return { ok: true, baseUrl: `${url.protocol}//${url.port ? `${host}:${url.port}` : host}`, secret };
 }
