@@ -1,5 +1,6 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { NextResponse } from 'next/server';
+import { requirePermission } from '@/lib/auth/guards';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,10 +23,11 @@ function routeError(status: number, code: string, message: string, details?: unk
 
 // GET /api/news/latest
 export async function GET() {
-  const supabase = createSessionClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return routeError(401, 'unauthorized', 'unauthorized');
+  // Samma nyckel som /nyheter (layouten) och som news_items läspolicy (20260927080615). Lönebyrån har den inte.
+  const access = await requirePermission('app.access');
+  if (access.response) return access.response;
 
+  const supabase = createSessionClient();
   const { data, error } = await supabase
     .from('news_items')
     .select('id, headline, body, image_url, created_at')

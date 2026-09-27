@@ -5,7 +5,7 @@ import type { KmaDirectoryEntry, KmaStoredPlanSource } from './prefill';
 // Databasen för KMA-planerna — tunna frågor med SESSIONSKLIENTEN. RLS gör hela auktoriseringen
 // (supabase/archive/sql/20260924_crm_work_order_kma_plans.sql): läsning kräver crm.workorder.read,
 // skapande crm.workorder.write. Ingen fråga här eleverar sig, och ingen behöver: namn och nummer
-// kommer ur Kontaktlistan, som varje inloggad redan läser.
+// kommer ur Kontaktlistan, som samma användare redan läser (app.contacts.read — admin och sales har den).
 
 const TABLE = 'crm_work_order_kma_plans';
 
@@ -112,9 +112,10 @@ export async function getKmaPlanDocument(supabase: SupabaseClient, workOrderId: 
 /**
  * Kontaktlistan (public.contacts) — telefonnumren till förifyllnaden och förslagen i dialogen.
  *
- * Läsbar för varje inloggad och kuraterad av admin, så självregistrerade konton finns aldrig här
- * ("inloggad" är inte "anställd"). Listan är liten; skulle den någon gång passera PostgRESTs tysta
- * tak på 1000 rader blir följden ett tomt nummerfält, aldrig ett felaktigt.
+ * Läsbar med app.contacts.read (RLS, 20260927080615) och kuraterad av admin, så självregistrerade
+ * konton finns aldrig här ("inloggad" är inte "anställd"). Saknar anroparen nyckeln blir listan tom,
+ * inget fel. Listan är liten; skulle den någon gång passera PostgRESTs tysta tak på 1000 rader blir
+ * följden ett tomt nummerfält, aldrig ett felaktigt.
  */
 export async function listKmaDirectory(supabase: SupabaseClient) {
   return supabase

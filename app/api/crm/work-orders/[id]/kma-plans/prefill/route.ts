@@ -93,8 +93,8 @@ export async function GET(req: Request, context: RouteContext) {
       companyLatest: companyLatest.error ? null : companyLatest.data ?? null,
     });
 
-    // Kontaktlistan följer med till namnförslagen i dialogen. Den läses redan av varje inloggad
-    // (/kontakt-lista), så det är ingen ny exponering.
+    // Kontaktlistan följer med till namnförslagen i dialogen. Den läses med sessionen, så RLS
+    // (app.contacts.read, samma som /kontakt-lista) avgör — ingen ny exponering.
     return ok({
       ...prefill,
       directory: directoryEntries.filter((entry) => entry.name?.trim()),
