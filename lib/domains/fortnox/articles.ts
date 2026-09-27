@@ -362,8 +362,9 @@ async function getArticlePrice(articleNumber: string, priceList: string): Promis
 
 // Upsert the article's base price on one price list. The row may or may not
 // already exist (a fresh article has none), so probe with a GET and either PUT
-// (update) or POST (create). Requires the `price` scope.
-async function setArticlePrice(articleNumber: string, priceList: string, price: number): Promise<void> {
+// (update) or POST (create). Requires the `price` scope. Exported for
+// scripts/fortnox/copy-price-list-160-to-test-company.ts.
+export async function setArticlePrice(articleNumber: string, priceList: string, price: number): Promise<void> {
   let exists = false;
   try {
     await fortnoxGet<FortnoxPriceResponse>(pricePath(articleNumber, priceList));

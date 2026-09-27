@@ -328,7 +328,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 
 | Fas | Innehåll | Kräver |
 | --- | --- | --- |
-| **0** | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? | — |
+| **0** ✅ | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? Resultaten står under tabellen | — |
 | **1a** | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
 | **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts` | 1a |
 | **1c** | Undantaget i middleware, signerad `ping`, vakttestet för `app/api/portal/**` | 1a |
@@ -344,6 +344,37 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
 | **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
 | **9** | Prod, när portalens prodprojekt finns: hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
+
+### Fas 0: resultat (2026-09-27)
+
+**Fortnox prislista, provat mot testbolaget:**
+- `GET /3/prices/sublist/{lista}` fungerar **utan** artikelnummer. 100 rader per sida som standard;
+  `limit` och `page` fungerar (läsaren använder 500, som artikellistan), och
+  `MetaInformation.@TotalPages` anger antalet sidor.
+- Varje rad: `ArticleNumber`, `FromQuantity` (tal), `PriceList`, `Price` (tal). Grundpriset är raden
+  med `FromQuantity` 0. En artikel med mängdrabatt har fler rader, som läsaren i fas 2b ska hoppa över.
+- Läsaren finns nu: `listFortnoxPriceListPrices()` i `lib/domains/fortnox/priceLists.ts`, med test.
+  Fas 2b återanvänder den.
+
+**Lista 160 i testbolaget:**
+- Skapad som "Byggvaruhandel", med 44 grundpriser ur portalens kopia (giltig från 2026-09-25):
+  `npx -y tsx scripts/fortnox/copy-price-list-160-to-test-company.ts --source <portalrepot>/lib/data/mock/seed.ts`
+  (torrkörning; `--apply` skriver). En ny torrkörning gav "stämmer redan: 44".
+- ⚠️ Sju av portalens 51 artiklar finns inte i testbolaget och har därför inget pris: **1010
+  (Etablering)**, 13400, 16765, 16766, 16767, 2410521, 2410522. Hela 47 av prods artiklar saknas
+  fortfarande där, eftersom Fortnox svarade "används redan" vid förra kopieringen. Kör
+  `copy-articles-to-test-company.ts --apply` igen, och sedan prislisteskriptet, innan jobben byggs
+  (fas 3b). Etableringen finns på nästan varje jobb.
+
+**Nominatim, för länet i fördelningen (fas 3a):**
+- `addressdetails=1` ger både `county` ("Gävleborgs län") och `ISO3166-2-lvl4` ("SE-X"). Koden
+  översätts med en fast tabell till namnen i `SWEDISH_COUNTIES` (`lib/domains/crm/routingRules.ts`):
+  AB Stockholm, AC Västerbotten, BD Norrbotten, C Uppsala, D Södermanland, E Östergötland,
+  F Jönköping, G Kronoberg, H Kalmar, I Gotland, K Blekinge, M Skåne, N Halland, O Västra Götaland,
+  S Värmland, T Örebro, U Västmanland, W Dalarna, X Gävleborg, Y Västernorrland, Z Jämtland.
+- Fråga med **postnummer och ort**, inte gatan. En gatufråga träffade en annan husadress med ett
+  annat postnummer; länet blev rätt, men postnummer och ort räcker för länet och ger mindre att gissa.
+- `crm_routing_rules` är tom lokalt. Fördelningen på län går inte att prova förrän regler finns.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
