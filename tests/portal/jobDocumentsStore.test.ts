@@ -167,7 +167,7 @@ describe('sendPortalJobDocument: orderbekräftelsen', () => {
         idempotency_key: `job.document-${DOC}`,
         path: '/api/ekovilla/events',
         ordering_key: 'job:q-1',
-        supersede_key: 'job.document:q-1:order_confirmation',
+        supersede_key: null,
         payload: {
           type: 'job.document',
           occurredAt: NOW.toISOString(),
@@ -178,7 +178,7 @@ describe('sendPortalJobDocument: orderbekräftelsen', () => {
     ]);
   });
 
-  it('en äldre version som ännu väntar ersätts av den nya', async () => {
+  it('kön ersätter inget när en ny köas: utskicket avgör (det senast beslutade vinner där)', async () => {
     const { admin, tables } = db({
       portal_outbound_events: [
         confirmed(),
@@ -186,7 +186,8 @@ describe('sendPortalJobDocument: orderbekräftelsen', () => {
       ],
     });
     await send(admin, sources());
-    expect(tables.portal_outbound_events.find((e) => e.id === 'ev-old')?.status).toBe('superseded');
+    expect(tables.portal_outbound_events.find((e) => e.id === 'ev-old')?.status).toBe('pending');
+    expect(docEvents(tables).find((e) => e.idempotency_key === `job.document-${DOC}`)?.supersede_key ?? null).toBeNull();
   });
 
   it('samma id igen: svarar med det som finns och renderar inget nytt', async () => {
@@ -321,29 +322,15 @@ describe('sendPortalJobDocument: orderbekräftelsen', () => {
     expect(docEvents(tables)).toEqual([]);
   });
 
-  it('🧨 ROT påslagen: orderbekräftelsen skriver ut ett personnummer och går inte till butiken', async () => {
-    const { admin, tables } = db({ crm_work_orders: [workOrder({ rot_details: { enabled: true } })] });
-    const src = sources();
-    expect(await send(admin, src)).toMatchObject({ kind: 'failed', document: { error: expect.stringContaining('ROT') } });
-    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
-    expect(docEvents(tables)).toEqual([]);
-  });
-
-  it('🧨 ROT via offerten (orderns egna uppgifter tomma) räknas också, som renderingen räknar', async () => {
-    const { admin, tables } = db({
-      crm_work_orders: [workOrder({ rot_details: {}, quote_id: 'quote-1' })],
-      crm_quotes: [{ id: 'quote-1', rot_details: { enabled: true } }],
+  it('🧨 ROT påslagen: renderingen vägrar (samma läsning som den ritar ur), och inget går till butiken', async () => {
+    // Själva provet står i getFortnoxOrderPdf({ refuseRot: true }) (tests/fortnox/orderPdfRefuseRot.test.ts); källan
+    // översätter det till ett skäl som aldrig blir rätt av ett nytt försök.
+    const { admin, tables } = db();
+    const src = sources({
+      renderOrderConfirmation: { ok: false, permanent: true, error: 'Ordern har ROT påslagen. Orderbekräftelsen skickas inte till butiken.' },
     });
-    const src = sources();
     expect(await send(admin, src)).toMatchObject({ kind: 'failed', document: { error: expect.stringContaining('ROT') } });
-    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
     expect(docEvents(tables)).toEqual([]);
-    // Orderns egna uppgifter vinner över offertens (resolveOrderRotDetails): av på ordern = av.
-    const own = db({
-      crm_work_orders: [workOrder({ rot_details: { enabled: false }, quote_id: 'quote-1' })],
-      crm_quotes: [{ id: 'quote-1', rot_details: { enabled: true } }],
-    });
-    expect(await send(own.admin, sources())).toMatchObject({ kind: 'sent' });
   });
 
   it('Fortnox svarar inte: misslyckat med Fortnox svar, och knappen går att trycka igen', async () => {
@@ -615,9 +602,42 @@ describe('sweepPortalJobDocuments', () => {
     const { admin, calls } = db({ crm_portal_jobs: [job({ sync_state: { confirmedKey: CONFIRMED_KEY, cancelled: true } })] });
     expect(await sweep(admin, sources())).toMatchObject({ created: 0, errors: 0 });
     const read = calls.find((c) => c.table === 'portal_outbound_events' && c.filters.some(([k]) => k === 'like'));
-    expect(read?.orders).toEqual([{ column: 'sent_at', ascending: false }]);
+    // Senaste först, med en unik sista ordning: .range() får inte hoppa över eller upprepa rader mellan sidorna.
+    expect(read?.orders).toEqual([
+      { column: 'sent_at', ascending: false },
+      { column: 'idempotency_key', ascending: false },
+    ]);
+    expect(read).toMatchObject({ offset: 0, limit: 500 });
     // Grinden (arbetsordern, bekräftelsens status) lästes aldrig för det avbrutna jobbet.
     expect(calls.filter((c) => c.table === 'crm_work_orders')).toEqual([]);
+  });
+
+  it('HELA fönstret läses, i sidor: en bekräftelse långt bak får också sin', async () => {
+    // 500 senare bekräftelser (jobb som inte finns här) trycker q-1 till sida två.
+    const later = Array.from({ length: 500 }, (_, i) =>
+      confirmed({
+        id: `ev-${i}`,
+        seq: 10 + i,
+        idempotency_key: `job.confirmed-q-x${i}-${i}`,
+        payload: { type: 'job.confirmed', data: { quoteId: `q-x${i}` } },
+        sent_at: ago(MINUTE),
+      }),
+    );
+    const { admin, calls } = db({ portal_outbound_events: [confirmed({ sent_at: ago(60 * MINUTE) }), ...later] });
+    expect(await sweep(admin, sources())).toMatchObject({ created: 1, queued: 1 });
+    expect(calls.filter((c) => c.table === 'portal_outbound_events' && c.filters.some(([k]) => k === 'like')).map((c) => c.offset)).toEqual([0, 500]);
+  });
+
+  it('bygger bara så många som varvet får (knapparna på portalsidan: ett)', async () => {
+    const auto = (quote: string) => ({ ...defaults('crm_portal_job_documents'), id: `d-${quote}`, quote_id: quote, kind: 'order_confirmation', next_attempt_at: ago(MINUTE) });
+    const { admin } = db({
+      crm_portal_jobs: [job(), job({ quote_id: 'q-2', work_order_id: WO })],
+      portal_outbound_events: [confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) })],
+      crm_portal_job_documents: [auto('q-1'), auto('q-2')],
+    });
+    const src = sources();
+    await sweepPortalJobDocuments(admin, { now: () => NOW, sources: src, builds: 1 });
+    expect(src.renderOrderConfirmation).toHaveBeenCalledTimes(1);
   });
 
   it('en säljares egenkontroll hindrar inte den automatiska orderbekräftelsen', async () => {
@@ -872,9 +892,56 @@ describe('sweepPortalJobDocuments', () => {
         },
       ],
     });
-    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 1 });
+    const src = sources();
+    expect(await sweep(admin, src)).toMatchObject({ queued: 0, failed: 1 });
     expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'failed', error: 'Ersattes av en nyare innan den hann skickas.' });
     expect(docEvents(tables)).toEqual([]);
+    // Upptäckt FÖRE Fortnox: ingen rendering, ingen fil för något som ändå aldrig skickas.
+    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
+  });
+
+  it('en manuell som ännu byggs räcker också för att den automatiska inte renderas', async () => {
+    const { admin, tables } = db({
+      crm_portal_job_documents: [
+        { ...defaults('crm_portal_job_documents'), id: 'd-auto', quote_id: 'q-1', kind: 'order_confirmation', created_at: ago(120 * MINUTE), next_attempt_at: ago(MINUTE), attempts: 3 },
+        { ...defaults('crm_portal_job_documents'), id: 'd-manual', quote_id: 'q-1', kind: 'order_confirmation', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(MINUTE), next_attempt_at: ago(MINUTE) },
+      ],
+    });
+    const src = sources();
+    await sweep(admin, src);
+    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
+    expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'failed' });
+  });
+
+  it('någon annan hann köa den under tiden: räknas varken som köad eller misslyckad här', async () => {
+    const readyRow = {
+      ...defaults('crm_portal_job_documents'),
+      id: '00000000-0000-4000-8000-00000000000e',
+      quote_id: 'q-1',
+      kind: 'order_confirmation',
+      status: 'ready',
+      name: 'Orderbekräftelse 26.pdf',
+      byte_size: 64,
+      sha256: 'a'.repeat(64),
+      source_ref: '26',
+      created_by: 'u-seller',
+      created_by_name: 'Anna Berg',
+      created_at: ago(30 * MINUTE),
+      ready_at: ago(2 * MINUTE),
+    };
+    const newer = { ...readyRow, id: '00000000-0000-4000-8000-00000000000f', created_at: ago(10 * MINUTE), queued_at: ago(MINUTE) };
+    const base = db({ portal_outbound_events: [confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) })], crm_portal_job_documents: [readyRow, newer] });
+    const raced = memoryAdmin(base.tables, {
+      defaults,
+      rpc: () => canSend,
+      beforeExecute: (call, t) => {
+        const values = call.values as Record<string, unknown> | undefined;
+        if (call.table === 'crm_portal_job_documents' && call.op === 'update' && values?.status === 'failed') {
+          t.crm_portal_job_documents[0].queued_at = ago(0);
+        }
+      },
+    });
+    expect(await sweep(raced.admin, sources())).toMatchObject({ queued: 0, failed: 0, errors: 0 });
   });
 
   it('ett fel i en del stoppar inte de andra', async () => {

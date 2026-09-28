@@ -151,6 +151,8 @@ describe('runPortalCron', () => {
     });
     await runPortalCron({} as never, { env: {}, now: () => new Date(t), fortnoxRetries: false });
     expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents']);
+    // Ett bygge per klick; cron bygger så många som standarden säger.
+    expect(documents.mock.calls.at(-1)?.[1].builds).toBe(1);
 
     calls.length = 0;
     t = 0;
@@ -166,6 +168,7 @@ describe('runPortalCron', () => {
     t = 0;
     await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
     expect(calls).toContain('documents');
+    expect(documents.mock.calls.at(-1)?.[1].builds).toBeUndefined();
   });
 
   it('inga dokument när tiden gått: tre orderbekräftelser är nio Fortnox-anrop', async () => {

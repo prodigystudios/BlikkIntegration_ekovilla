@@ -208,7 +208,7 @@ describe('dispatchPortalOutbox', () => {
     const summary = await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW });
 
     expect(rpc).toHaveBeenCalledWith('claim_portal_outbound_events', { p_limit: 20 });
-    expect(summary).toEqual({ ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, returned: 0, bookkeepingErrors: 0 });
+    expect(summary).toEqual({ ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, returned: 0, superseded: 0, bookkeepingErrors: 0 });
     const [url] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(url).toBe('http://localhost:3001/api/ekovilla/events');
 

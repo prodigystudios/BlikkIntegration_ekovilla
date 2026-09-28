@@ -36,6 +36,8 @@ export type Call = {
   /** Alla `order`, i den ordning de gavs. `order` är den första. */
   orders?: { column: string; ascending: boolean }[];
   limit?: number;
+  /** `range(from, to)`: raderna från `from` (0-baserat) till och med `to`. */
+  offset?: number;
 };
 type DbError = { code?: string; message: string };
 
@@ -135,6 +137,7 @@ export function memoryAdmin(
           return 0;
         });
       }
+      if (call.offset !== undefined) rows = rows.slice(call.offset);
       if (call.limit !== undefined) rows = rows.slice(0, call.limit);
       return out(rows);
     }
@@ -206,6 +209,7 @@ export function memoryAdmin(
         return chain;
       },
       limit: (n: number) => ((call.limit = n), chain),
+      range: (from: number, to: number) => ((call.offset = from), (call.limit = to - from + 1), chain),
       maybeSingle: async () => execute(call, returning, true),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
         Promise.resolve(execute(call, returning, false)).then(resolve, reject),

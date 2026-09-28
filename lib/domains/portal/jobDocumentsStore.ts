@@ -1,7 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { findLatestEgenkontrollArchive } from '@/lib/domains/crm/egenkontrollLink';
 import { listCrmWorkOrderComments } from '@/lib/domains/crm/work-orders';
-import { resolveOrderRotDetails } from '@/lib/domains/fortnox/orders';
 import { enqueuePortalEvent } from './outbox';
 import { isMissingObject, sha256Hex } from './outboundContent';
 import { parsePortalJobSyncState } from './jobState';
@@ -76,12 +75,17 @@ export type PortalDocumentSources = {
 export function portalDocumentSources(admin: SupabaseClient, env: Record<string, string | undefined>): PortalDocumentSources {
   return {
     async renderOrderConfirmation(workOrderId) {
-      const { getFortnoxOrderPdf } = await import('@/lib/domains/fortnox/orders');
+      const { getFortnoxOrderPdf, OrderPdfRotRefusedError } = await import('@/lib/domains/fortnox/orders');
       const { FortnoxApiError, friendlyFortnoxMessage } = await import('@/lib/domains/fortnox/client');
       try {
-        const { bytes } = await getFortnoxOrderPdf(workOrderId);
+        // Portalens ordrar har ingen ROT (planen: "ingen rabatt och ingen ROT"). Med ROT skriver orderbekräftelsen ut
+        // sökandens personnummer, och det ska inte till butiken: renderingen vägrar, på samma läsning som den ritar ur.
+        const { bytes } = await getFortnoxOrderPdf(workOrderId, { refuseRot: true });
         return { ok: true, bytes };
       } catch (e) {
+        if (e instanceof OrderPdfRotRefusedError) {
+          return { ok: false, permanent: true, error: 'Ordern har ROT påslagen. Orderbekräftelsen skickas inte till butiken.' };
+        }
         // 409 = ordern finns inte i Fortnox; det rättar inget omförsök. Allt annat (Fortnox nere, anslutningen ute, ett
         // fel i renderingen) kan gå nästa gång.
         const permanent = e instanceof FortnoxApiError && e.status === 409;
@@ -104,7 +108,7 @@ export function portalDocumentSources(admin: SupabaseClient, env: Record<string,
 
 // ------------------------------------------------------------------------------------------------- jobbet
 
-const WORK_ORDER_SELECT = 'id, status, order_number, fortnox_order_number, project_name, work_address, rot_details, quote_id';
+const WORK_ORDER_SELECT = 'id, status, order_number, fortnox_order_number, project_name, work_address';
 
 type WorkOrderRow = {
   id: string;
@@ -113,8 +117,6 @@ type WorkOrderRow = {
   fortnox_order_number: string | number | null;
   project_name: string | null;
   work_address: { street_address?: string | null; city?: string | null } | null;
-  rot_details: { enabled?: boolean } | null;
-  quote_id: string | null;
 };
 
 type JobGate = {
@@ -212,23 +214,8 @@ type BuildOutcome =
   /** Går att göra om (Fortnox eller arkivet svarade inte). */
   | { kind: 'retry'; error: string };
 
-/** Filen ur sin källa, kontrollerad. Rör inte databasen. */
-/**
- * ROT som orderbekräftelsen ser den: orderns egna uppgifter, med offertens som reserv (resolveOrderRotDetails, samma som
- * renderingen). Portalens ordrar har ingen offert, men en som fått en ska inte slinka igenom.
- */
-async function rotEnabled(admin: SupabaseClient, workOrder: WorkOrderRow): Promise<boolean> {
-  let quote: { rot_details?: { enabled?: boolean } | null } | null = null;
-  if (workOrder.quote_id) {
-    const read = await admin.from('crm_quotes').select('rot_details').eq('id', workOrder.quote_id).maybeSingle();
-    if (read.error) throw new Error(`Offerten gick inte att läsa: ${read.error.message}`);
-    quote = read.data as typeof quote;
-  }
-  return resolveOrderRotDetails(workOrder as never, quote as never)?.enabled === true;
-}
-
+/** Filen ur sin källa, kontrollerad (PDF, storleken). Rör inte databasen; källorna läser det de behöver. */
 async function readSource(
-  admin: SupabaseClient,
   row: Pick<DocumentRow, 'kind'>,
   gate: JobGate & { workOrder: WorkOrderRow },
   sources: PortalDocumentSources,
@@ -240,11 +227,6 @@ async function readSource(
   if (row.kind === 'order_confirmation') {
     if (workOrder.fortnox_order_number === null || workOrder.fortnox_order_number === undefined) {
       return { ok: false, permanent: true, error: 'Ordern finns inte i Fortnox.' };
-    }
-    // Portalens ordrar har ingen ROT (planen: "ingen rabatt och ingen ROT"). Med ROT påslagen skriver orderbekräftelsen
-    // ut sökandens personnummer, och det ska inte till butiken.
-    if (await rotEnabled(admin, workOrder)) {
-      return { ok: false, permanent: true, error: 'Ordern har ROT påslagen. Orderbekräftelsen skickas inte till butiken.' };
     }
     sourceRef = String(workOrder.fortnox_order_number);
     result = await sources.renderOrderConfirmation(workOrder.id);
@@ -285,7 +267,7 @@ async function freeze(
   selfInspectionPath: string | null,
   now: Date,
 ): Promise<BuildOutcome> {
-  const source = await readSource(admin, row, gate, sources, selfInspectionPath);
+  const source = await readSource(row, gate, sources, selfInspectionPath);
   if (!source.ok) return source.permanent ? { kind: 'failed', error: source.error } : { kind: 'retry', error: source.error };
 
   const bucket = admin.storage.from(PORTAL_JOB_DOCUMENTS_BUCKET);
@@ -333,38 +315,52 @@ async function readRow(admin: SupabaseClient, id: string): Promise<DocumentRow |
   return data as DocumentRow | null;
 }
 
-/** Bara om den fortfarande byggs: ett färdigt eller redan misslyckat dokument ändras inte. */
-async function markFailed(admin: SupabaseClient, id: string, error: string, from: 'building' | 'ready' = 'building'): Promise<void> {
+/**
+ * Bara om den fortfarande byggs (eller är fryst men inte köad): ett köat eller redan misslyckat dokument ändras inte.
+ * Svarar om raden ändrades.
+ */
+async function markFailed(admin: SupabaseClient, id: string, error: string, from: 'building' | 'ready' = 'building'): Promise<boolean> {
   const query = admin.from(TABLE).update({ status: 'failed', error: error.slice(0, 2000) }).eq('id', id).eq('status', from);
-  const { error: dbError } = await (from === 'ready' ? query.is('queued_at', null) : query);
+  const { data, error: dbError } = await (from === 'ready' ? query.is('queued_at', null) : query).select('id');
   if (dbError) throw new Error(`Dokumentet kunde inte markeras: ${dbError.message}`);
+  return (data ?? []).length > 0;
 }
 
-/**
- * Köar ett fryst dokument och bokför det. Jobbet prövas en gång till först: avbröts det medan filen frystes skickas
- * inget (William 2026-09-28), och dokumentet står som misslyckat. Idempotent: kön känner igen nyckeln.
- */
-async function queueReady(admin: SupabaseClient, row: DocumentRow, now: Date): Promise<'queued' | 'cancelled' | 'replaced'> {
-  const gate = await readJobGate(admin, row.quote_id);
-  if (!gate || gate.blocked === 'cancelled') {
-    await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready');
-    return 'cancelled';
-  }
-  // Den senast BESLUTADE av samma sort vinner, som kortet visar den. En äldre som frystes sent (en process som dog före
-  // köandet, eller den automatiska efter ett dygns Fortnox-omförsök) hade annars köats efter den nyare, ersatt den i kön
-  // (supersedeKey) och gett butiken det gamla dokumentet.
+/** Finns ett senare beslut av samma sort, som är fryst eller på väg? Då ska det här aldrig till butiken. */
+async function hasNewerDecision(admin: SupabaseClient, row: Pick<DocumentRow, 'quote_id' | 'kind' | 'created_at'>, statuses: string[]) {
   const newer = await admin
     .from(TABLE)
     .select('id')
     .eq('quote_id', row.quote_id)
     .eq('kind', row.kind)
-    .eq('status', 'ready')
+    .in('status', statuses)
     .gt('created_at', row.created_at)
     .limit(1);
   if (newer.error) throw new Error(`Nyare dokument gick inte att läsa: ${newer.error.message}`);
-  if ((newer.data ?? []).length > 0) {
-    await markFailed(admin, row.id, REPLACED_TEXT, 'ready');
-    return 'replaced';
+  return (newer.data ?? []).length > 0;
+}
+
+/**
+ * Köar ett fryst dokument och bokför det. Jobbet prövas en gång till först: avbröts det medan filen frystes skickas
+ * inget (William 2026-09-28), och dokumentet står som misslyckat. Idempotent: kön känner igen nyckeln.
+ *
+ * Den senast BESLUTADE av samma sort vinner, som kortet visar den. Här sållas en äldre som frystes sent bort (en process
+ * som dog före köandet, eller den automatiska efter ett dygns Fortnox-omförsök), så att kortet säger "ersatt". Det
+ * avgörande provet görs ändå av utskicket, precis före sändningen (outboundContent.ts): mellan provet här och köandet
+ * kan en nyare hinna köas, och kön skickar i den ordning händelserna kom.
+ *   already   någon annan hann köa eller markera den; inget gjordes här
+ */
+async function queueReady(
+  admin: SupabaseClient,
+  row: DocumentRow,
+  now: Date,
+): Promise<'queued' | 'cancelled' | 'replaced' | 'already'> {
+  const gate = await readJobGate(admin, row.quote_id);
+  if (!gate || gate.blocked === 'cancelled') {
+    return (await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready')) ? 'cancelled' : 'already';
+  }
+  if (await hasNewerDecision(admin, row, ['ready'])) {
+    return (await markFailed(admin, row.id, REPLACED_TEXT, 'ready')) ? 'replaced' : 'already';
   }
   // Varje anropare har en fryst rad (databasens check: ready har namn, hash, storlek och tid). Provet är för typerna.
   if (!row.name || !row.sha256 || row.byte_size === null || !row.ready_at) {
@@ -678,14 +674,20 @@ export type PortalJobDocumentsSweepSummary = {
  * Körs av runPortalCron. Fyra oberoende halvor; ett fel i en stoppar inte de andra.
  *   1. Den automatiska orderbekräftelsen: jobb vars job.confirmed levererats senaste veckan och som saknar en. Ett
  *      beslut per jobb (unikt index), så överlappande varv skapar aldrig två.
- *   2. Automatiska beslut som ska göras nu (nya, eller efter ett Fortnox-fel): frys och köa, högst tre per varv. Ett
- *      lån på tio minuter, så att två varv inte bygger samma. Fortnox nere: 5 min, 15 min, sedan varje timme, i ett dygn.
+ *   2. Automatiska beslut som ska göras nu (nya, eller efter ett Fortnox-fel): frys och köa, högst tre per varv (ett
+ *      från knapparna på portalsidan). Ett lån på tio minuter, så att två varv inte bygger samma. Fortnox nere: 5 min,
+ *      15 min, sedan varje timme, i ett dygn. Har någon skickat en med knappen under tiden görs inget.
  *   3. En knapptryckning som inte blivit en fil på tio minuter dog med processen: misslyckad, tryck igen.
  *   4. Frysta dokument som inte hann köas (processen dog emellan): köas.
  */
 export async function sweepPortalJobDocuments(
   admin: SupabaseClient,
-  options: { now: () => Date; sources: PortalDocumentSources },
+  options: {
+    now: () => Date;
+    sources: PortalDocumentSources;
+    /** Så många PDF:er byggs i varvet (standard tre). Knapparna på portalsidan bygger en. */
+    builds?: number;
+  },
 ): Promise<PortalJobDocumentsSweepSummary> {
   const now = options.now();
   const iso = (ms: number) => new Date(now.getTime() + ms).toISOString();
@@ -697,64 +699,52 @@ export async function sweepPortalJobDocuments(
 
   // 1. Nya automatiska beslut.
   try {
-    // sent_at sätts bara när portalen tagit emot händelsen (outcomeUpdate), så fönstret tar bara levererade. Grinden
-    // (readJobGate) prövar ändå varje jobb innan ett beslut läggs.
-    // De senaste först: de äldre i fönstret har nästan alltid redan sin.
-    const confirmed = await admin
-      .from('portal_outbound_events')
-      .select('payload')
-      .like('idempotency_key', 'job.confirmed-%')
-      .gt('sent_at', iso(-PORTAL_DOCUMENT_AUTO_WINDOW_MS))
-      .order('sent_at', { ascending: false })
-      .limit(200);
-    if (confirmed.error) throw new Error(confirmed.error.message);
-    const quoteIds = [
-      ...new Set(
-        ((confirmed.data ?? []) as { payload: { data?: { quoteId?: unknown } } | null }[])
-          .map((r) => r.payload?.data?.quoteId)
-          .filter((q): q is string => typeof q === 'string' && q.length > 0),
-      ),
-    ];
-    if (quoteIds.length > 0) {
-      // Ingen automatisk när jobbet redan har en orderbekräftelse: den automatiska (i vilket läge som helst, en per jobb),
-      // eller en som någon skickat med knappen och som inte misslyckats. Annars hade en säljare som tryckte före cron
-      // gett butiken två.
-      const [existing, jobs] = await Promise.all([
-        admin.from(TABLE).select('quote_id, created_by, status').eq('kind', 'order_confirmation').in('quote_id', quoteIds),
-        admin.from('crm_portal_jobs').select('quote_id, sync_state').in('quote_id', quoteIds),
+    const quoteIds = await confirmedInWindow(admin, iso(-PORTAL_DOCUMENT_AUTO_WINDOW_MS));
+    // Ingen automatisk när jobbet redan har en orderbekräftelse: den automatiska (i vilket läge som helst, en per jobb),
+    // eller en som någon skickat med knappen och som inte misslyckats. Annars hade en säljare som tryckte före cron gett
+    // butiken två. Avbrutna jobb sållas bort här, så att de inte prövas en gång i minuten hela veckan. I omgångar om 20
+    // jobb: en säljare som skickat om många gånger får inte trycka ut raderna förbi PostgREST:s 1000.
+    const has = new Set<string>();
+    const cancelled = new Set<string>();
+    for (let i = 0; i < quoteIds.length; i += 20) {
+      const chunk = quoteIds.slice(i, i + 20);
+      const [automatic, manual, jobs] = await Promise.all([
+        // En automatisk är alltid en orderbekräftelse (tabellens check).
+        admin.from(TABLE).select('quote_id').is('created_by', null).in('quote_id', chunk),
+        admin
+          .from(TABLE)
+          .select('quote_id')
+          .eq('kind', 'order_confirmation')
+          .not('created_by', 'is', null)
+          .in('status', ['building', 'ready'])
+          .in('quote_id', chunk),
+        admin.from('crm_portal_jobs').select('quote_id, sync_state').in('quote_id', chunk),
       ]);
-      if (existing.error) throw new Error(existing.error.message);
-      if (jobs.error) throw new Error(jobs.error.message);
-      const has = new Set(
-        ((existing.data ?? []) as { quote_id: string; created_by: string | null; status: string }[])
-          .filter((r) => r.created_by === null || r.status !== 'failed')
-          .map((r) => r.quote_id),
-      );
-      // Avbrutna jobb sållas bort i samma fråga, så att de inte prövas en gång i minuten hela veckan.
-      const cancelled = new Set(
-        ((jobs.data ?? []) as { quote_id: string; sync_state: unknown }[])
-          .filter((j) => parsePortalJobSyncState(j.sync_state).cancelled)
-          .map((j) => j.quote_id),
-      );
-      for (const quoteId of quoteIds.filter((q) => !has.has(q) && !cancelled.has(q))) {
-        try {
-          const gate = await readJobGate(admin, quoteId);
-          // Avbrutet: inget beslut. Inte bekräftad (kan inte hända här, men läget kan ha ändrats): nästa varv.
-          if (!gate || gate.blocked) continue;
-          // Varvets tid, inte databasens: databasens now() ligger efter varvets start, och då hade steg 2 lämnat beslutet
-          // till nästa varv.
-          const inserted = await admin
-            .from(TABLE)
-            .insert({ quote_id: quoteId, kind: 'order_confirmation', next_attempt_at: now.toISOString() })
-            .select('id');
-          if (inserted.error) {
-            if (inserted.error.code === '23505') continue; // ett annat varv hann
-            throw new Error(inserted.error.message);
-          }
-          summary.created += 1;
-        } catch (e) {
-          failed('den automatiska orderbekräftelsen kunde inte beslutas', e, quoteId);
+      const failure = automatic.error ?? manual.error ?? jobs.error;
+      if (failure) throw new Error(failure.message);
+      for (const r of [...(automatic.data ?? []), ...(manual.data ?? [])] as { quote_id: string }[]) has.add(r.quote_id);
+      for (const j of (jobs.data ?? []) as { quote_id: string; sync_state: unknown }[]) {
+        if (parsePortalJobSyncState(j.sync_state).cancelled) cancelled.add(j.quote_id);
+      }
+    }
+    for (const quoteId of quoteIds.filter((q) => !has.has(q) && !cancelled.has(q))) {
+      try {
+        const gate = await readJobGate(admin, quoteId);
+        // Avbrutet: inget beslut. Inte bekräftad (kan inte hända här, men läget kan ha ändrats): nästa varv.
+        if (!gate || gate.blocked) continue;
+        // Varvets tid, inte databasens: databasens now() ligger efter varvets start, och då hade steg 2 lämnat beslutet
+        // till nästa varv.
+        const inserted = await admin
+          .from(TABLE)
+          .insert({ quote_id: quoteId, kind: 'order_confirmation', next_attempt_at: now.toISOString() })
+          .select('id');
+        if (inserted.error) {
+          if (inserted.error.code === '23505') continue; // ett annat varv hann
+          throw new Error(inserted.error.message);
         }
+        summary.created += 1;
+      } catch (e) {
+        failed('den automatiska orderbekräftelsen kunde inte beslutas', e, quoteId);
       }
     }
   } catch (e) {
@@ -770,7 +760,7 @@ export async function sweepPortalJobDocuments(
       .is('created_by', null)
       .lte('next_attempt_at', now.toISOString())
       .order('next_attempt_at', { ascending: true })
-      .limit(PORTAL_DOCUMENT_BUILDS_PER_RUN);
+      .limit(options.builds ?? PORTAL_DOCUMENT_BUILDS_PER_RUN);
     if (due.error) throw new Error(due.error.message);
     for (const row of (due.data ?? []) as DocumentRow[]) {
       try {
@@ -795,8 +785,7 @@ export async function sweepPortalJobDocuments(
     if (abandoned.error) throw new Error(abandoned.error.message);
     for (const row of (abandoned.data ?? []) as { id: string }[]) {
       try {
-        await markFailed(admin, row.id, 'Avbröts innan filen hann sparas. Skicka igen.');
-        summary.failed += 1;
+        if (await markFailed(admin, row.id, 'Avbröts innan filen hann sparas. Skicka igen.')) summary.failed += 1;
       } catch (e) {
         failed('en avbruten knapptryckning kunde inte markeras', e, row.id);
       }
@@ -819,9 +808,7 @@ export async function sweepPortalJobDocuments(
     if (unqueued.error) throw new Error(unqueued.error.message);
     for (const row of (unqueued.data ?? []) as DocumentRow[]) {
       try {
-        // Avbrutet eller ersatt av en nyare räknas som misslyckat: det gick aldrig till butiken.
-        if ((await queueReady(admin, row, now)) === 'queued') summary.queued += 1;
-        else summary.failed += 1;
+        countQueued(summary, await queueReady(admin, row, now));
       } catch (e) {
         failed('dokumentet kunde inte köas', e, row.id);
       }
@@ -853,14 +840,19 @@ async function buildAutomatic(
 
   const gate = await readJobGate(admin, row.quote_id);
   if (!gate || gate.blocked === 'cancelled') {
-    await markFailed(admin, row.id, BLOCKED_TEXT.cancelled);
-    summary.failed += 1;
+    if (await markFailed(admin, row.id, BLOCKED_TEXT.cancelled)) summary.failed += 1;
     return;
   }
   if (gate.blocked || !gate.workOrder) {
     // Ska inte hända (beslutet togs efter bekräftelsen); försök om en stund.
     await retryLater(admin, row, attempts, 'Bekräftelsen är inte levererad.', now);
     summary.retried += 1;
+    return;
+  }
+  // Har någon skickat en med knappen under tiden (medan Fortnox var nere) är den automatiska överflödig: inga
+  // Fortnox-anrop och ingen fil för något som ändå aldrig skickas.
+  if (await hasNewerDecision(admin, row, ['building', 'ready'])) {
+    if (await markFailed(admin, row.id, REPLACED_TEXT)) summary.failed += 1;
     return;
   }
 
@@ -871,18 +863,51 @@ async function buildAutomatic(
     outcome = { kind: 'retry', error: e instanceof Error ? e.message : String(e) };
   }
   if (outcome.kind === 'ready') {
-    if ((await queueReady(admin, outcome.row, now)) === 'queued') summary.queued += 1;
-    else summary.failed += 1;
+    countQueued(summary, await queueReady(admin, outcome.row, now));
     return;
   }
   const expired = now.getTime() - new Date(row.created_at).getTime() >= PORTAL_DOCUMENT_RETRY_WINDOW_MS;
   if (outcome.kind === 'failed' || expired) {
-    await markFailed(admin, row.id, outcome.error);
-    summary.failed += 1;
+    if (await markFailed(admin, row.id, outcome.error)) summary.failed += 1;
     return;
   }
   await retryLater(admin, row, attempts, outcome.error, now);
   summary.retried += 1;
+}
+
+/** Avbrutet eller ersatt räknas som misslyckat (det gick aldrig till butiken); det någon annan redan gjort räknas inte. */
+function countQueued(summary: PortalJobDocumentsSweepSummary, outcome: Awaited<ReturnType<typeof queueReady>>) {
+  if (outcome === 'queued') summary.queued += 1;
+  else if (outcome !== 'already') summary.failed += 1;
+}
+
+/**
+ * De jobb vars job.confirmed levererats sedan `since`, senaste först. sent_at sätts bara när portalen tagit emot
+ * händelsen (outcomeUpdate), så fönstret tar bara levererade; grinden prövar ändå varje jobb innan ett beslut läggs.
+ * HELA fönstret läses, i sidor: med bara de senaste hade ett jobb vars beslut föll på ett tillfälligt fel aldrig kommit
+ * tillbaka. Den sista ordningen är unik (idempotency_key), annars kan .range() hoppa över eller upprepa rader.
+ */
+async function confirmedInWindow(admin: SupabaseClient, since: string): Promise<string[]> {
+  const PAGE = 500;
+  const ids = new Set<string>();
+  for (let from = 0; from < 20 * PAGE; from += PAGE) {
+    const { data, error } = await admin
+      .from('portal_outbound_events')
+      .select('payload')
+      .like('idempotency_key', 'job.confirmed-%')
+      .gt('sent_at', since)
+      .order('sent_at', { ascending: false })
+      .order('idempotency_key', { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(error.message);
+    const rows = (data ?? []) as { payload: { data?: { quoteId?: unknown } } | null }[];
+    for (const r of rows) {
+      const q = r.payload?.data?.quoteId;
+      if (typeof q === 'string' && q.length > 0) ids.add(q);
+    }
+    if (rows.length < PAGE) break;
+  }
+  return [...ids];
 }
 
 async function retryLater(admin: SupabaseClient, row: DocumentRow, attempts: number, error: string, now: Date): Promise<void> {

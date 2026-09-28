@@ -11,7 +11,6 @@ import {
   portalJobDocumentKey,
   portalJobDocumentName,
   portalJobDocumentPath,
-  portalJobDocumentSupersedeKey,
 } from '@/lib/domains/portal/jobDocuments';
 import { egenkontrollFileName, egenkontrollFilenamePart } from '@/lib/domains/egenkontroll/filename';
 
@@ -55,14 +54,18 @@ describe('köns händelse', () => {
     readyAt: '2026-10-12T08:30:00.123456+00:00',
   };
 
-  it('nyckeln ur dokumentets id (som job.message-<id>), i jobbets kö, och en nyare av samma sort ersätter', () => {
+  it('nyckeln ur dokumentets id (som job.message-<id>), i jobbets kö', () => {
     const event = buildPortalJobDocumentEvent(row);
     expect(event.idempotencyKey).toBe(`job.document-${row.id}`);
     expect(event.idempotencyKey).toBe(portalJobDocumentKey(row.id));
     expect(event.path).toBe('/api/ekovilla/events');
     expect(event.orderingKey).toBe('job:q-1');
-    expect(event.supersedeKey).toBe('job.document:q-1:order_confirmation');
-    expect(portalJobDocumentSupersedeKey('q-1', 'self_inspection')).toBe('job.document:q-1:self_inspection');
+  });
+
+  it('🧨 ingen supersedeKey: kön ersätter i den ordning händelserna kom, men det senast BESLUTADE ska vinna', () => {
+    // Utskicket hoppar över ett dokument som ett senare beslut ersatt (outboundContent.ts). En supersedeKey hade låtit en
+    // äldre som köades sent ersätta en nyare som väntade.
+    expect(buildPortalJobDocumentEvent(row)).not.toHaveProperty('supersedeKey');
   });
 
   it('kroppen bär referensen, aldrig innehållet; tiden som …Z med millisekunder', () => {
@@ -171,6 +174,13 @@ describe('egenkontrollen hör till ordern', () => {
 
   it('tomma nummer räknas aldrig', () => {
     expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_.pdf'), ['', null, undefined])).toBe(false);
+  });
+
+  it('en kund vars namn rensas bort helt: `Egenkontroll__22.pdf` hör ändå till order 22', () => {
+    const saved = `Egenkontroller/${egenkontrollFileName('Пётр', '22')}`;
+    expect(saved).toBe('Egenkontroller/Egenkontroll__22.pdf');
+    expect(egenkontrollBelongsToOrder(saved, ['22'])).toBe(true);
+    expect(egenkontrollBelongsToOrder('Egenkontroller/Egenkontroll_22.pdf', ['22'])).toBe(false);
     expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_6579.pdf'), [])).toBe(false);
   });
 });

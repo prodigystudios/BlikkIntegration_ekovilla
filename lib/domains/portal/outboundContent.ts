@@ -12,6 +12,11 @@ import {
  * Köns kropp som den skickas (RESELLER_PORTAL_CRM_PLAN.md fas 7). De flesta händelser skickas som de köades. Ett
  * dokument (job.document) köas med en referens till den frysta PDF:en (`contentRef`), och här byts referensen mot
  * filens innehåll i base64, vid varje försök:
+ *   - först: är det fortfarande det senast BESLUTADE dokumentet av sin sort på jobbet? Annars skickas det aldrig
+ *     ('skip', kön markerar det ersatt). Provet görs här, precis före sändningen, eftersom kön skickar ett jobbs
+ *     händelser en i taget: ingen annan kan köa eller skicka för jobbet mellan provet och anropet. Kön ersätter inte
+ *     dokument själv (ingen supersedeKey): den ersätter i den ordning händelserna KOM, och en äldre som köades sent hade
+ *     då ersatt en nyare;
  *   - filen hämtas ur bucketen med service-rollen;
  *   - storleken, `%PDF-` och sha256 kontrolleras mot referensen, så att samma Idempotency-Key aldrig ger andra byte
  *     (portalen svarar 422 på det);
@@ -27,7 +32,9 @@ export type PreparedPortalPayload =
   /** Går att göra om: lagringen svarade inte. Räknas som ett försök. */
   | { kind: 'retry'; error: string }
   /** Blir aldrig rätt: ingen fil, eller en fil som inte stämmer med kön. Ges upp. */
-  | { kind: 'dead'; error: string };
+  | { kind: 'dead'; error: string }
+  /** Ska inte skickas: ett senare beslut av samma sort finns. Kön markerar händelsen ersatt. */
+  | { kind: 'skip'; error: string };
 
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -81,6 +88,28 @@ export async function preparePortalPayload(admin: SupabaseClient, payload: unkno
   if (ref.bytes > PORTAL_JOB_DOCUMENT_MAX_BYTES) {
     return { kind: 'dead', error: `dokumentet: ${ref.bytes} byte, portalen tar emot högst ${PORTAL_JOB_DOCUMENT_MAX_BYTES}` };
   }
+
+  // Det senast beslutade dokumentet av sin sort vinner (kortet visar det; butiken behåller det senast mottagna).
+  const decided = await admin
+    .from('crm_portal_job_documents')
+    .select('quote_id, kind, status, created_at')
+    .eq('id', ref.documentId)
+    .maybeSingle();
+  if (decided.error) return { kind: 'retry', error: `dokumentet: raden kunde inte läsas: ${decided.error.message}` };
+  const own = decided.data as { quote_id: string; kind: string; status: string; created_at: string } | null;
+  if (!own || own.quote_id !== data.quoteId || own.kind !== data.kind || own.status !== 'ready') {
+    return { kind: 'dead', error: 'dokumentet: raden stämmer inte med kön' };
+  }
+  const newer = await admin
+    .from('crm_portal_job_documents')
+    .select('id')
+    .eq('quote_id', own.quote_id)
+    .eq('kind', own.kind)
+    .eq('status', 'ready')
+    .gt('created_at', own.created_at)
+    .limit(1);
+  if (newer.error) return { kind: 'retry', error: `dokumentet: nyare kunde inte läsas: ${newer.error.message}` };
+  if ((newer.data ?? []).length > 0) return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };
 
   const downloaded = await admin.storage
     .from(PORTAL_JOB_DOCUMENTS_BUCKET)

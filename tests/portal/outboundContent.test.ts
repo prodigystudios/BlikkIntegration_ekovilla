@@ -49,8 +49,18 @@ function stored(bytes: Uint8Array, over: Partial<Parameters<typeof buildPortalJo
   return buildPortalJobDocumentEvent(row);
 }
 
-function withFile(bytes: Uint8Array | null) {
-  const db = memoryAdmin();
+/** Dokumentets rad, som utskicket läser för att se att det är det senast beslutade av sin sort. */
+const docRow = (over: Record<string, unknown> = {}) => ({
+  id: DOC_ID,
+  quote_id: 'q-1',
+  kind: 'order_confirmation',
+  status: 'ready',
+  created_at: '2026-10-12T08:28:00.000Z',
+  ...over,
+});
+
+function withFile(bytes: Uint8Array | null, rows: Record<string, unknown>[] = [docRow()]) {
+  const db = memoryAdmin({ crm_portal_job_documents: rows });
   if (bytes) db.files.set(`${PORTAL_JOB_DOCUMENTS_BUCKET}/${portalJobDocumentPath('q-1', DOC_ID)}`, bytes);
   return db;
 }
@@ -127,7 +137,50 @@ describe('preparePortalPayload', () => {
     const bytes = pdf();
     const { admin, calls } = withFile(bytes);
     await preparePortalPayload(admin, stored(bytes).payload);
-    expect(calls).toEqual([{ table: `storage:${PORTAL_JOB_DOCUMENTS_BUCKET}`, op: 'select', values: `q-1/${DOC_ID}.pdf`, filters: [] }]);
+    expect(calls.filter((c) => c.table.startsWith('storage:'))).toEqual([
+      { table: `storage:${PORTAL_JOB_DOCUMENTS_BUCKET}`, op: 'select', values: `q-1/${DOC_ID}.pdf`, filters: [] },
+    ]);
+  });
+
+  it('🧨 ett senare beslut av samma sort finns: skickas aldrig, och filen läses inte', async () => {
+    const bytes = pdf();
+    const { admin, calls } = withFile(bytes, [
+      docRow(),
+      docRow({ id: 'd-senare', created_at: '2026-10-12T08:29:00.000Z' }),
+    ]);
+    expect(await preparePortalPayload(admin, stored(bytes).payload)).toEqual({ kind: 'skip', error: 'dokumentet: ersatt av ett senare' });
+    expect(calls.filter((c) => c.table.startsWith('storage:'))).toEqual([]);
+  });
+
+  it('ett senare som inte är fryst, eller av en annan sort, eller på ett annat jobb, ersätter inte', async () => {
+    const bytes = pdf();
+    for (const later of [
+      docRow({ id: 'd-2', created_at: '2026-10-12T08:29:00.000Z', status: 'building' }),
+      docRow({ id: 'd-3', created_at: '2026-10-12T08:29:00.000Z', status: 'failed' }),
+      docRow({ id: 'd-4', created_at: '2026-10-12T08:29:00.000Z', kind: 'self_inspection' }),
+      docRow({ id: 'd-5', created_at: '2026-10-12T08:29:00.000Z', quote_id: 'q-2' }),
+    ]) {
+      const { admin } = withFile(bytes, [docRow(), later]);
+      expect((await preparePortalPayload(admin, stored(bytes).payload)).kind, String(later.id)).toBe('ready');
+    }
+  });
+
+  it('en rad som inte stämmer med kön (saknas, annat jobb, annan sort, inte fryst) ges upp', async () => {
+    const bytes = pdf();
+    for (const rows of [[], [docRow({ quote_id: 'q-2' })], [docRow({ kind: 'self_inspection' })], [docRow({ status: 'failed' })]]) {
+      const { admin } = withFile(bytes, rows);
+      expect(await preparePortalPayload(admin, stored(bytes).payload), JSON.stringify(rows)).toEqual({
+        kind: 'dead',
+        error: 'dokumentet: raden stämmer inte med kön',
+      });
+    }
+  });
+
+  it('raden går inte att läsa: görs om', async () => {
+    const bytes = pdf();
+    const { admin, failOn } = withFile(bytes);
+    failOn((c) => c.table === 'crm_portal_job_documents', { message: 'nere' });
+    expect((await preparePortalPayload(admin, stored(bytes).payload)).kind).toBe('retry');
   });
 
   it('en trasig referens ges upp utan att något läses', async () => {
@@ -165,6 +218,14 @@ describe('preparePortalPayload', () => {
 });
 
 describe('preparationFailureUpdate', () => {
+  it('ersatt: aldrig skickad, och räknas inte som ett misslyckande', () => {
+    expect(preparationFailureUpdate({ attempts: 1 }, { kind: 'skip', error: 'x' }, NOW)).toEqual({
+      status: 'superseded',
+      last_http_status: null,
+      last_error: 'x',
+    });
+  });
+
   it('uppgiven med felet, utan HTTP-status', () => {
     expect(preparationFailureUpdate({ attempts: 1 }, { kind: 'dead', error: 'x' }, NOW)).toEqual({
       status: 'dead',
@@ -197,6 +258,7 @@ describe('dispatchPortalOutbox med ett dokument', () => {
     const event = stored(pdf(2000));
     const db = memoryAdmin(
       {
+        crm_portal_job_documents: [docRow()],
         portal_outbound_events: [
           {
             id: 'ev-doc',
@@ -283,6 +345,66 @@ describe('dispatchPortalOutbox med ett dokument', () => {
       status: 'pending',
       next_attempt_at: new Date(NOW.getTime() + 30_000).toISOString(),
       last_error: 'dokumentet: filen kunde inte hämtas: nere',
+    });
+  });
+
+  it('🧨 en äldre som köades EFTER en nyare (granskningens förlopp) skickas aldrig; den nyare kommer fram', async () => {
+    const older = pdf(2000);
+    const newer = pdf(3000);
+    const NEWER_ID = '8e1c9f6f-2b3c-4d4e-8f9a-1b2c3d4e5f60';
+    const olderEvent = stored(older);
+    const newerEvent = buildPortalJobDocumentEvent({
+      id: NEWER_ID,
+      quoteId: 'q-1',
+      kind: 'order_confirmation',
+      name: 'Orderbekräftelse 26 – Rönnvägen 18, Gävle.pdf',
+      sha256: sha256Hex(newer),
+      byteSize: newer.length,
+      readyAt: '2026-10-12T08:29:30.000Z',
+    });
+    const row = (id: string, seq: number, e: ReturnType<typeof stored>) => ({
+      id,
+      seq,
+      idempotency_key: e.idempotencyKey,
+      path: e.path,
+      payload: e.payload,
+      ordering_key: e.orderingKey,
+      status: 'pending',
+      attempts: 0,
+      next_attempt_at: NOW.toISOString(),
+    });
+    const db = memoryAdmin(
+      {
+        crm_portal_job_documents: [docRow(), docRow({ id: NEWER_ID, created_at: '2026-10-12T08:29:00.000Z' })],
+        // Den nyare köades FÖRST (lägre seq), den äldre sist.
+        portal_outbound_events: [row('ev-new', 1, newerEvent), row('ev-old', 2, olderEvent)],
+      },
+      {
+        rpc: (name, _args, tables) => {
+          if (name !== 'claim_portal_outbound_events') return null;
+          // Claim-funktionens regel: den första väntande per jobb.
+          const head = tables.portal_outbound_events.filter((r) => r.status === 'pending').sort((a, b) => Number(a.seq) - Number(b.seq))[0];
+          if (!head) return [];
+          Object.assign(head, { status: 'sending', claimed_at: NOW.toISOString(), attempts: Number(head.attempts) + 1 });
+          return [structuredClone(head)];
+        },
+      },
+    );
+    db.files.set(`${PORTAL_JOB_DOCUMENTS_BUCKET}/${portalJobDocumentPath('q-1', DOC_ID)}`, older);
+    db.files.set(`${PORTAL_JOB_DOCUMENTS_BUCKET}/${portalJobDocumentPath('q-1', NEWER_ID)}`, newer);
+    const bodies: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body));
+      return new Response('', { status: 200 });
+    }) as unknown as typeof fetch;
+
+    expect(await dispatchPortalOutbox(db.admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW })).toMatchObject({ sent: 1 });
+    expect(await dispatchPortalOutbox(db.admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW })).toMatchObject({ sent: 0, superseded: 1 });
+    expect(bodies).toHaveLength(1);
+    expect(new Uint8Array(Buffer.from(JSON.parse(bodies[0]).data.contentBase64, 'base64'))).toEqual(newer);
+    expect(db.tables.portal_outbound_events.find((e) => e.id === 'ev-old')).toMatchObject({
+      status: 'superseded',
+      last_error: 'dokumentet: ersatt av ett senare',
     });
   });
 

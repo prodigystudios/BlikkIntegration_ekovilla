@@ -100,7 +100,12 @@ export async function runPortalCron(
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
   if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
-      sweepPortalJobDocuments(admin, { now, sources: options.documentSources ?? portalDocumentSources(admin, options.env) }),
+      sweepPortalJobDocuments(admin, {
+        now,
+        sources: options.documentSources ?? portalDocumentSources(admin, options.env),
+        // Ett bygge per klick: ett långsamt Fortnox (klienten har ingen tidsgräns) får inte dra klicket förbi 180 s.
+        builds: options.fortnoxRetries === false ? 1 : undefined,
+      }),
     );
     if (queuedSomething(summary.documents)) {
       summary.documentsDispatch = await step('utskicket efter dokumenten', () =>

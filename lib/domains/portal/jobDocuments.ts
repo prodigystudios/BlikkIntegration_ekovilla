@@ -43,11 +43,6 @@ export function portalJobDocumentKey(documentId: string): string {
   return `job.document-${documentId}`;
 }
 
-/** En nyare version av samma sort ersätter en äldre som ännu väntar i kön: bara den senaste behöver fram. */
-export function portalJobDocumentSupersedeKey(quoteId: string, kind: PortalJobDocumentKind): string {
-  return `job.document:${quoteId}:${kind}`;
-}
-
 /** Den frysta filens plats i bucketen. Härledd ur raden, aldrig läst ur något annat. */
 export function portalJobDocumentPath(quoteId: string, documentId: string): string {
   return `${quoteId}/${documentId}.pdf`;
@@ -98,7 +93,8 @@ export function egenkontrollBelongsToOrder(path: string, orderNumbers: readonly 
     const part = egenkontrollFilenamePart(n ?? '').toLowerCase();
     if (!part) return false;
     const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`^egenkontroll_.+_${escaped}(?:-\\d+(?:-[a-z0-9]{1,6})?)?\\.pdf$`).test(fileName);
+    // `.*`: en kund vars namn rensas bort helt (bara kyrilliska tecken, bara skiljetecken) ger `Egenkontroll__22.pdf`.
+    return new RegExp(`^egenkontroll_.*_${escaped}(?:-\\d+(?:-[a-z0-9]{1,6})?)?\\.pdf$`).test(fileName);
   });
 }
 
@@ -126,7 +122,8 @@ export function buildPortalJobDocumentEvent(row: PortalJobDocumentReadyRow) {
     idempotencyKey: portalJobDocumentKey(row.id),
     path: PORTAL_EVENTS_PATH,
     orderingKey: portalJobOrderingKey(row.quoteId),
-    supersedeKey: portalJobDocumentSupersedeKey(row.quoteId, row.kind),
+    // Ingen supersedeKey: kön ersätter i den ordning händelserna kom, och det senast BESLUTADE ska vinna. Utskicket
+    // hoppar över ett dokument som ett senare beslut ersatt (outboundContent.ts).
     payload: {
       type: 'job.document' as const,
       occurredAt: new Date(row.readyAt).toISOString(),

@@ -147,6 +147,8 @@ export type OutboxDispatchSummary =
       dead: number;
       /** Tagna men inte skickade, eftersom tiden tog slut; tillbaka i kön utan att ett försök räknats. */
       returned: number;
+      /** Tagna men aldrig skickade: ett senare dokument av samma sort finns (outboundContent.ts). */
+      superseded: number;
       /** Resultatet kunde inte bokföras, eller claimen var inte längre vår. */
       bookkeepingErrors: number;
     };
@@ -194,6 +196,7 @@ export function preparationFailureUpdate(
   now: Date,
 ): Record<string, unknown> {
   const error = safeExcerpt(failure.error, 500);
+  if (failure.kind === 'skip') return { status: 'superseded', last_http_status: null, last_error: error };
   if (failure.kind === 'dead' || event.attempts >= PORTAL_OUTBOX_MAX_ATTEMPTS) {
     return { status: 'dead', last_http_status: null, last_error: error };
   }
@@ -250,7 +253,16 @@ export async function dispatchPortalOutbox(
   if (claimed.error) throw new Error(`Kön kunde inte läsas: ${claimed.error.message}`);
   const events = (claimed.data ?? []) as ClaimedEvent[];
 
-  const summary = { ran: true as const, claimed: events.length, sent: 0, retried: 0, dead: 0, returned: 0, bookkeepingErrors: 0 };
+  const summary = {
+    ran: true as const,
+    claimed: events.length,
+    sent: 0,
+    retried: 0,
+    dead: 0,
+    returned: 0,
+    superseded: 0,
+    bookkeepingErrors: 0,
+  };
   for (const event of events) {
     if (now().getTime() - startedAt >= budgetMs) {
       // Tiden är slut: lämna tillbaka resten utan att räkna ett försök som aldrig gjordes.
@@ -289,6 +301,7 @@ export async function dispatchPortalOutbox(
       continue;
     }
     if (update.status === 'sent') summary.sent += 1;
+    else if (update.status === 'superseded') summary.superseded += 1;
     else if (update.status === 'dead') {
       summary.dead += 1;
       console.warn('[portal-outbox] händelsen gavs upp', { key: event.idempotency_key, error: update.last_error });

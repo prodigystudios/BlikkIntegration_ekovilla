@@ -1514,6 +1514,14 @@ async function renderOrderDocument(
   return kind === 'order' ? renderOrderPdfDesign(input) : renderDeliveryNotePdf(input);
 }
 
+/** Orderbekräftelsen nekades: ordern har ROT, och anroparen bad om att inte få en sådan (`refuseRot`). */
+export class OrderPdfRotRefusedError extends Error {
+  constructor(orderNumber: string) {
+    super(`Order ${orderNumber} har ROT påslagen.`);
+    this.name = 'OrderPdfRotRefusedError';
+  }
+}
+
 // The order confirmation as a PDF — our own design since 2026-09-07 (ORDER_PDF_MODE).
 //
 // `mode: 'off'` är nödutgången och går till Fortnox utskriftsmall: `GET /orders/{n}/preview`. Vi
@@ -1523,10 +1531,13 @@ async function renderOrderDocument(
 // ändå PDF-binären. Se FORTNOX_INTEGRATION.md.
 export async function getFortnoxOrderPdf(
   workOrderId: string,
-  options: { mode?: OrderPdfMode } = {},
+  options: { mode?: OrderPdfMode; refuseRot?: boolean } = {},
 ): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
   const order = await requireOrderNumber(workOrderId);
   const { orderNumber, projectName } = order;
+  // Återförsäljarportalen (fas 7): orderbekräftelsen på en ROT-order skriver ut sökandens personnummer, och den ska inte
+  // till en butik. Prövas på SAMMA läsning som renderingen använder, så att prövningen och dokumentet aldrig kan skilja sig.
+  if (options.refuseRot && order.rotEnabled) throw new OrderPdfRotRefusedError(orderNumber);
 
   if ((options.mode ?? ORDER_PDF_MODE) === 'design') {
     return { bytes: await renderOrderDocument(order, 'order'), contentType: 'application/pdf', orderNumber, projectName };
