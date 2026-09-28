@@ -1,0 +1,256 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { listCachedFortnoxArticles } from '@/lib/domains/fortnox/articles';
+import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { listFortnoxPriceListPrices, RESELLER_PRICE_LIST_CODE } from '@/lib/domains/fortnox/priceLists';
+import type { PortalArticleFields } from './articleFields';
+import { listPortalArticleFields } from './articleFieldsStore';
+import { resolvePortalTarget } from './config';
+import { dispatchPortalOutbox, enqueuePortalEvent, type OutboxEventStatus } from './outbox';
+import {
+  PRICELIST_ORDERING_KEY,
+  PRICELIST_PATH,
+  buildPricelistDraft,
+  isAllowedValidFrom,
+  pricelistIdempotencyKey,
+  type ListPrice,
+  type PricelistDraft,
+  type PricelistPayload,
+  type RegisterArticle,
+} from './pricelist';
+
+/**
+ * Publiceringen av prislistan (RESELLER_PORTAL_CRM_PLAN.md fas 2b): läser källorna, sparar publiceringen, köar den och
+ * gör ett första utskick. Reglerna för innehållet bor i ./pricelist.ts.
+ *
+ * Två klienter, med flit:
+ *   sessionen     portalfälten, publiceringarna och köns status. RLS (crm.portal.manage) är grinden.
+ *   service-rollen kön skrivs och töms bara av service_role (fas 1b), och artikelregistret läses som artikelsidan
+ *                 läser det. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
+ */
+
+export type PricelistSources = {
+  fields: () => Promise<PortalArticleFields[]>;
+  register: (articleNumbers: string[]) => Promise<RegisterArticle[]>;
+  prices: () => Promise<ListPrice[]>;
+};
+
+export function pricelistSources(session: SupabaseClient): PricelistSources {
+  return {
+    fields: () => listPortalArticleFields(session),
+    register: async (articleNumbers) =>
+      articleNumbers.length ? listCachedFortnoxArticles({ activeOnly: false, numbers: articleNumbers }) : [],
+    prices: () => listFortnoxPriceListPrices(RESELLER_PRICE_LIST_CODE),
+  };
+}
+
+/** Utkastet som det ser ut nu: portalfälten, lista 160 ur Fortnox och registret för artiklarna på någon av dem. */
+export async function loadPricelistDraft(sources: PricelistSources): Promise<PricelistDraft> {
+  const [fields, prices] = await Promise.all([sources.fields(), sources.prices()]);
+  const numbers = [...new Set([...fields.map((f) => f.article_number), ...prices.map((p) => p.articleNumber)])].sort();
+  const register = await sources.register(numbers);
+  return buildPricelistDraft({ fields, register, prices });
+}
+
+/** Ett fel från källorna, som en användare kan läsa. Fortnox egna fel översätts; andra får sitt eget meddelande. */
+export function describeSourceError(e: unknown): string {
+  if (e instanceof FortnoxNotConnectedError || e instanceof FortnoxApiError) {
+    return `Lista ${RESELLER_PRICE_LIST_CODE} gick inte att läsa: ${friendlyFortnoxMessage(e)}`;
+  }
+  return e instanceof Error ? e.message : 'Prislistan gick inte att läsa.';
+}
+
+// ----------------------------------------------------------------------------------------------------- leveransen
+
+export type PricelistDelivery = {
+  /** `not_queued`: publiceringen finns men händelsen gick inte att köa. En ny publicering köar den. */
+  status: OutboxEventStatus | 'not_queued';
+  attempts: number;
+  lastHttpStatus: number | null;
+  lastError: string | null;
+  sentAt: string | null;
+};
+
+const DELIVERY_SELECT = 'idempotency_key, status, attempts, last_http_status, last_error, sent_at';
+
+type DeliveryRow = {
+  idempotency_key: string;
+  status: OutboxEventStatus;
+  attempts: number;
+  last_http_status: number | null;
+  last_error: string | null;
+  sent_at: string | null;
+};
+
+const NOT_QUEUED: PricelistDelivery = { status: 'not_queued', attempts: 0, lastHttpStatus: null, lastError: null, sentAt: null };
+
+function toDelivery(row: DeliveryRow | undefined): PricelistDelivery {
+  if (!row) return NOT_QUEUED;
+  return {
+    status: row.status,
+    attempts: row.attempts,
+    lastHttpStatus: row.last_http_status,
+    lastError: row.last_error,
+    sentAt: row.sent_at,
+  };
+}
+
+async function readDeliveries(client: SupabaseClient, keys: string[]): Promise<Map<string, PricelistDelivery>> {
+  if (keys.length === 0) return new Map();
+  const { data, error } = await client.from('portal_outbound_events').select(DELIVERY_SELECT).in('idempotency_key', keys);
+  if (error) throw new Error(`Utskickens status gick inte att läsa: ${error.message}`);
+  return new Map(((data ?? []) as DeliveryRow[]).map((row) => [row.idempotency_key, toDelivery(row)]));
+}
+
+// ---------------------------------------------------------------------------------------------------- historiken
+
+export type PricelistPublication = {
+  id: string;
+  validFrom: string;
+  contentHash: string;
+  idempotencyKey: string;
+  articleCount: number;
+  publishedByName: string | null;
+  createdAt: string;
+  delivery: PricelistDelivery;
+};
+
+/** De senaste publiceringarna med utskickets status. Sessionsklienten: båda tabellerna kräver crm.portal.manage. */
+export async function listPricelistPublications(session: SupabaseClient, limit = 10): Promise<PricelistPublication[]> {
+  const { data, error } = await session
+    .from('crm_portal_pricelist_publications')
+    .select('id, valid_from, content_hash, idempotency_key, article_count, published_by_name, created_at')
+    .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`Publiceringarna gick inte att läsa: ${error.message}`);
+  const rows = (data ?? []) as {
+    id: string;
+    valid_from: string;
+    content_hash: string;
+    idempotency_key: string;
+    article_count: number;
+    published_by_name: string | null;
+    created_at: string;
+  }[];
+  const deliveries = await readDeliveries(session, rows.map((r) => r.idempotency_key));
+  return rows.map((r) => ({
+    id: r.id,
+    validFrom: r.valid_from,
+    contentHash: r.content_hash,
+    idempotencyKey: r.idempotency_key,
+    articleCount: r.article_count,
+    publishedByName: r.published_by_name,
+    createdAt: r.created_at,
+    delivery: deliveries.get(r.idempotency_key) ?? NOT_QUEUED,
+  }));
+}
+
+// ---------------------------------------------------------------------------------------------------- publiceringen
+
+export type PublishPricelistResult =
+  | { kind: 'integration_off'; message: string }
+  | { kind: 'invalid_valid_from' }
+  | { kind: 'source_error'; message: string }
+  | { kind: 'empty' }
+  | { kind: 'changed' }
+  | { kind: 'forbidden' }
+  | { kind: 'db_error'; message: string }
+  | {
+      kind: 'published';
+      created: boolean;
+      idempotencyKey: string;
+      articleCount: number;
+      /** null = statusen gick inte att läsa efter utskicket; publiceringen och händelsen finns. */
+      delivery: PricelistDelivery | null;
+    };
+
+/** Ett första utskick direkt efter publiceringen: få händelser och kort tid, så att knappen svarar snabbt. */
+const PUBLISH_DISPATCH = { limit: 5, budgetMs: 15_000 };
+
+/**
+ * Publicerar prislistan som den ser ut NU. Utkastet byggs om här, inte ur klientens kropp, och `expectedHash` är
+ * hashen på förhandsvisningen som användaren såg: har något ändrats sedan dess blir det `changed` och inget sparas.
+ *
+ * Ordningen, och varför den tål ett avbrott var som helst:
+ *   1. publiceringen sparas (sessionen; samma nyckel en gång till = samma rad),
+ *   2. händelsen köas (service-rollen; samma nyckel = samma händelse),
+ *   3. ett första utskick. Det som inte hinner eller inte går fram ligger kvar i kön.
+ * Dör anropet efter 1 står publiceringen som "inte köad", och samma publicering en gång till köar den.
+ */
+export async function publishPricelist(
+  deps: {
+    session: SupabaseClient;
+    admin: SupabaseClient;
+    env: Record<string, string | undefined>;
+    sources: PricelistSources;
+    today: string;
+    actor: { id: string; name: string | null };
+    fetchImpl?: typeof fetch;
+  },
+  input: { validFrom: string; expectedHash: string },
+): Promise<PublishPricelistResult> {
+  // Avstängd integration: ingenting köas, så att en gammal lista inte går iväg den dag hemligheten sätts.
+  const target = resolvePortalTarget(deps.env);
+  if (!target.ok) return { kind: 'integration_off', message: target.message };
+  if (!isAllowedValidFrom(input.validFrom, deps.today)) return { kind: 'invalid_valid_from' };
+
+  let draft: PricelistDraft;
+  try {
+    draft = await loadPricelistDraft(deps.sources);
+  } catch (e) {
+    return { kind: 'source_error', message: describeSourceError(e) };
+  }
+  if (draft.articles.length === 0) return { kind: 'empty' };
+  if (draft.hash !== input.expectedHash) return { kind: 'changed' };
+
+  const idempotencyKey = pricelistIdempotencyKey(input.validFrom, draft.hash);
+  const payload: PricelistPayload = { validFrom: input.validFrom, resellerId: null, articles: draft.articles };
+
+  const inserted = await deps.session
+    .from('crm_portal_pricelist_publications')
+    .upsert(
+      {
+        valid_from: input.validFrom,
+        content_hash: draft.hash,
+        idempotency_key: idempotencyKey,
+        payload,
+        article_count: draft.articles.length,
+        published_by: deps.actor.id,
+        published_by_name: deps.actor.name ? deps.actor.name.slice(0, 200) : null,
+      },
+      // ON CONFLICT DO NOTHING: sessionen har ingen update, och publiceringen ska aldrig skrivas om.
+      { onConflict: 'idempotency_key', ignoreDuplicates: true },
+    )
+    .select('id');
+  if (inserted.error) {
+    if (inserted.error.code === '42501') return { kind: 'forbidden' };
+    return { kind: 'db_error', message: inserted.error.message };
+  }
+  const created = (inserted.data ?? []).length > 0;
+
+  try {
+    await enqueuePortalEvent(deps.admin, {
+      idempotencyKey,
+      path: PRICELIST_PATH,
+      payload,
+      orderingKey: PRICELIST_ORDERING_KEY,
+    });
+  } catch (e) {
+    return { kind: 'db_error', message: e instanceof Error ? e.message : 'Publiceringen kunde inte köas.' };
+  }
+
+  try {
+    await dispatchPortalOutbox(deps.admin, { env: deps.env, ...PUBLISH_DISPATCH, fetchImpl: deps.fetchImpl });
+  } catch (e) {
+    // Händelsen ligger i kön; utskicket görs om med "Skicka väntande nu" (och av utskicket i fas 4b).
+    console.error('[portal-pricelist] första utskicket misslyckades', e instanceof Error ? e.message : e);
+  }
+
+  let delivery: PricelistDelivery | null = null;
+  try {
+    delivery = (await readDeliveries(deps.admin, [idempotencyKey])).get(idempotencyKey) ?? NOT_QUEUED;
+  } catch (e) {
+    console.error('[portal-pricelist] status efter utskicket', e instanceof Error ? e.message : e);
+  }
+  return { kind: 'published', created, idempotencyKey, articleCount: draft.articles.length, delivery };
+}

@@ -12,7 +12,7 @@ type Shape = (string | Record<string, string[]>)[];
 const CRM_NAV_BEFORE_KEYS: Record<UserRole, Shape> = {
   member: [],
   sales: ['/crm', '/crm/kunder', '/crm/offerter', '/crm/arbetsorder', '/crm/planering', '/crm/samtal', '/crm/uppgifter', '/crm/saljtavla', '/crm/rapportering', '/crm/coach', '/crm/dokument', '/crm/korjournal'],
-  admin: ['/crm', '/crm/kunder', '/crm/offerter', '/crm/arbetsorder', '/crm/planering', '/crm/samtal', '/crm/uppgifter', '/crm/saljtavla', '/crm/rapportering', '/crm/ringlistor', '/crm/ai-prospekt', '/crm/coach', '/crm/dokument', '/crm/korjournal', {'/crm/installningar':  ['/crm/installningar', '/crm/installningar/artiklar', '/crm/installningar/enheter']}],
+  admin: ['/crm', '/crm/kunder', '/crm/offerter', '/crm/arbetsorder', '/crm/planering', '/crm/samtal', '/crm/uppgifter', '/crm/saljtavla', '/crm/rapportering', '/crm/ringlistor', '/crm/ai-prospekt', '/crm/coach', '/crm/dokument', '/crm/korjournal', {'/crm/installningar':  ['/crm/installningar', '/crm/installningar/artiklar', '/crm/installningar/enheter', '/crm/installningar/aterforsaljarportalen']}],
   konsult: ['/crm', '/crm/kunder', '/crm/offerter', '/crm/arbetsorder', '/crm/planering', '/crm/samtal', '/crm/uppgifter', '/crm/saljtavla', '/crm/rapportering', '/crm/coach', '/crm/dokument', '/crm/korjournal'],
   ekonomi: [],
 };

@@ -26,6 +26,9 @@ export const PERMISSION_KEYS = [
   'crm.routingrule.read', 'crm.routingrule.manage',
   'crm.aiprospect.read', 'crm.aiprospect.manage',
   'crm.ringlist.manage', 'crm.article.manage', 'crm.unit.manage',
+  // Återförsäljarportalen: prislistan, butikerna och utskicken (20260928072725_portal_pricelist_publications.sql).
+  // Bara admin. Portalfälten per artikel redigeras fortfarande under crm.article.manage.
+  'crm.portal.manage',
   // Fortnox actions
   'fortnox.offer.push', 'fortnox.workorder.push', 'fortnox.invoice.create',
   'fortnox.customer.sync', 'fortnox.read',
