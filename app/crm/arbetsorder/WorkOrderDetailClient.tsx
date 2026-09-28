@@ -43,6 +43,7 @@ import { progressWorkItemsFromLineItems } from '@/lib/domains/crm/workOrderProgr
 import { useCustomerContact } from './useCustomerContact';
 import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
+import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -232,6 +233,7 @@ export default function WorkOrderDetailClient({
   homePath = '/crm/arbetsorder',
   homeLabel = 'Arbetsorder',
   showSafetyRounds = false,
+  portalJob = null,
 }: {
   workOrderId: string;
   fortnoxConnected: boolean;
@@ -256,6 +258,11 @@ export default function WorkOrderDetailClient({
    * alls — i stället för att fråga och få 403.
    */
   showSafetyRounds?: boolean;
+  /**
+   * Kom ordern från återförsäljarportalen? Läses av sidan på servern (lib/domains/portal/jobBadge.ts) och visas som
+   * en bricka i sidhuvudet. null = en vanlig order.
+   */
+  portalJob?: PortalJobBadge | null;
 }) {
   const router = useRouter();
   // Arbetsordern öppnas både från sin egen lista och från planeringskalendern. Utan det här
@@ -1039,6 +1046,16 @@ export default function WorkOrderDetailClient({
               {fortnoxConnected ? (
                 <span className={cn(crm.badge, syncStatusClass[workOrder.fortnox_order_sync_status])}>
                   Fortnox: {syncStatusLabel[workOrder.fortnox_order_sync_status]}
+                </span>
+              ) : null}
+              {/* Ursprunget är ett faktum, ingen status: vit och neutral, så att statusen äger färgen.
+                  Ett långt butiksnamn kortas i stället för att trycka raden bredare än telefonen. */}
+              {portalJob ? (
+                <span
+                  className={cn(crm.badge, 'min-w-0 max-w-full truncate border-slate-200 bg-white text-slate-600')}
+                  title={`Från återförsäljarportalen · ${portalJob.storeName} · offert ${portalJob.quoteNumber}`}
+                >
+                  Från återförsäljarportalen · {portalJob.storeName} · offert {portalJob.quoteNumber}
                 </span>
               ) : null}
             </div>
