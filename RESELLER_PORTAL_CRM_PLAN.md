@@ -640,6 +640,16 @@ Chromium, så att Chrome-kakorna för portalen inte rördes):
 - Engångsifyllnaden körs i migreringen efter triggrarna, rör inte `updated_at`, och efterkontrollen räknar om varje
   order och avbryter pushen om något inte stämmer.
 
+**Granskningen** (code-review high) fann två låsordningar som kunde ge deadlock, båda lagade:
+- Migreringen låser `ops_segments` först. Tog den ordern först (ALTER TABLE) och korten sist (CREATE TRIGGER) låste den
+  och ett kort som lades under pushen varandra (prövat med en långsam migrering: deadlock, pushen avbruten). Låset står
+  i ett `do`-block: `supabase db push` kör filen utan transaktionsblock, och där vägrar `LOCK TABLE` (prövat). Filen
+  körs ändå som en enda transaktion (prövat: ett fel i sista satsen rullade tillbaka den första).
+- Ett kort som byter order låser båda ordrarna i id-ordning. Appen byter aldrig order på ett kort i dag.
+Avfärdat: att vakten släpper varje funktion som tabellens ägare äger (en sådan funktion är en granskad migrering), att
+faktakortet inte uppdateras live (samma som resten av sidan; ordern ligger inte i realtime), och att egenkontrollen
+inte räknar pausade kort (beslutad definition).
+
 **Egenkontrollen** (`lookupCrmWorkOrderByNumber`) läser `planned_start_day` i stället för sitt eget uppslag i
 `ops_segments`, en fråga mindre. Skillnaden: ett pausat kort ger inte längre egenkontrollens datum. Svaret har samma form
 (`scheduled_day`), så `projectSource.ts` är oförändrad.
@@ -651,8 +661,8 @@ schema, och en triggerfunktion går inte att anropa via PostgREST.
 **Prövat:**
 - Migreringen i en tom tillfällig databas med stubbar, tre körningar; 24 mutationer av databasen, var och en fångad av
   efterkontrollen. Lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`.
-- `supabase/checks/work_order_planned_days.sql` med riktiga sessioner (13 steg), och 14 mutationer av funktionerna och
-  triggrarna, var och en röd på rätt steg.
+- `supabase/checks/work_order_planned_days.sql` med riktiga sessioner (13 steg), och 15 mutationer av funktionerna och
+  triggrarna, var och en röd på rätt steg. 25 mutationer av koden och migreringstexten röda i vitest.
 - Samtidigheten med två anslutningar i den tillfälliga databasen: två flyttar, två nya kort, och FK-låset före.
   Utan låset och med `for update` blev provet rött.
 - I webbläsaren (headless, dev-servern på :3002): säljaren lade kort på en order som admin har, genom planeringens
@@ -660,6 +670,9 @@ schema, och en triggerfunktion går inte att anropa via PostgREST.
   2026", en paus gav "20–21 okt. 2026", och `updated_at` stod kvar. Egenkontrollens uppslag gav 2026-10-20. Admin
   sparade önskat datum (updated_at bumpades, datumen stod kvar), och när korten togs bort stod det "Ej inplanerad".
   Ingen sidledsscroll på telefonbredd.
+
+**Ordningen till prod:** migreringen FÖRE koden. Koden läser kolumnerna, så en deploy utan migreringen ger 500 på
+arbetsordrarna.
 
 **Till fas 4b:**
 - `updated_at` säger inget om datumen. Markeringen "behöver synkas" ska vara en trigger på `crm_work_orders` som
