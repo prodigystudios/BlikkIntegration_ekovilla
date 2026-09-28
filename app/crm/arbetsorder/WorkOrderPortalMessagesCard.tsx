@@ -16,6 +16,8 @@ import {
   type PortalJobMessagesView,
   type PortalJobMessageView,
 } from '@/lib/domains/portal/jobMessages';
+import { portalWhen } from './portalWhen';
+import WorkOrderPortalDocuments from './WorkOrderPortalDocuments';
 
 // Kortet "Butiken": samtalet med återförsäljaren om jobbet (RESELLER_PORTAL_CRM_PLAN.md fas 6). Överst i sidokolumnen
 // (William 2026-09-28), långt från de interna kommentarerna längst ned på sidan.
@@ -44,21 +46,6 @@ const AFTER_SEND_RELOADS_MS = [3_000, 10_000];
 /** Räknaren visas först när det börjar bli trångt. */
 const COUNTER_FROM = PORTAL_JOB_MESSAGE_MAX_CHARS - 500;
 
-const stockholmDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', year: 'numeric', month: '2-digit', day: '2-digit' });
-const stockholmTime = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', hour: '2-digit', minute: '2-digit' });
-const stockholmDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', day: 'numeric', month: 'short' });
-const stockholmDateYear = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', day: 'numeric', month: 'short', year: 'numeric' });
-
-/** "08:14" i dag, "12 okt. 08:14" i år, annars med året. Svensk tid, som resten av CRM:et. */
-function when(iso: string, now: Date): string {
-  const at = new Date(iso);
-  if (Number.isNaN(at.getTime())) return '';
-  const time = stockholmTime.format(at);
-  if (stockholmDay.format(at) === stockholmDay.format(now)) return time;
-  const sameYear = stockholmDay.format(at).slice(0, 4) === stockholmDay.format(now).slice(0, 4);
-  return `${(sameYear ? stockholmDate : stockholmDateYear).format(at)} ${time}`;
-}
-
 function newDraftId(): string {
   return crypto.randomUUID();
 }
@@ -78,7 +65,7 @@ function Message({ message, now }: { message: PortalJobMessageView; now: Date })
         <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
           <span className="font-semibold text-slate-900">{portalJobMessageByline(message)}</span>
           <time dateTime={message.sentAt} className="text-xs text-slate-500">
-            {when(message.sentAt, now)}
+            {portalWhen(message.sentAt, now)}
           </time>
         </div>
         <p className="m-0 whitespace-pre-wrap break-words leading-relaxed text-slate-700">{message.body}</p>
@@ -325,6 +312,8 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
       ) : view && canEdit ? (
         <p className={cn(crm.micro, 'm-0 border-t border-[#e0e8dc] pt-3')}>Bara den som har ordern, eller en admin, kan svara butiken.</p>
       ) : null}
+
+      <WorkOrderPortalDocuments workOrderId={workOrderId} canEdit={canEdit} />
     </section>
   );
 }

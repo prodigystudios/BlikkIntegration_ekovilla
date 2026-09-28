@@ -12,6 +12,12 @@
  * En unik nyckel och `onConflict` kan vara sammansatta ('direction,message_id'), och `order` kan ges flera gånger.
  * `rpc` svarar med testets `rpc`-funktion; anropet står i `calls` som tabellen `rpc:<namn>` med argumenten som värden.
  *
+ * `like` följer SQL: `%` är vad som helst, `_` ett tecken.
+ * `storage` är en lagring i minnet (`files`, nyckeln `<bucket>/<sökväg>`): `upload` skriver aldrig över (som
+ * `upsert: false`) och svarar då som Supabase ("already exists", 409); `download` svarar med en Blob, eller "Object not
+ * found" (404). Anropen står i `calls` som tabellen `storage:<bucket>` (op `insert` för upload, `select` för download),
+ * så att `failOn` kan få dem att falla.
+ *
  * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång. `canUpdate` spelar RLS på
  * UPDATE: en rad den säger nej till ändras inte och kommer inte tillbaka, utan fel, som i PostgREST. `beforeExecute`
  * körs före varje fråga, med tabellerna: så spelar ett test upp något som en annan hann göra i samma stund.
@@ -19,7 +25,7 @@
 
 type Row = Record<string, unknown>;
 type Op = 'select' | 'insert' | 'upsert' | 'update' | 'delete';
-type Filter = ['eq' | 'is' | 'in' | 'notIs' | 'lt' | 'lte' | 'gt', string, unknown];
+type Filter = ['eq' | 'is' | 'in' | 'notIs' | 'lt' | 'lte' | 'gt' | 'like', string, unknown];
 export type Call = {
   table: string;
   op: Op;
@@ -36,6 +42,7 @@ type DbError = { code?: string; message: string };
 const UNIQUE: Record<string, string[]> = {
   crm_portal_jobs: ['quote_id', 'reserved_work_order_id', 'work_order_id'],
   crm_portal_job_messages: ['id', 'direction,message_id'],
+  crm_portal_job_documents: ['id'],
   crm_portal_resellers: ['reseller_id'],
   crm_work_orders: ['id', 'order_number'],
   portal_idempotency_keys: ['key'],
@@ -77,6 +84,11 @@ export function memoryAdmin(
       const actual = row[column] ?? null;
       if (kind === 'in') return (value as unknown[]).includes(actual);
       if (kind === 'notIs') return actual !== value;
+      if (kind === 'like') {
+        if (typeof actual !== 'string') return false;
+        const pattern = String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
+        return new RegExp(`^${pattern}$`, 's').test(actual);
+      }
       if (kind === 'lt' || kind === 'lte' || kind === 'gt') {
         if (actual === null) return false;
         const a = actual as string | number;
@@ -186,6 +198,7 @@ export function memoryAdmin(
       lt: (column: string, value: unknown) => (call.filters.push(['lt', column, value]), chain),
       lte: (column: string, value: unknown) => (call.filters.push(['lte', column, value]), chain),
       gt: (column: string, value: unknown) => (call.filters.push(['gt', column, value]), chain),
+      like: (column: string, value: unknown) => (call.filters.push(['like', column, value]), chain),
       order: (column: string, options?: { ascending?: boolean }) => {
         const order = { column, ascending: options?.ascending ?? true };
         call.order ??= order;
@@ -212,5 +225,38 @@ export function memoryAdmin(
     return { data: options.rpc(name, args, tables), error: null };
   }
 
-  return { admin: { from, rpc } as never, tables, calls, failOn };
+  const files = new Map<string, Uint8Array>();
+  const storage = {
+    from(bucket: string) {
+      const fail = (op: Op, path: string) => {
+        const call: Call = { table: `storage:${bucket}`, op, values: path, filters: [] };
+        calls.push(call);
+        const failure = failures.find((f) => f.times > 0 && f.match(call));
+        if (!failure) return null;
+        failure.times -= 1;
+        return failure.error;
+      };
+      return {
+        async upload(path: string, body: Uint8Array | ArrayBuffer, opts?: { upsert?: boolean }) {
+          const error = fail('insert', path);
+          if (error) return { data: null, error };
+          const key = `${bucket}/${path}`;
+          if (files.has(key) && !opts?.upsert) {
+            return { data: null, error: { message: 'The resource already exists', statusCode: '409' } };
+          }
+          files.set(key, new Uint8Array(body instanceof ArrayBuffer ? body : body.slice()));
+          return { data: { path }, error: null };
+        },
+        async download(path: string) {
+          const error = fail('select', path);
+          if (error) return { data: null, error };
+          const bytes = files.get(`${bucket}/${path}`);
+          if (!bytes) return { data: null, error: { message: 'Object not found', statusCode: '404' } };
+          return { data: new Blob([bytes.slice()]), error: null };
+        },
+      };
+    },
+  };
+
+  return { admin: { from, rpc, storage } as never, tables, calls, failOn, files };
 }

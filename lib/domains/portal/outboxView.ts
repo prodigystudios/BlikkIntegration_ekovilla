@@ -15,6 +15,8 @@ export type PortalOutboxEventKind =
   | 'job.completed'
   | 'job.invoiced'
   | 'job.cancelled'
+  | 'job.message'
+  | 'job.document'
   | 'other';
 
 export type PortalOutboxItem = {
@@ -50,7 +52,15 @@ type EventRow = {
   next_attempt_at: string;
 };
 
-const JOB_TYPES = new Set(['job.confirmed', 'job.scheduled', 'job.completed', 'job.invoiced', 'job.cancelled']);
+const JOB_TYPES = new Set([
+  'job.confirmed',
+  'job.scheduled',
+  'job.completed',
+  'job.invoiced',
+  'job.cancelled',
+  'job.message',
+  'job.document',
+]);
 
 export function portalOutboxEventKind(orderingKey: string, payload: unknown): PortalOutboxEventKind {
   if (orderingKey === 'pricelist') return 'pricelist';
@@ -76,6 +86,11 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
       return str(data.completedAt);
     case 'job.invoiced':
       return str(data.invoicedAt);
+    case 'job.message':
+      return str(data.authorName);
+    case 'job.document':
+      // Kroppen i kön bär filnamnet och en referens till filen, aldrig innehållet (jobDocuments.ts).
+      return str(data.name);
     case 'pricelist':
       return str(body.validFrom) ? `Giltig från ${body.validFrom}` : null;
     default:

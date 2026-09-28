@@ -51,9 +51,8 @@ const ARCHIVE_PREFIX = 'Egenkontroller/';
 // att hamna i utdata. `&` avslutar värdet, så en länk med fler parametrar inte drar med dem.
 const DOWNLOAD_PATTERN = /https?:\/\/[^\s<>"']*\/api\/storage\/download\?path=([^\s<>"'&]+)/gi;
 
-// Rå sökväg → vår egen nedladdningsadress, eller null om den inte hör hemma i arkivets
-// egenkontrollmapp.
-function toArchiveHref(rawPathValue: string): string | null {
+// Rå sökväg → sökvägen i arkivet, eller null om den inte hör hemma i arkivets egenkontrollmapp.
+function toArchivePath(rawPathValue: string): string | null {
   let decoded: string;
   try {
     decoded = decodeURIComponent(rawPathValue);
@@ -71,18 +70,23 @@ function toArchiveHref(rawPathValue: string): string | null {
   // ur en kommentar ska aldrig få formen av något annat än en fil i arkivmappen.
   if (path.includes('..')) return null;
 
+  return path;
+}
+
+/** Vår egen nedladdningsadress för en sökväg i arkivet. */
+export function egenkontrollArchiveHref(path: string): string {
   return `/api/storage/download?path=${encodeURIComponent(path)}`;
 }
 
 // Sista träffen i EN kommentar. Kommentaren innehåller normalt exakt en länk; skulle någon ha
 // redigerat in fler är den sista den som står närmast raden "Ladda ner här:".
-function lastEgenkontrollHrefIn(body: string): string | null {
+function lastEgenkontrollPathIn(body: string): string | null {
   const re = new RegExp(DOWNLOAD_PATTERN.source, DOWNLOAD_PATTERN.flags);
   let found: string | null = null;
   let match: RegExpExecArray | null;
   while ((match = re.exec(body)) !== null) {
-    const href = toArchiveHref(match[1]);
-    if (href) found = href;
+    const path = toArchivePath(match[1]);
+    if (path) found = path;
   }
   return found;
 }
@@ -90,15 +94,33 @@ function lastEgenkontrollHrefIn(body: string): string | null {
 export function findLatestEgenkontrollLink(
   comments: readonly EgenkontrollCommentLike[] | null | undefined,
 ): string | null {
+  const latest = findLatestEgenkontrollArchive(comments);
+  return latest ? egenkontrollArchiveHref(latest.path) : null;
+}
+
+export type EgenkontrollArchiveRef = {
+  /** Sökvägen i arkivet, alltid under `Egenkontroller/`. */
+  path: string;
+  /** Kommentarens tid, som den stod (null när den saknas). */
+  commentedAt: string | null;
+};
+
+/**
+ * Samma val som `findLatestEgenkontrollLink`, men med sökvägen i arkivet och kommentarens tid: det
+ * servern behöver för att läsa filen (återförsäljarportalens egenkontroll, fas 7).
+ */
+export function findLatestEgenkontrollArchive(
+  comments: readonly EgenkontrollCommentLike[] | null | undefined,
+): EgenkontrollArchiveRef | null {
   if (!Array.isArray(comments)) return null;
 
-  let bestUrl: string | null = null;
+  let best: EgenkontrollArchiveRef | null = null;
   let bestTime = Number.NEGATIVE_INFINITY;
   let bestIndex = -1;
 
   for (let index = 0; index < comments.length; index += 1) {
-    const url = lastEgenkontrollHrefIn(String(comments[index]?.body ?? ''));
-    if (!url) continue;
+    const path = lastEgenkontrollPathIn(String(comments[index]?.body ?? ''));
+    if (!path) continue;
 
     // Otolkbart datum sorteras sist, men diskvalificerar inte kommentaren: en länk vi kan öppna är
     // bättre än ingen. Den faller då tillbaka på inmatningsordningen, där senare vinner.
@@ -106,11 +128,11 @@ export function findLatestEgenkontrollLink(
     const time = Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
 
     if (time > bestTime || (time === bestTime && index > bestIndex)) {
-      bestUrl = url;
+      best = { path, commentedAt: comments[index]?.created_at ?? null };
       bestTime = time;
       bestIndex = index;
     }
   }
 
-  return bestUrl;
+  return best;
 }

@@ -30,8 +30,9 @@ type RouteContext = { params: { workOrderId: string } };
 // Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
 
 export const dynamic = 'force-dynamic';
-// Utskicket efter svaret räknas in i funktionens tid: det tar nya händelser i 60 s, och varje anrop har 10 s.
-export const maxDuration = 90;
+// Utskicket efter svaret räknas in i funktionens tid: det tar nya händelser i 60 s, och varje anrop har 10 s, ett
+// dokument i samma kö 30 s (fas 7).
+export const maxDuration = 120;
 
 const replySchema = z.object({
   messageId: z.string().uuid('Ogiltigt id för svaret.'),
