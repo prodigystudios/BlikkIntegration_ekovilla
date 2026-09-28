@@ -102,9 +102,10 @@ export const CONTRACT_STORE_ORDER = deepFreeze({
 
 /**
  * En signatur räknad med Pythons `hmac` (inte med CRM:ets kod), så att testet prövar kontraktet och
- * inte bara att koden stämmer med sig själv. Kroppen har å, ä, ö och ett tankstreck: 126 tecken men
- * 130 byte i UTF-8, så en signatur över tecken i stället för byte blir fel. Portalen kan pröva sin
- * halva mot samma vektor.
+ * inte bara att koden stämmer med sig själv. Det som signeras är tidsstämpel, metod, sökväg och
+ * kropp, skilda med radbrytning. Kroppen har å, ä, ö och ett tankstreck: 126 tecken men 130 byte i
+ * UTF-8, så en signatur över tecken i stället för byte blir fel. Portalen kan pröva sin halva mot
+ * samma vektor.
  *
  * Att räkna om den, med värdena nedan:
  *
@@ -112,13 +113,18 @@ export const CONTRACT_STORE_ORDER = deepFreeze({
  *   import hmac, hashlib
  *   secret = "portal-kontraktsvektor-0123456789abcdef0123456789abcdef"
  *   timestamp = "1790000000"
+ *   method = "POST"
+ *   path = "/api/portal/jobs/q-2026-015/messages"
  *   body = '{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}'
- *   print("v1=" + hmac.new(secret.encode(), (timestamp + "." + body).encode("utf-8"), hashlib.sha256).hexdigest())
+ *   message = timestamp + "\n" + method + "\n" + path + "\n" + body
+ *   print("v1=" + hmac.new(secret.encode(), message.encode("utf-8"), hashlib.sha256).hexdigest())
  *   PY
  */
 export const SIGNATURE_VECTOR = deepFreeze({
   secret: 'portal-kontraktsvektor-0123456789abcdef0123456789abcdef',
   timestamp: '1790000000',
+  method: 'POST',
+  path: '/api/portal/jobs/q-2026-015/messages',
   body: '{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}',
-  signature: 'v1=d5d87ef08b18bb2d5286335a54405c2b79f80fb291fc1640e32f746b9f2a3c30',
+  signature: 'v1=0a23a52e4a620ea087da88e218f347248f4003d0fcfecd56649ef08e670bcac6',
 });

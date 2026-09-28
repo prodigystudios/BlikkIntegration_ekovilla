@@ -143,7 +143,7 @@ Ren logik som testas isolerat:
 
 | Fil | Ansvar |
 | --- | --- |
-| `signature.ts` | HMAC-SHA256 över råkroppen. `timingSafeEqual` efter längdkontroll (den kastar vid olika längd). ±300 s. En tom eller kort hemlighet räknas som avstängd, alltså 503 |
+| `signature.ts` ✅ | HMAC-SHA256 över tidsstämpel, metod, sökväg och råkropp, skilda med radbrytning (punkt 14 nedan). `timingSafeEqual` efter längdkontroll (den kastar vid olika längd). ±300 s. En tom eller kort hemlighet räknas som avstängd, alltså 503 |
 | `config.ts` | Miljövariablerna och portalspärren |
 | `client.ts` | Signerat anrop med `AbortSignal.timeout`, svaret klassat som 2xx, 4xx eller 5xx/timeout |
 | `outbox.ts`, `idempotency.ts` | Utgående kö och inkommande svarscache |
@@ -333,7 +333,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | --- | --- | --- |
 | **0** ✅ | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? Resultaten står under tabellen | — |
 | **1a** ✅ | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
-| **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts` | 1a |
+| **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts`. Ett 401 från portalen görs om med backoff, som 5xx (punkt 15) | 1a |
 | **1c** | Undantaget i middleware, signerad `ping`, vakttestet för `app/api/portal/**` | 1a |
 | **2a** | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`) | — |
 | **2b** | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera | 0, 1b, 2a |
@@ -416,23 +416,29 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 11. **Förslag:** `POST /api/ekovilla/ping` i portalen, så att CRM:et kan prova kopplingen från
     portalsidan.
 12. **En gemensam testvektor för signaturen**, så att båda sidor prövar samma sak. Räknad med Pythons
-    `hmac`, inte med någon av apparnas kod (`tests/portal/fixtures/contract.ts`):
+    `hmac`, inte med någon av apparnas kod (`tests/portal/helpers/contractFixtures.ts`, där också
+    Python-kommandot står):
     - hemlighet `portal-kontraktsvektor-0123456789abcdef0123456789abcdef`, tidsstämpel `1790000000`
+    - metod `POST`, sökväg `/api/portal/jobs/q-2026-015/messages`
     - kropp `{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}`
       (126 tecken, 130 byte i UTF-8)
-    - signatur `v1=d5d87ef08b18bb2d5286335a54405c2b79f80fb291fc1640e32f746b9f2a3c30`
+    - signatur `v1=0a23a52e4a620ea087da88e218f347248f4003d0fcfecd56649ef08e670bcac6`
 13. **Hemligheten ska vara minst 32 tecken.** CRM:et räknar en kortare som saknad, svarar 503 och
     signerar inget. Den trimmas på båda sidor.
-14. **Förslag: signera också metod och sökväg**, till exempel `tidsstämpel + "." + METOD + " " +
-    sökväg + "." + råkropp`. I dag gäller en signatur för vilken route som helst, åt båda hållen, i
-    300 sekunder. Den som ser ett anrop, till exempel i en logg, kan skicka om samma headers till en
-    annan route med samma kropp. Tydligast är det med tomma kroppar: en signerad `ping` duger då
-    också till `store-orders/{orderId}/withdraw` för en annan beställning. Ingen sida har byggt
-    transporten än, så nu är ändringen billig. Beslutas med portalen.
-15. **Ett nej på signaturen (401) ska göras om, inte ges upp.** Kontraktet säger att 4xx inte görs om.
-    Då tappas varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget,
-    eller om en klocka går fel mer än 300 sekunder. Förslag: 401 räknas som tillfälligt och görs om
-    med backoff, som 5xx. Byt hemligheten i båda apparna i samma stund, en lugn stund.
+14. **Beslutat (William 2026-09-28): signaturen gäller också metod och sökväg.** Det som signeras är
+    `tidsstämpel + "\n" + METOD + "\n" + sökväg + "\n" + råkropp`:
+    - metoden med versaler;
+    - sökvägen som den står i URL:en (procentkodad), utan värd och frågesträng.
+
+    Utan dem gällde en signatur för vilken route som helst, åt båda hållen, i 300 sekunder. En
+    signerad `ping` med tom kropp hade också dugt till `store-orders/{orderId}/withdraw` för en annan
+    beställning. Fälten skiljs med radbrytning, eftersom en punkt hade varit tvetydig: `/a.b` + `c`
+    och `/a` + `b.c` ger samma sträng. Prefixet är fortfarande `v1=`, eftersom ingen sida hade byggt
+    transporten.
+15. **Beslutat (William 2026-09-28): ett nej på signaturen (401) görs om, som 5xx.** Annars tappas
+    varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget, eller om en
+    klocka går fel mer än 300 sekunder. Andra 4xx ges fortfarande upp. Byt hemligheten i båda apparna
+    i samma stund, en lugn stund.
 
 ## Öppna frågor
 

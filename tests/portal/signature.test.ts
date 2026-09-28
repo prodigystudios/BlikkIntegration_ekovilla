@@ -7,12 +7,18 @@ import {
 } from '@/lib/domains/portal/signature';
 import { CONTRACT_JOB, SIGNATURE_VECTOR } from './helpers/contractFixtures';
 
-const { secret, timestamp, body, signature } = SIGNATURE_VECTOR;
+const { secret, timestamp, method, path, body, signature } = SIGNATURE_VECTOR;
 const now = Number(timestamp);
+
+function sign(overrides: Partial<Parameters<typeof signPortalRequest>[0]> = {}) {
+  return signPortalRequest({ secret, method, path, rawBody: body, nowSeconds: now, ...overrides });
+}
 
 function verify(overrides: Partial<Parameters<typeof verifyPortalSignature>[0]> = {}) {
   return verifyPortalSignature({
     secret,
+    method,
+    path,
     rawBody: body,
     timestampHeader: timestamp,
     signatureHeader: signature,
@@ -23,10 +29,7 @@ function verify(overrides: Partial<Parameters<typeof verifyPortalSignature>[0]> 
 
 describe('signPortalRequest', () => {
   it('ger exakt kontraktets signatur, räknad oberoende av CRM:ets kod', () => {
-    expect(signPortalRequest(secret, body, now)).toEqual({
-      [PORTAL_TIMESTAMP_HEADER]: timestamp,
-      [PORTAL_SIGNATURE_HEADER]: signature,
-    });
+    expect(sign()).toEqual({ [PORTAL_TIMESTAMP_HEADER]: timestamp, [PORTAL_SIGNATURE_HEADER]: signature });
   });
 
   it('använder header-namnen i kontraktet', () => {
@@ -35,25 +38,38 @@ describe('signPortalRequest', () => {
   });
 
   it('signerar byte som en UTF-8-sträng — samma signatur för strängen och dess byte', () => {
-    const fromBytes = signPortalRequest(secret, new TextEncoder().encode(body), now);
-    expect(fromBytes[PORTAL_SIGNATURE_HEADER]).toBe(signature);
+    expect(sign({ rawBody: new TextEncoder().encode(body) })[PORTAL_SIGNATURE_HEADER]).toBe(signature);
+  });
+
+  it('skriver metoden med versaler', () => {
+    expect(sign({ method: 'post' })[PORTAL_SIGNATURE_HEADER]).toBe(signature);
   });
 
   it('avrundar klockan nedåt till hela sekunder', () => {
-    expect(signPortalRequest(secret, body, now + 0.9)[PORTAL_TIMESTAMP_HEADER]).toBe(timestamp);
+    expect(sign({ nowSeconds: now + 0.9 })[PORTAL_TIMESTAMP_HEADER]).toBe(timestamp);
   });
 
   it('vägrar signera med en tom eller kort hemlighet — en sådan signatur går att gissa', () => {
-    expect(() => signPortalRequest('', body, now)).toThrow();
-    expect(() => signPortalRequest('för-kort', body, now)).toThrow();
+    expect(() => sign({ secret: '' })).toThrow();
+    expect(() => sign({ secret: 'för-kort' })).toThrow();
   });
 
   it('vägrar signera när klockan inte är ett tal', () => {
-    expect(() => signPortalRequest(secret, body, Number.NaN)).toThrow();
+    expect(() => sign({ nowSeconds: Number.NaN })).toThrow();
   });
 
   it('trimmar hemligheten: en avslutande radbrytning ger samma signatur', () => {
-    expect(signPortalRequest(`${secret}\n`, body, now)[PORTAL_SIGNATURE_HEADER]).toBe(signature);
+    expect(sign({ secret: `${secret}\n` })[PORTAL_SIGNATURE_HEADER]).toBe(signature);
+  });
+
+  it('vägrar en sökväg eller metod som kunde göra strängen tvetydig', () => {
+    // Radbrytningen är avgränsaren; frågesträngen hör inte till sökvägen; sökvägen börjar i roten.
+    for (const bad of ['/api/portal/jobs\nPOST', '/api/portal/jobs?x=1', '/api/portal/jobs#a', 'api/portal/jobs', '/api/portal/jobs 2']) {
+      expect(() => sign({ path: bad })).toThrow();
+    }
+    for (const bad of ['', 'PO ST', 'POST\n', 'P0ST']) {
+      expect(() => sign({ method: bad })).toThrow();
+    }
   });
 });
 
@@ -64,19 +80,48 @@ describe('verifyPortalSignature', () => {
 
   it('godtar ett helt jobb som signerats och skickats oförändrat', () => {
     const raw = JSON.stringify(CONTRACT_JOB);
-    const headers = signPortalRequest(secret, raw, now);
+    const headers = sign({ path: '/api/portal/jobs', rawBody: raw });
     expect(
-      verify({ rawBody: raw, timestampHeader: headers[PORTAL_TIMESTAMP_HEADER], signatureHeader: headers[PORTAL_SIGNATURE_HEADER] }),
+      verify({
+        path: '/api/portal/jobs',
+        rawBody: raw,
+        timestampHeader: headers[PORTAL_TIMESTAMP_HEADER],
+        signatureHeader: headers[PORTAL_SIGNATURE_HEADER],
+      }),
     ).toEqual({ ok: true });
   });
 
   it('nekar samma innehåll serialiserat om — signaturen gäller den råa kroppen', () => {
     const raw = JSON.stringify(CONTRACT_JOB);
-    const headers = signPortalRequest(secret, raw, now);
-    const reserialized = JSON.stringify(JSON.parse(raw), null, 2);
+    const headers = sign({ path: '/api/portal/jobs', rawBody: raw });
     expect(
-      verify({ rawBody: reserialized, timestampHeader: headers[PORTAL_TIMESTAMP_HEADER], signatureHeader: headers[PORTAL_SIGNATURE_HEADER] }),
+      verify({
+        path: '/api/portal/jobs',
+        rawBody: JSON.stringify(JSON.parse(raw), null, 2),
+        timestampHeader: headers[PORTAL_TIMESTAMP_HEADER],
+        signatureHeader: headers[PORTAL_SIGNATURE_HEADER],
+      }),
     ).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+
+  it('🧨 en signerad ping duger inte till att dra tillbaka en beställning — sökvägen ingår', () => {
+    const ping = sign({ path: '/api/portal/ping', rawBody: '' });
+    expect(
+      verify({
+        path: '/api/portal/store-orders/so-b-2026-003/withdraw',
+        rawBody: '',
+        timestampHeader: ping[PORTAL_TIMESTAMP_HEADER],
+        signatureHeader: ping[PORTAL_SIGNATURE_HEADER],
+      }),
+    ).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+
+  it('🧨 metoden ingår: en signerad POST duger inte som PUT', () => {
+    expect(verify({ method: 'PUT' })).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+
+  it('🧨 riktningen ingår genom sökvägen: portalens route och CRM:ets route har olika signaturer', () => {
+    expect(verify({ path: '/api/ekovilla/jobs/q-2026-015/messages' })).toEqual({ ok: false, reason: 'signature_mismatch' });
   });
 
   it('nekar en ändrad kropp, fel hemlighet och en annan tidsstämpel', () => {
@@ -91,6 +136,11 @@ describe('verifyPortalSignature', () => {
     expect(verify({ nowSeconds: now - 300 })).toEqual({ ok: true });
     expect(verify({ nowSeconds: now + 301 })).toEqual({ ok: false, reason: 'stale_timestamp' });
     expect(verify({ nowSeconds: now - 301 })).toEqual({ ok: false, reason: 'stale_timestamp' });
+  });
+
+  it('🧨 faller stängt när klockan inte är ett tal — NaN får inte släppa igenom en gammal signatur', () => {
+    expect(verify({ nowSeconds: Number.NaN })).toEqual({ ok: false, reason: 'stale_timestamp' });
+    expect(verify({ nowSeconds: Number.POSITIVE_INFINITY })).toEqual({ ok: false, reason: 'stale_timestamp' });
   });
 
   it('nekar en tidsstämpel som inte är hela unix-sekunder', () => {
@@ -117,11 +167,6 @@ describe('verifyPortalSignature', () => {
   it('godtar versaler i hex och mellanslag runt headervärdena', () => {
     expect(verify({ signatureHeader: `v1=${signature.slice(3).toUpperCase()}` })).toEqual({ ok: true });
     expect(verify({ signatureHeader: ` ${signature} `, timestampHeader: ` ${timestamp}` })).toEqual({ ok: true });
-  });
-
-  it('🧨 faller stängt när klockan inte är ett tal — NaN får inte släppa igenom en gammal signatur', () => {
-    expect(verify({ nowSeconds: Number.NaN })).toEqual({ ok: false, reason: 'stale_timestamp' });
-    expect(verify({ nowSeconds: Number.POSITIVE_INFINITY })).toEqual({ ok: false, reason: 'stale_timestamp' });
   });
 
   it('trimmar hemligheten som den prövas: en radbrytning från Vercel ger inte 401 på allt', () => {
