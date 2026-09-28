@@ -13,6 +13,7 @@ import {
 import type { NotificationContent } from '@/lib/domains/notifications/types';
 import { portalAssignmentDeps, resolvePortalAssignee, type PortalAssignment } from './assignment';
 import { canonicalJson } from './canonicalJson';
+import { portalFortnoxSafetyNet, recordPortalFortnoxOutcome } from './jobFortnoxRetry';
 import {
   JOB_CUSTOMER_SELECT,
   buildPortalWorkOrderInsert,
@@ -282,9 +283,12 @@ async function createWorkOrder(
     if (!existing.data) throw new Error(`Arbetsordern kunde inte skapas: ${created.error.message}`);
   }
 
+  // Skyddsnätet sätts med kopplingen: dör processen efter svaret, innan uppföljningen hunnit, gör cron-utskicket den
+  // om 5 min (fas 4b). Uppföljningen bokför sitt utfall och tar bort nätet när det inte behövs.
+  const linkedAt = deps.now();
   const linked = await admin
     .from('crm_portal_jobs')
-    .update({ work_order_id: workOrderId, work_order_created_at: deps.now().toISOString() })
+    .update({ work_order_id: workOrderId, work_order_created_at: linkedAt.toISOString(), ...portalFortnoxSafetyNet(linkedAt) })
     .eq('quote_id', job.quoteId)
     .is('work_order_id', null)
     .select('quote_id');
@@ -319,10 +323,13 @@ export type FollowUpOutcome = {
   received: 'sent' | 'already_sent' | 'failed' | 'skipped';
   fortnox: 'exists' | 'created' | 'blocked' | 'failed' | 'in_progress' | 'skipped';
   reasons: string[];
+  /** Notisen om Fortnox, när en behövdes. */
+  issueNotice?: 'sent' | 'already_sent' | 'failed';
 };
 
 type FollowUpWorkOrder = ReadinessQuoteSource & {
   id: string;
+  status: string;
   assigned_to: string;
   project_name: string;
   fortnox_order_number: string | null;
@@ -377,7 +384,10 @@ async function sendOnce(
 
 /**
  * Notisen "Nytt jobb" till den som har arbetsordern, sedan Fortnox-ordern. Stoppar kontrollerna, eller svarar Fortnox
- * fel, får samma person en andra notis med orsaken (William 2026-09-28). Ett försök; omförsöken kommer i fas 4b.
+ * fel, får samma person en andra notis med orsaken (William 2026-09-28). Varje notis skickas en gång.
+ *
+ * Utfallet bokförs på jobbet (jobFortnoxRetry.ts): ett tekniskt fel ger ett nytt försök av cron-utskicket, efter 5 min,
+ * 15 min, 1 h och sedan varje timme i 24 h; stoppar kontrollerna försöker den aldrig. Samma funktion gör omförsöken.
  *
  * Kastar bara när databasen inte svarar. Allt annat blir ett utfall, som anroparen loggar.
  */
@@ -385,6 +395,23 @@ export async function followUpPortalJob(
   admin: SupabaseClient,
   quoteId: string,
   deps: FollowUpDeps = followUpDeps(admin),
+): Promise<FollowUpOutcome> {
+  const outcome = await attemptPortalJobFollowUp(admin, quoteId, deps);
+  try {
+    await recordPortalFortnoxOutcome(admin, quoteId, outcome.fortnox, deps.now(), {
+      resendNotice: outcome.received === 'failed' || outcome.issueNotice === 'failed',
+    });
+  } catch (e) {
+    // Skyddsnätet står kvar: nästa varv ser att Fortnox-ordern finns och bokför det då.
+    console.error('[portal-jobs] utfallet kunde inte bokföras', { quoteId, error: e instanceof Error ? e.message : String(e) });
+  }
+  return outcome;
+}
+
+async function attemptPortalJobFollowUp(
+  admin: SupabaseClient,
+  quoteId: string,
+  deps: FollowUpDeps,
 ): Promise<FollowUpOutcome> {
   const jobRead = await admin
     .from('crm_portal_jobs')
@@ -397,7 +424,7 @@ export async function followUpPortalJob(
 
   const woRead = await admin
     .from('crm_work_orders')
-    .select('id, assigned_to, project_name, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
+    .select('id, status, assigned_to, project_name, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
     .eq('id', job.work_order_id)
     .maybeSingle();
   if (woRead.error) throw new Error(`Arbetsordern gick inte att läsa: ${woRead.error.message}`);
@@ -426,6 +453,8 @@ export async function followUpPortalJob(
   );
 
   if (workOrder.fortnox_order_number) return { received, fortnox: 'exists', reasons: [] };
+  // Avbruten (kanske medan omförsöken pågick): aldrig en Fortnox-order, och inga fler försök.
+  if (workOrder.status === 'cancelled') return { received, fortnox: 'skipped', reasons: [] };
 
   // Samma kontroll som våra egna ordrar, mot kundkortet som det ser ut nu.
   const { customer, error: customerError } = await fetchReadinessCustomer(admin, workOrder.customer_id ?? null);
@@ -451,8 +480,9 @@ export async function followUpPortalJob(
     }
   }
 
+  let issueNotice: FollowUpOutcome['issueNotice'];
   if (reasons.length > 0) {
-    await sendOnce(
+    issueNotice = await sendOnce(
       admin,
       deps,
       quoteId,
@@ -466,5 +496,5 @@ export async function followUpPortalJob(
       }),
     );
   }
-  return { received, fortnox, reasons };
+  return { received, fortnox, reasons, ...(issueNotice ? { issueNotice } : {}) };
 }

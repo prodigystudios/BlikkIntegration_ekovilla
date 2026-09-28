@@ -3,6 +3,7 @@ import { evaluateWorkOrderReadiness, type WorkOrderReadinessIssue } from '@/lib/
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { pushWorkOrderToFortnox, type PushOrderResult } from '@/lib/domains/fortnox/orders';
 import { JOB_CUSTOMER_SELECT, buildPortalCustomerLinkUpdate, type JobCustomerCard, type LinkableWorkOrder } from './jobIntake';
+import { recordPortalFortnoxOutcome, type PortalFortnoxOutcome } from './jobFortnoxRetry';
 
 /**
  * Butikens kundkort kopplas på en portalorder utan kund, och Fortnox-ordern skapas (RESELLER_PORTAL_CRM_PLAN.md
@@ -137,6 +138,7 @@ export async function linkPortalJobCustomer(
 
   let fortnoxOrderNumber: string | null = null;
   let fortnoxError: string | null = null;
+  let outcome: PortalFortnoxOutcome = 'created';
   try {
     const pushed = await deps.push(input.workOrderId);
     fortnoxOrderNumber = pushed.fortnox_order_number;
@@ -144,11 +146,19 @@ export async function linkPortalJobCustomer(
       fortnoxError = 'Fortnox-ordern skapades, men en ändring som sparades under tiden kom inte med. Synka om arbetsordern.';
     }
   } catch (e) {
+    outcome = e instanceof FortnoxPushInProgressError ? 'in_progress' : 'failed';
     fortnoxError =
       e instanceof FortnoxNotConnectedError || e instanceof FortnoxPushInProgressError
         ? friendlyFortnoxMessage(e)
         : `Fortnox svarade: ${friendlyFortnoxMessage(e)}`;
     console.error('[portal-link] Fortnox-ordern kunde inte skapas', { workOrderId: input.workOrderId, error: e instanceof Error ? e.message : String(e) });
+  }
+  // Ett tekniskt fel ger nya försök av cron-utskicket (fas 4b); kontrollen har redan passerat. Ett fel här ändrar inget
+  // i kopplingen: då blir det bara inga omförsök, och "Skicka till Fortnox" finns kvar.
+  try {
+    await recordPortalFortnoxOutcome(admin, job.quote_id, outcome, deps.now());
+  } catch (e) {
+    console.error('[portal-link] Fortnox-försöket kunde inte bokföras', { quoteId: job.quote_id, error: e instanceof Error ? e.message : String(e) });
   }
   return { kind: 'linked', fortnoxOrderNumber, fortnoxError, storeLinked };
 }

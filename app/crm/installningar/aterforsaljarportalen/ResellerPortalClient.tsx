@@ -11,6 +11,7 @@ import DatePicker from '@/components/ui/DatePicker';
 import DialogShell from '@/components/ui/DialogShell';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
 import ResellersPanel, { type ResellerView } from './ResellersPanel';
+import OutboxPanel, { type OutboxItemView } from './OutboxPanel';
 import type { PricelistArticle, UnmarkedArticle } from '@/lib/domains/portal/pricelist';
 import type { PricelistDelivery } from '@/lib/domains/portal/pricelistPublish';
 
@@ -46,9 +47,10 @@ type ResellerPortalClientProps = {
   publications: PublicationView[] | { error: string };
   resellers: ResellerView[] | { error: string };
   fallbackUserId: string | null | { error: string };
+  outbox: OutboxItemView[] | { error: string };
 };
 
-type Tab = 'pricelist' | 'resellers';
+type Tab = 'pricelist' | 'resellers' | 'outbox';
 
 const CARD =
   'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]';
@@ -113,6 +115,7 @@ export default function ResellerPortalClient({
   publications,
   resellers,
   fallbackUserId,
+  outbox,
 }: ResellerPortalClientProps) {
   const router = useRouter();
   const toast = useToast();
@@ -122,6 +125,8 @@ export default function ResellerPortalClient({
   const [busy, setBusy] = useState<null | 'publish' | 'dispatch'>(null);
 
   const history = Array.isArray(publications) ? publications : [];
+  // Syns på fliken: det som gett upp kräver en människa.
+  const deadCount = Array.isArray(outbox) ? outbox.filter((i) => i.status === 'dead').length : 0;
   const articles = preview.ok ? preview.articles : [];
   const validFromOk = /^\d{4}-\d{2}-\d{2}$/.test(validFrom) && validFrom >= today;
   // Samma innehåll som en tidigare publicering: värt att veta innan man publicerar igen.
@@ -198,6 +203,15 @@ export default function ResellerPortalClient({
           <TabsTrigger id="portal-tab-resellers" aria-controls="portal-panel-resellers" active={tab === 'resellers'} onClick={() => setTab('resellers')}>
             Butiker och säljare
           </TabsTrigger>
+          <TabsTrigger id="portal-tab-outbox" aria-controls="portal-panel-outbox" active={tab === 'outbox'} onClick={() => setTab('outbox')}>
+            Utskick
+            {deadCount > 0 && (
+              <Badge variant="danger" className="ml-1.5 px-1.5 py-0">
+                {deadCount}
+                <span className="sr-only"> gav upp</span>
+              </Badge>
+            )}
+          </TabsTrigger>
         </TabsList>
 
         {/* Båda panelerna står kvar monterade och döljs: en panel som monterades om vid flikbytet tog sina värden från
@@ -211,6 +225,21 @@ export default function ResellerPortalClient({
           className={cn(tab !== 'resellers' && 'hidden')}
         >
           <ResellersPanel resellers={resellers} fallbackUserId={fallbackUserId} />
+        </div>
+
+        <div
+          role="tabpanel"
+          id="portal-panel-outbox"
+          aria-labelledby="portal-tab-outbox"
+          hidden={tab !== 'outbox'}
+          className={cn(tab !== 'outbox' && 'hidden')}
+        >
+          <OutboxPanel
+            items={outbox}
+            integrationEnabled={integration.enabled}
+            dispatching={busy === 'dispatch'}
+            onDispatch={handleDispatch}
+          />
         </div>
 
         {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut korten i mobil. */}

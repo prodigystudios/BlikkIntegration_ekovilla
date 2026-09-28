@@ -11,10 +11,23 @@ import {
   loadPricelistDraft,
   pricelistSources,
 } from '@/lib/domains/portal/pricelistPublish';
+import { listPortalOutboxAttention, type PortalOutboxEventKind } from '@/lib/domains/portal/outboxView';
 import ResellerPortalClient, { type PortalIntegrationView, type PricelistPreviewView, type PublicationView } from './ResellerPortalClient';
 import type { ResellerView } from './ResellersPanel';
+import type { OutboxItemView } from './OutboxPanel';
 
 export const dynamic = 'force-dynamic';
+
+// Det butiken ser, med portalens ord (kontraktet: Bekräftad, Planerad, Utförd, Fakturerad).
+const OUTBOX_KIND_LABELS: Record<PortalOutboxEventKind, string> = {
+  pricelist: 'Prislistan',
+  'job.confirmed': 'Bekräftad',
+  'job.scheduled': 'Planerad',
+  'job.completed': 'Utförd',
+  'job.invoiced': 'Fakturerad',
+  'job.cancelled': 'Avbruten',
+  other: 'Annan händelse',
+};
 
 // Tidpunkter formateras här, i svensk tid, och skickas som text: samma sträng på servern och i webbläsaren.
 function formatStockholm(iso: string): string {
@@ -32,7 +45,7 @@ export default async function AterforsaljarportalenPage() {
     : { enabled: false, message: target.message };
 
   const failure = (fallback: string) => (e: unknown) => ({ error: e instanceof Error ? e.message : fallback });
-  const [draftResult, publicationsResult, resellersResult, settingsResult] = await Promise.all([
+  const [draftResult, publicationsResult, resellersResult, settingsResult, outboxResult] = await Promise.all([
     loadPricelistDraft(pricelistSources(session)).then(
       (draft) => ({ ok: true as const, draft }),
       (e: unknown) => ({ ok: false as const, message: describeSourceError(e) }),
@@ -43,7 +56,30 @@ export default async function AterforsaljarportalenPage() {
     ),
     listPortalResellers(session).catch(failure('Butikerna gick inte att läsa.')),
     getPortalSettings(session).catch(failure('Portalens inställningar gick inte att läsa.')),
+    listPortalOutboxAttention(session).catch(failure('Utskicken gick inte att läsa.')),
   ]);
+
+  const outbox: OutboxItemView[] | { error: string } = Array.isArray(outboxResult)
+    ? outboxResult.map((item) => ({
+        id: item.id,
+        kindLabel: OUTBOX_KIND_LABELS[item.kind],
+        detail: item.detail,
+        status: item.status,
+        attempts: item.attempts,
+        lastError: item.lastError,
+        queuedAtLabel: formatStockholm(item.createdAt),
+        nextAttemptLabel: item.nextAttemptAt ? formatStockholm(item.nextAttemptAt) : null,
+        job: item.job
+          ? {
+              label: [item.job.storeName, item.job.quoteNumber ? `offert ${item.job.quoteNumber}` : `jobb ${item.job.quoteId}`]
+                .filter(Boolean)
+                .join(', '),
+              href: item.job.workOrderId ? `/crm/arbetsorder/${item.job.workOrderId}` : null,
+            }
+          : null,
+        canRetry: item.canRetry,
+      }))
+    : outboxResult;
 
   const resellers: ResellerView[] | { error: string } = Array.isArray(resellersResult)
     ? resellersResult.map((r) => ({ ...r, lastSeenLabel: formatStockholm(r.lastSeenAt) }))
@@ -88,6 +124,7 @@ export default async function AterforsaljarportalenPage() {
       publications={publications}
       resellers={resellers}
       fallbackUserId={fallbackUserId}
+      outbox={outbox}
     />
   );
 }

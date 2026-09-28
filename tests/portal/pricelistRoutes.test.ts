@@ -34,6 +34,13 @@ vi.mock('@/lib/domains/portal/pricelistPublish', () => ({
 vi.mock('@/lib/domains/portal/outbox', () => ({
   dispatchPortalOutbox: vi.fn(async () => ((h.dispatchCalls += 1), h.dispatchResult)),
 }));
+// "Skicka väntande nu" kör hela varvet (fas 4b); här prövas bara grinden och hur utskickets utfall översätts.
+vi.mock('@/lib/domains/portal/cron', () => ({
+  runPortalCron: vi.fn(async () => {
+    h.dispatchCalls += 1;
+    return { sync: { jobs: 0, queued: 0, unchanged: 0, conflicts: 0, errors: 0 }, dispatch: h.dispatchResult, fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 } };
+  }),
+}));
 
 const HASH = 'a'.repeat(64);
 
