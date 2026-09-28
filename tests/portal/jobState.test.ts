@@ -209,16 +209,10 @@ describe('derivePortalJobEvents: avbruten', () => {
     expect(r.state.cancelled).toBe(true);
   });
 
-  it('arbetsordern borttagen (fanns, finns inte): job.cancelled', () => {
-    expect(run({ workOrder: null, state: CONFIRMED, confirmedDelivery: 'pending' }).types).toEqual(['job.cancelled']);
-  });
-
-  it('kontraktspunkt 20: reason finns alltid, som en tom sträng; portalens schema kräver fältet (annars 400, uppgiven)', () => {
-    for (const r of [run({ workOrder: order({ status: 'cancelled' }) }), run({ workOrder: null, state: CONFIRMED, confirmedDelivery: 'sent' })]) {
-      const data = r.events[0].payload.data;
-      expect(Object.keys(data).sort()).toEqual(['cancelledAt', 'quoteId', 'reason']);
-      expect(data.reason).toBe('');
-    }
+  it('arbetsordern borttagen (fanns, finns inte): job.cancelled, med reason tom (kontraktspunkt 20)', () => {
+    const r = run({ workOrder: null, state: CONFIRMED, confirmedDelivery: 'pending' });
+    expect(r.types).toEqual(['job.cancelled']);
+    expect(r.events[0].payload.data).toEqual({ quoteId: 'q-1', reason: '', cancelledAt: '2026-10-12T08:30:00.000Z' });
   });
 
   it('arbetsordern har aldrig funnits: ingenting', () => {

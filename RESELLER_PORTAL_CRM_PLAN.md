@@ -851,9 +851,10 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 20. **`job.cancelled`** (fas 4b, William 2026-09-28): `{ "quoteId", "reason": "", "cancelledAt" }` (tidpunkt i UTC)
     när Ekovilla avbryter jobbet eller tar bort arbetsordern. Skickas bara före "Utförd", och efter den skickas inget
     mer för jobbet. Tar portalen inte emot den (4xx) syns den som uppgiven på CRM:ets portalsida.
-    **Rättat 2026-09-28:** `reason` saknades först. Portalens kontrakt har fältet (fritext till butiken, får vara tom)
-    och dess schema krävde det, så varje `job.cancelled` hade nekats med 400 och getts upp. CRM:et har inget skäl att
-    skicka och skickar alltid en tom sträng. Det fungerar också om portalen gör fältet valfritt.
+    **Rättat 2026-09-28:** `reason` saknades först. Portalens kontrakt har fältet (fritext till butiken, får vara tom),
+    och portalens schema krävde det tills portalens PR #40, som gör fältet valfritt ("får saknas"). Före den hade varje
+    `job.cancelled` nekats med 400 och getts upp. CRM:et har inget skäl att skicka och skickar alltid en tom sträng,
+    som båda versionerna av portalen tar emot.
 21. **`job.scheduled` har `scheduledUntil`** (punkt 5, byggt i fas 4b): planerad slutdag, samma dag som `scheduledFor`
     för ett endagsjobb. `scheduledFor` och `scheduledUntil` är båda `null` när jobbet inte längre är planerat.
 22. **Bara framåt** (William 2026-09-28): efter job.completed skickas inga fler job.scheduled, och efter job.completed

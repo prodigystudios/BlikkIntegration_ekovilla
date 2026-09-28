@@ -167,6 +167,12 @@ describe('syncPortalJobs', () => {
     const { admin, tables } = memoryAdmin({ crm_portal_jobs: [job({ work_order_id: null })], crm_work_orders: [] });
     await sync(admin);
     expect(tables.portal_outbound_events.map((e) => (e.payload as { type: string }).type)).toEqual(['job.cancelled']);
+    // Kontraktspunkt 20: reason når kön, tom men med.
+    expect((tables.portal_outbound_events[0].payload as { data: unknown }).data).toEqual({
+      quoteId: 'q-1',
+      reason: '',
+      cancelledAt: expect.any(String),
+    });
     expect(jobRow(tables)).toMatchObject({ sync_state: { cancelled: true }, sync_requested_at: null });
   });
 
