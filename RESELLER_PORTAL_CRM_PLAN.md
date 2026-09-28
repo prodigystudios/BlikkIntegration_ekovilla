@@ -582,16 +582,22 @@ tas före utskicket och släpps om det misslyckas. En push som redan pågår ger
 **Så fungerar kopplingen** (`lib/domains/portal/linkCustomer.ts`):
 1. Sessionen läser ordern och kortet; service-rollen läser jobbet (sessionen ser bara brickans kolumner). En vanlig
    order, en order som redan har kund eller finns i Fortnox, och ett kort som inte finns ger var sitt svar.
-2. Kortets del av snapshoten byts (namn, org.nr, kontakt och Er referens, adress, moms), och momsen och beloppet
-   räknas om. Märkningen, arbetsplatsen, kontakten på plats och det säljaren redigerat står kvar.
+2. Kortets del av snapshoten byts (namn, org.nr, adress, moms), och momsen och beloppet räknas om. Kontakten och Er
+   referens fylls bara där ordern saknar dem: har säljaren fyllt i dem står de kvar. Märkningen, arbetsplatsen och
+   kontakten på plats står kvar.
 3. Samma fullständighetskontroll som våra egna ordrar, på ordern som den blir. Saknas något: 409 med listan.
-4. Sessionen sparar ordern, bara om den fortfarande saknar kund och Fortnox-order. Noll rader betyder att någon hann
-   före (409) eller att sessionen inte får ändra ordern (403).
+4. Sessionen sparar ordern, bara om den fortfarande saknar kund och Fortnox-order och inte sparats sedan den lästes
+   (`updated_at`). Noll rader betyder att någon hann före (409 `portal_job_already_linked`, `portal_job_in_fortnox`
+   eller `portal_job_changed`) eller att sessionen inte får ändra ordern (403). Kortet läser då om ordern.
 5. Service-rollen sparar kunden på jobbet och kopplingen på butiken (`customer_linked_by/at`, ny migrering), och sedan
    skapas Fortnox-ordern. Ett Fortnox-fel ändrar inte kopplingen; det sägs.
 
 **Intaget (3b) läser kopplingen:** ett nummer som finns i CRM:et ger det kortet och nollar kopplingen; annars får
-jobbet kortet som kopplats på butiken. Tas kortet bort nollas bara id:t, och butiken räknas som okopplad.
+jobbet kortet som kopplats på butiken. Kortet skrivs i ett eget, villkorat steg, så att en koppling som sparas medan
+ett intag pågår inte nollas. Tas kortet bort nollas bara id:t, och butiken räknas som okopplad.
+
+**Kundväljaren** är nu en delad hjälpare (`app/crm/lib/customerSearch.ts`), som "Ny order" och uppgiftsformuläret
+också använder. Portalkortet visar bara företag.
 
 **Prövat lokalt↔lokalt** (dev-servern på :3002, eftersom portalen körde på :3000 och :3001; en egen headless
 Chromium, så att Chrome-kakorna för portalen inte rördes):
@@ -600,10 +606,12 @@ Chromium, så att Chrome-kakorna för portalen inte rördes):
 - admin med BRIX Sverige AB: kopplad, Fortnox-order 24, sidhuvudet visar kunden och "Fortnox: Synkad";
 - ett nytt jobb från samma butik, fortfarande utan nummer: fick BRIX direkt och blev Fortnox-order 25 utan att
   någon gjorde något;
-- på telefonbredd ingen sidledsscroll, knappen i full bredd.
+- på telefonbredd ingen sidledsscroll, knappen i full bredd;
+- efter granskningen: väljaren visade bara företag, och en koppling med krockkontrollen mot riktig PostgREST blev
+  Fortnox-order 26.
 
-⚠️ **Lokalt kvar:** portalordern `q-lokal-3c-1` (butiken `res-okopplad-2`, utan kund), `q-lokal-3c-2`, butiken
-`res-okopplad` kopplad till BRIX för hand, och Fortnox-order 24 och 25 i testbolaget.
+⚠️ **Lokalt kvar:** portalorderna `q-lokal-3c-1` och `-2`, butikerna `res-okopplad` (kopplad till BRIX för hand) och
+`res-okopplad-2` (kopplad till Boli Bygg), och Fortnox-order 24–26 i testbolaget.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad

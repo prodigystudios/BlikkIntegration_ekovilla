@@ -133,16 +133,17 @@ export function resolveStoreCustomer(byNumberId: string | null, reseller: Resell
 
 /**
  * Butiken dyker upp när den hör av sig (William 2026-09-28): namn, adress och kundnummer som portalen skickar, och
- * kundkortet som gäller. Säljaren (`seller_user_id`) rörs aldrig; den sätts på portalsidan. En koppling för hand rörs
- * inte när portalens nummer saknas eller är okänt, och ersätts av ett nummer som finns i CRM:et.
+ * kundkortet som gäller. Säljaren (`seller_user_id`) rörs aldrig; den sätts på portalsidan.
+ *
+ * Kortet skrivs i ett eget steg, efter butikens uppgifter:
+ *   ett nummer som finns i CRM:et  det kortet, alltid, och en koppling för hand ersätts
+ *   ingen koppling, inget nummer   kortet nollas, men BARA där ingen koppling finns: en koppling som sparades medan
+ *                                  intaget pågick (fas 3c) hade annars skrivits över av en läsning från före den
+ *   en koppling för hand           rörs inte
  */
 async function upsertReseller(admin: SupabaseClient, job: PortalJob, storeCustomer: StoreCustomer, now: Date) {
   const { store } = job;
-  const link =
-    storeCustomer.source === 'manual'
-      ? {}
-      : { customer_id: storeCustomer.customerId, customer_linked_by: null, customer_linked_at: null };
-  const { error } = await admin.from('crm_portal_resellers').upsert(
+  const saved = await admin.from('crm_portal_resellers').upsert(
     {
       reseller_id: store.resellerId,
       name: store.name,
@@ -150,12 +151,20 @@ async function upsertReseller(admin: SupabaseClient, job: PortalJob, storeCustom
       postal_code: store.address.postalCode,
       city: store.address.city,
       customer_number: store.ekovillaCustomerNumber,
-      ...link,
       last_seen_at: now.toISOString(),
     },
     { onConflict: 'reseller_id' },
   );
-  if (error) throw new Error(`Butiken kunde inte sparas: ${error.message}`);
+  if (saved.error) throw new Error(`Butiken kunde inte sparas: ${saved.error.message}`);
+  if (storeCustomer.source === 'manual') return;
+
+  let link = admin
+    .from('crm_portal_resellers')
+    .update({ customer_id: storeCustomer.customerId, customer_linked_by: null, customer_linked_at: null })
+    .eq('reseller_id', store.resellerId);
+  if (storeCustomer.source === 'none') link = link.is('customer_linked_at', null);
+  const linked = await link;
+  if (linked.error) throw new Error(`Butikens kundkort kunde inte sparas: ${linked.error.message}`);
 }
 
 async function assign(job: PortalJob, customerId: string | null, deps: JobIntakeDeps) {
@@ -178,9 +187,10 @@ export async function receivePortalJob(
     readResellerLink(admin, job.store.resellerId),
   ]);
   const storeCustomer = resolveStoreCustomer(byNumber?.id ?? null, reseller);
-  const customer = storeCustomer.source === 'manual' ? await readCustomer(admin, 'id', storeCustomer.customerId) : byNumber;
   let row = existingRow;
   if (!row) {
+    // Kortet som kopplats för hand läses först här: en upprepning av ett befintligt jobb behöver det inte.
+    const customer = storeCustomer.source === 'manual' ? await readCustomer(admin, 'id', storeCustomer.customerId) : byNumber;
     // Butiken uppdateras bara av ett NYTT jobb. En upprepning, ett nekat jobb eller ett sent omförsök av ett gammalt
     // hade annars skrivit tillbaka ett inaktuellt namn eller kundnummer, och kopplat loss butikens kundkort.
     // Före fördelningen (butikens säljare läses därifrån) och före jobbets rad (den pekar på butiken).
@@ -236,7 +246,7 @@ export async function receivePortalJob(
       ?? null;
     if (!assigneeId) throw new Error('Jobbet kunde inte fördelas om.');
   }
-  const jobCustomer = customer?.id === row.customer_id ? customer : await readCustomer(admin, 'id', row.customer_id);
+  const jobCustomer = byNumber?.id === row.customer_id ? byNumber : await readCustomer(admin, 'id', row.customer_id);
   await createWorkOrder(admin, job, row, jobCustomer, assigneeId, deps);
   return { kind: 'created', workOrderId: row.reserved_work_order_id };
 }

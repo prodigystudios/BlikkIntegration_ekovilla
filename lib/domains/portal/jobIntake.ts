@@ -270,6 +270,15 @@ export function portalCustomerIdentity(customer: JobCustomerCard): Record<string
   };
 }
 
+function mergeLinkedSnapshot(existing: Record<string, unknown>, identity: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...existing, ...identity };
+  for (const key of LINK_CONTACT_KEYS) {
+    const kept = existing[key];
+    if (typeof kept === 'string' && kept.trim()) merged[key] = kept;
+  }
+  return merged;
+}
+
 /** Det ur arbetsordern som kopplingen räknar om. */
 export type LinkableWorkOrder = {
   customer_snapshot: Record<string, unknown> | null;
@@ -277,14 +286,23 @@ export type LinkableWorkOrder = {
   rot_details: Record<string, unknown> | null;
 };
 
+/** Kontaktfälten ordern kan ha fått för hand innan kortet kopplades. Kortet fyller dem bara när de är tomma. */
+const LINK_CONTACT_KEYS = ['contact_name', 'email', 'phone', 'your_reference'] as const;
+
 /**
  * Butikens kundkort kopplas på en portalorder utan kund (fas 3c): kunden, kortets del av snapshoten och momsen, och
  * därmed beloppet. Butiken är kunden: det är butiken Ekovilla fakturerar (William 2026-09-28). Raderna och resten av
- * snapshoten (märkningen, arbetsplatsen, kontakten på plats, det säljaren redigerat) står kvar.
+ * snapshoten (märkningen, arbetsplatsen, kontakten på plats) står kvar.
+ *
+ * Kortet vinner för vem kunden är (namn, org.nr, adress, moms). Kontakten och Er referens är ett val för just den här
+ * ordern: har säljaren fyllt i dem innan kortet kopplades står de kvar, och kortet fyller bara det som är tomt. Samma
+ * regel som telefonnumret i fullständighetskontrollen.
  */
 export function buildPortalCustomerLinkUpdate(workOrder: LinkableWorkOrder, customer: JobCustomerCard): Record<string, unknown> {
   const vatPercent = customer.reverse_vat === true ? 0 : 25;
-  // Avskrivna rader räknas inte, samma regel som när artiklarna sparas (saveWorkOrderLineItems).
+  // Avskrivna rader räknas inte: samma regel som `activeLineItems` (fortnox/partialInvoices.ts), som
+  // saveWorkOrderLineItems räknar med. Den importeras inte hit, eftersom den modulen drar in service-klienten och
+  // Fortnox-pushen, och den här ska vara ren. Ändras regeln där ändras den här.
   const active = (workOrder.line_items ?? []).filter((item) => !item.written_off) as PortalWorkOrderLine[];
   const pricing = computePricing(active, vatPercent, {
     isPrivate: customer.customer_type === 'private',
@@ -294,7 +312,7 @@ export function buildPortalCustomerLinkUpdate(workOrder: LinkableWorkOrder, cust
     customer_id: customer.id,
     client_name: getCrmCustomerDisplayName(customer),
     quote_type: customer.customer_type === 'private' ? 'private' : 'business',
-    customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), ...portalCustomerIdentity(customer) },
+    customer_snapshot: mergeLinkedSnapshot(workOrder.customer_snapshot ?? {}, portalCustomerIdentity(customer)),
     vat_percent: vatPercent,
     pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
     amount: pricing.total,

@@ -35,6 +35,8 @@ export type LinkPortalCustomerResult =
   | { kind: 'incomplete'; blockers: WorkOrderReadinessIssue[] }
   /** Sessionen ser ordern men får inte ändra den: varken ansvarig eller admin. */
   | { kind: 'forbidden' }
+  /** Ordern sparades av någon annan medan kopplingen förbereddes. Ingenting sparat; försök igen. */
+  | { kind: 'changed' }
   | { kind: 'linked'; fortnoxOrderNumber: string | null; fortnoxError: string | null; storeLinked: boolean };
 
 export type LinkPortalCustomerDeps = {
@@ -43,7 +45,7 @@ export type LinkPortalCustomerDeps = {
 };
 
 const WORK_ORDER_SELECT =
-  'id, customer_id, fortnox_order_number, quote_type, customer_snapshot, line_items, rot_details, internal_handoff';
+  'id, customer_id, fortnox_order_number, quote_type, customer_snapshot, line_items, rot_details, internal_handoff, updated_at';
 
 type LinkWorkOrderRow = LinkableWorkOrder & {
   id: string;
@@ -51,6 +53,7 @@ type LinkWorkOrderRow = LinkableWorkOrder & {
   fortnox_order_number: string | null;
   quote_type: 'private' | 'business';
   internal_handoff: Record<string, unknown> | null;
+  updated_at: string;
 };
 
 export async function linkPortalJobCustomer(
@@ -89,23 +92,30 @@ export async function linkPortalJobCustomer(
   if (!readiness.ready) return { kind: 'incomplete', blockers: readiness.blockers };
 
   // Sessionen ändrar ordern: RLS släpper bara den ansvariga och admin. Bara om den fortfarande saknar kund och
-  // Fortnox-order, så att två som kopplar samtidigt inte skriver över varandra.
+  // Fortnox-order, och inte har sparats sedan den lästes: uppdateringen skriver hela snapshoten, och en märkning eller
+  // kontakt som någon sparade under tiden hade annars försvunnit utan att någon märkt det.
   const saved = await session
     .from('crm_work_orders')
     .update(update)
     .eq('id', input.workOrderId)
+    .eq('updated_at', workOrder.updated_at)
     .is('customer_id', null)
     .is('fortnox_order_number', null)
     .select('id');
   if (saved.error) throw new Error(`Kunden kunde inte kopplas: ${saved.error.message}`);
   if ((saved.data ?? []).length === 0) {
     // Ingen rad ändrad: någon hann före, eller så får sessionen inte ändra ordern. UPDATE svarar utan fel i båda fallen.
-    const again = await session.from('crm_work_orders').select('customer_id, fortnox_order_number').eq('id', input.workOrderId).maybeSingle();
+    const again = await session
+      .from('crm_work_orders')
+      .select('customer_id, fortnox_order_number, updated_at')
+      .eq('id', input.workOrderId)
+      .maybeSingle();
     if (again.error) throw new Error(`Arbetsordern gick inte att läsa: ${again.error.message}`);
-    const now = again.data as { customer_id: string | null; fortnox_order_number: string | null } | null;
+    const now = again.data as { customer_id: string | null; fortnox_order_number: string | null; updated_at: string } | null;
     if (!now) return { kind: 'not_found' };
     if (now.customer_id) return { kind: 'already_linked' };
     if (now.fortnox_order_number) return { kind: 'in_fortnox' };
+    if (now.updated_at !== workOrder.updated_at) return { kind: 'changed' };
     return { kind: 'forbidden' };
   }
 

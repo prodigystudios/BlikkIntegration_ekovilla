@@ -52,7 +52,7 @@ function unlinkedWorkOrder(): Record<string, unknown> {
   const snapshot = row.customer_snapshot as Record<string, unknown>;
   // Säljaren har rättat kontakten på plats innan kunden kopplades.
   snapshot.end_contact_phone = '070-999 88 77';
-  return { ...row, fortnox_order_number: null };
+  return { ...row, fortnox_order_number: null, updated_at: '2026-09-28T10:00:00.000Z' };
 }
 
 function setup(options: { workOrder?: Record<string, unknown> | null; cards?: Record<string, unknown>[]; canUpdate?: boolean } = {}) {
@@ -154,6 +154,43 @@ describe('linkPortalJobCustomer', () => {
     const result = await linkPortalJobCustomer(race.admin, t.admin.admin, { workOrderId: WO, customerId: CARD_ID, actorId: SELLER }, t.deps);
     expect(result).toEqual({ kind: 'in_fortnox' });
     expect(race.tables.crm_work_orders[0].customer_id ?? null).toBeNull();
+  });
+
+  it('🧨 ordern sparades av någon annan under tiden (märkningen): ändrad, och ingenting skrivs över', async () => {
+    const t = setup();
+    const race = memoryAdmin(
+      { crm_work_orders: [unlinkedWorkOrder()], crm_customers: [CARD] },
+      {
+        beforeExecute: (call, tables) => {
+          if (call.table === 'crm_work_orders' && call.op === 'update') {
+            const row = tables.crm_work_orders[0];
+            row.customer_snapshot = { ...(row.customer_snapshot as object), label: 'Ny märkning' };
+            row.updated_at = '2026-09-28T10:00:05.000Z';
+          }
+        },
+      },
+    );
+    const result = await linkPortalJobCustomer(race.admin, t.admin.admin, { workOrderId: WO, customerId: CARD_ID, actorId: SELLER }, t.deps);
+    expect(result).toEqual({ kind: 'changed' });
+    expect((race.tables.crm_work_orders[0].customer_snapshot as { label: string }).label).toBe('Ny märkning');
+    expect(race.tables.crm_work_orders[0].customer_id ?? null).toBeNull();
+    expect(t.deps.push).not.toHaveBeenCalled();
+  });
+
+  it('kontakten som säljaren fyllt i står kvar; kortet fyller bara det som är tomt', async () => {
+    const wo = unlinkedWorkOrder();
+    wo.customer_snapshot = { ...(wo.customer_snapshot as object), contact_name: 'Kalle på lagret', phone: '026-55 55 55' };
+    const t = setup({ workOrder: wo });
+    await t.link();
+    expect(t.session.tables.crm_work_orders[0].customer_snapshot).toMatchObject({
+      contact_name: 'Kalle på lagret',
+      phone: '026-55 55 55',
+      // Tomma innan: kortets.
+      email: 'per@norrbygg.se',
+      your_reference: 'Per Inköp',
+      // Vem kunden är: alltid kortets.
+      customer_name: 'Norrbygg AB',
+    });
   });
 
   it.each([

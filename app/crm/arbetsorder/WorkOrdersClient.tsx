@@ -11,7 +11,8 @@ import SortFilter from '@/app/crm/components/SortFilter';
 import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
 import CrmModal from '@/app/crm/components/CrmModal';
-import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import EntityCombobox from '@/app/crm/components/EntityCombobox';
+import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
 import { useWorkOrderMargins, type WorkOrderMargin } from './useWorkOrderMargins';
@@ -233,17 +234,6 @@ export default function WorkOrdersClient({
   // save it on the customer before retrying.
   const [needsPersonalNumber, setNeedsPersonalNumber] = useState(false);
   const [newOrderPersonalNumber, setNewOrderPersonalNumber] = useState('');
-
-  async function searchCustomers(query: string): Promise<EntityResult[]> {
-    const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-    const json = await res.json().catch(() => ({}));
-    const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-    return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
-      id: c.id,
-      label: c.display_name || 'Okänd kund',
-      sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
-    }));
-  }
 
   function resetNewOrder() {
     setNewOrderOpen(false);
@@ -636,7 +626,7 @@ export default function WorkOrdersClient({
                 valueLabel={newOrderCustomerLabel}
                 onChange={(id, label) => { setNewOrderCustomerId(id); setNewOrderCustomerLabel(label); }}
                 onClear={() => { setNewOrderCustomerId(''); setNewOrderCustomerLabel(''); }}
-                search={searchCustomers}
+                search={searchCustomerOptions}
                 placeholder="Sök kund…"
               />
             </div>

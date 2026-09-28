@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   clients: 0,
   calls: [] as unknown[][],
   result: { kind: 'linked', fortnoxOrderNumber: '24', fortnoxError: null, storeLinked: true } as Record<string, unknown>,
+  rereadFails: false,
 }));
 
 vi.mock('@/lib/auth/route', async (importOriginal) => {
@@ -29,7 +30,7 @@ vi.mock('@/lib/domains/portal/linkCustomer', () => ({
   linkPortalJobCustomer: vi.fn(async (...args: unknown[]) => (h.calls.push(args), h.result)),
 }));
 vi.mock('@/lib/domains/crm/work-orders', () => ({
-  getCrmWorkOrder: vi.fn(async () => ({ data: { id: WO, customer_id: CARD }, error: null })),
+  getCrmWorkOrder: vi.fn(async () => (h.rereadFails ? { data: null, error: { message: 'nere' } } : { data: { id: WO, customer_id: CARD }, error: null })),
 }));
 
 const WO = '22222222-2222-4222-8222-222222222222';
@@ -54,6 +55,7 @@ beforeEach(() => {
   h.clients = 0;
   h.calls = [];
   h.result = { kind: 'linked', fortnoxOrderNumber: '24', fortnoxError: null, storeLinked: true };
+  h.rereadFails = false;
 });
 
 describe('POST /api/crm/portal/jobs/[workOrderId]/link-customer', () => {
@@ -93,6 +95,13 @@ describe('POST /api/crm/portal/jobs/[workOrderId]/link-customer', () => {
     expect(res.body.data.fortnox_error).toBe('Fortnox svarade: nej');
   });
 
+  it('🧨 ordern gick inte att läsa om efter en lyckad koppling: ändå 200 med utfallet, utan ordern', async () => {
+    h.rereadFails = true;
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ item: null, fortnox_order_number: '24', fortnox_error: null, store_linked: true });
+  });
+
   it('kortet saknar något: 409 med listan', async () => {
     const blockers = [{ field: 'organization_number', label: 'Organisationsnummer', message: 'Org.nr saknas.', fixAt: 'customer_card' }];
     h.result = { kind: 'incomplete', blockers };
@@ -109,6 +118,7 @@ describe('POST /api/crm/portal/jobs/[workOrderId]/link-customer', () => {
     ['customer_not_found', 404, 'crm_customer_not_found'],
     ['not_business', 422, 'portal_customer_not_business'],
     ['forbidden', 403, 'portal_link_forbidden'],
+    ['changed', 409, 'portal_job_changed'],
   ])('%s: %i %s', async (kind, status, code) => {
     h.result = { kind };
     const res = await post();

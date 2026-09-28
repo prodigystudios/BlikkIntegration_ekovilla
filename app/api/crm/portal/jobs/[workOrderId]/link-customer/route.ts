@@ -20,8 +20,10 @@ const bodySchema = z.object({
 // elevations" i SUPABASE_CONVENTIONS.md.
 //
 //   200 { item, fortnox_order_number, fortnox_error, store_linked }  kopplad; fortnox_error när Fortnox-ordern inte
-//                                                                    kunde skapas (kunden är ändå kopplad)
+//                                                                    kunde skapas (kunden är ändå kopplad); item null
+//                                                                    om ordern inte gick att läsa om efteråt
 //   403 portal_link_forbidden        varken ansvarig för ordern eller admin
+//   409 portal_job_changed           ordern sparades av någon annan under tiden; ingenting sparat, försök igen
 //   404 crm_work_order_not_found     ingen portalorder som du ser
 //   404 crm_customer_not_found       kundkortet finns inte
 //   409 portal_job_already_linked    ordern har redan en kund
@@ -64,11 +66,15 @@ export async function POST(req: Request, context: RouteContext) {
         });
       case 'forbidden':
         return routeError(403, 'portal_link_forbidden', 'Bara den som har ordern, eller en admin, kan koppla kunden.');
+      case 'changed':
+        return routeError(409, 'portal_job_changed', 'Ordern sparades av någon annan under tiden. Försök igen.');
       case 'linked': {
+        // Kopplingen och Fortnox-ordern är klara här. Går ordern inte att läsa om svarar vi ändå med utfallet, och
+        // klienten hämtar ordern själv: ett 500 hade sagt "kunde inte kopplas" om något som lyckats.
         const { data, error } = await getCrmWorkOrder(session, workOrderId);
-        if (error) return routeError(500, 'crm_work_order_fetch_failed', error.message);
+        if (error) console.error('[portal-link] ordern gick inte att läsa om efter kopplingen', { workOrderId, error: error.message });
         return ok({
-          item: data,
+          item: error ? null : data,
           fortnox_order_number: result.fortnoxOrderNumber,
           fortnox_error: result.fortnoxError,
           store_linked: result.storeLinked,

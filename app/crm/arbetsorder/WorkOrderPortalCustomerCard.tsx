@@ -5,7 +5,8 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
-import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import EntityCombobox from '@/app/crm/components/EntityCombobox';
+import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 
@@ -24,16 +25,11 @@ type Props = {
   onLinked: (item: unknown) => void;
 };
 
-async function searchCustomers(query: string): Promise<EntityResult[]> {
-  const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-  const json = await res.json().catch(() => ({}));
-  const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-  return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
-    id: c.id,
-    label: c.display_name || 'Okänd kund',
-    sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
-  }));
-}
+// Bara företag: butiken är ett företag, och servern nekar ett privatkundskort ändå.
+const searchStores = (query: string) => searchCustomerOptions(query, { businessOnly: true });
+
+// Lägen där kortet inte längre stämmer med ordern: någon annan kopplade eller skickade den under tiden.
+const STALE_CODES = new Set(['portal_job_already_linked', 'portal_job_in_fortnox', 'portal_job_changed']);
 
 export default function WorkOrderPortalCustomerCard({ workOrderId, storeName, onLinked }: Props) {
   const toast = useToast();
@@ -47,6 +43,13 @@ export default function WorkOrderPortalCustomerCard({ workOrderId, storeName, on
     setCustomerLabel(label);
     // Listan gällde det förra kortet.
     setBlockers([]);
+  }
+
+  /** Läser om ordern och lämnar den till sidan, som då döljer kortet om ordern har fått en kund. */
+  async function refreshWorkOrder() {
+    const res = await fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' }).catch(() => null);
+    const json = res ? await res.json().catch(() => ({})) : {};
+    if (json?.ok && json.data?.item) onLinked(json.data.item);
   }
 
   async function link() {
@@ -66,6 +69,7 @@ export default function WorkOrderPortalCustomerCard({ workOrderId, storeName, on
           return;
         }
         toast.error(json?.error || 'Kunden kunde inte kopplas.');
+        if (STALE_CODES.has(json?.errorDetails?.code)) await refreshWorkOrder();
         return;
       }
       const data = json.data as { item: unknown; fortnox_order_number: string | null; fortnox_error: string | null };
@@ -78,7 +82,8 @@ export default function WorkOrderPortalCustomerCard({ workOrderId, storeName, on
             : 'Kunden är kopplad.',
         );
       }
-      onLinked(data.item);
+      if (data.item) onLinked(data.item);
+      else await refreshWorkOrder();
     } catch {
       toast.error('Kunden kunde inte kopplas.');
     } finally {
@@ -103,7 +108,7 @@ export default function WorkOrderPortalCustomerCard({ workOrderId, storeName, on
           valueLabel={customerLabel}
           onChange={choose}
           onClear={() => choose('', '')}
-          search={searchCustomers}
+          search={searchStores}
           placeholder="Sök butikens kundkort…"
           disabled={linking}
         />

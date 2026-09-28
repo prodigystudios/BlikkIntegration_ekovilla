@@ -1191,7 +1191,7 @@ export default function WorkOrderDetailClient({
               <WorkOrderPortalCustomerCard
                 workOrderId={workOrder.id}
                 storeName={portalJob.storeName}
-                onLinked={(item) => applyWorkOrder(item as WorkOrderItem, { keepDraft: true })}
+                onLinked={(item) => applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview })}
               />
             ) : null}
 

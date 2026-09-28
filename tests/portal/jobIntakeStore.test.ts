@@ -184,6 +184,23 @@ describe('receivePortalJob', () => {
       });
     });
 
+    it('🧨 en koppling som sparas medan intaget pågår nollas inte (läsningen var från före den)', async () => {
+      const m = memoryAdmin(
+        { crm_customers: [CARD, MANUAL], crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'x', customer_id: null, customer_linked_at: null }] },
+        {
+          beforeExecute: (call, tables) => {
+            if (call.table === 'crm_portal_resellers' && call.op === 'update') {
+              Object.assign(tables.crm_portal_resellers[0], { customer_id: MANUAL.id, customer_linked_by: SELLER, customer_linked_at: '2026-09-28T10:00:01Z' });
+            }
+          },
+        },
+      );
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = null;
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
+      expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: MANUAL.id, customer_linked_at: '2026-09-28T10:00:01Z' });
+    });
+
     it('ett nummer som finns i CRM:et vinner alltid, och ersätter kopplingen', async () => {
       const m = memoryAdmin({ crm_customers: [CARD, MANUAL], crm_portal_resellers: [linkedStore()] });
       await receivePortalJob(m.admin, job(), payload(), intakeDeps());
@@ -191,13 +208,14 @@ describe('receivePortalJob', () => {
       expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: CUSTOMER_ID, customer_linked_by: null, customer_linked_at: null });
     });
 
-    it('kortet som kopplades har tagits bort (id:t nollat): ingen kund, och butikens rad nollas', async () => {
+    it('kortet som kopplades har tagits bort (id:t nollat): ingen kund, och butiken räknas som okopplad', async () => {
       const m = memoryAdmin({ crm_customers: [CARD], crm_portal_resellers: [linkedStore({ customer_id: null })] });
       const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
       body.store.ekovillaCustomerNumber = null;
       await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
       expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
-      expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: null, customer_linked_at: null });
+      // Tiden för kopplingen står kvar (kortet nollas bara där ingen koppling finns), men utan id räknas den inte.
+      expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
     });
 
     it('utan koppling och utan nummer: ingen kund (som i 3b)', async () => {
