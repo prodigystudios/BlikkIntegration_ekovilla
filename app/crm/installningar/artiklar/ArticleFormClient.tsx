@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
@@ -9,6 +9,8 @@ import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import DialogShell from '@/components/ui/DialogShell';
 import type { FortnoxArticlePriceRow } from '@/lib/domains/fortnox/types';
+import type { PortalArticleFields } from '@/lib/domains/portal/articleFields';
+import PortalArticleFieldsCard, { type PortalArticleFacts } from './PortalArticleFieldsCard';
 
 export type ArticleFormInitial = {
   article_number: string;
@@ -31,6 +33,8 @@ type ArticleFormClientProps = {
   units: { code: string; description: string }[];
   initial?: ArticleFormInitial;
   articleNumber?: string;
+  /** Portalfälten (bara vid redigering). undefined = kortet visas inte; error = de gick inte att läsa. */
+  portal?: { fields: PortalArticleFields | null; facts: PortalArticleFacts | null } | { error: true };
 };
 
 const VAT_OPTIONS = ['25', '12', '6', '0'];
@@ -66,6 +70,7 @@ export default function ArticleFormClient({
   units,
   initial,
   articleNumber,
+  portal,
 }: ArticleFormClientProps) {
   const router = useRouter();
   const toast = useToast();
@@ -96,6 +101,10 @@ export default function ArticleFormClient({
 
   const [busy, setBusy] = useState<null | 'save' | 'delete'>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Portalkortet sparas för sig. Har det osparade ändringar stannar Spara här i stället för att gå tillbaka till
+  // listan, så att de inte försvinner.
+  const [portalDirty, setPortalDirty] = useState(false);
+  const handlePortalDirty = useCallback((dirty: boolean) => setPortalDirty(dirty), []);
 
   // Unit options from the Fortnox register; keep the article's current unit
   // selectable even if it is no longer in the register.
@@ -146,6 +155,11 @@ export default function ArticleFormClient({
           method: 'PUT',
           body: JSON.stringify(body),
         });
+      }
+      if (portalDirty) {
+        toast.info('Artikeln är sparad. Portalfälten är inte sparade än.');
+        router.refresh();
+        return;
       }
       toast.success(isCreate ? 'Artikel skapad' : 'Artikel uppdaterad');
       router.push(LIST_BASE);
@@ -323,29 +337,45 @@ export default function ArticleFormClient({
           </div>
         </div>
 
-        {/* Prices per price list */}
-        <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-          <h2 className="m-0 mb-1 text-base font-bold text-slate-900">Priser (ex moms)</h2>
-          <p className="m-0 mb-4 text-sm text-slate-500">Försäljningspris per prislista. Lämna tomt för inget pris.</p>
+        <div className="grid content-start gap-6">
+          {/* Prices per price list */}
+          <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
+            <h2 className="m-0 mb-1 text-base font-bold text-slate-900">Priser (ex moms)</h2>
+            <p className="m-0 mb-4 text-sm text-slate-500">Försäljningspris per prislista. Lämna tomt för inget pris.</p>
 
-          {priceLists.length === 0 ? (
-            <p className="m-0 text-sm text-slate-400">
-              {fortnoxConnected ? 'Inga prislistor hittades i Fortnox.' : 'Anslut Fortnox för att se prislistor.'}
-            </p>
-          ) : (
-            <div className="grid gap-3">
-              {priceLists.map((list) => (
-                <label key={list.code} className="grid gap-1.5">
-                  <span className="text-sm font-medium text-slate-700">{list.description || list.code}</span>
-                  <Input
-                    inputMode="decimal"
-                    value={priceInputs[list.code] ?? ''}
-                    onChange={(e) => setPriceInputs((p) => ({ ...p, [list.code]: e.target.value }))}
-                    placeholder="0,00"
-                  />
-                </label>
-              ))}
+            {priceLists.length === 0 ? (
+              <p className="m-0 text-sm text-slate-400">
+                {fortnoxConnected ? 'Inga prislistor hittades i Fortnox.' : 'Anslut Fortnox för att se prislistor.'}
+              </p>
+            ) : (
+              <div className="grid gap-3">
+                {priceLists.map((list) => (
+                  <label key={list.code} className="grid gap-1.5">
+                    <span className="text-sm font-medium text-slate-700">{list.description || list.code}</span>
+                    <Input
+                      inputMode="decimal"
+                      value={priceInputs[list.code] ?? ''}
+                      onChange={(e) => setPriceInputs((p) => ({ ...p, [list.code]: e.target.value }))}
+                      placeholder="0,00"
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {portal && 'error' in portal && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              Återförsäljarportalens fält kunde inte läsas. Ladda om sidan för att försöka igen.
             </div>
+          )}
+          {portal && !('error' in portal) && articleNumber && (
+            <PortalArticleFieldsCard
+              articleNumber={articleNumber}
+              initialFields={portal.fields}
+              facts={portal.facts}
+              onDirtyChange={handlePortalDirty}
+            />
           )}
         </div>
       </div>

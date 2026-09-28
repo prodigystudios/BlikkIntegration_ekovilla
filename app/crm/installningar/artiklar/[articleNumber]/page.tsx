@@ -2,7 +2,11 @@ import { getFortnoxArticleForEdit } from '@/lib/domains/fortnox/articles';
 import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { listFortnoxUnits } from '@/lib/domains/fortnox/units';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
+import { RESELLER_PRICE_LIST_CODE } from '@/lib/domains/fortnox/priceLists';
+import { getPortalArticleFields } from '@/lib/domains/portal/articleFieldsStore';
+import { createSessionClient } from '@/lib/supabase/session';
 import ArticleFormClient, { type ArticleFormInitial } from '../ArticleFormClient';
+import type { PortalArticleFacts } from '../PortalArticleFieldsCard';
 import type { FortnoxArticlePriceRow } from '@/lib/domains/fortnox/types';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +17,15 @@ export default async function RedigeraArtikelPage({ params }: { params: Promise<
   const { articleNumber: raw } = await params;
   const articleNumber = decodeURIComponent(raw);
 
-  const fortnoxStatus = await getFortnoxConnectionStatus().catch(() => ({ connected: false }));
+  // Portalfälten bor i CRM:et och läses med sessionen (RLS: crm.article.manage), oberoende av Fortnox. Ett läsfel
+  // får inte ta artikelsidan med sig, och kortet visas då inte alls: tomma fält hade kunnat sparas över de riktiga.
+  const [fortnoxStatus, portalFields] = await Promise.all([
+    getFortnoxConnectionStatus().catch(() => ({ connected: false })),
+    getPortalArticleFields(createSessionClient(), articleNumber).catch((e: unknown) => {
+      console.error('[portal] artikelfälten', e instanceof Error ? e.message : e);
+      return 'error' as const;
+    }),
+  ]);
 
   let initial: ArticleFormInitial | undefined;
   let priceLists: FortnoxArticlePriceRow[] = [];
@@ -57,6 +69,15 @@ export default async function RedigeraArtikelPage({ params }: { params: Promise<
     );
   }
 
+  // Det publiceringen prövar, som Fortnox har det nu. Okänt utan Fortnox.
+  const portalFacts: PortalArticleFacts | null = initial
+    ? {
+        active: initial.active,
+        unit: initial.unit,
+        resellerPrice: priceLists.find((p) => p.code === RESELLER_PRICE_LIST_CODE)?.price ?? null,
+      }
+    : null;
+
   return (
     <ArticleFormClient
       mode="edit"
@@ -65,6 +86,7 @@ export default async function RedigeraArtikelPage({ params }: { params: Promise<
       initial={initial}
       priceLists={priceLists}
       units={units}
+      portal={portalFields === 'error' ? { error: true } : { fields: portalFields, facts: portalFacts }}
     />
   );
 }

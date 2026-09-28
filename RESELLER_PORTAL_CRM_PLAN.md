@@ -1,7 +1,7 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** plan, ingen kod byggd. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma dag
-efter genomgången med William.
+**Status:** fas 0–2a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
 vägen utan att röra prod. Kontrollera varje filhänvisning mot koden innan du bygger på den.
@@ -155,6 +155,7 @@ Ren logik som testas isolerat:
 | `config.ts` | Miljövariablerna och portalspärren |
 | `client.ts` | Signerat anrop med `AbortSignal.timeout`, svaret klassat som 2xx, 4xx eller 5xx/timeout |
 | `outbox.ts`, `idempotency.ts` | Utgående kö och inkommande svarscache |
+| `articleFields.ts` ✅, `articleFieldsStore.ts` ✅ | Portalfälten per artikel. Den rena delen (kategorierna, arbetsandelen i procent, `portalPublishBlockers`) importeras av artikelsidans kort och får aldrig dra in zod eller databasklienten. Zod-schemat och läsningarna och skrivningarna ligger i `…Store.ts` |
 | `pricelist.ts` | Prislistans payload |
 | `jobIntake.ts` | Radmappning och snapshot för jobben |
 | `assignment.ts`, `county.ts` | Fördelningen till en säljare |
@@ -198,7 +199,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_resellers` | Portalens `resellerId` (butiken), namn, adress, `customer_id`, `seller_user_id`. Uppdateras vid varje inkommande anrop |
 | `crm_portal_jobs` | `quote_id` (unik), `quote_number`, `reseller_id`, `work_order_id` (unik, `on delete set null`), kroppen, senast skickade tillstånd, och en markering "behöver synkas" |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
-| `crm_portal_article_fields` | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1), `note`, `sort_order`, `publish` |
+| `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` | Varje publicering: giltig från, hash, kroppen, vem och när |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
 
@@ -347,7 +348,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **1a** ✅ | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
 | **1b** ✅ | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts`. Ett 401 från portalen görs om med backoff, som 5xx (punkt 15). Köns beteende prövas mot en databas med `supabase/checks/portal_outbox.sql` (bara lokalt, rullar tillbaka) | 1a |
 | **1c** ✅ | Undantaget i middleware (prefixet `/api/portal/`), signerad `POST /api/portal/ping`, grinden `verifyPortalRequest` i `app/api/portal/_shared.ts`, och vakttestet `tests/portal/routeGuards.test.ts`: varje handler under prefixet måste BÖRJA med grinden och använda svaret | 1a |
-| **2a** | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`) | — |
+| **2a** ✅ | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`): eget kort med eget Spara (`PUT /api/crm/portal/article-fields/[articleNumber]`), kolumnen "Portal" och ett filter i listan. Beteendet prövas mot en databas med `supabase/checks/portal_article_fields.sql`. Resultaten står under tabellen | — |
 | **2b** | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera | 0, 1b, 2a |
 | **3a** | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin | 1b |
 | **3b** | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan | 3a |
@@ -395,6 +396,27 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 - Fråga med **postnummer och ort**, inte gatan. En gatufråga träffade en annan husadress med ett
   annat postnummer; länet blev rätt, men postnummer och ort räcker för länet och ger mindre att gissa.
 - `crm_routing_rules` är tom lokalt. Fördelningen på län går inte att prova förrän regler finns.
+
+### Fas 2a: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Tabellen fylls från början** med de 51 artiklarna portalen visar i dag (`ARTICLES` i portalens
+  `lib/data/mock/seed.ts`, prods lista 160 läst 25 september): kundnamn, kategori och arbetsandel, en tom
+  anteckning, ordningen 10, 20 … 510 i portalens ordning och publiceras = ja. Första publiceringen ändrar
+  då inget för butikerna. Migreringen gör ifyllnaden med `on conflict do nothing`.
+- **Fälten ligger i ett eget kort** under "Priser" på artikelns sida, med eget Spara, eftersom fälten
+  sparas i CRM:et och inte i Fortnox. Kortet visar grundpriset på lista 160 och enheten, men de går inte
+  att ändra där. Listan har kolumnen "Portal" och filtret "Bara portalens prislista".
+- **Vilken artikel som helst kan markeras.** Publiceringen hoppar över en artikel som är inaktiv, saknar
+  enhet eller saknar pris på lista 160, och kortet varnar för samma sak. Regeln finns på ett ställe,
+  `portalPublishBlockers()`, som fas 2b använder. 0 kr räknas som ett pris.
+
+⚠️ **Före första publiceringen:** arbetsandelarna för inblåst lösull är portalens antaganden (0,45 på
+vinden, 0,5 annars; 14 artiklar) och ger ROT. Ekovilla behöver bekräfta dem.
+
+**Till fas 2b:** tabellens policyer frågar bara efter `crm.article.manage`. Publiceringen under
+`crm.portal.manage` får en egen läspolicy i sin migrering. `numeric(4,3)` avrundar en fjärde decimal
+utan att säga något, och därför nekar appen fler än tre decimaler innan värdet når databasen.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
@@ -504,5 +526,6 @@ Ingen av dem stoppar fas 0–6.
 **Prod, mörk:** `/api/portal/ping` svarar 503 utan hemlighet, och `/api/crm/*` utan session svarar
 fortfarande 401.
 
-**Varje kod-PR:** `npm run type-check`, `npm run lint`, `npm run build` (inte medan dev-servern kör),
-`npm test` och `npm run db:reset`.
+**Varje kod-PR:** `npm run type-check`, `npm run lint`, `npm run build` (inte medan dev-servern kör)
+och `npm test`. En migrering prövas i en tillfällig databas (två körningar) och läggs lokalt med
+`supabase migration up`. Kör inte `npm run db:reset`: den raderar den lokala Fortnox-kopplingen.
