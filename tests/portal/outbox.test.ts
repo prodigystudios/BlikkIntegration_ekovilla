@@ -61,63 +61,112 @@ describe('outcomeUpdate', () => {
   });
 });
 
-/** En minimal service-roll-klient som spelar in anropen. */
-function fakeAdmin(claimed: unknown[] = []) {
-  const calls: { table: string; op: string; values?: unknown; filters: [string, string, unknown][] }[] = [];
+type Call = { table: string; op: string; values?: unknown; filters: [string, string, unknown][]; select?: string };
+
+/**
+ * En minimal service-roll-klient som spelar in anropen. `respond` avgör vad ett anrop svarar; standard är att en
+ * upsert lägger in en ny rad och att en update träffar sin rad.
+ */
+function fakeAdmin(claimed: unknown[] = [], respond?: (call: Call) => { data: unknown; error: unknown } | undefined) {
+  const calls: Call[] = [];
   function builder(table: string) {
-    const call = { table, op: '', values: undefined as unknown, filters: [] as [string, string, unknown][] };
+    const call: Call = { table, op: '', filters: [] };
     calls.push(call);
     const chain: Record<string, unknown> = {};
-    for (const op of ['update', 'upsert', 'insert', 'select', 'delete']) {
+    for (const op of ['update', 'upsert', 'insert', 'delete']) {
       chain[op] = vi.fn((values?: unknown) => {
-        if (!call.op) {
-          call.op = op;
-          call.values = values;
-        }
+        call.op = op;
+        call.values = values;
         return chain;
       });
     }
+    chain.select = vi.fn((columns?: string) => {
+      if (!call.op) call.op = 'select';
+      call.select = columns;
+      return chain;
+    });
     for (const f of ['eq', 'neq', 'lte', 'lt']) {
       chain[f] = vi.fn((column: string, value: unknown) => {
         call.filters.push([f, column, value]);
         return chain;
       });
     }
-    chain.maybeSingle = vi.fn(async () => ({ data: null, error: null }));
-    chain.then = (resolve: (v: unknown) => unknown) =>
-      Promise.resolve({ data: call.op === 'upsert' ? [{ id: 'new-id', created_at: NOW.toISOString() }] : [], error: null }).then(resolve);
+    const result = () =>
+      respond?.(call) ??
+      (call.op === 'upsert'
+        ? { data: [{ id: 'new-id', seq: 7, status: 'pending' }], error: null }
+        : call.op === 'update' && call.select
+          ? { data: [{ id: 'x' }], error: null }
+          : { data: [], error: null });
+    chain.maybeSingle = vi.fn(async () => result());
+    chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve(result()).then(resolve);
     return chain;
   }
   const rpc = vi.fn(async () => ({ data: claimed, error: null }));
   return { admin: { from: vi.fn(builder), rpc } as never, calls, rpc };
 }
 
+const EVENT = {
+  idempotencyKey: 'job.scheduled-q-1-2026-09-28T08:00:00Z',
+  path: '/api/ekovilla/events',
+  payload: { type: 'job.scheduled', data: { quoteId: 'q-1', scheduledFor: '2026-10-14' } },
+  orderingKey: 'job:q-1',
+  supersedeKey: 'job.scheduled:q-1',
+};
+
 describe('enqueuePortalEvent', () => {
   it('köar bara till portalens egna routes', async () => {
     const { admin } = fakeAdmin();
-    await expect(
-      enqueuePortalEvent(admin, { idempotencyKey: 'k', path: 'https://example.com/x', payload: {}, orderingKey: 'job:1' }),
-    ).rejects.toThrow(/portalroute/);
+    await expect(enqueuePortalEvent(admin, { ...EVENT, path: 'https://example.com/x' })).rejects.toThrow(/portalroute/);
   });
 
-  it('ersätter äldre väntande händelser med samma supersedeKey, men inte den nya', async () => {
+  it('🧨 vägrar en nyckel som fetch inte kan skicka — den hade blockerat jobbet i två dygn', async () => {
     const { admin, calls } = fakeAdmin();
-    const result = await enqueuePortalEvent(admin, {
-      idempotencyKey: 'job.scheduled-q-1-2026-09-28T08:00:00Z',
-      path: '/api/ekovilla/events',
-      payload: { type: 'job.scheduled' },
-      orderingKey: 'job:q-1',
-      supersedeKey: 'job.scheduled:q-1',
-    });
-    expect(result).toEqual({ id: 'new-id', created: true });
+    for (const key of ['job ett', 'jöb-1', 'job-1\n', '', 'x'.repeat(201)]) {
+      await expect(enqueuePortalEvent(admin, { ...EVENT, idempotencyKey: key })).rejects.toThrow(/Idempotency-Key/);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it('ersätter äldre väntande händelser med samma supersedeKey, efter köordningen (seq)', async () => {
+    const { admin, calls } = fakeAdmin();
+    expect(await enqueuePortalEvent(admin, EVENT)).toEqual({ id: 'new-id', created: true, status: 'pending' });
     const supersede = calls.find((c) => c.op === 'update');
     expect(supersede?.values).toEqual({ status: 'superseded' });
     expect(supersede?.filters).toEqual([
       ['eq', 'supersede_key', 'job.scheduled:q-1'],
       ['eq', 'status', 'pending'],
-      ['neq', 'id', 'new-id'],
-      ['lte', 'created_at', NOW.toISOString()],
+      ['lt', 'seq', 7],
     ]);
+  });
+
+  it('samma nyckel igen: inte köad två gånger, med radens status — och ersättningen görs klart', async () => {
+    const existing = { id: 'old-id', seq: 3, status: 'pending', path: EVENT.path, payload: { data: { scheduledFor: '2026-10-14', quoteId: 'q-1' }, type: 'job.scheduled' }, ordering_key: EVENT.orderingKey, supersede_key: EVENT.supersedeKey };
+    const { admin, calls } = fakeAdmin([], (call) => {
+      if (call.op === 'upsert') return { data: [], error: null };
+      if (call.op === 'select') return { data: existing, error: null };
+      return undefined;
+    });
+    // Samma kropp med nycklarna i en annan ordning (som jsonb lämnar tillbaka dem) är samma händelse.
+    expect(await enqueuePortalEvent(admin, EVENT)).toEqual({ id: 'old-id', created: false, status: 'pending' });
+    expect(calls.find((c) => c.op === 'update')?.filters).toContainEqual(['lt', 'seq', 3]);
+  });
+
+  it('samma nyckel igen, redan levererad: säger det, och ersätter ingenting', async () => {
+    const existing = { id: 'old-id', seq: 3, status: 'sent', path: EVENT.path, payload: EVENT.payload, ordering_key: EVENT.orderingKey, supersede_key: EVENT.supersedeKey };
+    const { admin, calls } = fakeAdmin([], (call) =>
+      call.op === 'upsert' ? { data: [], error: null } : call.op === 'select' ? { data: existing, error: null } : undefined,
+    );
+    expect(await enqueuePortalEvent(admin, EVENT)).toEqual({ id: 'old-id', created: false, status: 'sent' });
+    expect(calls.find((c) => c.op === 'update')).toBeUndefined();
+  });
+
+  it('🧨 samma nyckel med ett annat innehåll kastar — annars hade den nya kroppen tappats tyst', async () => {
+    const existing = { id: 'old-id', seq: 3, status: 'pending', path: EVENT.path, payload: { type: 'job.scheduled', data: { quoteId: 'q-1', scheduledFor: '2026-10-21' } }, ordering_key: EVENT.orderingKey, supersede_key: EVENT.supersedeKey };
+    const { admin } = fakeAdmin([], (call) =>
+      call.op === 'upsert' ? { data: [], error: null } : call.op === 'select' ? { data: existing, error: null } : undefined,
+    );
+    await expect(enqueuePortalEvent(admin, EVENT)).rejects.toThrow(/annat innehåll/);
   });
 });
 
@@ -159,7 +208,7 @@ describe('dispatchPortalOutbox', () => {
     const summary = await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW });
 
     expect(rpc).toHaveBeenCalledWith('claim_portal_outbound_events', { p_limit: 20 });
-    expect(summary).toEqual({ ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, bookkeepingErrors: 0 });
+    expect(summary).toEqual({ ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, returned: 0, bookkeepingErrors: 0 });
     const [url] = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0] as [string];
     expect(url).toBe('http://localhost:3001/api/ekovilla/events');
 
@@ -172,11 +221,35 @@ describe('dispatchPortalOutbox', () => {
     ]);
   });
 
+  it('🧨 en bokföring som inte träffar raden räknas inte som skickad — PostgREST svarar utan fel', async () => {
+    const { admin } = fakeAdmin([event], (call) => (call.op === 'update' ? { data: [], error: null } : undefined));
+    const fetchImpl = vi.fn(async () => new Response('', { status: 202 })) as unknown as typeof fetch;
+    const summary = await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW });
+    expect(summary).toMatchObject({ sent: 0, bookkeepingErrors: 1 });
+  });
+
   it('räknar tillfälliga fel och uppgivna var för sig', async () => {
     const { admin } = fakeAdmin([event, { ...event, id: 'ev-2', idempotency_key: 'job.confirmed-q-2' }]);
     const statuses = [503, 409];
     const fetchImpl = vi.fn(async () => new Response('', { status: statuses.shift() })) as unknown as typeof fetch;
     const summary = await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW });
-    expect(summary).toEqual({ ran: true, claimed: 2, sent: 0, retried: 1, dead: 1, bookkeepingErrors: 0 });
+    expect(summary).toMatchObject({ claimed: 2, sent: 0, retried: 1, dead: 1 });
+  });
+
+  it('🧨 slutar skicka när tiden är slut och lämnar tillbaka resten, utan att räkna ett försök', async () => {
+    const events = [event, { ...event, id: 'ev-2', idempotency_key: 'k2', attempts: 3 }, { ...event, id: 'ev-3', idempotency_key: 'k3' }];
+    const { admin, calls } = fakeAdmin(events);
+    let clock = NOW.getTime();
+    const fetchImpl = vi.fn(async () => {
+      clock += 45_000; // ett långsamt anrop
+      return new Response('', { status: 202 });
+    }) as unknown as typeof fetch;
+    const summary = await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => new Date(clock), budgetMs: 60_000 });
+
+    expect(summary).toMatchObject({ claimed: 3, sent: 2, returned: 1 });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const returned = calls.filter((c) => c.op === 'update').at(-1);
+    expect(returned?.values).toEqual({ status: 'pending', attempts: 0 });
+    expect(returned?.filters).toContainEqual(['eq', 'id', 'ev-3']);
   });
 });

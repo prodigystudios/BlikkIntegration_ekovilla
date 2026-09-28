@@ -14,8 +14,13 @@
 --   claim_portal_outbound_events()
 --                             tar nästa händelser att skicka, med `for update skip locked`, och bara den ÄLDSTA
 --                             oavslutade per `ordering_key` (t.ex. ett jobb), så att ett jobbs händelser kommer fram i
---                             ordning. En händelse som fastnat i "sending" (en funktion som dog) tas om efter
---                             p_stale_after.
+--                             köordning (`seq`). En händelse som fastnat i "sending" (en funktion som dog) tas om efter
+--                             p_stale_after, som måste vara längre än ett utskicks längsta körning (utskicket slutar
+--                             ta nya efter 60 s, och ett anrop får ta 10 s).
+--                             En UPPGIVEN händelse ('dead') håller inte kvar resten av sin nyckel: annars hade ett
+--                             enda 4xx låst ett jobb, eller alla framtida prislistor, för gott. Att ett jobb aldrig
+--                             får "planerad" före "bekräftad" avgörs där händelserna skapas (fas 4b), mot det som
+--                             portalen faktiskt TAGIT EMOT, inte här.
 --
 -- ÅTKOMST
 -- Bara service_role, från portalens routes och utskicket. anon och authenticated får INGENTING: RLS är på, inga
@@ -56,12 +61,20 @@ alter table public.portal_idempotency_keys drop constraint if exists portal_idem
 alter table public.portal_idempotency_keys
   add constraint portal_idempotency_keys_status_check check (status in ('processing', 'done'));
 
--- Bara svar som blir samma vid ett omförsök sparas: 2xx och 4xx. Ett 5xx släpper nyckeln, så att omförsöket körs.
+-- Bara svar som blir samma vid ett omförsök sparas: 2xx och de 4xx som inte är tillfälliga. 401, 408, 425 och 429
+-- betyder "försök igen" (401 görs om enligt beslutet 2026-09-28), och ett 5xx släpper nyckeln, så att omförsöket körs.
 alter table public.portal_idempotency_keys drop constraint if exists portal_idempotency_keys_response_check;
 alter table public.portal_idempotency_keys
   add constraint portal_idempotency_keys_response_check check (
     (status = 'processing' and response_status is null and completed_at is null)
-    or (status = 'done' and response_status between 200 and 499 and completed_at is not null)
+    or (
+      status = 'done'
+      and completed_at is not null
+      and (
+        response_status between 200 and 299
+        or (response_status between 400 and 499 and response_status not in (401, 408, 425, 429))
+      )
+    )
   );
 
 -- Gallringen (gamla nycklar) går på created_at.
@@ -75,6 +88,9 @@ grant select, insert, update, delete on table public.portal_idempotency_keys to 
 
 create table if not exists public.portal_outbound_events (
   id uuid primary key default gen_random_uuid(),
+  -- Köordningen. Strikt stigande, till skillnad från created_at (transaktionens start, och lika för två rader i
+  -- samma ögonblick).
+  seq bigint generated always as identity,
   -- Idempotency-Key mot portalen, t.ex. `job.scheduled-q-2026-015-2026-10-14T08:00:00Z`. Unik: samma händelse köas en gång.
   idempotency_key text not null,
   -- Portalens route, t.ex. `/api/ekovilla/events`. Värden kommer ur RESELLER_PORTAL_URL, aldrig härifrån.
@@ -135,7 +151,7 @@ alter table public.portal_outbound_events
 
 -- Claim-funktionens sökning: oavslutade händelser per nyckel i köordning.
 create index if not exists portal_outbound_events_open_idx
-  on public.portal_outbound_events (ordering_key, created_at, id)
+  on public.portal_outbound_events (ordering_key, seq)
   where status in ('pending', 'sending');
 
 create index if not exists portal_outbound_events_supersede_idx
@@ -154,7 +170,7 @@ grant select, insert, update, delete on table public.portal_outbound_events to s
 -- nyaste versionen av en rad som hunnit ändras.
 create or replace function public.claim_portal_outbound_events(
   p_limit integer default 20,
-  p_stale_after interval default interval '2 minutes'
+  p_stale_after interval default interval '5 minutes'
 )
 returns setof public.portal_outbound_events
 language sql
@@ -163,17 +179,17 @@ security invoker
 set search_path = ''
 as $$
   with heads as (
-    select distinct on (e.ordering_key) e.id, e.status, e.next_attempt_at, e.claimed_at, e.created_at
+    select distinct on (e.ordering_key) e.id, e.status, e.next_attempt_at, e.claimed_at, e.seq
       from public.portal_outbound_events e
      where e.status in ('pending', 'sending')
-     order by e.ordering_key, e.created_at, e.id
+     order by e.ordering_key, e.seq
   ),
   ready as (
     select h.id
       from heads h
      where (h.status = 'pending' and h.next_attempt_at <= now())
         or (h.status = 'sending' and h.claimed_at < now() - p_stale_after)
-     order by h.created_at, h.id
+     order by h.seq
      limit greatest(p_limit, 0)
   ),
   locked as (
@@ -216,9 +232,12 @@ begin
         raise exception 'portaltransporten: % har rättigheter på %', who, tbl;
       end if;
     end loop;
-    if not has_table_privilege('service_role', tbl, 'SELECT,INSERT,UPDATE,DELETE') then
-      raise exception 'portaltransporten: service_role saknar rättigheter på %', tbl;
-    end if;
+    -- En kommaseparerad lista svarar sant om NÅGON finns; varje rättighet prövas därför för sig.
+    foreach who in array array['SELECT', 'INSERT', 'UPDATE', 'DELETE'] loop
+      if not has_table_privilege('service_role', tbl, who) then
+        raise exception 'portaltransporten: service_role saknar % på %', who, tbl;
+      end if;
+    end loop;
   end loop;
 
   foreach who in array array['anon', 'authenticated'] loop

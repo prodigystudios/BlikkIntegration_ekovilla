@@ -119,6 +119,14 @@ Räkna med ungefär en halv dag, och börja lite innan någon ska testa.
 - Testkunden "Testbygg AB" läggs upp i testbolaget och i CRM-testet. Dess kundnummer sätts på
   portalens testbutik.
 
+**T4b. Kön får inte tömmas från fel databas.** Om testmiljön ärver prods Supabase-nycklar genom en
+allmän Preview-variabel (T3) och har testportalens adress, godtar portalspärren den (testmiljö →
+testportal). Då tar knappen "Skicka väntande nu" händelser ur PRODS kö och skickar dem till
+testportalen, där de går förlorade. Innan hemligheten sätts i testmiljön: knyt portalen till
+databasen. Antingen står prods Supabase-värd i koden och nekas utanför prod, eller så får varje miljö
+en variabel med sin egen databasvärd som måste stämma med `SUPABASE_URL`. Prods värd finns i dag med
+flit inte i repot, så valet görs då. (Granskningen av fas 1b, 2026-09-28.)
+
 **T5. Den delade hemligheten.** `PORTAL_CRM_SHARED_SECRET` för testmiljön genereras av William i egen
 terminal (`openssl rand -hex 32`) och läggs i båda Vercel-projekten, Preview för grenen `testmiljo`.
 Den skrivs aldrig i en chatt, en commit eller en logg.
@@ -341,7 +349,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **3b** | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan | 3a |
 | **3c** | Koppla kund på en portalorder utan kund | 3b |
 | **4a** | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen | — |
-| **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen | 1b, 3b, 4a |
+| **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
 | **6** | Meddelanden åt båda hållen och kortet "Butiken" | 4b |
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |

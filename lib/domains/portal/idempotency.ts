@@ -7,8 +7,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Portalen sätter `Idempotency-Key` och gör om anropet vid timeout, 5xx och 401. Ett upprepat anrop ska få samma
  * svar och inte göra något nytt. Flödet i en route:
  *
- *   claim → 'claimed'     kör, och spara sedan svaret med completeIdempotencyKey (2xx/4xx) eller släpp nyckeln
- *                         med releaseIdempotencyKey (5xx), så att omförsöket körs på nytt
+ *   claim → 'claimed'     kör, och spara sedan svaret med completeIdempotencyKey (2xx och bestående 4xx) eller
+ *                         släpp nyckeln med releaseIdempotencyKey (5xx och tillfälliga 4xx), så att omförsöket körs
+ *                         på nytt. Båda tar claimens `token`: en route som tagit för lång tid och fått sin nyckel
+ *                         övertagen kan då inte spara över eller släppa den nya ägarens claim.
  *   claim → 'replay'      svara med det sparade svaret
  *   claim → 'mismatch'    422: samma nyckel, en annan förfrågan
  *   claim → 'in_progress' 503 med Retry-After: ett annat anrop med nyckeln körs just nu. 503 och inte 409, eftersom
@@ -54,7 +56,7 @@ export type IdempotencyRow = {
 };
 
 export type IdempotencyClaim =
-  | { kind: 'claimed' }
+  | { kind: 'claimed'; token: string }
   | { kind: 'replay'; status: number; body: unknown }
   | { kind: 'mismatch' }
   | { kind: 'in_progress' };
@@ -63,6 +65,16 @@ export type IdempotencyClaim =
  * Vad en befintlig rad betyder för ett nytt anrop med samma nyckel. `take_over` = claimen är gammal och får tas
  * (det avgör databasen, så att bara ett omförsök vinner).
  */
+/**
+ * Får svaret sparas? 2xx och de 4xx som blir samma vid ett omförsök. 401, 408, 425 och 429 är tillfälliga (401 görs
+ * om enligt beslutet 2026-09-28), 3xx svarar portalens routes inte med, och ett 5xx ska köras om. Samma regel som
+ * tabellens CHECK.
+ */
+export function isCacheableResponseStatus(status: number): boolean {
+  if (status >= 200 && status <= 299) return true;
+  return status >= 400 && status <= 499 && ![401, 408, 425, 429].includes(status);
+}
+
 export function decideExistingIdempotencyKey(
   row: IdempotencyRow,
   requestHash: string,
@@ -86,16 +98,19 @@ export async function claimIdempotencyKey(
   requestHash: string,
   now: Date = new Date(),
 ): Promise<IdempotencyClaim> {
+  // Tiden claimen skrivs med är också dess token.
+  const token = now.toISOString();
+
   // Ny nyckel: raden läggs in, och bara det anrop som lade in den får köra.
   const inserted = await admin
     .from('portal_idempotency_keys')
     .upsert(
-      { key, request_hash: requestHash, status: 'processing', claimed_at: now.toISOString() },
+      { key, request_hash: requestHash, status: 'processing', claimed_at: token },
       { onConflict: 'key', ignoreDuplicates: true },
     )
     .select('key');
   if (inserted.error) throw new Error(`Idempotensnyckeln kunde inte tas: ${inserted.error.message}`);
-  if ((inserted.data ?? []).length > 0) return { kind: 'claimed' };
+  if ((inserted.data ?? []).length > 0) return { kind: 'claimed', token };
 
   const existing = await admin.from('portal_idempotency_keys').select(SELECT).eq('key', key).maybeSingle();
   if (existing.error) throw new Error(`Idempotensnyckeln kunde inte läsas: ${existing.error.message}`);
@@ -109,36 +124,53 @@ export async function claimIdempotencyKey(
   // Ta över en gammal claim — bara om ingen annan hunnit före (claimed_at är oförändrad).
   const taken = await admin
     .from('portal_idempotency_keys')
-    .update({ claimed_at: now.toISOString() })
+    .update({ claimed_at: token })
     .eq('key', key)
     .eq('status', 'processing')
     .eq('claimed_at', row.claimed_at)
     .select('key');
   if (taken.error) throw new Error(`Idempotensnyckeln kunde inte tas över: ${taken.error.message}`);
-  return (taken.data ?? []).length > 0 ? { kind: 'claimed' } : { kind: 'in_progress' };
+  return (taken.data ?? []).length > 0 ? { kind: 'claimed', token } : { kind: 'in_progress' };
 }
 
-/** Sparar svaret. Bara 2xx och 4xx: de blir samma vid ett omförsök. Ett 5xx släpps i stället. */
+/**
+ * Sparar svaret, om claimen fortfarande är vår. `false` = den togs över eller släpptes medan routen körde; svaret
+ * gäller ändå för det här anropet, men sparas inte. (Kolla alltid: en UPDATE som inte träffar någon rad svarar utan
+ * fel i PostgREST.)
+ */
 export async function completeIdempotencyKey(
   admin: SupabaseClient,
-  key: string,
+  claim: { key: string; token: string },
   responseStatus: number,
   responseBody: unknown,
   now: Date = new Date(),
-): Promise<void> {
-  if (!(responseStatus >= 200 && responseStatus <= 499)) {
+): Promise<boolean> {
+  if (!isCacheableResponseStatus(responseStatus)) {
     throw new Error(`Svaret ${responseStatus} sparas inte — släpp nyckeln med releaseIdempotencyKey.`);
   }
-  const { error } = await admin
+  const { data, error } = await admin
     .from('portal_idempotency_keys')
     .update({ status: 'done', response_status: responseStatus, response_body: responseBody ?? null, completed_at: now.toISOString() })
-    .eq('key', key)
-    .eq('status', 'processing');
+    .eq('key', claim.key)
+    .eq('status', 'processing')
+    .eq('claimed_at', claim.token)
+    .select('key');
   if (error) throw new Error(`Svaret kunde inte sparas för idempotensnyckeln: ${error.message}`);
+  return (data ?? []).length > 0;
 }
 
-/** Släpper en nyckel efter ett 5xx, så att portalens omförsök körs på nytt i stället för att vänta ut claimen. */
-export async function releaseIdempotencyKey(admin: SupabaseClient, key: string): Promise<void> {
-  const { error } = await admin.from('portal_idempotency_keys').delete().eq('key', key).eq('status', 'processing');
+/**
+ * Släpper nyckeln efter ett svar som inte sparas (5xx, tillfälligt 4xx), så att portalens omförsök körs på nytt i
+ * stället för att vänta ut claimen — men bara vår egen claim. `false` = någon annan äger den nu.
+ */
+export async function releaseIdempotencyKey(admin: SupabaseClient, claim: { key: string; token: string }): Promise<boolean> {
+  const { data, error } = await admin
+    .from('portal_idempotency_keys')
+    .delete()
+    .eq('key', claim.key)
+    .eq('status', 'processing')
+    .eq('claimed_at', claim.token)
+    .select('key');
   if (error) throw new Error(`Idempotensnyckeln kunde inte släppas: ${error.message}`);
+  return (data ?? []).length > 0;
 }

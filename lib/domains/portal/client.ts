@@ -13,6 +13,17 @@ export const PORTAL_REQUEST_TIMEOUT_MS = 10_000;
 /** Hur mycket av svarskroppen som sparas för felsökning. Kroppen loggas aldrig i sin helhet. */
 const RESPONSE_EXCERPT_CHARS = 500;
 
+/**
+ * Början av en text, säker att spara i Postgres. `slice` på UTF-16 kan klyva en emoji och lämna ett ensamt
+ * surrogattecken, och en kropp kan bära ett nolltecken — Postgres nekar båda. Då hade resultatet av ett försök inte
+ * gått att bokföra, raden fastnat i "sending", och jobbets alla senare händelser stått bakom den.
+ */
+export function safeExcerpt(text: string, maxChars: number): string {
+  const codePoints = Array.from(text.replace(/\u0000/g, '')).slice(0, maxChars).join('');
+  // Array.from håller ihop korrekta par; ett ensamt surrogat som redan fanns i texten byts mot U+FFFD.
+  return codePoints.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
 export type PortalSendResult =
   | { kind: 'response'; status: number; bodyExcerpt: string }
   | { kind: 'timeout' }
@@ -73,10 +84,10 @@ export async function sendToPortal(input: {
       signal: AbortSignal.timeout(input.timeoutMs ?? PORTAL_REQUEST_TIMEOUT_MS),
     });
     const text = await response.text().catch(() => '');
-    return { kind: 'response', status: response.status, bodyExcerpt: text.slice(0, RESPONSE_EXCERPT_CHARS) };
+    return { kind: 'response', status: response.status, bodyExcerpt: safeExcerpt(text, RESPONSE_EXCERPT_CHARS) };
   } catch (e) {
     const name = e instanceof Error ? e.name : '';
     if (name === 'TimeoutError' || name === 'AbortError') return { kind: 'timeout' };
-    return { kind: 'network_error', message: e instanceof Error ? e.message.slice(0, 200) : String(e) };
+    return { kind: 'network_error', message: safeExcerpt(e instanceof Error ? e.message : String(e), 200) };
   }
 }

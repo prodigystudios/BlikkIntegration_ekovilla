@@ -15,6 +15,9 @@ declare
   claimed text[];
   n integer;
 begin
+  -- Riktiga händelser i den lokala kön hade tagits av claim-anropen nedan och stört svaren. De sätts åt sidan här,
+  -- i transaktionen som rullas tillbaka i slutet.
+  update public.portal_outbound_events set status = 'dead' where status in ('pending', 'sending') and ordering_key not like 'check:%';
   delete from public.portal_outbound_events where ordering_key like 'check:%';
 
   insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key, status, created_at, next_attempt_at)
@@ -59,7 +62,7 @@ begin
     raise exception 'claim 4: check-b1 har inte attempts = 2';
   end if;
 
-  -- 5. Taket: två lediga, limit 1 ger en, den äldsta först.
+  -- 5. Taket: två lediga, limit 1 ger en, den som köades först (seq).
   update public.portal_outbound_events set next_attempt_at = now() - interval '1 second' where idempotency_key = 'check-c1';
   insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key, created_at)
   values ('check-f1', '/api/ekovilla/events', '{}', 'check:F', now());

@@ -3,8 +3,10 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   STALE_CLAIM_MS,
   completeIdempotencyKey,
+  releaseIdempotencyKey,
   decideExistingIdempotencyKey,
   idempotencyRequestHash,
+  isCacheableResponseStatus,
   isValidIdempotencyKey,
   type IdempotencyRow,
 } from '@/lib/domains/portal/idempotency';
@@ -88,10 +90,60 @@ describe('decideExistingIdempotencyKey', () => {
   });
 });
 
+describe('isCacheableResponseStatus', () => {
+  it('sparar 2xx och bestående 4xx — de blir samma vid ett omförsök', () => {
+    for (const status of [200, 201, 204, 400, 404, 409, 422]) expect(isCacheableResponseStatus(status)).toBe(true);
+  });
+
+  it('🧨 sparar aldrig ett tillfälligt svar: då hade varje omförsök fått samma 401 eller 429 för gott', () => {
+    for (const status of [401, 408, 425, 429, 301, 302, 500, 503, 199, 600]) expect(isCacheableResponseStatus(status)).toBe(false);
+  });
+});
+
 describe('completeIdempotencyKey', () => {
-  it('vägrar spara ett 5xx — det ska släppas, så att omförsöket körs', async () => {
+  it('vägrar spara ett svar som ska köras om — nyckeln ska släppas i stället', async () => {
     const admin = {} as never;
-    await expect(completeIdempotencyKey(admin, 'job-1', 500, {})).rejects.toThrow(/releaseIdempotencyKey/);
-    await expect(completeIdempotencyKey(admin, 'job-1', 199, {})).rejects.toThrow();
+    const claim = { key: 'job-1', token: NOW.toISOString() };
+    await expect(completeIdempotencyKey(admin, claim, 500, {})).rejects.toThrow(/releaseIdempotencyKey/);
+    await expect(completeIdempotencyKey(admin, claim, 429, {})).rejects.toThrow(/releaseIdempotencyKey/);
+    await expect(completeIdempotencyKey(admin, claim, 401, {})).rejects.toThrow(/releaseIdempotencyKey/);
+  });
+});
+
+/** En service-roll-klient som spelar in filtren och svarar med `rows` på varje skrivning. */
+function recordingAdmin(rows: unknown[]) {
+  const filters: [string, unknown][] = [];
+  const chain: Record<string, unknown> = {};
+  for (const op of ['update', 'delete', 'select']) chain[op] = () => chain;
+  chain.eq = (column: string, value: unknown) => {
+    filters.push([column, value]);
+    return chain;
+  };
+  chain.then = (resolve: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(resolve);
+  return { admin: { from: () => chain } as never, filters };
+}
+
+describe('completeIdempotencyKey och releaseIdempotencyKey — bara den egna claimen', () => {
+  const claim = { key: 'job-1', token: '2026-09-28T08:00:00.000Z' };
+
+  it('🧨 filtrerar på claimens token, så att en övertagen nyckel inte skrivs över eller släpps', async () => {
+    for (const run of [
+      (admin: never) => completeIdempotencyKey(admin, claim, 201, {}),
+      (admin: never) => releaseIdempotencyKey(admin, claim),
+    ]) {
+      const { admin, filters } = recordingAdmin([{ key: 'job-1' }]);
+      expect(await run(admin)).toBe(true);
+      expect(filters).toEqual([
+        ['key', 'job-1'],
+        ['status', 'processing'],
+        ['claimed_at', claim.token],
+      ]);
+    }
+  });
+
+  it('säger till när claimen inte längre var vår — PostgREST svarar utan fel på noll rader', async () => {
+    const { admin } = recordingAdmin([]);
+    expect(await completeIdempotencyKey(admin, claim, 201, {})).toBe(false);
+    expect(await releaseIdempotencyKey(recordingAdmin([]).admin, claim)).toBe(false);
   });
 });

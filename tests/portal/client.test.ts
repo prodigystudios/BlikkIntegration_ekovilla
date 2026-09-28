@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { classifyPortalResult, sendToPortal } from '@/lib/domains/portal/client';
+import { classifyPortalResult, safeExcerpt, sendToPortal } from '@/lib/domains/portal/client';
 import { verifyPortalSignature } from '@/lib/domains/portal/signature';
 
 const SECRET = 'portal-kontraktsvektor-0123456789abcdef0123456789abcdef';
@@ -28,6 +28,23 @@ describe('classifyPortalResult', () => {
 
   it('övriga 4xx ges upp; 409 är kontraktets "går inte längre"', () => {
     for (const status of [400, 403, 404, 409, 413, 422]) expect(classifyPortalResult(response(status))).toBe('dead');
+  });
+});
+
+describe('safeExcerpt', () => {
+  it('🧨 klyver aldrig en emoji — ett ensamt surrogat hade Postgres nekat, och raden fastnat i "sending"', () => {
+    const text = `${'a'.repeat(499)}😀b`;
+    const out = safeExcerpt(text, 500);
+    expect(out.endsWith('😀')).toBe(true);
+    expect(Array.from(out)).toHaveLength(500);
+    // Ett ensamt surrogat överlever inte en tur genom UTF-8 oförändrat.
+    expect(Buffer.from(out, 'utf8').toString('utf8')).toBe(out);
+  });
+
+  it('tar bort nolltecken och byter ett ensamt surrogat som redan fanns', () => {
+    expect(safeExcerpt('x\u0000y', 10)).toBe('xy');
+    expect(safeExcerpt('a\uD83Db', 10)).toBe('a\uFFFDb');
+    expect(safeExcerpt('a\uDE00b', 10)).toBe('a\uFFFDb');
   });
 });
 

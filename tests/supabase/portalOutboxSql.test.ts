@@ -51,6 +51,22 @@ describe('portalens transporttabeller (SQL)', () => {
     expect(body?.[2]).toContain('for update skip locked');
   });
 
+  it('köordningen går på ett strikt stigande löpnummer, inte på created_at', () => {
+    expect(sql).toContain('seq bigint generated always as identity');
+    expect(sql).toContain('order by e.ordering_key, e.seq');
+    expect(sql).toContain('order by h.seq');
+  });
+
+  it('en fastnad händelse tas om först efter fem minuter — längre än ett utskicks längsta körning', () => {
+    expect(sql).toContain("p_stale_after interval default interval '5 minutes'");
+  });
+
+  it('svarscachen sparar aldrig ett tillfälligt svar (401, 408, 425, 429) eller ett 5xx', () => {
+    expect(sql).toContain('response_status between 200 and 299');
+    expect(sql).toContain('response_status between 400 and 499 and response_status not in (401, 408, 425, 429)');
+    expect(sql).not.toContain('response_status between 200 and 499');
+  });
+
   it('kön pekar bara på portalens egna routes', () => {
     expect(sql).toContain("check (path ~ '^/api/ekovilla/[a-za-z0-9_-]+(/[a-za-z0-9_-]+)*$')");
   });
