@@ -1,3 +1,4 @@
+import { isLocalUrl } from '@/lib/env';
 import { FORTNOX_API_BASE } from './client';
 import type { FortnoxCompanySettingsResponse } from './offerPdf';
 
@@ -35,12 +36,7 @@ export function isFortnoxProductionRuntime(env: Env): boolean {
 
 /** Samma URL som getSupabaseAdmin skriver kopplingen till. Delas med skripten under scripts/fortnox/. */
 export function isLocalSupabaseUrl(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    return ['127.0.0.1', 'localhost', '0.0.0.0', '[::1]'].includes(new URL(url).hostname);
-  } catch {
-    return false;
-  }
+  return isLocalUrl(url);
 }
 
 export function fortnoxConnectionPolicy(env: Env): FortnoxConnectionPolicy {

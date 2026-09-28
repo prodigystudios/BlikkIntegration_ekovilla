@@ -65,12 +65,15 @@ Räkna med ungefär en halv dag, och börja lite innan någon ska testa.
 **T1. Spärren för utgående trafik, först och som egen PR.**
 - `NODE_ENV` är `production` även i Vercels Preview. Då **kastar** `lib/email.ts` när Resend-nyckeln
   saknas, och sms och push kastar när de inte är konfigurerade.
-- Ny `lib/env.ts` med `isProductionEnvironment()` = `VERCEL_ENV === 'production'`.
+- `lib/env.ts` finns sedan fas 1a: `isProductionDeployment()` kräver `NODE_ENV=production`,
+  `VERCEL_ENV=production` och en databas som inte är lokal, och faller alltså stängt. Spärren
+  använder den.
 - Spärren läggs i transportlagret, `lib/email.ts`, `lib/sms.ts` och `lib/webPush.ts`, inte i
   anroparna. Utanför prod: mejl bara till `NONPROD_MAIL_ALLOWLIST`, sms och push loggas, och saknade
   nycklar ger "skipped" i stället för ett kast. Prods beteende ändras inte.
-- Portalklienten får samma sorts spärr: utanför prod vägrar den skicka till `partner.ekovilla.se`, och
-  i prod vägrar den allt annat.
+- Portalklienten har redan sin spärr (fas 1a, `resolvePortalTarget` i `lib/domains/portal/config.ts`):
+  en lista över tillåtna värdar per miljö. Prod skickar bara till `partner.ekovilla.se`, alla andra
+  miljöer bara till `test.partner.ekovilla.se` eller den här datorn.
 - Mutationstesta spärren: byt den tillfälligt mot `return true` och se testerna bli röda.
 
 **T2. Supabase-projektet `ekovilla-crm-test`.**
@@ -140,7 +143,7 @@ Ren logik som testas isolerat:
 
 | Fil | Ansvar |
 | --- | --- |
-| `signature.ts` | HMAC-SHA256 över råkroppen. `timingSafeEqual` efter längdkontroll (den kastar vid olika längd). ±300 s. En tom eller kort hemlighet räknas som avstängd, alltså 503 |
+| `signature.ts` ✅ | HMAC-SHA256 över tidsstämpel, metod, sökväg och råkropp, skilda med radbrytning (punkt 14 nedan). `timingSafeEqual` efter längdkontroll (den kastar vid olika längd). ±300 s. En tom eller kort hemlighet räknas som avstängd, alltså 503 |
 | `config.ts` | Miljövariablerna och portalspärren |
 | `client.ts` | Signerat anrop med `AbortSignal.timeout`, svaret klassat som 2xx, 4xx eller 5xx/timeout |
 | `outbox.ts`, `idempotency.ts` | Utgående kö och inkommande svarscache |
@@ -329,8 +332,8 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | Fas | Innehåll | Kräver |
 | --- | --- | --- |
 | **0** ✅ | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? Resultaten står under tabellen | — |
-| **1a** | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
-| **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts` | 1a |
+| **1a** ✅ | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
+| **1b** | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts`. Ett 401 från portalen görs om med backoff, som 5xx (punkt 15) | 1a |
 | **1c** | Undantaget i middleware, signerad `ping`, vakttestet för `app/api/portal/**` | 1a |
 | **2a** | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`) | — |
 | **2b** | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera | 0, 1b, 2a |
@@ -360,14 +363,16 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 - Skapad som "Byggvaruhandel", med 44 grundpriser ur portalens kopia (giltig från 2026-09-25):
   `npx -y tsx scripts/fortnox/copy-price-list-160-to-test-company.ts --source <portalrepot>/lib/data/mock/seed.ts`
   (torrkörning; `--apply` skriver). En ny torrkörning gav "stämmer redan: 44".
-- **1010 Etablering** fick sitt pris efter att William bytt den från vara till tjänst i Fortnox; då
-  började API:t se den. Nu har 45 av portalens 51 artiklar pris på lista 160.
-- ⚠️ **Sex saknas fortfarande:** 13400, 16765, 16766, 16767, 2410521, 2410522. Totalt 46 av prods
-  artiklar är osynliga för API:t i testbolaget: `GET /articles/{nr}` ger 404, men att skapa dem ger
-  `Artikelnummer "…" används redan` (kod 2000013). De finns alltså i Fortnox men inte för API:t.
-  Typen är inte förklaringen, eftersom andra varor (`STOCK`) syns. Troligen fastnade de i ett läge
-  vid importen i Fortnox som ett sparande i Fortnox löser. Prov: öppna 13400 i testbolaget, spara
-  utan ändring, och läs om den syns. Kör sedan prislisteskriptet igen. Klart före fas 3b.
+- ✅ **Alla 51 artiklar har pris på lista 160.** Sju av dem syntes först inte för API:t:
+  `GET /articles/{nr}` gav 404, men att skapa dem gav `Artikelnummer "…" används redan` (kod 2000013).
+- **Orsaken: de var satta som paketartiklar i testbolaget**, och `/articles` visar inte paket. Det
+  bekräftades på 13400: ett vanligt sparande räckte inte, men att ändra den till vanlig artikel gjorde
+  den synlig direkt. Typen och lagerföringen är inte orsaken; varor och lagerförda artiklar syns.
+- 🧨 Vid ändringen kan artikeln tappa sin enhet (13400 gjorde det). Kontrollera enheten, eftersom
+  publiceringen hoppar över artiklar utan enhet.
+- ⏸️ 40 andra av prods artiklar är fortfarande paket i testbolaget, bland dem **1050 FRAKT** (behövs i
+  fas 8) och ROT-artiklarna 1024 och 10060. De ändras när de behövs. Torrkörningen av
+  `copy-articles-to-test-company.ts` visar hur många som är kvar.
 
 **Nominatim, för länet i fördelningen (fas 3a):**
 - `addressdetails=1` ger både `county` ("Gävleborgs län") och `ISO3166-2-lvl4` ("SE-X"). Koden
@@ -410,6 +415,30 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 10. **`job.message.department`** behöver ett bestämt värde.
 11. **Förslag:** `POST /api/ekovilla/ping` i portalen, så att CRM:et kan prova kopplingen från
     portalsidan.
+12. **En gemensam testvektor för signaturen**, så att båda sidor prövar samma sak. Räknad med Pythons
+    `hmac`, inte med någon av apparnas kod (`tests/portal/helpers/contractFixtures.ts`, där också
+    Python-kommandot står):
+    - hemlighet `portal-kontraktsvektor-0123456789abcdef0123456789abcdef`, tidsstämpel `1790000000`
+    - metod `POST`, sökväg `/api/portal/jobs/q-2026-015/messages`
+    - kropp `{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}`
+      (126 tecken, 130 byte i UTF-8)
+    - signatur `v1=0a23a52e4a620ea087da88e218f347248f4003d0fcfecd56649ef08e670bcac6`
+13. **Hemligheten ska vara minst 32 tecken.** CRM:et räknar en kortare som saknad, svarar 503 och
+    signerar inget. Den trimmas på båda sidor.
+14. **Beslutat (William 2026-09-28): signaturen gäller också metod och sökväg.** Det som signeras är
+    `tidsstämpel + "\n" + METOD + "\n" + sökväg + "\n" + råkropp`:
+    - metoden med versaler;
+    - sökvägen som den står i URL:en (procentkodad), utan värd och frågesträng.
+
+    Utan dem gällde en signatur för vilken route som helst, åt båda hållen, i 300 sekunder. En
+    signerad `ping` med tom kropp hade också dugt till `store-orders/{orderId}/withdraw` för en annan
+    beställning. Fälten skiljs med radbrytning, eftersom en punkt hade varit tvetydig: `/a.b` + `c`
+    och `/a` + `b.c` ger samma sträng. Prefixet är fortfarande `v1=`, eftersom ingen sida hade byggt
+    transporten.
+15. **Beslutat (William 2026-09-28): ett nej på signaturen (401) görs om, som 5xx.** Annars tappas
+    varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget, eller om en
+    klocka går fel mer än 300 sekunder. Andra 4xx ges fortfarande upp. Byt hemligheten i båda apparna
+    i samma stund, en lugn stund.
 
 ## Öppna frågor
 
