@@ -8,6 +8,8 @@ import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import DatePicker from '@/components/ui/DatePicker';
 import DialogShell from '@/components/ui/DialogShell';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/Tabs';
+import ResellersPanel, { type ResellerView } from './ResellersPanel';
 import type { PricelistArticle, UnmarkedArticle } from '@/lib/domains/portal/pricelist';
 import type { PricelistDelivery } from '@/lib/domains/portal/pricelistPublish';
 
@@ -41,7 +43,11 @@ type ResellerPortalClientProps = {
   integration: PortalIntegrationView;
   preview: PricelistPreviewView;
   publications: PublicationView[] | { error: string };
+  resellers: ResellerView[] | { error: string };
+  fallbackUserId: string | null | { error: string };
 };
+
+type Tab = 'pricelist' | 'resellers';
 
 const CARD =
   'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]';
@@ -99,9 +105,17 @@ function DeliveryBadge({ delivery }: { delivery: PublicationView['delivery'] }) 
   }
 }
 
-export default function ResellerPortalClient({ today, integration, preview, publications }: ResellerPortalClientProps) {
+export default function ResellerPortalClient({
+  today,
+  integration,
+  preview,
+  publications,
+  resellers,
+  fallbackUserId,
+}: ResellerPortalClientProps) {
   const router = useRouter();
   const toast = useToast();
+  const [tab, setTab] = useState<Tab>('pricelist');
   const [validFrom, setValidFrom] = useState(today);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState<null | 'publish' | 'dispatch'>(null);
@@ -162,11 +176,7 @@ export default function ResellerPortalClient({ today, integration, preview, publ
       <div>
         <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Återförsäljarportalen</h1>
         <p className="m-0 mt-1 max-w-3xl text-sm text-slate-500">
-          Prislistan butikerna räknar sina offerter på: priserna på lista 160 i Fortnox och portalfälten under{' '}
-          <Link href={ARTICLE_BASE} className="font-semibold text-slate-700 underline">
-            Artiklar
-          </Link>
-          . Varje publicering blir en ny prislista för alla butiker och gäller nya offerter från sitt datum.
+          Prislistan butikerna räknar sina offerter på, och vem på Ekovilla som får deras jobb.
         </p>
       </div>
 
@@ -179,204 +189,232 @@ export default function ResellerPortalClient({ today, integration, preview, publ
         </div>
       )}
 
-      {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut korten i mobil. */}
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]">
-        {/* Förhandsvisningen: det som skickas */}
-        <section className={`${CARD} order-2 min-w-0 xl:order-1`} aria-labelledby="pricelist-preview-heading">
-          <h2 id="pricelist-preview-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
-            Förhandsvisning
-          </h2>
-          <p className="m-0 mb-4 text-sm text-slate-500">
-            Priserna läses från Fortnox när sidan laddas. Namn, enhet och aktiv kommer från artikelregistret; synka det
-            under Artiklar om något ändrats i Fortnox.
-          </p>
+      <Tabs>
+        <TabsList aria-label="Återförsäljarportalen">
+          <TabsTrigger id="portal-tab-pricelist" aria-controls="portal-panel-pricelist" active={tab === 'pricelist'} onClick={() => setTab('pricelist')}>
+            Prislistan
+          </TabsTrigger>
+          <TabsTrigger id="portal-tab-resellers" aria-controls="portal-panel-resellers" active={tab === 'resellers'} onClick={() => setTab('resellers')}>
+            Butiker och säljare
+          </TabsTrigger>
+        </TabsList>
 
-          {!preview.ok ? (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
-              {preview.message}
-            </div>
-          ) : (
-            <>
-              {preview.skipped.length > 0 && (
-                <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-800">
-                  <p className="m-0 font-semibold">
-                    {preview.skipped.length === 1
-                      ? 'En markerad artikel kommer inte med'
-                      : `${preview.skipped.length} markerade artiklar kommer inte med`}
-                  </p>
-                  <ul className="m-0 mt-1.5 grid gap-1 pl-0">
-                    {preview.skipped.map((s) => (
-                      <li key={s.articleNumber} className="list-none">
-                        <Link href={articleHref(s.articleNumber)} className="font-semibold text-amber-900 underline">
-                          {s.articleNumber}
-                        </Link>
-                        {s.customerName ? ` ${s.customerName}` : ''}: {s.reasons.join(', ').toLowerCase()}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+        {tab === 'resellers' && (
+          <div role="tabpanel" id="portal-panel-resellers" aria-labelledby="portal-tab-resellers">
+            <ResellersPanel resellers={resellers} fallbackUserId={fallbackUserId} />
+          </div>
+        )}
 
-              {articles.length === 0 ? (
-                <p className="m-0 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-3 text-sm text-slate-600">
-                  Ingen artikel kommer med. Markera artiklar för portalen på deras sidor under{' '}
-                  <Link href={ARTICLE_BASE} className="font-semibold underline">
-                    Artiklar
-                  </Link>
-                  .
-                </p>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse text-sm">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-left text-xs font-semibold text-slate-500">
-                        <th className="py-2 pr-3">Artikel</th>
-                        <th className="py-2 pr-3">Kundnamn</th>
-                        <th className="py-2 pr-3">Enhet</th>
-                        <th className="py-2 pr-3 text-right">Inpris</th>
-                        <th className="py-2 pr-3 text-right" title="Andelen av priset som är arbete och ger ROT">
-                          Arbete
-                        </th>
-                        <th className="py-2 text-right">Ordning</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rowsWithHeadings.map(({ article: a, heading }) => (
-                        <Fragment key={a.articleNumber}>
-                          {heading && (
-                            <tr>
-                              <th colSpan={6} scope="colgroup" className="pb-1.5 pt-4 text-left text-sm font-bold text-slate-900">
-                                {heading}
-                              </th>
-                            </tr>
-                          )}
-                          <tr className="border-b border-slate-100 align-top last:border-0">
-                            <td className="py-2 pr-3">
-                              <Link href={articleHref(a.articleNumber)} className="font-semibold text-slate-900 no-underline hover:underline">
-                                {a.articleNumber}
-                              </Link>
-                            </td>
-                            <td className="py-2 pr-3">
-                              <div className="text-slate-900">{a.customerName}</div>
-                              <div className="text-xs text-slate-400">{a.name}</div>
-                              {a.note && <div className="mt-0.5 text-xs text-slate-500">{a.note}</div>}
-                            </td>
-                            <td className="py-2 pr-3 text-slate-600">{a.unit}</td>
-                            <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-slate-900">{formatKr(a.unitCost)}</td>
-                            <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-slate-600">{formatPercent(a.laborShare)}</td>
-                            <td className="py-2 text-right tabular-nums text-slate-400">{a.sortOrder}</td>
-                          </tr>
-                        </Fragment>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {preview.unmarked.length > 0 && (
-                <details className="mt-4 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-2.5 text-sm">
-                  <summary className="cursor-pointer font-semibold text-slate-700">
-                    {preview.unmarked.length === 1
-                      ? 'En aktiv artikel har pris på lista 160 men är inte med'
-                      : `${preview.unmarked.length} aktiva artiklar har pris på lista 160 men är inte med`}
-                  </summary>
-                  <ul className="m-0 mt-2 grid gap-1 pl-0">
-                    {preview.unmarked.map((u) => (
-                      <li key={u.articleNumber} className="list-none text-slate-600">
-                        <Link href={articleHref(u.articleNumber)} className="font-semibold text-slate-800 underline">
-                          {u.articleNumber}
-                        </Link>{' '}
-                        {u.name}, {formatKr(u.unitCost)}
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )}
-            </>
-          )}
-        </section>
-
-        <div className="order-1 grid min-w-0 grid-cols-1 content-start gap-6 xl:order-2">
-          {/* Publicera */}
-          <section className={CARD} aria-labelledby="pricelist-publish-heading">
-            <h2 id="pricelist-publish-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
-              Publicera prislistan
-            </h2>
-            <p className="m-0 mb-4 text-sm text-slate-600">
-              {!preview.ok
-                ? 'Prislistan gick inte att läsa.'
-                : articles.length === 1
-                  ? 'En artikel skickas.'
-                  : `${articles.length} artiklar skickas.`}
-              {integration.enabled && <span className="text-slate-400"> Till {integration.host}.</span>}
-            </p>
-
-            <label className="grid gap-1.5">
-              <span className="text-sm font-medium text-slate-700">Giltig från</span>
-              <DatePicker value={validFrom} onChange={setValidFrom} clearable={false} disabled={busy !== null} />
-              {validFromOk ? (
-                <span className="text-xs text-slate-400">Nya offerter i portalen använder listan från och med det här datumet.</span>
-              ) : (
-                <span className="text-xs font-medium text-red-700">Välj i dag eller ett senare datum.</span>
-              )}
-            </label>
-
-            {sameContent && (
-              <p className="m-0 mt-3 text-xs text-slate-500">
-                Samma innehåll publicerades {sameContent.createdAtLabel}, giltig från {sameContent.validFrom}.
-              </p>
-            )}
-
-            <div className="mt-4 flex justify-end">
-              <Button variant="primary" onClick={() => setConfirming(true)} disabled={!canPublish}>
-                Publicera
-              </Button>
-            </div>
-          </section>
-
-          {/* Historiken */}
-          <section className={CARD} aria-labelledby="pricelist-history-heading">
-            <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-              <h2 id="pricelist-history-heading" className="m-0 text-base font-bold text-slate-900">
-                Publiceringar
+        {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut korten i mobil. */}
+        {tab === 'pricelist' && (
+          <div
+            role="tabpanel"
+            id="portal-panel-pricelist"
+            aria-labelledby="portal-tab-pricelist"
+            className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]"
+          >
+            {/* Förhandsvisningen: det som skickas */}
+            <section className={`${CARD} order-2 min-w-0 xl:order-1`} aria-labelledby="pricelist-preview-heading">
+              <h2 id="pricelist-preview-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
+                Förhandsvisning
               </h2>
-              <Button variant="secondary" onClick={handleDispatch} disabled={!integration.enabled || busy !== null}>
-                {busy === 'dispatch' ? 'Skickar…' : 'Skicka väntande nu'}
-              </Button>
-            </div>
+              <p className="m-0 mb-4 text-sm text-slate-500">
+                Priserna på lista 160 och portalfälten under{' '}
+                <Link href={ARTICLE_BASE} className="font-semibold text-slate-700 underline">
+                  Artiklar
+                </Link>
+                . Priserna läses från Fortnox när sidan laddas. Namn, enhet och aktiv kommer från artikelregistret; synka det
+                under Artiklar om något ändrats i Fortnox.
+              </p>
 
-            {!Array.isArray(publications) ? (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">{publications.error}</div>
-            ) : history.length === 0 ? (
-              <p className="m-0 text-sm text-slate-500">Ingen prislista är publicerad än.</p>
-            ) : (
-              <ul className="m-0 grid gap-2.5 pl-0">
-                {history.map((p) => (
-                  <li key={p.id} className="list-none rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-sm font-semibold text-slate-900">Giltig från {p.validFrom}</span>
-                      <DeliveryBadge delivery={p.delivery} />
+              {!preview.ok ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
+                  {preview.message}
+                </div>
+              ) : (
+                <>
+                  {preview.skipped.length > 0 && (
+                    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-800">
+                      <p className="m-0 font-semibold">
+                        {preview.skipped.length === 1
+                          ? 'En markerad artikel kommer inte med'
+                          : `${preview.skipped.length} markerade artiklar kommer inte med`}
+                      </p>
+                      <ul className="m-0 mt-1.5 grid gap-1 pl-0">
+                        {preview.skipped.map((s) => (
+                          <li key={s.articleNumber} className="list-none">
+                            <Link href={articleHref(s.articleNumber)} className="font-semibold text-amber-900 underline">
+                              {s.articleNumber}
+                            </Link>
+                            {s.customerName ? ` ${s.customerName}` : ''}: {s.reasons.join(', ').toLowerCase()}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
-                    <div className="mt-0.5 text-xs text-slate-500">
-                      {p.articleCount === 1 ? 'En artikel' : `${p.articleCount} artiklar`}, publicerad {p.createdAtLabel}
-                      {p.publishedByName ? ` av ${p.publishedByName}` : ''}
+                  )}
+
+                  {articles.length === 0 ? (
+                    <p className="m-0 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-3 text-sm text-slate-600">
+                      Ingen artikel kommer med. Markera artiklar för portalen på deras sidor under{' '}
+                      <Link href={ARTICLE_BASE} className="font-semibold underline">
+                        Artiklar
+                      </Link>
+                      .
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full border-collapse text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-200 text-left text-xs font-semibold text-slate-500">
+                            <th className="py-2 pr-3">Artikel</th>
+                            <th className="py-2 pr-3">Kundnamn</th>
+                            <th className="py-2 pr-3">Enhet</th>
+                            <th className="py-2 pr-3 text-right">Inpris</th>
+                            <th className="py-2 pr-3 text-right" title="Andelen av priset som är arbete och ger ROT">
+                              Arbete
+                            </th>
+                            <th className="py-2 text-right">Ordning</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rowsWithHeadings.map(({ article: a, heading }) => (
+                            <Fragment key={a.articleNumber}>
+                              {heading && (
+                                <tr>
+                                  <th colSpan={6} scope="colgroup" className="pb-1.5 pt-4 text-left text-sm font-bold text-slate-900">
+                                    {heading}
+                                  </th>
+                                </tr>
+                              )}
+                              <tr className="border-b border-slate-100 align-top last:border-0">
+                                <td className="py-2 pr-3">
+                                  <Link href={articleHref(a.articleNumber)} className="font-semibold text-slate-900 no-underline hover:underline">
+                                    {a.articleNumber}
+                                  </Link>
+                                </td>
+                                <td className="py-2 pr-3">
+                                  <div className="text-slate-900">{a.customerName}</div>
+                                  <div className="text-xs text-slate-400">{a.name}</div>
+                                  {a.note && <div className="mt-0.5 text-xs text-slate-500">{a.note}</div>}
+                                </td>
+                                <td className="py-2 pr-3 text-slate-600">{a.unit}</td>
+                                <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-slate-900">{formatKr(a.unitCost)}</td>
+                                <td className="whitespace-nowrap py-2 pr-3 text-right tabular-nums text-slate-600">{formatPercent(a.laborShare)}</td>
+                                <td className="py-2 text-right tabular-nums text-slate-400">{a.sortOrder}</td>
+                              </tr>
+                            </Fragment>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                    {p.delivery.status === 'sent' && p.delivery.sentAtLabel && (
-                      <div className="mt-0.5 text-xs text-slate-400">Mottagen {p.delivery.sentAtLabel}</div>
-                    )}
-                    {p.delivery.status !== 'sent' && p.delivery.lastError && (
-                      <div className="mt-1 break-words text-xs text-red-700">{p.delivery.lastError}</div>
-                    )}
-                    {p.delivery.nextAttemptLabel && (
-                      <div className="mt-0.5 text-xs text-slate-500">Nästa försök {p.delivery.nextAttemptLabel}</div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        </div>
-      </div>
+                  )}
+
+                  {preview.unmarked.length > 0 && (
+                    <details className="mt-4 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-2.5 text-sm">
+                      <summary className="cursor-pointer font-semibold text-slate-700">
+                        {preview.unmarked.length === 1
+                          ? 'En aktiv artikel har pris på lista 160 men är inte med'
+                          : `${preview.unmarked.length} aktiva artiklar har pris på lista 160 men är inte med`}
+                      </summary>
+                      <ul className="m-0 mt-2 grid gap-1 pl-0">
+                        {preview.unmarked.map((u) => (
+                          <li key={u.articleNumber} className="list-none text-slate-600">
+                            <Link href={articleHref(u.articleNumber)} className="font-semibold text-slate-800 underline">
+                              {u.articleNumber}
+                            </Link>{' '}
+                            {u.name}, {formatKr(u.unitCost)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+            </section>
+
+            <div className="order-1 grid min-w-0 grid-cols-1 content-start gap-6 xl:order-2">
+              {/* Publicera */}
+              <section className={CARD} aria-labelledby="pricelist-publish-heading">
+                <h2 id="pricelist-publish-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
+                  Publicera prislistan
+                </h2>
+                <p className="m-0 mb-4 text-sm text-slate-600">
+                  {!preview.ok
+                    ? 'Prislistan gick inte att läsa.'
+                    : articles.length === 1
+                      ? 'En artikel skickas.'
+                      : `${articles.length} artiklar skickas.`}
+                  {integration.enabled && <span className="text-slate-400"> Till {integration.host}.</span>}
+                </p>
+
+                <label className="grid gap-1.5">
+                  <span className="text-sm font-medium text-slate-700">Giltig från</span>
+                  <DatePicker value={validFrom} onChange={setValidFrom} clearable={false} disabled={busy !== null} />
+                  {validFromOk ? (
+                    <span className="text-xs text-slate-400">Nya offerter i portalen använder listan från och med det här datumet.</span>
+                  ) : (
+                    <span className="text-xs font-medium text-red-700">Välj i dag eller ett senare datum.</span>
+                  )}
+                </label>
+
+                {sameContent && (
+                  <p className="m-0 mt-3 text-xs text-slate-500">
+                    Samma innehåll publicerades {sameContent.createdAtLabel}, giltig från {sameContent.validFrom}.
+                  </p>
+                )}
+
+                <div className="mt-4 flex justify-end">
+                  <Button variant="primary" onClick={() => setConfirming(true)} disabled={!canPublish}>
+                    Publicera
+                  </Button>
+                </div>
+              </section>
+
+              {/* Historiken */}
+              <section className={CARD} aria-labelledby="pricelist-history-heading">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <h2 id="pricelist-history-heading" className="m-0 text-base font-bold text-slate-900">
+                    Publiceringar
+                  </h2>
+                  <Button variant="secondary" onClick={handleDispatch} disabled={!integration.enabled || busy !== null}>
+                    {busy === 'dispatch' ? 'Skickar…' : 'Skicka väntande nu'}
+                  </Button>
+                </div>
+
+                {!Array.isArray(publications) ? (
+                  <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">{publications.error}</div>
+                ) : history.length === 0 ? (
+                  <p className="m-0 text-sm text-slate-500">Ingen prislista är publicerad än.</p>
+                ) : (
+                  <ul className="m-0 grid gap-2.5 pl-0">
+                    {history.map((p) => (
+                      <li key={p.id} className="list-none rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-slate-900">Giltig från {p.validFrom}</span>
+                          <DeliveryBadge delivery={p.delivery} />
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500">
+                          {p.articleCount === 1 ? 'En artikel' : `${p.articleCount} artiklar`}, publicerad {p.createdAtLabel}
+                          {p.publishedByName ? ` av ${p.publishedByName}` : ''}
+                        </div>
+                        {p.delivery.status === 'sent' && p.delivery.sentAtLabel && (
+                          <div className="mt-0.5 text-xs text-slate-400">Mottagen {p.delivery.sentAtLabel}</div>
+                        )}
+                        {p.delivery.status !== 'sent' && p.delivery.lastError && (
+                          <div className="mt-1 break-words text-xs text-red-700">{p.delivery.lastError}</div>
+                        )}
+                        {p.delivery.nextAttemptLabel && (
+                          <div className="mt-0.5 text-xs text-slate-500">Nästa försök {p.delivery.nextAttemptLabel}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            </div>
+          </div>
+        )}
+      </Tabs>
 
       {confirming && preview.ok && (
         <DialogShell
