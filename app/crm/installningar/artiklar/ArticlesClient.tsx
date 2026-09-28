@@ -22,6 +22,11 @@ type ArticlesClientProps = {
 
 const LIST_BASE = '/crm/installningar/artiklar';
 
+// Markerad för portalens prislista. Ett ställe, så att märket, antalet och filtret aldrig säger olika.
+function isInPortal(portal: Record<string, ArticlePortalSummary> | null, articleNumber: string): boolean {
+  return Boolean(portal?.[articleNumber]?.publish);
+}
+
 function formatPrice(value: number | null): string {
   if (value === null || value === undefined) return '–';
   return value.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -46,14 +51,13 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected, port
   const [favBusy, setFavBusy] = useState<string | null>(null);
   const [workDescBusy, setWorkDescBusy] = useState<string | null>(null);
 
-  const isInPortal = (articleNumber: string) => Boolean(portal?.[articleNumber]?.publish);
   const portalCount = useMemo(
-    () => articles.filter((a) => portal?.[a.article_number]?.publish).length,
+    () => articles.filter((a) => isInPortal(portal, a.article_number)).length,
     [articles, portal],
   );
 
   const filtered = useMemo(() => {
-    const inScope = onlyPortal ? articles.filter((a) => portal?.[a.article_number]?.publish) : articles;
+    const inScope = onlyPortal ? articles.filter((a) => isInPortal(portal, a.article_number)) : articles;
     if (!search.trim()) return inScope;
     // Tokenised AND-across-words match, shared with the offer/quote article search.
     return inScope.filter((a) => matchesArticleSearch(a, search));
@@ -272,7 +276,7 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected, port
                     </td>
                     {portal && (
                       <td className="py-2.5 pr-3">
-                        {isInPortal(a.article_number) ? (
+                        {isInPortal(portal, a.article_number) ? (
                           <Badge variant="accent" title={portal[a.article_number]?.customer_name || undefined}>
                             I prislistan
                           </Badge>

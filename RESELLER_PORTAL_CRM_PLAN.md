@@ -414,7 +414,10 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 ⚠️ **Före första publiceringen:** arbetsandelarna för inblåst lösull är portalens antaganden (0,45 på
 vinden, 0,5 annars; 14 artiklar) och ger ROT. Ekovilla behöver bekräfta dem.
 
-**Till fas 2b:** tabellens policyer frågar bara efter `crm.article.manage`. Publiceringen under
+**Till fas 2b:** en markerad rad kan sakna artikel, till exempel när artikeln raderats i Fortnox, för
+raden ligger kvar. Den kommer inte med, eftersom den saknar pris på lista 160, men den syns inte heller
+på någon sida. Förhandsvisningen ska därför visa markerade rader som inte finns i artikelcachen, så att
+de går att se och avmarkera. Tabellens policyer frågar bara efter `crm.article.manage`. Publiceringen under
 `crm.portal.manage` får en egen läspolicy i sin migrering. `numeric(4,3)` avrundar en fjärde decimal
 utan att säga något, och därför nekar appen fler än tre decimaler innan värdet når databasen.
 

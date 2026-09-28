@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
@@ -104,7 +104,6 @@ export default function ArticleFormClient({
   // Portalkortet sparas för sig. Har det osparade ändringar stannar Spara här i stället för att gå tillbaka till
   // listan, så att de inte försvinner.
   const [portalDirty, setPortalDirty] = useState(false);
-  const handlePortalDirty = useCallback((dirty: boolean) => setPortalDirty(dirty), []);
 
   // Unit options from the Fortnox register; keep the article's current unit
   // selectable even if it is no longer in the register.
@@ -374,7 +373,7 @@ export default function ArticleFormClient({
               articleNumber={articleNumber}
               initialFields={portal.fields}
               facts={portal.facts}
-              onDirtyChange={handlePortalDirty}
+              onDirtyChange={setPortalDirty}
             />
           )}
         </div>

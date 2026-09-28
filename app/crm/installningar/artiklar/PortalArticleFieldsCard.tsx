@@ -86,6 +86,8 @@ export default function PortalArticleFieldsCard({
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
+  // Ett kort som försvinner (t.ex. läsfel efter en omladdning) har inget osparat kvar.
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const laborShare = parseLaborSharePercent(form.labor_share);
   const sortOrder = /^\d{1,9}$/.test(form.sort_order.trim()) ? Number(form.sort_order.trim()) : null;
@@ -157,97 +159,100 @@ export default function PortalArticleFieldsCard({
         </div>
       </div>
 
-      <label className="flex items-center gap-2.5">
-        <input
-          type="checkbox"
-          checked={form.publish}
-          onChange={(e) => setField('publish', e.target.checked)}
-          className="h-4 w-4 accent-[color:var(--ek-accent)]"
-        />
-        <span className="text-sm font-semibold text-slate-800">Med i prislistan</span>
-      </label>
-
-      {form.publish && blockers.length > 0 && (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800" role="status">
-          <p className="m-0 font-semibold">Kommer inte med när prislistan publiceras:</p>
-          <ul className="m-0 mt-1 list-disc pl-5">
-            {blockers.map((b) => (
-              <li key={b}>{PORTAL_PUBLISH_BLOCKER_LABELS[b]}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="mt-4 grid gap-3.5">
-        <label className="grid gap-1.5">
-          <span className="text-sm font-medium text-slate-700">Kundnamn</span>
-          <Input
-            value={form.customer_name}
-            onChange={(e) => setField('customer_name', e.target.value)}
-            maxLength={PORTAL_CUSTOMER_NAME_MAX}
-            placeholder="t.ex. Lösull på vinden"
-            aria-invalid={showErrors && Boolean(errors.customer_name)}
+      {/* Låst medan sparandet pågår: svaret ersätter formuläret, och det som skrevs under tiden hade försvunnit. */}
+      <fieldset disabled={busy} className="m-0 min-w-0 border-0 p-0">
+        <label className="flex items-center gap-2.5">
+          <input
+            type="checkbox"
+            checked={form.publish}
+            onChange={(e) => setField('publish', e.target.checked)}
+            className="h-4 w-4 accent-[color:var(--ek-accent)]"
           />
-          <span className="text-xs text-slate-400">Namnet slutkunden ser på offerten. Nämn inte Ekovilla.</span>
-          {fieldError(errors.customer_name)}
+          <span className="text-sm font-semibold text-slate-800">Med i prislistan</span>
         </label>
 
-        <div className="grid gap-3.5 sm:grid-cols-2">
-          <label className="grid content-start gap-1.5">
-            <span className="text-sm font-medium text-slate-700">Kategori</span>
-            <Select
-              value={form.category}
-              onChange={(e) => setField('category', e.target.value as FormState['category'])}
-              aria-invalid={showErrors && Boolean(errors.category)}
-            >
-              <option value="">—</option>
-              {PORTAL_ARTICLE_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {PORTAL_ARTICLE_CATEGORY_LABELS[c]}
-                </option>
+        {form.publish && blockers.length > 0 && (
+          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-sm text-amber-800" role="status">
+            <p className="m-0 font-semibold">Som artikeln är sparad i Fortnox kommer den inte med när prislistan publiceras:</p>
+            <ul className="m-0 mt-1 list-disc pl-5">
+              {blockers.map((b) => (
+                <li key={b}>{PORTAL_PUBLISH_BLOCKER_LABELS[b]}</li>
               ))}
-            </Select>
-            {fieldError(errors.category)}
+            </ul>
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-3.5">
+          <label className="grid gap-1.5">
+            <span className="text-sm font-medium text-slate-700">Kundnamn</span>
+            <Input
+              value={form.customer_name}
+              onChange={(e) => setField('customer_name', e.target.value)}
+              maxLength={PORTAL_CUSTOMER_NAME_MAX}
+              placeholder="t.ex. Lösull på vinden"
+              aria-invalid={showErrors && Boolean(errors.customer_name)}
+            />
+            <span className="text-xs text-slate-400">Namnet slutkunden ser på offerten. Nämn inte Ekovilla.</span>
+            {fieldError(errors.customer_name)}
           </label>
 
-          <label className="grid content-start gap-1.5">
-            <span className="text-sm font-medium text-slate-700">Arbetsandel (%)</span>
-            <Input
-              inputMode="decimal"
-              value={form.labor_share}
-              onChange={(e) => setField('labor_share', e.target.value)}
-              placeholder="0"
-              aria-invalid={showErrors && Boolean(errors.labor_share)}
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <label className="grid content-start gap-1.5">
+              <span className="text-sm font-medium text-slate-700">Kategori</span>
+              <Select
+                value={form.category}
+                onChange={(e) => setField('category', e.target.value as FormState['category'])}
+                aria-invalid={showErrors && Boolean(errors.category)}
+              >
+                <option value="">—</option>
+                {PORTAL_ARTICLE_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {PORTAL_ARTICLE_CATEGORY_LABELS[c]}
+                  </option>
+                ))}
+              </Select>
+              {fieldError(errors.category)}
+            </label>
+
+            <label className="grid content-start gap-1.5">
+              <span className="text-sm font-medium text-slate-700">Arbetsandel (%)</span>
+              <Input
+                inputMode="decimal"
+                value={form.labor_share}
+                onChange={(e) => setField('labor_share', e.target.value)}
+                placeholder="0"
+                aria-invalid={showErrors && Boolean(errors.labor_share)}
+              />
+              <span className="text-xs text-slate-400">Den del av priset som är arbete och ger ROT.</span>
+              {fieldError(errors.labor_share)}
+            </label>
+          </div>
+
+          <label className="grid gap-1.5">
+            <span className="text-sm font-medium text-slate-700">Anteckning</span>
+            <Textarea
+              value={form.note}
+              onChange={(e) => setField('note', e.target.value)}
+              rows={2}
+              maxLength={PORTAL_NOTE_MAX}
+              className="min-h-[72px]"
+              placeholder="Kort förtydligande i prislistan, får vara tom"
             />
-            <span className="text-xs text-slate-400">Den del av priset som är arbete och ger ROT.</span>
-            {fieldError(errors.labor_share)}
+          </label>
+
+          <label className="grid gap-1.5 sm:max-w-[50%]">
+            <span className="text-sm font-medium text-slate-700">Ordning</span>
+            <Input
+              inputMode="numeric"
+              value={form.sort_order}
+              onChange={(e) => setField('sort_order', e.target.value)}
+              aria-invalid={showErrors && Boolean(errors.sort_order)}
+            />
+            <span className="text-xs text-slate-400">Lägst visas först i prislistan.</span>
+            {fieldError(errors.sort_order)}
           </label>
         </div>
-
-        <label className="grid gap-1.5">
-          <span className="text-sm font-medium text-slate-700">Anteckning</span>
-          <Textarea
-            value={form.note}
-            onChange={(e) => setField('note', e.target.value)}
-            rows={2}
-            maxLength={PORTAL_NOTE_MAX}
-            className="min-h-[72px]"
-            placeholder="Kort förtydligande i prislistan, får vara tom"
-          />
-        </label>
-
-        <label className="grid gap-1.5 sm:max-w-[50%]">
-          <span className="text-sm font-medium text-slate-700">Ordning</span>
-          <Input
-            inputMode="numeric"
-            value={form.sort_order}
-            onChange={(e) => setField('sort_order', e.target.value)}
-            aria-invalid={showErrors && Boolean(errors.sort_order)}
-          />
-          <span className="text-xs text-slate-400">Lägst visas först i prislistan.</span>
-          {fieldError(errors.sort_order)}
-        </label>
-      </div>
+      </fieldset>
 
       <div className="mt-5 flex flex-wrap items-center justify-end gap-3">
         {dirty && <span className="text-xs font-semibold text-amber-700">Ändringarna är inte sparade</span>}
