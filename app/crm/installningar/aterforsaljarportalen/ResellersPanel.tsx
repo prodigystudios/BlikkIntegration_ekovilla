@@ -30,10 +30,15 @@ async function put(url: string, body: unknown): Promise<string | null> {
   }
 }
 
-/** Säljarna i listan, och den valda även om den inte längre står där (roll ändrad, konto borttaget). */
-function sellerOptions(sellers: Seller[], selected: string | null) {
-  const options = sellers.map((s) => ({ id: s.id, label: s.full_name || 'Namnlös användare' }));
-  if (selected && !options.some((o) => o.id === selected)) options.unshift({ id: selected, label: 'Okänd användare' });
+/**
+ * Säljarna i listan, och den valda även om den inte längre står där (roll ändrad, konto borttaget). Medan listan
+ * hämtas (null) är den valda inte okänd, bara inte hämtad än.
+ */
+function sellerOptions(sellers: Seller[] | null, selected: string | null) {
+  const options = (sellers ?? []).map((s) => ({ id: s.id, label: s.full_name || 'Namnlös användare' }));
+  if (selected && !options.some((o) => o.id === selected)) {
+    options.unshift({ id: selected, label: sellers ? 'Okänd användare' : 'Hämtar säljare…' });
+  }
   return options;
 }
 
@@ -127,7 +132,7 @@ export default function ResellersPanel({ resellers, fallbackUserId }: ResellersP
               disabled={loading || busy !== null}
             >
               <option value="">{loading ? 'Hämtar säljare…' : 'Ingen reserv vald'}</option>
-              {sellerOptions(sellers ?? [], fallback).map((o) => (
+              {sellerOptions(sellers, fallback).map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.label}
                 </option>
@@ -198,7 +203,7 @@ export default function ResellersPanel({ resellers, fallbackUserId }: ResellersP
                         aria-label={`Säljare för ${r.name}`}
                       >
                         <option value="">Följ kedjan</option>
-                        {sellerOptions(sellers ?? [], r.sellerUserId).map((o) => (
+                        {sellerOptions(sellers, r.sellerUserId).map((o) => (
                           <option key={o.id} value={o.id}>
                             {o.label}
                           </option>

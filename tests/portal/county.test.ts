@@ -62,6 +62,8 @@ describe('countyFromNominatim', () => {
 
   it('ett svar utanför Sverige, utan träff eller utan adress ger null', () => {
     expect(countyFromNominatim(hit({ 'ISO3166-2-lvl4': 'NO-03', country_code: 'no' }))).toBeNull();
+    // Ett svenskt länsnamn i ett danskt svar räknas inte.
+    expect(countyFromNominatim(hit({ county: 'Skåne län', 'ISO3166-2-lvl4': 'SE-M', country_code: 'dk' }))).toBeNull();
     expect(countyFromNominatim([])).toBeNull();
     expect(countyFromNominatim({})).toBeNull();
     expect(countyFromNominatim([{}])).toBeNull();
@@ -111,6 +113,8 @@ describe('lookupCounty', () => {
 
   it.each([
     ['ett felsvar', async () => json({ error: 'upptagen' }, 503)],
+    // Ett felsvar tolkas aldrig, också om kroppen ser ut som en träff.
+    ['ett felsvar med en träff i kroppen', async () => json([{ address: { 'ISO3166-2-lvl4': 'SE-X' } }], 500)],
     ['ett nätfel', async () => Promise.reject(new TypeError('fetch failed'))],
     ['en timeout', async () => Promise.reject(new DOMException('timeout', 'TimeoutError'))],
     ['ogiltig JSON', async () => new Response('<html>', { status: 200 })],
