@@ -1,7 +1,7 @@
 # Återförsäljarportalen ↔ CRM:et: integrationen (fas 5 och 6)
 
-**Status:** kontrakt, beslutat med William 2026-09-27. Portalens halva av affärsflödet är byggd.
-Transporten är inte byggd på någon sida.
+**Status:** kontrakt, beslutat med William 2026-09-27. Signaturen och omförsöken ändrades
+2026-09-28. Portalens halva av affärsflödet är byggd. Transporten är inte byggd på någon sida.
 **Källa:** `prodigystudios/aterforsaljare-ekovilla`, filen `CRM_INTEGRATION.md`. Det här är en
 kopia. Ändras kontraktet ändras det i båda.
 **Hur CRM:et bygger sin halva** står i CRM-repots `RESELLER_PORTAL_CRM_PLAN.md` (PR #242), läst mot
@@ -43,7 +43,7 @@ jobb. Allt det kommer från CRM:et.
 
 ---
 
-## Besluten (William 2026-09-27)
+## Besluten (William, 27–28 september 2026)
 
 | Fråga | Beslut |
 | --- | --- |
@@ -54,6 +54,7 @@ jobb. Allt det kommer från CRM:et.
 | Avbrutet jobb | En ny händelse, `job.cancelled`. Portalen visar jobbet som **Avbrutet**, med skälet. |
 | Dokument | Butiken får **orderbekräftelsen och egenkontrollen**. |
 | Avsändare på meddelanden | **Namn och avdelning**, till exempel "Anna Berg · Planering". Avdelningen är en fast lista, se `job.message`. |
+| Signaturen (28 september) | **Metoden och sökvägen signeras med kroppen**, så att en signatur bara gäller för sitt eget anrop. Ett 401 görs om med backoff. Se "Transporten". |
 | Moms mellan Ekovilla och butiken | **Öppen.** Tas med ekonomi eller revisor, och ska vara besvarad före första riktiga jobbet i prod. Se sist. |
 
 ---
@@ -76,19 +77,54 @@ Inget av det här finns i någon av apparna i dag.
 ### Signatur
 
 Varje anrop, i båda riktningarna, signeras med HMAC-SHA256 och en delad hemlighet per miljö.
+Metoden och sökvägen signeras med kroppen (beslutat 2026-09-28). Utan dem gällde en signatur för
+vilken route som helst, åt båda hållen, i 300 sekunder. En signerad ping med tom kropp hade då
+räckt för att dra tillbaka en annan beställning.
 
-- **Hemligheten** heter `PORTAL_CRM_SHARED_SECRET` i båda apparna. Den är olika lokalt, i
-  testmiljön och i produktionen, och ligger aldrig i koden.
+- **Hemligheten** heter `PORTAL_CRM_SHARED_SECRET` i båda apparna.
+  - Den är minst 32 tecken och trimmas på båda sidor innan den används.
+  - Den är olika lokalt, i testmiljön och i produktionen.
+  - Den ligger aldrig i koden.
 - **Headers:**
   - `X-Ekovilla-Timestamp`: unix-sekunder.
-  - `X-Ekovilla-Signature`: `v1=` följt av hex av `HMAC_SHA256(secret, timestamp + "." + råkropp)`.
+  - `X-Ekovilla-Signature`: `v1=` följt av hex av `HMAC_SHA256(hemlighet, det som signeras)`.
+- **Det som signeras** är fyra fält åtskilda med radbrytning (`\n`):
+
+  ```
+  tidsstämpel + "\n" + METOD + "\n" + sökväg + "\n" + råkropp
+  ```
+
+  - **`METOD`** skrivs med versaler, till exempel `POST` eller `PUT`.
+  - **`sökväg`** skrivs som den står i URL:en, procentkodad, utan värd och frågesträng. Ett exempel
+    är `/api/portal/jobs/q-2026-015/messages`.
+  - **`råkropp`** är kroppen exakt som den skickas, i UTF-8.
+  - **Radbrytningen skiljer fälten entydigt.** Med en punkt hade `/a.b` + `c` och `/a` + `b.c`
+    gett samma sträng.
 - **Mottagaren:**
+  - Räknar med metoden och sökvägen i anropet den tog emot.
   - Nekar med 401 om tidsstämpeln avviker mer än 300 sekunder, om signaturen inte stämmer eller om
     `v1=` saknas.
   - Jämför i konstant tid.
   - Läser den råa kroppen först och parsar JSON:en efteråt.
-  - Avsändaren signerar vid varje försök, eftersom en signatur bara gäller i 300 sekunder.
+- **Avsändaren** signerar vid varje försök, eftersom en signatur bara gäller i 300 sekunder.
 - **Utan hemlighet** svarar mottagarens routes 503 och inget skickas. Koden kan därför gå ut mörk.
+
+**Testvektor.** Båda sidornas kod ska ge den här signaturen. Den är räknad med Pythons `hmac` och
+kontrollerad med `node:crypto`.
+
+| Fält | Värde |
+| --- | --- |
+| Hemlighet | `portal-kontraktsvektor-0123456789abcdef0123456789abcdef` |
+| Tidsstämpel | `1790000000` |
+| Metod | `POST` |
+| Sökväg | `/api/portal/jobs/q-2026-015/messages` |
+| Signatur | `v1=0a23a52e4a620ea087da88e218f347248f4003d0fcfecd56649ef08e670bcac6` |
+
+Kroppen är 126 tecken och 130 byte i UTF-8:
+
+```
+{"messageId":"msg-1","authorName":"Sara Ek","body":"Hej från Gävle – vindsluckan sitter ute.","sentAt":"2026-09-27T12:00:00Z"}
+```
 
 ### Idempotens
 
@@ -99,8 +135,10 @@ Varje anrop, i båda riktningarna, signeras med HMAC-SHA256 och en delad hemligh
   arbetsorder eller beställning.
 - **Svar:**
   - 2xx: mottaget.
-  - 4xx: fel i anropet, och det görs inte om. 409 betyder "går inte längre", till exempel en
-    ändring av en beställning som redan är bekräftad.
+  - 401: signaturen godtogs inte. Avsändaren försöker igen med backoff, som vid 5xx. Annars
+    tappas varje händelse för gott medan hemligheten byts, eller om en klocka går fel.
+  - Andra 4xx: fel i anropet, och det görs inte om. 409 betyder "går inte längre", till exempel
+    en ändring av en beställning som redan är bekräftad.
   - 5xx eller timeout: avsändaren försöker igen med backoff, ett begränsat antal gånger.
 
 ### Kroppen
