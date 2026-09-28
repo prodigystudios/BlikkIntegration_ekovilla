@@ -291,6 +291,19 @@ describe('publishPricelist: publiceringen', () => {
     expect(db.tables.portal_outbound_events).toHaveLength(1);
   });
 
+  it('registret läses för varje artikel på lista 160, också omarkerade, så att de syns som "inte med"', async () => {
+    const src = sources({
+      prices: async () => [
+        { articleNumber: '2410509', fromQuantity: 0, price: 342 },
+        { articleNumber: '13102', fromQuantity: 0, price: 195.3 },
+      ],
+      register: async (numbers) =>
+        numbers.map((n) => ({ article_number: n, description: `Fortnox ${n}`, unit: 'st', active: true })),
+    });
+    const draft = await loadPricelistDraft(src);
+    expect(draft.unmarked).toEqual([{ articleNumber: '13102', name: 'Fortnox 13102', unitCost: 195.3 }]);
+  });
+
   it('utkastet byggs om på servern ur källorna, också registret för alla artiklar på listan', async () => {
     const { src } = await publish();
     expect(src.calls).toEqual(expect.arrayContaining(['fields', 'prices', 'register:2410509']));
