@@ -1,25 +1,34 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { dispatchPortalOutbox } from '@/lib/domains/portal/outbox';
+import { runPortalCron } from '@/lib/domains/portal/cron';
 import { ok, routeError, requirePermission } from '../../_shared';
 
-// Utskicket tar nya händelser i 60 s, och ett anrop får ta 10 s (lib/domains/portal/outbox.ts).
-export const maxDuration = 90;
+// Samma varv som cron-routen: omräkningen, utskicket och Fortnox-försöken (lib/domains/portal/cron.ts).
+export const maxDuration = 300;
 
-// "Skicka väntande nu": skickar det som står i kön till portalen (RESELLER_PORTAL_CRM_PLAN.md). Testmiljön har ingen
-// cron, och i prod slipper den som just publicerat vänta på nästa körning.
+// "Skicka väntande nu": gör det cron gör varje minut i prod. Testmiljön har ingen cron, och i prod slipper den som
+// just publicerat eller skickat om vänta på nästa körning.
 //
 // Service-rollen: kön töms bara av service_role (claim_portal_outbound_events). Grinden är crm.portal.manage; routen
-// skickar bara det som redan är köat och tar ingen indata. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
+// tar ingen indata. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
 export async function POST() {
   try {
     const gate = await requirePermission('crm.portal.manage');
     if (gate.response || !gate.currentUser) return gate.response;
 
-    const summary = await dispatchPortalOutbox(getSupabaseAdmin(), { env: process.env });
-    if (!summary.ran) {
-      return routeError(409, 'portal_integration_off', `Integrationen med portalen är inte påslagen här. ${summary.reason}`);
+    const summary = await runPortalCron(getSupabaseAdmin(), { env: process.env });
+    const dispatch = summary.dispatch;
+    if ('error' in dispatch) return routeError(500, 'portal_dispatch_failed', `Kön kunde inte skickas: ${dispatch.error}`);
+    if (!dispatch.ran) {
+      return routeError(409, 'portal_integration_off', `Integrationen med portalen är inte påslagen här. ${dispatch.reason}`);
     }
-    return ok(summary);
+    const again = summary.redispatch && !('error' in summary.redispatch) && summary.redispatch.ran ? summary.redispatch : null;
+    return ok({
+      claimed: dispatch.claimed + (again?.claimed ?? 0),
+      sent: dispatch.sent + (again?.sent ?? 0),
+      retried: dispatch.retried + (again?.retried ?? 0),
+      dead: dispatch.dead + (again?.dead ?? 0),
+      summary,
+    });
   } catch (e: any) {
     return routeError(500, 'portal_dispatch_unexpected', e?.message || 'Kön kunde inte skickas');
   }

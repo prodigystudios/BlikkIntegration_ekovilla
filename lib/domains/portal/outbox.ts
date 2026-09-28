@@ -260,3 +260,46 @@ export async function dispatchPortalOutbox(
   }
   return summary;
 }
+
+export type RequeuePortalEventResult =
+  | { kind: 'not_found' }
+  /** Bara en uppgiven händelse skickas om. */
+  | { kind: 'not_dead'; status: OutboxEventStatus }
+  /** En senare händelse för samma jobb (eller prislistan) har redan gått iväg eller väntar. */
+  | { kind: 'superseded_by_later' }
+  | { kind: 'requeued'; orderingKey: string };
+
+/**
+ * "Skicka om" en uppgiven händelse från portalsidan: tillbaka i kön med nya försök, på sin gamla plats.
+ *
+ * 🧨 BARA DEN SENASTE för sin nyckel. En uppgiven händelse håller inte kvar resten av jobbets kö, så en senare kan redan
+ * ha gått fram. En gammal job.scheduled efter en levererad job.completed hade flyttat butiken bakåt (bara framåt,
+ * William 2026-09-28), och en gammal prislista efter en nyare hade ersatt den nyare hos butikerna.
+ */
+export async function requeueDeadPortalEvent(admin: SupabaseClient, id: string, now: Date): Promise<RequeuePortalEventResult> {
+  const read = await admin.from('portal_outbound_events').select('id, seq, status, ordering_key').eq('id', id).maybeSingle();
+  if (read.error) throw new Error(`Händelsen gick inte att läsa: ${read.error.message}`);
+  const row = read.data as { id: string; seq: number; status: OutboxEventStatus; ordering_key: string } | null;
+  if (!row) return { kind: 'not_found' };
+  if (row.status !== 'dead') return { kind: 'not_dead', status: row.status };
+
+  const later = await admin
+    .from('portal_outbound_events')
+    .select('id')
+    .eq('ordering_key', row.ordering_key)
+    .in('status', ['pending', 'sending', 'sent'])
+    .gt('seq', row.seq)
+    .limit(1);
+  if (later.error) throw new Error(`Senare händelser gick inte att läsa: ${later.error.message}`);
+  if ((later.data ?? []).length > 0) return { kind: 'superseded_by_later' };
+
+  const requeued = await admin
+    .from('portal_outbound_events')
+    .update({ status: 'pending', attempts: 0, next_attempt_at: now.toISOString(), claimed_at: null })
+    .eq('id', id)
+    .eq('status', 'dead')
+    .select('id');
+  if (requeued.error) throw new Error(`Händelsen kunde inte läggas tillbaka: ${requeued.error.message}`);
+  if ((requeued.data ?? []).length === 0) return { kind: 'not_dead', status: 'pending' };
+  return { kind: 'requeued', orderingKey: row.ordering_key };
+}

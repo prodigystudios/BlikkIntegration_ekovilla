@@ -8,6 +8,10 @@
     {
       "path": "/api/notifications/cleanup",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/api/reseller-portal/cron",
+      "schedule": "* * * * *"
     }
   ]
 }

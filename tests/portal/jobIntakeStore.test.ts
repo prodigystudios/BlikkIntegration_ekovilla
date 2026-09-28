@@ -490,3 +490,61 @@ describe('followUpPortalJob', () => {
     expect(deps.notify).not.toHaveBeenCalled();
   });
 });
+
+// ------------------------------------------------------------------------------------------------ omförsöken (fas 4b)
+
+describe('Fortnox-omförsöken i intaget och uppföljningen', () => {
+  const at = (iso: string, ms: number) => new Date(new Date(iso).getTime() + ms).toISOString();
+  const T0 = '2026-09-28T10:00:00.000Z'; // intakeDeps
+  const T1 = '2026-09-28T10:00:05.000Z'; // followDeps
+
+  it('arbetsordern skapas med skyddsnätet: ett försök om 5 min, i 24 h, inget räknat', async () => {
+    const { m } = await received();
+    expect(m.tables.crm_portal_jobs[0]).toMatchObject({
+      fortnox_next_attempt_at: at(T0, 5 * 60_000),
+      fortnox_retry_until: at(T0, 24 * 3600_000),
+      fortnox_attempts: 0,
+    });
+  });
+
+  it('Fortnox-ordern skapades: nätet tas bort', async () => {
+    const { m } = await received();
+    await followUpPortalJob(m.admin, QUOTE, followDeps().deps);
+    expect(m.tables.crm_portal_jobs[0].fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('kontrollerna stoppar (kortet saknar något): aldrig ett nytt försök', async () => {
+    const { m } = await received([]);
+    await followUpPortalJob(m.admin, QUOTE, followDeps().deps);
+    expect(m.tables.crm_portal_jobs[0].fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('tekniskt fel: nytt försök om 5 min, sedan 15 min, med försöken räknade och samma fönster', async () => {
+    const { m } = await received();
+    const fail = followDeps(async () => {
+      throw new FortnoxApiError(503, 'Fortnox 503', 0, 'nere');
+    });
+    await followUpPortalJob(m.admin, QUOTE, fail.deps);
+    expect(m.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: at(T1, 5 * 60_000), fortnox_retry_until: at(T0, 24 * 3600_000) });
+    await followUpPortalJob(m.admin, QUOTE, fail.deps);
+    expect(m.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 2, fortnox_next_attempt_at: at(T1, 15 * 60_000) });
+    // Ingen ny notis per försök.
+    expect(fail.sent.filter((n) => n.type === 'portal_job.fortnox_issue')).toHaveLength(1);
+  });
+
+  it('en push som redan pågår: titta igen om 5 min, utan att räkna ett försök', async () => {
+    const { m } = await received();
+    await followUpPortalJob(m.admin, QUOTE, followDeps(async () => {
+      throw new FortnoxPushInProgressError();
+    }).deps);
+    expect(m.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 0, fortnox_next_attempt_at: at(T1, 5 * 60_000) });
+  });
+
+  it('en notis som inte gick fram: ett varv till om 5 min, fast Fortnox-ordern finns', async () => {
+    const { m } = await received();
+    const { deps } = followDeps();
+    (deps.notify as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('nere'));
+    await followUpPortalJob(m.admin, QUOTE, deps);
+    expect(m.tables.crm_portal_jobs[0].fortnox_next_attempt_at).toBe(at(T1, 5 * 60_000));
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { linkPortalJobCustomer, type LinkPortalCustomerDeps } from '@/lib/domains/portal/linkCustomer';
 import { buildPortalCustomerLinkUpdate, buildPortalWorkOrderInsert, portalJobSchema, type JobCustomerCard } from '@/lib/domains/portal/jobIntake';
-import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from '@/lib/domains/fortnox/client';
 import { CONTRACT_JOB } from './helpers/contractFixtures';
 import { memoryAdmin } from './helpers/memoryAdmin';
 
@@ -234,6 +234,31 @@ describe('linkPortalJobCustomer', () => {
     const t = setup();
     (t.deps.push as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new FortnoxNotConnectedError());
     expect((await t.link()) as { fortnoxError: string }).toMatchObject({ fortnoxError: expect.stringMatching(/^Fortnox är inte kopplat/) });
+  });
+
+  it('Fortnox-fel vid kopplingen: nya försök av cron-utskicket om 5 min, i 24 h (fas 4b)', async () => {
+    const t = setup();
+    (t.deps.push as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new FortnoxApiError(503, 'Fortnox 503', 0, 'nere'));
+    await t.link();
+    expect(t.admin.tables.crm_portal_jobs[0]).toMatchObject({
+      fortnox_attempts: 1,
+      fortnox_next_attempt_at: '2026-09-28T12:05:00.000Z',
+      fortnox_retry_until: '2026-09-29T12:00:00.000Z',
+    });
+  });
+
+  it('en push som redan pågår vid kopplingen: titta igen om 5 min, inget försök räknat', async () => {
+    const t = setup();
+    (t.deps.push as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new FortnoxPushInProgressError());
+    await t.link();
+    expect(t.admin.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 0, fortnox_next_attempt_at: '2026-09-28T12:05:00.000Z' });
+  });
+
+  it('Fortnox-ordern skapades vid kopplingen: inga omförsök', async () => {
+    const t = setup();
+    t.admin.tables.crm_portal_jobs[0].fortnox_next_attempt_at = '2026-09-28T12:03:00.000Z';
+    await t.link();
+    expect(t.admin.tables.crm_portal_jobs[0].fortnox_next_attempt_at).toBeNull();
   });
 
   it('butikens koppling gick inte att spara: ordern är kopplad och går till Fortnox, och det sägs', async () => {

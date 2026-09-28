@@ -99,6 +99,19 @@ describe('middleware och sessionskakorna', () => {
     }
   });
 
+  it('släpper portalens cron utan session — routen prövar CRON_SECRET själv', async () => {
+    const res = await middleware(new NextRequest('http://localhost/api/reseller-portal/cron'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it('🧨 släpper bara exakt /api/reseller-portal/cron — inte ett prefix', async () => {
+    for (const path of ['/api/reseller-portal', '/api/reseller-portal/cron/x', '/api/reseller-portal/other']) {
+      const res = await middleware(request(path));
+      expect(res.status, path).toBe(401);
+    }
+  });
+
   it('låter kakorna följa med när en inloggad skickas bort från inloggningssidan', async () => {
     h.refreshed = [{ name: TOKEN, value: 'base64-new', options: { path: '/' } }];
     h.session = { access_token: 'new' };

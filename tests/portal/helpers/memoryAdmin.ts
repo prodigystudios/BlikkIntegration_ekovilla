@@ -1,11 +1,13 @@
 /**
  * En Supabase-klient i minnet, för de frågeformer portalens databassteg använder: select/insert/upsert/update/delete
- * med eq/is/in, `.select()` för att få tillbaka raderna och `.maybeSingle()`. Beter sig som PostgREST där det spelar
- * roll för koden som prövas:
+ * med eq/is/in/not-is/lt/lte/gt, order och limit, `.select()` för att få tillbaka raderna och `.maybeSingle()`. Beter
+ * sig som PostgREST där det spelar roll för koden som prövas:
  *   - en UPDATE eller DELETE som inte träffar någon rad svarar utan fel, med en tom lista;
  *   - `upsert` med `ignoreDuplicates` lämnar en befintlig rad orörd och svarar med en tom lista;
  *   - en krock på en unik kolumn svarar med kod 23505.
  * Kolumnlistan i `select` läses inte: hela raden kommer tillbaka. Inbäddningar (`contacts:…`) ligger redan på raden.
+ * portal_outbound_events får kolumnens standardvärden vid insert: ett stigande `seq`, status 'pending' och 0 försök.
+ * lt/lte/gt jämför värdena som de står: ISO-tider i samma form, eller tal.
  *
  * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång. `canUpdate` spelar RLS på
  * UPDATE: en rad den säger nej till ändras inte och kommer inte tillbaka, utan fel, som i PostgREST. `beforeExecute`
@@ -14,8 +16,16 @@
 
 type Row = Record<string, unknown>;
 type Op = 'select' | 'insert' | 'upsert' | 'update' | 'delete';
-type Filter = ['eq' | 'is' | 'in', string, unknown];
-export type Call = { table: string; op: Op; values?: unknown; filters: Filter[]; options?: Record<string, unknown> };
+type Filter = ['eq' | 'is' | 'in' | 'notIs' | 'lt' | 'lte' | 'gt', string, unknown];
+export type Call = {
+  table: string;
+  op: Op;
+  values?: unknown;
+  filters: Filter[];
+  options?: Record<string, unknown>;
+  order?: { column: string; ascending: boolean };
+  limit?: number;
+};
 type DbError = { code?: string; message: string };
 
 const UNIQUE: Record<string, string[]> = {
@@ -23,6 +33,7 @@ const UNIQUE: Record<string, string[]> = {
   crm_portal_resellers: ['reseller_id'],
   crm_work_orders: ['id', 'order_number'],
   portal_idempotency_keys: ['key'],
+  portal_outbound_events: ['idempotency_key'],
 };
 
 export function memoryAdmin(
@@ -33,6 +44,11 @@ export function memoryAdmin(
   } = {},
 ) {
   const tables: Record<string, Row[]> = structuredClone(initial);
+  let nextSeq = Math.max(0, ...(tables.portal_outbound_events ?? []).map((r) => Number(r.seq ?? 0))) + 1;
+  const withDefaults = (table: string, row: Row): Row =>
+    table === 'portal_outbound_events'
+      ? { status: 'pending', attempts: 0, ...row, seq: row.seq ?? nextSeq++ }
+      : row;
   const calls: Call[] = [];
   const failures: { match: (call: Call) => boolean; error: DbError; times: number }[] = [];
 
@@ -45,6 +61,13 @@ export function memoryAdmin(
     filters.every(([kind, column, value]) => {
       const actual = row[column] ?? null;
       if (kind === 'in') return (value as unknown[]).includes(actual);
+      if (kind === 'notIs') return actual !== value;
+      if (kind === 'lt' || kind === 'lte' || kind === 'gt') {
+        if (actual === null) return false;
+        const a = actual as string | number;
+        const b = value as string | number;
+        return kind === 'lt' ? a < b : kind === 'lte' ? a <= b : a > b;
+      }
       return actual === value;
     });
 
@@ -73,7 +96,19 @@ export function memoryAdmin(
       return { data: returning || call.op === 'select' ? (single ? (copies[0] ?? null) : copies) : null, error: null };
     };
 
-    if (call.op === 'select') return out(table.filter((r) => matches(r, call.filters)));
+    if (call.op === 'select') {
+      let rows = table.filter((r) => matches(r, call.filters));
+      if (call.order) {
+        const { column, ascending } = call.order;
+        rows = [...rows].sort((x, y) => {
+          const a = x[column] as string | number;
+          const b = y[column] as string | number;
+          return (a < b ? -1 : a > b ? 1 : 0) * (ascending ? 1 : -1);
+        });
+      }
+      if (call.limit !== undefined) rows = rows.slice(0, call.limit);
+      return out(rows);
+    }
 
     if (call.op === 'insert' || call.op === 'upsert') {
       const values = (Array.isArray(call.values) ? call.values : [call.values]) as Row[];
@@ -92,7 +127,7 @@ export function memoryAdmin(
         }
         const clash = conflict(call.table, value);
         if (clash) return { data: null, error: clash };
-        const row = structuredClone(value);
+        const row = withDefaults(call.table, structuredClone(value));
         table.push(row);
         written.push(row);
       }
@@ -126,8 +161,16 @@ export function memoryAdmin(
       eq: (column: string, value: unknown) => (call.filters.push(['eq', column, value]), chain),
       is: (column: string, value: unknown) => (call.filters.push(['is', column, value]), chain),
       in: (column: string, values: unknown[]) => (call.filters.push(['in', column, values]), chain),
-      order: () => chain,
-      limit: () => chain,
+      not: (column: string, operator: string, value: unknown) => {
+        if (operator !== 'is') throw new Error(`memoryAdmin: not.${operator} stöds inte`);
+        call.filters.push(['notIs', column, value]);
+        return chain;
+      },
+      lt: (column: string, value: unknown) => (call.filters.push(['lt', column, value]), chain),
+      lte: (column: string, value: unknown) => (call.filters.push(['lte', column, value]), chain),
+      gt: (column: string, value: unknown) => (call.filters.push(['gt', column, value]), chain),
+      order: (column: string, options?: { ascending?: boolean }) => ((call.order = { column, ascending: options?.ascending ?? true }), chain),
+      limit: (n: number) => ((call.limit = n), chain),
       maybeSingle: async () => execute(call, returning, true),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>
         Promise.resolve(execute(call, returning, false)).then(resolve, reject),
