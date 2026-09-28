@@ -619,6 +619,7 @@ describe('sweepPortalJobDocuments', () => {
         id: `ev-${i}`,
         seq: 10 + i,
         idempotency_key: `job.confirmed-q-x${i}-${i}`,
+        ordering_key: `job:q-x${i}`,
         payload: { type: 'job.confirmed', data: { quoteId: `q-x${i}` } },
         sent_at: ago(MINUTE),
       }),
@@ -900,7 +901,7 @@ describe('sweepPortalJobDocuments', () => {
     expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
   });
 
-  it('en manuell som ännu byggs räcker också för att den automatiska inte renderas', async () => {
+  it('🧨 en manuell som bara byggs stoppar inte den automatiska: faller den manuella hade butiken ingen fått', async () => {
     const { admin, tables } = db({
       crm_portal_job_documents: [
         { ...defaults('crm_portal_job_documents'), id: 'd-auto', quote_id: 'q-1', kind: 'order_confirmation', created_at: ago(120 * MINUTE), next_attempt_at: ago(MINUTE), attempts: 3 },
@@ -908,9 +909,64 @@ describe('sweepPortalJobDocuments', () => {
       ],
     });
     const src = sources();
-    await sweep(admin, src);
-    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
-    expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'failed' });
+    expect(await sweep(admin, src)).toMatchObject({ queued: 1 });
+    expect(src.renderOrderConfirmation).toHaveBeenCalledTimes(1);
+    expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'ready' });
+  });
+
+  it('en manuell som gavs upp i kön stoppar inte heller den automatiska före Fortnox', async () => {
+    const { admin } = db({
+      portal_outbound_events: [confirmed(), { id: 'ev-m', seq: 3, idempotency_key: 'job.document-d-manual', ordering_key: 'job:q-1', status: 'dead', payload: {} }],
+      crm_portal_job_documents: [
+        { ...defaults('crm_portal_job_documents'), id: 'd-auto', quote_id: 'q-1', kind: 'order_confirmation', created_at: ago(120 * MINUTE), next_attempt_at: ago(MINUTE), attempts: 3 },
+        { ...defaults('crm_portal_job_documents'), id: 'd-manual', quote_id: 'q-1', kind: 'order_confirmation', status: 'ready', name: 'O.pdf', byte_size: 64, sha256: 'b'.repeat(64), source_ref: '26', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(30 * MINUTE), ready_at: ago(30 * MINUTE), queued_at: ago(30 * MINUTE) },
+      ],
+    });
+    const src = sources();
+    expect(await sweep(admin, src)).toMatchObject({ queued: 1 });
+    expect(src.renderOrderConfirmation).toHaveBeenCalledTimes(1);
+  });
+
+  it('när en ny köas ersätts ÄLDRE beslut som väntar; en som redan skickas, och den nya själv, rörs inte', async () => {
+    const frozen = (id: string, created: string) => ({
+      ...defaults('crm_portal_job_documents'),
+      id,
+      quote_id: 'q-1',
+      kind: 'order_confirmation',
+      status: 'ready',
+      name: 'O.pdf',
+      byte_size: 64,
+      sha256: 'c'.repeat(64),
+      source_ref: '26',
+      created_by: 'u-seller',
+      created_by_name: 'Anna Berg',
+      created_at: created,
+      ready_at: created,
+      queued_at: created,
+    });
+    const ev = (id: string, doc: string, status: string) => ({ id, seq: Number(id.slice(3)), idempotency_key: `job.document-${doc}`, ordering_key: 'job:q-1', status, payload: {} });
+    const { admin, tables } = db({
+      portal_outbound_events: [confirmed(), ev('ev-10', 'd-old-pending', 'pending'), ev('ev-11', 'd-old-sending', 'sending')],
+      crm_portal_job_documents: [frozen('d-old-pending', ago(60 * MINUTE)), frozen('d-old-sending', ago(50 * MINUTE))],
+    });
+    await send(admin, sources());
+    const status = (id: string) => tables.portal_outbound_events.find((e) => e.id === id)?.status;
+    expect(status('ev-10')).toBe('superseded');
+    expect(status('ev-11')).toBe('sending');
+    expect(tables.portal_outbound_events.find((e) => e.idempotency_key === `job.document-${DOC}`)?.status).toBe('pending');
+  });
+
+  it('🧨 köad men inte bokförd: bokförs, och markeras aldrig misslyckad (den är på väg till butiken)', async () => {
+    const id = '00000000-0000-4000-8000-000000000010';
+    const { admin, tables } = db({
+      crm_work_orders: [workOrder({ status: 'cancelled' })],
+      portal_outbound_events: [confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) }), { id: 'ev-q', seq: 9, idempotency_key: `job.document-${id}`, ordering_key: 'job:q-1', status: 'sent', payload: {} }],
+      crm_portal_job_documents: [
+        { ...defaults('crm_portal_job_documents'), id, quote_id: 'q-1', kind: 'order_confirmation', status: 'ready', name: 'O.pdf', byte_size: 64, sha256: 'a'.repeat(64), source_ref: '26', created_by: 'u-seller', created_by_name: 'Anna Berg', ready_at: ago(2 * MINUTE) },
+      ],
+    });
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 0, errors: 0 });
+    expect(tables.crm_portal_job_documents[0]).toMatchObject({ status: 'ready', queued_at: NOW.toISOString() });
   });
 
   it('någon annan hann köa den under tiden: räknas varken som köad eller misslyckad här', async () => {

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { hasNewerLiveDocument } from './jobDocumentsDecision';
 import {
   PORTAL_JOB_DOCUMENTS_BUCKET,
   PORTAL_JOB_DOCUMENT_MAX_BYTES,
@@ -12,11 +13,11 @@ import {
  * Köns kropp som den skickas (RESELLER_PORTAL_CRM_PLAN.md fas 7). De flesta händelser skickas som de köades. Ett
  * dokument (job.document) köas med en referens till den frysta PDF:en (`contentRef`), och här byts referensen mot
  * filens innehåll i base64, vid varje försök:
- *   - först: är det fortfarande det senast BESLUTADE dokumentet av sin sort på jobbet? Annars skickas det aldrig
- *     ('skip', kön markerar det ersatt). Provet görs här, precis före sändningen, eftersom kön skickar ett jobbs
- *     händelser en i taget: ingen annan kan köa eller skicka för jobbet mellan provet och anropet. Kön ersätter inte
- *     dokument själv (ingen supersedeKey): den ersätter i den ordning händelserna KOM, och en äldre som köades sent hade
- *     då ersatt en nyare;
+ *   - först: är det fortfarande det senast BESLUTADE dokumentet av sin sort på jobbet (jobDocumentsDecision.ts)? Annars
+ *     skickas det aldrig ('skip', kön markerar det ersatt). Provet görs här, precis före sändningen: kön SKICKAR ett
+ *     jobbs händelser en i taget, så ett senare beslut som köas under tiden hamnar efter det här och kommer fram sist
+ *     (butiken behåller det senast mottagna). Köns supersedeKey används inte för dokument: den ersätter i den ordning
+ *     händelserna KOM, och en äldre som köades sent hade då ersatt en nyare;
  *   - filen hämtas ur bucketen med service-rollen;
  *   - storleken, `%PDF-` och sha256 kontrolleras mot referensen, så att samma Idempotency-Key aldrig ger andra byte
  *     (portalen svarar 422 på det);
@@ -97,19 +98,18 @@ export async function preparePortalPayload(admin: SupabaseClient, payload: unkno
     .maybeSingle();
   if (decided.error) return { kind: 'retry', error: `dokumentet: raden kunde inte läsas: ${decided.error.message}` };
   const own = decided.data as { quote_id: string; kind: string; status: string; created_at: string } | null;
-  if (!own || own.quote_id !== data.quoteId || own.kind !== data.kind || own.status !== 'ready') {
+  if (!own || own.quote_id !== data.quoteId || own.kind !== data.kind) {
     return { kind: 'dead', error: 'dokumentet: raden stämmer inte med kön' };
   }
-  const newer = await admin
-    .from('crm_portal_job_documents')
-    .select('id')
-    .eq('quote_id', own.quote_id)
-    .eq('kind', own.kind)
-    .eq('status', 'ready')
-    .gt('created_at', own.created_at)
-    .limit(1);
-  if (newer.error) return { kind: 'retry', error: `dokumentet: nyare kunde inte läsas: ${newer.error.message}` };
-  if ((newer.data ?? []).length > 0) return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };
+  // Markerad misslyckad (ersatt eller jobbet avbröts) innan den skickades: med flit, inget att skicka om.
+  if (own.status !== 'ready') return { kind: 'skip', error: 'dokumentet: skickas inte (markerat på arbetsordern)' };
+  try {
+    if (await hasNewerLiveDocument(admin, { quoteId: own.quote_id, kind: own.kind, createdAt: own.created_at })) {
+      return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };
+    }
+  } catch (e) {
+    return { kind: 'retry', error: `dokumentet: ${e instanceof Error ? e.message : String(e)}` };
+  }
 
   const downloaded = await admin.storage
     .from(PORTAL_JOB_DOCUMENTS_BUCKET)

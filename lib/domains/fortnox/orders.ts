@@ -474,13 +474,18 @@ async function buildOrderHeader(
 async function fetchLinkedQuoteForHeader(
   supabase: ReturnType<typeof getSupabaseAdmin>,
   quoteId: string | null,
+  options: { strict?: boolean } = {},
 ): Promise<OrderHeaderQuote> {
   if (!quoteId) return null;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('crm_quotes')
     .select('assigned_to, customer_snapshot, rot_details')
     .eq('id', quoteId)
     .maybeSingle();
+  // `strict`: en spärr som läser ROT ur offerten får inte tolka ett läsfel som "ingen offert" (fas 7, refuseRot).
+  if (error && options.strict) {
+    throw new FortnoxApiError(500, `Offerten gick inte att läsa: ${error.message}`, undefined, 'Kunde inte läsa offerten. Försök igen.');
+  }
   return (data as OrderHeaderQuote) ?? null;
 }
 
@@ -1433,7 +1438,7 @@ type OrderForPdf = {
   snapshotPersonalNumber: string | null;
 };
 
-async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
+async function requireOrderNumber(workOrderId: string, options: { strictQuote?: boolean } = {}): Promise<OrderForPdf> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_work_orders')
@@ -1457,7 +1462,10 @@ async function requireOrderNumber(workOrderId: string): Promise<OrderForPdf> {
   // Samma upplösning som pushen använder — orderns egna ROT-uppgifter, med offertens som reserv för
   // rader vars `rot_details` är tom `{}`. Läste PDF:en dem på annat sätt hade dokumentet kunnat
   // säga något annat än det vi skickade till Fortnox.
-  const rotDetails = resolveOrderRotDetails(row ?? {}, await fetchLinkedQuoteForHeader(supabase, row?.quote_id ?? null));
+  const rotDetails = resolveOrderRotDetails(
+    row ?? {},
+    await fetchLinkedQuoteForHeader(supabase, row?.quote_id ?? null, { strict: options.strictQuote }),
+  );
 
   return {
     orderNumber: String(orderNumber),
@@ -1533,10 +1541,11 @@ export async function getFortnoxOrderPdf(
   workOrderId: string,
   options: { mode?: OrderPdfMode; refuseRot?: boolean } = {},
 ): Promise<{ bytes: Uint8Array; contentType: string; orderNumber: string; projectName: string | null }> {
-  const order = await requireOrderNumber(workOrderId);
-  const { orderNumber, projectName } = order;
   // Återförsäljarportalen (fas 7): orderbekräftelsen på en ROT-order skriver ut sökandens personnummer, och den ska inte
-  // till en butik. Prövas på SAMMA läsning som renderingen använder, så att prövningen och dokumentet aldrig kan skilja sig.
+  // till en butik. Prövas på SAMMA läsning som renderingen använder, så att prövningen och dokumentet aldrig kan skilja sig,
+  // och offerten läses strikt: ett läsfel stänger (500, görs om) i stället för att räknas som "ingen ROT".
+  const order = await requireOrderNumber(workOrderId, { strictQuote: options.refuseRot });
+  const { orderNumber, projectName } = order;
   if (options.refuseRot && order.rotEnabled) throw new OrderPdfRotRefusedError(orderNumber);
 
   if ((options.mode ?? ORDER_PDF_MODE) === 'design') {

@@ -55,6 +55,16 @@ describe('getFortnoxOrderPdf({ refuseRot })', () => {
     await expect(getFortnoxOrderPdf(WO, { refuseRot: true })).rejects.toThrow('FORTNOX');
   });
 
+  it('🧨 offerten går inte att läsa: stänger (500, görs om) i stället för att räkna det som "ingen ROT"', async () => {
+    const db = setup({ rot_details: {}, quote_id: 'quote-1' }, { rot_details: { enabled: true } });
+    db.failOn((c) => c.table === 'crm_quotes', { message: 'nere' });
+    await expect(getFortnoxOrderPdf(WO, { refuseRot: true })).rejects.toMatchObject({ status: 500 });
+    expect(h.fortnoxGet).not.toHaveBeenCalled();
+    // Utan spärren är läsfelet som förut ("ingen offert") för orderbekräftelsens andra vägar.
+    db.failOn((c) => c.table === 'crm_quotes', { message: 'nere' });
+    await expect(getFortnoxOrderPdf(WO)).rejects.toThrow('FORTNOX');
+  });
+
   it('utan valet: orderbekräftelsens andra vägar renderar ROT-ordrar som förut', async () => {
     setup({ rot_details: { enabled: true } });
     await expect(getFortnoxOrderPdf(WO)).rejects.toThrow('FORTNOX');

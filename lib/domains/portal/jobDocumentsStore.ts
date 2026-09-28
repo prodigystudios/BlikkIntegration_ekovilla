@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { findLatestEgenkontrollArchive } from '@/lib/domains/crm/egenkontrollLink';
 import { listCrmWorkOrderComments } from '@/lib/domains/crm/work-orders';
 import { enqueuePortalEvent } from './outbox';
+import { hasNewerLiveDocument, supersedeOlderDocuments } from './jobDocumentsDecision';
 import { isMissingObject, sha256Hex } from './outboundContent';
 import { parsePortalJobSyncState } from './jobState';
 import { portalFortnoxRetryDelayMs } from './jobFortnoxRetry';
@@ -326,40 +327,36 @@ async function markFailed(admin: SupabaseClient, id: string, error: string, from
   return (data ?? []).length > 0;
 }
 
-/** Finns ett senare beslut av samma sort, som är fryst eller på väg? Då ska det här aldrig till butiken. */
-async function hasNewerDecision(admin: SupabaseClient, row: Pick<DocumentRow, 'quote_id' | 'kind' | 'created_at'>, statuses: string[]) {
-  const newer = await admin
-    .from(TABLE)
-    .select('id')
-    .eq('quote_id', row.quote_id)
-    .eq('kind', row.kind)
-    .in('status', statuses)
-    .gt('created_at', row.created_at)
-    .limit(1);
-  if (newer.error) throw new Error(`Nyare dokument gick inte att läsa: ${newer.error.message}`);
-  return (newer.data ?? []).length > 0;
-}
 
 /**
  * Köar ett fryst dokument och bokför det. Jobbet prövas en gång till först: avbröts det medan filen frystes skickas
  * inget (William 2026-09-28), och dokumentet står som misslyckat. Idempotent: kön känner igen nyckeln.
  *
- * Den senast BESLUTADE av samma sort vinner, som kortet visar den. Här sållas en äldre som frystes sent bort (en process
- * som dog före köandet, eller den automatiska efter ett dygns Fortnox-omförsök), så att kortet säger "ersatt". Det
- * avgörande provet görs ändå av utskicket, precis före sändningen (outboundContent.ts): mellan provet här och köandet
- * kan en nyare hinna köas, och kön skickar i den ordning händelserna kom.
- *   already   någon annan hann köa eller markera den; inget gjordes här
+ * Den senast BESLUTADE av samma sort vinner, som kortet visar den (jobDocumentsDecision.ts). Här sållas en äldre som
+ * frystes sent bort (en process som dog före köandet, eller den automatiska efter ett dygns Fortnox-omförsök), så att
+ * kortet säger "ersatt"; och när den här köats ersätts äldre beslut som ännu väntar. Det avgörande provet görs ändå av
+ * utskicket, precis före sändningen (outboundContent.ts): mellan provet här och köandet kan en nyare hinna köas.
+ *   already   händelsen fanns redan i kön (köad men inte bokförd), eller någon annan hann markera raden
  */
 async function queueReady(
   admin: SupabaseClient,
   row: DocumentRow,
   now: Date,
 ): Promise<'queued' | 'cancelled' | 'replaced' | 'already'> {
+  // Redan i kön (köandet gick men bokföringen föll): bara bokföringen. Ett dokument på väg till butiken markeras aldrig
+  // misslyckat.
+  const queued = await admin.from('portal_outbound_events').select('status').eq('idempotency_key', portalJobDocumentKey(row.id)).maybeSingle();
+  if (queued.error) throw new Error(`Köns status gick inte att läsa: ${queued.error.message}`);
+  if (queued.data) {
+    const marked = await admin.from(TABLE).update({ queued_at: now.toISOString() }).eq('id', row.id).is('queued_at', null);
+    if (marked.error) throw new Error(`Dokumentet kunde inte bokföras: ${marked.error.message}`);
+    return 'already';
+  }
   const gate = await readJobGate(admin, row.quote_id);
   if (!gate || gate.blocked === 'cancelled') {
     return (await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready')) ? 'cancelled' : 'already';
   }
-  if (await hasNewerDecision(admin, row, ['ready'])) {
+  if (await hasNewerLiveDocument(admin, { quoteId: row.quote_id, kind: row.kind, createdAt: row.created_at })) {
     return (await markFailed(admin, row.id, REPLACED_TEXT, 'ready')) ? 'replaced' : 'already';
   }
   // Varje anropare har en fryst rad (databasens check: ready har namn, hash, storlek och tid). Provet är för typerna.
@@ -378,6 +375,15 @@ async function queueReady(
       readyAt: row.ready_at,
     }),
   );
+  // Äldre beslut som ännu väntar behöver aldrig fram. Går det inte hoppar utskicket över dem ändå.
+  try {
+    await supersedeOlderDocuments(admin, { id: row.id, quoteId: row.quote_id, kind: row.kind, createdAt: row.created_at });
+  } catch (e) {
+    console.error('[portal-documents] äldre dokument kunde inte ersättas, utskicket hoppar över dem', {
+      id: row.id,
+      error: e instanceof Error ? e.message : e,
+    });
+  }
   const marked = await admin.from(TABLE).update({ queued_at: now.toISOString() }).eq('id', row.id).is('queued_at', null);
   if (marked.error) throw new Error(`Dokumentet köades men kunde inte bokföras: ${marked.error.message}`);
   return 'queued';
@@ -711,13 +717,8 @@ export async function sweepPortalJobDocuments(
       const [automatic, manual, jobs] = await Promise.all([
         // En automatisk är alltid en orderbekräftelse (tabellens check).
         admin.from(TABLE).select('quote_id').is('created_by', null).in('quote_id', chunk),
-        admin
-          .from(TABLE)
-          .select('quote_id')
-          .eq('kind', 'order_confirmation')
-          .not('created_by', 'is', null)
-          .in('status', ['building', 'ready'])
-          .in('quote_id', chunk),
+        // Varje orderbekräftelse som byggs eller är fryst (en automatisk räknas redan ovan, i alla lägen).
+        admin.from(TABLE).select('quote_id').eq('kind', 'order_confirmation').in('status', ['building', 'ready']).in('quote_id', chunk),
         admin.from('crm_portal_jobs').select('quote_id, sync_state').in('quote_id', chunk),
       ]);
       const failure = automatic.error ?? manual.error ?? jobs.error;
@@ -849,9 +850,10 @@ async function buildAutomatic(
     summary.retried += 1;
     return;
   }
-  // Har någon skickat en med knappen under tiden (medan Fortnox var nere) är den automatiska överflödig: inga
-  // Fortnox-anrop och ingen fil för något som ändå aldrig skickas.
-  if (await hasNewerDecision(admin, row, ['building', 'ready'])) {
+  // Har någon skickat en med knappen under tiden (medan Fortnox var nere), fryst och på väg, är den automatiska
+  // överflödig: inga Fortnox-anrop och ingen fil för något som ändå aldrig skickas. En som bara byggs räknas inte:
+  // faller den hade butiken inte fått någon.
+  if (await hasNewerLiveDocument(admin, { quoteId: row.quote_id, kind: row.kind, createdAt: row.created_at })) {
     if (await markFailed(admin, row.id, REPLACED_TEXT)) summary.failed += 1;
     return;
   }
@@ -891,19 +893,20 @@ async function confirmedInWindow(admin: SupabaseClient, since: string): Promise<
   const PAGE = 500;
   const ids = new Set<string>();
   for (let from = 0; from < 20 * PAGE; from += PAGE) {
+    // Bara köns nyckel (job:<quoteId>), inte kroppen: fönstret läses varje minut.
     const { data, error } = await admin
       .from('portal_outbound_events')
-      .select('payload')
+      .select('ordering_key')
       .like('idempotency_key', 'job.confirmed-%')
       .gt('sent_at', since)
       .order('sent_at', { ascending: false })
       .order('idempotency_key', { ascending: false })
       .range(from, from + PAGE - 1);
     if (error) throw new Error(error.message);
-    const rows = (data ?? []) as { payload: { data?: { quoteId?: unknown } } | null }[];
+    const rows = (data ?? []) as { ordering_key: string | null }[];
     for (const r of rows) {
-      const q = r.payload?.data?.quoteId;
-      if (typeof q === 'string' && q.length > 0) ids.add(q);
+      const q = r.ordering_key?.startsWith('job:') ? r.ordering_key.slice('job:'.length) : '';
+      if (q) ids.add(q);
     }
     if (rows.length < PAGE) break;
   }

@@ -152,6 +152,19 @@ describe('preparePortalPayload', () => {
     expect(calls.filter((c) => c.table.startsWith('storage:'))).toEqual([]);
   });
 
+  it('🧨 ett senare vars händelse gavs upp ersätter inte: butiken fick det aldrig, och då ska det äldre fram', async () => {
+    const bytes = pdf();
+    const later = docRow({ id: 'd-senare', created_at: '2026-10-12T08:29:00.000Z' });
+    const { admin, tables } = withFile(bytes, [docRow(), later]);
+    tables.portal_outbound_events = [{ id: 'e', seq: 1, idempotency_key: 'job.document-d-senare', status: 'dead' }];
+    expect((await preparePortalPayload(admin, stored(bytes).payload)).kind).toBe('ready');
+    // Väntande eller skickad räknas.
+    for (const status of ['pending', 'sending', 'sent']) {
+      tables.portal_outbound_events[0].status = status;
+      expect((await preparePortalPayload(admin, stored(bytes).payload)).kind, status).toBe('skip');
+    }
+  });
+
   it('ett senare som inte är fryst, eller av en annan sort, eller på ett annat jobb, ersätter inte', async () => {
     const bytes = pdf();
     for (const later of [
@@ -165,15 +178,31 @@ describe('preparePortalPayload', () => {
     }
   });
 
-  it('en rad som inte stämmer med kön (saknas, annat jobb, annan sort, inte fryst) ges upp', async () => {
+  it('markerad misslyckad på arbetsordern (ersatt, avbrutet) före sändningen: skickas inte, och ges inte upp', async () => {
     const bytes = pdf();
-    for (const rows of [[], [docRow({ quote_id: 'q-2' })], [docRow({ kind: 'self_inspection' })], [docRow({ status: 'failed' })]]) {
+    const { admin } = withFile(bytes, [docRow({ status: 'failed' })]);
+    expect(await preparePortalPayload(admin, stored(bytes).payload)).toEqual({
+      kind: 'skip',
+      error: 'dokumentet: skickas inte (markerat på arbetsordern)',
+    });
+  });
+
+  it('en rad som inte stämmer med kön (saknas, annat jobb, annan sort) ges upp', async () => {
+    const bytes = pdf();
+    for (const rows of [[], [docRow({ quote_id: 'q-2' })], [docRow({ kind: 'self_inspection' })]]) {
       const { admin } = withFile(bytes, rows);
       expect(await preparePortalPayload(admin, stored(bytes).payload), JSON.stringify(rows)).toEqual({
         kind: 'dead',
         error: 'dokumentet: raden stämmer inte med kön',
       });
     }
+  });
+
+  it('regeln går inte att fråga (de senares status): görs om, inte uppgiven', async () => {
+    const bytes = pdf();
+    const { admin, failOn } = withFile(bytes, [docRow(), docRow({ id: 'd-senare', created_at: '2026-10-12T08:29:00.000Z' })]);
+    failOn((c) => c.table === 'portal_outbound_events', { message: 'nere' });
+    expect(await preparePortalPayload(admin, stored(bytes).payload)).toMatchObject({ kind: 'retry' });
   });
 
   it('raden går inte att läsa: görs om', async () => {
