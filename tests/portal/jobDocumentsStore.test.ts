@@ -914,7 +914,7 @@ describe('sweepPortalJobDocuments', () => {
     expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'ready' });
   });
 
-  it('en manuell som gavs upp i kön stoppar inte heller den automatiska före Fortnox', async () => {
+  it('en fryst manuell stoppar den automatiska före Fortnox, också när den manuella gavs upp i kön (syns, skickas om)', async () => {
     const { admin } = db({
       portal_outbound_events: [confirmed(), { id: 'ev-m', seq: 3, idempotency_key: 'job.document-d-manual', ordering_key: 'job:q-1', status: 'dead', payload: {} }],
       crm_portal_job_documents: [
@@ -923,8 +923,8 @@ describe('sweepPortalJobDocuments', () => {
       ],
     });
     const src = sources();
-    expect(await sweep(admin, src)).toMatchObject({ queued: 1 });
-    expect(src.renderOrderConfirmation).toHaveBeenCalledTimes(1);
+    expect(await sweep(admin, src)).toMatchObject({ queued: 0, failed: 1 });
+    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
   });
 
   it('när en ny köas ersätts ÄLDRE beslut som väntar; en som redan skickas, och den nya själv, rörs inte', async () => {
@@ -956,17 +956,25 @@ describe('sweepPortalJobDocuments', () => {
     expect(tables.portal_outbound_events.find((e) => e.idempotency_key === `job.document-${DOC}`)?.status).toBe('pending');
   });
 
-  it('🧨 köad men inte bokförd: bokförs, och markeras aldrig misslyckad (den är på väg till butiken)', async () => {
+  it('🧨 köad men inte bokförd: görs klar (äldre ersätts, bokförs) och markeras aldrig misslyckad (den är på väg)', async () => {
     const id = '00000000-0000-4000-8000-000000000010';
+    const older = '00000000-0000-4000-8000-000000000011';
+    const frozen = (docId: string, created: string, over: Record<string, unknown> = {}) => ({
+      ...defaults('crm_portal_job_documents'), id: docId, quote_id: 'q-1', kind: 'order_confirmation', status: 'ready', name: 'O.pdf', byte_size: 64,
+      sha256: 'a'.repeat(64), source_ref: '26', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: created, ready_at: ago(2 * MINUTE), ...over,
+    });
     const { admin, tables } = db({
       crm_work_orders: [workOrder({ status: 'cancelled' })],
-      portal_outbound_events: [confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) }), { id: 'ev-q', seq: 9, idempotency_key: `job.document-${id}`, ordering_key: 'job:q-1', status: 'sent', payload: {} }],
-      crm_portal_job_documents: [
-        { ...defaults('crm_portal_job_documents'), id, quote_id: 'q-1', kind: 'order_confirmation', status: 'ready', name: 'O.pdf', byte_size: 64, sha256: 'a'.repeat(64), source_ref: '26', created_by: 'u-seller', created_by_name: 'Anna Berg', ready_at: ago(2 * MINUTE) },
+      portal_outbound_events: [
+        confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) }),
+        { id: 'ev-old', seq: 8, idempotency_key: `job.document-${older}`, ordering_key: 'job:q-1', status: 'pending', payload: {} },
+        { id: 'ev-q', seq: 9, idempotency_key: `job.document-${id}`, ordering_key: 'job:q-1', status: 'sent', payload: {} },
       ],
+      crm_portal_job_documents: [frozen(older, ago(60 * MINUTE), { queued_at: ago(59 * MINUTE) }), frozen(id, ago(5 * MINUTE))],
     });
-    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 0, errors: 0 });
-    expect(tables.crm_portal_job_documents[0]).toMatchObject({ status: 'ready', queued_at: NOW.toISOString() });
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 1, failed: 0, errors: 0 });
+    expect(tables.crm_portal_job_documents.find((d) => d.id === id)).toMatchObject({ status: 'ready', queued_at: NOW.toISOString() });
+    expect(tables.portal_outbound_events.find((e) => e.id === 'ev-old')?.status).toBe('superseded');
   });
 
   it('någon annan hann köa den under tiden: räknas varken som köad eller misslyckad här', async () => {

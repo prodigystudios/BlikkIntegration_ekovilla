@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { hasNewerLiveDocument } from './jobDocumentsDecision';
+import { hasNewerFrozenDocument } from './jobDocumentsDecision';
 import {
   PORTAL_JOB_DOCUMENTS_BUCKET,
   PORTAL_JOB_DOCUMENT_MAX_BYTES,
@@ -101,14 +101,13 @@ export async function preparePortalPayload(admin: SupabaseClient, payload: unkno
   if (!own || own.quote_id !== data.quoteId || own.kind !== data.kind) {
     return { kind: 'dead', error: 'dokumentet: raden stämmer inte med kön' };
   }
-  // Markerad misslyckad (ersatt eller jobbet avbröts) innan den skickades: med flit, inget att skicka om.
-  if (own.status !== 'ready') return { kind: 'skip', error: 'dokumentet: skickas inte (markerat på arbetsordern)' };
-  try {
-    if (await hasNewerLiveDocument(admin, { quoteId: own.quote_id, kind: own.kind, createdAt: own.created_at })) {
-      return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };
-    }
-  } catch (e) {
-    return { kind: 'retry', error: `dokumentet: ${e instanceof Error ? e.message : String(e)}` };
+  // Markerad misslyckad (ersatt eller jobbet avbröts) innan den skickades: med flit, inget att skicka om. Ett annat läge
+  // kan inte finnas för en köad rad; hittas det ges händelsen upp och syns på portalsidan.
+  if (own.status === 'failed') return { kind: 'skip', error: 'dokumentet: skickas inte (markerat på arbetsordern)' };
+  if (own.status !== 'ready') return { kind: 'dead', error: `dokumentet: raden har läget ${own.status}` };
+  // Kastar frågan gör utskicket om (dispatchPortalOutbox fångar det som 'retry').
+  if (await hasNewerFrozenDocument(admin, { quoteId: own.quote_id, kind: own.kind, createdAt: own.created_at })) {
+    return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };
   }
 
   const downloaded = await admin.storage

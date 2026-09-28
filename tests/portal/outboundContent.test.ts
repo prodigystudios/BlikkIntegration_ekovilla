@@ -152,15 +152,13 @@ describe('preparePortalPayload', () => {
     expect(calls.filter((c) => c.table.startsWith('storage:'))).toEqual([]);
   });
 
-  it('🧨 ett senare vars händelse gavs upp ersätter inte: butiken fick det aldrig, och då ska det äldre fram', async () => {
+  it('ett senare som gavs upp i kön ersätter ändå: det senast beslutade gäller, aldrig en tyst äldre version', async () => {
+    // Det senare syns som "Kom inte fram" och skickas om; det äldre kunde ha inaktuellt innehåll (jobDocumentsDecision.ts).
     const bytes = pdf();
     const later = docRow({ id: 'd-senare', created_at: '2026-10-12T08:29:00.000Z' });
     const { admin, tables } = withFile(bytes, [docRow(), later]);
-    tables.portal_outbound_events = [{ id: 'e', seq: 1, idempotency_key: 'job.document-d-senare', status: 'dead' }];
-    expect((await preparePortalPayload(admin, stored(bytes).payload)).kind).toBe('ready');
-    // Väntande eller skickad räknas.
-    for (const status of ['pending', 'sending', 'sent']) {
-      tables.portal_outbound_events[0].status = status;
+    for (const status of ['dead', 'pending', 'sending', 'sent', 'superseded']) {
+      tables.portal_outbound_events = [{ id: 'e', seq: 1, idempotency_key: 'job.document-d-senare', status }];
       expect((await preparePortalPayload(admin, stored(bytes).payload)).kind, status).toBe('skip');
     }
   });
@@ -198,11 +196,19 @@ describe('preparePortalPayload', () => {
     }
   });
 
-  it('regeln går inte att fråga (de senares status): görs om, inte uppgiven', async () => {
+  it('regeln går inte att fråga: kastar, och utskicket gör om (inte uppgiven)', async () => {
     const bytes = pdf();
-    const { admin, failOn } = withFile(bytes, [docRow(), docRow({ id: 'd-senare', created_at: '2026-10-12T08:29:00.000Z' })]);
-    failOn((c) => c.table === 'portal_outbound_events', { message: 'nere' });
-    expect(await preparePortalPayload(admin, stored(bytes).payload)).toMatchObject({ kind: 'retry' });
+    const { admin, failOn } = withFile(bytes);
+    // Andra frågan mot tabellen är regeln (den första läser dokumentets egen rad).
+    let reads = 0;
+    failOn((c) => c.table === 'crm_portal_job_documents' && ++reads === 2, { message: 'nere' });
+    await expect(preparePortalPayload(admin, stored(bytes).payload)).rejects.toThrow('nere');
+  });
+
+  it('en köad rad i ett läge som inte kan finnas (byggs) ges upp och syns på portalsidan', async () => {
+    const bytes = pdf();
+    const { admin } = withFile(bytes, [docRow({ status: 'building' })]);
+    expect(await preparePortalPayload(admin, stored(bytes).payload)).toEqual({ kind: 'dead', error: 'dokumentet: raden har läget building' });
   });
 
   it('raden går inte att läsa: görs om', async () => {
@@ -361,6 +367,17 @@ describe('dispatchPortalOutbox med ett dokument', () => {
       last_http_status: null,
       last_error: 'dokumentet: filen stämmer inte med kön (storlek, PDF eller hash)',
     });
+  });
+
+  it('regeln kastar under utskicket: inget anrop, tillbaka i kön', async () => {
+    const bytes = pdf(2000);
+    const { admin, tables, failOn } = queue(bytes);
+    let reads = 0;
+    failOn((c) => c.table === 'crm_portal_job_documents' && ++reads === 2, { message: 'nere' });
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    expect(await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW })).toMatchObject({ retried: 1 });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(tables.portal_outbound_events[0]).toMatchObject({ status: 'pending', last_error: 'kroppen kunde inte byggas: Senare dokument gick inte att läsa: nere' });
   });
 
   it('lagringen som inte svarar: inget anrop, tillbaka i kön med nästa försök', async () => {

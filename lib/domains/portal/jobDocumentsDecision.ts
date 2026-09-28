@@ -2,18 +2,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { portalJobDocumentKey, type PortalJobDocumentKind } from './jobDocuments';
 
 /**
- * Vilket dokument vinner (RESELLER_PORTAL_CRM_PLAN.md fas 7)? Det senast BESLUTADE av sin sort på jobbet, som kortet
- * visar det. Regeln står EN gång, här, och används av köandet (queueReady) och av utskicket (preparePortalPayload):
- * utskicket prövar precis före sändningen, eftersom kön ersätter i den ordning händelserna kom och en äldre kan ha
- * köats efter en nyare.
+ * Vilket dokument vinner (RESELLER_PORTAL_CRM_PLAN.md fas 7)? Det senast BESLUTADE och FRYSTA av sin sort på jobbet, som
+ * kortet visar det. Regeln står EN gång, här, och används av köandet (queueReady), av automatiken (buildAutomatic) och av
+ * utskicket (preparePortalPayload): utskicket prövar precis före sändningen, eftersom kön ersätter i den ordning
+ * händelserna kom och en äldre kan ha köats efter en nyare.
  *
- * Ett senare beslut räknas när det är FRYST och på väg: ingen händelse i kön än (köandet kommer inom någon minut, cron
- * tar det annars) eller en händelse som inte getts upp. Ett beslut som bara byggs räknas inte: faller det har butiken
- * inget. En senare som getts upp räknas inte heller: butiken fick den aldrig, och då ska den äldre fram.
+ * Ett beslut som bara byggs räknas inte (faller det hade butiken inget fått). Ett fryst räknas också när dess händelse
+ * senare gavs upp: då syns det som "Kom inte fram" på kortet och skickas om på portalsidan, eller så skickar säljaren ett
+ * nytt. Att tyst falla tillbaka på en äldre version hade kunnat ge butiken inaktuellt innehåll, och en händelse ges i
+ * praktiken bara upp när portalen nekar jobbet eller varit nere i två dygn, och då hade den äldre fått samma svar.
  *
  * Två beslut i samma mikrosekund (created_at) räknas inte som senare än varandra; båda skickas, i köordning.
  */
-export async function hasNewerLiveDocument(
+export async function hasNewerFrozenDocument(
   admin: SupabaseClient,
   doc: { quoteId: string; kind: PortalJobDocumentKind | string; createdAt: string },
 ): Promise<boolean> {
@@ -24,26 +25,16 @@ export async function hasNewerLiveDocument(
     .eq('kind', doc.kind)
     .eq('status', 'ready')
     .gt('created_at', doc.createdAt)
-    .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(1);
   if (later.error) throw new Error(`Senare dokument gick inte att läsa: ${later.error.message}`);
-  const ids = ((later.data ?? []) as { id: string }[]).map((r) => r.id);
-  if (ids.length === 0) return false;
-
-  const events = await admin
-    .from('portal_outbound_events')
-    .select('idempotency_key, status')
-    .in('idempotency_key', ids.map(portalJobDocumentKey));
-  if (events.error) throw new Error(`De senare dokumentens status gick inte att läsa: ${events.error.message}`);
-  const status = new Map(((events.data ?? []) as { idempotency_key: string; status: string }[]).map((e) => [e.idempotency_key, e.status]));
-  return ids.some((id) => status.get(portalJobDocumentKey(id)) !== 'dead');
+  return (later.data ?? []).length > 0;
 }
 
 /**
  * Ett nytt dokument har köats: äldre BESLUT av samma sort som ännu väntar i kön behöver aldrig fram (butiken behåller
  * det senast mottagna). Samma sak som köns supersedeKey gjorde, men i beslutsordning: en äldre som köas sent ersätter
  * aldrig en nyare, eftersom bara äldre beslut än det nya rörs. Bara väntande händelser; en som redan skickas går fram, och
- * den nya kommer efter.
+ * den nya kommer efter. De senaste äldre först, om det någon gång skulle finnas fler än gränsen.
  */
 export async function supersedeOlderDocuments(
   admin: SupabaseClient,
@@ -56,6 +47,7 @@ export async function supersedeOlderDocuments(
     .eq('kind', doc.kind)
     .eq('status', 'ready')
     .lt('created_at', doc.createdAt)
+    .order('created_at', { ascending: false })
     .limit(100);
   if (older.error) throw new Error(`Äldre dokument gick inte att läsa: ${older.error.message}`);
   const keys = ((older.data ?? []) as { id: string }[]).map((r) => portalJobDocumentKey(r.id));
