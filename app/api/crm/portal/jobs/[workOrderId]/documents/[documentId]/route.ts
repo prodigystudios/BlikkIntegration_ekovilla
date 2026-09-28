@@ -41,13 +41,15 @@ export async function GET(req: Request, context: RouteContext) {
     );
     if (!file) return fail(404, 'portal_document_not_found', 'Dokumentet finns inte.');
 
-    // Svenska tecken i namnet kräver filename*; ett enkelt namn står bredvid för äldre läsare. Samma som portalen.
+    // Svenska tecken i namnet kräver filename*; ett enkelt namn står bredvid för äldre läsare. I filename* får ' ( ) *
+    // inte stå okodade (RFC 5987), och encodeURIComponent lämnar dem.
     const ascii = file.name.replace(/[^\x20-\x7e]|"/g, '_');
+    const encoded = encodeURIComponent(file.name).replace(/['()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
     return new Response(file.bytes, {
       status: 200,
       headers: {
         'Content-Type': 'application/pdf',
-        'Content-Disposition': `inline; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+        'Content-Disposition': `inline; filename="${ascii}"; filename*=UTF-8''${encoded}`,
         'Cache-Control': 'private, no-store',
       },
     });

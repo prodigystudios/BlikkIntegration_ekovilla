@@ -275,6 +275,14 @@ describe('GET …/[documentId]: öppna den skickade kopian', () => {
     expect(res.headers.get('content-disposition')).toContain('filename="a_b.pdf"');
   });
 
+  it("filename* kodar också ' ( ) * (RFC 5987), som en adress kan ha", async () => {
+    h.file = { bytes: new Uint8Array([1]), name: "Orderbekräftelse 26 – O'Brien väg 1 (bakgård)*.pdf" };
+    const header = (await open()).headers.get('content-disposition') ?? '';
+    const ext = header.split("filename*=UTF-8''")[1];
+    expect(ext).toMatch(/^[A-Za-z0-9!#$&+\-.^_`|~%]+$/);
+    expect(decodeURIComponent(ext)).toBe("Orderbekräftelse 26 – O'Brien väg 1 (bakgård)*.pdf");
+  });
+
   it('🧨 fetchCache: ingen PDF får komma ur Next 14:s cache (routen har bara GET)', () => {
     const source = readFileSync('app/api/crm/portal/jobs/[workOrderId]/documents/[documentId]/route.ts', 'utf8');
     expect(source).toMatch(/^export const fetchCache = 'force-no-store';$/m);

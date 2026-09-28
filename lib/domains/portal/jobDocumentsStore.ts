@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { findLatestEgenkontrollArchive } from '@/lib/domains/crm/egenkontrollLink';
 import { listCrmWorkOrderComments } from '@/lib/domains/crm/work-orders';
+import { resolveOrderRotDetails } from '@/lib/domains/fortnox/orders';
 import { enqueuePortalEvent } from './outbox';
-import { sha256Hex } from './outboundContent';
+import { isMissingObject, sha256Hex } from './outboundContent';
 import { parsePortalJobSyncState } from './jobState';
 import { portalFortnoxRetryDelayMs } from './jobFortnoxRetry';
 import {
@@ -92,9 +93,7 @@ export function portalDocumentSources(admin: SupabaseClient, env: Record<string,
       const bucket = env.SUPABASE_BUCKET || 'pdfs';
       const { data, error } = await admin.storage.from(bucket).download(path);
       if (error || !data) {
-        const e = (error ?? {}) as { message?: string; status?: number; statusCode?: string };
-        const missing = Number(e.status ?? e.statusCode) === 404 || /not[\s_-]?found/i.test(e.message ?? '');
-        return missing
+        return isMissingObject((error ?? {}) as { message?: string; status?: number; statusCode?: string })
           ? { ok: false, permanent: true, error: 'Egenkontrollen finns inte i arkivet.' }
           : { ok: false, permanent: false, error: 'Egenkontrollen kunde inte hämtas ur arkivet. Försök igen.' };
       }
@@ -105,7 +104,7 @@ export function portalDocumentSources(admin: SupabaseClient, env: Record<string,
 
 // ------------------------------------------------------------------------------------------------- jobbet
 
-const WORK_ORDER_SELECT = 'id, status, order_number, fortnox_order_number, project_name, work_address, rot_details';
+const WORK_ORDER_SELECT = 'id, status, order_number, fortnox_order_number, project_name, work_address, rot_details, quote_id';
 
 type WorkOrderRow = {
   id: string;
@@ -115,6 +114,7 @@ type WorkOrderRow = {
   project_name: string | null;
   work_address: { street_address?: string | null; city?: string | null } | null;
   rot_details: { enabled?: boolean } | null;
+  quote_id: string | null;
 };
 
 type JobGate = {
@@ -164,6 +164,8 @@ const DEFINITE: Record<PortalJobDocumentKind, string> = {
   self_inspection: 'Egenkontrollen',
 };
 
+const REPLACED_TEXT = 'Ersattes av en nyare innan den hann skickas.';
+
 const BLOCKED_TEXT: Record<PortalJobDocumentsBlocked, string> = {
   cancelled: 'Jobbet är avbrutet. Butiken får inga fler dokument.',
   not_confirmed: 'Butiken har inte fått bekräftelsen på jobbet än. Dokumenten skickas efter den.',
@@ -211,7 +213,22 @@ type BuildOutcome =
   | { kind: 'retry'; error: string };
 
 /** Filen ur sin källa, kontrollerad. Rör inte databasen. */
+/**
+ * ROT som orderbekräftelsen ser den: orderns egna uppgifter, med offertens som reserv (resolveOrderRotDetails, samma som
+ * renderingen). Portalens ordrar har ingen offert, men en som fått en ska inte slinka igenom.
+ */
+async function rotEnabled(admin: SupabaseClient, workOrder: WorkOrderRow): Promise<boolean> {
+  let quote: { rot_details?: { enabled?: boolean } | null } | null = null;
+  if (workOrder.quote_id) {
+    const read = await admin.from('crm_quotes').select('rot_details').eq('id', workOrder.quote_id).maybeSingle();
+    if (read.error) throw new Error(`Offerten gick inte att läsa: ${read.error.message}`);
+    quote = read.data as typeof quote;
+  }
+  return resolveOrderRotDetails(workOrder as never, quote as never)?.enabled === true;
+}
+
 async function readSource(
+  admin: SupabaseClient,
   row: Pick<DocumentRow, 'kind'>,
   gate: JobGate & { workOrder: WorkOrderRow },
   sources: PortalDocumentSources,
@@ -226,7 +243,7 @@ async function readSource(
     }
     // Portalens ordrar har ingen ROT (planen: "ingen rabatt och ingen ROT"). Med ROT påslagen skriver orderbekräftelsen
     // ut sökandens personnummer, och det ska inte till butiken.
-    if (workOrder.rot_details?.enabled === true) {
+    if (await rotEnabled(admin, workOrder)) {
       return { ok: false, permanent: true, error: 'Ordern har ROT påslagen. Orderbekräftelsen skickas inte till butiken.' };
     }
     sourceRef = String(workOrder.fortnox_order_number);
@@ -268,7 +285,7 @@ async function freeze(
   selfInspectionPath: string | null,
   now: Date,
 ): Promise<BuildOutcome> {
-  const source = await readSource(row, gate, sources, selfInspectionPath);
+  const source = await readSource(admin, row, gate, sources, selfInspectionPath);
   if (!source.ok) return source.permanent ? { kind: 'failed', error: source.error } : { kind: 'retry', error: source.error };
 
   const bucket = admin.storage.from(PORTAL_JOB_DOCUMENTS_BUCKET);
@@ -327,11 +344,27 @@ async function markFailed(admin: SupabaseClient, id: string, error: string, from
  * Köar ett fryst dokument och bokför det. Jobbet prövas en gång till först: avbröts det medan filen frystes skickas
  * inget (William 2026-09-28), och dokumentet står som misslyckat. Idempotent: kön känner igen nyckeln.
  */
-async function queueReady(admin: SupabaseClient, row: DocumentRow, now: Date): Promise<'queued' | 'cancelled'> {
+async function queueReady(admin: SupabaseClient, row: DocumentRow, now: Date): Promise<'queued' | 'cancelled' | 'replaced'> {
   const gate = await readJobGate(admin, row.quote_id);
   if (!gate || gate.blocked === 'cancelled') {
     await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready');
     return 'cancelled';
+  }
+  // Den senast BESLUTADE av samma sort vinner, som kortet visar den. En äldre som frystes sent (en process som dog före
+  // köandet, eller den automatiska efter ett dygns Fortnox-omförsök) hade annars köats efter den nyare, ersatt den i kön
+  // (supersedeKey) och gett butiken det gamla dokumentet.
+  const newer = await admin
+    .from(TABLE)
+    .select('id')
+    .eq('quote_id', row.quote_id)
+    .eq('kind', row.kind)
+    .eq('status', 'ready')
+    .gt('created_at', row.created_at)
+    .limit(1);
+  if (newer.error) throw new Error(`Nyare dokument gick inte att läsa: ${newer.error.message}`);
+  if ((newer.data ?? []).length > 0) {
+    await markFailed(admin, row.id, REPLACED_TEXT, 'ready');
+    return 'replaced';
   }
   // Varje anropare har en fryst rad (databasens check: ready har namn, hash, storlek och tid). Provet är för typerna.
   if (!row.name || !row.sha256 || row.byte_size === null || !row.ready_at) {
@@ -559,24 +592,25 @@ export async function listPortalJobDocuments(
   if (!quoteId) return null;
 
   // Regeln styr bara om knapparna visas. Databasen nekar ett beslut från den som inte får, vad kortet än visar.
-  const rule = await session.rpc('crm_portal_job_message_can_reply', { p_quote_id: quoteId });
+  const [rule, list, gate] = await Promise.all([
+    session.rpc('crm_portal_job_message_can_reply', { p_quote_id: quoteId }),
+    session
+      .from(TABLE)
+      .select(VIEW_SELECT)
+      .eq('quote_id', quoteId)
+      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
+      .limit(50),
+    readJobGate(admin, quoteId),
+  ]);
   if (rule.error) console.error('[portal-documents] svarsregeln svarade inte', { error: rule.error.message });
   const canSend = rule.data === true;
-
-  const { data, error } = await session
-    .from(TABLE)
-    .select(VIEW_SELECT)
-    .eq('quote_id', quoteId)
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(50);
-  if (error) throw new Error(`Dokumenten gick inte att läsa: ${error.message}`);
-  const rows = (data ?? []) as ViewRow[];
+  if (list.error) throw new Error(`Dokumenten gick inte att läsa: ${list.error.message}`);
+  const rows = (list.data ?? []) as ViewRow[];
   const latestRows = PORTAL_JOB_DOCUMENT_KINDS.map((kind) => rows.find((r) => r.kind === kind) ?? null);
   const readyKeys = latestRows.filter((r): r is ViewRow => r?.status === 'ready').map((r) => portalJobDocumentKey(r.id));
-  const statuses = readyKeys.length > 0 ? await readStatuses(admin, readyKeys) : new Map<string, string>();
-
-  const gate = await readJobGate(admin, quoteId);
+  // Svarar inte kön visas dokumenten ändå, som "skickas".
+  const statuses = readyKeys.length > 0 ? await readStatusesSafe(admin, readyKeys) : new Map<string, string>();
   const blocked = gate ? gate.blocked : 'cancelled';
 
   let selfInspection: PortalJobDocumentsView['selfInspection'] = null;
@@ -665,12 +699,13 @@ export async function sweepPortalJobDocuments(
   try {
     // sent_at sätts bara när portalen tagit emot händelsen (outcomeUpdate), så fönstret tar bara levererade. Grinden
     // (readJobGate) prövar ändå varje jobb innan ett beslut läggs.
+    // De senaste först: de äldre i fönstret har nästan alltid redan sin.
     const confirmed = await admin
       .from('portal_outbound_events')
       .select('payload')
       .like('idempotency_key', 'job.confirmed-%')
       .gt('sent_at', iso(-PORTAL_DOCUMENT_AUTO_WINDOW_MS))
-      .order('sent_at', { ascending: true })
+      .order('sent_at', { ascending: false })
       .limit(200);
     if (confirmed.error) throw new Error(confirmed.error.message);
     const quoteIds = [
@@ -681,10 +716,27 @@ export async function sweepPortalJobDocuments(
       ),
     ];
     if (quoteIds.length > 0) {
-      const existing = await admin.from(TABLE).select('quote_id').is('created_by', null).in('quote_id', quoteIds);
+      // Ingen automatisk när jobbet redan har en orderbekräftelse: den automatiska (i vilket läge som helst, en per jobb),
+      // eller en som någon skickat med knappen och som inte misslyckats. Annars hade en säljare som tryckte före cron
+      // gett butiken två.
+      const [existing, jobs] = await Promise.all([
+        admin.from(TABLE).select('quote_id, created_by, status').eq('kind', 'order_confirmation').in('quote_id', quoteIds),
+        admin.from('crm_portal_jobs').select('quote_id, sync_state').in('quote_id', quoteIds),
+      ]);
       if (existing.error) throw new Error(existing.error.message);
-      const has = new Set(((existing.data ?? []) as { quote_id: string }[]).map((r) => r.quote_id));
-      for (const quoteId of quoteIds.filter((q) => !has.has(q))) {
+      if (jobs.error) throw new Error(jobs.error.message);
+      const has = new Set(
+        ((existing.data ?? []) as { quote_id: string; created_by: string | null; status: string }[])
+          .filter((r) => r.created_by === null || r.status !== 'failed')
+          .map((r) => r.quote_id),
+      );
+      // Avbrutna jobb sållas bort i samma fråga, så att de inte prövas en gång i minuten hela veckan.
+      const cancelled = new Set(
+        ((jobs.data ?? []) as { quote_id: string; sync_state: unknown }[])
+          .filter((j) => parsePortalJobSyncState(j.sync_state).cancelled)
+          .map((j) => j.quote_id),
+      );
+      for (const quoteId of quoteIds.filter((q) => !has.has(q) && !cancelled.has(q))) {
         try {
           const gate = await readJobGate(admin, quoteId);
           // Avbrutet: inget beslut. Inte bekräftad (kan inte hända här, men läget kan ha ändrats): nästa varv.
@@ -767,6 +819,7 @@ export async function sweepPortalJobDocuments(
     if (unqueued.error) throw new Error(unqueued.error.message);
     for (const row of (unqueued.data ?? []) as DocumentRow[]) {
       try {
+        // Avbrutet eller ersatt av en nyare räknas som misslyckat: det gick aldrig till butiken.
         if ((await queueReady(admin, row, now)) === 'queued') summary.queued += 1;
         else summary.failed += 1;
       } catch (e) {

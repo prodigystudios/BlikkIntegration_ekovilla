@@ -267,7 +267,7 @@ function DocumentRow({
       empty =
         view.blocked === 'not_confirmed'
           ? 'Skickas av sig själv när butiken har fått bekräftelsen på jobbet.'
-          : 'Skickas av sig själv inom någon minut.';
+          : 'Inte skickad än.';
     } else if (view.blocked === 'not_confirmed') empty = 'Kan skickas när butiken har fått bekräftelsen på jobbet.';
     else if (mayAct && !candidate) empty = 'Ingen egenkontroll på ordern än. Den kommer när montörerna lämnat in den.';
     else empty = 'Inte skickad.';

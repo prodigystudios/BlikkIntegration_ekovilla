@@ -33,6 +33,12 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
 export const PORTAL_CRON_FORTNOX_START_BEFORE_MS = 150_000;
 /** Samma gräns för dokumenten: tre orderbekräftelser är nio Fortnox-anrop. */
 export const PORTAL_CRON_DOCUMENTS_START_BEFORE_MS = 150_000;
+/**
+ * Knapparna på portalsidan (fortnoxRetries: false) har 180 s. Dokumenten görs där också, eftersom testmiljön inte har
+ * någon cron, men bara om varvet hunnit så här lite: byggena (~10 s) och utskicket efter dem (30 s + ett dokument på
+ * 30 s) ryms då.
+ */
+export const PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS = 60_000;
 /** Utskicket efter dokumenten tar nya händelser i högst så här lång tid; ett dokument kan ta 30 s till. */
 export const PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS = 30_000;
 
@@ -90,7 +96,9 @@ export async function runPortalCron(
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
 
-  if (now().getTime() - startedAt < PORTAL_CRON_DOCUMENTS_START_BEFORE_MS) {
+  const documentsStartBefore =
+    options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
+  if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
       sweepPortalJobDocuments(admin, { now, sources: options.documentSources ?? portalDocumentSources(admin, options.env) }),
     );

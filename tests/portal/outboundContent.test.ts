@@ -187,7 +187,7 @@ describe('preparationFailureUpdate', () => {
 
   it('felet går att spara i Postgres (inget nolltecken, inget ensamt surrogat)', () => {
     const update = preparationFailureUpdate({ attempts: 1 }, { kind: 'dead', error: 'a\u0000b\uD800' }, NOW);
-    expect(update.last_error).toBe('ab�');
+    expect(update.last_error).toBe('ab\uFFFD');
   });
 });
 

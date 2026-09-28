@@ -329,6 +329,23 @@ describe('sendPortalJobDocument: orderbekräftelsen', () => {
     expect(docEvents(tables)).toEqual([]);
   });
 
+  it('🧨 ROT via offerten (orderns egna uppgifter tomma) räknas också, som renderingen räknar', async () => {
+    const { admin, tables } = db({
+      crm_work_orders: [workOrder({ rot_details: {}, quote_id: 'quote-1' })],
+      crm_quotes: [{ id: 'quote-1', rot_details: { enabled: true } }],
+    });
+    const src = sources();
+    expect(await send(admin, src)).toMatchObject({ kind: 'failed', document: { error: expect.stringContaining('ROT') } });
+    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
+    expect(docEvents(tables)).toEqual([]);
+    // Orderns egna uppgifter vinner över offertens (resolveOrderRotDetails): av på ordern = av.
+    const own = db({
+      crm_work_orders: [workOrder({ rot_details: { enabled: false }, quote_id: 'quote-1' })],
+      crm_quotes: [{ id: 'quote-1', rot_details: { enabled: true } }],
+    });
+    expect(await send(own.admin, sources())).toMatchObject({ kind: 'sent' });
+  });
+
   it('Fortnox svarar inte: misslyckat med Fortnox svar, och knappen går att trycka igen', async () => {
     const { admin } = db();
     const result = await send(admin, sources({ renderOrderConfirmation: { ok: false, permanent: false, error: 'Fortnox svarar inte.' } }));
@@ -508,6 +525,17 @@ describe('listPortalJobDocuments', () => {
     const { admin } = db({ crm_portal_jobs: [] });
     expect(await listPortalJobDocuments(admin, admin, WO)).toBeNull();
   });
+
+  it('kön svarar inte: kortet visas ändå, med "skickas"', async () => {
+    const { admin, failOn } = db({
+      crm_portal_job_documents: [
+        { id: 'd-1', quote_id: 'q-1', kind: 'order_confirmation', status: 'ready', name: 'A.pdf', byte_size: 10, error: null, created_by: null, created_by_name: null, created_at: ago(MINUTE), ready_at: ago(MINUTE) },
+      ],
+    });
+    failOn((c) => c.table === 'portal_outbound_events' && c.filters.some(([k, col]) => k === 'in' && col === 'idempotency_key'), { message: 'nere' });
+    const view = await listPortalJobDocuments(admin, admin, WO);
+    expect(view?.latest.order_confirmation).toMatchObject({ id: 'd-1', delivery: 'sending' });
+  });
 });
 
 describe('openPortalJobDocument', () => {
@@ -561,10 +589,42 @@ describe('sweepPortalJobDocuments', () => {
     expect(src.renderOrderConfirmation).toHaveBeenCalledTimes(1);
   });
 
+  it('🧨 en orderbekräftelse som säljaren redan skickat: ingen automatisk till (butiken hade fått två)', async () => {
+    const manual = (status: string) => ({
+      ...defaults('crm_portal_job_documents'),
+      id: 'd-manual',
+      quote_id: 'q-1',
+      kind: 'order_confirmation',
+      status,
+      created_by: 'u-seller',
+      created_by_name: 'Anna Berg',
+      ...(status === 'failed' ? { error: 'Fortnox svarar inte.' } : {}),
+    });
+    for (const status of ['building', 'ready']) {
+      const { admin, tables } = db({ crm_portal_job_documents: [manual(status)] });
+      const src = sources();
+      expect(await sweep(admin, src), status).toMatchObject({ created: 0 });
+      expect(tables.crm_portal_job_documents.filter((d) => d.created_by === null), status).toEqual([]);
+    }
+    // En som misslyckades hindrar inte: butiken har ingen.
+    const { admin } = db({ crm_portal_job_documents: [manual('failed')] });
+    expect(await sweep(admin, sources())).toMatchObject({ created: 1, queued: 1 });
+  });
+
+  it('de senaste bekräftelserna först, och avbrutna jobb prövas inte en gång i minuten', async () => {
+    const { admin, calls } = db({ crm_portal_jobs: [job({ sync_state: { confirmedKey: CONFIRMED_KEY, cancelled: true } })] });
+    expect(await sweep(admin, sources())).toMatchObject({ created: 0, errors: 0 });
+    const read = calls.find((c) => c.table === 'portal_outbound_events' && c.filters.some(([k]) => k === 'like'));
+    expect(read?.orders).toEqual([{ column: 'sent_at', ascending: false }]);
+    // Grinden (arbetsordern, bekräftelsens status) lästes aldrig för det avbrutna jobbet.
+    expect(calls.filter((c) => c.table === 'crm_work_orders')).toEqual([]);
+  });
+
   it('en säljares egenkontroll hindrar inte den automatiska orderbekräftelsen', async () => {
     const { admin, tables } = db({
       crm_portal_job_documents: [
-        { ...defaults('crm_portal_job_documents'), id: 'd-button', quote_id: 'q-1', kind: 'self_inspection', status: 'failed', error: 'x', created_by: 'u-seller', created_by_name: 'Anna Berg' },
+        // Skickad (inte misslyckad): bara orderbekräftelser räknas, också när en egenkontroll kommit fram.
+        { ...defaults('crm_portal_job_documents'), id: 'd-button', quote_id: 'q-1', kind: 'self_inspection', status: 'ready', name: 'E.pdf', byte_size: 64, sha256: 'c'.repeat(64), source_ref: 'Egenkontroller/x.pdf', ready_at: ago(MINUTE), queued_at: ago(MINUTE), created_by: 'u-seller', created_by_name: 'Anna Berg' },
       ],
     });
     expect(await sweep(admin, sources())).toMatchObject({ created: 1, queued: 1 });
@@ -654,8 +714,9 @@ describe('sweepPortalJobDocuments', () => {
       crm_portal_job_documents: [
         // En gammal automatisk som väntar på nästa försök: den är cronens egen och räknas aldrig som en död knapptryckning.
         { ...base, id: 'd-auto', quote_id: 'q-1', kind: 'order_confirmation', created_at: ago(60 * MINUTE), next_attempt_at: ago(-30 * MINUTE) },
-        { ...base, id: 'd-dead', quote_id: 'q-1', kind: 'self_inspection', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(PORTAL_DOCUMENT_ABANDONED_MS + 1) },
-        { ...base, id: 'd-fresh', quote_id: 'q-1', kind: 'self_inspection', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(MINUTE) },
+        // Ett tryck får databasens tid i båda (next_attempt_at = created_at): det är "dags" direkt, men byggs aldrig av cron.
+        { ...base, id: 'd-dead', quote_id: 'q-1', kind: 'self_inspection', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(PORTAL_DOCUMENT_ABANDONED_MS + 1), next_attempt_at: ago(PORTAL_DOCUMENT_ABANDONED_MS + 1) },
+        { ...base, id: 'd-fresh', quote_id: 'q-1', kind: 'order_confirmation', created_by: 'u-seller', created_by_name: 'Anna Berg', created_at: ago(MINUTE), next_attempt_at: ago(MINUTE) },
       ],
     });
     const src = sources();
@@ -663,8 +724,10 @@ describe('sweepPortalJobDocuments', () => {
     expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-dead')).toMatchObject({ status: 'failed', error: expect.stringContaining('Skicka igen') });
     expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-fresh')).toMatchObject({ status: 'building' });
     expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'building' });
-    // En knapptryckning byggs aldrig av cron: källan (vilken egenkontroll) visste bara den som tryckte.
+    // En knapptryckning byggs aldrig av cron: källan (vilken egenkontroll) visste bara den som tryckte, och en pågående
+    // orderbekräftelse byggs redan av routen.
     expect(src.readArchive).not.toHaveBeenCalled();
+    expect(src.renderOrderConfirmation).not.toHaveBeenCalled();
   });
 
   it('en fryst fil som inte hann köas köas; en till ett avbrutet jobb blir misslyckad', async () => {
@@ -723,6 +786,95 @@ describe('sweepPortalJobDocuments', () => {
     expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 1 });
     expect(docEvents(tables)).toEqual([]);
     expect(tables.crm_portal_job_documents[0]).toMatchObject({ status: 'failed', error: expect.stringContaining('avbrutet') });
+  });
+
+  it('🧨 den senast beslutade vinner: en äldre fryst som inte hann köas köas aldrig efter en nyare', async () => {
+    const frozen = (id: string, created: string, over: Record<string, unknown> = {}) => ({
+      ...defaults('crm_portal_job_documents'),
+      id,
+      quote_id: 'q-1',
+      kind: 'order_confirmation',
+      status: 'ready',
+      name: 'Orderbekräftelse 26.pdf',
+      byte_size: 64,
+      sha256: 'a'.repeat(64),
+      source_ref: '26',
+      created_by: 'u-seller',
+      created_by_name: 'Anna Berg',
+      created_at: created,
+      ready_at: ago(2 * MINUTE),
+      ...over,
+    });
+    const older = '00000000-0000-4000-8000-00000000000a';
+    const newer = '00000000-0000-4000-8000-00000000000b';
+    const { admin, tables } = db({
+      portal_outbound_events: [
+        confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) }),
+        { id: 'ev-b', seq: 5, idempotency_key: `job.document-${newer}`, payload: {}, ordering_key: 'job:q-1', supersede_key: 'job.document:q-1:order_confirmation', status: 'pending' },
+      ],
+      crm_portal_job_documents: [frozen(older, ago(30 * MINUTE)), frozen(newer, ago(10 * MINUTE), { queued_at: ago(9 * MINUTE) })],
+    });
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 1 });
+    expect(tables.crm_portal_job_documents.find((d) => d.id === older)).toMatchObject({ status: 'failed', error: 'Ersattes av en nyare innan den hann skickas.' });
+    // Den nyare står kvar i kön, inte ersatt av den äldre.
+    expect(tables.portal_outbound_events.find((e) => e.id === 'ev-b')?.status).toBe('pending');
+    expect(docEvents(tables).map((e) => e.idempotency_key)).toEqual([`job.document-${newer}`]);
+  });
+
+  it('en nyare egenkontroll ersätter inte en orderbekräftelse: bara samma sort räknas', async () => {
+    const frozen = (id: string, kind: string, created: string) => ({
+      ...defaults('crm_portal_job_documents'),
+      id,
+      quote_id: 'q-1',
+      kind,
+      status: 'ready',
+      name: 'Dokument.pdf',
+      byte_size: 64,
+      sha256: 'a'.repeat(64),
+      source_ref: '26',
+      created_by: 'u-seller',
+      created_by_name: 'Anna Berg',
+      created_at: created,
+      ready_at: ago(2 * MINUTE),
+      queued_at: kind === 'self_inspection' ? ago(MINUTE) : null,
+    });
+    const confirmation = '00000000-0000-4000-8000-00000000000c';
+    const { admin, tables } = db({
+      portal_outbound_events: [confirmed({ sent_at: ago(8 * 24 * 60 * MINUTE) })],
+      crm_portal_job_documents: [
+        frozen(confirmation, 'order_confirmation', ago(30 * MINUTE)),
+        frozen('00000000-0000-4000-8000-00000000000d', 'self_inspection', ago(10 * MINUTE)),
+      ],
+    });
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 1, failed: 0 });
+    expect(docEvents(tables).map((e) => e.idempotency_key)).toEqual([`job.document-${confirmation}`]);
+  });
+
+  it('🧨 den automatiska som blir klar efter en manuell (Fortnox var nere) skickas inte', async () => {
+    const { admin, tables } = db({
+      crm_portal_job_documents: [
+        { ...defaults('crm_portal_job_documents'), id: 'd-auto', quote_id: 'q-1', kind: 'order_confirmation', created_at: ago(120 * MINUTE), next_attempt_at: ago(MINUTE), attempts: 3 },
+        {
+          ...defaults('crm_portal_job_documents'),
+          id: 'd-manual',
+          quote_id: 'q-1',
+          kind: 'order_confirmation',
+          status: 'ready',
+          name: 'Orderbekräftelse 26.pdf',
+          byte_size: 64,
+          sha256: 'b'.repeat(64),
+          source_ref: '26',
+          created_by: 'u-seller',
+          created_by_name: 'Anna Berg',
+          created_at: ago(30 * MINUTE),
+          ready_at: ago(30 * MINUTE),
+          queued_at: ago(30 * MINUTE),
+        },
+      ],
+    });
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 1 });
+    expect(tables.crm_portal_job_documents.find((d) => d.id === 'd-auto')).toMatchObject({ status: 'failed', error: 'Ersattes av en nyare innan den hann skickas.' });
+    expect(docEvents(tables)).toEqual([]);
   });
 
   it('ett fel i en del stoppar inte de andra', async () => {

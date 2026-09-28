@@ -21,6 +21,7 @@ import {
   type EgenkontrollProject,
 } from '@/lib/domains/egenkontroll/projectSource';
 import { finalSackEntriesFromEtappRows } from '@/lib/domains/egenkontroll/sackReport';
+import { egenkontrollFileName } from '@/lib/domains/egenkontroll/filename';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -1151,10 +1152,8 @@ export default function EgenkontrollPage() {
               if (!res.ok) throw new Error(await res.text());
               const arrayBuf = await res.arrayBuffer();
               const base64 = await arrayBufferToBase64(arrayBuf);
-              const sanitize = (s: string) => String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w\-.]+/g, '_').replace(/_+/g, '_').replace(/^_+|_+$/g, '');
-              const clientPart = sanitize(clientName || 'client');
-              const orderPart = sanitize(orderId || projectNumber || 'order');
-              const filename = `Egenkontroll_${clientPart}_${orderPart}.pdf`;
+              // Samma namn som återförsäljarportalen läser ordernumret ur (lib/domains/egenkontroll/filename.ts).
+              const filename = egenkontrollFileName(clientName, orderId || projectNumber);
               const save = await fetch('/api/storage/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fileName: filename, pdfBytesBase64: base64, folder: orderId || projectNumber || 'misc', metadata: { orderId, projectNumber, clientName } }) });
               const saved = await save.json();
               if (!save.ok) throw new Error(saved?.error || 'Upload failed');

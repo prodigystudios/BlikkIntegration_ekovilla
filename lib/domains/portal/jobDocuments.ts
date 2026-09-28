@@ -1,3 +1,4 @@
+import { egenkontrollFilenamePart } from '@/lib/domains/egenkontroll/filename';
 import { PORTAL_EVENTS_PATH, portalJobOrderingKey } from './jobState';
 
 /**
@@ -85,21 +86,9 @@ export function portalJobDocumentName(
 }
 
 /**
- * Samma rensning som egenkontrollens sida gör av ordernumret i filnamnet (app/egenkontroll/page.tsx, `sanitize`):
- * `Egenkontroll_<kund>_<ordernr>.pdf`.
- */
-export function egenkontrollFilenamePart(value: string): string {
-  return String(value || '')
-    .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^\w\-.]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
-
-/**
  * Hör egenkontrollen till den här ordern? Länken står i en kommentar, som är fritext: filnamnet måste sluta på orderns
- * Fortnox-nummer eller AO-nummer, som sidan skrev in det, med arkivets `-1`, `-2` när namnet redan fanns.
+ * Fortnox-nummer eller AO-nummer, som sidan skrev in det (egenkontrollFileName), med arkivets `-1`, `-2` när namnet
+ * redan fanns, eller dess reservnamn `-<tid>-<slump>` när femton sådana var tagna (app/api/storage/save).
  */
 export function egenkontrollBelongsToOrder(path: string, orderNumbers: readonly (string | null | undefined)[]): boolean {
   const fileName = (path.split('/').pop() ?? '').toLowerCase();
@@ -109,7 +98,7 @@ export function egenkontrollBelongsToOrder(path: string, orderNumbers: readonly 
     const part = egenkontrollFilenamePart(n ?? '').toLowerCase();
     if (!part) return false;
     const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`^egenkontroll_.+_${escaped}(?:-\\d+)?\\.pdf$`).test(fileName);
+    return new RegExp(`^egenkontroll_.+_${escaped}(?:-\\d+(?:-[a-z0-9]{1,6})?)?\\.pdf$`).test(fileName);
   });
 }
 

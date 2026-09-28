@@ -28,6 +28,7 @@ const {
   PORTAL_CRON_FORTNOX_START_BEFORE_MS,
   PORTAL_CRON_DOCUMENTS_START_BEFORE_MS,
   PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS,
+  PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS,
 } = await import('@/lib/domains/portal/cron');
 
 const SYNC = { jobs: 1, queued: 1, unchanged: 0, conflicts: 0, errors: 0 };
@@ -140,6 +141,31 @@ describe('runPortalCron', () => {
     expect(documents.mock.calls[0][1].sources).toBe(own);
     expect(summary.documents).toEqual({ error: 'arkivet svarar inte' });
     expect(calls.at(-1)).toBe('fortnox');
+  });
+
+  it('knapparna på portalsidan (180 s): dokumenten bara om varvet hunnit lite', async () => {
+    let t = 0;
+    dispatch.mockImplementation(async () => {
+      t += PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS / 2 - 1;
+      return SENT;
+    });
+    await runPortalCron({} as never, { env: {}, now: () => new Date(t), fortnoxRetries: false });
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents']);
+
+    calls.length = 0;
+    t = 0;
+    dispatch.mockImplementation(async () => {
+      t += PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS / 2;
+      return SENT;
+    });
+    await runPortalCron({} as never, { env: {}, now: () => new Date(t), fortnoxRetries: false });
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch']);
+
+    // Cron (300 s) har kvar sin gräns.
+    calls.length = 0;
+    t = 0;
+    await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
+    expect(calls).toContain('documents');
   });
 
   it('inga dokument när tiden gått: tre orderbekräftelser är nio Fortnox-anrop', async () => {

@@ -5,7 +5,6 @@ import {
   PORTAL_JOB_DOCUMENT_MAX_BYTES,
   buildPortalJobDocumentEvent,
   egenkontrollBelongsToOrder,
-  egenkontrollFilenamePart,
   formatDocumentSize,
   isPdfBytes,
   portalJobDocumentDelivery,
@@ -14,6 +13,7 @@ import {
   portalJobDocumentPath,
   portalJobDocumentSupersedeKey,
 } from '@/lib/domains/portal/jobDocuments';
+import { egenkontrollFileName, egenkontrollFilenamePart } from '@/lib/domains/egenkontroll/filename';
 
 // Dokumenten till butiken, den rena delen (fas 7). Det som skyddas:
 //   - kontraktets gräns (3 300 000 byte, decimalt, samma som portalens MAX_JOB_DOCUMENT_BYTES) och PDF-provet;
@@ -129,6 +129,25 @@ describe('egenkontrollen hör till ordern', () => {
     expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_6579-2.pdf'), numbers)).toBe(true);
     expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_AO-20260925-DF3269.pdf'), numbers)).toBe(true);
     expect(egenkontrollBelongsToOrder(file('egenkontroll_kund_ao-20260925-df3269-1.pdf'), numbers)).toBe(true);
+  });
+
+  it('🧨 det namn som egenkontrollens sida sparar känns igen: samma funktion åt båda hållen', () => {
+    const saved = `Egenkontroller/${egenkontrollFileName('Rönnvägen 18, Gävle', ' 22 ')}`;
+    expect(saved).toBe('Egenkontroller/Egenkontroll_Ronnvagen_18_Gavle_22.pdf');
+    expect(egenkontrollBelongsToOrder(saved, ['22', 'AO-20260928-B99B61'])).toBe(true);
+    expect(egenkontrollBelongsToOrder(`Egenkontroller/${egenkontrollFileName('Kund', 'AO-20260928-B99B61')}`, ['22', 'AO-20260928-B99B61'])).toBe(true);
+    // Sidan har ingen egen kopia av rensningen längre.
+    const page = readFileSync('app/egenkontroll/page.tsx', 'utf8');
+    expect(page).toContain("import { egenkontrollFileName } from '@/lib/domains/egenkontroll/filename';");
+    expect(page).toContain('egenkontrollFileName(clientName, orderId || projectNumber)');
+    expect(page).not.toMatch(/const sanitize = /);
+  });
+
+  it('arkivets reservnamn när femton löpnummer är tagna (`-<tid>-<slump>`)', () => {
+    const numbers = ['6579'];
+    expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_6579-1727512345678-ab12cd.pdf'), numbers)).toBe(true);
+    expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_6579-1727512345678-ab12cd9.pdf'), numbers)).toBe(false);
+    expect(egenkontrollBelongsToOrder(file('Egenkontroll_Kund_6579-1727512345678-.pdf'), numbers)).toBe(false);
   });
 
   it('en annan orders egenkontroll gör det inte', () => {

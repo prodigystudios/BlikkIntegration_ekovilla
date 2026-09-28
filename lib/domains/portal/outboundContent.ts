@@ -65,8 +65,8 @@ function asQueuedDocument(payload: unknown): QueuedDocument | null {
   return p as QueuedDocument;
 }
 
-/** Ett fel från lagringen som betyder att filen inte finns (då hjälper inga omförsök). */
-function isMissingObject(error: { message?: string; status?: number; statusCode?: string | number }): boolean {
+/** Ett fel från lagringen som betyder att filen inte finns (då hjälper inga omförsök). Delas med arkivets läsning. */
+export function isMissingObject(error: { message?: string; status?: number; statusCode?: string | number }): boolean {
   const status = Number(error.status ?? error.statusCode);
   return status === 404 || /not[\s_-]?found/i.test(error.message ?? '');
 }
