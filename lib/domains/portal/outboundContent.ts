@@ -101,10 +101,9 @@ export async function preparePortalPayload(admin: SupabaseClient, payload: unkno
   if (!own || own.quote_id !== data.quoteId || own.kind !== data.kind) {
     return { kind: 'dead', error: 'dokumentet: raden stämmer inte med kön' };
   }
-  // Markerad misslyckad (ersatt eller jobbet avbröts) innan den skickades: med flit, inget att skicka om. Ett annat läge
-  // kan inte finnas för en köad rad; hittas det ges händelsen upp och syns på portalsidan.
-  if (own.status === 'failed') return { kind: 'skip', error: 'dokumentet: skickas inte (markerat på arbetsordern)' };
-  if (own.status !== 'ready') return { kind: 'dead', error: `dokumentet: raden har läget ${own.status}` };
+  // Markerad misslyckad (ersatt eller jobbet avbröts) innan den skickades: med flit, inget att skicka om. (Bara en fryst
+  // rad köas, och en köad rad kan aldrig bli något annat: tabellens check.)
+  if (own.status !== 'ready') return { kind: 'skip', error: 'dokumentet: skickas inte (markerat på arbetsordern)' };
   // Kastar frågan gör utskicket om (dispatchPortalOutbox fångar det som 'retry').
   if (await hasNewerFrozenDocument(admin, { quoteId: own.quote_id, kind: own.kind, createdAt: own.created_at })) {
     return { kind: 'skip', error: 'dokumentet: ersatt av ett senare' };

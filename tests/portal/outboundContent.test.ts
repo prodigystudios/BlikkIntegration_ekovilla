@@ -49,6 +49,10 @@ function stored(bytes: Uint8Array, over: Partial<Parameters<typeof buildPortalJo
   return buildPortalJobDocumentEvent(row);
 }
 
+/** Regelns fråga (jobDocumentsDecision.ts): senare dokument av samma sort. Känns igen på sitt filter, inte på ordningen. */
+const isRuleQuery = (c: { table: string; filters: unknown[][] }) =>
+  c.table === 'crm_portal_job_documents' && c.filters.some(([kind, column]) => kind === 'gt' && column === 'created_at');
+
 /** Dokumentets rad, som utskicket läser för att se att det är det senast beslutade av sin sort. */
 const docRow = (over: Record<string, unknown> = {}) => ({
   id: DOC_ID,
@@ -199,16 +203,8 @@ describe('preparePortalPayload', () => {
   it('regeln går inte att fråga: kastar, och utskicket gör om (inte uppgiven)', async () => {
     const bytes = pdf();
     const { admin, failOn } = withFile(bytes);
-    // Andra frågan mot tabellen är regeln (den första läser dokumentets egen rad).
-    let reads = 0;
-    failOn((c) => c.table === 'crm_portal_job_documents' && ++reads === 2, { message: 'nere' });
+    failOn(isRuleQuery, { message: 'nere' });
     await expect(preparePortalPayload(admin, stored(bytes).payload)).rejects.toThrow('nere');
-  });
-
-  it('en köad rad i ett läge som inte kan finnas (byggs) ges upp och syns på portalsidan', async () => {
-    const bytes = pdf();
-    const { admin } = withFile(bytes, [docRow({ status: 'building' })]);
-    expect(await preparePortalPayload(admin, stored(bytes).payload)).toEqual({ kind: 'dead', error: 'dokumentet: raden har läget building' });
   });
 
   it('raden går inte att läsa: görs om', async () => {
@@ -372,8 +368,7 @@ describe('dispatchPortalOutbox med ett dokument', () => {
   it('regeln kastar under utskicket: inget anrop, tillbaka i kön', async () => {
     const bytes = pdf(2000);
     const { admin, tables, failOn } = queue(bytes);
-    let reads = 0;
-    failOn((c) => c.table === 'crm_portal_job_documents' && ++reads === 2, { message: 'nere' });
+    failOn(isRuleQuery, { message: 'nere' });
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     expect(await dispatchPortalOutbox(admin, { env: LOCAL_ENV, fetchImpl, now: () => NOW })).toMatchObject({ retried: 1 });
     expect(fetchImpl).not.toHaveBeenCalled();

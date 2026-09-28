@@ -972,7 +972,8 @@ describe('sweepPortalJobDocuments', () => {
       ],
       crm_portal_job_documents: [frozen(older, ago(60 * MINUTE), { queued_at: ago(59 * MINUTE) }), frozen(id, ago(5 * MINUTE))],
     });
-    expect(await sweep(admin, sources())).toMatchObject({ queued: 1, failed: 0, errors: 0 });
+    // Inget köades här (det var redan köat): räknas inte, men görs klart.
+    expect(await sweep(admin, sources())).toMatchObject({ queued: 0, failed: 0, errors: 0 });
     expect(tables.crm_portal_job_documents.find((d) => d.id === id)).toMatchObject({ status: 'ready', queued_at: NOW.toISOString() });
     expect(tables.portal_outbound_events.find((e) => e.id === 'ev-old')?.status).toBe('superseded');
   });

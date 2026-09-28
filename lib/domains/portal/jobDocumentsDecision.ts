@@ -8,9 +8,10 @@ import { portalJobDocumentKey, type PortalJobDocumentKind } from './jobDocuments
  * händelserna kom och en äldre kan ha köats efter en nyare.
  *
  * Ett beslut som bara byggs räknas inte (faller det hade butiken inget fått). Ett fryst räknas också när dess händelse
- * senare gavs upp: då syns det som "Kom inte fram" på kortet och skickas om på portalsidan, eller så skickar säljaren ett
- * nytt. Att tyst falla tillbaka på en äldre version hade kunnat ge butiken inaktuellt innehåll, och en händelse ges i
- * praktiken bara upp när portalen nekar jobbet eller varit nere i två dygn, och då hade den äldre fått samma svar.
+ * senare gavs upp, oavsett varför (portalen nekade, filen stämde inte, två dygn utan svar): då syns det som "Kom inte
+ * fram" på kortet, och knappen där skickar ett NYTT beslut, som alltid köas på nytt (portalsidans "Skicka om" kan nekas
+ * när jobbet har senare händelser). Att tyst falla tillbaka på en äldre version hade kunnat ge butiken inaktuellt
+ * innehåll, och kortet hade visat ett dokument som butiken inte har.
  *
  * Två beslut i samma mikrosekund (created_at) räknas inte som senare än varandra; båda skickas, i köordning.
  */

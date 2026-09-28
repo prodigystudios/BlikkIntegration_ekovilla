@@ -336,49 +336,49 @@ async function markFailed(admin: SupabaseClient, id: string, error: string, from
  * frystes sent bort (en process som dog före köandet, eller den automatiska efter ett dygns Fortnox-omförsök), så att
  * kortet säger "ersatt"; och när den här köats ersätts äldre beslut som ännu väntar. Det avgörande provet görs ändå av
  * utskicket, precis före sändningen (outboundContent.ts): mellan provet här och köandet kan en nyare hinna köas.
- *   queued    köad nu, eller redan i kön men inte bokförd (en process som dog): bokförd här
- *   already   någon annan hann markera raden
+ *   queued    köad här, nu
+ *   already   redan i kön (en process som dog före bokföringen: bokförs och görs klar här), eller någon annan hann
+ *             köa eller markera raden
  */
 async function queueReady(
   admin: SupabaseClient,
   row: DocumentRow,
   now: Date,
 ): Promise<'queued' | 'cancelled' | 'replaced' | 'already'> {
-  // Redan i kön (köandet gick men processen dog före bokföringen): gör klart det som återstod, ersättningen av äldre och
+  // Redan i kön (köandet gick men processen dog före bokföringen): bara det som återstod, ersättningen av äldre och
   // bokföringen. Ett dokument på väg till butiken markeras aldrig misslyckat.
-  const queued = await admin.from('portal_outbound_events').select('status').eq('idempotency_key', portalJobDocumentKey(row.id)).maybeSingle();
-  if (queued.error) throw new Error(`Köns status gick inte att läsa: ${queued.error.message}`);
-  if (queued.data) {
-    await supersedeOlder(admin, row);
-    await markQueued(admin, row.id, now);
-    return 'queued';
+  const inQueue = await admin.from('portal_outbound_events').select('status').eq('idempotency_key', portalJobDocumentKey(row.id)).maybeSingle();
+  if (inQueue.error) throw new Error(`Köns status gick inte att läsa: ${inQueue.error.message}`);
+  let created = false;
+  if (!inQueue.data) {
+    const gate = await readJobGate(admin, row.quote_id);
+    if (!gate || gate.blocked === 'cancelled') {
+      return (await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready')) ? 'cancelled' : 'already';
+    }
+    if (await hasNewerFrozenDocument(admin, { quoteId: row.quote_id, kind: row.kind, createdAt: row.created_at })) {
+      return (await markFailed(admin, row.id, REPLACED_TEXT, 'ready')) ? 'replaced' : 'already';
+    }
+    // Varje anropare har en fryst rad (databasens check: ready har namn, hash, storlek och tid). Provet är för typerna.
+    if (!row.name || !row.sha256 || row.byte_size === null || !row.ready_at) {
+      throw new Error(`Dokumentet ${row.id} är inte fryst.`);
+    }
+    ({ created } = await enqueuePortalEvent(
+      admin,
+      buildPortalJobDocumentEvent({
+        id: row.id,
+        quoteId: row.quote_id,
+        kind: row.kind,
+        name: row.name,
+        sha256: row.sha256,
+        byteSize: row.byte_size,
+        readyAt: row.ready_at,
+      }),
+    ));
   }
-  const gate = await readJobGate(admin, row.quote_id);
-  if (!gate || gate.blocked === 'cancelled') {
-    return (await markFailed(admin, row.id, BLOCKED_TEXT.cancelled, 'ready')) ? 'cancelled' : 'already';
-  }
-  if (await hasNewerFrozenDocument(admin, { quoteId: row.quote_id, kind: row.kind, createdAt: row.created_at })) {
-    return (await markFailed(admin, row.id, REPLACED_TEXT, 'ready')) ? 'replaced' : 'already';
-  }
-  // Varje anropare har en fryst rad (databasens check: ready har namn, hash, storlek och tid). Provet är för typerna.
-  if (!row.name || !row.sha256 || row.byte_size === null || !row.ready_at) {
-    throw new Error(`Dokumentet ${row.id} är inte fryst.`);
-  }
-  await enqueuePortalEvent(
-    admin,
-    buildPortalJobDocumentEvent({
-      id: row.id,
-      quoteId: row.quote_id,
-      kind: row.kind,
-      name: row.name,
-      sha256: row.sha256,
-      byteSize: row.byte_size,
-      readyAt: row.ready_at,
-    }),
-  );
   await supersedeOlder(admin, row);
   await markQueued(admin, row.id, now);
-  return 'queued';
+  // Bara det som köades HÄR räknas; en reparation eller en som någon annan hann köa gör det inte.
+  return created ? 'queued' : 'already';
 }
 
 /** Äldre beslut som ännu väntar behöver aldrig fram. Går det inte hoppar utskicket över dem ändå. */

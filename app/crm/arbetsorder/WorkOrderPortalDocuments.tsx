@@ -74,8 +74,8 @@ function toneOf(doc: PortalJobDocumentView | null): Tone {
   return 'idle';
 }
 
-/** Vad som hänt med den senaste versionen, som en mening. */
-function stateLine(doc: PortalJobDocumentView, now: Date): { text: string; problem: boolean } {
+/** Vad som hänt med den senaste versionen, som en mening. `mayAct`: den som tittar kan skicka en ny. */
+function stateLine(doc: PortalJobDocumentView, now: Date, mayAct: boolean): { text: string; problem: boolean } {
   const at = portalWhenInSentence(doc.createdAt, now);
   const by = doc.createdByName ? `av ${doc.createdByName}` : 'automatiskt';
   if (doc.status === 'building') return { text: 'Skapas …', problem: false };
@@ -84,8 +84,9 @@ function stateLine(doc: PortalJobDocumentView, now: Date): { text: string; probl
     case 'sent':
       return { text: `Skickad ${by} ${at}.`, problem: false };
     case 'failed':
+      // En ny med knappen köas alltid på nytt; portalsidans "Skicka om" kan nekas när jobbet har senare händelser.
       return {
-        text: `Kom inte fram till butiken. En admin kan skicka om den under Inställningar, Återförsäljarportalen, Utskick.`,
+        text: mayAct ? 'Kom inte fram till butiken. Skicka en ny.' : 'Kom inte fram till butiken. Den som har ordern kan skicka en ny.',
         problem: true,
       };
     case 'replaced':
@@ -256,7 +257,7 @@ function DocumentRow({
   onSend: () => void;
 }) {
   const label = PORTAL_JOB_DOCUMENT_LABELS[kind];
-  const state = doc ? stateLine(doc, now) : null;
+  const state = doc ? stateLine(doc, now, mayAct) : null;
   const candidate = kind === 'self_inspection' ? view.selfInspection : null;
 
   // Vad som står när inget har skickats.
