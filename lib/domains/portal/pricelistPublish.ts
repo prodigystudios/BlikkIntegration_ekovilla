@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { listCachedFortnoxArticles } from '@/lib/domains/fortnox/articles';
 import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { listFortnoxPriceListPrices, RESELLER_PRICE_LIST_CODE } from '@/lib/domains/fortnox/priceLists';
 import type { PortalArticleFields } from './articleFields';
@@ -23,9 +22,9 @@ import {
  * gör ett första utskick. Reglerna för innehållet bor i ./pricelist.ts.
  *
  * Två klienter, med flit:
- *   sessionen     portalfälten, publiceringarna och köns status. RLS (crm.portal.manage) är grinden.
- *   service-rollen kön skrivs och töms bara av service_role (fas 1b), och artikelregistret läses som artikelsidan
- *                 läser det. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
+ *   sessionen      portalfälten, artikelregistret, publiceringarna och köns status. RLS är grinden.
+ *   service-rollen kön skrivs och töms bara av service_role (fas 1b). Se "Reviewed elevations" i
+ *                  SUPABASE_CONVENTIONS.md.
  */
 
 export type PricelistSources = {
@@ -34,11 +33,29 @@ export type PricelistSources = {
   prices: () => Promise<ListPrice[]>;
 };
 
+/**
+ * Registret för de här artikelnumren, med sessionen (cachens läspolicy släpper in sales och admin; crm.portal.manage
+ * är admin). I delar: numren står i adressen (`in.(…)`), och ett svar kapas tyst vid 1000 rader.
+ */
+const REGISTER_CHUNK = 150;
+
+export async function readRegisterArticles(session: SupabaseClient, articleNumbers: string[]): Promise<RegisterArticle[]> {
+  const out: RegisterArticle[] = [];
+  for (let i = 0; i < articleNumbers.length; i += REGISTER_CHUNK) {
+    const { data, error } = await session
+      .from('fortnox_articles_cache')
+      .select('article_number, description, unit, active')
+      .in('article_number', articleNumbers.slice(i, i + REGISTER_CHUNK));
+    if (error) throw new Error(`Artikelregistret gick inte att läsa: ${error.message}`);
+    out.push(...((data ?? []) as RegisterArticle[]));
+  }
+  return out;
+}
+
 export function pricelistSources(session: SupabaseClient): PricelistSources {
   return {
     fields: () => listPortalArticleFields(session),
-    register: async (articleNumbers) =>
-      articleNumbers.length ? listCachedFortnoxArticles({ activeOnly: false, numbers: articleNumbers }) : [],
+    register: (articleNumbers) => readRegisterArticles(session, articleNumbers),
     prices: () => listFortnoxPriceListPrices(RESELLER_PRICE_LIST_CODE),
   };
 }
@@ -68,9 +85,11 @@ export type PricelistDelivery = {
   lastHttpStatus: number | null;
   lastError: string | null;
   sentAt: string | null;
+  /** När en väntande händelse tidigast görs om; "Skicka väntande nu" tar den inte före det. */
+  nextAttemptAt: string | null;
 };
 
-const DELIVERY_SELECT = 'idempotency_key, status, attempts, last_http_status, last_error, sent_at';
+const DELIVERY_SELECT = 'idempotency_key, status, attempts, last_http_status, last_error, sent_at, next_attempt_at';
 
 type DeliveryRow = {
   idempotency_key: string;
@@ -79,9 +98,17 @@ type DeliveryRow = {
   last_http_status: number | null;
   last_error: string | null;
   sent_at: string | null;
+  next_attempt_at: string | null;
 };
 
-const NOT_QUEUED: PricelistDelivery = { status: 'not_queued', attempts: 0, lastHttpStatus: null, lastError: null, sentAt: null };
+const NOT_QUEUED: PricelistDelivery = {
+  status: 'not_queued',
+  attempts: 0,
+  lastHttpStatus: null,
+  lastError: null,
+  sentAt: null,
+  nextAttemptAt: null,
+};
 
 function toDelivery(row: DeliveryRow | undefined): PricelistDelivery {
   if (!row) return NOT_QUEUED;
@@ -91,6 +118,7 @@ function toDelivery(row: DeliveryRow | undefined): PricelistDelivery {
     lastHttpStatus: row.last_http_status,
     lastError: row.last_error,
     sentAt: row.sent_at,
+    nextAttemptAt: row.status === 'pending' ? row.next_attempt_at : null,
   };
 }
 
@@ -119,8 +147,8 @@ export async function listPricelistPublications(session: SupabaseClient, limit =
   const { data, error } = await session
     .from('crm_portal_pricelist_publications')
     .select('id, valid_from, content_hash, idempotency_key, article_count, published_by_name, created_at')
+    .order('sequence', { ascending: false })
     .order('created_at', { ascending: false })
-    .order('id', { ascending: false })
     .limit(limit);
   if (error) throw new Error(`Publiceringarna gick inte att läsa: ${error.message}`);
   const rows = (data ?? []) as {
@@ -171,11 +199,17 @@ const PUBLISH_DISPATCH = { limit: 5, budgetMs: 15_000 };
  * Publicerar prislistan som den ser ut NU. Utkastet byggs om här, inte ur klientens kropp, och `expectedHash` är
  * hashen på förhandsvisningen som användaren såg: har något ändrats sedan dess blir det `changed` och inget sparas.
  *
+ * Samma publicering eller en ny? Samma innehåll och datum som den SENASTE publiceringen, som portalen inte nekat, är
+ * samma publicering: ett dubbelklick eller ett nytt tryck efter ett avbrott gör ingenting nytt. Allt annat är en ny
+ * publicering med nästa löpnummer, också samma lista som en tidigare (X, sedan Y, sedan X igen): då ska X ut igen,
+ * annars räknar butikerna på Y. Och en nekad lista (4xx) kan skickas igen, till exempel när portalen fått sin
+ * mottagare.
+ *
  * Ordningen, och varför den tål ett avbrott var som helst:
  *   1. publiceringen sparas (sessionen; samma nyckel en gång till = samma rad),
  *   2. händelsen köas (service-rollen; samma nyckel = samma händelse),
  *   3. ett första utskick. Det som inte hinner eller inte går fram ligger kvar i kön.
- * Dör anropet efter 1 står publiceringen som "inte köad", och samma publicering en gång till köar den.
+ * Dör anropet efter 1 står publiceringen som "inte köad" och är den senaste, så samma publicering igen köar den.
  */
 export async function publishPricelist(
   deps: {
@@ -203,8 +237,30 @@ export async function publishPricelist(
   if (draft.articles.length === 0) return { kind: 'empty' };
   if (draft.hash !== input.expectedHash) return { kind: 'changed' };
 
-  const idempotencyKey = pricelistIdempotencyKey(input.validFrom, draft.hash);
   const payload: PricelistPayload = { validFrom: input.validFrom, resellerId: null, articles: draft.articles };
+
+  const latestRead = await deps.session
+    .from('crm_portal_pricelist_publications')
+    .select('sequence, valid_from, content_hash, idempotency_key')
+    .order('sequence', { ascending: false })
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (latestRead.error) return { kind: 'db_error', message: latestRead.error.message };
+  const latest = latestRead.data as { sequence: number; valid_from: string; content_hash: string; idempotency_key: string } | null;
+
+  let idempotencyKey: string | null = null;
+  if (latest && latest.valid_from === input.validFrom && latest.content_hash === draft.hash) {
+    let latestStatus: PricelistDelivery['status'];
+    try {
+      latestStatus = ((await readDeliveries(deps.admin, [latest.idempotency_key])).get(latest.idempotency_key) ?? NOT_QUEUED).status;
+    } catch (e) {
+      return { kind: 'db_error', message: e instanceof Error ? e.message : 'Utskickets status gick inte att läsa.' };
+    }
+    if (latestStatus !== 'dead') idempotencyKey = latest.idempotency_key;
+  }
+  const sequence = (latest?.sequence ?? 0) + 1;
+  idempotencyKey ??= pricelistIdempotencyKey(input.validFrom, draft.hash, sequence);
 
   const inserted = await deps.session
     .from('crm_portal_pricelist_publications')
@@ -212,6 +268,7 @@ export async function publishPricelist(
       {
         valid_from: input.validFrom,
         content_hash: draft.hash,
+        sequence: idempotencyKey === latest?.idempotency_key ? latest.sequence : sequence,
         idempotency_key: idempotencyKey,
         payload,
         article_count: draft.articles.length,

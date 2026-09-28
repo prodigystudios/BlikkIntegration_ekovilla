@@ -7,14 +7,19 @@
 --
 --   crm.portal.manage                   ny nyckel, bara admin: portalens sida och allt den gör. Speglar
 --                                       lib/auth/permissions.ts PERMISSION_KEYS (59 → 60).
---   crm_portal_pricelist_publications   varje publicering: giltig från, hashen av innehållet, Idempotency-Key
---                                       (`pricelist-<giltig från>-<hash>`, samma som händelsen i kön), kroppen som
---                                       skickades, antalet artiklar, vem och när. Vem sparas också som NAMN vid
---                                       publiceringen: sessionen läser bara sin egen profil, och ett namnuppslag
---                                       ska inte bli en ny elevation (SUPABASE_CONVENTIONS.md, profiles). Historik:
---                                       ändras och tas aldrig
---                                       bort, så sessionen får bara select och insert. Samma innehåll och datum en
---                                       gång till är samma publicering (unik nyckel), inte en ny rad.
+--   crm_portal_pricelist_publications   varje publicering: giltig från, hashen av innehållet, löpnumret,
+--                                       Idempotency-Key (`pricelist-<giltig från>-<hash>-<löpnummer>`, samma som
+--                                       händelsen i kön), kroppen som skickades, antalet artiklar, vem och när.
+--                                       Löpnumret gör att en lista kan publiceras IGEN: X, sedan Y, sedan X igen med
+--                                       samma datum hade annars fått första X:ets nyckel, ingenting hade skickats och
+--                                       portalen hade behållit Y. Samma innehåll och datum som den SENASTE
+--                                       publiceringen, som inte nekats, är samma publicering
+--                                       (lib/domains/portal/pricelistPublish.ts).
+--                                       Vem sparas också som NAMN vid publiceringen: sessionen läser bara sin egen
+--                                       profil, och ett namnuppslag ska inte bli en ny elevation
+--                                       (SUPABASE_CONVENTIONS.md, profiles). Historik: ändras och tas aldrig bort, så
+--                                       sessionen får bara select och insert, och bara som sig själv
+--                                       (published_by = auth.uid()).
 --   läspolicyer                         sidan läser portalfälten (policyn i 2a gällde bara crm.article.manage) och
 --                                       kön, för att visa om en publicering har kommit fram. Kön SKRIVS fortfarande
 --                                       bara av service_role; claim-funktionen rörs inte.
@@ -44,7 +49,9 @@ create table if not exists public.crm_portal_pricelist_publications (
   valid_from date not null,
   -- sha256 (hex) av artiklarna som JSON med sorterade nycklar (lib/domains/portal/pricelist.ts).
   content_hash text not null,
-  -- `pricelist-<valid_from>-<content_hash>`, samma nyckel som händelsen i portal_outbound_events.
+  -- Publiceringens nummer i ordningen, 1, 2, 3 …
+  sequence integer not null,
+  -- `pricelist-<valid_from>-<content_hash>-<sequence>`, samma nyckel som händelsen i portal_outbound_events.
   idempotency_key text not null,
   payload jsonb not null,
   article_count integer not null,
@@ -64,8 +71,13 @@ alter table public.crm_portal_pricelist_publications
 alter table public.crm_portal_pricelist_publications drop constraint if exists crm_portal_pricelist_publications_idempotency_key_check;
 alter table public.crm_portal_pricelist_publications
   add constraint crm_portal_pricelist_publications_idempotency_key_check check (
-    idempotency_key ~ '^pricelist-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{64}$' and right(idempotency_key, 64) = content_hash
+    idempotency_key ~ '^pricelist-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{64}-[1-9][0-9]{0,8}$'
+    and idempotency_key = 'pricelist-' || substring(idempotency_key from 11 for 10) || '-' || content_hash || '-' || sequence::text
   );
+
+alter table public.crm_portal_pricelist_publications drop constraint if exists crm_portal_pricelist_publications_sequence_check;
+alter table public.crm_portal_pricelist_publications
+  add constraint crm_portal_pricelist_publications_sequence_check check (sequence > 0);
 
 -- En tom lista publiceras aldrig: portalen hade fått en prislista utan artiklar att räkna offerter på.
 alter table public.crm_portal_pricelist_publications drop constraint if exists crm_portal_pricelist_publications_article_count_check;
@@ -83,9 +95,9 @@ alter table public.crm_portal_pricelist_publications
   add constraint crm_portal_pricelist_publications_published_by_fkey
   foreign key (published_by) references public.profiles(id) on delete set null;
 
--- Sidan visar de senaste först.
-create index if not exists crm_portal_pricelist_publications_created_at_idx
-  on public.crm_portal_pricelist_publications (created_at desc);
+-- Sidan visar de senaste först, och publiceringen läser den senaste.
+create index if not exists crm_portal_pricelist_publications_sequence_idx
+  on public.crm_portal_pricelist_publications (sequence desc, created_at desc);
 
 alter table public.crm_portal_pricelist_publications enable row level security;
 revoke all on table public.crm_portal_pricelist_publications from anon, authenticated;
@@ -100,7 +112,7 @@ create policy crm_portal_pricelist_publications_select on public.crm_portal_pric
 drop policy if exists crm_portal_pricelist_publications_insert on public.crm_portal_pricelist_publications;
 create policy crm_portal_pricelist_publications_insert on public.crm_portal_pricelist_publications
   for insert to authenticated
-  with check ((select has_permission('crm.portal.manage')));
+  with check ((select has_permission('crm.portal.manage')) and published_by = (select auth.uid()));
 
 -- ------------------------------------------------------------------------------------------------ läspolicyerna
 

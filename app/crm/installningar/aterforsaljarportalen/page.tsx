@@ -62,7 +62,11 @@ export default async function AterforsaljarportalenPage() {
         articleCount: p.articleCount,
         publishedByName: p.publishedByName,
         createdAtLabel: formatStockholm(p.createdAt),
-        delivery: { ...p.delivery, sentAtLabel: p.delivery.sentAt ? formatStockholm(p.delivery.sentAt) : null },
+        delivery: {
+          ...p.delivery,
+          sentAtLabel: p.delivery.sentAt ? formatStockholm(p.delivery.sentAt) : null,
+          nextAttemptLabel: p.delivery.nextAttemptAt ? formatStockholm(p.delivery.nextAttemptAt) : null,
+        },
       }))
     : { error: publicationsResult.message };
 

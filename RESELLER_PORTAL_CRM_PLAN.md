@@ -200,7 +200,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_jobs` | `quote_id` (unik), `quote_number`, `reseller_id`, `work_order_id` (unik, `on delete set null`), kroppen, senast skickade tillstånd, och en markering "behöver synkas" |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
-| `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert, aldrig update eller delete. En tom lista kan inte sparas |
+| `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
 
 **Kön** hämtas med en RPC som använder `for update skip locked` och bara kan köras av service_role.
@@ -437,14 +437,19 @@ utan att säga något, och därför nekar appen fler än tre decimaler innan vä
   svarar den 409 och sparar ingenting.
 - Publiceringen sparas med sessionen, händelsen köas med service-rollen, och ett första utskick görs
   direkt (högst 5 händelser och 15 s).
-- Samma innehåll med samma datum ger samma nyckel. Då blir det ingen ny rad och ingen ny händelse,
-  och portalen får inget nytt anrop.
+- Nyckeln är `pricelist-<giltig från>-<hash>-<löpnummer>`. Samma innehåll och datum som den
+  **senaste** publiceringen, som portalen inte nekat, är samma publicering. Då blir det ingen ny rad
+  och ingen ny händelse, och portalen får inget nytt anrop. Allt annat blir en ny publicering med nästa
+  löpnummer. Det gäller också samma lista som en tidigare (X, sedan Y, sedan X igen), för annars hade
+  butikerna fortsatt räkna på Y. En nekad lista kan skickas igen på samma sätt.
 - Det som inte går fram ligger kvar i kön. "Skicka väntande nu" skickar det som är dags, och en
   händelse som misslyckats görs om tidigast efter 30 s. Cron-utskicket kommer i 4b.
 
 **Prövat mot en fejkportal på :3101**, som kontrollerar signaturen enligt punkt 14:
 - 51 artiklar gick fram med enheten med gemener och kontraktets fält;
 - en andra publicering av samma lista gav inget nytt anrop;
+- X, sedan Y, sedan X igen: X gick fram en andra gång (#3, samma hash som #1);
+- en lista som nekades (404) gick fram när den publicerades igen;
 - 503 gav "Väntar, försöker igen" med felet, och sedan "Mottagen" efter "Skicka väntande nu";
 - säljaren fick 403 på båda routerna och skickades bort från sidan.
 
@@ -453,7 +458,8 @@ utan att säga något, och därför nekar appen fler än tre decimaler innan vä
 den riktiga lokala portalen som "redan publicerad", och ingenting skickas.
 
 **Till senare faser:**
-- En nekad publicering (4xx) går inte att skicka om. Det gör uppgivna händelser i 4b.
+- En nekad prislista skickas om genom att den publiceras igen. Andra uppgivna händelser skickas om
+  från sidan i 4b.
 - Portalen har ingen mottagare än (`/api/ekovilla/pricelists`), se punkt 17 nedan.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
@@ -517,11 +523,13 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     CRM:et svarar 400 på andra tecken. (Granskningen av fas 1c, 2026-09-28.)
 
 17. **Portalens mottagare för prislistan** (fas 2b, 2026-09-28) finns inte än. CRM:et skickar
-    `POST /api/ekovilla/pricelists` med kontraktets kropp och `Idempotency-Key:
-    pricelist-<validFrom>-<sha256>`. Hashen är sha256 i hex över artiklarna som JSON med sorterade
-    nycklar. CRM:et räknar 2xx som mottaget och gör om 5xx och 401. Övriga 4xx ges upp och visas på
-    sidan. Två publiceringar samma dag med olika innehåll ger två listor med samma `validFrom`, och
-    portalen behöver då använda den senast mottagna.
+    `POST /api/ekovilla/pricelists` med kontraktets kropp och **`Idempotency-Key:
+    pricelist-<validFrom>-<sha256>-<löpnummer>`**. Löpnumret är ett tillägg till kontraktet: utan det
+    hade samma lista publicerad igen efter en annan (X, Y, X) fått första X:ets nyckel, och portalen
+    hade svarat som på den och behållit Y. Portalen ska behandla nyckeln som en ogenomskinlig sträng.
+    Hashen är sha256 i hex över artiklarna som JSON med sorterade nycklar. CRM:et räknar 2xx som
+    mottaget och gör om 5xx och 401. Övriga 4xx ges upp och visas på sidan. Två publiceringar samma
+    dag ger två listor med samma `validFrom`, och portalen behöver då använda den senast mottagna.
 
 ## Öppna frågor
 

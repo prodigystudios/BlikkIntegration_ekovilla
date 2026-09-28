@@ -33,7 +33,7 @@ export type PublicationView = {
   articleCount: number;
   publishedByName: string | null;
   createdAtLabel: string;
-  delivery: PricelistDelivery & { sentAtLabel: string | null };
+  delivery: PricelistDelivery & { sentAtLabel: string | null; nextAttemptLabel: string | null };
 };
 
 type ResellerPortalClientProps = {
@@ -51,6 +51,10 @@ function formatKr(value: number): string {
   return `${value.toLocaleString('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kr`;
 }
 
+function articlesLabel(count: number): string {
+  return count === 1 ? 'en artikel' : `${count} artiklar`;
+}
+
 function formatPercent(share: number): string {
   if (share === 0) return '–';
   return `${(Math.round(share * 1000) / 10).toLocaleString('sv-SE')} %`;
@@ -63,11 +67,17 @@ function articleHref(articleNumber: string): string {
 type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 async function post<T>(url: string, body?: unknown): Promise<ApiResult<T>> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    // Ett nätfel får inte lämna knappen och dialogen låsta.
+    return { ok: false, error: 'Servern svarade inte. Ladda om sidan och se i historiken om publiceringen gick igenom.' };
+  }
   const json = await res.json().catch(() => null);
   if (!res.ok || !json?.ok) return { ok: false, error: json?.error || `Begäran misslyckades (${res.status})` };
   return { ok: true, data: json.data as T };
@@ -140,7 +150,7 @@ export default function ResellerPortalClient({ today, integration, preview, publ
       return;
     }
     const { claimed, sent, retried, dead } = result.data;
-    if (claimed === 0) toast.info('Inget väntade i kön.');
+    if (claimed === 0) toast.info('Inget var dags att skicka. En händelse som misslyckats görs om vid sin tid, se historiken.');
     else if (dead > 0) toast.error(`${sent} skickade, ${retried} väntar, ${dead} nekade av portalen.`);
     else if (retried > 0) toast.info(`${sent} skickade, ${retried} väntar på ett nytt försök.`);
     else toast.success(`${sent} skickade.`);
@@ -348,7 +358,7 @@ export default function ResellerPortalClient({ today, integration, preview, publ
                       <DeliveryBadge delivery={p.delivery} />
                     </div>
                     <div className="mt-0.5 text-xs text-slate-500">
-                      {p.articleCount} artiklar, publicerad {p.createdAtLabel}
+                      {p.articleCount === 1 ? 'En artikel' : `${p.articleCount} artiklar`}, publicerad {p.createdAtLabel}
                       {p.publishedByName ? ` av ${p.publishedByName}` : ''}
                     </div>
                     {p.delivery.status === 'sent' && p.delivery.sentAtLabel && (
@@ -356,6 +366,9 @@ export default function ResellerPortalClient({ today, integration, preview, publ
                     )}
                     {p.delivery.status !== 'sent' && p.delivery.lastError && (
                       <div className="mt-1 break-words text-xs text-red-700">{p.delivery.lastError}</div>
+                    )}
+                    {p.delivery.nextAttemptLabel && (
+                      <div className="mt-0.5 text-xs text-slate-500">Nästa försök {p.delivery.nextAttemptLabel}</div>
                     )}
                   </li>
                 ))}
@@ -368,7 +381,7 @@ export default function ResellerPortalClient({ today, integration, preview, publ
       {confirming && preview.ok && (
         <DialogShell
           eyebrow="Publicera prislistan"
-          title={`Publicera ${articles.length} artiklar?`}
+          title={`Publicera ${articlesLabel(articles.length)}?`}
           description={`Prislistan blir en ny lista för alla butiker och gäller nya offerter från ${validFrom}. Offerter som redan finns behåller sina priser.`}
           onClose={() => (busy === null ? setConfirming(false) : undefined)}
           panelClassName="max-w-md"

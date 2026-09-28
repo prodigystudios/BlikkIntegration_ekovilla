@@ -69,14 +69,25 @@ describe('prislistans migrering (SQL)', () => {
     expect(sql).toContain('check (article_count > 0)');
   });
 
-  it('nyckelns form i databasen är den koden bygger', () => {
-    const check = RAW.match(/idempotency_key ~ '([^']+)' and right\(idempotency_key, 64\) = content_hash/);
+  it('nyckelns form i databasen är den koden bygger, och den binder hashen och löpnumret till raden', () => {
+    const check = RAW.match(/idempotency_key ~ '([^']+)'/);
     expect(check).not.toBeNull();
     const hash = 'f'.repeat(64);
-    const key = pricelistIdempotencyKey('2026-10-01', hash);
+    const key = pricelistIdempotencyKey('2026-10-01', hash, 7);
     expect(new RegExp(check![1]).test(key)).toBe(true);
-    expect(key.slice(-64)).toBe(hash);
+    expect(sql).toContain(
+      "idempotency_key = 'pricelist-' || substring(idempotency_key from 11 for 10) || '-' || content_hash || '-' || sequence::text",
+    );
+    // Samma uttryck i JS: position 11–20 är datumet.
+    expect(`pricelist-${key.substring(10, 20)}-${hash}-7`).toBe(key);
     expect(sql).toContain("content_hash ~ '^[0-9a-f]{64}$'");
+    expect(sql).toContain('check (sequence > 0)');
+  });
+
+  it('en publicering sparas bara i den inloggades namn', () => {
+    expect(sql).toMatch(
+      /create policy crm_portal_pricelist_publications_insert [^;]* with check \(\(select has_permission\('crm\.portal\.manage'\)\) and published_by = \(select auth\.uid\(\)\)\);/,
+    );
   });
 
   it('inga astrala tecken i filen', () => {

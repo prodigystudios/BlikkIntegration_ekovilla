@@ -17,7 +17,7 @@ declare
 begin
   -- En händelse i kön att läsa, och en rad med portalfält (2a:s ifyllnad) att läsa.
   insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key)
-  values ('pricelist-2026-10-01-' || hash, '/api/ekovilla/pricelists', '{}', 'pricelist');
+  values ('pricelist-2026-10-01-' || hash || '-1', '/api/ekovilla/pricelists', '{}', 'pricelist');
 
   -- Admin utan crm.article.manage: läser portalfälten bara genom den nya policyn (crm.portal.manage).
   insert into public.user_permissions (user_id, permission_key, effect) values (admin_id, 'crm.article.manage', 'revoke');
@@ -29,17 +29,31 @@ begin
   select count(*) into n from public.crm_portal_article_fields;
   if n < 1 then raise exception 'admin: läser inga portalfält utan crm.article.manage; policyn för crm.portal.manage saknas'; end if;
 
-  insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count, published_by, published_by_name)
-  values ('2026-10-01', hash, 'pricelist-2026-10-01-' || hash, '{"articles": []}', 1, admin_id, 'Admin');
+  insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by, published_by_name)
+  values ('2026-10-01', hash, 1, 'pricelist-2026-10-01-' || hash || '-1', '{"articles": []}', 1, admin_id, 'Admin');
   select count(*) into n from public.crm_portal_pricelist_publications;
   if n < 1 then raise exception 'admin: ser inte publiceringen den just sparade'; end if;
 
   -- Samma nyckel igen: ingen ny rad (unik nyckel; appen gör ON CONFLICT DO NOTHING).
-  insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count)
-  values ('2026-10-01', hash, 'pricelist-2026-10-01-' || hash, '{}', 1)
+  insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+  values ('2026-10-01', hash, 1, 'pricelist-2026-10-01-' || hash || '-1', '{}', 1, admin_id)
   on conflict (idempotency_key) do nothing;
   get diagnostics n = row_count;
   if n <> 0 then raise exception 'admin: samma nyckel gav en ny publicering'; end if;
+
+  -- Bara i sitt eget namn.
+  begin
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-01', hash, 2, 'pricelist-2026-10-01-' || hash || '-2', '{}', 1, seller_id);
+    raise exception 'admin: kunde publicera i en annans namn';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count)
+    values ('2026-10-01', hash, 2, 'pricelist-2026-10-01-' || hash || '-2', '{}', 1);
+    raise exception 'admin: kunde publicera utan namn';
+  exception when insufficient_privilege then null;
+  end;
 
   -- Historiken ändras och tas aldrig bort.
   begin
@@ -54,7 +68,7 @@ begin
   end;
 
   -- Kön: läsa ja, skriva nej.
-  select count(*) into n from public.portal_outbound_events where idempotency_key = 'pricelist-2026-10-01-' || hash;
+  select count(*) into n from public.portal_outbound_events where idempotency_key = 'pricelist-2026-10-01-' || hash || '-1';
   if n <> 1 then raise exception 'admin: läser inte kön'; end if;
   begin
     insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key)
@@ -75,20 +89,26 @@ begin
 
   -- Reglerna på raden.
   begin
-    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count)
-    values ('2026-10-02', hash, 'pricelist-2026-10-02-' || hash, '{}', 0);
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-02', hash, 3, 'pricelist-2026-10-02-' || hash || '-3', '{}', 0, admin_id);
     raise exception 'regel: en tom lista gick att spara';
   exception when check_violation then null;
   end;
   begin
-    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count)
-    values ('2026-10-02', hash, 'pricelist-2026-10-02-' || repeat('cd', 32), '{}', 1);
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-02', hash, 3, 'pricelist-2026-10-02-' || repeat('cd', 32) || '-3', '{}', 1, admin_id);
     raise exception 'regel: nyckeln fick en annan hash än raden';
   exception when check_violation then null;
   end;
   begin
-    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count)
-    values ('2026-10-02', 'ABC', 'pricelist-2026-10-02-ABC', '{}', 1);
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-02', hash, 3, 'pricelist-2026-10-02-' || hash || '-4', '{}', 1, admin_id);
+    raise exception 'regel: nyckeln fick ett annat löpnummer än raden';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-02', 'ABC', 3, 'pricelist-2026-10-02-ABC-3', '{}', 1, admin_id);
     raise exception 'regel: en hash som inte är sha256-hex gick att spara';
   exception when check_violation then null;
   end;
@@ -105,8 +125,8 @@ begin
   select count(*) into n from public.crm_portal_article_fields;
   if n <> 0 then raise exception 'säljare: ser % portalfält', n; end if;
   begin
-    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, idempotency_key, payload, article_count)
-    values ('2026-10-03', hash, 'pricelist-2026-10-03-' || hash, '{}', 1);
+    insert into public.crm_portal_pricelist_publications (valid_from, content_hash, sequence, idempotency_key, payload, article_count, published_by)
+    values ('2026-10-03', hash, 5, 'pricelist-2026-10-03-' || hash || '-5', '{}', 1, seller_id);
     raise exception 'säljare: kunde publicera';
   exception when insufficient_privilege then null;
   end;

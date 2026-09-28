@@ -20,8 +20,9 @@ import {
  * `skipped` med skälen, så att sidan kan visa den. Artiklar med pris på listan som inte är markerade hamnar i
  * `unmarked`, så att en ny artikel i Fortnox syns.
  *
- * Idempotency-Key är `pricelist-<validFrom>-<hash>`. Hashen tas över artiklarna, så samma innehåll och datum är samma
- * publicering, och portalen svarar på den som på den första.
+ * Idempotency-Key är `pricelist-<validFrom>-<hash>-<löpnummer>`. Hashen tas över artiklarna. Löpnumret skiljer en
+ * publicering av samma lista som kommer EFTER en annan (X, Y, X igen) från ett omförsök av samma publicering; vilken
+ * det är avgör pricelistPublish.ts.
  */
 
 export const PRICELIST_PATH = '/api/ekovilla/pricelists';
@@ -107,8 +108,8 @@ export function pricelistContentHash(articles: PricelistArticle[]): string {
   return createHash('sha256').update(canonicalJson(articles), 'utf8').digest('hex');
 }
 
-export function pricelistIdempotencyKey(validFrom: string, hash: string): string {
-  return `pricelist-${validFrom}-${hash}`;
+export function pricelistIdempotencyKey(validFrom: string, hash: string, sequence: number): string {
+  return `pricelist-${validFrom}-${hash}-${sequence}`;
 }
 
 export function buildPricelistDraft(input: {

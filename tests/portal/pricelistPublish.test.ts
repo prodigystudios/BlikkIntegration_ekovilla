@@ -1,7 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import { emptyPortalArticleFields, type PortalArticleFields } from '@/lib/domains/portal/articleFields';
-import { publishPricelist, loadPricelistDraft, type PricelistSources } from '@/lib/domains/portal/pricelistPublish';
+import {
+  loadPricelistDraft,
+  publishPricelist,
+  readRegisterArticles,
+  type PricelistSources,
+} from '@/lib/domains/portal/pricelistPublish';
 import { PORTAL_SIGNATURE_HEADER, PORTAL_TIMESTAMP_HEADER, verifyPortalSignature } from '@/lib/domains/portal/signature';
 
 /**
@@ -10,7 +15,8 @@ import { PORTAL_SIGNATURE_HEADER, PORTAL_TIMESTAMP_HEADER, verifyPortalSignature
  *   - utkastet byggs om på servern: klienten skickar bara datum och hashen den såg;
  *   - publiceringen sparas med sessionen, händelsen köas och skickas med service-rollen;
  *   - anropet till portalen går till rätt route, med nyckeln och en signatur som CRM:ets egen kontroll godkänner;
- *   - samma lista och datum igen: ingen ny rad, ingen ny händelse.
+ *   - samma lista och datum som den SENASTE publiceringen: ingen ny rad, ingen ny händelse;
+ *   - samma lista efter en annan (X, Y, X), eller efter ett nej från portalen: en ny publicering som skickas.
  */
 
 const SECRET = 'b'.repeat(64);
@@ -36,6 +42,8 @@ function fakeDb() {
         let op = 'select';
         let values: Row | undefined;
         let onConflict = '';
+        let limit = Infinity;
+        const orders: [string, boolean][] = [];
         const filters: ((r: Row) => boolean)[] = [];
         const run = () => {
           log.push({ client: name, table, op, values });
@@ -50,14 +58,21 @@ function fakeDb() {
           }
           const hit = rows.filter((r) => filters.every((f) => f(r)));
           if (op === 'update') hit.forEach((r) => Object.assign(r, values));
-          return { data: hit.map((r) => ({ ...r })), error: null };
+          const sorted = [...hit].sort((a, b) => {
+            for (const [column, ascending] of orders) {
+              if (a[column] === b[column]) continue;
+              return (a[column] < b[column] ? -1 : 1) * (ascending ? 1 : -1);
+            }
+            return 0;
+          });
+          return { data: sorted.slice(0, limit).map((r) => ({ ...r })), error: null };
         };
         const chain: any = {
           upsert: (v: Row, o: { onConflict: string }) => ((op = 'upsert'), (values = v), (onConflict = o.onConflict), chain),
           update: (v: Row) => ((op = 'update'), (values = v), chain),
           select: () => chain,
-          order: () => chain,
-          limit: () => chain,
+          order: (c: string, o?: { ascending?: boolean }) => (orders.push([c, o?.ascending !== false]), chain),
+          limit: (n: number) => ((limit = n), chain),
           eq: (c: string, v: unknown) => (filters.push((r) => r[c] === v), chain),
           lt: (c: string, v: any) => (filters.push((r) => r[c] < v), chain),
           in: (c: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[c])), chain),
@@ -185,7 +200,7 @@ describe('publishPricelist: publiceringen', () => {
   it('sparar med sessionen, köar och skickar med service-rollen, och portalen tar emot den', async () => {
     const { result, db, fetchImpl } = await publish();
     const hash = await currentHash(sources());
-    const key = `pricelist-2026-10-01-${hash}`;
+    const key = `pricelist-2026-10-01-${hash}-1`;
     const payload = {
       validFrom: '2026-10-01',
       resellerId: null,
@@ -209,13 +224,14 @@ describe('publishPricelist: publiceringen', () => {
       created: true,
       idempotencyKey: key,
       articleCount: 1,
-      delivery: expect.objectContaining({ status: 'sent', attempts: 1, lastHttpStatus: 201, lastError: null }),
+      delivery: expect.objectContaining({ status: 'sent', attempts: 1, lastHttpStatus: 201, lastError: null, nextAttemptAt: null }),
     });
 
     expect(db.tables.crm_portal_pricelist_publications).toEqual([
       expect.objectContaining({
         valid_from: '2026-10-01',
         content_hash: hash,
+        sequence: 1,
         idempotency_key: key,
         payload,
         article_count: 1,
@@ -224,7 +240,9 @@ describe('publishPricelist: publiceringen', () => {
       }),
     ]);
     // Vem som skrev vad: publiceringen med sessionen, kön bara med service-rollen.
-    expect(db.log.filter((l) => l.table === 'crm_portal_pricelist_publications').map((l) => l.client)).toEqual(['session']);
+    expect(new Set(db.log.filter((l) => l.table === 'crm_portal_pricelist_publications').map((l) => l.client))).toEqual(
+      new Set(['session']),
+    );
     expect(new Set(db.log.filter((l) => l.table === 'portal_outbound_events').map((l) => l.client))).toEqual(new Set(['admin']));
     expect(db.tables.portal_outbound_events).toEqual([
       expect.objectContaining({ idempotency_key: key, path: '/api/ekovilla/pricelists', ordering_key: 'pricelist', payload, status: 'sent' }),
@@ -264,12 +282,41 @@ describe('publishPricelist: publiceringen', () => {
     const first = await publish();
     const later = await publish({ db: first.db, validFrom: '2026-10-15' });
     expect(later.result).toMatchObject({ kind: 'published', created: true });
-    expect(first.db.tables.crm_portal_pricelist_publications.map((r) => r.valid_from)).toEqual(['2026-10-01', '2026-10-15']);
+    expect(first.db.tables.crm_portal_pricelist_publications.map((r) => [r.valid_from, r.sequence])).toEqual([
+      ['2026-10-01', 1],
+      ['2026-10-15', 2],
+    ]);
+  });
+
+  it('🧨 X, sedan Y, sedan X igen med samma datum: X skickas igen, annars räknar butikerna på Y', async () => {
+    const x = sources();
+    const y = sources({ prices: async () => [{ articleNumber: '2410509', fromQuantity: 0, price: 399 }] });
+    const first = await publish({ src: x });
+    const second = await publish({ db: first.db, src: y, expectedHash: await currentHash(y) });
+    const third = await publish({ db: first.db, src: sources() });
+    expect(second.result).toMatchObject({ kind: 'published', created: true });
+    expect(third.result).toMatchObject({ kind: 'published', created: true, delivery: { status: 'sent' } });
+    expect(third.fetchImpl).toHaveBeenCalledTimes(1);
+    const rows = first.db.tables.crm_portal_pricelist_publications;
+    expect(rows.map((r) => r.sequence)).toEqual([1, 2, 3]);
+    expect(rows[2].content_hash).toBe(rows[0].content_hash);
+    expect(rows[2].idempotency_key).not.toBe(rows[0].idempotency_key);
+  });
+
+  it('en lista portalen nekade kan publiceras igen, och går då fram', async () => {
+    const first = await publish({ fetchImpl: portalFetch(404) });
+    expect(first.result).toMatchObject({ delivery: { status: 'dead' } });
+    const again = await publish({ db: first.db });
+    expect(again.result).toMatchObject({ kind: 'published', created: true, delivery: { status: 'sent' } });
+    expect(first.db.tables.crm_portal_pricelist_publications.map((r) => r.sequence)).toEqual([1, 2]);
   });
 
   it('portalen svarar 503: publicerad, och väntar i kön med felet', async () => {
     const { result, db } = await publish({ fetchImpl: portalFetch(503) });
     expect(result).toMatchObject({ kind: 'published', created: true, delivery: { status: 'pending', lastHttpStatus: 503 } });
+    // Sidan visar när nästa försök görs: "Skicka väntande nu" tar den inte före det.
+    expect(result.kind === 'published' && result.delivery?.nextAttemptAt).toBe(db.tables.portal_outbound_events[0].next_attempt_at);
+    expect(result.kind === 'published' && result.delivery?.nextAttemptAt).toEqual(expect.any(String));
     expect(db.tables.portal_outbound_events[0].status).toBe('pending');
   });
 
@@ -278,7 +325,7 @@ describe('publishPricelist: publiceringen', () => {
     expect(result).toMatchObject({ kind: 'published', delivery: { status: 'dead', lastHttpStatus: 422, lastError: 'HTTP 422: ok' } });
   });
 
-  it('kön går inte att skriva: ett fel, men publiceringen står kvar och en ny publicering köar den', async () => {
+  it('kön går inte att skriva: ett fel, men publiceringen står kvar och samma publicering igen köar den', async () => {
     const db = fakeDb();
     db.failures['admin:portal_outbound_events:upsert'] = { code: 'XX000', message: 'nere' };
     const { result } = await publish({ db });
@@ -302,6 +349,30 @@ describe('publishPricelist: publiceringen', () => {
     });
     const draft = await loadPricelistDraft(src);
     expect(draft.unmarked).toEqual([{ articleNumber: '13102', name: 'Fortnox 13102', unitCost: 195.3 }]);
+  });
+
+  it('registret läses med sessionen, i delar om 150, och ett fel stoppar', async () => {
+    const calls: number[] = [];
+    const session = {
+      from: (table: string) => {
+        expect(table).toBe('fortnox_articles_cache');
+        const chain: any = {
+          select: () => chain,
+          in: (_c: string, numbers: string[]) => (
+            calls.push(numbers.length),
+            Promise.resolve({ data: numbers.map((n) => ({ article_number: n, description: n, unit: 'st', active: true })), error: null })
+          ),
+        };
+        return chain;
+      },
+    } as never;
+    const numbers = Array.from({ length: 400 }, (_, i) => String(i));
+    expect(await readRegisterArticles(session, numbers)).toHaveLength(400);
+    expect(calls).toEqual([150, 150, 100]);
+    expect(await readRegisterArticles(session, [])).toEqual([]);
+
+    const failing = { from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: 'nere' } }) }) }) } as never;
+    await expect(readRegisterArticles(failing, ['1'])).rejects.toThrow(/Artikelregistret gick inte att läsa: nere/);
   });
 
   it('utkastet byggs om på servern ur källorna, också registret för alla artiklar på listan', async () => {

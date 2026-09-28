@@ -75,7 +75,9 @@ caught at compile time).
 
 **CRM admin-managed:** `crm.goal.read` / `crm.goal.manage`, `crm.routingrule.read` /
 `crm.routingrule.manage`, `crm.aiprospect.read` / `crm.aiprospect.manage`,
-`crm.ringlist.manage`, `crm.article.manage`, `crm.unit.manage`.
+`crm.ringlist.manage`, `crm.article.manage`, `crm.unit.manage`, `crm.portal.manage`
+(återförsäljarportalen: prislistan, butikerna och utskicken, bara admin; se
+`20260928072725_portal_pricelist_publications.sql`).
 
 **Fortnox:** `fortnox.offer.push`, `fortnox.workorder.push`, `fortnox.invoice.create`,
 `fortnox.customer.sync`, `fortnox.read`.

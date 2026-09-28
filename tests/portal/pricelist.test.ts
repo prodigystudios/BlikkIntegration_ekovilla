@@ -214,14 +214,14 @@ describe('hashen och nyckeln', () => {
     expect(buildPricelistDraft({ ...input, register: [reg('1', { description: 'Nytt' }), input.register[1]] }).hash).not.toBe(before);
   });
 
-  it('nyckeln: pricelist-<giltig från>-<hash>, godkänd av kön och av databasens check', () => {
+  it('nyckeln: pricelist-<giltig från>-<hash>-<löpnummer>, godkänd av kön och av databasens check', () => {
     const { hash } = buildPricelistDraft(input);
-    const key = pricelistIdempotencyKey('2026-10-01', hash);
-    expect(key).toBe(`pricelist-2026-10-01-${hash}`);
+    const key = pricelistIdempotencyKey('2026-10-01', hash, 12);
+    expect(key).toBe(`pricelist-2026-10-01-${hash}-12`);
     expect(isValidIdempotencyKey(key)).toBe(true);
     // Samma mönster som migreringens check (20260928072725).
-    expect(key).toMatch(/^pricelist-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{64}$/);
-    expect(key.slice(-64)).toBe(hash);
+    expect(key).toMatch(/^pricelist-[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9a-f]{64}-[1-9][0-9]{0,8}$/);
+    expect(pricelistIdempotencyKey('2026-10-01', hash, 1)).not.toBe(pricelistIdempotencyKey('2026-10-01', hash, 2));
   });
 });
 
