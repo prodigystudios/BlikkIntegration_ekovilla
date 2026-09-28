@@ -162,10 +162,11 @@ describe('derivePortalJobEvents: utförd och fakturerad', () => {
     expect(r.types).toEqual(['job.completed']);
   });
 
-  it('fakturerad direkt: utförd och sedan fakturerad, med fakturadagen', () => {
-    const r = delivered({ status: 'invoiced', fortnoxInvoicedAt: '2026-10-11T22:15:00.000Z' });
+  it('fakturerad direkt: utförd och sedan fakturerad, med fakturadagen (svensk dag, inte i dag)', () => {
+    // 22:15 UTC den 9:e är 00:15 den 10:e i Stockholm, och "nu" är den 12:e.
+    const r = delivered({ status: 'invoiced', fortnoxInvoicedAt: '2026-10-09T22:15:00.000Z' });
     expect(r.types).toEqual(['job.completed', 'job.invoiced']);
-    expect(r.events[1].payload.data).toEqual({ quoteId: 'q-1', invoicedAt: '2026-10-12' });
+    expect(r.events[1].payload.data).toEqual({ quoteId: 'q-1', invoicedAt: '2026-10-10' });
     expect(r.state).toMatchObject({ completed: true, invoiced: true });
   });
 
