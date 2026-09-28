@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { verifyPortalRequest } from '@/app/api/portal/_shared';
 import { signPortalRequest } from '@/lib/domains/portal/signature';
+import { SIGNATURE_VECTOR } from './helpers/contractFixtures';
 
 const SECRET = 'a'.repeat(64);
 const NOW = 1_790_000_000;
@@ -9,8 +10,8 @@ const ENV = { PORTAL_CRM_SHARED_SECRET: SECRET };
 
 function signed(
   path: string,
-  body: string,
-  options: { method?: string; signedPath?: string; signedBody?: string; now?: number; secret?: string } = {},
+  body: string | Uint8Array,
+  options: { method?: string; signedPath?: string; signedBody?: string | Uint8Array; now?: number; secret?: string } = {},
 ) {
   const method = options.method ?? 'POST';
   const headers = signPortalRequest({
@@ -34,9 +35,63 @@ describe('verifyPortalRequest', () => {
     expect(result).toEqual({ ok: true, rawBody: body });
   });
 
-  it('prövar sökvägen som den står i URL:en, procentkodad', async () => {
-    const path = '/api/portal/jobs/q%201/messages';
-    expect(await verifyPortalRequest(signed(path, '{}'), ENV, NOW)).toMatchObject({ ok: true });
+  it('godtar kontraktets vektor, räknad med Python, genom hela grinden', async () => {
+    const { secret, timestamp, method, path, body, signature } = SIGNATURE_VECTOR;
+    const request = new NextRequest(`https://app.ekovilla.se${path}`, {
+      method,
+      body,
+      headers: { 'X-Ekovilla-Timestamp': timestamp, 'X-Ekovilla-Signature': signature },
+    });
+    expect(await verifyPortalRequest(request, { PORTAL_CRM_SHARED_SECRET: secret }, Number(timestamp))).toEqual({ ok: true, rawBody: body });
+  });
+
+  it('prövar signaturen över kroppens byte: ett BOM följer med, och godtas', async () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...new TextEncoder().encode('{"a":1}')]);
+    const result = await verifyPortalRequest(signed('/api/portal/jobs', bytes), ENV, NOW);
+    expect(result).toEqual({ ok: true, rawBody: '\uFEFF{"a":1}' });
+  });
+
+  it('korrekt signerad men inte UTF-8: 400, inte 401 — samma byte blir inte rätt av att skickas igen', async () => {
+    const bytes = new Uint8Array([0x7b, 0xff, 0x7d]);
+    const result = await verifyPortalRequest(signed('/api/portal/jobs', bytes), ENV, NOW);
+    if (result.ok) throw new Error('skulle ha nekats');
+    expect(result.response.status).toBe(400);
+    expect((await json(result.response)).errorDetails?.code).toBe('invalid_encoding');
+  });
+
+  it('🧨 läser inte kroppen förrän headrarna stämmer — ett osignerat anrop kostar ingenting', async () => {
+    const stream = new ReadableStream({ pull() { throw new Error('kroppen lästes'); } });
+    const request = new NextRequest('https://app.ekovilla.se/api/portal/jobs', { method: 'POST', body: stream, duplex: 'half' } as ConstructorParameters<typeof NextRequest>[1]);
+    const result = await verifyPortalRequest(request, ENV, NOW);
+    if (result.ok) throw new Error('skulle ha nekats');
+    expect(result.response.status).toBe(401);
+  });
+
+  it('en kropp som inte går att läsa ger 400, inte ett kast', async () => {
+    const stream = new ReadableStream({ pull() { throw new Error('anslutningen bröts'); } });
+    const headers = signPortalRequest({ secret: SECRET, method: 'POST', path: '/api/portal/jobs', rawBody: '', nowSeconds: NOW });
+    const request = new NextRequest('https://app.ekovilla.se/api/portal/jobs', { method: 'POST', body: stream, headers, duplex: 'half' } as ConstructorParameters<typeof NextRequest>[1]);
+    const result = await verifyPortalRequest(request, ENV, NOW);
+    if (result.ok) throw new Error('skulle ha nekats');
+    expect(result.response.status).toBe(400);
+    expect((await json(result.response)).errorDetails?.code).toBe('unreadable_body');
+  });
+
+  it('413 på en för stor kropp, före läsningen', async () => {
+    const request = signed('/api/portal/jobs', '{}');
+    request.headers.set('content-length', String(6 * 1024 * 1024));
+    const result = await verifyPortalRequest(request, ENV, NOW);
+    if (result.ok) throw new Error('skulle ha nekats');
+    expect(result.response.status).toBe(413);
+  });
+
+  it('400 på en sökväg med tecken som portalen aldrig skickar (procentkodning, mellanslag)', async () => {
+    for (const path of ['/api/portal/jobs/q%201/messages', '/api/portal/jobs/q%C3%A5']) {
+      const result = await verifyPortalRequest(signed(path, '{}'), ENV, NOW);
+      if (result.ok) throw new Error(`${path} skulle ha nekats`);
+      expect(result.response.status).toBe(400);
+      expect((await json(result.response)).errorDetails?.code).toBe('invalid_path');
+    }
   });
 
   it('503 när hemligheten saknas — integrationen är av, och anropet prövas inte', async () => {

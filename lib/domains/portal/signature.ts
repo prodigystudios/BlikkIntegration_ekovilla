@@ -111,6 +111,33 @@ export type PortalSignatureFailure =
 export type PortalSignatureVerdict = { ok: true } | { ok: false; reason: PortalSignatureFailure };
 
 /**
+ * Det som går att pröva utan kroppen: att båda headrarna finns, att tidsstämpeln är hela sekunder inom 300 s och
+ * att signaturen har rätt form. En mottagare kör den INNAN kroppen läses, så att ett osignerat anrop nekas utan att
+ * en enda byte av kroppen tas emot. `verifyPortalSignature` kör den också.
+ */
+export function precheckPortalSignatureHeaders(input: {
+  timestampHeader: string | null | undefined;
+  signatureHeader: string | null | undefined;
+  nowSeconds: number;
+}): { ok: true; timestamp: string; receivedHex: string } | { ok: false; reason: PortalSignatureFailure } {
+  const timestamp = input.timestampHeader?.trim();
+  const signature = input.signatureHeader?.trim();
+  if (!timestamp || !signature) return { ok: false, reason: 'missing_headers' };
+
+  if (!UNIX_SECONDS.test(timestamp)) return { ok: false, reason: 'bad_timestamp' };
+  // Skrivet så att det faller stängt: med `NaN` som klocka är varje jämförelse falsk, och
+  // `Math.abs(NaN) > 300` hade släppt igenom en signatur hur gammal som helst.
+  const skew = Math.abs(Math.floor(input.nowSeconds) - Number(timestamp));
+  if (!(skew <= PORTAL_SIGNATURE_TOLERANCE_SECONDS)) return { ok: false, reason: 'stale_timestamp' };
+
+  // Formen prövas före avkodningen: Buffer.from(x, 'hex') slutar tyst vid första ogiltiga tecknet.
+  if (!signature.startsWith(SIGNATURE_VERSION)) return { ok: false, reason: 'bad_signature_format' };
+  const receivedHex = signature.slice(SIGNATURE_VERSION.length);
+  if (!HEX_SHA256.test(receivedHex)) return { ok: false, reason: 'bad_signature_format' };
+  return { ok: true, timestamp, receivedHex };
+}
+
+/**
  * Prövar ett inkommande anrop. Alla nej utom `secret_not_configured` ska bli 401 för avsändaren;
  * `secret_not_configured` är vårt eget fel och blir 503. Anledningen loggas, men skickas inte
  * tillbaka i detalj.
@@ -124,23 +151,12 @@ export function verifyPortalSignature(input: {
   signatureHeader: string | null | undefined;
   nowSeconds: number;
 }): PortalSignatureVerdict {
-  const { secret, rawBody, nowSeconds } = input;
+  const { secret, rawBody } = input;
   if (!isUsablePortalSecret(secret)) return { ok: false, reason: 'secret_not_configured' };
 
-  const timestamp = input.timestampHeader?.trim();
-  const signature = input.signatureHeader?.trim();
-  if (!timestamp || !signature) return { ok: false, reason: 'missing_headers' };
-
-  if (!UNIX_SECONDS.test(timestamp)) return { ok: false, reason: 'bad_timestamp' };
-  // Skrivet så att det faller stängt: med `NaN` som klocka är varje jämförelse falsk, och
-  // `Math.abs(NaN) > 300` hade släppt igenom en signatur hur gammal som helst.
-  const skew = Math.abs(Math.floor(nowSeconds) - Number(timestamp));
-  if (!(skew <= PORTAL_SIGNATURE_TOLERANCE_SECONDS)) return { ok: false, reason: 'stale_timestamp' };
-
-  // Formen prövas före avkodningen: Buffer.from(x, 'hex') slutar tyst vid första ogiltiga tecknet.
-  if (!signature.startsWith(SIGNATURE_VERSION)) return { ok: false, reason: 'bad_signature_format' };
-  const receivedHex = signature.slice(SIGNATURE_VERSION.length);
-  if (!HEX_SHA256.test(receivedHex)) return { ok: false, reason: 'bad_signature_format' };
+  const pre = precheckPortalSignatureHeaders(input);
+  if (!pre.ok) return pre;
+  const { timestamp, receivedHex } = pre;
 
   const expected = hmacDigest(secret, timestamp, { method: input.method, path: input.path }, rawBody);
   const received = Buffer.from(receivedHex, 'hex');

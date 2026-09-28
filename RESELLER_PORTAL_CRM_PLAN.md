@@ -172,8 +172,12 @@ gör bara om vid 429 och har ingen timeout.
   routen: `runtime = 'nodejs'`, `req.text()` först, sedan `JSON.parse` och Zod `safeParse`.
 - **Allt som kräver session ligger under `/api/crm/portal/`**: inställningar, publicering, svar till
   butiken, koppla kund och "skicka väntande nu". Då kan prefixet aldrig göra en sessionsroute publik.
-- Ett vitest-vakttest går igenom `app/api/portal/**/route.ts` och kräver signatur- eller cronkontroll
-  i varje route.
+- Ett vitest-vakttest (`tests/portal/routeGuards.test.ts`) går igenom VARJE route i `app/`, räknar ut
+  adressen (genom routegrupper och catch-all) och kräver för allt under `/api/portal/` att varje handler
+  börjar med grinden, importerad från `app/api/portal/_shared.ts`, och använder svaret.
+- ⚠️ Grinden stoppar inte ett anrop som spelas upp igen inom 300 sekunder, eftersom signaturen är
+  densamma. **Varje route som ändrar något går därför genom svarscachen** (`claimIdempotencyKey`)
+  och sin affärsnyckel, så att ett upprepat anrop inte gör något nytt.
 - Mall för en tunn route: `app/api/crm/planering/material-orders/[id]/send/route.ts`. Domänanropet
   returnerar en diskriminerad union som routen översätter med `ok`/`routeError` ur
   `lib/api/responses.ts`.
@@ -447,6 +451,10 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget, eller om en
     klocka går fel mer än 300 sekunder. Andra 4xx ges fortfarande upp. Byt hemligheten i båda apparna
     i samma stund, en lugn stund.
+16. **Sökvägarna har bara tecken som aldrig procentkodas:** A–Z, a–z, 0–9 och `- _ . ~`. Det gäller
+    alltså också id:n i sökvägen (`quoteId`, `orderId`, `messageId`). Då är sökvägen samma för
+    avsändaren och mottagaren, och ingen server på vägen kan koda om den och få signaturen att falla.
+    CRM:et svarar 400 på andra tecken. (Granskningen av fas 1c, 2026-09-28.)
 
 ## Öppna frågor
 
