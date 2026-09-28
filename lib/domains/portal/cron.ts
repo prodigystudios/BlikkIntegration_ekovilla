@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { followUpPortalJob } from './jobIntakeStore';
 import { retryPortalFortnox, type PortalFortnoxRetrySummary } from './jobFortnoxRetry';
+import { sweepPortalJobMessages, type PortalJobMessagesSweepSummary } from './jobMessagesStore';
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
 
@@ -8,7 +9,8 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  * Ett varv av portalens bakgrundsarbete (RESELLER_PORTAL_CRM_PLAN.md fas 4b). Körs av cron-routen varje minut i prod
  * och av "Skicka väntande nu" på portalsidan (testmiljön har ingen cron).
  *
- *   1. De markerade jobben räknas om och skillnaden köas (jobSync.ts).
+ *   1. De markerade jobben räknas om och skillnaden köas (jobSync.ts). Meddelandena städas: ett svar som sparats men
+ *      inte köats köas, och en notis om butikens meddelande som inte gick iväg görs om (jobMessagesStore.ts, fas 6).
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
  *   3. Levererades något räknas jobben om en gång till: "planerad" köas först när "bekräftad" är levererad, och annars
  *      hade butiken fått den en minut senare.
@@ -23,6 +25,7 @@ export const PORTAL_CRON_FORTNOX_START_BEFORE_MS = 150_000;
 
 export type PortalCronSummary = {
   sync: PortalJobSyncSummary | { error: string };
+  messages: PortalJobMessagesSweepSummary | { error: string };
   dispatch: OutboxDispatchSummary | { error: string };
   resync?: PortalJobSyncSummary | { error: string };
   redispatch?: OutboxDispatchSummary | { error: string };
@@ -59,6 +62,7 @@ export async function runPortalCron(
 
   const summary: PortalCronSummary = {
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
+    messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
   };

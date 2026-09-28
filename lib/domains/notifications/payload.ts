@@ -164,6 +164,27 @@ export function buildPortalJobReceivedNotification(input: {
 }
 
 /**
+ * Butiken har skrivit på ett jobb från återförsäljarportalen (RESELLER_PORTAL_CRM_PLAN.md fas 6). Till arbetsorderns
+ * ansvarige, och till reserven när ordern saknar en (William 2026-09-28). Brödtexten är början av meddelandet, som
+ * `preview` redan kortat; hela står på kortet "Butiken". Egen typ, så att push-bannern inte ersätter "Nytt jobb".
+ */
+export function buildPortalJobMessageNotification(input: {
+  workOrderId: string;
+  storeName: string;
+  authorName: string;
+  preview: string;
+}): NotificationContent {
+  return {
+    type: 'portal_job.message',
+    title: `Meddelande från ${input.storeName}`,
+    body: `${input.authorName}: ${input.preview}`,
+    href: `/crm/arbetsorder/${input.workOrderId}`,
+    entity_type: 'work_order',
+    entity_id: input.workOrderId,
+  };
+}
+
+/**
  * Fortnox-ordern för ett jobb från portalen skapades inte (kontrollerna stoppade, eller Fortnox svarade fel), eller
  * skapades utan en ändring som sparades under tiden. Till samma person som fick jobbet. Egen typ, så att push-bannern
  * inte ersätter "Nytt jobb" (taggen är typ + arbetsorder).
