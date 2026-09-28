@@ -7,7 +7,9 @@
  *   - en krock på en unik kolumn svarar med kod 23505.
  * Kolumnlistan i `select` läses inte: hela raden kommer tillbaka. Inbäddningar (`contacts:…`) ligger redan på raden.
  * portal_outbound_events får kolumnens standardvärden vid insert: ett stigande `seq`, status 'pending' och 0 försök.
+ * Andra tabellers standardvärden (id, tider) ger testet med `defaults`.
  * lt/lte/gt jämför värdena som de står: ISO-tider i samma form, eller tal.
+ * En unik nyckel och `onConflict` kan vara sammansatta ('direction,message_id'), och `order` kan ges flera gånger.
  *
  * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång. `canUpdate` spelar RLS på
  * UPDATE: en rad den säger nej till ändras inte och kommer inte tillbaka, utan fel, som i PostgREST. `beforeExecute`
@@ -24,12 +26,15 @@ export type Call = {
   filters: Filter[];
   options?: Record<string, unknown>;
   order?: { column: string; ascending: boolean };
+  /** Alla `order`, i den ordning de gavs. `order` är den första. */
+  orders?: { column: string; ascending: boolean }[];
   limit?: number;
 };
 type DbError = { code?: string; message: string };
 
 const UNIQUE: Record<string, string[]> = {
   crm_portal_jobs: ['quote_id', 'reserved_work_order_id', 'work_order_id'],
+  crm_portal_job_messages: ['id', 'direction,message_id'],
   crm_portal_resellers: ['reseller_id'],
   crm_work_orders: ['id', 'order_number'],
   portal_idempotency_keys: ['key'],
@@ -41,14 +46,21 @@ export function memoryAdmin(
   options: {
     canUpdate?: (table: string, row: Row) => boolean;
     beforeExecute?: (call: Call, tables: Record<string, Row[]>) => void;
+    /** Kolumnernas standardvärden vid insert, per tabell (det databasen hade fyllt i). */
+    defaults?: (table: string, row: Row) => Row;
   } = {},
 ) {
   const tables: Record<string, Row[]> = structuredClone(initial);
   let nextSeq = Math.max(0, ...(tables.portal_outbound_events ?? []).map((r) => Number(r.seq ?? 0))) + 1;
-  const withDefaults = (table: string, row: Row): Row =>
-    table === 'portal_outbound_events'
-      ? { status: 'pending', attempts: 0, ...row, seq: row.seq ?? nextSeq++ }
-      : row;
+  const withDefaults = (table: string, row: Row): Row => {
+    const filled = { ...(options.defaults?.(table, row) ?? {}), ...row };
+    return table === 'portal_outbound_events'
+      ? { status: 'pending', attempts: 0, ...filled, seq: filled.seq ?? nextSeq++ }
+      : filled;
+  };
+  // En sammansatt nyckel ('direction,message_id') är samma när varje kolumn är det.
+  const columnsOf = (key: string) => key.split(',').map((c) => c.trim());
+  const sameKey = (a: Row, b: Row, key: string) => columnsOf(key).every((c) => a[c] === b[c]);
   const calls: Call[] = [];
   const failures: { match: (call: Call) => boolean; error: DbError; times: number }[] = [];
 
@@ -72,11 +84,10 @@ export function memoryAdmin(
     });
 
   function conflict(table: string, candidate: Row, except?: Row): DbError | null {
-    for (const column of UNIQUE[table] ?? []) {
-      const value = candidate[column];
-      if (value == null) continue;
-      if (rowsOf(table).some((r) => r !== except && r[column] === value)) {
-        return { code: '23505', message: `duplicate key value violates unique constraint "${table}_${column}_key"` };
+    for (const key of UNIQUE[table] ?? []) {
+      if (columnsOf(key).some((c) => candidate[c] == null)) continue;
+      if (rowsOf(table).some((r) => r !== except && sameKey(r, candidate, key))) {
+        return { code: '23505', message: `duplicate key value violates unique constraint "${table}_${key.replace(/,/g, '_')}_key"` };
       }
     }
     return null;
@@ -98,12 +109,15 @@ export function memoryAdmin(
 
     if (call.op === 'select') {
       let rows = table.filter((r) => matches(r, call.filters));
-      if (call.order) {
-        const { column, ascending } = call.order;
+      const orders = call.orders ?? (call.order ? [call.order] : []);
+      if (orders.length > 0) {
         rows = [...rows].sort((x, y) => {
-          const a = x[column] as string | number;
-          const b = y[column] as string | number;
-          return (a < b ? -1 : a > b ? 1 : 0) * (ascending ? 1 : -1);
+          for (const { column, ascending } of orders) {
+            const a = x[column] as string | number;
+            const b = y[column] as string | number;
+            if (a !== b) return (a < b ? -1 : 1) * (ascending ? 1 : -1);
+          }
+          return 0;
         });
       }
       if (call.limit !== undefined) rows = rows.slice(0, call.limit);
@@ -115,7 +129,7 @@ export function memoryAdmin(
       const onConflict = call.options?.onConflict as string | undefined;
       const written: Row[] = [];
       for (const value of values) {
-        const existing = onConflict ? table.find((r) => r[onConflict] === value[onConflict]) : undefined;
+        const existing = onConflict ? table.find((r) => sameKey(r, value, onConflict)) : undefined;
         if (call.op === 'upsert' && existing) {
           if (call.options?.ignoreDuplicates) continue;
           const merged = { ...existing, ...value };
@@ -169,7 +183,12 @@ export function memoryAdmin(
       lt: (column: string, value: unknown) => (call.filters.push(['lt', column, value]), chain),
       lte: (column: string, value: unknown) => (call.filters.push(['lte', column, value]), chain),
       gt: (column: string, value: unknown) => (call.filters.push(['gt', column, value]), chain),
-      order: (column: string, options?: { ascending?: boolean }) => ((call.order = { column, ascending: options?.ascending ?? true }), chain),
+      order: (column: string, options?: { ascending?: boolean }) => {
+        const order = { column, ascending: options?.ascending ?? true };
+        call.order ??= order;
+        (call.orders ??= []).push(order);
+        return chain;
+      },
       limit: (n: number) => ((call.limit = n), chain),
       maybeSingle: async () => execute(call, returning, true),
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) =>

@@ -33,6 +33,7 @@ import WorkOrderSafetyRoundsCard from './WorkOrderSafetyRoundsCard';
 import WorkOrderStagesCard from './WorkOrderStagesCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
 import WorkOrderPortalCustomerCard from './WorkOrderPortalCustomerCard';
+import WorkOrderPortalMessagesCard from './WorkOrderPortalMessagesCard';
 import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
@@ -1700,6 +1701,13 @@ export default function WorkOrderDetailClient({
               editingOverview ? 'lg:top-16 lg:max-h-[calc(100vh-5rem)]' : 'lg:top-4 lg:max-h-[calc(100vh-2rem)]',
             )}
           >
+
+            {/* Butiken — samtalet med återförsäljaren på en portalorder (fas 6). Överst i sidokolumnen, långt från de
+                interna kommentarerna: allt som skrivs här går till butiken. Kortet hämtar sin tråd själv; vem som får
+                svara avgör servern. */}
+            {portalJob ? (
+              <WorkOrderPortalMessagesCard workOrderId={workOrder.id} storeName={portalJob.storeName} canEdit={canEdit} />
+            ) : null}
 
             {/* ─── Kontakt & referens ────────────────────────────────────────
                 ETT kort, TVÅ tydligt åtskilda avsnitt.

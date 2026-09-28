@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–4b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–4b och 6 byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -159,7 +159,8 @@ Ren logik som testas isolerat:
 | `pricelist.ts` ✅, `pricelistPublish.ts` ✅ | Prislistans payload (ren: grundpriset, enheten med gemener, vad som hoppas över och varför, hashen, nyckeln) och publiceringen (källorna, sparandet, kön och ett första utskick). Sidans klient importerar bara typer ur dem |
 | `jobIntake.ts` ✅, `jobIntakeStore.ts` ✅, `jobBadge.ts` ✅ | Jobbets kropp (Zod), radmappningen och snapshoten (ren), och intaget mot databasen: butiken, jobbets rad, arbetsordern och, efter svaret, notiserna och Fortnox-ordern. Brickan på arbetsordern läses med sessionen |
 | `assignment.ts` ✅, `county.ts` ✅, `resellers.ts` ✅ | Fördelningen till en säljare (kedjan, behörighetskravet, stegen mot databasen), länet ur postnummer och ort via Nominatim, och butikerna och reserven på portalsidan |
-| `jobState.ts` | Portalens tillstånd härlett ur arbetsordern |
+| `jobState.ts` ✅ | Portalens tillstånd härlett ur arbetsordern |
+| `jobMessages.ts` ✅, `jobMessagesStore.ts` ✅ | Meddelandena (fas 6). Den rena delen (avdelningarna, `job.message`-kroppen och dess nyckel, tecken räknade som Postgres räknar dem) importeras av kortet "Butiken" och får aldrig dra in zod eller databasen. Intaget från portalen, notisen, svaret, trådens läsning och cron-sopningen ligger i `…Store.ts` |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
 gör bara om vid 429 och har ingen timeout.
@@ -202,7 +203,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
 | `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
 | `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner och `quote_id` (kolumngrant). Fas 4b ✅: markeringen `sync_requested_at`, det senast köade läget `sync_state`, `sync_pending_events`, `sync_version`, `synced_at` och Fortnox-omförsöken (`fortnox_next_attempt_at`, `fortnox_attempts`, `fortnox_retry_until`) |
-| `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
+| `crm_portal_job_messages` ✅ | `quote_id` (FK till jobbet), riktning (`from_store`/`to_store`), `message_id` (unik per riktning: portalens id eller vårt), författarens namn när det skrevs och `author_user_id` (svar), avdelning (svar), text, `sent_at`, härledd `outbound_key` (`job.message-<id>`), `queued_at` och `notified_at` (bara service_role). Sessionen läser trådens kolumner och lägger till svar i eget namn (kolumngrant + RLS), ändrar eller tar aldrig bort något. Skild från `crm_work_order_comments` |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
@@ -332,7 +333,9 @@ Byggt i fas 4b; beslut, prövning och det portalen behöver står i "Fas 4b: res
   - `completed` och `invoiced`: arbetsorderns status. `partially_invoiced` skickas inte.
 - I testmiljön finns ingen cron. Portalsidan får knappen "Skicka väntande nu".
 
-### Meddelanden
+### Meddelanden ✅
+
+Byggt i fas 6; beslut, prövning och det portalen behöver står i "Fas 6: resultat".
 
 Meddelandena ligger i en egen tabell och ett eget kort, "Butiken", på arbetsordern. De blandas aldrig
 med de interna kommentarerna (`crm_work_order_comments`), så att inget internt kan läcka till
@@ -358,7 +361,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **4a** ✅ | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen. Beteendet prövas mot en databas med `supabase/checks/work_order_planned_days.sql`. Resultaten står under tabellen | — |
 | **4b** ✅ | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem. Beteendet prövas mot en databas med `supabase/checks/portal_job_status.sql`. Resultaten står under tabellen | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
-| **6** | Meddelanden åt båda hållen och kortet "Butiken" | 4b |
+| **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
 | **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
@@ -768,6 +771,74 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
 **Till portalen** (rättelselistan, punkt 20–23): mottagaren `POST /api/ekovilla/events` med job.confirmed, job.scheduled
 (med `scheduledUntil` och `scheduledFor: null`), job.completed, job.invoiced och job.cancelled.
 
+### Fas 6: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Avdelningen väljs vid svaret**: Försäljning, Planering eller Ekonomi, förvalt Försäljning. Ingen roll motsvarar
+  Planering, så den kan inte härledas.
+- **Notisen när butiken skriver** går till arbetsorderns ansvarige nu, och till reserven när ordern saknar en:
+  "Meddelande från <butik>" och "<namn>: <början av meddelandet>", med länk till arbetsordern.
+- **Svara får den som har ordern och admin**, samma personer som får redigera arbetsordern och koppla kund. Ett skickat
+  svar är slutgiltigt, eftersom portalen sparar det en gång per `messageId`.
+- **Kortet "Butiken" sitter överst i sidokolumnen**, med "Syns för butiken". Tråden läses av alla som ser ordern
+  (säljare, admin, konsult och ekonomi i läsvyn). Svarsfältet visas bara för den som får svara, och fältvyn ser inget.
+- **Kantfallen:** okänt jobb 404, arbetsordern skapas just nu 503, borttagen arbetsorder 409. En avbruten, utförd eller
+  fakturerad order tar emot meddelanden som vanligt.
+
+**Egna val som William inte sa emot:**
+- Svarets `Idempotency-Key` är `job.message-<messageId>` (punkt 24). `messageId` är en uuid som klienten ger utkastet,
+  så att ett dubbelklick eller ett omförsök blir samma svar och inte två.
+- Svaret väntar på ett första utskick innan routen svarar: det sista försöket börjar inom 5 s, och resten tar cron.
+  Kön är per jobb, så ett svar kommer aldrig före en tidigare händelse för samma jobb.
+- Samma `messageId` med ett annat innehåll (text, namn, tid eller jobb) ger 409 `message_conflict`.
+- Namn och text trimmas och räknas i tecken som Postgres räknar dem, alltså kodpunkter: 5000 emoji går igenom.
+- Kortet läser om tråden varje minut medan fliken syns, och när fönstret får fokus.
+
+**Så fungerar det** (`20260928151026_portal_job_messages.sql`, `lib/domains/portal/{jobMessages,jobMessagesStore}.ts`,
+`app/api/portal/jobs/[quoteId]/messages`, `app/api/crm/portal/jobs/[workOrderId]/messages`,
+`WorkOrderPortalMessagesCard.tsx`):
+- **In:** grinden och svarscachen, Zod och kontrollen av nolltecken, sedan jobbet (finns det, och har det kvar sin
+  arbetsorder?). Meddelandet sparas en gång per `messageId` (unik per riktning). Notisen skickas efter svaret, en gång
+  (`notified_at`), också när ett nytt anrop för samma meddelande kommer efter en notis som föll.
+- **Ut:** sessionen sparar svaret. Insert-policyn släpper bara den som har ordern eller en admin med
+  `crm.workorder.write`, i eget namn och bara åt butiken. `sent_at` sätter databasen. Service-rollen köar kroppen byggd
+  ur den **sparade raden**, bokför `queued_at` och kör utskicket. Kortet läser svarens status med sessionen, genom en
+  läspolicy på kön för de svar sessionen själv ser.
+- **Cron** (`sweepPortalJobMessages`, före utskicket): ett svar som sparats men inte köats köas (äldre än en minut,
+  yngre än en vecka), och en notis som inte gick iväg görs om (äldre än två minuter, yngre än ett dygn).
+- **Skilt från de interna kommentarerna:** egen tabell, egna routes och eget kort. Ett vakttest kräver att ingen av
+  meddelandenas filer läser eller skriver `crm_work_order_comments`, och att ingen av kommentarernas filer rör
+  meddelandena. Kontrollen prövar att inget meddelande blev en kommentar.
+
+**Prövat:**
+- Migreringen i en tom tillfällig databas med stubbar, två körningar, och 15 mutationer av efterkontrollen. Varje
+  mutation stoppades av sitt eget meddelande. Lokalt kördes den två gånger i en transaktion som rullades tillbaka, och
+  sedan med `supabase migration up`.
+- `supabase/checks/portal_job_messages.sql` med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon), och
+  28 mutationer av databasen. Alla gav rött utom en, med flit: policyns `direction = 'to_store'` överlappar tabellens
+  check (butikens meddelande har ingen svarare). Tas båda bort blir kontrollen röd.
+- 55 mutationer av koden. Alla gav rött i vitest, med "Tests N".
+- Lokalt mot en fejkportal på :3101 som kontrollerar signaturen:
+  - Butikens meddelanden: 201. En upprepning med en ny nyckel gav samma rad och ingen ny notis, ett annat innehåll
+    gav 409 och ett okänt jobb 404.
+  - Notisen gick till den ansvarige, och till admin på den avbrutna ordern.
+- I webbläsaren (headless Playwright):
+  - Säljaren svarade med Planering, och fejkportalen fick en signerad `job.message` direkt.
+  - "Kom inte fram till butiken" när portalen nekade med 404.
+  - Någon annans order visade inget svarsfält.
+  - Ekonomi och konsult läste tråden utan svarsfält.
+  - Admin svarade på en avbruten order.
+  - Telefonbredd utan sidledsscroll.
+
+⚠️ **Lokalt kvar:**
+- Meddelanden och svar på q-lokal-3b-1, -3b-2 och -3b-3, och tre notiser.
+- Tre `job.message` i kön. Den för q-lokal-3b-3 är uppgiven, eftersom fejkportalen nekade den.
+
+**Till portalen** (rättelselistan, punkt 24–27): kontraktets `job.message`-nyckel, svaren på butikens meddelande, hur
+tecknen räknas, och att en avbruten order tar emot meddelanden. Vår kopia av kontraktet
+(`RESELLER_PORTAL_INTEGRATION_PLAN.md`) är synkad med portalens `CRM_INTEGRATION.md` @ `f2a7984` och är ordagrann.
+Punkterna 24–27 står därför bara här, tills portalen för in dem.
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -863,6 +934,27 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 23. **Tider och nycklar** (fas 4b): `occurredAt` och `confirmedAt` är ISO 8601 i UTC med `Z`; `completedAt` och
     `invoicedAt` är svenska kalenderdagar `YYYY-MM-DD`. Idempotency-Key är `<event>-<quoteId>-<occurredAt>`, alltså
     unik per händelse även när datumen går X → Y → X.
+24. **`job.message` från CRM:et** (fas 6): `messageId` är CRM:ets id, en uuid. `Idempotency-Key` är
+    `job.message-<messageId>` utan tidpunkt, eftersom id:t redan är unikt per meddelande och databasen härleder
+    nyckeln ur det. `occurredAt` och `sentAt` är samma tid, i UTC med `Z`. `department` är alltid `Försäljning`,
+    `Planering` eller `Ekonomi`, aldrig tom. `authorName` är svararens namn, eller "Ekovilla" när profilen saknar
+    namn. Ett svar ändras eller tas aldrig bort. Svaren ligger i jobbets kö (`job:<quoteId>`) och kommer efter jobbets
+    tidigare händelser.
+25. **Svaren på butikens meddelande** (fas 6):
+    - 201 `{ messageId }` när det är mottaget, också när samma `messageId` redan finns med samma innehåll.
+    - 400 `invalid_json`, `invalid_text` och `validation_error`, den sista med `details.issues`.
+    - 404 `unknown_job`.
+    - 409 `work_order_removed`.
+    - 409 `message_conflict` när samma `messageId` redan är mottaget med en annan text, ett annat namn, en annan
+      `sentAt` eller för ett annat jobb.
+    - 503 `job_not_ready` med `Retry-After: 30` medan jobbet tas emot.
+
+    Ett omförsök måste alltså skicka samma `sentAt`. Det gör portalen, eftersom kroppen byggs ur det sparade
+    meddelandet.
+26. **Namn och text trimmas** åt båda hållen och räknas i tecken som Postgres räknar dem: ett emoji är ett tecken.
+    Namnet får vara högst 200 tecken och texten högst 5000.
+27. **En avbruten, utförd eller fakturerad order tar emot meddelanden** (William 2026-09-28), på samma sätt som
+    portalen tar emot `job.message` efter `job.cancelled`.
 
 ## Öppna frågor
 
