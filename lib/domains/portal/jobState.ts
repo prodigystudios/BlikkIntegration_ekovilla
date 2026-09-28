@@ -93,6 +93,11 @@ function event(type: PortalJobEventType, quoteId: string, now: Date, data: Recor
   };
 }
 
+function isoOrNow(value: string | null, now: Date): string {
+  const at = value ? new Date(value) : null;
+  return at && !Number.isNaN(at.getTime()) ? at.toISOString() : now.toISOString();
+}
+
 const sameScheduled = (a: PortalJobSyncState['scheduled'], b: { for: string | null; until: string | null }) =>
   a !== undefined && a.for === b.for && a.until === b.until;
 
@@ -118,7 +123,8 @@ export function derivePortalJobEvents(input: DerivePortalJobInput): DerivePortal
     if (!workOrder.fortnoxOrderNumber) return done;
     const confirmed = event('job.confirmed', quoteId, now, {
       ekovillaOrderNumber: workOrder.fortnoxOrderNumber,
-      confirmedAt: workOrder.fortnoxOrderSyncedAt ?? now.toISOString(),
+      // Samma form som occurredAt (…Z): databasen skriver tiden som …+00:00.
+      confirmedAt: isoOrNow(workOrder.fortnoxOrderSyncedAt, now),
     });
     events.push(confirmed);
     state.confirmedKey = confirmed.idempotencyKey;

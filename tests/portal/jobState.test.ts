@@ -48,6 +48,13 @@ describe('derivePortalJobEvents: bekräftad', () => {
     expect(r.revisit).toBe(true);
   });
 
+  it('confirmedAt i samma form som occurredAt, också när databasen skriver +00:00; en trasig tid ger nu', () => {
+    const r = run({ workOrder: order({ fortnoxOrderNumber: '26', fortnoxOrderSyncedAt: '2026-09-28T09:29:30.779+00:00' }) });
+    expect(r.events[0].payload.data.confirmedAt).toBe('2026-09-28T09:29:30.779Z');
+    const broken = run({ workOrder: order({ fortnoxOrderNumber: '26', fortnoxOrderSyncedAt: 'x' }) });
+    expect(broken.events[0].payload.data.confirmedAt).toBe(NOW.toISOString());
+  });
+
   it('nyckeln har kontraktets form <event>-<id>-<tidpunkt>, och kroppen type/occurredAt/data', () => {
     const r = run({ workOrder: order({ fortnoxOrderNumber: '26' }) });
     expect(r.events[0].idempotencyKey).toBe('job.confirmed-q-1-2026-10-12T08:30:00.000Z');

@@ -75,6 +75,12 @@ describe('GET /api/reseller-portal/cron', () => {
     expect(h.cronCalls).toBe(0);
   });
 
+  it('🧨 routen cachar inga fetch-anrop (bara GET = "auto cache" i Next 14, också för supabase-js)', async () => {
+    const route = await import('@/app/api/reseller-portal/cron/route');
+    expect(route.fetchCache).toBe('force-no-store');
+    expect(route.dynamic).toBe('force-dynamic');
+  });
+
   it('utan CRON_SECRET: 503, ingenting körs', async () => {
     vi.stubEnv('CRON_SECRET', '');
     expect((await cron('Bearer ')).status).toBe(503);
