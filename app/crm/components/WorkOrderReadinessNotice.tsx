@@ -33,6 +33,8 @@ type Props = {
   onRecheck?: (() => void) | null;
   /** Sant medan omkontrollen pågår. */
   rechecking?: boolean;
+  /** Vad som väntar på uppgifterna, i rubriken. Kopplingen på en portalorder har ett eget steg (fas 3c). */
+  blockedAction?: string;
   className?: string;
 };
 
@@ -54,7 +56,7 @@ function IssueList({ issues, tone }: { issues: WorkOrderReadinessIssue[]; tone: 
   );
 }
 
-export default function WorkOrderReadinessNotice({ blockers, warnings, customerHref, onOpenCustomerCard, quoteHref, onRecheck, rechecking = false, className }: Props) {
+export default function WorkOrderReadinessNotice({ blockers, warnings, customerHref, onOpenCustomerCard, quoteHref, onRecheck, rechecking = false, blockedAction = 'innan arbetsordern kan skapas', className }: Props) {
   if (blockers.length === 0 && warnings.length === 0) return null;
 
   // Bara de länkar som någon av fynden faktiskt pekar på — en "Öppna kundkortet" bredvid ett fynd
@@ -67,7 +69,7 @@ export default function WorkOrderReadinessNotice({ blockers, warnings, customerH
       {blockers.length > 0 ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-3 text-rose-800">
           <p className="m-0 mb-1.5 text-xs font-semibold">
-            {blockers.length === 1 ? 'En uppgift saknas' : `${blockers.length} uppgifter saknas`} innan arbetsordern kan skapas
+            {blockers.length === 1 ? 'En uppgift saknas' : `${blockers.length} uppgifter saknas`} {blockedAction}
           </p>
           <IssueList issues={blockers} tone="blocker" />
           {(needsCustomerCard && (onOpenCustomerCard || customerHref)) || (needsQuote && quoteHref) || onRecheck ? (

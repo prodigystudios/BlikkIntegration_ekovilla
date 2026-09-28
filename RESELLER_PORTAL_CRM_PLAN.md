@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–3b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–3c byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -284,10 +284,9 @@ Varje kandidat måste fortfarande ha `crm.workorder.write`, annars prövas näst
   skapas utan kund, så butiken ser "Mottagen" tills kunden är kopplad.
 - `reverse_vat` skrivs **inte** i snapshoten. Snapshotens värde vinner annars över kundkortet för
   alltid (`resolveReverseVat` i `lib/domains/fortnox/helpers.ts`).
-- Ny route `POST /api/crm/portal/jobs/[id]/link-customer`, bara för portalordrar som inte finns i
-  Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar kopplingen i
-  `crm_portal_resellers` och skapar Fortnox-ordern. I dag går det inte att byta kund på en
-  arbetsorder, och Fortnox-pushen kastar utan kund.
+- ✅ `POST /api/crm/portal/jobs/[workOrderId]/link-customer` (fas 3c), bara för portalordrar utan kund som
+  inte finns i Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar
+  kopplingen i `crm_portal_resellers` och skapar Fortnox-ordern. Se "Fas 3c: resultat".
 
 ### Planerat datum (alla arbetsordrar)
 
@@ -353,7 +352,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **2b** ✅ | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera, historiken och "Skicka väntande nu". Beteendet prövas mot en databas med `supabase/checks/portal_pricelist.sql`. Resultaten står under tabellen | 0, 1b, 2a |
 | **3a** ✅ | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin (fliken "Butiker och säljare" på portalsidan). Beteendet prövas mot en databas med `supabase/checks/portal_resellers.sql`. Resultaten står under tabellen | 1b |
 | **3b** ✅ | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan. Beteendet prövas mot en databas med `supabase/checks/portal_jobs.sql`. Resultaten står under tabellen | 3a |
-| **3c** | Koppla kund på en portalorder utan kund | 3b |
+| **3c** ✅ | Koppla kund på en portalorder utan kund. Beteendet prövas mot en databas med `supabase/checks/portal_customer_link.sql`. Resultaten står under tabellen | 3b |
 | **4a** | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen | — |
 | **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
@@ -561,12 +560,50 @@ tas före utskicket och släpps om det misslyckas. En push som redan pågår ger
 `res-okopplad`), reserven (admin) och Fortnox-order 22 och 23 i testbolaget ligger kvar tills de tas bort.
 
 **Till senare faser:**
-- 3c: en portalorder utan kund kan inte nå Fortnox förrän kunden kopplas. Notisen säger vad som saknas, men det finns
-  ännu ingen väg att byta kund på arbetsordern. Kundkopplingen på butiken speglar i 3b vad kundnumret pekar på;
-  3c avgör hur en koppling för hand ska samsas med det.
+- ✅ 3c: kopplingen av kund, se nedan.
 - 4b: omförsöken av Fortnox-pushen, och en push som dog med processen (efter svaret men före Fortnox). Tills dess
   syns det som "Ej synkad" på arbetsordern och lagas med "Skicka till Fortnox".
 - Portalen läser `data.crmWorkOrderId` (appens kuvert, punkt 18 nedan).
+
+### Fas 3c: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Den som har ordern, eller en admin, kopplar**: samma som får redigera arbetsordern (RLS på `crm_work_orders`),
+  med `crm.workorder.write`.
+- **Kopplingen gäller butikens nästa jobb** när portalens nummer saknas eller inte finns i CRM:et. Ett nummer som finns
+  i CRM:et vinner alltid, och ersätter kopplingen.
+- **Saknar kortet något som kontrollen kräver nekas kopplingen** med listan, och ingenting sparas. Kopplingen och
+  Fortnox-ordern görs i ett steg, så en portalorder når aldrig Fortnox förbi kontrollen.
+- **Bara på arbetsordern.** Ett kort "Butiken är inte kopplad till någon kund" överst i översikten, med kundväljaren
+  från "Ny order" och knappen "Koppla och skicka till Fortnox".
+- **Butiken är kunden** (William): det är butiken Ekovilla fakturerar, och butiken fakturerar sin kund. Ett
+  privatkundskort nekas (422).
+
+**Så fungerar kopplingen** (`lib/domains/portal/linkCustomer.ts`):
+1. Sessionen läser ordern och kortet; service-rollen läser jobbet (sessionen ser bara brickans kolumner). En vanlig
+   order, en order som redan har kund eller finns i Fortnox, och ett kort som inte finns ger var sitt svar.
+2. Kortets del av snapshoten byts (namn, org.nr, kontakt och Er referens, adress, moms), och momsen och beloppet
+   räknas om. Märkningen, arbetsplatsen, kontakten på plats och det säljaren redigerat står kvar.
+3. Samma fullständighetskontroll som våra egna ordrar, på ordern som den blir. Saknas något: 409 med listan.
+4. Sessionen sparar ordern, bara om den fortfarande saknar kund och Fortnox-order. Noll rader betyder att någon hann
+   före (409) eller att sessionen inte får ändra ordern (403).
+5. Service-rollen sparar kunden på jobbet och kopplingen på butiken (`customer_linked_by/at`, ny migrering), och sedan
+   skapas Fortnox-ordern. Ett Fortnox-fel ändrar inte kopplingen; det sägs.
+
+**Intaget (3b) läser kopplingen:** ett nummer som finns i CRM:et ger det kortet och nollar kopplingen; annars får
+jobbet kortet som kopplats på butiken. Tas kortet bort nollas bara id:t, och butiken räknas som okopplad.
+
+**Prövat lokalt↔lokalt** (dev-servern på :3002, eftersom portalen körde på :3000 och :3001; en egen headless
+Chromium, så att Chrome-kakorna för portalen inte rördes):
+- säljaren, som inte hade ordern: kortet syns, kopplingen nekas med "Bara den som har ordern, eller en admin …";
+- admin med ett kort utan org.nr: listan "En uppgift saknas innan kunden kan kopplas", med länk till kundkortet;
+- admin med BRIX Sverige AB: kopplad, Fortnox-order 24, sidhuvudet visar kunden och "Fortnox: Synkad";
+- ett nytt jobb från samma butik, fortfarande utan nummer: fick BRIX direkt och blev Fortnox-order 25 utan att
+  någon gjorde något;
+- på telefonbredd ingen sidledsscroll, knappen i full bredd.
+
+⚠️ **Lokalt kvar:** portalordern `q-lokal-3c-1` (butiken `res-okopplad-2`, utan kund), `q-lokal-3c-2`, butiken
+`res-okopplad` kopplad till BRIX för hand, och Fortnox-order 24 och 25 i testbolaget.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad

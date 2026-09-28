@@ -241,6 +241,15 @@ export function buildPortalJobCustomerSnapshot(job: PortalJob, customer: JobCust
     };
   }
 
+  return { ...portalCustomerIdentity(customer), ...common };
+}
+
+/**
+ * Kundkortets del av snapshoten: vem kunden är, dess kontakt (Er referens) och adress, och momsen. Det är de fälten
+ * som byts när butikens kundkort kopplas i efterhand (fas 3c); märkningen, arbetsplatsen och kontakten på plats är
+ * jobbets och står kvar.
+ */
+export function portalCustomerIdentity(customer: JobCustomerCard): Record<string, unknown> {
   const isBusiness = customer.customer_type === 'business';
   const contact = resolveCrmContact(customer);
   const visit = customer.visit_address ?? {};
@@ -257,8 +266,38 @@ export function buildPortalJobCustomerSnapshot(job: PortalJob, customer: JobCust
     street_address: nonEmpty(visit.street) ?? nonEmpty(visit.street_address),
     postal_code: nonEmpty(visit.postal_code),
     city: nonEmpty(visit.city),
-    ...common,
     reverse_vat: customer.reverse_vat === true,
+  };
+}
+
+/** Det ur arbetsordern som kopplingen räknar om. */
+export type LinkableWorkOrder = {
+  customer_snapshot: Record<string, unknown> | null;
+  line_items: Array<Record<string, unknown>> | null;
+  rot_details: Record<string, unknown> | null;
+};
+
+/**
+ * Butikens kundkort kopplas på en portalorder utan kund (fas 3c): kunden, kortets del av snapshoten och momsen, och
+ * därmed beloppet. Butiken är kunden: det är butiken Ekovilla fakturerar (William 2026-09-28). Raderna och resten av
+ * snapshoten (märkningen, arbetsplatsen, kontakten på plats, det säljaren redigerat) står kvar.
+ */
+export function buildPortalCustomerLinkUpdate(workOrder: LinkableWorkOrder, customer: JobCustomerCard): Record<string, unknown> {
+  const vatPercent = customer.reverse_vat === true ? 0 : 25;
+  // Avskrivna rader räknas inte, samma regel som när artiklarna sparas (saveWorkOrderLineItems).
+  const active = (workOrder.line_items ?? []).filter((item) => !item.written_off) as PortalWorkOrderLine[];
+  const pricing = computePricing(active, vatPercent, {
+    isPrivate: customer.customer_type === 'private',
+    rot: (workOrder.rot_details ?? null) as { enabled?: boolean | null } | null,
+  });
+  return {
+    customer_id: customer.id,
+    client_name: getCrmCustomerDisplayName(customer),
+    quote_type: customer.customer_type === 'private' ? 'private' : 'business',
+    customer_snapshot: { ...(workOrder.customer_snapshot ?? {}), ...portalCustomerIdentity(customer) },
+    vat_percent: vatPercent,
+    pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
+    amount: pricing.total,
   };
 }
 
