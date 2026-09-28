@@ -57,6 +57,21 @@ describe('planerat datum: schemats regel (SQL)', () => {
     expect(sync?.body).toContain('and not s.on_hold');
   });
 
+  it('ett kort som byter order låser båda ordrarna i id-ordning', () => {
+    // Annars låser två motsatta byten (A→B och B→A) varandra.
+    expect(sync?.body).toContain('select array_agg(x order by x) into ids');
+  });
+
+  it('migreringen låser korten före ordern, i ett do-block', () => {
+    // Ett kort som läggs under pushen håller ops_segments och väntar på ordern; tog migreringen ordern först hade de
+    // låst varandra. supabase db push kör filen utan transaktionsblock, och där vägrar LOCK TABLE på toppnivå.
+    const mig = chain.find((c) => c.file.startsWith('20260928122049_'))?.sql ?? '';
+    const lock = mig.indexOf('do $$ begin lock table public.ops_segments in share row exclusive mode; end $$;');
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(lock).toBeLessThan(mig.indexOf('alter table public.crm_work_orders'));
+    expect(mig).not.toMatch(/(^|; )lock table/);
+  });
+
   it('synken skriver bara när datumen faktiskt ändras', () => {
     expect(sync?.body).toContain(
       'and (w.planned_start_day is distinct from first_day or w.planned_end_day is distinct from last_day)',

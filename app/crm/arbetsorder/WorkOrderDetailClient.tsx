@@ -983,6 +983,10 @@ export default function WorkOrderDetailClient({
     </div>
   );
   const plannedDays = formatDayRange(workOrder.planned_start_day, workOrder.planned_end_day);
+  // Samma utskrift i läs- och redigeringsläget.
+  const plannedValue = plannedDays
+    ? <span className="text-sm text-slate-800">{plannedDays}</span>
+    : <span className={crm.emptyValue}>Ej inplanerad</span>;
 
   return (
     <div className="grid grid-cols-1 gap-6 pb-10">
@@ -1256,7 +1260,7 @@ export default function WorkOrderDetailClient({
                   <div className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Planerad</span>
                     <div className="flex h-11 flex-col justify-center">
-                      {plannedDays ? <span className="text-sm text-slate-800">{plannedDays}</span> : <span className={crm.emptyValue}>Ej inplanerad</span>}
+                      {plannedValue}
                       <span className="text-[11px] leading-snug text-slate-500">Följer korten i planeringen</span>
                     </div>
                   </div>
@@ -1273,7 +1277,7 @@ export default function WorkOrderDetailClient({
                       Första och sista dagen bland korten som inte är pausade; skrivs bara av databasen. */}
                   <div className="grid gap-0.5 md:col-start-2">
                     <span className={crm.sectionTitle}>Planerad</span>
-                    {plannedDays ? <span className="text-sm text-slate-800">{plannedDays}</span> : <span className={crm.emptyValue}>Ej inplanerad</span>}
+                    {plannedValue}
                   </div>
                   {/* Adressen skrevs ut TVÅ gånger i läsläget — en gång som kartlänk och en gång
                       som "Gatuadress"-fält, tecken för tecken samma sträng. Kvar står EN utskrift,

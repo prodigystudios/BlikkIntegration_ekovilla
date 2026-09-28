@@ -49,7 +49,13 @@
 -- authenticated läser crm_work_orders med en grant på tabellnivå, som omfattar de nya kolumnerna. Inga nya grants.
 --
 -- Additiv: två nya kolumner, två nya triggrar, och set_timestamp_crm_work_orders som bara skiljer sig när planned_*
--- ändrats (vilket ingen kod gör). Kan gå till prod före koden. Idempotent, kan köras om.
+-- ändrats (vilket ingen kod gör). MÅSTE till prod FÖRE koden: koden läser kolumnerna. Idempotent, kan köras om.
+
+-- Korten först, sedan ordern: ett kort som läggs under pushen håller ops_segments och väntar på ordern
+-- (FK-kontrollen). Tog migreringen ordern först och korten sist (create trigger) hade de låst varandra.
+-- I ett do-block: supabase db push kör filen utan transaktionsblock, och där vägrar LOCK TABLE (prövat).
+-- Låset hålls ändå till slutet; filen körs som en enda transaktion.
+do $$ begin lock table public.ops_segments in share row exclusive mode; end $$;
 
 alter table public.crm_work_orders add column if not exists planned_start_day date;
 alter table public.crm_work_orders add column if not exists planned_end_day date;
@@ -150,8 +156,10 @@ begin
   elsif old.work_order_id is not distinct from new.work_order_id then
     ids := array[new.work_order_id];
   else
-    -- Kortet bytte order: båda räknas om.
-    ids := array[old.work_order_id, new.work_order_id];
+    -- Kortet bytte order: båda räknas om, låsta i id-ordning så att två motsatta byten inte låser varandra.
+    select array_agg(x order by x) into ids
+      from unnest(array[old.work_order_id, new.work_order_id]) as x
+     where x is not null;
   end if;
 
   foreach wo in array ids loop

@@ -36,7 +36,12 @@ describe('formatDayRange', () => {
     expect(formatDayRange('2026-10-14', '2026-10-12')).toBe('14 okt. 2026');
   });
 
-  it('ett ogiltigt datum ger null, inte "Invalid Date"', () => {
+  it('en ogiltig startdag ger null, inte "Invalid Date"', () => {
     expect(formatDayRange('x', 'y')).toBeNull();
+    expect(formatDayRange('x', '2026-10-12')).toBeNull();
+  });
+
+  it('en ogiltig slutdag ger startdagen, som en saknad', () => {
+    expect(formatDayRange('2026-10-12', 'x')).toBe('12 okt. 2026');
   });
 });
