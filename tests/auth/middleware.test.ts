@@ -86,6 +86,19 @@ describe('middleware och sessionskakorna', () => {
     expect(res.headers.get('x-middleware-override-headers')).toBeNull();
   });
 
+  it('släpper återförsäljarportalens routes utan session — routen prövar signaturen själv', async () => {
+    const res = await middleware(new NextRequest('http://localhost/api/portal/ping', { method: 'POST' }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it('🧨 släpper bara prefixet /api/portal/ — en liknande sökväg kräver fortfarande session', async () => {
+    for (const path of ['/api/portal', '/api/portalen/x', '/api/crm/portal/settings']) {
+      const res = await middleware(request(path));
+      expect(res.status, path).toBe(401);
+    }
+  });
+
   it('låter kakorna följa med när en inloggad skickas bort från inloggningssidan', async () => {
     h.refreshed = [{ name: TOKEN, value: 'base64-new', options: { path: '/' } }];
     h.session = { access_token: 'new' };

@@ -172,8 +172,12 @@ gör bara om vid 429 och har ingen timeout.
   routen: `runtime = 'nodejs'`, `req.text()` först, sedan `JSON.parse` och Zod `safeParse`.
 - **Allt som kräver session ligger under `/api/crm/portal/`**: inställningar, publicering, svar till
   butiken, koppla kund och "skicka väntande nu". Då kan prefixet aldrig göra en sessionsroute publik.
-- Ett vitest-vakttest går igenom `app/api/portal/**/route.ts` och kräver signatur- eller cronkontroll
-  i varje route.
+- Ett vitest-vakttest (`tests/portal/routeGuards.test.ts`) går igenom VARJE route i `app/`, räknar ut
+  adressen (genom routegrupper och catch-all) och kräver för allt under `/api/portal/` att varje handler
+  börjar med grinden, importerad från `app/api/portal/_shared.ts`, och använder svaret.
+- ⚠️ Grinden stoppar inte ett anrop som spelas upp igen inom 300 sekunder, eftersom signaturen är
+  densamma. **Varje route som ändrar något går därför genom svarscachen** (`claimIdempotencyKey`)
+  och sin affärsnyckel, så att ett upprepat anrop inte gör något nytt.
 - Mall för en tunn route: `app/api/crm/planering/material-orders/[id]/send/route.ts`. Domänanropet
   returnerar en diskriminerad union som routen översätter med `ok`/`routeError` ur
   `lib/api/responses.ts`.
@@ -342,7 +346,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **0** ✅ | Skriptet som lägger lista 160 i testbolaget. Spikar mot testbolaget: svarar `GET /3/prices/sublist/160` utan artikelnummer, och hur ser `FromQuantity` ut? Vad ger Nominatim för ISO-fält? Resultaten står under tabellen | — |
 | **1a** ✅ | `signature.ts` och `config.ts`, rena, med kontraktets exempel som fixturer | — |
 | **1b** ✅ | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts`. Ett 401 från portalen görs om med backoff, som 5xx (punkt 15). Köns beteende prövas mot en databas med `supabase/checks/portal_outbox.sql` (bara lokalt, rullar tillbaka) | 1a |
-| **1c** | Undantaget i middleware, signerad `ping`, vakttestet för `app/api/portal/**` | 1a |
+| **1c** ✅ | Undantaget i middleware (prefixet `/api/portal/`), signerad `POST /api/portal/ping`, grinden `verifyPortalRequest` i `app/api/portal/_shared.ts`, och vakttestet `tests/portal/routeGuards.test.ts`: varje handler under prefixet måste BÖRJA med grinden och använda svaret | 1a |
 | **2a** | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`) | — |
 | **2b** | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera | 0, 1b, 2a |
 | **3a** | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin | 1b |
@@ -447,6 +451,10 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     varje händelse för gott medan hemligheten byts, eftersom den byts i en app i taget, eller om en
     klocka går fel mer än 300 sekunder. Andra 4xx ges fortfarande upp. Byt hemligheten i båda apparna
     i samma stund, en lugn stund.
+16. **Sökvägarna har bara tecken som aldrig procentkodas:** A–Z, a–z, 0–9 och `- _ . ~`. Det gäller
+    alltså också id:n i sökvägen (`quoteId`, `orderId`, `messageId`). Då är sökvägen samma för
+    avsändaren och mottagaren, och ingen server på vägen kan koda om den och få signaturen att falla.
+    CRM:et svarar 400 på andra tecken. (Granskningen av fas 1c, 2026-09-28.)
 
 ## Öppna frågor
 
