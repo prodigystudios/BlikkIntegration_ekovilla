@@ -169,9 +169,10 @@ export default function ResellerPortalClient({ today, integration, preview, publ
         </div>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]">
+      {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut korten i mobil. */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]">
         {/* Förhandsvisningen: det som skickas */}
-        <section className={`${CARD} order-2 xl:order-1`} aria-labelledby="pricelist-preview-heading">
+        <section className={`${CARD} order-2 min-w-0 xl:order-1`} aria-labelledby="pricelist-preview-heading">
           <h2 id="pricelist-preview-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
             Förhandsvisning
           </h2>
@@ -285,7 +286,7 @@ export default function ResellerPortalClient({ today, integration, preview, publ
           )}
         </section>
 
-        <div className="order-1 grid content-start gap-6 xl:order-2">
+        <div className="order-1 grid min-w-0 grid-cols-1 content-start gap-6 xl:order-2">
           {/* Publicera */}
           <section className={CARD} aria-labelledby="pricelist-publish-heading">
             <h2 id="pricelist-publish-heading" className="m-0 mb-1 text-base font-bold text-slate-900">

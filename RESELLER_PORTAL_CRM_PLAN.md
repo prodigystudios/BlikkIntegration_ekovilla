@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–2a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–2b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -156,7 +156,7 @@ Ren logik som testas isolerat:
 | `client.ts` | Signerat anrop med `AbortSignal.timeout`, svaret klassat som 2xx, 4xx eller 5xx/timeout |
 | `outbox.ts`, `idempotency.ts` | Utgående kö och inkommande svarscache |
 | `articleFields.ts` ✅, `articleFieldsStore.ts` ✅ | Portalfälten per artikel. Den rena delen (kategorierna, arbetsandelen i procent, `portalPublishBlockers`) importeras av artikelsidans kort och får aldrig dra in zod eller databasklienten. Zod-schemat och läsningarna och skrivningarna ligger i `…Store.ts` |
-| `pricelist.ts` | Prislistans payload |
+| `pricelist.ts` ✅, `pricelistPublish.ts` ✅ | Prislistans payload (ren: grundpriset, enheten med gemener, vad som hoppas över och varför, hashen, nyckeln) och publiceringen (källorna, sparandet, kön och ett första utskick). Sidans klient importerar bara typer ur dem |
 | `jobIntake.ts` | Radmappning och snapshot för jobben |
 | `assignment.ts`, `county.ts` | Fördelningen till en säljare |
 | `jobState.ts` | Portalens tillstånd härlett ur arbetsordern |
@@ -200,7 +200,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_jobs` | `quote_id` (unik), `quote_number`, `reseller_id`, `work_order_id` (unik, `on delete set null`), kroppen, senast skickade tillstånd, och en markering "behöver synkas" |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
-| `crm_portal_pricelist_publications` | Varje publicering: giltig från, hash, kroppen, vem och när |
+| `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert, aldrig update eller delete. En tom lista kan inte sparas |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
 
 **Kön** hämtas med en RPC som använder `for update skip locked` och bara kan köras av service_role.
@@ -209,7 +209,7 @@ ordning, och en ny `job.scheduled` ersätter äldre väntande för samma jobb. K
 försök, eftersom signaturen bara gäller i 300 sekunder. PDF:er ligger i kön som referens, inte som
 base64.
 
-**Behörigheten:** en ny nyckel `crm.portal.manage` (admin) för portalens inställningssida, enligt
+**Behörigheten ✅ (fas 2b):** en ny nyckel `crm.portal.manage` (admin) för portalens inställningssida, enligt
 mallen `supabase/migrations/20260926122102_rbac_app_staff_key.sql`. `PERMISSION_KEYS` i
 `lib/auth/permissions.ts` får nyckeln, och `tests/auth/permissions.test.ts` räknar 60 i stället för 59.
 Artikelfälten redigeras under den befintliga `crm.article.manage`.
@@ -349,7 +349,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **1b** ✅ | Migreringen för idempotens, kö och kö-RPC (bara service_role). `idempotency.ts`, `outbox.ts`, `client.ts`. Ett 401 från portalen görs om med backoff, som 5xx (punkt 15). Köns beteende prövas mot en databas med `supabase/checks/portal_outbox.sql` (bara lokalt, rullar tillbaka) | 1a |
 | **1c** ✅ | Undantaget i middleware (prefixet `/api/portal/`), signerad `POST /api/portal/ping`, grinden `verifyPortalRequest` i `app/api/portal/_shared.ts`, och vakttestet `tests/portal/routeGuards.test.ts`: varje handler under prefixet måste BÖRJA med grinden och använda svaret | 1a |
 | **2a** ✅ | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`): eget kort med eget Spara (`PUT /api/crm/portal/article-fields/[articleNumber]`), kolumnen "Portal" och ett filter i listan. Beteendet prövas mot en databas med `supabase/checks/portal_article_fields.sql`. Resultaten står under tabellen | — |
-| **2b** | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera | 0, 1b, 2a |
+| **2b** ✅ | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera, historiken och "Skicka väntande nu". Beteendet prövas mot en databas med `supabase/checks/portal_pricelist.sql`. Resultaten står under tabellen | 0, 1b, 2a |
 | **3a** | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin | 1b |
 | **3b** | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan | 3a |
 | **3c** | Koppla kund på en portalorder utan kund | 3b |
@@ -421,6 +421,41 @@ de går att se och avmarkera. Tabellens policyer frågar bara efter `crm.article
 `crm.portal.manage` får en egen läspolicy i sin migrering. `numeric(4,3)` avrundar en fjärde decimal
 utan att säga något, och därför nekar appen fler än tre decimaler innan värdet når databasen.
 
+### Fas 2b: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Sidan ligger under CRM → Inställningar** (`/crm/installningar/aterforsaljarportalen`), bredvid
+  Artiklar och Enheter, med nyckeln `crm.portal.manage`. Butik → säljare, reservadmin och uppgivna
+  händelser (3a, 4b) hamnar på samma sida.
+- **Giltig från är i dag eller senare.** Förvalet är i dag (svensk dag). Ett datum bakåt nekas både
+  på sidan och i routen.
+- **Publicera är avstängd där integrationen är av**, alltså i prod tills hemligheten sätts. Då köas
+  ingenting som skulle gå iväg den dag integrationen slås på. Förhandsvisningen fungerar ändå.
+
+**Så fungerar publiceringen:**
+- Servern bygger om listan ur källorna och jämför hashen med förhandsvisningen. Har något ändrats
+  svarar den 409 och sparar ingenting.
+- Publiceringen sparas med sessionen, händelsen köas med service-rollen, och ett första utskick görs
+  direkt (högst 5 händelser och 15 s).
+- Samma innehåll med samma datum ger samma nyckel. Då blir det ingen ny rad och ingen ny händelse,
+  och portalen får inget nytt anrop.
+- Det som inte går fram ligger kvar i kön. "Skicka väntande nu" skickar det som är dags, och en
+  händelse som misslyckats görs om tidigast efter 30 s. Cron-utskicket kommer i 4b.
+
+**Prövat mot en fejkportal på :3101**, som kontrollerar signaturen enligt punkt 14:
+- 51 artiklar gick fram med enheten med gemener och kontraktets fält;
+- en andra publicering av samma lista gav inget nytt anrop;
+- 503 gav "Väntar, försöker igen" med felet, och sedan "Mottagen" efter "Skicka väntande nu";
+- säljaren fick 403 på båda routerna och skickades bort från sidan.
+
+⚠️ **Lokala provpubliceringar tas bort efteråt**, både publiceringen och händelsen med
+`ordering_key = 'pricelist'`. Ligger de kvar räknas en publicering med samma innehåll och datum mot
+den riktiga lokala portalen som "redan publicerad", och ingenting skickas.
+
+**Till senare faser:**
+- En nekad publicering (4xx) går inte att skicka om. Det gör uppgivna händelser i 4b.
+- Portalen har ingen mottagare än (`/api/ekovilla/pricelists`), se punkt 17 nedan.
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -481,6 +516,13 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     avsändaren och mottagaren, och ingen server på vägen kan koda om den och få signaturen att falla.
     CRM:et svarar 400 på andra tecken. (Granskningen av fas 1c, 2026-09-28.)
 
+17. **Portalens mottagare för prislistan** (fas 2b, 2026-09-28) finns inte än. CRM:et skickar
+    `POST /api/ekovilla/pricelists` med kontraktets kropp och `Idempotency-Key:
+    pricelist-<validFrom>-<sha256>`. Hashen är sha256 i hex över artiklarna som JSON med sorterade
+    nycklar. CRM:et räknar 2xx som mottaget och gör om 5xx och 401. Övriga 4xx ges upp och visas på
+    sidan. Två publiceringar samma dag med olika innehåll ger två listor med samma `validFrom`, och
+    portalen behöver då använda den senast mottagna.
+
 ## Öppna frågor
 
 Ingen av dem stoppar fas 0–6.
@@ -511,7 +553,7 @@ Ingen av dem stoppar fas 0–6.
 - Kön: 5xx och timeout görs om, 4xx ger upp, tre snabba flyttar blir en händelse.
 
 **Lokalt↔lokalt:**
-- Publicera prislistan två gånger: samma nyckel, samma svar.
+- ✅ Publicera prislistan två gånger: samma nyckel, samma svar (mot fejkportalen, fas 2b).
 - Samma jobb från portalen två gånger ger en arbetsorder och en Fortnox-order. Samma `quoteId` med en
   ny nyckel ger den befintliga.
 - Ett jobb från portalen blir "Bekräftad" utan att någon hos Ekovilla gör något. Ett kort i
