@@ -1,7 +1,7 @@
 -- Beteendet hos meddelandenas migrering (20260928151026_portal_job_messages.sql), prövat mot en databas.
 --
 -- BARA LOKALT. Skriptet lägger in en provbutik, tre provordrar med jobb och butikens meddelanden, prövar läsning, svar
--- och köns läspolicy med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon) och rullar sedan tillbaka
+-- och svarsregeln med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon) och rullar sedan tillbaka
 -- allt. Ett fel avbryter med ett meddelande som säger vad som inte stämde. Kräver seedens testanvändare
 -- (<roll>@example.test).
 --
@@ -45,9 +45,6 @@ begin
   values ('check-6-1', 'from_store', 'check-6-in-1', 'Sara Ek', 'Hej från Gävle', now() - interval '1 hour'),
          ('check-6-2', 'from_store', 'check-6-in-2', 'Sara Ek', 'Och den andra', now() - interval '1 hour'),
          ('check-6-3', 'from_store', 'check-6-in-3', 'Sara Ek', 'Och den tredje', now() - interval '1 hour');
-  -- En händelse i kön som inte hör till något svar (prislistan): sessionen ska aldrig se den via svarens policy.
-  insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key)
-  values ('check-6-pricelist', '/api/ekovilla/pricelists', '{}', 'pricelist');
   reset role;
 
   -- 1. De som läser arbetsordrar kontorsvägen (crm.workorder.read) läser tråden på alla tre, men aldrig markeringarna,
@@ -68,6 +65,11 @@ begin
     exception when insufficient_privilege then null;
     end;
     begin
+      perform notify_claimed_at from public.crm_portal_job_messages where quote_id = 'check-6-1';
+      raise exception '%: kunde läsa notify_claimed_at', who;
+    exception when insufficient_privilege then null;
+    end;
+    begin
       update public.crm_portal_job_messages set body = 'Kapad' where quote_id = 'check-6-1';
       raise exception '%: kunde ändra ett meddelande', who;
     exception when insufficient_privilege then null;
@@ -77,11 +79,6 @@ begin
       raise exception '%: kunde ta bort ett meddelande', who;
     exception when insufficient_privilege then null;
     end;
-    -- Köns läspolicy för svaren släpper aldrig igenom något annat (admin ser allt genom 2b:s crm.portal.manage).
-    if who <> admin_id then
-      select count(*) into n from public.portal_outbound_events where idempotency_key = 'check-6-pricelist';
-      if n <> 0 then raise exception '%: ser prislistans händelse i kön', who; end if;
-    end if;
     reset role;
   end loop;
 
@@ -174,22 +171,49 @@ begin
   end;
   reset role;
 
-  -- 5. Köns rad för svaret (som enqueuePortalEvent lägger den): de som ser svaret ser den, montören inte.
+  -- 5. Köns rad för svaret (som enqueuePortalEvent lägger den) är stängd för sessionen: kortet får statusen av
+  --    servern. Bara admin ser den, genom portalsidans policy (crm.portal.manage).
   set local role service_role;
   insert into public.portal_outbound_events (idempotency_key, path, payload, ordering_key)
   values (reply_key, '/api/ekovilla/events', '{}', 'job:check-6-1');
   reset role;
-  foreach who in array array[seller_id, konsult_id, ekonomi_id] loop
+  foreach who in array array[seller_id, konsult_id, ekonomi_id, montor_id] loop
     perform set_config('request.jwt.claims', json_build_object('sub', who, 'role', 'authenticated')::text, true);
     set local role authenticated;
     select count(*) into n from public.portal_outbound_events where idempotency_key = reply_key;
-    if n <> 1 then raise exception '%: ser inte svarets rad i kön', who; end if;
+    if n <> 0 then raise exception '%: ser svarets rad i kön', who; end if;
     reset role;
   end loop;
-  perform set_config('request.jwt.claims', json_build_object('sub', montor_id, 'role', 'authenticated')::text, true);
-  set local role authenticated;
-  select count(*) into n from public.portal_outbound_events where idempotency_key in (reply_key, 'check-6-pricelist');
-  if n <> 0 then raise exception 'montör: ser köns rader för en annans order'; end if;
+
+  -- 5b. Svarsregeln (som kortet frågar och svarspolicyn använder) ger samma svar som svaren nedan.
+  foreach who in array array[admin_id, seller_id, konsult_id, ekonomi_id, montor_id] loop
+    perform set_config('request.jwt.claims', json_build_object('sub', who, 'role', 'authenticated')::text, true);
+    set local role authenticated;
+    if public.crm_portal_job_message_can_reply('check-6-1') is distinct from (who in (admin_id, seller_id)) then
+      raise exception '%: svarsregeln fel för sin egen order eller som admin', who;
+    end if;
+    if public.crm_portal_job_message_can_reply('check-6-2') is distinct from (who = admin_id) then
+      raise exception '%: svarsregeln fel för admins order', who;
+    end if;
+    -- Montörens egen order: ansvarig men utan skrivnyckeln, så bara admin.
+    if public.crm_portal_job_message_can_reply('check-6-3') is distinct from (who = admin_id) then
+      raise exception '%: svarsregeln fel för montörens order', who;
+    end if;
+    if public.crm_portal_job_message_can_reply('check-6-okand') then
+      raise exception '%: svarsregeln släpper igenom ett okänt jobb', who;
+    end if;
+    reset role;
+  end loop;
+  set local role anon;
+  begin
+    perform public.crm_portal_job_message_can_reply('check-6-1');
+    raise exception 'anon: kunde köra svarsregeln';
+  exception when insufficient_privilege then
+    -- Nejet ska gälla funktionen själv, inte en tabell den läser: det senare hade betytt att anon får köra den.
+    if sqlerrm not like '%function crm_portal_job_message_can_reply%' then
+      raise exception 'anon: kunde köra svarsregeln (%)', sqlerrm;
+    end if;
+  end;
   reset role;
 
   -- 6. Admin får svara på en order hen inte har; konsult och ekonomi (ingen skrivnyckel) får aldrig, och inte heller
@@ -260,6 +284,12 @@ begin
   exception when check_violation then null;
   end;
   begin
+    insert into public.crm_portal_job_messages (quote_id, direction, message_id, author_name, author_user_id, department, body, notify_claimed_at)
+    values ('check-6-1', 'to_store', 'check-6-d5', 'X', seller_id, 'Försäljning', 'Hej', now());
+    raise exception 'ett svar fick ett lån på en notis';
+  exception when check_violation then null;
+  end;
+  begin
     insert into public.crm_portal_job_messages (quote_id, direction, message_id, author_name, body)
     values ('check-6-1', 'from_store', 'check-6-c3', 'Sara Ek', e'  \n\t ');
     raise exception 'ett tomt meddelande gick att spara';
@@ -296,13 +326,15 @@ begin
   insert into public.crm_portal_job_messages (quote_id, direction, message_id, author_name, body)
   values ('check-6-1', 'from_store', 'check-6-out-1', 'Sara Ek', 'Samma id som svaret');
 
-  -- Notisen tas en gång.
-  update public.crm_portal_job_messages set notified_at = now() where message_id = 'check-6-in-1' and notified_at is null;
+  -- Lånet på notisen tas en gång (som claimNotice gör det).
+  update public.crm_portal_job_messages set notify_claimed_at = now()
+   where message_id = 'check-6-in-1' and notified_at is null and notify_claimed_at is null;
   get diagnostics n = row_count;
-  if n <> 1 then raise exception 'service_role: notisen gick inte att ta'; end if;
-  update public.crm_portal_job_messages set notified_at = now() where message_id = 'check-6-in-1' and notified_at is null;
+  if n <> 1 then raise exception 'service_role: lånet på notisen gick inte att ta'; end if;
+  update public.crm_portal_job_messages set notify_claimed_at = now()
+   where message_id = 'check-6-in-1' and notified_at is null and notify_claimed_at is null;
   get diagnostics n = row_count;
-  if n <> 0 then raise exception 'service_role: notisen togs två gånger'; end if;
+  if n <> 0 then raise exception 'service_role: lånet på notisen togs två gånger'; end if;
   reset role;
 
   -- 8. Inget av det här blev en intern kommentar.

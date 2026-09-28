@@ -19,21 +19,25 @@
 --   sent_at        butikens sentAt, eller databasens tid för ett svar (sessionen kan inte sätta den).
 --   outbound_key   Idempotency-Key för svarets job.message i kön (härledd, så att den alltid stämmer med raden).
 --   queued_at      svaret är köat. Ett svar som sparats men inte köats (processen dog emellan) köas av cron.
---   notified_at    notisen om butikens meddelande är skickad; den som sätter tiden (där den var null) skickar.
+--   notify_claimed_at  lånet på notisen om butikens meddelande: den som tar det (där det saknas eller gått ut efter
+--                  fem minuter) skickar. Dör processen innan notisen gått iväg går lånet ut, och cron gör om den.
+--   notified_at    notisen är skickad. Sätts först EFTER utskicket: hellre en notis för mycket än en som tappas.
 --
 -- ÅTKOMST (William 2026-09-28)
 --   läsa    alla som ser arbetsordern kontorsvägen: crm.workorder.read (säljare, admin, konsult, ekonomi), eller
 --           ansvarig för ordern. Samma två vägar som crm_portal_jobs. Besättningen (fältvyn) ser ingenting.
 --   svara   den som har ordern, eller en admin, med crm.workorder.write: samma som får redigera arbetsordern och
---           koppla kund (fas 3c). Bara i eget namn, och bara to_store.
+--           koppla kund (fas 3c). Bara i eget namn, och bara to_store. Regeln står EN gång, i
+--           crm_portal_job_message_can_reply(): policyn använder den, och kortet frågar den om svarsfältet ska visas.
 --   ändra   ingen. Portalen sparar ett meddelande en gång per messageId, så ett skickat svar är slutgiltigt.
--- Sessionens läsning och insert går genom kolumngrants; notified_at och queued_at är bara service-rollens.
--- Kön (portal_outbound_events) får en läspolicy till: raderna för svar som sessionen själv ser, så att kortet kan visa
--- om svaret kommit fram. Default privileges är stängda sedan 20260926134651; varje grant står här.
+-- Sessionens läsning och insert går genom kolumngrants; markeringarna (queued_at, notify_claimed_at, notified_at) är
+-- bara service-rollens. Kön (portal_outbound_events) får ingen ny policy: kortet får svarens status av servern, som
+-- läser just status för de svar sessionen själv kunde läsa. Default privileges är stängda sedan 20260926134651; varje
+-- grant står här.
 --
--- Additiv: en ny tabell och en ny policy på kön, inget befintligt ändras. Kan gå till prod före koden. Idempotent.
--- Låsen: FK:n tar crm_portal_jobs i share row exclusive (fas 4b:s trigger skriver där när en portalorder ändras), och
--- policyn tar kön i access exclusive. Ingen transaktion tar båda, så ordningen kan inte ge deadlock.
+-- Additiv: en ny tabell och en ny funktion, inget befintligt ändras. Kan gå till prod före koden. Idempotent.
+-- Låset: FK:n tar crm_portal_jobs i share row exclusive (fas 4b:s trigger skriver där när en portalorder ändras), en
+-- kort stund medan den nya, tomma tabellen skapas.
 
 create table if not exists public.crm_portal_job_messages (
   id uuid primary key default gen_random_uuid(),
@@ -50,6 +54,7 @@ create table if not exists public.crm_portal_job_messages (
     case when direction = 'to_store' then 'job.message-' || message_id end
   ) stored,
   queued_at timestamptz,
+  notify_claimed_at timestamptz,
   notified_at timestamptz
 );
 
@@ -84,7 +89,7 @@ alter table public.crm_portal_job_messages
 alter table public.crm_portal_job_messages drop constraint if exists crm_portal_job_messages_direction_fields_check;
 alter table public.crm_portal_job_messages
   add constraint crm_portal_job_messages_direction_fields_check check (
-    (direction = 'to_store' and author_user_id is not null and notified_at is null)
+    (direction = 'to_store' and author_user_id is not null and notify_claimed_at is null and notified_at is null)
     or (direction = 'from_store' and author_user_id is null and queued_at is null)
   );
 
@@ -102,12 +107,36 @@ alter table public.crm_portal_job_messages
   add constraint crm_portal_job_messages_quote_id_fkey
   foreign key (quote_id) references public.crm_portal_jobs(quote_id);
 
-create index if not exists crm_portal_job_messages_quote_sent_idx on public.crm_portal_job_messages (quote_id, sent_at);
+-- Tråden i den ordning meddelandena kom fram: sent_at är avsändarens klocka, och ett sent omförsök från portalen hade
+-- annars hamnat före ett svar som skrevs under tiden.
+create index if not exists crm_portal_job_messages_quote_created_idx on public.crm_portal_job_messages (quote_id, created_at);
 -- Cron letar efter svar som inte köats och butiksmeddelanden utan notis.
 create index if not exists crm_portal_job_messages_unqueued_idx
   on public.crm_portal_job_messages (created_at) where direction = 'to_store' and queued_at is null;
 create index if not exists crm_portal_job_messages_unnotified_idx
   on public.crm_portal_job_messages (created_at) where direction = 'from_store' and notified_at is null;
+
+-- Vem som får svara, EN gång: svarspolicyn använder den, och kortet frågar den om svarsfältet ska visas. Invoker:
+-- jobbet och arbetsordern läses som sessionen, med deras egen RLS.
+create or replace function public.crm_portal_job_message_can_reply(p_quote_id text)
+  returns boolean
+  language sql
+  stable
+  security invoker
+  set search_path = ''
+as $$
+  select (select public.has_permission('crm.workorder.write'))
+     and exists (
+       select 1
+         from public.crm_portal_jobs j
+         join public.crm_work_orders w on w.id = j.work_order_id
+        where j.quote_id = p_quote_id
+          and (w.assigned_to = (select auth.uid()) or (select public.has_permission('crm.admin')))
+     );
+$$;
+
+revoke all on function public.crm_portal_job_message_can_reply(text) from public, anon, authenticated, service_role;
+grant execute on function public.crm_portal_job_message_can_reply(text) to authenticated;
 
 alter table public.crm_portal_job_messages enable row level security;
 revoke all on table public.crm_portal_job_messages from anon, authenticated;
@@ -139,31 +168,14 @@ create policy crm_portal_job_messages_insert_reply on public.crm_portal_job_mess
   with check (
     direction = 'to_store'
     and author_user_id = (select auth.uid())
-    and (select has_permission('crm.workorder.write'))
-    and exists (
-      select 1
-        from public.crm_portal_jobs j
-        join public.crm_work_orders w on w.id = j.work_order_id
-       where j.quote_id = crm_portal_job_messages.quote_id
-         and (w.assigned_to = (select auth.uid()) or (select has_permission('crm.admin')))
-    )
-  );
-
--- Kön: svarens rader för den som ser svaret. Två tillåtande policyer är ett ELLER; 2b:s (crm.portal.manage) står kvar.
-drop policy if exists portal_outbound_events_select_job_message on public.portal_outbound_events;
-create policy portal_outbound_events_select_job_message on public.portal_outbound_events
-  for select to authenticated
-  using (
-    exists (
-      select 1 from public.crm_portal_job_messages m
-       where m.outbound_key = portal_outbound_events.idempotency_key
-    )
+    and public.crm_portal_job_message_can_reply(quote_id)
   );
 
 -- ------------------------------------------------------------------------------------------------ efterkontroll
 
 -- Pröva effekten: RLS på; anon ingenting; sessionen läser de uppräknade kolumnerna, skriver bara ett svars kolumner
--- och kan aldrig ändra eller ta bort; service_role allt; policyerna finns med rätt kommando; nyckeln härleds.
+-- och kan aldrig ändra eller ta bort; service_role allt; policyerna finns med rätt kommando och kön har ingen ny;
+-- svarsregeln körs av sessionen men inte av anon; nyckeln härleds.
 -- (has_table_privilege med en kommalista svarar på om NÅGON av rättigheterna finns.)
 do $$
 declare
@@ -192,7 +204,7 @@ begin
       raise exception 'portalens meddelanden: authenticated kan inte läsa %', col;
     end if;
   end loop;
-  foreach col in array array['queued_at', 'notified_at'] loop
+  foreach col in array array['queued_at', 'notify_claimed_at', 'notified_at'] loop
     if has_column_privilege('authenticated', tbl, col, 'SELECT') then
       raise exception 'portalens meddelanden: authenticated kan läsa %', col;
     end if;
@@ -203,7 +215,7 @@ begin
       raise exception 'portalens meddelanden: authenticated kan inte skriva %', col;
     end if;
   end loop;
-  foreach col in array array['id', 'sent_at', 'created_at', 'queued_at', 'notified_at'] loop
+  foreach col in array array['id', 'sent_at', 'created_at', 'queued_at', 'notify_claimed_at', 'notified_at'] loop
     if has_column_privilege('authenticated', tbl, col, 'INSERT') then
       raise exception 'portalens meddelanden: authenticated kan skriva %', col;
     end if;
@@ -225,10 +237,19 @@ begin
                    and policyname = 'crm_portal_job_messages_insert_reply' and cmd = 'INSERT' and roles = '{authenticated}') then
     raise exception 'portalens meddelanden: svarspolicyn saknas';
   end if;
-  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'portal_outbound_events'
-                   and policyname = 'portal_outbound_events_select_job_message' and cmd = 'SELECT'
-                   and roles = '{authenticated}') then
-    raise exception 'portalens meddelanden: köns läspolicy för svaren saknas';
+  -- Kön öppnas inte för fler: bara 2b:s policy (crm.portal.manage) läser den.
+  if exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'portal_outbound_events'
+               and policyname <> 'portal_outbound_events_select_portal') then
+    raise exception 'portalens meddelanden: kön har en policy till';
+  end if;
+  if not has_function_privilege('authenticated', 'public.crm_portal_job_message_can_reply(text)', 'EXECUTE') then
+    raise exception 'portalens meddelanden: sessionen kan inte fråga om den får svara';
+  end if;
+  if has_function_privilege('anon', 'public.crm_portal_job_message_can_reply(text)', 'EXECUTE') then
+    raise exception 'portalens meddelanden: anon kan köra svarsregeln';
+  end if;
+  if (select p.prosecdef from pg_proc p where p.oid = 'public.crm_portal_job_message_can_reply(text)'::regprocedure) then
+    raise exception 'portalens meddelanden: svarsregeln ska köras som den som frågar (invoker)';
   end if;
   if has_table_privilege('authenticated', 'public.portal_outbound_events', 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') then
     raise exception 'portalens meddelanden: authenticated kan skriva i kön';

@@ -10,6 +10,7 @@
  * Andra tabellers standardvärden (id, tider) ger testet med `defaults`.
  * lt/lte/gt jämför värdena som de står: ISO-tider i samma form, eller tal.
  * En unik nyckel och `onConflict` kan vara sammansatta ('direction,message_id'), och `order` kan ges flera gånger.
+ * `rpc` svarar med testets `rpc`-funktion; anropet står i `calls` som tabellen `rpc:<namn>` med argumenten som värden.
  *
  * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång. `canUpdate` spelar RLS på
  * UPDATE: en rad den säger nej till ändras inte och kommer inte tillbaka, utan fel, som i PostgREST. `beforeExecute`
@@ -48,6 +49,8 @@ export function memoryAdmin(
     beforeExecute?: (call: Call, tables: Record<string, Row[]>) => void;
     /** Kolumnernas standardvärden vid insert, per tabell (det databasen hade fyllt i). */
     defaults?: (table: string, row: Row) => Row;
+    /** Svaret på en RPC. Utan den svarar varje RPC med ett fel. */
+    rpc?: (name: string, args: Record<string, unknown>, tables: Record<string, Row[]>) => unknown;
   } = {},
 ) {
   const tables: Record<string, Row[]> = structuredClone(initial);
@@ -197,5 +200,17 @@ export function memoryAdmin(
     return chain;
   }
 
-  return { admin: { from } as never, tables, calls, failOn };
+  async function rpc(name: string, args: Record<string, unknown> = {}) {
+    const call: Call = { table: `rpc:${name}`, op: 'select', values: args, filters: [] };
+    calls.push(call);
+    const failure = failures.find((f) => f.times > 0 && f.match(call));
+    if (failure) {
+      failure.times -= 1;
+      return { data: null, error: failure.error };
+    }
+    if (!options.rpc) return { data: null, error: { message: `memoryAdmin: ingen rpc ${name}` } };
+    return { data: options.rpc(name, args, tables), error: null };
+  }
+
+  return { admin: { from, rpc } as never, tables, calls, failOn };
 }

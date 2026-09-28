@@ -203,7 +203,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
 | `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
 | `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner och `quote_id` (kolumngrant). Fas 4b ✅: markeringen `sync_requested_at`, det senast köade läget `sync_state`, `sync_pending_events`, `sync_version`, `synced_at` och Fortnox-omförsöken (`fortnox_next_attempt_at`, `fortnox_attempts`, `fortnox_retry_until`) |
-| `crm_portal_job_messages` ✅ | `quote_id` (FK till jobbet), riktning (`from_store`/`to_store`), `message_id` (unik per riktning: portalens id eller vårt), författarens namn när det skrevs och `author_user_id` (svar), avdelning (svar), text, `sent_at`, härledd `outbound_key` (`job.message-<id>`), `queued_at` och `notified_at` (bara service_role). Sessionen läser trådens kolumner och lägger till svar i eget namn (kolumngrant + RLS), ändrar eller tar aldrig bort något. Skild från `crm_work_order_comments` |
+| `crm_portal_job_messages` ✅ | `quote_id` (FK till jobbet), riktning (`from_store`/`to_store`), `message_id` (unik per riktning: portalens id eller vårt), författarens namn när det skrevs och `author_user_id` (svar), avdelning (svar), text, `sent_at`, `created_at` (trådens ordning), härledd `outbound_key` (`job.message-<id>`), och markeringarna `queued_at`, `notify_claimed_at` (lånet) och `notified_at`, som bara service_role ser. Sessionen läser trådens kolumner och lägger till svar i eget namn (kolumngrant + RLS), men ändrar eller tar aldrig bort något. Vem som får svara står en gång, i `crm_portal_job_message_can_reply()` (invoker), som policyn och kortet delar. Skild från `crm_work_order_comments` |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
@@ -361,7 +361,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **4a** ✅ | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen. Beteendet prövas mot en databas med `supabase/checks/work_order_planned_days.sql`. Resultaten står under tabellen | — |
 | **4b** ✅ | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem. Beteendet prövas mot en databas med `supabase/checks/portal_job_status.sql`. Resultaten står under tabellen | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
-| **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
+| **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt efter att det sparats och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
 | **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
@@ -788,8 +788,12 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
 **Egna val som William inte sa emot:**
 - Svarets `Idempotency-Key` är `job.message-<messageId>` (punkt 24). `messageId` är en uuid som klienten ger utkastet,
   så att ett dubbelklick eller ett omförsök blir samma svar och inte två.
-- Svaret väntar på ett första utskick innan routen svarar: det sista försöket börjar inom 5 s, och resten tar cron.
-  Kön är per jobb, så ett svar kommer aldrig före en tidigare händelse för samma jobb.
+- Svaret skickas direkt EFTER att routen svarat: portalens varv, samma som "Skicka väntande nu" (utan Fortnox-försök),
+  körs i `waitUntil`. Knappen väntar alltså aldrig på portalen eller på andra jobbs händelser, och omräkningen efter ett
+  utskick blir också gjord. Kortet läser om efter 3 och 10 s. Kön är per jobb, så ett svar kommer aldrig före en
+  tidigare händelse för samma jobb.
+- Tråden visas i den ordning meddelandena kom fram (`created_at`), med avsändarens tid utskriven. Portalens klocka och
+  ett sent omförsök därifrån hade annars kunnat lägga ett meddelande före ett svar som skrevs efter det.
 - Samma `messageId` med ett annat innehåll (text, namn, tid eller jobb) ger 409 `message_conflict`.
 - Namn och text trimmas och räknas i tecken som Postgres räknar dem, alltså kodpunkter: 5000 emoji går igenom.
 - Kortet läser om tråden varje minut medan fliken syns, och när fönstret får fokus.
@@ -798,26 +802,48 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
 `app/api/portal/jobs/[quoteId]/messages`, `app/api/crm/portal/jobs/[workOrderId]/messages`,
 `WorkOrderPortalMessagesCard.tsx`):
 - **In:** grinden och svarscachen, Zod och kontrollen av nolltecken, sedan jobbet (finns det, och har det kvar sin
-  arbetsorder?). Meddelandet sparas en gång per `messageId` (unik per riktning). Notisen skickas efter svaret, en gång
-  (`notified_at`), också när ett nytt anrop för samma meddelande kommer efter en notis som föll.
-- **Ut:** sessionen sparar svaret. Insert-policyn släpper bara den som har ordern eller en admin med
-  `crm.workorder.write`, i eget namn och bara åt butiken. `sent_at` sätter databasen. Service-rollen köar kroppen byggd
-  ur den **sparade raden**, bokför `queued_at` och kör utskicket. Kortet läser svarens status med sessionen, genom en
-  läspolicy på kön för de svar sessionen själv ser.
+  arbetsorder?). Meddelandet sparas en gång per `messageId` (unik per riktning). Notisen skickas efter svaret, med ett
+  **lån** (`notify_claimed_at`, fem minuter). `notified_at` sätts först när notisen har gått iväg. Faller utskicket
+  släpps lånet, och dör processen går det ut. I båda fallen gör cron om den: hellre en notis för mycket än en som
+  tappas. Ett nytt anrop för samma meddelande gör också om en notis som föll.
+- **Ut:** sessionen sparar svaret. Insert-policyn släpper, genom svarsregeln, bara den som har ordern eller en admin
+  med `crm.workorder.write`, i eget namn och bara åt butiken. `sent_at` sätter databasen. Service-rollen köar kroppen
+  byggd ur den **sparade raden** och bokför `queued_at`. Routen kör sedan portalens varv efter svaret. Kortet frågar
+  svarsregeln om svarsfältet ska visas. Svarens status i kön läser servern med service-rollen, bara `status` och bara
+  för svaren sessionen själv kunde läsa. Kön fick ingen ny läspolicy, eftersom en sådan hade gett varje läsare hela
+  raden, med portalens feltext och kroppen.
 - **Cron** (`sweepPortalJobMessages`, före utskicket): ett svar som sparats men inte köats köas (äldre än en minut,
-  yngre än en vecka), och en notis som inte gick iväg görs om (äldre än två minuter, yngre än ett dygn).
+  yngre än en vecka), och en notis som inte gick iväg görs om (äldre än två minuter, yngre än ett dygn, lånet
+  utgånget). De två halvorna är oberoende, så ett fel i den ena stoppar inte den andra.
 - **Skilt från de interna kommentarerna:** egen tabell, egna routes och eget kort. Ett vakttest kräver att ingen av
   meddelandenas filer läser eller skriver `crm_work_order_comments`, och att ingen av kommentarernas filer rör
   meddelandena. Kontrollen prövar att inget meddelande blev en kommentar.
 
+**Granskningen** (code-review high) fann tio saker. Nio är lagade, och den tionde var bara en kommentar:
+- Notisen kunde tappas om processen dog mellan markeringen och utskicket. Nu finns ett lån, och `notified_at` sätts
+  efter utskicket.
+- Utskicket gjordes inne i användarens klick, över hela kön och utan omräkningen. Nu körs portalens varv efter svaret.
+- Ett fel i sopningens första halva stoppade den andra.
+- En check i databasen (23514) gav 500 i stället för 400 på svaret.
+- Kortet kunde läsa in två gånger samtidigt, och ett gammalt svar kunde ta bort ett nyss skickat ur tråden. Nu finns
+  ett löpnummer och en läsning i taget.
+- Utkastets id skapades vid varje tangenttryckning.
+- Köns läspolicy gav varje läsare hela raden. Den är borttagen, och servern läser bara status.
+- Svarsregeln stod både i TypeScript och i SQL. Nu står den i en funktion som båda använder.
+- Tråden sorterades på avsändarens klocka. Nu sorteras den på när meddelandet togs emot.
+- GET-grinden (`crm.workorder.read`) är densamma som arbetsordersidan kräver. Kommentaren är rättad.
+
 **Prövat:**
-- Migreringen i en tom tillfällig databas med stubbar, två körningar, och 15 mutationer av efterkontrollen. Varje
+- Migreringen i en tom tillfällig databas med stubbar, två körningar, och 21 mutationer av efterkontrollen. Varje
   mutation stoppades av sitt eget meddelande. Lokalt kördes den två gånger i en transaktion som rullades tillbaka, och
   sedan med `supabase migration up`.
-- `supabase/checks/portal_job_messages.sql` med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon), och
-  28 mutationer av databasen. Alla gav rött utom en, med flit: policyns `direction = 'to_store'` överlappar tabellens
-  check (butikens meddelande har ingen svarare). Tas båda bort blir kontrollen röd.
-- 55 mutationer av koden. Alla gav rött i vitest, med "Tests N".
+- `supabase/checks/portal_job_messages.sql` med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon),
+  bland annat svarsregeln per roll, och 32 mutationer av databasen. Alla gav rött utom en, med flit: policyns
+  `direction = 'to_store'` överlappar tabellens check (butikens meddelande har ingen svarare). Tas båda bort blir
+  kontrollen röd. Kontrollen av anon mot svarsregeln fångade först fel nej (tabellen i stället för funktionen) och är
+  skärpt.
+- 67 mutationer av koden. Alla gav rött i vitest, med "Tests N". En överlevde först: en notis som skickats för mer än
+  fem minuter sedan hade skickats igen utan villkoret `notified_at is null`. Testet finns nu.
 - Lokalt mot en fejkportal på :3101 som kontrollerar signaturen:
   - Butikens meddelanden: 201. En upprepning med en ny nyckel gav samma rad och ingen ny notis, ett annat innehåll
     gav 409 och ett okänt jobb 404.

@@ -1,7 +1,8 @@
 import { z } from 'zod';
+import { waitUntil } from '@vercel/functions';
 import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { can, getEffectivePermissions } from '@/lib/auth/permissions';
+import { runPortalCron } from '@/lib/domains/portal/cron';
 import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import { PORTAL_JOB_MESSAGE_DEPARTMENTS, PORTAL_JOB_MESSAGE_MAX_CHARS, countChars } from '@/lib/domains/portal/jobMessages';
 import { listPortalJobMessages, sendPortalJobReply } from '@/lib/domains/portal/jobMessagesStore';
@@ -11,14 +12,16 @@ type RouteContext = { params: { workOrderId: string } };
 
 // Kortet "Butiken" på arbetsordern (RESELLER_PORTAL_CRM_PLAN.md fas 6): tråden med butiken, och svaret.
 //
-// GET  crm.workorder.read. Sessionen läser tråden (RLS: alla som ser ordern kontorsvägen, och den som har den), och
-//      svarens status i kön (läspolicyn för svaren). `canReply` säger om svarsfältet ska visas.
+// GET  crm.workorder.read, samma nyckel som arbetsordersidan kräver. Sessionen läser tråden (RLS) och frågar svarsregeln
+//      (crm_portal_job_message_can_reply, samma som svarspolicyn) om svarsfältet ska visas; service-rollen läser bara
+//      svarens status i kön, för de svar sessionen själv kunde läsa.
 //        200 { storeName, canReply, messages }
 //        404 portal_job_not_found   ingen portalorder som du ser
 // POST crm.workorder.write, och sedan RLS: bara den som har ordern, eller en admin, får svara (William 2026-09-28).
-//      Svaret sparas med sessionen, köas och skickas med service-rollen (kön är bara service_role), direkt och inte
-//      först vid nästa cron. Ett skickat svar kan inte ändras: portalen sparar det en gång per messageId.
-//        201 { message, created }       sparat; message.delivery säger om det kom fram, skickas eller inte kom fram
+//      Svaret sparas med sessionen och köas med service-rollen (kön är bara service_role). Direkt EFTER svaret körs
+//      portalens varv, samma som "Skicka väntande nu", så svaret skickas nu och inte vid nästa cron, utan att knappen
+//      väntar på portalen. Ett skickat svar kan inte ändras: portalen sparar det en gång per messageId.
+//        201 { message, created }       sparat och köat; message.delivery är köns läge just nu
 //        400 validation_error / invalid_text
 //        403 portal_reply_forbidden      varken ansvarig för ordern eller admin
 //        404 portal_job_not_found        ingen portalorder som du ser
@@ -26,8 +29,8 @@ type RouteContext = { params: { workOrderId: string } };
 // Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
 
 export const dynamic = 'force-dynamic';
-// Svaret väntar på ett första utskick (högst ~5 s innan det sista försöket börjar, plus portalens svarstid).
-export const maxDuration = 60;
+// Varvet efter svaret räknas in i funktionens tid: utskicket tar nya händelser i 60 s. Samma gräns som knappen.
+export const maxDuration = 180;
 
 const replySchema = z.object({
   messageId: z.string().uuid('Ogiltigt id för svaret.'),
@@ -47,12 +50,7 @@ export async function GET(_req: Request, context: RouteContext) {
     const badId = invalidUuidParam(context.params.workOrderId);
     if (badId) return badId;
 
-    const perms = await getEffectivePermissions();
-    const view = await listPortalJobMessages(createSessionClient(), context.params.workOrderId, {
-      userId: gate.currentUser.id,
-      canWrite: can(perms, 'crm.workorder.write'),
-      isAdmin: can(perms, 'crm.admin'),
-    });
+    const view = await listPortalJobMessages(createSessionClient(), getSupabaseAdmin(), context.params.workOrderId);
     if (!view) return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
     return ok(view);
   } catch (e) {
@@ -75,9 +73,10 @@ export async function POST(req: Request, context: RouteContext) {
     const parsed = replySchema.safeParse(raw);
     if (!parsed.success) return validationError(parsed.error);
 
+    const admin = getSupabaseAdmin();
     const result = await sendPortalJobReply(
       createSessionClient(),
-      getSupabaseAdmin(),
+      admin,
       {
         workOrderId: context.params.workOrderId,
         messageId: parsed.data.messageId,
@@ -85,11 +84,17 @@ export async function POST(req: Request, context: RouteContext) {
         department: parsed.data.department,
         actor: { id: gate.currentUser.id, name: gate.currentUser.name ?? null },
       },
-      { env: process.env },
     );
     switch (result.kind) {
       case 'sent':
+        waitUntil(
+          runPortalCron(admin, { env: process.env, fortnoxRetries: false }).catch((e) => {
+            console.error('[portal-messages] utskicket efter svaret föll, cron tar det', { error: e instanceof Error ? e.message : e });
+          }),
+        );
         return ok({ message: result.message, created: result.created }, 201);
+      case 'invalid':
+        return routeError(400, 'invalid_text', 'Meddelandet innehåller tecken som inte kan sparas.');
       case 'not_found':
         return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
       case 'forbidden':

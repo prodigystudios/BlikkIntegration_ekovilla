@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { adminUser, ekonomiUser, salesUser } from '../crm/helpers/supabase';
+import { ekonomiUser, salesUser } from '../crm/helpers/supabase';
 
 /**
  * GET/POST /api/crm/portal/jobs/[workOrderId]/messages (fas 6), kortet "Butiken". Grinden före allt: utan inloggning
  * 401, utan nyckeln 403 (läsa: crm.workorder.read, svara: crm.workorder.write), och då har ingen klient byggts och
- * ingenting körts. Sedan id:t och kroppen (400), och översättningen av domänens utfall. Vem som får svara avgör RLS i
- * domänen (supabase/checks/portal_job_messages.sql); `canReply` räknas ur nycklarna som skickas med här.
+ * ingenting körts. Sedan id:t och kroppen (400), översättningen av domänens utfall, och att svaret skickas direkt
+ * efter svaret (portalens varv i waitUntil) i stället för i användarens klick. Vem som får svara avgör databasens
+ * svarsregel (supabase/checks/portal_job_messages.sql).
  */
 
 const h = vi.hoisted(() => ({
@@ -16,6 +17,8 @@ const h = vi.hoisted(() => ({
   sent: [] as unknown[][],
   view: null as unknown,
   result: null as unknown,
+  waitUntil: vi.fn(),
+  cron: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/route', async (importOriginal) => {
@@ -28,6 +31,8 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 });
 vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ((h.clients += 1), { kind: 'session' })) }));
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ((h.clients += 1), { kind: 'admin' })) }));
+vi.mock('@vercel/functions', () => ({ waitUntil: h.waitUntil }));
+vi.mock('@/lib/domains/portal/cron', () => ({ runPortalCron: h.cron }));
 vi.mock('@/lib/domains/portal/jobMessagesStore', () => ({
   listPortalJobMessages: vi.fn(async (...args: unknown[]) => (h.listed.push(args), h.view)),
   sendPortalJobReply: vi.fn(async (...args: unknown[]) => (h.sent.push(args), h.result)),
@@ -69,6 +74,8 @@ beforeEach(() => {
   h.sent = [];
   h.view = { storeName: 'K-Bygg Sandviken', canReply: true, messages: [MESSAGE] };
   h.result = { kind: 'sent', created: true, message: MESSAGE };
+  h.waitUntil.mockReset();
+  h.cron.mockReset().mockResolvedValue({});
 });
 
 describe('GET: tråden', () => {
@@ -87,25 +94,17 @@ describe('GET: tråden', () => {
     expect(h.listed).toHaveLength(0);
   });
 
-  it('200 med tråden; sessionen läser, och nycklarna avgör canReply (skrivnyckeln, admin)', async () => {
+  it('200 med tråden; sessionen läser (och frågar svarsregeln), service-rollen bara köns status', async () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, data: h.view });
-    const [client, workOrderId, viewer] = h.listed[0];
-    expect(client).toEqual({ kind: 'session' });
-    expect(workOrderId).toBe(WO);
-    expect(viewer).toEqual({ userId: salesUser.id, canWrite: true, isAdmin: false });
+    expect(h.listed[0]).toEqual([{ kind: 'session' }, { kind: 'admin' }, WO]);
   });
 
-  it('ekonomi (bara läsnyckeln) läser, men utan skrivnyckeln; admin med crm.admin', async () => {
+  it('ekonomi (bara läsnyckeln) läser tråden', async () => {
     h.user = ekonomiUser;
     h.held = new Set(['crm.workorder.read', 'crm.report.read']);
-    await get();
-    expect(h.listed[0][2]).toEqual({ userId: ekonomiUser.id, canWrite: false, isAdmin: false });
-    h.user = adminUser;
-    h.held = new Set([...SALES_KEYS, 'crm.admin']);
-    await get();
-    expect(h.listed[1][2]).toEqual({ userId: adminUser.id, canWrite: true, isAdmin: true });
+    expect((await get()).status).toBe(200);
   });
 
   it('ingen portalorder som du ser: 404', async () => {
@@ -151,7 +150,7 @@ describe('POST: svaret', () => {
     const res = await post();
     expect(res.status).toBe(201);
     expect(res.body).toEqual({ ok: true, data: { message: MESSAGE, created: true } });
-    const [session, admin, input, deps] = h.sent[0] as [unknown, unknown, Record<string, unknown>, Record<string, unknown>];
+    const [session, admin, input] = h.sent[0] as [unknown, unknown, Record<string, unknown>];
     expect(session).toEqual({ kind: 'session' });
     expect(admin).toEqual({ kind: 'admin' });
     expect(input).toEqual({
@@ -161,19 +160,41 @@ describe('POST: svaret', () => {
       department: 'Planering',
       actor: { id: salesUser.id, name: 'Anna Berg' },
     });
-    expect(deps.env).toBe(process.env);
   });
 
-  it('domänens nej: 403 forbidden, 404 not_found, 409 conflict', async () => {
+  it('skickas direkt EFTER svaret: portalens varv (utan Fortnox-försök) i waitUntil, inte i klicket', async () => {
+    let finish: (v: unknown) => void = () => {};
+    h.cron.mockReturnValue(new Promise((r) => (finish = r)));
+    const res = await post();
+    // Svaret kom fast varvet inte är klart.
+    expect(res.status).toBe(201);
+    expect(h.cron).toHaveBeenCalledTimes(1);
+    expect(h.cron.mock.calls[0][0]).toEqual({ kind: 'admin' });
+    expect(h.cron.mock.calls[0][1]).toEqual({ env: process.env, fortnoxRetries: false });
+    expect(h.waitUntil).toHaveBeenCalledTimes(1);
+    expect(h.waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
+    finish({});
+  });
+
+  it('varvet faller: ingen ohanterad avvisning (cron tar det)', async () => {
+    h.cron.mockRejectedValue(new Error('portalen nere'));
+    expect((await post()).status).toBe(201);
+    await expect(h.waitUntil.mock.calls[0][0]).resolves.toBeUndefined();
+  });
+
+  it('domänens nej: 403 forbidden, 404 not_found, 409 conflict, 400 invalid; inget varv', async () => {
     for (const [kind, status, code] of [
       ['forbidden', 403, 'portal_reply_forbidden'],
       ['not_found', 404, 'portal_job_not_found'],
       ['conflict', 409, 'portal_message_conflict'],
+      ['invalid', 400, 'invalid_text'],
     ] as const) {
       h.result = { kind };
       const res = await post();
       expect(res.status, kind).toBe(status);
       expect(res.body.errorDetails.code, kind).toBe(code);
     }
+    expect(h.cron).not.toHaveBeenCalled();
+    expect(h.waitUntil).not.toHaveBeenCalled();
   });
 });

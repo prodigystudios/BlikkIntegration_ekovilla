@@ -4,7 +4,7 @@ import { deliverNotifications } from '@/lib/domains/notifications/delivery';
 import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
 import { buildPortalJobMessageNotification } from '@/lib/domains/notifications/payload';
 import type { NotificationInsert } from '@/lib/domains/notifications/types';
-import { dispatchPortalOutbox, enqueuePortalEvent } from './outbox';
+import { enqueuePortalEvent } from './outbox';
 import {
   PORTAL_JOB_MESSAGE_AUTHOR_MAX_CHARS,
   PORTAL_JOB_MESSAGE_MAX_CHARS,
@@ -27,8 +27,8 @@ import {
  * (crm_work_order_comments), som den här filen aldrig rör.
  *
  *   in från portalen   receivePortalJobMessage (service-rollen: anropet har ingen användare), sedan notisen
- *   svar till butiken  sendPortalJobReply: sessionen sparar (RLS avgör vem som får svara), service-rollen köar och
- *                      skickar direkt, utan att vänta på cron
+ *   svar till butiken  sendPortalJobReply: sessionen sparar (RLS avgör vem som får svara), service-rollen köar; routen
+ *                      skickar kön direkt efter svaret, utan att vänta på cron
  *   kortet             listPortalJobMessages, med sessionen
  *   cron               sweepPortalJobMessages: svar som sparats men inte köats, och notiser som inte gick iväg
  */
@@ -144,36 +144,75 @@ export function notifyPortalJobMessageDeps(admin: SupabaseClient): NotifyPortalJ
   };
 }
 
-export type NotifyPortalJobMessageOutcome = 'sent' | 'already_sent' | 'no_work_order' | 'no_recipient';
+export type NotifyPortalJobMessageOutcome = 'sent' | 'already_sent' | 'in_progress' | 'no_work_order' | 'no_recipient';
+
+/** Hur länge ett lån på notisen gäller. Dör processen innan notisen gått iväg tar cron över när det gått ut. */
+export const PORTAL_MESSAGE_NOTICE_LEASE_MS = 5 * 60_000;
+
+type NoticeMessage = { quote_id: string; author_name: string; body: string };
+
+/** Tar lånet: där inget finns, eller där det gått ut. Två villkorade skrivningar, var och en atomär. */
+async function claimNotice(admin: SupabaseClient, id: string, at: Date): Promise<NoticeMessage | null> {
+  const claim = (expired: boolean) => {
+    const query = admin
+      .from(TABLE)
+      .update({ notify_claimed_at: at.toISOString() })
+      .eq('id', id)
+      .eq('direction', 'from_store')
+      .is('notified_at', null);
+    return (expired
+      ? query.lt('notify_claimed_at', new Date(at.getTime() - PORTAL_MESSAGE_NOTICE_LEASE_MS).toISOString())
+      : query.is('notify_claimed_at', null)
+    ).select('quote_id, author_name, body');
+  };
+  for (const expired of [false, true]) {
+    const { data, error } = await claim(expired);
+    if (error) throw new Error(`Notisen kunde inte tas: ${error.message}`);
+    const row = (data ?? [])[0] as NoticeMessage | undefined;
+    if (row) return row;
+  }
+  return null;
+}
 
 /**
- * Notisen om butikens meddelande, en gång: den som sätter `notified_at` (där den var null) skickar. Till arbetsorderns
- * ansvarige nu, annars till reserven (William 2026-09-28). Faller utskicket släpps markeringen, så att cron försöker
- * igen, och felet kastas.
+ * Notisen om butikens meddelande (William 2026-09-28): till arbetsorderns ansvarige nu, annars till reserven.
+ *
+ * Den som tar lånet (`notify_claimed_at`) skickar, och `notified_at` sätts först när notisen gått iväg. Faller
+ * utskicket släpps lånet och felet kastas; dör processen mitt i går lånet ut efter fem minuter. I båda fallen gör cron
+ * om den (sweepPortalJobMessages). Hellre en notis för mycket än en som tappas. En borttagen order, eller ingen alls
+ * att meddela, bokförs som klar: det finns inget att försöka igen.
  */
 export async function notifyPortalJobMessage(
   admin: SupabaseClient,
   messageRowId: string,
   deps: NotifyPortalJobMessageDeps = notifyPortalJobMessageDeps(admin),
 ): Promise<NotifyPortalJobMessageOutcome> {
-  const at = deps.now().toISOString();
-  const claimed = await admin
-    .from(TABLE)
-    .update({ notified_at: at })
-    .eq('id', messageRowId)
-    .eq('direction', 'from_store')
-    .is('notified_at', null)
-    .select('quote_id, author_name, body');
-  if (claimed.error) throw new Error(`Notisen kunde inte bokföras: ${claimed.error.message}`);
-  const message = (claimed.data ?? [])[0] as { quote_id: string; author_name: string; body: string } | undefined;
-  if (!message) return 'already_sent';
+  const at = deps.now();
+  const message = await claimNotice(admin, messageRowId, at);
+  if (!message) {
+    // Inget lån: antingen klar (eller inget att notisera, som ett av våra svar), eller så har någon annan lånet nu.
+    const current = await admin.from(TABLE).select('direction, notified_at').eq('id', messageRowId).maybeSingle();
+    if (current.error) throw new Error(`Notisen gick inte att läsa: ${current.error.message}`);
+    const row = current.data as { direction: string; notified_at: string | null } | null;
+    return row?.direction === 'from_store' && !row.notified_at ? 'in_progress' : 'already_sent';
+  }
+
+  const done = async (outcome: NotifyPortalJobMessageOutcome) => {
+    const marked = await admin
+      .from(TABLE)
+      .update({ notified_at: deps.now().toISOString() })
+      .eq('id', messageRowId)
+      .eq('notify_claimed_at', at.toISOString());
+    if (marked.error) throw new Error(`Notisen skickades men kunde inte bokföras: ${marked.error.message}`);
+    return outcome;
+  };
 
   try {
     const job = await admin.from('crm_portal_jobs').select('store_name, work_order_id').eq('quote_id', message.quote_id).maybeSingle();
     if (job.error) throw new Error(`Jobbet gick inte att läsa: ${job.error.message}`);
     const jobRow = job.data as { store_name: string; work_order_id: string | null } | null;
     // Ordern togs bort efter att meddelandet kom: det finns ingen sida att länka till.
-    if (!jobRow?.work_order_id) return 'no_work_order';
+    if (!jobRow?.work_order_id) return await done('no_work_order');
 
     const workOrder = await admin.from('crm_work_orders').select('assigned_to').eq('id', jobRow.work_order_id).maybeSingle();
     if (workOrder.error) throw new Error(`Arbetsordern gick inte att läsa: ${workOrder.error.message}`);
@@ -185,9 +224,8 @@ export async function notifyPortalJobMessage(
     }
     if (!recipient) {
       console.warn('[portal-messages] ingen att meddela', { quoteId: message.quote_id });
-      return 'no_recipient';
+      return await done('no_recipient');
     }
-
     const content = buildPortalJobMessageNotification({
       workOrderId: jobRow.work_order_id,
       storeName: jobRow.store_name,
@@ -195,12 +233,16 @@ export async function notifyPortalJobMessage(
       preview: portalJobMessagePreview(message.body),
     });
     await deps.notify(expandNotificationToRecipients(content, [recipient]));
-    return 'sent';
   } catch (e) {
-    const released = await admin.from(TABLE).update({ notified_at: null }).eq('id', messageRowId).eq('notified_at', at);
-    if (released.error) console.error('[portal-messages] notisens markering kunde inte släppas', { id: messageRowId });
+    const released = await admin
+      .from(TABLE)
+      .update({ notify_claimed_at: null })
+      .eq('id', messageRowId)
+      .eq('notify_claimed_at', at.toISOString());
+    if (released.error) console.error('[portal-messages] lånet på notisen kunde inte släppas', { id: messageRowId });
     throw e;
   }
+  return done('sent');
 }
 
 // ------------------------------------------------------------------------------------------ svaret till butiken
@@ -239,11 +281,15 @@ async function queuePortalJobReply(admin: SupabaseClient, row: ReplyDbRow, now: 
   if (marked.error) throw new Error(`Svaret köades men kunde inte bokföras: ${marked.error.message}`);
 }
 
-/** Köns status per nyckel, med sessionen (läspolicyn för svaren). I omgångar, så att adressen aldrig blir för lång. */
-async function readReplyStatuses(session: SupabaseClient, keys: string[]): Promise<Map<string, string>> {
+/**
+ * Köns status för svaren, med service-rollen: kön är bara service_role:s (och admins på portalsidan), och en läspolicy
+ * för svaren hade gett varje läsare hela raden (portalens feltext, kroppen). Nycklarna kommer ur raderna som SESSIONEN
+ * just kunde läsa, och bara `status` lämnar servern. I omgångar, så att adressen aldrig blir för lång.
+ */
+async function readReplyStatuses(admin: SupabaseClient, keys: string[]): Promise<Map<string, string>> {
   const statuses = new Map<string, string>();
   for (let i = 0; i < keys.length; i += 100) {
-    const { data, error } = await session
+    const { data, error } = await admin
       .from('portal_outbound_events')
       .select('idempotency_key, status')
       .in('idempotency_key', keys.slice(i, i + 100));
@@ -277,32 +323,27 @@ export type SendPortalJobReplyInput = {
   actor: { id: string; name: string | null };
 };
 
-export type SendPortalJobReplyDeps = {
-  env: Record<string, string | undefined>;
-  now?: () => Date;
-  fetchImpl?: typeof fetch;
-};
-
 /**
- *   sent        sparat och köat (och skickat, om portalen svarade i tid); `message.delivery` säger hur det gick
+ *   sent        sparat och köat; routen skickar kön direkt efter svaret. `message.delivery` är köns läge nu
  *   not_found   ingen portalorder som sessionen ser
  *   forbidden   RLS nekade: varken ansvarig för ordern eller admin (eller saknar skrivnyckeln)
  *   conflict    samma id finns redan, med ett annat innehåll
+ *   invalid     databasen nekade texten eller namnet (en check som zod inte ser)
  */
 export type SendPortalJobReplyResult =
   | { kind: 'sent'; created: boolean; message: PortalJobMessageView }
-  | { kind: 'not_found' | 'forbidden' | 'conflict' };
+  | { kind: 'not_found' | 'forbidden' | 'conflict' | 'invalid' };
 
-/** Hur mycket av kön svaret får vänta på innan routen svarar. Resten skickar cron. */
-const REPLY_DISPATCH = { limit: 20, budgetMs: 5_000 };
-
+/**
+ * Sparar och köar svaret. Själva utskicket görs inte här: routen kör portalens varv direkt EFTER svaret (samma som
+ * "Skicka väntande nu"), så att knappen aldrig väntar på portalen eller på andra jobbs händelser i kön.
+ */
 export async function sendPortalJobReply(
   session: SupabaseClient,
   admin: SupabaseClient,
   input: SendPortalJobReplyInput,
-  deps: SendPortalJobReplyDeps,
+  now: () => Date = () => new Date(),
 ): Promise<SendPortalJobReplyResult> {
-  const now = deps.now ?? (() => new Date());
   const job = await session.from('crm_portal_jobs').select('quote_id').eq('work_order_id', input.workOrderId).maybeSingle();
   if (job.error) throw new Error(`Portalordern gick inte att läsa: ${job.error.message}`);
   const quoteId = (job.data as { quote_id: string } | null)?.quote_id;
@@ -327,6 +368,7 @@ export async function sendPortalJobReply(
     .select(REPLY_SELECT);
   if (inserted.error) {
     if (inserted.error.code === '42501') return { kind: 'forbidden' };
+    if (inserted.error.code === '23514') return { kind: 'invalid' };
     throw new Error(`Svaret kunde inte sparas: ${inserted.error.message}`);
   }
   let row = (inserted.data ?? [])[0] as ReplyDbRow | undefined;
@@ -345,22 +387,16 @@ export async function sendPortalJobReply(
     row = found;
   }
 
-  // Köas och skickas direkt. Går något av det fel ligger svaret sparat; cron köar det (sweepPortalJobMessages) och
-  // skickar kön, och kortet visar "Skickas …" så länge.
+  // Går köandet fel ligger svaret sparat; cron köar det (sweepPortalJobMessages), och kortet visar "Skickas …".
   try {
     await queuePortalJobReply(admin, row, now());
   } catch (e) {
     console.error('[portal-messages] svaret kunde inte köas, cron tar det', { id: row.id, error: e instanceof Error ? e.message : e });
   }
-  try {
-    await dispatchPortalOutbox(admin, { env: deps.env, now, fetchImpl: deps.fetchImpl, ...REPLY_DISPATCH });
-  } catch (e) {
-    console.error('[portal-messages] utskicket föll, cron tar det', { error: e instanceof Error ? e.message : e });
-  }
 
   let statuses = new Map<string, string>();
   try {
-    statuses = await readReplyStatuses(session, [portalJobMessageKey(row.message_id)]);
+    statuses = await readReplyStatuses(admin, [portalJobMessageKey(row.message_id)]);
   } catch (e) {
     console.error('[portal-messages] svarets status gick inte att läsa', { error: e instanceof Error ? e.message : e });
   }
@@ -372,50 +408,41 @@ export async function sendPortalJobReply(
 /** Så många meddelanden visar kortet, de senaste. En tråd med fler finns inte i praktiken. */
 export const PORTAL_JOB_MESSAGES_LIMIT = 500;
 
-export type PortalJobMessagesViewer = {
-  userId: string;
-  /** crm.workorder.write */
-  canWrite: boolean;
-  /** crm.admin */
-  isAdmin: boolean;
-};
-
 /**
- * Tråden på arbetsordern, med sessionen: RLS ger den till alla som ser ordern kontorsvägen (crm.workorder.read) och
- * till den som har den. null = ingen portalorder som sessionen ser. `canReply` är samma regel som svarspolicyn; den
- * styr bara om svarsfältet visas, databasen nekar ändå.
+ * Tråden på arbetsordern. Sessionen läser den (RLS: alla som ser ordern kontorsvägen, och den som har den) och frågar
+ * svarsregeln (`crm_portal_job_message_can_reply`, samma som svarspolicyn) om svarsfältet ska visas; service-rollen
+ * läser bara svarens status i kön. null = ingen portalorder som sessionen ser.
+ *
+ * Ordningen är den meddelandena kom fram i (`created_at`), inte avsändarens klocka: ett meddelande som portalen fick
+ * skicka om en stund senare hamnar efter svaret som skrevs under tiden, med sin egen tid utskriven.
  */
 export async function listPortalJobMessages(
   session: SupabaseClient,
+  admin: SupabaseClient,
   workOrderId: string,
-  viewer: PortalJobMessagesViewer,
 ): Promise<PortalJobMessagesView | null> {
   const job = await session.from('crm_portal_jobs').select('quote_id, store_name').eq('work_order_id', workOrderId).maybeSingle();
   if (job.error) throw new Error(`Portalordern gick inte att läsa: ${job.error.message}`);
   const jobRow = job.data as { quote_id: string; store_name: string } | null;
   if (!jobRow) return null;
 
-  let canReply = viewer.canWrite && viewer.isAdmin;
-  if (viewer.canWrite && !canReply) {
-    const workOrder = await session.from('crm_work_orders').select('assigned_to').eq('id', workOrderId).maybeSingle();
-    if (workOrder.error) throw new Error(`Arbetsordern gick inte att läsa: ${workOrder.error.message}`);
-    canReply = (workOrder.data as { assigned_to: string | null } | null)?.assigned_to === viewer.userId;
-  }
+  const rule = await session.rpc('crm_portal_job_message_can_reply', { p_quote_id: jobRow.quote_id });
+  if (rule.error) throw new Error(`Svarsregeln gick inte att fråga: ${rule.error.message}`);
 
   const { data, error } = await session
     .from(TABLE)
-    .select('id, direction, message_id, author_name, department, body, sent_at')
+    .select('id, direction, message_id, author_name, department, body, sent_at, created_at')
     .eq('quote_id', jobRow.quote_id)
     // De senaste; id sist, så att ordningen alltid är densamma.
-    .order('sent_at', { ascending: false })
+    .order('created_at', { ascending: false })
     .order('id', { ascending: false })
     .limit(PORTAL_JOB_MESSAGES_LIMIT);
   if (error) throw new Error(`Meddelandena gick inte att läsa: ${error.message}`);
   const rows = ((data ?? []) as (Omit<ReplyDbRow, 'quote_id' | 'author_user_id'> & { direction: PortalJobMessageDirection })[]).reverse();
 
   const keys = rows.filter((r) => r.direction === 'to_store').map((r) => portalJobMessageKey(r.message_id));
-  const statuses = keys.length > 0 ? await readReplyStatuses(session, keys) : new Map<string, string>();
-  return { storeName: jobRow.store_name, canReply, messages: rows.map((r) => toView(r, statuses)) };
+  const statuses = keys.length > 0 ? await readReplyStatuses(admin, keys) : new Map<string, string>();
+  return { storeName: jobRow.store_name, canReply: rule.data === true, messages: rows.map((r) => toView(r, statuses)) };
 }
 
 // ---------------------------------------------------------------------------------------------------------- cron
@@ -425,10 +452,12 @@ const MINUTE = 60_000;
 export type PortalJobMessagesSweepSummary = { queued: number; notified: number; errors: number };
 
 /**
- * Städar efter det som skulle ha hänt direkt (körs av runPortalCron före utskicket):
- *   - svar som sparats men inte köats, när processen dog mellan de två stegen (äldre än en minut, yngre än en vecka);
- *   - butikens meddelanden utan notis, när arbetet efter svaret inte hann eller notisen föll (äldre än två minuter,
- *     yngre än ett dygn: en notis om ett gammalt meddelande hjälper ingen).
+ * Städar efter det som skulle ha hänt direkt (körs av runPortalCron före utskicket). De två halvorna är oberoende: ett
+ * fel i den ena stoppar inte den andra.
+ *   - Svar som sparats men inte köats, när processen dog mellan de två stegen (äldre än en minut, yngre än en vecka).
+ *   - Butikens meddelanden utan notis, när arbetet efter svaret inte hann, notisen föll eller processen dog med lånet
+ *     (äldre än två minuter, yngre än ett dygn: en notis om ett gammalt meddelande hjälper ingen). Ett lån som ännu
+ *     gäller lämnas åt den som har det.
  */
 export async function sweepPortalJobMessages(
   admin: SupabaseClient,
@@ -437,46 +466,55 @@ export async function sweepPortalJobMessages(
   const now = options.now();
   const ago = (ms: number) => new Date(now.getTime() - ms).toISOString();
   const summary: PortalJobMessagesSweepSummary = { queued: 0, notified: 0, errors: 0 };
+  const failed = (what: string, e: unknown, id?: string) => {
+    summary.errors += 1;
+    console.error(`[portal-messages] ${what}`, { id, error: e instanceof Error ? e.message : e });
+  };
 
-  const unqueued = await admin
-    .from(TABLE)
-    .select(REPLY_SELECT)
-    .eq('direction', 'to_store')
-    .is('queued_at', null)
-    .lt('created_at', ago(MINUTE))
-    .gt('created_at', ago(7 * 24 * 60 * MINUTE))
-    .order('created_at', { ascending: true })
-    .limit(50);
-  if (unqueued.error) throw new Error(`Svaren som inte köats gick inte att läsa: ${unqueued.error.message}`);
-  for (const row of (unqueued.data ?? []) as ReplyDbRow[]) {
-    try {
-      await queuePortalJobReply(admin, row, now);
-      summary.queued += 1;
-    } catch (e) {
-      summary.errors += 1;
-      console.error('[portal-messages] svaret kunde inte köas', { id: row.id, error: e instanceof Error ? e.message : e });
+  try {
+    const unqueued = await admin
+      .from(TABLE)
+      .select(REPLY_SELECT)
+      .eq('direction', 'to_store')
+      .is('queued_at', null)
+      .lt('created_at', ago(MINUTE))
+      .gt('created_at', ago(7 * 24 * 60 * MINUTE))
+      .order('created_at', { ascending: true })
+      .limit(50);
+    if (unqueued.error) throw new Error(unqueued.error.message);
+    for (const row of (unqueued.data ?? []) as ReplyDbRow[]) {
+      try {
+        await queuePortalJobReply(admin, row, now);
+        summary.queued += 1;
+      } catch (e) {
+        failed('svaret kunde inte köas', e, row.id);
+      }
     }
+  } catch (e) {
+    failed('svaren som inte köats gick inte att läsa', e);
   }
 
-  const unnotified = await admin
-    .from(TABLE)
-    .select('id')
-    .eq('direction', 'from_store')
-    .is('notified_at', null)
-    .lt('created_at', ago(2 * MINUTE))
-    .gt('created_at', ago(24 * 60 * MINUTE))
-    .order('created_at', { ascending: true })
-    .limit(50);
-  if (unnotified.error) throw new Error(`Meddelandena utan notis gick inte att läsa: ${unnotified.error.message}`);
-  const deps = options.notifyDeps ?? notifyPortalJobMessageDeps(admin);
-  for (const row of (unnotified.data ?? []) as { id: string }[]) {
-    try {
-      if ((await notifyPortalJobMessage(admin, row.id, deps)) === 'sent') summary.notified += 1;
-    } catch (e) {
-      summary.errors += 1;
-      console.error('[portal-messages] notisen kunde inte skickas', { id: row.id, error: e instanceof Error ? e.message : e });
+  try {
+    const unnotified = await admin
+      .from(TABLE)
+      .select('id')
+      .eq('direction', 'from_store')
+      .is('notified_at', null)
+      .lt('created_at', ago(2 * MINUTE))
+      .gt('created_at', ago(24 * 60 * MINUTE))
+      .order('created_at', { ascending: true })
+      .limit(50);
+    if (unnotified.error) throw new Error(unnotified.error.message);
+    const deps = options.notifyDeps ?? notifyPortalJobMessageDeps(admin);
+    for (const row of (unnotified.data ?? []) as { id: string }[]) {
+      try {
+        if ((await notifyPortalJobMessage(admin, row.id, deps)) === 'sent') summary.notified += 1;
+      } catch (e) {
+        failed('notisen kunde inte skickas', e, row.id);
+      }
     }
+  } catch (e) {
+    failed('meddelandena utan notis gick inte att läsa', e);
   }
   return summary;
 }
-

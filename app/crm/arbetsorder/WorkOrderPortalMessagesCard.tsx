@@ -37,6 +37,10 @@ type Props = {
 
 /** Hur ofta tråden läses om medan fliken syns: butikens svar kan komma medan sidan står öppen. */
 const REFRESH_MS = 60_000;
+/** Fokus och synlighet kommer ofta i samma ögonblick; en läsning räcker. */
+const REFRESH_MIN_GAP_MS = 2_000;
+/** Svaret skickas direkt efter att det sparats; läs om strax efter, så att "Skickas …" byts mot utfallet. */
+const AFTER_SEND_RELOADS_MS = [3_000, 10_000];
 /** Räknaren visas först när det börjar bli trångt. */
 const COUNTER_FROM = PORTAL_JOB_MESSAGE_MAX_CHARS - 500;
 
@@ -96,35 +100,47 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
   const [draft, setDraft] = useState('');
   const [department, setDepartment] = useState<PortalJobMessageDepartment>(DEFAULT_PORTAL_JOB_MESSAGE_DEPARTMENT);
   const [sending, setSending] = useState(false);
-  const draftId = useRef(newDraftId());
+  // Utkastets id, skapat först när det behövs (inte vid varje rendering) och bytt när svaret skickats.
+  const draftId = useRef<string | null>(null);
   const threadRef = useRef<HTMLOListElement | null>(null);
   const [now, setNow] = useState(() => new Date());
+  // Löpnummer: bara den senast påbörjade läsningen får skriva, och ett skickat svar gör pågående läsningar gamla. Annars
+  // hade en läsning som startade före Skicka kunnat ta bort svaret ur tråden när den kom tillbaka.
+  const loadSeq = useRef(0);
+  const lastLoadAt = useRef(0);
+  const followUps = useRef<number[]>([]);
 
   const load = useCallback(async () => {
+    const seq = ++loadSeq.current;
+    lastLoadAt.current = Date.now();
     try {
       const res = await fetch(`/api/crm/portal/jobs/${workOrderId}/messages`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Meddelandena kunde inte hämtas.');
+      if (seq !== loadSeq.current) return;
       setView(json.data as PortalJobMessagesView);
       setLoadError(false);
       setNow(new Date());
     } catch {
-      setLoadError(true);
+      if (seq === loadSeq.current) setLoadError(true);
     }
   }, [workOrderId]);
 
   useEffect(() => {
     void load();
     const refresh = () => {
-      if (document.visibilityState === 'visible') void load();
+      if (document.visibilityState !== 'visible' || Date.now() - lastLoadAt.current < REFRESH_MIN_GAP_MS) return;
+      void load();
     };
     const timer = window.setInterval(refresh, REFRESH_MS);
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
+    const pending = followUps.current;
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
+      pending.forEach((t) => window.clearTimeout(t));
     };
   }, [load]);
 
@@ -146,29 +162,32 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
       const res = await fetch(`/api/crm/portal/jobs/${workOrderId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId: draftId.current, body: draft, department }),
+        body: JSON.stringify({ messageId: (draftId.current ??= newDraftId()), body: draft, department }),
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
         const code = json?.errorDetails?.code;
         // Id:t är redan använt för ett annat svar: börja om med ett nytt, och visa det som faktiskt skickades.
         if (code === 'portal_message_conflict') {
-          draftId.current = newDraftId();
+          draftId.current = null;
           void load();
         }
         toast.error(json?.error || 'Svaret kunde inte skickas. Försök igen.');
         return;
       }
       const message = json.data.message as PortalJobMessageView;
+      loadSeq.current += 1;
       setView((current) =>
         current
           ? { ...current, messages: current.messages.some((m) => m.id === message.id) ? current.messages : [...current.messages, message] }
           : current,
       );
       setDraft('');
-      draftId.current = newDraftId();
+      draftId.current = null;
       setNow(new Date());
-      if (message.delivery === 'failed') toast.error('Svaret sparades men kom inte fram till butiken.');
+      if (message.delivery === 'sending') {
+        followUps.current.push(...AFTER_SEND_RELOADS_MS.map((ms) => window.setTimeout(() => void load(), ms)));
+      }
     } catch {
       // Id:t står kvar: skickas det igen blir det samma svar, inte två.
       toast.error('Svaret kunde inte skickas. Försök igen.');
