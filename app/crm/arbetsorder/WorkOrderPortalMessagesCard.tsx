@@ -110,19 +110,23 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
   const lastLoadAt = useRef(0);
   const followUps = useRef<number[]>([]);
 
-  const load = useCallback(async () => {
+  /** Läser tråden. Svarar med den, eller null om läsningen föll eller hann bli gammal. */
+  const load = useCallback(async (): Promise<PortalJobMessagesView | null> => {
     const seq = ++loadSeq.current;
     lastLoadAt.current = Date.now();
     try {
       const res = await fetch(`/api/crm/portal/jobs/${workOrderId}/messages`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) throw new Error(json?.error || 'Meddelandena kunde inte hämtas.');
-      if (seq !== loadSeq.current) return;
-      setView(json.data as PortalJobMessagesView);
+      if (seq !== loadSeq.current) return null;
+      const next = json.data as PortalJobMessagesView;
+      setView(next);
       setLoadError(false);
       setNow(new Date());
+      return next;
     } catch {
       if (seq === loadSeq.current) setLoadError(true);
+      return null;
     }
   }, [workOrderId]);
 
@@ -135,12 +139,12 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
     const timer = window.setInterval(refresh, REFRESH_MS);
     document.addEventListener('visibilitychange', refresh);
     window.addEventListener('focus', refresh);
-    const pending = followUps.current;
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
       window.removeEventListener('focus', refresh);
-      pending.forEach((t) => window.clearTimeout(t));
+      // Timrarna som finns när kortet försvinner, inte de som fanns när effekten startade.
+      followUps.current.forEach((t) => window.clearTimeout(t));
     };
   }, [load]);
 
@@ -185,8 +189,20 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
       setDraft('');
       draftId.current = null;
       setNow(new Date());
-      if (message.delivery === 'sending') {
-        followUps.current.push(...AFTER_SEND_RELOADS_MS.map((ms) => window.setTimeout(() => void load(), ms)));
+      // Läs alltid om efteråt: svaret gjorde en pågående läsning gammal, och den kan ha haft butikens nya meddelande.
+      // Kom svaret inte fram sägs det också med en notis, inte bara i tråden.
+      let told = message.delivery === 'failed';
+      if (told) toast.error('Svaret kom inte fram till butiken.');
+      for (const ms of AFTER_SEND_RELOADS_MS) {
+        const timer = window.setTimeout(async () => {
+          followUps.current = followUps.current.filter((t) => t !== timer);
+          const next = await load();
+          if (!told && next?.messages.find((m) => m.id === message.id)?.delivery === 'failed') {
+            told = true;
+            toast.error('Svaret kom inte fram till butiken.');
+          }
+        }, ms);
+        followUps.current.push(timer);
       }
     } catch {
       // Id:t står kvar: skickas det igen blir det samma svar, inte två.

@@ -5,7 +5,7 @@ import { ekonomiUser, salesUser } from '../crm/helpers/supabase';
  * GET/POST /api/crm/portal/jobs/[workOrderId]/messages (fas 6), kortet "Butiken". Grinden före allt: utan inloggning
  * 401, utan nyckeln 403 (läsa: crm.workorder.read, svara: crm.workorder.write), och då har ingen klient byggts och
  * ingenting körts. Sedan id:t och kroppen (400), översättningen av domänens utfall, och att svaret skickas direkt
- * efter svaret (portalens varv i waitUntil) i stället för i användarens klick. Vem som får svara avgör databasens
+ * efter svaret (utskicket i waitUntil, bara när svaret väntar) i stället för i användarens klick. Vem som får svara avgör databasens
  * svarsregel (supabase/checks/portal_job_messages.sql).
  */
 
@@ -18,7 +18,7 @@ const h = vi.hoisted(() => ({
   view: null as unknown,
   result: null as unknown,
   waitUntil: vi.fn(),
-  cron: vi.fn(),
+  dispatch: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/route', async (importOriginal) => {
@@ -32,7 +32,7 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ((h.clients += 1), { kind: 'session' })) }));
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ((h.clients += 1), { kind: 'admin' })) }));
 vi.mock('@vercel/functions', () => ({ waitUntil: h.waitUntil }));
-vi.mock('@/lib/domains/portal/cron', () => ({ runPortalCron: h.cron }));
+vi.mock('@/lib/domains/portal/outbox', () => ({ dispatchPortalOutbox: h.dispatch }));
 vi.mock('@/lib/domains/portal/jobMessagesStore', () => ({
   listPortalJobMessages: vi.fn(async (...args: unknown[]) => (h.listed.push(args), h.view)),
   sendPortalJobReply: vi.fn(async (...args: unknown[]) => (h.sent.push(args), h.result)),
@@ -75,7 +75,7 @@ beforeEach(() => {
   h.view = { storeName: 'K-Bygg Sandviken', canReply: true, messages: [MESSAGE] };
   h.result = { kind: 'sent', created: true, message: MESSAGE };
   h.waitUntil.mockReset();
-  h.cron.mockReset().mockResolvedValue({});
+  h.dispatch.mockReset().mockResolvedValue({ ran: true });
 });
 
 describe('GET: tråden', () => {
@@ -162,22 +162,32 @@ describe('POST: svaret', () => {
     });
   });
 
-  it('skickas direkt EFTER svaret: portalens varv (utan Fortnox-försök) i waitUntil, inte i klicket', async () => {
+  it('skickas direkt EFTER svaret: bara utskicket, i waitUntil, inte i klicket', async () => {
+    h.result = { kind: 'sent', created: true, message: { ...MESSAGE, delivery: 'sending' } };
     let finish: (v: unknown) => void = () => {};
-    h.cron.mockReturnValue(new Promise((r) => (finish = r)));
+    h.dispatch.mockReturnValue(new Promise((r) => (finish = r)));
     const res = await post();
-    // Svaret kom fast varvet inte är klart.
+    // Svaret kom fast utskicket inte är klart.
     expect(res.status).toBe(201);
-    expect(h.cron).toHaveBeenCalledTimes(1);
-    expect(h.cron.mock.calls[0][0]).toEqual({ kind: 'admin' });
-    expect(h.cron.mock.calls[0][1]).toEqual({ env: process.env, fortnoxRetries: false });
+    expect(h.dispatch).toHaveBeenCalledTimes(1);
+    expect(h.dispatch.mock.calls[0]).toEqual([{ kind: 'admin' }, { env: process.env }]);
     expect(h.waitUntil).toHaveBeenCalledTimes(1);
     expect(h.waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
     finish({});
   });
 
-  it('varvet faller: ingen ohanterad avvisning (cron tar det)', async () => {
-    h.cron.mockRejectedValue(new Error('portalen nere'));
+  it('en upprepning av ett levererat (eller uppgivet) svar startar inget utskick', async () => {
+    for (const delivery of ['sent', 'failed']) {
+      h.result = { kind: 'sent', created: false, message: { ...MESSAGE, delivery } };
+      expect((await post()).status).toBe(201);
+    }
+    expect(h.dispatch).not.toHaveBeenCalled();
+    expect(h.waitUntil).not.toHaveBeenCalled();
+  });
+
+  it('utskicket faller: ingen ohanterad avvisning (cron tar det)', async () => {
+    h.result = { kind: 'sent', created: true, message: { ...MESSAGE, delivery: 'sending' } };
+    h.dispatch.mockRejectedValue(new Error('portalen nere'));
     expect((await post()).status).toBe(201);
     await expect(h.waitUntil.mock.calls[0][0]).resolves.toBeUndefined();
   });
@@ -194,7 +204,7 @@ describe('POST: svaret', () => {
       expect(res.status, kind).toBe(status);
       expect(res.body.errorDetails.code, kind).toBe(code);
     }
-    expect(h.cron).not.toHaveBeenCalled();
+    expect(h.dispatch).not.toHaveBeenCalled();
     expect(h.waitUntil).not.toHaveBeenCalled();
   });
 });

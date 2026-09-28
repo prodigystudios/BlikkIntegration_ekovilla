@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { waitUntil } from '@vercel/functions';
 import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { runPortalCron } from '@/lib/domains/portal/cron';
+import { dispatchPortalOutbox } from '@/lib/domains/portal/outbox';
 import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import { PORTAL_JOB_MESSAGE_DEPARTMENTS, PORTAL_JOB_MESSAGE_MAX_CHARS, countChars } from '@/lib/domains/portal/jobMessages';
 import { listPortalJobMessages, sendPortalJobReply } from '@/lib/domains/portal/jobMessagesStore';
@@ -18,9 +18,10 @@ type RouteContext = { params: { workOrderId: string } };
 //        200 { storeName, canReply, messages }
 //        404 portal_job_not_found   ingen portalorder som du ser
 // POST crm.workorder.write, och sedan RLS: bara den som har ordern, eller en admin, får svara (William 2026-09-28).
-//      Svaret sparas med sessionen och köas med service-rollen (kön är bara service_role). Direkt EFTER svaret körs
-//      portalens varv, samma som "Skicka väntande nu", så svaret skickas nu och inte vid nästa cron, utan att knappen
-//      väntar på portalen. Ett skickat svar kan inte ändras: portalen sparar det en gång per messageId.
+//      Svaret sparas med sessionen och köas med service-rollen (kön är bara service_role). Direkt EFTER svaret skickas
+//      kön, så svaret går nu och inte vid nästa cron, utan att knappen väntar på portalen. Bara utskicket, och bara när
+//      svaret fortfarande väntar: en upprepning av ett levererat svar startar ingenting. Ett skickat svar kan inte
+//      ändras: portalen sparar det en gång per messageId.
 //        201 { message, created }       sparat och köat; message.delivery är köns läge just nu
 //        400 validation_error / invalid_text
 //        403 portal_reply_forbidden      varken ansvarig för ordern eller admin
@@ -29,8 +30,8 @@ type RouteContext = { params: { workOrderId: string } };
 // Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
 
 export const dynamic = 'force-dynamic';
-// Varvet efter svaret räknas in i funktionens tid: utskicket tar nya händelser i 60 s. Samma gräns som knappen.
-export const maxDuration = 180;
+// Utskicket efter svaret räknas in i funktionens tid: det tar nya händelser i 60 s, och varje anrop har 10 s.
+export const maxDuration = 90;
 
 const replySchema = z.object({
   messageId: z.string().uuid('Ogiltigt id för svaret.'),
@@ -87,11 +88,13 @@ export async function POST(req: Request, context: RouteContext) {
     );
     switch (result.kind) {
       case 'sent':
-        waitUntil(
-          runPortalCron(admin, { env: process.env, fortnoxRetries: false }).catch((e) => {
-            console.error('[portal-messages] utskicket efter svaret föll, cron tar det', { error: e instanceof Error ? e.message : e });
-          }),
-        );
+        if (result.message.delivery === 'sending') {
+          waitUntil(
+            dispatchPortalOutbox(admin, { env: process.env }).catch((e) => {
+              console.error('[portal-messages] utskicket efter svaret föll, cron tar det', { error: e instanceof Error ? e.message : e });
+            }),
+          );
+        }
         return ok({ message: result.message, created: result.created }, 201);
       case 'invalid':
         return routeError(400, 'invalid_text', 'Meddelandet innehåller tecken som inte kan sparas.');

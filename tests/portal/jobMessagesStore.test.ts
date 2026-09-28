@@ -475,10 +475,11 @@ describe('listPortalJobMessages', () => {
     expect((await listPortalJobMessages(admin, admin, WO))!.canReply).toBe(false);
   });
 
-  it('svarsregeln svarar inte: kastar (routen svarar 500) i stället för att gissa', async () => {
-    const { admin, failOn } = db();
+  it('svarsregeln svarar inte: tråden visas ändå, utan svarsfält (databasen nekar ändå den som inte får)', async () => {
+    const { admin, failOn } = db({ crm_portal_job_messages: [fromStore()] });
     failOn((c) => c.table === 'rpc:crm_portal_job_message_can_reply', { message: 'nere' });
-    await expect(listPortalJobMessages(admin, admin, WO)).rejects.toThrow('Svarsregeln');
+    const view = await listPortalJobMessages(admin, admin, WO);
+    expect(view).toMatchObject({ canReply: false, messages: [{ id: 'm-in' }] });
   });
 });
 
@@ -514,7 +515,7 @@ describe('sweepPortalJobMessages', () => {
 
   it('butikens meddelande utan notis notiseras (äldre än två minuter, yngre än ett dygn, lånet utgånget); ett fel stoppar inte nästa', async () => {
     const deps = quiet();
-    const { admin, tables, failOn } = db({
+    const { admin, tables, failOn, calls } = db({
       crm_portal_job_messages: [
         fromStore({ id: 'nyss', message_id: 'a', created_at: ago(1) }),
         fromStore({ id: 'gardag', message_id: 'b', created_at: ago(25 * 60) }),
@@ -528,6 +529,15 @@ describe('sweepPortalJobMessages', () => {
     expect(await sweepPortalJobMessages(admin, { now: () => NOW, notifyDeps: deps })).toEqual({ queued: 0, notified: 2, errors: 1 });
     expect(deps.notify).toHaveBeenCalledTimes(2);
     expect(tables.crm_portal_job_messages.filter((m) => m.notified_at).map((m) => m.id).sort()).toEqual(['dog', 'glomd']);
+    // Ett lån som ännu gäller tar ingen plats i omgången: raden rörs inte ens.
+    expect(calls.some((c) => c.op === 'update' && c.filters.some(([, col, v]) => col === 'id' && v === 'lanad'))).toBe(false);
+  });
+
+  it('aktiva lån fyller aldrig omgången: femtio lånade rader stänger inte ute en ny', async () => {
+    const deps = quiet();
+    const leased = Array.from({ length: 50 }, (_, i) => fromStore({ id: `l${i}`, message_id: `l${i}`, created_at: ago(60 + i), notify_claimed_at: ago(1) }));
+    const { admin } = db({ crm_portal_job_messages: [...leased, fromStore({ id: 'ny', message_id: 'ny', created_at: ago(3) })] });
+    expect(await sweepPortalJobMessages(admin, { now: () => NOW, notifyDeps: deps })).toEqual({ queued: 0, notified: 1, errors: 0 });
   });
 
   it('de två halvorna är oberoende: kan svaren inte läsas notiseras butikens meddelanden ändå', async () => {

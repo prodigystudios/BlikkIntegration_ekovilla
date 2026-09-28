@@ -202,8 +202,11 @@ export async function notifyPortalJobMessage(
       .from(TABLE)
       .update({ notified_at: deps.now().toISOString() })
       .eq('id', messageRowId)
-      .eq('notify_claimed_at', at.toISOString());
+      .eq('notify_claimed_at', at.toISOString())
+      .select('id');
     if (marked.error) throw new Error(`Notisen skickades men kunde inte bokföras: ${marked.error.message}`);
+    // Lånet gick ut medan vi arbetade och någon annan tog det: den skickar också. Så ska det vara (hellre två än ingen).
+    if ((marked.data ?? []).length === 0) console.warn('[portal-messages] lånet på notisen togs över under utskicket', { id: messageRowId });
     return outcome;
   };
 
@@ -426,8 +429,10 @@ export async function listPortalJobMessages(
   const jobRow = job.data as { quote_id: string; store_name: string } | null;
   if (!jobRow) return null;
 
+  // Regeln styr bara om svarsfältet visas. Svarar den inte visas tråden ändå, utan svarsfält: databasen nekar ett svar
+  // från den som inte får, vad kortet än visar.
   const rule = await session.rpc('crm_portal_job_message_can_reply', { p_quote_id: jobRow.quote_id });
-  if (rule.error) throw new Error(`Svarsregeln gick inte att fråga: ${rule.error.message}`);
+  if (rule.error) console.error('[portal-messages] svarsregeln svarade inte', { error: rule.error.message });
 
   const { data, error } = await session
     .from(TABLE)
@@ -495,18 +500,26 @@ export async function sweepPortalJobMessages(
   }
 
   try {
-    const unnotified = await admin
-      .from(TABLE)
-      .select('id')
-      .eq('direction', 'from_store')
-      .is('notified_at', null)
-      .lt('created_at', ago(2 * MINUTE))
-      .gt('created_at', ago(24 * 60 * MINUTE))
-      .order('created_at', { ascending: true })
-      .limit(50);
-    if (unnotified.error) throw new Error(unnotified.error.message);
+    // Två frågor: utan lån, och med ett lån som gått ut. Ett lån som ännu gäller tar ingen plats i omgången.
+    const unnotified = (lease: 'none' | 'expired') => {
+      const query = admin
+        .from(TABLE)
+        .select('id, created_at')
+        .eq('direction', 'from_store')
+        .is('notified_at', null)
+        .lt('created_at', ago(2 * MINUTE))
+        .gt('created_at', ago(24 * 60 * MINUTE));
+      return (lease === 'none' ? query.is('notify_claimed_at', null) : query.lt('notify_claimed_at', ago(PORTAL_MESSAGE_NOTICE_LEASE_MS)))
+        .order('created_at', { ascending: true })
+        .limit(50);
+    };
+    const [free, expired] = await Promise.all([unnotified('none'), unnotified('expired')]);
+    if (free.error || expired.error) throw new Error((free.error ?? expired.error)!.message);
+    const due = [...((free.data ?? []) as { id: string; created_at: string }[]), ...((expired.data ?? []) as { id: string; created_at: string }[])]
+      .sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0))
+      .slice(0, 50);
     const deps = options.notifyDeps ?? notifyPortalJobMessageDeps(admin);
-    for (const row of (unnotified.data ?? []) as { id: string }[]) {
+    for (const row of due) {
       try {
         if ((await notifyPortalJobMessage(admin, row.id, deps)) === 'sent') summary.notified += 1;
       } catch (e) {

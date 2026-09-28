@@ -788,10 +788,10 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
 **Egna val som William inte sa emot:**
 - Svarets `Idempotency-Key` är `job.message-<messageId>` (punkt 24). `messageId` är en uuid som klienten ger utkastet,
   så att ett dubbelklick eller ett omförsök blir samma svar och inte två.
-- Svaret skickas direkt EFTER att routen svarat: portalens varv, samma som "Skicka väntande nu" (utan Fortnox-försök),
-  körs i `waitUntil`. Knappen väntar alltså aldrig på portalen eller på andra jobbs händelser, och omräkningen efter ett
-  utskick blir också gjord. Kortet läser om efter 3 och 10 s. Kön är per jobb, så ett svar kommer aldrig före en
-  tidigare händelse för samma jobb.
+- Svaret skickas direkt EFTER att routen svarat: utskicket (`dispatchPortalOutbox`) körs i `waitUntil`, och bara när
+  svaret fortfarande väntar i kön. En upprepning av ett levererat svar startar ingenting. Knappen väntar alltså aldrig
+  på portalen eller på andra jobbs händelser. Kortet läser om efter 3 och 10 s, och säger till med en notis på skärmen
+  om svaret gavs upp. Kön är per jobb, så ett svar kommer aldrig före en tidigare händelse för samma jobb.
 - Tråden visas i den ordning meddelandena kom fram (`created_at`), med avsändarens tid utskriven. Portalens klocka och
   ett sent omförsök därifrån hade annars kunnat lägga ett meddelande före ett svar som skrevs efter det.
 - Samma `messageId` med ett annat innehåll (text, namn, tid eller jobb) ger 409 `message_conflict`.
@@ -808,13 +808,14 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
   tappas. Ett nytt anrop för samma meddelande gör också om en notis som föll.
 - **Ut:** sessionen sparar svaret. Insert-policyn släpper, genom svarsregeln, bara den som har ordern eller en admin
   med `crm.workorder.write`, i eget namn och bara åt butiken. `sent_at` sätter databasen. Service-rollen köar kroppen
-  byggd ur den **sparade raden** och bokför `queued_at`. Routen kör sedan portalens varv efter svaret. Kortet frågar
-  svarsregeln om svarsfältet ska visas. Svarens status i kön läser servern med service-rollen, bara `status` och bara
+  byggd ur den **sparade raden** och bokför `queued_at`. Routen skickar sedan kön efter svaret. Kortet frågar
+  svarsregeln om svarsfältet ska visas, och svarar den inte visas tråden ändå, utan svarsfält. Svarens status i kön läser servern med service-rollen, bara `status` och bara
   för svaren sessionen själv kunde läsa. Kön fick ingen ny läspolicy, eftersom en sådan hade gett varje läsare hela
   raden, med portalens feltext och kroppen.
 - **Cron** (`sweepPortalJobMessages`, före utskicket): ett svar som sparats men inte köats köas (äldre än en minut,
-  yngre än en vecka), och en notis som inte gick iväg görs om (äldre än två minuter, yngre än ett dygn, lånet
-  utgånget). De två halvorna är oberoende, så ett fel i den ena stoppar inte den andra.
+  yngre än en vecka), och en notis som inte gick iväg görs om (äldre än två minuter, yngre än ett dygn, utan lån eller
+  med utgånget lån). Ett lån som ännu gäller tar ingen plats i omgången. De två halvorna är oberoende, så ett fel i den
+  ena stoppar inte den andra.
 - **Skilt från de interna kommentarerna:** egen tabell, egna routes och eget kort. Ett vakttest kräver att ingen av
   meddelandenas filer läser eller skriver `crm_work_order_comments`, och att ingen av kommentarernas filer rör
   meddelandena. Kontrollen prövar att inget meddelande blev en kommentar.
@@ -833,6 +834,20 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
 - Tråden sorterades på avsändarens klocka. Nu sorteras den på när meddelandet togs emot.
 - GET-grinden (`crm.workorder.read`) är densamma som arbetsordersidan kräver. Kommentaren är rättad.
 
+**Den andra granskningen** (high, av rättelserna) fann nio saker. Sju är lagade:
+- Varje svar startade hela portalvarvet, också en upprepning av ett levererat svar. Nu körs bara utskicket, och bara
+  när svaret väntar.
+- Ett fel i svarsregeln stoppade hela tråden.
+- Ett uppgivet svar syntes bara i tråden. Nu kommer också en notis på skärmen.
+- Ett skickat svar kastade en pågående omläsning utan att läsa om.
+- Sopningen lade platser på aktiva lån.
+- Timerlistan i kortet växte.
+- Klar-markeringen loggar när lånet tagits över (en dubblett, med flit).
+
+Två lämnades:
+- Migreringen ändrades på plats. Den har bara körts lokalt, där den lades in på nytt.
+- Tre databasanrop i stället för ett när lånet tas.
+
 **Prövat:**
 - Migreringen i en tom tillfällig databas med stubbar, två körningar, och 21 mutationer av efterkontrollen. Varje
   mutation stoppades av sitt eget meddelande. Lokalt kördes den två gånger i en transaktion som rullades tillbaka, och
@@ -842,7 +857,7 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
   `direction = 'to_store'` överlappar tabellens check (butikens meddelande har ingen svarare). Tas båda bort blir
   kontrollen röd. Kontrollen av anon mot svarsregeln fångade först fel nej (tabellen i stället för funktionen) och är
   skärpt.
-- 67 mutationer av koden. Alla gav rött i vitest, med "Tests N". En överlevde först: en notis som skickats för mer än
+- 75 mutationer av koden. Alla gav rött i vitest, med "Tests N". En överlevde först: en notis som skickats för mer än
   fem minuter sedan hade skickats igen utan villkoret `notified_at is null`. Testet finns nu.
 - Lokalt mot en fejkportal på :3101 som kontrollerar signaturen:
   - Butikens meddelanden: 201. En upprepning med en ny nyckel gav samma rad och ingen ny notis, ett annat innehåll
@@ -857,8 +872,10 @@ status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
   - Telefonbredd utan sidledsscroll.
 
 ⚠️ **Lokalt kvar:**
-- Meddelanden och svar på q-lokal-3b-1, -3b-2 och -3b-3, och tre notiser.
-- Tre `job.message` i kön. Den för q-lokal-3b-3 är uppgiven, eftersom fejkportalen nekade den.
+- Butikens meddelanden och våra svar på q-lokal-3b-1, -3b-2 och -3b-3, och tre notiser.
+- Fyra `job.message` i kön. De två för q-lokal-3b-3 är uppgivna, eftersom fejkportalen nekade dem.
+- Migreringen lades in lokalt två gånger, eftersom granskningen ändrade den före push. Den första versionen togs bort
+  (tabellen, köns policy och raden i migreringshistoriken).
 
 **Till portalen** (rättelselistan, punkt 24–27): kontraktets `job.message`-nyckel, svaren på butikens meddelande, hur
 tecknen räknas, och att en avbruten order tar emot meddelanden. Vår kopia av kontraktet
