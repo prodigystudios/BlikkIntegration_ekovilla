@@ -691,8 +691,8 @@ arbetsordrarna.
 - **Bara framåt.** När Utförd eller Fakturerad köats skickas inget tidigare läge igen, och inga fler datum. En order som
   ångras från "Fakturera" till "Pågående" syns som Utförd hos butiken. "Inte längre planerad" (sista kortet borttaget
   eller pausat) skickas fram till Utförd, som beslutat i punkt 4.
-- **`job.cancelled` nu**, `{ quoteId, cancelledAt }`, när arbetsordern får status Avbruten eller raderas. Bara före
-  Utförd, och efter den skickas ingenting mer. Kontraktstillägg, punkt 20 nedan.
+- **`job.cancelled` nu**, `{ quoteId, reason: "", cancelledAt }`, när arbetsordern får status Avbruten eller raderas.
+  Bara före Utförd, och efter den skickas ingenting mer. Kontraktstillägg, punkt 20 nedan.
 - **Fortnox-omförsök bara efter tekniska fel** (Fortnox nere, anslutningen ute, en process som dog): efter 5 min,
   15 min, 1 h och sedan varje timme i 24 h, med kontrollerna före varje försök. Stoppar kontrollerna (något saknas på
   kundkortet) försöker den aldrig. Säljaren fick notisen vid första felet och får ingen ny per försök.
@@ -848,9 +848,13 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     med `Retry-After: 300` när ingen hos Ekovilla kan ta jobbet än. `ekovillaCustomerNumber` måste finnas i kroppen
     (null eller en sträng; en tom sträng räknas som null). En `volume`-rad måste ha enheten `m3`.
 
-20. **`job.cancelled`** (fas 4b, William 2026-09-28): `{ "quoteId", "cancelledAt" }` (tidpunkt i UTC) när Ekovilla
-    avbryter jobbet eller tar bort arbetsordern. Skickas bara före "Utförd", och efter den skickas inget mer för jobbet.
-    Tar portalen inte emot den (4xx) syns den som uppgiven på CRM:ets portalsida.
+20. **`job.cancelled`** (fas 4b, William 2026-09-28): `{ "quoteId", "reason": "", "cancelledAt" }` (tidpunkt i UTC)
+    när Ekovilla avbryter jobbet eller tar bort arbetsordern. Skickas bara före "Utförd", och efter den skickas inget
+    mer för jobbet. Tar portalen inte emot den (4xx) syns den som uppgiven på CRM:ets portalsida.
+    **Rättat 2026-09-28:** `reason` saknades först. Portalens kontrakt har fältet (fritext till butiken, får vara tom),
+    och portalens schema krävde det tills portalens PR #40, som gör fältet valfritt ("får saknas"). Före den hade varje
+    `job.cancelled` nekats med 400 och getts upp. CRM:et har inget skäl att skicka och skickar alltid en tom sträng,
+    som båda versionerna av portalen tar emot.
 21. **`job.scheduled` har `scheduledUntil`** (punkt 5, byggt i fas 4b): planerad slutdag, samma dag som `scheduledFor`
     för ett endagsjobb. `scheduledFor` och `scheduledUntil` är båda `null` när jobbet inte längre är planerat.
 22. **Bara framåt** (William 2026-09-28): efter job.completed skickas inga fler job.scheduled, och efter job.completed
