@@ -135,3 +135,57 @@ export function buildTimeReminderNotification(input: {
     entity_id: null,
   };
 }
+
+/**
+ * Ett jobb från återförsäljarportalen har blivit en arbetsorder (RESELLER_PORTAL_CRM_PLAN.md fas 3b). Till den som
+ * fick jobbet i fördelningen. Portalen skickar ingen densitet, så lösullens säckantal är 0 tills säljaren fyllt i den;
+ * notisen påminner om det (William 2026-09-28).
+ *
+ * Mottagaren kan skriva arbetsordrar (fördelningens krav), så CRM-vyn är en sida hen kan öppna.
+ */
+export function buildPortalJobReceivedNotification(input: {
+  workOrderId: string;
+  storeName: string;
+  /** Var jobbet görs: arbetsorderns titel, som är arbetsplatsens adress. */
+  place: string;
+  desiredPeriod: string;
+  needsDensity: boolean;
+}): NotificationContent {
+  return {
+    type: 'portal_job.received',
+    title: `Nytt jobb från ${input.storeName}`,
+    body: [input.place.trim(), input.desiredPeriod.trim(), input.needsDensity ? 'Fyll i densiteten' : '']
+      .filter(Boolean)
+      .join(' · '),
+    href: `/crm/arbetsorder/${input.workOrderId}`,
+    entity_type: 'work_order',
+    entity_id: input.workOrderId,
+  };
+}
+
+/**
+ * Fortnox-ordern för ett jobb från portalen skapades inte (kontrollerna stoppade, eller Fortnox svarade fel), eller
+ * skapades utan en ändring som sparades under tiden. Till samma person som fick jobbet. Egen typ, så att push-bannern
+ * inte ersätter "Nytt jobb" (taggen är typ + arbetsorder).
+ */
+export function buildPortalJobFortnoxIssueNotification(input: {
+  workOrderId: string;
+  storeName: string;
+  reasons: string[];
+  /** Ordern finns i Fortnox men behöver synkas om. */
+  created?: boolean;
+}): NotificationContent {
+  const next = input.created
+    ? 'Synka om arbetsordern.'
+    : 'Arbetsordern finns och kan planeras. Åtgärda det och skicka sedan ordern till Fortnox från arbetsordern.';
+  return {
+    type: 'portal_job.fortnox_issue',
+    title: input.created
+      ? `Fortnox-ordern behöver synkas om · ${input.storeName}`
+      : `Fortnox-ordern kunde inte skapas · ${input.storeName}`,
+    body: [...input.reasons, next].join(' '),
+    href: `/crm/arbetsorder/${input.workOrderId}`,
+    entity_type: 'work_order',
+    entity_id: input.workOrderId,
+  };
+}

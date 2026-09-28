@@ -1,6 +1,17 @@
-import type { NextRequest, NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { waitUntil } from '@vercel/functions';
 import { routeError } from '@/lib/api/responses';
 import { readPortalSecret } from '@/lib/domains/portal/config';
+import {
+  IDEMPOTENCY_KEY_HEADER,
+  claimIdempotencyKey,
+  completeIdempotencyKey,
+  idempotencyRequestHash,
+  isCacheableResponseStatus,
+  isValidIdempotencyKey,
+  releaseIdempotencyKey,
+} from '@/lib/domains/portal/idempotency';
 import {
   PORTAL_SIGNATURE_HEADER,
   PORTAL_TIMESTAMP_HEADER,
@@ -96,4 +107,92 @@ export async function verifyPortalRequest(
     return { ok: false, response: routeError(400, 'invalid_encoding', 'Kroppen är inte UTF-8.') };
   }
   return { ok: true, rawBody };
+}
+
+// ---------------------------------------------------------------------------------------------------- svarscachen
+
+/** Vad en ändrande route svarar, och det som ska göras efter svaret (Fortnox-ordern, notiserna). */
+export type PortalHandlerResult = { response: NextResponse; after?: () => Promise<unknown> };
+
+/** Vercel väntar in arbetet efter svaret; lokalt, utan Vercel, fortsätter det bara i processen. */
+function scheduleAfterResponse(work: Promise<unknown>) {
+  waitUntil(work);
+}
+
+function cachedResponse(status: number, body: unknown) {
+  return NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
+}
+
+/**
+ * Kör en ändrande route genom svarscachen (`portal_idempotency_keys`, se idempotency.ts). Portalen gör om anropet
+ * vid timeout, 5xx och 401; ett upprepat anrop med samma `Idempotency-Key` får samma svar utan att något körs igen.
+ *
+ *   400 invalid_idempotency_key  nyckeln saknas eller har otillåtna tecken
+ *   422 idempotency_key_reused   samma nyckel, en annan förfrågan (metod, sökväg eller kropp)
+ *   503 request_in_progress      ett annat anrop med nyckeln körs just nu (Retry-After)
+ *   500 portal_request_failed    routen kastade; nyckeln släpps, så att omförsöket körs på nytt
+ *
+ * Svaret sparas när det blir samma vid ett omförsök (2xx och bestående 4xx), annars släpps nyckeln. Det som ska göras
+ * efter svaret (`after`) körs bara av det anrop som faktiskt körde routen, aldrig av en upprepning.
+ */
+export async function runIdempotentPortalRequest(
+  req: NextRequest,
+  rawBody: string,
+  admin: SupabaseClient,
+  handler: () => Promise<PortalHandlerResult>,
+  options: { schedule?: (work: Promise<unknown>) => void; now?: () => Date } = {},
+): Promise<NextResponse> {
+  const key = req.headers.get(IDEMPOTENCY_KEY_HEADER);
+  if (!isValidIdempotencyKey(key)) {
+    return routeError(400, 'invalid_idempotency_key', 'Idempotency-Key saknas eller är ogiltig.');
+  }
+  const path = new URL(req.url).pathname;
+  const now = options.now ?? (() => new Date());
+
+  let claim;
+  try {
+    claim = await claimIdempotencyKey(admin, key, idempotencyRequestHash(req.method, path, rawBody), now());
+  } catch (e) {
+    console.error('[portal] svarscachen svarar inte', { path, error: e instanceof Error ? e.message : String(e) });
+    return routeError(500, 'portal_request_failed', 'Anropet kunde inte tas emot. Försök igen.');
+  }
+  if (claim.kind === 'replay') return cachedResponse(claim.status, claim.body);
+  if (claim.kind === 'mismatch') {
+    return routeError(422, 'idempotency_key_reused', 'Idempotency-Key är redan använd för en annan förfrågan.');
+  }
+  if (claim.kind === 'in_progress') {
+    const busy = routeError(503, 'request_in_progress', 'Ett anrop med samma Idempotency-Key körs redan.');
+    busy.headers.set('Retry-After', '5');
+    return busy;
+  }
+  const owned = { key, token: claim.token };
+
+  let result: PortalHandlerResult;
+  try {
+    result = await handler();
+  } catch (e) {
+    console.error('[portal] routen föll', { path, error: e instanceof Error ? e.message : String(e) });
+    result = { response: routeError(500, 'portal_request_failed', 'Anropet kunde inte tas emot. Försök igen.') };
+  }
+
+  const { response } = result;
+  try {
+    if (isCacheableResponseStatus(response.status)) {
+      const saved = await completeIdempotencyKey(admin, owned, response.status, await response.clone().json(), now());
+      if (!saved) console.warn('[portal] svaret sparades inte: claimen var inte längre vår', { path });
+    } else {
+      await releaseIdempotencyKey(admin, owned);
+    }
+  } catch (e) {
+    // Svaret gäller ändå för det här anropet. Ett omförsök kör routen igen, som är idempotent på sin affärsnyckel.
+    console.error('[portal] svarscachen kunde inte uppdateras', { path, error: e instanceof Error ? e.message : String(e) });
+  }
+
+  if (result.after) {
+    const work = result.after().catch((e) => {
+      console.error('[portal] arbetet efter svaret föll', { path, error: e instanceof Error ? e.message : String(e) });
+    });
+    (options.schedule ?? scheduleAfterResponse)(work);
+  }
+  return response;
 }

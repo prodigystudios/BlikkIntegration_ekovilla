@@ -2,6 +2,8 @@ import { Suspense } from 'react';
 import { redirect } from 'next/navigation';
 import PageShell from '@/components/ui/PageShell';
 import { getFortnoxConnectionStatus } from '@/lib/domains/fortnox/auth';
+import { createSessionClient } from '@/lib/supabase/session';
+import { getPortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import WorkOrderDetailClient from '@/app/crm/arbetsorder/WorkOrderDetailClient';
 import { readEkonomiAccess, canReadWorkOrders } from '../../_lib/access';
 
@@ -25,7 +27,10 @@ export default async function EkonomiWorkOrderDetailPage({ params }: { params: P
   if (!userId) redirect('/auth/sign-in');
   if (!canReadWorkOrders(held)) redirect('/ekonomi');
 
-  const fortnoxStatus = await getFortnoxConnectionStatus().catch(() => ({ connected: false }));
+  const [fortnoxStatus, portalJob] = await Promise.all([
+    getFortnoxConnectionStatus().catch(() => ({ connected: false })),
+    getPortalJobBadge(createSessionClient(), id).catch(() => null),
+  ]);
 
   return (
     <PageShell className="max-w-[1460px]">
@@ -35,6 +40,7 @@ export default async function EkonomiWorkOrderDetailPage({ params }: { params: P
           fortnoxConnected={fortnoxStatus.connected}
           currentUserId={userId}
           readOnly
+          portalJob={portalJob}
           // Bakåtknappen ska till ekonomiytans egen lista. Utan det pekar den på /crm/arbetsorder,
           // där rollgrinden kastar ut en ekonomianvändare till startsidan.
           homePath="/ekonomi/arbetsorder"

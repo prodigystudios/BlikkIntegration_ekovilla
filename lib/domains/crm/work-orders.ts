@@ -295,7 +295,10 @@ const readinessCustomerSelect =
 // ⚠️ Felet får INTE svaljas. En tillfälligt misslyckad läsning skulle annars vara omöjlig att
 // skilja från "kunden har inga uppgifter": kontrollen hade hittat på spärrar för adress, telefon
 // och org.nr och bett säljaren fylla i fält som redan är ifyllda. Anroparen avbryter i stället.
-async function fetchReadinessCustomer(
+//
+// Exporterad för portalens jobb (lib/domains/portal/jobIntakeStore.ts), som prövar sin Fortnox-order
+// med samma kontroll och samma kundkortsläsning.
+export async function fetchReadinessCustomer(
   supabase: SupabaseClient,
   customerId: string | null,
 ): Promise<{ customer: ReadinessCustomerSource; error: { message: string } | null }> {

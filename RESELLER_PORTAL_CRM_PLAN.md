@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–3a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–3b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -157,7 +157,7 @@ Ren logik som testas isolerat:
 | `outbox.ts`, `idempotency.ts` | Utgående kö och inkommande svarscache |
 | `articleFields.ts` ✅, `articleFieldsStore.ts` ✅ | Portalfälten per artikel. Den rena delen (kategorierna, arbetsandelen i procent, `portalPublishBlockers`) importeras av artikelsidans kort och får aldrig dra in zod eller databasklienten. Zod-schemat och läsningarna och skrivningarna ligger i `…Store.ts` |
 | `pricelist.ts` ✅, `pricelistPublish.ts` ✅ | Prislistans payload (ren: grundpriset, enheten med gemener, vad som hoppas över och varför, hashen, nyckeln) och publiceringen (källorna, sparandet, kön och ett första utskick). Sidans klient importerar bara typer ur dem |
-| `jobIntake.ts` | Radmappning och snapshot för jobben |
+| `jobIntake.ts` ✅, `jobIntakeStore.ts` ✅, `jobBadge.ts` ✅ | Jobbets kropp (Zod), radmappningen och snapshoten (ren), och intaget mot databasen: butiken, jobbets rad, arbetsordern och, efter svaret, notiserna och Fortnox-ordern. Brickan på arbetsordern läses med sessionen |
 | `assignment.ts` ✅, `county.ts` ✅, `resellers.ts` ✅ | Fördelningen till en säljare (kedjan, behörighetskravet, stegen mot databasen), länet ur postnummer och ort via Nominatim, och butikerna och reserven på portalsidan |
 | `jobState.ts` | Portalens tillstånd härlett ur arbetsordern |
 
@@ -198,7 +198,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `portal_outbound_events` | Utgående kö: unik nyckel, typ, osignerad kropp, status, antal försök, nästa försök, senaste fel |
 | `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
 | `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
-| `crm_portal_jobs` | `quote_id` (unik), `quote_number`, `reseller_id`, `work_order_id` (unik, `on delete set null`), kroppen, senast skickade tillstånd, och en markering "behöver synkas" |
+| `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner (kolumngrant). Fas 4b lägger till senast skickade tillstånd och markeringen "behöver synkas" |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
@@ -352,7 +352,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **2a** ✅ | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`): eget kort med eget Spara (`PUT /api/crm/portal/article-fields/[articleNumber]`), kolumnen "Portal" och ett filter i listan. Beteendet prövas mot en databas med `supabase/checks/portal_article_fields.sql`. Resultaten står under tabellen | — |
 | **2b** ✅ | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera, historiken och "Skicka väntande nu". Beteendet prövas mot en databas med `supabase/checks/portal_pricelist.sql`. Resultaten står under tabellen | 0, 1b, 2a |
 | **3a** ✅ | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin (fliken "Butiker och säljare" på portalsidan). Beteendet prövas mot en databas med `supabase/checks/portal_resellers.sql`. Resultaten står under tabellen | 1b |
-| **3b** | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan | 3a |
+| **3b** ✅ | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan. Beteendet prövas mot en databas med `supabase/checks/portal_jobs.sql`. Resultaten står under tabellen | 3a |
 | **3c** | Koppla kund på en portalorder utan kund | 3b |
 | **4a** | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen | — |
 | **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem | 1b, 3b, 4a |
@@ -507,6 +507,67 @@ Säljarlistan på sidan kommer från den befintliga `/api/crm/sellers`, så inge
 - Ett id av bara punkter (`.`, `..`) skrivs om av webbläsaren i en adress, och butikens id nekar det
   därför. Samma sak gäller portalens andra id:n i sökvägar (`quoteId` med flera), så pröva det i 3b.
 
+### Fas 3b: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Två notiser vid behov.** "Nytt jobb från <butik>" med arbetsplatsen, perioden och "Fyll i densiteten" när jobbet
+  har lösull, till den som fick jobbet. En andra notis bara när Fortnox-ordern inte kan skapas, med orsaken, till
+  samma person (reserven när butiken saknar kund).
+- **Brickan** "Från återförsäljarportalen · <butik> · offert <nr>" i arbetsorderns sidhuvud, bara där. Den syns
+  också i ekonomiytans läsvy, som är samma sida.
+- **Titeln är arbetsplatsens adress** ("Rönnvägen 18, Gävle"). Den står i listorna och på Fortnox-ordern som
+  "Projekt: …  Märkning: <offertnr>".
+- **Densiteten lämnas tom.** Portalen skickar ingen, och säckantalet är 0 tills säljaren fyllt i den.
+
+**Egna val som William inte sa emot:**
+- Samma quoteId med en ny nyckel ger den befintliga arbetsordern om innehållet är detsamma (nycklarnas ordning spelar
+  ingen roll), annars 409 `job_conflict`. En arbetsorder som tagits bort skapas inte igen (409 `work_order_removed`).
+- Namn och enhet ur artikelregistret när artikeln finns där: säckberäkningen känner igen materialet på registrets
+  namn, och Fortnox vill ha registrets enhetskod. Annars portalens.
+- Ett Fortnox-försök direkt efter svaret. Omförsöken kommer i 4b.
+
+**Så fungerar intaget** (`receivePortalJob`, i anropet):
+1. Kroppen prövas: JSON, ingen text som Postgres inte kan spara (nolltecken, ensamt surrogat: 400 `invalid_text`
+   i stället för ett 500 som portalen gjort om i två dygn), och kontraktet med Zod. En volymrad måste ha enheten m³.
+2. Finns jobbet redan jämförs innehållet, och butiken rörs inte. Ett nytt jobb lägger till eller uppdaterar butiken
+   (namn, adress, kundnummer, kortet numret pekar på, `last_seen_at`; aldrig säljaren) och fördelas (fas 3a). Ingen kan
+   ta det: 503 med `Retry-After: 300`, inget jobb och ingen arbetsorder, men butiken finns och kan få en säljare.
+3. Jobbets rad sparas med ett arbetsorder-id valt i förväg. Arbetsordern skapas med det id:t och ett ordernummer ur
+   det och dagen jobbet kom. Ett omförsök efter ett avbrott, också efter midnatt, fortsätter där det förra föll och
+   skapar aldrig en andra order. Den som fick jobbet är både `created_by` och ansvarig. Togs den bort innan ordern
+   fanns fördelas jobbet om (ett samtidigt omförsök tar den första omfördelningen).
+4. 201 `{ ok: true, data: { crmWorkOrderId } }`.
+
+**Efter svaret** (`followUpPortalJob`, med `waitUntil`; routen har `maxDuration = 90` som utskicket): "Nytt jobb", sedan samma fullständighetskontroll som våra
+egna ordrar mot kundkortet som det ser ut nu, sedan `pushWorkOrderToFortnox()`. Varje notis skickas en gång: raden
+tas före utskicket och släpps om det misslyckas. En push som redan pågår ger ingen notis.
+
+**Prövat lokalt↔lokalt** (signerade anrop mot dev-servern, Fortnox testbolaget):
+- utan säljare och reserv: 503, butiken tillagd och kopplad till kund 15, nyckeln släppt;
+- med butikens säljare: samma anrop gav 201, arbetsorder AO-20260928-B99B61 hos säljaren, Fortnox-order 22 i
+  testbolaget med `YourOrderNumber` = offertnumret, leveransadressen = arbetsplatsen, priserna = unitCost,
+  registrets namn och enheter, ingen ROT, netto 14 270 kr, och textraden "Projekt: Rönnvägen 18, Gävle  Märkning:
+  2026-901";
+- samma nyckel igen: samma svar ur cachen; en ny nyckel: samma arbetsorder; ett ändrat innehåll: 409; samma nyckel med
+  en annan kropp: 422;
+- en butik utan kundnummer, med admin som reserv: arbetsordern hos reserven utan kund och utan moms i snapshoten,
+  ingen Fortnox-order, och två notiser till reserven;
+- i webbläsaren som säljaren: notisen i klockan ledde till ordern, brickan i sidhuvudet, arbetsbeskrivningen,
+  märkningen och kontakten på plats. På telefonbredd kortas brickan med ellips;
+- efter granskningen: en upprepning rörde inte butiken, ett nolltecken gav 400 `invalid_text`, och ett nytt jobb
+  blev Fortnox-order 23.
+
+⚠️ **Lokala provjobb** (`q-lokal-3b-1` till `-3`), deras arbetsordrar, notiser och butiker (`res-sehed-gavle`,
+`res-okopplad`), reserven (admin) och Fortnox-order 22 och 23 i testbolaget ligger kvar tills de tas bort.
+
+**Till senare faser:**
+- 3c: en portalorder utan kund kan inte nå Fortnox förrän kunden kopplas. Notisen säger vad som saknas, men det finns
+  ännu ingen väg att byta kund på arbetsordern. Kundkopplingen på butiken speglar i 3b vad kundnumret pekar på;
+  3c avgör hur en koppling för hand ska samsas med det.
+- 4b: omförsöken av Fortnox-pushen, och en push som dog med processen (efter svaret men före Fortnox). Tills dess
+  syns det som "Ej synkad" på arbetsordern och lagas med "Skicka till Fortnox".
+- Portalen läser `data.crmWorkOrderId` (appens kuvert, punkt 18 nedan).
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -575,6 +636,17 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     Hashen är sha256 i hex över artiklarna som JSON med sorterade nycklar. CRM:et räknar 2xx som
     mottaget och gör om 5xx och 401. Övriga 4xx ges upp och visas på sidan. Två publiceringar samma
     dag ger två listor med samma `validFrom`, och portalen behöver då använda den senast mottagna.
+
+18. **Svaren har appens kuvert** (fas 3b, 2026-09-28). Framgång är `{ "ok": true, "data": … }`, jobbet alltså
+    `201 { "ok": true, "data": { "crmWorkOrderId": "…" } }`, och ett fel är `{ "ok": false, "error": "<text>",
+    "errorDetails": { "code": "…", "message": "…", "details": … } }`. Samma form som `ping` redan svarar med.
+19. **Jobbets felsvar** (fas 3b): 400 `invalid_json`; 400 `invalid_text` (ett nolltecken eller ett ensamt surrogat
+    någonstans i kroppen, med sökvägen); 400 `validation_error` med `details.issues` (`path` som
+    `lines.1.unitCost`, och `message`); 400 `invalid_idempotency_key`; 409 `job_conflict` när samma quoteId redan är
+    mottaget med ett annat innehåll (en ny nyckel med samma innehåll ger 201 och den befintliga arbetsordern); 409
+    `work_order_removed` när Ekovilla tagit bort jobbets arbetsorder; 422 `idempotency_key_reused`; 503 `no_assignee`
+    med `Retry-After: 300` när ingen hos Ekovilla kan ta jobbet än. `ekovillaCustomerNumber` måste finnas i kroppen
+    (null eller en sträng; en tom sträng räknas som null). En `volume`-rad måste ha enheten `m3`.
 
 ## Öppna frågor
 
