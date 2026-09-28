@@ -10,12 +10,22 @@ import EmptyState from '@/components/ui/EmptyState';
 import type { CachedFortnoxArticle } from '@/lib/domains/fortnox/types';
 import { matchesArticleSearch, sortArticlesFavoritesFirst } from '@/lib/domains/fortnox/articleSearch';
 
+/** Det listan visar om återförsäljarportalens fält, per artikelnummer. */
+export type ArticlePortalSummary = { publish: boolean; customer_name: string };
+
 type ArticlesClientProps = {
   initialArticles: CachedFortnoxArticle[];
   fortnoxConnected: boolean;
+  /** null = fälten gick inte att läsa; då visas varken kolumnen eller filtret. */
+  portal: Record<string, ArticlePortalSummary> | null;
 };
 
 const LIST_BASE = '/crm/installningar/artiklar';
+
+// Markerad för portalens prislista. Ett ställe, så att märket, antalet och filtret aldrig säger olika.
+function isInPortal(portal: Record<string, ArticlePortalSummary> | null, articleNumber: string): boolean {
+  return Boolean(portal?.[articleNumber]?.publish);
+}
 
 function formatPrice(value: number | null): string {
   if (value === null || value === undefined) return '–';
@@ -32,19 +42,26 @@ async function apiRequest<T>(input: string, init?: RequestInit): Promise<T> {
   return json.data as T;
 }
 
-export default function ArticlesClient({ initialArticles, fortnoxConnected }: ArticlesClientProps) {
+export default function ArticlesClient({ initialArticles, fortnoxConnected, portal }: ArticlesClientProps) {
   const toast = useToast();
   const [articles, setArticles] = useState<CachedFortnoxArticle[]>(initialArticles);
   const [search, setSearch] = useState('');
+  const [onlyPortal, setOnlyPortal] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [favBusy, setFavBusy] = useState<string | null>(null);
   const [workDescBusy, setWorkDescBusy] = useState<string | null>(null);
 
+  const portalCount = useMemo(
+    () => articles.filter((a) => isInPortal(portal, a.article_number)).length,
+    [articles, portal],
+  );
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return articles;
+    const inScope = onlyPortal ? articles.filter((a) => isInPortal(portal, a.article_number)) : articles;
+    if (!search.trim()) return inScope;
     // Tokenised AND-across-words match, shared with the offer/quote article search.
-    return articles.filter((a) => matchesArticleSearch(a, search));
-  }, [articles, search]);
+    return inScope.filter((a) => matchesArticleSearch(a, search));
+  }, [articles, search, onlyPortal, portal]);
 
   // Toggle a global favorite (shared across all sellers). Optimistic; re-sorts favorites to the top.
   async function toggleFavorite(articleNumber: string, next: boolean) {
@@ -154,13 +171,30 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
       {/* Search + table */}
       <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="w-full max-w-sm">
-            <Input
-              type="search"
-              placeholder="Sök artikelnummer eller beskrivning…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
+            <div className="w-full sm:w-96">
+              <Input
+                type="search"
+                placeholder="Sök artikelnummer eller beskrivning…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            {portal && (
+              <button
+                type="button"
+                aria-pressed={onlyPortal}
+                onClick={() => setOnlyPortal((v) => !v)}
+                className={
+                  'rounded-full border px-3 py-1.5 text-[13px] font-semibold transition-colors ' +
+                  (onlyPortal
+                    ? 'border-[color:var(--ek-accent)] bg-[color:var(--ek-accent)] text-white'
+                    : 'border-[#e0e8dc] bg-white text-slate-600 hover:border-[#cfdcc9]')
+                }
+              >
+                Bara portalens prislista ({portalCount})
+              </button>
+            )}
           </div>
           <span className="text-xs font-semibold text-slate-500">{filtered.length} artiklar</span>
         </div>
@@ -171,7 +205,9 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
             description={
               articles.length === 0
                 ? 'Synka från Fortnox eller skapa en ny artikel för att komma igång.'
-                : 'Inga artiklar matchar din sökning.'
+                : onlyPortal && portalCount === 0
+                  ? 'Ingen artikel är med i portalens prislista. Markera en på artikelns sida.'
+                  : 'Inga artiklar matchar din sökning.'
             }
           />
         ) : (
@@ -193,6 +229,11 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
                   >
                     I arbetsbeskr.
                   </th>
+                  {portal && (
+                    <th className="py-2 pr-3" title="Med i återförsäljarportalens prislista">
+                      Portal
+                    </th>
+                  )}
                   <th className="py-2 pr-3 text-right">Åtgärder</th>
                 </tr>
               </thead>
@@ -233,6 +274,17 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected }: Ar
                         className="h-4 w-4 accent-[color:var(--ek-accent)] disabled:opacity-50"
                       />
                     </td>
+                    {portal && (
+                      <td className="py-2.5 pr-3">
+                        {isInPortal(portal, a.article_number) ? (
+                          <Badge variant="accent" title={portal[a.article_number]?.customer_name || undefined}>
+                            I prislistan
+                          </Badge>
+                        ) : (
+                          <span className="text-slate-300">–</span>
+                        )}
+                      </td>
+                    )}
                     <td className="py-2.5 pr-3 text-right">
                       <Link
                         href={`${LIST_BASE}/${encodeURIComponent(a.article_number)}`}
