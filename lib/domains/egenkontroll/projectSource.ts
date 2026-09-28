@@ -55,8 +55,8 @@ export type CrmWorkOrderLookupRow = {
   fortnox_order_number?: string | null;
   project_name?: string | null;
   client_name?: string | null;
-  // The day the job is actually scheduled for (ops_segments.start_day), resolved by the lookup
-  // route. Takes precedence over desired_installation_date, which is what the customer ASKED for
+  // The day the job is actually scheduled for (crm_work_orders.planned_start_day: the first card on
+  // the schedule that is not paused), resolved by the lookup route. Takes precedence over desired_installation_date, which is what the customer ASKED for
   // when the order was written and is never updated when the planner moves the job. The egenkontroll
   // is a signed quality document — dating it from a stale wish rather than the day the work
   // happened would put the wrong date on a compliance artefact.

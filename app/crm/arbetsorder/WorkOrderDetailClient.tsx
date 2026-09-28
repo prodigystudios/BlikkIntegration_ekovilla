@@ -42,7 +42,7 @@ import { useSackReports } from './useSackReports';
 import { useProgressReports } from './useProgressReports';
 import { progressWorkItemsFromLineItems } from '@/lib/domains/crm/workOrderProgress';
 import { useCustomerContact } from './useCustomerContact';
-import { formatDate, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
+import { formatDate, formatDayRange, formatDateTime, formatCurrency, joinAddress, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
@@ -105,6 +105,10 @@ type WorkOrderItem = {
   amount: number | string;
   vat_percent: number | string;
   desired_installation_date: string | null;
+  // Första och sista dagen på schemat, skrivna BARA av databasen (trigger på ops_segments). Pausade
+  // kort räknas inte; båda är null när inget kort ligger kvar.
+  planned_start_day: string | null;
+  planned_end_day: string | null;
   source_status: string;
   status: WorkOrderStatus;
   notes: string | null;
@@ -978,6 +982,7 @@ export default function WorkOrderDetailClient({
       <span className="text-sm text-slate-800">{value || '–'}</span>
     </div>
   );
+  const plannedDays = formatDayRange(workOrder.planned_start_day, workOrder.planned_end_day);
 
   return (
     <div className="grid grid-cols-1 gap-6 pb-10">
@@ -1243,10 +1248,18 @@ export default function WorkOrderDetailClient({
                       {assignees.map((u) => <option key={u.id} value={u.id}>{u.full_name || 'Namnlös'}</option>)}
                     </Select>
                   </label>
-                  <label className="grid gap-1 text-sm text-slate-600 md:col-span-2">
+                  <label className="grid gap-1 text-sm text-slate-600">
                     <span className={crm.sectionTitle}>Önskat installationsdatum</span>
                     <Input value={draft.desired_installation_date} onChange={(e) => setField('desired_installation_date', e.target.value)} type="date" />
                   </label>
+                  {/* Inget fält: datumen skrivs bara av databasen, ur korten på schemat. */}
+                  <div className="grid gap-1 text-sm text-slate-600">
+                    <span className={crm.sectionTitle}>Planerad</span>
+                    <div className="flex h-11 flex-col justify-center">
+                      {plannedDays ? <span className="text-sm text-slate-800">{plannedDays}</span> : <span className={crm.emptyValue}>Ej inplanerad</span>}
+                      <span className="text-[11px] leading-snug text-slate-500">Följer korten i planeringen</span>
+                    </div>
+                  </div>
                 </>
               ) : (
                 <>
@@ -1256,6 +1269,12 @@ export default function WorkOrderDetailClient({
                       I redigeringsläget finns väljaren kvar; där är den kontrollen, inte en kopia. */}
                   {readField('Ansvarig', (workOrder.assigned_to ? (assigneeNameById.get(workOrder.assigned_to) || workOrder.assignee?.full_name) : null) || 'Ej tilldelad')}
                   {readField('Önskat installationsdatum', formatDate(workOrder.desired_installation_date))}
+                  {/* Under önskat datum, i samma spalt: kundens önskan och det som ligger på schemat läses ihop.
+                      Första och sista dagen bland korten som inte är pausade; skrivs bara av databasen. */}
+                  <div className="grid gap-0.5 md:col-start-2">
+                    <span className={crm.sectionTitle}>Planerad</span>
+                    {plannedDays ? <span className="text-sm text-slate-800">{plannedDays}</span> : <span className={crm.emptyValue}>Ej inplanerad</span>}
+                  </div>
                   {/* Adressen skrevs ut TVÅ gånger i läsläget — en gång som kartlänk och en gång
                       som "Gatuadress"-fält, tecken för tecken samma sträng. Kvar står EN utskrift,
                       och det är den användbara: den man kan trycka på för att navigera. */}

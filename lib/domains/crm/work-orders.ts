@@ -49,6 +49,8 @@ export const crmWorkOrderSelect = `
   amount,
   vat_percent,
   desired_installation_date,
+  planned_start_day,
+  planned_end_day,
   source_status,
   status,
   notes,
@@ -849,7 +851,7 @@ export async function getWorkOrderSourceQuote(supabase: SupabaseClient, quoteId:
 // reduced to geometry: an egenkontroll needs area, thickness, density and what the row is called,
 // never unit_price / discount_percent / labor_cost.
 const WORK_ORDER_LOOKUP_SELECT =
-  'id, order_number, fortnox_order_number, project_name, client_name, desired_installation_date, work_address, customer_snapshot, internal_handoff, line_items';
+  'id, order_number, fortnox_order_number, project_name, client_name, desired_installation_date, planned_start_day, work_address, customer_snapshot, internal_handoff, line_items';
 
 const LOOKUP_ADDRESS_KEYS = [
   'street_address', 'postal_code', 'city',
@@ -902,17 +904,12 @@ export async function lookupCrmWorkOrderByNumber(supabase: SupabaseClient, order
 
   // The day the job is actually scheduled for — the egenkontroll dates itself from this rather
   // than from the order's desired date, which goes stale as soon as the planner moves the job.
-  // Earliest segment that has not finished; falls back to the most recent one for past jobs.
-  const { data: segment } = await supabase
-    .from('ops_segments')
-    .select('start_day')
-    .eq('work_order_id', row.id as string)
-    .order('start_day', { ascending: true })
-    .limit(1)
-    .maybeSingle();
-
+  // planned_start_day is the schedule's first day as the database keeps it (fas 4a, trigger on
+  // ops_segments): the first card that is not paused. One definition, shared with the order page.
+  // Handed on as scheduled_day, the name the egenkontroll already reads.
+  const { planned_start_day: plannedStartDay, ...rest } = row;
   return {
-    data: { ...narrowLookupRow(row), scheduled_day: (segment as { start_day?: string } | null)?.start_day ?? null },
+    data: { ...narrowLookupRow(rest), scheduled_day: typeof plannedStartDay === 'string' ? plannedStartDay : null },
     error: null,
   };
 }
