@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canSessionReadWorkOrder, narrowLookupRow, sanitizeOrFilterTerm, searchWorkOrdersForTimeReport } from '@/lib/domains/crm/work-orders';
+import { canSessionReadWorkOrder, lookupCrmWorkOrderByNumber, narrowLookupRow, sanitizeOrFilterTerm, searchWorkOrdersForTimeReport } from '@/lib/domains/crm/work-orders';
 
 // The egenkontroll's order lookup (/api/crm/work-orders/lookup) reads under the SERVICE ROLE, so
 // nothing but these two functions stands between a whole work order and any signed-in account.
@@ -132,5 +132,63 @@ describe('canSessionReadWorkOrder', () => {
 
   it('fails closed on an error', async () => {
     expect(await canSessionReadWorkOrder(client({ data: { id: 'wo-1' }, error: { message: 'boom' } }), 'wo-1')).toBe(false);
+  });
+});
+
+describe('lookupCrmWorkOrderByNumber: planerad dag', () => {
+  // Egenkontrollen daterar sig efter dagen jobbet ligger på schemat. Sedan fas 4a är det orderns egen
+  // planned_start_day (databasen håller den: första kortet som inte är pausat), inte ett eget uppslag i
+  // ops_segments som räknade med pausade kort och kunde gå isär från orderns datum.
+  const fake = (row: Record<string, unknown> | null) => {
+    const calls = { tables: [] as string[], selects: [] as string[] };
+    const client = {
+      from: (table: string) => {
+        calls.tables.push(table);
+        return {
+          select: (columns: string) => {
+            calls.selects.push(columns);
+            const chain: any = {
+              eq: () => chain,
+              order: () => chain,
+              limit: () => chain,
+              maybeSingle: async () => ({ data: row, error: null }),
+            };
+            return chain;
+          },
+        };
+      },
+    } as never;
+    return { client, calls };
+  };
+
+  const row = (plannedStartDay: string | null) => ({
+    id: 'wo-1',
+    order_number: 'AO-20260928-A1B2',
+    desired_installation_date: '2026-10-01',
+    planned_start_day: plannedStartDay,
+    customer_snapshot: {},
+    internal_handoff: {},
+    line_items: [],
+  });
+
+  it('ger orderns planned_start_day som scheduled_day, och frågar inte ops_segments', async () => {
+    const { client, calls } = fake(row('2026-10-12'));
+    const result = await lookupCrmWorkOrderByNumber(client, '6579');
+    expect(result.data?.scheduled_day).toBe('2026-10-12');
+    expect(calls.tables).toEqual(['crm_work_orders']);
+    expect(calls.selects[0]).toContain('planned_start_day');
+  });
+
+  it('en order som inte ligger på schemat ger null, så att egenkontrollen faller tillbaka på önskat datum', async () => {
+    const { client } = fake(row(null));
+    const result = await lookupCrmWorkOrderByNumber(client, '6579');
+    expect(result.data?.scheduled_day).toBeNull();
+    expect((result.data as Record<string, unknown> | null)?.desired_installation_date).toBe('2026-10-01');
+  });
+
+  it('svarar med samma form som förut: planned_start_day följer inte med under eget namn', async () => {
+    const { client } = fake(row('2026-10-12'));
+    const result = await lookupCrmWorkOrderByNumber(client, '6579');
+    expect(result.data).not.toHaveProperty('planned_start_day');
   });
 });

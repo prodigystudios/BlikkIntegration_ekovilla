@@ -7,6 +7,23 @@ export function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
 
+// Arbetsorderns planerade period (planned_start_day, planned_end_day): en dag som formatDate, flera
+// som "12–14 okt. 2026", "30 sep. – 2 okt. 2026" eller "30 dec. 2026 – 2 jan. 2027" (tankstreck
+// utan mellanslag bara när leden är tal). Byggd av formatDates delar och inte med formatRange, vars
+// mönster skiftar mellan ICU-versioner. null utan giltig startdag: anroparen väljer vad som står då.
+// En saknad, ogiltig eller tidigare slutdag ger startdagen.
+export function formatDayRange(start: string | null | undefined, end: string | null | undefined): string | null {
+  if (!start) return null;
+  const from = new Date(`${start}T12:00:00`);
+  const to = new Date(`${end || start}T12:00:00`);
+  if (Number.isNaN(from.getTime())) return null;
+  if (Number.isNaN(to.getTime()) || to.getTime() <= from.getTime()) return formatDate(start);
+  if (from.getFullYear() !== to.getFullYear()) return `${formatDate(start)} – ${formatDate(end)}`;
+  if (from.getMonth() === to.getMonth()) return `${from.getDate()}–${formatDate(end)}`;
+  const dayMonth = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short' }).format(from);
+  return `${dayMonth} – ${formatDate(end)}`;
+}
+
 export function formatDateTime(value: string | null | undefined): string {
   if (!value) return '–';
   const date = new Date(value);

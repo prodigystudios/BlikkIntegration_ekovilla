@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–3c byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–4a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -193,7 +193,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 
 | Tabell | Innehåll |
 | --- | --- |
-| `crm_work_orders` (nya kolumner) | `planned_start_day`, `planned_end_day`, som bara databasen skriver (se "Planerat datum") |
+| `crm_work_orders` (nya kolumner) ✅ | `planned_start_day`, `planned_end_day`, som bara databasen skriver (se "Planerat datum") |
 | `portal_idempotency_keys` | Nyckel, hash av kroppen, svaret. Bara en cache: dubbletter stoppas av affärsnycklarna nedan. Samma nyckel med en annan kropp ger 422 |
 | `portal_outbound_events` | Utgående kö: unik nyckel, typ, osignerad kropp, status, antal försök, nästa försök, senaste fel |
 | `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
@@ -288,28 +288,25 @@ Varje kandidat måste fortfarande ha `crm.workorder.write`, annars prövas näst
   inte finns i Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar
   kopplingen i `crm_portal_resellers` och skapar Fortnox-ordern. Se "Fas 3c: resultat".
 
-### Planerat datum (alla arbetsordrar)
+### Planerat datum (alla arbetsordrar) ✅
+
+Byggt i fas 4a; beslut, prövning och det 4b behöver står i "Fas 4a: resultat".
 
 - Två nya kolumner på `crm_work_orders`: `planned_start_day` och `planned_end_day`.
 - **Definition:** första `start_day` och sista `end_day` bland arbetsorderns `ops_segments` som inte
-  är `on_hold`. Ett endagsjobb har samma dag i båda. Båda är tomma när inget kort ligger kvar.
-- **Bara databasen skriver dem:** en trigger på `ops_segments` räknar om arbetsorderns datum vid varje
-  insert, update och delete. Ingen kod och inget formulär skriver i fälten. Schemat är fortfarande
-  sanningen, och fälten kan inte glida isär från det, oavsett vilken kodväg som flyttar ett kort.
+  är `on_hold`. Ett endagsjobb har samma dag i båda. Båda är tomma när inget kort ligger kvar, eller
+  när alla är pausade.
+- **Bara databasen skriver dem:** triggern `ops_segments_sync_planned_days` räknar om arbetsorderns
+  datum vid insert, delete och update av `work_order_id`, `start_day`, `end_day` eller `on_hold`, och
+  skriver bara när datumen faktiskt ändras. Vakten `crm_work_orders_guard_planned_days` vägrar varje
+  annan skrivning, från sessionen och service-rollen. Schemat är fortfarande sanningen, och fälten kan
+  inte glida isär från det, oavsett vilken kodväg som flyttar ett kort.
 - **Det här reviderar en princip från planering v2**, "det som ligger på schemat bor i `ops_segments`,
-  aldrig på arbetsordern". Kopian är skrivskyddad, så principens skäl gäller fortfarande. William har
-  godkänt riktningen; lösningen ses över igen när den byggs.
-- **Fällor att pröva när den byggs:**
-  - Triggerfunktionen måste få skriva på arbetsordern även när planeraren saknar rätt att redigera
-    ordrar: `security definer` med fast `search_path`, ingen EXECUTE utifrån.
-  - Varje dragning ändrar arbetsorderns `updated_at`. Arbetsorderns PATCH använder den inte för
-    krockkontroll (kontrollerat), men sidor som lyssnar på ändringar laddar om oftare.
-  - `ops_segments.work_order_id` är `on delete cascade`. Triggern måste tåla att arbetsordern redan är
-    på väg bort.
-- Migreringen fyller i datumen på befintliga ordrar en gång. Den är additiv och kan gå före koden.
-- Visas bredvid önskat datum på arbetsordern, i listorna och på kundkortet. Egenkontrollens egna
-  uppslag av "planerad dag" (`lib/domains/crm/work-orders.ts`, `scheduled_day`) byter till fältet, så
-  att det finns en enda definition.
+  aldrig på arbetsordern". Kopian är skrivskyddad, så principens skäl gäller fortfarande.
+- **En dragning ändrar inte arbetsorderns `updated_at`** (William 2026-09-28): `updated_at` betyder
+  "någon sparade ordern", och 3c:s koppling använder den som krockkontroll.
+- Visas bara på arbetsorderns faktakort, under önskat datum (William 2026-09-28). Egenkontrollens
+  uppslag av "planerad dag" läser fältet.
 
 ### Status tillbaka till portalen
 
@@ -353,7 +350,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **3a** ✅ | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin (fliken "Butiker och säljare" på portalsidan). Beteendet prövas mot en databas med `supabase/checks/portal_resellers.sql`. Resultaten står under tabellen | 1b |
 | **3b** ✅ | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan. Beteendet prövas mot en databas med `supabase/checks/portal_jobs.sql`. Resultaten står under tabellen | 3a |
 | **3c** ✅ | Koppla kund på en portalorder utan kund. Beteendet prövas mot en databas med `supabase/checks/portal_customer_link.sql`. Resultaten står under tabellen | 3b |
-| **4a** | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen | — |
+| **4a** ✅ | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen. Beteendet prövas mot en databas med `supabase/checks/work_order_planned_days.sql`. Resultaten står under tabellen | — |
 | **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
 | **6** | Meddelanden åt båda hållen och kortet "Butiken" | 4b |
@@ -613,6 +610,76 @@ Chromium, så att Chrome-kakorna för portalen inte rördes):
 ⚠️ **Lokalt kvar:** portalorderna `q-lokal-3c-1` och `-2`, butikerna `res-okopplad` (kopplad till BRIX för hand) och
 `res-okopplad-2` (kopplad till Boli Bygg), och Fortnox-order 24–26 i testbolaget.
 
+### Fas 4a: resultat (2026-09-28)
+
+**Williams beslut:**
+- **En dragning ändrar inte arbetsorderns `updated_at`.** `updated_at` betyder "någon sparade ordern". Annars hade en
+  dragning mitt i en koppling av butikens kund (3c, krockkontroll på `updated_at`) gett 409 `portal_job_changed`.
+  `set_timestamp_crm_work_orders` lämnar den orörd när BARA `planned_*` ändrats; resten av raden jämförs. En sparning
+  som inte ändrar något bumpar den fortfarande, som förut.
+- **Vakttrigger, inte kolumngrants.** `crm_work_orders_guard_planned_days` vägrar (42501) varje ändring av datumen
+  som inte kommer från tabellens ägare, alltså schemats trigger och migreringarna, också från service-rollen. En ny
+  order har dem tomma. Grants på `crm_work_orders` rördes inte.
+- **Visas bara på arbetsorderns faktakort**, under "Önskat installationsdatum": "12–14 okt. 2026", "30 sep. – 2 okt.
+  2026" eller "Ej inplanerad". I redigeringsläget som text bredvid datumfältet, med "Följer korten i planeringen".
+  Listan, kundkortet och fältvyn visar som förut önskat datum. Fältvyns rubrik säger fortfarande
+  "Planerad <önskat datum>".
+
+**Så fungerar triggern** (`20260928122049_work_order_planned_days.sql`):
+- `security definer` med tomt `search_path`, ägd av tabellernas ägare, ingen EXECUTE för någon roll. En säljare får
+  flytta alla kort (`planning.schedule.write`), men RLS på `crm_work_orders` släpper bara den ansvariga och admin: som
+  invoker hade en flytt av en kollegas kort uppdaterat 0 rader utan fel. PostgREST exponerar inte funktionen (PGRST202).
+- Ordern låses med `for no key update` innan datumen räknas, och räkningen görs i ett eget steg. Utan låset skrev
+  två samtidiga flyttar på samma order ett gammalt värde (prövat: 5 okt i stället för 1 okt). Med `for update` låste två
+  nya kort varandra, eftersom FK-kontrollen håller FOR KEY SHARE (prövat: deadlock). Kvar: raderas en order i samma
+  sekund som någon flyttar ett av dess kort kan Postgres avbryta den ena; den görs om.
+- Ordningen på dagen, jobbtypen, arbetsbeskrivningen och bekräftelserna rör aldrig ordern, och inte heller ett kort
+  som läggs eller flyttas inom perioden.
+- Kaskaden: när ordern raderas finns ingen order att låsa, och triggern gör ingenting. Ett kort som byter order räknar
+  om båda. Platshållare räknas aldrig.
+- Engångsifyllnaden körs i migreringen efter triggrarna, rör inte `updated_at`, och efterkontrollen räknar om varje
+  order och avbryter pushen om något inte stämmer.
+
+**Granskningen** (code-review high) fann två låsordningar som kunde ge deadlock, båda lagade:
+- Migreringen låser `ops_segments` först. Tog den ordern först (ALTER TABLE) och korten sist (CREATE TRIGGER) låste den
+  och ett kort som lades under pushen varandra (prövat med en långsam migrering: deadlock, pushen avbruten). Låset står
+  i ett `do`-block: `supabase db push` kör filen utan transaktionsblock, och där vägrar `LOCK TABLE` (prövat). Filen
+  körs ändå som en enda transaktion (prövat: ett fel i sista satsen rullade tillbaka den första).
+- Ett kort som byter order låser båda ordrarna i id-ordning. Appen byter aldrig order på ett kort i dag.
+Avfärdat: att vakten släpper varje funktion som tabellens ägare äger (en sådan funktion är en granskad migrering), att
+faktakortet inte uppdateras live (samma som resten av sidan; ordern ligger inte i realtime), och att egenkontrollen
+inte räknar pausade kort (beslutad definition).
+
+**Egenkontrollen** (`lookupCrmWorkOrderByNumber`) läser `planned_start_day` i stället för sitt eget uppslag i
+`ops_segments`, en fråga mindre. Skillnaden: ett pausat kort ger inte längre egenkontrollens datum. Svaret har samma form
+(`scheduled_day`), så `projectSource.ts` är oförändrad.
+
+⚠️ `SUPABASE_CONVENTIONS.md` säger "Keep `security definer` functions out of exposed schemas". Triggerfunktionen ligger
+i `public` som de fem befintliga security definer-triggrarna (t.ex. `assign_offert_number`): repot har inget privat
+schema, och en triggerfunktion går inte att anropa via PostgREST.
+
+**Prövat:**
+- Migreringen i en tom tillfällig databas med stubbar, tre körningar; 24 mutationer av databasen, var och en fångad av
+  efterkontrollen. Lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`.
+- `supabase/checks/work_order_planned_days.sql` med riktiga sessioner (13 steg), och 15 mutationer av funktionerna och
+  triggrarna, var och en röd på rätt steg. 25 mutationer av koden och migreringstexten röda i vitest.
+- Samtidigheten med två anslutningar i den tillfälliga databasen: två flyttar, två nya kort, och FK-låset före.
+  Utan låset och med `for update` blev provet rött.
+- I webbläsaren (headless, dev-servern på :3002): säljaren lade kort på en order som admin har, genom planeringens
+  routes. Faktakortet visade "12–14 okt. 2026", en andra etapp gav "12–21 okt. 2026", en flytt gav "30 sep. – 21 okt.
+  2026", en paus gav "20–21 okt. 2026", och `updated_at` stod kvar. Egenkontrollens uppslag gav 2026-10-20. Admin
+  sparade önskat datum (updated_at bumpades, datumen stod kvar), och när korten togs bort stod det "Ej inplanerad".
+  Ingen sidledsscroll på telefonbredd.
+
+**Ordningen till prod:** migreringen FÖRE koden. Koden läser kolumnerna, så en deploy utan migreringen ger 500 på
+arbetsordrarna.
+
+**Till fas 4b:**
+- `updated_at` säger inget om datumen. Markeringen "behöver synkas" ska vara en trigger på `crm_work_orders` som
+  jämför `planned_start_day`/`planned_end_day` (och status, Fortnox-numret), som planen redan säger.
+- `job.scheduled` med `scheduledFor` = `planned_start_day` och förslaget `scheduledUntil` = `planned_end_day`
+  (punkt 5). Ett pausat sista kort ger null, alltså "inte längre planerad".
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -719,7 +786,7 @@ Ingen av dem stoppar fas 0–6.
 - Fördelningskedjan, steg för steg.
 - `jobState.ts` tabelldrivet: bekräftad före planerad, datum som flyttas och tas bort, pausade kort,
   flera etapper, `partially_invoiced` skickar inget, steg bakåt.
-- Planerat datum: triggern prövad mot den lokala databasen (lägg, flytta, pausa, ta bort, radera
+- ✅ Planerat datum: triggern prövad mot den lokala databasen (lägg, flytta, pausa, ta bort, radera
   arbetsordern) och ett SQL-texttest för grants och `security definer`.
 - Kön: 5xx och timeout görs om, 4xx ger upp, tre snabba flyttar blir en händelse.
 
