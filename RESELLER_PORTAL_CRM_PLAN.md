@@ -699,6 +699,22 @@ arbetsordrarna.
 - **Visningen bara på portalsidan**: fliken "Utskick" med uppgivna och väntande händelser, felet och "Skicka om".
   Antalet som gett upp står på fliken. Ingen notis, inget på arbetsordern.
 
+**Granskningen** (code-review high) fann tio saker, alla lagade:
+- En avbruten order kunde få en Fortnox-order av ett omförsök. Nu hoppas den över, och omförsöken tar slut.
+- "Skicka om" räknade inte en senare händelse som själv gett upp: av två uppgivna prislistor kunde den äldre skickas och
+  ge butikerna de gamla priserna. Nu räknas allt senare utom en ersatt planerad dag.
+- Ett varv till för en notis kunde pusha ett stoppat jobb om kortet rättats under tiden. Nu får ett stoppat jobb aldrig
+  ett nytt varv.
+- En koppling av kund mer än 24 h efter intaget fick inga omförsök. Nu börjar ett fel utan aktivt fönster ett nytt.
+- **Delfakturerad räknas som utförd** när "Utförd" inte redan skickats. Första delfaktureringen kräver "Fakturera"
+  (`partialInvoices.ts`), så ordern har varit utförd; annars hade butikens läge berott på om ett cron-varv hann se det
+  korta "Fakturera". Delfakturerad har fortfarande inget eget läge hos butiken.
+- Jobb som väntar på att "bekräftad" levereras flyttas sist i kön varje varv, så att de inte tränger undan nya.
+- Knapparna ("Skicka väntande nu", "Skicka om") kör inga Fortnox-försök; de hör hemma i cron.
+- Fliken läser uppgivna och väntande var för sig, så att en lång kö aldrig trycker ut en uppgiven, och "kan skickas om"
+  prövas per rad (inte mot en lista som PostgREST kapar vid 1000).
+- Utförd-dagen är aldrig senare än fakturadagen.
+
 **Egna val som William inte sa emot:** cron-routen utanför `/api/portal/`; `ekovillaOrderNumber` = Fortnox-numret;
 `scheduledUntil` = planerad slutdag; `completedAt` = den svenska dag CRM:et såg statusen (ingen tidsstämpel finns);
 `invoicedAt` = den svenska dagen ur `fortnox_invoiced_at`; `confirmedAt` ur `fortnox_order_synced_at`, i UTC med `Z`.
@@ -736,12 +752,14 @@ för att `cookies()` sätter `revalidate = 0`.
 - `supabase/checks/portal_job_status.sql` med riktiga sessioner (7 steg): säljaren byter status, planeringens kort
   (också genom fas 4a:s trigger), Fortnox-numret, en vanlig order, läsningen, raderingen. 9 mutationer, alla röda.
 - 33 mutationer av koden och migreringstexten, alla röda i vitest (med "Tests N"). En överlevde först (fakturadagen
-  prövades samma dag som "nu"), och testet skärptes.
+  prövades samma dag som "nu"), och testet skärptes. Efter granskningen 16 till (de nya skydden och de omriktade),
+  alla röda.
 - Lokalt mot en fejkportal som kontrollerar signaturen (:3101), med cron-routen och `CRON_SECRET`: fem job.confirmed
   (Fortnox-order 22–26); ett kort gav "Planerad 12–14 okt", en flytt "20–21 okt", en ny ordning ingenting, borttaget
   "inte längre planerad", ett nytt kort "22 okt" i båda, "Fakturera" job.completed; en flytt och Pågående efter det
   ingenting; en avbruten order job.cancelled som fejkportalen nekade (404), fliken visade "Utskick 1" och raden med felet,
-  "Skicka om" levererade den och fliken blev tom. Fortnox-omförsöket på en order som redan fanns i Fortnox tog bort
+  "Skicka om" levererade den och fliken blev tom. Efter granskningen samma sak igen, och med två uppgivna för samma jobb
+  hade bara den senaste "Skicka om". Fortnox-omförsöket på en order som redan fanns i Fortnox tog bort
   nätet; ett utgånget fönster gavs upp utan försök. Telefonbredd utan sidledsscroll.
 
 ⚠️ **Lokalt kvar:** fejkportalens logg, två kort på AO-20260928-B99B61 (q-lokal-3b-1, nu Utförd hos "portalen" och

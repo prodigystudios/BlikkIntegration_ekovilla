@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   user: null as unknown,
   clients: 0,
   cronCalls: 0,
+  cronOptions: [] as unknown[],
   requeue: { kind: 'requeued', orderingKey: 'job:q-1' } as Record<string, unknown>,
   requeueCalls: [] as unknown[][],
   marked: [] as string[],
@@ -27,7 +28,7 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 });
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ((h.clients += 1), { kind: 'admin' })) }));
 vi.mock('@/lib/domains/portal/cron', () => ({
-  runPortalCron: vi.fn(async () => ((h.cronCalls += 1), { sync: {}, dispatch: { ran: false, reason: 'av' }, fortnox: {} })),
+  runPortalCron: vi.fn(async (_admin: unknown, options: unknown) => (h.cronCalls += 1, h.cronOptions.push(options), { sync: {}, dispatch: { ran: false, reason: 'av' }, fortnox: {} })),
 }));
 vi.mock('@/lib/domains/portal/outbox', () => ({
   requeueDeadPortalEvent: vi.fn(async (...args: unknown[]) => (h.requeueCalls.push(args), h.requeue)),
@@ -54,6 +55,7 @@ beforeEach(() => {
   h.user = null;
   h.clients = 0;
   h.cronCalls = 0;
+  h.cronOptions = [];
   h.requeue = { kind: 'requeued', orderingKey: 'job:q-1' };
   h.requeueCalls = [];
   h.marked = [];
@@ -65,6 +67,7 @@ describe('GET /api/reseller-portal/cron', () => {
     const res = await cron(`Bearer ${SECRET}`);
     expect(res.status).toBe(200);
     expect(h.cronCalls).toBe(1);
+    expect((h.cronOptions[0] as { fortnoxRetries?: boolean }).fortnoxRetries).not.toBe(false);
   });
 
   it('fel eller ingen nyckel: 401, ingen klient, ingenting körs', async () => {
@@ -115,6 +118,8 @@ describe('POST /api/crm/portal/events/[id]/retry', () => {
       expect(h.requeueCalls[0][1]).toBe(EVENT_ID);
       expect(h.marked).toEqual(['q-1']);
       expect(h.cronCalls).toBe(1);
+      // Ett klick kör inga Fortnox-försök (upp mot 40 s var); de hör hemma i cron.
+      expect(h.cronOptions[0]).toMatchObject({ fortnoxRetries: false });
     });
 
     it('prislistan: inget jobb markeras', async () => {

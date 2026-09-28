@@ -8,8 +8,10 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
  *   job.confirmed   Fortnox-ordern finns. ekovillaOrderNumber = Fortnox-numret (kontraktspunkt 6).
  *   job.scheduled   planerat datum (fas 4a). Skickas igen när datumen ändras, och med scheduledFor: null när inget
  *                   kort ligger kvar. scheduledUntil = slutdagen (kontraktspunkt 5).
- *   job.completed   arbetsordern har status "Fakturera" (completed) eller är fakturerad.
- *   job.invoiced    arbetsordern är helt fakturerad. partially_invoiced skickas inte.
+ *   job.completed   arbetsordern har status "Fakturera" (completed), är delfakturerad eller fakturerad. Första
+ *                   delfaktureringen kräver "Fakturera" (partialInvoices.ts), så en delfakturerad order har varit
+ *                   utförd; annars hade butikens läge berott på om ett cron-varv hann se det korta "Fakturera".
+ *   job.invoiced    arbetsordern är helt fakturerad. partially_invoiced har inget eget läge hos butiken.
  *   job.cancelled   arbetsordern är avbruten eller borttagen (tillägg till kontraktet, William 2026-09-28).
  *
  * Reglerna (William 2026-09-28):
@@ -138,15 +140,18 @@ export function derivePortalJobEvents(input: DerivePortalJobInput): DerivePortal
   if (state.invoiced) return done;
 
   const status = workOrder.status;
-  if (status === 'completed' || status === 'invoiced') {
-    // En fakturerad order är också utförd: butiken får båda, i ordning.
+  if (status === 'completed' || status === 'partially_invoiced' || status === 'invoiced') {
+    const invoicedDay =
+      status === 'invoiced' ? stockholmTodayISO(workOrder.fortnoxInvoicedAt ? new Date(workOrder.fortnoxInvoicedAt) : now) : null;
+    // En fakturerad order är också utförd: butiken får båda, i ordning. Utförd-dagen är dagen CRM:et såg statusen (det
+    // finns ingen tidsstämpel för den), men aldrig efter fakturadagen.
     if (!state.completed) {
-      events.push(event('job.completed', quoteId, now, { completedAt: stockholmTodayISO(now) }));
+      const today = stockholmTodayISO(now);
+      events.push(event('job.completed', quoteId, now, { completedAt: invoicedDay && invoicedDay < today ? invoicedDay : today }));
       state.completed = true;
     }
-    if (status === 'invoiced') {
-      const invoicedAt = workOrder.fortnoxInvoicedAt ? new Date(workOrder.fortnoxInvoicedAt) : now;
-      events.push(event('job.invoiced', quoteId, now, { invoicedAt: stockholmTodayISO(invoicedAt) }));
+    if (invoicedDay) {
+      events.push(event('job.invoiced', quoteId, now, { invoicedAt: invoicedDay }));
       state.invoiced = true;
     }
     return done;

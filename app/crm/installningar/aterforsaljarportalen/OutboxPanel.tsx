@@ -80,8 +80,8 @@ function Row({ item, retrying, onRetry, canAct }: { item: OutboxItemView; retryi
           </div>
         ) : (
           <p className="m-0 mt-1.5 text-xs text-slate-500">
-            Skickas inte om: något senare för samma {item.job ? 'jobb' : 'prislista'} har redan gått iväg eller väntar, och
-            det här hade hamnat efter det.
+            Skickas inte om: det finns något senare för {item.job ? 'samma jobb' : 'prislistan'}, och det här hade kommit
+            fram efter det.
           </p>
         ))}
     </li>

@@ -171,11 +171,13 @@ async function syncOne(admin: SupabaseClient, row: SyncJobRow, now: Date): Promi
     if (cleared.error) throw new Error(`Jobbets köade händelser kunde inte bokföras: ${cleared.error.message}`);
   }
 
-  // 3. Markeringen, bara om den står kvar som vi läste den. En ny ändring under tiden ger ett varv till.
-  if (!result.revisit && row.sync_requested_at !== null) {
+  // 3. Markeringen, bara om den står kvar som vi läste den. En ny ändring under tiden ger ett varv till. Ett jobb som
+  // väntar på att "bekräftad" levereras får en ny markering (nu), så att det hamnar sist: annars hade femtio jobb som
+  // väntar på en portal som ligger nere tagit varje varv, och nya ändringar aldrig kommit fram.
+  if (row.sync_requested_at !== null) {
     const done = await admin
       .from('crm_portal_jobs')
-      .update({ sync_requested_at: null, synced_at: now.toISOString() })
+      .update({ sync_requested_at: result.revisit ? now.toISOString() : null, synced_at: now.toISOString() })
       .eq('quote_id', quoteId)
       .eq('sync_version', version)
       .eq('sync_requested_at', row.sync_requested_at)
@@ -196,7 +198,7 @@ export async function syncPortalJobs(
     .select(JOB_SELECT)
     .not('sync_requested_at', 'is', null)
     .order('sync_requested_at', { ascending: true })
-    .limit(options.limit ?? 50);
+    .limit(options.limit ?? 100);
   if (error) throw new Error(`De markerade jobben gick inte att läsa: ${error.message}`);
   const rows = (data ?? []) as SyncJobRow[];
 

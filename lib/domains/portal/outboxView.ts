@@ -83,63 +83,68 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
   }
 }
 
+/**
+ * Uppgivna och väntande, var för sig och nyast först: en lång kö av väntande (integrationen av, portalen nere) får aldrig
+ * trycka ut en uppgiven, eftersom det är den som kräver en människa.
+ */
 export async function listPortalOutboxAttention(session: SupabaseClient, limit = 100): Promise<PortalOutboxItem[]> {
-  const { data, error } = await session
-    .from('portal_outbound_events')
-    .select(SELECT)
-    .in('status', ['dead', 'pending', 'sending'])
-    .order('seq', { ascending: false })
-    .limit(limit);
-  if (error) throw new Error(`Kön gick inte att läsa: ${error.message}`);
-  const rows = (data ?? []) as EventRow[];
+  const read = (statuses: OutboxEventStatus[]) =>
+    session.from('portal_outbound_events').select(SELECT).in('status', statuses).order('seq', { ascending: false }).limit(limit);
+  const [deadRead, waitingRead] = await Promise.all([read(['dead']), read(['pending', 'sending'])]);
+  if (deadRead.error) throw new Error(`Kön gick inte att läsa: ${deadRead.error.message}`);
+  if (waitingRead.error) throw new Error(`Kön gick inte att läsa: ${waitingRead.error.message}`);
+  const rows = [...((deadRead.data ?? []) as EventRow[]), ...((waitingRead.data ?? []) as EventRow[])];
   if (rows.length === 0) return [];
 
-  const keys = [...new Set(rows.map((r) => r.ordering_key))];
-  const quoteIds = keys.filter((k) => k.startsWith('job:')).map((k) => k.slice(4));
-  const [jobsRead, laterRead] = await Promise.all([
+  const quoteIds = [...new Set(rows.map((r) => r.ordering_key).filter((k) => k.startsWith('job:')).map((k) => k.slice(4)))];
+  const jobsRead =
     quoteIds.length > 0
-      ? session.from('crm_portal_jobs').select('quote_id, quote_number, store_name, work_order_id').in('quote_id', quoteIds)
-      : Promise.resolve({ data: [], error: null }),
-    // Det senaste som gått iväg eller väntar, per nyckel: en uppgiven före den kan inte skickas om.
-    session
-      .from('portal_outbound_events')
-      .select('ordering_key, seq')
-      .in('ordering_key', keys)
-      .in('status', ['pending', 'sending', 'sent'])
-      .order('seq', { ascending: false }),
-  ]);
+      ? await session.from('crm_portal_jobs').select('quote_id, quote_number, store_name, work_order_id').in('quote_id', quoteIds)
+      : { data: [], error: null };
   if (jobsRead.error) throw new Error(`Jobben gick inte att läsa: ${jobsRead.error.message}`);
-  if (laterRead.error) throw new Error(`Kön gick inte att läsa: ${laterRead.error.message}`);
-
   const jobs = new Map(
     ((jobsRead.data ?? []) as { quote_id: string; quote_number: string; store_name: string; work_order_id: string | null }[]).map(
       (j) => [j.quote_id, j],
     ),
   );
-  const latestLive = new Map<string, number>();
-  for (const r of (laterRead.data ?? []) as { ordering_key: string; seq: number }[]) {
-    if (!latestLive.has(r.ordering_key)) latestLive.set(r.ordering_key, Number(r.seq));
-  }
+
+  // Kan den skickas om? Samma regel som requeueDeadPortalEvent: inget senare för nyckeln, utom en ersatt planerad dag.
+  // En fråga per uppgiven (få), inte en lista över allt senare, som hade kunnat kapas vid PostgRESTs tak.
+  const retryable = new Map<string, boolean>();
+  await Promise.all(
+    rows
+      .filter((r) => r.status === 'dead')
+      .map(async (r) => {
+        const later = await session
+          .from('portal_outbound_events')
+          .select('id')
+          .eq('ordering_key', r.ordering_key)
+          .in('status', ['pending', 'sending', 'sent', 'dead'])
+          .gt('seq', r.seq)
+          .limit(1);
+        if (later.error) throw new Error(`Kön gick inte att läsa: ${later.error.message}`);
+        retryable.set(r.id, (later.data ?? []).length === 0);
+      }),
+  );
 
   return rows.map((r) => {
     const kind = portalOutboxEventKind(r.ordering_key, r.payload);
     const quoteId = r.ordering_key.startsWith('job:') ? r.ordering_key.slice(4) : null;
     const job = quoteId ? jobs.get(quoteId) : undefined;
-    const live = latestLive.get(r.ordering_key);
     return {
       id: r.id,
       kind,
       detail: portalOutboxEventDetail(kind, r.payload),
       status: r.status,
       attempts: r.attempts,
-      lastHttpStatus: r.last_http_status,
       lastError: r.last_error,
+      lastHttpStatus: r.last_http_status,
       createdAt: r.created_at,
       nextAttemptAt: r.status === 'pending' ? r.next_attempt_at : null,
       job: quoteId
         ? { quoteId, quoteNumber: job?.quote_number ?? null, storeName: job?.store_name ?? null, workOrderId: job?.work_order_id ?? null }
         : null,
-      canRetry: r.status === 'dead' && (live === undefined || live < Number(r.seq)),
+      canRetry: retryable.get(r.id) ?? false,
     };
   });
 }

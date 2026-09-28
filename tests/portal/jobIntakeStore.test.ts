@@ -540,6 +540,15 @@ describe('Fortnox-omförsöken i intaget och uppföljningen', () => {
     expect(m.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 0, fortnox_next_attempt_at: at(T1, 5 * 60_000) });
   });
 
+  it('🧨 en avbruten order pushas aldrig, och omförsöken tar slut', async () => {
+    const { m } = await received();
+    m.tables.crm_work_orders[0].status = 'cancelled';
+    const { deps } = followDeps();
+    expect((await followUpPortalJob(m.admin, QUOTE, deps)).fortnox).toBe('skipped');
+    expect(deps.push).not.toHaveBeenCalled();
+    expect(m.tables.crm_portal_jobs[0].fortnox_next_attempt_at).toBeNull();
+  });
+
   it('en notis som inte gick fram: ett varv till om 5 min, fast Fortnox-ordern finns', async () => {
     const { m } = await received();
     const { deps } = followDeps();

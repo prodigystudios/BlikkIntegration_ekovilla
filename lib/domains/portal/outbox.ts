@@ -265,7 +265,7 @@ export type RequeuePortalEventResult =
   | { kind: 'not_found' }
   /** Bara en uppgiven händelse skickas om. */
   | { kind: 'not_dead'; status: OutboxEventStatus }
-  /** En senare händelse för samma jobb (eller prislistan) har redan gått iväg eller väntar. */
+  /** En senare händelse för samma jobb (eller prislistan) finns: skickad, väntande eller själv uppgiven. */
   | { kind: 'superseded_by_later' }
   | { kind: 'requeued'; orderingKey: string };
 
@@ -274,7 +274,9 @@ export type RequeuePortalEventResult =
  *
  * 🧨 BARA DEN SENASTE för sin nyckel. En uppgiven händelse håller inte kvar resten av jobbets kö, så en senare kan redan
  * ha gått fram. En gammal job.scheduled efter en levererad job.completed hade flyttat butiken bakåt (bara framåt,
- * William 2026-09-28), och en gammal prislista efter en nyare hade ersatt den nyare hos butikerna.
+ * William 2026-09-28), och en gammal prislista efter en nyare hade ersatt den nyare hos butikerna. Också en senare som
+ * själv gett upp räknas: två uppgivna prislistor, och den äldre skickad om, hade gett butikerna de gamla priserna.
+ * Bara 'superseded' räknas inte (en ersatt planerad dag, som aldrig ska fram).
  */
 export async function requeueDeadPortalEvent(admin: SupabaseClient, id: string, now: Date): Promise<RequeuePortalEventResult> {
   const read = await admin.from('portal_outbound_events').select('id, seq, status, ordering_key').eq('id', id).maybeSingle();
@@ -287,7 +289,7 @@ export async function requeueDeadPortalEvent(admin: SupabaseClient, id: string, 
     .from('portal_outbound_events')
     .select('id')
     .eq('ordering_key', row.ordering_key)
-    .in('status', ['pending', 'sending', 'sent'])
+    .in('status', ['pending', 'sending', 'sent', 'dead'])
     .gt('seq', row.seq)
     .limit(1);
   if (later.error) throw new Error(`Senare händelser gick inte att läsa: ${later.error.message}`);

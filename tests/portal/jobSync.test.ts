@@ -32,7 +32,7 @@ const jobRow = (tables: Record<string, Record<string, unknown>[]>, quoteId = 'q-
   tables.crm_portal_jobs.find((r) => r.quote_id === quoteId)!;
 
 describe('syncPortalJobs', () => {
-  it('bekräftad köas mot portalens events-route, läget sparas med nyckeln, markeringen står kvar tills den levererats', async () => {
+  it('bekräftad köas mot portalens events-route, läget sparas med nyckeln, markeringen står kvar (flyttad sist) tills den levererats', async () => {
     const { admin, tables } = memoryAdmin({ crm_portal_jobs: [job()], crm_work_orders: [workOrder()] });
     expect(await sync(admin)).toEqual({ jobs: 1, queued: 1, unchanged: 0, conflicts: 0, errors: 0 });
 
@@ -50,11 +50,11 @@ describe('syncPortalJobs', () => {
       sync_state: { confirmedKey: 'job.confirmed-q-1-2026-10-12T08:30:00.000Z' },
       sync_pending_events: [],
       sync_version: 1,
-      sync_requested_at: MARK,
+      sync_requested_at: NOW.toISOString(),
     });
   });
 
-  it('köad men inte levererad: inget nytt, markeringen står kvar', async () => {
+  it('köad men inte levererad: inget nytt, markeringen står kvar men flyttas sist i kön', async () => {
     const key = 'job.confirmed-q-1-2026-10-12T08:00:00.000Z';
     const { admin, tables } = memoryAdmin({
       crm_portal_jobs: [job({ sync_state: { confirmedKey: key }, sync_version: 1 })],
@@ -63,7 +63,26 @@ describe('syncPortalJobs', () => {
     });
     expect(await sync(admin)).toMatchObject({ unchanged: 1 });
     expect(tables.portal_outbound_events).toHaveLength(1);
-    expect(jobRow(tables).sync_requested_at).toBe(MARK);
+    expect(jobRow(tables).sync_requested_at).toBe(NOW.toISOString());
+  });
+
+  it('jobb som väntar tränger inte undan nya: de tas äldst först, och de väntande hamnar sist', async () => {
+    const key = (q: string) => `job.confirmed-${q}-2026-10-12T08:00:00.000Z`;
+    const waiting = (q: string, mark: string) =>
+      job({ quote_id: q, work_order_id: `wo-${q}`, reserved_work_order_id: `wo-${q}`, sync_requested_at: mark, sync_state: { confirmedKey: key(q) }, sync_version: 1 });
+    const { admin, tables } = memoryAdmin({
+      crm_portal_jobs: [waiting('q-a', '2026-10-12T07:00:00.000Z'), waiting('q-b', '2026-10-12T07:01:00.000Z'), job({ quote_id: 'q-ny', work_order_id: 'wo-q-ny', reserved_work_order_id: 'wo-q-ny', sync_requested_at: '2026-10-12T08:20:00.000Z' })],
+      crm_work_orders: [workOrder({ id: 'wo-q-a' }), workOrder({ id: 'wo-q-b' }), workOrder({ id: 'wo-q-ny', order_number: 'AO-NY' })],
+      portal_outbound_events: [
+        { id: 'a', seq: 1, idempotency_key: key('q-a'), status: 'pending' },
+        { id: 'b', seq: 2, idempotency_key: key('q-b'), status: 'pending' },
+      ],
+    });
+    await syncPortalJobs(admin, { now: () => NOW, limit: 2 });
+    expect(tables.crm_portal_jobs.filter((j) => j.sync_requested_at === NOW.toISOString()).map((j) => j.quote_id)).toEqual(['q-a', 'q-b']);
+    // Nästa varv tar det nya jobbet först.
+    await syncPortalJobs(admin, { now: () => new Date(NOW.getTime() + 60_000), limit: 1 });
+    expect(tables.portal_outbound_events.some((e) => String(e.idempotency_key).startsWith('job.confirmed-q-ny'))).toBe(true);
   });
 
   it('levererad: planerad köas med ersättningsnyckel, och markeringen nollas', async () => {

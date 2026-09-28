@@ -47,8 +47,8 @@ export function portalFortnoxSafetyNet(now: Date): PortalFortnoxRetryColumns {
  *   exists / created / blocked / skipped   inget mer (klart, en människa behövs, eller ingen order)
  *   failed                                  ett misslyckat försök till; nästa efter väntan, om fönstret räcker
  *   in_progress                             en annan push pågår; titta igen om 5 min, utan att räkna ett försök
- * `resendNotice`: en notis gick inte att skicka. Då görs ett varv till om 5 min även när Fortnox är klart, så att
- * notisen kommer fram (den skickas en gång, så ett extra varv gör inget mer).
+ * `resendNotice`: en notis gick inte att skicka. Då görs ett varv till om 5 min när Fortnox-ordern finns, så att
+ * notisen kommer fram (den skickas en gång, så ett extra varv gör inget mer). Aldrig för ett stoppat jobb.
  */
 export function planPortalFortnoxRetry(input: {
   outcome: PortalFortnoxOutcome;
@@ -58,11 +58,14 @@ export function planPortalFortnoxRetry(input: {
   resendNotice?: boolean;
 }): PortalFortnoxRetryColumns {
   const { outcome, now } = input;
-  const until = input.retryUntil ? new Date(input.retryUntil) : new Date(now.getTime() + PORTAL_FORTNOX_RETRY_WINDOW_MS);
+  // Inget fönster, eller ett som gått ut: ett nytt fel (t.ex. när kunden kopplas dagar efter intaget) får ett eget
+  // fönster på 24 h, räknat från nu och med försöken från noll.
+  const stale = !input.retryUntil || new Date(input.retryUntil).getTime() < now.getTime();
+  const until = stale ? new Date(now.getTime() + PORTAL_FORTNOX_RETRY_WINDOW_MS) : new Date(input.retryUntil as string);
   const within = (at: Date) => (at.getTime() <= until.getTime() ? at.toISOString() : null);
 
   if (outcome === 'failed') {
-    const attempts = input.attempts + 1;
+    const attempts = (stale ? 0 : input.attempts) + 1;
     return {
       fortnox_next_attempt_at: within(new Date(now.getTime() + portalFortnoxRetryDelayMs(attempts))),
       fortnox_attempts: attempts,
@@ -70,7 +73,9 @@ export function planPortalFortnoxRetry(input: {
     };
   }
   const soon = within(new Date(now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS));
-  if (outcome === 'in_progress' || (input.resendNotice && outcome !== 'skipped')) {
+  // Ett varv till för en notis bara när Fortnox-ordern finns: ett varv på ett STOPPAT jobb hade pushat ordern om kortet
+  // rättats under tiden, och ett stoppat jobb kräver en människa (William 2026-09-28).
+  if (outcome === 'in_progress' || (input.resendNotice && (outcome === 'created' || outcome === 'exists'))) {
     return { fortnox_next_attempt_at: soon, fortnox_attempts: input.attempts, fortnox_retry_until: until.toISOString() };
   }
   return { fortnox_next_attempt_at: null, fortnox_attempts: input.attempts, fortnox_retry_until: input.retryUntil };

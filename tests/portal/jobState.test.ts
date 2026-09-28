@@ -137,7 +137,7 @@ describe('derivePortalJobEvents: planerad', () => {
   });
 
   it('status Pågående eller Delfakturerad: fortfarande bara datumen', () => {
-    for (const status of ['in_progress', 'partially_invoiced', 'scheduled']) {
+    for (const status of ['in_progress', 'scheduled', 'draft']) {
       expect(delivered({ status, plannedStartDay: '2026-10-14', plannedEndDay: '2026-10-14' }).types).toEqual(['job.scheduled']);
     }
   });
@@ -174,8 +174,15 @@ describe('derivePortalJobEvents: utförd och fakturerad', () => {
     expect(delivered({ status: 'invoiced' }, { ...CONFIRMED, completed: true }).types).toEqual(['job.invoiced']);
   });
 
-  it('delfakturerad räknas inte som utförd', () => {
-    expect(delivered({ status: 'partially_invoiced' }).types).toEqual([]);
+  it('delfakturerad har varit "Fakturera" (första rundan kräver det): utförd om den inte redan skickats, men inte fakturerad', () => {
+    expect(delivered({ status: 'partially_invoiced' }).types).toEqual(['job.completed']);
+    expect(delivered({ status: 'partially_invoiced' }, { ...CONFIRMED, completed: true }).types).toEqual([]);
+  });
+
+  it('utförd-dagen är aldrig senare än fakturadagen (en försenad omräkning)', () => {
+    const r = delivered({ status: 'invoiced', fortnoxInvoicedAt: '2026-10-09T22:15:00.000Z' });
+    expect(r.events[0].payload.data).toEqual({ quoteId: 'q-1', completedAt: '2026-10-10' });
+    expect(r.events[1].payload.data).toEqual({ quoteId: 'q-1', invoicedAt: '2026-10-10' });
   });
 
   it('BARA FRAMÅT: tillbaka till Pågående efter Utförd skickar ingenting, inte heller nya datum', () => {

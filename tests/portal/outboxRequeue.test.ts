@@ -26,10 +26,14 @@ describe('requeueDeadPortalEvent', () => {
     }
   });
 
-  it('senare händelser som själva gavs upp eller ersattes hindrar inte, och andra jobbs händelser räknas inte', async () => {
-    const { admin } = memoryAdmin({
-      portal_outbound_events: [ev('a', 1, 'dead'), ev('b', 2, 'dead'), ev('c', 3, 'superseded'), ev('x', 4, 'sent', 'job:q-2')],
-    });
+  it('🧨 en senare som själv gett upp hindrar också: två uppgivna prislistor, och den äldre hade gett butikerna gamla priser', async () => {
+    const { admin } = memoryAdmin({ portal_outbound_events: [ev('a', 1, 'dead', 'pricelist'), ev('b', 2, 'dead', 'pricelist')] });
+    expect(await requeueDeadPortalEvent(admin, 'a', NOW)).toEqual({ kind: 'superseded_by_later' });
+    expect((await requeueDeadPortalEvent(admin, 'b', NOW)).kind).toBe('requeued');
+  });
+
+  it('en senare ersatt planerad dag och andra jobbs händelser hindrar inte', async () => {
+    const { admin } = memoryAdmin({ portal_outbound_events: [ev('a', 1, 'dead'), ev('c', 3, 'superseded'), ev('x', 4, 'sent', 'job:q-2')] });
     expect((await requeueDeadPortalEvent(admin, 'a', NOW)).kind).toBe('requeued');
   });
 

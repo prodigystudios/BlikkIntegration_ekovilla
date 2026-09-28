@@ -55,6 +55,11 @@ describe('runPortalCron', () => {
     expect(calls).toContain('fortnox');
   });
 
+  it('knapparna på portalsidan (fortnoxRetries: false): inga Fortnox-försök', async () => {
+    await runPortalCron({} as never, { env: {}, fortnoxRetries: false });
+    expect(calls).toEqual(['sync', 'dispatch', 'sync', 'dispatch']);
+  });
+
   it('Fortnox-försöken får resten av tidsgränsen, och inga när den är slut', async () => {
     let t = 0;
     dispatch.mockImplementation(async () => {

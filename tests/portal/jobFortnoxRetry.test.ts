@@ -63,10 +63,21 @@ describe('planPortalFortnoxRetry', () => {
     });
   });
 
-  it('en notis gick inte fram: ett varv till om 5 min, utom när ordern inte finns', () => {
+  it('en notis gick inte fram: ett varv till om 5 min när Fortnox-ordern finns', () => {
     expect(planPortalFortnoxRetry({ outcome: 'created', attempts: 0, retryUntil: until, now: NOW, resendNotice: true }).fortnox_next_attempt_at).toBe(plus(5 * MIN));
-    expect(planPortalFortnoxRetry({ outcome: 'blocked', attempts: 0, retryUntil: until, now: NOW, resendNotice: true }).fortnox_next_attempt_at).toBe(plus(5 * MIN));
+    expect(planPortalFortnoxRetry({ outcome: 'exists', attempts: 0, retryUntil: until, now: NOW, resendNotice: true }).fortnox_next_attempt_at).toBe(plus(5 * MIN));
     expect(planPortalFortnoxRetry({ outcome: 'skipped', attempts: 0, retryUntil: until, now: NOW, resendNotice: true }).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('🧨 ett stoppat jobb får aldrig ett varv till, inte ens för en notis: rättas kortet under tiden hade ordern pushats', () => {
+    expect(planPortalFortnoxRetry({ outcome: 'blocked', attempts: 0, retryUntil: until, now: NOW, resendNotice: true }).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('ett fel när fönstret gått ut (kunden kopplad dagar efter intaget): nytt fönster från nu, försöken från noll', () => {
+    const old = plus(-HOUR);
+    expect(planPortalFortnoxRetry({ outcome: 'failed', attempts: 7, retryUntil: old, now: NOW })).toEqual({
+      fortnox_next_attempt_at: plus(5 * MIN), fortnox_attempts: 1, fortnox_retry_until: plus(24 * HOUR),
+    });
   });
 });
 

@@ -4,13 +4,14 @@ import { markPortalJobForSync } from '@/lib/domains/portal/jobSync';
 import { requeueDeadPortalEvent } from '@/lib/domains/portal/outbox';
 import { invalidUuidParam, ok, routeError, requirePermission } from '../../../../_shared';
 
-export const maxDuration = 300;
+// Omräkningen och utskicket, som "Skicka väntande nu"; inga Fortnox-försök i ett klick.
+export const maxDuration = 180;
 
 type RouteContext = { params: { id: string } };
 
 // "Skicka om" en uppgiven händelse på portalsidans flik Utskick (fas 4b). Bara den senaste för sitt jobb (eller
 // prislistan): se requeueDeadPortalEvent. En bekräftelse som skickas om markerar jobbet, så att planerat datum och
-// resten följer när den levererats. Sedan ett varv som "Skicka väntande nu".
+// resten följer när den levererats. Sedan ett varv som "Skicka väntande nu", utan Fortnox-försöken.
 //
 // Service-rollen: kön skrivs bara av service_role. Grinden är crm.portal.manage; indata är bara händelsens id. Se
 // "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -36,7 +37,7 @@ export async function POST(_req: Request, context: RouteContext) {
     }
     if (result.orderingKey.startsWith('job:')) await markPortalJobForSync(admin, result.orderingKey.slice(4), now);
 
-    const summary = await runPortalCron(admin, { env: process.env });
+    const summary = await runPortalCron(admin, { env: process.env, fortnoxRetries: false });
     return ok({ requeued: true, summary });
   } catch (e: any) {
     return routeError(500, 'portal_event_retry_unexpected', e?.message || 'Händelsen kunde inte skickas om');

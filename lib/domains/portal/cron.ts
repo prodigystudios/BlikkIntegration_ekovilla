@@ -44,7 +44,14 @@ const queuedSomething = (s: PortalJobSyncSummary | { error: string }) => 'queued
 
 export async function runPortalCron(
   admin: SupabaseClient,
-  options: { env: Record<string, string | undefined>; now?: () => Date; fetchImpl?: typeof fetch; followUp?: (quoteId: string) => Promise<unknown> },
+  options: {
+    env: Record<string, string | undefined>;
+    now?: () => Date;
+    fetchImpl?: typeof fetch;
+    followUp?: (quoteId: string) => Promise<unknown>;
+    /** false från knapparna på portalsidan: ett Fortnox-försök kan ta 40 s och hör hemma i cron, inte i ett klick. */
+    fortnoxRetries?: boolean;
+  },
 ): Promise<PortalCronSummary> {
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
@@ -61,7 +68,7 @@ export async function runPortalCron(
   }
 
   const remaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);
-  if (remaining > 0) {
+  if (options.fortnoxRetries !== false && remaining > 0) {
     summary.fortnox = await step('Fortnox-försöken', () =>
       retryPortalFortnox(admin, {
         followUp: options.followUp ?? ((quoteId) => followUpPortalJob(admin, quoteId)),

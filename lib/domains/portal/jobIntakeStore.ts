@@ -329,6 +329,7 @@ export type FollowUpOutcome = {
 
 type FollowUpWorkOrder = ReadinessQuoteSource & {
   id: string;
+  status: string;
   assigned_to: string;
   project_name: string;
   fortnox_order_number: string | null;
@@ -423,7 +424,7 @@ async function attemptPortalJobFollowUp(
 
   const woRead = await admin
     .from('crm_work_orders')
-    .select('id, assigned_to, project_name, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
+    .select('id, status, assigned_to, project_name, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
     .eq('id', job.work_order_id)
     .maybeSingle();
   if (woRead.error) throw new Error(`Arbetsordern gick inte att läsa: ${woRead.error.message}`);
@@ -452,6 +453,8 @@ async function attemptPortalJobFollowUp(
   );
 
   if (workOrder.fortnox_order_number) return { received, fortnox: 'exists', reasons: [] };
+  // Avbruten (kanske medan omförsöken pågick): aldrig en Fortnox-order, och inga fler försök.
+  if (workOrder.status === 'cancelled') return { received, fortnox: 'skipped', reasons: [] };
 
   // Samma kontroll som våra egna ordrar, mot kundkortet som det ser ut nu.
   const { customer, error: customerError } = await fetchReadinessCustomer(admin, workOrder.customer_id ?? null);

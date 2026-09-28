@@ -2,11 +2,13 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { runPortalCron } from '@/lib/domains/portal/cron';
 import { ok, routeError, requirePermission } from '../../_shared';
 
-// Samma varv som cron-routen: omräkningen, utskicket och Fortnox-försöken (lib/domains/portal/cron.ts).
-export const maxDuration = 300;
+// Samma varv som cron-routen, utom Fortnox-försöken (lib/domains/portal/cron.ts): utskicket tar nya händelser i 60 s,
+// och görs om en gång när något levererats.
+export const maxDuration = 180;
 
-// "Skicka väntande nu": gör det cron gör varje minut i prod. Testmiljön har ingen cron, och i prod slipper den som
-// just publicerat eller skickat om vänta på nästa körning.
+// "Skicka väntande nu": räknar om jobben och skickar kön, som cron varje minut i prod. Testmiljön har ingen cron, och i
+// prod slipper den som just publicerat eller skickat om vänta på nästa körning. Fortnox-försöken lämnas åt cron (i
+// testmiljön: anropa cron-routen med CRON_SECRET).
 //
 // Service-rollen: kön töms bara av service_role (claim_portal_outbound_events). Grinden är crm.portal.manage; routen
 // tar ingen indata. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -15,7 +17,7 @@ export async function POST() {
     const gate = await requirePermission('crm.portal.manage');
     if (gate.response || !gate.currentUser) return gate.response;
 
-    const summary = await runPortalCron(getSupabaseAdmin(), { env: process.env });
+    const summary = await runPortalCron(getSupabaseAdmin(), { env: process.env, fortnoxRetries: false });
     const dispatch = summary.dispatch;
     if ('error' in dispatch) return routeError(500, 'portal_dispatch_failed', `Kön kunde inte skickas: ${dispatch.error}`);
     if (!dispatch.ran) {

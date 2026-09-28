@@ -39,26 +39,41 @@ describe('listPortalOutboxAttention', () => {
       crm_portal_jobs: [{ quote_id: 'q-1', quote_number: '2026-901', store_name: 'Sehed Bygg', work_order_id: 'wo-1' }],
     });
     const items = await listPortalOutboxAttention(admin);
-    expect(items.map((i) => i.id)).toEqual(['c', 'b']);
-    expect(items[1]).toMatchObject({
+    expect(items.map((i) => i.id)).toEqual(['b', 'c']);
+    expect(items[0]).toMatchObject({
       kind: 'job.scheduled', detail: '2026-10-14 – 2026-10-15', status: 'dead', lastHttpStatus: 404, nextAttemptAt: null,
       job: { quoteId: 'q-1', quoteNumber: '2026-901', storeName: 'Sehed Bygg', workOrderId: 'wo-1' }, canRetry: true,
     });
-    expect(items[0]).toMatchObject({ kind: 'pricelist', job: null, canRetry: false, nextAttemptAt: '2026-10-12T09:00:00.000Z' });
+    expect(items[1]).toMatchObject({ kind: 'pricelist', job: null, canRetry: false, nextAttemptAt: '2026-10-12T09:00:00.000Z' });
   });
 
-  it('en uppgiven före något som gått iväg eller väntar kan inte skickas om', async () => {
+  it('en uppgiven före något som gått iväg, väntar eller själv gett upp kan inte skickas om', async () => {
+    for (const later of ['sent', 'pending', 'dead']) {
+      const { admin } = memoryAdmin({
+        portal_outbound_events: [event({ id: 'b', seq: 2, status: 'dead' }), event({ id: 'd', seq: 4, status: later })],
+        crm_portal_jobs: [],
+      });
+      const item = (await listPortalOutboxAttention(admin)).find((i) => i.id === 'b');
+      expect(item).toMatchObject({ canRetry: false, job: { quoteId: 'q-1', quoteNumber: null, storeName: null } });
+    }
+  });
+
+  it('en lång kö av väntande trycker aldrig ut en uppgiven', async () => {
     const { admin } = memoryAdmin({
-      portal_outbound_events: [event({ id: 'b', seq: 2, status: 'dead' }), event({ id: 'd', seq: 4, status: 'sent' })],
+      portal_outbound_events: [
+        event({ id: 'gammal', seq: 1, status: 'dead', ordering_key: 'job:q-9' }),
+        event({ id: 'p1', seq: 2, status: 'pending' }),
+        event({ id: 'p2', seq: 3, status: 'pending' }),
+      ],
       crm_portal_jobs: [],
     });
-    const [item] = await listPortalOutboxAttention(admin);
-    expect(item).toMatchObject({ id: 'b', canRetry: false, job: { quoteId: 'q-1', quoteNumber: null, storeName: null } });
+    const items = await listPortalOutboxAttention(admin, 1);
+    expect(items.map((i) => i.id)).toEqual(['gammal', 'p2']);
   });
 
   it('en tom kö frågar inte efter jobben', async () => {
     const { admin, calls } = memoryAdmin({ portal_outbound_events: [event({ status: 'sent' })] });
     expect(await listPortalOutboxAttention(admin)).toEqual([]);
-    expect(calls.map((c) => c.table)).toEqual(['portal_outbound_events']);
+    expect(calls.map((c) => c.table)).toEqual(['portal_outbound_events', 'portal_outbound_events']);
   });
 });
