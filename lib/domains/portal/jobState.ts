@@ -12,7 +12,8 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
  *                   delfaktureringen kräver "Fakturera" (partialInvoices.ts), så en delfakturerad order har varit
  *                   utförd; annars hade butikens läge berott på om ett cron-varv hann se det korta "Fakturera".
  *   job.invoiced    arbetsordern är helt fakturerad. partially_invoiced har inget eget läge hos butiken.
- *   job.cancelled   arbetsordern är avbruten eller borttagen (tillägg till kontraktet, William 2026-09-28).
+ *   job.cancelled   arbetsordern är avbruten eller borttagen (tillägg till kontraktet, William 2026-09-28). reason är
+ *                   alltid tom: CRM:et har inget skäl att skicka, men portalens schema kräver fältet (kontraktspunkt 20).
  *
  * Reglerna (William 2026-09-28):
  *   - BARA FRAMÅT. När Utförd eller Fakturerad köats skickas inget tidigare läge igen, och inga fler datum. En order
@@ -115,7 +116,8 @@ export function derivePortalJobEvents(input: DerivePortalJobInput): DerivePortal
   // Avbruten eller borttagen: bara före Utförd, och sedan ingenting mer.
   if (!workOrder || workOrder.status === 'cancelled') {
     if (!finished) {
-      events.push(event('job.cancelled', quoteId, now, { cancelledAt: now.toISOString() }));
+      // reason är tom men måste finnas: utan den nekar portalen händelsen med 400, och utskicket ger upp.
+      events.push(event('job.cancelled', quoteId, now, { reason: '', cancelledAt: now.toISOString() }));
       state.cancelled = true;
     }
     return done;
