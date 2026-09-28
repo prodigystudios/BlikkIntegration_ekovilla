@@ -501,6 +501,11 @@ Säljarlistan på sidan kommer från den befintliga `/api/crm/sellers`, så inge
 - Fördelningen anropas med `portalAssignmentDeps(admin, …)`. `none` blir 503, och den som får jobbet
   blir `created_by` och ansvarig.
 - `crm_routing_rules` är tom lokalt. Steg 3 prövas genom att lägga en regel under Ringlistor.
+- Länsuppslaget har ingen cache. Nominatim tillåter ett anrop i sekunden, och steg 3 behövs bara när
+  butiken saknar både säljare och kundansvarig. Ett misslyckat uppslag loggas som
+  `[portal-county]`, utan adressen. Blir det många behövs en cache per postnummer.
+- Ett id av bara punkter (`.`, `..`) skrivs om av webbläsaren i en adress, och butikens id nekar det
+  därför. Samma sak gäller portalens andra id:n i sökvägar (`quoteId` med flera), så pröva det i 3b.
 
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad

@@ -119,7 +119,21 @@ describe('lookupCounty', () => {
     ['en timeout', async () => Promise.reject(new DOMException('timeout', 'TimeoutError'))],
     ['ogiltig JSON', async () => new Response('<html>', { status: 200 })],
   ])('%s ger null, aldrig ett kast', async (_label, impl) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(lookupCounty(place, { fetchImpl: vi.fn(impl) as never })).resolves.toBeNull();
+    warn.mockRestore();
+  });
+
+  it('ett misslyckat uppslag lämnar ett spår, utan adressen', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await lookupCounty(place, { fetchImpl: vi.fn(async () => json({}, 429)) as never });
+    await lookupCounty(place, { fetchImpl: vi.fn(async () => Promise.reject(new DOMException('t', 'TimeoutError'))) as never });
+    expect(warn.mock.calls).toEqual([
+      ['[portal-county] Nominatim svarade', 429],
+      ['[portal-county] länet gick inte att slå upp', 'TimeoutError'],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/806|Gävle/);
+    warn.mockRestore();
   });
 
   it('avbryts efter tidsgränsen', async () => {

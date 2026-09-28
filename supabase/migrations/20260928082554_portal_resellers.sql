@@ -46,10 +46,11 @@ create table if not exists public.crm_portal_resellers (
   updated_by uuid
 );
 
--- Samma tecken som portalens id:n i sökvägar (planens punkt 16).
+-- Samma tecken som portalens id:n i sökvägar (planens punkt 16). Ett id av bara punkter (`.`, `..`) skrivs om av
+-- webbläsaren i en adress och nekas därför.
 alter table public.crm_portal_resellers drop constraint if exists crm_portal_resellers_reseller_id_check;
 alter table public.crm_portal_resellers
-  add constraint crm_portal_resellers_reseller_id_check check (reseller_id ~ '^[A-Za-z0-9._~-]{1,100}$');
+  add constraint crm_portal_resellers_reseller_id_check check (reseller_id ~ '^(?!\.+$)[A-Za-z0-9._~-]{1,100}$');
 
 alter table public.crm_portal_resellers drop constraint if exists crm_portal_resellers_name_check;
 alter table public.crm_portal_resellers

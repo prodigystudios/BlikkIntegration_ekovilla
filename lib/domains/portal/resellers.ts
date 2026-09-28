@@ -10,8 +10,11 @@ import { getCrmCustomerDisplayName, type CrmCustomerType } from '@/lib/domains/c
  * arbetsordrar prövar routen innan den sparar (`userCanWriteWorkOrders` i assignment.ts).
  */
 
-/** Portalens id:n: samma tecken som i sökvägar (planens punkt 16) och migreringens check. */
-export const RESELLER_ID_PATTERN = /^[A-Za-z0-9._~-]{1,100}$/;
+/**
+ * Portalens id:n: samma tecken som i sökvägar (planens punkt 16) och migreringens check. Ett id av bara punkter
+ * (`.`, `..`) nekas: webbläsaren skriver om det i adressen, och sidan hade aldrig kunnat spara butiken.
+ */
+export const RESELLER_ID_PATTERN = /^(?!\.+$)[A-Za-z0-9._~-]{1,100}$/;
 
 export type PortalReseller = {
   resellerId: string;

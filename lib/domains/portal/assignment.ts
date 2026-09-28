@@ -1,5 +1,4 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveRoutingUser } from '@/lib/domains/crm/routingRules';
 import { lookupCounty } from './county';
 
 /**
@@ -47,6 +46,12 @@ export type AssignmentDeps = {
 export async function resolvePortalAssignee(deps: AssignmentDeps): Promise<PortalAssignment> {
   const skipped: SkippedCandidate[] = [];
   let county: string | null = null;
+  // Samma användare kan stå i flera steg (butikens säljare är också kundansvarig): fråga en gång.
+  const writes = new Map<string, Promise<boolean>>();
+  const canWrite = (userId: string) => {
+    if (!writes.has(userId)) writes.set(userId, deps.canWrite(userId));
+    return writes.get(userId)!;
+  };
 
   const steps: [AssignmentSource, () => Promise<string | null>][] = [
     ['reseller_seller', deps.resellerSeller],
@@ -64,7 +69,7 @@ export async function resolvePortalAssignee(deps: AssignmentDeps): Promise<Porta
   for (const [source, candidate] of steps) {
     const userId = await candidate();
     if (!userId) continue;
-    if (await deps.canWrite(userId)) return { kind: 'assigned', userId, source, county, skipped };
+    if (await canWrite(userId)) return { kind: 'assigned', userId, source, county, skipped };
     skipped.push({ source, userId });
   }
   return { kind: 'none', county, skipped };
@@ -118,6 +123,9 @@ export async function userCanWriteWorkOrders(admin: SupabaseClient, userId: stri
 /**
  * Stegen mot databasen och Nominatim, för jobbets intag (fas 3b). Service-rollen: jobbet har ingen användare bakom
  * sig. Ett databasfel kastas (intaget svarar då 5xx och portalen försöker igen); länsuppslaget ger null vid fel.
+ *
+ * Länsregeln läses här och inte med `resolveRoutingUser` (routingRules.ts): den sväljer ett databasfel och svarar
+ * null, och då hade ett tillfälligt fel skickat jobbet förbi länets säljare till reserven.
  */
 export function portalAssignmentDeps(
   admin: SupabaseClient,
@@ -138,7 +146,11 @@ export function portalAssignmentDeps(
         ? single(admin.from('crm_customers').select('account_manager_id').eq('id', job.customerId).maybeSingle(), 'account_manager_id')
         : null,
     county: () => lookupCounty(job.workplace, { fetchImpl: options.fetchImpl }),
-    countyUser: (county) => resolveRoutingUser(admin, county),
+    countyUser: (county) =>
+      single(
+        admin.from('crm_routing_rules').select('user_id').eq('county', county).order('priority', { ascending: false }).limit(1).maybeSingle(),
+        'user_id',
+      ),
     fallback: () => single(admin.from('crm_portal_settings').select('fallback_user_id').eq('id', true).maybeSingle(), 'fallback_user_id'),
     canWrite: (userId) => userCanWriteWorkOrders(admin, userId),
   };

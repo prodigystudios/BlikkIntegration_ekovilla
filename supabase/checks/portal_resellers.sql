@@ -90,6 +90,11 @@ begin
   exception when check_violation then null;
   end;
   begin
+    insert into public.crm_portal_resellers (reseller_id, name) values ('..', 'Bara punkter');
+    raise exception 'regel: ett id av bara punkter gick att spara';
+  exception when check_violation then null;
+  end;
+  begin
     insert into public.crm_portal_resellers (reseller_id, name) values ('check-3a-3', '  ');
     raise exception 'regel: en butik utan namn gick att spara';
   exception when check_violation then null;

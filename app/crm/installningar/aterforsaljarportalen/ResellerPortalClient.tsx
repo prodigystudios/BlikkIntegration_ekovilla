@@ -4,6 +4,7 @@ import { Fragment, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
+import { cn } from '@/lib/shared/cn';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 import DatePicker from '@/components/ui/DatePicker';
@@ -199,19 +200,26 @@ export default function ResellerPortalClient({
           </TabsTrigger>
         </TabsList>
 
-        {tab === 'resellers' && (
-          <div role="tabpanel" id="portal-panel-resellers" aria-labelledby="portal-tab-resellers">
-            <ResellersPanel resellers={resellers} fallbackUserId={fallbackUserId} />
-          </div>
-        )}
+        {/* Båda panelerna står kvar monterade och döljs: en panel som monterades om vid flikbytet tog sina värden från
+            serverns första svar, och en nyss sparad reserv såg då borttagen ut. Klassen `hidden` bredvid attributet:
+            preflight är av, och en display-klass som `grid` slår annars webbläsarens [hidden]. */}
+        <div
+          role="tabpanel"
+          id="portal-panel-resellers"
+          aria-labelledby="portal-tab-resellers"
+          hidden={tab !== 'resellers'}
+          className={cn(tab !== 'resellers' && 'hidden')}
+        >
+          <ResellersPanel resellers={resellers} fallbackUserId={fallbackUserId} />
+        </div>
 
         {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut korten i mobil. */}
-        {tab === 'pricelist' && (
           <div
             role="tabpanel"
             id="portal-panel-pricelist"
             aria-labelledby="portal-tab-pricelist"
-            className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]"
+            hidden={tab !== 'pricelist'}
+            className={cn('grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]', tab !== 'pricelist' && 'hidden')}
           >
             {/* Förhandsvisningen: det som skickas */}
             <section className={`${CARD} order-2 min-w-0 xl:order-1`} aria-labelledby="pricelist-preview-heading">
@@ -413,7 +421,6 @@ export default function ResellerPortalClient({
               </section>
             </div>
           </div>
-        )}
       </Tabs>
 
       {confirming && preview.ok && (

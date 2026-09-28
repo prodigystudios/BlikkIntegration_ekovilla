@@ -216,7 +216,9 @@ describe('lagret', () => {
 
   it('butikens id: portalens tecken, samma som migreringens check', () => {
     for (const ok of ['res-norrbygg', 'b7c1e0e4-2f3a-4c55-9d7e-1a2b3c4d5e6f', 'a.b_c~d']) expect(RESELLER_ID_PATTERN.test(ok), ok).toBe(true);
-    for (const bad of ['', 'res norrbygg', 'res/norr', 'rés', 'x'.repeat(101)]) expect(RESELLER_ID_PATTERN.test(bad), bad).toBe(false);
+    // Bara punkter: webbläsaren skriver om `.` och `..` i adressen, och butiken hade aldrig gått att spara.
+    for (const bad of ['', 'res norrbygg', 'res/norr', 'rés', 'x'.repeat(101), '.', '..', '...']) expect(RESELLER_ID_PATTERN.test(bad), bad).toBe(false);
+    for (const ok of ['.a', 'a..b', 'res.1']) expect(RESELLER_ID_PATTERN.test(ok), ok).toBe(true);
     const sql = readFileSync('supabase/migrations/20260928082554_portal_resellers.sql', 'utf8');
     expect(sql).toContain(`check (reseller_id ~ '${RESELLER_ID_PATTERN.source}')`);
   });

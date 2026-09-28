@@ -93,9 +93,14 @@ export async function lookupCounty(
       cache: 'no-store',
       signal: AbortSignal.timeout(options.timeoutMs ?? COUNTY_LOOKUP_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      // Ett spår när steg 3 hoppas över (t.ex. 429, Nominatims gräns är ett anrop i sekunden). Aldrig adressen.
+      console.warn('[portal-county] Nominatim svarade', res.status);
+      return null;
+    }
     return countyFromNominatim(await res.json());
-  } catch {
+  } catch (e) {
+    console.warn('[portal-county] länet gick inte att slå upp', e instanceof Error ? e.name : 'okänt fel');
     return null;
   }
 }

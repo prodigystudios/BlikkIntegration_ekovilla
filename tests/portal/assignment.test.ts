@@ -103,6 +103,15 @@ describe('resolvePortalAssignee', () => {
     });
   });
 
+  it('samma användare i flera steg: behörigheten frågas en gång', async () => {
+    const same = vi.fn(async () => 'anna' as string | null);
+    const d = deps({ writers: [], resellerSeller: same, accountManager: same, countyUser: vi.fn(async () => 'anna'), fallback: same });
+    const result = await resolvePortalAssignee(d);
+    expect(result.kind).toBe('none');
+    expect(d.canWrite).toHaveBeenCalledTimes(1);
+    expect(result.skipped.map((s) => s.source)).toEqual(['reseller_seller', 'account_manager', 'county', 'fallback']);
+  });
+
   it('ett fel i ett steg kastas vidare: intaget svarar då 5xx och portalen försöker igen', async () => {
     const d = deps({ resellerSeller: vi.fn(async () => Promise.reject(new Error('Fördelningen: nere'))) });
     await expect(resolvePortalAssignee(d)).rejects.toThrow(/nere/);
@@ -217,5 +226,14 @@ describe('portalAssignmentDeps', () => {
   it('ett databasfel kastas', async () => {
     const { client } = fakeAdmin({ crm_portal_resellers: { data: null, error: { message: 'nere' } } });
     await expect(portalAssignmentDeps(client, job).resellerSeller()).rejects.toThrow(/Fördelningen: nere/);
+  });
+
+  it('länsregeln: rätt län, och ett databasfel kastas i stället för att hoppa till reserven', async () => {
+    const ok = fakeAdmin({ crm_routing_rules: { data: { user_id: 'county-user' } } });
+    expect(await portalAssignmentDeps(ok.client, job).countyUser('Gävleborg')).toBe('county-user');
+    expect(ok.calls[0]).toMatchObject({ table: 'crm_routing_rules', filters: [['county', 'Gävleborg']] });
+
+    const failing = fakeAdmin({ crm_routing_rules: { data: null, error: { message: 'timeout' } } });
+    await expect(portalAssignmentDeps(failing.client, job).countyUser('Gävleborg')).rejects.toThrow(/Fördelningen: timeout/);
   });
 });
