@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–4a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–4b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -167,8 +167,11 @@ gör bara om vid 429 och har ingen timeout.
 ### Routes
 
 - **Signerade, utan session**, under `app/api/portal/`: `jobs`, `jobs/[quoteId]/messages`,
-  `store-orders`, `store-orders/[orderId]` (PUT), `store-orders/[orderId]/withdraw`, `ping`, och
-  cron-routen `dispatch` (`CRON_SECRET`, jämförd i konstant tid).
+  `store-orders`, `store-orders/[orderId]` (PUT), `store-orders/[orderId]/withdraw` och `ping`.
+- ✅ **Cron-routen `GET /api/reseller-portal/cron`** (fas 4b) ligger UTANFÖR `/api/portal/`: där kräver vakttestet
+  portalens signatur, och Vercels cron kan inte signera. Grinden är `CRON_SECRET`, jämförd i konstant tid; middleware
+  släpper exakt den sökvägen. 🧨 `fetchCache = 'force-no-store'`: en route med bara GET cachar annars varje fetch i
+  Next 14, också supabase-js (se "Fas 4b: resultat").
 - `middleware.ts` släpper prefixet `/api/portal/`. Middleware kör på Edge, så signaturen kontrolleras i
   routen: `runtime = 'nodejs'`, `req.text()` först, sedan `JSON.parse` och Zod `safeParse`.
 - **Allt som kräver session ligger under `/api/crm/portal/`**: inställningar, publicering, svar till
@@ -198,7 +201,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `portal_outbound_events` | Utgående kö: unik nyckel, typ, osignerad kropp, status, antal försök, nästa försök, senaste fel |
 | `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
 | `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
-| `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner (kolumngrant). Fas 4b lägger till senast skickade tillstånd och markeringen "behöver synkas" |
+| `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner och `quote_id` (kolumngrant). Fas 4b ✅: markeringen `sync_requested_at`, det senast köade läget `sync_state`, `sync_pending_events`, `sync_version`, `synced_at` och Fortnox-omförsöken (`fortnox_next_attempt_at`, `fortnox_attempts`, `fortnox_retry_until`) |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
@@ -308,7 +311,9 @@ Byggt i fas 4a; beslut, prövning och det 4b behöver står i "Fas 4a: resultat"
 - Visas bara på arbetsorderns faktakort, under önskat datum (William 2026-09-28). Egenkontrollens
   uppslag av "planerad dag" läser fältet.
 
-### Status tillbaka till portalen
+### Status tillbaka till portalen ✅
+
+Byggt i fas 4b; beslut, prövning och det portalen behöver står i "Fas 4b: resultat".
 
 - **Databasen markerar, TypeScript räknar.** En trigger på `crm_work_orders` markerar raden i
   `crm_portal_jobs` som "behöver synkas" när en portalorders `status`, `planned_start_day`,
@@ -351,7 +356,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **3b** ✅ | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan. Beteendet prövas mot en databas med `supabase/checks/portal_jobs.sql`. Resultaten står under tabellen | 3a |
 | **3c** ✅ | Koppla kund på en portalorder utan kund. Beteendet prövas mot en databas med `supabase/checks/portal_customer_link.sql`. Resultaten står under tabellen | 3b |
 | **4a** ✅ | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen. Beteendet prövas mot en databas med `supabase/checks/work_order_planned_days.sql`. Resultaten står under tabellen | — |
-| **4b** | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem | 1b, 3b, 4a |
+| **4b** ✅ | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem. Beteendet prövas mot en databas med `supabase/checks/portal_job_status.sql`. Resultaten står under tabellen | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
 | **6** | Meddelanden åt båda hållen och kortet "Butiken" | 4b |
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
@@ -680,6 +685,71 @@ arbetsordrarna.
 - `job.scheduled` med `scheduledFor` = `planned_start_day` och förslaget `scheduledUntil` = `planned_end_day`
   (punkt 5). Ett pausat sista kort ger null, alltså "inte längre planerad".
 
+### Fas 4b: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Bara framåt.** När Utförd eller Fakturerad köats skickas inget tidigare läge igen, och inga fler datum. En order som
+  ångras från "Fakturera" till "Pågående" syns som Utförd hos butiken. "Inte längre planerad" (sista kortet borttaget
+  eller pausat) skickas fram till Utförd, som beslutat i punkt 4.
+- **`job.cancelled` nu**, `{ quoteId, cancelledAt }`, när arbetsordern får status Avbruten eller raderas. Bara före
+  Utförd, och efter den skickas ingenting mer. Kontraktstillägg, punkt 20 nedan.
+- **Fortnox-omförsök bara efter tekniska fel** (Fortnox nere, anslutningen ute, en process som dog): efter 5 min,
+  15 min, 1 h och sedan varje timme i 24 h, med kontrollerna före varje försök. Stoppar kontrollerna (något saknas på
+  kundkortet) försöker den aldrig. Säljaren fick notisen vid första felet och får ingen ny per försök.
+- **Visningen bara på portalsidan**: fliken "Utskick" med uppgivna och väntande händelser, felet och "Skicka om".
+  Antalet som gett upp står på fliken. Ingen notis, inget på arbetsordern.
+
+**Egna val som William inte sa emot:** cron-routen utanför `/api/portal/`; `ekovillaOrderNumber` = Fortnox-numret;
+`scheduledUntil` = planerad slutdag; `completedAt` = den svenska dag CRM:et såg statusen (ingen tidsstämpel finns);
+`invoicedAt` = den svenska dagen ur `fortnox_invoiced_at`; `confirmedAt` ur `fortnox_order_synced_at`, i UTC med `Z`.
+
+**Så fungerar det** (`20260928134853_portal_job_status.sql`, `lib/domains/portal/{jobState,jobSync,jobFortnoxRetry,
+cron,cronAuth,outboxView}.ts`):
+- **Databasen markerar.** `crm_work_orders_mark_portal_job` (AFTER-trigger, security definer, tomt `search_path`, ingen
+  EXECUTE) sätter `sync_requested_at` när en portalorder byter status, planerat datum (fas 4a:s trigger) eller
+  Fortnox-nummer, och när den raderas. Den markerar på `reserved_work_order_id`, eftersom `work_order_id` nollas vid
+  raderingen. Som invoker hade den fällt säljarens statusbyte helt (prövat: permission denied).
+- **TypeScript räknar.** `derivePortalJobEvents` (ren) jämför ordern med det senast köade läget. Omräkningen sparar det
+  nya läget och händelserna i en skrivning (`sync_pending_events`, krockkontroll på `sync_version`) och köar sedan, så en
+  krasch mitt i varken tappar eller dubblerar en händelse. Markeringen nollas bara om ingen ny ändring kommit under tiden
+  och "bekräftad" inte väntar på leverans.
+- **Cron varje minut** (`vercel.json`): omräkning → utskick → (om något levererades) omräkning och utskick igen, så att
+  "planerad" följer "bekräftad" i samma körning → Fortnox-omförsöken sist, inom 150 s. "Skicka väntande nu" kör samma
+  varv. Testmiljön har ingen cron (Vercel kör cron bara i produktion); där är knappen det som skickar.
+- **Fortnox-omförsöken**: när arbetsordern skapas sätts ett skyddsnät (ett försök om 5 min). Uppföljningen bokför sitt
+  utfall och tar bort nätet när det inte behövs; ett nytt varv om 5 min också när en notis inte gick fram. Kopplingen av
+  kund (3c) bokför sitt Fortnox-utfall på samma sätt. Varje försök tas med ett lån (10 min), så två körningar aldrig gör
+  samma push.
+- **"Skicka om"** bara för den senaste händelsen för sin nyckel: en gammal job.scheduled efter en levererad job.completed
+  hade flyttat butiken bakåt, och en gammal prislista efter en nyare hade ersatt den nyare. En bekräftelse som skickas om
+  markerar jobbet, så att resten följer.
+
+🧨 **Next 14 cachar fetch i en route med bara GET** (också supabase-js POST med `Authorization`), trots
+`dynamic = 'force-dynamic'`: routen får `revalidate = false`, och då blir det "auto cache". Lokalt fick claim-anropet
+samma svar om och om igen, och fem händelser skickades varje körning. `fetchCache = 'force-no-store'` i cron-routen, med
+ett test som vaktar raden. De två gamla cron-routerna klarar sig för att de också har POST, och routes som läser kakan
+för att `cookies()` sätter `revalidate = 0`.
+
+**Prövat:**
+- Migreringen i en tom tillfällig databas med stubbar, fyra körningar; 20 mutationer av databasen, var och en stoppad av
+  efterkontrollen. Lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`.
+- `supabase/checks/portal_job_status.sql` med riktiga sessioner (7 steg): säljaren byter status, planeringens kort
+  (också genom fas 4a:s trigger), Fortnox-numret, en vanlig order, läsningen, raderingen. 9 mutationer, alla röda.
+- 33 mutationer av koden och migreringstexten, alla röda i vitest (med "Tests N"). En överlevde först (fakturadagen
+  prövades samma dag som "nu"), och testet skärptes.
+- Lokalt mot en fejkportal som kontrollerar signaturen (:3101), med cron-routen och `CRON_SECRET`: fem job.confirmed
+  (Fortnox-order 22–26); ett kort gav "Planerad 12–14 okt", en flytt "20–21 okt", en ny ordning ingenting, borttaget
+  "inte längre planerad", ett nytt kort "22 okt" i båda, "Fakturera" job.completed; en flytt och Pågående efter det
+  ingenting; en avbruten order job.cancelled som fejkportalen nekade (404), fliken visade "Utskick 1" och raden med felet,
+  "Skicka om" levererade den och fliken blev tom. Fortnox-omförsöket på en order som redan fanns i Fortnox tog bort
+  nätet; ett utgånget fönster gavs upp utan försök. Telefonbredd utan sidledsscroll.
+
+⚠️ **Lokalt kvar:** fejkportalens logg, två kort på AO-20260928-B99B61 (q-lokal-3b-1, nu Utförd hos "portalen" och
+status Pågående), AO-20260928-D90E8A (q-lokal-3b-2) är Avbruten.
+
+**Till portalen** (rättelselistan, punkt 20–23): mottagaren `POST /api/ekovilla/events` med job.confirmed, job.scheduled
+(med `scheduledUntil` och `scheduledFor: null`), job.completed, job.invoiced och job.cancelled.
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -760,6 +830,18 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     med `Retry-After: 300` när ingen hos Ekovilla kan ta jobbet än. `ekovillaCustomerNumber` måste finnas i kroppen
     (null eller en sträng; en tom sträng räknas som null). En `volume`-rad måste ha enheten `m3`.
 
+20. **`job.cancelled`** (fas 4b, William 2026-09-28): `{ "quoteId", "cancelledAt" }` (tidpunkt i UTC) när Ekovilla
+    avbryter jobbet eller tar bort arbetsordern. Skickas bara före "Utförd", och efter den skickas inget mer för jobbet.
+    Tar portalen inte emot den (4xx) syns den som uppgiven på CRM:ets portalsida.
+21. **`job.scheduled` har `scheduledUntil`** (punkt 5, byggt i fas 4b): planerad slutdag, samma dag som `scheduledFor`
+    för ett endagsjobb. `scheduledFor` och `scheduledUntil` är båda `null` när jobbet inte längre är planerat.
+22. **Bara framåt** (William 2026-09-28): efter job.completed skickas inga fler job.scheduled, och efter job.completed
+    eller job.invoiced aldrig ett tidigare läge. job.invoiced kommer alltid efter job.completed. Inget efter
+    job.confirmed skickas förrän den är mottagen (2xx).
+23. **Tider och nycklar** (fas 4b): `occurredAt` och `confirmedAt` är ISO 8601 i UTC med `Z`; `completedAt` och
+    `invoicedAt` är svenska kalenderdagar `YYYY-MM-DD`. Idempotency-Key är `<event>-<quoteId>-<occurredAt>`, alltså
+    unik per händelse även när datumen går X → Y → X.
+
 ## Öppna frågor
 
 Ingen av dem stoppar fas 0–6.
@@ -767,7 +849,7 @@ Ingen av dem stoppar fas 0–6.
 - **Momsen** (kontraktets fråga 4). `reverse_vat` sitter på kunden och gäller alla kundens dokument,
   medan produkter normalt har vanlig moms. Blockerar fas 8 och ska vara besvarad före första riktiga
   jobbet i prod, eftersom Fortnox-ordern nu skapas automatiskt. Tas med ekonomi eller revisor.
-- **Ett avbrutet jobb** (fråga 5): förslaget är en ny händelse `job.cancelled`.
+- ✅ **Ett avbrutet jobb** (fråga 5): `job.cancelled`, byggt i fas 4b (punkt 20).
 - **Dokumenten** (fråga 7): förslaget är både orderbekräftelsen och egenkontrollen.
 - **Planeringens datumbekräftelse** föreslår kontakten på plats (`resolveDocumentContact()` i
   `lib/domains/crm/contacts.ts`), alltså butikens slutkund. Är det önskat?
@@ -784,8 +866,8 @@ Ingen av dem stoppar fas 0–6.
 - Radmappningen och snapshoten, med kontraktets JSON-exempel som fixturer.
 - Prislistans payload: enheterna, en artikel utan enhet, ören, stabil hash.
 - Fördelningskedjan, steg för steg.
-- `jobState.ts` tabelldrivet: bekräftad före planerad, datum som flyttas och tas bort, pausade kort,
-  flera etapper, `partially_invoiced` skickar inget, steg bakåt.
+- ✅ `jobState.ts` tabelldrivet: bekräftad före planerad, datum som flyttas och tas bort, pausade kort,
+  flera etapper, `partially_invoiced` skickar inget, steg bakåt, avbruten.
 - ✅ Planerat datum: triggern prövad mot den lokala databasen (lägg, flytta, pausa, ta bort, radera
   arbetsordern) och ett SQL-texttest för grants och `security definer`.
 - Kön: 5xx och timeout görs om, 4xx ger upp, tre snabba flyttar blir en händelse.
@@ -794,9 +876,9 @@ Ingen av dem stoppar fas 0–6.
 - ✅ Publicera prislistan två gånger: samma nyckel, samma svar (mot fejkportalen, fas 2b).
 - Samma jobb från portalen två gånger ger en arbetsorder och en Fortnox-order. Samma `quoteId` med en
   ny nyckel ger den befintliga.
-- Ett jobb från portalen blir "Bekräftad" utan att någon hos Ekovilla gör något. Ett kort i
+- ✅ Ett jobb från portalen blir "Bekräftad" utan att någon hos Ekovilla gör något. Ett kort i
   planeringen ger "Planerad" med start- och slutdag; att flytta kortet uppdaterar datumen, att ta bort
-  det ger "inte längre planerad".
+  det ger "inte längre planerad" (mot fejkportalen, fas 4b).
 
 **I testmiljön, hela vägen:**
 1. Testbygg AB skickar ett jobb på test.partner.ekovilla.se, och rätt säljare får en notis.
