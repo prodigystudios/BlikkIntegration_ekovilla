@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–2b byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–3a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -158,7 +158,7 @@ Ren logik som testas isolerat:
 | `articleFields.ts` ✅, `articleFieldsStore.ts` ✅ | Portalfälten per artikel. Den rena delen (kategorierna, arbetsandelen i procent, `portalPublishBlockers`) importeras av artikelsidans kort och får aldrig dra in zod eller databasklienten. Zod-schemat och läsningarna och skrivningarna ligger i `…Store.ts` |
 | `pricelist.ts` ✅, `pricelistPublish.ts` ✅ | Prislistans payload (ren: grundpriset, enheten med gemener, vad som hoppas över och varför, hashen, nyckeln) och publiceringen (källorna, sparandet, kön och ett första utskick). Sidans klient importerar bara typer ur dem |
 | `jobIntake.ts` | Radmappning och snapshot för jobben |
-| `assignment.ts`, `county.ts` | Fördelningen till en säljare |
+| `assignment.ts` ✅, `county.ts` ✅, `resellers.ts` ✅ | Fördelningen till en säljare (kedjan, behörighetskravet, stegen mot databasen), länet ur postnummer och ort via Nominatim, och butikerna och reserven på portalsidan |
 | `jobState.ts` | Portalens tillstånd härlett ur arbetsordern |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
@@ -196,7 +196,8 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_work_orders` (nya kolumner) | `planned_start_day`, `planned_end_day`, som bara databasen skriver (se "Planerat datum") |
 | `portal_idempotency_keys` | Nyckel, hash av kroppen, svaret. Bara en cache: dubbletter stoppas av affärsnycklarna nedan. Samma nyckel med en annan kropp ger 422 |
 | `portal_outbound_events` | Utgående kö: unik nyckel, typ, osignerad kropp, status, antal försök, nästa försök, senaste fel |
-| `crm_portal_resellers` | Portalens `resellerId` (butiken), namn, adress, `customer_id`, `seller_user_id`. Uppdateras vid varje inkommande anrop |
+| `crm_portal_resellers` ✅ | Portalens `resellerId` (butiken), namn, adress, kundnumret portalen skickade, `customer_id`, `seller_user_id`, första och senaste kontakten. Läggs till och uppdateras av intaget (service-rollen, fas 3b). Sessionen ändrar bara säljaren (kolumngrant) |
+| `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
 | `crm_portal_jobs` | `quote_id` (unik), `quote_number`, `reseller_id`, `work_order_id` (unik, `on delete set null`), kroppen, senast skickade tillstånd, och en markering "behöver synkas" |
 | `crm_portal_job_messages` | Riktning, `portal_message_id` (unik), författare, text, tid |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
@@ -350,7 +351,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **1c** ✅ | Undantaget i middleware (prefixet `/api/portal/`), signerad `POST /api/portal/ping`, grinden `verifyPortalRequest` i `app/api/portal/_shared.ts`, och vakttestet `tests/portal/routeGuards.test.ts`: varje handler under prefixet måste BÖRJA med grinden och använda svaret | 1a |
 | **2a** ✅ | `crm_portal_article_fields` och fälten på artikelsidan (`crm.article.manage`): eget kort med eget Spara (`PUT /api/crm/portal/article-fields/[articleNumber]`), kolumnen "Portal" och ett filter i listan. Beteendet prövas mot en databas med `supabase/checks/portal_article_fields.sql`. Resultaten står under tabellen | — |
 | **2b** ✅ | Läsaren för lista 160 (bara `FromQuantity` 0, paginering, rate limit). Payloadbyggaren: enheten med gemener, en artikel utan enhet skickas inte, hashen byggs över sorterad JSON. Sidan Återförsäljarportalen (`crm.portal.manage`) med förhandsvisning och Publicera, historiken och "Skicka väntande nu". Beteendet prövas mot en databas med `supabase/checks/portal_pricelist.sql`. Resultaten står under tabellen | 0, 1b, 2a |
-| **3a** | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin | 1b |
+| **3a** ✅ | `crm_portal_resellers`, fördelningen, inställningarna butik → säljare och reservadmin (fliken "Butiker och säljare" på portalsidan). Beteendet prövas mot en databas med `supabase/checks/portal_resellers.sql`. Resultaten står under tabellen | 1b |
 | **3b** | `POST /api/portal/jobs`, skapandet av arbetsordern, den automatiska Fortnox-ordern med kontrollerna, notistypen `portal_job.received` (bygge i `lib/domains/notifications/payload.ts`, utskick med `deliverNotifications()`), brickan | 3a |
 | **3c** | Koppla kund på en portalorder utan kund | 3b |
 | **4a** | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen | — |
@@ -359,7 +360,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **6** | Meddelanden åt båda hållen och kortet "Butiken" | 4b |
 | **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
 | **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
-| **9** | Prod, när portalens prodprojekt finns: hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
+| **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
 ### Fas 0: resultat (2026-09-27)
 
@@ -462,6 +463,50 @@ den riktiga lokala portalen som "redan publicerad", och ingenting skickas.
   från sidan i 4b.
 - Portalen har ingen mottagare än (`/api/ekovilla/pricelists`), se punkt 17 nedan.
 
+### Fas 3a: resultat (2026-09-28)
+
+**Williams beslut:**
+- **En butik dyker upp när den hör av sig första gången.** Intaget i 3b lägger till den med namn,
+  adress och kundnummer. Därefter kan en säljare väljas. Det första jobbet fördelas genom kedjan.
+- **Reserven kan vara säljare eller admin**, så länge den kan skriva arbetsordrar.
+- **Ett jobb som inte hittar någon tas inte emot än.** Portalen får 503 och försöker igen, och
+  portalsidan visar en röd varning så länge ingen reserv är vald.
+
+**Fördelningen** (`resolvePortalAssignee` i `lib/domains/portal/assignment.ts`) tar den första som
+finns och kan skriva arbetsordrar:
+1. butikens säljare;
+2. kundansvarig på butikens kundkort;
+3. säljaren för länet;
+4. reserven.
+
+En kandidat som inte kan skriva arbetsordrar hoppas över och redovisas i svaret. Länet slås upp hos
+Nominatim bara när steg 1 och 2 inte gav någon. Frågan ställs med postnummer och ort, har 3 s
+timeout, och ett fel ger `null`. Ett databasfel kastas, så att intaget svarar 5xx.
+
+**Behörighetsfrågan om en annan användare** (`userCanWriteWorkOrders`) går med service-rollen, med
+samma regel som `effective_permissions()`: ett borttag vinner. Den står under "Reviewed elevations".
+Säljarlistan på sidan kommer från den befintliga `/api/crm/sellers`, så ingen ny namnelevation.
+
+**Prövat i webbläsaren som admin**, med två provbutiker lokalt som tagits bort efteråt:
+- reserven sparades och varningen försvann;
+- butikens säljare sparades och stod kvar efter omladdning;
+- en säljare vars `crm.workorder.write` dragits tillbaka gav 422, och valet gick tillbaka;
+- länsuppslaget bekräftades mot Nominatim: Gävle (806 28 och 802 91) gav SE-X, Gävleborg.
+
+**Till fas 3b:**
+- Intaget upserter butiken med service-rollen: namn, adress, `customer_number` och `last_seen_at`,
+  men aldrig `seller_user_id`.
+- `customer_id` hittas ur `ekovillaCustomerNumber` (`crm_customers.fortnox_customer_id`). Butiker
+  kan dela kundnummer.
+- Fördelningen anropas med `portalAssignmentDeps(admin, …)`. `none` blir 503, och den som får jobbet
+  blir `created_by` och ansvarig.
+- `crm_routing_rules` är tom lokalt. Steg 3 prövas genom att lägga en regel under Ringlistor.
+- Länsuppslaget har ingen cache. Nominatim tillåter ett anrop i sekunden, och steg 3 behövs bara när
+  butiken saknar både säljare och kundansvarig. Ett misslyckat uppslag loggas som
+  `[portal-county]`, utan adressen. Blir det många behövs en cache per postnummer.
+- Ett id av bara punkter (`.`, `..`) skrivs om av webbläsaren i en adress, och butikens id nekar det
+  därför. Samma sak gäller portalens andra id:n i sökvägar (`quoteId` med flera), så pröva det i 3b.
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -542,7 +587,8 @@ Ingen av dem stoppar fas 0–6.
 - **Dokumenten** (fråga 7): förslaget är både orderbekräftelsen och egenkontrollen.
 - **Planeringens datumbekräftelse** föreslår kontakten på plats (`resolveDocumentContact()` i
   `lib/domains/crm/contacts.ts`), alltså butikens slutkund. Är det önskat?
-- **Vem är reservadmin?**
+- **Vem är reservadmin?** Reserven väljs på portalsidan (fas 3a) och måste vara vald före fas 9.
+  Vem det ska vara är fortfarande öppet.
 
 ---
 

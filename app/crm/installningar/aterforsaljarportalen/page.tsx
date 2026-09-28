@@ -4,6 +4,7 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { resolvePortalTarget } from '@/lib/domains/portal/config';
 import { PORTAL_ARTICLE_CATEGORY_LABELS } from '@/lib/domains/portal/articleFields';
 import { PRICELIST_SKIP_REASON_LABELS } from '@/lib/domains/portal/pricelist';
+import { getPortalSettings, listPortalResellers } from '@/lib/domains/portal/resellers';
 import {
   describeSourceError,
   listPricelistPublications,
@@ -11,6 +12,7 @@ import {
   pricelistSources,
 } from '@/lib/domains/portal/pricelistPublish';
 import ResellerPortalClient, { type PortalIntegrationView, type PricelistPreviewView, type PublicationView } from './ResellerPortalClient';
+import type { ResellerView } from './ResellersPanel';
 
 export const dynamic = 'force-dynamic';
 
@@ -29,7 +31,8 @@ export default async function AterforsaljarportalenPage() {
     ? { enabled: true, host: new URL(target.baseUrl).host }
     : { enabled: false, message: target.message };
 
-  const [draftResult, publicationsResult] = await Promise.all([
+  const failure = (fallback: string) => (e: unknown) => ({ error: e instanceof Error ? e.message : fallback });
+  const [draftResult, publicationsResult, resellersResult, settingsResult] = await Promise.all([
     loadPricelistDraft(pricelistSources(session)).then(
       (draft) => ({ ok: true as const, draft }),
       (e: unknown) => ({ ok: false as const, message: describeSourceError(e) }),
@@ -38,7 +41,14 @@ export default async function AterforsaljarportalenPage() {
       (publications) => ({ ok: true as const, publications }),
       (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : 'Publiceringarna gick inte att läsa.' }),
     ),
+    listPortalResellers(session).catch(failure('Butikerna gick inte att läsa.')),
+    getPortalSettings(session).catch(failure('Portalens inställningar gick inte att läsa.')),
   ]);
+
+  const resellers: ResellerView[] | { error: string } = Array.isArray(resellersResult)
+    ? resellersResult.map((r) => ({ ...r, lastSeenLabel: formatStockholm(r.lastSeenAt) }))
+    : resellersResult;
+  const fallbackUserId = 'error' in settingsResult ? settingsResult : settingsResult.fallbackUserId;
 
   const preview: PricelistPreviewView = draftResult.ok
     ? {
@@ -76,6 +86,8 @@ export default async function AterforsaljarportalenPage() {
       integration={integration}
       preview={preview}
       publications={publications}
+      resellers={resellers}
+      fallbackUserId={fallbackUserId}
     />
   );
 }
