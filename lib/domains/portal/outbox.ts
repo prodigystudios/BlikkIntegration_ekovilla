@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolvePortalTarget } from './config';
 import { classifyPortalResult, sendToPortal, type PortalSendResult } from './client';
 import { isValidIdempotencyKey } from './idempotency';
+import { canonicalJson } from './canonicalJson';
 
 /**
  * Kön för allt CRM:et skickar till återförsäljarportalen (`portal_outbound_events`, RESELLER_PORTAL_CRM_PLAN.md
@@ -49,15 +50,6 @@ export type PortalEventInput = {
 };
 
 export type OutboxEventStatus = 'pending' | 'sending' | 'sent' | 'dead' | 'superseded';
-
-/** JSON med sorterade nycklar, så att jsonb:s egen nyckelordning inte gör två lika kroppar olika. */
-function canonicalJson(value: unknown): string {
-  return JSON.stringify(value, (_key, v) =>
-    v && typeof v === 'object' && !Array.isArray(v)
-      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : v,
-  );
-}
 
 /**
  * Köar en händelse. Samma `idempotencyKey` köas bara en gång: andra gången blir det `created: false` och radens
