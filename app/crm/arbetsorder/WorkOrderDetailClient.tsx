@@ -32,6 +32,7 @@ import WorkOrderKmaCard from './WorkOrderKmaCard';
 import WorkOrderSafetyRoundsCard from './WorkOrderSafetyRoundsCard';
 import WorkOrderStagesCard from './WorkOrderStagesCard';
 import WorkOrderAfterCalculation from './WorkOrderAfterCalculation';
+import WorkOrderPortalCustomerCard from './WorkOrderPortalCustomerCard';
 import { useAfterCalculation } from './useAfterCalculation';
 import WorkOrderPartialInvoiceModal, { type PartialInvoiceLine } from './WorkOrderPartialInvoiceModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
@@ -1183,6 +1184,16 @@ export default function WorkOrderDetailClient({
       {activeTab === 'overview' ? (
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)] lg:items-start">
           <div className="grid gap-5">
+
+            {/* En portalorder utan kund når inte Fortnox förrän butikens kundkort är kopplat (fas 3c). Överst,
+                eftersom det är det enda som står i vägen. Vem som får koppla avgör servern. */}
+            {canEdit && portalJob && !workOrder.customer_id && !workOrder.fortnox_order_number ? (
+              <WorkOrderPortalCustomerCard
+                workOrderId={workOrder.id}
+                storeName={portalJob.storeName}
+                onLinked={(item) => applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview })}
+              />
+            ) : null}
 
             <Card className="grid gap-4 md:grid-cols-2">
               {editingOverview ? (

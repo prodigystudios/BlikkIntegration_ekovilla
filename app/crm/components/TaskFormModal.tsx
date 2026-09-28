@@ -7,6 +7,7 @@ import Select from '@/components/ui/Select';
 import Textarea from '@/components/ui/Textarea';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox, { type EntityResult } from '@/app/crm/components/EntityCombobox';
+import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -104,16 +105,7 @@ export default function TaskFormModal({
   // Serverside-sökning i kopplingsväljaren — skalar till valfri tabellstorlek, till skillnad från
   // att förladda varenda kund och offert i en <select>.
   async function searchRelated(query: string): Promise<EntityResult[]> {
-    if (draft.related_type === 'crm_customer') {
-      const res = await fetch(`/api/crm/customers/search?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
-      const json = await res.json().catch(() => ({}));
-      const items = json?.ok && Array.isArray(json?.data?.items) ? json.data.items : [];
-      return items.map((c: { id: string; display_name: string; organization_number: string | null; city: string | null }) => ({
-        id: c.id,
-        label: c.display_name || 'Okänd kund',
-        sublabel: [c.organization_number, c.city].filter(Boolean).join(' · ') || undefined,
-      }));
-    }
+    if (draft.related_type === 'crm_customer') return searchCustomerOptions(query);
     if (draft.related_type === 'crm_quote') {
       const res = await fetch(`/api/crm/quotes?q=${encodeURIComponent(query)}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));

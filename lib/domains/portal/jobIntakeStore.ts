@@ -98,13 +98,52 @@ async function readCustomer(admin: SupabaseClient, column: 'id' | 'fortnox_custo
   return (data as JobCustomerCard | null) ?? null;
 }
 
+type ResellerLinkRow = { customer_id: string | null; customer_linked_at: string | null };
+
+async function readResellerLink(admin: SupabaseClient, resellerId: string): Promise<ResellerLinkRow | null> {
+  const { data, error } = await admin
+    .from('crm_portal_resellers')
+    .select('customer_id, customer_linked_at')
+    .eq('reseller_id', resellerId)
+    .maybeSingle();
+  if (error) throw new Error(`Butiken gick inte att läsa: ${error.message}`);
+  return (data as ResellerLinkRow | null) ?? null;
+}
+
+/** Kortet som kopplats för hand på butiken (fas 3c), eller null. Båda kolumnerna krävs: tas kortet bort nollas bara id:t. */
+export function manualCustomerLink(row: ResellerLinkRow | null): string | null {
+  return row?.customer_linked_at && row.customer_id ? row.customer_id : null;
+}
+
+/**
+ * Vilket kundkort som gäller för butiken, och vad butikens rad ska få (William 2026-09-28):
+ *   ett nummer som finns i CRM:et  det kortet, alltid; en koppling för hand ersätts
+ *   inget nummer, eller ett okänt  kortet som kopplats för hand på butiken, om något; annars inget kort
+ */
+export type StoreCustomer =
+  | { source: 'number'; customerId: string }
+  | { source: 'manual'; customerId: string }
+  | { source: 'none'; customerId: null };
+
+export function resolveStoreCustomer(byNumberId: string | null, reseller: ResellerLinkRow | null): StoreCustomer {
+  if (byNumberId) return { source: 'number', customerId: byNumberId };
+  const manual = manualCustomerLink(reseller);
+  return manual ? { source: 'manual', customerId: manual } : { source: 'none', customerId: null };
+}
+
 /**
  * Butiken dyker upp när den hör av sig (William 2026-09-28): namn, adress och kundnummer som portalen skickar, och
- * kundkortet numret pekar på. Säljaren (`seller_user_id`) rörs aldrig; den sätts på portalsidan.
+ * kundkortet som gäller. Säljaren (`seller_user_id`) rörs aldrig; den sätts på portalsidan.
+ *
+ * Kortet skrivs i ett eget steg, efter butikens uppgifter:
+ *   ett nummer som finns i CRM:et  det kortet, alltid, och en koppling för hand ersätts
+ *   ingen koppling, inget nummer   kortet nollas, men BARA där ingen koppling finns: en koppling som sparades medan
+ *                                  intaget pågick (fas 3c) hade annars skrivits över av en läsning från före den
+ *   en koppling för hand           rörs inte
  */
-async function upsertReseller(admin: SupabaseClient, job: PortalJob, customerId: string | null, now: Date) {
+async function upsertReseller(admin: SupabaseClient, job: PortalJob, storeCustomer: StoreCustomer, now: Date) {
   const { store } = job;
-  const { error } = await admin.from('crm_portal_resellers').upsert(
+  const saved = await admin.from('crm_portal_resellers').upsert(
     {
       reseller_id: store.resellerId,
       name: store.name,
@@ -112,12 +151,20 @@ async function upsertReseller(admin: SupabaseClient, job: PortalJob, customerId:
       postal_code: store.address.postalCode,
       city: store.address.city,
       customer_number: store.ekovillaCustomerNumber,
-      customer_id: customerId,
       last_seen_at: now.toISOString(),
     },
     { onConflict: 'reseller_id' },
   );
-  if (error) throw new Error(`Butiken kunde inte sparas: ${error.message}`);
+  if (saved.error) throw new Error(`Butiken kunde inte sparas: ${saved.error.message}`);
+  if (storeCustomer.source === 'manual') return;
+
+  let link = admin
+    .from('crm_portal_resellers')
+    .update({ customer_id: storeCustomer.customerId, customer_linked_by: null, customer_linked_at: null })
+    .eq('reseller_id', store.resellerId);
+  if (storeCustomer.source === 'none') link = link.is('customer_linked_at', null);
+  const linked = await link;
+  if (linked.error) throw new Error(`Butikens kundkort kunde inte sparas: ${linked.error.message}`);
 }
 
 async function assign(job: PortalJob, customerId: string | null, deps: JobIntakeDeps) {
@@ -134,16 +181,20 @@ export async function receivePortalJob(
   payload: unknown,
   deps: JobIntakeDeps = jobIntakeDeps(admin),
 ): Promise<ReceivePortalJobResult> {
-  const [existingRow, customer] = await Promise.all([
+  const [existingRow, byNumber, reseller] = await Promise.all([
     readJob(admin, job.quoteId),
     readCustomer(admin, 'fortnox_customer_id', job.store.ekovillaCustomerNumber),
+    readResellerLink(admin, job.store.resellerId),
   ]);
+  const storeCustomer = resolveStoreCustomer(byNumber?.id ?? null, reseller);
   let row = existingRow;
   if (!row) {
+    // Kortet som kopplats för hand läses först här: en upprepning av ett befintligt jobb behöver det inte.
+    const customer = storeCustomer.source === 'manual' ? await readCustomer(admin, 'id', storeCustomer.customerId) : byNumber;
     // Butiken uppdateras bara av ett NYTT jobb. En upprepning, ett nekat jobb eller ett sent omförsök av ett gammalt
     // hade annars skrivit tillbaka ett inaktuellt namn eller kundnummer, och kopplat loss butikens kundkort.
     // Före fördelningen (butikens säljare läses därifrån) och före jobbets rad (den pekar på butiken).
-    await upsertReseller(admin, job, customer?.id ?? null, deps.now());
+    await upsertReseller(admin, job, storeCustomer, deps.now());
     const assignment = await assign(job, customer?.id ?? null, deps);
     if (assignment.kind === 'none') return { kind: 'no_assignee', assignment };
 
@@ -195,7 +246,7 @@ export async function receivePortalJob(
       ?? null;
     if (!assigneeId) throw new Error('Jobbet kunde inte fördelas om.');
   }
-  const jobCustomer = customer?.id === row.customer_id ? customer : await readCustomer(admin, 'id', row.customer_id);
+  const jobCustomer = byNumber?.id === row.customer_id ? byNumber : await readCustomer(admin, 'id', row.customer_id);
   await createWorkOrder(admin, job, row, jobCustomer, assigneeId, deps);
   return { kind: 'created', workOrderId: row.reserved_work_order_id };
 }

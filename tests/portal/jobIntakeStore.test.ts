@@ -152,6 +152,82 @@ describe('receivePortalJob', () => {
     expect(m.tables.crm_work_orders[0]).toMatchObject({ assigned_to: assignee, created_by: assignee });
   });
 
+  describe('butikens koppling för hand (fas 3c)', () => {
+    const MANUAL = { ...CARD, id: '44444444-4444-4444-8444-444444444444', fortnox_customer_id: null, company_name: 'Norrbygg (kopplad)' };
+    const linkedStore = (extra: Record<string, unknown> = {}) => ({
+      reseller_id: 'res-norrbygg',
+      name: 'Norrbygg AB',
+      customer_id: MANUAL.id,
+      customer_linked_by: SELLER,
+      customer_linked_at: '2026-09-27T12:00:00Z',
+      seller_user_id: null,
+      ...extra,
+    });
+
+    it.each([
+      ['inget kundnummer', null],
+      ['ett okänt kundnummer', '9999'],
+    ])('%s: jobbet och ordern får kortet som kopplats på butiken, och kopplingen står kvar', async (_n, number) => {
+      const m = memoryAdmin({ crm_customers: [CARD, MANUAL], crm_portal_resellers: [linkedStore()] });
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = number;
+      const deps = intakeDeps();
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, deps);
+      expect(m.tables.crm_portal_jobs[0].customer_id).toBe(MANUAL.id);
+      expect(m.tables.crm_work_orders[0]).toMatchObject({ customer_id: MANUAL.id, client_name: 'Norrbygg (kopplad)' });
+      expect(deps.assign).toHaveBeenCalledWith(expect.objectContaining({ customerId: MANUAL.id }));
+      expect(m.tables.crm_portal_resellers[0]).toMatchObject({
+        customer_id: MANUAL.id,
+        customer_linked_by: SELLER,
+        customer_linked_at: '2026-09-27T12:00:00Z',
+        customer_number: number,
+      });
+    });
+
+    it('🧨 en koppling som sparas medan intaget pågår nollas inte (läsningen var från före den)', async () => {
+      const m = memoryAdmin(
+        { crm_customers: [CARD, MANUAL], crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'x', customer_id: null, customer_linked_at: null }] },
+        {
+          beforeExecute: (call, tables) => {
+            if (call.table === 'crm_portal_resellers' && call.op === 'update') {
+              Object.assign(tables.crm_portal_resellers[0], { customer_id: MANUAL.id, customer_linked_by: SELLER, customer_linked_at: '2026-09-28T10:00:01Z' });
+            }
+          },
+        },
+      );
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = null;
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
+      expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: MANUAL.id, customer_linked_at: '2026-09-28T10:00:01Z' });
+    });
+
+    it('ett nummer som finns i CRM:et vinner alltid, och ersätter kopplingen', async () => {
+      const m = memoryAdmin({ crm_customers: [CARD, MANUAL], crm_portal_resellers: [linkedStore()] });
+      await receivePortalJob(m.admin, job(), payload(), intakeDeps());
+      expect(m.tables.crm_work_orders[0].customer_id).toBe(CUSTOMER_ID);
+      expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: CUSTOMER_ID, customer_linked_by: null, customer_linked_at: null });
+    });
+
+    it('kortet som kopplades har tagits bort (id:t nollat): ingen kund, och butiken räknas som okopplad', async () => {
+      const m = memoryAdmin({ crm_customers: [CARD], crm_portal_resellers: [linkedStore({ customer_id: null })] });
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = null;
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
+      expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
+      // Tiden för kopplingen står kvar (kortet nollas bara där ingen koppling finns), men utan id räknas den inte.
+      expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
+    });
+
+    it('utan koppling och utan nummer: ingen kund (som i 3b)', async () => {
+      const m = memoryAdmin({ crm_customers: [CARD], crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'x', customer_id: CUSTOMER_ID }] });
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = null;
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
+      expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
+      expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
+    });
+  });
+
   it('ett okänt kundnummer: ingen kund på jobbet eller ordern, men butiken sparas med numret', async () => {
     const m = memoryAdmin({ crm_customers: [] });
     const deps = intakeDeps();

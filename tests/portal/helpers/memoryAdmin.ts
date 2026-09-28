@@ -7,7 +7,9 @@
  *   - en krock på en unik kolumn svarar med kod 23505.
  * Kolumnlistan i `select` läses inte: hela raden kommer tillbaka. Inbäddningar (`contacts:…`) ligger redan på raden.
  *
- * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång.
+ * `failOn` låter ett test få en fråga att svara med ett fel, en gång eller varje gång. `canUpdate` spelar RLS på
+ * UPDATE: en rad den säger nej till ändras inte och kommer inte tillbaka, utan fel, som i PostgREST. `beforeExecute`
+ * körs före varje fråga, med tabellerna: så spelar ett test upp något som en annan hann göra i samma stund.
  */
 
 type Row = Record<string, unknown>;
@@ -23,7 +25,13 @@ const UNIQUE: Record<string, string[]> = {
   portal_idempotency_keys: ['key'],
 };
 
-export function memoryAdmin(initial: Record<string, Row[]> = {}) {
+export function memoryAdmin(
+  initial: Record<string, Row[]> = {},
+  options: {
+    canUpdate?: (table: string, row: Row) => boolean;
+    beforeExecute?: (call: Call, tables: Record<string, Row[]>) => void;
+  } = {},
+) {
   const tables: Record<string, Row[]> = structuredClone(initial);
   const calls: Call[] = [];
   const failures: { match: (call: Call) => boolean; error: DbError; times: number }[] = [];
@@ -53,6 +61,7 @@ export function memoryAdmin(initial: Record<string, Row[]> = {}) {
 
   function execute(call: Call, returning: boolean, single: boolean): { data: unknown; error: DbError | null } {
     calls.push(call);
+    options.beforeExecute?.(call, tables);
     const failure = failures.find((f) => f.times > 0 && f.match(call));
     if (failure) {
       failure.times -= 1;
@@ -90,7 +99,9 @@ export function memoryAdmin(initial: Record<string, Row[]> = {}) {
       return out(written);
     }
 
-    const hit = table.filter((r) => matches(r, call.filters));
+    const hit = table.filter(
+      (r) => matches(r, call.filters) && (call.op !== 'update' || (options.canUpdate?.(call.table, r) ?? true)),
+    );
     if (call.op === 'update') {
       for (const row of hit) {
         const clash = conflict(call.table, { ...row, ...(call.values as Row) }, row);
