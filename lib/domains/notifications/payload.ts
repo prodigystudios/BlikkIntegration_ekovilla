@@ -146,16 +146,15 @@ export function buildTimeReminderNotification(input: {
 export function buildPortalJobReceivedNotification(input: {
   workOrderId: string;
   storeName: string;
-  street: string;
-  city: string;
+  /** Var jobbet görs: arbetsorderns titel, som är arbetsplatsens adress. */
+  place: string;
   desiredPeriod: string;
   needsDensity: boolean;
 }): NotificationContent {
-  const address = [input.street, input.city].map((s) => s.trim()).filter(Boolean).join(', ');
   return {
     type: 'portal_job.received',
     title: `Nytt jobb från ${input.storeName}`,
-    body: [address, input.desiredPeriod.trim(), input.needsDensity ? 'Fyll i densiteten' : '']
+    body: [input.place.trim(), input.desiredPeriod.trim(), input.needsDensity ? 'Fyll i densiteten' : '']
       .filter(Boolean)
       .join(' · '),
     href: `/crm/arbetsorder/${input.workOrderId}`,

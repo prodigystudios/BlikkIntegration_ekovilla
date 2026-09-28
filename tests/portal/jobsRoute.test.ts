@@ -128,6 +128,19 @@ describe('POST /api/portal/jobs', () => {
     expect(h.db.tables.portal_idempotency_keys[0]).toMatchObject({ status: 'done', response_status: 400 });
   });
 
+  it.each([
+    // Escape-sekvensen i JSON-texten, som portalen skickar den (ett rått nolltecken nekar JSON.parse redan).
+    ['ett nolltecken', '\\u0000'],
+    ['ett ensamt surrogat', '\\ud800'],
+  ])('%s i en text: 400 invalid_text med sökvägen (Postgres hade nekat det som 500, och portalen gjort om i två dygn)', async (_n, escape) => {
+    const body = JSON.stringify(CONTRACT_JOB).replace('"notes":""', `"notes":"Ring${escape}"`);
+    const res = await post(body);
+    expect(res.status).toBe(400);
+    expect(res.body.errorDetails.code).toBe('invalid_text');
+    expect(res.body.error).toMatch(/^workplace\.notes: /);
+    expect(h.receive).not.toHaveBeenCalled();
+  });
+
   it('fel i kroppen: 400 med fältets sökväg, intaget körs inte', async () => {
     const bad = structuredClone(CONTRACT_JOB) as Record<string, any>;
     bad.lines[1].unitCost = -5;

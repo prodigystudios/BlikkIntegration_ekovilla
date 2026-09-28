@@ -5,8 +5,8 @@ import {
   mapPortalJobLines,
   portalFortnoxBlockerReasons,
   portalJobHandoffNotes,
-  portalJobNeedsDensity,
   portalJobProjectName,
+  workOrderLinesNeedDensity,
   portalJobSchema,
   type JobCustomerCard,
   type PortalJob,
@@ -104,6 +104,7 @@ describe('schemat: kontraktets kropp', () => {
     ['inga rader', (b) => (b.lines = []), 'lines'],
     ['för många rader', (b) => (b.lines = Array.from({ length: 201 }, () => b.lines[1])), 'lines'],
     ['ett artikelnummer som saknas', (b) => (b.lines[1].articleNumber = ''), 'lines.1.articleNumber'],
+    ['en volymrad i en annan enhet än m³ (hade blivit "38 st" i Fortnox)', (b) => (b.lines[0].unit = 'st'), 'lines.0.unit'],
   ])('nekar: %s', (_name, mutate, path) => {
     const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
     mutate(body);
@@ -386,10 +387,19 @@ describe('notisens orsaker', () => {
     ]);
   });
 
-  it('påminnelsen om densiteten bara när jobbet har lösull', () => {
-    expect(portalJobNeedsDensity(job())).toBe(true);
-    const j = job();
-    j.lines = [j.lines[1]];
-    expect(portalJobNeedsDensity(j)).toBe(false);
+  it('påminnelsen om densiteten: en lösullsrad (m³) utan densitet, inte en antalsrad eller en avskriven rad', () => {
+    const [losull, etablering] = mapPortalJobLines(job().lines, REGISTER, newId);
+    expect(workOrderLinesNeedDensity([losull, etablering])).toBe(true);
+    expect(workOrderLinesNeedDensity([etablering])).toBe(false);
+    expect(workOrderLinesNeedDensity([{ ...losull, density: '45' }, etablering])).toBe(false);
+    expect(workOrderLinesNeedDensity([{ ...losull, density: '0' }])).toBe(true);
+    expect(workOrderLinesNeedDensity([{ ...losull, written_off: true }])).toBe(false);
+    expect(workOrderLinesNeedDensity(null)).toBe(false);
+  });
+
+  it('volymrader i m³ med eller utan upphöjd trea tas emot', () => {
+    const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+    body.lines[0].unit = 'm³';
+    expect(portalJobSchema.safeParse(body).success).toBe(true);
   });
 });

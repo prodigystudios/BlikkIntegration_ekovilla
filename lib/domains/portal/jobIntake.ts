@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { computePricing } from '@/lib/domains/crm/pricing';
+import { pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
+import { parseDecimal } from '@/lib/shared/number';
 import { resolveCrmContact, type CrmContactSource } from '@/lib/domains/crm/contacts';
 import { getCrmCustomerDisplayName, type CrmCustomerType } from '@/lib/domains/crm/customers';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
@@ -45,16 +47,23 @@ const quantitySchema = z.discriminatedUnion('kind', [
 
 export const PORTAL_CONSTRUCTIONS = ['vind', 'snedtak', 'vagg', 'ovrigt'] as const;
 
-const lineSchema = z.object({
-  articleNumber: required(50),
-  name: required(500),
-  construction: z.enum(PORTAL_CONSTRUCTIONS),
-  unit: trimmed(20),
-  quantity: quantitySchema,
-  unitCost: amount.min(0, 'Priset kan inte vara negativt.').max(10_000_000),
-  // Bara information (kontraktet): CRM:et räknar själv.
-  lineCost: amount,
-});
+const lineSchema = z
+  .object({
+    articleNumber: required(50),
+    name: required(500),
+    construction: z.enum(PORTAL_CONSTRUCTIONS),
+    unit: trimmed(20),
+    quantity: quantitySchema,
+    unitCost: amount.min(0, 'Priset kan inte vara negativt.').max(10_000_000),
+    // Bara information (kontraktet): CRM:et räknar själv.
+    lineCost: amount,
+  })
+  // Kontraktet: `volume` är lösull, i m³. En volymrad i en annan enhet hade blivit en m³-rad med fel enhet på
+  // Fortnox-ordern ("38 st"), så den nekas i stället för att tolkas.
+  .refine((line) => line.quantity.kind !== 'volume' || pricingModeFromUnit(line.unit) === 'm3', {
+    message: 'En volymrad (yta × tjocklek) ska ha enheten m3.',
+    path: ['unit'],
+  });
 
 export const portalJobSchema = z.object({
   quoteId: portalId,
@@ -322,7 +331,14 @@ export function portalFortnoxBlockerReasons(blockers: WorkOrderReadinessIssue[],
   });
 }
 
-/** Påminnelsen i notisen: portalen skickar ingen densitet, och säckantalet är 0 tills den finns. */
-export function portalJobNeedsDensity(job: PortalJob): boolean {
-  return job.lines.some((line) => line.quantity.kind === 'volume');
+/**
+ * Påminnelsen i notisen: portalen skickar ingen densitet, och säckantalet är 0 tills den finns. Läses ur
+ * arbetsorderns rader: en m³-rad (lösull) utan densitet.
+ */
+export function workOrderLinesNeedDensity(lines: unknown): boolean {
+  if (!Array.isArray(lines)) return false;
+  return lines.some((line) => {
+    const l = line as { pricing_mode?: string | null; density?: string | number | null; written_off?: boolean | null };
+    return (l.pricing_mode ?? 'm3') !== 'item' && !l.written_off && !(parseDecimal(l.density) > 0);
+  });
 }

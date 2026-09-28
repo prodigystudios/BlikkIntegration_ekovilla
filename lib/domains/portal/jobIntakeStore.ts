@@ -17,8 +17,7 @@ import {
   JOB_CUSTOMER_SELECT,
   buildPortalWorkOrderInsert,
   portalFortnoxBlockerReasons,
-  portalJobNeedsDensity,
-  portalJobSchema,
+  workOrderLinesNeedDensity,
   type JobCustomerCard,
   type PortalJob,
   type RegisterArticleForJob,
@@ -64,6 +63,7 @@ export function jobIntakeDeps(admin: SupabaseClient): JobIntakeDeps {
 type JobRow = {
   quote_id: string;
   payload: unknown;
+  received_at: string;
   customer_id: string | null;
   assigned_to: string | null;
   reserved_work_order_id: string;
@@ -71,7 +71,7 @@ type JobRow = {
   work_order_created_at: string | null;
 };
 
-const JOB_SELECT = 'quote_id, payload, customer_id, assigned_to, reserved_work_order_id, work_order_id, work_order_created_at';
+const JOB_SELECT = 'quote_id, payload, received_at, customer_id, assigned_to, reserved_work_order_id, work_order_id, work_order_created_at';
 
 export type ReceivePortalJobResult =
   /** Arbetsordern skapades i det här anropet. */
@@ -134,11 +134,16 @@ export async function receivePortalJob(
   payload: unknown,
   deps: JobIntakeDeps = jobIntakeDeps(admin),
 ): Promise<ReceivePortalJobResult> {
-  const customer = await readCustomer(admin, 'fortnox_customer_id', job.store.ekovillaCustomerNumber);
-  await upsertReseller(admin, job, customer?.id ?? null, deps.now());
-
-  let row = await readJob(admin, job.quoteId);
+  const [existingRow, customer] = await Promise.all([
+    readJob(admin, job.quoteId),
+    readCustomer(admin, 'fortnox_customer_id', job.store.ekovillaCustomerNumber),
+  ]);
+  let row = existingRow;
   if (!row) {
+    // Butiken uppdateras bara av ett NYTT jobb. En upprepning, ett nekat jobb eller ett sent omförsök av ett gammalt
+    // hade annars skrivit tillbaka ett inaktuellt namn eller kundnummer, och kopplat loss butikens kundkort.
+    // Före fördelningen (butikens säljare läses därifrån) och före jobbets rad (den pekar på butiken).
+    await upsertReseller(admin, job, customer?.id ?? null, deps.now());
     const assignment = await assign(job, customer?.id ?? null, deps);
     if (assignment.kind === 'none') return { kind: 'no_assignee', assignment };
 
@@ -155,6 +160,7 @@ export async function receivePortalJob(
           assignment_source: assignment.source,
           reserved_work_order_id: deps.newId(),
           payload,
+          received_at: deps.now().toISOString(),
         },
         { onConflict: 'quote_id', ignoreDuplicates: true },
       )
@@ -180,11 +186,14 @@ export async function receivePortalJob(
       .from('crm_portal_jobs')
       .update({ assigned_to: assignment.userId, assignment_source: assignment.source })
       .eq('quote_id', job.quoteId)
-      .select('quote_id');
-    if (reassigned.error || (reassigned.data ?? []).length === 0) {
-      throw new Error(`Jobbet kunde inte fördelas om: ${reassigned.error?.message ?? 'raden saknas'}`);
-    }
-    assigneeId = assignment.userId;
+      .is('assigned_to', null)
+      .select('assigned_to');
+    if (reassigned.error) throw new Error(`Jobbet kunde inte fördelas om: ${reassigned.error.message}`);
+    // Ett samtidigt omförsök hann först: dess val gäller, så att ordern och jobbet säger samma sak.
+    assigneeId = ((reassigned.data ?? [])[0] as { assigned_to: string } | undefined)?.assigned_to
+      ?? (await readJob(admin, job.quoteId))?.assigned_to
+      ?? null;
+    if (!assigneeId) throw new Error('Jobbet kunde inte fördelas om.');
   }
   const jobCustomer = customer?.id === row.customer_id ? customer : await readCustomer(admin, 'id', row.customer_id);
   await createWorkOrder(admin, job, row, jobCustomer, assigneeId, deps);
@@ -207,8 +216,8 @@ async function createWorkOrder(
     customer,
     register,
     workOrderId,
-    // Ur det reserverade id:t: ett omförsök får samma nummer.
-    orderNumber: buildWorkOrderNumber(workOrderId, deps.now()),
+    // Ur det reserverade id:t och dagen jobbet kom, inte dagen ordern skapas: ett omförsök efter midnatt får samma nummer.
+    orderNumber: buildWorkOrderNumber(workOrderId, new Date(row.received_at)),
     assigneeId,
     newId: deps.newId,
   });
@@ -264,6 +273,7 @@ export type FollowUpOutcome = {
 type FollowUpWorkOrder = ReadinessQuoteSource & {
   id: string;
   assigned_to: string;
+  project_name: string;
   fortnox_order_number: string | null;
 };
 
@@ -336,16 +346,17 @@ export async function followUpPortalJob(
 
   const woRead = await admin
     .from('crm_work_orders')
-    .select('id, assigned_to, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
+    .select('id, assigned_to, project_name, customer_id, quote_type, customer_snapshot, rot_details, line_items, internal_handoff, fortnox_order_number')
     .eq('id', job.work_order_id)
     .maybeSingle();
   if (woRead.error) throw new Error(`Arbetsordern gick inte att läsa: ${woRead.error.message}`);
   const workOrder = woRead.data as FollowUpWorkOrder | null;
   if (!workOrder) return { received: 'skipped', fortnox: 'skipped', reasons: [] };
 
-  // Kroppen prövades när den togs emot; här läses den bara för notisens text.
-  const parsed = portalJobSchema.safeParse(job.payload);
-  const portalJob = parsed.success ? parsed.data : null;
+  // Kroppen prövades när den togs emot. Här behövs bara perioden och kundnumret, till notisernas text.
+  const body = (job.payload ?? {}) as { workplace?: { desiredPeriod?: unknown }; store?: { ekovillaCustomerNumber?: unknown } };
+  const desiredPeriod = typeof body.workplace?.desiredPeriod === 'string' ? body.workplace.desiredPeriod : '';
+  const customerNumber = typeof body.store?.ekovillaCustomerNumber === 'string' ? body.store.ekovillaCustomerNumber : null;
 
   const received = await sendOnce(
     admin,
@@ -356,10 +367,10 @@ export async function followUpPortalJob(
     buildPortalJobReceivedNotification({
       workOrderId: workOrder.id,
       storeName: job.store_name,
-      street: portalJob?.workplace.address.street ?? '',
-      city: portalJob?.workplace.address.city ?? '',
-      desiredPeriod: portalJob?.workplace.desiredPeriod ?? '',
-      needsDensity: portalJob ? portalJobNeedsDensity(portalJob) : false,
+      // Titeln är arbetsplatsens adress (jobIntake.ts), samma sträng som i listorna.
+      place: workOrder.project_name,
+      desiredPeriod,
+      needsDensity: workOrderLinesNeedDensity(workOrder.line_items),
     }),
   );
 
@@ -374,7 +385,7 @@ export async function followUpPortalJob(
   let reasons: string[] = [];
   if (!readiness.ready) {
     fortnox = 'blocked';
-    reasons = portalFortnoxBlockerReasons(readiness.blockers, portalJob?.store.ekovillaCustomerNumber ?? null);
+    reasons = portalFortnoxBlockerReasons(readiness.blockers, customerNumber);
   } else {
     try {
       const pushed = await deps.push(workOrder.id);

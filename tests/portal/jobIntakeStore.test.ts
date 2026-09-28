@@ -110,6 +110,48 @@ describe('receivePortalJob', () => {
     });
   });
 
+  it('🧨 en upprepning, ett nekat jobb eller ett sent omförsök rör inte butiken', async () => {
+    const m = db();
+    await receivePortalJob(m.admin, job(), payload(), intakeDeps());
+    // Butiken har bytt namn i portalen sedan dess; ett gammalt anrop kommer igen, med det gamla namnet och ett
+    // kundnummer som inte längre stämmer.
+    m.tables.crm_portal_resellers[0].name = 'Norrbygg AB (nytt namn)';
+    const stale = structuredClone(CONTRACT_JOB) as Record<string, any>;
+    stale.store.ekovillaCustomerNumber = '9999';
+    const before = structuredClone(m.tables.crm_portal_resellers[0]);
+
+    expect((await receivePortalJob(m.admin, job(), payload(), intakeDeps())).kind).toBe('existing');
+    expect((await receivePortalJob(m.admin, portalJobSchema.parse(stale), stale, intakeDeps())).kind).toBe('conflict');
+    expect(m.tables.crm_portal_resellers[0]).toEqual(before);
+    expect(m.calls.filter((c) => c.table === 'crm_portal_resellers' && c.op === 'upsert')).toHaveLength(1);
+  });
+
+  it('ett omförsök efter midnatt får samma ordernummer: dagen är den då jobbet kom', async () => {
+    const m = db();
+    m.failOn((c) => c.table === 'crm_work_orders' && c.op === 'insert', { message: 'nere' });
+    const evening = { ...intakeDeps(), now: () => new Date('2026-09-28T21:59:00Z') }; // 23:59 i Sverige
+    await expect(receivePortalJob(m.admin, job(), payload(), evening)).rejects.toThrow();
+    const morning = { ...intakeDeps(), now: () => new Date('2026-09-28T22:30:00Z') }; // 00:30 dagen efter
+    await receivePortalJob(m.admin, job(), payload(), morning);
+    expect(m.tables.crm_work_orders[0].order_number).toMatch(/^AO-20260928-/);
+  });
+
+  it('två samtidiga omförsök som båda fördelar om: ordern och jobbet får samma person', async () => {
+    const m = db();
+    m.failOn((c) => c.table === 'crm_work_orders' && c.op === 'insert', { message: 'nere' });
+    await expect(receivePortalJob(m.admin, job(), payload(), intakeDeps())).rejects.toThrow();
+    m.tables.crm_portal_jobs[0].assigned_to = null;
+
+    const a = intakeDeps({ kind: 'assigned', userId: 'forst', source: 'fallback', county: null, skipped: [] });
+    const b = intakeDeps({ kind: 'assigned', userId: 'sedan', source: 'county', county: 'Gävleborg', skipped: [] });
+    await Promise.all([receivePortalJob(m.admin, job(), payload(), a), receivePortalJob(m.admin, job(), payload(), b)]);
+    expect(a.assign).toHaveBeenCalled();
+    expect(b.assign).toHaveBeenCalled();
+    const assignee = m.tables.crm_portal_jobs[0].assigned_to;
+    expect(m.tables.crm_work_orders).toHaveLength(1);
+    expect(m.tables.crm_work_orders[0]).toMatchObject({ assigned_to: assignee, created_by: assignee });
+  });
+
   it('ett okänt kundnummer: ingen kund på jobbet eller ordern, men butiken sparas med numret', async () => {
     const m = memoryAdmin({ crm_customers: [] });
     const deps = intakeDeps();

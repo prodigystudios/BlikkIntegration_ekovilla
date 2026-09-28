@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { isUuid } from '@/lib/api/responses';
 
 /**
  * Brickan "Från återförsäljarportalen · <butik> · offert <nr>" i arbetsorderns sidhuvud (RESELLER_PORTAL_CRM_PLAN.md
@@ -10,12 +11,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  */
 export type PortalJobBadge = { storeName: string; quoteNumber: string };
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** null = ordern kom inte från portalen (eller syns inte för sessionen). Kastar vid ett databasfel. */
 export async function getPortalJobBadge(session: SupabaseClient, workOrderId: string): Promise<PortalJobBadge | null> {
   // Ett id som inte är en uuid får Postgres att kasta (22P02); sidan visar då sitt eget "hittades inte".
-  if (!UUID.test(workOrderId)) return null;
+  if (!isUuid(workOrderId)) return null;
   const { data, error } = await session
     .from('crm_portal_jobs')
     .select('store_name, quote_number')

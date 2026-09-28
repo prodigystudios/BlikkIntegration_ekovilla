@@ -1,6 +1,7 @@
 import type { NextRequest } from 'next/server';
 import { ok, routeError } from '@/lib/api/responses';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import { portalJobSchema } from '@/lib/domains/portal/jobIntake';
 import { followUpPortalJob, receivePortalJob } from '@/lib/domains/portal/jobIntakeStore';
 import { runIdempotentPortalRequest, verifyPortalRequest } from '../_shared';
@@ -10,6 +11,7 @@ import { runIdempotentPortalRequest, verifyPortalRequest } from '../_shared';
 // Fortnox-avbrott aldrig blir butikens fel.
 //
 //   400 invalid_json          kroppen är inte JSON
+//   400 invalid_text          en text som Postgres inte kan spara (nolltecken, ensamt surrogat)
 //   400 validation_error      kroppen följer inte kontraktet (details.issues: fälten)
 //   409 job_conflict          jobbet finns redan, med ett annat innehåll
 //   409 work_order_removed    jobbets arbetsorder har tagits bort hos Ekovilla
@@ -19,6 +21,9 @@ import { runIdempotentPortalRequest, verifyPortalRequest } from '../_shared';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+// Arbetet efter svaret (waitUntil) räknas in i funktionens tid: Fortnox-ordern har tagit upp mot 40 s. Samma gräns som
+// utskicket (/api/crm/portal/dispatch), uttryckligen i stället för projektets standard.
+export const maxDuration = 90;
 
 export async function POST(req: NextRequest) {
   const verified = await verifyPortalRequest(req);
@@ -32,6 +37,12 @@ export async function POST(req: NextRequest) {
       payload = JSON.parse(verified.rawBody.replace(/^\uFEFF/, ''));
     } catch {
       return { response: routeError(400, 'invalid_json', 'Kroppen är inte JSON.') };
+    }
+    const unstorable = findUnstorableText(payload);
+    if (unstorable !== null) {
+      return {
+        response: routeError(400, 'invalid_text', `${unstorable}: innehåller ett nolltecken eller ett ensamt surrogat, som inte kan sparas.`),
+      };
     }
     const parsed = portalJobSchema.safeParse(payload);
     if (!parsed.success) {

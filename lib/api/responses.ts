@@ -39,11 +39,16 @@ export function validationError(parsedError: z.ZodError) {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Är värdet en uuid? Samma mönster som id-grinden nedan, för den som behöver svaret utan ett HTTP-svar. */
+export function isUuid(value: string | null | undefined): value is string {
+  return typeof value === 'string' && UUID_RE.test(value);
+}
+
 // Guards a dynamic [id] path segment before it reaches a `.eq('id', …)` query. A non-UUID id
 // otherwise makes Postgres throw 22P02, surfacing as a raw 500. Returns a 400 to return early,
 // or null when the id is valid.
 export function invalidUuidParam(id: string | undefined) {
-  return id && UUID_RE.test(id) ? null : routeError(400, 'invalid_id', 'Ogiltigt id.');
+  return isUuid(id) ? null : routeError(400, 'invalid_id', 'Ogiltigt id.');
 }
 
 // PostgREST returns PGRST116 from `.single()` when a statement matched no rows — the row is

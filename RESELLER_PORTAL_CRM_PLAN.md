@@ -527,16 +527,18 @@ Säljarlistan på sidan kommer från den befintliga `/api/crm/sellers`, så inge
 - Ett Fortnox-försök direkt efter svaret. Omförsöken kommer i 4b.
 
 **Så fungerar intaget** (`receivePortalJob`, i anropet):
-1. Kundkortet ur kundnumret, och butiken läggs till eller uppdateras (namn, adress, kundnummer, kortet numret pekar
-   på, `last_seen_at`). Säljaren på butiken rörs aldrig.
-2. Finns jobbet redan jämförs innehållet. Annars fördelas det (fas 3a). Ingen kan ta det: 503 med `Retry-After: 300`,
-   inget jobb och ingen arbetsorder, men butiken finns och kan få en säljare.
+1. Kroppen prövas: JSON, ingen text som Postgres inte kan spara (nolltecken, ensamt surrogat: 400 `invalid_text`
+   i stället för ett 500 som portalen gjort om i två dygn), och kontraktet med Zod. En volymrad måste ha enheten m³.
+2. Finns jobbet redan jämförs innehållet, och butiken rörs inte. Ett nytt jobb lägger till eller uppdaterar butiken
+   (namn, adress, kundnummer, kortet numret pekar på, `last_seen_at`; aldrig säljaren) och fördelas (fas 3a). Ingen kan
+   ta det: 503 med `Retry-After: 300`, inget jobb och ingen arbetsorder, men butiken finns och kan få en säljare.
 3. Jobbets rad sparas med ett arbetsorder-id valt i förväg. Arbetsordern skapas med det id:t och ett ordernummer ur
-   det. Ett omförsök efter ett avbrott fortsätter där det förra föll och skapar aldrig en andra order. Den som fick
-   jobbet är både `created_by` och ansvarig. Togs den bort innan ordern fanns fördelas jobbet om.
+   det och dagen jobbet kom. Ett omförsök efter ett avbrott, också efter midnatt, fortsätter där det förra föll och
+   skapar aldrig en andra order. Den som fick jobbet är både `created_by` och ansvarig. Togs den bort innan ordern
+   fanns fördelas jobbet om (ett samtidigt omförsök tar den första omfördelningen).
 4. 201 `{ ok: true, data: { crmWorkOrderId } }`.
 
-**Efter svaret** (`followUpPortalJob`, med `waitUntil`): "Nytt jobb", sedan samma fullständighetskontroll som våra
+**Efter svaret** (`followUpPortalJob`, med `waitUntil`; routen har `maxDuration = 90` som utskicket): "Nytt jobb", sedan samma fullständighetskontroll som våra
 egna ordrar mot kundkortet som det ser ut nu, sedan `pushWorkOrderToFortnox()`. Varje notis skickas en gång: raden
 tas före utskicket och släpps om det misslyckas. En push som redan pågår ger ingen notis.
 
@@ -551,10 +553,12 @@ tas före utskicket och släpps om det misslyckas. En push som redan pågår ger
 - en butik utan kundnummer, med admin som reserv: arbetsordern hos reserven utan kund och utan moms i snapshoten,
   ingen Fortnox-order, och två notiser till reserven;
 - i webbläsaren som säljaren: notisen i klockan ledde till ordern, brickan i sidhuvudet, arbetsbeskrivningen,
-  märkningen och kontakten på plats. På telefonbredd kortas brickan med ellips.
+  märkningen och kontakten på plats. På telefonbredd kortas brickan med ellips;
+- efter granskningen: en upprepning rörde inte butiken, ett nolltecken gav 400 `invalid_text`, och ett nytt jobb
+  blev Fortnox-order 23.
 
-⚠️ **Lokala provjobb** (`q-lokal-3b-1`, `q-lokal-3b-2`), deras arbetsordrar, notiser och butiker, och Fortnox-order 22
-i testbolaget ligger kvar tills de tas bort.
+⚠️ **Lokala provjobb** (`q-lokal-3b-1` till `-3`), deras arbetsordrar, notiser och butiker (`res-sehed-gavle`,
+`res-okopplad`), reserven (admin) och Fortnox-order 22 och 23 i testbolaget ligger kvar tills de tas bort.
 
 **Till senare faser:**
 - 3c: en portalorder utan kund kan inte nå Fortnox förrän kunden kopplas. Notisen säger vad som saknas, men det finns
@@ -636,12 +640,13 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 18. **Svaren har appens kuvert** (fas 3b, 2026-09-28). Framgång är `{ "ok": true, "data": … }`, jobbet alltså
     `201 { "ok": true, "data": { "crmWorkOrderId": "…" } }`, och ett fel är `{ "ok": false, "error": "<text>",
     "errorDetails": { "code": "…", "message": "…", "details": … } }`. Samma form som `ping` redan svarar med.
-19. **Jobbets felsvar** (fas 3b): 400 `invalid_json`; 400 `validation_error` med `details.issues` (`path` som
+19. **Jobbets felsvar** (fas 3b): 400 `invalid_json`; 400 `invalid_text` (ett nolltecken eller ett ensamt surrogat
+    någonstans i kroppen, med sökvägen); 400 `validation_error` med `details.issues` (`path` som
     `lines.1.unitCost`, och `message`); 400 `invalid_idempotency_key`; 409 `job_conflict` när samma quoteId redan är
     mottaget med ett annat innehåll (en ny nyckel med samma innehåll ger 201 och den befintliga arbetsordern); 409
     `work_order_removed` när Ekovilla tagit bort jobbets arbetsorder; 422 `idempotency_key_reused`; 503 `no_assignee`
     med `Retry-After: 300` när ingen hos Ekovilla kan ta jobbet än. `ekovillaCustomerNumber` måste finnas i kroppen
-    (null eller en sträng; en tom sträng räknas som null).
+    (null eller en sträng; en tom sträng räknas som null). En `volume`-rad måste ha enheten `m3`.
 
 ## Öppna frågor
 
