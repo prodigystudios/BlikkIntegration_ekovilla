@@ -3,14 +3,14 @@
 **Status:** kontrakt, beslutat med William 2026-09-27. Signaturen och omförsöken ändrades
 2026-09-28, och samma dag fördes CRM:ets rättelser 16–19 in (sökvägarna, prislistans nyckel,
 svarens kuvert och jobbets felkoder), 20–23 från CRM:ets fas 4b (avbrutet jobb utan skäl,
-planeringens slutdag, bara framåt, tider och nycklar), 24–27 från fas 6 (meddelandena) och 28–30 från
-fas 7 (dokumenten).
+planeringens slutdag, bara framåt, tider och nycklar), 24–27 från fas 6 (meddelandena), 28–30 från
+fas 7 (dokumenten) och 31–35 från fas 8a (butiksbeställningarnas intag och momsen).
 Portalens halva av affärsflödet är byggd. CRM:ets transport
 finns (fas 1a–1c), och portalens byggs nu, se "Det här finns i portalen".
 **Källa:** `prodigystudios/aterforsaljare-ekovilla`, filen `CRM_INTEGRATION.md`. En kopia ligger i
 CRM-repot som `RESELLER_PORTAL_INTEGRATION_PLAN.md`. Ändras kontraktet ändras det i båda.
 **Hur CRM:et bygger sin halva** står i CRM-repots `RESELLER_PORTAL_CRM_PLAN.md`, läst mot CRM:et
-@ `fbcd0ec` (fas 7, PR #257). Rättelserna står där under "Rättelser och luckor i kontraktet".
+@ `4859771` (fas 8a, PR #258). Rättelserna står där under "Rättelser och luckor i kontraktet".
 Kontrollera varje filhänvisning mot koden innan du bygger på den. CRM:et byggs om (RBAC, SSR,
 säkerhetsmigreringar).
 
@@ -61,7 +61,7 @@ jobb. Allt det kommer från CRM:et.
 | Dokument | Butiken får **orderbekräftelsen och egenkontrollen**. |
 | Avsändare på meddelanden | **Namn och avdelning**, till exempel "Anna Berg · Planering". Avdelningen är en fast lista, se `job.message`. |
 | Signaturen (28 september) | **Metoden och sökvägen signeras med kroppen**, så att en signatur bara gäller för sitt eget anrop. Ett 401 görs om med backoff. Se "Transporten". |
-| Moms mellan Ekovilla och butiken | **Öppen.** Tas med ekonomi eller revisor, och ska vara besvarad före första riktiga jobbet i prod. Se sist. |
+| Moms mellan Ekovilla och butiken (29 september) | **Per dokument, som i CRM:et i dag:** ett jobb har 0 % (omvänd skattskyldighet), en butiksbeställning 25 %, också på frakten. Se sist. |
 
 ---
 
@@ -165,7 +165,11 @@ Kroppen är 126 tecken och 130 byte i UTF-8:
   - 408, 425, 429 och 3xx görs också om. En omdirigering följs aldrig, eftersom den hade kunnat leda
     förbi miljöspärren.
   - Andra 4xx: fel i anropet, och det görs inte om. 409 betyder "går inte längre", till exempel
-    en ändring av en beställning som redan är bekräftad.
+    ett jobb vars arbetsorder tagits bort. För en ändring eller tillbakadragning av en
+    butiksbeställning betyder 409 bara att den redan är bekräftad (rättelse 32).
+- **Portalens id:n är uuid** (`quoteId`, `orderId`, `messageId`), eftersom databasen ger dem
+  (rättelse 35). Då kan två nycklar aldrig bli samma sträng: `store-order-<uuid>-withdraw` är aldrig
+  `store-order-<uuid2>`, eftersom ett uuid inte slutar på `-withdraw`. Nycklarnas format ändras inte.
   - 5xx eller timeout: avsändaren försöker igen med backoff.
 - **Omförsöken** börjar efter 30 sekunder och dubblas upp till en timme. Efter 60 försök, drygt två
   dygn, ges anropet upp. Skickar mottagaren `Retry-After` väntar portalen minst så länge, men aldrig
@@ -558,10 +562,11 @@ fakturerad arbetsorder tar emot meddelanden (rättelse 27).
 ### Butiken beställer
 
 **Portalen håller beställningarna i utkorgen tills CRM:et tar emot dem** (William 28 september
-2026). CRM:et bygger dem i sin fas 8, som väntar på momsbeslutet. Utan `EKOVILLA_CRM_STORE_ORDERS=on`
-skickar portalen jobben och meddelandena som vanligt, men beställningarna ligger kvar i kö, med en
-ny titt var femtonde minut, utan att ett försök räknas. Slå på variabeln när CRM:et har
-fas 8, så går kön iväg.
+2026). Utan `EKOVILLA_CRM_STORE_ORDERS=on` skickar portalen jobben och meddelandena som vanligt,
+men beställningarna ligger kvar i kö, med en ny titt var femtonde minut, utan att ett försök räknas.
+Kroppen byggs först när beställningen skickas. CRM:et tar emot beställningar sedan fas 8a (PR #258),
+och bekräftelsen, frakten och statusen tillbaka kommer i 8b. Slå på variabeln när William bestämt
+det, så går kön iväg.
 
 Butiken beställer produkter ur prislistan: allt utom inblåsning (`m3`) och etablering. Antalet är
 alltid hela enheter. Leveransen går till butiken, och **frakten sätter Ekovilla** som en rad i
@@ -590,6 +595,25 @@ beställningen tills Ekovilla har bekräftat den.** Efter bekräftelsen är den 
 - **Tillbakadragningens kropp** är `{ "orderId": "…" }`.
 - Ligger flera ändringar i portalens kö innan de hunnit skickas, skickas bara den senaste. De äldre
   står som `superseded` i utkorgen.
+
+**Kroppens krav** (rättelse 33): antalet är ett heltal över noll, `unitCost` är hela ören, ingen rad
+i `m3`, leveransadressens gata, postnummer och ort är ifyllda, och beställningen har högst 200 rader.
+`orderId` i kroppen är sökvägens. Portalen kontrollerar samma sak innan beställningen skickas.
+
+**CRM:ets svar** (rättelse 31 och 32):
+
+| Anrop | Svar |
+| --- | --- |
+| Ny beställning | 201 `{ "crmStoreOrderId" }`, också när samma `orderId` med samma kropp redan är mottagen. 409 `store_order_conflict` när den första kroppen var en annan. 503 `no_assignee` med `Retry-After: 300`, och portalen gör om. |
+| Ändrad | 200 `{ "status": "updated" }` eller `{ "status": "ignored" }`. 409 `store_order_confirmed`. 404 `unknown_order`. 400 `store_order_mismatch` för en annan butik eller ett annat nummer. |
+| Tillbakadragen | 200 `{ "status": "withdrawn" }`, också när den redan är tillbakadragen, eller `{ "status": "ignored" }`. 409 `store_order_confirmed`. 404 `unknown_order`. |
+| Alla | 400 `invalid_json`, `invalid_text` och `validation_error` med `details.issues`. |
+
+- **409 kommer bara efter Ekovillas bekräftelse.** En ändring eller tillbakadragning av en makulerad
+  beställning får 200 `ignored`, och makuleringen kommer som `store_order.cancelled`.
+- Ett 404 `unknown_order` sparas inte i CRM:ets svarscache, så samma nyckel prövas på nytt när
+  beställningen kommit fram. Portalen ger ändå upp på 404, eftersom den nya beställningen alltid går
+  före i samma kö.
 
 Kroppen är `EkovillaStoreOrder`, byggd av `toEkovillaStoreOrder()` i portalens
 `lib/domains/storeOrders/ekovilla.ts`, plus `store.ekovillaCustomerNumber`. Exemplet är genererat
@@ -637,7 +661,7 @@ Väg B: en egen tabell för butiksbeställningarna (`crm_store_orders` med rader
 | Fraktraden | Ekovilla lägger till den innan beställningen bekräftas |
 
 Fördela beställningen till en säljare som jobben, men utan länet, eftersom leveransen går till
-butiken. Momsen på produkter är en öppen fråga, se sist.
+butiken. Beställningen har 25 % moms, också frakten (William 29 september 2026).
 
 ### Status tillbaka
 
@@ -655,7 +679,7 @@ Butikens egen tillbakadragning heter Tillbakadragen i portalen. Den är skild fr
 
 ## Det här finns i CRM:et i dag
 
-Läst mot `fbcd0ec` (fas 7, PR #257, 29 september). CRM:ets plan säger vilken fas som är klar.
+Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken fas som är klar.
 
 - **Transporten** (fas 1a–1c): signaturen, miljöspärren, utkorgen med omförsök, svarscachen för
   idempotens, grinden för `/api/portal/` och `POST /api/portal/ping`.
@@ -672,8 +696,11 @@ Läst mot `fbcd0ec` (fas 7, PR #257, 29 september). CRM:ets plan säger vilken f
   `job.message` (`lib/domains/portal/jobMessages.ts`).
 - **Dokumenten** (fas 7, PR #257): orderbekräftelsen och egenkontrollen som `job.document`
   (`lib/domains/portal/jobDocuments.ts`).
-- **Kvar i CRM:et:** butiksbeställningarna (8, väntar på momsbeslutet). Portalen håller dem i kö tills
-  dess, se "Flöde 3".
+- **Butiksbeställningarnas intag** (fas 8a, PR #258): ny, ändrad och tillbakadragen, med en notis
+  till den ansvarige och sidan `/crm/butiksbestallningar` (`lib/domains/portal/storeOrderIntake.ts`).
+- **Kvar i CRM:et:** fas 8b, alltså bekräftelsen med frakten, Fortnox-ordern, leveransen, fakturan,
+  makuleringen och `store_order.*` tillbaka. Portalen håller beställningarna i kö tills
+  `EKOVILLA_CRM_STORE_ORDERS=on`, se "Flöde 3".
 - **`crm_work_orders`**, i `supabase/migrations/20260925081734_baseline.sql`:
   - Nummer: `order_number`, med formatet `AO-YYYYMMDD-XXXXXX`.
   - Kund och innehåll: `customer_id`, `customer_snapshot`, `work_address`, `line_items`,
@@ -752,10 +779,11 @@ Läst mot `fbcd0ec` (fas 7, PR #257, 29 september). CRM:ets plan säger vilken f
 - **Kvar i portalen**, mot det här kontraktet: inget. Det som återstår är CRM:ets halva, och att slå
   på kopplingen i testmiljön (HANDOVER.md).
 
-## Öppen fråga
+## Momsen (besvarad 29 september 2026)
 
-- **Momsen mellan Ekovilla och butiken.** Omvänd skattskyldighet är ett antagande i portalen
-  (`DOMAIN.md`). `reverse_vat` sitter på kunden i CRM:et och gäller alla kundens dokument, medan
-  produkter normalt har vanlig moms. Frågan tas med ekonomi eller revisor. Den ska vara besvarad
-  före första riktiga jobbet i prod, eftersom Fortnox-ordern skapas automatiskt, och den stoppar
-  butiksbeställningarna i CRM:et.
+- **William beslutade momsen per dokument, som i CRM:et i dag** (rättelse 34, prövat i Fortnox
+  testbolag): en butiksbeställning har 25 %, också frakten, eftersom butiken är slutkund. Ett jobb har
+  0 % på hela ordern (omvänd skattskyldighet). `DOMAIN.md` säger samma sak.
+- **Kvar hos ekonomi:** Fortnox tar kontot och fakturatexten ur kundkortet. En beställning till en
+  butik med omvänd moms bokförs därför på 3231 och får texten "Omvänd betalningsskyldighet" bredvid
+  25 % moms, som CRM:ets materialordrar i dag.
