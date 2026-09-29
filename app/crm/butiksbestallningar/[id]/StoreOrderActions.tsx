@@ -89,9 +89,7 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
     if (!customerId) return;
     const body = { customer_id: customerId, expected_customer_id: props.customerId };
     const done = await run(`/api/crm/portal/store-orders/${props.id}/customer`, 'PUT', body, 'Kunden kunde inte kopplas.', (data) =>
-      data?.store_link_attempted && data?.store_linked === false
-        ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' }
-        : 'Kunden är kopplad.',
+      data?.store_link === 'failed' ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' } : 'Kunden är kopplad.',
     );
     // Klart, eller sidan stämde inte: stängt, så att det som nu är sparat syns.
     if (done !== 'failed') edit(false);

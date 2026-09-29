@@ -4,6 +4,7 @@ import { claimFortnoxPush, documentOrganisationNumber } from '@/lib/domains/fort
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
   PORTAL_FORTNOX_LEASE_MS,
+  PORTAL_FORTNOX_RETRY_WINDOW_MS,
   PORTAL_FORTNOX_SAFETY_NET_MS,
   planPortalFortnoxRetry,
   portalFortnoxSafetyNet,
@@ -93,8 +94,11 @@ export async function setStoreOrderFreight(
 // ------------------------------------------------------------------------------------------------------------ kunden
 
 export type LinkStoreOrderCustomerResult =
-  /** `storeLinkAttempted`: beställningen kom utan kund, så butiken skulle kopplas; `storeLinked`: det gick. */
-  | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted: boolean }
+  /**
+   * `storeLink`: butikens koppling. `linked` sparad; `kept` butiken hade redan en, som står kvar; `failed` gick inte att
+   * spara (sägs); `not_applicable` ett byte, som bara gäller beställningen.
+   */
+  | { kind: 'linked'; storeLink: 'linked' | 'kept' | 'failed' | 'not_applicable' }
   | { kind: 'not_found' }
   | { kind: 'not_received' }
   /** Kunden är inte längre den säljaren såg (butikens ändring, eller en annan hos Ekovilla). Ingenting sparat; läs om. */
@@ -150,7 +154,7 @@ export async function linkStoreOrderCustomer(
 
   // Ett byte gäller bara den här beställningen: butikens koppling (som gäller nästa jobb och beställning) sätts bara när
   // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
-  if (hadCustomer) return { kind: 'linked', storeLinked: false, storeLinkAttempted: false };
+  if (hadCustomer) return { kind: 'linked', storeLink: 'not_applicable' };
 
   // Butikens koppling, bara om butiken saknar en: en koppling som gjorts sedan beställningen kom (ett jobb, 3c) flyttas
   // aldrig av en beställning. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
@@ -162,11 +166,10 @@ export async function linkStoreOrderCustomer(
     .select('reseller_id');
   if (store.error) {
     console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error.message });
-    return { kind: 'linked', storeLinked: false, storeLinkAttempted: true };
+    return { kind: 'linked', storeLink: 'failed' };
   }
   // Ingen rad: butiken hade redan en koppling, som står kvar.
-  const storeLinked = (store.data ?? []).length > 0;
-  return { kind: 'linked', storeLinked, storeLinkAttempted: storeLinked };
+  return { kind: 'linked', storeLink: (store.data ?? []).length > 0 ? 'linked' : 'kept' };
 }
 
 // ------------------------------------------------------------------------------------------------------ Fortnox-ordern
@@ -251,6 +254,18 @@ async function readPushCard(admin: SupabaseClient, customerId: string | null): P
   return (data as PushCard | null) ?? null;
 }
 
+/**
+ * En ny titt om 5 min, med ett fönster som räcker för den: har fönstret gått ut (eller finns inget) börjar ett nytt på
+ * 24 h, som planPortalFortnoxRetry gör. Annars hade cron gett upp tittens försök direkt (planerat efter fönstret), och
+ * en order som skapats men inte kopplats aldrig tagits över.
+ */
+function revisitColumns(row: Pick<PushRow, 'fortnox_retry_until'>, now: Date) {
+  const until = row.fortnox_retry_until && new Date(row.fortnox_retry_until).getTime() > now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS
+    ? row.fortnox_retry_until
+    : new Date(now.getTime() + PORTAL_FORTNOX_RETRY_WINDOW_MS).toISOString();
+  return { fortnox_next_attempt_at: new Date(now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString(), fortnox_retry_until: until };
+}
+
 /** Utfallet och omförsöken på raden, och claimen släppt. */
 async function finishPush(
   admin: SupabaseClient,
@@ -308,7 +323,7 @@ export async function pushStoreOrderToFortnox(
     // order finns: räknaren och ett planerat försök är den andras.
     const revisit = await admin
       .from('crm_store_orders')
-      .update({ fortnox_next_attempt_at: new Date(deps.now().getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString() })
+      .update(revisitColumns(first, deps.now()))
       .eq('id', id)
       .is('fortnox_next_attempt_at', null)
       .is('fortnox_order_number', null);
@@ -321,7 +336,7 @@ export async function pushStoreOrderToFortnox(
     // ordern på märkningen om 5 min. Utfallet sätter planen efteråt.
     const net = await admin
       .from('crm_store_orders')
-      .update({ fortnox_next_attempt_at: new Date(deps.now().getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString() })
+      .update(revisitColumns(first, deps.now()))
       .eq('id', id)
       .is('fortnox_next_attempt_at', null);
     if (net.error) throw new Error(`Skyddsnätet kunde inte sättas: ${net.error.message}`);
@@ -463,9 +478,10 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       fortnoxOrderNumber: number,
       error: e instanceof Error ? e.message : String(e),
     });
+    // Claimen släpps också, så att knappen inte svarar "skapas redan" i två minuter.
     const revisit = await admin
       .from('crm_store_orders')
-      .update({ fortnox_next_attempt_at: new Date(deps.now().getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString() })
+      .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
       .eq('id', id)
       .is('fortnox_order_number', null)
       .then((r) => r, (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }));

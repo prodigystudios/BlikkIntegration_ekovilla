@@ -115,7 +115,7 @@ describe('linkStoreOrderCustomer', () => {
 
   it('kopplar kortet på beställningen och butiken (som fas 3c)', async () => {
     const m = db(storeOrder({ customer_id: null }));
-    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: true, storeLinkAttempted: true });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLink: 'linked' });
     expect(row(m).customer_id).toBe(CARD_ID);
     expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: CARD_ID, customer_linked_by: SELLER, customer_linked_at: NOW.toISOString() });
   });
@@ -123,7 +123,7 @@ describe('linkStoreOrderCustomer', () => {
   it('🧨 ett byte på en beställning som redan hade kund gäller bara beställningen: butiken rörs inte', async () => {
     const other = '77777777-7777-4777-8777-777777777777';
     const m = db(storeOrder(), { crm_customers: [CARD, { ...CARD, id: other, fortnox_customer_id: '2000' }] });
-    expect(await link(m, other, CARD_ID)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
+    expect(await link(m, other, CARD_ID)).toEqual({ kind: 'linked', storeLink: 'not_applicable' });
     expect(row(m).customer_id).toBe(other);
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
   });
@@ -177,7 +177,7 @@ describe('linkStoreOrderCustomer', () => {
     const m = db(storeOrder({ customer_id: null }), {
       crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'Norrbygg AB', customer_id: other, customer_linked_at: '2026-09-28T10:00:00Z' }],
     });
-    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLink: 'kept' });
     expect(row(m).customer_id).toBe(CARD_ID);
     expect(m.tables.crm_portal_resellers[0].customer_id).toBe(other);
   });
@@ -185,7 +185,7 @@ describe('linkStoreOrderCustomer', () => {
   it('butikens koppling föll: beställningen är ändå kopplad, och det sägs', async () => {
     const m = db(storeOrder({ customer_id: null }));
     m.failOn((c) => c.table === 'crm_portal_resellers', { message: 'nere' });
-    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: true });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLink: 'failed' });
     expect(row(m).customer_id).toBe(CARD_ID);
   });
 });
@@ -472,6 +472,20 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m)).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
   });
 
+  it('🧨 "Skicka till Fortnox" efter att fönstret gått ut: skyddsnätet får ett nytt fönster, så att cron inte ger upp det', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-60) }));
+    const deps = fortnoxDeps(async () => {
+      throw new Error('processen dog');
+    });
+    let during: Record<string, unknown> = {};
+    deps.findExisting.mockImplementation(async () => {
+      during = { next: row(m).fortnox_next_attempt_at, until: row(m).fortnox_retry_until };
+      return null;
+    });
+    await pushStoreOrderToFortnox(m.admin, ID, deps);
+    expect(during).toEqual({ next: minutes(5), until: minutes(24 * 60) });
+  });
+
   it('🧨 "Skicka till Fortnox" utan planerat försök: skyddsnätet sätts före POST:en (dör processen tar cron över)', async () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null, fortnox_retry_until: null }));
     const deps = fortnoxDeps();
@@ -529,6 +543,8 @@ describe('pushStoreOrderToFortnox', () => {
     expect(result).toMatchObject({ outcome: 'blocked', fortnoxOrderNumber: '801' });
     expect(result.error).toContain('ingen ny order skapas');
     expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
+    // Claimen släpptes, så att knappen inte svarar "skapas redan" i två minuter.
+    expect(row(m)).toMatchObject({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null });
 
     // Claimen blev gammal; nästa försök söker och hittar ordern.
     Object.assign(row(m), { fortnox_order_claimed_at: new Date(Date.now() - 10 * 60_000).toISOString() });

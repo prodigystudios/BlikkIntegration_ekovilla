@@ -1240,6 +1240,11 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 - En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund
   bara före bekräftelsen). Vägen ut blir Makulera (8b2).
 - Lämnat: omförsöksloopen är en kopia av jobbens (`retryPortalFortnox`); att dela den hade rört 4b:s prövade kod.
+- 🧨 **Till 8b2 (Makulera):** en makulering får aldrig landa medan en push pågår (claimen `pending`): pushen skriver då
+  numret på en makulerad beställning och Fortnox-ordern står kvar. Makulera tar claimen, eller väntar ut den, och
+  makulerar Fortnox-ordern om ett nummer finns.
+- Lämnat: claimen är inte stämplad per försök (den delade `claimFortnoxPush`); två försök som båda hunnit skicka fångas
+  av sökningen och av makuleringen av den extra ordern.
 
 ⚠️ **Lokalt kvar:** so-lokal-8-1 (bekräftad, Fortnox föll på 1050), 8-4/8-5/8-6/8b-12 (bekräftade, ordrar 53/54/55/58),
 8b-11 (övertagen order 57), 8b-13 (mottagen), 8-7 (kopplad till Boli). Testbolaget: ordrar 37–58, faktura 22.

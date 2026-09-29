@@ -18,17 +18,18 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
   await requirePagePermission('crm.access');
   if (!isUuid(params.id)) notFound();
   const session = createSessionClient();
-  // Regeln frågas parallellt med läsningen; den beror bara på id:t. PostgREST skickar först när svaret efterfrågas, så
-  // anropet startas här med `then`.
-  const canManageRead = session.rpc('crm_store_order_can_manage', { p_id: params.id }).then((r) => r);
-  const read = await getStoreOrderView(session, params.id).then(
-    (order) => ({ ok: true as const, order }),
-    (e: unknown) => {
-      // Databasens text stannar i loggen, som på listan.
-      console.error('[butiksbestallningar] beställningen gick inte att läsa', { id: params.id, error: e instanceof Error ? e.message : String(e) });
-      return { ok: false as const };
-    },
-  );
+  // Regeln frågas parallellt med läsningen; den beror bara på id:t.
+  const [read, rule] = await Promise.all([
+    getStoreOrderView(session, params.id).then(
+      (order) => ({ ok: true as const, order }),
+      (e: unknown) => {
+        // Databasens text stannar i loggen, som på listan.
+        console.error('[butiksbestallningar] beställningen gick inte att läsa', { id: params.id, error: e instanceof Error ? e.message : String(e) });
+        return { ok: false as const };
+      },
+    ),
+    session.rpc('crm_store_order_can_manage', { p_id: params.id }),
+  ]);
   if (!read.ok) {
     return (
       <div className="grid grid-cols-1 gap-4">
@@ -40,7 +41,7 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
     );
   }
   if (!read.order) notFound();
-  return <StoreOrderDetail order={read.order} canManage={canManageStoreOrder(read.order, await canManageRead)} />;
+  return <StoreOrderDetail order={read.order} canManage={canManageStoreOrder(read.order, rule)} />;
 }
 
 /**
