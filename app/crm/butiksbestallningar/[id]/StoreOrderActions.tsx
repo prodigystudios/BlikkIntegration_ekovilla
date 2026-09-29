@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, useTransition } from 'react';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -323,19 +324,23 @@ const CONFIRM_STALE_CODES = new Set([
   'store_order_customer_missing',
   'store_order_customer_not_in_fortnox',
 ]);
-// Levererad, Fakturera och Makulera (8b2): beställningen är inte längre som sidan visar den, eller ett annat steg pågår.
+// Levererad, Fakturera och Makulera (8b2): beställningen är inte längre som sidan visar den.
 const FULFIL_STALE_CODES = new Set([
   'store_order_not_confirmed',
   'store_order_fortnox_order_missing',
-  'store_order_busy',
   'store_order_not_delivered',
-  'store_order_invoice_in_progress',
   'store_order_not_cancellable',
   'store_order_changed',
-  'store_order_push_in_progress',
-  // Fortnox-ordern är fakturerad i Fortnox: ett nytt försök ger samma nej, så dialogen stängs.
+  // Dagen utanför gränserna: sidan kan ha stått öppen över midnatt, och gränserna läses om.
+  'store_order_delivered_on_out_of_range',
+  // Fortnox-ordern är makulerad eller fakturerad i Fortnox: ett nytt försök ger samma nej, så dialogen stängs.
+  'store_order_fortnox_order_cancelled',
   'store_order_fortnox_order_invoiced',
 ]);
+// Ett annat steg pågår: sidan läses om efter Levererad och Fakturera. Makulera läser inte om, så att skälet står kvar i
+// dialogen när säljaren försöker igen om en stund.
+const FULFIL_BUSY_CODES = ['store_order_busy', 'store_order_invoice_in_progress'];
+const STEP_FULFIL_STALE_CODES = new Set([...FULFIL_STALE_CODES, ...FULFIL_BUSY_CODES]);
 
 /** Vad Fortnox-försöket blev, som säljaren läser det. */
 function fortnoxMessage(data: any, confirmed: boolean): SuccessMessage {
@@ -462,8 +467,15 @@ export default function StoreOrderActions(props: Props) {
   const refresh = () => startRefresh(() => router.refresh());
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingFreight, setEditingFreight] = useState(false);
-  // Leveransdagen: i dag som förval (serverns svenska dag).
+  // Leveransdagen: i dag som förval (serverns svenska dag). Sidan kan stå öppen över midnatt, så övre gränsen är den senare
+  // av serverns och webbläsarens svenska dag, läst när fältet används; servern prövar ändå.
   const [deliveredOn, setDeliveredOn] = useState(props.deliveredOnBounds.max);
+  const [today, setToday] = useState(props.deliveredOnBounds.max);
+  const refreshToday = () => {
+    const now = stockholmTodayISO();
+    setToday(now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max);
+  };
+  const deliveredOnBounds = { min: props.deliveredOnBounds.min, max: today };
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [confirmingInvoice, setConfirmingInvoice] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -516,7 +528,7 @@ export default function StoreOrderActions(props: Props) {
       { deliveredOn },
       'Leveransen kunde inte sparas.',
       () => 'Beställningen är markerad som levererad.',
-      FULFIL_STALE_CODES,
+      STEP_FULFIL_STALE_CODES,
     );
     setConfirmingDelivery(false);
   }
@@ -528,7 +540,7 @@ export default function StoreOrderActions(props: Props) {
       {},
       'Fakturan kunde inte skapas.',
       invoiceMessage,
-      FULFIL_STALE_CODES,
+      STEP_FULFIL_STALE_CODES,
     );
     setConfirmingInvoice(false);
   }
@@ -588,7 +600,7 @@ export default function StoreOrderActions(props: Props) {
   }
 
   if (props.status === 'confirmed') {
-    const dayValid = isStoreOrderDeliveredOnAllowed(deliveredOn, props.deliveredOnBounds);
+    const dayValid = isStoreOrderDeliveredOnAllowed(deliveredOn, deliveredOnBounds);
     return (
       <section className={cn(crm.cardInner, 'grid gap-2.5')} aria-labelledby="store-order-delivery-step">
         <div className="grid gap-1">
@@ -604,9 +616,13 @@ export default function StoreOrderActions(props: Props) {
             type="date"
             aria-label="Leveransdag"
             value={deliveredOn}
-            min={props.deliveredOnBounds.min}
-            max={props.deliveredOnBounds.max}
-            onChange={(e) => setDeliveredOn(e.target.value)}
+            min={deliveredOnBounds.min}
+            max={deliveredOnBounds.max}
+            onFocus={refreshToday}
+            onChange={(e) => {
+              refreshToday();
+              setDeliveredOn(e.target.value);
+            }}
             aria-invalid={!dayValid}
             disabled={locked}
             className={cn(crm.input, 'tabular-nums', !dayValid && 'border-rose-300')}
@@ -622,7 +638,7 @@ export default function StoreOrderActions(props: Props) {
         </div>
         {!dayValid ? (
           <p className="text-xs text-rose-700">
-            Välj en dag från {formatStoreOrderDay(props.deliveredOnBounds.min)}, då beställningen kom in, till och med i dag.
+            Välj en dag från {formatStoreOrderDay(deliveredOnBounds.min)}, då beställningen kom in, till och med i dag.
           </p>
         ) : null}
         {cancelFoot}

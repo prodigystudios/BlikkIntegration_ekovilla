@@ -12,7 +12,8 @@ import { readProfileName } from './storeOrdersStore';
  *
  * Besluten (William 2026-09-29):
  *   - Levererad: en knapp med datum (svensk dag), bara när Fortnox-ordern finns. Varorna har kommit fram, så dagen
- *     ligger mellan dagen beställningen kom in och i dag.
+ *     ligger mellan dagen beställningen kom in och i dag. En Fortnox-order som makulerats för hand i Fortnox nekar
+ *     Levererad: den hade inte gått att fakturera, och efter Levererad går beställningen inte att makulera.
  *   - Fakturera: `createinvoice` på Fortnox-ordern. En faktura som redan finns i Fortnox kopplas bara (InvoiceReference).
  *     Fakturan är ett utkast, som ekonomi bokför och skickar i Fortnox, som för arbetsordrarna.
  *   - Makulera: bara före Levererad, med ett skäl som butiken ser. Fortnox-ordern makuleras först.
@@ -146,6 +147,8 @@ export type MarkStoreOrderDeliveredResult =
   /** Fortnox-ordern finns inte än: butiken ska ha fått sitt ordernummer före leveransen. */
   | { kind: 'fortnox_order_missing' }
   | { kind: 'date_out_of_range'; min: string; max: string }
+  /** Fortnox-ordern är makulerad i Fortnox (för hand). Ingenting sparat. */
+  | { kind: 'fortnox_order_cancelled'; orderNumber: string }
   /** Ett annat steg arbetar mot Fortnox-ordern just nu (claimen): en makulering eller en push. Ingenting sparat. */
   | { kind: 'busy' };
 
@@ -168,20 +171,34 @@ function decideDeliver(row: DeliverRow | null, deliveredOn: string, now: Date): 
 
 /**
  * Levererad, med dagen (`YYYY-MM-DD`, svensk dag). En villkorad UPDATE: bekräftad och med Fortnox-order, med orderns
- * claim tagen, så att en makulering som pågår aldrig får en levererad beställning under sig. Går inte att ångra (vakten
- * släpper statusen bara framåt), och butiken får den i 8b3.
+ * claim tagen, så att en makulering som pågår aldrig får en levererad beställning under sig. Med claimen läses också
+ * Fortnox-ordern: en som makulerats i Fortnox nekar. Går inte att ångra (vakten släpper statusen bara framåt), och
+ * butiken får den i 8b3. Kastar Fortnox fel (anslutningen, läsningen) och databasens.
  */
 export async function markStoreOrderDelivered(
   admin: SupabaseClient,
   input: { id: string; deliveredOn: string; actor: StoreOrderActor },
-  now: () => Date = () => new Date(),
+  deps: Pick<StoreOrderFulfilmentDeps, 'readOrder' | 'now'> = storeOrderFulfilmentDeps(),
 ): Promise<MarkStoreOrderDeliveredResult> {
-  const at = now();
-  const blocked = decideDeliver(await readDeliverRow(admin, input.id), input.deliveredOn, at);
+  const at = deps.now();
+  const first = await readDeliverRow(admin, input.id);
+  const blocked = decideDeliver(first, input.deliveredOn, at);
   if (blocked) return blocked;
+  const orderNumber = (first as DeliverRow).fortnox_order_number as string;
   const name = await readProfileName(admin, input.actor.id);
   const stamp = await takeClaim(admin, input.id, ORDER_CLAIM);
   if (!stamp) return { kind: 'busy' };
+
+  // Fortnox-ordern som den står, med claimen: ingen makulering här kan komma emellan.
+  try {
+    if ((await deps.readOrder(orderNumber)).cancelled) {
+      await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
+      return { kind: 'fortnox_order_cancelled', orderNumber };
+    }
+  } catch (e) {
+    await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
+    throw e;
+  }
 
   // Statusen och dagen, och claimen släppt, i samma skrivning, och bara med den egna claimen.
   const saved = await admin

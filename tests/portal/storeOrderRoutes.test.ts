@@ -269,6 +269,7 @@ describe('POST …/deliver', () => {
       [{ kind: 'fortnox_order_missing' }, 409, 'store_order_fortnox_order_missing'],
       [{ kind: 'busy' }, 409, 'store_order_busy'],
       [{ kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' }, 400, 'store_order_delivered_on_out_of_range'],
+      [{ kind: 'fortnox_order_cancelled', orderNumber: '58' }, 409, 'store_order_fortnox_order_cancelled'],
     ];
     for (const [result, status, code] of cases) {
       h.results.markStoreOrderDelivered = result;
@@ -276,6 +277,13 @@ describe('POST …/deliver', () => {
     }
     h.results.markStoreOrderDelivered = { kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' };
     expect((await call('deliver', { deliveredOn: '2026-09-26' })).body.error).toContain('27 sep. 2026');
+    const { markStoreOrderDelivered } = await import('@/lib/domains/portal/storeOrderFulfilment');
+    vi.mocked(markStoreOrderDelivered).mockRejectedValueOnce(new FortnoxNotConnectedError());
+    expect(await call('deliver', { deliveredOn: '2026-09-28' })).toMatchObject({ status: 409, body: { errorDetails: { code: 'fortnox_not_connected' } } });
+    vi.mocked(markStoreOrderDelivered).mockRejectedValueOnce(new Error('relation "hemlig" does not exist'));
+    const ours = await call('deliver', { deliveredOn: '2026-09-28' });
+    expect(ours).toMatchObject({ status: 500, body: { errorDetails: { code: 'store_order_deliver_failed' } } });
+    expect(JSON.stringify(ours.body)).not.toContain('hemlig');
   });
 
   it('🧨 bara en riktig kalenderdag i formen ÅÅÅÅ-MM-DD; annars 400 och ingenting körs', async () => {
@@ -339,7 +347,7 @@ describe('POST …/cancel', () => {
       [{ kind: 'not_found' }, 404, 'store_order_not_found'],
       [{ kind: 'not_cancellable' }, 409, 'store_order_not_cancellable'],
       [{ kind: 'changed' }, 409, 'store_order_changed'],
-      [{ kind: 'busy' }, 409, 'store_order_push_in_progress'],
+      [{ kind: 'busy' }, 409, 'store_order_busy'],
       [{ kind: 'fortnox_order_invoiced', orderNumber: '58', invoiceNumber: '23' }, 409, 'store_order_fortnox_order_invoiced'],
     ];
     for (const [result, status, code] of cases) {

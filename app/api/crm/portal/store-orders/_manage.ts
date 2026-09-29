@@ -39,3 +39,10 @@ export function storeOrderFortnoxErrorResponse(e: unknown): Response | null {
   if (e instanceof FortnoxApiError) return routeError(502, 'store_order_fortnox_failed', `Fortnox svarade: ${friendlyFortnoxMessage(e)}`);
   return null;
 }
+
+/**
+ * Orderns claim hålls av ett annat steg (Levererad, Makulera, 8b2): en push som skapar Fortnox-ordern, eller någon annan
+ * hos Ekovilla som levererar eller makulerar.
+ */
+export const STORE_ORDER_BUSY_MESSAGE =
+  'Beställningen ändras mot Fortnox just nu, av Fortnox-ordern som skapas eller av någon annan hos Ekovilla. Försök igen om en stund.';

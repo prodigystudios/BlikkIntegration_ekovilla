@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { cancelStoreOrder } from '@/lib/domains/portal/storeOrderFulfilment';
 import { STORE_ORDER_CANCEL_REASON_MAX } from '@/lib/domains/portal/storeOrders';
 import { ok, routeError, validationError } from '../../../../_shared';
-import { requireStoreOrderManager, storeOrderFortnoxErrorResponse } from '../../_manage';
+import { STORE_ORDER_BUSY_MESSAGE, requireStoreOrderManager, storeOrderFortnoxErrorResponse } from '../../_manage';
 
 type RouteContext = { params: { id: string } };
 
@@ -16,7 +16,8 @@ type RouteContext = { params: { id: string } };
 //   404 store_order_not_found
 //   409 store_order_not_cancellable               levererad, fakturerad, tillbakadragen eller redan makulerad
 //   409 store_order_changed                       butiken ändrade den, eller någon bekräftade den, sedan sidan lästes
-//   409 store_order_push_in_progress              Fortnox-ordern skapas just nu: försök igen om en stund
+//   409 store_order_busy                          en push, Levererad eller en annan makulering arbetar mot Fortnox-
+//                                                 ordern just nu: försök igen om en stund
 //   409 store_order_fortnox_order_invoiced        Fortnox-ordern är redan fakturerad i Fortnox
 //   409 fortnox_not_connected
 //   502 store_order_fortnox_failed                Fortnox nekade, med Fortnox text
@@ -64,7 +65,7 @@ export async function POST(req: Request, context: RouteContext) {
       case 'changed':
         return routeError(409, 'store_order_changed', 'Beställningen har ändrats sedan du öppnade den. Läs igenom den igen innan du makulerar.');
       case 'busy':
-        return routeError(409, 'store_order_push_in_progress', 'Fortnox-ordern skapas just nu. Försök igen om en stund.');
+        return routeError(409, 'store_order_busy', STORE_ORDER_BUSY_MESSAGE);
       case 'fortnox_order_invoiced':
         return routeError(
           409,

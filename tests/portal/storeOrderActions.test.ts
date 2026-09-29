@@ -682,6 +682,23 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_error: null, fortnox_next_attempt_at: null, fortnox_order_sync_status: 'not_synced' });
   });
 
+  it('🧨 POST:en föll (svaret kom aldrig) medan beställningen makulerades, men Fortnox skapade ordern: den makuleras', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }));
+    let searches = 0;
+    // Före POST:en finns ingen order; efter den finns 801 (skapad fast svaret aldrig kom), och sedan ingen öppen.
+    const deps = fortnoxDeps(
+      async () => {
+        Object.assign(row(m), { status: 'cancelled', fortnox_next_attempt_at: null, fortnox_order_claimed_at: null });
+        throw new FortnoxApiError(504, 'Fortnox POST /orders misslyckades (504)');
+      },
+      async () => (++searches === 2 ? '801' : null),
+    );
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(deps.cancel).toHaveBeenCalledTimes(1);
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: null, fortnox_error: null });
+  });
+
   it('🧨 kortet tappade numret medan beställningen makulerades: stoppet skrivs inte på den makulerade', async () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null }), { crm_customers: [{ ...CARD, fortnox_customer_id: null }] }, {
       beforeExecute: (call, tables) => {

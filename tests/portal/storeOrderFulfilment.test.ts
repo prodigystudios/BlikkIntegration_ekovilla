@@ -155,7 +155,7 @@ describe('stegen per läge', () => {
 
 describe('markStoreOrderDelivered', () => {
   const deliver = (m: ReturnType<typeof memoryAdmin>, deliveredOn = '2026-09-29') =>
-    markStoreOrderDelivered(m.admin, { id: ID, deliveredOn, actor }, () => NOW);
+    markStoreOrderDelivered(m.admin, { id: ID, deliveredOn, actor }, fakeFortnox().deps);
 
   it('bekräftad med Fortnox-order: levererad den dagen, med vem och när, och claimen släppt', async () => {
     const m = db();
@@ -190,7 +190,7 @@ describe('markStoreOrderDelivered', () => {
     const without = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }));
     expect(await deliver(without)).toEqual({ kind: 'fortnox_order_missing' });
     expect(row(without)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'failed' });
-    expect(await markStoreOrderDelivered(db().admin, { id: '66666666-6666-4666-8666-666666666666', deliveredOn: '2026-09-29', actor }, () => NOW)).toEqual({
+    expect(await markStoreOrderDelivered(db().admin, { id: '66666666-6666-4666-8666-666666666666', deliveredOn: '2026-09-29', actor }, fakeFortnox().deps)).toEqual({
       kind: 'not_found',
     });
   });
@@ -200,6 +200,29 @@ describe('markStoreOrderDelivered', () => {
     const m = db(storeOrder({ fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: claimedAt }));
     expect(await deliver(m)).toEqual({ kind: 'busy' });
     expect(row(m)).toMatchObject({ status: 'confirmed', delivered_on: null, fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: claimedAt });
+  });
+
+  it('🧨 Fortnox-ordern är makulerad i Fortnox (för hand): nekas, ingenting sparat, och claimen släpps', async () => {
+    const m = db();
+    const { deps } = fakeFortnox({ '58': { cancelled: true } });
+    expect(await markStoreOrderDelivered(m.admin, { id: ID, deliveredOn: '2026-09-29', actor }, deps)).toEqual({ kind: 'fortnox_order_cancelled', orderNumber: '58' });
+    expect(deps.readOrder).toHaveBeenCalledWith('58');
+    expect(row(m)).toMatchObject({ status: 'confirmed', delivered_on: null, fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
+  });
+
+  it('en order som fakturerats för hand i Fortnox kan levereras (Fakturera kopplar fakturan sedan)', async () => {
+    const { deps } = fakeFortnox({ '58': { invoiceNumber: '19' } });
+    expect(await markStoreOrderDelivered(db().admin, { id: ID, deliveredOn: '2026-09-29', actor }, deps)).toEqual({ kind: 'delivered' });
+  });
+
+  it('Fortnox svarar inte: kastar, ingenting sparat, claimen släppt', async () => {
+    const m = db();
+    const { deps } = fakeFortnox();
+    deps.readOrder.mockImplementationOnce(async () => {
+      throw new FortnoxNotConnectedError();
+    });
+    await expect(markStoreOrderDelivered(m.admin, { id: ID, deliveredOn: '2026-09-29', actor }, deps)).rejects.toBeInstanceOf(FortnoxNotConnectedError);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
   });
 
   it('en claim som blivit gammal (en död process) spärrar inte för alltid', async () => {

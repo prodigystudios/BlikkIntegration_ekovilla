@@ -339,6 +339,28 @@ async function numberSavedMeanwhile(admin: SupabaseClient, id: string): Promise<
 }
 
 /**
+ * 🧨 Ett försök som föll efter POST:en (svaret kom aldrig fram) kan ändå ha skapat ordern, och beställningen makulerades
+ * under tiden (8b2): makuleringens sökning kom före. Varje order som bär märkningen makuleras, så att ingen står kvar.
+ * Loggar bara: beställningen är redan makulerad.
+ */
+async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOrderFortnoxDeps): Promise<void> {
+  try {
+    // Högst tre: en order som Fortnox fortfarande visar efter makuleringen ska inte ge en oändlig loop.
+    for (let i = 0; i < 3; i += 1) {
+      const left = await deps.findExisting(reference);
+      if (!left) return;
+      await deps.cancel(left);
+      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: left });
+    }
+  } catch (e) {
+    console.error('[portal-store-orders] 🧨 beställningen är makulerad, men Fortnox kunde inte sökas eller en order makuleras', {
+      id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
  * 🧨 Beställningen makulerades medan ordern skapades (8b2): Makulera tog claimen när den här pushens blivit gammal, och
  * dess sökning kom före vår POST. Numret skrivs aldrig på en makulerad beställning, och vår order makuleras, så att ingen
  * Fortnox-order står kvar. Hittade makuleringen redan vår order (numret står på raden) är den makulerad.
@@ -527,8 +549,12 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       { withoutNumber: true, whileConfirmed: true },
     );
     // Ingen rad: ett annat försök hann skapa och spara ordern medan det här väntade (då är det klart, inget fel), eller
-    // beställningen makulerades.
-    if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome, fortnoxOrderNumber: null, error };
+    // beställningen makulerades (då söks en order som vår POST ändå kan ha skapat).
+    if (!written) {
+      const settled = await numberSavedMeanwhile(admin, id);
+      if (settled?.outcome === 'skipped') await cancelLeftoverOrders(id, reference, deps);
+      return settled ?? { outcome, fortnoxOrderNumber: null, error };
+    }
     return { outcome, fortnoxOrderNumber: null, error };
   }
 
