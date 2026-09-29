@@ -1496,6 +1496,54 @@ fliken Utskick):
   kundnummer i portalen, men CRM:et har butiken med kund 15.
 - Testbolaget: order 75 med faktura 28 (obokförd), och order 76, makulerad.
 
+### Lokal genomkörning av hela kedjan (2026-09-29)
+
+CRM:et (:3002) mot den **riktiga** portalen (:3001, egen git-worktree av portalens `main` @ `e9b55aa`, variablerna bara i
+processens miljö, `EKOVILLA_CRM_STORE_ORDERS=on` bara lokalt), båda lokala databaserna och Fortnox testbolaget. Headless
+(Playwright), ett cron-varv i taget i CRM:et och portalens utkorg puffad för hand (`/api/cron/utkorg`, egen
+`CRON_SECRET`). Portalsessionen höll sig borta från databasen och portarna under tiden. Butiken Norrbygg hade kundnummer
+15 (SEHED) under testet. **81 kontroller gröna; inget fel i CRM:et.**
+
+1. **Prislistan:** Publicera (lista 160, 51 artiklar, giltig från 2026-09-29) blev en ny rad i portalens `pricelists`
+   (`reseller_id` null) med 51 artiklar, enheterna med gemener, kategori och arbetsandel. Samma nyckel igen gav samma svar
+   (201) och ingen ny lista; samma nyckel med en annan kropp gav 422 `idempotency_key_reused`. Nya beställningar låstes
+   mot den nya listan.
+2. **Jobbet (2026-011):** kunden godkände via kundlänken (namn, personnummer, fastighet, ritad signatur), butiken lämnade
+   över. Portalens kropp saknade kundpris, påslag, personnummer och signatur och bar `ekovillaCustomerNumber` "15". CRM:et
+   skapade AO-20260929-BB3B4E och Fortnox-order 77; `job.confirmed` gav portalen Bekräftad med 77 och arbetsorderns id.
+3. **Planerat, utfört, fakturerat:** ett kort gav Planerad 12–14 okt, en flytt 20–21 okt, borttaget kort tillbaka till
+   Bekräftad med tomma datum, ett nytt endagskort 22 okt i båda fälten. "Fakturera" gav Utförd, en flytt efter det köade
+   inget (bara framåt), faktura 29 gav Fakturerad.
+4. **Meddelanden:** butikens meddelande (med emoji och tankstreck) kom fram och gav notisen; svaret kom fram som
+   "Test Admin · Planering" med `crm_message_id`. Också på ett fakturerat och ett avbrutet jobb.
+5. **Dokumenten:** orderbekräftelsen gick automatiskt efter bekräftelsen; "skicka ny" ersatte rad och fil hos portalen;
+   egenkontrollen (arkiverad med `/api/storage/save` och kommentaren, som egenkontrollsidan) gick med kortets route. Butiken
+   laddade ner båda (PDF, `filename*` med svenska tecken och tankstreck).
+6. **Butiksbeställningen (B-2026-008 och -009):** ändringen före bekräftelsen gav version 2. Med CRM:et nere köade portalen
+   två ändringar; den första hade redan fryst sin kropp och gick fram när CRM:et kom tillbaka, och säljaren bekräftade den
+   versionen (Fortnox-order 78). Butikens två senare ändringar låg då i portalens kö: den äldre blev `superseded`, den
+   senaste fick 409, och portalen visade Ekovillas version med rutan "Ekovilla hann bekräfta …". Levererad och Fakturerad
+   (faktura 30) kom fram. B-2026-009: tillbakadragningen efter bekräftelsen fick 409 (rutan "före tillbakadragningen"),
+   sedan makulerad av Ekovilla (order 79 makulerad), och butiken såg skälet.
+7. **Det avbrutna jobbet (2026-008):** AO-20260929-2C9335, Fortnox-order 80, Bekräftad; avbruten i CRM:et gav portalen
+   Avbrutet med "Inget skäl angavs.", offerten stod kvar som överlämnad. En signerad `job.scheduled` efter det fick 409
+   `cancelled`, en ny `job.cancelled` 200, och meddelanden gick fortfarande åt båda hållen.
+
+**Iakttagelser till portalen** (inget av det rör CRM:ets flöde):
+- En sen `job.scheduled` med ny nyckel efter `job.invoiced` flyttar inte statusen, men skriver över `scheduled_for` och
+  `scheduled_until` (22 okt blev 12–14 okt). CRM:et skickar aldrig en sådan (rättelse 22), så det gäller bara uppspelade
+  anrop. Rättelse 38.
+- 409-svaret på en ändring eller tillbakadragning sparas i `last_error` och `last_error_code` (`store_order_confirmed`),
+  inte i `response_body`.
+- En ändring vars första försök redan gjorts (kroppen fryst) blir ändå `superseded` av en senare ändring i samma kö.
+
+⚠️ **Lokalt kvar:** portalens lokala databas har testets offerter, jobb, meddelanden, dokument, beställningar
+B-2026-008–009 och den nya prislistan; portalsessionen kör `npm run db:reset` där efter Williams ok (tillbaka till
+seeden, Norrbygg utan kundnummer). CRM:et: AO-20260929-BB3B4E (fakturerad), AO-20260929-2C9335 (avbruten), B-2026-008
+(fakturerad), B-2026-009 (makulerad), publiceringen av lista 160. Testbolaget: ordrar 77–80, fakturor 29 och 30 (obokförda),
+order 79 makulerad; order 80 (det avbrutna jobbet) står kvar, som för varje avbruten arbetsorder.
+Skript: scratchpad/8b3 (session 783c9315): lib.mjs, steg1–7.mjs, steg6lib.mjs, kedjan.log.
+
 ---
 
 ## Rättelser och luckor i kontraktet
@@ -1662,6 +1710,9 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     `store_order.confirmed` skickas först när Fortnox-numret finns, och inget efter den förrän den är mottagen (2xx).
     `store_order.cancelled` kan komma till en beställning som aldrig fått `store_order.confirmed`, också när portalen
     redan fått 409 på en ändring. `reason` är aldrig tom.
+38. **En sen `job.scheduled` skriver över datumen efter Utförd** (portalen, lokal genomkörning 2026-09-29): statusen står
+    kvar, men `scheduled_for` och `scheduled_until` byts. CRM:et skickar ingen `job.scheduled` efter `job.completed`
+    (rättelse 22), så bara ett uppspelat anrop kan göra det. Förslag: portalen ignorerar datumen när jobbet är utfört.
 
 ## Öppna frågor
 
@@ -1700,8 +1751,8 @@ Ingen av dem stoppar fas 0–7.
   arbetsordern) och ett SQL-texttest för grants och `security definer`.
 - Kön: 5xx och timeout görs om, 4xx ger upp, tre snabba flyttar blir en händelse.
 
-**Lokalt↔lokalt:**
-- ✅ Publicera prislistan två gånger: samma nyckel, samma svar (mot fejkportalen, fas 2b).
+**Lokalt↔lokalt** (✅ hela kedjan mot den riktiga portalen 2026-09-29, se "Lokal genomkörning av hela kedjan"):
+- ✅ Publicera prislistan två gånger: samma nyckel, samma svar (mot fejkportalen, fas 2b; mot portalen 2026-09-29).
 - Samma jobb från portalen två gånger ger en arbetsorder och en Fortnox-order. Samma `quoteId` med en
   ny nyckel ger den befintliga.
 - ✅ Ett jobb från portalen blir "Bekräftad" utan att någon hos Ekovilla gör något. Ett kort i
