@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSessionClient } from '@/lib/supabase/session';
+import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { storeOrderManageAccess } from '@/lib/domains/portal/storeOrderActions';
 import { invalidUuidParam, requirePermission, routeError } from '../../_shared';
 
@@ -27,4 +28,14 @@ export async function requireStoreOrderManager(
     return { response: routeError(403, 'store_order_forbidden', 'Bara den ansvarige för beställningen, eller en admin, kan göra det.') };
   }
   return { response: null, userId: gate.currentUser.id, session };
+}
+
+/**
+ * Fortnox svar på ett steg som gör något i Fortnox (Fakturera, Makulera, fas 8b2), som arbetsorderns fakturaroute:
+ * Fortnox inte anslutet 409, ett nej från Fortnox 502 med Fortnox text. Allt annat är vårt eget fel (null: anroparens 500).
+ */
+export function storeOrderFortnoxFailure(e: unknown): Response | null {
+  if (e instanceof FortnoxNotConnectedError) return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
+  if (e instanceof FortnoxApiError) return routeError(502, 'store_order_fortnox_failed', `Fortnox svarade: ${friendlyFortnoxMessage(e)}`);
+  return null;
 }

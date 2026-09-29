@@ -7,13 +7,27 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
+import CrmModal from '@/app/crm/components/CrmModal';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
-import { formatStoreOrderKr as kr, type StoreOrderFreight, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
+import {
+  STORE_ORDER_CANCEL_REASON_MAX,
+  formatStoreOrderDay,
+  formatStoreOrderKr as kr,
+  isStoreOrderDeliveredOnAllowed,
+  storeOrderCanBeCancelled,
+  type StoreOrderFreight,
+  type StoreOrderStatus,
+} from '@/lib/domains/portal/storeOrders';
 
 // Ekovillas steg på en butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8b), för den ansvarige och admin (sidan frågar
-// crm_store_order_can_manage innan den visar kortet; routerna frågar igen). Stegen är en ordningsföljd: butikens
-// kundkort, frakten, och sedan Bekräfta, som låser beställningen för butiken och skapar Fortnox-ordern. Efter
-// bekräftelsen visar kortet Fortnox-ordern tills den finns, med "Skicka till Fortnox" om den inte kunde skapas.
+// crm_store_order_can_manage innan den visar kortet; routerna frågar igen). Ett kort per läge:
+//   mottagen    butikens kundkort, frakten, och sedan Bekräfta, som låser beställningen för butiken och skapar
+//               Fortnox-ordern (en ordningsföljd, därför numrerad);
+//   bekräftad   Fortnox-ordern tills den finns ("Skicka till Fortnox" om den inte kunde skapas), sedan Markera som
+//               levererad;
+//   levererad   Fakturera beställningen.
+// Rubriken är stegets handling, som i Bekräfta-kortet.
+// Makulera står längst ner så länge beställningen är mottagen eller bekräftad (8b2).
 // Varje steg läser om sidan (serverkomponent) efteråt, så att summorna och händelserna stämmer.
 
 type Props = {
@@ -30,6 +44,10 @@ type Props = {
   freight: StoreOrderFreight;
   fortnoxOrderNumber: string | null;
   fortnoxError: string | null;
+  /** Beställningens nummer (B-…), i makuleringens rubrik. */
+  orderNumber: string;
+  /** Leveransdagens gränser (svenska dagar), räknade på servern: från dagen beställningen kom in till i dag. */
+  deliveredOnBounds: { min: string; max: string };
 };
 
 type ApiResult = { ok: boolean; status: number; data: any; error: string | null; code: string | null };
@@ -305,6 +323,17 @@ const CONFIRM_STALE_CODES = new Set([
   'store_order_customer_missing',
   'store_order_customer_not_in_fortnox',
 ]);
+// Levererad, Fakturera och Makulera (8b2): beställningen är inte längre som sidan visar den, eller ett annat steg pågår.
+const FULFIL_STALE_CODES = new Set([
+  'store_order_not_confirmed',
+  'store_order_fortnox_order_missing',
+  'store_order_busy',
+  'store_order_not_delivered',
+  'store_order_invoice_in_progress',
+  'store_order_not_cancellable',
+  'store_order_changed',
+  'store_order_push_in_progress',
+]);
 
 /** Vad Fortnox-försöket blev, som säljaren läser det. */
 function fortnoxMessage(data: any, confirmed: boolean): SuccessMessage {
@@ -321,6 +350,106 @@ function fortnoxMessage(data: any, confirmed: boolean): SuccessMessage {
   return `${lead ?? 'Klart'}.`;
 }
 
+/** Vad Fakturera blev, som säljaren läser det. */
+function invoiceMessage(data: any): string {
+  const number = data?.fortnox_invoice_number;
+  if (data?.source === 'adopted') return `Faktura ${number} fanns redan i Fortnox och är nu kopplad.`;
+  if (data?.source === 'already') return `Beställningen är redan fakturerad, med faktura ${number}.`;
+  return `Faktura ${number} är skapad i Fortnox.`;
+}
+
+/** Makulera, längst ner i kortet: sällsynt och går inte att ta tillbaka, så den står tyst under huvudsteget. */
+function CancelFoot({ onOpen, disabled }: { onOpen: () => void; disabled: boolean }) {
+  return (
+    <div className="border-t border-[#e3e9df] pt-3">
+      <button type="button" onClick={onOpen} disabled={disabled} className={crm.dangerButton}>
+        Makulera beställningen
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Skälet till butiken, och vad makuleringen gör. Fältet är tomt varje gång dialogen öppnas: ett skäl som skrevs och
+ * avbröts ska inte skickas nästa gång.
+ */
+function CancelDialog({
+  props,
+  busy,
+  onConfirm,
+  onClose,
+}: {
+  props: Props;
+  busy: boolean;
+  onConfirm: (reason: string) => void;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [touched, setTouched] = useState(false);
+  const trimmed = reason.trim();
+  const invalid = trimmed.length === 0;
+  const consequence =
+    props.status === 'received'
+      ? 'Butiken ser att Ekovilla makulerat beställningen, och skälet.'
+      : props.fortnoxOrderNumber
+        ? `Fortnox-order ${props.fortnoxOrderNumber} makuleras också. Butiken ser att Ekovilla makulerat beställningen, och skälet.`
+        : 'Fortnox-ordern har inte skapats. Finns den ändå i Fortnox makuleras den också. Butiken ser att Ekovilla makulerat beställningen, och skälet.';
+  function submit() {
+    setTouched(true);
+    if (!invalid) onConfirm(trimmed);
+  }
+  return (
+    <CrmModal
+      onClose={busy ? () => {} : onClose}
+      ariaLabel={`Makulera ${props.orderNumber}`}
+      maxWidth="sm:max-w-[480px]"
+      header={
+        <>
+          <h2 className="text-lg font-bold text-slate-900">Makulera {props.orderNumber}?</h2>
+          <p className="m-0 mt-0.5 text-sm text-slate-500">{consequence} Det går inte att ångra.</p>
+        </>
+      }
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={busy}
+            autoFocus
+            className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-5"
+          >
+            Avbryt
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            disabled={busy}
+            className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
+          >
+            {busy ? 'Makulerar…' : 'Makulera beställningen'}
+          </button>
+        </>
+      }
+    >
+      <label className="grid gap-1">
+        <span className={crm.label}>Skäl till butiken</span>
+        <textarea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          onBlur={() => setTouched(true)}
+          disabled={busy}
+          rows={4}
+          maxLength={STORE_ORDER_CANCEL_REASON_MAX}
+          aria-invalid={touched && invalid}
+          placeholder="t.ex. Artikeln går inte att leverera före jul"
+          className={cn(crm.input, 'h-auto min-h-[96px] py-2', touched && invalid && 'border-rose-300')}
+        />
+        {touched && invalid ? <span className="text-xs text-rose-700">Skriv skälet. Butiken ser det.</span> : null}
+      </label>
+    </CrmModal>
+  );
+}
+
 export default function StoreOrderActions(props: Props) {
   const router = useRouter();
   const toast = useToast();
@@ -331,6 +460,11 @@ export default function StoreOrderActions(props: Props) {
   const refresh = () => startRefresh(() => router.refresh());
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingFreight, setEditingFreight] = useState(false);
+  // Leveransdagen: i dag som förval (serverns svenska dag).
+  const [deliveredOn, setDeliveredOn] = useState(props.deliveredOnBounds.max);
+  const [confirmingDelivery, setConfirmingDelivery] = useState(false);
+  const [confirmingInvoice, setConfirmingInvoice] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   // Två klick i samma bildruta ser båda `busy` som falskt; referensen stoppar det andra.
   const inFlight = useRef(false);
@@ -373,6 +507,51 @@ export default function StoreOrderActions(props: Props) {
     return ok;
   }
 
+  async function markDelivered() {
+    await run(
+      `/api/crm/portal/store-orders/${props.id}/deliver`,
+      'POST',
+      { deliveredOn },
+      'Leveransen kunde inte sparas.',
+      () => 'Beställningen är markerad som levererad.',
+      FULFIL_STALE_CODES,
+    );
+    setConfirmingDelivery(false);
+  }
+
+  async function invoice() {
+    await run(
+      `/api/crm/portal/store-orders/${props.id}/invoice`,
+      'POST',
+      {},
+      'Fakturan kunde inte skapas.',
+      invoiceMessage,
+      FULFIL_STALE_CODES,
+    );
+    setConfirmingInvoice(false);
+  }
+
+  async function cancel(reason: string) {
+    const done = await run(
+      `/api/crm/portal/store-orders/${props.id}/cancel`,
+      'POST',
+      { reason, status: props.status, version: props.storeVersion },
+      'Beställningen kunde inte makuleras.',
+      (data) => {
+        const numbers: string[] = Array.isArray(data?.fortnox_order_numbers) ? data.fortnox_order_numbers : [];
+        if (numbers.length === 0) return 'Beställningen är makulerad.';
+        return `Beställningen är makulerad, och Fortnox-order ${numbers.join(' och ')} också.`;
+      },
+      FULFIL_STALE_CODES,
+    );
+    // Stängd när den gick igenom eller sidan inte längre stämmer; ett fel från Fortnox låter skälet stå kvar.
+    if (done !== 'failed') setCancelling(false);
+  }
+
+  const locked = busy || refreshing;
+  const cancelFoot = storeOrderCanBeCancelled(props.status) ? <CancelFoot onOpen={() => setCancelling(true)} disabled={locked} /> : null;
+  const cancelDialog = cancelling ? <CancelDialog props={props} busy={busy} onConfirm={cancel} onClose={() => setCancelling(false)} /> : null;
+
   if (props.status === 'confirmed' && !props.fortnoxOrderNumber) {
     return (
       <section className={cn(crm.cardInner, 'grid gap-2.5 border-amber-200')} aria-labelledby="store-order-fortnox">
@@ -395,11 +574,102 @@ export default function StoreOrderActions(props: Props) {
           onClick={() =>
             run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) => fortnoxMessage(data, false), CONFIRM_STALE_CODES)
           }
-          disabled={busy || refreshing}
+          disabled={locked}
           className={cn(crm.saveButton, 'px-4 sm:w-auto sm:justify-self-start')}
         >
           {busy ? 'Skickar…' : 'Skicka till Fortnox'}
         </button>
+        {cancelFoot}
+        {cancelDialog}
+      </section>
+    );
+  }
+
+  if (props.status === 'confirmed') {
+    const dayValid = isStoreOrderDeliveredOnAllowed(deliveredOn, props.deliveredOnBounds);
+    return (
+      <section className={cn(crm.cardInner, 'grid gap-2.5')} aria-labelledby="store-order-delivery-step">
+        <div className="grid gap-1">
+          <h2 id="store-order-delivery-step" className={crm.cardTitle}>
+            Markera som levererad
+          </h2>
+          <p className={crm.meta}>
+            Fortnox-order {props.fortnoxOrderNumber}. Ange dagen varorna kom fram till butiken. Butiken får beskedet.
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,11rem)_auto] sm:items-center">
+          <input
+            type="date"
+            aria-label="Leveransdag"
+            value={deliveredOn}
+            min={props.deliveredOnBounds.min}
+            max={props.deliveredOnBounds.max}
+            onChange={(e) => setDeliveredOn(e.target.value)}
+            aria-invalid={!dayValid}
+            disabled={locked}
+            className={cn(crm.input, 'tabular-nums', !dayValid && 'border-rose-300')}
+          />
+          <button
+            type="button"
+            onClick={() => setConfirmingDelivery(true)}
+            disabled={locked || !dayValid}
+            className={cn(crm.saveButton, 'px-4 sm:w-auto')}
+          >
+            Markera som levererad
+          </button>
+        </div>
+        {!dayValid ? (
+          <p className="text-xs text-rose-700">
+            Välj en dag från {formatStoreOrderDay(props.deliveredOnBounds.min)}, då beställningen kom in, till och med i dag.
+          </p>
+        ) : null}
+        {cancelFoot}
+        {cancelDialog}
+        {confirmingDelivery ? (
+          <CrmConfirmDialog
+            title="Markera som levererad?"
+            message={`Levererad ${formatStoreOrderDay(deliveredOn)}. Butiken får beskedet, och det går inte att ångra.`}
+            confirmLabel={busy ? 'Sparar…' : 'Markera som levererad'}
+            busy={busy}
+            focusCancel
+            onConfirm={markDelivered}
+            onCancel={() => setConfirmingDelivery(false)}
+          />
+        ) : null}
+      </section>
+    );
+  }
+
+  if (props.status === 'delivered') {
+    return (
+      <section className={cn(crm.cardInner, 'grid gap-2.5')} aria-labelledby="store-order-invoice-step">
+        <div className="grid gap-1">
+          <h2 id="store-order-invoice-step" className={crm.cardTitle}>
+            Fakturera beställningen
+          </h2>
+          <p className={crm.meta}>
+            Fakturan skapas i Fortnox ur order {props.fortnoxOrderNumber}, som ett utkast. Ekonomi bokför och skickar den i Fortnox.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirmingInvoice(true)}
+          disabled={locked}
+          className={cn(crm.saveButton, 'px-4 sm:w-auto sm:justify-self-start')}
+        >
+          Fakturera
+        </button>
+        {confirmingInvoice ? (
+          <CrmConfirmDialog
+            title="Fakturera beställningen?"
+            message={`Fakturan skapas i Fortnox ur order ${props.fortnoxOrderNumber}. Butiken får beskedet, och det går inte att ångra.`}
+            confirmLabel={busy ? 'Fakturerar…' : 'Fakturera'}
+            busy={busy}
+            focusCancel
+            onConfirm={invoice}
+            onCancel={() => setConfirmingInvoice(false)}
+          />
+        ) : null}
       </section>
     );
   }
@@ -411,8 +681,6 @@ export default function StoreOrderActions(props: Props) {
   // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
   const editing = editingCustomer || editingFreight;
   const ready = customerReady && freightReady && !editing && !refreshing;
-  // Medan sidan läses om efter ett steg bär knapparna de gamla värdena: allt är låst tills de nya kommit.
-  const locked = busy || refreshing;
   const missing = editing
     ? 'spara eller avbryt ändringen'
     : [!customerReady ? 'koppla butikens kundkort' : null, !freightReady ? 'sätt frakten' : null].filter(Boolean).join(' och ');
@@ -426,6 +694,7 @@ export default function StoreOrderActions(props: Props) {
         <p className={crm.meta}>När den är bekräftad kan butiken inte längre ändra den, och Fortnox-ordern skapas.</p>
       </div>
       <ol className="m-0 grid list-none gap-3.5 p-0">
+        {/* Medan sidan läses om efter ett steg bär knapparna de gamla värdena: allt är låst tills de nya kommit. */}
         <CustomerStep props={props} busy={locked} run={run} editing={editingCustomer} setEditing={setEditingCustomer} />
         <FreightStep props={props} busy={locked} run={run} editing={editingFreight} setEditing={setEditingFreight} />
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
@@ -439,6 +708,8 @@ export default function StoreOrderActions(props: Props) {
           </div>
         </li>
       </ol>
+      {cancelFoot}
+      {cancelDialog}
       {confirming ? (
         <CrmConfirmDialog
           title="Bekräfta beställningen?"

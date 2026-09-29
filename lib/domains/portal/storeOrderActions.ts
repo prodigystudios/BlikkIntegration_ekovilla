@@ -302,11 +302,16 @@ async function finishPush(
    * Ett misslyckande bokförs bara på en beställning som fortfarande saknar nummer: ett långsamt försök (claimen blev
    * gammal) hade annars skrivit sitt fel och sin plan över ett annat försöks lyckade order.
    */
-  options: { withoutNumber?: boolean } = {},
+  /**
+   * `whileConfirmed`: bara på en beställning som fortfarande är bekräftad. Numret skrivs aldrig på en makulerad (8b2).
+   */
+  options: { withoutNumber?: boolean; whileConfirmed?: boolean } = {},
 ): Promise<boolean> {
   const plan = planPortalFortnoxRetry({ outcome, attempts: row.fortnox_attempts ?? 0, retryUntil: row.fortnox_retry_until, now });
-  const update = admin.from('crm_store_orders').update({ ...values, ...plan }).eq('id', row.id);
-  const saved = await (options.withoutNumber ? update.is('fortnox_order_number', null) : update).select('id');
+  let update = admin.from('crm_store_orders').update({ ...values, ...plan }).eq('id', row.id);
+  if (options.withoutNumber) update = update.is('fortnox_order_number', null);
+  if (options.whileConfirmed) update = update.eq('status', 'confirmed');
+  const saved = await update.select('id');
   if (saved.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${saved.error.message}`);
   const written = (saved.data ?? []).length > 0;
   if (written && outcome === 'failed' && plan.fortnox_next_attempt_at === null) {
@@ -315,10 +320,40 @@ async function finishPush(
   return written;
 }
 
-/** Ett annat försök hann spara sitt nummer: den här pushens fel gäller inte längre, ordern finns. */
+/**
+ * Ett annat försök hann spara sitt nummer: den här pushens fel gäller inte längre, ordern finns. Utom på en makulerad
+ * beställning (8b2): numret där är en order som makuleringen hittade och makulerade.
+ */
 async function numberSavedMeanwhile(admin: SupabaseClient, id: string): Promise<StoreOrderPushResult | null> {
   const current = await readPushRow(admin, id);
+  if (current?.status === 'cancelled') return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
   return current?.fortnox_order_number ? { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null } : null;
+}
+
+/**
+ * 🧨 Beställningen makulerades medan ordern skapades (8b2): Makulera tog claimen när den här pushens blivit gammal, och
+ * dess sökning kom före vår POST. Numret skrivs aldrig på en makulerad beställning, och vår order makuleras, så att ingen
+ * Fortnox-order står kvar. Hittade makuleringen redan vår order (numret står på raden) är den makulerad.
+ */
+async function cancelledDuringPush(
+  current: PushRow | null,
+  id: string,
+  number: string,
+  deps: StoreOrderFortnoxDeps,
+): Promise<StoreOrderPushResult> {
+  if (current?.fortnox_order_number !== number) {
+    try {
+      await deps.cancel(number);
+      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: number });
+    } catch (cancelError) {
+      console.error('[portal-store-orders] 🧨 beställningen är makulerad, men dess Fortnox-order kunde inte makuleras', {
+        id,
+        fortnoxOrderNumber: number,
+        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+      });
+    }
+  }
+  return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
 }
 
 /**
@@ -484,15 +519,23 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     return { outcome, fortnoxOrderNumber: null, error };
   }
 
-  // Numret direkt, i samma skrivning som utfallet: vakten skriver det en gång.
+  // Numret direkt, i samma skrivning som utfallet: vakten skriver det en gång. Bara på en beställning som fortfarande
+  // är bekräftad (se cancelledDuringPush).
   try {
-    await finishPush(
+    const saved = await finishPush(
       admin,
       row,
       adopted ? 'exists' : 'created',
       { fortnox_order_number: number, fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null, fortnox_error: null },
       deps.now(),
+      { whileConfirmed: true },
     );
+    if (!saved) {
+      const current = await readPushRow(admin, id);
+      if (current?.status !== 'confirmed') return await cancelledDuringPush(current, id, number, deps);
+      // Bekräftad men ingen rad skrevs: som ett nummer som inte gick att spara, nedan.
+      throw new Error('Numret sparades inte: ingen rad skrevs.');
+    }
   } catch (e) {
     // 🧨 Ett annat försök kan ha sparat sitt nummer medan det här pågick: claimen räknas som gammal efter två minuter,
     // och ett anrop till Fortnox har ingen tidsgräns, så ett långsamt cron-försök och "Skicka till Fortnox" kan båda

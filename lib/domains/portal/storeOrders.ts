@@ -11,7 +11,9 @@
  *   - Notisen när en beställning kommer, ändras eller dras tillbaka går till den ansvarige, eller till reserven.
  */
 
-export const STORE_ORDER_STATUSES = ['received', 'withdrawn', 'confirmed', 'delivered', 'invoiced', 'cancelled'] as const;
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+
+export const STORE_ORDER_STATUSES =['received', 'withdrawn', 'confirmed', 'delivered', 'invoiced', 'cancelled'] as const;
 export type StoreOrderStatus = (typeof STORE_ORDER_STATUSES)[number];
 
 /** Portalens ord för statusen (kontraktet): Ny heter Skickad hos butiken. */
@@ -28,11 +30,32 @@ export const STORE_ORDER_STATUS_LABELS: Record<StoreOrderStatus, string> = {
 export const STORE_ORDER_CONFIRMED_STATUSES: ReadonlySet<StoreOrderStatus> = new Set(['confirmed', 'delivered', 'invoiced']);
 
 /**
- * Har Ekovilla ett steg att ta på beställningen (fas 8b1)? Mottagen (kunden, frakten, Bekräfta), eller bekräftad utan
- * Fortnox-order (Skicka till Fortnox). Sidan frågar regeln och visar kortet bara då.
+ * Har Ekovilla ett steg att ta på beställningen (fas 8b)? Mottagen (kunden, frakten, Bekräfta), bekräftad (Skicka till
+ * Fortnox tills ordern finns, sedan Levererad) och levererad (Fakturera); de två första kan också makuleras. Sidan
+ * frågar regeln och visar kortet bara då.
  */
-export function storeOrderHasStep(order: { status: StoreOrderStatus; fortnoxOrderNumber: string | null }): boolean {
-  return order.status === 'received' || (order.status === 'confirmed' && !order.fortnoxOrderNumber);
+export function storeOrderHasStep(order: { status: StoreOrderStatus }): boolean {
+  return order.status === 'received' || order.status === 'confirmed' || order.status === 'delivered';
+}
+
+/** Makulera: bara före Levererad (William 2026-09-29). Vakten i databasen säger samma sak. */
+export function storeOrderCanBeCancelled(status: StoreOrderStatus): boolean {
+  return status === 'received' || status === 'confirmed';
+}
+
+/** Skälet till butiken: portalen tar högst 2000 tecken, och checken i databasen kräver 1–2000 efter trim. */
+export const STORE_ORDER_CANCEL_REASON_MAX = 2000;
+
+/**
+ * Leveransdagen (svensk dag): varorna har kommit fram, så den ligger från dagen beställningen kom in till och med i
+ * dag. Butiken får "Levererad" när den sparas (8b3), så en dag i framtiden hade sagt det om något som inte kommit fram.
+ */
+export function storeOrderDeliveredOnBounds(receivedAt: string, now: Date): { min: string; max: string } {
+  return { min: stockholmTodayISO(new Date(receivedAt)), max: stockholmTodayISO(now) };
+}
+
+export function isStoreOrderDeliveredOnAllowed(day: string, bounds: { min: string; max: string }): boolean {
+  return day >= bounds.min && day <= bounds.max;
 }
 
 /** Momsen på en butiksbeställning, raderna och frakten (William 2026-09-29). */
@@ -143,6 +166,11 @@ const ore = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFr
 /** "4 414,20 kr": beloppen på sidorna. */
 export function formatStoreOrderKr(amount: number): string {
   return `${ore.format(amount)} kr`;
+}
+
+/** En svensk kalenderdag (`YYYY-MM-DD`) som "2 okt. 2026". Läses som UTC-midnatt, som i Stockholm är samma dag. */
+export function formatStoreOrderDay(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium' });
 }
 
 const kronor = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });

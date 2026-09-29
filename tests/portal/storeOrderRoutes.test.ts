@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { salesUser } from '../crm/helpers/supabase';
+import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 
 /**
- * Ekovillas steg på en butiksbeställning över HTTP (fas 8b): frakten, kunden, Bekräfta och "Skicka till Fortnox".
+ * Ekovillas steg på en butiksbeställning över HTTP (fas 8b): frakten, kunden, Bekräfta, "Skicka till Fortnox", och
+ * (8b2) Levererad, Fakturera och Makulera.
  * Grinden före allt: utan inloggning 401 och utan crm.workorder.write 403, och då har ingen klient byggts. Sedan id:t
  * (400), en beställning som sessionen inte ser (404) och regeln crm_store_order_can_manage (403), och först därefter
  * kroppen och domänen. Domänens utfall blir rätt status och kod.
@@ -61,10 +63,20 @@ vi.mock('@/lib/domains/portal/storeOrderActions', () => {
     pushStoreOrderToFortnox: fn('pushStoreOrderToFortnox'),
   };
 });
+vi.mock('@/lib/domains/portal/storeOrderFulfilment', () => {
+  const fn = (name: string) => vi.fn(async (...args: unknown[]) => (h.calls.push({ fn: name, args }), h.results[name]));
+  return {
+    markStoreOrderDelivered: fn('markStoreOrderDelivered'),
+    invoiceStoreOrder: fn('invoiceStoreOrder'),
+    cancelStoreOrder: fn('cancelStoreOrder'),
+  };
+});
 
 type Json = Record<string, any>;
 
-async function call(action: 'freight' | 'customer' | 'confirm' | 'fortnox', body: unknown = {}, id = ID) {
+type Action = 'freight' | 'customer' | 'confirm' | 'fortnox' | 'deliver' | 'invoice' | 'cancel';
+
+async function call(action: Action, body: unknown = {}, id = ID) {
   const route = await import(`@/app/api/crm/portal/store-orders/[id]/${action}/route`);
   const method = action === 'freight' || action === 'customer' ? 'PUT' : 'POST';
   const res = (await route[method](
@@ -92,15 +104,23 @@ beforeEach(() => {
     linkStoreOrderCustomer: { kind: 'linked', storeLink: 'linked' },
     confirmStoreOrder: { kind: 'confirmed', push: { outcome: 'created', fortnoxOrderNumber: '801', error: null } },
     pushStoreOrderToFortnox: { outcome: 'created', fortnoxOrderNumber: '801', error: null },
+    markStoreOrderDelivered: { kind: 'delivered' },
+    invoiceStoreOrder: { kind: 'invoiced', invoiceNumber: '23', source: 'created' },
+    cancelStoreOrder: { kind: 'cancelled', fortnoxOrderNumbers: ['58'] },
   };
 });
 
-describe('grinden, för alla fyra', () => {
+const CANCEL = { reason: 'Fel artikel', status: 'confirmed', version: 2 };
+
+describe('grinden, för alla steg', () => {
   const actions = [
     ['freight', { mode: 'none', expectedSetAt: null }],
     ['customer', { customer_id: CARD, expected_customer_id: null }],
     ['confirm', { version: 2, freightSetAt: '2026-09-29T09:30:00.000000+00:00', customerId: CARD }],
     ['fortnox', {}],
+    ['deliver', { deliveredOn: '2026-09-29' }],
+    ['invoice', {}],
+    ['cancel', CANCEL],
   ] as const;
 
   it('utan inloggning 401, utan crm.workorder.write 403: ingen klient, ingenting körs', async () => {
@@ -236,5 +256,125 @@ describe('POST …/fortnox', () => {
     expect(await call('fortnox')).toMatchObject({ status: 409, body: { errorDetails: { code: 'store_order_not_confirmed' } } });
     h.results.pushStoreOrderToFortnox = { outcome: 'in_progress', fortnoxOrderNumber: null, error: 'Fortnox-ordern skapas redan.' };
     expect(await call('fortnox')).toMatchObject({ status: 409, body: { errorDetails: { code: 'store_order_push_in_progress' } } });
+  });
+});
+
+describe('POST …/deliver', () => {
+  it('dagen går till domänen; utfallen blir rätt status', async () => {
+    expect(await call('deliver', { deliveredOn: '2026-09-28' })).toMatchObject({ status: 200, body: { data: { delivered_on: '2026-09-28' } } });
+    expect(h.calls.find((c) => c.fn === 'markStoreOrderDelivered')!.args[1]).toEqual({ id: ID, deliveredOn: '2026-09-28', actor: { id: salesUser.id } });
+    const cases: [Record<string, unknown>, number, string][] = [
+      [{ kind: 'not_found' }, 404, 'store_order_not_found'],
+      [{ kind: 'not_confirmed' }, 409, 'store_order_not_confirmed'],
+      [{ kind: 'fortnox_order_missing' }, 409, 'store_order_fortnox_order_missing'],
+      [{ kind: 'busy' }, 409, 'store_order_busy'],
+      [{ kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' }, 400, 'store_order_delivered_on_out_of_range'],
+    ];
+    for (const [result, status, code] of cases) {
+      h.results.markStoreOrderDelivered = result;
+      expect(await call('deliver', { deliveredOn: '2026-09-28' })).toMatchObject({ status, body: { errorDetails: { code } } });
+    }
+    h.results.markStoreOrderDelivered = { kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' };
+    expect((await call('deliver', { deliveredOn: '2026-09-26' })).body.error).toContain('27 sep. 2026');
+  });
+
+  it('🧨 bara en riktig kalenderdag i formen ÅÅÅÅ-MM-DD; annars 400 och ingenting körs', async () => {
+    for (const bad of [{}, { deliveredOn: '' }, { deliveredOn: '2026-02-30' }, { deliveredOn: '2026-9-29' }, { deliveredOn: '29/9/2026' }, { deliveredOn: '2026-09-29T00:00:00Z' }, { deliveredOn: 20260929 }, '{']) {
+      expect((await call('deliver', bad)).status).toBe(400);
+    }
+    expect(domainCalls()).toHaveLength(0);
+    expect((await call('deliver', { deliveredOn: '2028-02-29' })).status).toBe(200);
+  });
+});
+
+describe('POST …/invoice', () => {
+  it('numret och källan; varje utfall blir rätt status och kod', async () => {
+    expect(await call('invoice')).toMatchObject({ status: 200, body: { data: { fortnox_invoice_number: '23', source: 'created' } } });
+    expect(h.calls.find((c) => c.fn === 'invoiceStoreOrder')!.args[1]).toEqual({ id: ID, actor: { id: salesUser.id } });
+    h.results.invoiceStoreOrder = { kind: 'invoiced', invoiceNumber: '19', source: 'adopted' };
+    expect(await call('invoice')).toMatchObject({ status: 200, body: { data: { fortnox_invoice_number: '19', source: 'adopted' } } });
+    const cases: [Record<string, unknown>, number, string][] = [
+      [{ kind: 'not_found' }, 404, 'store_order_not_found'],
+      [{ kind: 'not_delivered' }, 409, 'store_order_not_delivered'],
+      [{ kind: 'busy' }, 409, 'store_order_invoice_in_progress'],
+      [{ kind: 'fortnox_order_cancelled', orderNumber: '58' }, 409, 'store_order_fortnox_order_cancelled'],
+      [{ kind: 'unsaved', invoiceNumber: '23' }, 500, 'store_order_invoice_unsaved'],
+    ];
+    for (const [result, status, code] of cases) {
+      h.results.invoiceStoreOrder = result;
+      expect(await call('invoice')).toMatchObject({ status, body: { errorDetails: { code } } });
+    }
+    h.results.invoiceStoreOrder = { kind: 'unsaved', invoiceNumber: '23' };
+    expect((await call('invoice')).body.error).toContain('Faktura 23 skapades i Fortnox');
+  });
+
+  it('Fortnox inte anslutet 409, ett nej från Fortnox 502 med Fortnox text, vårt eget fel 500 utan databasens text', async () => {
+    const { invoiceStoreOrder } = await import('@/lib/domains/portal/storeOrderFulfilment');
+    vi.mocked(invoiceStoreOrder).mockRejectedValueOnce(new FortnoxNotConnectedError());
+    expect(await call('invoice')).toMatchObject({ status: 409, body: { errorDetails: { code: 'fortnox_not_connected' } } });
+    vi.mocked(invoiceStoreOrder).mockRejectedValueOnce(new FortnoxApiError(400, 'teknisk text', 2000397, 'Ordernummer 58 är makulerad och kan inte behandlas.'));
+    const refused = await call('invoice');
+    expect(refused).toMatchObject({ status: 502, body: { errorDetails: { code: 'store_order_fortnox_failed' } } });
+    expect(refused.body.error).toContain('Ordernummer 58 är makulerad');
+    vi.mocked(invoiceStoreOrder).mockRejectedValueOnce(new Error('relation "hemlig" does not exist'));
+    const ours = await call('invoice');
+    expect(ours).toMatchObject({ status: 500, body: { errorDetails: { code: 'store_order_invoice_failed' } } });
+    expect(JSON.stringify(ours.body)).not.toContain('hemlig');
+  });
+});
+
+describe('POST …/cancel', () => {
+  it('skälet (trimmat) och det säljaren såg går till domänen; svaret bär Fortnox-ordrarna', async () => {
+    expect(await call('cancel', { ...CANCEL, reason: '  Fel artikel \n' })).toMatchObject({ status: 200, body: { data: { fortnox_order_numbers: ['58'] } } });
+    expect(h.calls.find((c) => c.fn === 'cancelStoreOrder')!.args[1]).toEqual({
+      id: ID,
+      reason: 'Fel artikel',
+      expected: { status: 'confirmed', version: 2 },
+      actor: { id: salesUser.id },
+    });
+  });
+
+  it('varje utfall blir rätt status och kod', async () => {
+    const cases: [Record<string, unknown>, number, string][] = [
+      [{ kind: 'not_found' }, 404, 'store_order_not_found'],
+      [{ kind: 'not_cancellable' }, 409, 'store_order_not_cancellable'],
+      [{ kind: 'changed' }, 409, 'store_order_changed'],
+      [{ kind: 'busy' }, 409, 'store_order_push_in_progress'],
+      [{ kind: 'fortnox_order_invoiced', orderNumber: '58', invoiceNumber: '23' }, 409, 'store_order_fortnox_order_invoiced'],
+    ];
+    for (const [result, status, code] of cases) {
+      h.results.cancelStoreOrder = result;
+      expect(await call('cancel', CANCEL)).toMatchObject({ status, body: { errorDetails: { code } } });
+    }
+    const { cancelStoreOrder } = await import('@/lib/domains/portal/storeOrderFulfilment');
+    vi.mocked(cancelStoreOrder).mockRejectedValueOnce(new FortnoxApiError(503, 'Fortnox PUT misslyckades (503)'));
+    expect(await call('cancel', CANCEL)).toMatchObject({ status: 502, body: { errorDetails: { code: 'store_order_fortnox_failed' } } });
+    vi.mocked(cancelStoreOrder).mockRejectedValueOnce(new FortnoxNotConnectedError());
+    expect(await call('cancel', CANCEL)).toMatchObject({ status: 409, body: { errorDetails: { code: 'fortnox_not_connected' } } });
+    vi.mocked(cancelStoreOrder).mockRejectedValueOnce(new Error('relation "hemlig" does not exist'));
+    const ours = await call('cancel', CANCEL);
+    expect(ours).toMatchObject({ status: 500, body: { errorDetails: { code: 'store_order_cancel_failed' } } });
+    expect(JSON.stringify(ours.body)).not.toContain('hemlig');
+  });
+
+  it('🧨 ett skäl krävs (butiken ser det), högst 2000 tecken, och bara före Levererad; annars 400 och ingenting körs', async () => {
+    const bads = [
+      {},
+      { ...CANCEL, reason: '' },
+      { ...CANCEL, reason: '   \n ' },
+      { ...CANCEL, reason: 'x'.repeat(2001) },
+      { ...CANCEL, reason: `a${String.fromCharCode(0)}b` },
+      { ...CANCEL, reason: 42 },
+      { ...CANCEL, status: 'delivered' },
+      { ...CANCEL, status: 'cancelled' },
+      { ...CANCEL, version: 0 },
+      { ...CANCEL, version: '2' },
+      { reason: 'x', status: 'confirmed' },
+      '{',
+    ];
+    for (const bad of bads) expect((await call('cancel', bad)).status).toBe(400);
+    expect(domainCalls()).toHaveLength(0);
+    expect((await call('cancel', { ...CANCEL, reason: 'x'.repeat(2000) })).status).toBe(200);
+    expect((await call('cancel', { ...CANCEL, status: 'received' })).status).toBe(200);
   });
 });

@@ -630,6 +630,48 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m)).toMatchObject({ fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
   });
 
+  it('🧨 makulerad medan ordern skapades (8b2, claimen blev gammal): numret skrivs inte, och vår order makuleras', async () => {
+    const m = db(confirmed());
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      // Makulera tog över claimen och sökte innan vår POST kom fram.
+      Object.assign(row(m), { status: 'cancelled', cancel_reason: 'Fel artikel', fortnox_order_sync_status: 'not_synced', fortnox_order_claimed_at: null });
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: null });
+  });
+
+  it('ingen rad skrevs men beställningen är fortfarande bekräftad: som ett nummer som inte gick att spara, ordern står kvar', async () => {
+    let blocked = false;
+    const m = db(confirmed(), {}, { canUpdate: () => !blocked });
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => ((blocked = true), { Order: { DocumentNumber: '801' } }));
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'failed', fortnoxOrderNumber: '801' });
+    expect(deps.cancel).not.toHaveBeenCalled();
+  });
+
+  it('makuleringen hittade redan vår order och skrev den på beställningen: den makuleras inte en gång till', async () => {
+    const m = db(confirmed());
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      Object.assign(row(m), { status: 'cancelled', fortnox_order_number: '801' });
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.cancel).not.toHaveBeenCalled();
+  });
+
+  it('🧨 ett försök som faller medan beställningen makulerades (med en order från sökningen): "skipped", inte "exists"', async () => {
+    const m = db(confirmed());
+    const deps = fortnoxDeps(async () => {
+      Object.assign(row(m), { status: 'cancelled', fortnox_order_number: '57' });
+      throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+  });
+
   it('Fortnox svarade utan nummer: ett fel, inte en order', async () => {
     const m = db(confirmed());
     expect((await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps(async () => ({ Order: {} })))).outcome).toBe('failed');
