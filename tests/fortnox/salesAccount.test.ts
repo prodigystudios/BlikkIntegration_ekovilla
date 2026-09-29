@@ -21,6 +21,12 @@ describe('fortnoxSalesAccount', () => {
     expect(fortnoxSalesAccount(0, false)).toBe(3004);
   });
 
+  it('bokar 12 % och 6 % på sina egna konton, inte på 25 %-kontot', () => {
+    // Momsen är fritt inmatad på offerten (0–100).
+    expect(fortnoxSalesAccount(12, false)).toBe(3002);
+    expect(fortnoxSalesAccount(6, false)).toBe(3003);
+  });
+
   it('låter omvänd moms vinna: raderna går då ut med 0 % oavsett dokumentets procentsats', () => {
     expect(fortnoxSalesAccount(25, true)).toBe(3231);
   });

@@ -562,13 +562,19 @@ export function fortnoxTextRowFields() {
  * dokumentet skapas). Den löses inte här; William 2026-09-29: senare.
  */
 export const FORTNOX_SALES_ACCOUNT_VAT = 3001;
+export const FORTNOX_SALES_ACCOUNT_VAT_12 = 3002;
+export const FORTNOX_SALES_ACCOUNT_VAT_6 = 3003;
 export const FORTNOX_SALES_ACCOUNT_REVERSE_VAT = 3231;
 export const FORTNOX_SALES_ACCOUNT_NO_VAT = 3004;
 
 // Dokumentets moms: `vatPercent` är den som står på dokumentet, `reverseVat` omvänd byggmoms (då
-// går raderna ut med 0 %). 0 % utan omvänd moms är Fortnox eget val för ett kort med vanlig moms.
+// går raderna ut med 0 %). Momsen är fritt inmatad (0–100), så 12 % och 6 % får sina egna konton,
+// som Fortnox fördefinierade (SALES_12_SE, SALES_6_SE); 0 % utan omvänd moms är Fortnox eget val
+// för ett kort med vanlig moms (SALES_0_SE).
 export function fortnoxSalesAccount(vatPercent: number, reverseVat: boolean): number {
   if (reverseVat) return FORTNOX_SALES_ACCOUNT_REVERSE_VAT;
+  if (vatPercent === 12) return FORTNOX_SALES_ACCOUNT_VAT_12;
+  if (vatPercent === 6) return FORTNOX_SALES_ACCOUNT_VAT_6;
   return vatPercent > 0 ? FORTNOX_SALES_ACCOUNT_VAT : FORTNOX_SALES_ACCOUNT_NO_VAT;
 }
 
