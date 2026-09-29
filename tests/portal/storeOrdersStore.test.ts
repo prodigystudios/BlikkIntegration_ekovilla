@@ -113,7 +113,8 @@ describe('receiveStoreOrder', () => {
     const store = { reseller_id: 'res-norrbygg', name: 'Norrbygg AB (nytt namn)', customer_number: '2000', customer_id: 'kund-2000', customer_linked_at: null };
     const m = db({ crm_portal_resellers: [store], crm_customers: [{ id: 'kund-1043', fortnox_customer_id: '1043' }] });
     await receiveStoreOrder(m.admin, ORDER, RAW, intakeDeps());
-    expect(m.tables.crm_portal_resellers).toEqual([store]);
+    // Bara den senaste kontakten, aldrig uppgifterna.
+    expect(m.tables.crm_portal_resellers).toEqual([{ ...store, last_seen_at: NOW.toISOString() }]);
     // Beställningen får kortet som dess eget nummer pekar på.
     expect(m.tables.crm_store_orders[0].customer_id).toBe('kund-1043');
   });
@@ -143,6 +144,8 @@ describe('receiveStoreOrder', () => {
 
   it('samma första kropp igen: den befintliga, och butiken rörs inte', async () => {
     const m = db({ crm_store_orders: [storeRow()] });
+    // En upprepning behöver ingen kund: faller kund- eller butiksläsningen får den ändå sitt svar.
+    m.failOn((c) => c.table === 'crm_customers' || c.table === 'crm_portal_resellers', { message: 'nere' }, 10);
     const deps = intakeDeps();
     expect(await receiveStoreOrder(m.admin, ORDER, structuredClone(RAW), deps)).toEqual({ kind: 'existing', id: 'order-1' });
     expect(deps.assign).not.toHaveBeenCalled();
@@ -543,9 +546,9 @@ describe('sweepStoreOrderNotices', () => {
     expect(summary).toEqual({ candidates: 4, sent: 4, failed: 0, gaveUp: 0, errors: 0, deferred: 0 });
     // Kroppen läses inte i sopningen, bara när notisen skickas (en läsning per notis).
     const sweepReads = m.calls.filter((c) => c.table === 'crm_store_orders' && c.op === 'select' && c.limit === 500);
-    expect(sweepReads).toHaveLength(3);
+    expect(sweepReads).toHaveLength(4);
     // Ändringar och tillbakadragningar: de nyaste. Nya som aldrig meddelats: exakt, de äldsta först.
-    expect(sweepReads.map((c) => c.orders?.[0]?.ascending)).toEqual([true, false, false]);
+    expect(sweepReads.map((c) => c.orders?.[0]?.ascending)).toEqual([true, false, false, false]);
     expect(sent.map((rows) => rows[0].href).sort()).toEqual(
       ['/crm/butiksbestallningar/andrad', '/crm/butiksbestallningar/gammal-andrad', '/crm/butiksbestallningar/gammal-ny', '/crm/butiksbestallningar/tillbaka'].sort(),
     );
@@ -560,6 +563,23 @@ describe('sweepStoreOrderNotices', () => {
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
     expect(summary.candidates).toBe(1);
     expect(sent[0][0].href).toBe('/crm/butiksbestallningar/bortglomd');
+  });
+
+  it('en tillbakadragning som inte sagts hittas, hur många sagda som än kommit efter den', async () => {
+    const told = Array.from({ length: 600 }, (_, i) =>
+      storeRow({ id: `sagd-${i}`, order_id: `s-${i}`, status: 'withdrawn', withdrawn_at: minutesAgo(3 + (i % 50)), notified_key: 'withdrawn' }),
+    );
+    const m = db({
+      crm_store_orders: [
+        ...told,
+        storeRow({ id: 'osagd-v', order_id: 'x', status: 'withdrawn', withdrawn_at: minutesAgo(60 * 24), notified_key: 'v2', store_version: 2 }),
+        storeRow({ id: 'osagd-null', order_id: 'y', status: 'withdrawn', withdrawn_at: minutesAgo(60 * 25) }),
+      ],
+    });
+    const { deps, sent } = noticeDeps();
+    const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
+    expect(summary.candidates).toBe(2);
+    expect(sent.map((rows) => rows[0].href).sort()).toEqual(['/crm/butiksbestallningar/osagd-null', '/crm/butiksbestallningar/osagd-v']);
   });
 
   it('det som väntat längst skickas först', async () => {

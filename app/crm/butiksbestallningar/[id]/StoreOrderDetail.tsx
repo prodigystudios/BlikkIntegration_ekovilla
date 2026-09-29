@@ -19,11 +19,8 @@ function StateNotice({ order }: { order: StoreOrderView }) {
         </p>
         {!order.customerLinked ? (
           <p>
-            Beställningen är inte kopplad till någon kund i CRM:et
-            {order.customerNumber
-              ? `: kundnumret ${order.customerNumber} från portalen fanns inte i kundregistret när beställningen kom eller senast ändrades`
-              : ': butiken har inget kundnummer i portalen'}
-            . En kund behöver kopplas innan beställningen kan bekräftas.
+            Beställningen är inte kopplad till någon kund i CRM:et. En kund behöver kopplas innan den kan bekräftas.
+            {order.customerNumber ? ` Portalen skickade kundnumret ${order.customerNumber}.` : ' Butiken har inget kundnummer i portalen.'}
           </p>
         ) : null}
       </div>

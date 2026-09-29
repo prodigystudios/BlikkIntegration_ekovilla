@@ -31,7 +31,11 @@ const lineSchema = z
     unit: trimmed(20),
     // Hela enheter: paket, rullar, pallar, styck (kontraktet).
     quantity: z.number().int('Antalet är hela enheter.').positive('Måste vara större än noll.').max(100_000, 'Högst 100000.'),
-    unitCost: amount.min(0, 'Priset kan inte vara negativt.').max(10_000_000),
+    unitCost: amount
+      .min(0, 'Priset kan inte vara negativt.')
+      .max(10_000_000)
+      // Kontraktet: hela ören. Ett halvt öre hade avrundats olika här och i Fortnox.
+      .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'Priset anges i hela ören (högst två decimaler).'),
     lineCost: amount,
   })
   // Inblåsning (m³) säljs bara som jobb (portalens isOrderableArticle). En sådan rad hade blivit ett antal i fel enhet.

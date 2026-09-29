@@ -70,14 +70,20 @@ export type StoreOrderBody = {
   updatedAt?: string;
 };
 
-/** Radens summa exkl. moms, i hela ören: antal × butikens pris. */
+/**
+ * Priset i hela ören. Kontraktet: beloppen är avrundade till hela ören, och schemat kräver det (högst två decimaler),
+ * så avrundningen här tar bara bort flyttalets brus (335,3 × 100 = 33529,999…), aldrig ett halvt öre.
+ */
+const toOre = (kronor: number) => Math.round(kronor * 100);
+
+/** Radens summa exkl. moms: antal × butikens pris, räknat i heltalsören. */
 export function storeOrderLineTotal(line: Pick<StoreOrderLine, 'quantity' | 'unitCost'>): number {
-  return Math.round(line.quantity * line.unitCost * 100) / 100;
+  return (line.quantity * toOre(line.unitCost)) / 100;
 }
 
-/** Beställningens summa exkl. moms och frakt, radernas summor lagda ihop i ören. */
+/** Beställningens summa exkl. moms och frakt, radernas summor lagda ihop i heltalsören. */
 export function storeOrderLinesTotal(lines: readonly Pick<StoreOrderLine, 'quantity' | 'unitCost'>[]): number {
-  const ore = lines.reduce((sum, line) => sum + Math.round(storeOrderLineTotal(line) * 100), 0);
+  const ore = lines.reduce((sum, line) => sum + line.quantity * toOre(line.unitCost), 0);
   return ore / 100;
 }
 
@@ -111,7 +117,10 @@ export function storeOrderTotals(
   return { lines: linesOre / 100, freight: freightOre / 100, net: netOre / 100, vat: vatOre / 100, total: (netOre + vatOre) / 100 };
 }
 
-/** Så många av de senaste avslutade (fakturerade, tillbakadragna, makulerade) som listan läser; de pågående läses alla. */
+/**
+ * Så många avslutade (fakturerade, tillbakadragna, makulerade) som listan läser, de senast mottagna; de pågående läses
+ * alla. Det finns ingen egen tid för när en beställning avslutades, så gränsen räknas på när den kom.
+ */
 export const STORE_ORDER_LIST_LIMIT = 500;
 
 const ore = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });

@@ -102,9 +102,12 @@ export async function listStoreOrderViews(session: SupabaseClient): Promise<{ or
   if (closedRead.error) throw new Error(`Beställningarna gick inte att läsa: ${closedRead.error.message}`);
   const closedRows = (closedRead.data ?? []) as ListRow[];
   const rest = closedRows.slice(0, STORE_ORDER_LIST_LIMIT);
+  // En beställning som bytte status mellan läsningarna (levererad → fakturerad) kan finnas i båda: en gång räcker.
+  const unique = new Map<string, ListRow>();
+  for (const row of [...active, ...rest]) if (!unique.has(row.id)) unique.set(row.id, row);
   return {
     capped: closedRows.length > STORE_ORDER_LIST_LIMIT,
-    orders: [...active, ...rest]
+    orders: [...unique.values()]
       .filter((row) => isStatus(row.status))
       .sort((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : a.id < b.id ? -1 : 1))
       .map((row) => ({

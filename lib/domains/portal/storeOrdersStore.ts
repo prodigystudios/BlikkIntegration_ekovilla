@@ -111,6 +111,9 @@ async function ensurePortalReseller(admin: SupabaseClient, store: PortalStoreOrd
     { onConflict: 'reseller_id', ignoreDuplicates: true },
   );
   if (error) throw new Error(`Butiken kunde inte sparas: ${error.message}`);
+  // Senaste kontakten är nu, hur gammal kroppen än är: bara den tiden, aldrig uppgifterna.
+  const seen = await admin.from('crm_portal_resellers').update({ last_seen_at: now.toISOString() }).eq('reseller_id', store.resellerId);
+  if (seen.error) throw new Error(`Butikens senaste kontakt kunde inte sparas: ${seen.error.message}`);
 }
 
 export type ReceiveStoreOrderResult =
@@ -130,12 +133,10 @@ export async function receiveStoreOrder(
   payload: unknown,
   deps: StoreOrderIntakeDeps = storeOrderIntakeDeps(admin),
 ): Promise<ReceiveStoreOrderResult> {
-  // Samtidigt, som jobbens intag: svaret väntar inte på en läsning i taget medan svarscachens nyckel hålls.
-  const [existing, storeCustomer] = await Promise.all([
-    readIntakeRow(admin, order.orderId),
-    resolveStoreOrderCustomer(admin, order.store),
-  ]);
+  // Raden först: en upprepning svarar direkt, utan kundläsningar som den inte behöver och som hade kunnat fälla den.
+  const existing = await readIntakeRow(admin, order.orderId);
   if (existing) return sameIntake(existing, payload) ? { kind: 'existing', id: existing.id } : { kind: 'conflict' };
+  const storeCustomer = await resolveStoreOrderCustomer(admin, order.store);
 
   // Före fördelningen, som läser butikens säljare, och före beställningens rad, som pekar på butiken.
   await ensurePortalReseller(admin, order.store, storeCustomer, deps.now());
@@ -487,12 +488,16 @@ export async function sweepStoreOrderNotices(
       .order(column, { ascending })
       .limit(SWEEP_READ_LIMIT);
 
+  // Exakt där det går, så att beställningar som redan meddelats aldrig tränger undan en som väntar: en ny som ingen
+  // fått veta om (notified_key saknas), och en tillbakadragning som inte sagts (saknas, eller en version `v…`). Nya läses
+  // de äldsta först, så att en lång störning inte lämnar de första bakom de senaste. Ändringar läses de nyaste först;
+  // deras filter (en äldre version än den som gäller) går inte att uttrycka som ett villkor, men 500 ändringar på två
+  // veckor är långt fler än butikerna gör.
   const reads = await Promise.all([
-    // En ny beställning som ingen fått veta om: exakt, så att beställningar som redan meddelats aldrig tränger undan den,
-    // och de äldsta först, så att en lång störning inte lämnar de första bakom de senaste.
     recent('received', 'received_at', true).is('notified_key', null),
     recent('received', 'changed_at'),
-    recent('withdrawn', 'withdrawn_at'),
+    recent('withdrawn', 'withdrawn_at').is('notified_key', null),
+    recent('withdrawn', 'withdrawn_at').like('notified_key', 'v%'),
   ]);
   const rows = new Map<string, SweepRow>();
   for (const read of reads) {

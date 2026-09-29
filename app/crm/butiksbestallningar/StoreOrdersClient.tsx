@@ -148,8 +148,8 @@ export default function StoreOrdersClient({
 
         {capped ? (
           <p className={cn(crm.meta, 'px-1')}>
-            Listan visar alla som väntar på bekräftelse, leverans eller faktura, och de {STORE_ORDER_LIST_LIMIT} senaste
-            avslutade.
+            Listan visar alla som väntar på bekräftelse, leverans eller faktura, och de {STORE_ORDER_LIST_LIMIT} senast
+            mottagna av de avslutade.
           </p>
         ) : null}
       </div>

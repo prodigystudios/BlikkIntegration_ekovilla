@@ -74,6 +74,19 @@ describe('portalStoreOrderSchema', () => {
     expect(portalStoreOrderSchema.safeParse(dots).success).toBe(false);
   });
 
+  it('priset i hela ören: två decimaler godtas, ett halvt öre nekas', () => {
+    for (const unitCost of [335.3, 0.07, 195.3, 12, 0.1]) {
+      const body = clone();
+      body.lines[0].unitCost = unitCost;
+      expect(portalStoreOrderSchema.safeParse(body).success, String(unitCost)).toBe(true);
+    }
+    const body = clone();
+    body.lines[0].unitCost = 1.005;
+    const result = portalStoreOrderSchema.safeParse(body);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].path.join('.')).toBe('lines.0.unitCost');
+  });
+
   it('en negativ rad nekas', () => {
     const body = clone();
     body.lines[0].unitCost = -1;
@@ -172,8 +185,9 @@ describe('decideStoreOrderWithdraw', () => {
 describe('summorna och sammanfattningen', () => {
   it('räknar i hela ören, rad för rad', () => {
     expect(storeOrderLinesTotal(CONTRACT_STORE_ORDER.lines)).toBe(4414.2);
-    // 3 × 0,335 = 1,005 → 1,01 per rad (inte 1,00 som flyttalet ger), två rader = 2,02.
-    expect(storeOrderLinesTotal([{ quantity: 3, unitCost: 0.335 }, { quantity: 3, unitCost: 0.335 }])).toBe(2.02);
+    // Räknat i heltalsören: 3 × 0,10 är 0,30, inte 0,30000000000000004.
+    expect(storeOrderLinesTotal([{ quantity: 3, unitCost: 0.1 }])).toBe(0.3);
+    expect(storeOrderLinesTotal([{ quantity: 7, unitCost: 1.15 }, { quantity: 3, unitCost: 0.29 }])).toBe(8.92);
     // Summan läggs ihop i hela ören: 0,07 × 100 är 7,000000000000001 som flyttal, och tre sådana blir inte 0,21.
     expect(storeOrderLinesTotal([{ quantity: 1, unitCost: 0.07 }, { quantity: 1, unitCost: 0.07 }, { quantity: 1, unitCost: 0.07 }])).toBe(0.21);
   });

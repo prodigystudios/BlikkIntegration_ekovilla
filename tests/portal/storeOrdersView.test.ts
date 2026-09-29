@@ -86,6 +86,18 @@ describe('listStoreOrderViews', () => {
     expect(activeReads[1].filters).toContainEqual(['gt', 'id', expect.any(String)]);
   });
 
+  it('en beställning som byter status mellan läsningarna listas en gång', async () => {
+    // Båda läsningarna ser den, var sin status: fakturerad för de avslutade och levererad för de pågående (frågorna går
+    // samtidigt, och fakturan kom emellan).
+    const m = memoryAdmin({ crm_store_orders: [listRow({ id: 'x', status: 'delivered' })] }, {
+      beforeExecute: (call, tables) => {
+        tables.crm_store_orders[0].status = call.limit === STORE_ORDER_LIST_LIMIT + 1 ? 'invoiced' : 'delivered';
+      },
+    });
+    const { orders } = await listStoreOrderViews(m.admin);
+    expect(orders.map((o) => o.id)).toEqual(['x']);
+  });
+
   it('en beställning som kommer medan sidorna läses blir ingen dubblett', async () => {
     const pad = (i: number) => String(i).padStart(4, '0');
     const rows = Array.from({ length: 1000 }, (_, i) => listRow({ id: `m-${pad(i)}` }));
