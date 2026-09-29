@@ -380,7 +380,9 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt efter att det sparats och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
 | **7** ✅ | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) automatiskt efter bekräftelsen och sedan med knappen, egenkontrollen med knappen, i kortet "Butiken". PDF:en fryses i en privat bucket och kön bär en referens. Storlekskontroll: högst 3 300 000 byte före base64, under Vercels 4,5 MB. Beteendet prövas mot en databas med `supabase/checks/portal_job_documents.sql`. Resultaten står under tabellen | 4b, 6 |
 | **8a** ✅ | Butiksbeställningar, väg B, intaget: `crm_store_orders` med vakten, `POST`/`PUT`/`withdraw` under `/api/portal/store-orders`, 409 bara efter bekräftelsen, notisen till den ansvarige, sidorna (lista och en beställning, läsläge). Beteendet prövas mot en databas med `supabase/checks/portal_store_orders.sql`. Resultaten står under tabellen | Momsbeslutet |
-| **8b** | Ekovillas steg: frakten, Bekräfta (Fortnox-ordern, `buildOrderRows()` med 25 %), Levererad, Fakturera, Makulera, koppla kund, och statusen tillbaka (`store_order.*`). Ingen ny migrering planerad | 8a |
+| **8b1** ✅ | Ekovillas steg före bekräftelsen: koppla kund, frakten, Bekräfta med Fortnox-ordern (`buildOrderRows()`, 25 %) och dess omförsök. Ingen migrering. Resultaten står under tabellen | 8a |
+| **8b2** | Levererad, Fakturera, Makulera | 8b1 |
+| **8b3** | Statusen tillbaka (`store_order.*`) | 8b1 |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
 ### Fas 0: resultat (2026-09-27)
@@ -1179,6 +1181,49 @@ Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
 planeringen (`/crm/planering`); gamla `/plannering` hämtar sina jobb från Blikk och ser dem inte.
+
+### Fas 8b1: resultat (2026-09-29)
+
+**Williams beslut:** Bekräfta låser beställningen först och skapar Fortnox-ordern sedan ("Ja du kan köra", 2026-09-29):
+en Fortnox-order skapas aldrig för en version som butiken hunnit ändra. Butiken får "bekräftad" (8b3) först när numret
+finns, eftersom kontraktet kräver det.
+
+**Så fungerar det** (`lib/domains/portal/{storeOrderFortnox,storeOrderActions}.ts`,
+`app/api/crm/portal/store-orders/[id]/{freight,customer,confirm,fortnox}`, `app/crm/butiksbestallningar/[id]/StoreOrderActions.tsx`):
+- **Vem:** `crm.workorder.write`, en beställning som sessionen ser och `crm_store_order_can_manage()` (den ansvarige
+  eller admin), samma regel som sidan frågar om kortet "Bekräfta beställningen" ska visas.
+- **Kunden:** ett företagskort med kundnummer i Fortnox, läst med sessionen. Kom beställningen utan kund sparas
+  kopplingen också på butiken (som 3c); ett byte gäller bara beställningen.
+- **Frakten:** artikel 1050 med säljarens pris (högst två decimaler), eller Ingen frakt.
+- **Bekräfta** jämför det säljaren såg: butikens version, frakten (sparad när) och kunden. En ändring som butiken eller
+  någon annan hos Ekovilla gjort efter att sidan lästes bekräftas aldrig (409 `store_order_changed` /
+  `store_order_changed_here`). Knappen är spärrad medan ett steg har en osparad ändring. Låset är en villkorad UPDATE
+  som också sätter skyddsnätet (ett försök om 5 min, i 24 h).
+- **Fortnox-ordern:** arbetsorderns radbyggare, 25 % och konto 3001, textraden "Butiksbeställning B-…  Leverans: …
+  Mottagare: …", butikens meddelande i `Comments` (intern). Fortnox gränser uppmätta i testbolaget: Er referens över 50
+  tecken nekar ordern, Ert ordernummer (30), leveransadressen (60) och textraden (255) kapas tyst, `Comments` tar 1024.
+  Vi kapar själva och lägger det som inte ryms i textraden.
+- 🧨 **Aldrig två ordrar:** /orders har ingen dubblettspärr. Ordern märks med `crm-store-order:<id>` i
+  `ExternalInvoiceReference1` (skrivs inte ut, följer med till fakturan) och varje försök söker på den före POST:en;
+  sökningen matchar på början av värdet, så träffen jämförs exakt. Går sökningen inte skickas ingenting. Prövat skarpt:
+  ett försök som dog efter POST:en (order 57) togs över av nästa, en order med märkningen.
+- **Omförsöken:** jobbens schema (5 min, 15 min, 1 h, i 24 h), i ett eget cron-steg före jobbens, ett per varv. Ett
+  stopp som kräver en människa (kortet saknar kundnummer) ger inga omförsök. "Skicka till Fortnox" på sidan.
+
+**Prövat:** vitest (storeOrderFortnox, storeOrderActions, storeOrderRoutes, cron), 56 mutationer, alla röda utom en
+likvärdig (`exists`/`created` ger samma plan). Lokalt mot testbolaget: ordrar 53, 54, 55, 58 (Ingen frakt), felvägen
+med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, butikens ändring under tiden, osparad
+ändring, telefonbredd.
+
+**Frågor och kvar:**
+- ⚠️ **Artikel 1050 är en paketartikel i testbolaget:** Fortnox nekar raden ("raden måste innehålla en instans av det
+  paketet"). Är 1050 FRAKT en vanlig artikel i prod? Annars nekas varje beställning med frakt.
+- En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund
+  bara före bekräftelsen). Vägen ut blir Makulera (8b2).
+- Lämnat: omförsöksloopen är en kopia av jobbens (`retryPortalFortnox`); att dela den hade rört 4b:s prövade kod.
+
+⚠️ **Lokalt kvar:** so-lokal-8-1 (bekräftad, Fortnox föll på 1050), 8-4/8-5/8-6/8b-12 (bekräftade, ordrar 53/54/55/58),
+8b-11 (övertagen order 57), 8b-13 (mottagen), 8-7 (kopplad till Boli). Testbolaget: ordrar 37–58, faktura 22.
 
 ---
 
