@@ -571,8 +571,9 @@ describe('pushStoreOrderToFortnox', () => {
     expect(result).toMatchObject({ outcome: 'failed', fortnoxOrderNumber: '801' });
     expect(result.error).toContain('ingen ny order skapas');
     expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
-    // Claimen släpptes, så att knappen inte svarar "skapas redan" i två minuter.
+    // Claimen släpptes, så att knappen inte svarar "skapas redan" i två minuter, och numret står i felet på raden.
     expect(row(m)).toMatchObject({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null });
+    expect(row(m).fortnox_error).toContain('Fortnox-order 801 skapades');
 
     // Claimen blev gammal; nästa försök söker och hittar ordern.
     Object.assign(row(m), { fortnox_order_claimed_at: new Date(Date.now() - 10 * 60_000).toISOString() });
@@ -603,7 +604,8 @@ describe('pushStoreOrderToFortnox', () => {
       Object.assign(row(m), { fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
       throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
     });
-    await pushStoreOrderToFortnox(m.admin, ID, deps);
+    // Svaret säger att ordern finns, inte att den inte kunde skapas.
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'exists', fortnoxOrderNumber: '799', error: null });
     expect(row(m)).toMatchObject({ fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
   });
 

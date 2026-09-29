@@ -301,14 +301,22 @@ async function finishPush(
    * gammal) hade annars skrivit sitt fel och sin plan över ett annat försöks lyckade order.
    */
   options: { withoutNumber?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   const plan = planPortalFortnoxRetry({ outcome, attempts: row.fortnox_attempts ?? 0, retryUntil: row.fortnox_retry_until, now });
   const update = admin.from('crm_store_orders').update({ ...values, ...plan }).eq('id', row.id);
-  const saved = await (options.withoutNumber ? update.is('fortnox_order_number', null) : update);
+  const saved = await (options.withoutNumber ? update.is('fortnox_order_number', null) : update).select('id');
   if (saved.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${saved.error.message}`);
-  if (outcome === 'failed' && plan.fortnox_next_attempt_at === null) {
+  const written = (saved.data ?? []).length > 0;
+  if (written && outcome === 'failed' && plan.fortnox_next_attempt_at === null) {
     console.warn('[portal-store-orders] Fortnox-försöken ges upp; bara för hand nu', { id: row.id, attempts: plan.fortnox_attempts });
   }
+  return written;
+}
+
+/** Ett annat försök hann spara sitt nummer: den här pushens fel gäller inte längre, ordern finns. */
+async function numberSavedMeanwhile(admin: SupabaseClient, id: string): Promise<StoreOrderPushResult | null> {
+  const current = await readPushRow(admin, id);
+  return current?.fortnox_order_number ? { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null } : null;
 }
 
 /**
@@ -402,7 +410,8 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
   if (!customerNumber) {
     // Kortet togs bort, eller tappade numret, efter bekräftelsen. Kräver en människa: inga omförsök.
     const error = 'Kundkortet saknar kundnummer i Fortnox.';
-    await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), { withoutNumber: true });
+    const written = await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), { withoutNumber: true });
+    if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome: 'blocked', fortnoxOrderNumber: null, error };
     return { outcome: 'blocked', fortnoxOrderNumber: null, error };
   }
 
@@ -456,7 +465,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
           : // Vårt eget fel (databasen, registret, sökningen): texten stannar i loggen.
             'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.';
     console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: e instanceof Error ? e.message : String(e) });
-    await finishPush(
+    const written = await finishPush(
       admin,
       row,
       outcome,
@@ -468,6 +477,8 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       deps.now(),
       { withoutNumber: true },
     );
+    // Ingen rad: ett annat försök hann skapa och spara ordern medan det här väntade. Då är det klart, inget fel.
+    if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome, fortnoxOrderNumber: null, error };
     return { outcome, fortnoxOrderNumber: null, error };
   }
 
@@ -509,20 +520,18 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       fortnoxOrderNumber: number,
       error: e instanceof Error ? e.message : String(e),
     });
-    // Claimen släpps också, så att knappen inte svarar "skapas redan" i två minuter.
+    // Claimen släpps också, så att knappen inte svarar "skapas redan" i två minuter, och numret står i felet på raden, så
+    // att sidan visar det efter en omläsning (ingen ska lägga upp ordern för hand i Fortnox).
+    const unsaved = `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Tryck Skicka till Fortnox om några minuter, så kopplas den; ingen ny order skapas.`;
     const revisit = await admin
       .from('crm_store_orders')
-      .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
+      .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: unsaved })
       .eq('id', id)
       .is('fortnox_order_number', null)
       .then((r) => r, (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }));
     if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
     // `failed`, inte `blocked`: ett nytt försök är planerat och tar över ordern, ingen människa behövs.
-    return {
-      outcome: 'failed',
-      fortnoxOrderNumber: number,
-      error: `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Tryck Skicka till Fortnox om några minuter, så kopplas den; ingen ny order skapas.`,
-    };
+    return { outcome: 'failed', fortnoxOrderNumber: number, error: unsaved };
   }
   return { outcome: adopted ? 'exists' : 'created', fortnoxOrderNumber: number, error: null };
 }

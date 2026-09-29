@@ -73,6 +73,9 @@ function StepNumber({ n, done, className }: { n: number; done: boolean; classNam
 
 type StepProps = { props: Props; busy: boolean; run: Runner; editing: boolean; setEditing: (editing: boolean) => void };
 
+/** Samma prövning som servern: ett kort med kundnummer i Fortnox, och ett nummer som bara är blanksteg är inget nummer. */
+const customerIsReady = (props: Props) => Boolean(props.customer?.fortnoxCustomerNumber?.trim());
+
 function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
   const [customerId, setCustomerId] = useState('');
   const [customerLabel, setCustomerLabel] = useState('');
@@ -82,7 +85,7 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
     setCustomerLabel('');
     setEditing(on);
   }
-  const linked = Boolean(props.customer?.fortnoxCustomerNumber?.trim());
+  const linked = customerIsReady(props);
   const open = editing || !props.customer;
 
   async function link() {
@@ -97,7 +100,7 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
 
   return (
     <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
-      <StepNumber n={1} done={Boolean(linked) && !editing} />
+      <StepNumber n={1} done={linked && !editing} />
       <div className="grid min-w-0 gap-1.5">
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <h3 className={crm.bodyStrong}>Butikens kundkort</h3>
@@ -122,8 +125,8 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
             {!props.customer ? (
               <p className={crm.meta}>
                 {props.customerNumber
-                  ? `Portalen skickade kundnumret ${props.customerNumber}, som inte finns som företagskund i kundregistret.`
-                  : `${props.storeName} har inget kundnummer i portalen.`}{' '}
+                  ? `Beställningen är inte kopplad till något kundkort. Portalen skickade kundnumret ${props.customerNumber}.`
+                  : `Beställningen är inte kopplad till något kundkort, och ${props.storeName} har inget kundnummer i portalen.`}{' '}
                 Välj butikens kort: det är butiken vi fakturerar. Kopplingen gäller också butikens nästa beställning och jobb.
               </p>
             ) : null}
@@ -399,8 +402,7 @@ export default function StoreOrderActions(props: Props) {
 
   if (props.status !== 'received') return null;
 
-  // Samma prövning som servern: ett nummer som bara är blanksteg är inget nummer.
-  const customerReady = Boolean(props.customer?.fortnoxCustomerNumber?.trim());
+  const customerReady = customerIsReady(props);
   const freightReady = props.freight !== null;
   // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
   const editing = editingCustomer || editingFreight;
