@@ -672,6 +672,57 @@ describe('pushStoreOrderToFortnox', () => {
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
   });
 
+  it('🧨 Fortnox nekar medan beställningen makulerades (ingen order): inget fel och inga nya försök på den makulerade', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }));
+    const deps = fortnoxDeps(async () => {
+      Object.assign(row(m), { status: 'cancelled', fortnox_next_attempt_at: null, fortnox_order_sync_status: 'not_synced', fortnox_order_claimed_at: null });
+      throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_error: null, fortnox_next_attempt_at: null, fortnox_order_sync_status: 'not_synced' });
+  });
+
+  it('🧨 kortet tappade numret medan beställningen makulerades: stoppet skrivs inte på den makulerade', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }), { crm_customers: [{ ...CARD, fortnox_customer_id: null }] }, {
+      beforeExecute: (call, tables) => {
+        if (call.op === 'update' && typeof (call.values as Record<string, unknown>).fortnox_error === 'string') tables.crm_store_orders[0].status = 'cancelled';
+      },
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps())).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_error: null });
+  });
+
+  it('🧨 numret gick inte att spara och beställningen makulerades under tiden: vår order makuleras, inga nya försök', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }));
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      // Makuleringen stänger omförsöken (skyddsnätet som pushen satte före POST:en).
+      Object.assign(row(m), { status: 'cancelled', fortnox_order_sync_status: 'not_synced', fortnox_order_claimed_at: null, fortnox_next_attempt_at: null });
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    // Inget nytt försök planeras och inget "skapades men sparades inte" skrivs på den makulerade.
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: null, fortnox_error: null });
+  });
+
+  it('🧨 numret gick inte att spara, och beställningen makulerades just innan det nya försöket skrevs: vår order makuleras', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }), {}, {
+      beforeExecute: (call, tables) => {
+        const values = call.values as Record<string, unknown> | undefined;
+        if (call.op === 'update' && typeof values?.fortnox_error === 'string' && values.fortnox_error.includes('skapades')) {
+          Object.assign(tables.crm_store_orders[0], { status: 'cancelled', fortnox_order_claimed_at: null, fortnox_next_attempt_at: null });
+        }
+      },
+    });
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
+    const deps = fortnoxDeps();
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_next_attempt_at: null, fortnox_error: null });
+  });
+
   it('Fortnox svarade utan nummer: ett fel, inte en order', async () => {
     const m = db(confirmed());
     expect((await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps(async () => ({ Order: {} })))).outcome).toBe('failed');

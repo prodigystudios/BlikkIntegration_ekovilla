@@ -47,7 +47,7 @@ export function storeOrderFortnoxReference(id: string): string {
   return `crm-store-order:${id}`;
 }
 
-type FortnoxOrderListItem = { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null; Cancelled?: boolean | null };
+export type FortnoxOrderListItem = { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null; Cancelled?: boolean | null };
 
 /**
  * Alla ordrar sökningen hittade som bär exakt märkningen och inte är makulerade. Fortnox sökning matchar på början av

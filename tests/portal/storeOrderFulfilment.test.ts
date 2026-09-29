@@ -35,6 +35,10 @@ const SELLER = '33333333-3333-4333-8333-333333333333';
 const NOW = new Date('2026-09-29T10:00:00.000Z');
 const RECEIVED_AT = '2026-09-27T08:00:00.000Z';
 const fresh = () => new Date().toISOString();
+/** En annans färska claim: en annan stämpel än den stegen själva tar. */
+const othersClaim = () => new Date(Date.now() + 5_000).toISOString();
+const isUpdate = (call: { op: string; values?: unknown }, key: string, value: unknown) =>
+  call.op === 'update' && (call.values as Record<string, unknown>)[key] === value;
 const stale = () => new Date(Date.now() - 10 * 60_000).toISOString();
 
 function storeOrder(extra: Record<string, unknown> = {}) {
@@ -216,6 +220,36 @@ describe('markStoreOrderDelivered', () => {
     expect(row(m)).toMatchObject({ status: 'cancelled', delivered_on: null, fortnox_order_sync_status: 'synced' });
   });
 
+  it('🧨 claimen togs av ett annat steg mellan claimen och skrivningen: busy, och den andras claim står kvar', async () => {
+    const other = othersClaim();
+    const m = db(storeOrder(), {
+      beforeExecute: (call, tables) => {
+        if (isUpdate(call, 'status', 'delivered')) Object.assign(tables.crm_store_orders[0], { fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+      },
+    });
+    expect(await deliver(m)).toEqual({ kind: 'busy' });
+    expect(row(m)).toMatchObject({ status: 'confirmed', delivered_on: null, fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+  });
+
+  it('claimens stämpel går inte att läsa: kastar, ingenting sparat, och claimen släpps', async () => {
+    let selects = 0;
+    const m = db();
+    // Första läsningen är raden, den andra stämpeln.
+    m.failOn((c) => c.op === 'select' && c.table === 'crm_store_orders' && ++selects === 2, { message: 'nere' });
+    await expect(deliver(m)).rejects.toThrow('Claimen gick inte att läsa');
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null });
+  });
+
+  it('statusen ändrades utan claimen (t.ex. för hand i databasen): ingenting sparat, "not_confirmed"', async () => {
+    const m = db(storeOrder(), {
+      beforeExecute: (call, tables) => {
+        if (isUpdate(call, 'status', 'delivered')) tables.crm_store_orders[0].status = 'cancelled';
+      },
+    });
+    expect(await deliver(m)).toEqual({ kind: 'not_confirmed' });
+    expect(row(m)).toMatchObject({ status: 'cancelled', delivered_on: null });
+  });
+
   it('databasen svarar inte på skrivningen: kastar, och claimen släpps', async () => {
     const m = db();
     m.failOn((c) => c.op === 'update' && (c.values as Record<string, unknown>).status === 'delivered', { message: 'nere' });
@@ -295,6 +329,18 @@ describe('invoiceStoreOrder', () => {
     expect(row(m)).toMatchObject({ status: 'delivered', fortnox_invoice_number: null, fortnox_invoice_sync_status: 'failed', fortnox_invoice_claimed_at: null });
   });
 
+  it('🧨 ett annat försök tog över fakturans claim (den blev gammal) medan Fortnox svarade: vårt fel släpper inte dess claim', async () => {
+    const other = othersClaim();
+    const m = db(delivered());
+    const { deps } = fakeFortnox();
+    deps.createInvoice.mockImplementationOnce(async () => {
+      Object.assign(row(m), { fortnox_invoice_sync_status: 'pending', fortnox_invoice_claimed_at: other });
+      throw new FortnoxApiError(503, 'Fortnox PUT misslyckades (503)');
+    });
+    await expect(invoice(m, deps)).rejects.toBeInstanceOf(FortnoxApiError);
+    expect(row(m)).toMatchObject({ status: 'delivered', fortnox_invoice_sync_status: 'pending', fortnox_invoice_claimed_at: other });
+  });
+
   it('Fortnox inte anslutet: kastar, claimen släppt som not_synced', async () => {
     const m = db(delivered());
     const { deps } = fakeFortnox();
@@ -362,6 +408,18 @@ describe('invoiceStoreOrder', () => {
 
     expect(await invoice(m, deps)).toEqual({ kind: 'invoiced', invoiceNumber: '23', source: 'adopted' });
     expect(deps.createInvoice).toHaveBeenCalledTimes(1);
+    expect(row(m)).toMatchObject({ status: 'invoiced', fortnox_invoice_number: '23' });
+  });
+
+  it('ett annat försök tog över fakturans claim men har inte sparat än: vi sparar ändå (samma faktura, Fortnox ger bara en)', async () => {
+    const other = othersClaim();
+    const m = db(delivered());
+    const { deps } = fakeFortnox();
+    deps.createInvoice.mockImplementationOnce(async (n: string) => {
+      Object.assign(row(m), { fortnox_invoice_sync_status: 'pending', fortnox_invoice_claimed_at: other });
+      return (await fakeFortnox({ [n]: {} }).deps.createInvoice(n)) as string;
+    });
+    expect(await invoice(m, deps)).toEqual({ kind: 'invoiced', invoiceNumber: '23', source: 'created' });
     expect(row(m)).toMatchObject({ status: 'invoiced', fortnox_invoice_number: '23' });
   });
 
@@ -535,6 +593,65 @@ describe('cancelStoreOrder', () => {
     expect(await cancel(m, deps)).toEqual({ kind: 'cancelled', fortnoxOrderNumbers: ['801'] });
     expect(state['801'].cancelled).toBe(true);
     expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: '801' });
+  });
+
+  it('🧨 en push sparade sitt nummer efter sökningen och släppte claimen: den tas igen, och ordern makuleras', async () => {
+    let first = true;
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }), {
+      beforeExecute: (call, tables) => {
+        if (first && isUpdate(call, 'status', 'cancelled')) {
+          first = false;
+          Object.assign(tables.crm_store_orders[0], { fortnox_order_number: '801', fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
+        }
+      },
+    });
+    const { deps, state } = fakeFortnox({ '801': {} });
+    expect(await cancel(m, deps)).toEqual({ kind: 'cancelled', fortnoxOrderNumbers: ['801'] });
+    expect(state['801'].cancelled).toBe(true);
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: '801', fortnox_order_claimed_at: null });
+  });
+
+  it('🧨 ... och ett annat steg (Levererad) hann ta claimen: busy, ingenting makuleras och dess claim står kvar', async () => {
+    const other = othersClaim();
+    let first = true;
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }), {
+      beforeExecute: (call, tables) => {
+        if (first && isUpdate(call, 'status', 'cancelled')) {
+          first = false;
+          Object.assign(tables.crm_store_orders[0], { fortnox_order_number: '801', fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+        }
+      },
+    });
+    const { deps, state } = fakeFortnox({ '801': {} });
+    expect(await cancel(m, deps)).toEqual({ kind: 'busy' });
+    expect(state['801'].cancelled).toBe(false);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+  });
+
+  it('🧨 claimen togs av ett annat steg efter att sökningens order makulerats: busy, och det loggas', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const other = othersClaim();
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }), {
+      beforeExecute: (call, tables) => {
+        if (isUpdate(call, 'status', 'cancelled')) Object.assign(tables.crm_store_orders[0], { fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+      },
+    });
+    const { deps } = fakeFortnox({ '57': {} }, ['57']);
+    expect(await cancel(m, deps)).toEqual({ kind: 'busy' });
+    expect(error.mock.calls.some(([message]) => String(message).includes('hann tas av ett annat steg'))).toBe(true);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_claimed_at: other });
+    error.mockRestore();
+  });
+
+  it('sökningen gav två ordrar och den andra är fakturerad: nekas, och att den första makulerades loggas', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }));
+    const { deps, state } = fakeFortnox({ '57': {}, '59': { invoiceNumber: '30' } }, ['57', '59']);
+    expect(await cancel(m, deps)).toEqual({ kind: 'fortnox_order_invoiced', orderNumber: '59', invoiceNumber: '30' });
+    expect(state['57'].cancelled).toBe(true);
+    expect(error.mock.calls.some(([message]) => String(message).includes('makulerades inte'))).toBe(true);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_claimed_at: null });
+    error.mockRestore();
   });
 
   it('Fortnox-ordern var redan makulerad (i Fortnox): räknas som klar', async () => {

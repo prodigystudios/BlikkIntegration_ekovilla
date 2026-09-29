@@ -13,7 +13,7 @@
 
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
-export const STORE_ORDER_STATUSES =['received', 'withdrawn', 'confirmed', 'delivered', 'invoiced', 'cancelled'] as const;
+export const STORE_ORDER_STATUSES = ['received', 'withdrawn', 'confirmed', 'delivered', 'invoiced', 'cancelled'] as const;
 export type StoreOrderStatus = (typeof STORE_ORDER_STATUSES)[number];
 
 /** Portalens ord för statusen (kontraktet): Ny heter Skickad hos butiken. */

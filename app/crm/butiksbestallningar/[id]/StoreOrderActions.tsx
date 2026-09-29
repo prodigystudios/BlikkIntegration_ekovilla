@@ -333,6 +333,8 @@ const FULFIL_STALE_CODES = new Set([
   'store_order_not_cancellable',
   'store_order_changed',
   'store_order_push_in_progress',
+  // Fortnox-ordern är fakturerad i Fortnox: ett nytt försök ger samma nej, så dialogen stängs.
+  'store_order_fortnox_order_invoiced',
 ]);
 
 /** Vad Fortnox-försöket blev, som säljaren läser det. */

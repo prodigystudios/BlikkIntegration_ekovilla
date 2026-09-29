@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { invoiceStoreOrder } from '@/lib/domains/portal/storeOrderFulfilment';
 import { ok, routeError } from '../../../../_shared';
-import { requireStoreOrderManager, storeOrderFortnoxFailure } from '../../_manage';
+import { requireStoreOrderManager, storeOrderFortnoxErrorResponse } from '../../_manage';
 
 type RouteContext = { params: { id: string } };
 
@@ -52,7 +52,7 @@ export async function POST(_req: Request, context: RouteContext) {
         );
     }
   } catch (e) {
-    const fortnox = storeOrderFortnoxFailure(e);
+    const fortnox = storeOrderFortnoxErrorResponse(e);
     console.error('[portal-store-orders] fakturan kunde inte skapas', { id: context.params.id, error: e instanceof Error ? e.message : String(e) });
     return fortnox ?? routeError(500, 'store_order_invoice_failed', 'Fakturan kunde inte skapas.');
   }

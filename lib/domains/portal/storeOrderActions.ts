@@ -17,6 +17,7 @@ import {
   decideStoreOrderConfirm,
   pickStoreOrderFortnoxMatch,
   storeOrderFortnoxReference,
+  type FortnoxOrderListItem,
   type StoreOrderConfirmBlocker,
   type StoreOrderConfirmExpected,
   type StoreOrderConfirmRow,
@@ -204,18 +205,25 @@ export type StoreOrderFortnoxDeps = {
   now: () => Date;
 };
 
-type FortnoxOrderList = { Orders?: { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null }[] };
+/** PUT /orders/{n}/cancel: den extra ordern här, och Makulera (./storeOrderFulfilment.ts). */
+export async function cancelFortnoxOrder(orderNumber: string): Promise<void> {
+  await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
+}
+
+/**
+ * Fortnox-ordrarna vars ExternalInvoiceReference1 BÖRJAR med märkningen (så söker Fortnox): träffarna jämförs exakt av
+ * `pickStoreOrderFortnoxMatch(es)`. Pushen och Makulera söker samma väg.
+ */
+export async function searchStoreOrderFortnoxOrders(reference: string): Promise<FortnoxOrderListItem[]> {
+  const found = await fortnoxGet<{ Orders?: FortnoxOrderListItem[] }>('/orders', { externalinvoicereference1: reference });
+  return found.Orders ?? [];
+}
 
 export function storeOrderFortnoxDeps(admin: SupabaseClient): StoreOrderFortnoxDeps {
   return {
     post: (path, body) => fortnoxPost(path, body),
-    cancel: async (orderNumber) => {
-      await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
-    },
-    findExisting: async (reference) => {
-      const found = await fortnoxGet<FortnoxOrderList>('/orders', { externalinvoicereference1: reference });
-      return pickStoreOrderFortnoxMatch(found.Orders ?? [], reference);
-    },
+    cancel: cancelFortnoxOrder,
+    findExisting: async (reference) => pickStoreOrderFortnoxMatch(await searchStoreOrderFortnoxOrders(reference), reference),
     // Hela registret för numren, också inaktiva: namnet och enheten gäller ändå raden.
     articles: async (numbers) => {
       const { data, error } = await admin.from('fortnox_articles_cache').select('article_number, description, unit').in('article_number', numbers);
@@ -447,7 +455,10 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
   if (!customerNumber) {
     // Kortet togs bort, eller tappade numret, efter bekräftelsen. Kräver en människa: inga omförsök.
     const error = 'Kundkortet saknar kundnummer i Fortnox.';
-    const written = await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), { withoutNumber: true });
+    const written = await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), {
+      withoutNumber: true,
+      whileConfirmed: true,
+    });
     if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome: 'blocked', fortnoxOrderNumber: null, error };
     return { outcome: 'blocked', fortnoxOrderNumber: null, error };
   }
@@ -512,9 +523,11 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
         fortnox_error: error,
       },
       deps.now(),
-      { withoutNumber: true },
+      // Bara på en bekräftad: en makulerad (8b2) får inget fel och inga nya försök.
+      { withoutNumber: true, whileConfirmed: true },
     );
-    // Ingen rad: ett annat försök hann skapa och spara ordern medan det här väntade. Då är det klart, inget fel.
+    // Ingen rad: ett annat försök hann skapa och spara ordern medan det här väntade (då är det klart, inget fel), eller
+    // beställningen makulerades.
     if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome, fortnoxOrderNumber: null, error };
     return { outcome, fortnoxOrderNumber: null, error };
   }
@@ -530,18 +543,16 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       deps.now(),
       { whileConfirmed: true },
     );
-    if (!saved) {
-      const current = await readPushRow(admin, id);
-      if (current?.status !== 'confirmed') return await cancelledDuringPush(current, id, number, deps);
-      // Bekräftad men ingen rad skrevs: som ett nummer som inte gick att spara, nedan.
-      throw new Error('Numret sparades inte: ingen rad skrevs.');
-    }
+    // Ingen rad: beställningen är inte längre bekräftad. Vägen nedan läser den och avgör (makulerad, ett annat försöks
+    // order, eller ett nummer som inte gick att spara).
+    if (!saved) throw new Error('Numret sparades inte: beställningen är inte längre bekräftad.');
   } catch (e) {
     // 🧨 Ett annat försök kan ha sparat sitt nummer medan det här pågick: claimen räknas som gammal efter två minuter,
     // och ett anrop till Fortnox har ingen tidsgräns, så ett långsamt cron-försök och "Skicka till Fortnox" kan båda
     // ha skickat, innan någon av ordrarna fanns att söka fram. Vakten skriver numret en gång. Står ett annat nummer på
     // beställningen makuleras vår egen order, så att bara en finns kvar.
     const current = await readPushRow(admin, id).catch(() => null);
+    if (current?.status === 'cancelled') return await cancelledDuringPush(current, id, number, deps);
     // Ett annat försök tog över just vår order (sökningen) och sparade den: allt är kopplat.
     if (current?.fortnox_order_number === number) return { outcome: 'created', fortnoxOrderNumber: number, error: null };
     if (current?.fortnox_order_number && current.fortnox_order_number !== number) {
@@ -573,8 +584,15 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: unsaved })
       .eq('id', id)
       .is('fortnox_order_number', null)
-      .then((r) => r, (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }));
+      .eq('status', 'confirmed')
+      .select('id')
+      .then((r) => r, (err: unknown) => ({ data: null, error: { message: err instanceof Error ? err.message : String(err) } }));
     if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
+    // Ingen rad: makulerad (8b2) mellan läsningen ovan och den här skrivningen. Då står vår order annars kvar.
+    else if ((revisit.data ?? []).length === 0) {
+      const after = await readPushRow(admin, id).catch(() => null);
+      if (after?.status === 'cancelled') return await cancelledDuringPush(after, id, number, deps);
+    }
     // `failed`, inte `blocked`: ett nytt försök är planerat och tar över ordern, ingen människa behövs.
     return { outcome: 'failed', fortnoxOrderNumber: number, error: unsaved };
   }

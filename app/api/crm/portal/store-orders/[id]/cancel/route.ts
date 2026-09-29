@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { cancelStoreOrder } from '@/lib/domains/portal/storeOrderFulfilment';
 import { STORE_ORDER_CANCEL_REASON_MAX } from '@/lib/domains/portal/storeOrders';
 import { ok, routeError, validationError } from '../../../../_shared';
-import { requireStoreOrderManager, storeOrderFortnoxFailure } from '../../_manage';
+import { requireStoreOrderManager, storeOrderFortnoxErrorResponse } from '../../_manage';
 
 type RouteContext = { params: { id: string } };
 
@@ -73,7 +73,7 @@ export async function POST(req: Request, context: RouteContext) {
         );
     }
   } catch (e) {
-    const fortnox = storeOrderFortnoxFailure(e);
+    const fortnox = storeOrderFortnoxErrorResponse(e);
     console.error('[portal-store-orders] beställningen kunde inte makuleras', { id: context.params.id, error: e instanceof Error ? e.message : String(e) });
     return fortnox ?? routeError(500, 'store_order_cancel_failed', 'Beställningen kunde inte makuleras.');
   }
