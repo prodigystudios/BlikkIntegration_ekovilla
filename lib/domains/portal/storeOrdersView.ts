@@ -4,6 +4,7 @@ import {
   STORE_ORDER_LIST_LIMIT,
   STORE_ORDER_STATUSES,
   STORE_ORDER_VAT_PERCENT,
+  formatStoreOrderDay,
   storeOrderFreightFromRow,
   storeOrderLineTotal,
   storeOrderLinesTotal,
@@ -30,14 +31,11 @@ const PAGE = 1000;
 
 const DETAIL_SELECT = `id, order_number, store_name, customer_id, assigned_to_name, status, payload, store_version,
   received_at, changed_at, withdrawn_at, freight_mode, freight_price, freight_set_at, confirmed_at, confirmed_by_name, fortnox_order_number, fortnox_error,
-  delivered_on, delivered_by_name, invoiced_on, invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
+  delivered_on, delivered_by_name, fortnox_invoice_number, invoiced_on, invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
   customer:crm_customers(customer_type, company_name, first_name, last_name, fortnox_customer_id)`;
 
 const stockholm = (iso: string) =>
   new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium', timeStyle: 'short' });
-/** En svensk kalenderdag (`YYYY-MM-DD`), som "2 okt. 2026". Läses som UTC-midnatt, som i Stockholm är samma dag. */
-const swedishDay = (day: string) =>
-  new Date(`${day}T00:00:00Z`).toLocaleDateString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium' });
 
 const isStatus = (value: unknown): value is StoreOrderStatus => STORE_ORDER_STATUSES.includes(value as StoreOrderStatus);
 
@@ -173,6 +171,10 @@ export type StoreOrderView = {
   fortnoxOrderNumber: string | null;
   /** Varför Fortnox-ordern inte kunde skapas, senast; null när den skapades eller inget försök gjorts. */
   fortnoxError: string | null;
+  /** Fakturan i Fortnox (8b2), när beställningen är fakturerad. */
+  fortnoxInvoiceNumber: string | null;
+  /** När beställningen kom in (ISO): leveransdagen kan inte ligga före den dagen. */
+  receivedAt: string;
   /** Butikens version: Bekräfta låser den versionen, och nekas om butiken ändrat sedan sidan lästes. */
   storeVersion: number;
   /** När frakten sparades, och kundkortets id: Bekräfta nekas om någon annan ändrat dem sedan sidan lästes. */
@@ -186,6 +188,7 @@ type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
   payload: StoreOrderBody;
   fortnox_order_number: string | null;
   fortnox_error: string | null;
+  fortnox_invoice_number: string | null;
   customer_id: string | null;
   assigned_to_name: string | null;
   freight_mode: 'none' | 'charged' | null;
@@ -228,8 +231,8 @@ function storeOrderEvents(row: DetailRow): StoreOrderEvent[] {
   }
   if (row.withdrawn_at) events.push({ label: 'Tillbakadragen av butiken', at: stockholm(row.withdrawn_at), by: null });
   if (row.confirmed_at) events.push({ label: 'Bekräftad', at: stockholm(row.confirmed_at), by: row.confirmed_by_name });
-  if (row.delivered_on) events.push({ label: 'Levererad', at: swedishDay(row.delivered_on), by: row.delivered_by_name });
-  if (row.invoiced_on) events.push({ label: 'Fakturerad', at: swedishDay(row.invoiced_on), by: row.invoiced_by_name });
+  if (row.delivered_on) events.push({ label: 'Levererad', at: formatStoreOrderDay(row.delivered_on), by: row.delivered_by_name });
+  if (row.invoiced_on) events.push({ label: 'Fakturerad', at: formatStoreOrderDay(row.invoiced_on), by: row.invoiced_by_name });
   if (row.cancelled_at) events.push({ label: 'Makulerad', at: stockholm(row.cancelled_at), by: row.cancelled_by_name });
   return events;
 }
@@ -270,6 +273,8 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
     freight,
     fortnoxOrderNumber: row.fortnox_order_number,
     fortnoxError: row.fortnox_error,
+    fortnoxInvoiceNumber: row.fortnox_invoice_number,
+    receivedAt: row.received_at,
     storeVersion: row.store_version,
     freightSetAt: row.freight_set_at,
     customerId: row.customer_id,

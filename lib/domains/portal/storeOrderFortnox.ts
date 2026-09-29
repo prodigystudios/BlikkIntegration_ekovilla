@@ -47,16 +47,34 @@ export function storeOrderFortnoxReference(id: string): string {
   return `crm-store-order:${id}`;
 }
 
+export type FortnoxOrderListItem = { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null; Cancelled?: boolean | null };
+
 /**
- * Den order sökningen hittade som bär exakt märkningen, eller null. Fortnox sökning matchar på början av värdet. En
- * makulerad tas aldrig över: någon har tagit bort den med flit, och numret skrivs en gång på beställningen.
+ * Alla ordrar sökningen hittade som bär exakt märkningen och inte är makulerade. Fortnox sökning matchar på början av
+ * värdet. Makuleringen (8b2) makulerar varje träff: två försök som skickade samtidigt kan ha gett två.
  */
-export function pickStoreOrderFortnoxMatch(
-  orders: readonly { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null; Cancelled?: boolean | null }[],
-  reference: string,
-): string | null {
-  const match = orders.find((o) => (o.ExternalInvoiceReference1 ?? '').trim() === reference && o.DocumentNumber != null && o.Cancelled !== true);
-  return match ? String(match.DocumentNumber) : null;
+export function pickStoreOrderFortnoxMatches(orders: readonly FortnoxOrderListItem[], reference: string): string[] {
+  return orders
+    .filter((o) => (o.ExternalInvoiceReference1 ?? '').trim() === reference && o.DocumentNumber != null && o.Cancelled !== true)
+    .map((o) => String(o.DocumentNumber));
+}
+
+/**
+ * Den order sökningen hittade som bär exakt märkningen, eller null. En makulerad tas aldrig över: någon har tagit bort
+ * den med flit, och numret skrivs en gång på beställningen.
+ */
+export function pickStoreOrderFortnoxMatch(orders: readonly FortnoxOrderListItem[], reference: string): string | null {
+  return pickStoreOrderFortnoxMatches(orders, reference)[0] ?? null;
+}
+
+/**
+ * Fakturanumret en Fortnox-order pekar på (`InvoiceReference`), eller null. 🧨 En ofakturerad order svarar med strängen
+ * "0", inte null (uppmätt 2026-09-29, order 71 före och efter createinvoice): "0" är ingen faktura.
+ */
+export function fortnoxInvoiceReference(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const text = String(value).trim();
+  return text === '' || /^0+$/.test(text) ? null : text;
 }
 
 /** Det ur artikelregistret raderna tar: benämningen och enhetskoden (portalen skickar enheten med gemener). */

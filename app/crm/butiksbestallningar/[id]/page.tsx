@@ -7,7 +7,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import ErrorState from '@/components/ui/ErrorState';
 import { getStoreOrderView, type StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
-import { storeOrderHasStep } from '@/lib/domains/portal/storeOrders';
+import { storeOrderDeliveredOnBounds, storeOrderHasStep } from '@/lib/domains/portal/storeOrders';
 import StoreOrderDetail from './StoreOrderDetail';
 
 export const dynamic = 'force-dynamic';
@@ -41,7 +41,14 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
     );
   }
   if (!read.order) notFound();
-  return <StoreOrderDetail order={read.order} canManage={canManageStoreOrder(read.order, rule)} />;
+  return (
+    <StoreOrderDetail
+      order={read.order}
+      canManage={canManageStoreOrder(read.order, rule)}
+      // Leveransdagens gränser i svensk tid, räknade här: webbläsarens klocka och zon avgör inte.
+      deliveredOnBounds={storeOrderDeliveredOnBounds(read.order.receivedAt, new Date())}
+    />
+  );
 }
 
 /**

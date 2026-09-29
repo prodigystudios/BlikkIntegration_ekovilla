@@ -37,7 +37,8 @@ function StateNotice({ order }: { order: StoreOrderView }) {
   if (order.status === 'cancelled') {
     return (
       <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
-        Makulerad av Ekovilla. {order.cancelReason ? <>Skäl till butiken: {order.cancelReason}</> : null}
+        Makulerad av Ekovilla.{order.fortnoxOrderNumber ? ` Fortnox-order ${order.fortnoxOrderNumber} är makulerad.` : ''}{' '}
+        {order.cancelReason ? <span className="whitespace-pre-wrap break-words">Skäl till butiken: {order.cancelReason}</span> : null}
       </div>
     );
   }
@@ -89,7 +90,16 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export default function StoreOrderDetail({ order, canManage = false }: { order: StoreOrderView; canManage?: boolean }) {
+export default function StoreOrderDetail({
+  order,
+  canManage = false,
+  deliveredOnBounds,
+}: {
+  order: StoreOrderView;
+  canManage?: boolean;
+  /** Leveransdagens gränser (svenska dagar), räknade på servern. */
+  deliveredOnBounds: { min: string; max: string };
+}) {
   const { delivery } = order;
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -143,6 +153,8 @@ export default function StoreOrderDetail({ order, canManage = false }: { order: 
               freight={order.freight}
               fortnoxOrderNumber={order.fortnoxOrderNumber}
               fortnoxError={order.fortnoxError}
+              orderNumber={order.orderNumber}
+              deliveredOnBounds={deliveredOnBounds}
             />
           ) : null}
           <section className={cn(crm.cardInner, 'grid gap-3')} aria-labelledby="store-order-delivery">
@@ -207,7 +219,16 @@ export default function StoreOrderDetail({ order, canManage = false }: { order: 
               {order.fortnoxOrderNumber ? (
                 <div>
                   <dt className="inline">Fortnox-order: </dt>
-                  <dd className="inline">{order.fortnoxOrderNumber}</dd>
+                  <dd className="inline">
+                    {order.fortnoxOrderNumber}
+                    {order.status === 'cancelled' ? ' (makulerad)' : ''}
+                  </dd>
+                </div>
+              ) : null}
+              {order.fortnoxInvoiceNumber ? (
+                <div>
+                  <dt className="inline">Fortnox-faktura: </dt>
+                  <dd className="inline">{order.fortnoxInvoiceNumber}</dd>
                 </div>
               ) : null}
             </dl>

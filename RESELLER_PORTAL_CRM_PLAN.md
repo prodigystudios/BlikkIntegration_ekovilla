@@ -1246,9 +1246,9 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 - ⚠️ **Artikel 1050 är en paketartikel i testbolaget:** Fortnox nekar raden ("raden måste innehålla en instans av det
   paketet"). Är 1050 FRAKT en vanlig artikel i prod? Annars nekas varje beställning med frakt.
 - En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund
-  bara före bekräftelsen). Vägen ut blir Makulera (8b2).
+  bara före bekräftelsen). Vägen ut blir Makulera (✅ 8b2).
 - Lämnat: omförsöksloopen är en kopia av jobbens (`retryPortalFortnox`); att dela den hade rört 4b:s prövade kod.
-- 🧨 **Till 8b2 (Makulera):** en makulering får aldrig landa medan en push pågår (claimen `pending`): pushen skriver då
+- ✅ **Till 8b2 (Makulera), löst i 8b2:** en makulering får aldrig landa medan en push pågår (claimen `pending`): pushen skriver då
   numret på en makulerad beställning och Fortnox-ordern står kvar. Makulera tar claimen, eller väntar ut den, och
   makulerar Fortnox-ordern om ett nummer finns.
 - Lämnat: claimen är inte stämplad per försök (den delade `claimFortnoxPush`); två försök som båda hunnit skicka fångas
@@ -1256,6 +1256,113 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 
 ⚠️ **Lokalt kvar:** so-lokal-8-1 (bekräftad, Fortnox föll på 1050), 8-4/8-5/8-6/8b-12 (bekräftade, ordrar 53/54/55/58),
 8b-11 (övertagen order 57), 8b-13 (mottagen), 8-7 (kopplad till Boli). Testbolaget: ordrar 37–58, faktura 22.
+
+
+### Fas 8b2: resultat (2026-09-29)
+
+**Williams beslut** (planens "Fas 8a: resultat", och 2026-09-29):
+- Levererad: en knapp med datum. Knappen säger att varorna har kommit fram, så dagen ligger från dagen beställningen kom
+  in till och med i dag (William: "självklart kan vi inte sätta ett leverans datum innan beställningen kom"). Kräver
+  Fortnox-ordern.
+- Fakturera: `createinvoice` på Fortnox-ordern; en faktura som redan finns i Fortnox kopplas bara.
+- Makulera: den ansvarige och admin, bara före Levererad, skälet krävs (butiken ser det), Fortnox-ordern makuleras först.
+  Pågår en push svarar Makulera direkt "försök igen om en stund" i stället för att vänta ut den (William: "gå på din
+  rekommendation").
+
+**Spiken i testbolaget** (2026-09-29, ordrar 71–73, fakturor 23–27, alla obokförda):
+- `PUT /orders/{n}/createinvoice` svarar med **ordern** (InvoiceReference satt), inte med fakturan. Fakturan är ett utkast
+  (Booked false) med orderns rader, konto och moms, `ExternalInvoiceReference1` och `OrderReference`.
+- 🧨 En ofakturerad order har `InvoiceReference: "0"`, strängen noll. `fortnoxInvoiceReference` läser den som ingen
+  faktura. Arbetsorderns `fetchInvoiceReference` gör inte det, se "Frågor och kvar".
+- Nejen: `createinvoice` igen 400 2000496 "redan fakturerad", makulera en fakturerad 400 2001383 "Är låst", makulera igen
+  400 2001279 "Är redan makulerad", `createinvoice` på en makulerad 400 2000397. Koden läser inte koderna: efter ett nej
+  läses ordern, och dess läge avgör (`cancelFortnoxOrderByState`).
+- Sökningen (`GET /orders?externalinvoicereference1=`) bär `Cancelled` men inte `InvoiceReference`.
+
+**Så fungerar det** (`lib/domains/portal/{storeOrderFulfilment,storeOrderClaim,settle}.ts`,
+`app/api/crm/portal/store-orders/[id]/{deliver,invoice,cancel}`, kortet i `StoreOrderActions.tsx`):
+- **Levererad:** en bekräftad med Fortnox-order, med orderns claim. Fortnox-ordern läses först: en som makulerats för
+  hand i Fortnox nekar (den hade inte gått att fakturera, och efter Levererad går beställningen inte att makulera). Ett
+  orört datum skickas som `null`, och servern räknar i dag (svensk dag): en flik som stått öppen i dagar eller en
+  webbläsare med fel klocka avgör inte dagen.
+- **Fakturera:** en levererad, med fakturans egen claim. Pekar ordern redan på en faktura kopplas den. Annars
+  `createinvoice`, och ett nej läses (fakturerad av ett annat försök kopplas, makulerad under tiden sägs). Ett nummer som
+  inte kunde sparas kopplas vid nästa tryck: Fortnox ger ordern bara en faktura. `invoiced_on` är den svenska dagen.
+- **Makulera:**
+  - Mottagen: en villkorad UPDATE på statusen och versionen säljaren såg. Bekräfta kräver också "mottagen", så bara en går igenom.
+  - Bekräftad: orderns claim först. Sökningen på märkningen görs alltid, också när raden har ett nummer (en dubblett
+    följer med). Varje order läses innan något görs: en fakturerad nekar direkt, en redan makulerad hoppas över. Hittas
+    en order på en rad utan nummer kopplas den och omförsöken stängs före första makuleringen, med claimen. Sist
+    beställningen, bara med claimen. Ett svep planeras om 5 min.
+- 🧨 **Claimen med stämpel** (`storeOrderClaim.ts`): den delade claimen (`claimFortnoxPush`) säger inte vems den är.
+  Varje steg, också pushen, läser claimens tid direkt efter att det tagit den (ingen annan kan ta den förrän den är två
+  minuter gammal), och släpper och skriver bara med den. Pushen skriver sitt nummer utan att röra claimen (bara på en
+  bekräftad) och släpper den sist med stämpeln. En makulering som tagit över en gammal claim behåller den alltså medan
+  den makulerar. Makulera och Fakturera har `maxDuration` 100, under claimens två minuter.
+- 🧨 **Svepet:** ett planerat försök på en makulerad görs bara av cron, med lånet, aldrig av knapparna. Det makulerar
+  varje order som bär märkningen, i ett pass. En som Fortnox nekar läses: redan makulerad är klar, fakturerad är ett
+  stopp. Svepet följer jobbens schema och slutar efter fönstret. Det planeras av Makulera (en POST som skickades före
+  makuleringen kan landa efter sökningen) och av pushen när den finner beställningen makulerad efter ett fel. Prövat
+  skarpt: en kvarlämnad order 73 med märkningen makulerades av cron.
+- **Pushen (8b1) mot en makulerad:** numret skrivs aldrig på en makulerad, och vår egen order makuleras. Fel och stopp
+  skrivs inte på den, och planen (ett svep, eller ingen) rörs inte. En dubblett efter två samtidiga försök makuleras
+  också i det nya försökets väg.
+- **Sidan:**
+  - Ett kort per läge, med stegets handling som rubrik: "Markera som levererad" och "Fakturera beställningen".
+  - Makulera står längst ner så länge beställningen är mottagen eller bekräftad.
+  - Makuleringens dialog är `CrmConfirmDialog` med en kropp (ett additivt tillägg i den delade komponenten). Skälet har
+    fokus, står kvar om sidan läses om, och dialogen skickar det säljaren såg när den öppnades.
+- ⚠️ **`store_order.*` till portalen är 8b3.** Dialogerna säger "Butiken får beskedet". Slå inte på
+  `EKOVILLA_CRM_STORE_ORDERS` förrän 8b3 är klar.
+
+**Granskningarna** (code-review high, elva rundor; de sista gav mest upprepningar):
+1. Claimens ägare (stämpeln), pushen mot en makulerad, delade Fortnox-anrop.
+2. Levererad läser Fortnox-ordern, rester efter en makulering, "upptagen" behåller skälet.
+3. Svepet, synkläget, en fråga som kastar.
+4. Numret kopplas före Fortnox, dubbletterna, svepets slut.
+5. Svepet bara från cron, ordrarna läses först, det säljaren såg.
+6. Pushen rör aldrig en makulerads plan.
+7. Svepet läser ordern efter ett nej.
+8. Roten: pushen släpper bara sin egen claim; Levererad "i dag" på servern.
+9. Makulera planerar alltid svepet.
+10. Dubbletten i det nya försökets väg.
+11. Fakturan mot en order som makulerats under tiden.
+
+**Lämnat, med skäl:**
+- `claimFortnoxPush` returnerar inte sin stämpel. Den delas med det aktiva flödet, och en stämpel ur JS har ett annat
+  format än databasens. En läsning till per claim.
+- Makuleringens läsningar mot Fortnox görs i följd: Fortnox tak (25 anrop per 5 s) ger fler 429 parallellt.
+- Racet där en av två ordrar faktureras i Fortnox under ett makuleringsanrop (under en sekund efter läsningen): det loggas.
+- En krasch mellan pushens nummer och claimens släpp ger två minuters "upptagen", som en död push alltid gett.
+
+**Prövat:**
+- vitest: `storeOrderFulfilment` (72), `storeOrderActions` (77) och `storeOrderRoutes` (18).
+- 129 mutationer, alla röda utom fem likvärdiga: numret kan inte försvinna före Levererad, ägarkontrollen i varvet tar
+  claimen, makulerad är ett slutläge (två), och dialogens kropp prövas i webbläsaren.
+- Lokalt mot testbolaget:
+  - Levererad i dag och med valt datum.
+  - Fakturera med ny faktura (26, 27) och med en befintlig (24, 25).
+  - Makulera av en bekräftad (53, 66), en utan nummer och en mottagen.
+  - Makulera av en fakturerad (nekas), och Makulera under en claim (upptagen, skälet står kvar).
+  - Svepet (73).
+- I webbläsaren: säljare, admin, konsult (inget kort) och telefonbredd.
+
+**Frågor och kvar:**
+- ⚠️ **Arbetsorderns fakturering läser "0" som en faktura** (det aktiva flödet): `fetchInvoiceReference` i
+  `lib/domains/fortnox/orders.ts` gör `existing ? String(existing) : null`. Två grenar kan då markera en arbetsorder
+  fakturerad med nummer "0" utan faktura: grenen när synken inte är klar, och catch-grenen efter ett nekat
+  `createinvoice`. Egen liten PR, fråga William. Läsfråga mot prod:
+  `select id, order_number, status from crm_work_orders where fortnox_invoice_number = '0'`.
+- ⚠️ **En levererad beställning vars Fortnox-order makuleras för hand i Fortnox efter leveransen** kan varken faktureras
+  eller makuleras (Makulera gäller bara före Levererad). Affärsbeslut: fråga William.
+- Nästa: 8b3, `store_order.confirmed/delivered/invoiced/cancelled` till portalen (mönstret i `jobSync.ts`/`jobState.ts`).
+  "Bekräftad" skickas först när Fortnox-numret finns. Vakten markerar redan `sync_requested_at`.
+
+⚠️ **Lokalt kvar:**
+- so-lokal-8-5, 8b-12, 8-6 och 8b-13 är fakturerade (26, 27, 24, 25).
+- 8b-11 och 8b-17 är levererade.
+- 8-1, 8-3, 8-4, 8b-15, 8b-16 och 8b-18 är makulerade. 8b-14 är bekräftad utan order (1050), och 8-7 är mottagen.
+- Testbolaget: ordrar 71–73, fakturor 23–27.
 
 ---
 
