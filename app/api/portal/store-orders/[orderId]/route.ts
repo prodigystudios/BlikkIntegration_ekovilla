@@ -3,7 +3,7 @@ import { ok, routeError } from '@/lib/api/responses';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { portalStoreOrderChangeSchema } from '@/lib/domains/portal/storeOrderIntake';
 import { changeStoreOrder, notifyStoreOrder } from '@/lib/domains/portal/storeOrdersStore';
-import { parsePortalBody, runIdempotentPortalRequest, verifyPortalRequest } from '../../_shared';
+import { parsePortalBody, portalPathIdMismatch, runIdempotentPortalRequest, verifyPortalRequest } from '../../_shared';
 
 type RouteContext = { params: { orderId: string } };
 
@@ -36,13 +36,8 @@ export async function PUT(req: NextRequest, context: RouteContext) {
   return runIdempotentPortalRequest(req, verified.rawBody, admin, async () => {
     const body = parsePortalBody(verified.rawBody, portalStoreOrderChangeSchema);
     if (!body.ok) return { response: body.response };
-    if (body.data.orderId !== context.params.orderId) {
-      return {
-        response: routeError(400, 'validation_error', 'orderId: samma id som i sökvägen.', {
-          issues: [{ path: 'orderId', message: 'Samma id som i sökvägen.' }],
-        }),
-      };
-    }
+    const mismatch = portalPathIdMismatch('orderId', body.data.orderId, context.params.orderId);
+    if (mismatch) return { response: mismatch };
 
     const result = await changeStoreOrder(admin, body.data);
     switch (result.kind) {

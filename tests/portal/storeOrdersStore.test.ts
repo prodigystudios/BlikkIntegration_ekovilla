@@ -471,6 +471,15 @@ describe('notifyStoreOrder', () => {
     expect(old.tables.crm_store_orders[0]).toMatchObject({ notified_key: 'v1', notify_claimed_at: null });
   });
 
+  it('en läsning som faller efter lånet: lånet släpps och felet kastas, så att nästa försök inte väntar ut lånet', async () => {
+    const m = db({ crm_store_orders: [storeRow({ assigned_to: null })] });
+    m.failOn((c) => c.table === 'crm_portal_settings', { message: 'databasen svarar inte' });
+    const { deps } = noticeDeps();
+    await expect(notifyStoreOrder(m.admin, 'order-1', deps)).rejects.toThrow(/svarar inte/);
+    expect(deps.notify).not.toHaveBeenCalled();
+    expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: null, notify_claimed_at: null });
+  });
+
   it('utskicket faller: lånet släpps och inget bokförs, så att ett nytt försök skickar den', async () => {
     const m = db({ crm_store_orders: [storeRow()] });
     const { deps } = noticeDeps({ notify: vi.fn(async () => Promise.reject(new Error('push nere'))) });

@@ -206,6 +206,17 @@ export async function runIdempotentPortalRequest(
 
 // ---------------------------------------------------------------------------------------------------------- kroppen
 
+/**
+ * Ett id i kroppen som måste vara sökvägens (butiksbeställningens orderId): 400 validation_error med fältets sökväg när
+ * de skiljer sig, annars null.
+ */
+export function portalPathIdMismatch(field: string, inBody: string, inPath: string): NextResponse | null {
+  if (inBody === inPath) return null;
+  return routeError(400, 'validation_error', `${field}: samma id som i sökvägen.`, {
+    issues: [{ path: field, message: 'Samma id som i sökvägen.' }],
+  });
+}
+
 export type ParsedPortalBody<T> = { ok: true; data: T; payload: unknown } | { ok: false; response: NextResponse };
 
 /**

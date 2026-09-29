@@ -13,7 +13,7 @@ type RouteContext = { params: { quoteId: string } };
 //   400 invalid_json          kroppen är inte JSON
 //   400 invalid_text          en text som Postgres inte kan spara (nolltecken, ensamt surrogat), eller som den nekar
 //   400 validation_error      kroppen följer inte kontraktet (details.issues: fälten)
-//   404 unknown_job           inget jobb med det quoteId:t
+//   404 unknown_job           inget jobb med det quoteId:t (sparas inte i svarscachen: jobbet kan komma senare)
 //   409 work_order_removed    jobbets arbetsorder har tagits bort hos Ekovilla
 //   409 message_conflict      samma messageId är redan mottaget, med ett annat innehåll
 //   503 job_not_ready         jobbet tas emot just nu; portalen försöker igen (Retry-After)
@@ -51,7 +51,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
           },
         };
       case 'unknown_job':
-        return { response: routeError(404, 'unknown_job', 'Inget jobb med det id:t.') };
+        // Inte bestående: kommer jobbet fram senare (det kan ha fått 503 no_assignee) ska samma nyckel köras igen, inte
+        // få samma 404 ur svarscachen (fas 8, som butiksbeställningarnas unknown_order).
+        return { response: routeError(404, 'unknown_job', 'Inget jobb med det id:t.'), cacheable: false };
       case 'work_order_removed':
         return { response: routeError(409, 'work_order_removed', 'Jobbets arbetsorder har tagits bort hos Ekovilla.') };
       case 'conflict':

@@ -375,14 +375,24 @@ export async function notifyStoreOrder(
   const stamp = await claimNotice(admin, id, deps.now());
   if (!stamp) return 'busy';
 
-  const row = await readNoticeRow(admin, id);
+  // Kastar en läsning medan lånet är vårt släpps det, så att nästa försök inte väntar ut fem minuter.
+  let row: NoticeRow | null;
+  let recipient: string | null = null;
+  try {
+    row = await readNoticeRow(admin, id);
+    if (row && decideStoreOrderNotice(row)) recipient = row.assigned_to ?? (await readFallbackUser(admin));
+  } catch (e) {
+    await finishNotice(admin, id, stamp).catch((err) =>
+      console.error('[portal-store-orders] lånet kunde inte släppas', { id, error: err instanceof Error ? err.message : String(err) }),
+    );
+    throw e;
+  }
   const decision = row ? decideStoreOrderNotice(row) : null;
   if (!row || !decision) {
     await finishNotice(admin, id, stamp);
     return 'none';
   }
 
-  const recipient = row.assigned_to ?? (await readFallbackUser(admin));
   if (!recipient) {
     // Den ansvariges profil är borttagen och ingen reserv är vald. Bokförs, så att cron inte gör om den varje minut; det
     // går inte att meddela någon, och sidan visar beställningen ändå.
