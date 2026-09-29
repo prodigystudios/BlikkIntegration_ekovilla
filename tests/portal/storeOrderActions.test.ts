@@ -134,6 +134,20 @@ describe('linkStoreOrderCustomer', () => {
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
   });
 
+  it('🧨 butikens ändring kopplade ett kort under tiden: ingenting skrivs över, "customer_changed"', async () => {
+    const other = '77777777-7777-4777-8777-777777777777';
+    const m = db(storeOrder({ customer_id: null }), { crm_customers: [CARD, { ...CARD, id: other, fortnox_customer_id: '2000' }] }, {
+      beforeExecute: (call, tables) => {
+        if (call.table === 'crm_store_orders' && call.op === 'update' && 'customer_id' in (call.values as object)) {
+          tables.crm_store_orders[0].customer_id = other;
+        }
+      },
+    });
+    expect(await link(m)).toEqual({ kind: 'customer_changed' });
+    expect(row(m).customer_id).toBe(other);
+    expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
+  });
+
   it('bara på en mottagen, och butiken rörs då inte', async () => {
     const m = db(storeOrder({ customer_id: null, status: 'confirmed' }));
     expect(await link(m)).toEqual({ kind: 'not_received' });
@@ -345,6 +359,14 @@ describe('pushStoreOrderToFortnox', () => {
     expect((await pushStoreOrderToFortnox(m.admin, ID, deps)).outcome).toBe('failed');
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(m)).toMatchObject({ fortnox_order_number: null, fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
+
+    // Fortnox inte anslutet vid sökningen: den egna klassen och texten, inte ett allmänt fel.
+    const mc = db(confirmed());
+    const result = await pushStoreOrderToFortnox(mc.admin, ID, fortnoxDeps(undefined, async () => {
+      throw new FortnoxNotConnectedError();
+    }));
+    expect(result).toMatchObject({ outcome: 'failed', error: 'Fortnox är inte kopplat. Be en administratör ansluta Fortnox i CRM-inställningarna.' });
+    expect(row(mc).fortnox_order_sync_status).toBe('not_synced');
 
     // Också när sökningen svarar 4xx: det är ingen människas sak att rätta, och utan svaret vet vi inget.
     const m4 = db(confirmed());

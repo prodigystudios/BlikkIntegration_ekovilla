@@ -24,8 +24,9 @@ type RouteContext = { params: { id: string } };
 //   409 store_order_customer_not_in_fortnox       kundkortet har inget kundnummer i Fortnox
 
 export const dynamic = 'force-dynamic';
-// Ett Fortnox-anrop, och registret före det.
-export const maxDuration = 60;
+// Sökningen och POST:en mot Fortnox, var och en med upp till ~23 s väntan vid 429, och registret. Ett försök som
+// ändå dör tas över av nästa (märkningen), men säljaren ska helst få svaret.
+export const maxDuration = 120;
 
 // Det säljaren såg: butikens version, och Ekovillas frakt (sparad när) och kund. Ingenting bekräftas som säljaren inte sett.
 const bodySchema = z.object({

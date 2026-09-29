@@ -86,6 +86,8 @@ export type LinkStoreOrderCustomerResult =
   | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted: boolean }
   | { kind: 'not_found' }
   | { kind: 'not_received' }
+  /** Beställningen fick en kund under tiden (butikens ändring). Ingenting sparat; läs om. */
+  | { kind: 'customer_changed' }
   | { kind: 'customer_not_found' }
   /** Butiken är ett företag (som kopplingen i 3c). */
   | { kind: 'not_business' }
@@ -121,15 +123,22 @@ export async function linkStoreOrderCustomer(
   if (!before.data) return { kind: 'not_found' };
   const hadCustomer = Boolean((before.data as { customer_id: string | null }).customer_id);
 
-  const saved = await admin
+  // Saknades kunden: bara om den fortfarande saknas. En butiksändring kan ha kopplat kortet ur kundnumret under tiden
+  // (changeStoreOrder), och då skrivs varken den eller butikens koppling över.
+  let update = admin
     .from('crm_store_orders')
     .update({ customer_id: card.id })
     .eq('id', input.id)
-    .eq('status', 'received')
-    .select('id, reseller_id');
+    .eq('status', 'received');
+  if (!hadCustomer) update = update.is('customer_id', null);
+  const saved = await update.select('id, reseller_id');
   if (saved.error) throw new Error(`Kunden kunde inte kopplas: ${saved.error.message}`);
   const row = (saved.data ?? [])[0] as { id: string; reseller_id: string } | undefined;
-  if (!row) return (await readStatus(admin, input.id)) ? { kind: 'not_received' } : { kind: 'not_found' };
+  if (!row) {
+    const status = await readStatus(admin, input.id);
+    if (!status) return { kind: 'not_found' };
+    return status === 'received' ? { kind: 'customer_changed' } : { kind: 'not_received' };
+  }
 
   // Ett byte gäller bara den här beställningen: butikens koppling (som gäller nästa jobb och beställning) sätts bara när
   // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
@@ -319,7 +328,11 @@ export async function pushStoreOrderToFortnox(
     // En sökning som inte går är alltid ett tekniskt fel (nytt försök), också ett 4xx: utan svaret vet vi inte om ordern
     // redan finns, och det rättar ingen människa.
     const existing = await deps.findExisting(reference).catch((err: unknown) => {
-      throw new Error(`Sökningen efter en befintlig order gick inte: ${err instanceof Error ? err.message : String(err)}`);
+      // Ett 4xx på sökningen hade annars klassats som ett stopp; "inte ansluten" och 5xx behåller sin egen klass och text.
+      if (err instanceof FortnoxApiError && storeOrderFortnoxFailure(err) === 'blocked') {
+        throw new Error(`Sökningen efter en befintlig order gick inte: ${err.message}`);
+      }
+      throw err;
     });
     if (existing) {
       console.warn('[portal-store-orders] Fortnox-ordern fanns redan; den tas över', { id, fortnoxOrderNumber: existing });
@@ -353,7 +366,7 @@ export async function pushStoreOrderToFortnox(
         : e instanceof FortnoxApiError
           ? `Fortnox svarade: ${friendlyFortnoxMessage(e)}`
           : // Vårt eget fel (databasen, registret, sökningen): texten stannar i loggen.
-            'Fortnox-ordern kunde inte skapas just nu. Ett nytt försök görs om några minuter.';
+            'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.';
     console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: e instanceof Error ? e.message : String(e) });
     await finishPush(
       admin,
@@ -478,7 +491,7 @@ export async function confirmStoreOrder(
     console.error('[portal-store-orders] Fortnox-försöket efter bekräftelsen föll', { id: input.id, error: e instanceof Error ? e.message : String(e) });
     return {
       kind: 'confirmed',
-      push: { outcome: 'failed', fortnoxOrderNumber: null, error: 'Fortnox-ordern kunde inte skapas just nu. Ett nytt försök görs om några minuter.' },
+      push: { outcome: 'failed', fortnoxOrderNumber: null, error: 'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.' },
     };
   }
 }

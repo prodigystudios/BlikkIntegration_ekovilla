@@ -282,6 +282,7 @@ const STALE_CODES = new Set([
   'store_order_not_received',
   'store_order_changed',
   'store_order_changed_here',
+  'store_order_customer_changed',
   'store_order_not_confirmed',
   'store_order_push_in_progress',
 ]);
@@ -316,7 +317,9 @@ export default function StoreOrderActions(props: Props) {
       const result = await send(url, method, body);
       if (!result.ok) {
         toast.error(result.error || failure);
-        if (result.code && STALE_CODES.has(result.code)) router.refresh();
+        // Läs om när sidan inte längre stämmer, och när svaret inte kom fram (nätet, 5xx, en tidsgräns): steget kan ha
+        // gått igenom ändå, och en bekräftad beställning ska inte stå kvar som ny.
+        if ((result.code && STALE_CODES.has(result.code)) || result.status === 0 || result.status >= 500) router.refresh();
         return false;
       }
       const message = success(result.data);

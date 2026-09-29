@@ -16,7 +16,7 @@ type RouteContext = { params: { id: string } };
 //   409 store_order_push_in_progress              ett försök pågår redan
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export async function POST(_req: Request, context: RouteContext) {
   try {

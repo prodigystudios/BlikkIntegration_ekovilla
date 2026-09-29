@@ -87,7 +87,7 @@ export function storeOrderLineItems(
       article_number: line.articleNumber,
       article_name: nonEmpty(article?.description) ?? line.name,
       // Bara registrets enhetskod: portalen skickar enheten med gemener, och en kod Fortnox inte känner nekar ordern.
-      // Utan registret skickas ingen, och Fortnox tar artikelns.
+      // Utan registret går raden med tom enhet, och Fortnox tar då artikelns (uppmätt 2026-09-29, order 65).
       article_unit_name: nonEmpty(article?.unit),
       unit_price: String(line.unitCost),
       quantity: String(line.quantity),

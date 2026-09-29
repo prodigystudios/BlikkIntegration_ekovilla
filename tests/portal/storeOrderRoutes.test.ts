@@ -160,6 +160,7 @@ describe('PUT …/customer', () => {
     const cases: [string, number, string][] = [
       ['not_found', 404, 'store_order_not_found'],
       ['not_received', 409, 'store_order_not_received'],
+      ['customer_changed', 409, 'store_order_customer_changed'],
       ['customer_not_found', 404, 'crm_customer_not_found'],
       ['not_business', 422, 'portal_customer_not_business'],
       ['customer_not_in_fortnox', 422, 'store_order_customer_not_in_fortnox'],
