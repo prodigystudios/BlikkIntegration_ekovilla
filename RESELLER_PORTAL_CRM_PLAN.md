@@ -1041,6 +1041,14 @@ Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka
   `AccountNumber: null` ger konto 0. Därför kontot på varje rad, varje gång.
 - `VatType` nekas som `VATType` (2001399).
 
+Följder av kontot per rad:
+- ⚠️ **Kontot följer `reverseVat`** (snapshoten, annars kundkortet), inte procentsatsen ensam. Portaljobbets 0 % oavsett
+  kort (3b/3c) måste därför sätta omvänd moms på dokumentet, annars bokas jobbet till en butik med vanligt kort på 3004.
+- **Öppna ordrar som synkades före ändringen behåller sina konton** tills de synkas om ("Synka om" eller en
+  artikelredigering); `createinvoice` kopierar orderns rader som de står.
+- CRM:et känner bara svensk moms: kundsynken skriver alltid SEVAT eller SEREVERSEDVAT på kortet. EU- och exportkonton
+  väljs aldrig av oss.
+
 ### Fas 8a: resultat (2026-09-29)
 
 **Williams beslut** (2026-09-29, "kör på förslagen"):
