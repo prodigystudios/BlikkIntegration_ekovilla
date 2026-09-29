@@ -6,7 +6,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, fortnoxSalesAccount, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withFortnoxSalesAccount } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
@@ -290,7 +290,11 @@ export function buildInvoiceRows(
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it. A partial invoice builds its own rows (not copied from the order), so it's
   // appended here per round. Only set on a ROT order (the caller passes null otherwise).
-  return appendFortnoxTextNote(rows, rotPropertyNote);
+  appendFortnoxTextNote(rows, rotPropertyNote);
+  // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Fakturan skapas med POST, så
+  // inget ärvs positionellt här, men utan fältet väljer Fortnox kontot ur kundkortet. Se
+  // fortnoxSalesAccount.
+  return withFortnoxSalesAccount(rows, fortnoxSalesAccount(vatPercent, reverseVat));
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.

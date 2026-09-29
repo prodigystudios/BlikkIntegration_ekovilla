@@ -543,6 +543,44 @@ export function fortnoxTextRowFields() {
 }
 
 /**
+ * Försäljningskontot varje rad i ett dokument bokas på. Följer dokumentets moms, INTE kundkortet.
+ *
+ * 🧨 VARFÖR VI VÄLJER KONTOT SJÄLVA. Fortnox väljer kontot ur kundkortets momstyp, och momsen sätts
+ * per dokument hos oss (offerten förifylls ur kortet men kan ändras). En order MED moms till en kund
+ * vars kort har omvänd skattskyldighet bokades därför på 3231 — fel momsruta. Momstypen går inte att
+ * skicka på dokumentet (`VATType` och `VatType` nekas med 2001399 på offert, order och faktura), men
+ * `AccountNumber` per rad går, och den följer med `createorder` och `createinvoice`.
+ * William 2026-09-29: "3001 ska det vara när det är moms", 3231 vid omvänd byggmoms.
+ *
+ * ⚠️ PÅ VARJE RAD, VARJE GÅNG — också textraderna. Uppmätt i testbolaget 2026-09-29:
+ *   - en rad som läggs till vid en PUT tar kontot ur det LEVANDE kundkortet,
+ *   - en rad som finns kvar ärver sitt gamla konto när fältet utelämnas (se FORTNOX_TEXT_ROW),
+ *   - `AccountNumber: null` ger konto 0; Fortnox räknar inte om det.
+ * Det finns alltså ingen väg tillbaka till "låt Fortnox välja" för en rad som en gång fått ett konto.
+ *
+ * ⚠️ Fakturatexten "Omvänd betalningsskyldighet" följer fortfarande kundkortet (den fångas när
+ * dokumentet skapas). Den löses inte här; William 2026-09-29: senare.
+ */
+export const FORTNOX_SALES_ACCOUNT_VAT = 3001;
+export const FORTNOX_SALES_ACCOUNT_REVERSE_VAT = 3231;
+export const FORTNOX_SALES_ACCOUNT_NO_VAT = 3004;
+
+// Dokumentets moms: `vatPercent` är den som står på dokumentet, `reverseVat` omvänd byggmoms (då
+// går raderna ut med 0 %). 0 % utan omvänd moms är Fortnox eget val för ett kort med vanlig moms.
+export function fortnoxSalesAccount(vatPercent: number, reverseVat: boolean): number {
+  if (reverseVat) return FORTNOX_SALES_ACCOUNT_REVERSE_VAT;
+  return vatPercent > 0 ? FORTNOX_SALES_ACCOUNT_VAT : FORTNOX_SALES_ACCOUNT_NO_VAT;
+}
+
+// Sista passet i varje radbyggare: samma konto på varje rad, också text-, ROT- och notraderna. Ett
+// pass i slutet i stället för fältet på varje ställe som skapar en rad, så att en ny sorts rad inte
+// kan glömmas och ärva kontot från raden som låg på positionen förut.
+export function withFortnoxSalesAccount<T extends object>(rows: T[], account: number): Array<T & { AccountNumber: number }> {
+  // Spridningen tar med symbolnyckeln FORTNOX_TEXT_ROW.
+  return rows.map((row) => ({ ...row, AccountNumber: account }));
+}
+
+/**
  * Text som ska stå i en rads Description hos Fortnox.
  *
  * 🧨 Fortnox avvisar em-streck (—) i en radbeskrivning med 2000359 "otillåtna tecken" (uppmätt, se
