@@ -8,6 +8,7 @@ import {
   type StoreOrderSyncRow,
   type StoreOrderSyncState,
 } from '@/lib/domains/portal/storeOrderState';
+import type { StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
 import { isValidIdempotencyKey } from '@/lib/domains/portal/idempotency';
 
 // Vad butiken ser av sin beställning (fas 8b3). Händelserna byggs helt ur raden, "bekräftad" först när Fortnox-numret
@@ -58,7 +59,7 @@ function run(over: Partial<DeriveStoreOrderInput>) {
 
 describe('deriveStoreOrderEvents: mottagen och tillbakadragen', () => {
   it('ingenting, och inget att vänta på', () => {
-    for (const status of ['received', 'withdrawn']) {
+    for (const status of ['received', 'withdrawn'] as const) {
       const r = run({ order: row({ status, fortnoxOrderNumber: '74', confirmedAt: CONFIRMED_AT }) });
       expect(r.types).toEqual([]);
       expect(r.revisit).toBe(false);
@@ -66,8 +67,8 @@ describe('deriveStoreOrderEvents: mottagen och tillbakadragen', () => {
     }
   });
 
-  it('en okänd status ger ingenting', () => {
-    expect(run({ order: confirmedRow({ status: 'draft' }) }).types).toEqual([]);
+  it('en okänd status ger ingenting (databasens check hindrar den, men utskicket läser en sträng)', () => {
+    expect(run({ order: confirmedRow({ status: 'draft' as StoreOrderStatus }) }).types).toEqual([]);
   });
 });
 
@@ -155,6 +156,7 @@ describe('deriveStoreOrderEvents: levererad och fakturerad', () => {
   it('fakturerad utan att levererad köats: båda, i ordning', () => {
     const r = run({ state: QUEUED, confirmedDelivery: 'sent', order: invoicedRow() });
     expect(r.types).toEqual(['store_order.delivered', 'store_order.invoiced']);
+    expect(r.events[0].payload.data).toEqual({ orderId: 'so-1', deliveredAt: '2026-10-02' });
     expect(r.events[1]).toEqual({
       idempotencyKey: 'store_order.invoiced-so-1-2026-10-05T07:45:10.000Z',
       payload: { type: 'store_order.invoiced', occurredAt: '2026-10-05T07:45:10.000Z', data: { orderId: 'so-1', invoicedAt: '2026-10-05' } },
@@ -175,14 +177,23 @@ describe('deriveStoreOrderEvents: levererad och fakturerad', () => {
     }
   });
 
+  it('statusen avgör, inte dagen: en bekräftad med en leveransdag är inte levererad', () => {
+    const queued = run({ state: QUEUED, confirmedDelivery: 'sent', order: confirmedRow({ deliveredOn: '2026-10-02', deliveredAt: DELIVERED_AT }) });
+    expect(queued.types).toEqual([]);
+    const first = run({ order: confirmedRow({ deliveredOn: '2026-10-02', deliveredAt: DELIVERED_AT }) });
+    expect(first.types).toEqual(['store_order.confirmed']);
+    expect(first.revisit).toBe(false);
+  });
+
   it('statusen avgör, inte dagen: en levererad med en fakturadag är inte fakturerad', () => {
     const r = run({ state: QUEUED, confirmedDelivery: 'sent', order: deliveredRow({ invoicedOn: '2026-10-05', invoicedAt: INVOICED_AT }) });
     expect(r.types).toEqual(['store_order.delivered']);
   });
 
-  it('en köad fakturering köas aldrig igen, också i ett läge som saknar leveransen', () => {
+  it('ett läge med fakturan har också leveransen: ingen leverans köas efter fakturan', () => {
     const r = run({ state: { ...QUEUED, invoiced: true }, confirmedDelivery: 'sent', order: invoicedRow() });
-    expect(r.types).toEqual(['store_order.delivered']);
+    expect(r.types).toEqual([]);
+    expect(r.revisit).toBe(false);
     expect(r.state).toEqual({ ...QUEUED, delivered: true, invoiced: true });
   });
 
@@ -195,9 +206,12 @@ describe('deriveStoreOrderEvents: levererad och fakturerad', () => {
     expect(run({ order: deliveredRow({ deliveredOn: null }) }).types).toEqual(['store_order.confirmed']);
   });
 
-  it('en rad utan tidpunkt (skriven för hand) får körningens tid', () => {
-    const r = run({ state: QUEUED, confirmedDelivery: 'sent', order: invoicedRow({ deliveredAt: null, invoicedAt: null }) });
-    expect(r.events.map((e) => e.payload.occurredAt)).toEqual([NOW.toISOString(), NOW.toISOString()]);
+  it('en rad utan tidpunkt (skriven för hand) dateras med dagens början, aldrig med körningens tid', () => {
+    for (const time of [null, 'x']) {
+      const r = run({ state: QUEUED, confirmedDelivery: 'sent', order: invoicedRow({ deliveredAt: time, invoicedAt: time }) });
+      expect(r.events.map((e) => e.payload.occurredAt)).toEqual(['2026-10-02T00:00:00.000Z', '2026-10-05T00:00:00.000Z']);
+      expect(r.events[0].idempotencyKey).toBe('store_order.delivered-so-1-2026-10-02T00:00:00.000Z');
+    }
   });
 });
 
@@ -254,6 +268,7 @@ describe('deriveStoreOrderEvents: samma rad ger samma händelser', () => {
     ['bekräftad', { order: invoicedRow() }],
     ['levererad och fakturerad', { state: QUEUED, confirmedDelivery: 'sent', order: invoicedRow() }],
     ['makulerad', { order: cancelledRow({ fortnoxOrderNumber: '66' }) }],
+    ['levererad och fakturerad utan tider', { state: QUEUED, confirmedDelivery: 'sent', order: invoicedRow({ deliveredAt: null, invoicedAt: null }) }],
   ];
   it.each(cases)('%s', (_, input) => {
     const first = run({ ...input, now: NOW });

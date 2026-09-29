@@ -1,4 +1,5 @@
 import type { ConfirmedDelivery } from './jobState';
+import type { StoreOrderStatus } from './storeOrders';
 
 /**
  * Vad butiken ska se av sin beställning, härlett ur crm_store_orders (RESELLER_PORTAL_CRM_PLAN.md fas 8b3, kontraktets
@@ -15,10 +16,11 @@ import type { ConfirmedDelivery } from './jobState';
  *
  * 🧨 HÄNDELSEN BYGGS HELT UR RADEN. occurredAt är när CRM:et gjorde steget (confirmed_at, delivered_at, invoiced_at,
  * cancelled_at, som knapparna skriver), aldrig körningens tid. Vakten låter statusen bara gå framåt och skriver numret en
- * gång, så samma rad ger alltid samma nyckel och samma kropp. Därför kan utskicket köa FÖRST och spara läget sedan: en
- * krasch mellan de två ger samma händelser nästa varv, och kön känner igen nycklarna. Jobben (jobState.ts) behöver i
- * stället sync_pending_events, eftersom deras occurredAt är körningens tid. Bara en rad som saknar sin tid (skriven för
- * hand) får körningens tid.
+ * gång, så varje rad som databasen tar emot ger alltid samma nyckel och samma kropp: confirmed_at och cancelled_at krävs
+ * av tabellens checkar, och en leverans eller faktura utan sin tid (bara en rad skriven för hand) dateras med dagens
+ * början i UTC, aldrig med körningens tid. Därför kan utskicket köa FÖRST och spara läget sedan: en krasch mellan de två
+ * ger samma händelser nästa varv, och kön känner igen nycklarna. Jobben (jobState.ts) behöver i stället
+ * sync_pending_events, eftersom deras occurredAt är körningens tid.
  *
  * Reglerna, som jobbens (William 2026-09-28):
  *   - Inget efter "bekräftad" köas förrän den är LEVERERAD. En uppgiven händelse håller inte kvar resten av kön (fas 1b),
@@ -28,6 +30,8 @@ import type { ConfirmedDelivery } from './jobState';
  *     "bekräftad" köats får bara makuleringen, också när den hann få ett Fortnox-nummer: butiken såg den aldrig
  *     bekräftad.
  *   - Mottagen och tillbakadragen (butikens egen, som vakten också markerar) ger ingenting.
+ *   - Bara bekräftelsen spärrar, som för jobben: ger en köad leverans upp (portalen nere i över två dygn) går en senare
+ *     fakturering ändå fram, och butiken ser Fakturerad utan leveransdag.
  */
 
 export type StoreOrderEventType =
@@ -58,7 +62,7 @@ export type StoreOrderEvent = {
 
 /** Raden, med de kolumner som avgör vad butiken ser. */
 export type StoreOrderSyncRow = {
-  status: string;
+  status: StoreOrderStatus;
   fortnoxOrderNumber: string | null;
   confirmedAt: string | null;
   deliveredOn: string | null;
@@ -90,9 +94,14 @@ export function storeOrderOrderingKey(orderId: string): string {
   return `store_order:${orderId}`;
 }
 
-function isoOrNow(value: string | null, now: Date): string {
+/**
+ * Tiden i kontraktets form (…Z; databasen skriver +00:00). Saknas den tar en leverans eller faktura dagens början i UTC,
+ * så att händelsen fortfarande byggs helt ur raden. Utan dag (bekräftad, makulerad: checkarna kräver tiden) körningens.
+ */
+function occurredAt(value: string | null, day: string | null, now: Date): string {
   const at = value ? new Date(value) : null;
-  return at && !Number.isNaN(at.getTime()) ? at.toISOString() : now.toISOString();
+  if (at && !Number.isNaN(at.getTime())) return at.toISOString();
+  return day ? `${day}T00:00:00.000Z` : now.toISOString();
 }
 
 function event(
@@ -111,25 +120,27 @@ function event(
 export function deriveStoreOrderEvents(input: DeriveStoreOrderInput): DeriveStoreOrderResult {
   const { orderId, order, now } = input;
   const state: StoreOrderSyncState = { ...input.state };
+  // Leveransen köas alltid före fakturan (i samma varv eller tidigare): ett läge med fakturan har också leveransen.
+  if (state.invoiced) state.delivered = true;
   const events: StoreOrderEvent[] = [];
   const done = { events, state, revisit: false };
 
   if (state.cancelled) return done;
 
   if (order.status === 'cancelled') {
-    events.push(event('store_order.cancelled', orderId, isoOrNow(order.cancelledAt, now), { reason: order.cancelReason ?? '' }));
+    events.push(event('store_order.cancelled', orderId, occurredAt(order.cancelledAt, null, now), { reason: order.cancelReason ?? '' }));
     state.cancelled = true;
     return done;
   }
 
   if (order.status !== 'confirmed' && order.status !== 'delivered' && order.status !== 'invoiced') return done;
   // Dagarna följer statusen (vaktens checkar), men en händelse utan dag skickas inte: portalen hade nekat den.
-  const delivered = order.status !== 'confirmed' && Boolean(order.deliveredOn);
-  const invoiced = order.status === 'invoiced' && delivered && Boolean(order.invoicedOn);
+  const deliveredOn = order.status !== 'confirmed' ? order.deliveredOn : null;
+  const invoicedOn = order.status === 'invoiced' && deliveredOn ? order.invoicedOn : null;
 
   if (!state.confirmedKey) {
     if (!order.fortnoxOrderNumber) return done;
-    const confirmedAt = isoOrNow(order.confirmedAt, now);
+    const confirmedAt = occurredAt(order.confirmedAt, null, now);
     const confirmed = event('store_order.confirmed', orderId, confirmedAt, {
       ekovillaOrderNumber: order.fortnoxOrderNumber,
       confirmedAt,
@@ -137,21 +148,21 @@ export function deriveStoreOrderEvents(input: DeriveStoreOrderInput): DeriveStor
     events.push(confirmed);
     state.confirmedKey = confirmed.idempotencyKey;
     // Resten får vänta tills den är levererad.
-    return { ...done, revisit: delivered };
+    return { ...done, revisit: Boolean(deliveredOn) };
   }
 
-  const waiting = (delivered && !state.delivered) || (invoiced && !state.invoiced);
+  const waiting = (deliveredOn && !state.delivered) || (invoicedOn && !state.invoiced);
   if (!waiting) return done;
   if (input.confirmedDelivery === 'pending') return { ...done, revisit: true };
   // Uppgiven (eller borta): beställningen står still tills någon skickar om den på portalsidan.
   if (input.confirmedDelivery !== 'sent') return done;
 
-  if (!state.delivered) {
-    events.push(event('store_order.delivered', orderId, isoOrNow(order.deliveredAt, now), { deliveredAt: order.deliveredOn as string }));
+  if (deliveredOn && !state.delivered) {
+    events.push(event('store_order.delivered', orderId, occurredAt(order.deliveredAt, deliveredOn, now), { deliveredAt: deliveredOn }));
     state.delivered = true;
   }
-  if (invoiced && !state.invoiced) {
-    events.push(event('store_order.invoiced', orderId, isoOrNow(order.invoicedAt, now), { invoicedAt: order.invoicedOn as string }));
+  if (invoicedOn && !state.invoiced) {
+    events.push(event('store_order.invoiced', orderId, occurredAt(order.invoicedAt, invoicedOn, now), { invoicedAt: invoicedOn }));
     state.invoiced = true;
   }
   return done;

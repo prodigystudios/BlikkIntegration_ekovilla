@@ -1389,7 +1389,9 @@ eftersom deras `occurredAt` är körningens tid. En beställning når varje läg
 en gång), och varje steg har en egen tid som knappen skriver. Samma rad ger alltså alltid samma nyckel och samma kropp.
 Utskicket kan då köa först och spara läget sedan, i en villkorad UPDATE på `sync_requested_at` (vakten sätter en ny
 `now()` vid varje ändring, så markeringen är krockkontrollen): en krasch mellan de två ger samma händelser nästa varv, och
-kön känner igen nycklarna. Bara en rad som saknar sin tid (skriven för hand) får körningens tid.
+kön känner igen nycklarna. Det gäller varje rad som databasen tar emot: `confirmed_at` och `cancelled_at` krävs av
+tabellens checkar, och en leverans eller faktura utan sin tid (bara en rad skriven för hand) dateras med dagens början i
+UTC, aldrig med körningens tid.
 
 **Reglerna**, som jobbens:
 - Inget efter "bekräftad" köas förrän den är levererad. Väntar den räknas beställningen om nästa varv, sist i kön; bara
@@ -1397,7 +1399,9 @@ kön känner igen nycklarna. Bara en rad som saknar sin tid (skriven för hand) 
 - "Makulerad" behöver ingen bekräftelse, och efter den köas ingenting.
 - Mottagen och tillbakadragen (butikens egen, som vakten också markerar) ger ingenting, och markeringen tas bort.
 - En egen kö per beställning, `store_order:<orderId>`, och ingen händelse ersätter en annan.
-- En händelse utan sin dag skickas inte (portalen hade nekat den). Vaktens checkar gör det omöjligt i dag.
+- En händelse utan sin dag skickas inte (portalen hade nekat den). Vaktens checkar gör det omöjligt i dag. Statusen
+  avgör, inte dagen: en levererad med en fakturadag är inte fakturerad.
+- Ett läge med fakturan har också leveransen (den köas alltid först), så en leverans köas aldrig efter fakturan.
 
 **Egna val som William inte sa emot:**
 - `confirmedAt` är när någon tryckte Bekräfta, inte när Fortnox-numret kom: då låstes beställningen, och CRM:et svarar
@@ -1406,8 +1410,13 @@ kön känner igen nycklarna. Bara en rad som saknar sin tid (skriven för hand) 
 - En beställning som makulerades innan "bekräftad" köats får bara makuleringen, också när den hann få ett Fortnox-nummer:
   butiken såg den aldrig bekräftad.
 
-**Känt, inte jagat:** Makulera kopplar ett funnet Fortnox-nummer på en rad utan nummer innan den makulerar ordern. Går ett
-cron-varv precis däremellan får butiken "Bekräftad" och strax "Makulerad".
+**Känt, inte jagat:**
+- Makulera kopplar ett funnet Fortnox-nummer på en rad utan nummer innan den makulerar ordern. Går ett cron-varv precis
+  däremellan får butiken "Bekräftad" och strax "Makulerad". Att kräva `fortnox_order_sync_status = 'synced'` hade
+  undvikit det, men gjort butikens läge beroende av claimens släpp i flera kodvägar.
+- Bara bekräftelsen spärrar, som för jobben. Ger en köad leverans upp (60 försök, portalen nere i över två dygn) går en
+  senare fakturering ändå fram, och butiken ser Fakturerad utan leveransdag. Leveransen kan då inte skickas om, eftersom
+  något senare finns för beställningen.
 
 **Portalens mottagare** (läst @ `e9b55aa`): `store_order.cancelled` kräver `reason` (utan standardvärde, till skillnad från
 `job.cancelled`), trimmad och högst 2000 tecken räknade i kodpunkter (zod 4, prövat). Makuleringens route tar högst 2000
@@ -1415,9 +1424,18 @@ UTF-16-enheter, alltså aldrig för långt. Portalen räknar statusen ur datumen
 `cancelled` på allt efter en makulering och 404 `unknown_order` på ett id den inte har, också ett som inte är ett uuid: de
 lokala `so-lokal-*` kan bara prövas mot en fejkportal.
 
-**Prövat (gren 1):** vitest (`storeOrderState.test.ts`, 32), med ett kontraktstest som speglar portalens schema för
-`store_order.*` och kräver giltiga nycklar. 56 mutationer, alla röda utom en likvärdig (en JSON-array kan inte bära
-lägets fält).
+**Granskningen av gren 1** (code-review high, en runda, sju fynd):
+- Lagat: en leverans eller faktura utan sin tid fick körningens tid, alltså inte samma nyckel efter en krasch (nu dagens
+  början); ett läge med fakturan men inte leveransen hade köat leveransen efter fakturan; statusen som typ, inga
+  `as string`.
+- Dokumenterat ovan: en uppgiven leverans före fakturan, och Makuleras race.
+- Fel premiss: "ingenting markerar beställningen igen efter en uppgiven bekräftelse". "Skicka om" markerar den i gren 2,
+  som jobben, och kön rensas aldrig, så "saknas" nås inte.
+- Lämnat: tidshjälparen är inte längre en kopia av jobbens (den tar en dag att falla tillbaka på).
+
+**Prövat (gren 1):** vitest (`storeOrderState.test.ts`, 34), med ett kontraktstest som speglar portalens schema för
+`store_order.*` och kräver giltiga nycklar. 61 mutationer, alla röda utom två likvärdiga: en JSON-array kan inte bära
+lägets fält, och en fakturering som redan köats når aldrig utskicket (`waiting` och "fakturan har leveransen").
 
 **Gren 2:** `storeOrderSync.ts` (de markerade beställningarna, äldst först; kön; läget och markeringen i en villkorad
 UPDATE), cron-steget efter jobbens omräkning och i omräkningen efter utskicket, "Skicka om" markerar beställningen, och
