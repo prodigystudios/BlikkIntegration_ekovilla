@@ -1023,10 +1023,23 @@ testbolaget: ordrar 27–31 och fakturor 14–18, alla obokförda.
 - Orderbekräftelsen i Fortnox skriver ingen sådan text, och inte heller vår egen PDF-design (den följer `TotalVAT`).
 
 **Williams beslut (2026-09-29):** momsen **som i CRM:et i dag**, per dokument: en butiksbeställning har 25 % (butiken är
-slutkund), också frakten; ett portaljobb (arbete åt butiken mot en annan slutkund) har 0 % på hela ordern. Inget konto per
-rad och ingen spärr: materialordrar till kunder med omvänd moms får i dag sin moms för hand på samma sätt, och varken
-ekonomi eller vd har sett något fel. Kontot och fakturatexten är en känd sak att ta med ekonomi (se "Öppna frågor").
+slutkund), också frakten; ett portaljobb (arbete åt butiken mot en annan slutkund) har 0 % på hela ordern. Ingen spärr:
+materialordrar till kunder med omvänd moms får i dag sin moms för hand på samma sätt.
 Portaljobbets 0 % oavsett kort byggs i 8b eller en egen liten PR.
+
+**Rättat samma dag (William, efter #258): kontot per rad.** "Konto blir fel vid moms-ordrar." Varje rad i varje dokument
+(offert, order, delfaktura, och därmed butiksbeställningarna) bär nu `AccountNumber` efter dokumentets moms: moms → 3001
+("3001 ska det vara när det är moms"), omvänd byggmoms → 3231, 0 % utan omvänd moms → 3004 (`fortnoxSalesAccount` i
+`lib/domains/fortnox/helpers.ts`). Egen PR före 8b. Fakturatexten tas senare (William: "inte lika viktig som att siffrorna
+går in på rätt konto").
+
+Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka; ordrar 32–35, offerter 33–35, fakturor
+19–21):
+- **Dokumentet tar kortets momstyp när det skapas**, och `createorder`/`createinvoice` ärver den. Den styr fakturatexten
+  och kontona på raderna som skapas med dokumentet. Kortet som ändras efteråt rör inte dokumentet.
+- **En rad som läggs till vid en PUT tar kontot ur det levande kortet**, och en rad som finns kvar ärver sitt konto.
+  `AccountNumber: null` ger konto 0. Därför kontot på varje rad, varje gång.
+- `VatType` nekas som `VATType` (2001399).
 
 ### Fas 8a: resultat (2026-09-29)
 
@@ -1312,10 +1325,11 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 Ingen av dem stoppar fas 0–7.
 
 - ✅ **Momsen** (kontraktets fråga 4): besvarad av William 2026-09-29, se "Fas 8: spiken om momsen" och punkt 34.
-- **Kontot och fakturatexten vid moms som avviker från kundkortet** (till ekonomi, stoppar inget): Fortnox bokför en rad
-  med 25 % till en kund med omvänd moms på 3231 och skriver "Omvänd betalningsskyldighet" på fakturan, och en rad med
-  0 % till en kund med vanlig moms på 3004 utan texten. Det gäller dagens manuella materialordrar lika mycket som
-  butiksbeställningarna. Vill ekonomi ha det ändrat blir det en egen ändring (konto per rad) som gäller alla dokument.
+- ✅ **Kontot vid moms som avviker från kundkortet**: konto per rad, se "Fas 8: spiken om momsen".
+- **Fakturatexten vid moms som avviker från kundkortet** (senare, stoppar inget): Fortnox faktura skriver "Omvänd
+  betalningsskyldighet" vid 25 % till en kund med omvänd moms, och texten saknas vid 0 % till en kund med vanlig moms.
+  Texten följer kortets momstyp när dokumentet skapas; enda vägen är att kortet har dokumentets momstyp i det ögonblicket
+  (vända kortet kring skapandet: risk att ett dokument som skapas för samma kund i Fortnox samtidigt får fel momstyp).
 - ✅ **Ett avbrutet jobb** (fråga 5): `job.cancelled`, byggt i fas 4b (punkt 20).
 - ✅ **Dokumenten** (fråga 7): orderbekräftelsen och egenkontrollen, byggt i fas 7 (punkt 28–30).
 - **Planeringens datumbekräftelse** föreslår kontakten på plats (`resolveDocumentContact()` i
