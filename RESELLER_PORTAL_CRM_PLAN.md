@@ -162,6 +162,7 @@ Ren logik som testas isolerat:
 | `jobState.ts` ✅ | Portalens tillstånd härlett ur arbetsordern |
 | `jobDocuments.ts` ✅, `jobDocumentsStore.ts` ✅, `jobDocumentsDecision.ts` ✅, `outboundContent.ts` ✅ | Dokumenten (fas 7). Den rena delen (sorterna, gränsen, filnamnet, köns händelse med en referens till filen, egenkontrollens prov mot orderns nummer) importeras av kortet och får aldrig dra in zod, databasen eller `node:crypto`. Frysningen, knappen, kortets läsning, "Öppna" och cron-sopningen ligger i `…Store.ts`; regeln "det senast beslutade vinner" i `…Decision.ts`; utskickets byte av referensen mot filens base64 i `outboundContent.ts` |
 | `storeOrders.ts` ✅, `storeOrderIntake.ts` ✅, `storeOrdersStore.ts` ✅, `storeOrdersView.ts` ✅ | Butiksbeställningarna (fas 8). Den rena delen (statusarna, summorna i hela ören, notisens sammanfattning och regeln för vilken notis som gäller) importeras av sidorna och får aldrig dra in zod eller databasen. Kroppens schema och besluten om en ny, ändrad och tillbakadragen står i `storeOrderIntake.ts`; intaget, notisen med lån och cron-sopningen i `…Store.ts`; sidornas läsning med sessionen i `…View.ts` |
+| `storeOrderState.ts` ✅ | Butiksbeställningens läge hos portalen (fas 8b3), härlett ur raden: vilka `store_order.*` som ska köas. Ren, och varje händelse byggs helt ur raden, så att samma rad alltid ger samma nyckel och kropp |
 | `jobMessages.ts` ✅, `jobMessagesStore.ts` ✅ | Meddelandena (fas 6). Den rena delen (avdelningarna, `job.message`-kroppen och dess nyckel, tecken räknade som Postgres räknar dem) importeras av kortet "Butiken" och får aldrig dra in zod eller databasen. Intaget från portalen, notisen, svaret, trådens läsning och cron-sopningen ligger i `…Store.ts` |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
@@ -381,8 +382,8 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **7** ✅ | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) automatiskt efter bekräftelsen och sedan med knappen, egenkontrollen med knappen, i kortet "Butiken". PDF:en fryses i en privat bucket och kön bär en referens. Storlekskontroll: högst 3 300 000 byte före base64, under Vercels 4,5 MB. Beteendet prövas mot en databas med `supabase/checks/portal_job_documents.sql`. Resultaten står under tabellen | 4b, 6 |
 | **8a** ✅ | Butiksbeställningar, väg B, intaget: `crm_store_orders` med vakten, `POST`/`PUT`/`withdraw` under `/api/portal/store-orders`, 409 bara efter bekräftelsen, notisen till den ansvarige, sidorna (lista och en beställning, läsläge). Beteendet prövas mot en databas med `supabase/checks/portal_store_orders.sql`. Resultaten står under tabellen | Momsbeslutet |
 | **8b1** ✅ | Ekovillas steg före bekräftelsen: koppla kund, frakten, Bekräfta med Fortnox-ordern (`buildOrderRows()`, 25 %) och dess omförsök. Ingen migrering. Resultaten står under tabellen | 8a |
-| **8b2** | Levererad, Fakturera, Makulera | 8b1 |
-| **8b3** | Statusen tillbaka (`store_order.*`) | 8b1 |
+| **8b2** ✅ | Levererad, Fakturera, Makulera, med svepet som makulerar kvarlämnade Fortnox-ordrar. Ingen migrering. Resultaten står under tabellen | 8b1 |
+| **8b3** | Statusen tillbaka (`store_order.*`), i två grenar: den rena tillståndsberäkningen (✅ `storeOrderState.ts`), sedan omräkningen mot databasen, cron-steget och utskicksfliken. Ingen migrering. Resultaten står under tabellen | 8b2 |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
 ### Fas 0: resultat (2026-09-27)
@@ -1243,8 +1244,8 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 - ⚠️ **Arbetsorderns huvud tvättar inte tankstreck** (det aktiva flödet): `buildOrderHeader` skickar Er referens och
   leveransadressen som de står, och "—" där nekar hela pushen (2000359, uppmätt 2026-09-29 på en order). En kontakt med
   tankstreck i namnet (macOS autokorrektur) fäller alltså jobbets Fortnox-order. Egen liten PR, fråga William.
-- ⚠️ **Artikel 1050 är en paketartikel i testbolaget:** Fortnox nekar raden ("raden måste innehålla en instans av det
-  paketet"). Är 1050 FRAKT en vanlig artikel i prod? Annars nekas varje beställning med frakt.
+- ✅ **Artikel 1050 är en paketartikel i testbolaget** (besvarat 2026-09-29): 1050 FRAKT är nu en vanlig artikel i
+  testbolaget, som i prod. Prövat: so-lokal-8b-14 blev order 74 med FRAKT 450 kr, 25 % och konto 3001.
 - En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund
   bara före bekräftelsen). Vägen ut blir Makulera (✅ 8b2).
 - Lämnat: omförsöksloopen är en kopia av jobbens (`retryPortalFortnox`); att dela den hade rört 4b:s prövade kod.
@@ -1348,21 +1349,97 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 - I webbläsaren: säljare, admin, konsult (inget kort) och telefonbredd.
 
 **Frågor och kvar:**
-- ⚠️ **Arbetsorderns fakturering läser "0" som en faktura** (det aktiva flödet): `fetchInvoiceReference` i
+- ✅ **Arbetsorderns fakturering läser "0" som en faktura** (det aktiva flödet): `fetchInvoiceReference` i
   `lib/domains/fortnox/orders.ts` gör `existing ? String(existing) : null`. Två grenar kan då markera en arbetsorder
   fakturerad med nummer "0" utan faktura: grenen när synken inte är klar, och catch-grenen efter ett nekat
   `createinvoice`. Egen liten PR, fråga William. Läsfråga mot prod:
   `select id, order_number, status from crm_work_orders where fortnox_invoice_number = '0'`.
+  **Besvarat (William 2026-09-29):** det har hänt en gång i prod, på en testorder, med flit. Ingen åtgärd nu.
 - ⚠️ **En levererad beställning vars Fortnox-order makuleras för hand i Fortnox efter leveransen** kan varken faktureras
   eller makuleras (Makulera gäller bara före Levererad). Affärsbeslut: fråga William.
+  **Besvarat (William 2026-09-29):** tas efter portalarbetet, med fas 9-frågorna och arbetsorderns tankstreck och
+  leveransfält.
 - Nästa: 8b3, `store_order.confirmed/delivered/invoiced/cancelled` till portalen (mönstret i `jobSync.ts`/`jobState.ts`).
-  "Bekräftad" skickas först när Fortnox-numret finns. Vakten markerar redan `sync_requested_at`.
+  "Bekräftad" skickas först när Fortnox-numret finns. Vakten markerar redan `sync_requested_at`. Se "Fas 8b3: resultat".
 
 ⚠️ **Lokalt kvar:**
 - so-lokal-8-5, 8b-12, 8-6 och 8b-13 är fakturerade (26, 27, 24, 25).
 - 8b-11 och 8b-17 är levererade.
 - 8-1, 8-3, 8-4, 8b-15, 8b-16 och 8b-18 är makulerade. 8b-14 är bekräftad utan order (1050), och 8-7 är mottagen.
 - Testbolaget: ordrar 71–73, fakturor 23–27.
+
+### Fas 8b3: resultat (2026-09-29)
+
+**Williams besked:** två grenar, först den rena tillståndsberäkningen, sedan omräkningen, cron-steget och utskicket. Allt
+får prövas lokalt, också mot den riktiga lokala portalen med `EKOVILLA_CRM_STORE_ORDERS=on` där. "Slå inte på" gäller att
+inget går till prod eller testmiljön påslaget innan vi är redo.
+
+**Händelserna** (`lib/domains/portal/storeOrderState.ts`, gren 1):
+
+| Händelse | När | `data` | `occurredAt` |
+| --- | --- | --- | --- |
+| `store_order.confirmed` | bekräftad, levererad eller fakturerad, **och** Fortnox-numret finns | `orderId`, `ekovillaOrderNumber`, `confirmedAt` = `confirmed_at` | `confirmed_at` |
+| `store_order.delivered` | levererad eller fakturerad, efter att bekräftelsen är levererad | `orderId`, `deliveredAt` = `delivered_on` | `delivered_at` |
+| `store_order.invoiced` | fakturerad, efter leveransen | `orderId`, `invoicedAt` = `invoiced_on` | `invoiced_at` |
+| `store_order.cancelled` | makulerad, oavsett bekräftelsen | `orderId`, `reason` = `cancel_reason` | `cancelled_at` |
+| inget | mottagen, tillbakadragen | | |
+
+🧨 **Händelsen byggs helt ur raden, därför ingen migrering.** Jobben behöver `sync_pending_events` och `sync_version`
+eftersom deras `occurredAt` är körningens tid. En beställning når varje läge en gång (vakten: statusen bara framåt, numret
+en gång), och varje steg har en egen tid som knappen skriver. Samma rad ger alltså alltid samma nyckel och samma kropp.
+Utskicket kan då köa först och spara läget sedan, i en villkorad UPDATE på `sync_requested_at` (vakten sätter en ny
+`now()` vid varje ändring, så markeringen är krockkontrollen): en krasch mellan de två ger samma händelser nästa varv, och
+kön känner igen nycklarna. Det gäller varje rad som databasen tar emot: `confirmed_at` och `cancelled_at` krävs av
+tabellens checkar, och en leverans eller faktura utan sin tid (bara en rad skriven för hand) dateras med dagens början i
+UTC, aldrig med körningens tid.
+
+**Reglerna**, som jobbens:
+- Inget efter "bekräftad" köas förrän den är levererad. Väntar den räknas beställningen om nästa varv, sist i kön; bara
+  när något faktiskt väntar bakom den. Uppgiven står beställningen still tills "Skicka om".
+- "Makulerad" behöver ingen bekräftelse, och efter den köas ingenting.
+- Mottagen och tillbakadragen (butikens egen, som vakten också markerar) ger ingenting, och markeringen tas bort.
+- En egen kö per beställning, `store_order:<orderId>`, och ingen händelse ersätter en annan.
+- En händelse utan sin dag skickas inte (portalen hade nekat den). Vaktens checkar gör det omöjligt i dag. Statusen
+  avgör, inte dagen: en levererad med en fakturadag är inte fakturerad.
+- Ett läge med fakturan har också leveransen (den köas alltid först), så en leverans köas aldrig efter fakturan.
+
+**Egna val som William inte sa emot:**
+- `confirmedAt` är när någon tryckte Bekräfta, inte när Fortnox-numret kom: då låstes beställningen, och CRM:et svarar
+  409 på butikens ändringar sedan dess (kontraktets "Låser beställningen").
+- `occurredAt` är när CRM:et gjorde steget, inte körningens tid. För makuleringen är det datumet portalen visar.
+- En beställning som makulerades innan "bekräftad" köats får bara makuleringen, också när den hann få ett Fortnox-nummer:
+  butiken såg den aldrig bekräftad.
+
+**Känt, inte jagat:**
+- Makulera kopplar ett funnet Fortnox-nummer på en rad utan nummer innan den makulerar ordern. Går ett cron-varv precis
+  däremellan får butiken "Bekräftad" och strax "Makulerad". Att kräva `fortnox_order_sync_status = 'synced'` hade
+  undvikit det, men gjort butikens läge beroende av claimens släpp i flera kodvägar.
+- Bara bekräftelsen spärrar, som för jobben. Ger en köad leverans upp (60 försök, portalen nere i över två dygn) går en
+  senare fakturering ändå fram, och butiken ser Fakturerad utan leveransdag. Leveransen kan då inte skickas om, eftersom
+  något senare finns för beställningen.
+
+**Portalens mottagare** (läst @ `e9b55aa`): `store_order.cancelled` kräver `reason` (utan standardvärde, till skillnad från
+`job.cancelled`), trimmad och högst 2000 tecken räknade i kodpunkter (zod 4, prövat). Makuleringens route tar högst 2000
+UTF-16-enheter, alltså aldrig för långt. Portalen räknar statusen ur datumen och flyttar den aldrig bakåt, svarar 409
+`cancelled` på allt efter en makulering och 404 `unknown_order` på ett id den inte har, också ett som inte är ett uuid: de
+lokala `so-lokal-*` kan bara prövas mot en fejkportal.
+
+**Granskningen av gren 1** (code-review high, en runda, sju fynd):
+- Lagat: en leverans eller faktura utan sin tid fick körningens tid, alltså inte samma nyckel efter en krasch (nu dagens
+  början); ett läge med fakturan men inte leveransen hade köat leveransen efter fakturan; statusen som typ, inga
+  `as string`.
+- Dokumenterat ovan: en uppgiven leverans före fakturan, och Makuleras race.
+- Fel premiss: "ingenting markerar beställningen igen efter en uppgiven bekräftelse". "Skicka om" markerar den i gren 2,
+  som jobben, och kön rensas aldrig, så "saknas" nås inte.
+- Lämnat: tidshjälparen är inte längre en kopia av jobbens (den tar en dag att falla tillbaka på).
+
+**Prövat (gren 1):** vitest (`storeOrderState.test.ts`, 34), med ett kontraktstest som speglar portalens schema för
+`store_order.*` och kräver giltiga nycklar. 61 mutationer, alla röda utom två likvärdiga: en JSON-array kan inte bära
+lägets fält, och en fakturering som redan köats når aldrig utskicket (`waiting` och "fakturan har leveransen").
+
+**Gren 2:** `storeOrderSync.ts` (de markerade beställningarna, äldst först; kön; läget och markeringen i en villkorad
+UPDATE), cron-steget efter jobbens omräkning och i omräkningen efter utskicket, "Skicka om" markerar beställningen, och
+fliken "Utskick" visar `store_order.*` med beställningen.
 
 ---
 
@@ -1518,6 +1595,18 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     kan i teorin krocka: `store-order-<id>-withdraw` är samma sträng som `store-order-<id2>` när id2 är `<id>-withdraw`,
     och likadant för en ändrings `store-order-<id>-<updatedAt>`. Portalens id:n är uuid, så det händer inte i dag, men
     kontraktet bör säga att id:n är uuid, eller nycklarna få ett eget prefix per anrop (`store-order-withdraw-<id>`).
+    **Besvarat av portalen (@ `e9b55aa`):** portalens id:n är uuid, eftersom databasen ger dem, och nycklarnas format
+    ändras inte.
+36. **Kontot i portalens kopia är inaktuellt** (fas 8b3, 2026-09-29): "Kvar hos ekonomi" säger att en beställning till en
+    butik med omvänd moms bokförs på 3231. Sedan CRM-PR #259 bär varje rad sitt konto efter dokumentets moms, alltså 3001
+    för en beställning (25 %). Fakturatexten "Omvänd betalningsskyldighet" följer fortfarande kundkortet (öppen fråga,
+    före fas 9).
+37. **Butiksbeställningarnas status tillbaka** (fas 8b3): Idempotency-Key är `<type>-<orderId>-<occurredAt>`, och
+    `occurredAt` är när Ekovilla gjorde steget (Bekräfta, Levererad, Fakturera, Makulera), i UTC med `Z`, inte när
+    händelsen köades. `confirmedAt` är samma tid som `occurredAt`: när beställningen låstes, inte när Fortnox-numret kom.
+    `store_order.confirmed` skickas först när Fortnox-numret finns, och inget efter den förrän den är mottagen (2xx).
+    `store_order.cancelled` kan komma till en beställning som aldrig fått `store_order.confirmed`, också när portalen
+    redan fått 409 på en ändring. `reason` är aldrig tom.
 
 ## Öppna frågor
 
