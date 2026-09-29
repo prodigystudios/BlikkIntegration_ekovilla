@@ -119,8 +119,9 @@ describe('receiveStoreOrder', () => {
       payload: ORDER,
     });
     expect(deps.assign).toHaveBeenCalledWith({ resellerId: 'res-norrbygg', customerId: 'kund-1043' });
-    // Butiken dyker upp vid första kontakten, med kortet.
+    // Butiken dyker upp vid första kontakten, med kortet, i ett enda skriv.
     expect(m.tables.crm_portal_resellers[0]).toMatchObject({ reseller_id: 'res-norrbygg', customer_number: '1043', customer_id: 'kund-1043' });
+    expect(m.calls.filter((c) => c.table === 'crm_portal_resellers' && c.op !== 'select').map((c) => c.op)).toEqual(['upsert']);
   });
 
   it('en befintlig butik skrivs aldrig över av en beställning: den kan vara veckogammal i portalens kö', async () => {
@@ -638,6 +639,8 @@ describe('sweepStoreOrderNotices', () => {
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
     expect(summary.candidates).toBe(STORE_ORDER_NOTICES_PER_ROUND + 3);
     expect(summary.sent + summary.errors).toBe(STORE_ORDER_NOTICES_PER_ROUND);
+    // De tre som inte rymdes räknas som uppskjutna.
+    expect(summary.deferred).toBe(3);
     expect(summary.errors).toBe(1);
   });
 

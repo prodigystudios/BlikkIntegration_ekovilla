@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Ett varv av portalens bakgrundsarbete (fas 4b): omräkning → meddelandena (fas 6) → utskick → (om något levererades)
-// omräkning + utskick → dokumenten → butiksbeställningarnas notiser (fas 8) (fas 7), och ett utskick till om de köade något → Fortnox-försöken sist, bara inom
-// tidsgränsen. Ett steg som kastar stoppar inte nästa.
+// omräkning + utskick → dokumenten (fas 7), och ett utskick till om de köade något → butiksbeställningarnas notiser
+// (fas 8), inom dokumentens startgräns → Fortnox-försöken sist, bara inom tidsgränsen. Ett steg som kastar stoppar inte
+// nästa.
 
 const calls: string[] = [];
 const sync = vi.fn();

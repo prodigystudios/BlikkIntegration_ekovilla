@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/shared/cn';
+import EmptyState from '@/components/ui/EmptyState';
+import ErrorState from '@/components/ui/ErrorState';
 import { crm } from '@/app/crm/lib/crmTokens';
 import {
   STORE_ORDER_LIST_LIMIT,
@@ -68,11 +70,7 @@ export default function StoreOrdersClient({
         <p className={cn('mt-1', crm.pageSubtitle)}>Material som butikerna beställer i återförsäljarportalen.</p>
       </div>
 
-      {error ? (
-        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          {error} Ladda om sidan för att försöka igen.
-        </div>
-      ) : null}
+      {error ? <ErrorState title={error} message="Ladda om sidan för att försöka igen." /> : null}
 
       <div className={cn(crm.card, 'grid gap-2 p-2.5 md:p-3')}>
         <div className="flex flex-wrap gap-2" role="group" aria-label="Visa">
@@ -95,18 +93,17 @@ export default function StoreOrdersClient({
         </div>
 
         {visible.length === 0 ? (
-          <div className="grid justify-items-center gap-3 rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-600">
-            <span>{EMPTY[filter]}</span>
-            {filter !== 'all' && orders.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setFilter('all')}
-                className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
-              >
-                Visa alla
-              </button>
-            ) : null}
-          </div>
+          <EmptyState
+            title={EMPTY[filter]}
+            description={null}
+            action={
+              filter !== 'all' && orders.length > 0 ? (
+                <button type="button" onClick={() => setFilter('all')} className={crm.ghostButton}>
+                  Visa alla
+                </button>
+              ) : undefined
+            }
+          />
         ) : (
           <ul className="grid gap-1">
             {visible.map((order) => (

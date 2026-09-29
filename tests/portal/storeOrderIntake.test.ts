@@ -87,6 +87,15 @@ describe('portalStoreOrderSchema', () => {
     expect(result.error?.issues[0].path.join('.')).toBe('lines.0.unitCost');
   });
 
+  it('priset har ett tak (1 000 000 kr per enhet), så att summan i heltalsören alltid är exakt', () => {
+    const at = clone();
+    at.lines[0].unitCost = 1_000_000;
+    expect(portalStoreOrderSchema.safeParse(at).success).toBe(true);
+    const over = clone();
+    over.lines[0].unitCost = 1_000_000.01;
+    expect(portalStoreOrderSchema.safeParse(over).success).toBe(false);
+  });
+
   it('en negativ rad nekas', () => {
     const body = clone();
     body.lines[0].unitCost = -1;

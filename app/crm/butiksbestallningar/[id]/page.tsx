@@ -5,6 +5,7 @@ import { isUuid } from '@/lib/api/responses';
 import { createSessionClient } from '@/lib/supabase/session';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import ErrorState from '@/components/ui/ErrorState';
 import { getStoreOrderView } from '@/lib/domains/portal/storeOrdersView';
 import StoreOrderDetail from './StoreOrderDetail';
 
@@ -29,9 +30,7 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
         <Link href="/crm/butiksbestallningar" className={cn(crm.link, 'w-fit text-sm')}>
           Alla butiksbeställningar
         </Link>
-        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-          Beställningen gick inte att läsa. Ladda om sidan för att försöka igen.
-        </div>
+        <ErrorState title="Beställningen gick inte att läsa." message="Ladda om sidan för att försöka igen." />
       </div>
     );
   }

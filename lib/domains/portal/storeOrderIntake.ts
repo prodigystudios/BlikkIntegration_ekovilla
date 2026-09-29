@@ -33,7 +33,8 @@ const lineSchema = z
     quantity: z.number().int('Antalet är hela enheter.').positive('Måste vara större än noll.').max(100_000, 'Högst 100000.'),
     unitCost: amount
       .min(0, 'Priset kan inte vara negativt.')
-      .max(10_000_000)
+      // Taket håller summan i heltalsören exakt: 200 rader × 100 000 st × 1 000 000 kr = 2e15 öre, under 2^53.
+      .max(1_000_000, 'Högst 1000000 kr per enhet.')
       // Kontraktet: hela ören. Ett halvt öre hade avrundats olika här och i Fortnox.
       .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'Priset anges i hela ören (högst två decimaler).'),
     lineCost: amount,

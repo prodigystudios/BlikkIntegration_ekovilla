@@ -96,7 +96,7 @@ async function resolveStoreOrderCustomer(admin: SupabaseClient, store: PortalSto
  * kortet som numret pekar på; en befintlig rörs inte.
  */
 async function ensurePortalReseller(admin: SupabaseClient, store: PortalStoreOrder['store'], storeCustomer: StoreCustomer, now: Date) {
-  const { error } = await admin.from('crm_portal_resellers').upsert(
+  const inserted = await admin.from('crm_portal_resellers').upsert(
     {
       reseller_id: store.resellerId,
       name: store.name,
@@ -109,9 +109,11 @@ async function ensurePortalReseller(admin: SupabaseClient, store: PortalStoreOrd
       last_seen_at: now.toISOString(),
     },
     { onConflict: 'reseller_id', ignoreDuplicates: true },
-  );
-  if (error) throw new Error(`Butiken kunde inte sparas: ${error.message}`);
-  // Senaste kontakten är nu, hur gammal kroppen än är: bara den tiden, aldrig uppgifterna.
+  ).select('reseller_id');
+  if (inserted.error) throw new Error(`Butiken kunde inte sparas: ${inserted.error.message}`);
+  // Ny butik: tiderna står redan på raden.
+  if ((inserted.data ?? []).length > 0) return;
+  // Befintlig: senaste kontakten är nu, hur gammal kroppen än är; bara den tiden, aldrig uppgifterna.
   const seen = await admin.from('crm_portal_resellers').update({ last_seen_at: now.toISOString() }).eq('reseller_id', store.resellerId);
   if (seen.error) throw new Error(`Butikens senaste kontakt kunde inte sparas: ${seen.error.message}`);
 }
@@ -465,7 +467,7 @@ export type StoreOrderNoticeSweepSummary = {
   failed: number;
   noRecipient: number;
   errors: number;
-  /** Tiden tog slut: kvar till nästa varv. */
+  /** Tiden tog slut, eller omgången var full: kvar till nästa varv. */
   deferred: number;
 };
 
@@ -474,8 +476,8 @@ const touchedAt = (row: SweepRow) => Date.parse(row.withdrawn_at ?? row.changed_
 
 /**
  * Notiserna som inte gick iväg: en ny beställning, en ändring eller en tillbakadragning de senaste två veckorna som
- * den ansvarige inte fått veta om. De nyaste läses, i tre smala frågor (ny, ändrad, tillbakadragen), så att gamla
- * beställningar aldrig tränger undan en ny, och kroppen läses först när notisen skickas. Ett lån som ännu gäller tar
+ * den ansvarige inte fått veta om. Fyra smala frågor (ny, ändrad, och tillbakadragen utan bokförd notis respektive med
+ * en version bokförd), och kroppen läses först när notisen skickas. Ett lån som ännu gäller tar
  * ingen plats i omgången. Ett fel för en beställning stoppar inte nästa.
  */
 export async function sweepStoreOrderNotices(
@@ -522,7 +524,15 @@ export async function sweepStoreOrderNotices(
     // Det som väntat längst först.
     .sort((a, b) => touchedAt(a) - touchedAt(b));
 
-  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 };
+  // Det som inte ryms i omgången (fler än 20) väntar till nästa varv, och räknas som uppskjutet.
+  const summary: StoreOrderNoticeSweepSummary = {
+    candidates: due.length,
+    sent: 0,
+    failed: 0,
+    noRecipient: 0,
+    errors: 0,
+    deferred: Math.max(0, due.length - STORE_ORDER_NOTICES_PER_ROUND),
+  };
   for (const row of due.slice(0, STORE_ORDER_NOTICES_PER_ROUND)) {
     // Resten väntar till nästa varv: statusen och dokumenten i samma varv ska inte vänta på notiser.
     if (now().getTime() - at >= budgetMs) {
