@@ -567,23 +567,35 @@ export const FORTNOX_SALES_ACCOUNT_VAT_6 = 3003;
 export const FORTNOX_SALES_ACCOUNT_REVERSE_VAT = 3231;
 export const FORTNOX_SALES_ACCOUNT_NO_VAT = 3004;
 
+// Artiklar med ett eget konto i stället för 3001 när raden har moms. Vid omvänd byggmoms gäller
+// 3231 som för allt annat. William 2026-09-29: Etableringskostnad (1010) på 3017.
+const FORTNOX_SALES_ACCOUNT_BY_ARTICLE = new Map<string, number>([
+  ['1010', 3017],
+]);
+
 // Dokumentets moms: `vatPercent` är den som står på dokumentet, `reverseVat` omvänd byggmoms (då
 // går raderna ut med 0 %). Momsen är fritt inmatad (0–100), så 12 % och 6 % får sina egna konton,
 // som Fortnox fördefinierade (SALES_12_SE, SALES_6_SE); 0 % utan omvänd moms är Fortnox eget val
 // för ett kort med vanlig moms (SALES_0_SE).
-export function fortnoxSalesAccount(vatPercent: number, reverseVat: boolean): number {
+export function fortnoxSalesAccount(vatPercent: number, reverseVat: boolean, articleNumber?: string | null): number {
   if (reverseVat) return FORTNOX_SALES_ACCOUNT_REVERSE_VAT;
   if (vatPercent === 12) return FORTNOX_SALES_ACCOUNT_VAT_12;
   if (vatPercent === 6) return FORTNOX_SALES_ACCOUNT_VAT_6;
-  return vatPercent > 0 ? FORTNOX_SALES_ACCOUNT_VAT : FORTNOX_SALES_ACCOUNT_NO_VAT;
+  if (!(vatPercent > 0)) return FORTNOX_SALES_ACCOUNT_NO_VAT;
+  return (articleNumber && FORTNOX_SALES_ACCOUNT_BY_ARTICLE.get(articleNumber.trim())) || FORTNOX_SALES_ACCOUNT_VAT;
 }
 
-// Sista passet i varje radbyggare: samma konto på varje rad, också text-, ROT- och notraderna. Ett
-// pass i slutet i stället för fältet på varje ställe som skapar en rad, så att en ny sorts rad inte
-// kan glömmas och ärva kontot från raden som låg på positionen förut.
-export function withFortnoxSalesAccount<T extends object>(rows: T[], account: number): Array<T & { AccountNumber: number }> {
-  // Spridningen tar med symbolnyckeln FORTNOX_TEXT_ROW.
-  return rows.map((row) => ({ ...row, AccountNumber: account }));
+// Sista passet i varje radbyggare: kontot på varje rad, också text-, ROT- och notraderna. Ett pass i
+// slutet i stället för fältet på varje ställe som skapar en rad, så att en ny sorts rad inte kan
+// glömmas och ärva kontot från raden som låg på positionen förut.
+export function withFortnoxSalesAccount<T extends object>(
+  rows: T[], vatPercent: number, reverseVat: boolean,
+): Array<T & { AccountNumber: number }> {
+  return rows.map((row) => {
+    const articleNumber = (row as { ArticleNumber?: unknown }).ArticleNumber;
+    // Spridningen tar med symbolnyckeln FORTNOX_TEXT_ROW.
+    return { ...row, AccountNumber: fortnoxSalesAccount(vatPercent, reverseVat, typeof articleNumber === 'string' ? articleNumber : null) };
+  });
 }
 
 /**

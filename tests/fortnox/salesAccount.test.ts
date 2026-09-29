@@ -27,6 +27,20 @@ describe('fortnoxSalesAccount', () => {
     expect(fortnoxSalesAccount(6, false)).toBe(3003);
   });
 
+  it('bokar Etableringskostnad (1010) med moms på 3017, men omvänd byggmoms på 3231 som allt annat', () => {
+    // William 2026-09-29.
+    expect(fortnoxSalesAccount(25, false, '1010')).toBe(3017);
+    expect(fortnoxSalesAccount(25, false, ' 1010 ')).toBe(3017);
+    expect(fortnoxSalesAccount(0, true, '1010')).toBe(3231);
+    expect(fortnoxSalesAccount(0, false, '1010')).toBe(3004);
+  });
+
+  it('ger andra artiklar och rader utan artikel 3001', () => {
+    expect(fortnoxSalesAccount(25, false, '10100')).toBe(3001);
+    expect(fortnoxSalesAccount(25, false, 'constructor')).toBe(3001);
+    expect(fortnoxSalesAccount(25, false, null)).toBe(3001);
+  });
+
   it('låter omvänd moms vinna: raderna går då ut med 0 % oavsett dokumentets procentsats', () => {
     expect(fortnoxSalesAccount(25, true)).toBe(3231);
   });
@@ -57,6 +71,15 @@ describe('buildOrderRows — kontot på varje rad', () => {
     expect(everyAccount(rows)).toEqual([3231, 3231, 3231, 3231]);
   });
 
+  it('Etableringskostnaden får sitt eget konto, textraden under den 3001', () => {
+    const rows = buildOrderRows([
+      { pricing_mode: 'item', article_number: '1010', article_name: 'Etableringskostnad', unit_price: '2490', quantity: '1', line_note: 'Sandviken' },
+      { pricing_mode: 'item', article_number: '13003', article_name: 'Levy', unit_price: '300', quantity: '2' },
+    ] as never, 25, false, false);
+    expect(everyAccount(rows)).toEqual([3017, 3001, 3001]);
+    expect(everyAccount(buildOrderRows([{ pricing_mode: 'item', article_number: '1010', unit_price: '2490', quantity: '1' }] as never, 0, false, true))).toEqual([3231]);
+  });
+
   it('skickar fältet med exakt Fortnox namn', () => {
     const rows = buildOrderRows(items as never, 25, false, false);
     expect(JSON.parse(JSON.stringify(rows))[0]).toMatchObject({ AccountNumber: 3001, VAT: 25 });
@@ -64,6 +87,11 @@ describe('buildOrderRows — kontot på varje rad', () => {
 });
 
 describe('buildOfferRows — kontot på varje rad', () => {
+  it('Etableringskostnaden får sitt eget konto', () => {
+    const rows = buildOfferRows([{ pricing_mode: 'item', article_number: '1010', article_name: 'Etableringskostnad', unit_price: '2490', quantity: '1' }] as never, 25, false);
+    expect(everyAccount(rows)).toEqual([3017]);
+  });
+
   const items = [
     // m²/tjocklek + Radtext → en textrad under artikeln.
     { pricing_mode: 'm3', article_number: '13003', article_name: 'Levy', m2: '100', thickness_mm: '200', unit_price: '700', line_note: 'Vind' },
@@ -100,5 +128,10 @@ describe('buildInvoiceRows — kontot på varje rad', () => {
   it('omvänd moms: varje rad bär 3231', () => {
     const rows = buildInvoiceRows(items as never, request, 0, false, true);
     expect(everyAccount(rows)).toEqual([3231, 3231]);
+  });
+
+  it('Etableringskostnaden får sitt eget konto', () => {
+    const rows = buildInvoiceRows([{ pricing_mode: 'item', article_number: '1010', article_name: 'Etableringskostnad', unit_price: '2490', quantity: '1' }] as never, new Map([['#0', 1]]), 25, false);
+    expect(everyAccount(rows)).toEqual([3017]);
   });
 });

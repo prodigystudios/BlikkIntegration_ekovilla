@@ -6,7 +6,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, fortnoxSalesAccount, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withFortnoxSalesAccount } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withFortnoxSalesAccount } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
@@ -294,7 +294,7 @@ export function buildInvoiceRows(
   // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Fakturan skapas med POST, så
   // inget ärvs positionellt här, men utan fältet väljer Fortnox kontot ur kundkortet. Se
   // fortnoxSalesAccount.
-  return withFortnoxSalesAccount(rows, fortnoxSalesAccount(vatPercent, reverseVat));
+  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.
