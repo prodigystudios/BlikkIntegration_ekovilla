@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { errorText } from '@/lib/domains/portal/settle';
 import { markStoreOrderDelivered } from '@/lib/domains/portal/storeOrderFulfilment';
 import { formatStoreOrderDay } from '@/lib/domains/portal/storeOrders';
 import { isoDayNumber, isoFromDayNumber } from '@/lib/domains/planning/timezone';
@@ -75,7 +76,7 @@ export async function POST(req: Request, context: RouteContext) {
     }
   } catch (e) {
     const fortnox = storeOrderFortnoxErrorResponse(e);
-    console.error('[portal-store-orders] leveransen kunde inte sparas', { id: context.params.id, error: e instanceof Error ? e.message : String(e) });
+    console.error('[portal-store-orders] leveransen kunde inte sparas', { id: context.params.id, error: errorText(e) });
     return fortnox ?? routeError(500, 'store_order_deliver_failed', 'Leveransen kunde inte sparas.');
   }
 }

@@ -375,6 +375,14 @@ describe('invoiceStoreOrder', () => {
     expect(row(m)).toMatchObject({ status: 'delivered', fortnox_invoice_sync_status: 'pending', fortnox_invoice_claimed_at: other });
   });
 
+  it('fakturans stämpel går inte att läsa: claimen släpps till synkläget som det var', async () => {
+    let selects = 0;
+    const m = db(delivered({ fortnox_invoice_sync_status: 'not_synced' }));
+    m.failOn((c) => c.op === 'select' && c.table === 'crm_store_orders' && ++selects === 2, { message: 'nere' });
+    await expect(invoice(m, fakeFortnox().deps)).rejects.toThrow('Claimen gick inte att läsa');
+    expect(row(m)).toMatchObject({ fortnox_invoice_sync_status: 'not_synced', fortnox_invoice_claimed_at: null });
+  });
+
   it('Fortnox inte anslutet: kastar, claimen släppt som not_synced', async () => {
     const m = db(delivered());
     const { deps } = fakeFortnox();
@@ -672,6 +680,13 @@ describe('cancelStoreOrder', () => {
     expect(await cancel(m, deps)).toEqual({ kind: 'busy' });
     expect(state['71'].cancelled).toBe(false);
     expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_number: null, fortnox_order_claimed_at: other });
+  });
+
+  it('ingen order i Fortnox och sista skrivningen faller: omförsöken står kvar (inget makulerades, kortet lovar dem)', async () => {
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed', fortnox_next_attempt_at: '2026-09-29T10:05:00.000Z' }));
+    m.failOn((c) => isUpdate(c, 'status', 'cancelled'), { message: 'nere' });
+    await expect(cancel(m, fakeFortnox({}).deps)).rejects.toThrow('kunde inte makuleras');
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_number: null, fortnox_next_attempt_at: '2026-09-29T10:05:00.000Z', fortnox_order_sync_status: 'failed' });
   });
 
   it('bekräftad utan nummer och ingen order i Fortnox: makulerad utan nummer', async () => {

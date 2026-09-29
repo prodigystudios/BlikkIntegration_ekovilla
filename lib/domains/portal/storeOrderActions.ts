@@ -15,7 +15,9 @@ import {
   STORE_ORDER_FREIGHT_ARTICLE,
   buildStoreOrderFortnoxOrder,
   decideStoreOrderConfirm,
+  fortnoxInvoiceReference,
   pickStoreOrderFortnoxMatch,
+  pickStoreOrderFortnoxMatches,
   storeOrderFortnoxReference,
   type FortnoxOrderListItem,
   type StoreOrderConfirmBlocker,
@@ -202,9 +204,27 @@ export type StoreOrderFortnoxDeps = {
   cancel: (orderNumber: string) => Promise<void>;
   /** Fortnox-ordern som redan bär märkningen, eller null. Kastar när Fortnox inte svarar: då skickas ingenting. */
   findExisting: (reference: string) => Promise<string | null>;
+  /** Alla ordrar som bär märkningen och inte är makulerade (svepet, 8b2). Kastar när Fortnox inte svarar. */
+  findOpen: (reference: string) => Promise<string[]>;
+  /** En Fortnox-orders läge (svepet läser det efter ett nej, som Makulera). Kastar när Fortnox inte svarar. */
+  readOrder: (orderNumber: string) => Promise<StoreOrderFortnoxOrderState>;
   articles: (articleNumbers: string[]) => Promise<StoreOrderRegisterArticle[]>;
   now: () => Date;
 };
+
+export type StoreOrderFortnoxOrderState = {
+  cancelled: boolean;
+  /** Fakturan ordern pekar på, eller null. */
+  invoiceNumber: string | null;
+};
+
+/** GET /orders/{n}: makulerad, och fakturan (InvoiceReference, där "0" är ingen). */
+export async function readStoreOrderFortnoxOrder(orderNumber: string): Promise<StoreOrderFortnoxOrderState> {
+  const { Order } = await fortnoxGet<{ Order?: { Cancelled?: boolean | null; InvoiceReference?: string | number | null } }>(
+    `/orders/${encodeURIComponent(orderNumber)}`,
+  );
+  return { cancelled: Order?.Cancelled === true, invoiceNumber: fortnoxInvoiceReference(Order?.InvoiceReference) };
+}
 
 /** PUT /orders/{n}/cancel: den extra ordern här, och Makulera (./storeOrderFulfilment.ts). */
 export async function cancelFortnoxOrder(orderNumber: string): Promise<void> {
@@ -225,6 +245,8 @@ export function storeOrderFortnoxDeps(admin: SupabaseClient): StoreOrderFortnoxD
     post: (path, body) => fortnoxPost(path, body),
     cancel: cancelFortnoxOrder,
     findExisting: async (reference) => pickStoreOrderFortnoxMatch(await searchStoreOrderFortnoxOrders(reference), reference),
+    findOpen: async (reference) => pickStoreOrderFortnoxMatches(await searchStoreOrderFortnoxOrders(reference), reference),
+    readOrder: readStoreOrderFortnoxOrder,
     // Hela registret för numren, också inaktiva: namnet och enheten gäller ändå raden.
     articles: async (numbers) => {
       const { data, error } = await admin.from('fortnox_articles_cache').select('article_number, description, unit').in('article_number', numbers);
@@ -342,36 +364,49 @@ async function numberSavedMeanwhile(admin: SupabaseClient, id: string): Promise<
 
 /**
  * 🧨 SVEPET (8b2). Ett försök som skapade ordern medan beställningen makulerades (makuleringens sökning kom före POST:en)
- * lämnar en order i Fortnox. Varje order som bär märkningen och inte är makulerad makuleras. true: ingen står kvar.
- * false: något gick inte (Fortnox svarade inte, en order gick inte att makulera, eller Fortnox listar fortfarande en som
- * just makulerades); anroparen planerar då ett nytt svep (`requestLeftoverSweep`), som cron gör med jobbens schema.
+ * lämnar en order i Fortnox. Varje order som bär märkningen och inte är makulerad makuleras, i ett pass. Nekar Fortnox
+ * läses ordern, som i Makulera: en som redan är makulerad (listan släpar efter) är klar, en fakturerad kan inte makuleras.
+ *   done     ingen står kvar
+ *   blocked  bara fakturerade står kvar: kräver en människa, inga fler svep
+ *   retry    något tekniskt (Fortnox svarade inte); anroparen planerar ett nytt svep (`requestLeftoverSweep`), som cron
+ *            gör med jobbens schema
  */
 type LeftoverSweep = 'done' | 'retry' | 'blocked';
 
 async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOrderFortnoxDeps): Promise<LeftoverSweep> {
-  const tried = new Set<string>();
+  let open: string[];
   try {
-    // Högst tre: fler ordrar än så har aldrig skapats för en beställning; resten tar nästa svep.
-    for (let i = 0; i < 3; i += 1) {
-      const left = await deps.findExisting(reference);
-      if (!left) return 'done';
-      // Samma order igen: Fortnox listar den ännu som öppen. Nästa svep avgör.
-      if (tried.has(left)) return 'retry';
-      tried.add(left);
-      await deps.cancel(left);
-      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: left });
-    }
-    return 'retry';
+    open = await deps.findOpen(reference);
   } catch (e) {
-    // Ett 400 är Fortnox besked om ordern ("Är redan makulerad", "Är låst" av en faktura), som pushens regel: det kommer
-    // igen likadant, så inga fler svep. Allt annat är tekniskt och görs om.
-    const blocked = storeOrderFortnoxFailure(e) === 'blocked';
-    console.error(
-      `[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte sökas eller makuleras; ${blocked ? 'bara för hand nu' : 'nytt försök planeras'}`,
-      { id, error: errorText(e) },
-    );
-    return blocked ? 'blocked' : 'retry';
+    console.error('[portal-store-orders] 🧨 beställningen är makulerad, men Fortnox kunde inte sökas; nytt försök planeras', { id, error: errorText(e) });
+    return 'retry';
   }
+  let result: LeftoverSweep = 'done';
+  for (const orderNumber of open) {
+    try {
+      await deps.cancel(orderNumber);
+      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: orderNumber });
+    } catch (e) {
+      const state = await deps.readOrder(orderNumber).catch(() => null);
+      if (state?.cancelled) continue;
+      if (state?.invoiceNumber) {
+        console.error('[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen är fakturerad; bara för hand nu', {
+          id,
+          fortnoxOrderNumber: orderNumber,
+          fortnoxInvoiceNumber: state.invoiceNumber,
+        });
+        if (result === 'done') result = 'blocked';
+        continue;
+      }
+      console.error('[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte makuleras; nytt försök planeras', {
+        id,
+        fortnoxOrderNumber: orderNumber,
+        error: errorText(e),
+      });
+      result = 'retry';
+    }
+  }
+  return result;
 }
 
 /** Ett nytt svep om 5 min, i ett fönster på 24 h (jobbens schema), bara på en makulerad. Loggar bara. */
@@ -479,7 +514,9 @@ export async function pushStoreOrderToFortnox(
       .update(revisitColumns(first, deps.now()))
       .eq('id', id)
       .is('fortnox_next_attempt_at', null)
-      .is('fortnox_order_number', null);
+      .is('fortnox_order_number', null)
+      // Bara en bekräftad: den som håller claimen kan vara en makulering (8b2), och en makulerad får ingen ny titt.
+      .eq('status', 'confirmed');
     if (revisit.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${revisit.error.message}`);
     return { outcome: 'in_progress', fortnoxOrderNumber: null, error: null };
   }

@@ -1,10 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { FortnoxNotConnectedError, fortnoxGet, fortnoxPut } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, fortnoxPut } from '@/lib/domains/fortnox/client';
 import { claimFortnoxPush } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { planPortalFortnoxRetry } from './jobFortnoxRetry';
 import { errorText, settle } from './settle';
-import { cancelFortnoxOrder, searchStoreOrderFortnoxOrders, type StoreOrderActor } from './storeOrderActions';
+import {
+  cancelFortnoxOrder,
+  readStoreOrderFortnoxOrder,
+  searchStoreOrderFortnoxOrders,
+  type StoreOrderActor,
+  type StoreOrderFortnoxOrderState,
+} from './storeOrderActions';
 import { fortnoxInvoiceReference, pickStoreOrderFortnoxMatches, storeOrderFortnoxReference } from './storeOrderFortnox';
 import { isStoreOrderDeliveredOnAllowed, storeOrderCanBeCancelled, storeOrderDeliveredOnBounds, type StoreOrderStatus } from './storeOrders';
 import { readProfileName } from './storeOrdersStore';
@@ -86,11 +92,7 @@ async function release(admin: SupabaseClient, id: string, [status, claimedAt]: C
 
 // ------------------------------------------------------------------------------------------------------------ Fortnox
 
-export type StoreOrderFortnoxOrderState = {
-  cancelled: boolean;
-  /** Fakturan ordern pekar på, eller null. */
-  invoiceNumber: string | null;
-};
+export type { StoreOrderFortnoxOrderState };
 
 export type StoreOrderFulfilmentDeps = {
   /** GET /orders/{n}. Kastar när Fortnox inte svarar. */
@@ -112,10 +114,7 @@ type FortnoxOrderResponse = {
 export function storeOrderFulfilmentDeps(): StoreOrderFulfilmentDeps {
   const path = (orderNumber: string) => `/orders/${encodeURIComponent(orderNumber)}`;
   return {
-    readOrder: async (orderNumber) => {
-      const { Order } = await fortnoxGet<FortnoxOrderResponse>(path(orderNumber));
-      return { cancelled: Order?.Cancelled === true, invoiceNumber: fortnoxInvoiceReference(Order?.InvoiceReference) };
-    },
+    readOrder: readStoreOrderFortnoxOrder,
     cancel: cancelFortnoxOrder,
     createInvoice: async (orderNumber) => {
       const response = await fortnoxPut<FortnoxOrderResponse>(`${path(orderNumber)}/createinvoice`);
@@ -232,12 +231,17 @@ export type InvoiceStoreOrderResult =
   /** Fakturan finns i Fortnox, men numret kunde inte sparas här. Nästa tryck kopplar den; ingen ny skapas. */
   | { kind: 'unsaved'; invoiceNumber: string };
 
-type InvoiceRow = { status: StoreOrderStatus; fortnox_order_number: string | null; fortnox_invoice_number: string | null };
+type InvoiceRow = {
+  status: StoreOrderStatus;
+  fortnox_order_number: string | null;
+  fortnox_invoice_number: string | null;
+  fortnox_invoice_sync_status: string;
+};
 
 async function readInvoiceRow(admin: SupabaseClient, id: string): Promise<InvoiceRow | null> {
   const { data, error } = await admin
     .from(TABLE)
-    .select('status, fortnox_order_number, fortnox_invoice_number')
+    .select('status, fortnox_order_number, fortnox_invoice_number, fortnox_invoice_sync_status')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(`Beställningen gick inte att läsa: ${error.message}`);
@@ -290,7 +294,9 @@ export async function invoiceStoreOrder(
   const [first, name] = await Promise.all([readInvoiceRow(admin, input.id), readProfileName(admin, input.actor.id)]);
   const settled = settledInvoice(first);
   if (settled) return settled;
-  const stamp = await takeClaim(admin, input.id, INVOICE_CLAIM, 'failed');
+  // Synkläget som det var, om claimen måste släppas utan att något gjorts (en gammal claim räknas som ett fel).
+  const before = (first as InvoiceRow).fortnox_invoice_sync_status;
+  const stamp = await takeClaim(admin, input.id, INVOICE_CLAIM, before === 'pending' ? 'failed' : before);
   if (!stamp) return { kind: 'busy' };
 
   let invoice: { number: string; source: 'created' | 'adopted' };
@@ -511,10 +517,12 @@ export async function cancelStoreOrder(
       // 🧨 Före Fortnox, med claimen: numret kopplas om det saknades, och omförsöken stängs. Dör makuleringen efter det
       // skapar ingen push en ny order för en beställning som skulle makuleras (pushen ser numret, eller inget planerat),
       // och Levererad nekar en order som hunnit makuleras i Fortnox; ett nytt tryck räknar den som klar.
-      if (!current.fortnox_order_number) {
+      // Hittades ingen order makuleras ingenting i Fortnox före sista skrivningen: då finns inget att skydda, och omförsöken
+      // står kvar tills beställningen är makulerad (kortet lovar dem).
+      if (!current.fortnox_order_number && linked) {
         const prepared = await admin
           .from(TABLE)
-          .update({ ...(linked ? { fortnox_order_number: linked } : {}), fortnox_next_attempt_at: null })
+          .update({ fortnox_order_number: linked, fortnox_next_attempt_at: null })
           .eq('id', input.id)
           .eq('status', 'confirmed')
           .is('fortnox_order_number', null)
