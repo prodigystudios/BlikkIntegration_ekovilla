@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet, fortnoxPost, fortnoxPut, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
-import { claimFortnoxPush, documentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
+import { documentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
   PORTAL_FORTNOX_LEASE_MS,
@@ -27,6 +27,7 @@ import {
 } from './storeOrderFortnox';
 import { storeOrderFreightFromRow, type StoreOrderBody, type StoreOrderStatus } from './storeOrders';
 import { errorText, settle } from './settle';
+import { STORE_ORDER_CLAIM, releaseStoreOrderClaim, takeStoreOrderClaim } from './storeOrderClaim';
 import { readProfileName } from './storeOrdersStore';
 
 /**
@@ -226,6 +227,31 @@ export async function readStoreOrderFortnoxOrder(orderNumber: string): Promise<S
   return { cancelled: Order?.Cancelled === true, invoiceNumber: fortnoxInvoiceReference(Order?.InvoiceReference) };
 }
 
+/** Ordrarna som bär märkningen och inte är makulerade: svepet här, och Makulera (./storeOrderFulfilment.ts). */
+export async function findOpenStoreOrderFortnoxOrders(reference: string): Promise<string[]> {
+  return pickStoreOrderFortnoxMatches(await searchStoreOrderFortnoxOrders(reference), reference);
+}
+
+/**
+ * Makulerar en Fortnox-order och avgör ett nej på orderns läge, inte på Fortnox felkod (8b2): en som redan är makulerad
+ * (också när Fortnox lista släpar efter) är klar, en fakturerad kan inte makuleras. Annat kastas. Delas av Makulera,
+ * svepet och pushen som makulerar sin egen order.
+ */
+export async function cancelFortnoxOrderByState(
+  orderNumber: string,
+  deps: Pick<StoreOrderFortnoxDeps, 'cancel' | 'readOrder'>,
+): Promise<{ kind: 'cancelled' } | { kind: 'invoiced'; invoiceNumber: string }> {
+  try {
+    await deps.cancel(orderNumber);
+    return { kind: 'cancelled' };
+  } catch (e) {
+    const state = await deps.readOrder(orderNumber).catch(() => null);
+    if (state?.cancelled) return { kind: 'cancelled' };
+    if (state?.invoiceNumber) return { kind: 'invoiced', invoiceNumber: state.invoiceNumber };
+    throw e;
+  }
+}
+
 /** PUT /orders/{n}/cancel: den extra ordern här, och Makulera (./storeOrderFulfilment.ts). */
 export async function cancelFortnoxOrder(orderNumber: string): Promise<void> {
   await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
@@ -245,7 +271,7 @@ export function storeOrderFortnoxDeps(admin: SupabaseClient): StoreOrderFortnoxD
     post: (path, body) => fortnoxPost(path, body),
     cancel: cancelFortnoxOrder,
     findExisting: async (reference) => pickStoreOrderFortnoxMatch(await searchStoreOrderFortnoxOrders(reference), reference),
-    findOpen: async (reference) => pickStoreOrderFortnoxMatches(await searchStoreOrderFortnoxOrders(reference), reference),
+    findOpen: findOpenStoreOrderFortnoxOrders,
     readOrder: readStoreOrderFortnoxOrder,
     // Hela registret för numren, också inaktiva: namnet och enheten gäller ändå raden.
     articles: async (numbers) => {
@@ -384,20 +410,18 @@ async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOr
   let result: LeftoverSweep = 'done';
   for (const orderNumber of open) {
     try {
-      await deps.cancel(orderNumber);
-      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: orderNumber });
-    } catch (e) {
-      const state = await deps.readOrder(orderNumber).catch(() => null);
-      if (state?.cancelled) continue;
-      if (state?.invoiceNumber) {
+      const outcome = await cancelFortnoxOrderByState(orderNumber, deps);
+      if (outcome.kind === 'invoiced') {
         console.error('[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen är fakturerad; bara för hand nu', {
           id,
           fortnoxOrderNumber: orderNumber,
-          fortnoxInvoiceNumber: state.invoiceNumber,
+          fortnoxInvoiceNumber: outcome.invoiceNumber,
         });
         if (result === 'done') result = 'blocked';
         continue;
       }
+      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: orderNumber });
+    } catch (e) {
       console.error('[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte makuleras; nytt försök planeras', {
         id,
         fortnoxOrderNumber: orderNumber,
@@ -430,8 +454,16 @@ async function cancelledDuringPush(
 ): Promise<StoreOrderPushResult> {
   if (current?.fortnox_order_number !== number) {
     try {
-      await deps.cancel(number);
-      console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: number });
+      const outcome = await cancelFortnoxOrderByState(number, deps);
+      if (outcome.kind === 'invoiced') {
+        console.error('[portal-store-orders] 🧨 beställningen är makulerad, men dess Fortnox-order är fakturerad; bara för hand nu', {
+          id,
+          fortnoxOrderNumber: number,
+          fortnoxInvoiceNumber: outcome.invoiceNumber,
+        });
+      } else {
+        console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: number });
+      }
     } catch (cancelError) {
       // Svepet gör om det: ordern bär märkningen.
       console.error('[portal-store-orders] 🧨 beställningen är makulerad, men dess Fortnox-order kunde inte makuleras; nytt försök planeras', {
@@ -506,7 +538,8 @@ export async function pushStoreOrderToFortnox(
     return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
   }
 
-  if (!(await claimFortnoxPush(admin, 'crm_store_orders', id, 'fortnox_order_sync_status', 'fortnox_order_claimed_at'))) {
+  const stamp = await takeStoreOrderClaim(admin, id, STORE_ORDER_CLAIM, 'failed');
+  if (!stamp) {
     // Den som har claimen bokför sitt eget utfall. Här bara en ny titt om 5 min, och bara om inget är planerat och ingen
     // order finns: räknaren och ett planerat försök är den andras.
     const revisit = await admin
@@ -530,37 +563,39 @@ export async function pushStoreOrderToFortnox(
       .eq('id', id)
       .is('fortnox_next_attempt_at', null);
     if (net.error) throw new Error(`Skyddsnätet kunde inte sättas: ${net.error.message}`);
-    return await pushWithClaim(admin, id, deps);
+    const { result, sync } = await pushWithClaim(admin, id, deps);
+    // Claimen släpps sist, och bara om den fortfarande är vår (stämpeln): har en makulering tagit över en claim som
+    // blivit gammal (8b2) är den makuleringens, och en Levererad får inte komma in mitt i den.
+    await releaseStoreOrderClaim(admin, id, STORE_ORDER_CLAIM, stamp, sync);
+    return result;
   } catch (e) {
     // Ett fel som inte bokförts (databasen): claimen släpps, annars svarar knappen "skapas redan" i två minuter.
-    const released = await settle(
-      admin
-        .from('crm_store_orders')
-        .update({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
-        .eq('id', id)
-        .eq('fortnox_order_sync_status', 'pending'),
-    );
-    if (released.error) console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: released.error.message });
+    await releaseStoreOrderClaim(admin, id, STORE_ORDER_CLAIM, stamp, 'failed');
     throw e;
   }
 }
 
-/** Resten av pushen, med claimen tagen. Kastar bara när databasen inte svarar; anroparen släpper då claimen. */
-async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrderFortnoxDeps): Promise<StoreOrderPushResult> {
+/** Utfallet och synkläget claimen släpps till (`fortnox_order_sync_status`). */
+type PushOutcome = { result: StoreOrderPushResult; sync: 'synced' | 'not_synced' | 'failed' };
+
+/**
+ * Resten av pushen, med claimen tagen. Rör aldrig claimen själv: anroparen släpper den med stämpeln, till `sync`. Kastar
+ * bara när databasen inte svarar; anroparen släpper då claimen.
+ */
+async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrderFortnoxDeps): Promise<PushOutcome> {
   // Raden som den är med claimen: ett försök som hann före kan ha sparat numret, och en makulering kan ha kommit.
   const row = await readPushRow(admin, id);
   if (!row || row.fortnox_order_number || row.status !== 'confirmed') {
-    const values = { fortnox_order_sync_status: row?.fortnox_order_number ? 'synced' : 'not_synced', fortnox_order_claimed_at: null };
-    if (row?.status === 'cancelled') {
-      // Makulerad medan claimen togs (8b2): bara claimen släpps. Planen är makuleringens: ett svep, eller ingen.
-      const released = await admin.from('crm_store_orders').update(values).eq('id', id).eq('status', 'cancelled');
-      if (released.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${released.error.message}`);
-      return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
-    }
-    if (row) await finishPush(admin, row, row.fortnox_order_number ? 'exists' : 'skipped', values, deps.now());
-    return row?.fortnox_order_number
-      ? { outcome: 'exists', fortnoxOrderNumber: row.fortnox_order_number, error: null }
-      : { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
+    const sync = row?.fortnox_order_number ? 'synced' : 'not_synced';
+    // Makulerad medan claimen togs (8b2): ingen plan rörs, den är makuleringens (ett svep, eller ingen).
+    if (row?.status === 'cancelled') return { result: { outcome: 'skipped', fortnoxOrderNumber: null, error: null }, sync };
+    if (row) await finishPush(admin, row, row.fortnox_order_number ? 'exists' : 'skipped', {}, deps.now());
+    return {
+      result: row?.fortnox_order_number
+        ? { outcome: 'exists', fortnoxOrderNumber: row.fortnox_order_number, error: null }
+        : { outcome: 'skipped', fortnoxOrderNumber: null, error: null },
+      sync,
+    };
   }
 
   const card = await readPushCard(admin, row.customer_id);
@@ -568,12 +603,15 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
   if (!customerNumber) {
     // Kortet togs bort, eller tappade numret, efter bekräftelsen. Kräver en människa: inga omförsök.
     const error = 'Kundkortet saknar kundnummer i Fortnox.';
-    const written = await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), {
+    const written = await finishPush(admin, row, 'blocked', { fortnox_error: error }, deps.now(), {
       withoutNumber: true,
       whileConfirmed: true,
     });
-    if (!written) return (await numberSavedMeanwhile(admin, id)) ?? { outcome: 'blocked', fortnoxOrderNumber: null, error };
-    return { outcome: 'blocked', fortnoxOrderNumber: null, error };
+    if (!written) {
+      const settled = await numberSavedMeanwhile(admin, id);
+      if (settled) return { result: settled, sync: settled.outcome === 'exists' ? 'synced' : 'not_synced' };
+    }
+    return { result: { outcome: 'blocked', fortnoxOrderNumber: null, error }, sync: 'failed' };
   }
 
   const reference = storeOrderFortnoxReference(row.id);
@@ -626,15 +664,12 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
           : // Vårt eget fel (databasen, registret, sökningen): texten stannar i loggen.
             'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.';
     console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: e instanceof Error ? e.message : String(e) });
+    const sync = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     const written = await finishPush(
       admin,
       row,
       outcome,
-      {
-        fortnox_order_sync_status: e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed',
-        fortnox_order_claimed_at: null,
-        fortnox_error: error,
-      },
+      { fortnox_error: error },
       deps.now(),
       // Bara på en bekräftad: en makulerad (8b2) får inget fel och inga nya försök.
       { withoutNumber: true, whileConfirmed: true },
@@ -644,19 +679,20 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     if (!written) {
       const settled = await numberSavedMeanwhile(admin, id);
       if (settled?.outcome === 'skipped' && (await cancelLeftoverOrders(id, reference, deps)) === 'retry') await requestLeftoverSweep(admin, id, deps.now());
-      return settled ?? { outcome, fortnoxOrderNumber: null, error };
+      if (settled) return { result: settled, sync: settled.outcome === 'exists' ? 'synced' : 'not_synced' };
     }
-    return { outcome, fortnoxOrderNumber: null, error };
+    return { result: { outcome, fortnoxOrderNumber: null, error }, sync };
   }
 
   // Numret direkt, i samma skrivning som utfallet: vakten skriver det en gång. Bara på en beställning som fortfarande
-  // är bekräftad (se cancelledDuringPush).
+  // är bekräftad (se cancelledDuringPush). Claimen rörs inte här: anroparen släpper den med stämpeln, så att en
+  // makulering som tagit över den (8b2) behåller den medan den makulerar ordern.
   try {
     const saved = await finishPush(
       admin,
       row,
       adopted ? 'exists' : 'created',
-      { fortnox_order_number: number, fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null, fortnox_error: null },
+      { fortnox_order_number: number, fortnox_error: null },
       deps.now(),
       { whileConfirmed: true },
     );
@@ -669,9 +705,9 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // ha skickat, innan någon av ordrarna fanns att söka fram. Vakten skriver numret en gång. Står ett annat nummer på
     // beställningen makuleras vår egen order, så att bara en finns kvar.
     const current = await readPushRow(admin, id).catch(() => null);
-    if (current?.status === 'cancelled') return await cancelledDuringPush(admin, current, id, number, deps);
+    if (current?.status === 'cancelled') return { result: await cancelledDuringPush(admin, current, id, number, deps), sync: 'not_synced' };
     // Ett annat försök tog över just vår order (sökningen) och sparade den: allt är kopplat.
-    if (current?.fortnox_order_number === number) return { outcome: 'created', fortnoxOrderNumber: number, error: null };
+    if (current?.fortnox_order_number === number) return { result: { outcome: 'created', fortnoxOrderNumber: number, error: null }, sync: 'synced' };
     if (current?.fortnox_order_number && current.fortnox_order_number !== number) {
       try {
         await deps.cancel(number);
@@ -684,7 +720,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
           error: cancelError instanceof Error ? cancelError.message : String(cancelError),
         });
       }
-      return { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null };
+      return { result: { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null }, sync: 'synced' };
     }
     // Ordern finns i Fortnox men inte hos oss. Nästa försök hittar den på märkningen och tar över den, i stället för
     // att skapa en till; numret står i loggen och i svaret. Ett försök planeras om det går (databasen kan vara nere).
@@ -699,7 +735,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     const revisit = await settle(
       admin
         .from('crm_store_orders')
-        .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: unsaved })
+        .update({ ...revisitColumns(row, deps.now()), fortnox_error: unsaved })
         .eq('id', id)
         .is('fortnox_order_number', null)
         .eq('status', 'confirmed')
@@ -709,12 +745,12 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // Ingen rad: makulerad (8b2) mellan läsningen ovan och den här skrivningen. Då står vår order annars kvar.
     else if ((revisit.data ?? []).length === 0) {
       const after = await readPushRow(admin, id).catch(() => null);
-      if (after?.status === 'cancelled') return await cancelledDuringPush(admin, after, id, number, deps);
+      if (after?.status === 'cancelled') return { result: await cancelledDuringPush(admin, after, id, number, deps), sync: 'not_synced' };
     }
     // `failed`, inte `blocked`: ett nytt försök är planerat och tar över ordern, ingen människa behövs.
-    return { outcome: 'failed', fortnoxOrderNumber: number, error: unsaved };
+    return { result: { outcome: 'failed', fortnoxOrderNumber: number, error: unsaved }, sync: 'failed' };
   }
-  return { outcome: adopted ? 'exists' : 'created', fortnoxOrderNumber: number, error: null };
+  return { result: { outcome: adopted ? 'exists' : 'created', fortnoxOrderNumber: number, error: null }, sync: 'synced' };
 }
 
 // ------------------------------------------------------------------------------------------------------ bekräftelsen

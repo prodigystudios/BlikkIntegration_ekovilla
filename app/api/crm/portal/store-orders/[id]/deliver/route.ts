@@ -13,7 +13,7 @@ type RouteContext = { params: { id: string } };
 // dagen beställningen kom in till och med i dag). Bara när Fortnox-ordern finns och inte är makulerad i Fortnox. Går inte
 // att ångra; butiken får den i 8b3.
 //
-//   200 { delivered_on }
+//   200 { delivered_on }                        dagen som sparades (i dag när kroppen säger null)
 //   400 validation_error
 //   400 store_order_delivered_on_out_of_range   före dagen beställningen kom in, eller i framtiden
 //   403 store_order_forbidden                   varken ansvarig eller admin
@@ -35,7 +35,9 @@ const day = z.string().refine((value) => {
   return n !== null && isoFromDayNumber(n) === value;
 }, 'Ange leveransdagen.');
 
-const bodySchema = z.object({ deliveredOn: day });
+// null: i dag, som servern räknar den (svensk dag). Sidan skickar null när säljaren inte rört datumet, så att en flik som
+// stått öppen i dagar, eller en webbläsare med fel klocka, inte avgör dagen.
+const bodySchema = z.object({ deliveredOn: day.nullable() });
 
 export async function POST(req: Request, context: RouteContext) {
   try {
@@ -52,7 +54,7 @@ export async function POST(req: Request, context: RouteContext) {
     });
     switch (result.kind) {
       case 'delivered':
-        return ok({ delivered_on: parsed.data.deliveredOn });
+        return ok({ delivered_on: result.deliveredOn });
       case 'not_found':
         return routeError(404, 'store_order_not_found', 'Beställningen hittades inte.');
       case 'not_confirmed':

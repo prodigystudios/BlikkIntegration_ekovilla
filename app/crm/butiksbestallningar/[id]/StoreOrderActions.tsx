@@ -449,14 +449,12 @@ export default function StoreOrderActions(props: Props) {
   // Leveransdagen: i dag som förval (serverns svenska dag). Sidan kan stå öppen över midnatt, så övre gränsen är den senare
   // av serverns och webbläsarens svenska dag, läst när fältet används; servern prövar ändå.
   const [deliveredOn, setDeliveredOn] = useState(props.deliveredOnBounds.max);
-  // Rörd av säljaren: annars är förvalet dagens dag också när fliken stått öppen i dagar (sätts när knappen trycks).
+  // Rörd av säljaren: annars skickas "i dag" (null), och servern räknar dagen, också när fliken stått öppen i dagar.
   const [deliveredOnTouched, setDeliveredOnTouched] = useState(false);
   const [today, setToday] = useState(props.deliveredOnBounds.max);
   const refreshToday = () => {
     const now = stockholmTodayISO();
-    const latest = now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max;
-    setToday(latest);
-    return latest;
+    setToday(now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max);
   };
   const deliveredOnBounds = { min: props.deliveredOnBounds.min, max: today };
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
@@ -517,7 +515,7 @@ export default function StoreOrderActions(props: Props) {
     await run(
       `/api/crm/portal/store-orders/${props.id}/deliver`,
       'POST',
-      { deliveredOn },
+      { deliveredOn: deliveredOnTouched ? deliveredOn : null },
       'Leveransen kunde inte sparas.',
       () => 'Beställningen är markerad som levererad.',
       STEP_FULFIL_STALE_CODES,
@@ -631,11 +629,7 @@ export default function StoreOrderActions(props: Props) {
           />
           <button
             type="button"
-            onClick={() => {
-              const latest = refreshToday();
-              if (!deliveredOnTouched) setDeliveredOn(latest);
-              setConfirmingDelivery(true);
-            }}
+            onClick={() => setConfirmingDelivery(true)}
             disabled={locked || !dayValid}
             className={cn(crm.saveButton, 'px-4 sm:w-auto')}
           >
@@ -652,7 +646,7 @@ export default function StoreOrderActions(props: Props) {
         {confirmingDelivery ? (
           <CrmConfirmDialog
             title="Markera som levererad?"
-            message={`Levererad ${formatStoreOrderDay(deliveredOn)}. Butiken får beskedet, och det går inte att ångra.`}
+            message={`${deliveredOnTouched ? `Levererad ${formatStoreOrderDay(deliveredOn)}` : 'Levererad i dag'}. Butiken får beskedet, och det går inte att ångra.`}
             confirmLabel={busy ? 'Sparar…' : 'Markera som levererad'}
             busy={busy}
             focusCancel

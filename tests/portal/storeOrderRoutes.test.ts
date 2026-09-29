@@ -104,7 +104,7 @@ beforeEach(() => {
     linkStoreOrderCustomer: { kind: 'linked', storeLink: 'linked' },
     confirmStoreOrder: { kind: 'confirmed', push: { outcome: 'created', fortnoxOrderNumber: '801', error: null } },
     pushStoreOrderToFortnox: { outcome: 'created', fortnoxOrderNumber: '801', error: null },
-    markStoreOrderDelivered: { kind: 'delivered' },
+    markStoreOrderDelivered: { kind: 'delivered', deliveredOn: '2026-09-28' },
     invoiceStoreOrder: { kind: 'invoiced', invoiceNumber: '23', source: 'created' },
     cancelStoreOrder: { kind: 'cancelled', fortnoxOrderNumbers: ['58'] },
   };
@@ -284,6 +284,12 @@ describe('POST …/deliver', () => {
     const ours = await call('deliver', { deliveredOn: '2026-09-28' });
     expect(ours).toMatchObject({ status: 500, body: { errorDetails: { code: 'store_order_deliver_failed' } } });
     expect(JSON.stringify(ours.body)).not.toContain('hemlig');
+  });
+
+  it('null betyder i dag (servern räknar dagen); svaret bär dagen som sparades', async () => {
+    h.results.markStoreOrderDelivered = { kind: 'delivered', deliveredOn: '2026-09-30' };
+    expect(await call('deliver', { deliveredOn: null })).toMatchObject({ status: 200, body: { data: { delivered_on: '2026-09-30' } } });
+    expect(h.calls.find((c) => c.fn === 'markStoreOrderDelivered')!.args[1]).toEqual({ id: ID, deliveredOn: null, actor: { id: salesUser.id } });
   });
 
   it('🧨 bara en riktig kalenderdag i formen ÅÅÅÅ-MM-DD; annars 400 och ingenting körs', async () => {

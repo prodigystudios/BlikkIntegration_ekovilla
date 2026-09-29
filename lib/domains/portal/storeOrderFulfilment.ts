@@ -1,17 +1,24 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FortnoxNotConnectedError, fortnoxPut } from '@/lib/domains/fortnox/client';
-import { claimFortnoxPush } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { planPortalFortnoxRetry } from './jobFortnoxRetry';
 import { errorText, settle } from './settle';
 import {
+  STORE_ORDER_CLAIM,
+  STORE_ORDER_INVOICE_CLAIM,
+  releaseStoreOrderClaim,
+  takeStoreOrderClaim,
+} from './storeOrderClaim';
+import {
   cancelFortnoxOrder,
+  cancelFortnoxOrderByState,
+  findOpenStoreOrderFortnoxOrders,
   readStoreOrderFortnoxOrder,
-  searchStoreOrderFortnoxOrders,
   type StoreOrderActor,
+  type StoreOrderFortnoxDeps,
   type StoreOrderFortnoxOrderState,
 } from './storeOrderActions';
-import { fortnoxInvoiceReference, pickStoreOrderFortnoxMatches, storeOrderFortnoxReference } from './storeOrderFortnox';
+import { fortnoxInvoiceReference, storeOrderFortnoxReference } from './storeOrderFortnox';
 import { isStoreOrderDeliveredOnAllowed, storeOrderCanBeCancelled, storeOrderDeliveredOnBounds, type StoreOrderStatus } from './storeOrders';
 import { readProfileName } from './storeOrdersStore';
 
@@ -54,56 +61,19 @@ import { readProfileName } from './storeOrdersStore';
 
 const TABLE = 'crm_store_orders';
 
-type ClaimColumns = readonly [status: string, claimedAt: string];
-const ORDER_CLAIM: ClaimColumns = ['fortnox_order_sync_status', 'fortnox_order_claimed_at'];
-const INVOICE_CLAIM: ClaimColumns = ['fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at'];
-
-const claim = (admin: SupabaseClient, id: string, [status, claimedAt]: ClaimColumns) =>
-  claimFortnoxPush(admin, TABLE, id, status, claimedAt);
-
-/**
- * Tar claimen och läser dess stämpel (tiden den togs). null: någon annan håller den. Går stämpeln inte att läsa släpps
- * claimen, bara om den togs efter anropet (ingen annan kan ta den förrän om två minuter), till `dropValue`: synkläget som
- * det var. Steget görs då inte.
- */
-async function takeClaim(admin: SupabaseClient, id: string, columns: ClaimColumns, dropValue: string): Promise<string | null> {
-  const [status, claimedAt] = columns;
-  // En millisekund före: claimen stämplas med samma klocka (claimFortnoxPush), och en stämpel i samma millisekund räknas.
-  const since = new Date(Date.now() - 1).toISOString();
-  if (!(await claim(admin, id, columns))) return null;
-  const read = await settle(admin.from(TABLE).select(claimedAt).eq('id', id).maybeSingle());
-  const stamp = (read.data as Record<string, unknown> | null)?.[claimedAt];
-  if (!read.error && typeof stamp === 'string') return stamp;
-  // Ingen stämpel: claimen hann släppas (en push vars claim blivit gammal släpper den när den sparar sitt nummer). Någon
-  // annan har den kanske nu: upptagen, som när claimen inte gick att ta.
-  if (!read.error) return null;
-  const dropped = await settle(
-    admin.from(TABLE).update({ [status]: dropValue, [claimedAt]: null }).eq('id', id).eq(status, 'pending').gt(claimedAt, since),
-  );
-  if (dropped.error) console.error('[portal-store-orders] claimen kunde inte släppas', { id, claim: status, error: dropped.error.message });
-  throw new Error(`Claimen gick inte att läsa: ${read.error?.message ?? 'ingen stämpel'}`);
-}
-
-/** Släpper claimen, bara om den fortfarande är den egna (stämpeln). Ett fel loggas bara: den blir gammal efter två minuter. */
-async function release(admin: SupabaseClient, id: string, [status, claimedAt]: ClaimColumns, stamp: string, value: string): Promise<void> {
-  const released = await settle(admin.from(TABLE).update({ [status]: value, [claimedAt]: null }).eq('id', id).eq(claimedAt, stamp));
-  if (released.error) console.error('[portal-store-orders] claimen kunde inte släppas', { id, claim: status, error: released.error.message });
-}
+const ORDER_CLAIM = STORE_ORDER_CLAIM;
+const INVOICE_CLAIM = STORE_ORDER_INVOICE_CLAIM;
+const takeClaim = takeStoreOrderClaim;
+const release = releaseStoreOrderClaim;
 
 // ------------------------------------------------------------------------------------------------------------ Fortnox
 
 export type { StoreOrderFortnoxOrderState };
 
-export type StoreOrderFulfilmentDeps = {
-  /** GET /orders/{n}. Kastar när Fortnox inte svarar. */
-  readOrder: (orderNumber: string) => Promise<StoreOrderFortnoxOrderState>;
-  /** PUT /orders/{n}/cancel. */
-  cancel: (orderNumber: string) => Promise<void>;
+/** Pushens Fortnox-anrop (samma koppling, ./storeOrderActions.ts) och fakturan. */
+export type StoreOrderFulfilmentDeps = Pick<StoreOrderFortnoxDeps, 'readOrder' | 'cancel' | 'findOpen' | 'now'> & {
   /** PUT /orders/{n}/createinvoice: fakturans nummer ur svaret, eller null när svaret inte bär det. */
   createInvoice: (orderNumber: string) => Promise<string | null>;
-  /** Ordrarna som bär märkningen och inte är makulerade. Kastar när Fortnox inte svarar. */
-  findOpen: (reference: string) => Promise<string[]>;
-  now: () => Date;
 };
 
 type FortnoxOrderResponse = {
@@ -120,7 +90,7 @@ export function storeOrderFulfilmentDeps(): StoreOrderFulfilmentDeps {
       const response = await fortnoxPut<FortnoxOrderResponse>(`${path(orderNumber)}/createinvoice`);
       return fortnoxInvoiceReference(response.Order?.InvoiceReference) ?? fortnoxInvoiceReference(response.Invoice?.DocumentNumber);
     },
-    findOpen: async (reference) => pickStoreOrderFortnoxMatches(await searchStoreOrderFortnoxOrders(reference), reference),
+    findOpen: findOpenStoreOrderFortnoxOrders,
     now: () => new Date(),
   };
 }
@@ -128,7 +98,8 @@ export function storeOrderFulfilmentDeps(): StoreOrderFulfilmentDeps {
 // ---------------------------------------------------------------------------------------------------------- Levererad
 
 export type MarkStoreOrderDeliveredResult =
-  | { kind: 'delivered' }
+  /** Levererad den dagen (svensk dag). */
+  | { kind: 'delivered'; deliveredOn: string }
   | { kind: 'not_found' }
   /** Inte bekräftad (mottagen, tillbakadragen, makulerad), eller redan levererad. */
   | { kind: 'not_confirmed' }
@@ -165,12 +136,14 @@ function decideDeliver(row: DeliverRow | null, deliveredOn: string, now: Date): 
  */
 export async function markStoreOrderDelivered(
   admin: SupabaseClient,
-  input: { id: string; deliveredOn: string; actor: StoreOrderActor },
+  /** `deliveredOn`: dagen säljaren valde, eller null för i dag (serverns svenska dag, inte webbläsarens klocka). */
+  input: { id: string; deliveredOn: string | null; actor: StoreOrderActor },
   deps: Pick<StoreOrderFulfilmentDeps, 'readOrder' | 'now'> = storeOrderFulfilmentDeps(),
 ): Promise<MarkStoreOrderDeliveredResult> {
   const at = deps.now();
+  const deliveredOn = input.deliveredOn ?? stockholmTodayISO(at);
   const [first, name] = await Promise.all([readDeliverRow(admin, input.id), readProfileName(admin, input.actor.id)]);
-  const blocked = decideDeliver(first, input.deliveredOn, at);
+  const blocked = decideDeliver(first, deliveredOn, at);
   if (blocked) return blocked;
   const orderNumber = (first as DeliverRow).fortnox_order_number as string;
   // Fortnox-ordern finns (bekräftad med nummer): synkad.
@@ -194,7 +167,7 @@ export async function markStoreOrderDelivered(
       .from(TABLE)
       .update({
         status: 'delivered',
-        delivered_on: input.deliveredOn,
+        delivered_on: deliveredOn,
         delivered_at: at.toISOString(),
         delivered_by: input.actor.id,
         delivered_by_name: name,
@@ -207,13 +180,13 @@ export async function markStoreOrderDelivered(
       .eq('fortnox_order_claimed_at', stamp)
       .select('id'),
   );
-  if (!saved.error && (saved.data ?? []).length > 0) return { kind: 'delivered' };
+  if (!saved.error && (saved.data ?? []).length > 0) return { kind: 'delivered', deliveredOn };
 
   // Inte sparat: claimen släpps (Fortnox-ordern finns, alltså synkad), och svaret säger varför. Står beställningen kvar
   // som den var har claimen tappats till ett annat steg: busy.
   await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
   if (saved.error) throw new Error(`Leveransen kunde inte sparas: ${saved.error.message}`);
-  return decideDeliver(await readDeliverRow(admin, input.id), input.deliveredOn, at) ?? { kind: 'busy' };
+  return decideDeliver(await readDeliverRow(admin, input.id), deliveredOn, at) ?? { kind: 'busy' };
 }
 
 // ---------------------------------------------------------------------------------------------------------- Fakturera
@@ -404,15 +377,8 @@ function decideCancel(row: CancelRow | null, expected: StoreOrderCancelExpected)
  * sägs. Nekar Fortnox av något annat skäl kastas nejet.
  */
 async function cancelInFortnox(orderNumber: string, deps: StoreOrderFulfilmentDeps): Promise<CancelStoreOrderResult | null> {
-  try {
-    await deps.cancel(orderNumber);
-    return null;
-  } catch (e) {
-    const state = await deps.readOrder(orderNumber).catch(() => null);
-    if (state?.cancelled) return null;
-    if (state?.invoiceNumber) return { kind: 'fortnox_order_invoiced', orderNumber, invoiceNumber: state.invoiceNumber };
-    throw e;
-  }
+  const outcome = await cancelFortnoxOrderByState(orderNumber, deps);
+  return outcome.kind === 'invoiced' ? { kind: 'fortnox_order_invoiced', orderNumber, invoiceNumber: outcome.invoiceNumber } : null;
 }
 
 /**

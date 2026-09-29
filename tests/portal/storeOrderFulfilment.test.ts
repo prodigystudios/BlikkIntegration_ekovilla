@@ -159,7 +159,7 @@ describe('markStoreOrderDelivered', () => {
 
   it('bekräftad med Fortnox-order: levererad den dagen, med vem och när, och claimen släppt', async () => {
     const m = db();
-    expect(await deliver(m, '2026-09-28')).toEqual({ kind: 'delivered' });
+    expect(await deliver(m, '2026-09-28')).toEqual({ kind: 'delivered', deliveredOn: '2026-09-28' });
     expect(row(m)).toMatchObject({
       status: 'delivered',
       delivered_on: '2026-09-28',
@@ -171,13 +171,22 @@ describe('markStoreOrderDelivered', () => {
     });
   });
 
+  it('ingen dag (säljaren rörde inte fältet): i dag som servern räknar den, svensk dag', async () => {
+    const m = db();
+    const { deps } = fakeFortnox();
+    // 22:30 UTC är 00:30 nästa dag i Stockholm.
+    const late = { ...deps, now: () => new Date('2026-09-29T22:30:00.000Z') };
+    expect(await markStoreOrderDelivered(m.admin, { id: ID, deliveredOn: null, actor }, late)).toEqual({ kind: 'delivered', deliveredOn: '2026-09-30' });
+    expect(row(m).delivered_on).toBe('2026-09-30');
+  });
+
   it('dagen: före dagen den kom in, eller efter i dag, nekas och ingenting sparas; gränserna går', async () => {
     const m = db();
     expect(await deliver(m, '2026-09-26')).toEqual({ kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' });
     expect(await deliver(m, '2026-09-30')).toEqual({ kind: 'date_out_of_range', min: '2026-09-27', max: '2026-09-29' });
     expect(row(m).status).toBe('confirmed');
-    expect(await deliver(db(), '2026-09-27')).toEqual({ kind: 'delivered' });
-    expect(await deliver(db(), '2026-09-29')).toEqual({ kind: 'delivered' });
+    expect(await deliver(db(), '2026-09-27')).toEqual({ kind: 'delivered', deliveredOn: '2026-09-27' });
+    expect(await deliver(db(), '2026-09-29')).toEqual({ kind: 'delivered', deliveredOn: '2026-09-29' });
   });
 
   it('bara en bekräftad med Fortnox-order; okänd not_found. Ingen claim tas och ingenting skrivs då', async () => {
@@ -212,7 +221,7 @@ describe('markStoreOrderDelivered', () => {
 
   it('en order som fakturerats för hand i Fortnox kan levereras (Fakturera kopplar fakturan sedan)', async () => {
     const { deps } = fakeFortnox({ '58': { invoiceNumber: '19' } });
-    expect(await markStoreOrderDelivered(db().admin, { id: ID, deliveredOn: '2026-09-29', actor }, deps)).toEqual({ kind: 'delivered' });
+    expect(await markStoreOrderDelivered(db().admin, { id: ID, deliveredOn: '2026-09-29', actor }, deps)).toEqual({ kind: 'delivered', deliveredOn: '2026-09-29' });
   });
 
   it('Fortnox svarar inte: kastar, ingenting sparat, claimen släppt', async () => {
@@ -227,7 +236,7 @@ describe('markStoreOrderDelivered', () => {
 
   it('en claim som blivit gammal (en död process) spärrar inte för alltid', async () => {
     const m = db(storeOrder({ fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: stale() }));
-    expect(await deliver(m)).toEqual({ kind: 'delivered' });
+    expect(await deliver(m)).toEqual({ kind: 'delivered', deliveredOn: '2026-09-29' });
     expect(row(m)).toMatchObject({ status: 'delivered', fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
   });
 

@@ -635,6 +635,34 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m)).toMatchObject({ fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
   });
 
+  it('🧨 en makulering tog över claimen medan POST:en pågick: numret sparas, men claimen är makuleringens och står kvar', async () => {
+    const other = new Date(Date.now() + 5_000).toISOString();
+    const m = db(confirmed());
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      Object.assign(row(m), { fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'created', fortnoxOrderNumber: '801' });
+    expect(row(m)).toMatchObject({ fortnox_order_number: '801', fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+  });
+
+  it('🧨 databasen föll efter att någon tagit över claimen: vårt fel släpper inte dess claim', async () => {
+    const other = new Date(Date.now() + 5_000).toISOString();
+    const m = db(confirmed());
+    const deps = fortnoxDeps();
+    deps.articles.mockImplementation(async () => {
+      Object.assign(row(m), { fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+      return [];
+    });
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && typeof (c.values as Record<string, unknown>).fortnox_error === 'string', { message: 'nere' });
+    deps.post.mockImplementation(async () => {
+      throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
+    });
+    await expect(pushStoreOrderToFortnox(m.admin, ID, deps)).rejects.toThrow();
+    expect(row(m)).toMatchObject({ fortnox_order_sync_status: 'pending', fortnox_order_claimed_at: other });
+  });
+
   it('🧨 makulerad medan ordern skapades (8b2, claimen blev gammal): numret skrivs inte, och vår order makuleras', async () => {
     const m = db(confirmed());
     const deps = fortnoxDeps();
@@ -783,6 +811,21 @@ describe('pushStoreOrderToFortnox', () => {
     deps.readOrder.mockImplementation(async () => ({ cancelled: false, invoiceNumber: '30' }));
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'blocked' });
     expect(row(m).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('svepet: ett tekniskt fel på den första ordern hindrar inte den andra; nytt svep för den första', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(-1), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
+    const deps = fortnoxDeps();
+    deps.findOpen.mockImplementation(async () => ['801', '802']);
+    deps.cancel.mockImplementation(async (n: string) => {
+      if (n === '801') throw new FortnoxApiError(503, 'Fortnox PUT misslyckades (503)');
+    });
+    deps.readOrder.mockImplementation(async () => {
+      throw new FortnoxApiError(503, 'Fortnox GET misslyckades (503)');
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'failed' });
+    expect(deps.cancel).toHaveBeenCalledWith('802');
+    expect(row(m).fortnox_next_attempt_at).toBe(minutes(15));
   });
 
   it('svepet: Fortnox nekar makuleringen av tekniska skäl (ordern inte läsbar): nytt svep', async () => {
