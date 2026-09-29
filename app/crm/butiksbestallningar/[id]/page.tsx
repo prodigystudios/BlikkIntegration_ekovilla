@@ -17,8 +17,9 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
   await requirePagePermission('crm.access');
   if (!isUuid(params.id)) notFound();
   const session = createSessionClient();
-  // Regeln frågas parallellt med läsningen; den beror bara på id:t.
-  const canManageRead = session.rpc('crm_store_order_can_manage', { p_id: params.id });
+  // Regeln frågas parallellt med läsningen; den beror bara på id:t. PostgREST skickar först när svaret efterfrågas, så
+  // anropet startas här med `then`.
+  const canManageRead = session.rpc('crm_store_order_can_manage', { p_id: params.id }).then((r) => r);
   const read = await getStoreOrderView(session, params.id).then(
     (order) => ({ ok: true as const, order }),
     (e: unknown) => {

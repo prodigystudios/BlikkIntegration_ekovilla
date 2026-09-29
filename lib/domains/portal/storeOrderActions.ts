@@ -51,18 +51,27 @@ async function readStatus(admin: SupabaseClient, id: string): Promise<StoreOrder
 
 export type StoreOrderFreightInput = { mode: 'none' } | { mode: 'charged'; price: number };
 
-export type SetStoreOrderFreightResult = { kind: 'saved' } | { kind: 'not_received' } | { kind: 'not_found' };
+export type SetStoreOrderFreightResult =
+  | { kind: 'saved' }
+  | { kind: 'not_received' }
+  | { kind: 'not_found' }
+  /** Frakten är inte längre den säljaren såg: någon annan sparade under tiden. Ingenting sparat; läs om. */
+  | { kind: 'freight_changed' };
 
-/** Frakten, eller "Ingen frakt", medan beställningen är mottagen. Vakten i databasen nekar den efter det. */
+/**
+ * Frakten, eller "Ingen frakt", medan beställningen är mottagen. Vakten i databasen nekar den efter det. Sparas bara mot
+ * frakten säljaren såg (`expectedSetAt`, null = inte satt), så att en annans nyare frakt aldrig skrivs över tyst.
+ */
 export async function setStoreOrderFreight(
   admin: SupabaseClient,
   id: string,
   freight: StoreOrderFreightInput,
   actor: StoreOrderActor,
+  expectedSetAt: string | null,
   now: () => Date = () => new Date(),
 ): Promise<SetStoreOrderFreightResult> {
   const name = await readProfileName(admin, actor.id);
-  const saved = await admin
+  const base = admin
     .from('crm_store_orders')
     .update({
       freight_mode: freight.mode,
@@ -72,11 +81,13 @@ export async function setStoreOrderFreight(
       freight_set_at: now().toISOString(),
     })
     .eq('id', id)
-    .eq('status', 'received')
-    .select('id');
+    .eq('status', 'received');
+  const saved = await (expectedSetAt === null ? base.is('freight_set_at', null) : base.eq('freight_set_at', expectedSetAt)).select('id');
   if (saved.error) throw new Error(`Frakten kunde inte sparas: ${saved.error.message}`);
   if ((saved.data ?? []).length > 0) return { kind: 'saved' };
-  return (await readStatus(admin, id)) ? { kind: 'not_received' } : { kind: 'not_found' };
+  const status = await readStatus(admin, id);
+  if (!status) return { kind: 'not_found' };
+  return status === 'received' ? { kind: 'freight_changed' } : { kind: 'not_received' };
 }
 
 // ------------------------------------------------------------------------------------------------------------ kunden
@@ -97,9 +108,9 @@ export type LinkStoreOrderCustomerResult =
 type LinkCard = { id: string; customer_type: string; fortnox_customer_id: string | null };
 
 /**
- * Butikens kundkort på beställningen, medan den är mottagen. Kom beställningen utan kund sparas kopplingen också på
- * butiken, som i fas 3c, och gäller då butikens nästa jobb och beställning när portalens nummer saknas eller är okänt.
- * Ett byte på en beställning som redan hade en kund gäller bara beställningen.
+ * Butikens kundkort på beställningen, medan den är mottagen. Kom beställningen utan kund, och saknar butiken en koppling,
+ * sparas kopplingen också på butiken (som fas 3c) och gäller då butikens nästa jobb och beställning när portalens nummer
+ * saknas eller är okänt. Ett byte, eller en butik som redan är kopplad, gäller bara beställningen.
  */
 export async function linkStoreOrderCustomer(
   session: SupabaseClient,
@@ -141,17 +152,21 @@ export async function linkStoreOrderCustomer(
   // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
   if (hadCustomer) return { kind: 'linked', storeLinked: false, storeLinkAttempted: false };
 
-  // Butikens koppling. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
+  // Butikens koppling, bara om butiken saknar en: en koppling som gjorts sedan beställningen kom (ett jobb, 3c) flyttas
+  // aldrig av en beställning. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
   const store = await admin
     .from('crm_portal_resellers')
     .update({ customer_id: card.id, customer_linked_by: input.actor.id, customer_linked_at: now().toISOString() })
     .eq('reseller_id', row.reseller_id)
+    .is('customer_id', null)
     .select('reseller_id');
-  const storeLinked = !store.error && (store.data ?? []).length > 0;
-  if (!storeLinked) {
-    console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error?.message });
+  if (store.error) {
+    console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error.message });
+    return { kind: 'linked', storeLinked: false, storeLinkAttempted: true };
   }
-  return { kind: 'linked', storeLinked, storeLinkAttempted: true };
+  // Ingen rad: butiken hade redan en koppling, som står kvar.
+  const storeLinked = (store.data ?? []).length > 0;
+  return { kind: 'linked', storeLinked, storeLinkAttempted: storeLinked };
 }
 
 // ------------------------------------------------------------------------------------------------------ Fortnox-ordern
@@ -253,13 +268,12 @@ async function finishPush(
 }
 
 /**
- * Omförsök bara efter ett tekniskt fel (jobbens regel, fas 4b): Fortnox nere eller inte anslutet, en tidsgräns (429),
- * nätet. Ett 4xx är Fortnox besked om själva ordern (en artikel som saknas, ett fält som inte godtas) och kommer igen
- * likadant: det kräver en människa, som rättar och trycker Skicka till Fortnox.
+ * Omförsök bara efter ett tekniskt fel (jobbens regel, fas 4b): Fortnox nere eller inte anslutet, behörigheten, en
+ * tidsgräns (429), nätet. Ett 400 är Fortnox besked om själva ordern (en artikel som saknas, ett fält som inte godtas)
+ * och kommer igen likadant: det kräver en människa, som rättar och trycker Skicka till Fortnox.
  */
 export function storeOrderFortnoxFailure(e: unknown): 'failed' | 'blocked' {
-  if (e instanceof FortnoxApiError && e.status >= 400 && e.status < 500 && e.status !== 429) return 'blocked';
-  return 'failed';
+  return e instanceof FortnoxApiError && e.status === 400 ? 'blocked' : 'failed';
 }
 
 /**
@@ -302,6 +316,33 @@ export async function pushStoreOrderToFortnox(
     return { outcome: 'in_progress', fortnoxOrderNumber: null, error: null };
   }
 
+  try {
+    // Skyddsnätet, också för "Skicka till Fortnox" när inget är planerat: dör processen efter POST:en tar cron över
+    // ordern på märkningen om 5 min. Utfallet sätter planen efteråt.
+    const net = await admin
+      .from('crm_store_orders')
+      .update({ fortnox_next_attempt_at: new Date(deps.now().getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString() })
+      .eq('id', id)
+      .is('fortnox_next_attempt_at', null);
+    if (net.error) throw new Error(`Skyddsnätet kunde inte sättas: ${net.error.message}`);
+    return await pushWithClaim(admin, id, deps);
+  } catch (e) {
+    // Ett fel som inte bokförts (databasen): claimen släpps, annars svarar knappen "skapas redan" i två minuter.
+    await admin
+      .from('crm_store_orders')
+      .update({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
+      .eq('id', id)
+      .eq('fortnox_order_sync_status', 'pending')
+      .then(
+        (r) => r.error && console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: r.error.message }),
+        (err: unknown) => console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: err instanceof Error ? err.message : String(err) }),
+      );
+    throw e;
+  }
+}
+
+/** Resten av pushen, med claimen tagen. Kastar bara när databasen inte svarar; anroparen släpper då claimen. */
+async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrderFortnoxDeps): Promise<StoreOrderPushResult> {
   // Raden som den är med claimen: ett försök som hann före kan ha sparat numret, och en makulering kan ha kommit.
   const row = await readPushRow(admin, id);
   if (!row || row.fortnox_order_number || row.status !== 'confirmed') {
@@ -399,6 +440,8 @@ export async function pushStoreOrderToFortnox(
     // ha skickat, innan någon av ordrarna fanns att söka fram. Vakten skriver numret en gång. Står ett annat nummer på
     // beställningen makuleras vår egen order, så att bara en finns kvar.
     const current = await readPushRow(admin, id).catch(() => null);
+    // Ett annat försök tog över just vår order (sökningen) och sparade den: allt är kopplat.
+    if (current?.fortnox_order_number === number) return { outcome: 'created', fortnoxOrderNumber: number, error: null };
     if (current?.fortnox_order_number && current.fortnox_order_number !== number) {
       try {
         await deps.cancel(number);

@@ -86,18 +86,26 @@ const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000).toISOString(
 
 describe('setStoreOrderFreight', () => {
   it('frakten eller Ingen frakt, med vem och när', async () => {
-    const m = db(storeOrder({ freight_mode: null, freight_price: null }));
-    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'charged', price: 1200 }, { id: SELLER }, () => NOW)).toEqual({ kind: 'saved' });
+    const m = db(storeOrder({ freight_mode: null, freight_price: null, freight_set_at: null }));
+    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'charged', price: 1200 }, { id: SELLER }, null, () => NOW)).toEqual({ kind: 'saved' });
     expect(row(m)).toMatchObject({ freight_mode: 'charged', freight_price: 1200, freight_set_by: SELLER, freight_set_by_name: 'Anna Berg', freight_set_at: NOW.toISOString() });
-    await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER }, () => NOW);
+    await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER }, NOW.toISOString(), () => NOW);
     expect(row(m)).toMatchObject({ freight_mode: 'none', freight_price: null });
+  });
+
+  it('🧨 någon annan sparade frakten sedan sidan lästes: ingenting skrivs över, "freight_changed"', async () => {
+    const m = db();
+    // Sidan visade ingen frakt; nu står 950 kr sparad (FREIGHT_AT).
+    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER }, null)).toEqual({ kind: 'freight_changed' });
+    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER }, '2026-09-29T08:00:00.000000+00:00')).toEqual({ kind: 'freight_changed' });
+    expect(row(m)).toMatchObject({ freight_mode: 'charged', freight_price: '950.00' });
   });
 
   it('bara på en mottagen: bekräftad svarar not_received och ändrar ingenting; okänd not_found', async () => {
     const m = db(storeOrder({ status: 'confirmed' }));
-    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER })).toEqual({ kind: 'not_received' });
+    expect(await setStoreOrderFreight(m.admin, ID, { mode: 'none' }, { id: SELLER }, FREIGHT_AT)).toEqual({ kind: 'not_received' });
     expect(row(m).freight_mode).toBe('charged');
-    expect(await setStoreOrderFreight(db().admin, '66666666-6666-4666-8666-666666666666', { mode: 'none' }, { id: SELLER })).toEqual({ kind: 'not_found' });
+    expect(await setStoreOrderFreight(db().admin, '66666666-6666-4666-8666-666666666666', { mode: 'none' }, { id: SELLER }, null)).toEqual({ kind: 'not_found' });
   });
 });
 
@@ -162,6 +170,16 @@ describe('linkStoreOrderCustomer', () => {
     const m = db(storeOrder({ customer_id: null, status: 'confirmed' }));
     expect(await link(m)).toEqual({ kind: 'not_received' });
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
+  });
+
+  it('🧨 butiken hade redan en koppling (ett jobb, 3c): den står kvar, och det är inget fel', async () => {
+    const other = '77777777-7777-4777-8777-777777777777';
+    const m = db(storeOrder({ customer_id: null }), {
+      crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'Norrbygg AB', customer_id: other, customer_linked_at: '2026-09-28T10:00:00Z' }],
+    });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
+    expect(row(m).customer_id).toBe(CARD_ID);
+    expect(m.tables.crm_portal_resellers[0].customer_id).toBe(other);
   });
 
   it('butikens koppling föll: beställningen är ändå kopplad, och det sägs', async () => {
@@ -443,6 +461,47 @@ describe('pushStoreOrderToFortnox', () => {
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'blocked', fortnoxOrderNumber: null, error: 'Kundkortet saknar kundnummer i Fortnox.' });
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(m)).toMatchObject({ fortnox_order_sync_status: 'failed', fortnox_next_attempt_at: null, fortnox_error: 'Kundkortet saknar kundnummer i Fortnox.' });
+  });
+
+  it('behörigheten (403) är tekniskt, inte ett besked om ordern: nya försök', async () => {
+    const m = db(confirmed());
+    const deps = fortnoxDeps(async () => {
+      throw new FortnoxApiError(403, 'Fortnox POST /orders misslyckades (403)');
+    });
+    expect((await pushStoreOrderToFortnox(m.admin, ID, deps)).outcome).toBe('failed');
+    expect(row(m)).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
+  });
+
+  it('🧨 "Skicka till Fortnox" utan planerat försök: skyddsnätet sätts före POST:en (dör processen tar cron över)', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null, fortnox_retry_until: null }));
+    const deps = fortnoxDeps();
+    let during: unknown = 'inte satt';
+    deps.post.mockImplementation(async () => {
+      during = row(m).fortnox_next_attempt_at;
+      return { Order: { DocumentNumber: '801' } };
+    });
+    await pushStoreOrderToFortnox(m.admin, ID, deps);
+    expect(during).toBe(minutes(5));
+    expect(row(m).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('🧨 databasen svarar inte efter claimen: claimen släpps (knappen svarar inte "skapas redan" i två minuter)', async () => {
+    const m = db(confirmed());
+    m.failOn((c) => c.table === 'crm_customers', { message: 'nere' });
+    await expect(pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps())).rejects.toThrow();
+    expect(row(m)).toMatchObject({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null });
+  });
+
+  it('numret gick inte att spara, men ett annat försök hann koppla just vår order: klart, inget fel', async () => {
+    const m = db(confirmed());
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      row(m).fortnox_order_number = '801';
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'created', fortnoxOrderNumber: '801', error: null });
+    expect(deps.cancel).not.toHaveBeenCalled();
   });
 
   it('Fortnox inte anslutet: not_synced, och nya försök', async () => {

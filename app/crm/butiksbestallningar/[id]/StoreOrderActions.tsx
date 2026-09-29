@@ -93,7 +93,8 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
         ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' }
         : 'Kunden är kopplad.',
     );
-    if (done) edit(false);
+    // Klart, eller sidan stämde inte: stängt, så att det som nu är sparat syns.
+    if (done !== 'failed') edit(false);
   }
 
   return (
@@ -184,11 +185,14 @@ function FreightStep({ props, busy, run, editing, setEditing }: StepProps) {
   async function save() {
     setTouched(true);
     if (priceInvalid) return;
-    const body = mode === 'none' ? { mode: 'none' } : { mode: 'charged', price };
+    const expectedSetAt = props.freightSetAt;
+    const body = mode === 'none' ? { mode: 'none', expectedSetAt } : { mode: 'charged', price, expectedSetAt };
     const done = await run(`/api/crm/portal/store-orders/${props.id}/freight`, 'PUT', body, 'Frakten kunde inte sparas.', () =>
       mode === 'none' ? 'Ingen frakt.' : 'Frakten är sparad.',
     );
-    if (done) setEditing(false);
+    // Klart: stängt. Sidan stämde inte: stängt och tömt, så att det nya syns och ingen gammal siffra sparas igen.
+    if (done === 'ok') setEditing(false);
+    else if (done === 'stale') edit(false);
   }
 
   return (
@@ -270,13 +274,16 @@ function FreightStep({ props, busy, run, editing, setEditing }: StepProps) {
 /** Vad som sägs när anropet gick igenom: en text, eller `{ error }` när steget gick men något efter det inte gjorde det. */
 type SuccessMessage = string | { error: string };
 
+/** `stale`: servern sa att sidan inte längre stämmer; den läses om, och ett öppet steg ska stängas så att det nya syns. */
+type RunResult = 'ok' | 'failed' | 'stale';
+
 type Runner = (
   url: string,
   method: 'PUT' | 'POST',
   body: unknown,
   failure: string,
   success: (data: any) => SuccessMessage,
-) => Promise<boolean>;
+) => Promise<RunResult>;
 
 // Lägen där sidan inte längre stämmer med beställningen: läs om den.
 const STALE_CODES = new Set([
@@ -284,6 +291,7 @@ const STALE_CODES = new Set([
   'store_order_changed',
   'store_order_changed_here',
   'store_order_customer_changed',
+  'store_order_freight_changed',
   // Bekräftelsens krav: sidan visade dem som uppfyllda, så den stämmer inte längre.
   'store_order_freight_missing',
   'store_order_customer_missing',
@@ -319,7 +327,7 @@ export default function StoreOrderActions(props: Props) {
   const [editingFreight, setEditingFreight] = useState(false);
 
   const run: Runner = async (url, method, body, failure, success) => {
-    if (busy) return false;
+    if (busy) return 'failed';
     setBusy(true);
     try {
       const result = await send(url, method, body);
@@ -327,14 +335,15 @@ export default function StoreOrderActions(props: Props) {
         toast.error(result.error || failure);
         // Läs om när sidan inte längre stämmer, och när svaret inte kom fram (nätet, 5xx, en tidsgräns): steget kan ha
         // gått igenom ändå, och en bekräftad beställning ska inte stå kvar som ny.
-        if ((result.code && STALE_CODES.has(result.code)) || result.status === 0 || result.status >= 500) refresh();
-        return false;
+        const stale = Boolean(result.code && STALE_CODES.has(result.code));
+        if (stale || result.status === 0 || result.status >= 500) refresh();
+        return stale ? 'stale' : 'failed';
       }
       const message = success(result.data);
       if (typeof message === 'string') toast.success(message);
       else toast.error(message.error);
       refresh();
-      return true;
+      return 'ok';
     } finally {
       setBusy(false);
     }

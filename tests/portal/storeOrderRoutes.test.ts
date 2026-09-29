@@ -91,7 +91,7 @@ beforeEach(() => {
 
 describe('grinden, för alla fyra', () => {
   const actions = [
-    ['freight', { mode: 'none' }],
+    ['freight', { mode: 'none', expectedSetAt: null }],
     ['customer', { customer_id: CARD, expected_customer_id: null }],
     ['confirm', { version: 2, freightSetAt: '2026-09-29T09:30:00.000000+00:00', customerId: CARD }],
     ['fortnox', {}],
@@ -131,11 +131,14 @@ describe('grinden, för alla fyra', () => {
 
 describe('PUT …/freight', () => {
   it('Ingen frakt, eller ett pris med högst två decimaler; annars 400 och ingenting körs', async () => {
-    expect((await call('freight', { mode: 'none' })).status).toBe(200);
-    expect((await call('freight', { mode: 'charged', price: 950.5 })).status).toBe(200);
-    expect(h.calls.filter((c) => c.fn === 'setStoreOrderFreight').map((c) => c.args[2])).toEqual([{ mode: 'none' }, { mode: 'charged', price: 950.5 }]);
+    const AT = '2026-09-29T09:30:00.000000+00:00';
+    expect((await call('freight', { mode: 'none', expectedSetAt: null })).status).toBe(200);
+    expect((await call('freight', { mode: 'charged', price: 950.5, expectedSetAt: AT })).status).toBe(200);
+    const saved = h.calls.filter((c) => c.fn === 'setStoreOrderFreight');
+    expect(saved.map((c) => c.args[2])).toEqual([{ mode: 'none' }, { mode: 'charged', price: 950.5 }]);
+    expect(saved.map((c) => c.args[4])).toEqual([null, AT]);
     h.calls = [];
-    for (const bad of [{ mode: 'charged' }, { mode: 'charged', price: 0 }, { mode: 'charged', price: -5 }, { mode: 'charged', price: 10.005 }, { mode: 'charged', price: 1_000_001 }, { mode: 'x' }, '{']) {
+    for (const bad of [{ mode: 'charged', expectedSetAt: null }, { mode: 'charged', price: 0, expectedSetAt: null }, { mode: 'charged', price: -5, expectedSetAt: null }, { mode: 'charged', price: 10.005, expectedSetAt: null }, { mode: 'charged', price: 1_000_001, expectedSetAt: null }, { mode: 'x', expectedSetAt: null }, { mode: 'none' }, { mode: 'none', expectedSetAt: 'igår' }, '{']) {
       expect((await call('freight', bad)).status).toBe(400);
     }
     expect(domainCalls()).toHaveLength(0);
@@ -143,9 +146,11 @@ describe('PUT …/freight', () => {
 
   it('inte mottagen 409, okänd 404', async () => {
     h.results.setStoreOrderFreight = { kind: 'not_received' };
-    expect(await call('freight', { mode: 'none' })).toMatchObject({ status: 409, body: { errorDetails: { code: 'store_order_not_received' } } });
+    expect(await call('freight', { mode: 'none', expectedSetAt: null })).toMatchObject({ status: 409, body: { errorDetails: { code: 'store_order_not_received' } } });
+    h.results.setStoreOrderFreight = { kind: 'freight_changed' };
+    expect(await call('freight', { mode: 'none', expectedSetAt: null })).toMatchObject({ status: 409, body: { errorDetails: { code: 'store_order_freight_changed' } } });
     h.results.setStoreOrderFreight = { kind: 'not_found' };
-    expect((await call('freight', { mode: 'none' })).status).toBe(404);
+    expect((await call('freight', { mode: 'none', expectedSetAt: null })).status).toBe(404);
   });
 });
 
