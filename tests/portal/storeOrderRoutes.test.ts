@@ -92,7 +92,7 @@ beforeEach(() => {
 describe('grinden, för alla fyra', () => {
   const actions = [
     ['freight', { mode: 'none' }],
-    ['customer', { customer_id: CARD }],
+    ['customer', { customer_id: CARD, expected_customer_id: null }],
     ['confirm', { version: 2, freightSetAt: '2026-09-29T09:30:00.000000+00:00', customerId: CARD }],
     ['fortnox', {}],
   ] as const;
@@ -151,11 +151,11 @@ describe('PUT …/freight', () => {
 
 describe('PUT …/customer', () => {
   it('kortet kopplas med sessionen och service-rollen; utfallen blir rätt status', async () => {
-    expect(await call('customer', { customer_id: CARD })).toMatchObject({ status: 200, body: { data: { store_linked: true, store_link_attempted: true } } });
+    expect(await call('customer', { customer_id: CARD, expected_customer_id: null })).toMatchObject({ status: 200, body: { data: { store_linked: true, store_link_attempted: true } } });
     const args = h.calls.find((c) => c.fn === 'linkStoreOrderCustomer')!.args;
     expect((args[0] as Json).kind).toBe('session');
     expect((args[1] as Json).kind).toBe('admin');
-    expect(args[2]).toEqual({ id: ID, customerId: CARD, actor: { id: salesUser.id } });
+    expect(args[2]).toEqual({ id: ID, customerId: CARD, expectedCustomerId: null, actor: { id: salesUser.id } });
 
     const cases: [string, number, string][] = [
       ['not_found', 404, 'store_order_not_found'],
@@ -167,12 +167,14 @@ describe('PUT …/customer', () => {
     ];
     // Ett byte: butiken rördes inte, och det är inget fel.
     h.results.linkStoreOrderCustomer = { kind: 'linked', storeLinked: false, storeLinkAttempted: false };
-    expect(await call('customer', { customer_id: CARD })).toMatchObject({ status: 200, body: { data: { store_linked: false, store_link_attempted: false } } });
+    expect(await call('customer', { customer_id: CARD, expected_customer_id: null })).toMatchObject({ status: 200, body: { data: { store_linked: false, store_link_attempted: false } } });
     for (const [kind, status, code] of cases) {
       h.results.linkStoreOrderCustomer = { kind };
-      expect(await call('customer', { customer_id: CARD })).toMatchObject({ status, body: { errorDetails: { code } } });
+      expect(await call('customer', { customer_id: CARD, expected_customer_id: null })).toMatchObject({ status, body: { errorDetails: { code } } });
     }
-    expect((await call('customer', { customer_id: 'x' })).status).toBe(400);
+    for (const bad of [{ customer_id: 'x', expected_customer_id: null }, { customer_id: CARD }, { customer_id: CARD, expected_customer_id: 'x' }]) {
+      expect((await call('customer', bad)).status).toBe(400);
+    }
   });
 });
 

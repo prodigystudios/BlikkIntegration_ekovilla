@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -87,7 +87,8 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
 
   async function link() {
     if (!customerId) return;
-    const done = await run(`/api/crm/portal/store-orders/${props.id}/customer`, 'PUT', { customer_id: customerId }, 'Kunden kunde inte kopplas.', (data) =>
+    const body = { customer_id: customerId, expected_customer_id: props.customerId };
+    const done = await run(`/api/crm/portal/store-orders/${props.id}/customer`, 'PUT', body, 'Kunden kunde inte kopplas.', (data) =>
       data?.store_link_attempted && data?.store_linked === false
         ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' }
         : 'Kunden är kopplad.',
@@ -283,6 +284,10 @@ const STALE_CODES = new Set([
   'store_order_changed',
   'store_order_changed_here',
   'store_order_customer_changed',
+  // Bekräftelsens krav: sidan visade dem som uppfyllda, så den stämmer inte längre.
+  'store_order_freight_missing',
+  'store_order_customer_missing',
+  'store_order_customer_not_in_fortnox',
   'store_order_not_confirmed',
   'store_order_push_in_progress',
 ]);
@@ -307,6 +312,9 @@ export default function StoreOrderActions(props: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  // Medan sidan läses om efter ett steg bär knapparna de gamla värdena: Bekräfta hade skickat dem och fått "ändrad".
+  const [refreshing, startRefresh] = useTransition();
+  const refresh = () => startRefresh(() => router.refresh());
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingFreight, setEditingFreight] = useState(false);
 
@@ -319,13 +327,13 @@ export default function StoreOrderActions(props: Props) {
         toast.error(result.error || failure);
         // Läs om när sidan inte längre stämmer, och när svaret inte kom fram (nätet, 5xx, en tidsgräns): steget kan ha
         // gått igenom ändå, och en bekräftad beställning ska inte stå kvar som ny.
-        if ((result.code && STALE_CODES.has(result.code)) || result.status === 0 || result.status >= 500) router.refresh();
+        if ((result.code && STALE_CODES.has(result.code)) || result.status === 0 || result.status >= 500) refresh();
         return false;
       }
       const message = success(result.data);
       if (typeof message === 'string') toast.success(message);
       else toast.error(message.error);
-      router.refresh();
+      refresh();
       return true;
     } finally {
       setBusy(false);
@@ -378,7 +386,7 @@ export default function StoreOrderActions(props: Props) {
   const freightReady = props.freight !== null;
   // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
   const editing = editingCustomer || editingFreight;
-  const ready = customerReady && freightReady && !editing;
+  const ready = customerReady && freightReady && !editing && !refreshing;
   const missing = editing
     ? 'spara eller avbryt ändringen'
     : [!customerReady ? 'koppla butikens kundkort' : null, !freightReady ? 'sätt frakten' : null].filter(Boolean).join(' och ');

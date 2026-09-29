@@ -74,6 +74,7 @@ function fortnoxDeps(
 ) {
   return {
     post: vi.fn(post),
+    cancel: vi.fn(async () => {}),
     findExisting: vi.fn(findExisting),
     articles: vi.fn(async () => [{ article_number: '1050', description: 'FRAKT', unit: 'st' }]),
     now: () => NOW,
@@ -101,8 +102,8 @@ describe('setStoreOrderFreight', () => {
 });
 
 describe('linkStoreOrderCustomer', () => {
-  const link = (m: ReturnType<typeof memoryAdmin>, customerId = CARD_ID) =>
-    linkStoreOrderCustomer(m.admin, m.admin, { id: ID, customerId, actor: { id: SELLER } }, () => NOW);
+  const link = (m: ReturnType<typeof memoryAdmin>, customerId = CARD_ID, expectedCustomerId: string | null = null) =>
+    linkStoreOrderCustomer(m.admin, m.admin, { id: ID, customerId, expectedCustomerId, actor: { id: SELLER } }, () => NOW);
 
   it('kopplar kortet på beställningen och butiken (som fas 3c)', async () => {
     const m = db(storeOrder({ customer_id: null }));
@@ -114,7 +115,7 @@ describe('linkStoreOrderCustomer', () => {
   it('🧨 ett byte på en beställning som redan hade kund gäller bara beställningen: butiken rörs inte', async () => {
     const other = '77777777-7777-4777-8777-777777777777';
     const m = db(storeOrder(), { crm_customers: [CARD, { ...CARD, id: other, fortnox_customer_id: '2000' }] });
-    expect(await link(m, other)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
+    expect(await link(m, other, CARD_ID)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
     expect(row(m).customer_id).toBe(other);
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
   });
@@ -132,6 +133,15 @@ describe('linkStoreOrderCustomer', () => {
     expect(await link(m, '88888888-8888-4888-8888-888888888888')).toEqual({ kind: 'customer_not_in_fortnox' });
     expect(row(m).customer_id).toBeNull();
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
+  });
+
+  it('🧨 en annan hos Ekovilla bytte kund sedan sidan lästes: mitt byte skriver inte över, "customer_changed"', async () => {
+    const other = '77777777-7777-4777-8777-777777777777';
+    const third = '99999999-9999-4999-8999-999999999999';
+    const m = db(storeOrder({ customer_id: other }), { crm_customers: [CARD, { ...CARD, id: third, fortnox_customer_id: '3000' }] });
+    // Sidan visade CARD_ID; nu står `other` där.
+    expect(await link(m, third, CARD_ID)).toEqual({ kind: 'customer_changed' });
+    expect(row(m).customer_id).toBe(other);
   });
 
   it('🧨 butikens ändring kopplade ett kort under tiden: ingenting skrivs över, "customer_changed"', async () => {
@@ -467,6 +477,20 @@ describe('pushStoreOrderToFortnox', () => {
     expect(await pushStoreOrderToFortnox(m.admin, ID, again)).toEqual({ outcome: 'exists', fortnoxOrderNumber: '801', error: null });
     expect(again.post).not.toHaveBeenCalled();
     expect(row(m).fortnox_order_number).toBe('801');
+  });
+
+  it('🧨 två försök skickade samtidigt (claimen blev gammal): den som inte fick spara sitt nummer makulerar sin order', async () => {
+    const m = db(confirmed());
+    // Precis när vi sparar har ett annat försök sparat 799; vakten nekar ett andra nummer.
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'ett Fortnox-nummer skrivs en gång' });
+    const deps = fortnoxDeps();
+    deps.post.mockImplementation(async () => {
+      row(m).fortnox_order_number = '799';
+      return { Order: { DocumentNumber: '801' } };
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'exists', fortnoxOrderNumber: '799', error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(row(m).fortnox_order_number).toBe('799');
   });
 
   it('Fortnox svarade utan nummer: ett fel, inte en order', async () => {

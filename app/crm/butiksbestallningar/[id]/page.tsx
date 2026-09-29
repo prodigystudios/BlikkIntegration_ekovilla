@@ -16,7 +16,10 @@ export const dynamic = 'force-dynamic';
 export default async function StoreOrderPage({ params }: { params: { id: string } }) {
   await requirePagePermission('crm.access');
   if (!isUuid(params.id)) notFound();
-  const read = await getStoreOrderView(createSessionClient(), params.id).then(
+  const session = createSessionClient();
+  // Regeln frågas parallellt med läsningen; den beror bara på id:t.
+  const canManageRead = session.rpc('crm_store_order_can_manage', { p_id: params.id });
+  const read = await getStoreOrderView(session, params.id).then(
     (order) => ({ ok: true as const, order }),
     (e: unknown) => {
       // Databasens text stannar i loggen, som på listan.
@@ -35,7 +38,7 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
     );
   }
   if (!read.order) notFound();
-  return <StoreOrderDetail order={read.order} canManage={await canManageStoreOrder(read.order)} />;
+  return <StoreOrderDetail order={read.order} canManage={canManageStoreOrder(read.order, await canManageRead)} />;
 }
 
 /**
@@ -43,13 +46,12 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
  * crm.workorder.write. Bara när det finns ett steg att visa. Svarar databasen inte visas inga knappar; routerna prövar
  * ändå själva.
  */
-async function canManageStoreOrder(order: StoreOrderView): Promise<boolean> {
+function canManageStoreOrder(order: StoreOrderView, rule: { data: unknown; error: { message: string } | null }): boolean {
   const hasStep = order.status === 'received' || (order.status === 'confirmed' && !order.fortnoxOrderNumber);
   if (!hasStep) return false;
-  const { data, error } = await createSessionClient().rpc('crm_store_order_can_manage', { p_id: order.id });
-  if (error) {
-    console.error('[butiksbestallningar] behörigheten gick inte att pröva', { id: order.id, error: error.message });
+  if (rule.error) {
+    console.error('[butiksbestallningar] behörigheten gick inte att pröva', { id: order.id, error: rule.error.message });
     return false;
   }
-  return data === true;
+  return rule.data === true;
 }

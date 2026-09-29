@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet, fortnoxPost, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet, fortnoxPost, fortnoxPut, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { claimFortnoxPush, documentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
@@ -86,7 +86,7 @@ export type LinkStoreOrderCustomerResult =
   | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted: boolean }
   | { kind: 'not_found' }
   | { kind: 'not_received' }
-  /** Beställningen fick en kund under tiden (butikens ändring). Ingenting sparat; läs om. */
+  /** Kunden är inte längre den säljaren såg (butikens ändring, eller en annan hos Ekovilla). Ingenting sparat; läs om. */
   | { kind: 'customer_changed' }
   | { kind: 'customer_not_found' }
   /** Butiken är ett företag (som kopplingen i 3c). */
@@ -104,7 +104,8 @@ type LinkCard = { id: string; customer_type: string; fortnox_customer_id: string
 export async function linkStoreOrderCustomer(
   session: SupabaseClient,
   admin: SupabaseClient,
-  input: { id: string; customerId: string; actor: StoreOrderActor },
+  /** `expectedCustomerId`: kunden säljaren såg på beställningen (null = ingen). */
+  input: { id: string; customerId: string; expectedCustomerId: string | null; actor: StoreOrderActor },
   now: () => Date = () => new Date(),
 ): Promise<LinkStoreOrderCustomerResult> {
   const cardRead = await session
@@ -118,20 +119,16 @@ export async function linkStoreOrderCustomer(
   if (card.customer_type !== 'business') return { kind: 'not_business' };
   if (!card.fortnox_customer_id?.trim()) return { kind: 'customer_not_in_fortnox' };
 
-  const before = await admin.from('crm_store_orders').select('customer_id').eq('id', input.id).maybeSingle();
-  if (before.error) throw new Error(`Beställningen gick inte att läsa: ${before.error.message}`);
-  if (!before.data) return { kind: 'not_found' };
-  const hadCustomer = Boolean((before.data as { customer_id: string | null }).customer_id);
-
-  // Saknades kunden: bara om den fortfarande saknas. En butiksändring kan ha kopplat kortet ur kundnumret under tiden
-  // (changeStoreOrder), och då skrivs varken den eller butikens koppling över.
-  let update = admin
+  // Bara om kunden fortfarande är den säljaren såg: en butiksändring (changeStoreOrder) eller en annan hos Ekovilla kan
+  // ha kopplat ett kort under tiden, och då skrivs varken den eller butikens koppling över.
+  const hadCustomer = input.expectedCustomerId !== null;
+  const base = admin
     .from('crm_store_orders')
     .update({ customer_id: card.id })
     .eq('id', input.id)
     .eq('status', 'received');
-  if (!hadCustomer) update = update.is('customer_id', null);
-  const saved = await update.select('id, reseller_id');
+  const conditioned = hadCustomer ? base.eq('customer_id', input.expectedCustomerId as string) : base.is('customer_id', null);
+  const saved = await conditioned.select('id, reseller_id');
   if (saved.error) throw new Error(`Kunden kunde inte kopplas: ${saved.error.message}`);
   const row = (saved.data ?? [])[0] as { id: string; reseller_id: string } | undefined;
   if (!row) {
@@ -161,6 +158,8 @@ export async function linkStoreOrderCustomer(
 
 export type StoreOrderFortnoxDeps = {
   post: (path: string, body: unknown) => Promise<{ Order?: { DocumentNumber?: string | number } }>;
+  /** Makulerar en Fortnox-order: den här pushens egen, när ett annat försök hann spara sitt nummer först. */
+  cancel: (orderNumber: string) => Promise<void>;
   /** Fortnox-ordern som redan bär märkningen, eller null. Kastar när Fortnox inte svarar: då skickas ingenting. */
   findExisting: (reference: string) => Promise<string | null>;
   articles: (articleNumbers: string[]) => Promise<StoreOrderRegisterArticle[]>;
@@ -172,6 +171,9 @@ type FortnoxOrderList = { Orders?: { DocumentNumber?: string | number | null; Ex
 export function storeOrderFortnoxDeps(admin: SupabaseClient): StoreOrderFortnoxDeps {
   return {
     post: (path, body) => fortnoxPost(path, body),
+    cancel: async (orderNumber) => {
+      await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
+    },
     findExisting: async (reference) => {
       const found = await fortnoxGet<FortnoxOrderList>('/orders', { externalinvoicereference1: reference });
       return pickStoreOrderFortnoxMatch(found.Orders ?? [], reference);
@@ -392,6 +394,25 @@ export async function pushStoreOrderToFortnox(
       deps.now(),
     );
   } catch (e) {
+    // 🧨 Ett annat försök kan ha sparat sitt nummer medan det här pågick: claimen räknas som gammal efter två minuter,
+    // och ett anrop till Fortnox har ingen tidsgräns, så ett långsamt cron-försök och "Skicka till Fortnox" kan båda
+    // ha skickat, innan någon av ordrarna fanns att söka fram. Vakten skriver numret en gång. Står ett annat nummer på
+    // beställningen makuleras vår egen order, så att bara en finns kvar.
+    const current = await readPushRow(admin, id).catch(() => null);
+    if (current?.fortnox_order_number && current.fortnox_order_number !== number) {
+      try {
+        await deps.cancel(number);
+        console.warn('[portal-store-orders] 🧨 två försök skickade samtidigt; vår order makulerades', { id, kept: current.fortnox_order_number, cancelled: number });
+      } catch (cancelError) {
+        console.error('[portal-store-orders] 🧨 två Fortnox-ordrar för samma beställning; den extra kunde inte makuleras', {
+          id,
+          kept: current.fortnox_order_number,
+          extra: number,
+          error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+        });
+      }
+      return { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null };
+    }
     // Ordern finns i Fortnox men inte hos oss. Nästa försök hittar den på märkningen och tar över den, i stället för
     // att skapa en till; numret står i loggen och i svaret. Ett försök planeras om det går (databasen kan vara nere).
     console.error('[portal-store-orders] 🧨 Fortnox-ordern skapades men numret sparades inte', {
@@ -432,13 +453,6 @@ async function readConfirmRow(admin: SupabaseClient, id: string): Promise<StoreO
   return (data as StoreOrderConfirmRow | null) ?? null;
 }
 
-async function readConfirmCard(admin: SupabaseClient, customerId: string | null) {
-  if (!customerId) return null;
-  const { data, error } = await admin.from('crm_customers').select('fortnox_customer_id').eq('id', customerId).maybeSingle();
-  if (error) throw new Error(`Kundkortet gick inte att läsa: ${error.message}`);
-  return (data as { fortnox_customer_id: string | null } | null) ?? null;
-}
-
 /**
  * Bekräftar beställningen som säljaren såg den och skapar Fortnox-ordern. Låsningen är en villkorad UPDATE: mottagen,
  * samma version, samma frakt (sparad när) och samma kund. Hann butiken ändra eller dra tillbaka, eller någon annan byta
@@ -452,7 +466,7 @@ export async function confirmStoreOrder(
 ): Promise<ConfirmStoreOrderResult> {
   const row = await readConfirmRow(admin, input.id);
   if (!row) return { kind: 'not_found' };
-  const decision = decideStoreOrderConfirm(row, input.expected, await readConfirmCard(admin, row.customer_id));
+  const decision = decideStoreOrderConfirm(row, input.expected, await readPushCard(admin, row.customer_id));
   if (!decision.ok) return { kind: 'blocked', reason: decision.reason };
 
   const now = deps.now();
@@ -480,7 +494,7 @@ export async function confirmStoreOrder(
     // Något hann före. Beslutet tas om på raden som den står nu, så att svaret säger vad.
     const again = await readConfirmRow(admin, input.id);
     if (!again) return { kind: 'not_found' };
-    const retry = decideStoreOrderConfirm(again, input.expected, await readConfirmCard(admin, again.customer_id));
+    const retry = decideStoreOrderConfirm(again, input.expected, await readPushCard(admin, again.customer_id));
     return { kind: 'blocked', reason: retry.ok ? 'changed' : retry.reason };
   }
 

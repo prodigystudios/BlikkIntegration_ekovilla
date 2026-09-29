@@ -14,7 +14,7 @@ type RouteContext = { params: { id: string } };
 //   403 store_order_forbidden                  varken ansvarig eller admin
 //   404 store_order_not_found / crm_customer_not_found
 //   409 store_order_not_received               bekräftad, tillbakadragen eller makulerad
-//   409 store_order_customer_changed           beställningen fick en kund under tiden; ingenting sparat
+//   409 store_order_customer_changed           kunden är inte längre den säljaren såg; ingenting sparat
 //   422 portal_customer_not_business           ett privatkundskort: butiken är ett företag
 //   422 store_order_customer_not_in_fortnox    kortet har inget kundnummer i Fortnox
 
@@ -22,8 +22,10 @@ export const dynamic = 'force-dynamic';
 // Next 14.2 räknar inte PUT som dynamisk och cachar då varje fetch, också Supabase-klientens.
 export const fetchCache = 'force-no-store';
 
+// `expected_customer_id`: kunden säljaren såg (null = ingen). Ett byte som någon annan hann göra skrivs inte över.
 const bodySchema = z.object({
   customer_id: z.string().uuid('Välj butikens kundkort i listan.'),
+  expected_customer_id: z.string().uuid().nullable(),
 });
 
 export async function PUT(req: Request, context: RouteContext) {
@@ -37,6 +39,7 @@ export async function PUT(req: Request, context: RouteContext) {
     const result = await linkStoreOrderCustomer(gate.session, getSupabaseAdmin(), {
       id: context.params.id,
       customerId: parsed.data.customer_id,
+      expectedCustomerId: parsed.data.expected_customer_id,
       actor: { id: gate.userId },
     });
     switch (result.kind) {
@@ -47,7 +50,7 @@ export async function PUT(req: Request, context: RouteContext) {
       case 'not_received':
         return routeError(409, 'store_order_not_received', 'Kunden kan bara bytas innan beställningen är bekräftad.');
       case 'customer_changed':
-        return routeError(409, 'store_order_customer_changed', 'Beställningen fick en kund under tiden. Läs igenom den igen.');
+        return routeError(409, 'store_order_customer_changed', 'Kunden på beställningen har ändrats sedan du öppnade den. Läs igenom den igen.');
       case 'customer_not_found':
         return routeError(404, 'crm_customer_not_found', 'Kundkortet hittades inte.');
       case 'not_business':
