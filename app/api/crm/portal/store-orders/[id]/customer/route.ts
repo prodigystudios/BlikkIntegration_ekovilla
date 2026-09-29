@@ -40,7 +40,7 @@ export async function PUT(req: Request, context: RouteContext) {
     });
     switch (result.kind) {
       case 'linked':
-        return ok({ store_linked: result.storeLinked, store_link_attempted: result.storeLinkAttempted !== false });
+        return ok({ store_linked: result.storeLinked, store_link_attempted: result.storeLinkAttempted });
       case 'not_found':
         return routeError(404, 'store_order_not_found', 'Beställningen hittades inte.');
       case 'not_received':

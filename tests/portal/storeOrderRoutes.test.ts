@@ -83,7 +83,7 @@ beforeEach(() => {
   h.calls = [];
   h.results = {
     setStoreOrderFreight: { kind: 'saved' },
-    linkStoreOrderCustomer: { kind: 'linked', storeLinked: true },
+    linkStoreOrderCustomer: { kind: 'linked', storeLinked: true, storeLinkAttempted: true },
     confirmStoreOrder: { kind: 'confirmed', push: { outcome: 'created', fortnoxOrderNumber: '801', error: null } },
     pushStoreOrderToFortnox: { outcome: 'created', fortnoxOrderNumber: '801', error: null },
   };

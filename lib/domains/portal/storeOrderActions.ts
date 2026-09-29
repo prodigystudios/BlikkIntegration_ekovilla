@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { FortnoxNotConnectedError, fortnoxGet, fortnoxPost, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet, fortnoxPost, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { claimFortnoxPush, documentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
@@ -41,10 +41,6 @@ import { readProfileName } from './storeOrdersStore';
 
 export type StoreOrderActor = { id: string };
 
-async function actorName(admin: SupabaseClient, actor: StoreOrderActor): Promise<string | null> {
-  return readProfileName(admin, actor.id);
-}
-
 async function readStatus(admin: SupabaseClient, id: string): Promise<StoreOrderStatus | null> {
   const { data, error } = await admin.from('crm_store_orders').select('status').eq('id', id).maybeSingle();
   if (error) throw new Error(`Beställningen gick inte att läsa: ${error.message}`);
@@ -65,7 +61,7 @@ export async function setStoreOrderFreight(
   actor: StoreOrderActor,
   now: () => Date = () => new Date(),
 ): Promise<SetStoreOrderFreightResult> {
-  const name = await actorName(admin, actor);
+  const name = await readProfileName(admin, actor.id);
   const saved = await admin
     .from('crm_store_orders')
     .update({
@@ -86,8 +82,8 @@ export async function setStoreOrderFreight(
 // ------------------------------------------------------------------------------------------------------------ kunden
 
 export type LinkStoreOrderCustomerResult =
-  /** `storeLinked`: kopplingen sparades också på butiken (bara när beställningen kom utan kund). */
-  | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted?: boolean }
+  /** `storeLinkAttempted`: beställningen kom utan kund, så butiken skulle kopplas; `storeLinked`: det gick. */
+  | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted: boolean }
   | { kind: 'not_found' }
   | { kind: 'not_received' }
   | { kind: 'customer_not_found' }
@@ -246,6 +242,16 @@ async function finishPush(
 }
 
 /**
+ * Omförsök bara efter ett tekniskt fel (jobbens regel, fas 4b): Fortnox nere eller inte anslutet, en tidsgräns (429),
+ * nätet. Ett 4xx är Fortnox besked om själva ordern (en artikel som saknas, ett fält som inte godtas) och kommer igen
+ * likadant: det kräver en människa, som rättar och trycker Skicka till Fortnox.
+ */
+export function storeOrderFortnoxFailure(e: unknown): 'failed' | 'blocked' {
+  if (e instanceof FortnoxApiError && e.status >= 400 && e.status < 500 && e.status !== 429) return 'blocked';
+  return 'failed';
+}
+
+/**
  * Skapar Fortnox-ordern för en bekräftad beställning, en gång. Claimen (samma som arbetsordern) hindrar två samtidiga
  * försök, och numret sparas direkt efter POST:en: /orders har ingen dubblettspärr hos Fortnox, så ett nummer som inte
  * sparats hade gett en order till vid nästa försök. Kastar bara när databasen inte svarar.
@@ -265,7 +271,10 @@ export async function pushStoreOrderToFortnox(
   }
   // Bara en bekräftad: levererad kräver numret, och en makulerad eller tillbakadragen ska aldrig till Fortnox.
   if (first.status !== 'confirmed') {
-    await finishPush(admin, first, 'skipped', {}, deps.now());
+    // Bara om statusen står kvar: en bekräftelse som kommer i samma stund har satt sitt skyddsnät, som inte får nollas.
+    const plan = planPortalFortnoxRetry({ outcome: 'skipped', attempts: first.fortnox_attempts ?? 0, retryUntil: first.fortnox_retry_until, now: deps.now() });
+    const closed = await admin.from('crm_store_orders').update(plan).eq('id', id).eq('status', first.status);
+    if (closed.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${closed.error.message}`);
     return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
   }
 
@@ -307,38 +316,49 @@ export async function pushStoreOrderToFortnox(
   try {
     // En order som redan finns tas över: ett försök som dog efter POST:en, ett nummer som inte gick att spara, eller ett
     // svar utan nummer. Utan sökningen hade nästa försök skapat en order till.
-    const existing = await deps.findExisting(reference);
+    // En sökning som inte går är alltid ett tekniskt fel (nytt försök), också ett 4xx: utan svaret vet vi inte om ordern
+    // redan finns, och det rättar ingen människa.
+    const existing = await deps.findExisting(reference).catch((err: unknown) => {
+      throw new Error(`Sökningen efter en befintlig order gick inte: ${err instanceof Error ? err.message : String(err)}`);
+    });
     if (existing) {
       console.warn('[portal-store-orders] Fortnox-ordern fanns redan; den tas över', { id, fortnoxOrderNumber: existing });
       number = existing;
       adopted = true;
     } else {
-    const numbers = [...new Set([...row.payload.lines.map((l) => l.articleNumber), STORE_ORDER_FREIGHT_ARTICLE])];
-    const register = new Map((await deps.articles(numbers)).map((a) => [a.article_number, a]));
-    const body = buildStoreOrderFortnoxOrder({
-      reference,
-      body: row.payload,
-      freight: storeOrderFreightFromRow(row),
-      customerNumber,
-      organisationNumber: documentOrganisationNumber(card),
-      ourReference: row.assigned_to_name,
-      register,
-      orderDate: stockholmTodayISO(deps.now()),
-    });
-    const response = await deps.post('/orders', body);
-    const documentNumber = response.Order?.DocumentNumber;
-    if (documentNumber === undefined || documentNumber === null || String(documentNumber).trim() === '') {
-      throw new Error('Fortnox returnerade inget ordernummer.');
-    }
-    number = String(documentNumber);
+      const numbers = [...new Set([...row.payload.lines.map((l) => l.articleNumber), STORE_ORDER_FREIGHT_ARTICLE])];
+      const register = new Map((await deps.articles(numbers)).map((a) => [a.article_number, a]));
+      const body = buildStoreOrderFortnoxOrder({
+        reference,
+        body: row.payload,
+        freight: storeOrderFreightFromRow(row),
+        customerNumber,
+        organisationNumber: documentOrganisationNumber(card),
+        ourReference: row.assigned_to_name,
+        register,
+        orderDate: stockholmTodayISO(deps.now()),
+      });
+      const response = await deps.post('/orders', body);
+      const documentNumber = response.Order?.DocumentNumber;
+      if (documentNumber === undefined || documentNumber === null || String(documentNumber).trim() === '') {
+        throw new Error('Fortnox returnerade inget ordernummer.');
+      }
+      number = String(documentNumber);
     }
   } catch (e) {
-    const error = e instanceof FortnoxNotConnectedError ? friendlyFortnoxMessage(e) : `Fortnox svarade: ${friendlyFortnoxMessage(e)}`;
-    console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, error: e instanceof Error ? e.message : String(e) });
+    const outcome = storeOrderFortnoxFailure(e);
+    const error =
+      e instanceof FortnoxNotConnectedError
+        ? friendlyFortnoxMessage(e)
+        : e instanceof FortnoxApiError
+          ? `Fortnox svarade: ${friendlyFortnoxMessage(e)}`
+          : // Vårt eget fel (databasen, registret, sökningen): texten stannar i loggen.
+            'Fortnox-ordern kunde inte skapas just nu. Ett nytt försök görs om några minuter.';
+    console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: e instanceof Error ? e.message : String(e) });
     await finishPush(
       admin,
       row,
-      'failed',
+      outcome,
       {
         fortnox_order_sync_status: e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed',
         fortnox_order_claimed_at: null,
@@ -346,7 +366,7 @@ export async function pushStoreOrderToFortnox(
       },
       deps.now(),
     );
-    return { outcome: 'failed', fortnoxOrderNumber: null, error };
+    return { outcome, fortnoxOrderNumber: null, error };
   }
 
   // Numret direkt, i samma skrivning som utfallet: vakten skriver det en gång.
@@ -423,7 +443,7 @@ export async function confirmStoreOrder(
   if (!decision.ok) return { kind: 'blocked', reason: decision.reason };
 
   const now = deps.now();
-  const name = await actorName(admin, input.actor);
+  const name = await readProfileName(admin, input.actor.id);
   const locked = await admin
     .from('crm_store_orders')
     .update({
@@ -512,8 +532,10 @@ export async function retryStoreOrderFortnox(
       continue;
     }
     try {
-      await pushStoreOrderToFortnox(admin, order.id, deps);
-      summary.attempted += 1;
+      const result = await pushStoreOrderToFortnox(admin, order.id, deps);
+      // Ett försök räknas bara när något gjordes mot Fortnox; en makulerad eller en som någon annan håller hoppas över.
+      if (result.outcome === 'skipped' || result.outcome === 'in_progress') summary.skipped += 1;
+      else summary.attempted += 1;
     } catch (e) {
       summary.errors += 1;
       console.error('[portal-store-orders] Fortnox-försöket föll', { id: order.id, error: e instanceof Error ? e.message : String(e) });

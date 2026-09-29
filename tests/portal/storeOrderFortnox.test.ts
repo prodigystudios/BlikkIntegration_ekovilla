@@ -50,8 +50,8 @@ describe('storeOrderLineItems', () => {
     const items = storeOrderLineItems(body(), null, REGISTER);
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({ pricing_mode: 'item', article_number: '13003', article_name: 'EKOVILLA LEVY 70 MM (registret)', article_unit_name: 'PKT', unit_price: '335.3', quantity: '12' });
-    // Inte i registret: portalens namn och enhet.
-    expect(items[1]).toMatchObject({ article_number: '13102', article_name: 'ISOLERINGSSÅG EKOVILLA LEVY', article_unit_name: 'st', unit_price: '195.3', quantity: '2' });
+    // Inte i registret: portalens namn, men ingen enhet (portalens gemener är ingen kod Fortnox känner; Fortnox tar artikelns).
+    expect(items[1]).toMatchObject({ article_number: '13102', article_name: 'ISOLERINGSSÅG EKOVILLA LEVY', article_unit_name: null, unit_price: '195.3', quantity: '2' });
   });
 
   it('frakten sist, som artikel 1050 med säljarens pris och antal 1; ingen rad för Ingen frakt', () => {
@@ -83,6 +83,9 @@ describe('buildStoreOrderFortnoxOrder', () => {
       DeliveryZipCode: '802 91',
       DeliveryCity: 'Gävle',
     });
+    // 🧨 Uttryckligen: annars fyller Fortnox i kundkortets leveransnamn och rad 2 (uppmätt). Tom sträng rensar inte, null gör.
+    expect(o.DeliveryName).toBe('Norrbygg AB');
+    expect(o).toHaveProperty('DeliveryAddress2', null);
     // Ingen VATType: Fortnox nekar den på dokumenten (2001399).
     expect(o).not.toHaveProperty('VATType');
     expect(o).not.toHaveProperty('Comments');
@@ -225,6 +228,12 @@ describe('märkningen', () => {
     expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: `${ref}-annan` }], ref)).toBeNull();
     expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: `${ref}-annan` }, { DocumentNumber: 71, ExternalInvoiceReference1: ref }], ref)).toBe('71');
     expect(pickStoreOrderFortnoxMatch([], ref)).toBeNull();
+  });
+
+  it('🧨 en makulerad order tas aldrig över: någon tog bort den med flit', () => {
+    const ref = 'crm-store-order:55555555-5555-4555-8555-555555555555';
+    expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: ref, Cancelled: true }], ref)).toBeNull();
+    expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: ref, Cancelled: true }, { DocumentNumber: 72, ExternalInvoiceReference1: ref, Cancelled: false }], ref)).toBe('72');
   });
 });
 

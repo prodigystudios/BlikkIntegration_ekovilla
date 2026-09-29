@@ -15,6 +15,10 @@ import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, t
  *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar; över det nekas ordern (2001896).
  * Vi kapar själva, så att det som skickas är det som står i Fortnox, och det som inte ryms står i textraden.
  *
+ * 🧨 LEVERANSFÄLT SOM INTE SKICKAS FYLLS I UR KUNDKORTET: utan `DeliveryName` och `DeliveryAddress2` tog ordern kortets
+ * leveransnamn och rad 2 bredvid beställningens gata, postnummer och ort (uppmätt 2026-09-29). Tom sträng rensar inte;
+ * `null` gör det. Namnet är därför butikens och rad 2 uttryckligen null.
+ *
  * 🧨 /orders HAR INGEN DUBBLETTSPÄRR. Ordern märks därför med beställningens id i `ExternalInvoiceReference1`
  * (`storeOrderFortnoxReference`), som inte skrivs ut på orderbekräftelsen eller fakturan men följer med till fakturan,
  * och varje försök söker på den före POST:en. Sökningen matchar på början av värdet, inte exakt (uppmätt 2026-09-29),
@@ -35,12 +39,15 @@ export function storeOrderFortnoxReference(id: string): string {
   return `crm-store-order:${id}`;
 }
 
-/** Den order sökningen hittade som bär exakt märkningen, eller null. Fortnox sökning matchar på början av värdet. */
+/**
+ * Den order sökningen hittade som bär exakt märkningen, eller null. Fortnox sökning matchar på början av värdet. En
+ * makulerad tas aldrig över: någon har tagit bort den med flit, och numret skrivs en gång på beställningen.
+ */
 export function pickStoreOrderFortnoxMatch(
-  orders: readonly { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null }[],
+  orders: readonly { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null; Cancelled?: boolean | null }[],
   reference: string,
 ): string | null {
-  const match = orders.find((o) => (o.ExternalInvoiceReference1 ?? '').trim() === reference && o.DocumentNumber != null);
+  const match = orders.find((o) => (o.ExternalInvoiceReference1 ?? '').trim() === reference && o.DocumentNumber != null && o.Cancelled !== true);
   return match ? String(match.DocumentNumber) : null;
 }
 
@@ -79,7 +86,9 @@ export function storeOrderLineItems(
       pricing_mode: 'item',
       article_number: line.articleNumber,
       article_name: nonEmpty(article?.description) ?? line.name,
-      article_unit_name: nonEmpty(article?.unit) ?? nonEmpty(line.unit),
+      // Bara registrets enhetskod: portalen skickar enheten med gemener, och en kod Fortnox inte känner nekar ordern.
+      // Utan registret skickas ingen, och Fortnox tar artikelns.
+      article_unit_name: nonEmpty(article?.unit),
       unit_price: String(line.unitCost),
       quantity: String(line.quantity),
       discount_percent: '',
@@ -180,7 +189,9 @@ export function buildStoreOrderFortnoxOrder(input: StoreOrderFortnoxInput) {
       ...(ourReference ? { OurReference: cap(ourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourReference ? { YourReference: cap(yourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourOrderNumber ? { YourOrderNumber: cap(yourOrderNumber, FORTNOX_YOUR_ORDER_NUMBER_MAX) } : {}),
+      DeliveryName: body.store.name.trim(),
       DeliveryAddress1: cap(delivery.address.street, FORTNOX_DELIVERY_ADDRESS_MAX),
+      DeliveryAddress2: null,
       DeliveryZipCode: delivery.address.postalCode.trim(),
       DeliveryCity: delivery.address.city.trim(),
       ...(comments ? { Comments: comments } : {}),

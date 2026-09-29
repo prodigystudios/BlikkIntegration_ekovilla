@@ -20,11 +20,13 @@ export async function requireStoreOrderManager(
   if (badId) return { response: badId };
 
   const session = createSessionClient();
-  const seen = await session.from('crm_store_orders').select('id').eq('id', id).maybeSingle();
+  // Parallellt: läsningen skiljer 404 från 403, regeln avgör.
+  const [seen, allowed] = await Promise.all([
+    session.from('crm_store_orders').select('id').eq('id', id).maybeSingle(),
+    session.rpc('crm_store_order_can_manage', { p_id: id }),
+  ]);
   if (seen.error) throw new Error(`Beställningen gick inte att läsa: ${seen.error.message}`);
   if (!seen.data) return { response: routeError(404, 'store_order_not_found', 'Beställningen hittades inte.') };
-
-  const allowed = await session.rpc('crm_store_order_can_manage', { p_id: id });
   if (allowed.error) throw new Error(`Behörigheten gick inte att pröva: ${allowed.error.message}`);
   if (allowed.data !== true) {
     return { response: routeError(403, 'store_order_forbidden', 'Bara den ansvarige för beställningen, eller en admin, kan göra det.') };

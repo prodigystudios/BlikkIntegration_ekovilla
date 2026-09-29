@@ -272,10 +272,10 @@ describe('confirmStoreOrder', () => {
     expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_attempts: 0, fortnox_next_attempt_at: minutes(5), fortnox_retry_until: minutes(24 * 60) });
   });
 
-  it('Fortnox svarar fel: bekräftad ändå, felet sparat, nytt försök om 5 min i ett fönster på 24 h', async () => {
+  it('Fortnox nere (5xx): bekräftad ändå, felet sparat, nytt försök om 5 min i ett fönster på 24 h', async () => {
     const m = db();
     const deps = fortnoxDeps(async () => {
-      throw new FortnoxApiError(400, 'Fortnox POST /orders misslyckades (400)', 2000428, 'Kan inte hitta artikeln.');
+      throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
     });
     const result = await confirm(m, deps);
     expect(result).toMatchObject({ kind: 'confirmed', push: { outcome: 'failed', fortnoxOrderNumber: null } });
@@ -289,6 +289,25 @@ describe('confirmStoreOrder', () => {
       fortnox_retry_until: minutes(24 * 60),
     });
     expect(row(m).fortnox_error).toMatch(/^Fortnox svarade: /);
+  });
+
+  it('🧨 Fortnox besked om ordern (4xx, t.ex. en artikel som saknas): stopp utan omförsök, med Fortnox text', async () => {
+    const m = db();
+    const deps = fortnoxDeps(async () => {
+      throw new FortnoxApiError(400, 'Fortnox POST /orders misslyckades (400)', 2000428, 'Kan inte hitta artikeln.');
+    });
+    const result = await confirm(m, deps);
+    expect(result).toMatchObject({ kind: 'confirmed', push: { outcome: 'blocked', fortnoxOrderNumber: null } });
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'failed', fortnox_next_attempt_at: null });
+    expect(row(m).fortnox_error).toMatch(/^Fortnox svarade: /);
+  });
+
+  it('en tidsgräns hos Fortnox (429) är tekniskt: nytt försök', async () => {
+    const m = db();
+    await confirm(m, fortnoxDeps(async () => {
+      throw new FortnoxApiError(429, 'Fortnox POST /orders misslyckades (429)');
+    }));
+    expect(row(m)).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
   });
 });
 
@@ -326,6 +345,14 @@ describe('pushStoreOrderToFortnox', () => {
     expect((await pushStoreOrderToFortnox(m.admin, ID, deps)).outcome).toBe('failed');
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(m)).toMatchObject({ fortnox_order_number: null, fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
+
+    // Också när sökningen svarar 4xx: det är ingen människas sak att rätta, och utan svaret vet vi inget.
+    const m4 = db(confirmed());
+    const deps4 = fortnoxDeps(undefined, async () => {
+      throw new FortnoxApiError(400, 'Fortnox GET /orders misslyckades (400)');
+    });
+    expect((await pushStoreOrderToFortnox(m4.admin, ID, deps4)).outcome).toBe('failed');
+    expect(row(m4)).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
   });
 
   it('🧨 numret kom medan claimen togs: ingen andra order', async () => {
@@ -353,6 +380,29 @@ describe('pushStoreOrderToFortnox', () => {
       const claimed = m.calls.some((c) => c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_sync_status === 'pending');
       expect(claimed).toBe(false);
     }
+  });
+
+  it('🧨 en bekräftelse i samma stund som en push läste "mottagen": skyddsnätet nollas inte', async () => {
+    const m = db(storeOrder({ status: 'received' }), {}, {
+      beforeExecute: (call, tables) => {
+        // Pushen läste raden som mottagen; bekräftelsen hinner före dess stängning av planen.
+        if (call.table === 'crm_store_orders' && call.op === 'update' && 'fortnox_next_attempt_at' in (call.values as object)) {
+          Object.assign(tables.crm_store_orders[0], { status: 'confirmed', fortnox_next_attempt_at: minutes(5) });
+        }
+      },
+    });
+    expect((await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps())).outcome).toBe('skipped');
+    expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
+  });
+
+  it('vårt eget fel (registret går inte att läsa): nytt försök, och databasens text når aldrig säljaren', async () => {
+    const m = db(confirmed());
+    const deps = { ...fortnoxDeps(), articles: vi.fn(async () => { throw new Error('relation "hemlig" does not exist'); }) };
+    const result = await pushStoreOrderToFortnox(m.admin, ID, deps);
+    expect(result.outcome).toBe('failed');
+    expect(result.error).not.toContain('hemlig');
+    expect(row(m).fortnox_error).not.toContain('hemlig');
+    expect(deps.post).not.toHaveBeenCalled();
   });
 
   it('kortet tappade kundnumret efter bekräftelsen: stopp utan omförsök, med skälet', async () => {
@@ -421,6 +471,13 @@ describe('retryStoreOrderFortnox', () => {
     expect(await retryStoreOrderFortnox(expired.admin, { deps })).toMatchObject({ due: 1, gaveUp: 1, attempted: 0 });
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(expired).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('en makulerad som stod på tur: räknas som överhoppad, inte som ett försök', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(60) }));
+    const deps = fortnoxDeps();
+    expect(await retryStoreOrderFortnox(m.admin, { deps })).toMatchObject({ due: 1, attempted: 0, skipped: 1 });
+    expect(deps.post).not.toHaveBeenCalled();
   });
 
   it('en annan körning tog lånet först: hoppas över', async () => {
