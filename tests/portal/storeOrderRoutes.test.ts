@@ -10,6 +10,7 @@ import { salesUser } from '../crm/helpers/supabase';
 
 const ID = '55555555-5555-4555-8555-555555555555';
 const CARD = '11111111-1111-4111-8111-111111111111';
+const SEEN = { version: 2, freightSetAt: '2026-09-29T09:30:00.000000+00:00', customerId: CARD };
 
 const h = vi.hoisted(() => ({
   held: new Set<string>(),
@@ -92,7 +93,7 @@ describe('grinden, för alla fyra', () => {
   const actions = [
     ['freight', { mode: 'none' }],
     ['customer', { customer_id: CARD }],
-    ['confirm', { version: 2 }],
+    ['confirm', { version: 2, freightSetAt: '2026-09-29T09:30:00.000000+00:00', customerId: CARD }],
     ['fortnox', {}],
   ] as const;
 
@@ -123,7 +124,7 @@ describe('grinden, för alla fyra', () => {
   });
 
   it('regeln frågas med beställningens id', async () => {
-    await call('confirm', { version: 2 });
+    await call('confirm', SEEN);
     expect(h.calls.find((c) => c.fn === 'rpc:crm_store_order_can_manage')?.args[0]).toEqual({ p_id: ID });
   });
 });
@@ -172,26 +173,28 @@ describe('PUT …/customer', () => {
 });
 
 describe('POST …/confirm', () => {
-  it('versionen säljaren såg går till domänen; svaret bär Fortnox-numret eller felet', async () => {
-    expect(await call('confirm', { version: 2 })).toMatchObject({ status: 200, body: { data: { fortnox_order_number: '801', fortnox_error: null } } });
-    expect(h.calls.find((c) => c.fn === 'confirmStoreOrder')!.args[1]).toEqual({ id: ID, expectedVersion: 2, actor: { id: salesUser.id } });
+  it('det säljaren såg går till domänen; svaret bär Fortnox-numret, felet och utfallet', async () => {
+    expect(await call('confirm', SEEN)).toMatchObject({ status: 200, body: { data: { fortnox_order_number: '801', fortnox_error: null, fortnox_outcome: 'created' } } });
+    expect(h.calls.find((c) => c.fn === 'confirmStoreOrder')!.args[1]).toEqual({ id: ID, expected: SEEN, actor: { id: salesUser.id } });
     h.results.confirmStoreOrder = { kind: 'confirmed', push: { outcome: 'failed', fortnoxOrderNumber: null, error: 'Fortnox svarade: nere' } };
-    expect(await call('confirm', { version: 2 })).toMatchObject({ status: 200, body: { data: { fortnox_order_number: null, fortnox_error: 'Fortnox svarade: nere' } } });
+    expect(await call('confirm', SEEN)).toMatchObject({ status: 200, body: { data: { fortnox_order_number: null, fortnox_error: 'Fortnox svarade: nere', fortnox_outcome: 'failed' } } });
   });
 
   it('varje skäl blir 409 med sin kod; utan version 400', async () => {
     for (const [reason, code] of [
       ['not_received', 'store_order_not_received'],
       ['changed', 'store_order_changed'],
+      ['changed_here', 'store_order_changed_here'],
       ['freight_missing', 'store_order_freight_missing'],
       ['customer_missing', 'store_order_customer_missing'],
       ['customer_not_in_fortnox', 'store_order_customer_not_in_fortnox'],
     ]) {
       h.results.confirmStoreOrder = { kind: 'blocked', reason };
-      expect(await call('confirm', { version: 2 })).toMatchObject({ status: 409, body: { errorDetails: { code } } });
+      expect(await call('confirm', SEEN)).toMatchObject({ status: 409, body: { errorDetails: { code } } });
     }
     h.calls = [];
-    for (const bad of [{}, { version: 0 }, { version: 1.5 }, { version: '2' }]) expect((await call('confirm', bad)).status).toBe(400);
+    const bads = [{}, { ...SEEN, version: 0 }, { ...SEEN, version: 1.5 }, { ...SEEN, version: '2' }, { version: 2, customerId: CARD }, { version: 2, freightSetAt: SEEN.freightSetAt }, { ...SEEN, freightSetAt: 'igår' }, { ...SEEN, customerId: 'x' }];
+    for (const bad of bads) expect((await call('confirm', bad)).status).toBe(400);
     expect(domainCalls()).toHaveLength(0);
   });
 
@@ -199,7 +202,7 @@ describe('POST …/confirm', () => {
     h.results.confirmStoreOrder = undefined;
     const { confirmStoreOrder } = await import('@/lib/domains/portal/storeOrderActions');
     vi.mocked(confirmStoreOrder).mockRejectedValueOnce(new Error('relation "hemlig" does not exist'));
-    const res = await call('confirm', { version: 2 });
+    const res = await call('confirm', SEEN);
     expect(res.status).toBe(500);
     expect(JSON.stringify(res.body)).not.toContain('hemlig');
   });

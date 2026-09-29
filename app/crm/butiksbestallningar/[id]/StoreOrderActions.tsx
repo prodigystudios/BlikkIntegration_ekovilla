@@ -20,6 +20,9 @@ type Props = {
   id: string;
   status: StoreOrderStatus;
   storeVersion: number;
+  /** Det säljaren ser av Ekovillas val; Bekräfta skickar dem, och servern nekar om någon annan ändrat dem. */
+  freightSetAt: string | null;
+  customerId: string | null;
   storeName: string;
   /** Kundnumret portalen skickade. */
   customerNumber: string | null;
@@ -260,7 +263,26 @@ type Runner = (
 ) => Promise<boolean>;
 
 // Lägen där sidan inte längre stämmer med beställningen: läs om den.
-const STALE_CODES = new Set(['store_order_not_received', 'store_order_changed', 'store_order_not_confirmed']);
+const STALE_CODES = new Set([
+  'store_order_not_received',
+  'store_order_changed',
+  'store_order_changed_here',
+  'store_order_not_confirmed',
+  'store_order_push_in_progress',
+]);
+
+/** Vad Fortnox-försöket blev, som säljaren läser det. */
+function fortnoxMessage(data: any, confirmed: boolean): SuccessMessage {
+  const lead = confirmed ? 'Beställningen är bekräftad' : null;
+  if (data?.fortnox_order_number) {
+    return lead ? `${lead} och Fortnox-order ${data.fortnox_order_number} är skapad.` : `Fortnox-order ${data.fortnox_order_number} är skapad.`;
+  }
+  if (data?.fortnox_error) {
+    return { error: lead ? `${lead}, men Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` : `Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` };
+  }
+  if (data?.fortnox_outcome === 'in_progress') return `${lead ?? 'Klart'}. Fortnox-ordern skapas av ett annat försök just nu.`;
+  return `${lead ?? 'Klart'}.`;
+}
 
 export default function StoreOrderActions(props: Props) {
   const router = useRouter();
@@ -289,10 +311,9 @@ export default function StoreOrderActions(props: Props) {
   };
 
   async function confirm() {
-    const ok = await run(`/api/crm/portal/store-orders/${props.id}/confirm`, 'POST', { version: props.storeVersion }, 'Beställningen kunde inte bekräftas.', (data) =>
-      data?.fortnox_error
-        ? { error: `Beställningen är bekräftad, men Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` }
-        : `Beställningen är bekräftad och Fortnox-order ${data?.fortnox_order_number} är skapad.`,
+    const body = { version: props.storeVersion, freightSetAt: props.freightSetAt, customerId: props.customerId };
+    const ok = await run(`/api/crm/portal/store-orders/${props.id}/confirm`, 'POST', body, 'Beställningen kunde inte bekräftas.', (data) =>
+      fortnoxMessage(data, true),
     );
     setConfirming(false);
     return ok;
@@ -311,13 +332,14 @@ export default function StoreOrderActions(props: Props) {
         ) : (
           <p className={crm.meta}>Beställningen är bekräftad. Fortnox-ordern har inte skapats än.</p>
         )}
-        <p className={crm.meta}>Nya försök görs av sig själv i ett dygn. Butiken får bekräftelsen när ordern finns.</p>
+        <p className={crm.meta}>
+          Var felet tillfälligt görs nya försök av sig själv under ett dygn. Annars: rätta det som felet säger och skicka igen.
+          Butiken får bekräftelsen när ordern finns.
+        </p>
         <button
           type="button"
           onClick={() =>
-            run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) =>
-              data?.fortnox_error ? { error: `Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` } : `Fortnox-order ${data?.fortnox_order_number} är skapad.`,
-            )
+            run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) => fortnoxMessage(data, false))
           }
           disabled={busy}
           className={cn(crm.saveButton, 'px-4 sm:w-auto sm:justify-self-start')}

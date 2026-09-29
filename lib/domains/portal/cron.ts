@@ -156,7 +156,7 @@ export async function runPortalCron(
   if (options.fortnoxRetries !== false && storeOrdersRemaining > 0) {
     summary.storeOrderFortnox = await step('butiksbeställningarnas Fortnox-försök', () =>
       retryStoreOrderFortnox(admin, {
-        deps: { ...(options.storeOrderFortnoxDeps ?? storeOrderFortnoxDeps()), now },
+        deps: { ...(options.storeOrderFortnoxDeps ?? storeOrderFortnoxDeps(admin)), now },
         budgetMs: storeOrdersRemaining,
       }),
     );

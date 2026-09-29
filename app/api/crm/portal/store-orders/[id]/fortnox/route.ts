@@ -8,7 +8,8 @@ type RouteContext = { params: { id: string } };
 // "Skicka till Fortnox" på en bekräftad butiksbeställning som ännu saknar Fortnox-order (RESELLER_PORTAL_CRM_PLAN.md
 // fas 8b): samma försök som bekräftelsen och cron gör, med samma claim, så att två samtidiga aldrig ger två ordrar.
 //
-//   200 { fortnox_order_number, fortnox_error }   skapad, eller fanns redan; fortnox_error när den inte kunde skapas
+//   200 { fortnox_order_number, fortnox_error, fortnox_outcome }
+//                                                 skapad, eller fanns redan; fortnox_error när den inte kunde skapas
 //   403 store_order_forbidden                     varken ansvarig eller admin
 //   404 store_order_not_found
 //   409 store_order_not_confirmed                 inte bekräftad (eller makulerad)
@@ -27,9 +28,9 @@ export async function POST(_req: Request, context: RouteContext) {
       return routeError(409, 'store_order_not_confirmed', 'Bara en bekräftad beställning skickas till Fortnox.');
     }
     if (result.outcome === 'in_progress') {
-      return routeError(409, 'store_order_push_in_progress', result.error ?? 'Fortnox-ordern skapas redan.');
+      return routeError(409, 'store_order_push_in_progress', 'Fortnox-ordern skapas redan av ett annat försök. Ladda om sidan om en stund.');
     }
-    return ok({ fortnox_order_number: result.fortnoxOrderNumber, fortnox_error: result.error });
+    return ok({ fortnox_order_number: result.fortnoxOrderNumber, fortnox_error: result.error, fortnox_outcome: result.outcome });
   } catch (e) {
     console.error('[portal-store-orders] Fortnox-ordern kunde inte skickas', { id: context.params.id, error: e instanceof Error ? e.message : String(e) });
     return routeError(500, 'store_order_fortnox_failed', 'Fortnox-ordern kunde inte skickas.');

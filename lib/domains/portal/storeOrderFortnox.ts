@@ -14,6 +14,11 @@ import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, t
  *   - `YourOrderNumber` kapas tyst vid 30 tecken, leveransadressen vid 60 och en textrad vid 255.
  *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar; över det nekas ordern (2001896).
  * Vi kapar själva, så att det som skickas är det som står i Fortnox, och det som inte ryms står i textraden.
+ *
+ * 🧨 /orders HAR INGEN DUBBLETTSPÄRR. Ordern märks därför med beställningens id i `ExternalInvoiceReference1`
+ * (`storeOrderFortnoxReference`), som inte skrivs ut på orderbekräftelsen eller fakturan men följer med till fakturan,
+ * och varje försök söker på den före POST:en. Sökningen matchar på början av värdet, inte exakt (uppmätt 2026-09-29),
+ * så träffarna jämförs exakt (`pickStoreOrderFortnoxMatch`).
  */
 
 /** Fraktens artikel (William 2026-09-29). Finns i prod, inte i testbolaget. */
@@ -23,6 +28,20 @@ export const FORTNOX_YOUR_REFERENCE_MAX = 50;
 export const FORTNOX_YOUR_ORDER_NUMBER_MAX = 30;
 export const FORTNOX_TEXT_ROW_MAX = 255;
 export const FORTNOX_COMMENTS_MAX = 1024;
+
+/** Märkningen på Fortnox-ordern: fast längd (uuid), unik per beställning. */
+export function storeOrderFortnoxReference(id: string): string {
+  return `crm-store-order:${id}`;
+}
+
+/** Den order sökningen hittade som bär exakt märkningen, eller null. Fortnox sökning matchar på början av värdet. */
+export function pickStoreOrderFortnoxMatch(
+  orders: readonly { DocumentNumber?: string | number | null; ExternalInvoiceReference1?: string | null }[],
+  reference: string,
+): string | null {
+  const match = orders.find((o) => (o.ExternalInvoiceReference1 ?? '').trim() === reference && o.DocumentNumber != null);
+  return match ? String(match.DocumentNumber) : null;
+}
 
 /** Det ur artikelregistret raderna tar: benämningen och enhetskoden (portalen skickar enheten med gemener). */
 export type StoreOrderRegisterArticle = { article_number: string; description: string | null; unit: string | null };
@@ -111,6 +130,8 @@ export function storeOrderComments(body: Pick<StoreOrderBody, 'delivery'>): stri
 }
 
 export type StoreOrderFortnoxInput = {
+  /** `storeOrderFortnoxReference(id)`: söks före varje POST. */
+  reference: string;
   body: StoreOrderBody;
   freight: StoreOrderFreight;
   customerNumber: string;
@@ -145,6 +166,7 @@ export function buildStoreOrderFortnoxOrder(input: StoreOrderFortnoxInput) {
     Order: {
       CustomerNumber: input.customerNumber,
       OrderDate: input.orderDate,
+      ExternalInvoiceReference1: input.reference,
       ...(input.organisationNumber ? { OrganisationNumber: input.organisationNumber } : {}),
       ...(ourReference ? { OurReference: cap(ourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourReference ? { YourReference: cap(yourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
@@ -165,6 +187,8 @@ export type StoreOrderConfirmBlocker =
   | 'not_received'
   /** Butiken ändrade beställningen efter att sidan lästes. */
   | 'changed'
+  /** Frakten eller kunden ändrades av någon annan hos Ekovilla efter att sidan lästes. */
+  | 'changed_here'
   | 'freight_missing'
   | 'customer_missing'
   /** Kortet har inget kundnummer i Fortnox, så ordern kan inte skapas. */
@@ -174,23 +198,34 @@ export type StoreOrderConfirmRow = {
   status: StoreOrderStatus;
   store_version: number;
   freight_mode: string | null;
+  freight_set_at: string | null;
   customer_id: string | null;
 };
 
+/** Det säljaren såg när hen tryckte: butikens version, och Ekovillas frakt och kund. */
+export type StoreOrderConfirmExpected = { version: number; freightSetAt: string; customerId: string };
+
+const sameInstant = (a: string | null, b: string) => a !== null && Date.parse(a) === Date.parse(b);
+
 /**
- * Får beställningen bekräftas nu? Mottagen, samma version som säljaren såg, frakten beslutad och en kund med kundnummer
- * i Fortnox. Databasen kräver själv frakten och mottagen (crm_store_orders_guard och checken), men svaret här säger
- * varför, i den ordning säljaren kan göra något åt det.
+ * Får beställningen bekräftas nu? Mottagen, och som säljaren såg den: butikens version, frakten och kunden. Bara
+ * butikens ändringar räknar upp versionen, så frakten (sparad när) och kunden jämförs för sig: en ändring som någon
+ * annan hos Ekovilla gjort efter att sidan lästes bekräftas aldrig tyst. Sedan frakten beslutad och en kund med
+ * kundnummer i Fortnox. Databasen kräver själv frakten och mottagen (crm_store_orders_guard och checken), men svaret
+ * här säger varför, i den ordning säljaren kan göra något åt det.
  */
 export function decideStoreOrderConfirm(
   row: StoreOrderConfirmRow,
-  expectedVersion: number,
+  expected: StoreOrderConfirmExpected,
   card: { fortnox_customer_id: string | null } | null,
 ): { ok: true } | { ok: false; reason: StoreOrderConfirmBlocker } {
   if (row.status !== 'received') return { ok: false, reason: 'not_received' };
-  if (row.store_version !== expectedVersion) return { ok: false, reason: 'changed' };
+  if (row.store_version !== expected.version) return { ok: false, reason: 'changed' };
   if (!row.freight_mode) return { ok: false, reason: 'freight_missing' };
   if (!row.customer_id || !card) return { ok: false, reason: 'customer_missing' };
+  if (!sameInstant(row.freight_set_at, expected.freightSetAt) || row.customer_id !== expected.customerId) {
+    return { ok: false, reason: 'changed_here' };
+  }
   if (!nonEmpty(card.fortnox_customer_id)) return { ok: false, reason: 'customer_not_in_fortnox' };
   return { ok: true };
 }

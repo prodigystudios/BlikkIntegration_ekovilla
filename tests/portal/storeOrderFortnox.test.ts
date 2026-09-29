@@ -4,7 +4,9 @@ import {
   FORTNOX_TEXT_ROW_MAX,
   buildStoreOrderFortnoxOrder,
   decideStoreOrderConfirm,
+  pickStoreOrderFortnoxMatch,
   storeOrderComments,
+  storeOrderFortnoxReference,
   storeOrderDocumentNote,
   storeOrderLineItems,
   type StoreOrderFortnoxInput,
@@ -31,6 +33,7 @@ const REGISTER = new Map<string, StoreOrderRegisterArticle>([
 
 function order(overrides: Partial<StoreOrderFortnoxInput> = {}) {
   return buildStoreOrderFortnoxOrder({
+    reference: 'crm-store-order:55555555-5555-4555-8555-555555555555',
     body: body(),
     freight: { mode: 'charged', price: 950 },
     customerNumber: '1043',
@@ -70,6 +73,8 @@ describe('buildStoreOrderFortnoxOrder', () => {
     expect(o).toMatchObject({
       CustomerNumber: '1043',
       OrderDate: '2026-09-29',
+      // Märkningen som söks före varje POST: /orders har ingen dubblettspärr.
+      ExternalInvoiceReference1: 'crm-store-order:55555555-5555-4555-8555-555555555555',
       OrganisationNumber: '556677-8899',
       OurReference: 'Anna Berg',
       YourReference: 'David Kron',
@@ -162,24 +167,47 @@ describe('storeOrderComments', () => {
 });
 
 describe('decideStoreOrderConfirm', () => {
-  const row = { status: 'received' as const, store_version: 3, freight_mode: 'charged', customer_id: 'kund' };
+  const AT = '2026-09-29T09:00:00.123456+00:00';
+  const row = { status: 'received' as const, store_version: 3, freight_mode: 'charged', freight_set_at: AT, customer_id: 'kund' };
+  const seen = { version: 3, freightSetAt: AT, customerId: 'kund' };
   const card = { fortnox_customer_id: '1043' };
 
-  it('mottagen, samma version, frakten beslutad och en kund i Fortnox: ja', () => {
-    expect(decideStoreOrderConfirm(row, 3, card)).toEqual({ ok: true });
-    expect(decideStoreOrderConfirm({ ...row, freight_mode: 'none' }, 3, card)).toEqual({ ok: true });
+  it('mottagen, som säljaren såg den, frakten beslutad och en kund i Fortnox: ja', () => {
+    expect(decideStoreOrderConfirm(row, seen, card)).toEqual({ ok: true });
+    expect(decideStoreOrderConfirm({ ...row, freight_mode: 'none' }, seen, card)).toEqual({ ok: true });
+    // Samma ögonblick i en annan form (klienten skickar tillbaka det den fick).
+    expect(decideStoreOrderConfirm(row, { ...seen, freightSetAt: '2026-09-29T11:00:00.123456+02:00' }, card)).toEqual({ ok: true });
   });
 
   it('nej, med skälet, i den ordning säljaren kan göra något åt det', () => {
     const no = (reason: string) => ({ ok: false, reason });
-    expect(decideStoreOrderConfirm({ ...row, status: 'withdrawn' }, 3, card)).toEqual(no('not_received'));
-    expect(decideStoreOrderConfirm({ ...row, status: 'confirmed' }, 3, card)).toEqual(no('not_received'));
+    expect(decideStoreOrderConfirm({ ...row, status: 'withdrawn' }, seen, card)).toEqual(no('not_received'));
+    expect(decideStoreOrderConfirm({ ...row, status: 'confirmed' }, seen, card)).toEqual(no('not_received'));
     // Butiken ändrade efter att sidan lästes: läs om före allt annat.
-    expect(decideStoreOrderConfirm({ ...row, freight_mode: null }, 2, card)).toEqual(no('changed'));
-    expect(decideStoreOrderConfirm({ ...row, freight_mode: null }, 3, card)).toEqual(no('freight_missing'));
-    expect(decideStoreOrderConfirm({ ...row, customer_id: null }, 3, null)).toEqual(no('customer_missing'));
-    expect(decideStoreOrderConfirm(row, 3, null)).toEqual(no('customer_missing'));
-    expect(decideStoreOrderConfirm(row, 3, { fortnox_customer_id: ' ' })).toEqual(no('customer_not_in_fortnox'));
+    expect(decideStoreOrderConfirm({ ...row, freight_mode: null }, { ...seen, version: 2 }, card)).toEqual(no('changed'));
+    expect(decideStoreOrderConfirm({ ...row, freight_mode: null }, seen, card)).toEqual(no('freight_missing'));
+    expect(decideStoreOrderConfirm({ ...row, customer_id: null }, seen, null)).toEqual(no('customer_missing'));
+    expect(decideStoreOrderConfirm(row, seen, null)).toEqual(no('customer_missing'));
+    expect(decideStoreOrderConfirm(row, seen, { fortnox_customer_id: ' ' })).toEqual(no('customer_not_in_fortnox'));
+  });
+
+  it('🧨 frakten eller kunden ändrades av någon annan hos Ekovilla (versionen är butikens): nej', () => {
+    const no = { ok: false, reason: 'changed_here' };
+    expect(decideStoreOrderConfirm({ ...row, freight_set_at: '2026-09-29T09:05:00+00:00' }, seen, card)).toEqual(no);
+    expect(decideStoreOrderConfirm({ ...row, customer_id: 'annan' }, seen, card)).toEqual(no);
+  });
+});
+
+describe('märkningen', () => {
+  it('beställningens id, fast form', () => {
+    expect(storeOrderFortnoxReference('55555555-5555-4555-8555-555555555555')).toBe('crm-store-order:55555555-5555-4555-8555-555555555555');
+  });
+
+  it('🧨 Fortnox sökning matchar på början av värdet: bara en exakt träff räknas', () => {
+    const ref = 'crm-store-order:55555555-5555-4555-8555-555555555555';
+    expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: `${ref}-annan` }], ref)).toBeNull();
+    expect(pickStoreOrderFortnoxMatch([{ DocumentNumber: 70, ExternalInvoiceReference1: `${ref}-annan` }, { DocumentNumber: 71, ExternalInvoiceReference1: ref }], ref)).toBe('71');
+    expect(pickStoreOrderFortnoxMatch([], ref)).toBeNull();
   });
 });
 
