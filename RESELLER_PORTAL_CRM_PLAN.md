@@ -291,9 +291,11 @@ Varje kandidat måste fortfarande ha `crm.workorder.write`, annars prövas näst
 - Ordern skapas ändå, hos reservadmin, med butikens uppgifter i snapshoten. Fortnox-ordern kan inte
   skapas utan kund, så butiken ser "Mottagen" tills kunden är kopplad.
 - ~~`reverse_vat` skrivs **inte** i snapshoten.~~ **Ändrat 2026-09-29:** varje portaljobb har omvänd byggmoms, 0 %,
-  och snapshoten bär `reverse_vat: true` med eller utan kort (`portalJobVat` i `jobIntake.ts`). Att snapshoten vinner
-  över kortet är nu avsikten. Undantag: ett privatkort (intaget kan hitta ett genom numret) ger 25 % som förut, eftersom
-  omvänd byggmoms aldrig gäller en privatperson.
+  och snapshoten bär `reverse_vat: true` med eller utan kort (`PORTAL_JOB_VAT` i `jobIntake.ts`). Att snapshoten vinner
+  över kortet är nu avsikten.
+- **Ett kort som inte är ett företag räknas som inget kort** (ändrat 2026-09-29, `readCustomer` i `jobIntakeStore.ts`),
+  vare sig numret eller kopplingen för hand pekar på det: butiken är ett företag, kopplingen (3c) nekar ett sådant kort,
+  och omvänd byggmoms gäller aldrig en privatperson. Ordern tas emot utan kund, och säljaren kopplar rätt kort.
 - ✅ `POST /api/crm/portal/jobs/[workOrderId]/link-customer` (fas 3c), bara för portalordrar utan kund som
   inte finns i Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar
   kopplingen i `crm_portal_resellers` och skapar Fortnox-ordern. Se "Fas 3c: resultat".
@@ -1047,7 +1049,7 @@ Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka
 
 Följder av kontot per rad:
 - ⚠️ **Kontot följer `reverseVat`** (snapshoten, annars kundkortet), inte procentsatsen ensam. Portaljobbets 0 % oavsett
-  kort sätter därför omvänd moms på dokumentet (✅ 2026-09-29, `portalJobVat`; prövat: ett jobb till SEHED med
+  kort sätter därför omvänd moms på dokumentet (✅ 2026-09-29, `PORTAL_JOB_VAT`; prövat: ett jobb till SEHED med
   vanlig moms på kortet blev order 36 i testbolaget, alla rader 0 % och 3231).
 - **Öppna ordrar som synkades före ändringen behåller sina konton** tills de synkas om ("Synka om" eller en
   artikelredigering); `createinvoice` kopierar orderns rader som de står.
@@ -1339,6 +1341,9 @@ Ingen av dem stoppar fas 0–7.
 
 - ✅ **Momsen** (kontraktets fråga 4): besvarad av William 2026-09-29, se "Fas 8: spiken om momsen" och punkt 34.
 - ✅ **Kontot vid moms som avviker från kundkortet**: konto per rad, se "Fas 8: spiken om momsen".
+- **Köparens momsregistreringsnummer vid omvänd moms** (före fas 9, gäller hela CRM:et): en faktura med omvänd
+  byggmoms ska bära köparens momsregistreringsnummer, men fullständighetskontrollen kräver det inte, varken för
+  portaljobben eller för CRM:ets egna byggmomsordrar. Fortnox skriver "Ert VAT-nummer" ur kundkortets `VATNumber`.
 - **Fakturatexten vid moms som avviker från kundkortet** (senare, men **före fas 9**: då får varje portaljobb till en
   butik med vanlig moms på kortet en faktura med 0 % utan texten, som en faktura med omvänd moms måste ha): Fortnox faktura skriver "Omvänd
   betalningsskyldighet" vid 25 % till en kund med omvänd moms, och texten saknas vid 0 % till en kund med vanlig moms.
