@@ -273,8 +273,10 @@ describe('buildPortalCustomerLinkUpdate', () => {
     const wo = unlinkedWorkOrder();
     const lines = wo.line_items as Record<string, unknown>[];
     lines[1] = { ...lines[1], written_off: true };
-    const update = buildPortalCustomerLinkUpdate(wo as never, CARD);
+    // Kortet säger vanlig moms; det läses inte.
+    const update = buildPortalCustomerLinkUpdate(wo as never, { ...CARD, reverse_vat: false } as JobCustomerCard);
     expect(update).toMatchObject({ vat_percent: 0, amount: 11780, pricing_summary: { subtotal: 11780, vat: 0, total: 11780 } });
+    expect(update.customer_snapshot).toMatchObject({ reverse_vat: true });
   });
 
   it('🧨 en order som togs emot före regeln får omvänd moms på dokumentet när kortet kopplas', () => {

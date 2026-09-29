@@ -19,7 +19,7 @@ import { RESELLER_ID_PATTERN } from './resellers';
  *     säljaren fyller i den.
  *   - Kunden är butiken. Med ett kundkort byggs snapshoten som på en fristående order (kortets kontakt blir Er
  *     referens). Utan kort står butikens uppgifter där.
- *   - Momsen är omvänd byggmoms, 0 % på hela ordern, vad butikens kort än säger (`PORTAL_JOB_VAT_PERCENT`).
+ *   - Momsen är omvänd byggmoms, 0 % på hela ordern, vad butikens kort än säger (`portalJobVat`).
  *   - Märkningen (`label`) är butikens offertnummer. Utan ROT blir den `YourOrderNumber` i Fortnox.
  *   - Arbetsplatsen är arbetsadressen, och står också som snapshotens separata arbetsadress (`delivery_*`), så att
  *     fullständighetskontrollen prövar arbetsplatsen och inte butikens adress, och Fortnox får den som leveransadress.
@@ -217,8 +217,8 @@ export function mapPortalJobLines(
 export function buildPortalJobCustomerSnapshot(job: PortalJob, customer: JobCustomerCard | null): Record<string, unknown> {
   const workplace = job.workplace;
   const common = {
-    // Dokumentets moms, inte kortets: se PORTAL_JOB_VAT_PERCENT.
-    reverse_vat: true,
+    // Dokumentets moms, inte kortets: se portalJobVat.
+    reverse_vat: portalJobVat(customer).reverseVat,
     delivery_address: nonEmpty(workplace.address.street),
     delivery_postal_code: nonEmpty(workplace.address.postalCode),
     delivery_city: nonEmpty(workplace.address.city),
@@ -256,8 +256,14 @@ export function buildPortalJobCustomerSnapshot(job: PortalJob, customer: JobCust
  * Snapshoten bär `reverse_vat: true` med eller utan kort. Den flaggan vinner över kortet i Fortnox-pushen
  * (`resolveReverseVat`), och den ger raderna 0 % och kontot 3231 (`fortnoxSalesAccount`). Utan den hade ett jobb till
  * en butik med vanlig moms på kortet bokats på 3004. Fortnox fakturatext följer fortfarande kortet (tas senare).
+ *
+ * ⚠️ Utom när kortet är en privatperson: omvänd byggmoms gäller aldrig en privatperson, så då 25 % som förut.
+ * Kopplingen (3c) nekar privatkort, men intaget kan hitta ett genom butikens kundnummer.
  */
-export const PORTAL_JOB_VAT_PERCENT = 0;
+export function portalJobVat(customer: Pick<JobCustomerCard, 'customer_type'> | null): { vatPercent: number; reverseVat: boolean } {
+  if (customer?.customer_type === 'private') return { vatPercent: 25, reverseVat: false };
+  return { vatPercent: 0, reverseVat: true };
+}
 
 /**
  * Kundkortets del av snapshoten: vem kunden är, dess kontakt (Er referens) och adress. Det är de fälten
@@ -306,14 +312,14 @@ const LINK_CONTACT_KEYS = ['contact_name', 'email', 'phone', 'your_reference'] a
 /**
  * Butikens kundkort kopplas på en portalorder utan kund (fas 3c): kunden och kortets del av snapshoten. Butiken är
  * kunden: det är butiken Ekovilla fakturerar (William 2026-09-28). Raderna och resten av snapshoten (märkningen,
- * arbetsplatsen, kontakten på plats) står kvar, och momsen är jobbets, inte kortets (`PORTAL_JOB_VAT_PERCENT`).
+ * arbetsplatsen, kontakten på plats) står kvar, och momsen är jobbets, inte kortets (`portalJobVat`).
  *
  * Kortet vinner för vem kunden är (namn, org.nr, adress). Kontakten och Er referens är ett val för just den här
  * ordern: har säljaren fyllt i dem innan kortet kopplades står de kvar, och kortet fyller bara det som är tomt. Samma
  * regel som telefonnumret i fullständighetskontrollen.
  */
 export function buildPortalCustomerLinkUpdate(workOrder: LinkableWorkOrder, customer: JobCustomerCard): Record<string, unknown> {
-  const vatPercent = PORTAL_JOB_VAT_PERCENT;
+  const { vatPercent, reverseVat } = portalJobVat(customer);
   // Avskrivna rader räknas inte: samma regel som `activeLineItems` (fortnox/partialInvoices.ts), som
   // saveWorkOrderLineItems räknar med. Den importeras inte hit, eftersom den modulen drar in service-klienten och
   // Fortnox-pushen, och den här ska vara ren. Ändras regeln där ändras den här.
@@ -326,8 +332,8 @@ export function buildPortalCustomerLinkUpdate(workOrder: LinkableWorkOrder, cust
     customer_id: customer.id,
     client_name: getCrmCustomerDisplayName(customer),
     quote_type: customer.customer_type === 'private' ? 'private' : 'business',
-    // `reverse_vat` sätts också här: en order som togs emot före regeln bär kortets värde eller inget alls.
-    customer_snapshot: { ...mergeLinkedSnapshot(workOrder.customer_snapshot ?? {}, portalCustomerIdentity(customer)), reverse_vat: true },
+    // Momsen räknas om med kortet, som beloppet: flaggan måste följa `vat_percent` ovan.
+    customer_snapshot: { ...mergeLinkedSnapshot(workOrder.customer_snapshot ?? {}, portalCustomerIdentity(customer)), reverse_vat: reverseVat },
     vat_percent: vatPercent,
     pricing_summary: { subtotal: pricing.subtotal, vat: pricing.vat, total: pricing.total },
     amount: pricing.total,
@@ -349,7 +355,7 @@ export function buildPortalWorkOrderInsert(input: PortalWorkOrderInput): Record<
   const { job, customer } = input;
   const snapshot = buildPortalJobCustomerSnapshot(job, customer);
   const lineItems = mapPortalJobLines(job.lines, input.register, input.newId);
-  const vatPercent = PORTAL_JOB_VAT_PERCENT;
+  const { vatPercent } = portalJobVat(customer);
   const pricing = computePricing(lineItems, vatPercent, { isPrivate: false });
   return {
     id: input.workOrderId,

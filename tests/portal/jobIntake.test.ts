@@ -219,6 +219,18 @@ describe('arbetsordern', () => {
     expect(insert(null).customer_snapshot).toMatchObject({ reverse_vat: true });
   });
 
+  it('kortets egen moms läses inte: ett kort med vanlig moms ger ändå 0 % och omvänd moms på dokumentet', () => {
+    const card = { ...CARD, reverse_vat: false } as JobCustomerCard;
+    expect(insert(card)).toMatchObject({ vat_percent: 0, amount: 14270 });
+    expect(insert(card).customer_snapshot).toMatchObject({ reverse_vat: true });
+  });
+
+  it('🧨 ett privatkort ger 25 % utan omvänd moms: omvänd byggmoms gäller aldrig en privatperson', () => {
+    const card: JobCustomerCard = { ...CARD, customer_type: 'private', company_name: null, organization_number: null, first_name: 'Eva', last_name: 'Ek', personal_number: '19800101-1234' };
+    expect(insert(card)).toMatchObject({ vat_percent: 25, amount: 17837.5 });
+    expect(insert(card).customer_snapshot).toMatchObject({ reverse_vat: false });
+  });
+
   it('arbetsadressen är arbetsplatsen', () => {
     expect(insert().work_address).toEqual({
       street_address: 'Rönnvägen 18',
