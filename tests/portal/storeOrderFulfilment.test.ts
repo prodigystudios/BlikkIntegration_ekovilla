@@ -273,6 +273,16 @@ describe('markStoreOrderDelivered', () => {
     expect(row(m)).toMatchObject({ status: 'cancelled', delivered_on: null });
   });
 
+  it('en fråga som kastar (nätet) i stället för att svara med ett fel: samma väg, och claimen släpps', async () => {
+    const m = db(storeOrder(), {
+      beforeExecute: (call) => {
+        if (isUpdate(call, 'status', 'delivered')) throw new Error('fetch failed');
+      },
+    });
+    await expect(deliver(m)).rejects.toThrow('Leveransen kunde inte sparas: fetch failed');
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
+  });
+
   it('databasen svarar inte på skrivningen: kastar, och claimen släpps', async () => {
     const m = db();
     m.failOn((c) => c.op === 'update' && (c.values as Record<string, unknown>).status === 'delivered', { message: 'nere' });
@@ -710,6 +720,16 @@ describe('cancelStoreOrder', () => {
     await expect(cancel(m, deps)).rejects.toBeInstanceOf(FortnoxNotConnectedError);
     expect(deps.cancel).not.toHaveBeenCalled();
     expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null });
+  });
+
+  it('synkläget lämnas som det var när ingenting ändrades (Fortnox inte anslutet på en utan nummer)', async () => {
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'not_synced' }));
+    const { deps } = fakeFortnox();
+    deps.findOpen.mockImplementation(async () => {
+      throw new FortnoxNotConnectedError();
+    });
+    await expect(cancel(m, deps)).rejects.toBeInstanceOf(FortnoxNotConnectedError);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_sync_status: 'not_synced', fortnox_order_claimed_at: null });
   });
 
   it('databasen svarar inte på sista skrivningen: kastar och släpper claimen (ett nytt tryck räknar den makulerade ordern som klar)', async () => {
