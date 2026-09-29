@@ -1030,8 +1030,8 @@ Portaljobbets 0 % oavsett kort byggs i 8b eller en egen liten PR.
 **Rättat samma dag (William, efter #258): kontot per rad.** "Konto blir fel vid moms-ordrar." Varje rad i varje dokument
 (offert, order, delfaktura, och därmed butiksbeställningarna) bär nu `AccountNumber` efter dokumentets moms: moms → 3001
 ("3001 ska det vara när det är moms"; Etableringskostnad 1010 → 3017), omvänd byggmoms → 3231, 0 % utan omvänd moms →
-3004 (`fortnoxSalesAccount` i `lib/domains/fortnox/helpers.ts`). ⚠️ 3017 finns i prods kontoplan men inte i testbolaget:
-där nekar Fortnox pushen ("Kunde inte hitta konto 3017", 2001303) tills kontot läggs upp. Egen PR före 8b. Fakturatexten tas senare (William: "inte lika viktig som att siffrorna
+3004 (`fortnoxSalesAccount` i `lib/domains/fortnox/helpers.ts`). ⚠️ Ett konto som saknas i kontoplanen fäller hela pushen
+("Kunde inte hitta konto 3017", 2001303); 3017 lades upp i testbolaget 2026-09-29. Egen PR före 8b. Fakturatexten tas senare (William: "inte lika viktig som att siffrorna
 går in på rätt konto").
 
 Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka; ordrar 32–35, offerter 33–35, fakturor
