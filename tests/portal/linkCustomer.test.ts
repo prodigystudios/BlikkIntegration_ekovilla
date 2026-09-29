@@ -33,7 +33,6 @@ const CARD: JobCustomerCard & { fortnox_customer_id: string } = {
   phone: '026-10 20 30',
   mobile: null,
   visit_address: { street: 'Verkstadsgatan 8', postal_code: '802 91', city: 'Gävle' },
-  reverse_vat: true,
   contacts: [{ name: 'Per Inköp', phone: '070-111 22 33', email: 'per@norrbygg.se', is_primary: true }],
 };
 
@@ -270,11 +269,19 @@ describe('linkPortalJobCustomer', () => {
 });
 
 describe('buildPortalCustomerLinkUpdate', () => {
-  it('momsen ur kortet: 25 % utan omvänd skattskyldighet, och avskrivna rader räknas inte', () => {
+  it('momsen är jobbets, 0 %, vad kortet än säger, och avskrivna rader räknas inte', () => {
     const wo = unlinkedWorkOrder();
     const lines = wo.line_items as Record<string, unknown>[];
     lines[1] = { ...lines[1], written_off: true };
-    const update = buildPortalCustomerLinkUpdate(wo as never, { ...CARD, reverse_vat: false });
-    expect(update).toMatchObject({ vat_percent: 25, amount: 14725, pricing_summary: { subtotal: 11780, vat: 2945, total: 14725 } });
+    const update = buildPortalCustomerLinkUpdate(wo as never, CARD);
+    expect(update).toMatchObject({ vat_percent: 0, amount: 11780, pricing_summary: { subtotal: 11780, vat: 0, total: 11780 } });
+  });
+
+  it('🧨 en order som togs emot före regeln får omvänd moms på dokumentet när kortet kopplas', () => {
+    const wo = unlinkedWorkOrder();
+    const before = { ...wo, customer_snapshot: { ...(wo.customer_snapshot as Record<string, unknown>), reverse_vat: false } };
+    expect(buildPortalCustomerLinkUpdate(before as never, CARD).customer_snapshot).toMatchObject({ reverse_vat: true });
+    const { reverse_vat: _dropped, ...withoutFlag } = wo.customer_snapshot as Record<string, unknown>;
+    expect(buildPortalCustomerLinkUpdate({ ...wo, customer_snapshot: withoutFlag } as never, CARD).customer_snapshot).toMatchObject({ reverse_vat: true });
   });
 });

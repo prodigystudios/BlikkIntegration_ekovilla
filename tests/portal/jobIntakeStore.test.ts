@@ -33,7 +33,6 @@ const CARD = {
   phone: '026-10 20 30',
   mobile: null,
   visit_address: { street: 'Verkstadsgatan 8', postal_code: '802 91', city: 'Gävle' },
-  reverse_vat: false,
   contacts: [{ name: 'Per Inköp', phone: '070-111 22 33', email: 'per@norrbygg.se', is_primary: true }],
 };
 
