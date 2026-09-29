@@ -462,6 +462,12 @@ export default function StoreOrderActions(props: Props) {
     setToday(now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max);
   };
   const deliveredOnBounds = { min: props.deliveredOnBounds.min, max: today };
+  // Sidan lästes om (nya gränser från servern): ett orört fält visar den nya dagen. Bara när serverns dag ändras, inte när
+  // fältet rörs.
+  useEffect(() => {
+    setToday(props.deliveredOnBounds.max);
+    if (!deliveredOnTouched) setDeliveredOn(props.deliveredOnBounds.max);
+  }, [props.deliveredOnBounds.max]);
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [confirmingInvoice, setConfirmingInvoice] = useState(false);
   const [cancelling, setCancelling] = useState(false);

@@ -609,6 +609,22 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m).fortnox_order_number).toBe('801');
   });
 
+  it('🧨 numret gick inte att spara, och ett annat försöks nummer hann sparas före det nya försöket: vår order makuleras', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: null }), {}, {
+      beforeExecute: (call, tables) => {
+        const values = call.values as Record<string, unknown> | undefined;
+        if (call.op === 'update' && typeof values?.fortnox_error === 'string' && values.fortnox_error.includes('skapades')) {
+          tables.crm_store_orders[0].fortnox_order_number = '799';
+        }
+      },
+    });
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
+    const deps = fortnoxDeps();
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'exists', fortnoxOrderNumber: '799', error: null });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(row(m)).toMatchObject({ fortnox_order_number: '799', fortnox_error: null });
+  });
+
   it('🧨 två försök skickade samtidigt (claimen blev gammal): den som inte fick spara sitt nummer makulerar sin order', async () => {
     const m = db(confirmed());
     // Precis när vi sparar har ett annat försök sparat 799; vakten nekar ett andra nummer.

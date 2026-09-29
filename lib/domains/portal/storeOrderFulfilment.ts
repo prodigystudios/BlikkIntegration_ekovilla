@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { FortnoxNotConnectedError, fortnoxPut } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { planPortalFortnoxRetry } from './jobFortnoxRetry';
 import { errorText, settle } from './settle';
@@ -12,13 +12,14 @@ import {
 import {
   cancelFortnoxOrder,
   cancelFortnoxOrderByState,
+  createFortnoxInvoiceFromOrder,
   findOpenStoreOrderFortnoxOrders,
   readStoreOrderFortnoxOrder,
   type StoreOrderActor,
   type StoreOrderFortnoxDeps,
   type StoreOrderFortnoxOrderState,
 } from './storeOrderActions';
-import { fortnoxInvoiceReference, storeOrderFortnoxReference } from './storeOrderFortnox';
+import { storeOrderFortnoxReference } from './storeOrderFortnox';
 import { isStoreOrderDeliveredOnAllowed, storeOrderCanBeCancelled, storeOrderDeliveredOnBounds, type StoreOrderStatus } from './storeOrders';
 import { readProfileName } from './storeOrdersStore';
 
@@ -44,10 +45,11 @@ import { readProfileName } from './storeOrdersStore';
  * levererad beställning hade haft en makulerad Fortnox-order, som inte går att fakturera.
  * Fakturan har en egen claim (`fortnox_invoice_sync_status`), mot två samtidiga tryck.
  *
- * 🧨 STÄMPELN. Den delade claimen (`claimFortnoxPush`) säger inte vems den är, och en push vars claim blivit gammal
- * släpper den när den sparar sitt nummer, vems den än är. Stegen här läser därför claimens tid direkt efter att de tagit
- * den (`takeStoreOrderClaim`, ./storeOrderClaim.ts: ingen annan kan ta den förrän den är två minuter gammal), och släpper och skriver bara med den.
- * Makulera prövar i varje varv att claimen fortfarande är dess egen, och tar den igen annars.
+ * 🧨 STÄMPELN. Den delade claimen (`claimFortnoxPush`) säger inte vems den är. Varje steg, också pushen, läser därför
+ * claimens tid direkt efter att det tagit den (`takeStoreOrderClaim`, ./storeOrderClaim.ts: ingen annan kan ta den förrän
+ * den är två minuter gammal), och släpper och skriver bara med den. Makulera prövar ändå i varje varv att claimen är dess
+ * egen, och tar den igen annars: det kostar en jämförelse, och ett anrop som lever längre än claimen (utan Vercels
+ * tidsgräns, lokalt) kan inte skriva med en claim som någon annan tagit över.
  *
  * Fortnox svar, uppmätta i testbolaget 2026-09-29 (ordrar 71 och 72):
  *   - `createinvoice` svarar med ORDERN, med InvoiceReference satt, inte med fakturan. En ofakturerad order har
@@ -71,20 +73,11 @@ export type StoreOrderFulfilmentDeps = Pick<StoreOrderFortnoxDeps, 'readOrder' |
   createInvoice: (orderNumber: string) => Promise<string | null>;
 };
 
-type FortnoxOrderResponse = {
-  Order?: { Cancelled?: boolean | null; InvoiceReference?: string | number | null };
-  Invoice?: { DocumentNumber?: string | number | null };
-};
-
 export function storeOrderFulfilmentDeps(): StoreOrderFulfilmentDeps {
-  const path = (orderNumber: string) => `/orders/${encodeURIComponent(orderNumber)}`;
   return {
     readOrder: readStoreOrderFortnoxOrder,
     cancel: cancelFortnoxOrder,
-    createInvoice: async (orderNumber) => {
-      const response = await fortnoxPut<FortnoxOrderResponse>(`${path(orderNumber)}/createinvoice`);
-      return fortnoxInvoiceReference(response.Order?.InvoiceReference) ?? fortnoxInvoiceReference(response.Invoice?.DocumentNumber);
-    },
+    createInvoice: createFortnoxInvoiceFromOrder,
     findOpen: findOpenStoreOrderFortnoxOrders,
     now: () => new Date(),
   };
@@ -436,8 +429,8 @@ export async function cancelStoreOrder(
     // Ett varv till bara om en push vars claim blivit gammal hann spara ett nummer efter sökningen: det makuleras då.
     for (let turn = 0; turn < 2; turn += 1) {
       row = await readCancelRow(admin, input.id);
-      // Claimen kan ha släppts under oss: en push vars claim blivit gammal släpper den när den sparar sitt nummer. Den
-      // tas igen, så att ingen Levererad landar medan Fortnox-ordern makuleras. Håller någon annan den nu: busy.
+      // Claimen är inte längre vår (den blev gammal och togs över, se STÄMPELN): den tas igen, så att ingen Levererad
+      // landar medan Fortnox-ordern makuleras. Håller någon annan den nu: busy.
       if (row && row.fortnox_order_claimed_at !== stamp) {
         stamp = await takeStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, restore(row));
         if (!stamp) {

@@ -252,6 +252,17 @@ export async function cancelFortnoxOrderByState(
   }
 }
 
+/**
+ * PUT /orders/{n}/createinvoice (Fakturera, 8b2): fakturans nummer, eller null när svaret inte bär det. 🧨 Svaret är
+ * ORDERN med InvoiceReference satt, inte fakturan (uppmätt 2026-09-29), och "0" är ingen faktura.
+ */
+export async function createFortnoxInvoiceFromOrder(orderNumber: string): Promise<string | null> {
+  const response = await fortnoxPut<{ Order?: { InvoiceReference?: string | number | null }; Invoice?: { DocumentNumber?: string | number | null } }>(
+    `/orders/${encodeURIComponent(orderNumber)}/createinvoice`,
+  );
+  return fortnoxInvoiceReference(response.Order?.InvoiceReference) ?? fortnoxInvoiceReference(response.Invoice?.DocumentNumber);
+}
+
 /** PUT /orders/{n}/cancel: den extra ordern här, och Makulera (./storeOrderFulfilment.ts). */
 export async function cancelFortnoxOrder(orderNumber: string): Promise<void> {
   await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
@@ -475,6 +486,21 @@ async function cancelledDuringPush(
     }
   }
   return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
+}
+
+/** Två försök skickade samtidigt och ett annat nummer står på beställningen: vår order makuleras. Loggar bara. */
+async function cancelDuplicateOrder(id: string, kept: string, extra: string, deps: StoreOrderFortnoxDeps): Promise<void> {
+  try {
+    await deps.cancel(extra);
+    console.warn('[portal-store-orders] 🧨 två försök skickade samtidigt; vår order makulerades', { id, kept, cancelled: extra });
+  } catch (cancelError) {
+    console.error('[portal-store-orders] 🧨 två Fortnox-ordrar för samma beställning; den extra kunde inte makuleras', {
+      id,
+      kept,
+      extra,
+      error: errorText(cancelError),
+    });
+  }
 }
 
 /**
@@ -710,17 +736,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // Ett annat försök tog över just vår order (sökningen) och sparade den: allt är kopplat.
     if (current?.fortnox_order_number === number) return { result: { outcome: 'created', fortnoxOrderNumber: number, error: null }, sync: 'synced' };
     if (current?.fortnox_order_number && current.fortnox_order_number !== number) {
-      try {
-        await deps.cancel(number);
-        console.warn('[portal-store-orders] 🧨 två försök skickade samtidigt; vår order makulerades', { id, kept: current.fortnox_order_number, cancelled: number });
-      } catch (cancelError) {
-        console.error('[portal-store-orders] 🧨 två Fortnox-ordrar för samma beställning; den extra kunde inte makuleras', {
-          id,
-          kept: current.fortnox_order_number,
-          extra: number,
-          error: errorText(cancelError),
-        });
-      }
+      await cancelDuplicateOrder(id, current.fortnox_order_number, number, deps);
       return { result: { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null }, sync: 'synced' };
     }
     // Ordern finns i Fortnox men inte hos oss. Nästa försök hittar den på märkningen och tar över den, i stället för
@@ -743,10 +759,16 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
         .select('id'),
     );
     if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
-    // Ingen rad: makulerad (8b2) mellan läsningen ovan och den här skrivningen. Då står vår order annars kvar.
+    // Ingen rad: makulerad (8b2), eller ett annat försöks nummer sparat, mellan läsningen ovan och den här skrivningen. Då
+    // står vår order annars kvar.
     else if ((revisit.data ?? []).length === 0) {
       const after = await readPushRow(admin, id).catch(() => null);
       if (after?.status === 'cancelled') return { result: await cancelledDuringPush(admin, after, id, number, deps), sync: 'not_synced' };
+      if (after?.fortnox_order_number === number) return { result: { outcome: 'created', fortnoxOrderNumber: number, error: null }, sync: 'synced' };
+      if (after?.fortnox_order_number) {
+        await cancelDuplicateOrder(id, after.fortnox_order_number, number, deps);
+        return { result: { outcome: 'exists', fortnoxOrderNumber: after.fortnox_order_number, error: null }, sync: 'synced' };
+      }
     }
     // `failed`, inte `blocked`: ett nytt försök är planerat och tar över ordern, ingen människa behövs.
     return { result: { outcome: 'failed', fortnoxOrderNumber: number, error: unsaved }, sync: 'failed' };
