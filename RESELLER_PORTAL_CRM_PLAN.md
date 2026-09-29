@@ -1054,9 +1054,19 @@ Portaljobbets 0 % oavsett kort byggs i 8b eller en egen liten PR.
 - En ändring eller tillbakadragning av en makulerad eller redan tillbakadragen beställning ger 200 `ignored`, aldrig 409:
   portalen läser varje 409 på en ändring som "Ekovilla hann bekräfta" och hade visat fel. En annan butik eller ett annat
   nummer än beställningens ger 400 `store_order_mismatch`.
-- Butiken dyker upp och uppdateras bara av en NY beställning, som av ett nytt jobb (samma `upsertPortalReseller`).
+- **En beställning skriver aldrig över en befintlig butik**, bara dess senaste kontakt (`last_seen_at`): portalen fryser
+  kroppen och håller beställningarna i kö tills integrationen slås på, så en beställning som är ny för CRM:et kan bära
+  veckogamla uppgifter om butiken. Bara jobben uppdaterar butiken. En butik som hör av sig första gången med en
+  beställning läggs till, med kortet som numret pekar på.
+- **Kunden** räknas med jobbens regel (numret, annars kopplingen för hand) när beställningen kommer, och igen när en
+  ändring kommer till en beställning utan kund. En kund som redan står på beställningen byts aldrig av butiken, och en
+  som kopplats för hand medan ändringen sparas skrivs inte över.
 - Fördelningen är jobbens utan länet: butikens säljare, kundansvarig, reserven.
-- En tillbakadragning av en beställning som ingen ännu fått notis om bokförs utan notis.
+- **En tillbakadragning ger alltid en notis**, också när ingen notis är bokförd: bokföringen kan ha fallit efter att
+  "Ny beställning" kom fram.
+- **Reserven får bara notisen om den kan skriva arbetsordrar** (fördelningens krav). Finns ingen mottagare står lånet
+  kvar och notisen görs om efter fem minuter, så att en reserv som väljs under tiden får den.
+- **Beloppen räknas i heltalsören**, och schemat kräver hela ören (högst två decimaler), som kontraktet säger.
 
 **Så fungerar det** (`20260929065116_portal_store_orders.sql`, `lib/domains/portal/{storeOrders,storeOrderIntake,
 storeOrdersStore,storeOrdersView}.ts`, `app/api/portal/store-orders/**`, `app/crm/butiksbestallningar/**`):
@@ -1071,23 +1081,50 @@ storeOrdersStore,storeOrdersView}.ts`, `app/api/portal/store-orders/**`, `app/cr
   kräver Fortnox-ordern, fakturerad kräver fakturanumret, makulerad kräver ett skäl.
 - **Notisen:** vilken som gäller räknas ur raden (`v<version>` eller `withdrawn`), skickas med ett lån på fem minuter
   och bokförs först efter utskicket. Cron gör om det som inte gick iväg (äldre än två minuter, högst 20 per varv).
-- **Sidorna** läser med sessionen. Tiderna formateras på servern i svensk tid. Summan räknas ur butikens rader i hela
-  ören, aldrig ur butikens `costTotal`.
+- **Sidorna** läser med sessionen. Listan läser alla pågående (att bekräfta, leverera, fakturera) sida för sida med nyckel,
+  och de 500 senast mottagna av de avslutade; bara raderna och önskad leverans ur kroppen. Beställningssidan
+  (`StoreOrderDetail.tsx`) visar kunden beställningen är kopplad till bredvid portalens kundnummer. Tiderna formateras på
+  servern i svensk tid. Summan räknas ur butikens rader i heltalsören, aldrig ur butikens `costTotal`.
+- **Svarscachen:** ett 404 `unknown_order` sparas inte (`cacheable: false`), så att samma nyckel körs igen när
+  beställningen kommit fram; tillbakadragningens nyckel är fast. Samma sak för meddelandenas 404 `unknown_job` (fas 6).
+- **Cron:** notiserna görs om efter utskicket, inom varvets startgräns och en egen tidsbudget (20 s, 5 s från knapparna),
+  och frågorna efter nya och tillbakadragna som inte sagts är exakta.
 
 🧨 **Next 14.2: en route med bara PUT cachar varje fetch** (`hasNonStaticMethods` räknar POST två gånger och glömmer
 PUT). Ändringens route läste radens första version om och om igen och gav upp med 500 vid andra ändringen. Rättat med
 `fetchCache = 'force-no-store'`, och vakttestet (`routeGuards.test.ts`) kräver raden för varje portalroute utan POST,
 DELETE, PATCH och OPTIONS. Övriga PUT-routes i appen läser kakan (dynamiska) eller sätter `no-store` själva.
 
+**Granskningarna** (code-review high, åtta rundor; varje runda granskade den förras rättelser):
+- **Första:** 404 i svarscachen (tillbakadragningens fasta nyckel), kunden vid en ändring, cron läste de 500 äldsta och hela
+  kroppen, en notis utan mottagare gjordes om varje minut, summorna i sidan, jobbens routes med `parsePortalBody`, butikens
+  schema delat.
+- **Andra:** listan tappade äldre obekräftade, listan läste hela kroppen, exakt fråga efter nya som aldrig meddelats,
+  sidans tider ur etiketter, databasens feltext till användaren.
+- **Tredje:** beställningssidans fel, kunden på sidan, leveransdagen i svensk form, `isUuid`.
+- **Fjärde:** en veckogammal beställning skrev över butiken, bekräftade och levererade kunde försvinna ur listan,
+  förskjutning i stället för nyckel, notiserna före utskicket, tunn sida.
+- **Femte:** en tillbakadragning bokfördes tyst fast "Ny" kommit fram, notiserna utan tidsbudget, gränsen plus en.
+- **Sjätte:** lånet släpptes inte vid ett läsfel, meddelandenas 404 i svarscachen.
+- **Sjunde:** halva ören, en upprepning som föll på kundläsningen, butikens senaste kontakt, dubbletter mellan läsningarna.
+- **Åttonde:** vakten stängde inte butikens namn och ändringstiden efter bekräftelsen (migreringen ändrad på plats),
+  notiserna efter varvets startgräns, en notis utan mottagare gavs upp för gott, reservens behörighet.
+- **Lämnat, med skäl:** reservens och kundnumrets uppslag och notisens lån finns i kopior hos jobben och meddelandena (en
+  delad funktion hade rört fas 3b:s och 6:s prövade kod; egen PR), listan räknar summan ur raderna (i SQL hade
+  öresregeln dubblerats), en äldre ändring efter en fryst första kropp (portalen skickar bara den senaste ändringen).
+
 **Prövat:**
 - **Migreringen:** i en tom tillfällig databas med stubbar, två körningar, och 21 mutationer av efterkontrollen, var och
   en stoppad av sitt eget meddelande (en första runda var ogiltig: min kontroll av triggerns kolumner föll också på den
-  omuterade, rättad); lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`.
+  omuterade, rättad); lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`. Efter
+  åttonde granskningen ändrades vakten på plats (namnet och ändringstiden), prövades om på samma sätt och lades lokalt
+  in genom att köra den idempotenta filen igen (versionen var redan registrerad).
 - **`supabase/checks/portal_store_orders.sql`** med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon):
-  läsningen, de dolda kolumnerna, regeln per roll och vakten. 42 mutationer av databasen, alla röda med sitt eget
+  läsningen, de dolda kolumnerna, regeln per roll och vakten. 44 mutationer av databasen, alla röda med sitt eget
   meddelande (fem behövde först skärpta prov, där en annan spärr hann säga nej före den som prövades).
-- **Koden:** 70 mutationer, alla röda i vitest med "Tests N". Två överlevde först (updatedAt utan millisekunder stoppades
-  också av tidskontrollen, summan i ören prövades inte med flyttalsfel); testerna finns nu.
+- **Koden:** över 130 mutationer i nio omgångar, alla röda i vitest med "Tests N". De som först överlevde var luckor i
+  testerna (updatedAt utan millisekunder, summan med flyttalsfel, frågan efter ändringar, "kapad" utan obekräftade, en
+  upprepning som läste kunden), och testerna finns nu. En var likvärdig: länet stängs av två gånger (deps och tom adress).
 - **Lokalt** med en signerad avsändare: ny 201, upprepning ur cachen, ny nyckel 201 (samma), annan första kropp 409;
   ändring med samma, äldre och nyare `updatedAt` (ignored, ignored, updated); tillbakadragen 200 två gånger; ändring av en
   tillbakadragen ignored; okänd 404; bekräftad 409 på ändring och tillbakadragning; en notis per version; cron gjorde om
@@ -1096,8 +1133,9 @@ DELETE, PATCH och OPTIONS. Övriga PUT-routes i appen läser kakan (dynamiska) e
   ändringar, meddelande och frakt; en tillbakadragen säger att den inte ska levereras; konsulten läser; ekonomi och
   utloggad når inte sidan; telefonbredd utan sidledsscroll.
 
-⚠️ **Lokalt kvar:** butiksbeställningarna so-lokal-8-1 (mottagen, version 3), so-lokal-8-2 (tillbakadragen) och
-so-lokal-8-3 (satt till bekräftad för hand, utan Fortnox-order), butiken res-lokal-8 och fem notiser.
+⚠️ **Lokalt kvar:** butiksbeställningarna so-lokal-8-1 (mottagen, version 3), so-lokal-8-2 (tillbakadragen),
+so-lokal-8-3 (satt till bekräftad för hand, utan Fortnox-order), so-lokal-8-4 (kunden kopplad vid en ändring) och
+so-lokal-8-5, butiken res-lokal-8 och notiserna.
 
 **Till portalen** (punkt 31–34 nedan).
 
@@ -1239,16 +1277,19 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 
 31. **Butiksbeställningarnas svar** (fas 8a):
     - `POST /api/portal/store-orders`: 201 `{ "crmStoreOrderId" }`, också när samma orderId med samma kropp redan är
-      mottaget; 409 `store_order_conflict` när den första kroppen var en annan; 503 `no_assignee` med `Retry-After: 300`.
+      mottaget; 409 `store_order_conflict` när den första kroppen var en annan (under en annan nyckel; samma nyckel med
+      en annan kropp ger 422 `idempotency_key_reused`); 503 `no_assignee` med `Retry-After: 300`.
     - `PUT /api/portal/store-orders/{orderId}`: 200 `{ "status": "updated" }` eller `{ "status": "ignored" }`; 409
       `store_order_confirmed`; 404 `unknown_order`; 400 `store_order_mismatch` (en annan butik eller ett annat nummer).
     - `POST …/{orderId}/withdraw`: 200 `{ "status": "withdrawn" }`, också när den redan är tillbakadragen, eller
       `{ "status": "ignored" }`; 409 `store_order_confirmed`; 404 `unknown_order`.
     - Alla: 400 `invalid_json`, `invalid_text` och `validation_error` med `details.issues`, och orderId i kroppen måste
-      vara sökvägens (400).
+      vara sökvägens (400). Ett 404 `unknown_order` sparas inte i svarscachen: samma nyckel körs igen när beställningen
+      kommit fram. Samma gäller nu meddelandenas 404 `unknown_job`.
 32. **409 bara efter bekräftelsen** (kontraktet), också när Ekovilla makulerat: en ändring eller tillbakadragning av en
     makulerad beställning får 200 `ignored`, och makuleringen kommer som `store_order.cancelled`.
-33. **Kroppens krav:** hela antal (heltal över noll), ingen rad i `m3` (inblåsning är jobb), leveransadressens gata,
+33. **Kroppens krav:** hela antal (heltal över noll), `unitCost` i hela ören (högst två decimaler), ingen rad i `m3`
+    (inblåsning är jobb), leveransadressens gata,
     postnummer och ort ifyllda, högst 200 rader. `updatedAt` skrivs `YYYY-MM-DDTHH:MM:SS.mmmZ` och måste vara en tid som
     finns. `ekovillaCustomerNumber` som tom sträng räknas som `null`, som för jobben.
 34. **Momsen** (William 2026-09-29): en butiksbeställning har 25 % (butiken är slutkund), också frakten; ett jobb har 0 %.

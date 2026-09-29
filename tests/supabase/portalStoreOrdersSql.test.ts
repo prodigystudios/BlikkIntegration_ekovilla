@@ -41,10 +41,10 @@ describe('butiksbeställningarna (SQL)', () => {
     expect(body).toContain("if new.status <> 'received' or new.store_version <> 1 then");
   });
 
-  it('vakten: butikens innehåll och frakten bara på en mottagen, versionen bara framåt, Fortnox-numren en gång', () => {
+  it('vakten: butikens innehåll (också namnet och ändringstiden) och frakten bara på en mottagen, versionen bara framåt, Fortnox-numren en gång', () => {
     const body = guard!.body;
     expect(body).toMatch(
-      /new\.payload is distinct from old\.payload or new\.store_version is distinct from old\.store_version or new\.portal_updated_at is distinct from old\.portal_updated_at or new\.freight_mode is distinct from old\.freight_mode or new\.freight_price is distinct from old\.freight_price\) and not \(old\.status = 'received' and new\.status = 'received'\) then raise exception/,
+      /new\.payload is distinct from old\.payload or new\.store_version is distinct from old\.store_version or new\.portal_updated_at is distinct from old\.portal_updated_at or new\.changed_at is distinct from old\.changed_at or new\.store_name is distinct from old\.store_name or new\.freight_mode is distinct from old\.freight_mode or new\.freight_price is distinct from old\.freight_price\) and not \(old\.status = 'received' and new\.status = 'received'\) then raise exception/,
     );
     expect(body).toContain('if new.store_version < old.store_version then raise exception');
     expect(body).toContain('old.fortnox_order_number is not null and new.fortnox_order_number is distinct from old.fortnox_order_number');

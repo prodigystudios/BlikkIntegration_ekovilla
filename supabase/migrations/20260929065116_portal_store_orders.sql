@@ -34,7 +34,8 @@
 --
 -- VAKTEN (triggern crm_store_orders_guard)
 -- Statusen går bara framåt: received → withdrawn | confirmed | cancelled, confirmed → delivered | cancelled,
--- delivered → invoiced. Butikens innehåll och frakten ändras bara medan beställningen är mottagen och obekräftad, så
+-- delivered → invoiced. Butikens innehåll (kroppen, versionen, tiderna, butikens namn) och frakten ändras bara medan
+-- beställningen är mottagen och obekräftad, så
 -- att en ändring aldrig kan landa efter bekräftelsen, hur koden än ser ut. Fortnox-numren skrivs en gång. Ändras
 -- statusen, Fortnox-ordern eller ett datum markeras raden för utskicket.
 --
@@ -255,11 +256,14 @@ begin
     raise exception 'butiksbeställningar: statusen kan inte gå från % till %', old.status, new.status;
   end if;
 
-  -- Butikens innehåll och Ekovillas frakt: bara medan beställningen är mottagen och förblir det. En bekräftelse ändrar
-  -- dem aldrig, så en ändring kan inte glida in i samma UPDATE som låser beställningen.
+  -- Butikens innehåll (kroppen, versionen, tiderna och butikens namn) och Ekovillas frakt: bara medan beställningen är
+  -- mottagen och förblir det. En bekräftelse ändrar dem aldrig, så en ändring kan inte glida in i samma UPDATE som låser
+  -- beställningen.
   if (new.payload is distinct from old.payload
       or new.store_version is distinct from old.store_version
       or new.portal_updated_at is distinct from old.portal_updated_at
+      or new.changed_at is distinct from old.changed_at
+      or new.store_name is distinct from old.store_name
       or new.freight_mode is distinct from old.freight_mode
       or new.freight_price is distinct from old.freight_price)
      and not (old.status = 'received' and new.status = 'received') then

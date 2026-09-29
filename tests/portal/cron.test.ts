@@ -41,7 +41,7 @@ const SENT = { ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, returned: 0,
 const NOTHING = { ...SENT, claimed: 0, sent: 0 };
 const RETRY = { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 };
 const SWEEP = { queued: 1, notified: 0, errors: 0 };
-const STORE_ORDER_NOTICES = { candidates: 1, sent: 1, failed: 0, gaveUp: 0, errors: 0, deferred: 0 };
+const STORE_ORDER_NOTICES = { candidates: 1, sent: 1, failed: 0, noRecipient: 0, errors: 0, deferred: 0 };
 const NO_DOCUMENTS = { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 };
 const QUEUED_DOCUMENT = { ...NO_DOCUMENTS, created: 1, queued: 1 };
 
@@ -142,7 +142,7 @@ describe('runPortalCron', () => {
       return NOTHING;
     });
     await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'store-orders']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch']);
   });
 
   it('dokumenten köade något: ett utskick till, med kortare budget, före Fortnox', async () => {
@@ -185,7 +185,7 @@ describe('runPortalCron', () => {
       return SENT;
     });
     await runPortalCron({} as never, { env: {}, now: () => new Date(t), fortnoxRetries: false });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'store-orders']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch']);
 
     // Cron (300 s) har kvar sin gräns.
     calls.length = 0;
@@ -202,7 +202,7 @@ describe('runPortalCron', () => {
       return NOTHING;
     });
     const summary = await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'store-orders']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch']);
     expect(summary.documents).toEqual(NO_DOCUMENTS);
   });
 });

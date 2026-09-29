@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { deliverNotifications } from '@/lib/domains/notifications/delivery';
 import { expandNotificationToRecipients } from '@/lib/domains/notifications/mutations';
 import { buildStoreOrderNotification } from '@/lib/domains/notifications/payload';
-import { portalAssignmentDeps, resolvePortalAssignee, type PortalAssignment } from './assignment';
+import { portalAssignmentDeps, resolvePortalAssignee, userCanWriteWorkOrders, type PortalAssignment } from './assignment';
 import { canonicalJson } from './canonicalJson';
 import { readResellerLink, resolveStoreCustomer, type StoreCustomer } from './jobIntakeStore';
 import {
@@ -352,10 +352,15 @@ async function finishNotice(admin: SupabaseClient, id: string, stamp: string, no
   return (data ?? []).length > 0;
 }
 
+/**
+ * Reserven, om den fortfarande kan skriva arbetsordrar: samma krav som fördelningen ställer på den (assignment.ts). En
+ * reserv som bytt roll hade fått en länk till en sida den inte kan öppna, och notisen hade räknats som skickad.
+ */
 async function readFallbackUser(admin: SupabaseClient): Promise<string | null> {
   const { data, error } = await admin.from('crm_portal_settings').select('fallback_user_id').eq('id', true).maybeSingle();
   if (error) throw new Error(`Reserven gick inte att läsa: ${error.message}`);
-  return (data as { fallback_user_id?: string | null } | null)?.fallback_user_id ?? null;
+  const fallback = (data as { fallback_user_id?: string | null } | null)?.fallback_user_id ?? null;
+  return fallback && (await userCanWriteWorkOrders(admin, fallback)) ? fallback : null;
 }
 
 export type StoreOrderNoticeOutcome = 'sent' | 'none' | 'busy' | 'no_recipient' | 'failed';
@@ -390,15 +395,16 @@ export async function notifyStoreOrder(
   }
   const decision = row ? decideStoreOrderNotice(row) : null;
   if (!row || !decision) {
-    await finishNotice(admin, id, stamp);
+    await finishNotice(admin, id, stamp).catch((err) =>
+      console.error('[portal-store-orders] lånet kunde inte släppas', { id, error: err instanceof Error ? err.message : String(err) }),
+    );
     return 'none';
   }
 
   if (!recipient) {
-    // Den ansvariges profil är borttagen och ingen reserv är vald. Bokförs, så att cron inte gör om den varje minut; det
-    // går inte att meddela någon, och sidan visar beställningen ändå.
-    console.error('[portal-store-orders] ingen att meddela: varken ansvarig eller reserv. Notisen ges upp.', { id });
-    await finishNotice(admin, id, stamp, decision.key);
+    // Den ansvariges profil är borttagen och ingen reserv som kan skriva arbetsordrar är vald. Lånet får stå kvar: nästa
+    // försök kommer när det gått ut (fem minuter), inte varje minut, och en reserv som väljs under tiden får notisen.
+    console.error('[portal-store-orders] ingen att meddela: varken ansvarig eller reserv. Görs om när lånet gått ut.', { id });
     return 'no_recipient';
   }
 
@@ -450,12 +456,12 @@ const SWEEP_SELECT = 'id, status, store_version, notified_key, notify_claimed_at
 /** Rader per fråga. De nyaste läses: en notis som inte gått iväg gäller något som hänt nyss. */
 const SWEEP_READ_LIMIT = 500;
 
-/** `gaveUp`: ingen att meddela (varken ansvarig eller reserv), bokförd och inte gjord om; `failed` görs om. */
+/** `noRecipient`: ingen att meddela (varken ansvarig eller reserv), görs om när lånet gått ut; `failed` görs om. */
 export type StoreOrderNoticeSweepSummary = {
   candidates: number;
   sent: number;
   failed: number;
-  gaveUp: number;
+  noRecipient: number;
   errors: number;
   /** Tiden tog slut: kvar till nästa varv. */
   deferred: number;
@@ -514,7 +520,7 @@ export async function sweepStoreOrderNotices(
     // Det som väntat längst först.
     .sort((a, b) => touchedAt(a) - touchedAt(b));
 
-  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, failed: 0, gaveUp: 0, errors: 0, deferred: 0 };
+  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 };
   for (const row of due.slice(0, STORE_ORDER_NOTICES_PER_ROUND)) {
     // Resten väntar till nästa varv: statusen och dokumenten i samma varv ska inte vänta på notiser.
     if (now().getTime() - at >= budgetMs) {
@@ -525,7 +531,7 @@ export async function sweepStoreOrderNotices(
       const outcome = await notifyStoreOrder(admin, row.id, deps);
       if (outcome === 'sent') summary.sent += 1;
       else if (outcome === 'failed') summary.failed += 1;
-      else if (outcome === 'no_recipient') summary.gaveUp += 1;
+      else if (outcome === 'no_recipient') summary.noRecipient += 1;
     } catch (e) {
       summary.errors += 1;
       console.error('[portal-store-orders] notisen kunde inte göras om', { id: row.id, error: e instanceof Error ? e.message : String(e) });

@@ -218,6 +218,18 @@ begin
     if sqlerrm not like 'butiksbeställningar: innehållet och frakten ändras bara%' then raise exception 'vakten: fel nej för versionen efter (%)', sqlerrm; end if;
   end;
   begin
+    update public.crm_store_orders set store_name = 'Annan butik AB' where id = so_guard;
+    raise exception 'vakten: butikens namn kunde ändras efter bekräftelsen';
+  exception when raise_exception then
+    if sqlerrm not like 'butiksbeställningar: innehållet och frakten ändras bara%' then raise exception 'vakten: fel nej för namnet (%)', sqlerrm; end if;
+  end;
+  begin
+    update public.crm_store_orders set changed_at = now() where id = so_guard;
+    raise exception 'vakten: ändringstiden kunde ändras efter bekräftelsen';
+  exception when raise_exception then
+    if sqlerrm not like 'butiksbeställningar: innehållet och frakten ändras bara%' then raise exception 'vakten: fel nej för ändringstiden (%)', sqlerrm; end if;
+  end;
+  begin
     update public.crm_store_orders set freight_price = 1 where id = so_guard;
     raise exception 'vakten: frakten kunde ändras efter bekräftelsen';
   exception when raise_exception then

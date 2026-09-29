@@ -93,7 +93,7 @@ export async function runPortalCron(
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
-    storeOrderNotices: { candidates: 0, sent: 0, failed: 0, gaveUp: 0, errors: 0, deferred: 0 },
+    storeOrderNotices: { candidates: 0, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 },
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
   };
@@ -101,15 +101,18 @@ export async function runPortalCron(
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
-  summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
-    sweepStoreOrderNotices(admin, {
-      now,
-      budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
-    }),
-  );
-
+  // Samma startgräns som dokumenten: ett varv som redan tagit sin tid påbörjar inga notiser, de väntar till nästa.
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
+  if (now().getTime() - startedAt < documentsStartBefore) {
+    summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
+      sweepStoreOrderNotices(admin, {
+        now,
+        budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
+      }),
+    );
+  }
+
   if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
       sweepPortalJobDocuments(admin, {

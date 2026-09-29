@@ -33,7 +33,14 @@ const RAW = structuredClone(CONTRACT_STORE_ORDER) as unknown;
 let seq = 0;
 function db(initial: Record<string, Record<string, unknown>[]> = {}, options: Parameters<typeof memoryAdmin>[1] = {}) {
   return memoryAdmin(
-    { crm_portal_settings: [{ id: true, fallback_user_id: 'reserven' }], ...initial },
+    {
+      crm_portal_settings: [{ id: true, fallback_user_id: 'reserven' }],
+      // Reserven måste kunna skriva arbetsordrar för att få en notis (samma krav som fördelningen).
+      profiles: [{ id: 'reserven', role: 'admin', full_name: 'Rolf Reserv' }, { id: 'ekonomen', role: 'ekonomi' }],
+      role_permissions: [{ role: 'admin', permission_key: 'crm.workorder.write' }],
+      user_permissions: [],
+      ...initial,
+    },
     {
       ...options,
       defaults: (table, row) =>
@@ -445,12 +452,25 @@ describe('notifyStoreOrder', () => {
     expect(sent[0][0].recipient_user_id).toBe('reserven');
   });
 
-  it('varken ansvarig eller reserv: ingen notis, men den bokförs, så att cron inte gör om den varje minut', async () => {
+  it('varken ansvarig eller reserv: ingen notis, inget bokfört, och lånet står kvar till nästa försök om fem minuter', async () => {
     const m = db({ crm_store_orders: [storeRow({ assigned_to: null })], crm_portal_settings: [{ id: true, fallback_user_id: null }] });
     const { deps } = noticeDeps();
     expect(await notifyStoreOrder(m.admin, 'order-1', deps)).toBe('no_recipient');
     expect(deps.notify).not.toHaveBeenCalled();
-    expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: 'v1', notify_claimed_at: null });
+    expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: null, notify_claimed_at: NOW.toISOString() });
+    // En reserv väljs; när lånet gått ut får den notisen.
+    m.tables.crm_portal_settings[0].fallback_user_id = 'reserven';
+    const later = new Date(NOW.getTime() + STORE_ORDER_NOTICE_LEASE_MS + 1);
+    const { deps: laterDeps, sent } = noticeDeps({ now: () => later });
+    expect(await notifyStoreOrder(m.admin, 'order-1', laterDeps)).toBe('sent');
+    expect(sent[0][0].recipient_user_id).toBe('reserven');
+  });
+
+  it('en reserv som inte längre kan skriva arbetsordrar får ingen notis', async () => {
+    const m = db({ crm_store_orders: [storeRow({ assigned_to: null })], crm_portal_settings: [{ id: true, fallback_user_id: 'ekonomen' }] });
+    const { deps } = noticeDeps();
+    expect(await notifyStoreOrder(m.admin, 'order-1', deps)).toBe('no_recipient');
+    expect(deps.notify).not.toHaveBeenCalled();
   });
 
   it('redan sagd, eller bekräftad: ingenting, och inget lån tas', async () => {
@@ -543,7 +563,7 @@ describe('sweepStoreOrderNotices', () => {
     });
     const { deps, sent } = noticeDeps();
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
-    expect(summary).toEqual({ candidates: 4, sent: 4, failed: 0, gaveUp: 0, errors: 0, deferred: 0 });
+    expect(summary).toEqual({ candidates: 4, sent: 4, failed: 0, noRecipient: 0, errors: 0, deferred: 0 });
     // Kroppen läses inte i sopningen, bara när notisen skickas (en läsning per notis).
     const sweepReads = m.calls.filter((c) => c.table === 'crm_store_orders' && c.op === 'select' && c.limit === 500);
     expect(sweepReads).toHaveLength(4);
@@ -607,15 +627,18 @@ describe('sweepStoreOrderNotices', () => {
     expect(summary.errors).toBe(1);
   });
 
-  it('en notis utan mottagare räknas som uppgiven, inte som ett fel som görs om', async () => {
+  it('en notis utan mottagare räknas för sig, och görs om först när lånet gått ut', async () => {
     const m = db({
       crm_store_orders: [storeRow({ assigned_to: null, received_at: minutesAgo(10) })],
       crm_portal_settings: [{ id: true, fallback_user_id: null }],
     });
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps });
-    expect(summary).toMatchObject({ candidates: 1, failed: 0, gaveUp: 1 });
-    // Bokförd: nästa varv har inget att göra.
-    expect((await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps })).candidates).toBe(0);
+    expect(summary).toMatchObject({ candidates: 1, failed: 0, noRecipient: 1 });
+    // Nästa minut: lånet gäller, ingen kandidat. Efter fem minuter: en kandidat igen.
+    const nextMinute = new Date(NOW.getTime() + 60_000);
+    expect((await sweepStoreOrderNotices(m.admin, { now: () => nextMinute, deps: noticeDeps().deps })).candidates).toBe(0);
+    const afterLease = new Date(NOW.getTime() + STORE_ORDER_NOTICE_LEASE_MS + 1);
+    expect((await sweepStoreOrderNotices(m.admin, { now: () => afterLease, deps: noticeDeps().deps })).candidates).toBe(1);
   });
 
   it('frågan efter nya som aldrig meddelats läser de äldsta först', async () => {
