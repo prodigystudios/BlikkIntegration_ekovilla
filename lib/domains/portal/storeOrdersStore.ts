@@ -4,7 +4,7 @@ import { expandNotificationToRecipients } from '@/lib/domains/notifications/muta
 import { buildStoreOrderNotification } from '@/lib/domains/notifications/payload';
 import { portalAssignmentDeps, resolvePortalAssignee, type PortalAssignment } from './assignment';
 import { canonicalJson } from './canonicalJson';
-import { readResellerLink, resolveStoreCustomer, upsertPortalReseller } from './jobIntakeStore';
+import { readResellerLink, resolveStoreCustomer, upsertPortalReseller, type StoreCustomer } from './jobIntakeStore';
 import {
   decideStoreOrderChange,
   decideStoreOrderWithdraw,
@@ -76,13 +76,16 @@ async function customerIdByNumber(admin: SupabaseClient, customerNumber: string 
   return (data as { id: string } | null)?.id ?? null;
 }
 
-/** Butikens kund som intaget räknar den: ett nummer som finns i kundregistret, annars kopplingen för hand på butiken. */
-async function resolveStoreCustomerId(admin: SupabaseClient, store: PortalStoreOrder['store']): Promise<string | null> {
+/**
+ * Butikens kund, med samma regel som jobben (`resolveStoreCustomer`): ett nummer som finns i kundregistret, annars
+ * kopplingen för hand på butiken. Används när beställningen kommer och när en ändring kommer till en utan kund.
+ */
+async function resolveStoreOrderCustomer(admin: SupabaseClient, store: PortalStoreOrder['store']): Promise<StoreCustomer> {
   const [byNumber, reseller] = await Promise.all([
     customerIdByNumber(admin, store.ekovillaCustomerNumber),
     readResellerLink(admin, store.resellerId),
   ]);
-  return resolveStoreCustomer(byNumber, reseller).customerId;
+  return resolveStoreCustomer(byNumber, reseller);
 }
 
 export type ReceiveStoreOrderResult =
@@ -102,20 +105,20 @@ export async function receiveStoreOrder(
   payload: unknown,
   deps: StoreOrderIntakeDeps = storeOrderIntakeDeps(admin),
 ): Promise<ReceiveStoreOrderResult> {
-  const existing = await readIntakeRow(admin, order.orderId);
+  // Samtidigt, som jobbens intag: svaret väntar inte på en läsning i taget medan svarscachens nyckel hålls.
+  const [existing, storeCustomer] = await Promise.all([
+    readIntakeRow(admin, order.orderId),
+    resolveStoreOrderCustomer(admin, order.store),
+  ]);
   if (existing) return sameIntake(existing, payload) ? { kind: 'existing', id: existing.id } : { kind: 'conflict' };
 
-  const [byNumber, reseller] = await Promise.all([
-    customerIdByNumber(admin, order.store.ekovillaCustomerNumber),
-    readResellerLink(admin, order.store.resellerId),
-  ]);
-  const storeCustomer = resolveStoreCustomer(byNumber, reseller);
   // Butiken uppdateras bara av en NY beställning, som av ett nytt jobb: en upprepning eller ett sent omförsök hade
   // annars skrivit tillbaka ett inaktuellt namn eller kundnummer. Före fördelningen, som läser butikens säljare.
   await upsertPortalReseller(admin, order.store, storeCustomer, deps.now());
   const assignment = await deps.assign({ resellerId: order.store.resellerId, customerId: storeCustomer.customerId });
   if (assignment.kind === 'none') return { kind: 'no_assignee', assignment };
   if (assignment.source === 'county') throw new Error('Fördelningen gav länet, som beställningarna inte har.');
+  const assigneeName = await deps.profileName(assignment.userId);
 
   const inserted = await admin
     .from('crm_store_orders')
@@ -127,7 +130,7 @@ export async function receiveStoreOrder(
         store_name: order.store.name,
         customer_id: storeCustomer.customerId,
         assigned_to: assignment.userId,
-        assigned_to_name: await deps.profileName(assignment.userId),
+        assigned_to_name: assigneeName,
         assignment_source: assignment.source,
         // Den första kroppen som den kom, för jämförelsen med en upprepning; den tolkade (trimmad, tom sträng som null)
         // är den som visas och blir Fortnox-ordern.
@@ -189,7 +192,7 @@ export async function changeStoreOrder(
     // Saknar beställningen kund kan ändringen ha med sig ett kundnummer som finns nu (butiken kopplades i portalen efter
     // att beställningen skickades), eller en koppling för hand på butiken: samma regel som när den kom. En kund som
     // redan står på beställningen byts aldrig av butiken.
-    const linkCustomer = row.customer_id ? null : await resolveStoreCustomerId(admin, change.store);
+    const linkCustomer = row.customer_id ? null : (await resolveStoreOrderCustomer(admin, change.store)).customerId;
 
     // Bara om den fortfarande är mottagen och har versionen vi prövade mot: annars hann en ändring eller en
     // bekräftelse före, och beslutet tas om på det som står nu. Sätter ändringen kunden krävs dessutom att den
@@ -436,7 +439,8 @@ export async function sweepStoreOrderNotices(
       .limit(SWEEP_READ_LIMIT);
 
   const reads = await Promise.all([
-    recent('received', 'received_at'),
+    // En ny beställning som ingen fått veta om: exakt, så att beställningar som redan meddelats aldrig tränger undan den.
+    recent('received', 'received_at').is('notified_key', null),
     recent('received', 'changed_at'),
     recent('withdrawn', 'withdrawn_at'),
   ]);

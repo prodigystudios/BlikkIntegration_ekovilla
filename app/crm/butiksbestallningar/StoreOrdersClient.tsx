@@ -4,7 +4,12 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { STORE_ORDER_STATUS_LABELS, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
+import {
+  STORE_ORDER_LIST_LIMIT,
+  STORE_ORDER_STATUS_LABELS,
+  formatStoreOrderKr,
+  type StoreOrderStatus,
+} from '@/lib/domains/portal/storeOrders';
 import type { StoreOrderListItem } from '@/lib/domains/portal/storeOrdersView';
 import { storeOrderStatusAccent, storeOrderStatusClass } from './storeOrderStatusStyle';
 
@@ -38,8 +43,6 @@ const EMPTY: Record<Filter, string> = {
   closed: 'Inga tillbakadragna eller makulerade beställningar.',
   all: 'Inga butiksbeställningar än. De kommer hit när en butik beställer material i återförsäljarportalen.',
 };
-
-const money = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function StoreOrdersClient({
   orders,
@@ -129,7 +132,7 @@ export default function StoreOrdersClient({
                     </div>
                     <div className="flex items-center justify-between gap-3 sm:justify-end">
                       <span className="text-right">
-                        <span className={cn(crm.bodyStrong, 'tabular-nums')}>{money.format(order.linesTotal)} kr</span>
+                        <span className={cn(crm.bodyStrong, 'tabular-nums')}>{formatStoreOrderKr(order.linesTotal)}</span>
                         <span className={cn(crm.micro, 'block')}>
                           {order.lineCount} {order.lineCount === 1 ? 'rad' : 'rader'}, exkl. moms och frakt
                         </span>
@@ -144,7 +147,9 @@ export default function StoreOrdersClient({
         )}
 
         {capped ? (
-          <p className={cn(crm.meta, 'px-1')}>Listan visar de 500 senaste beställningarna.</p>
+          <p className={cn(crm.meta, 'px-1')}>
+            Listan visar alla som väntar på bekräftelse och de {STORE_ORDER_LIST_LIMIT} senaste av de andra.
+          </p>
         ) : null}
       </div>
     </div>

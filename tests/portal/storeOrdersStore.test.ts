@@ -137,7 +137,8 @@ describe('receiveStoreOrder', () => {
     const deps = intakeDeps();
     expect(await receiveStoreOrder(m.admin, ORDER, structuredClone(RAW), deps)).toEqual({ kind: 'existing', id: 'order-1' });
     expect(deps.assign).not.toHaveBeenCalled();
-    expect(m.calls.some((c) => c.table === 'crm_portal_resellers')).toBe(false);
+    // Butiken skrivs bara av en NY beställning (läsas får den: kopplingen läses samtidigt som raden).
+    expect(m.calls.some((c) => c.table === 'crm_portal_resellers' && c.op !== 'select')).toBe(false);
     expect(m.tables.crm_store_orders).toHaveLength(1);
   });
 
@@ -533,6 +534,17 @@ describe('sweepStoreOrderNotices', () => {
     expect(sent.map((rows) => rows[0].href).sort()).toEqual(
       ['/crm/butiksbestallningar/andrad', '/crm/butiksbestallningar/gammal-andrad', '/crm/butiksbestallningar/gammal-ny', '/crm/butiksbestallningar/tillbaka'].sort(),
     );
+  });
+
+  it('en ny beställning som aldrig meddelats hittas, hur många redan meddelade som än kommit efter den', async () => {
+    const told = Array.from({ length: 600 }, (_, i) =>
+      storeRow({ id: `sagd-${i}`, order_id: `s-${i}`, received_at: minutesAgo(3 + (i % 50)), notified_key: 'v1' }),
+    );
+    const m = db({ crm_store_orders: [...told, storeRow({ id: 'bortglomd', order_id: 'x', received_at: minutesAgo(60 * 24) })] });
+    const { deps, sent } = noticeDeps();
+    const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
+    expect(summary.candidates).toBe(1);
+    expect(sent[0][0].href).toBe('/crm/butiksbestallningar/bortglomd');
   });
 
   it('det som väntat längst skickas först', async () => {

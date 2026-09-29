@@ -15,11 +15,15 @@ export default async function StoreOrdersPage() {
   await requirePagePermission('crm.access');
   const result = await listStoreOrderViews(createSessionClient()).then(
     (list) => ({ ok: true as const, ...list }),
-    (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : 'Beställningarna gick inte att läsa.' }),
+    (e: unknown) => {
+      // Databasens text stannar i loggen: den säger inget användaren kan göra något åt.
+      console.error('[butiksbestallningar] listan gick inte att läsa', { error: e instanceof Error ? e.message : String(e) });
+      return { ok: false as const };
+    },
   );
   return result.ok ? (
     <StoreOrdersClient orders={result.orders} capped={result.capped} />
   ) : (
-    <StoreOrdersClient orders={[]} capped={false} error={result.message} />
+    <StoreOrdersClient orders={[]} capped={false} error="Beställningarna gick inte att läsa." />
   );
 }

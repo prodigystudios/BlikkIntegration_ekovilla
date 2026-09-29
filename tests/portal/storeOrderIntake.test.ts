@@ -11,6 +11,7 @@ import {
   decideStoreOrderNotice,
   storeOrderLinesTotal,
   storeOrderNoticeKey,
+  formatStoreOrderKr,
   storeOrderSummary,
   storeOrderTotals,
   type StoreOrderStatus,
@@ -185,6 +186,13 @@ describe('summorna och sammanfattningen', () => {
     expect(plain(storeOrderSummary({ ...CONTRACT_STORE_ORDER, lines: [CONTRACT_STORE_ORDER.lines[0]], delivery: { ...CONTRACT_STORE_ORDER.delivery, desiredPeriod: ' ' } }))).toBe(
       'B-2026-003 · 1 rad · 4 024 kr exkl. moms',
     );
+  });
+});
+
+describe('formatStoreOrderKr', () => {
+  it('två decimaler, svenskt tusental och "kr"', () => {
+    expect(formatStoreOrderKr(4414.2).replace(/\s/g, ' ')).toBe('4 414,20 kr');
+    expect(formatStoreOrderKr(0.5).replace(/\s/g, ' ')).toBe('0,50 kr');
   });
 });
 

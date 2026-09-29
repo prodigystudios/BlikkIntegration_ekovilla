@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  STORE_ORDER_LIST_LIMIT,
   STORE_ORDER_STATUSES,
   STORE_ORDER_VAT_PERCENT,
   storeOrderLineTotal,
@@ -17,17 +18,17 @@ import {
  * Tiderna formateras på servern i svensk tid, så att servern och webbläsaren skriver samma sträng.
  */
 
+// Bara det listan visar: raderna (antal och summa) och önskad leverans ur kroppen, inte meddelandet eller leveransen.
 const LIST_SELECT =
-  'id, order_number, store_name, status, payload, store_version, received_at, changed_at, withdrawn_at, confirmed_at, fortnox_order_number';
+  'id, order_number, store_name, status, store_version, received_at, fortnox_order_number, lines:payload->lines, desired_period:payload->delivery->>desiredPeriod';
+/** PostgREST kapar vid 1000 rader: de som väntar på bekräftelse läses sida för sida. */
+const PAGE = 1000;
 
 const DETAIL_SELECT = `id, order_id, order_number, reseller_id, store_name, customer_id, assigned_to, assigned_to_name,
   assignment_source, status, payload, store_version, portal_updated_at, received_at, changed_at, withdrawn_at,
   freight_mode, freight_price, freight_set_by_name, freight_set_at, confirmed_at, confirmed_by_name, fortnox_order_number,
   fortnox_order_sync_status, fortnox_error, delivered_on, delivered_by_name, fortnox_invoice_number, invoiced_on,
   invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason`;
-
-/** Så många av de senaste som listan läser. PostgREST kapar vid 1000; sidan säger till när gränsen nås. */
-export const STORE_ORDER_LIST_LIMIT = 500;
 
 const stockholm = (iso: string) =>
   new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium', timeStyle: 'short' });
@@ -54,35 +55,57 @@ type ListRow = {
   order_number: string;
   store_name: string;
   status: string;
-  payload: StoreOrderBody;
   store_version: number;
   received_at: string;
   fortnox_order_number: string | null;
+  lines: StoreOrderBody['lines'];
+  desired_period: string | null;
 };
 
+/**
+ * Listan: ALLA som väntar på bekräftelse (sida för sida), så att ingen obekräftad försvinner ur "Att bekräfta" hur många
+ * som än kommit efter den, och de senaste av resten. `capped` säger att resten har fler än listan visar.
+ */
 export async function listStoreOrderViews(session: SupabaseClient): Promise<{ orders: StoreOrderListItem[]; capped: boolean }> {
-  const { data, error } = await session
+  const received: ListRow[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await session
+      .from('crm_store_orders')
+      .select(LIST_SELECT)
+      .eq('status', 'received')
+      .order('received_at', { ascending: false })
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
+    received.push(...((data ?? []) as ListRow[]));
+    if ((data ?? []).length < PAGE) break;
+  }
+  const others = await session
     .from('crm_store_orders')
     .select(LIST_SELECT)
+    .in('status', STORE_ORDER_STATUSES.filter((status) => status !== 'received'))
     .order('received_at', { ascending: false })
     .order('id', { ascending: true })
     .limit(STORE_ORDER_LIST_LIMIT);
-  if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
-  const rows = (data ?? []) as ListRow[];
+  if (others.error) throw new Error(`Beställningarna gick inte att läsa: ${others.error.message}`);
+  const rest = (others.data ?? []) as ListRow[];
   return {
-    capped: rows.length >= STORE_ORDER_LIST_LIMIT,
-    orders: rows.filter((row) => isStatus(row.status)).map((row) => ({
-      id: row.id,
-      orderNumber: row.order_number,
-      storeName: row.store_name,
-      status: row.status as StoreOrderStatus,
-      lineCount: row.payload.lines.length,
-      linesTotal: storeOrderLinesTotal(row.payload.lines),
-      desiredPeriod: row.payload.delivery.desiredPeriod,
-      receivedLabel: stockholm(row.received_at),
-      changed: row.store_version > 1,
-      fortnoxOrderNumber: row.fortnox_order_number,
-    })),
+    capped: rest.length >= STORE_ORDER_LIST_LIMIT,
+    orders: [...received, ...rest]
+      .filter((row) => isStatus(row.status))
+      .sort((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0))
+      .map((row) => ({
+        id: row.id,
+        orderNumber: row.order_number,
+        storeName: row.store_name,
+        status: row.status as StoreOrderStatus,
+        lineCount: row.lines.length,
+        linesTotal: storeOrderLinesTotal(row.lines),
+        desiredPeriod: row.desired_period ?? '',
+        receivedLabel: stockholm(row.received_at),
+        changed: row.store_version > 1,
+        fortnoxOrderNumber: row.fortnox_order_number,
+      })),
   };
 }
 
@@ -112,6 +135,9 @@ export type StoreOrderView = {
   customerNumber: string | null;
   customerLinked: boolean;
   storeVersion: number;
+  /** Senaste ändringen från butiken och tillbakadragningen, i svensk tid; null när de inte hänt. */
+  changedAtLabel: string | null;
+  withdrawnAtLabel: string | null;
   /** Ekovillas frakt: null = inte beslutad än. */
   freight: StoreOrderFreight;
   fortnoxOrderNumber: string | null;
@@ -119,7 +145,8 @@ export type StoreOrderView = {
   events: StoreOrderEvent[];
 };
 
-type DetailRow = ListRow & {
+type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
+  payload: StoreOrderBody;
   order_id: string;
   customer_id: string | null;
   assigned_to_name: string | null;
@@ -190,6 +217,8 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
     customerNumber: body.store.ekovillaCustomerNumber,
     customerLinked: row.customer_id !== null,
     storeVersion: row.store_version,
+    changedAtLabel: row.changed_at ? stockholm(row.changed_at) : null,
+    withdrawnAtLabel: row.withdrawn_at ? stockholm(row.withdrawn_at) : null,
     // numeric kommer som sträng från PostgREST.
     freight:
       row.freight_mode === 'none'

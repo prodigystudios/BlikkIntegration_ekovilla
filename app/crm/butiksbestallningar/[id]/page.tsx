@@ -4,7 +4,7 @@ import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { createSessionClient } from '@/lib/supabase/session';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { STORE_ORDER_STATUS_LABELS, storeOrderTotals } from '@/lib/domains/portal/storeOrders';
+import { STORE_ORDER_STATUS_LABELS, formatStoreOrderKr as kr, storeOrderTotals } from '@/lib/domains/portal/storeOrders';
 import { getStoreOrderView, type StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
 import { storeOrderStatusClass } from '../storeOrderStatusStyle';
 
@@ -14,16 +14,16 @@ export const dynamic = 'force-dynamic';
 // Läsläge: bekräftelsen, frakten och resten av Ekovillas steg kommer i nästa steg. Alla med crm.access läser (RLS).
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const money = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const kr = (n: number) => `${money.format(n)} kr`;
 
 /** Vad som gäller just nu, överst: det enda sidan behöver säga innan man läser raderna. */
 function StateNotice({ order }: { order: StoreOrderView }) {
-  const lastChange = order.events.find((e) => e.label.startsWith('Ändrad'));
   if (order.status === 'received') {
     return (
       <div className="grid gap-1 rounded-2xl border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-900">
-        <p>Butiken kan ändra eller dra tillbaka beställningen tills den är bekräftad.{lastChange ? ` Den ändrades senast ${lastChange.at}.` : ''}</p>
+        <p>
+          Butiken kan ändra eller dra tillbaka beställningen tills den är bekräftad.
+          {order.changedAtLabel ? ` Den ändrades senast ${order.changedAtLabel}.` : ''}
+        </p>
         {!order.customerLinked ? (
           <p>
             Beställningen är inte kopplad till någon kund i CRM:et
@@ -37,10 +37,9 @@ function StateNotice({ order }: { order: StoreOrderView }) {
     );
   }
   if (order.status === 'withdrawn') {
-    const withdrawn = order.events.find((e) => e.label.startsWith('Tillbakadragen'));
     return (
       <div className="rounded-2xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-700">
-        Butiken drog tillbaka beställningen{withdrawn ? ` ${withdrawn.at}` : ''}. Den ska inte levereras.
+        Butiken drog tillbaka beställningen{order.withdrawnAtLabel ? ` ${order.withdrawnAtLabel}` : ''}. Den ska inte levereras.
       </div>
     );
   }

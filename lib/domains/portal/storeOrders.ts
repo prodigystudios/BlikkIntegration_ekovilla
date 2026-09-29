@@ -111,6 +111,15 @@ export function storeOrderTotals(
   return { lines: linesOre / 100, freight: freightOre / 100, net: netOre / 100, vat: vatOre / 100, total: (netOre + vatOre) / 100 };
 }
 
+/** Så många av de senaste avslutade, bekräftade och levererade som listan läser; de som väntar på bekräftelse läses alla. */
+export const STORE_ORDER_LIST_LIMIT = 500;
+
+const ore = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** "4 414,20 kr": beloppen på sidorna. */
+export function formatStoreOrderKr(amount: number): string {
+  return `${ore.format(amount)} kr`;
+}
+
 const kronor = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });
 
 /** "B-2026-003 · 2 rader · 4 414 kr exkl. moms · Vecka 41": notisens brödtext. */
