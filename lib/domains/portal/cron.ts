@@ -8,6 +8,7 @@ import {
 } from './jobDocumentsStore';
 import { retryPortalFortnox, type PortalFortnoxRetrySummary } from './jobFortnoxRetry';
 import { sweepPortalJobMessages, type PortalJobMessagesSweepSummary } from './jobMessagesStore';
+import { sweepStoreOrderNotices, type StoreOrderNoticeSweepSummary } from './storeOrdersStore';
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
 
@@ -17,6 +18,7 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *
  *   1. De markerade jobben räknas om och skillnaden köas (jobSync.ts). Meddelandena städas: ett svar som sparats men
  *      inte köats köas, och en notis om butikens meddelande som inte gick iväg görs om (jobMessagesStore.ts, fas 6).
+ *      Likaså en notis om en ny, ändrad eller tillbakadragen butiksbeställning (storeOrdersStore.ts, fas 8).
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
  *   3. Levererades något räknas jobben om en gång till: "planerad" köas först när "bekräftad" är levererad, och annars
  *      hade butiken fått den en minut senare.
@@ -45,6 +47,7 @@ export const PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS = 30_000;
 export type PortalCronSummary = {
   sync: PortalJobSyncSummary | { error: string };
   messages: PortalJobMessagesSweepSummary | { error: string };
+  storeOrderNotices: StoreOrderNoticeSweepSummary | { error: string };
   dispatch: OutboxDispatchSummary | { error: string };
   resync?: PortalJobSyncSummary | { error: string };
   redispatch?: OutboxDispatchSummary | { error: string };
@@ -87,6 +90,7 @@ export async function runPortalCron(
   const summary: PortalCronSummary = {
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
+    storeOrderNotices: await step('butiksbeställningarnas notiser', () => sweepStoreOrderNotices(admin, { now })),
     dispatch: await step('utskicket', dispatch),
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
