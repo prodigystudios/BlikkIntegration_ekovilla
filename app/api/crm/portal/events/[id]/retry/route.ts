@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { runPortalCron } from '@/lib/domains/portal/cron';
-import { markPortalJobForSync } from '@/lib/domains/portal/jobSync';
+import { markPortalQueueForSync } from '@/lib/domains/portal/queueMarks';
 import { requeueDeadPortalEvent } from '@/lib/domains/portal/outbox';
 import { invalidUuidParam, ok, routeError, requirePermission } from '../../../../_shared';
 
@@ -9,9 +9,10 @@ export const maxDuration = 180;
 
 type RouteContext = { params: { id: string } };
 
-// "Skicka om" en uppgiven händelse på portalsidans flik Utskick (fas 4b). Bara den senaste för sitt jobb (eller
-// prislistan): se requeueDeadPortalEvent. En bekräftelse som skickas om markerar jobbet, så att planerat datum och
-// resten följer när den levererats. Sedan ett varv som "Skicka väntande nu", utan Fortnox-försöken.
+// "Skicka om" en uppgiven händelse på portalsidans flik Utskick (fas 4b). Bara den senaste för sitt jobb, sin
+// butiksbeställning (eller prislistan): se requeueDeadPortalEvent. En bekräftelse som skickas om markerar jobbet eller
+// beställningen (fas 8b3), så att resten följer när den levererats. Sedan ett varv som "Skicka väntande nu", utan
+// Fortnox-försöken.
 //
 // Service-rollen: kön skrivs bara av service_role. Grinden är crm.portal.manage; indata är bara händelsens id. Se
 // "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -31,11 +32,11 @@ export async function POST(_req: Request, context: RouteContext) {
       case 'not_dead':
         return routeError(409, 'portal_event_not_dead', 'Händelsen är inte uppgiven; den ligger redan i kön eller har skickats.');
       case 'superseded_by_later':
-        return routeError(409, 'portal_event_superseded', 'En senare händelse för samma jobb har redan skickats eller väntar. Den här skickas inte om.');
+        return routeError(409, 'portal_event_superseded', 'En senare händelse för samma jobb eller beställning har redan skickats eller väntar. Den här skickas inte om.');
       case 'requeued':
         break;
     }
-    if (result.orderingKey.startsWith('job:')) await markPortalJobForSync(admin, result.orderingKey.slice(4), now);
+    await markPortalQueueForSync(admin, result.orderingKey, now);
 
     const summary = await runPortalCron(admin, { env: process.env, fortnoxRetries: false });
     return ok({ requeued: true, summary });

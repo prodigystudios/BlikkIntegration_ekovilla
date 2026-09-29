@@ -1,10 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OutboxEventStatus } from './outbox';
+import { PORTAL_JOB_QUEUE_PREFIX } from './jobState';
+import { STORE_ORDER_QUEUE_PREFIX } from './storeOrderState';
 
 /**
  * Fliken "Utskick" på portalsidan (fas 4b, William 2026-09-28): det som väntar i kön och det som gavs upp, med felet.
  * Sessionsklienten: kön och jobbens kolumner här är läsbara för crm.portal.manage (policyn på portal_outbound_events;
- * quote_id, quote_number och store_name på crm_portal_jobs). Inget skrivs härifrån; "Skicka om" går genom
+ * quote_id, quote_number och store_name på crm_portal_jobs), butiksbeställningarnas för crm.access (fas 8b3; id,
+ * order_id, order_number och store_name på crm_store_orders). Inget skrivs härifrån; "Skicka om" går genom
  * requeueDeadPortalEvent med service-rollen.
  */
 
@@ -17,6 +20,10 @@ export type PortalOutboxEventKind =
   | 'job.cancelled'
   | 'job.message'
   | 'job.document'
+  | 'store_order.confirmed'
+  | 'store_order.delivered'
+  | 'store_order.invoiced'
+  | 'store_order.cancelled'
   | 'other';
 
 export type PortalOutboxItem = {
@@ -31,6 +38,8 @@ export type PortalOutboxItem = {
   createdAt: string;
   nextAttemptAt: string | null;
   job: { quoteId: string; quoteNumber: string | null; storeName: string | null; workOrderId: string | null } | null;
+  /** Butiksbeställningen (fas 8b3). id = CRM:ets, null när raden inte kunde läsas. */
+  storeOrder: { orderId: string; id: string | null; orderNumber: string | null; storeName: string | null } | null;
   /** Uppgiven och den senaste för sin nyckel: kan skickas om (se requeueDeadPortalEvent). */
   canRetry: boolean;
 };
@@ -52,7 +61,7 @@ type EventRow = {
   next_attempt_at: string;
 };
 
-const JOB_TYPES = new Set([
+const EVENT_TYPES = new Set([
   'job.confirmed',
   'job.scheduled',
   'job.completed',
@@ -60,12 +69,26 @@ const JOB_TYPES = new Set([
   'job.cancelled',
   'job.message',
   'job.document',
+  'store_order.confirmed',
+  'store_order.delivered',
+  'store_order.invoiced',
+  'store_order.cancelled',
 ]);
+
+const JOB_QUEUE = PORTAL_JOB_QUEUE_PREFIX;
+const STORE_ORDER_QUEUE = STORE_ORDER_QUEUE_PREFIX;
+
+/**
+ * Skälet till en makulering kan vara 2000 tecken; raden visar början. Räknat i grafem (det läsaren ser som ett tecken),
+ * så att varken ett emoji, en flagga eller en sammansatt emoji (👨‍👩‍👧) delas.
+ */
+const REASON_PREVIEW = 80;
+const graphemes = new Intl.Segmenter('sv', { granularity: 'grapheme' });
 
 export function portalOutboxEventKind(orderingKey: string, payload: unknown): PortalOutboxEventKind {
   if (orderingKey === 'pricelist') return 'pricelist';
   const type = (payload as { type?: unknown } | null)?.type;
-  return typeof type === 'string' && JOB_TYPES.has(type) ? (type as PortalOutboxEventKind) : 'other';
+  return typeof type === 'string' && EVENT_TYPES.has(type) ? (type as PortalOutboxEventKind) : 'other';
 }
 
 /** Det viktigaste ur kroppen, som text. Ren. */
@@ -75,7 +98,18 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
   switch (kind) {
     case 'job.confirmed':
+    case 'store_order.confirmed':
       return str(data.ekovillaOrderNumber) ? `Order ${data.ekovillaOrderNumber}` : null;
+    case 'store_order.delivered':
+      return str(data.deliveredAt);
+    case 'store_order.invoiced':
+      return str(data.invoicedAt);
+    case 'store_order.cancelled': {
+      const reason = str(data.reason);
+      if (!reason) return null;
+      const chars = Array.from(graphemes.segment(reason), (g) => g.segment);
+      return chars.length > REASON_PREVIEW ? `${chars.slice(0, REASON_PREVIEW - 1).join('')}…` : reason;
+    }
     case 'job.scheduled': {
       const from = str(data.scheduledFor);
       const until = str(data.scheduledUntil);
@@ -111,16 +145,30 @@ export async function listPortalOutboxAttention(session: SupabaseClient, limit =
   const rows = [...((deadRead.data ?? []) as EventRow[]), ...((waitingRead.data ?? []) as EventRow[])];
   if (rows.length === 0) return [];
 
-  const quoteIds = [...new Set(rows.map((r) => r.ordering_key).filter((k) => k.startsWith('job:')).map((k) => k.slice(4)))];
-  const jobsRead =
+  const idsIn = (prefix: string) =>
+    [...new Set(rows.map((r) => r.ordering_key).filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length)))];
+  const quoteIds = idsIn(JOB_QUEUE);
+  const orderIds = idsIn(STORE_ORDER_QUEUE);
+  const [jobsRead, storeOrdersRead] = await Promise.all([
     quoteIds.length > 0
-      ? await session.from('crm_portal_jobs').select('quote_id, quote_number, store_name, work_order_id').in('quote_id', quoteIds)
-      : { data: [], error: null };
+      ? session.from('crm_portal_jobs').select('quote_id, quote_number, store_name, work_order_id').in('quote_id', quoteIds)
+      : Promise.resolve({ data: [], error: null }),
+    orderIds.length > 0
+      ? session.from('crm_store_orders').select('id, order_id, order_number, store_name').in('order_id', orderIds)
+      : Promise.resolve({ data: [], error: null }),
+  ]);
   if (jobsRead.error) throw new Error(`Jobben gick inte att läsa: ${jobsRead.error.message}`);
+  if (storeOrdersRead.error) throw new Error(`Butiksbeställningarna gick inte att läsa: ${storeOrdersRead.error.message}`);
   const jobs = new Map(
     ((jobsRead.data ?? []) as { quote_id: string; quote_number: string; store_name: string; work_order_id: string | null }[]).map(
       (j) => [j.quote_id, j],
     ),
+  );
+  const storeOrders = new Map(
+    ((storeOrdersRead.data ?? []) as { id: string; order_id: string; order_number: string; store_name: string }[]).map((o) => [
+      o.order_id,
+      o,
+    ]),
   );
 
   // Kan den skickas om? Samma regel som requeueDeadPortalEvent: inget senare för nyckeln, utom en ersatt planerad dag.
@@ -144,8 +192,10 @@ export async function listPortalOutboxAttention(session: SupabaseClient, limit =
 
   return rows.map((r) => {
     const kind = portalOutboxEventKind(r.ordering_key, r.payload);
-    const quoteId = r.ordering_key.startsWith('job:') ? r.ordering_key.slice(4) : null;
+    const quoteId = r.ordering_key.startsWith(JOB_QUEUE) ? r.ordering_key.slice(JOB_QUEUE.length) : null;
     const job = quoteId ? jobs.get(quoteId) : undefined;
+    const orderId = r.ordering_key.startsWith(STORE_ORDER_QUEUE) ? r.ordering_key.slice(STORE_ORDER_QUEUE.length) : null;
+    const storeOrder = orderId ? storeOrders.get(orderId) : undefined;
     return {
       id: r.id,
       kind,
@@ -158,6 +208,9 @@ export async function listPortalOutboxAttention(session: SupabaseClient, limit =
       nextAttemptAt: r.status === 'pending' ? r.next_attempt_at : null,
       job: quoteId
         ? { quoteId, quoteNumber: job?.quote_number ?? null, storeName: job?.store_name ?? null, workOrderId: job?.work_order_id ?? null }
+        : null,
+      storeOrder: orderId
+        ? { orderId, id: storeOrder?.id ?? null, orderNumber: storeOrder?.order_number ?? null, storeName: storeOrder?.store_name ?? null }
         : null,
       canRetry: retryable.get(r.id) ?? false,
     };

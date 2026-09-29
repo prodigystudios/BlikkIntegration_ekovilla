@@ -16,6 +16,7 @@ const h = vi.hoisted(() => ({
   requeue: { kind: 'requeued', orderingKey: 'job:q-1' } as Record<string, unknown>,
   requeueCalls: [] as unknown[][],
   marked: [] as string[],
+  markedStoreOrders: [] as string[],
 }));
 
 vi.mock('@/lib/auth/route', async (importOriginal) => {
@@ -35,6 +36,9 @@ vi.mock('@/lib/domains/portal/outbox', () => ({
 }));
 vi.mock('@/lib/domains/portal/jobSync', () => ({
   markPortalJobForSync: vi.fn(async (_admin: unknown, quoteId: string) => void h.marked.push(quoteId)),
+}));
+vi.mock('@/lib/domains/portal/storeOrderSync', () => ({
+  markStoreOrderForSync: vi.fn(async (_admin: unknown, orderId: string) => (h.markedStoreOrders.push(orderId), true)),
 }));
 
 const SECRET = 'cron-hemlighet-0123456789';
@@ -59,6 +63,7 @@ beforeEach(() => {
   h.requeue = { kind: 'requeued', orderingKey: 'job:q-1' };
   h.requeueCalls = [];
   h.marked = [];
+  h.markedStoreOrders = [];
   vi.stubEnv('CRON_SECRET', SECRET);
 });
 
@@ -126,6 +131,20 @@ describe('POST /api/crm/portal/events/[id]/retry', () => {
       h.requeue = { kind: 'requeued', orderingKey: 'pricelist' };
       expect((await retry()).status).toBe(200);
       expect(h.marked).toEqual([]);
+      expect(h.markedStoreOrders).toEqual([]);
+    });
+
+    it('en butiksbeställnings händelse: beställningen markeras (portalens orderId), inget jobb, ett varv körs', async () => {
+      h.requeue = { kind: 'requeued', orderingKey: 'store_order:so-1' };
+      expect((await retry()).status).toBe(200);
+      expect(h.markedStoreOrders).toEqual(['so-1']);
+      expect(h.marked).toEqual([]);
+      expect(h.cronCalls).toBe(1);
+    });
+
+    it('ett jobbs händelse markerar ingen beställning', async () => {
+      await retry();
+      expect(h.markedStoreOrders).toEqual([]);
     });
 
     it.each([

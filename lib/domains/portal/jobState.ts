@@ -81,8 +81,11 @@ export type DerivePortalJobResult = {
   revisit: boolean;
 };
 
+/** Början av ett jobbs kö i portal_outbound_events (`job:<quoteId>`). */
+export const PORTAL_JOB_QUEUE_PREFIX = 'job:';
+
 export function portalJobOrderingKey(quoteId: string): string {
-  return `job:${quoteId}`;
+  return `${PORTAL_JOB_QUEUE_PREFIX}${quoteId}`;
 }
 
 function event(type: PortalJobEventType, quoteId: string, now: Date, data: Record<string, string | null>): PortalJobEvent {

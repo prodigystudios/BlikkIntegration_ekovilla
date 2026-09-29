@@ -38,6 +38,31 @@ describe('portalOutboxEventKind / Detail', () => {
   });
 });
 
+describe('portalOutboxEventKind / Detail: butiksbeställningarna (fas 8b3)', () => {
+  it('känner igen store_order.*', () => {
+    for (const type of ['store_order.confirmed', 'store_order.delivered', 'store_order.invoiced', 'store_order.cancelled']) {
+      expect(portalOutboxEventKind('store_order:so-1', { type })).toBe(type);
+    }
+    expect(portalOutboxEventKind('store_order:so-1', { type: 'store_order.okand' })).toBe('other');
+  });
+
+  it('numret, dagarna och skälets början', () => {
+    expect(portalOutboxEventDetail('store_order.confirmed', { data: { ekovillaOrderNumber: '74' } })).toBe('Order 74');
+    expect(portalOutboxEventDetail('store_order.delivered', { data: { deliveredAt: '2026-10-02' } })).toBe('2026-10-02');
+    expect(portalOutboxEventDetail('store_order.invoiced', { data: { invoicedAt: '2026-10-05' } })).toBe('2026-10-05');
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: 'Butiken ringde.' } })).toBe('Butiken ringde.');
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: '' } })).toBeNull();
+    // 80 tecken står kvar; ett längre skäl kapas till 79 och en ellips, utan att dela ett emoji.
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: 'x'.repeat(80) } })).toBe('x'.repeat(80));
+    const long = `${'x'.repeat(78)}😀😀😀`;
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: long } })).toBe(`${'x'.repeat(78)}😀…`);
+    // En sammansatt emoji och en flagga är ett tecken var för läsaren, och delas aldrig.
+    const family = '👨‍👩‍👧';
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: `${'x'.repeat(78)}${family}🇸🇪x` } })).toBe(`${'x'.repeat(78)}${family}…`);
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: `${'x'.repeat(79)}${family}` } })).toBe(`${'x'.repeat(79)}${family}`);
+  });
+});
+
 describe('listPortalOutboxAttention', () => {
   it('uppgivna och väntande, nyast först, med jobbets butik och offert; skickade visas inte', async () => {
     const { admin } = memoryAdmin({
@@ -79,6 +104,50 @@ describe('listPortalOutboxAttention', () => {
     });
     const items = await listPortalOutboxAttention(admin, 1);
     expect(items.map((i) => i.id)).toEqual(['gammal', 'p2']);
+  });
+
+  it('en butiksbeställnings händelse: beställningens butik och nummer, ingen jobbuppgift', async () => {
+    const { admin, calls } = memoryAdmin({
+      portal_outbound_events: [
+        event({ id: 'b', seq: 2, ordering_key: 'store_order:so-1', payload: { type: 'store_order.delivered', data: { deliveredAt: '2026-10-02' } } }),
+        event({ id: 'c', seq: 3, status: 'pending', ordering_key: 'store_order:so-okand', payload: { type: 'store_order.confirmed', data: { ekovillaOrderNumber: '74' } } }),
+      ],
+      crm_store_orders: [
+        { id: 'id-1', order_id: 'so-1', order_number: 'B-2026-003', store_name: 'Sehed Bygg' },
+        { id: 'id-2', order_id: 'so-2', order_number: 'B-2026-004', store_name: 'Boli' },
+      ],
+    });
+    const items = await listPortalOutboxAttention(admin);
+    expect(items.find((i) => i.id === 'b')).toMatchObject({
+      kind: 'store_order.delivered',
+      detail: '2026-10-02',
+      job: null,
+      storeOrder: { orderId: 'so-1', id: 'id-1', orderNumber: 'B-2026-003', storeName: 'Sehed Bygg' },
+      canRetry: true,
+    });
+    expect(items.find((i) => i.id === 'c')).toMatchObject({
+      job: null,
+      storeOrder: { orderId: 'so-okand', id: null, orderNumber: null, storeName: null },
+    });
+    const read = calls.find((c) => c.table === 'crm_store_orders')!;
+    expect(read.filters).toContainEqual(['in', 'order_id', ['so-1', 'so-okand']]);
+    expect(calls.some((c) => c.table === 'crm_portal_jobs')).toBe(false);
+  });
+
+  it('ett jobbs händelse har ingen beställning, och beställningarna läses inte', async () => {
+    const { admin, calls } = memoryAdmin({ portal_outbound_events: [event({})], crm_portal_jobs: [] });
+    const [item] = await listPortalOutboxAttention(admin);
+    expect(item.storeOrder).toBeNull();
+    expect(calls.some((c) => c.table === 'crm_store_orders')).toBe(false);
+  });
+
+  it('beställningarna går inte att läsa: fel, som för jobben', async () => {
+    const { admin, failOn } = memoryAdmin({
+      portal_outbound_events: [event({ ordering_key: 'store_order:so-1', payload: { type: 'store_order.confirmed', data: {} } })],
+      crm_store_orders: [],
+    });
+    failOn((c) => c.table === 'crm_store_orders', { message: 'nere' });
+    await expect(listPortalOutboxAttention(admin)).rejects.toThrow('Butiksbeställningarna gick inte att läsa: nere');
   });
 
   it('en tom kö frågar inte efter jobben', async () => {

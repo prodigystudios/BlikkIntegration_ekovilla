@@ -11,17 +11,19 @@ import { sweepPortalJobMessages, type PortalJobMessagesSweepSummary } from './jo
 import { sweepStoreOrderNotices, type StoreOrderNoticeSweepSummary } from './storeOrdersStore';
 import { retryStoreOrderFortnox, storeOrderFortnoxDeps, type StoreOrderFortnoxDeps } from './storeOrderActions';
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
+import { syncStoreOrders, type StoreOrderSyncSummary } from './storeOrderSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
 
 /**
  * Ett varv av portalens bakgrundsarbete (RESELLER_PORTAL_CRM_PLAN.md fas 4b). Körs av cron-routen varje minut i prod
  * och av "Skicka väntande nu" på portalsidan (testmiljön har ingen cron).
  *
- *   1. De markerade jobben räknas om och skillnaden köas (jobSync.ts). Meddelandena städas: ett svar som sparats men
- *      inte köats köas, och en notis om butikens meddelande som inte gick iväg görs om (jobMessagesStore.ts, fas 6).
+ *   1. De markerade jobben och butiksbeställningarna räknas om och skillnaden köas (jobSync.ts, storeOrderSync.ts,
+ *      fas 8b3). Meddelandena städas: ett svar som sparats men inte köats köas, och en notis om butikens meddelande som
+ *      inte gick iväg görs om (jobMessagesStore.ts, fas 6).
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
- *   3. Levererades något räknas jobben om en gång till: "planerad" köas först när "bekräftad" är levererad, och annars
- *      hade butiken fått den en minut senare.
+ *   3. Levererades något räknas jobben och beställningarna om en gång till: det som följer "bekräftad" köas först när
+ *      den är levererad, och annars hade butiken fått det en minut senare.
  *   4. Dokumenten (jobDocumentsStore.ts, fas 7): den automatiska orderbekräftelsen efter en levererad bekräftelse,
  *      omförsöken och det som inte hann köas. Efter utskicket, eftersom en orderbekräftelse är tre Fortnox-anrop och
  *      statusen inte ska vänta på dem. Köades något skickas kön en gång till.
@@ -51,10 +53,12 @@ export const PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS = 30_000;
 
 export type PortalCronSummary = {
   sync: PortalJobSyncSummary | { error: string };
+  storeOrderSync: StoreOrderSyncSummary | { error: string };
   messages: PortalJobMessagesSweepSummary | { error: string };
   storeOrderNotices: StoreOrderNoticeSweepSummary | { error: string };
   dispatch: OutboxDispatchSummary | { error: string };
   resync?: PortalJobSyncSummary | { error: string };
+  storeOrderResync?: StoreOrderSyncSummary | { error: string };
   redispatch?: OutboxDispatchSummary | { error: string };
   documents: PortalJobDocumentsSweepSummary | { error: string };
   documentsDispatch?: OutboxDispatchSummary | { error: string };
@@ -73,8 +77,9 @@ async function step<T>(name: string, run: () => Promise<T>): Promise<T | { error
 }
 
 const sentSomething = (s: OutboxDispatchSummary | { error: string }) => 'ran' in s && s.ran && s.sent > 0;
-const queuedSomething = (s: PortalJobSyncSummary | PortalJobDocumentsSweepSummary | { error: string }) =>
-  'queued' in s && s.queued > 0;
+const queuedSomething = (
+  s: PortalJobSyncSummary | StoreOrderSyncSummary | PortalJobDocumentsSweepSummary | { error: string } | undefined,
+) => s !== undefined && 'queued' in s && s.queued > 0;
 
 export async function runPortalCron(
   admin: SupabaseClient,
@@ -97,6 +102,7 @@ export async function runPortalCron(
 
   const summary: PortalCronSummary = {
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
+    storeOrderSync: await step('butiksbeställningarnas omräkning', () => syncStoreOrders(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
     storeOrderNotices: { candidates: 0, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 },
@@ -106,7 +112,10 @@ export async function runPortalCron(
   };
   if (sentSomething(summary.dispatch)) {
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
-    if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
+    summary.storeOrderResync = await step('butiksbeställningarnas omräkning efter utskicket', () => syncStoreOrders(admin, { now }));
+    if (queuedSomething(summary.resync) || queuedSomething(summary.storeOrderResync)) {
+      summary.redispatch = await step('utskicket efter omräkningen', dispatch);
+    }
   }
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;

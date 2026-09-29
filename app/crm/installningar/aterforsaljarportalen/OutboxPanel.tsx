@@ -20,8 +20,11 @@ export type OutboxItemView = {
   lastError: string | null;
   queuedAtLabel: string;
   nextAttemptLabel: string | null;
-  /** Jobbets butik och offert, med länk till arbetsordern. null för prislistan. */
-  job: { label: string; href: string | null } | null;
+  /**
+   * Vad händelsen gäller: jobbets butik och offert med länk till arbetsordern, eller butiksbeställningen med länk till
+   * den. null för prislistan.
+   */
+  subject: { kind: 'job' | 'store_order'; label: string; href: string | null } | null;
   canRetry: boolean;
 };
 
@@ -50,13 +53,13 @@ function Row({ item, retrying, onRetry, canAct }: { item: OutboxItemView; retryi
       </div>
 
       <div className="mt-0.5 min-w-0 break-words text-xs text-slate-500">
-        {item.job ? (
-          item.job.href ? (
-            <Link href={item.job.href} className="font-semibold text-slate-700 underline">
-              {item.job.label}
+        {item.subject ? (
+          item.subject.href ? (
+            <Link href={item.subject.href} className="font-semibold text-slate-700 underline">
+              {item.subject.label}
             </Link>
           ) : (
-            item.job.label
+            item.subject.label
           )
         ) : (
           'Alla butiker'
@@ -80,8 +83,9 @@ function Row({ item, retrying, onRetry, canAct }: { item: OutboxItemView; retryi
           </div>
         ) : (
           <p className="m-0 mt-1.5 text-xs text-slate-500">
-            Skickas inte om: det finns något senare för {item.job ? 'samma jobb' : 'prislistan'}, och det här hade kommit
-            fram efter det.
+            Skickas inte om: det finns något senare för{' '}
+            {item.subject ? (item.subject.kind === 'store_order' ? 'samma beställning' : 'samma jobb') : 'prislistan'}, och det
+            här hade kommit fram efter det.
           </p>
         ))}
     </li>
@@ -135,8 +139,8 @@ export default function OutboxPanel({
         </Button>
       </div>
       <p className="m-0 mb-4 max-w-3xl text-sm text-slate-500">
-        Det CRM:et skickar till portalen: prislistorna och jobbens status. Ett utskick som inte kommer fram görs om av sig
-        självt i två dygn. Det portalen nekar ges upp direkt och står kvar här tills någon skickar om det.
+        Det CRM:et skickar till portalen: prislistorna, jobbens och butiksbeställningarnas status. Ett utskick som inte
+        kommer fram görs om av sig självt i två dygn. Det portalen nekar ges upp direkt och står kvar här tills någon skickar om det.
       </p>
 
       {!Array.isArray(items) ? (
