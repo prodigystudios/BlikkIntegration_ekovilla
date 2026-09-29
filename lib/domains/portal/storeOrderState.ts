@@ -90,8 +90,11 @@ export type DeriveStoreOrderResult = {
   revisit: boolean;
 };
 
+/** Början av en butiksbeställnings kö i portal_outbound_events (`store_order:<orderId>`). */
+export const STORE_ORDER_QUEUE_PREFIX = 'store_order:';
+
 export function storeOrderOrderingKey(orderId: string): string {
-  return `store_order:${orderId}`;
+  return `${STORE_ORDER_QUEUE_PREFIX}${orderId}`;
 }
 
 /**

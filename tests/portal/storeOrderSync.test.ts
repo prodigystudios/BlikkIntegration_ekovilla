@@ -205,8 +205,13 @@ describe('markStoreOrderForSync', () => {
     const { admin, tables } = memoryAdmin({
       crm_store_orders: [order({ id: 'id-1', order_id: 'so-1', sync_requested_at: null }), order({ id: 'id-2', order_id: 'so-2', sync_requested_at: null })],
     });
-    await markStoreOrderForSync(admin as never, 'so-2', NOW);
+    expect(await markStoreOrderForSync(admin as never, 'so-2', NOW)).toBe(true);
     expect(tables.crm_store_orders.map((r) => r.sync_requested_at)).toEqual([null, NOW.toISOString()]);
+  });
+
+  it('ingen beställning med det orderId:t: false, inget fel (PostgREST svarar utan fel på noll rader)', async () => {
+    const { admin } = memoryAdmin({ crm_store_orders: [order({ sync_requested_at: null })] });
+    expect(await markStoreOrderForSync(admin as never, 'so-okand', NOW)).toBe(false);
   });
 
   it('ett fel kastar', async () => {

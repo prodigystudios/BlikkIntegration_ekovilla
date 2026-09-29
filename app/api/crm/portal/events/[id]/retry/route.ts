@@ -1,7 +1,6 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { runPortalCron } from '@/lib/domains/portal/cron';
-import { markPortalJobForSync } from '@/lib/domains/portal/jobSync';
-import { markStoreOrderForSync } from '@/lib/domains/portal/storeOrderSync';
+import { markPortalQueueForSync } from '@/lib/domains/portal/queueMarks';
 import { requeueDeadPortalEvent } from '@/lib/domains/portal/outbox';
 import { invalidUuidParam, ok, routeError, requirePermission } from '../../../../_shared';
 
@@ -37,10 +36,7 @@ export async function POST(_req: Request, context: RouteContext) {
       case 'requeued':
         break;
     }
-    if (result.orderingKey.startsWith('job:')) await markPortalJobForSync(admin, result.orderingKey.slice('job:'.length), now);
-    else if (result.orderingKey.startsWith('store_order:')) {
-      await markStoreOrderForSync(admin, result.orderingKey.slice('store_order:'.length), now);
-    }
+    await markPortalQueueForSync(admin, result.orderingKey, now);
 
     const summary = await runPortalCron(admin, { env: process.env, fortnoxRetries: false });
     return ok({ requeued: true, summary });

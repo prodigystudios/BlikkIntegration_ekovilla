@@ -38,7 +38,7 @@ vi.mock('@/lib/domains/portal/jobSync', () => ({
   markPortalJobForSync: vi.fn(async (_admin: unknown, quoteId: string) => void h.marked.push(quoteId)),
 }));
 vi.mock('@/lib/domains/portal/storeOrderSync', () => ({
-  markStoreOrderForSync: vi.fn(async (_admin: unknown, orderId: string) => void h.markedStoreOrders.push(orderId)),
+  markStoreOrderForSync: vi.fn(async (_admin: unknown, orderId: string) => (h.markedStoreOrders.push(orderId), true)),
 }));
 
 const SECRET = 'cron-hemlighet-0123456789';

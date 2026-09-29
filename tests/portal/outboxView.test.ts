@@ -56,6 +56,10 @@ describe('portalOutboxEventKind / Detail: butiksbeställningarna (fas 8b3)', () 
     expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: 'x'.repeat(80) } })).toBe('x'.repeat(80));
     const long = `${'x'.repeat(78)}😀😀😀`;
     expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: long } })).toBe(`${'x'.repeat(78)}😀…`);
+    // En sammansatt emoji och en flagga är ett tecken var för läsaren, och delas aldrig.
+    const family = '👨‍👩‍👧';
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: `${'x'.repeat(78)}${family}🇸🇪x` } })).toBe(`${'x'.repeat(78)}${family}…`);
+    expect(portalOutboxEventDetail('store_order.cancelled', { data: { reason: `${'x'.repeat(79)}${family}` } })).toBe(`${'x'.repeat(79)}${family}`);
   });
 });
 

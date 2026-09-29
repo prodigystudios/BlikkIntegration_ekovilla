@@ -43,6 +43,11 @@ type SyncStoreOrderRow = {
   sync_state: unknown;
 };
 
+/**
+ * `queued`: beställningar som köade något, också när läget sedan inte hann sparas (händelserna ligger i kön och ska
+ * skickas; cron gör ett utskick till för dem). `conflicts`: läget sparades inte. En beställning kan alltså räknas i båda,
+ * till skillnad från jobbens sammanfattning, där läget sparas före kön.
+ */
 export type StoreOrderSyncSummary = { orders: number; queued: number; unchanged: number; conflicts: number; errors: number };
 
 async function syncOne(admin: SupabaseClient, row: SyncStoreOrderRow, now: Date): Promise<{ queued: boolean; saved: boolean }> {
@@ -122,8 +127,16 @@ export async function syncStoreOrders(
   return summary;
 }
 
-/** Markerar en beställning för omräkning, t.ex. när dess uppgivna bekräftelse skickats om och resten kan följa. */
-export async function markStoreOrderForSync(admin: SupabaseClient, orderId: string, now: Date): Promise<void> {
-  const { error } = await admin.from('crm_store_orders').update({ sync_requested_at: now.toISOString() }).eq('order_id', orderId);
+/**
+ * Markerar en beställning för omräkning, t.ex. när dess uppgivna bekräftelse skickats om och resten kan följa. Svarar
+ * false när ingen rad har portalens orderId (en UPDATE på noll rader ger inget fel i PostgREST).
+ */
+export async function markStoreOrderForSync(admin: SupabaseClient, orderId: string, now: Date): Promise<boolean> {
+  const { data, error } = await admin
+    .from('crm_store_orders')
+    .update({ sync_requested_at: now.toISOString() })
+    .eq('order_id', orderId)
+    .select('id');
   if (error) throw new Error(`Butiksbeställningen kunde inte markeras: ${error.message}`);
+  return (data ?? []).length > 0;
 }

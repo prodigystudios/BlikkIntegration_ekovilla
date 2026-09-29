@@ -1449,15 +1449,30 @@ fliken Utskick):
   "bekräftad" i samma varv. Ett utskick till görs när jobben eller beställningarna köade något. Kön tar en händelse per
   beställning och dragning, så en fakturering bakom en leverans går nästa varv.
 - **"Skicka om"** på en butikshändelse markerar beställningen (portalens orderId ur kön `store_order:<orderId>`), så att
-  det som väntade bakom en uppgiven bekräftelse följer i samma klick.
+  det som väntade bakom en uppgiven bekräftelse följer i samma klick. Kön tolkas i `queueMarks.ts`, med prefixen ur
+  `jobState.ts` och `storeOrderState.ts`, och en beställning som inte finns ger en varning i loggen.
 - **Fliken Utskick** visar `store_order.*` som Bekräftad, Levererad, Fakturerad och Makulerad, med numret, dagen eller
-  början av skälet (80 tecken, räknade i tecken), och butiken och B-numret med länk till beställningen. Den läser
-  beställningarna med sessionen (`crm.access`). "Skickas inte om" säger "samma beställning".
+  början av skälet (80 grafem, så att en sammansatt emoji aldrig delas), och butiken och B-numret med länk till
+  beställningen. Den läser beställningarna med sessionen (`crm.access`). "Skickas inte om" säger "samma beställning".
 - `readConfirmedDelivery` delas med jobben (exporterad ur `jobSync.ts`, oförändrad).
 
+**Granskningen av gren 2** (code-review high, en runda, åtta fynd):
+- Lagat: kötolkningen låg i routen (nu `markPortalQueueForSync` i `queueMarks.ts`, prefixen på ett ställe);
+  markeringen läste inte tillbaka raden; skälet kapades per kodpunkt och kunde dela en sammansatt emoji; räknarna
+  (`queued` och `conflicts` kan gälla samma beställning) förklarade.
+- Fel premiss: "en makulering efter en bekräftelse som köats men inte bokförts bryter regeln". Bekräftelsen hann köas,
+  så butiken får Bekräftad och Makulerad, som fall D; regeln gäller en bekräftelse som aldrig köats. Och "omräkningen
+  efter utskicket kostar 100 rader": när portalen är nere skickas inget och ingen omräkning görs, och när den kommer
+  tillbaka är det den omräkningen som behövs.
+- Känt, inte jagat: faller markeringen i "Skicka om" (ett databasfel mellan två anrop) ligger bekräftelsen i kön men det
+  som väntar bakom den följer först vid nästa ändring av beställningen, och ett nytt klick säger "inte uppgiven". Jobben
+  har samma mönster (4b). Att markera före återköandet hade öppnat ett race mot cron, som då kan ta bort markeringen.
+  Bekräftelsens status läses en gång per markerad rad, som för jobben.
+
 **Prövat (gren 2):**
-- vitest: `storeOrderSync` (13), cron (18), routerna, fliken. 52 mutationer, alla röda (en överlevde först: ett trasigt
-  läge prövades bara som en lista, och testet kräver nu att en nyckel av fel typ kastas bort).
+- vitest: `storeOrderSync` (14), `queueMarks` (5), cron (18), routerna, fliken. 52 mutationer, alla röda (en överlevde
+  först: ett trasigt läge prövades bara som en lista, och testet kräver nu att en nyckel av fel typ kastas bort). Efter
+  granskningen 14 till, alla röda utom en likvärdig (en kö kan inte börja med båda prefixen).
 - **Mot en fejkportal** (:3101) som kontrollerar signaturen och prövar varje kropp mot portalens eget schema
   (`crmEventSchema` ur portalrepot, zod 4, med `--conditions=react-server`): de 14 markerade lokala beställningarna gav
   24 händelser, alla godtagna. Sju bekräftade, sex makulerade (8-3, 8-4 och 8b-15 bara makuleringen, trots nummer på

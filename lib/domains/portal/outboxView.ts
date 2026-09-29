@@ -1,5 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OutboxEventStatus } from './outbox';
+import { PORTAL_JOB_QUEUE_PREFIX } from './jobState';
+import { STORE_ORDER_QUEUE_PREFIX } from './storeOrderState';
 
 /**
  * Fliken "Utskick" på portalsidan (fas 4b, William 2026-09-28): det som väntar i kön och det som gavs upp, med felet.
@@ -73,11 +75,15 @@ const EVENT_TYPES = new Set([
   'store_order.cancelled',
 ]);
 
-const JOB_QUEUE = 'job:';
-const STORE_ORDER_QUEUE = 'store_order:';
+const JOB_QUEUE = PORTAL_JOB_QUEUE_PREFIX;
+const STORE_ORDER_QUEUE = STORE_ORDER_QUEUE_PREFIX;
 
-/** Skälet till en makulering kan vara 2000 tecken; raden visar början. Räknat i tecken, så att ett emoji inte delas. */
+/**
+ * Skälet till en makulering kan vara 2000 tecken; raden visar början. Räknat i grafem (det läsaren ser som ett tecken),
+ * så att varken ett emoji, en flagga eller en sammansatt emoji (👨‍👩‍👧) delas.
+ */
 const REASON_PREVIEW = 80;
+const graphemes = new Intl.Segmenter('sv', { granularity: 'grapheme' });
 
 export function portalOutboxEventKind(orderingKey: string, payload: unknown): PortalOutboxEventKind {
   if (orderingKey === 'pricelist') return 'pricelist';
@@ -101,7 +107,7 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
     case 'store_order.cancelled': {
       const reason = str(data.reason);
       if (!reason) return null;
-      const chars = Array.from(reason);
+      const chars = Array.from(graphemes.segment(reason), (g) => g.segment);
       return chars.length > REASON_PREVIEW ? `${chars.slice(0, REASON_PREVIEW - 1).join('')}…` : reason;
     }
     case 'job.scheduled': {
