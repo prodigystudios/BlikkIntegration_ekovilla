@@ -4,7 +4,7 @@ import { expandNotificationToRecipients } from '@/lib/domains/notifications/muta
 import { buildStoreOrderNotification } from '@/lib/domains/notifications/payload';
 import { portalAssignmentDeps, resolvePortalAssignee, type PortalAssignment } from './assignment';
 import { canonicalJson } from './canonicalJson';
-import { readResellerLink, resolveStoreCustomer, upsertPortalReseller, type StoreCustomer } from './jobIntakeStore';
+import { readResellerLink, resolveStoreCustomer, type StoreCustomer } from './jobIntakeStore';
 import {
   decideStoreOrderChange,
   decideStoreOrderWithdraw,
@@ -88,6 +88,31 @@ async function resolveStoreOrderCustomer(admin: SupabaseClient, store: PortalSto
   return resolveStoreCustomer(byNumber, reseller);
 }
 
+/**
+ * Butiken finns, utan att en beställning skriver över den. Portalen fryser kroppen vid första försöket och håller
+ * beställningarna i kö tills integrationen slås på (kontraktet), så en beställning som är ny för CRM:et kan bära
+ * veckogamla uppgifter om butiken: namnet, kundnumret och kopplingen. Bara jobben uppdaterar butiken
+ * (upsertReseller i jobIntakeStore.ts). En butik som hör av sig första gången med en beställning läggs till, med
+ * kortet som numret pekar på; en befintlig rörs inte.
+ */
+async function ensurePortalReseller(admin: SupabaseClient, store: PortalStoreOrder['store'], storeCustomer: StoreCustomer, now: Date) {
+  const { error } = await admin.from('crm_portal_resellers').upsert(
+    {
+      reseller_id: store.resellerId,
+      name: store.name,
+      street: store.address.street,
+      postal_code: store.address.postalCode,
+      city: store.address.city,
+      customer_number: store.ekovillaCustomerNumber,
+      customer_id: storeCustomer.source === 'number' ? storeCustomer.customerId : null,
+      first_seen_at: now.toISOString(),
+      last_seen_at: now.toISOString(),
+    },
+    { onConflict: 'reseller_id', ignoreDuplicates: true },
+  );
+  if (error) throw new Error(`Butiken kunde inte sparas: ${error.message}`);
+}
+
 export type ReceiveStoreOrderResult =
   | { kind: 'created'; id: string }
   /** Beställningen fanns redan, med samma första kropp. */
@@ -112,9 +137,8 @@ export async function receiveStoreOrder(
   ]);
   if (existing) return sameIntake(existing, payload) ? { kind: 'existing', id: existing.id } : { kind: 'conflict' };
 
-  // Butiken uppdateras bara av en NY beställning, som av ett nytt jobb: en upprepning eller ett sent omförsök hade
-  // annars skrivit tillbaka ett inaktuellt namn eller kundnummer. Före fördelningen, som läser butikens säljare.
-  await upsertPortalReseller(admin, order.store, storeCustomer, deps.now());
+  // Före fördelningen, som läser butikens säljare, och före beställningens rad, som pekar på butiken.
+  await ensurePortalReseller(admin, order.store, storeCustomer, deps.now());
   const assignment = await deps.assign({ resellerId: order.store.resellerId, customerId: storeCustomer.customerId });
   if (assignment.kind === 'none') return { kind: 'no_assignee', assignment };
   if (assignment.source === 'county') throw new Error('Fördelningen gav länet, som beställningarna inte har.');
@@ -281,6 +305,13 @@ type NoticeRow = {
 
 const NOTICE_SELECT = 'id, order_number, store_name, status, store_version, notified_key, notify_claimed_at, assigned_to, payload';
 
+/** Bara det beslutet behöver: förkontrollen före lånet läser inte kroppen. */
+async function readNoticeState(admin: SupabaseClient, id: string): Promise<Pick<NoticeRow, 'status' | 'store_version' | 'notified_key'> | null> {
+  const { data, error } = await admin.from('crm_store_orders').select('status, store_version, notified_key').eq('id', id).maybeSingle();
+  if (error) throw new Error(`Beställningen gick inte att läsa: ${error.message}`);
+  return (data as Pick<NoticeRow, 'status' | 'store_version' | 'notified_key'> | null) ?? null;
+}
+
 async function readNoticeRow(admin: SupabaseClient, id: string): Promise<NoticeRow | null> {
   const { data, error } = await admin.from('crm_store_orders').select(NOTICE_SELECT).eq('id', id).maybeSingle();
   if (error) throw new Error(`Beställningen gick inte att läsa: ${error.message}`);
@@ -338,7 +369,7 @@ export async function notifyStoreOrder(
   id: string,
   deps: StoreOrderNoticeDeps = storeOrderNoticeDeps(admin),
 ): Promise<StoreOrderNoticeOutcome> {
-  const before = await readNoticeRow(admin, id);
+  const before = await readNoticeState(admin, id);
   if (!before || !decideStoreOrderNotice(before)) return 'none';
 
   const stamp = await claimNotice(admin, id, deps.now());

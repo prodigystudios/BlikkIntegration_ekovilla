@@ -32,8 +32,8 @@ export const PORTAL_JOB_PATH = '/api/portal/jobs';
 
 const trimmed = (max: number) => z.string().trim().max(max, `Högst ${max} tecken.`);
 const required = (max: number) => trimmed(max).min(1, 'Får inte vara tomt.');
-// Portalens id:n står i sökvägar (planens punkt 16): samma tecken som butikens id.
-const portalId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
+// Portalens id:n står i sökvägar (planens punkt 16): samma tecken som butikens id. Delas med butiksbeställningarna.
+export const portalId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
 const amount = z.number().finite('Ogiltigt tal.');
 const positive = (max: number) => amount.positive('Måste vara större än noll.').max(max, `Högst ${max}.`);
 

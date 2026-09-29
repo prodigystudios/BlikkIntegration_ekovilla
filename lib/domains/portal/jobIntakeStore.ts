@@ -133,8 +133,7 @@ export function resolveStoreCustomer(byNumberId: string | null, reseller: Resell
 }
 
 /**
- * Butiken dyker upp när den hör av sig (William 2026-09-28), med ett nytt jobb eller en ny butiksbeställning (fas 8):
- * namn, adress och kundnummer som portalen skickar, och
+ * Butiken dyker upp när den hör av sig (William 2026-09-28): namn, adress och kundnummer som portalen skickar, och
  * kundkortet som gäller. Säljaren (`seller_user_id`) rörs aldrig; den sätts på portalsidan.
  *
  * Kortet skrivs i ett eget steg, efter butikens uppgifter:
@@ -143,7 +142,8 @@ export function resolveStoreCustomer(byNumberId: string | null, reseller: Resell
  *                                  intaget pågick (fas 3c) hade annars skrivits över av en läsning från före den
  *   en koppling för hand           rörs inte
  */
-export async function upsertPortalReseller(admin: SupabaseClient, store: PortalJob['store'], storeCustomer: StoreCustomer, now: Date) {
+async function upsertReseller(admin: SupabaseClient, job: PortalJob, storeCustomer: StoreCustomer, now: Date) {
+  const { store } = job;
   const saved = await admin.from('crm_portal_resellers').upsert(
     {
       reseller_id: store.resellerId,
@@ -195,7 +195,7 @@ export async function receivePortalJob(
     // Butiken uppdateras bara av ett NYTT jobb. En upprepning, ett nekat jobb eller ett sent omförsök av ett gammalt
     // hade annars skrivit tillbaka ett inaktuellt namn eller kundnummer, och kopplat loss butikens kundkort.
     // Före fördelningen (butikens säljare läses därifrån) och före jobbets rad (den pekar på butiken).
-    await upsertPortalReseller(admin, job.store, storeCustomer, deps.now());
+    await upsertReseller(admin, job, storeCustomer, deps.now());
     const assignment = await assign(job, customer?.id ?? null, deps);
     if (assignment.kind === 'none') return { kind: 'no_assignee', assignment };
 

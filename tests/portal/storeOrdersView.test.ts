@@ -64,16 +64,43 @@ describe('listStoreOrderViews', () => {
     expect(orders.find((o) => o.id === 'order-4')!.desiredPeriod).toBe('');
   });
 
-  it('alla som väntar på bekräftelse, sida för sida, hur många som än kommit efter; gränsen gäller bara resten', async () => {
-    const received = Array.from({ length: 1500 }, (_, i) => listRow({ id: `r-${i}`, received_at: `2026-01-01T00:00:${String(i % 60).padStart(2, '0')}.000Z` }));
-    const confirmed = Array.from({ length: STORE_ORDER_LIST_LIMIT + 5 }, (_, i) => listRow({ id: `c-${i}`, status: 'confirmed', received_at: '2026-10-12T08:00:00.000Z' }));
-    const m = memoryAdmin({ crm_store_orders: [...received, ...confirmed] });
+  it('alla pågående (att bekräfta, leverera, fakturera), sida för sida med nyckel; gränsen gäller bara de avslutade', async () => {
+    const pad = (i: number) => String(i).padStart(4, '0');
+    const received = Array.from({ length: 1200 }, (_, i) => listRow({ id: `r-${pad(i)}`, received_at: '2026-01-01T00:00:00.000Z' }));
+    const confirmed = Array.from({ length: 900 }, (_, i) => listRow({ id: `c-${pad(i)}`, status: 'confirmed', received_at: '2026-01-02T00:00:00.000Z' }));
+    const delivered = Array.from({ length: 5 }, (_, i) => listRow({ id: `d-${pad(i)}`, status: 'delivered', received_at: '2026-01-03T00:00:00.000Z' }));
+    const invoiced = Array.from({ length: STORE_ORDER_LIST_LIMIT + 5 }, (_, i) => listRow({ id: `i-${pad(i)}`, status: 'invoiced', received_at: '2026-10-12T08:00:00.000Z' }));
+    const m = memoryAdmin({ crm_store_orders: [...received, ...confirmed, ...delivered, ...invoiced] });
     const { orders, capped } = await listStoreOrderViews(m.admin);
-    expect(orders.filter((o) => o.status === 'received')).toHaveLength(1500);
-    expect(orders.filter((o) => o.status === 'confirmed')).toHaveLength(STORE_ORDER_LIST_LIMIT);
+    expect(orders.filter((o) => o.status === 'received')).toHaveLength(1200);
+    expect(orders.filter((o) => o.status === 'confirmed')).toHaveLength(900);
+    expect(orders.filter((o) => o.status === 'delivered')).toHaveLength(5);
+    expect(orders.filter((o) => o.status === 'invoiced')).toHaveLength(STORE_ORDER_LIST_LIMIT);
+    expect(new Set(orders.map((o) => o.id)).size).toBe(orders.length);
     expect(capped).toBe(true);
-    const receivedReads = m.calls.filter((c) => c.filters.some(([kind, col, v]) => kind === 'eq' && col === 'status' && v === 'received'));
-    expect(receivedReads.map((c) => [c.offset, c.limit])).toEqual([[0, 1000], [1000, 1000]]);
+    // Nyckeln, inte förskjutningen: sida två börjar efter sista id:t på sida ett.
+    const activeReads = m.calls.filter((c) => c.filters.some(([kind, col]) => kind === 'in' && col === 'status') && c.limit === 1000);
+    expect(activeReads).toHaveLength(3);
+    expect(activeReads.every((c) => c.offset === undefined)).toBe(true);
+    expect(activeReads[0].filters.some(([kind]) => kind === 'gt')).toBe(false);
+    expect(activeReads[1].filters).toContainEqual(['gt', 'id', expect.any(String)]);
+  });
+
+  it('en beställning som kommer medan sidorna läses blir ingen dubblett', async () => {
+    const pad = (i: number) => String(i).padStart(4, '0');
+    const rows = Array.from({ length: 1000 }, (_, i) => listRow({ id: `m-${pad(i)}` }));
+    let added = false;
+    const m = memoryAdmin({ crm_store_orders: rows }, {
+      beforeExecute: (call, tables) => {
+        if (!added && call.filters.some(([kind, col]) => kind === 'gt' && col === 'id')) {
+          added = true;
+          tables.crm_store_orders.push(listRow({ id: 'a-ny' }));
+        }
+      },
+    });
+    const { orders } = await listStoreOrderViews(m.admin);
+    expect(new Set(orders.map((o) => o.id)).size).toBe(orders.length);
+    expect(orders).toHaveLength(1000);
   });
 
   it('säger inte att listan är kapad när resten ryms', async () => {
@@ -93,14 +120,21 @@ describe('getStoreOrderView', () => {
     const m = memoryAdmin({ crm_store_orders: [row({ freight_mode: 'charged', freight_price: '950.00' })] });
     const view = (await getStoreOrderView(m.admin, 'order-1'))!;
     expect(view.lines[0]).toMatchObject({ articleNumber: '13003', quantity: 12, unitCost: 335.3, total: 4023.6 });
-    expect(view.linesTotal).toBe(4414.2);
+    expect(view.totals).toEqual({ lines: 4414.2, freight: 950, net: 5364.2, vat: 1341.05, total: 6705.25 });
     expect(view.freight).toEqual({ mode: 'charged', price: 950 });
+    expect(view.freightPending).toBe(false);
     expect(view.vatPercent).toBe(25);
     expect(view.customerNumber).toBe('1043');
     expect(await getStoreOrderView(m.admin, 'annan')).toBeNull();
     const none = (await getStoreOrderView(memoryAdmin({ crm_store_orders: [row({ freight_mode: 'none' })] }).admin, 'order-1'))!;
     expect(none.freight).toEqual({ mode: 'none' });
-    expect((await getStoreOrderView(memoryAdmin({ crm_store_orders: [row()] }).admin, 'order-1'))!.freight).toBeNull();
+    const pending = (await getStoreOrderView(memoryAdmin({ crm_store_orders: [row()] }).admin, 'order-1'))!;
+    expect(pending.freight).toBeNull();
+    expect(pending.freightPending).toBe(true);
+    expect(pending.totals).toEqual({ lines: 4414.2, freight: null, net: null, vat: null, total: null });
+    // Tillbakadragen utan frakt: ingen frakt väntar.
+    const withdrawn = (await getStoreOrderView(memoryAdmin({ crm_store_orders: [row({ status: 'withdrawn', withdrawn_at: '2026-10-12T08:00:00.000Z' })] }).admin, 'order-1'))!;
+    expect(withdrawn.freightPending).toBe(false);
   });
 
   it('kunden beställningen är kopplad till, som sessionen ser kortet; null utan kort', async () => {

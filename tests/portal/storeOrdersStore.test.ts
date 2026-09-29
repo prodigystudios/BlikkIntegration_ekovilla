@@ -109,6 +109,15 @@ describe('receiveStoreOrder', () => {
     expect(m.tables.crm_portal_resellers[0]).toMatchObject({ reseller_id: 'res-norrbygg', customer_number: '1043', customer_id: 'kund-1043' });
   });
 
+  it('en befintlig butik skrivs aldrig över av en beställning: den kan vara veckogammal i portalens kö', async () => {
+    const store = { reseller_id: 'res-norrbygg', name: 'Norrbygg AB (nytt namn)', customer_number: '2000', customer_id: 'kund-2000', customer_linked_at: null };
+    const m = db({ crm_portal_resellers: [store], crm_customers: [{ id: 'kund-1043', fortnox_customer_id: '1043' }] });
+    await receiveStoreOrder(m.admin, ORDER, RAW, intakeDeps());
+    expect(m.tables.crm_portal_resellers).toEqual([store]);
+    // Beställningen får kortet som dess eget nummer pekar på.
+    expect(m.tables.crm_store_orders[0].customer_id).toBe('kund-1043');
+  });
+
   it('en tom kundnummersträng i den första kroppen sparas som den kom; den tolkade har null', async () => {
     const raw = { ...(structuredClone(CONTRACT_STORE_ORDER) as Record<string, any>) };
     raw.store.ekovillaCustomerNumber = '';

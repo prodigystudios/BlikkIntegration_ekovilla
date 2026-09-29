@@ -6,9 +6,11 @@ import {
   STORE_ORDER_VAT_PERCENT,
   storeOrderLineTotal,
   storeOrderLinesTotal,
+  storeOrderTotals,
   type StoreOrderBody,
   type StoreOrderFreight,
   type StoreOrderStatus,
+  type StoreOrderTotals,
 } from './storeOrders';
 
 /**
@@ -21,15 +23,13 @@ import {
 
 // Bara det listan visar: raderna (antal och summa) och önskad leverans ur kroppen, inte meddelandet eller leveransen.
 const LIST_SELECT =
-  'id, order_number, store_name, status, store_version, received_at, fortnox_order_number, lines:payload->lines, desired_period:payload->delivery->>desiredPeriod';
-/** PostgREST kapar vid 1000 rader: de som väntar på bekräftelse läses sida för sida. */
+  'id, order_number, store_name, status, store_version, received_at, lines:payload->lines, desired_period:payload->delivery->>desiredPeriod';
+/** PostgREST kapar vid 1000 rader: de pågående läses sida för sida. */
 const PAGE = 1000;
 
-const DETAIL_SELECT = `id, order_id, order_number, reseller_id, store_name, customer_id, assigned_to, assigned_to_name,
-  assignment_source, status, payload, store_version, portal_updated_at, received_at, changed_at, withdrawn_at,
-  freight_mode, freight_price, freight_set_by_name, freight_set_at, confirmed_at, confirmed_by_name, fortnox_order_number,
-  fortnox_order_sync_status, fortnox_error, delivered_on, delivered_by_name, fortnox_invoice_number, invoiced_on,
-  invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
+const DETAIL_SELECT = `id, order_number, store_name, customer_id, assigned_to_name, status, payload, store_version,
+  received_at, changed_at, withdrawn_at, freight_mode, freight_price, confirmed_at, confirmed_by_name, fortnox_order_number,
+  delivered_on, delivered_by_name, invoiced_on, invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
   customer:crm_customers(customer_type, company_name, first_name, last_name, fortnox_customer_id)`;
 
 const stockholm = (iso: string) =>
@@ -52,7 +52,6 @@ export type StoreOrderListItem = {
   receivedLabel: string;
   /** Butiken har ändrat beställningen efter att den kom. */
   changed: boolean;
-  fortnoxOrderNumber: string | null;
 };
 
 type ListRow = {
@@ -62,46 +61,50 @@ type ListRow = {
   status: string;
   store_version: number;
   received_at: string;
-  fortnox_order_number: string | null;
   lines: StoreOrderBody['lines'];
   desired_period: string | null;
 };
 
+/** Pågående: något återstår för Ekovilla (bekräfta, leverera, fakturera). De läses alla, hur gamla de än är. */
+const ACTIVE_STATUSES: StoreOrderStatus[] = ['received', 'confirmed', 'delivered'];
+
 /**
- * Listan: ALLA som väntar på bekräftelse (sida för sida), så att ingen obekräftad försvinner ur "Att bekräfta" hur många
- * som än kommit efter den, och de senaste av resten. `capped` säger att resten har fler än listan visar.
+ * Listan: ALLA pågående (att bekräfta, leverera och fakturera), så att ingen försvinner ur sitt urval hur många som än
+ * kommit efter den, och de senaste av de avslutade (fakturerade, tillbakadragna, makulerade). `capped` säger att de
+ * avslutade är fler än listan visar.
+ *
+ * De pågående läses sida för sida med nyckel (id), inte med förskjutning: en beställning som kommer eller byter status
+ * medan sidorna läses hade annars gett en dubblett eller tappats. Ordningen sätts efteråt.
  */
 export async function listStoreOrderViews(session: SupabaseClient): Promise<{ orders: StoreOrderListItem[]; capped: boolean }> {
-  const others = session
+  const closed = session
     .from('crm_store_orders')
     .select(LIST_SELECT)
-    .in('status', STORE_ORDER_STATUSES.filter((status) => status !== 'received'))
+    .in('status', STORE_ORDER_STATUSES.filter((status) => !ACTIVE_STATUSES.includes(status)))
     .order('received_at', { ascending: false })
     .order('id', { ascending: true })
     .limit(STORE_ORDER_LIST_LIMIT)
     .then((result) => result);
-  const received: ListRow[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await session
-      .from('crm_store_orders')
-      .select(LIST_SELECT)
-      .eq('status', 'received')
-      .order('received_at', { ascending: false })
-      .order('id', { ascending: true })
-      .range(from, from + PAGE - 1);
+  const active: ListRow[] = [];
+  for (let after: string | null = null; ; ) {
+    let page = session.from('crm_store_orders').select(LIST_SELECT).in('status', ACTIVE_STATUSES);
+    if (after) page = page.gt('id', after);
+    const { data, error } = await page.order('id', { ascending: true }).limit(PAGE);
     if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
-    received.push(...((data ?? []) as ListRow[]));
-    if ((data ?? []).length < PAGE) break;
+    const rows = (data ?? []) as ListRow[];
+    active.push(...rows);
+    if (rows.length < PAGE) break;
+    after = rows[rows.length - 1].id;
   }
-  // Resten lästes samtidigt som den första sidan.
-  const othersRead = await others;
-  if (othersRead.error) throw new Error(`Beställningarna gick inte att läsa: ${othersRead.error.message}`);
-  const rest = (othersRead.data ?? []) as ListRow[];
+  // De avslutade lästes samtidigt som den första sidan.
+  const closedRead = await closed;
+  if (closedRead.error) throw new Error(`Beställningarna gick inte att läsa: ${closedRead.error.message}`);
+  const rest = (closedRead.data ?? []) as ListRow[];
   return {
     capped: rest.length >= STORE_ORDER_LIST_LIMIT,
-    orders: [...received, ...rest]
+    orders: [...active, ...rest]
       .filter((row) => isStatus(row.status))
-      .sort((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0))
+      .sort((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : a.id < b.id ? -1 : 1))
       .map((row) => ({
         id: row.id,
         orderNumber: row.order_number,
@@ -112,7 +115,6 @@ export async function listStoreOrderViews(session: SupabaseClient): Promise<{ or
         desiredPeriod: row.desired_period ?? '',
         receivedLabel: stockholm(row.received_at),
         changed: row.store_version > 1,
-        fortnoxOrderNumber: row.fortnox_order_number,
       })),
   };
 }
@@ -130,14 +132,19 @@ export type StoreOrderEvent = { label: string; at: string; by: string | null };
 
 export type StoreOrderView = {
   id: string;
-  orderId: string;
   orderNumber: string;
   storeName: string;
   status: StoreOrderStatus;
   assignedToName: string | null;
   lines: StoreOrderViewLine[];
-  linesTotal: number;
+  /** Raderna, frakten och momsen (`storeOrderTotals`): räknade en gång, här. */
+  totals: StoreOrderTotals;
   vatPercent: number;
+  /**
+   * Frakten ska beslutas innan beställningen kan bekräftas: den är mottagen och frakten är inte satt. En tillbakadragen
+   * eller makulerad utan frakt får ingen, och ingen moms, så sidan lovar inga.
+   */
+  freightPending: boolean;
   delivery: StoreOrderBody['delivery'];
   /** Butikens kundnummer hos Ekovilla, som portalen skickade i den senaste versionen. */
   customerNumber: string | null;
@@ -148,7 +155,6 @@ export type StoreOrderView = {
    * det kan skilja från portalens nummer: en kund som redan står på beställningen byts aldrig av butiken.
    */
   customer: { name: string; fortnoxCustomerNumber: string | null } | null;
-  storeVersion: number;
   /** Senaste ändringen från butiken och tillbakadragningen, i svensk tid; null när de inte hänt. */
   changedAtLabel: string | null;
   withdrawnAtLabel: string | null;
@@ -161,7 +167,7 @@ export type StoreOrderView = {
 
 type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
   payload: StoreOrderBody;
-  order_id: string;
+  fortnox_order_number: string | null;
   customer_id: string | null;
   assigned_to_name: string | null;
   freight_mode: 'none' | 'charged' | null;
@@ -217,9 +223,15 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
   const row = data as DetailRow | null;
   if (!row || !isStatus(row.status)) return null;
   const body = row.payload;
+  const freight: StoreOrderFreight =
+    // numeric kommer som sträng från PostgREST.
+    row.freight_mode === 'none'
+      ? { mode: 'none' }
+      : row.freight_mode === 'charged'
+        ? { mode: 'charged', price: Number(row.freight_price) }
+        : null;
   return {
     id: row.id,
-    orderId: row.order_id,
     orderNumber: row.order_number,
     storeName: row.store_name,
     status: row.status,
@@ -232,24 +244,18 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
       unitCost: line.unitCost,
       total: storeOrderLineTotal(line),
     })),
-    linesTotal: storeOrderLinesTotal(body.lines),
+    totals: storeOrderTotals(body.lines, freight, STORE_ORDER_VAT_PERCENT),
     vatPercent: STORE_ORDER_VAT_PERCENT,
+    freightPending: freight === null && row.status === 'received',
     delivery: body.delivery,
     customerNumber: body.store.ekovillaCustomerNumber,
     customerLinked: row.customer_id !== null,
     customer: row.customer
       ? { name: getCrmCustomerDisplayName(row.customer), fortnoxCustomerNumber: row.customer.fortnox_customer_id }
       : null,
-    storeVersion: row.store_version,
     changedAtLabel: row.changed_at ? stockholm(row.changed_at) : null,
     withdrawnAtLabel: row.withdrawn_at ? stockholm(row.withdrawn_at) : null,
-    // numeric kommer som sträng från PostgREST.
-    freight:
-      row.freight_mode === 'none'
-        ? { mode: 'none' }
-        : row.freight_mode === 'charged'
-          ? { mode: 'charged', price: Number(row.freight_price) }
-          : null,
+    freight,
     fortnoxOrderNumber: row.fortnox_order_number,
     cancelReason: row.cancel_reason,
     events: storeOrderEvents(row),

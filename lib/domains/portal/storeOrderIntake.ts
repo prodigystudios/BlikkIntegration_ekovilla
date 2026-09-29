@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
-import { portalStoreSchema } from './jobIntake';
-import { RESELLER_ID_PATTERN } from './resellers';
+import { portalId, portalStoreSchema } from './jobIntake';
 import { STORE_ORDER_CONFIRMED_STATUSES, type StoreOrderStatus } from './storeOrders';
 
 /**
@@ -24,8 +23,8 @@ export const PORTAL_STORE_ORDERS_PATH = '/api/portal/store-orders';
 
 const trimmed = (max: number) => z.string().trim().max(max, `Högst ${max} tecken.`);
 const required = (max: number) => trimmed(max).min(1, 'Får inte vara tomt.');
-// Portalens id:n står i sökvägar (planens punkt 16): samma tecken som butikens id.
-export const portalStoreOrderId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
+// Portalens id:n står i sökvägar (planens punkt 16): samma regel som jobbens.
+export const portalStoreOrderId = portalId;
 const amount = z.number().finite('Ogiltigt tal.');
 
 const lineSchema = z

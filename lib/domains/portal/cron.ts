@@ -18,10 +18,10 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *
  *   1. De markerade jobben räknas om och skillnaden köas (jobSync.ts). Meddelandena städas: ett svar som sparats men
  *      inte köats köas, och en notis om butikens meddelande som inte gick iväg görs om (jobMessagesStore.ts, fas 6).
- *      Likaså en notis om en ny, ändrad eller tillbakadragen butiksbeställning (storeOrdersStore.ts, fas 8).
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
  *   3. Levererades något räknas jobben om en gång till: "planerad" köas först när "bekräftad" är levererad, och annars
- *      hade butiken fått den en minut senare.
+ *      hade butiken fått den en minut senare. Sedan görs notiserna om butiksbeställningar som inte gick iväg
+ *      (storeOrdersStore.ts, fas 8): efter utskicket, eftersom de inte köar något och statusen inte ska vänta på dem.
  *   4. Dokumenten (jobDocumentsStore.ts, fas 7): den automatiska orderbekräftelsen efter en levererad bekräftelse,
  *      omförsöken och det som inte hann köas. Efter utskicket, eftersom en orderbekräftelse är tre Fortnox-anrop och
  *      statusen inte ska vänta på dem. Köades något skickas kön en gång till.
@@ -90,8 +90,8 @@ export async function runPortalCron(
   const summary: PortalCronSummary = {
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
-    storeOrderNotices: await step('butiksbeställningarnas notiser', () => sweepStoreOrderNotices(admin, { now })),
     dispatch: await step('utskicket', dispatch),
+    storeOrderNotices: { candidates: 0, sent: 0, marked: 0, failed: 0, gaveUp: 0, errors: 0 },
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
   };
@@ -99,6 +99,7 @@ export async function runPortalCron(
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
+  summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () => sweepStoreOrderNotices(admin, { now }));
 
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
