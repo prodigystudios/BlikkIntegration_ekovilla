@@ -759,6 +759,25 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m).fortnox_next_attempt_at).toBe(minutes(15));
   });
 
+  it('🧨 ett svep som plockas upp efter fönstret och faller öppnar inget nytt fönster: svepen tar slut', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: '57', fortnox_next_attempt_at: minutes(-120), fortnox_attempts: 4, fortnox_retry_until: minutes(-60) }));
+    const deps = fortnoxDeps(undefined, async () => {
+      throw new FortnoxApiError(503, 'Fortnox GET /orders misslyckades (503)');
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'failed' });
+    expect(row(m)).toMatchObject({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-60) });
+  });
+
+  it('🧨 svepet får ett 400 (ordern är låst av en faktura, eller redan makulerad): stopp, inga fler svep', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(-1), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
+    const deps = fortnoxDeps(undefined, async () => '801');
+    deps.cancel.mockImplementation(async () => {
+      throw new FortnoxApiError(400, 'Är låst och kan inte makuleras.', 2001383, 'Är låst och kan inte makuleras.');
+    });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'blocked' });
+    expect(row(m).fortnox_next_attempt_at).toBeNull();
+  });
+
   it('en makulerad utan planerat försök söks aldrig i Fortnox', async () => {
     const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: null }));
     const deps = fortnoxDeps();

@@ -8,7 +8,6 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
-import CrmModal from '@/app/crm/components/CrmModal';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
 import {
   STORE_ORDER_CANCEL_REASON_MAX,
@@ -377,21 +376,24 @@ function CancelFoot({ onOpen, disabled }: { onOpen: () => void; disabled: boolea
 }
 
 /**
- * Skälet till butiken, och vad makuleringen gör. Fältet är tomt varje gång dialogen öppnas: ett skäl som skrevs och
- * avbröts ska inte skickas nästa gång.
+ * Skälet till butiken, och vad makuleringen gör. Skälet ägs av kortet (`reason`), så att det står kvar om sidan läses om
+ * och kortet byter läge medan dialogen är öppen; det töms när dialogen öppnas.
  */
 function CancelDialog({
   props,
   busy,
+  reason,
+  setReason,
   onConfirm,
   onClose,
 }: {
   props: Props;
   busy: boolean;
+  reason: string;
+  setReason: (reason: string) => void;
   onConfirm: (reason: string) => void;
   onClose: () => void;
 }) {
-  const [reason, setReason] = useState('');
   const [touched, setTouched] = useState(false);
   const trimmed = reason.trim();
   const invalid = trimmed.length === 0;
@@ -406,37 +408,14 @@ function CancelDialog({
     if (!invalid) onConfirm(trimmed);
   }
   return (
-    <CrmModal
-      onClose={busy ? () => {} : onClose}
-      ariaLabel={`Makulera ${props.orderNumber}`}
-      maxWidth="sm:max-w-[480px]"
-      header={
-        <>
-          <h2 className="text-lg font-bold text-slate-900">Makulera {props.orderNumber}?</h2>
-          <p className="m-0 mt-0.5 text-sm text-slate-500">{consequence} Det går inte att ångra.</p>
-        </>
-      }
-      footer={
-        <>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            autoFocus
-            className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60 sm:flex-none sm:px-5"
-          >
-            Avbryt
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy}
-            className="flex-1 rounded-xl bg-rose-600 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60 sm:ml-auto sm:flex-none sm:px-5"
-          >
-            {busy ? 'Makulerar…' : 'Makulera beställningen'}
-          </button>
-        </>
-      }
+    <CrmConfirmDialog
+      title={`Makulera ${props.orderNumber}?`}
+      message={`${consequence} Det går inte att ångra.`}
+      confirmLabel={busy ? 'Makulerar…' : 'Makulera beställningen'}
+      busy={busy}
+      tone="danger"
+      onConfirm={submit}
+      onCancel={busy ? () => {} : onClose}
     >
       <label className="grid gap-1">
         <span className={crm.label}>Skäl till butiken</span>
@@ -453,7 +432,7 @@ function CancelDialog({
         />
         {touched && invalid ? <span className="text-xs text-rose-700">Skriv skälet. Butiken ser det.</span> : null}
       </label>
-    </CrmModal>
+    </CrmConfirmDialog>
   );
 }
 
@@ -479,6 +458,11 @@ export default function StoreOrderActions(props: Props) {
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [confirmingInvoice, setConfirmingInvoice] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const openCancel = () => {
+    setCancelReason('');
+    setCancelling(true);
+  };
 
   // Två klick i samma bildruta ser båda `busy` som falskt; referensen stoppar det andra.
   const inFlight = useRef(false);
@@ -563,8 +547,17 @@ export default function StoreOrderActions(props: Props) {
   }
 
   const locked = busy || refreshing;
-  const cancelFoot = storeOrderCanBeCancelled(props.status) ? <CancelFoot onOpen={() => setCancelling(true)} disabled={locked} /> : null;
-  const cancelDialog = cancelling ? <CancelDialog props={props} busy={busy} onConfirm={cancel} onClose={() => setCancelling(false)} /> : null;
+  const cancelFoot = storeOrderCanBeCancelled(props.status) ? <CancelFoot onOpen={openCancel} disabled={locked} /> : null;
+  const cancelDialog = cancelling ? (
+    <CancelDialog
+      props={props}
+      busy={busy}
+      reason={cancelReason}
+      setReason={setCancelReason}
+      onConfirm={cancel}
+      onClose={() => setCancelling(false)}
+    />
+  ) : null;
 
   if (props.status === 'confirmed' && !props.fortnoxOrderNumber) {
     return (

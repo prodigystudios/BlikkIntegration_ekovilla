@@ -1,4 +1,5 @@
 "use client";
+import type { ReactNode } from 'react';
 import CrmModal from '@/app/crm/components/CrmModal';
 import { cn } from '@/lib/shared/cn';
 
@@ -21,6 +22,7 @@ export default function CrmConfirmDialog({
   focusCancel,
   onConfirm,
   onCancel,
+  children,
 }: {
   title: string;
   /** Bryts ut på egen rad under rubriken. Håll den till konsekvensen av att fortsätta. */
@@ -43,6 +45,10 @@ export default function CrmConfirmDialog({
   focusCancel?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * En kropp under rubriken, när frågan behöver ett svar (t.ex. ett skäl). Utan den är kroppen tom med flit, se nedan.
+   */
+  children?: ReactNode;
 }) {
   const dangerous = tone === 'danger';
   const cancelFocused = focusCancel ?? dangerous;
@@ -85,8 +91,9 @@ export default function CrmConfirmDialog({
       }
     >
       {/* Kroppen är tom med flit: rubriken och meningen under den bär hela frågan, och en tom
-          kropp håller dialogen på höjden av det den faktiskt frågar. */}
-      <span className="sr-only">{message ?? title}</span>
+          kropp håller dialogen på höjden av det den faktiskt frågar. Bara en fråga som behöver
+          ett svar (children) har en. */}
+      {children ?? <span className="sr-only">{message ?? title}</span>}
     </CrmModal>
   );
 }

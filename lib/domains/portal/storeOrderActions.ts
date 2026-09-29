@@ -43,6 +43,16 @@ import { readProfileName } from './storeOrdersStore';
 
 export type StoreOrderActor = { id: string };
 
+/** En fråga som aldrig kastar: ett avvisat löfte blir ett fel i Supabase-form, som ett fel från databasen. */
+export function settle<T extends { error: { message: string } | null }>(
+  query: PromiseLike<T>,
+): Promise<T | { data: null; error: { message: string } }> {
+  return Promise.resolve(query).then(
+    (r) => r,
+    (err: unknown) => ({ data: null, error: { message: err instanceof Error ? err.message : String(err) } }),
+  );
+}
+
 /**
  * Får sessionen göra Ekovillas steg på beställningen? En beställning som sessionen ser (RLS, crm.access), och regeln
  * crm_store_order_can_manage() (den ansvarige eller admin, med crm.workorder.write), frågade parallellt. Samma regel som
@@ -345,41 +355,38 @@ async function numberSavedMeanwhile(admin: SupabaseClient, id: string): Promise<
  * false: något gick inte (Fortnox svarade inte, en order gick inte att makulera, eller Fortnox listar fortfarande en som
  * just makulerades); anroparen planerar då ett nytt svep (`requestLeftoverSweep`), som cron gör med jobbens schema.
  */
-async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOrderFortnoxDeps): Promise<boolean> {
+type LeftoverSweep = 'done' | 'retry' | 'blocked';
+
+async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOrderFortnoxDeps): Promise<LeftoverSweep> {
   const tried = new Set<string>();
   try {
     // Högst tre: fler ordrar än så har aldrig skapats för en beställning; resten tar nästa svep.
     for (let i = 0; i < 3; i += 1) {
       const left = await deps.findExisting(reference);
-      if (!left) return true;
-      // Samma order igen: Fortnox listar den ännu som öppen (eller nekade makuleringen). Nästa svep avgör.
-      if (tried.has(left)) return false;
+      if (!left) return 'done';
+      // Samma order igen: Fortnox listar den ännu som öppen. Nästa svep avgör.
+      if (tried.has(left)) return 'retry';
       tried.add(left);
       await deps.cancel(left);
       console.warn('[portal-store-orders] 🧨 beställningen makulerades medan Fortnox-ordern skapades; ordern makulerades', { id, cancelled: left });
     }
-    return false;
+    return 'retry';
   } catch (e) {
-    console.error('[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte sökas eller makuleras; nytt försök planeras', {
-      id,
-      error: e instanceof Error ? e.message : String(e),
-    });
-    return false;
+    // Ett 400 är Fortnox besked om ordern ("Är redan makulerad", "Är låst" av en faktura), som pushens regel: det kommer
+    // igen likadant, så inga fler svep. Allt annat är tekniskt och görs om.
+    const blocked = storeOrderFortnoxFailure(e) === 'blocked';
+    console.error(
+      `[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte sökas eller makuleras; ${blocked ? 'bara för hand nu' : 'nytt försök planeras'}`,
+      { id, error: e instanceof Error ? e.message : String(e) },
+    );
+    return blocked ? 'blocked' : 'retry';
   }
 }
 
 /** Ett nytt svep om 5 min, i ett fönster på 24 h (jobbens schema), bara på en makulerad. Loggar bara. */
 async function requestLeftoverSweep(admin: SupabaseClient, id: string, now: Date): Promise<void> {
   const plan = planPortalFortnoxRetry({ outcome: 'failed', attempts: 0, retryUntil: null, now });
-  const planned = await admin
-    .from('crm_store_orders')
-    .update(plan)
-    .eq('id', id)
-    .eq('status', 'cancelled')
-    .then(
-      (r) => r,
-      (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }),
-    );
+  const planned = await settle(admin.from('crm_store_orders').update(plan).eq('id', id).eq('status', 'cancelled'));
   if (planned.error) console.error('[portal-store-orders] 🧨 svepet kunde inte planeras', { id, error: planned.error.message });
 }
 
@@ -437,11 +444,20 @@ export async function pushStoreOrderToFortnox(
   // numret, eftersom makuleringen kan ha skrivit numret på en order den själv makulerade.
   if (first.status === 'cancelled' && first.fortnox_next_attempt_at) {
     const swept = await cancelLeftoverOrders(id, storeOrderFortnoxReference(id), deps);
-    const outcome: PortalFortnoxOutcome = swept ? 'skipped' : 'failed';
-    const plan = planPortalFortnoxRetry({ outcome, attempts: first.fortnox_attempts ?? 0, retryUntil: first.fortnox_retry_until, now: deps.now() });
+    const now = deps.now();
+    // Ett svep som körs efter fönstret (sent upplockat) öppnar inget nytt: svepen tar slut efter 24 h, som pushens.
+    const expired = first.fortnox_retry_until !== null && new Date(first.fortnox_retry_until).getTime() < now.getTime();
+    const plan =
+      swept === 'retry' && !expired
+        ? planPortalFortnoxRetry({ outcome: 'failed', attempts: first.fortnox_attempts ?? 0, retryUntil: first.fortnox_retry_until, now })
+        : { fortnox_next_attempt_at: null };
+    if (swept !== 'done' && plan.fortnox_next_attempt_at === null) {
+      console.warn('[portal-store-orders] 🧨 svepet ges upp; en Fortnox-order för den makulerade beställningen står kanske kvar', { id });
+    }
     const planned = await admin.from('crm_store_orders').update(plan).eq('id', id).eq('status', 'cancelled');
     if (planned.error) throw new Error(`Svepet kunde inte bokföras: ${planned.error.message}`);
-    return { outcome, fortnoxOrderNumber: null, error: swept ? null : 'En Fortnox-order för den makulerade beställningen kunde inte makuleras än.' };
+    const outcome: PortalFortnoxOutcome = swept === 'done' ? 'skipped' : swept === 'blocked' ? 'blocked' : 'failed';
+    return { outcome, fortnoxOrderNumber: null, error: swept === 'done' ? null : 'En Fortnox-order för den makulerade beställningen kunde inte makuleras.' };
   }
   // Inget att göra. Planen stängs ändå, så att cron inte tar beställningen igen: en som makulerades efter bekräftelsen
   // bär fortfarande skyddsnätet.
@@ -588,7 +604,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // beställningen makulerades (då söks en order som vår POST ändå kan ha skapat).
     if (!written) {
       const settled = await numberSavedMeanwhile(admin, id);
-      if (settled?.outcome === 'skipped' && !(await cancelLeftoverOrders(id, reference, deps))) await requestLeftoverSweep(admin, id, deps.now());
+      if (settled?.outcome === 'skipped' && (await cancelLeftoverOrders(id, reference, deps)) === 'retry') await requestLeftoverSweep(admin, id, deps.now());
       return settled ?? { outcome, fortnoxOrderNumber: null, error };
     }
     return { outcome, fortnoxOrderNumber: null, error };
@@ -641,14 +657,15 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // Claimen släpps också, så att knappen inte svarar "skapas redan" i två minuter, och numret står i felet på raden, så
     // att sidan visar det efter en omläsning (ingen ska lägga upp ordern för hand i Fortnox).
     const unsaved = `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Tryck Skicka till Fortnox om några minuter, så kopplas den; ingen ny order skapas.`;
-    const revisit = await admin
-      .from('crm_store_orders')
-      .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: unsaved })
-      .eq('id', id)
-      .is('fortnox_order_number', null)
-      .eq('status', 'confirmed')
-      .select('id')
-      .then((r) => r, (err: unknown) => ({ data: null, error: { message: err instanceof Error ? err.message : String(err) } }));
+    const revisit = await settle(
+      admin
+        .from('crm_store_orders')
+        .update({ ...revisitColumns(row, deps.now()), fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: unsaved })
+        .eq('id', id)
+        .is('fortnox_order_number', null)
+        .eq('status', 'confirmed')
+        .select('id'),
+    );
     if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
     // Ingen rad: makulerad (8b2) mellan läsningen ovan och den här skrivningen. Då står vår order annars kvar.
     else if ((revisit.data ?? []).length === 0) {
