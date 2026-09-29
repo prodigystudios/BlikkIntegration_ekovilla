@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { setStoreOrderFreight } from '@/lib/domains/portal/storeOrderActions';
+import { isWholeOre } from '@/lib/domains/portal/storeOrderIntake';
 import { ok, routeError, validationError } from '../../../../_shared';
 import { requireStoreOrderManager } from '../../_manage';
 
@@ -20,8 +21,6 @@ export const dynamic = 'force-dynamic';
 // Next 14.2 räknar inte PUT som dynamisk och cachar då varje fetch, också Supabase-klientens.
 export const fetchCache = 'force-no-store';
 
-const twoDecimals = (n: number) => Math.abs(Math.round(n * 100) - n * 100) < 1e-6;
-
 // `expectedSetAt`: när frakten säljaren såg sparades (null = inte satt). En annans nyare frakt skrivs inte över.
 const expectedSetAt = z.string().datetime({ offset: true }).nullable();
 
@@ -34,7 +33,7 @@ const bodySchema = z.discriminatedUnion('mode', [
       .number({ invalid_type_error: 'Ange fraktens pris.' })
       .positive('Priset måste vara större än noll.')
       .max(1_000_000, 'Högst 1000000 kr.')
-      .refine(twoDecimals, 'Högst två decimaler.'),
+      .refine(isWholeOre, 'Högst två decimaler.'),
   }),
 ]);
 

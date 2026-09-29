@@ -24,6 +24,11 @@ export const PORTAL_STORE_ORDERS_PATH = '/api/portal/store-orders';
 // Portalens id:n står i sökvägar (planens punkt 16): samma regel som jobbens.
 export const portalStoreOrderId = portalId;
 
+/** Hela ören, högst två decimaler (kontraktet). Ett halvt öre hade avrundats olika här och i Fortnox. */
+export function isWholeOre(value: number): boolean {
+  return Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
+}
+
 const lineSchema = z
   .object({
     articleNumber: required(50),
@@ -36,7 +41,7 @@ const lineSchema = z
       // Taket håller summan i heltalsören exakt: 200 rader × 100 000 st × 1 000 000 kr = 2e15 öre, under 2^53.
       .max(1_000_000, 'Högst 1000000 kr per enhet.')
       // Kontraktet: hela ören. Ett halvt öre hade avrundats olika här och i Fortnox.
-      .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, 'Priset anges i hela ören (högst två decimaler).'),
+      .refine(isWholeOre, 'Priset anges i hela ören (högst två decimaler).'),
     lineCost: amount,
   })
   // Inblåsning (m³) säljs bara som jobb (portalens isOrderableArticle). En sådan rad hade blivit ett antal i fel enhet.

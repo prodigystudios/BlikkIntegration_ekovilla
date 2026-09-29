@@ -172,19 +172,21 @@ export async function linkStoreOrderCustomer(
   // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
   if (hadCustomer) return { kind: 'linked', storeLink: 'not_applicable' };
 
-  // Butikens koppling, bara om butiken saknar en: en koppling som gjorts sedan beställningen kom (ett jobb, 3c) flyttas
-  // aldrig av en beställning. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
+  // Butikens koppling för hand, bara om butiken saknar en (`customer_linked_at`): en som gjorts sedan beställningen kom
+  // (ett jobb, 3c) flyttas aldrig av en beställning. En koppling via kundnumret räknas inte, eftersom intaget bara läser
+  // den för hand när numret saknas eller är okänt (manualCustomerLink). Beställningen är redan kopplad här: ett fel
+  // loggas och sägs, men stoppar inget.
   const store = await admin
     .from('crm_portal_resellers')
     .update({ customer_id: card.id, customer_linked_by: input.actor.id, customer_linked_at: now().toISOString() })
     .eq('reseller_id', row.reseller_id)
-    .is('customer_id', null)
+    .is('customer_linked_at', null)
     .select('reseller_id');
   if (store.error) {
     console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error.message });
     return { kind: 'linked', storeLink: 'failed' };
   }
-  // Ingen rad: butiken hade redan en koppling, som står kvar.
+  // Ingen rad: butiken hade redan en koppling för hand, som står kvar.
   return { kind: 'linked', storeLink: (store.data ?? []).length > 0 ? 'linked' : 'kept' };
 }
 
@@ -276,10 +278,15 @@ async function readPushCard(admin: SupabaseClient, customerId: string | null): P
  * en order som skapats men inte kopplats aldrig tagits över.
  */
 function revisitColumns(row: Pick<PushRow, 'fortnox_retry_until'>, now: Date) {
-  const until = row.fortnox_retry_until && new Date(row.fortnox_retry_until).getTime() > now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS
-    ? row.fortnox_retry_until
-    : new Date(now.getTime() + PORTAL_FORTNOX_RETRY_WINDOW_MS).toISOString();
-  return { fortnox_next_attempt_at: new Date(now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString(), fortnox_retry_until: until };
+  const next = new Date(now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString();
+  const open = row.fortnox_retry_until && new Date(row.fortnox_retry_until).getTime() > now.getTime() + PORTAL_FORTNOX_SAFETY_NET_MS;
+  if (open) return { fortnox_next_attempt_at: next };
+  // Ett nytt fönster räknar från noll, som jobbens regel: annars kom nästa försök efter en timme i stället för 5 min.
+  return {
+    fortnox_next_attempt_at: next,
+    fortnox_retry_until: new Date(now.getTime() + PORTAL_FORTNOX_RETRY_WINDOW_MS).toISOString(),
+    fortnox_attempts: 0,
+  };
 }
 
 /** Utfallet och omförsöken på raden, och claimen släppt. */
@@ -289,9 +296,15 @@ async function finishPush(
   outcome: PortalFortnoxOutcome,
   values: Record<string, unknown>,
   now: Date,
+  /**
+   * Ett misslyckande bokförs bara på en beställning som fortfarande saknar nummer: ett långsamt försök (claimen blev
+   * gammal) hade annars skrivit sitt fel och sin plan över ett annat försöks lyckade order.
+   */
+  options: { withoutNumber?: boolean } = {},
 ): Promise<void> {
   const plan = planPortalFortnoxRetry({ outcome, attempts: row.fortnox_attempts ?? 0, retryUntil: row.fortnox_retry_until, now });
-  const saved = await admin.from('crm_store_orders').update({ ...values, ...plan }).eq('id', row.id);
+  const update = admin.from('crm_store_orders').update({ ...values, ...plan }).eq('id', row.id);
+  const saved = await (options.withoutNumber ? update.is('fortnox_order_number', null) : update);
   if (saved.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${saved.error.message}`);
   if (outcome === 'failed' && plan.fortnox_next_attempt_at === null) {
     console.warn('[portal-store-orders] Fortnox-försöken ges upp; bara för hand nu', { id: row.id, attempts: plan.fortnox_attempts });
@@ -389,7 +402,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
   if (!customerNumber) {
     // Kortet togs bort, eller tappade numret, efter bekräftelsen. Kräver en människa: inga omförsök.
     const error = 'Kundkortet saknar kundnummer i Fortnox.';
-    await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now());
+    await finishPush(admin, row, 'blocked', { fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null, fortnox_error: error }, deps.now(), { withoutNumber: true });
     return { outcome: 'blocked', fortnoxOrderNumber: null, error };
   }
 
@@ -453,6 +466,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
         fortnox_error: error,
       },
       deps.now(),
+      { withoutNumber: true },
     );
     return { outcome, fortnoxOrderNumber: null, error };
   }
@@ -648,7 +662,8 @@ export async function retryStoreOrderFortnox(
       // Ett försök räknas bara när något gjordes mot Fortnox; en makulerad eller en som någon annan håller hoppas över.
       if (result.outcome === 'skipped' || result.outcome === 'in_progress') summary.skipped += 1;
       else summary.attempted += 1;
-      if (late && result.outcome === 'failed') {
+      // Men inte när ordern skapades och bara numret inte kunde sparas: då behövs försöket som tar över den.
+      if (late && result.outcome === 'failed' && result.fortnoxOrderNumber === null) {
         const done = await admin
           .from('crm_store_orders')
           .update({ fortnox_next_attempt_at: null, fortnox_retry_until: order.fortnox_retry_until })

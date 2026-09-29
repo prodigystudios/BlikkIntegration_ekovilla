@@ -197,6 +197,15 @@ describe('linkStoreOrderCustomer', () => {
     expect(m.tables.crm_portal_resellers[0].customer_id).toBe(other);
   });
 
+  it('🧨 butiken var kopplad bara via kundnumret: kopplingen för hand sparas (intaget läser bara den när numret saknas)', async () => {
+    const other = '77777777-7777-4777-8777-777777777777';
+    const m = db(storeOrder({ customer_id: null }), {
+      crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'Norrbygg AB', customer_id: other, customer_linked_at: null }],
+    });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLink: 'linked' });
+    expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: CARD_ID, customer_linked_by: SELLER });
+  });
+
   it('butikens koppling föll: beställningen är ändå kopplad, och det sägs', async () => {
     const m = db(storeOrder({ customer_id: null }));
     m.failOn((c) => c.table === 'crm_portal_resellers', { message: 'nere' });
@@ -488,7 +497,8 @@ describe('pushStoreOrderToFortnox', () => {
   });
 
   it('🧨 "Skicka till Fortnox" efter att fönstret gått ut: skyddsnätet får ett nytt fönster, så att cron inte ger upp det', async () => {
-    const m = db(confirmed({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-60) }));
+    // Omförsöken gav upp efter ett dygn: 27 försök.
+    const m = db(confirmed({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-60), fortnox_attempts: 27 }));
     const deps = fortnoxDeps(async () => {
       throw new Error('processen dog');
     });
@@ -498,7 +508,9 @@ describe('pushStoreOrderToFortnox', () => {
       return null;
     });
     await pushStoreOrderToFortnox(m.admin, ID, deps);
+    // Ett nytt fönster räknar från noll: nästa försök om 5 min, inte en timme.
     expect(during).toEqual({ next: minutes(5), until: minutes(24 * 60) });
+    expect(row(m)).toMatchObject({ fortnox_attempts: 1, fortnox_next_attempt_at: minutes(5) });
   });
 
   it('🧨 "Skicka till Fortnox" utan planerat försök: skyddsnätet sätts före POST:en (dör processen tar cron över)', async () => {
@@ -584,6 +596,17 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m).fortnox_order_number).toBe('799');
   });
 
+  it('🧨 ett långsamt försök som faller skriver inte över en order som ett annat försök hann skapa', async () => {
+    const m = db(confirmed());
+    const deps = fortnoxDeps(async () => {
+      // Medan det här försöket väntade (claimen blev gammal) skapade ett annat ordern och sparade numret.
+      Object.assign(row(m), { fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
+      throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
+    });
+    await pushStoreOrderToFortnox(m.admin, ID, deps);
+    expect(row(m)).toMatchObject({ fortnox_order_number: '799', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null, fortnox_error: null });
+  });
+
   it('Fortnox svarade utan nummer: ett fel, inte en order', async () => {
     const m = db(confirmed());
     expect((await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps(async () => ({ Order: {} })))).outcome).toBe('failed');
@@ -623,6 +646,13 @@ describe('retryStoreOrderFortnox', () => {
     });
     expect(await retryStoreOrderFortnox(m.admin, { deps })).toMatchObject({ attempted: 1, gaveUp: 1 });
     expect(row(m)).toMatchObject({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-6) });
+  });
+
+  it('🧨 ett sent försök som skapade ordern men inte fick spara numret: ger inte upp, nästa tar över ordern', async () => {
+    const m = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-6) }));
+    m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
+    expect(await retryStoreOrderFortnox(m.admin, { deps: fortnoxDeps() })).toMatchObject({ attempted: 1, gaveUp: 0 });
+    expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
   });
 
   it('🧨 planerat inom fönstret men upplockat sent (ett per varv, andra före i kön): görs ändå', async () => {
