@@ -6,7 +6,7 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import ErrorState from '@/components/ui/ErrorState';
-import { getStoreOrderView } from '@/lib/domains/portal/storeOrdersView';
+import { getStoreOrderView, type StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
 import StoreOrderDetail from './StoreOrderDetail';
 
 export const dynamic = 'force-dynamic';
@@ -35,5 +35,21 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
     );
   }
   if (!read.order) notFound();
-  return <StoreOrderDetail order={read.order} />;
+  return <StoreOrderDetail order={read.order} canManage={await canManageStoreOrder(read.order)} />;
+}
+
+/**
+ * Får den inloggade göra Ekovillas steg (fas 8b)? Samma regel som routerna frågar: den ansvarige eller en admin, med
+ * crm.workorder.write. Bara när det finns ett steg att visa. Svarar databasen inte visas inga knappar; routerna prövar
+ * ändå själva.
+ */
+async function canManageStoreOrder(order: StoreOrderView): Promise<boolean> {
+  const hasStep = order.status === 'received' || (order.status === 'confirmed' && !order.fortnoxOrderNumber);
+  if (!hasStep) return false;
+  const { data, error } = await createSessionClient().rpc('crm_store_order_can_manage', { p_id: order.id });
+  if (error) {
+    console.error('[butiksbestallningar] behörigheten gick inte att pröva', { id: order.id, error: error.message });
+    return false;
+  }
+  return data === true;
 }

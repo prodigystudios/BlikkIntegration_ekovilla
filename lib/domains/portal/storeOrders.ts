@@ -89,6 +89,14 @@ export function storeOrderLinesTotal(lines: readonly Pick<StoreOrderLine, 'quant
 
 export type StoreOrderFreight = { mode: 'none' } | { mode: 'charged'; price: number } | null;
 
+/** Frakten som raden bär den, eller null när den inte är beslutad. */
+export function storeOrderFreightFromRow(row: { freight_mode: string | null; freight_price: number | string | null }): StoreOrderFreight {
+  if (row.freight_mode === 'none') return { mode: 'none' };
+  // numeric kommer som sträng från PostgREST.
+  if (row.freight_mode === 'charged' && row.freight_price !== null) return { mode: 'charged', price: Number(row.freight_price) };
+  return null;
+}
+
 export type StoreOrderTotals = {
   lines: number;
   /** Fraktens pris exkl. moms; 0 för "Ingen frakt". null = inte beslutad än. */

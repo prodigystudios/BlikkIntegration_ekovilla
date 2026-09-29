@@ -40,7 +40,7 @@ export type StoreOrderIntakeDeps = {
 };
 
 /** Den ansvariges namn när beställningen kom: profiles är bara självläsbar, så sidan kan inte slå upp det. */
-async function readProfileName(admin: SupabaseClient, userId: string): Promise<string | null> {
+export async function readProfileName(admin: SupabaseClient, userId: string): Promise<string | null> {
   const { data, error } = await admin.from('profiles').select('full_name').eq('id', userId).maybeSingle();
   if (error) throw new Error(`Den ansvariges namn gick inte att läsa: ${error.message}`);
   const name = (data as { full_name?: string | null } | null)?.full_name?.trim();
