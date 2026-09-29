@@ -469,7 +469,8 @@ describe('pushStoreOrderToFortnox', () => {
     for (const extra of [{ fortnox_order_number: '801' }, { status: 'cancelled' }]) {
       const m = db(confirmed(extra));
       const deps = fortnoxDeps();
-      await pushStoreOrderToFortnox(m.admin, ID, deps);
+      // Cron: på en makulerad med plan är det svepet (8b2), som inte hittar något och stänger planen.
+      await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true });
       expect(deps.post).not.toHaveBeenCalled();
       expect(row(m).fortnox_next_attempt_at).toBeNull();
       const claimed = m.calls.some((c) => c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_sync_status === 'pending');
@@ -735,7 +736,7 @@ describe('pushStoreOrderToFortnox', () => {
     const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: '57', fortnox_next_attempt_at: minutes(-1), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
     let searches = 0;
     const deps = fortnoxDeps(undefined, async () => (++searches === 1 ? '801' : null));
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
     expect(deps.cancel).toHaveBeenCalledWith('801');
     expect(deps.findExisting).toHaveBeenCalledWith(`crm-store-order:${ID}`);
     expect(deps.post).not.toHaveBeenCalled();
@@ -747,14 +748,14 @@ describe('pushStoreOrderToFortnox', () => {
     const deps = fortnoxDeps(undefined, async () => {
       throw new FortnoxApiError(503, 'Fortnox GET /orders misslyckades (503)');
     });
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'failed', fortnoxOrderNumber: null });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'failed', fortnoxOrderNumber: null });
     expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_attempts: 2, fortnox_next_attempt_at: minutes(15) });
   });
 
   it('🧨 svepet: Fortnox listar ordern som öppen också efter makuleringen: den makuleras en gång, och nästa svep avgör', async () => {
     const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(-1), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
     const deps = fortnoxDeps(undefined, async () => '801');
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'failed' });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'failed' });
     expect(deps.cancel).toHaveBeenCalledTimes(1);
     expect(row(m).fortnox_next_attempt_at).toBe(minutes(15));
   });
@@ -764,7 +765,7 @@ describe('pushStoreOrderToFortnox', () => {
     const deps = fortnoxDeps(undefined, async () => {
       throw new FortnoxApiError(503, 'Fortnox GET /orders misslyckades (503)');
     });
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'failed' });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'failed' });
     expect(row(m)).toMatchObject({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-60) });
   });
 
@@ -774,14 +775,23 @@ describe('pushStoreOrderToFortnox', () => {
     deps.cancel.mockImplementation(async () => {
       throw new FortnoxApiError(400, 'Är låst och kan inte makuleras.', 2001383, 'Är låst och kan inte makuleras.');
     });
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'blocked' });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'blocked' });
     expect(row(m).fortnox_next_attempt_at).toBeNull();
   });
 
-  it('en makulerad utan planerat försök söks aldrig i Fortnox', async () => {
+  it('🧨 svepet görs bara av cron: en gammal sida som trycker Skicka till Fortnox rör varken Fortnox eller svepets plan', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(3), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
+    const deps = fortnoxDeps(undefined, async () => '801');
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.findExisting).not.toHaveBeenCalled();
+    expect(deps.cancel).not.toHaveBeenCalled();
+    expect(row(m)).toMatchObject({ fortnox_next_attempt_at: minutes(3), fortnox_attempts: 1 });
+  });
+
+  it('en makulerad utan planerat försök söks aldrig i Fortnox, inte heller av cron', async () => {
     const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: null }));
     const deps = fortnoxDeps();
-    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toMatchObject({ outcome: 'skipped' });
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps, { sweep: true })).toMatchObject({ outcome: 'skipped' });
     expect(deps.findExisting).not.toHaveBeenCalled();
   });
 
@@ -886,6 +896,15 @@ describe('retryStoreOrderFortnox', () => {
     const deps = fortnoxDeps();
     expect(await retryStoreOrderFortnox(m.admin, { deps })).toMatchObject({ due: 1, attempted: 0, skipped: 1 });
     expect(deps.post).not.toHaveBeenCalled();
+  });
+
+  it('🧨 cron sveper en makulerad med planerat svep: ordern med märkningen makuleras', async () => {
+    const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(-1), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
+    let searches = 0;
+    const deps = fortnoxDeps(undefined, async () => (++searches === 1 ? '801' : null));
+    expect(await retryStoreOrderFortnox(m.admin, { deps })).toMatchObject({ due: 1 });
+    expect(deps.cancel).toHaveBeenCalledWith('801');
+    expect(row(m).fortnox_next_attempt_at).toBeNull();
   });
 
   it('en annan körning tog lånet först: hoppas över', async () => {

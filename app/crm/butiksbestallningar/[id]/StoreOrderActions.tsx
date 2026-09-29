@@ -449,18 +449,26 @@ export default function StoreOrderActions(props: Props) {
   // Leveransdagen: i dag som förval (serverns svenska dag). Sidan kan stå öppen över midnatt, så övre gränsen är den senare
   // av serverns och webbläsarens svenska dag, läst när fältet används; servern prövar ändå.
   const [deliveredOn, setDeliveredOn] = useState(props.deliveredOnBounds.max);
+  // Rörd av säljaren: annars är förvalet dagens dag också när fliken stått öppen i dagar (sätts när knappen trycks).
+  const [deliveredOnTouched, setDeliveredOnTouched] = useState(false);
   const [today, setToday] = useState(props.deliveredOnBounds.max);
   const refreshToday = () => {
     const now = stockholmTodayISO();
-    setToday(now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max);
+    const latest = now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max;
+    setToday(latest);
+    return latest;
   };
   const deliveredOnBounds = { min: props.deliveredOnBounds.min, max: today };
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [confirmingInvoice, setConfirmingInvoice] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  // Det säljaren såg när dialogen öppnades: läses sidan om under tiden (ett fel, en annans steg) nekar servern om
+  // beställningen hunnit ändras, i stället för att makulera något säljaren inte sett.
+  const [cancelSeen, setCancelSeen] = useState<{ status: StoreOrderStatus; version: number }>({ status: props.status, version: props.storeVersion });
   const openCancel = () => {
     setCancelReason('');
+    setCancelSeen({ status: props.status, version: props.storeVersion });
     setCancelling(true);
   };
 
@@ -533,7 +541,7 @@ export default function StoreOrderActions(props: Props) {
     const done = await run(
       `/api/crm/portal/store-orders/${props.id}/cancel`,
       'POST',
-      { reason, status: props.status, version: props.storeVersion },
+      { reason, status: cancelSeen.status, version: cancelSeen.version },
       'Beställningen kunde inte makuleras.',
       (data) => {
         const numbers: string[] = Array.isArray(data?.fortnox_order_numbers) ? data.fortnox_order_numbers : [];
@@ -614,6 +622,7 @@ export default function StoreOrderActions(props: Props) {
             onFocus={refreshToday}
             onChange={(e) => {
               refreshToday();
+              setDeliveredOnTouched(true);
               setDeliveredOn(e.target.value);
             }}
             aria-invalid={!dayValid}
@@ -622,7 +631,11 @@ export default function StoreOrderActions(props: Props) {
           />
           <button
             type="button"
-            onClick={() => setConfirmingDelivery(true)}
+            onClick={() => {
+              const latest = refreshToday();
+              if (!deliveredOnTouched) setDeliveredOn(latest);
+              setConfirmingDelivery(true);
+            }}
             disabled={locked || !dayValid}
             className={cn(crm.saveButton, 'px-4 sm:w-auto')}
           >

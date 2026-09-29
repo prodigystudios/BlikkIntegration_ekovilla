@@ -437,12 +437,16 @@ export async function pushStoreOrderToFortnox(
   admin: SupabaseClient,
   id: string,
   deps: StoreOrderFortnoxDeps = storeOrderFortnoxDeps(admin),
+  /** `sweep`: cron, med sitt lån. Bara då görs svepet på en makulerad (8b2); knapparna rör det aldrig. */
+  options: { sweep?: boolean } = {},
 ): Promise<StoreOrderPushResult> {
   const first = await readPushRow(admin, id);
   if (!first) return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
   // 🧨 Ett planerat försök på en makulerad är svepet (8b2): ordrar som ett försök skapade medan den makulerades. Före
   // numret, eftersom makuleringen kan ha skrivit numret på en order den själv makulerade.
   if (first.status === 'cancelled' && first.fortnox_next_attempt_at) {
+    // Utanför cron (en gammal sida som trycker Skicka till Fortnox): ingenting görs, och svepets plan står kvar.
+    if (!options.sweep) return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
     const swept = await cancelLeftoverOrders(id, storeOrderFortnoxReference(id), deps);
     const now = deps.now();
     // Ett svep som körs efter fönstret (sent upplockat) öppnar inget nytt: svepen tar slut efter 24 h, som pushens.
@@ -499,15 +503,14 @@ export async function pushStoreOrderToFortnox(
     return await pushWithClaim(admin, id, deps);
   } catch (e) {
     // Ett fel som inte bokförts (databasen): claimen släpps, annars svarar knappen "skapas redan" i två minuter.
-    await admin
-      .from('crm_store_orders')
-      .update({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
-      .eq('id', id)
-      .eq('fortnox_order_sync_status', 'pending')
-      .then(
-        (r) => r.error && console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: r.error.message }),
-        (err: unknown) => console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: err instanceof Error ? err.message : String(err) }),
-      );
+    const released = await settle(
+      admin
+        .from('crm_store_orders')
+        .update({ fortnox_order_sync_status: 'failed', fortnox_order_claimed_at: null })
+        .eq('id', id)
+        .eq('fortnox_order_sync_status', 'pending'),
+    );
+    if (released.error) console.error('[portal-store-orders] claimen kunde inte släppas', { id, error: released.error.message });
     throw e;
   }
 }
@@ -809,7 +812,7 @@ export async function retryStoreOrderFortnox(
     // ett nytt fel dagar senare), men här är det samma fel, och omförsöken ska ta slut efter 24 h.
     const late = order.fortnox_retry_until !== null && at.getTime() > new Date(order.fortnox_retry_until).getTime();
     try {
-      const result = await pushStoreOrderToFortnox(admin, order.id, deps);
+      const result = await pushStoreOrderToFortnox(admin, order.id, deps, { sweep: true });
       // Ett försök räknas bara när något gjordes mot Fortnox; en makulerad eller en som någon annan håller hoppas över.
       if (result.outcome === 'skipped' || result.outcome === 'in_progress') summary.skipped += 1;
       else summary.attempted += 1;

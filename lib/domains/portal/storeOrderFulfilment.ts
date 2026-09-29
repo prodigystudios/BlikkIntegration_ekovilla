@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { FortnoxNotConnectedError, fortnoxGet, fortnoxPut } from '@/lib/domains/fortnox/client';
 import { claimFortnoxPush } from '@/lib/domains/fortnox/helpers';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { planPortalFortnoxRetry } from './jobFortnoxRetry';
 import { cancelFortnoxOrder, searchStoreOrderFortnoxOrders, settle, type StoreOrderActor } from './storeOrderActions';
 import { fortnoxInvoiceReference, pickStoreOrderFortnoxMatches, storeOrderFortnoxReference } from './storeOrderFortnox';
 import { isStoreOrderDeliveredOnAllowed, storeOrderCanBeCancelled, storeOrderDeliveredOnBounds, type StoreOrderStatus } from './storeOrders';
@@ -69,6 +70,9 @@ async function takeClaim(admin: SupabaseClient, id: string, columns: ClaimColumn
   const read = await settle(admin.from(TABLE).select(claimedAt).eq('id', id).maybeSingle());
   const stamp = (read.data as Record<string, unknown> | null)?.[claimedAt];
   if (!read.error && typeof stamp === 'string') return stamp;
+  // Ingen stämpel: claimen hann släppas (en push vars claim blivit gammal släpper den när den sparar sitt nummer). Någon
+  // annan har den kanske nu: upptagen, som när claimen inte gick att ta.
+  if (!read.error) return null;
   const dropped = await settle(
     admin.from(TABLE).update({ [status]: dropValue, [claimedAt]: null }).eq('id', id).eq(status, 'pending').gt(claimedAt, since),
   );
@@ -491,6 +495,22 @@ export async function cancelStoreOrder(
       const numbers = [...new Set([...(current.fortnox_order_number ? [current.fortnox_order_number] : []), ...found])];
       const linked = current.fortnox_order_number ?? numbers[0] ?? null;
 
+      // Varje order läses först: en som är fakturerad i Fortnox kan inte makuleras, och då ska ingen av dem makuleras och
+      // ingenting kopplas (beställningen hade annars pekat på en makulerad order och en fakturerad utan koppling). En som
+      // redan är makulerad (för hand, eller i ett tidigare varv) behöver ingen makulering.
+      const open: string[] = [];
+      for (const orderNumber of numbers) {
+        if (done.includes(orderNumber)) continue;
+        const state = await deps.readOrder(orderNumber);
+        if (state.invoiceNumber) {
+          await release(admin, input.id, ORDER_CLAIM, stamp, restore(current));
+          warnPartial(current.status, 'makulerades inte: en annan order är fakturerad');
+          return { kind: 'fortnox_order_invoiced', orderNumber, invoiceNumber: state.invoiceNumber };
+        }
+        if (state.cancelled) done.push(orderNumber);
+        else open.push(orderNumber);
+      }
+
       // 🧨 Före Fortnox, med claimen: numret kopplas om det saknades, och omförsöken stängs. Dör makuleringen efter det
       // skapar ingen push en ny order för en beställning som skulle makuleras (pushen ser numret, eller inget planerat),
       // och Levererad nekar en order som hunnit makuleras i Fortnox; ett nytt tryck räknar den som klar.
@@ -508,7 +528,7 @@ export async function cancelStoreOrder(
         if ((prepared.data ?? []).length === 0) continue;
       }
 
-      for (const orderNumber of numbers) {
+      for (const orderNumber of open) {
         const refused = await cancelInFortnox(orderNumber, deps);
         if (refused) {
           await release(admin, input.id, ORDER_CLAIM, stamp, linked ? 'synced' : restore(current));
@@ -524,8 +544,11 @@ export async function cancelStoreOrder(
           ...cancelled,
           fortnox_order_sync_status: linked ? 'synced' : 'not_synced',
           fortnox_order_claimed_at: null,
-          // Omförsöken stängs: cron hade annars tagit den igen (och hoppat över den).
-          fortnox_next_attempt_at: null,
+          // Omförsöken stängs: cron hade annars tagit den igen (och hoppat över den). Utom när makuleringen tog över en
+          // push vars claim blivit gammal: dess POST kan fortfarande vara på väg, så ett svep planeras (storeOrderActions).
+          ...(before === 'pending'
+            ? planPortalFortnoxRetry({ outcome: 'failed', attempts: 0, retryUntil: null, now: deps.now() })
+            : { fortnox_next_attempt_at: null }),
         })
         .eq('id', input.id)
         .eq('status', 'confirmed')
