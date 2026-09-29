@@ -15,7 +15,7 @@ type RouteContext = { params: { orderId: string } };
 //                               dragit tillbaka eller Ekovilla makulerat: ingenting ändras
 //   400 invalid_json, invalid_text, validation_error   kroppen följer inte kontraktet, eller orderId är inte sökvägens
 //   400 store_order_mismatch    en annan butik eller ett annat nummer än beställningens
-//   404 unknown_order           ingen beställning med det id:t
+//   404 unknown_order           ingen beställning med det id:t (sparas inte i svarscachen: den kan komma fram senare)
 //   409 store_order_confirmed   redan bekräftad av Ekovilla: det enda ett 409 betyder (kontraktet)
 //
 // Service-rollen: anropet har ingen användare bakom sig. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -65,7 +65,8 @@ export async function PUT(req: NextRequest, context: RouteContext) {
           }),
         };
       case 'unknown_order':
-        return { response: routeError(404, 'unknown_order', 'Ingen beställning med det id:t.') };
+        // Inte bestående: kommer beställningen fram senare ska samma nyckel köras igen, inte få samma 404.
+        return { response: routeError(404, 'unknown_order', 'Ingen beställning med det id:t.'), cacheable: false };
     }
   });
 }

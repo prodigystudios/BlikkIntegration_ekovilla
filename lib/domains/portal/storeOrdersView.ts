@@ -5,6 +5,7 @@ import {
   storeOrderLineTotal,
   storeOrderLinesTotal,
   type StoreOrderBody,
+  type StoreOrderFreight,
   type StoreOrderStatus,
 } from './storeOrders';
 
@@ -112,7 +113,7 @@ export type StoreOrderView = {
   customerLinked: boolean;
   storeVersion: number;
   /** Ekovillas frakt: null = inte beslutad än. */
-  freight: { mode: 'none' } | { mode: 'charged'; price: number } | null;
+  freight: StoreOrderFreight;
   fortnoxOrderNumber: string | null;
   cancelReason: string | null;
   events: StoreOrderEvent[];

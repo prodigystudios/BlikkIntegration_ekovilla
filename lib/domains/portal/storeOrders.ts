@@ -81,6 +81,36 @@ export function storeOrderLinesTotal(lines: readonly Pick<StoreOrderLine, 'quant
   return ore / 100;
 }
 
+export type StoreOrderFreight = { mode: 'none' } | { mode: 'charged'; price: number } | null;
+
+export type StoreOrderTotals = {
+  lines: number;
+  /** Fraktens pris exkl. moms; 0 för "Ingen frakt". null = inte beslutad än. */
+  freight: number | null;
+  /** Raderna och frakten, exkl. moms. null tills frakten är beslutad. */
+  net: number | null;
+  vat: number | null;
+  total: number | null;
+};
+
+/**
+ * Beställningens belopp, som sidan visar dem: butikens rader, Ekovillas frakt, 25 % moms på båda, avrundat till hela
+ * ören. Utan fraktbeslut finns ingen summa inkl. moms än, eftersom frakten ska med. Fortnox räknar sin egen moms per rad,
+ * så öresavrundningen kan skilja på fakturan; det här är sidans besked, inte fakturans.
+ */
+export function storeOrderTotals(
+  lines: readonly Pick<StoreOrderLine, 'quantity' | 'unitCost'>[],
+  freight: StoreOrderFreight,
+  vatPercent: number = STORE_ORDER_VAT_PERCENT,
+): StoreOrderTotals {
+  const linesOre = Math.round(storeOrderLinesTotal(lines) * 100);
+  if (freight === null) return { lines: linesOre / 100, freight: null, net: null, vat: null, total: null };
+  const freightOre = freight.mode === 'charged' ? Math.round(freight.price * 100) : 0;
+  const netOre = linesOre + freightOre;
+  const vatOre = Math.round((netOre * vatPercent) / 100);
+  return { lines: linesOre / 100, freight: freightOre / 100, net: netOre / 100, vat: vatOre / 100, total: (netOre + vatOre) / 100 };
+}
+
 const kronor = new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 });
 
 /** "B-2026-003 · 2 rader · 4 414 kr exkl. moms · Vecka 41": notisens brödtext. */

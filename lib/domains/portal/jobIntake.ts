@@ -65,16 +65,19 @@ const lineSchema = z
     path: ['unit'],
   });
 
+/** Butiken i portalens kropp: samma i ett jobb och i en butiksbeställning (fas 8), som delar butikens första kontakt. */
+export const portalStoreSchema = z.object({
+  resellerId: portalId,
+  name: required(200),
+  address: addressSchema(trimmed(200)),
+  // null = butiken är inte kopplad i portalen. En tom sträng betyder samma sak.
+  ekovillaCustomerNumber: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), trimmed(50).nullable()),
+});
+
 export const portalJobSchema = z.object({
   quoteId: portalId,
   quoteNumber: required(50),
-  store: z.object({
-    resellerId: portalId,
-    name: required(200),
-    address: addressSchema(trimmed(200)),
-    // null = butiken är inte kopplad i portalen. En tom sträng betyder samma sak.
-    ekovillaCustomerNumber: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), trimmed(50).nullable()),
-  }),
+  store: portalStoreSchema,
   workplace: z.object({
     // Installatörerna kör dit: alla tre delarna krävs.
     address: z.object({ street: required(200), postalCode: required(20), city: required(100) }),

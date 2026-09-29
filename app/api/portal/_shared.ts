@@ -113,8 +113,12 @@ export async function verifyPortalRequest(
 
 // ---------------------------------------------------------------------------------------------------- svarscachen
 
-/** Vad en ändrande route svarar, och det som ska göras efter svaret (Fortnox-ordern, notiserna). */
-export type PortalHandlerResult = { response: NextResponse; after?: () => Promise<unknown> };
+/**
+ * Vad en ändrande route svarar, och det som ska göras efter svaret (Fortnox-ordern, notiserna). `cacheable: false` släpper
+ * nyckeln i stället för att spara svaret, för ett nej som kan bli ett ja vid ett senare försök med samma nyckel: en
+ * tillbakadragning (fast nyckel) av en beställning som ännu inte kommit fram (fas 8).
+ */
+export type PortalHandlerResult = { response: NextResponse; after?: () => Promise<unknown>; cacheable?: false };
 
 /** Vercel väntar in arbetet efter svaret; lokalt, utan Vercel, fortsätter det bara i processen. */
 function scheduleAfterResponse(work: Promise<unknown>) {
@@ -134,7 +138,8 @@ function cachedResponse(status: number, body: unknown) {
  *   503 request_in_progress      ett annat anrop med nyckeln körs just nu (Retry-After)
  *   500 portal_request_failed    routen kastade; nyckeln släpps, så att omförsöket körs på nytt
  *
- * Svaret sparas när det blir samma vid ett omförsök (2xx och bestående 4xx), annars släpps nyckeln. Det som ska göras
+ * Svaret sparas när det blir samma vid ett omförsök (2xx och bestående 4xx), annars släpps nyckeln. En route kan säga att
+ * ett visst svar inte är bestående (`cacheable: false`), och då släpps nyckeln också. Det som ska göras
  * efter svaret (`after`) körs bara av det anrop som faktiskt körde routen, aldrig av en upprepning.
  */
 export async function runIdempotentPortalRequest(
@@ -179,7 +184,7 @@ export async function runIdempotentPortalRequest(
 
   const { response } = result;
   try {
-    if (isCacheableResponseStatus(response.status)) {
+    if (result.cacheable !== false && isCacheableResponseStatus(response.status)) {
       const saved = await completeIdempotencyKey(admin, owned, response.status, await response.clone().json(), now());
       if (!saved) console.warn('[portal] svaret sparades inte: claimen var inte längre vår', { path });
     } else {

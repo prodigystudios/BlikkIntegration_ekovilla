@@ -4,7 +4,7 @@ import { requirePagePermission } from '@/lib/auth/pageGuards';
 import { createSessionClient } from '@/lib/supabase/session';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { STORE_ORDER_STATUS_LABELS } from '@/lib/domains/portal/storeOrders';
+import { STORE_ORDER_STATUS_LABELS, storeOrderTotals } from '@/lib/domains/portal/storeOrders';
 import { getStoreOrderView, type StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
 import { storeOrderStatusClass } from '../storeOrderStatusStyle';
 
@@ -26,9 +26,11 @@ function StateNotice({ order }: { order: StoreOrderView }) {
         <p>Butiken kan ändra eller dra tillbaka beställningen tills den är bekräftad.{lastChange ? ` Den ändrades senast ${lastChange.at}.` : ''}</p>
         {!order.customerLinked ? (
           <p>
-            Butiken är inte kopplad till någon kund i CRM:et
-            {order.customerNumber ? ` (kundnumret ${order.customerNumber} finns inte i kundregistret)` : ''}. En kund behöver kopplas
-            innan beställningen kan bekräftas.
+            Beställningen är inte kopplad till någon kund i CRM:et
+            {order.customerNumber
+              ? `: kundnumret ${order.customerNumber} från portalen fanns inte i kundregistret när beställningen kom eller senast ändrades`
+              : ': butiken har inget kundnummer i portalen'}
+            . En kund behöver kopplas innan beställningen kan bekräftas.
           </p>
         ) : null}
       </div>
@@ -53,33 +55,35 @@ function StateNotice({ order }: { order: StoreOrderView }) {
 }
 
 function Totals({ order }: { order: StoreOrderView }) {
-  const freight = order.freight?.mode === 'charged' ? order.freight.price : 0;
-  const net = Math.round((order.linesTotal + freight) * 100) / 100;
-  const vat = Math.round(net * order.vatPercent) / 100;
+  const totals = storeOrderTotals(order.lines, order.freight, order.vatPercent);
+  // Tillbakadragen, eller makulerad innan frakten sattes: ingen frakt och ingen moms kommer, så inget löfte om dem.
+  const closedWithoutFreight = order.freight === null && (order.status === 'withdrawn' || order.status === 'cancelled');
   return (
     <dl className="grid gap-1.5 border-t border-[#e3e9df] pt-3 text-sm">
       <div className="flex justify-between gap-4">
         <dt className="text-slate-600">Butikens rader</dt>
-        <dd className="tabular-nums text-slate-900">{kr(order.linesTotal)}</dd>
+        <dd className="tabular-nums text-slate-900">{kr(totals.lines)}</dd>
       </div>
-      <div className="flex justify-between gap-4">
-        <dt className="text-slate-600">Frakt</dt>
-        <dd className={cn('tabular-nums', order.freight ? 'text-slate-900' : 'text-slate-500')}>
-          {order.freight === null ? 'Sätts innan beställningen bekräftas' : order.freight.mode === 'none' ? 'Ingen frakt' : kr(order.freight.price)}
-        </dd>
-      </div>
-      {order.freight !== null ? (
+      {closedWithoutFreight ? null : (
+        <div className="flex justify-between gap-4">
+          <dt className="text-slate-600">Frakt</dt>
+          <dd className={cn('tabular-nums', order.freight ? 'text-slate-900' : 'text-slate-500')}>
+            {order.freight === null ? 'Sätts innan beställningen bekräftas' : order.freight.mode === 'none' ? 'Ingen frakt' : kr(order.freight.price)}
+          </dd>
+        </div>
+      )}
+      {totals.vat !== null && totals.total !== null ? (
         <>
           <div className="flex justify-between gap-4">
             <dt className="text-slate-600">Moms {order.vatPercent} %</dt>
-            <dd className="tabular-nums text-slate-900">{kr(vat)}</dd>
+            <dd className="tabular-nums text-slate-900">{kr(totals.vat)}</dd>
           </div>
           <div className="flex justify-between gap-4 border-t border-[#e3e9df] pt-1.5">
             <dt className={crm.bodyStrong}>Totalt inkl. moms</dt>
-            <dd className={cn(crm.bodyStrong, 'tabular-nums')}>{kr(net + vat)}</dd>
+            <dd className={cn(crm.bodyStrong, 'tabular-nums')}>{kr(totals.total)}</dd>
           </div>
         </>
-      ) : (
+      ) : closedWithoutFreight ? null : (
         <p className={cn(crm.meta, 'text-right')}>Moms {order.vatPercent} % tillkommer på raderna och frakten.</p>
       )}
     </dl>

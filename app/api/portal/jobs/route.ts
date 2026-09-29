@@ -1,10 +1,9 @@
 import type { NextRequest } from 'next/server';
 import { ok, routeError } from '@/lib/api/responses';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import { portalJobSchema } from '@/lib/domains/portal/jobIntake';
 import { followUpPortalJob, receivePortalJob } from '@/lib/domains/portal/jobIntakeStore';
-import { runIdempotentPortalRequest, verifyPortalRequest } from '../_shared';
+import { parsePortalBody, runIdempotentPortalRequest, verifyPortalRequest } from '../_shared';
 
 // Butikens säljare skickar en godkänd offert till Ekovilla (RESELLER_PORTAL_CRM_PLAN.md fas 3b, kontraktets "Flöde 2").
 // Svarar 201 { crmWorkOrderId } när arbetsordern finns. Fortnox-ordern och notiserna görs efter svaret, så att ett
@@ -31,26 +30,9 @@ export async function POST(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
   return runIdempotentPortalRequest(req, verified.rawBody, admin, async () => {
-    let payload: unknown;
-    try {
-      // Grinden behåller ett inledande BOM (det signerades); JSON.parse tål det inte.
-      payload = JSON.parse(verified.rawBody.replace(/^\uFEFF/, ''));
-    } catch {
-      return { response: routeError(400, 'invalid_json', 'Kroppen är inte JSON.') };
-    }
-    const unstorable = findUnstorableText(payload);
-    if (unstorable !== null) {
-      return {
-        response: routeError(400, 'invalid_text', `${unstorable}: innehåller ett nolltecken eller ett ensamt surrogat, som inte kan sparas.`),
-      };
-    }
-    const parsed = portalJobSchema.safeParse(payload);
-    if (!parsed.success) {
-      // Med sökvägen till fältet (`lines.1.unitCost`), så att portalen ser vad som är fel.
-      const issues = parsed.error.issues.slice(0, 20).map((i) => ({ path: i.path.join('.'), message: i.message }));
-      const first = issues[0];
-      return { response: routeError(400, 'validation_error', first ? `${first.path}: ${first.message}` : 'Ogiltig kropp.', { issues }) };
-    }
+    const parsed = parsePortalBody(verified.rawBody, portalJobSchema);
+    if (!parsed.ok) return { response: parsed.response };
+    const payload = parsed.payload;
 
     const job = parsed.data;
     const result = await receivePortalJob(admin, job, payload);

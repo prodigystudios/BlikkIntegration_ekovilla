@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
+import { portalStoreSchema } from './jobIntake';
 import { RESELLER_ID_PATTERN } from './resellers';
 import { STORE_ORDER_CONFIRMED_STATUSES, type StoreOrderStatus } from './storeOrders';
 
@@ -27,8 +28,6 @@ const required = (max: number) => trimmed(max).min(1, 'Får inte vara tomt.');
 export const portalStoreOrderId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
 const amount = z.number().finite('Ogiltigt tal.');
 
-const addressSchema = (street: z.ZodString) => z.object({ street, postalCode: trimmed(20), city: trimmed(100) });
-
 const lineSchema = z
   .object({
     articleNumber: required(50),
@@ -48,13 +47,8 @@ const lineSchema = z
 export const portalStoreOrderSchema = z.object({
   orderId: portalStoreOrderId,
   orderNumber: required(50),
-  store: z.object({
-    resellerId: z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.'),
-    name: required(200),
-    address: addressSchema(trimmed(200)),
-    // null = butiken är inte kopplad i portalen. En tom sträng betyder samma sak (som för jobben).
-    ekovillaCustomerNumber: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), trimmed(50).nullable()),
-  }),
+  // Samma butik som i ett jobb: butikens första kontakt (upsertPortalReseller) delas.
+  store: portalStoreSchema,
   delivery: z.object({
     // Föraren kör dit: alla tre delarna krävs.
     address: z.object({ street: required(200), postalCode: required(20), city: required(100) }),

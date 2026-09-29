@@ -216,6 +216,43 @@ describe('changeStoreOrder', () => {
     expect(m.tables.crm_store_orders[0].intake_payload).toEqual(RAW);
   });
 
+  it('en beställning utan kund får kunden när ändringen har ett kundnummer som finns; butikens namn följer ändringen', async () => {
+    const m = db({
+      crm_store_orders: [storeRow({ customer_id: null })],
+      crm_customers: [{ id: 'kund-1043', fortnox_customer_id: '1043' }],
+    });
+    const change = { ...CHANGE, store: { ...CHANGE.store, name: 'Norrbygg AB (nytt namn)' } };
+    expect(await changeStoreOrder(m.admin, change, () => NOW)).toEqual({ kind: 'updated', id: 'order-1' });
+    expect(m.tables.crm_store_orders[0]).toMatchObject({ customer_id: 'kund-1043', store_name: 'Norrbygg AB (nytt namn)' });
+  });
+
+  it('en kund som redan står på beställningen byts aldrig av butiken', async () => {
+    const m = db({
+      crm_store_orders: [storeRow({ customer_id: 'kund-hand' })],
+      crm_customers: [{ id: 'kund-1043', fortnox_customer_id: '1043' }],
+    });
+    await changeStoreOrder(m.admin, CHANGE, () => NOW);
+    expect(m.tables.crm_store_orders[0].customer_id).toBe('kund-hand');
+    expect(m.calls.some((c) => c.table === 'crm_customers')).toBe(false);
+  });
+
+  it('en kund som kopplas för hand medan ändringen sparas skrivs inte över: beslutet tas om', async () => {
+    let raced = false;
+    const m = db(
+      { crm_store_orders: [storeRow({ customer_id: null })], crm_customers: [{ id: 'kund-1043', fortnox_customer_id: '1043' }] },
+      {
+        beforeExecute: (call, tables) => {
+          if (!raced && call.table === 'crm_store_orders' && call.op === 'update') {
+            raced = true;
+            tables.crm_store_orders[0].customer_id = 'kund-hand';
+          }
+        },
+      },
+    );
+    expect(await changeStoreOrder(m.admin, CHANGE, () => NOW)).toEqual({ kind: 'updated', id: 'order-1' });
+    expect(m.tables.crm_store_orders[0]).toMatchObject({ customer_id: 'kund-hand', payload: CHANGE, store_version: 2 });
+  });
+
   it('samma eller äldre updatedAt: ignoreras och ändrar ingenting', async () => {
     for (const stored of ['2026-10-12T08:20:00.123+00:00', '2026-10-12T08:25:00.000+00:00']) {
       const m = db({ crm_store_orders: [storeRow({ portal_updated_at: stored, store_version: 2 })] });
@@ -399,11 +436,12 @@ describe('notifyStoreOrder', () => {
     expect(sent[0][0].recipient_user_id).toBe('reserven');
   });
 
-  it('varken ansvarig eller reserv: ingen notis, lånet släpps, inget bokfört', async () => {
+  it('varken ansvarig eller reserv: ingen notis, men den bokförs, så att cron inte gör om den varje minut', async () => {
     const m = db({ crm_store_orders: [storeRow({ assigned_to: null })], crm_portal_settings: [{ id: true, fallback_user_id: null }] });
     const { deps } = noticeDeps();
     expect(await notifyStoreOrder(m.admin, 'order-1', deps)).toBe('no_recipient');
-    expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: null, notify_claimed_at: null });
+    expect(deps.notify).not.toHaveBeenCalled();
+    expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: 'v1', notify_claimed_at: null });
   });
 
   it('redan sagd, eller bekräftad: ingenting, och inget lån tas', async () => {
@@ -479,14 +517,34 @@ describe('sweepStoreOrderNotices', () => {
         storeRow({ id: 'tillbaka', order_id: 'g', status: 'withdrawn', notified_key: 'v1', withdrawn_at: minutesAgo(10) }),
         storeRow({ id: 'tillbaka-gammal', order_id: 'h', status: 'withdrawn', notified_key: 'v1', withdrawn_at: minutesAgo(15 * 24 * 60) }),
         storeRow({ id: 'bekraftad', order_id: 'i', status: 'confirmed', received_at: minutesAgo(10) }),
+        // Mottagen för länge sedan och aldrig ändrad: utanför fönstret.
+        storeRow({ id: 'gammal-mottagen', order_id: 'j', received_at: minutesAgo(15 * 24 * 60) }),
+        // Mottagen för länge sedan men ändrad nyss: bara frågan efter ändringar hittar den.
+        storeRow({ id: 'gammal-andrad', order_id: 'k', received_at: minutesAgo(15 * 24 * 60), store_version: 2, notified_key: 'v1', changed_at: minutesAgo(5) }),
       ],
     });
     const { deps, sent } = noticeDeps();
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
-    expect(summary).toEqual({ candidates: 3, sent: 3, marked: 0, failed: 0, errors: 0 });
+    expect(summary).toEqual({ candidates: 4, sent: 4, marked: 0, failed: 0, errors: 0 });
+    // Kroppen läses inte i sopningen, bara när notisen skickas (en läsning per notis).
+    const sweepReads = m.calls.filter((c) => c.table === 'crm_store_orders' && c.op === 'select' && c.limit === 500);
+    expect(sweepReads).toHaveLength(3);
+    expect(sweepReads.every((c) => c.orders?.[0]?.ascending === false)).toBe(true);
     expect(sent.map((rows) => rows[0].href).sort()).toEqual(
-      ['/crm/butiksbestallningar/andrad', '/crm/butiksbestallningar/gammal-ny', '/crm/butiksbestallningar/tillbaka'].sort(),
+      ['/crm/butiksbestallningar/andrad', '/crm/butiksbestallningar/gammal-andrad', '/crm/butiksbestallningar/gammal-ny', '/crm/butiksbestallningar/tillbaka'].sort(),
     );
+  });
+
+  it('det som väntat längst skickas först', async () => {
+    const m = db({
+      crm_store_orders: [
+        storeRow({ id: 'nyare', order_id: 'a', received_at: minutesAgo(5) }),
+        storeRow({ id: 'aldre', order_id: 'b', received_at: minutesAgo(50) }),
+      ],
+    });
+    const { deps, sent } = noticeDeps();
+    await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
+    expect(sent.map((rows) => rows[0].href)).toEqual(['/crm/butiksbestallningar/aldre', '/crm/butiksbestallningar/nyare']);
   });
 
   it('högst en omgång per varv, och ett fel för en stoppar inte nästa', async () => {

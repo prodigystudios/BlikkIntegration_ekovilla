@@ -76,6 +76,15 @@ async function customerIdByNumber(admin: SupabaseClient, customerNumber: string 
   return (data as { id: string } | null)?.id ?? null;
 }
 
+/** Butikens kund som intaget räknar den: ett nummer som finns i kundregistret, annars kopplingen för hand på butiken. */
+async function resolveStoreCustomerId(admin: SupabaseClient, store: PortalStoreOrder['store']): Promise<string | null> {
+  const [byNumber, reseller] = await Promise.all([
+    customerIdByNumber(admin, store.ekovillaCustomerNumber),
+    readResellerLink(admin, store.resellerId),
+  ]);
+  return resolveStoreCustomer(byNumber, reseller).customerId;
+}
+
 export type ReceiveStoreOrderResult =
   | { kind: 'created'; id: string }
   /** Beställningen fanns redan, med samma första kropp. */
@@ -141,9 +150,9 @@ export async function receiveStoreOrder(
 
 // ------------------------------------------------------------------------------------------ ändrad och tillbakadragen
 
-type DecisionRow = StoreOrderDecisionRow & { id: string; store_version: number };
+type DecisionRow = StoreOrderDecisionRow & { id: string; store_version: number; customer_id: string | null };
 
-const DECISION_SELECT = 'id, status, reseller_id, order_number, portal_updated_at, store_version';
+const DECISION_SELECT = 'id, status, reseller_id, order_number, portal_updated_at, store_version, customer_id';
 
 async function readDecisionRow(admin: SupabaseClient, orderId: string): Promise<DecisionRow | null> {
   const { data, error } = await admin.from('crm_store_orders').select(DECISION_SELECT).eq('order_id', orderId).maybeSingle();
@@ -177,20 +186,29 @@ export async function changeStoreOrder(
     if (decision.kind === 'mismatch') return { kind: 'mismatch', field: decision.field };
     if (decision.kind !== 'apply') return { kind: decision.kind, id: row.id };
 
+    // Saknar beställningen kund kan ändringen ha med sig ett kundnummer som finns nu (butiken kopplades i portalen efter
+    // att beställningen skickades), eller en koppling för hand på butiken: samma regel som när den kom. En kund som
+    // redan står på beställningen byts aldrig av butiken.
+    const linkCustomer = row.customer_id ? null : await resolveStoreCustomerId(admin, change.store);
+
     // Bara om den fortfarande är mottagen och har versionen vi prövade mot: annars hann en ändring eller en
-    // bekräftelse före, och beslutet tas om på det som står nu.
-    const saved = await admin
+    // bekräftelse före, och beslutet tas om på det som står nu. Sätter ändringen kunden krävs dessutom att den
+    // fortfarande saknas, så att en kund som kopplats för hand under tiden aldrig skrivs över.
+    let update = admin
       .from('crm_store_orders')
       .update({
         payload: change,
         store_version: row.store_version + 1,
         portal_updated_at: change.updatedAt,
         changed_at: now().toISOString(),
+        store_name: change.store.name,
+        ...(linkCustomer ? { customer_id: linkCustomer } : {}),
       })
       .eq('id', row.id)
       .eq('status', 'received')
-      .eq('store_version', row.store_version)
-      .select('id');
+      .eq('store_version', row.store_version);
+    if (linkCustomer) update = update.is('customer_id', null);
+    const saved = await update.select('id');
     if (saved.error) throw new Error(`Ändringen kunde inte sparas: ${saved.error.message}`);
     if ((saved.data ?? []).length > 0) return { kind: 'updated', id: row.id };
   }
@@ -336,8 +354,10 @@ export async function notifyStoreOrder(
 
   const recipient = row.assigned_to ?? (await readFallbackUser(admin));
   if (!recipient) {
-    console.error('[portal-store-orders] ingen att meddela: varken ansvarig eller reserv', { id });
-    await finishNotice(admin, id, stamp);
+    // Den ansvariges profil är borttagen och ingen reserv är vald. Bokförs, så att cron inte gör om den varje minut; det
+    // går inte att meddela någon, och sidan visar beställningen ändå.
+    console.error('[portal-store-orders] ingen att meddela: varken ansvarig eller reserv. Notisen ges upp.', { id });
+    await finishNotice(admin, id, stamp, decision.key);
     return 'no_recipient';
   }
 
@@ -372,19 +392,31 @@ export async function notifyStoreOrder(
 
 /** En notis görs om av cron först när den legat så här länge: den direkt efter svaret ska hinna först. */
 export const STORE_ORDER_NOTICE_SWEEP_AFTER_MS = 2 * 60_000;
-/** Så långt bakåt cron letar efter en tillbakadragning som inte meddelats. */
+/** Så långt bakåt cron letar efter en ny beställning, en ändring eller en tillbakadragning som inte meddelats. */
 export const STORE_ORDER_NOTICE_WINDOW_MS = 14 * 24 * 3600_000;
 /** Notiser per varv. */
 export const STORE_ORDER_NOTICES_PER_ROUND = 20;
 
-type SweepRow = NoticeRow & { received_at: string; changed_at: string | null; withdrawn_at: string | null };
+type SweepRow = Pick<NoticeRow, 'id' | 'status' | 'store_version' | 'notified_key' | 'notify_claimed_at'> & {
+  received_at: string;
+  changed_at: string | null;
+  withdrawn_at: string | null;
+};
+
+const SWEEP_SELECT = 'id, status, store_version, notified_key, notify_claimed_at, received_at, changed_at, withdrawn_at';
+/** Rader per fråga. De nyaste läses: en notis som inte gått iväg gäller något som hänt nyss. */
+const SWEEP_READ_LIMIT = 500;
 
 export type StoreOrderNoticeSweepSummary = { candidates: number; sent: number; marked: number; failed: number; errors: number };
 
+/** När något senast hände med beställningen som den ansvarige ska få veta. */
+const touchedAt = (row: SweepRow) => Date.parse(row.withdrawn_at ?? row.changed_at ?? row.received_at);
+
 /**
- * Notiserna som inte gick iväg: en mottagen beställning vars senaste version ingen fått veta om, eller en
- * tillbakadragning de senaste två veckorna. Ett lån som ännu gäller tar ingen plats i omgången. Ett fel för en
- * beställning stoppar inte nästa.
+ * Notiserna som inte gick iväg: en ny beställning, en ändring eller en tillbakadragning de senaste två veckorna som
+ * den ansvarige inte fått veta om. De nyaste läses, i tre smala frågor (ny, ändrad, tillbakadragen), så att gamla
+ * beställningar aldrig tränger undan en ny, och kroppen läses först när notisen skickas. Ett lån som ännu gäller tar
+ * ingen plats i omgången. Ett fel för en beställning stoppar inte nästa.
  */
 export async function sweepStoreOrderNotices(
   admin: SupabaseClient,
@@ -393,27 +425,35 @@ export async function sweepStoreOrderNotices(
   const now = options.now ?? (() => new Date());
   const deps = options.deps ?? { ...storeOrderNoticeDeps(admin), now };
   const at = now().getTime();
-  const select = `${NOTICE_SELECT}, received_at, changed_at, withdrawn_at`;
-
-  const [received, withdrawn] = await Promise.all([
-    admin.from('crm_store_orders').select(select).eq('status', 'received').order('received_at', { ascending: true }).limit(500),
+  const since = new Date(at - STORE_ORDER_NOTICE_WINDOW_MS).toISOString();
+  const recent = (status: StoreOrderStatus, column: 'received_at' | 'changed_at' | 'withdrawn_at') =>
     admin
       .from('crm_store_orders')
-      .select(select)
-      .eq('status', 'withdrawn')
-      .gt('withdrawn_at', new Date(at - STORE_ORDER_NOTICE_WINDOW_MS).toISOString())
-      .order('withdrawn_at', { ascending: true })
-      .limit(500),
-  ]);
-  if (received.error) throw new Error(`Beställningarna gick inte att läsa: ${received.error.message}`);
-  if (withdrawn.error) throw new Error(`Beställningarna gick inte att läsa: ${withdrawn.error.message}`);
+      .select(SWEEP_SELECT)
+      .eq('status', status)
+      .gt(column, since)
+      .order(column, { ascending: false })
+      .limit(SWEEP_READ_LIMIT);
 
-  const due = ([...(received.data ?? []), ...(withdrawn.data ?? [])] as SweepRow[]).filter((row) => {
-    if (!decideStoreOrderNotice(row)) return false;
-    const touched = Date.parse(row.withdrawn_at ?? row.changed_at ?? row.received_at);
-    if (at - touched < STORE_ORDER_NOTICE_SWEEP_AFTER_MS) return false;
-    return !row.notify_claimed_at || at - Date.parse(row.notify_claimed_at) >= STORE_ORDER_NOTICE_LEASE_MS;
-  });
+  const reads = await Promise.all([
+    recent('received', 'received_at'),
+    recent('received', 'changed_at'),
+    recent('withdrawn', 'withdrawn_at'),
+  ]);
+  const rows = new Map<string, SweepRow>();
+  for (const read of reads) {
+    if (read.error) throw new Error(`Beställningarna gick inte att läsa: ${read.error.message}`);
+    for (const row of (read.data ?? []) as SweepRow[]) rows.set(row.id, row);
+  }
+
+  const due = [...rows.values()]
+    .filter((row) => {
+      if (!decideStoreOrderNotice(row)) return false;
+      if (at - touchedAt(row) < STORE_ORDER_NOTICE_SWEEP_AFTER_MS) return false;
+      return !row.notify_claimed_at || at - Date.parse(row.notify_claimed_at) >= STORE_ORDER_NOTICE_LEASE_MS;
+    })
+    // Det som väntat längst först.
+    .sort((a, b) => touchedAt(a) - touchedAt(b));
 
   const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, marked: 0, failed: 0, errors: 0 };
   for (const row of due.slice(0, STORE_ORDER_NOTICES_PER_ROUND)) {

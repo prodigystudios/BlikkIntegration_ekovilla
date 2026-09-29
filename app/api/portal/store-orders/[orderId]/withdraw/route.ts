@@ -13,7 +13,7 @@ type RouteContext = { params: { orderId: string } };
 //   200 { status: "withdrawn" }  tillbakadragen, nu eller redan; den ansvarige får en notis efter svaret
 //   200 { status: "ignored" }    Ekovilla har redan makulerat den: makuleringen kommer som store_order.cancelled
 //   400 invalid_json, invalid_text, validation_error   kroppen följer inte kontraktet, eller orderId är inte sökvägens
-//   404 unknown_order            ingen beställning med det id:t
+//   404 unknown_order            ingen beställning med det id:t (sparas inte i svarscachen: den kan komma fram senare)
 //   409 store_order_confirmed    redan bekräftad av Ekovilla: det enda ett 409 betyder (kontraktet)
 //
 // Service-rollen: anropet har ingen användare bakom sig. Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -52,7 +52,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
       case 'confirmed':
         return { response: routeError(409, 'store_order_confirmed', 'Beställningen är redan bekräftad av Ekovilla.') };
       case 'unknown_order':
-        return { response: routeError(404, 'unknown_order', 'Ingen beställning med det id:t.') };
+        // Inte bestående: kommer beställningen fram senare ska samma nyckel köras igen, inte få samma 404.
+        return { response: routeError(404, 'unknown_order', 'Ingen beställning med det id:t.'), cacheable: false };
     }
   });
 }

@@ -199,6 +199,17 @@ describe('PUT /api/portal/store-orders/{orderId}', () => {
     expect(unknown.body.errorDetails.code).toBe('unknown_order');
   });
 
+  it('okänd: 404 sparas INTE i svarscachen; en bekräftad 409 gör det', async () => {
+    h.change.mockResolvedValue({ kind: 'unknown_order' });
+    expect((await put()).status).toBe(404);
+    expect((await put()).status).toBe(404);
+    expect(h.change).toHaveBeenCalledTimes(2);
+    h.change.mockResolvedValue({ kind: 'confirmed', id: 'order-1' });
+    expect((await put(undefined, undefined, { key: 'bekraftad-nyckel' })).status).toBe(409);
+    expect((await put(undefined, undefined, { key: 'bekraftad-nyckel' })).status).toBe(409);
+    expect(h.change).toHaveBeenCalledTimes(3);
+  });
+
   it('orderId i kroppen är inte sökvägens: 400, intaget körs inte', async () => {
     const res = await put(JSON.stringify(CHANGE), 'so-annan');
     expect(res.status).toBe(400);
@@ -241,6 +252,15 @@ describe('POST /api/portal/store-orders/{orderId}/withdraw', () => {
     h.withdraw.mockResolvedValue({ kind: 'unknown_order' });
     expect((await withdraw()).status).toBe(404);
     expect(h.notify).not.toHaveBeenCalled();
+  });
+
+  it('okänd: 404 sparas INTE i svarscachen, så att samma nyckel körs igen när beställningen kommit fram', async () => {
+    h.withdraw.mockResolvedValue({ kind: 'unknown_order' });
+    expect((await withdraw()).status).toBe(404);
+    h.withdraw.mockResolvedValue({ kind: 'withdrawn', id: 'order-1' });
+    const again = await withdraw();
+    expect(again).toMatchObject({ status: 200, body: { data: { status: 'withdrawn' } } });
+    expect(h.withdraw).toHaveBeenCalledTimes(2);
   });
 
   it('orderId i kroppen är inte sökvägens: 400', async () => {

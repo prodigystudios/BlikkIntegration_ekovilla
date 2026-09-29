@@ -12,6 +12,7 @@ import {
   storeOrderLinesTotal,
   storeOrderNoticeKey,
   storeOrderSummary,
+  storeOrderTotals,
   type StoreOrderStatus,
 } from '@/lib/domains/portal/storeOrders';
 import { CONTRACT_STORE_ORDER } from './helpers/contractFixtures';
@@ -184,6 +185,28 @@ describe('summorna och sammanfattningen', () => {
     expect(plain(storeOrderSummary({ ...CONTRACT_STORE_ORDER, lines: [CONTRACT_STORE_ORDER.lines[0]], delivery: { ...CONTRACT_STORE_ORDER.delivery, desiredPeriod: ' ' } }))).toBe(
       'B-2026-003 · 1 rad · 4 024 kr exkl. moms',
     );
+  });
+});
+
+describe('storeOrderTotals', () => {
+  it('utan fraktbeslut: bara raderna, ingen summa inkl. moms än', () => {
+    expect(storeOrderTotals(CONTRACT_STORE_ORDER.lines, null)).toEqual({ lines: 4414.2, freight: null, net: null, vat: null, total: null });
+  });
+
+  it('frakten och 25 % moms på båda, i hela ören', () => {
+    expect(storeOrderTotals(CONTRACT_STORE_ORDER.lines, { mode: 'charged', price: 950 })).toEqual({
+      lines: 4414.2,
+      freight: 950,
+      net: 5364.2,
+      vat: 1341.05,
+      total: 6705.25,
+    });
+    // Momsen avrundas till öre: 0,07 kr × 25 % = 0,0175 → 0,02.
+    expect(storeOrderTotals([{ quantity: 1, unitCost: 0.07 }], { mode: 'none' })).toEqual({ lines: 0.07, freight: 0, net: 0.07, vat: 0.02, total: 0.09 });
+  });
+
+  it('ingen frakt är 0 kr, och momsen följer procenten', () => {
+    expect(storeOrderTotals([{ quantity: 2, unitCost: 100 }], { mode: 'none' }, 12)).toMatchObject({ freight: 0, net: 200, vat: 24, total: 224 });
   });
 });
 
