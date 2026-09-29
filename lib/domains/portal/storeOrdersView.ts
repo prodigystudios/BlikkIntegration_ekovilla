@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getCrmCustomerDisplayName, type CrmCustomerType } from '@/lib/domains/crm/customers';
 import {
   STORE_ORDER_LIST_LIMIT,
   STORE_ORDER_STATUSES,
@@ -28,10 +29,14 @@ const DETAIL_SELECT = `id, order_id, order_number, reseller_id, store_name, cust
   assignment_source, status, payload, store_version, portal_updated_at, received_at, changed_at, withdrawn_at,
   freight_mode, freight_price, freight_set_by_name, freight_set_at, confirmed_at, confirmed_by_name, fortnox_order_number,
   fortnox_order_sync_status, fortnox_error, delivered_on, delivered_by_name, fortnox_invoice_number, invoiced_on,
-  invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason`;
+  invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
+  customer:crm_customers(customer_type, company_name, first_name, last_name, fortnox_customer_id)`;
 
 const stockholm = (iso: string) =>
   new Date(iso).toLocaleString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium', timeStyle: 'short' });
+/** En svensk kalenderdag (`YYYY-MM-DD`), som "2 okt. 2026". Läses som UTC-midnatt, som i Stockholm är samma dag. */
+const swedishDay = (day: string) =>
+  new Date(`${day}T00:00:00Z`).toLocaleDateString('sv-SE', { timeZone: 'Europe/Stockholm', dateStyle: 'medium' });
 
 const isStatus = (value: unknown): value is StoreOrderStatus => STORE_ORDER_STATUSES.includes(value as StoreOrderStatus);
 
@@ -67,6 +72,14 @@ type ListRow = {
  * som än kommit efter den, och de senaste av resten. `capped` säger att resten har fler än listan visar.
  */
 export async function listStoreOrderViews(session: SupabaseClient): Promise<{ orders: StoreOrderListItem[]; capped: boolean }> {
+  const others = session
+    .from('crm_store_orders')
+    .select(LIST_SELECT)
+    .in('status', STORE_ORDER_STATUSES.filter((status) => status !== 'received'))
+    .order('received_at', { ascending: false })
+    .order('id', { ascending: true })
+    .limit(STORE_ORDER_LIST_LIMIT)
+    .then((result) => result);
   const received: ListRow[] = [];
   for (let from = 0; ; from += PAGE) {
     const { data, error } = await session
@@ -80,15 +93,10 @@ export async function listStoreOrderViews(session: SupabaseClient): Promise<{ or
     received.push(...((data ?? []) as ListRow[]));
     if ((data ?? []).length < PAGE) break;
   }
-  const others = await session
-    .from('crm_store_orders')
-    .select(LIST_SELECT)
-    .in('status', STORE_ORDER_STATUSES.filter((status) => status !== 'received'))
-    .order('received_at', { ascending: false })
-    .order('id', { ascending: true })
-    .limit(STORE_ORDER_LIST_LIMIT);
-  if (others.error) throw new Error(`Beställningarna gick inte att läsa: ${others.error.message}`);
-  const rest = (others.data ?? []) as ListRow[];
+  // Resten lästes samtidigt som den första sidan.
+  const othersRead = await others;
+  if (othersRead.error) throw new Error(`Beställningarna gick inte att läsa: ${othersRead.error.message}`);
+  const rest = (othersRead.data ?? []) as ListRow[];
   return {
     capped: rest.length >= STORE_ORDER_LIST_LIMIT,
     orders: [...received, ...rest]
@@ -131,9 +139,15 @@ export type StoreOrderView = {
   linesTotal: number;
   vatPercent: number;
   delivery: StoreOrderBody['delivery'];
-  /** Butikens eget kundnummer hos Ekovilla, som portalen skickade. */
+  /** Butikens kundnummer hos Ekovilla, som portalen skickade i den senaste versionen. */
   customerNumber: string | null;
   customerLinked: boolean;
+  /**
+   * Kundkortet beställningen är kopplad till, som sessionen ser det (kortets egen läspolicy): namnet och Fortnox-numret.
+   * null när ingen kund är kopplad, eller när kortet inte syns. Det är det här kortet som blir Fortnox-ordern (8b), och
+   * det kan skilja från portalens nummer: en kund som redan står på beställningen byts aldrig av butiken.
+   */
+  customer: { name: string; fortnoxCustomerNumber: string | null } | null;
   storeVersion: number;
   /** Senaste ändringen från butiken och tillbakadragningen, i svensk tid; null när de inte hänt. */
   changedAtLabel: string | null;
@@ -164,6 +178,13 @@ type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
   cancelled_at: string | null;
   cancelled_by_name: string | null;
   cancel_reason: string | null;
+  customer: {
+    customer_type: CrmCustomerType;
+    company_name: string | null;
+    first_name: string | null;
+    last_name: string | null;
+    fortnox_customer_id: string | null;
+  } | null;
 };
 
 /**
@@ -183,8 +204,8 @@ function storeOrderEvents(row: DetailRow): StoreOrderEvent[] {
   }
   if (row.withdrawn_at) events.push({ label: 'Tillbakadragen av butiken', at: stockholm(row.withdrawn_at), by: null });
   if (row.confirmed_at) events.push({ label: 'Bekräftad', at: stockholm(row.confirmed_at), by: row.confirmed_by_name });
-  if (row.delivered_on) events.push({ label: 'Levererad', at: row.delivered_on, by: row.delivered_by_name });
-  if (row.invoiced_on) events.push({ label: 'Fakturerad', at: row.invoiced_on, by: row.invoiced_by_name });
+  if (row.delivered_on) events.push({ label: 'Levererad', at: swedishDay(row.delivered_on), by: row.delivered_by_name });
+  if (row.invoiced_on) events.push({ label: 'Fakturerad', at: swedishDay(row.invoiced_on), by: row.invoiced_by_name });
   if (row.cancelled_at) events.push({ label: 'Makulerad', at: stockholm(row.cancelled_at), by: row.cancelled_by_name });
   return events;
 }
@@ -216,6 +237,9 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
     delivery: body.delivery,
     customerNumber: body.store.ekovillaCustomerNumber,
     customerLinked: row.customer_id !== null,
+    customer: row.customer
+      ? { name: getCrmCustomerDisplayName(row.customer), fortnoxCustomerNumber: row.customer.fortnox_customer_id }
+      : null,
     storeVersion: row.store_version,
     changedAtLabel: row.changed_at ? stockholm(row.changed_at) : null,
     withdrawnAtLabel: row.withdrawn_at ? stockholm(row.withdrawn_at) : null,

@@ -410,7 +410,15 @@ const SWEEP_SELECT = 'id, status, store_version, notified_key, notify_claimed_at
 /** Rader per fråga. De nyaste läses: en notis som inte gått iväg gäller något som hänt nyss. */
 const SWEEP_READ_LIMIT = 500;
 
-export type StoreOrderNoticeSweepSummary = { candidates: number; sent: number; marked: number; failed: number; errors: number };
+/** `gaveUp`: ingen att meddela (varken ansvarig eller reserv), bokförd och inte gjord om; `failed` görs om. */
+export type StoreOrderNoticeSweepSummary = {
+  candidates: number;
+  sent: number;
+  marked: number;
+  failed: number;
+  gaveUp: number;
+  errors: number;
+};
 
 /** När något senast hände med beställningen som den ansvarige ska få veta. */
 const touchedAt = (row: SweepRow) => Date.parse(row.withdrawn_at ?? row.changed_at ?? row.received_at);
@@ -429,18 +437,19 @@ export async function sweepStoreOrderNotices(
   const deps = options.deps ?? { ...storeOrderNoticeDeps(admin), now };
   const at = now().getTime();
   const since = new Date(at - STORE_ORDER_NOTICE_WINDOW_MS).toISOString();
-  const recent = (status: StoreOrderStatus, column: 'received_at' | 'changed_at' | 'withdrawn_at') =>
+  const recent = (status: StoreOrderStatus, column: 'received_at' | 'changed_at' | 'withdrawn_at', ascending = false) =>
     admin
       .from('crm_store_orders')
       .select(SWEEP_SELECT)
       .eq('status', status)
       .gt(column, since)
-      .order(column, { ascending: false })
+      .order(column, { ascending })
       .limit(SWEEP_READ_LIMIT);
 
   const reads = await Promise.all([
-    // En ny beställning som ingen fått veta om: exakt, så att beställningar som redan meddelats aldrig tränger undan den.
-    recent('received', 'received_at').is('notified_key', null),
+    // En ny beställning som ingen fått veta om: exakt, så att beställningar som redan meddelats aldrig tränger undan den,
+    // och de äldsta först, så att en lång störning inte lämnar de första bakom de senaste.
+    recent('received', 'received_at', true).is('notified_key', null),
     recent('received', 'changed_at'),
     recent('withdrawn', 'withdrawn_at'),
   ]);
@@ -459,13 +468,14 @@ export async function sweepStoreOrderNotices(
     // Det som väntat längst först.
     .sort((a, b) => touchedAt(a) - touchedAt(b));
 
-  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, marked: 0, failed: 0, errors: 0 };
+  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, marked: 0, failed: 0, gaveUp: 0, errors: 0 };
   for (const row of due.slice(0, STORE_ORDER_NOTICES_PER_ROUND)) {
     try {
       const outcome = await notifyStoreOrder(admin, row.id, deps);
       if (outcome === 'sent') summary.sent += 1;
       else if (outcome === 'marked') summary.marked += 1;
-      else if (outcome === 'failed' || outcome === 'no_recipient') summary.failed += 1;
+      else if (outcome === 'failed') summary.failed += 1;
+      else if (outcome === 'no_recipient') summary.gaveUp += 1;
     } catch (e) {
       summary.errors += 1;
       console.error('[portal-store-orders] notisen kunde inte göras om', { id: row.id, error: e instanceof Error ? e.message : String(e) });

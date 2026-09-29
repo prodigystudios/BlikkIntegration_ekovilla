@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { requirePagePermission } from '@/lib/auth/pageGuards';
+import { isUuid } from '@/lib/api/responses';
 import { createSessionClient } from '@/lib/supabase/session';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -13,7 +14,6 @@ export const dynamic = 'force-dynamic';
 // En butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8): butikens rader med dess priser, leveransen och vad som hänt.
 // Läsläge: bekräftelsen, frakten och resten av Ekovillas steg kommer i nästa steg. Alla med crm.access läser (RLS).
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Vad som gäller just nu, överst: det enda sidan behöver säga innan man läser raderna. */
 function StateNotice({ order }: { order: StoreOrderView }) {
@@ -100,8 +100,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default async function StoreOrderPage({ params }: { params: { id: string } }) {
   await requirePagePermission('crm.access');
-  if (!UUID.test(params.id)) notFound();
-  const order = await getStoreOrderView(createSessionClient(), params.id);
+  if (!isUuid(params.id)) notFound();
+  const read = await getStoreOrderView(createSessionClient(), params.id).then(
+    (order) => ({ ok: true as const, order }),
+    (e: unknown) => {
+      // Databasens text stannar i loggen, som på listan.
+      console.error('[butiksbestallningar] beställningen gick inte att läsa', { id: params.id, error: e instanceof Error ? e.message : String(e) });
+      return { ok: false as const };
+    },
+  );
+  if (!read.ok) {
+    return (
+      <div className="grid grid-cols-1 gap-4">
+        <Link href="/crm/butiksbestallningar" className={cn(crm.link, 'w-fit text-sm')}>
+          Alla butiksbeställningar
+        </Link>
+        <div role="alert" className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          Beställningen gick inte att läsa. Ladda om sidan för att försöka igen.
+        </div>
+      </div>
+    );
+  }
+  const { order } = read;
   if (!order) notFound();
 
   const { delivery } = order;
@@ -188,10 +208,28 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
                 </li>
               ))}
             </ol>
-            <p className={cn(crm.micro, 'border-t border-[#e3e9df] pt-2')}>
-              Butikens kundnummer: {order.customerNumber ?? 'inget'}
-              {order.fortnoxOrderNumber ? <>. Fortnox-order {order.fortnoxOrderNumber}</> : null}
-            </p>
+            <dl className={cn(crm.micro, 'grid gap-1 border-t border-[#e3e9df] pt-2')}>
+              <div>
+                <dt className="inline">Kund i CRM:et: </dt>
+                <dd className="inline">
+                  {order.customer
+                    ? `${order.customer.name}${order.customer.fortnoxCustomerNumber ? ` (kundnummer ${order.customer.fortnoxCustomerNumber})` : ''}`
+                    : order.customerLinked
+                      ? 'kopplad'
+                      : 'ingen'}
+                </dd>
+              </div>
+              <div>
+                <dt className="inline">Kundnummer från portalen: </dt>
+                <dd className="inline">{order.customerNumber ?? 'inget'}</dd>
+              </div>
+              {order.fortnoxOrderNumber ? (
+                <div>
+                  <dt className="inline">Fortnox-order: </dt>
+                  <dd className="inline">{order.fortnoxOrderNumber}</dd>
+                </div>
+              ) : null}
+            </dl>
           </section>
         </aside>
       </div>

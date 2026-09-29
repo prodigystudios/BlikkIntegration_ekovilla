@@ -103,6 +103,18 @@ describe('getStoreOrderView', () => {
     expect((await getStoreOrderView(memoryAdmin({ crm_store_orders: [row()] }).admin, 'order-1'))!.freight).toBeNull();
   });
 
+  it('kunden beställningen är kopplad till, som sessionen ser kortet; null utan kort', async () => {
+    const linked = (await getStoreOrderView(
+      memoryAdmin({ crm_store_orders: [row({ customer: { customer_type: 'business', company_name: 'SEHED Bygg AB', first_name: null, last_name: null, fortnox_customer_id: '15' } })] }).admin,
+      'order-1',
+    ))!;
+    expect(linked.customer).toEqual({ name: 'SEHED Bygg AB', fortnoxCustomerNumber: '15' });
+    expect(linked.customerNumber).toBe('1043');
+    const hidden = (await getStoreOrderView(memoryAdmin({ crm_store_orders: [row({ customer: null })] }).admin, 'order-1'))!;
+    expect(hidden.customer).toBeNull();
+    expect(hidden.customerLinked).toBe(true);
+  });
+
   it('tiderna för läget: senaste ändringen och tillbakadragningen, eller null', async () => {
     const view = (await getStoreOrderView(
       memoryAdmin({ crm_store_orders: [row({ store_version: 2, changed_at: '2026-10-12T07:00:00.000Z', withdrawn_at: '2026-10-12T08:00:00.000Z', status: 'withdrawn' })] }).admin,
@@ -132,6 +144,9 @@ describe('getStoreOrderView', () => {
       ],
     });
     const view = (await getStoreOrderView(m.admin, 'order-1'))!;
+    // Dagarna i svensk form, som tiderna; inte 2026-10-12.
+    expect(view.events.find((e) => e.label === 'Levererad')!.at).toMatch(/^12 okt\. 2026$/);
+    expect(view.events.find((e) => e.label === 'Fakturerad')!.at).toMatch(/^13 okt\. 2026$/);
     expect(view.events.map((e) => [e.label, e.by])).toEqual([
       ['Mottagen från butiken', null],
       ['Ändrad av butiken 2 gånger, senast', null],

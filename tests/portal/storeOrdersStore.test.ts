@@ -526,11 +526,12 @@ describe('sweepStoreOrderNotices', () => {
     });
     const { deps, sent } = noticeDeps();
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
-    expect(summary).toEqual({ candidates: 4, sent: 4, marked: 0, failed: 0, errors: 0 });
+    expect(summary).toEqual({ candidates: 4, sent: 4, marked: 0, failed: 0, gaveUp: 0, errors: 0 });
     // Kroppen läses inte i sopningen, bara när notisen skickas (en läsning per notis).
     const sweepReads = m.calls.filter((c) => c.table === 'crm_store_orders' && c.op === 'select' && c.limit === 500);
     expect(sweepReads).toHaveLength(3);
-    expect(sweepReads.every((c) => c.orders?.[0]?.ascending === false)).toBe(true);
+    // Ändringar och tillbakadragningar: de nyaste. Nya som aldrig meddelats: exakt, de äldsta först.
+    expect(sweepReads.map((c) => c.orders?.[0]?.ascending)).toEqual([true, false, false]);
     expect(sent.map((rows) => rows[0].href).sort()).toEqual(
       ['/crm/butiksbestallningar/andrad', '/crm/butiksbestallningar/gammal-andrad', '/crm/butiksbestallningar/gammal-ny', '/crm/butiksbestallningar/tillbaka'].sort(),
     );
@@ -570,6 +571,24 @@ describe('sweepStoreOrderNotices', () => {
     expect(summary.candidates).toBe(STORE_ORDER_NOTICES_PER_ROUND + 3);
     expect(summary.sent + summary.errors).toBe(STORE_ORDER_NOTICES_PER_ROUND);
     expect(summary.errors).toBe(1);
+  });
+
+  it('en notis utan mottagare räknas som uppgiven, inte som ett fel som görs om', async () => {
+    const m = db({
+      crm_store_orders: [storeRow({ assigned_to: null, received_at: minutesAgo(10) })],
+      crm_portal_settings: [{ id: true, fallback_user_id: null }],
+    });
+    const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps });
+    expect(summary).toMatchObject({ candidates: 1, failed: 0, gaveUp: 1 });
+    // Bokförd: nästa varv har inget att göra.
+    expect((await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps })).candidates).toBe(0);
+  });
+
+  it('frågan efter nya som aldrig meddelats läser de äldsta först', async () => {
+    const m = db({ crm_store_orders: [storeRow({ received_at: minutesAgo(10) })] });
+    await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps });
+    const exact = m.calls.find((c) => c.filters.some(([kind, col]) => kind === 'is' && col === 'notified_key'));
+    expect(exact?.orders?.[0]).toEqual({ column: 'received_at', ascending: true });
   });
 
   it('en läsning som faller kastar (steget i cron fångar det)', async () => {

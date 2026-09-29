@@ -103,7 +103,8 @@ export function decideStoreOrderChange(
   change: { resellerId: string; orderNumber: string; updatedAt: string },
 ): StoreOrderChangeDecision {
   if (row.reseller_id !== change.resellerId) return { kind: 'mismatch', field: 'store.resellerId' };
-  if (row.order_number.trim() !== change.orderNumber.trim()) return { kind: 'mismatch', field: 'orderNumber' };
+  // Båda är trimmade: Zod trimmar kroppen, och den sparade kom samma väg.
+  if (row.order_number !== change.orderNumber) return { kind: 'mismatch', field: 'orderNumber' };
   if (STORE_ORDER_CONFIRMED_STATUSES.has(row.status)) return { kind: 'confirmed' };
   if (row.status !== 'received') return { kind: 'ignored' };
   // Äldre ELLER SAMMA: kontraktet. Jämförs som tider, eftersom Postgres skriver dem med +00:00.

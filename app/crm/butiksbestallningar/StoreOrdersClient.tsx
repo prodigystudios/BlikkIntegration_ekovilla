@@ -101,7 +101,7 @@ export default function StoreOrdersClient({
               <button
                 type="button"
                 onClick={() => setFilter('all')}
-                className="rounded-lg border border-solid border-[#dce4d8] bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                className="rounded-lg border border-[#dce4d8] bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
               >
                 Visa alla
               </button>
