@@ -290,8 +290,9 @@ Varje kandidat måste fortfarande ha `crm.workorder.write`, annars prövas näst
 **Kunden saknas** (numret är `null` eller okänt):
 - Ordern skapas ändå, hos reservadmin, med butikens uppgifter i snapshoten. Fortnox-ordern kan inte
   skapas utan kund, så butiken ser "Mottagen" tills kunden är kopplad.
-- `reverse_vat` skrivs **inte** i snapshoten. Snapshotens värde vinner annars över kundkortet för
-  alltid (`resolveReverseVat` i `lib/domains/fortnox/helpers.ts`).
+- ~~`reverse_vat` skrivs **inte** i snapshoten.~~ **Ändrat 2026-09-29:** varje portaljobb har omvänd byggmoms, 0 %,
+  och snapshoten bär `reverse_vat: true` med eller utan kort (`PORTAL_JOB_VAT_PERCENT` i `jobIntake.ts`). Att
+  snapshoten vinner över kortet är nu avsikten.
 - ✅ `POST /api/crm/portal/jobs/[workOrderId]/link-customer` (fas 3c), bara för portalordrar utan kund som
   inte finns i Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar
   kopplingen i `crm_portal_resellers` och skapar Fortnox-ordern. Se "Fas 3c: resultat".
@@ -600,7 +601,8 @@ tas före utskicket och släpps om det misslyckas. En push som redan pågår ger
 **Så fungerar kopplingen** (`lib/domains/portal/linkCustomer.ts`):
 1. Sessionen läser ordern och kortet; service-rollen läser jobbet (sessionen ser bara brickans kolumner). En vanlig
    order, en order som redan har kund eller finns i Fortnox, och ett kort som inte finns ger var sitt svar.
-2. Kortets del av snapshoten byts (namn, org.nr, adress, moms), och momsen och beloppet räknas om. Kontakten och Er
+2. Kortets del av snapshoten byts (namn, org.nr, adress), och beloppet räknas om. Momsen är jobbets, 0 % och
+   `reverse_vat: true`, vad kortet än säger (ändrat 2026-09-29; förut kortets). Kontakten och Er
    referens fylls bara där ordern saknar dem: har säljaren fyllt i dem står de kvar. Märkningen, arbetsplatsen och
    kontakten på plats står kvar.
 3. Samma fullständighetskontroll som våra egna ordrar, på ordern som den blir. Saknas något: 409 med listan.
@@ -1044,7 +1046,8 @@ Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka
 
 Följder av kontot per rad:
 - ⚠️ **Kontot följer `reverseVat`** (snapshoten, annars kundkortet), inte procentsatsen ensam. Portaljobbets 0 % oavsett
-  kort (3b/3c) måste därför sätta omvänd moms på dokumentet, annars bokas jobbet till en butik med vanligt kort på 3004.
+  kort sätter därför omvänd moms på dokumentet (✅ 2026-09-29, `PORTAL_JOB_VAT_PERCENT`; prövat: ett jobb till SEHED med
+  vanlig moms på kortet blev order 36 i testbolaget, alla rader 0 % och 3231).
 - **Öppna ordrar som synkades före ändringen behåller sina konton** tills de synkas om ("Synka om" eller en
   artikelredigering); `createinvoice` kopierar orderns rader som de står.
 - CRM:et känner bara svensk moms: kundsynken skriver alltid SEVAT eller SEREVERSEDVAT på kortet. EU- och exportkonton
