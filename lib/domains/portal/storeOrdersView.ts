@@ -4,6 +4,7 @@ import {
   STORE_ORDER_LIST_LIMIT,
   STORE_ORDER_STATUSES,
   STORE_ORDER_VAT_PERCENT,
+  storeOrderFreightFromRow,
   storeOrderLineTotal,
   storeOrderLinesTotal,
   storeOrderTotals,
@@ -28,7 +29,7 @@ const LIST_SELECT =
 const PAGE = 1000;
 
 const DETAIL_SELECT = `id, order_number, store_name, customer_id, assigned_to_name, status, payload, store_version,
-  received_at, changed_at, withdrawn_at, freight_mode, freight_price, confirmed_at, confirmed_by_name, fortnox_order_number,
+  received_at, changed_at, withdrawn_at, freight_mode, freight_price, freight_set_at, confirmed_at, confirmed_by_name, fortnox_order_number, fortnox_error,
   delivered_on, delivered_by_name, invoiced_on, invoiced_by_name, cancelled_at, cancelled_by_name, cancel_reason,
   customer:crm_customers(customer_type, company_name, first_name, last_name, fortnox_customer_id)`;
 
@@ -170,6 +171,13 @@ export type StoreOrderView = {
   /** Ekovillas frakt: null = inte beslutad än. */
   freight: StoreOrderFreight;
   fortnoxOrderNumber: string | null;
+  /** Varför Fortnox-ordern inte kunde skapas, senast; null när den skapades eller inget försök gjorts. */
+  fortnoxError: string | null;
+  /** Butikens version: Bekräfta låser den versionen, och nekas om butiken ändrat sedan sidan lästes. */
+  storeVersion: number;
+  /** När frakten sparades, och kundkortets id: Bekräfta nekas om någon annan ändrat dem sedan sidan lästes. */
+  freightSetAt: string | null;
+  customerId: string | null;
   cancelReason: string | null;
   events: StoreOrderEvent[];
 };
@@ -177,10 +185,12 @@ export type StoreOrderView = {
 type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
   payload: StoreOrderBody;
   fortnox_order_number: string | null;
+  fortnox_error: string | null;
   customer_id: string | null;
   assigned_to_name: string | null;
   freight_mode: 'none' | 'charged' | null;
   freight_price: number | string | null;
+  freight_set_at: string | null;
   changed_at: string | null;
   withdrawn_at: string | null;
   confirmed_at: string | null;
@@ -231,13 +241,7 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
   const row = data as DetailRow | null;
   if (!row || !isStatus(row.status)) return null;
   const body = row.payload;
-  const freight: StoreOrderFreight =
-    // numeric kommer som sträng från PostgREST.
-    row.freight_mode === 'none'
-      ? { mode: 'none' }
-      : row.freight_mode === 'charged'
-        ? { mode: 'charged', price: Number(row.freight_price) }
-        : null;
+  const freight = storeOrderFreightFromRow(row);
   return {
     id: row.id,
     orderNumber: row.order_number,
@@ -265,6 +269,10 @@ export async function getStoreOrderView(session: SupabaseClient, id: string): Pr
     withdrawnAtLabel: row.withdrawn_at ? stockholm(row.withdrawn_at) : null,
     freight,
     fortnoxOrderNumber: row.fortnox_order_number,
+    fortnoxError: row.fortnox_error,
+    storeVersion: row.store_version,
+    freightSetAt: row.freight_set_at,
+    customerId: row.customer_id,
     cancelReason: row.cancel_reason,
     events: storeOrderEvents(row),
   };

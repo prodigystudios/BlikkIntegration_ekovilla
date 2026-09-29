@@ -213,7 +213,7 @@ const PUSH_CLAIM_STALE_MS = 120_000;
 // flips the row and the other matches 0 rows.
 export async function claimFortnoxPush(
   supabase: ReturnType<typeof getSupabaseAdmin>,
-  table: 'crm_work_orders' | 'crm_quotes',
+  table: 'crm_work_orders' | 'crm_quotes' | 'crm_store_orders',
   id: string,
   statusCol: string,
   claimedAtCol: string,

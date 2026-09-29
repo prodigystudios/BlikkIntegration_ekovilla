@@ -25,7 +25,7 @@
 
 type Row = Record<string, unknown>;
 type Op = 'select' | 'insert' | 'upsert' | 'update' | 'delete';
-type Filter = ['eq' | 'is' | 'in' | 'notIs' | 'lt' | 'lte' | 'gt' | 'like', string, unknown];
+type Filter = ['eq' | 'neq' | 'is' | 'in' | 'notIs' | 'lt' | 'lte' | 'gt' | 'like', string, unknown];
 export type Call = {
   table: string;
   op: Op;
@@ -87,6 +87,8 @@ export function memoryAdmin(
       const actual = row[column] ?? null;
       if (kind === 'in') return (value as unknown[]).includes(actual);
       if (kind === 'notIs') return actual !== value;
+      // Som i SQL: `<>` mot NULL är aldrig sant.
+      if (kind === 'neq') return actual !== null && actual !== value;
       if (kind === 'like') {
         if (typeof actual !== 'string') return false;
         const pattern = String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*').replace(/_/g, '.');
@@ -192,6 +194,7 @@ export function memoryAdmin(
       update: (values: unknown) => ((call.op = 'update'), (call.values = values), chain),
       delete: () => ((call.op = 'delete'), chain),
       eq: (column: string, value: unknown) => (call.filters.push(['eq', column, value]), chain),
+      neq: (column: string, value: unknown) => (call.filters.push(['neq', column, value]), chain),
       is: (column: string, value: unknown) => (call.filters.push(['is', column, value]), chain),
       in: (column: string, values: unknown[]) => (call.filters.push(['in', column, values]), chain),
       not: (column: string, operator: string, value: unknown) => {

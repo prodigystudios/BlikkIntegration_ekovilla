@@ -4,9 +4,10 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { STORE_ORDER_STATUS_LABELS, formatStoreOrderKr as kr } from '@/lib/domains/portal/storeOrders';
 import type { StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
 import { storeOrderStatusClass } from '../storeOrderStatusStyle';
+import StoreOrderActions from './StoreOrderActions';
 
 // En butiksbeställning som sidan visar den (fas 8): butikens rader med dess priser, leveransen och vad som hänt.
-// Läsläge: bekräftelsen, frakten och resten av Ekovillas steg kommer i nästa steg. Serverkomponent, ingen klientkod.
+// Ekovillas steg (kunden, frakten, Bekräfta, Fortnox-ordern) står i StoreOrderActions, för den ansvarige och admin.
 
 /** Vad som gäller just nu, överst: det enda sidan behöver säga innan man läser raderna. */
 function StateNotice({ order }: { order: StoreOrderView }) {
@@ -88,7 +89,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-export default function StoreOrderDetail({ order }: { order: StoreOrderView }) {
+export default function StoreOrderDetail({ order, canManage = false }: { order: StoreOrderView; canManage?: boolean }) {
   const { delivery } = order;
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -129,6 +130,21 @@ export default function StoreOrderDetail({ order }: { order: StoreOrderView }) {
         </section>
 
         <aside className="grid gap-4">
+          {canManage ? (
+            <StoreOrderActions
+              id={order.id}
+              status={order.status}
+              storeVersion={order.storeVersion}
+              freightSetAt={order.freightSetAt}
+              customerId={order.customerId}
+              storeName={order.storeName}
+              customerNumber={order.customerNumber}
+              customer={order.customer}
+              freight={order.freight}
+              fortnoxOrderNumber={order.fortnoxOrderNumber}
+              fortnoxError={order.fortnoxError}
+            />
+          ) : null}
           <section className={cn(crm.cardInner, 'grid gap-3')} aria-labelledby="store-order-delivery">
             <h2 id="store-order-delivery" className={crm.cardTitle}>
               Leverans
