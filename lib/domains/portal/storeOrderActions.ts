@@ -402,8 +402,9 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     // En sökning som inte går är alltid ett tekniskt fel (nytt försök), också ett 4xx: utan svaret vet vi inte om ordern
     // redan finns, och det rättar ingen människa.
     const existing = await deps.findExisting(reference).catch((err: unknown) => {
-      // Ett 4xx på sökningen hade annars klassats som ett stopp; "inte ansluten" och 5xx behåller sin egen klass och text.
-      if (err instanceof FortnoxApiError && storeOrderFortnoxFailure(err) === 'blocked') {
+      // Ett 4xx på sökningen hade annars kunnat klassas som ett stopp; "inte ansluten" och 5xx behåller sin egen klass och
+      // text.
+      if (err instanceof FortnoxApiError && err.status >= 400 && err.status < 500) {
         throw new Error(`Sökningen efter en befintlig order gick inte: ${err.message}`);
       }
       throw err;
@@ -502,8 +503,9 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       .is('fortnox_order_number', null)
       .then((r) => r, (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }));
     if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
+    // `failed`, inte `blocked`: ett nytt försök är planerat och tar över ordern, ingen människa behövs.
     return {
-      outcome: 'blocked',
+      outcome: 'failed',
       fortnoxOrderNumber: number,
       error: `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Tryck Skicka till Fortnox om några minuter, så kopplas den; ingen ny order skapas.`,
     };
@@ -638,11 +640,24 @@ export async function retryStoreOrderFortnox(
       console.warn('[portal-store-orders] Fortnox-försöken ges upp; bara för hand nu', { id: order.id });
       continue;
     }
+    // Efter fönstret (ett lån som togs nära slutet): ett sista försök. Faller det öppnar planen ett nytt fönster (som för
+    // ett nytt fel dagar senare), men här är det samma fel, och omförsöken ska ta slut efter 24 h.
+    const late = order.fortnox_retry_until !== null && at.getTime() > new Date(order.fortnox_retry_until).getTime();
     try {
       const result = await pushStoreOrderToFortnox(admin, order.id, deps);
       // Ett försök räknas bara när något gjordes mot Fortnox; en makulerad eller en som någon annan håller hoppas över.
       if (result.outcome === 'skipped' || result.outcome === 'in_progress') summary.skipped += 1;
       else summary.attempted += 1;
+      if (late && result.outcome === 'failed') {
+        const done = await admin
+          .from('crm_store_orders')
+          .update({ fortnox_next_attempt_at: null, fortnox_retry_until: order.fortnox_retry_until })
+          .eq('id', order.id)
+          .is('fortnox_order_number', null);
+        if (done.error) throw new Error(`Omförsöken kunde inte avslutas: ${done.error.message}`);
+        summary.gaveUp += 1;
+        console.warn('[portal-store-orders] Fortnox-försöken ges upp; bara för hand nu', { id: order.id });
+      }
     } catch (e) {
       summary.errors += 1;
       console.error('[portal-store-orders] Fortnox-försöket föll', { id: order.id, error: e instanceof Error ? e.message : String(e) });

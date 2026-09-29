@@ -555,7 +555,8 @@ describe('pushStoreOrderToFortnox', () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null }));
     m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
     const result = await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps());
-    expect(result).toMatchObject({ outcome: 'blocked', fortnoxOrderNumber: '801' });
+    // `failed`, inte `blocked`: ett försök är planerat och tar över ordern, ingen människa behövs.
+    expect(result).toMatchObject({ outcome: 'failed', fortnoxOrderNumber: '801' });
     expect(result.error).toContain('ingen ny order skapas');
     expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
     // Claimen släpptes, så att knappen inte svarar "skapas redan" i två minuter.
@@ -613,6 +614,15 @@ describe('retryStoreOrderFortnox', () => {
   it('🧨 ett lån som togs nära fönstrets slut (lånet ligger efter slutet): försöket görs ändå', async () => {
     const lease = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-6) }));
     expect(await retryStoreOrderFortnox(lease.admin, { deps: fortnoxDeps() })).toMatchObject({ gaveUp: 0, attempted: 1 });
+  });
+
+  it('🧨 ett sent försök (efter fönstret) som faller: omförsöken tar slut, inget nytt fönster på 24 h', async () => {
+    const m = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-6), fortnox_attempts: 8 }));
+    const deps = fortnoxDeps(async () => {
+      throw new Error('Fortnox nere');
+    });
+    expect(await retryStoreOrderFortnox(m.admin, { deps })).toMatchObject({ attempted: 1, gaveUp: 1 });
+    expect(row(m)).toMatchObject({ fortnox_next_attempt_at: null, fortnox_retry_until: minutes(-6) });
   });
 
   it('🧨 planerat inom fönstret men upplockat sent (ett per varv, andra före i kön): görs ändå', async () => {

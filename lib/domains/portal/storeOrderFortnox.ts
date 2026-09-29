@@ -13,7 +13,10 @@ import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, t
  * Fortnox gränser, uppmätta i testbolaget 2026-09-29:
  *   - `YourReference` över 50 tecken nekar hela ordern (2001600). Butikens mottagare får vara 200.
  *   - `YourOrderNumber` kapas tyst vid 30 tecken, leveransadressen (`DeliveryAddress1`) vid 60 och en textrad vid 255.
- *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar; över det nekas ordern (2001896).
+ *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar (en räknas som ett tecken); över
+ *     det nekas ordern (2001896).
+ *   - `DeliveryZipCode` 20, `DeliveryCity` 100 och `DeliveryName` 200 tecken sparades hela: portalens gränser ryms, så
+ *     de kapas inte.
  * Vi kapar själva, så att det som skickas är det som står i Fortnox, och det som inte ryms står i textraden.
  *
  * 🧨 TANKSTRECK I HUVUDET NEKAR ORDERN: "—" i `YourReference`, `DeliveryAddress1` (2000359) och `Comments` (2004343),

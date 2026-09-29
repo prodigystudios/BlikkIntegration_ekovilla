@@ -388,7 +388,7 @@ export default function StoreOrderActions(props: Props) {
           onClick={() =>
             run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) => fortnoxMessage(data, false), CONFIRM_STALE_CODES)
           }
-          disabled={busy}
+          disabled={busy || refreshing}
           className={cn(crm.saveButton, 'px-4 sm:w-auto sm:justify-self-start')}
         >
           {busy ? 'Skickar…' : 'Skicka till Fortnox'}
