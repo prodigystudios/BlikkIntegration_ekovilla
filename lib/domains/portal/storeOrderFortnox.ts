@@ -126,12 +126,13 @@ export function storeOrderDocumentNote(body: Pick<StoreOrderBody, 'orderNumber' 
   const { delivery } = body;
   const recipient = [nonEmpty(delivery.contactName), nonEmpty(delivery.contactPhone)].filter(Boolean).join(' ');
   const reference = nonEmpty(delivery.reference);
+  // Det som inte rymdes i huvudet först: det står ingen annanstans på ordern, och textraden kapas vid 255 tecken.
   const parts = [
     `Butiksbeställning ${body.orderNumber.trim()}`,
-    nonEmpty(delivery.desiredPeriod) ? `Leverans: ${delivery.desiredPeriod.trim()}` : null,
-    recipient ? `Mottagare: ${recipient}` : null,
     reference && reference.length > FORTNOX_YOUR_ORDER_NUMBER_MAX ? `Butikens referens: ${reference}` : null,
     delivery.address.street.trim().length > FORTNOX_DELIVERY_ADDRESS_MAX ? `Leveransadress: ${delivery.address.street.trim()}` : null,
+    nonEmpty(delivery.desiredPeriod) ? `Leverans: ${delivery.desiredPeriod.trim()}` : null,
+    recipient ? `Mottagare: ${recipient}` : null,
   ];
   return cap(parts.filter(Boolean).join('  '), FORTNOX_TEXT_ROW_MAX);
 }

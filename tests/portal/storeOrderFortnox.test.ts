@@ -152,6 +152,17 @@ describe('storeOrderDocumentNote', () => {
     expect(storeOrderDocumentNote(b)).toBe('Butiksbeställning B-2026-003  Mottagare: 070-234 56 78');
   });
 
+  it('🧨 det som inte rymdes i huvudet står först, så att kapningen vid 255 aldrig tar det', () => {
+    const b = body();
+    b.delivery.reference = 'R'.repeat(40);
+    b.delivery.address.street = 'G'.repeat(70);
+    b.delivery.desiredPeriod = 'V'.repeat(200);
+    const note = storeOrderDocumentNote(b);
+    expect(note.length).toBe(FORTNOX_TEXT_ROW_MAX);
+    expect(note).toContain(`Butikens referens: ${'R'.repeat(40)}`);
+    expect(note).toContain(`Leveransadress: ${'G'.repeat(70)}`);
+  });
+
   it('en referens som inte ryms i Ert ordernummer står i textraden', () => {
     const b = body();
     b.delivery.reference = 'Projekt Norrby etapp 2, inköpsorder 99887766';

@@ -27,6 +27,14 @@ export const STORE_ORDER_STATUS_LABELS: Record<StoreOrderStatus, string> = {
 /** Från och med bekräftelsen är beställningen låst hos butiken: en ändring eller tillbakadragning får 409. */
 export const STORE_ORDER_CONFIRMED_STATUSES: ReadonlySet<StoreOrderStatus> = new Set(['confirmed', 'delivered', 'invoiced']);
 
+/**
+ * Har Ekovilla ett steg att ta på beställningen (fas 8b1)? Mottagen (kunden, frakten, Bekräfta), eller bekräftad utan
+ * Fortnox-order (Skicka till Fortnox). Sidan frågar regeln och visar kortet bara då.
+ */
+export function storeOrderHasStep(order: { status: StoreOrderStatus; fortnoxOrderNumber: string | null }): boolean {
+  return order.status === 'received' || (order.status === 'confirmed' && !order.fortnoxOrderNumber);
+}
+
 /** Momsen på en butiksbeställning, raderna och frakten (William 2026-09-29). */
 export const STORE_ORDER_VAT_PERCENT = 25;
 

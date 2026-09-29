@@ -7,6 +7,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import ErrorState from '@/components/ui/ErrorState';
 import { getStoreOrderView, type StoreOrderView } from '@/lib/domains/portal/storeOrdersView';
+import { storeOrderHasStep } from '@/lib/domains/portal/storeOrders';
 import StoreOrderDetail from './StoreOrderDetail';
 
 export const dynamic = 'force-dynamic';
@@ -48,8 +49,7 @@ export default async function StoreOrderPage({ params }: { params: { id: string 
  * ändå själva.
  */
 function canManageStoreOrder(order: StoreOrderView, rule: { data: unknown; error: { message: string } | null }): boolean {
-  const hasStep = order.status === 'received' || (order.status === 'confirmed' && !order.fortnoxOrderNumber);
-  if (!hasStep) return false;
+  if (!storeOrderHasStep(order)) return false;
   if (rule.error) {
     console.error('[butiksbestallningar] behörigheten gick inte att pröva', { id: order.id, error: rule.error.message });
     return false;

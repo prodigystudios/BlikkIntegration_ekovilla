@@ -580,7 +580,10 @@ export async function retryStoreOrderFortnox(
   for (const order of due) {
     if (options.budgetMs !== undefined && deps.now().getTime() - startedAt >= options.budgetMs) break;
     const at = deps.now();
-    const expired = order.fortnox_retry_until !== null && at.getTime() > new Date(order.fortnox_retry_until).getTime();
+    // Ett försök som planerades inom fönstret görs, också när det plockas upp sent (ett per varv, andra före i kön);
+    // bara ett som planerats efter fönstret (ett lån som blev liggande) ges upp.
+    const expired =
+      order.fortnox_retry_until !== null && new Date(order.fortnox_next_attempt_at).getTime() > new Date(order.fortnox_retry_until).getTime();
     const lease = await admin
       .from('crm_store_orders')
       .update({ fortnox_next_attempt_at: expired ? null : new Date(at.getTime() + PORTAL_FORTNOX_LEASE_MS).toISOString() })

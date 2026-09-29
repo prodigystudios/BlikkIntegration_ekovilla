@@ -571,11 +571,19 @@ describe('retryStoreOrderFortnox', () => {
     const later = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(1), fortnox_retry_until: minutes(60) }));
     expect((await retryStoreOrderFortnox(later.admin, { deps: fortnoxDeps() })).due).toBe(0);
 
-    const expired = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-1) }));
+    // Planerat efter fönstret (ett lån som blev liggande): ges upp utan försök.
+    const expired = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-10) }));
     const deps = fortnoxDeps();
     expect(await retryStoreOrderFortnox(expired.admin, { deps })).toMatchObject({ due: 1, gaveUp: 1, attempted: 0 });
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(expired).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('🧨 planerat inom fönstret men upplockat sent (ett per varv, andra före i kön): görs ändå', async () => {
+    const late = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-10), fortnox_retry_until: minutes(-5) }));
+    const deps = fortnoxDeps();
+    expect(await retryStoreOrderFortnox(late.admin, { deps })).toMatchObject({ due: 1, gaveUp: 0, attempted: 1 });
+    expect(row(late).fortnox_order_number).toBe('801');
   });
 
   it('en makulerad som stod på tur: räknas som överhoppad, inte som ett försök', async () => {

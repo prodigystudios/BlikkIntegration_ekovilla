@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from 'react';
+import { useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -8,7 +8,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
-import { formatStoreOrderKr as kr, type StoreOrderFreight, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
+import { formatStoreOrderKr as kr, storeOrderHasStep, type StoreOrderFreight, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
 
 // Ekovillas steg på en butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8b), för den ansvarige och admin (sidan frågar
 // crm_store_order_can_manage innan den visar kortet; routerna frågar igen). Stegen är en ordningsföljd: butikens
@@ -326,8 +326,11 @@ export default function StoreOrderActions(props: Props) {
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingFreight, setEditingFreight] = useState(false);
 
+  // Två klick i samma bildruta ser båda `busy` som falskt; referensen stoppar det andra.
+  const inFlight = useRef(false);
   const run: Runner = async (url, method, body, failure, success) => {
-    if (busy) return 'failed';
+    if (inFlight.current) return 'failed';
+    inFlight.current = true;
     setBusy(true);
     try {
       const result = await send(url, method, body);
@@ -345,6 +348,7 @@ export default function StoreOrderActions(props: Props) {
       refresh();
       return 'ok';
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
@@ -389,13 +393,15 @@ export default function StoreOrderActions(props: Props) {
     );
   }
 
-  if (props.status !== 'received') return null;
+  if (props.status !== 'received' || !storeOrderHasStep(props)) return null;
 
   const customerReady = Boolean(props.customer?.fortnoxCustomerNumber);
   const freightReady = props.freight !== null;
   // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
   const editing = editingCustomer || editingFreight;
   const ready = customerReady && freightReady && !editing && !refreshing;
+  // Medan sidan läses om efter ett steg bär knapparna de gamla värdena: allt är låst tills de nya kommit.
+  const locked = busy || refreshing;
   const missing = editing
     ? 'spara eller avbryt ändringen'
     : [!customerReady ? 'koppla butikens kundkort' : null, !freightReady ? 'sätt frakten' : null].filter(Boolean).join(' och ');
@@ -409,8 +415,8 @@ export default function StoreOrderActions(props: Props) {
         <p className={crm.meta}>När den är bekräftad kan butiken inte längre ändra den, och Fortnox-ordern skapas.</p>
       </div>
       <ol className="m-0 grid list-none gap-3.5 p-0">
-        <CustomerStep props={props} busy={busy} run={run} editing={editingCustomer} setEditing={setEditingCustomer} />
-        <FreightStep props={props} busy={busy} run={run} editing={editingFreight} setEditing={setEditingFreight} />
+        <CustomerStep props={props} busy={locked} run={run} editing={editingCustomer} setEditing={setEditingCustomer} />
+        <FreightStep props={props} busy={locked} run={run} editing={editingFreight} setEditing={setEditingFreight} />
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
           {/* Mitt för knappen, som är högre än de andra stegens rubrikrad. */}
           <StepNumber n={3} done={false} className="mt-2" />
@@ -418,7 +424,7 @@ export default function StoreOrderActions(props: Props) {
             <button type="button" onClick={() => setConfirming(true)} disabled={!ready || busy} className={cn(crm.saveButton, 'px-4')}>
               Bekräfta beställningen
             </button>
-            {!ready ? <p className={crm.meta}>Innan dess: {missing}.</p> : null}
+            {!ready && missing ? <p className={crm.meta}>Innan dess: {missing}.</p> : null}
           </div>
         </li>
       </ol>
