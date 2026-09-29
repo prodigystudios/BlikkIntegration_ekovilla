@@ -1208,14 +1208,33 @@ finns, eftersom kontraktet kräver det.
   sökningen matchar på början av värdet, så träffen jämförs exakt. Går sökningen inte skickas ingenting. Prövat skarpt:
   ett försök som dog efter POST:en (order 57) togs över av nästa, en order med märkningen.
 - **Omförsöken:** jobbens schema (5 min, 15 min, 1 h, i 24 h), i ett eget cron-steg före jobbens, ett per varv. Ett
-  stopp som kräver en människa (kortet saknar kundnummer) ger inga omförsök. "Skicka till Fortnox" på sidan.
+  stopp som kräver en människa (kortet saknar kundnummer, ett 400 från Fortnox) ger inga omförsök; allt annat (nere,
+  inte ansluten, 401/403/429, nätet, vårt eget fel) gör det. "Skicka till Fortnox" på sidan sätter också skyddsnätet.
+- 🧨 **Två samtidiga försök** (claimen räknas som gammal efter två minuter, och ett Fortnox-anrop har ingen tidsgräns):
+  får ett försök inte spara sitt nummer för att ett annat redan står där makuleras den egna ordern
+  (`PUT /orders/{n}/cancel`, prövad i testbolaget).
+- 🧨 **Leveransfälten:** Fortnox fyller i kundkortets `DeliveryName` och `DeliveryAddress2` när de inte skickas
+  (uppmätt; tom sträng rensar inte, `null` gör). Beställningen skickar butikens namn och `DeliveryAddress2: null`.
+- **Allt Ekovilla sparar görs mot det säljaren såg:** frakten (`expectedSetAt`), kunden (`expected_customer_id`) och
+  Bekräfta (version, frakt, kund). Säger servern att sidan inte stämmer läses den om och ett öppet steg stängs.
+- **Butikens koppling** sätts bara när beställningen kom utan kund och butiken saknar koppling: en beställning flyttar
+  aldrig en befintlig koppling (jobben, 3c, gör det fortfarande).
 
-**Prövat:** vitest (storeOrderFortnox, storeOrderActions, storeOrderRoutes, cron), 56 mutationer, alla röda utom en
-likvärdig (`exists`/`created` ger samma plan). Lokalt mot testbolaget: ordrar 53, 54, 55, 58 (Ingen frakt), felvägen
+**Granskningarna** (code-review high, sju rundor): dubbletter i Fortnox (märkningen och sökningen, sedan två samtidiga
+försök), bekräfta det säljaren såg, 500 efter ett lås som gick igenom, texterna efter utfallet, felens klass (bara 400
+är ett stopp), leveransnamnet och rad 2, makulerade ordrar tas inte över, enheten bara ur registret, osparade
+ändringar, bytet och butikens koppling, cron före jobben, skyddsnätet och claimen vid knappen. Lämnat med skäl:
+omförsöksloopen är en kopia av jobbens, läsningarnas ordning i Bekräfta, `parsePrice` är strikt med flit.
+
+**Prövat:** vitest (storeOrderFortnox, storeOrderActions, storeOrderRoutes, cron), över 70 mutationer, alla röda utom
+en likvärdig (`exists`/`created` ger samma plan). Lokalt mot testbolaget: ordrar 53, 54, 55, 58 (Ingen frakt), felvägen
 med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, butikens ändring under tiden, osparad
 ändring, telefonbredd.
 
 **Frågor och kvar:**
+- ⚠️ **Arbetsordrarna har samma leveransfel** (det aktiva flödet): `buildOrderDeliveryFields` skickar bara gata,
+  postnummer och ort, så en kund med leveransadress på Fortnox-kortet får kortets leveransnamn och rad 2 på jobbets
+  order. Egen liten PR, fråga William.
 - ⚠️ **Artikel 1050 är en paketartikel i testbolaget:** Fortnox nekar raden ("raden måste innehålla en instans av det
   paketet"). Är 1050 FRAKT en vanlig artikel i prod? Annars nekas varje beställning med frakt.
 - En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund
