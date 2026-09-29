@@ -160,6 +160,7 @@ Ren logik som testas isolerat:
 | `jobIntake.ts` ✅, `jobIntakeStore.ts` ✅, `jobBadge.ts` ✅ | Jobbets kropp (Zod), radmappningen och snapshoten (ren), och intaget mot databasen: butiken, jobbets rad, arbetsordern och, efter svaret, notiserna och Fortnox-ordern. Brickan på arbetsordern läses med sessionen |
 | `assignment.ts` ✅, `county.ts` ✅, `resellers.ts` ✅ | Fördelningen till en säljare (kedjan, behörighetskravet, stegen mot databasen), länet ur postnummer och ort via Nominatim, och butikerna och reserven på portalsidan |
 | `jobState.ts` ✅ | Portalens tillstånd härlett ur arbetsordern |
+| `jobDocuments.ts` ✅, `jobDocumentsStore.ts` ✅, `jobDocumentsDecision.ts` ✅, `outboundContent.ts` ✅ | Dokumenten (fas 7). Den rena delen (sorterna, gränsen, filnamnet, köns händelse med en referens till filen, egenkontrollens prov mot orderns nummer) importeras av kortet och får aldrig dra in zod, databasen eller `node:crypto`. Frysningen, knappen, kortets läsning, "Öppna" och cron-sopningen ligger i `…Store.ts`; regeln "det senast beslutade vinner" i `…Decision.ts`; utskickets byte av referensen mot filens base64 i `outboundContent.ts` |
 | `jobMessages.ts` ✅, `jobMessagesStore.ts` ✅ | Meddelandena (fas 6). Den rena delen (avdelningarna, `job.message`-kroppen och dess nyckel, tecken räknade som Postgres räknar dem) importeras av kortet "Butiken" och får aldrig dra in zod eller databasen. Intaget från portalen, notisen, svaret, trådens läsning och cron-sopningen ligger i `…Store.ts` |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
@@ -204,6 +205,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_settings` ✅ | En enda rad: reserven (`fallback_user_id`) |
 | `crm_portal_jobs` ✅ | `quote_id` (nyckel), `quote_number`, `reseller_id`, `store_name`, kunden och den som fick jobbet, `reserved_work_order_id` (valt före arbetsordern), `work_order_id` (unik, samma som den reserverade, `on delete set null`) och `work_order_created_at`, kroppen, och när notiserna skickades. Sessionen läser bara brickans fyra kolumner och `quote_id` (kolumngrant). Fas 4b ✅: markeringen `sync_requested_at`, det senast köade läget `sync_state`, `sync_pending_events`, `sync_version`, `synced_at` och Fortnox-omförsöken (`fortnox_next_attempt_at`, `fortnox_attempts`, `fortnox_retry_until`) |
 | `crm_portal_job_messages` ✅ | `quote_id` (FK till jobbet), riktning (`from_store`/`to_store`), `message_id` (unik per riktning: portalens id eller vårt), författarens namn när det skrevs och `author_user_id` (svar), avdelning (svar), text, `sent_at`, `created_at` (trådens ordning), härledd `outbound_key` (`job.message-<id>`), och markeringarna `queued_at`, `notify_claimed_at` (lånet) och `notified_at`, som bara service_role ser. Sessionen läser trådens kolumner och lägger till svar i eget namn (kolumngrant + RLS), men ändrar eller tar aldrig bort något. Vem som får svara står en gång, i `crm_portal_job_message_can_reply()` (invoker), som policyn och kortet delar. Skild från `crm_work_order_comments` |
+| `crm_portal_job_documents` ✅ | Dokumenten till butiken (fas 7): `quote_id` (FK till jobbet), sort, läge (`building`/`ready`/`failed`), namnet butiken ser, storlek och sha256 för den frysta filen, källan (Fortnox-nr eller egenkontrollens sökväg), skälet när det inte gick, lånet och omförsöken (`attempts`, `next_attempt_at`), vem som skickade och namnet då (null = automatiskt), `ready_at` (händelsens tid), `queued_at` och härledd `outbound_key` (`job.document-<id>`). En automatisk orderbekräftelse per jobb (unikt index). Sessionen läser visningskolumnerna och lägger till ett beslut i eget namn genom svarsregeln; filen, hashen och kön är service-rollens. PDF:en fryses i den privata bucketen `portal-job-documents` (3 300 000 byte, bara PDF, inga policyer) |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
 | `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
@@ -211,8 +213,9 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 **Kön** hämtas med en RPC som använder `for update skip locked` och bara kan köras av service_role.
 Den tar den **äldsta väntande händelsen per jobb**, så att händelserna för ett jobb kommer fram i
 ordning, och en ny `job.scheduled` ersätter äldre väntande för samma jobb. Kroppen signeras vid varje
-försök, eftersom signaturen bara gäller i 300 sekunder. PDF:er ligger i kön som referens, inte som
-base64.
+försök, eftersom signaturen bara gäller i 300 sekunder. ✅ PDF:er ligger i kön som referens, inte som
+base64 (fas 7): kroppen bär `contentRef { documentId, sha256, bytes }`, och utskicket byter den mot filens base64 vid varje
+försök (`outboundContent.ts`). Dokument använder inte `supersedeKey` (se "Fas 7: resultat").
 
 **Behörigheten ✅ (fas 2b):** en ny nyckel `crm.portal.manage` (admin) för portalens inställningssida, enligt
 mallen `supabase/migrations/20260926122102_rbac_app_staff_key.sql`. `PERMISSION_KEYS` i
@@ -333,6 +336,14 @@ Byggt i fas 4b; beslut, prövning och det portalen behöver står i "Fas 4b: res
   - `completed` och `invoiced`: arbetsorderns status. `partially_invoiced` skickas inte.
 - I testmiljön finns ingen cron. Portalsidan får knappen "Skicka väntande nu".
 
+### Dokumenten ✅
+
+Byggt i fas 7; beslut, prövning och det portalen behöver står i "Fas 7: resultat".
+
+Orderbekräftelsen går automatiskt en gång när butiken fått bekräftelsen, och sedan med knappen; egenkontrollen med
+knappen. Båda i kortet "Butiken". PDF:en fryses en gång, så att samma nyckel alltid ger samma byte, och det senast
+beslutade dokumentet av varje sort vinner.
+
 ### Meddelanden ✅
 
 Byggt i fas 6; beslut, prövning och det portalen behöver står i "Fas 6: resultat".
@@ -362,7 +373,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **4b** ✅ | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem. Beteendet prövas mot en databas med `supabase/checks/portal_job_status.sql`. Resultaten står under tabellen | 1b, 3b, 4a |
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
 | **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt efter att det sparats och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
-| **7** | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) efter bekräftelsen, egenkontrollen med en knapp. Storlekskontroll: base64 gör att en PDF får vara högst cirka 3,3 MB under Vercels 4,5 MB | 4b |
+| **7** ✅ | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) automatiskt efter bekräftelsen och sedan med knappen, egenkontrollen med knappen, i kortet "Butiken". PDF:en fryses i en privat bucket och kön bär en referens. Storlekskontroll: högst 3 300 000 byte före base64, under Vercels 4,5 MB. Beteendet prövas mot en databas med `supabase/checks/portal_job_documents.sql`. Resultaten står under tabellen | 4b, 6 |
 | **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
@@ -882,6 +893,118 @@ tecknen räknas, och att en avbruten order tar emot meddelanden. Vår kopia av k
 (`RESELLER_PORTAL_INTEGRATION_PLAN.md`) är synkad med portalens `CRM_INTEGRATION.md` @ `f2a7984` och är ordagrann.
 Punkterna 24–27 står därför bara här, tills portalen för in dem.
 
+### Fas 7: resultat (2026-09-28)
+
+**Williams beslut:**
+- **Orderbekräftelsen i vår egen design** (`getFortnoxOrderPdf()`, `ORDER_PDF_MODE`), automatiskt EN gång när
+  `job.confirmed` är levererad. Ändras ordern skickar den som har ordern, eller en admin, en ny med knappen.
+- **Egenkontrollen med en knapp** i kortet "Butiken". Knappen syns när en egenkontroll finns och bekräftelsen är
+  levererad, oavsett orderns status. Samma personer som svarar butiken (svarsregeln).
+- **Ett avbrutet eller borttaget jobb får inga dokument.**
+- **Arbetsordern visar per sort den senaste versionen:** namn, när, av vem eller "automatiskt", och Skickas, Skickad, Kom
+  inte fram eller Ersatt. "Öppna" visar exakt den PDF butiken fick.
+- **Filnamnet:** "Orderbekräftelse <Fortnox-nr> – <arbetsplats>.pdf" och "Egenkontroll <Fortnox-nr> – <arbetsplats>.pdf".
+- **Migreringen har `set lock_timeout = '5s'`.**
+
+**Egna val som William inte sa emot:**
+- **PDF:en fryses en gång** i den privata bucketen `portal-job-documents/<quoteId>/<id>.pdf`, och kön bär en referens med
+  hashen. Utskicket hämtar filen, kontrollerar storleken, `%PDF-` och sha256, och bygger kroppen i fast ordning vid varje
+  försök. Samma nyckel ger alltid samma byte. pdf-lib stämplar tiden, så en ny rendering hade gett andra byte, och
+  portalen svarar 422 på det. Kön och portalsidan bär aldrig filen.
+- **Idempotency-Key är `job.document-<dokument-id>`**, som `job.message-<id>` (punkt 24). `occurredAt` är när filen
+  frystes.
+- **Egenkontrollen hämtas ur arkivet** genom länken i just den här orderns kommentarer. Filnamnet måste sluta på orderns
+  Fortnox- eller AO-nummer, och samma namnfunktion används av egenkontrollens sida (`lib/domains/egenkontroll/filename.ts`).
+  Klienten skickar bara sökvägen den visade, och den jämförs bara med den som servern själv hittar.
+- **ROT:** orderbekräftelsen till en butik nekas om ordern har ROT, eftersom den då skriver ut ett personnummer. Provet står
+  i `getFortnoxOrderPdf({ refuseRot })`, på samma läsning som renderingen, och offerten läses strikt: ett läsfel stänger.
+- **Tidsgränsen** är 30 s per dokumentanrop (10 s för övriga).
+
+**Så fungerar det** (`20260928163644_portal_job_documents.sql`,
+`lib/domains/portal/{jobDocuments,jobDocumentsStore,jobDocumentsDecision,outboundContent}.ts`,
+`app/api/crm/portal/jobs/[workOrderId]/documents`, `WorkOrderPortalDocuments.tsx`):
+- **Tre lägen:** `building` (beslutat), `ready` (fryst) och `failed` (med skälet). Sessionen lägger till beslutet i eget
+  namn (RLS: svarsregeln). Service-rollen hämtar PDF:en, fryser den och köar. En köad rad ändras aldrig mer.
+- **Automatiken** körs i cron, efter utskicket. Den tar jobb vars `job.confirmed` levererats senaste veckan (hela fönstret,
+  i sidor) och som saknar en orderbekräftelse: en automatisk, eller en manuell som byggs eller är fryst.
+  - Ett beslut per jobb (unikt index) och ett lån på tio minuter.
+  - Tre byggen per varv, ett från knapparna på portalsidan.
+  - Fortnox nere: nya försök efter 5 min, 15 min och sedan varje timme, i ett dygn.
+  - Har någon skickat en med knappen under tiden görs inget.
+- **Det senast beslutade frysta dokumentet vinner** (`jobDocumentsDecision.ts`):
+  - Utskicket prövar precis före sändningen och hoppar över ett dokument som ett senare ersatt.
+  - Köandet sållar bort en äldre som frystes sent, och ersätter äldre beslut som ännu väntar.
+  - Dokumenten använder inte köns `supersedeKey`. Den ersätter i den ordning händelserna kom, och en äldre som köades sent
+    hade då ersatt en nyare.
+  - Ett fryst dokument som inte kom fram räknas ändå som det senaste. Kortet säger "Kom inte fram till butiken. Skicka en
+    ny.", och knappen köar alltid ett nytt beslut. Portalsidans "Skicka om" kan nekas när jobbet har senare händelser.
+- **Storleken** prövas när filen fryses, av bucketens gräns och vid varje utskick. En för stor PDF köas aldrig, och kortet
+  säger hur stor den är ("Egenkontrollen är 4,1 MB. Butiken kan ta emot högst 3,3 MB."). Fotona i en egenkontroll får vara
+  2 MB var, så det kan hända.
+- **Cron städar:** en knapptryckning som inte blivit en fil på tio minuter blir misslyckad. En fryst fil som inte hann köas
+  köas, eller bokförs om den redan låg i kön.
+
+**Granskningarna** (code-review high, fem rundor; varje runda granskade den förras rättelser):
+- **Första:**
+  - den senast beslutade vinner (en äldre som frystes sent hade ersatt en nyare);
+  - ingen automatisk när en manuell redan skickats;
+  - ROT via offertens reserv;
+  - knapparnas 180 s;
+  - egenkontrollens namn delat med sidan, och arkivets reservnamn;
+  - kortet vid köfel;
+  - `filename*` (RFC 5987).
+- **Andra:**
+  - prövningen flyttad till utskicket (kapplöpning mellan provet och köandet);
+  - ROT i renderingen;
+  - ett bygge per klick;
+  - fönstret i sidor och de befintliga i omgångar (1000 rader);
+  - en kund vars namn rensas bort helt.
+- **Tredje:**
+  - en manuell som bara byggs stoppar inte automatiken;
+  - ersättning i beslutsordning;
+  - en köad men inte bokförd rad markeras aldrig misslyckad;
+  - offerten läses strikt;
+  - fönstret läser bara köns nyckel.
+- **Fjärde och femte:** regeln förenklad och gjord lika på alla tre ställen (se ovan), och räkningen av vad ett varv
+  gjorde.
+- **Lämnat:** push-vägarna i `orders.ts` behandlar ett läsfel på offerten som "ingen offert". Det är befintligt beteende,
+  utanför fas 7, och hör hemma i en egen liten PR.
+
+**Prövat:**
+- **Migreringen:**
+  - i en tom tillfällig databas med stubbar (`storage.buckets` och `storage.objects`, svarsregeln): två körningar och 26
+    mutationer av efterkontrollen, var och en stoppad av sitt eget meddelande;
+  - lokalt två gånger i en transaktion som rullades tillbaka, och sedan med `supabase migration up`.
+- **`supabase/checks/portal_job_documents.sql`** med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon).
+  Varje nej måste vara rätt nej (grant, RLS eller rätt check, genom `sqlerrm`). 29 mutationer av databasen, alla röda med
+  sitt eget meddelande.
+- **Koden:** över 120 mutationer i fem rundor, alla röda i vitest med "Tests N". De som först överlevde var dubbletter,
+  som togs bort, eller luckor i testerna, som fylldes.
+- **Lokalt mot en fejkportal på :3101**, som prövar signaturen, portalens idempotens (samma nyckel med andra byte ger 422),
+  strikt base64, `%PDF-` och storleken:
+  - fyra automatiska orderbekräftelser (tre i första varvet, en i nästa), och ingen till det avbrutna jobbet;
+  - den mottagna PDF:en var byte för byte samma som den frysta;
+  - en som nekades (409) syns som "Kom inte fram";
+  - portalen svarade aldrig 422.
+- **I webbläsaren** (headless Playwright):
+  - säljaren ser den automatiska, öppnar exakt den skickade kopian, skickar egenkontrollen (samma byte som i arkivet) och
+    en ny orderbekräftelse;
+  - ett dubbelklick blir ett dokument;
+  - en för stor egenkontroll säger hur stor den är;
+  - en annan orders egenkontroll märks och får ingen knapp;
+  - ekonomi (läsvyn) och konsult läser utan knappar;
+  - admin ser "avbrutet" och får skicka på säljarens order;
+  - telefonbredd utan sidledsscroll.
+
+⚠️ **Lokalt kvar:**
+- automatiska och manuella dokument på q-lokal-3b-1, -3b-3, -3c-1 och -3c-2;
+- egenkontroller i arkivet (`Egenkontroller/Egenkontroll_Ronnvagen_18_22*.pdf` och `Egenkontroll_Annan_kund_999.pdf`), med
+  kommentarer på 3b-1 och 3b-3;
+- filer i `portal-job-documents`;
+- en uppgiven `job.document` för 3c-2 (fejkportalen nekade).
+
+**Till portalen:** punkt 28–30.
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -999,15 +1122,34 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 27. **En avbruten, utförd eller fakturerad order tar emot meddelanden** (William 2026-09-28), på samma sätt som
     portalen tar emot `job.message` efter `job.cancelled`.
 
+28. **`job.document` från CRM:et** (fas 7):
+    - `Idempotency-Key` är `job.document-<dokument-id>` (en uuid), utan tidpunkt, som `job.message` (punkt 24).
+      `occurredAt` är när PDF:en frystes, i UTC med `Z`.
+    - Kroppen är `{ type, occurredAt, data: { quoteId, kind, name, contentBase64 } }`, med strikt base64 av högst
+      3 300 000 byte. Samma nyckel ger alltid samma byte.
+    - `name` är "Orderbekräftelse <Fortnox-nr> – <arbetsplats>.pdf" eller "Egenkontroll …", högst 200 tecken, med svenska
+      tecken.
+    - Orderbekräftelsen skickas automatiskt en gång när `job.confirmed` är mottagen, och igen när Ekovilla skickar en ny.
+      Egenkontrollen skickas när Ekovilla skickar den.
+    - Av två av samma sort gäller den senast mottagna, och CRM:et skickar aldrig en äldre efter en nyare.
+    - Inga dokument efter `job.cancelled`.
+29. **Portalens kod tar emot `job.document` efter `job.cancelled`**, medan kontraktet säger 409 `cancelled` på allt utom
+    `job.message`. Det gäller route-kommentaren i `app/api/ekovilla/events/route.ts` och `saveJobDocument` i
+    `lib/data/supabase/crm.ts`. CRM:et skickar inga dokument efter ett avbrott, så båda fungerar, men kontraktet och koden
+    bör säga samma sak.
+30. **`filename*` i portalens dokumentroute** (`app/(portal)/jobb/[id]/dokument/[kind]/route.ts`): `encodeURIComponent`
+    lämnar `' ( ) *` okodade, och de får inte stå i ett RFC 5987-värde. En arbetsplats som "Storgatan 1 (bakgård)" ger ett
+    felaktigt `filename*`. CRM:ets "Öppna" kodar dem.
+
 ## Öppna frågor
 
-Ingen av dem stoppar fas 0–6.
+Ingen av dem stoppar fas 0–7.
 
 - **Momsen** (kontraktets fråga 4). `reverse_vat` sitter på kunden och gäller alla kundens dokument,
   medan produkter normalt har vanlig moms. Blockerar fas 8 och ska vara besvarad före första riktiga
   jobbet i prod, eftersom Fortnox-ordern nu skapas automatiskt. Tas med ekonomi eller revisor.
 - ✅ **Ett avbrutet jobb** (fråga 5): `job.cancelled`, byggt i fas 4b (punkt 20).
-- **Dokumenten** (fråga 7): förslaget är både orderbekräftelsen och egenkontrollen.
+- ✅ **Dokumenten** (fråga 7): orderbekräftelsen och egenkontrollen, byggt i fas 7 (punkt 28–30).
 - **Planeringens datumbekräftelse** föreslår kontakten på plats (`resolveDocumentContact()` i
   `lib/domains/crm/contacts.ts`), alltså butikens slutkund. Är det önskat?
 - **Vem är reservadmin?** Reserven väljs på portalsidan (fas 3a) och måste vara vald före fas 9.

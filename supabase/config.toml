@@ -122,6 +122,8 @@ file_size_limit = "50MiB"
 # Prods buckets (storage.buckets, 2026-09-25). De är rader, inte schema, och följer därför inte med
 # migreringarna. Prod har bara de här två, så allt som inte är skyddsrondsfoton ligger i `pdfs`.
 # Skapas lokalt av `supabase start`, i test med `supabase seed buckets`.
+# Undantag: `portal-job-documents` (återförsäljarportalens dokument, fas 7) skapas av sin migrering
+# (20260928163644_portal_job_documents.sql), som också prövar att den är privat och att ingen policy når den.
 [storage.buckets.pdfs]
 public = false
 

@@ -15,7 +15,9 @@ describe('portalOutboxEventKind / Detail', () => {
   it('känner igen prislistan och jobbens händelser', () => {
     expect(portalOutboxEventKind('pricelist', { validFrom: '2026-10-01' })).toBe('pricelist');
     expect(portalOutboxEventKind('job:q-1', { type: 'job.cancelled' })).toBe('job.cancelled');
-    expect(portalOutboxEventKind('job:q-1', { type: 'job.message' })).toBe('other');
+    expect(portalOutboxEventKind('job:q-1', { type: 'job.message' })).toBe('job.message');
+    expect(portalOutboxEventKind('job:q-1', { type: 'job.document' })).toBe('job.document');
+    expect(portalOutboxEventKind('job:q-1', { type: 'job.okand' })).toBe('other');
   });
 
   it('det viktigaste ur kroppen', () => {
@@ -25,6 +27,14 @@ describe('portalOutboxEventKind / Detail', () => {
     expect(portalOutboxEventDetail('job.confirmed', { data: { ekovillaOrderNumber: '26' } })).toBe('Order 26');
     expect(portalOutboxEventDetail('pricelist', { validFrom: '2026-10-01' })).toBe('Giltig från 2026-10-01');
     expect(portalOutboxEventDetail('job.cancelled', { data: {} })).toBeNull();
+    expect(portalOutboxEventDetail('job.message', { data: { authorName: 'Anna Berg', body: 'Hej' } })).toBe('Anna Berg');
+    // Dokumentets kropp i kön har namnet och en referens, aldrig innehållet (fas 7).
+    expect(
+      portalOutboxEventDetail('job.document', {
+        data: { quoteId: 'q-1', kind: 'order_confirmation', name: 'Orderbekräftelse 26 – Rönnvägen 18, Gävle.pdf' },
+        contentRef: { documentId: 'd', sha256: 'x', bytes: 10 },
+      }),
+    ).toBe('Orderbekräftelse 26 – Rönnvägen 18, Gävle.pdf');
   });
 });
 

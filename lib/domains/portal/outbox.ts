@@ -1,8 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolvePortalTarget } from './config';
-import { classifyPortalResult, sendToPortal, type PortalSendResult } from './client';
+import { classifyPortalResult, safeExcerpt, sendToPortal, type PortalSendResult } from './client';
 import { isValidIdempotencyKey } from './idempotency';
 import { canonicalJson } from './canonicalJson';
+import { preparePortalPayload, type PreparedPortalPayload } from './outboundContent';
 
 /**
  * Kön för allt CRM:et skickar till återförsäljarportalen (`portal_outbound_events`, RESELLER_PORTAL_CRM_PLAN.md
@@ -19,9 +20,9 @@ import { canonicalJson } from './canonicalJson';
 export const PORTAL_OUTBOX_MAX_ATTEMPTS = 60;
 
 /**
- * Hur länge ett utskick tar nya händelser. Ett anrop får ta 10 s, så en körning är klar inom ~70 s — väl under
- * claim-funktionens fem minuter innan en händelse i "sending" räknas som fastnad och tas igen. Utan gränsen hade 20
- * långsamma anrop tagit 200 s, och nästa körning skickat samma händelser en gång till.
+ * Hur länge ett utskick tar nya händelser. Ett anrop får ta 10 s, ett dokument 30 s (outboundContent.ts), så en körning
+ * är klar inom ~90 s — väl under claim-funktionens fem minuter innan en händelse i "sending" räknas som fastnad och tas
+ * igen. Utan gränsen hade 20 långsamma anrop tagit 200 s, och nästa körning skickat samma händelser en gång till.
  */
 export const PORTAL_OUTBOX_BUDGET_MS = 60_000;
 
@@ -146,6 +147,8 @@ export type OutboxDispatchSummary =
       dead: number;
       /** Tagna men inte skickade, eftersom tiden tog slut; tillbaka i kön utan att ett försök räknats. */
       returned: number;
+      /** Tagna men aldrig skickade: ett senare dokument av samma sort finns (outboundContent.ts). */
+      superseded: number;
       /** Resultatet kunde inte bokföras, eller claimen var inte längre vår. */
       bookkeepingErrors: number;
     };
@@ -179,6 +182,28 @@ export function outcomeUpdate(
     status: 'pending',
     next_attempt_at: new Date(now.getTime() + retryDelaySeconds(event.attempts) * 1000).toISOString(),
     last_http_status: httpStatus,
+    last_error: error,
+  };
+}
+
+/**
+ * Vad som skrivs på raden när kroppen inte gick att bygga (ett dokument vars fil inte kunde hämtas eller inte stämmer).
+ * Inget anrop gjordes. Ren, så att regeln kan testas.
+ */
+export function preparationFailureUpdate(
+  event: Pick<ClaimedEvent, 'attempts'>,
+  failure: Exclude<PreparedPortalPayload, { kind: 'ready' }>,
+  now: Date,
+): Record<string, unknown> {
+  const error = safeExcerpt(failure.error, 500);
+  if (failure.kind === 'skip') return { status: 'superseded', last_http_status: null, last_error: error };
+  if (failure.kind === 'dead' || event.attempts >= PORTAL_OUTBOX_MAX_ATTEMPTS) {
+    return { status: 'dead', last_http_status: null, last_error: error };
+  }
+  return {
+    status: 'pending',
+    next_attempt_at: new Date(now.getTime() + retryDelaySeconds(event.attempts) * 1000).toISOString(),
+    last_http_status: null,
     last_error: error,
   };
 }
@@ -228,7 +253,16 @@ export async function dispatchPortalOutbox(
   if (claimed.error) throw new Error(`Kön kunde inte läsas: ${claimed.error.message}`);
   const events = (claimed.data ?? []) as ClaimedEvent[];
 
-  const summary = { ran: true as const, claimed: events.length, sent: 0, retried: 0, dead: 0, returned: 0, bookkeepingErrors: 0 };
+  const summary = {
+    ran: true as const,
+    claimed: events.length,
+    sent: 0,
+    retried: 0,
+    dead: 0,
+    returned: 0,
+    superseded: 0,
+    bookkeepingErrors: 0,
+  };
   for (const event of events) {
     if (now().getTime() - startedAt >= budgetMs) {
       // Tiden är slut: lämna tillbaka resten utan att räkna ett försök som aldrig gjordes.
@@ -238,21 +272,36 @@ export async function dispatchPortalOutbox(
       continue;
     }
 
-    const result = await sendToPortal({
-      baseUrl: target.baseUrl,
-      secret: target.secret,
-      path: event.path,
-      idempotencyKey: event.idempotency_key,
-      payload: event.payload,
-      nowSeconds: now().getTime() / 1000,
-      fetchImpl: options.fetchImpl,
-    });
-    const update = outcomeUpdate(event, result, now());
+    // Ett dokument köas med en referens; kroppen byggs ur den frysta filen vid varje försök (outboundContent.ts).
+    let prepared: PreparedPortalPayload;
+    try {
+      prepared = await preparePortalPayload(admin, event.payload);
+    } catch (e) {
+      prepared = { kind: 'retry', error: `kroppen kunde inte byggas: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    const update =
+      prepared.kind === 'ready'
+        ? outcomeUpdate(
+            event,
+            await sendToPortal({
+              baseUrl: target.baseUrl,
+              secret: target.secret,
+              path: event.path,
+              idempotencyKey: event.idempotency_key,
+              payload: prepared.payload,
+              nowSeconds: now().getTime() / 1000,
+              fetchImpl: options.fetchImpl,
+              timeoutMs: prepared.timeoutMs,
+            }),
+            now(),
+          )
+        : preparationFailureUpdate(event, prepared, now());
     if (!(await updateOwnClaim(admin, event, update))) {
       summary.bookkeepingErrors += 1;
       continue;
     }
     if (update.status === 'sent') summary.sent += 1;
+    else if (update.status === 'superseded') summary.superseded += 1;
     else if (update.status === 'dead') {
       summary.dead += 1;
       console.warn('[portal-outbox] händelsen gavs upp', { key: event.idempotency_key, error: update.last_error });

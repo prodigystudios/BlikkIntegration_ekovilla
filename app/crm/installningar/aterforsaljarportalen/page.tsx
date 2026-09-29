@@ -26,6 +26,8 @@ const OUTBOX_KIND_LABELS: Record<PortalOutboxEventKind, string> = {
   'job.completed': 'Utförd',
   'job.invoiced': 'Fakturerad',
   'job.cancelled': 'Avbruten',
+  'job.message': 'Meddelande',
+  'job.document': 'Dokument',
   other: 'Annan händelse',
 };
 
