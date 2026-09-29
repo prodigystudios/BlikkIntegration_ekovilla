@@ -111,8 +111,8 @@ export async function setStoreOrderFreight(
 
 export type LinkStoreOrderCustomerResult =
   /**
-   * `storeLink`: butikens koppling. `linked` sparad; `kept` butiken hade redan en, som står kvar; `failed` gick inte att
-   * spara (sägs); `not_applicable` ett byte, som bara gäller beställningen.
+   * `storeLink`: butikens koppling. `linked` sparad (också när ett byte rättade ett felval); `kept` butiken hade redan en
+   * annan, som står kvar; `failed` gick inte att spara (sägs); `not_applicable` ett byte, som bara gäller beställningen.
    */
   | { kind: 'linked'; storeLink: 'linked' | 'kept' | 'failed' | 'not_applicable' }
   | { kind: 'not_found' }
@@ -170,24 +170,26 @@ export async function linkStoreOrderCustomer(
 
   // Ett byte gäller bara den här beställningen: butikens koppling (som gäller nästa jobb och beställning) sätts bara när
   // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
-  if (hadCustomer) return { kind: 'linked', storeLink: 'not_applicable' };
-
-  // Butikens koppling för hand, bara om butiken saknar en (`customer_linked_at`): en som gjorts sedan beställningen kom
-  // (ett jobb, 3c) flyttas aldrig av en beställning. En koppling via kundnumret räknas inte, eftersom intaget bara läser
-  // den för hand när numret saknas eller är okänt (manualCustomerLink). Beställningen är redan kopplad här: ett fel
-  // loggas och sägs, men stoppar inget.
-  const store = await admin
-    .from('crm_portal_resellers')
-    .update({ customer_id: card.id, customer_linked_by: input.actor.id, customer_linked_at: now().toISOString() })
-    .eq('reseller_id', row.reseller_id)
-    .is('customer_linked_at', null)
-    .select('reseller_id');
+  // Butikens koppling för hand. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
+  //   kom utan kund   sätts bara om butiken saknar en koppling för hand (`customer_linked_at`): en som gjorts sedan
+  //                   beställningen kom (ett jobb, 3c) flyttas aldrig av en beställning. En koppling via kundnumret
+  //                   räknas inte, eftersom intaget bara läser den för hand när numret saknas eller är okänt.
+  //   ett byte        följer med bara om butikens koppling för hand pekade på kortet som byts ut: då var det ett felval
+  //                   som rättas. Pekar den på något annat gäller bytet bara beställningen.
+  const linkValues = { customer_id: card.id, customer_linked_by: input.actor.id, customer_linked_at: now().toISOString() };
+  const storeUpdate = admin.from('crm_portal_resellers').update(linkValues).eq('reseller_id', row.reseller_id);
+  const store = await (hadCustomer
+    ? storeUpdate.eq('customer_id', input.expectedCustomerId as string).not('customer_linked_at', 'is', null)
+    : storeUpdate.is('customer_linked_at', null)
+  ).select('reseller_id');
   if (store.error) {
     console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error.message });
     return { kind: 'linked', storeLink: 'failed' };
   }
-  // Ingen rad: butiken hade redan en koppling för hand, som står kvar.
-  return { kind: 'linked', storeLink: (store.data ?? []).length > 0 ? 'linked' : 'kept' };
+  // Ingen rad: butiken hade redan en koppling för hand (till ett annat kort), som står kvar; eller ett byte som bara
+  // gäller beställningen.
+  if ((store.data ?? []).length > 0) return { kind: 'linked', storeLink: 'linked' };
+  return { kind: 'linked', storeLink: hadCustomer ? 'not_applicable' : 'kept' };
 }
 
 // ------------------------------------------------------------------------------------------------------ Fortnox-ordern

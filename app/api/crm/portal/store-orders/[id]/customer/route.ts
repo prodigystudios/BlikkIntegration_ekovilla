@@ -9,7 +9,7 @@ type RouteContext = { params: { id: string } };
 // Butikens kundkort på en butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8b), medan den är mottagen. Kortet läses
 // med sessionen. Kom beställningen utan kund sparas kopplingen också på butiken (som fas 3c); ett byte gäller bara den.
 //
-//   200 { store_link }   butikens koppling: linked | kept (butiken hade en) | failed | not_applicable (ett byte)
+//   200 { store_link }   butikens koppling: linked | kept (butiken hade en annan) | failed | not_applicable (ett byte)
 //   400 validation_error
 //   403 store_order_forbidden                  varken ansvarig eller admin
 //   404 store_order_not_found / crm_customer_not_found

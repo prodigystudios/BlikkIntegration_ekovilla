@@ -158,6 +158,27 @@ describe('linkStoreOrderCustomer', () => {
     expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
   });
 
+  it('🧨 ett felval rättas med Byt: butikens koppling för hand, som pekade på felvalet, följer med', async () => {
+    const right = '77777777-7777-4777-8777-777777777777';
+    const m = db(storeOrder(), {
+      crm_customers: [CARD, { ...CARD, id: right, fortnox_customer_id: '2000' }],
+      crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'Norrbygg AB', customer_id: CARD_ID, customer_linked_at: '2026-09-29T09:00:00Z' }],
+    });
+    expect(await link(m, right, CARD_ID)).toEqual({ kind: 'linked', storeLink: 'linked' });
+    expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: right, customer_linked_by: SELLER });
+  });
+
+  it('ett byte när butiken är kopplad till ett tredje kort: bara beställningen byts', async () => {
+    const right = '77777777-7777-4777-8777-777777777777';
+    const third = '99999999-9999-4999-8999-999999999999';
+    const m = db(storeOrder(), {
+      crm_customers: [CARD, { ...CARD, id: right, fortnox_customer_id: '2000' }],
+      crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'Norrbygg AB', customer_id: third, customer_linked_at: '2026-09-29T09:00:00Z' }],
+    });
+    expect(await link(m, right, CARD_ID)).toEqual({ kind: 'linked', storeLink: 'not_applicable' });
+    expect(m.tables.crm_portal_resellers[0].customer_id).toBe(third);
+  });
+
   it('🧨 en annan hos Ekovilla bytte kund sedan sidan lästes: mitt byte skriver inte över, "customer_changed"', async () => {
     const other = '77777777-7777-4777-8777-777777777777';
     const third = '99999999-9999-4999-8999-999999999999';

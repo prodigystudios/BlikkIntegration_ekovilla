@@ -1217,17 +1217,22 @@ finns, eftersom kontraktet kräver det.
   (uppmätt; tom sträng rensar inte, `null` gör). Beställningen skickar butikens namn och `DeliveryAddress2: null`.
 - **Allt Ekovilla sparar görs mot det säljaren såg:** frakten (`expectedSetAt`), kunden (`expected_customer_id`) och
   Bekräfta (version, frakt, kund). Säger servern att sidan inte stämmer läses den om och ett öppet steg stängs.
-- **Butikens koppling** sätts bara när beställningen kom utan kund och butiken saknar koppling: en beställning flyttar
-  aldrig en befintlig koppling (jobben, 3c, gör det fortfarande).
+- **Butikens koppling för hand** (`customer_linked_at`) sätts när beställningen kom utan kund och butiken saknar en;
+  en beställning flyttar aldrig en befintlig koppling (jobben, 3c, gör det fortfarande). Ett byte flyttar den bara när
+  den pekade på kortet som byts ut (ett felval som rättas).
+- 🧨 **Tankstreck i huvudet nekar ordern** ("—" i Er referens, leveransadressen, Comments; uppmätt): all butikens
+  fritext går genom `fortnoxRowText`. Postnummer 20, ort 100 och leveransnamn 200 tecken sparas hela (uppmätt).
 
-**Granskningarna** (code-review high, sju rundor): dubbletter i Fortnox (märkningen och sökningen, sedan två samtidiga
+**Granskningarna** (code-review high, tretton rundor; de sista gav mest upprepningar): dubbletter i Fortnox (märkningen och sökningen, sedan två samtidiga
 försök), bekräfta det säljaren såg, 500 efter ett lås som gick igenom, texterna efter utfallet, felens klass (bara 400
 är ett stopp), leveransnamnet och rad 2, makulerade ordrar tas inte över, enheten bara ur registret, osparade
-ändringar, bytet och butikens koppling, cron före jobben, skyddsnätet och claimen vid knappen. Lämnat med skäl:
-omförsöksloopen är en kopia av jobbens, läsningarnas ordning i Bekräfta, `parsePrice` är strikt med flit.
+ändringar, bytet och butikens koppling, cron före jobben, skyddsnätet och claimen vid knappen, tankstreck i huvudet,
+sena försök och fönstret, ett långsamt försök som skriver över ett annats order. Lämnat med skäl: omförsöksloopen är en
+kopia av jobbens, läsningarnas ordning i Bekräfta, `parsePrice` är strikt med flit, claimen är inte stämplad per
+försök, regelanropet görs också för avslutade beställningar.
 
-**Prövat:** vitest (storeOrderFortnox, storeOrderActions, storeOrderRoutes, cron), över 70 mutationer, alla röda utom
-en likvärdig (`exists`/`created` ger samma plan). Lokalt mot testbolaget: ordrar 53, 54, 55, 58 (Ingen frakt), felvägen
+**Prövat:** vitest (storeOrderFortnox, storeOrderActions, storeOrderRoutes, cron), 93 mutationer, alla röda utom en
+likvärdig (`exists`/`created` ger samma plan). Lokalt mot testbolaget: ordrar 53, 54, 55, 58 (Ingen frakt), felvägen
 med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, butikens ändring under tiden, osparad
 ändring, telefonbredd.
 
