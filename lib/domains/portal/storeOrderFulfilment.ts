@@ -46,7 +46,7 @@ import { readProfileName } from './storeOrdersStore';
  *
  * 🧨 STÄMPELN. Den delade claimen (`claimFortnoxPush`) säger inte vems den är, och en push vars claim blivit gammal
  * släpper den när den sparar sitt nummer, vems den än är. Stegen här läser därför claimens tid direkt efter att de tagit
- * den (`takeClaim`: ingen annan kan ta den förrän den är två minuter gammal), och släpper och skriver bara med den.
+ * den (`takeStoreOrderClaim`, ./storeOrderClaim.ts: ingen annan kan ta den förrän den är två minuter gammal), och släpper och skriver bara med den.
  * Makulera prövar i varje varv att claimen fortfarande är dess egen, och tar den igen annars.
  *
  * Fortnox svar, uppmätta i testbolaget 2026-09-29 (ordrar 71 och 72):
@@ -60,11 +60,6 @@ import { readProfileName } from './storeOrdersStore';
  */
 
 const TABLE = 'crm_store_orders';
-
-const ORDER_CLAIM = STORE_ORDER_CLAIM;
-const INVOICE_CLAIM = STORE_ORDER_INVOICE_CLAIM;
-const takeClaim = takeStoreOrderClaim;
-const release = releaseStoreOrderClaim;
 
 // ------------------------------------------------------------------------------------------------------------ Fortnox
 
@@ -147,17 +142,17 @@ export async function markStoreOrderDelivered(
   if (blocked) return blocked;
   const orderNumber = (first as DeliverRow).fortnox_order_number as string;
   // Fortnox-ordern finns (bekräftad med nummer): synkad.
-  const stamp = await takeClaim(admin, input.id, ORDER_CLAIM, 'synced');
+  const stamp = await takeStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, 'synced');
   if (!stamp) return { kind: 'busy' };
 
   // Fortnox-ordern som den står, med claimen: ingen makulering här kan komma emellan.
   try {
     if ((await deps.readOrder(orderNumber)).cancelled) {
-      await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
+      await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, 'synced');
       return { kind: 'fortnox_order_cancelled', orderNumber };
     }
   } catch (e) {
-    await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
+    await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, 'synced');
     throw e;
   }
 
@@ -184,7 +179,7 @@ export async function markStoreOrderDelivered(
 
   // Inte sparat: claimen släpps (Fortnox-ordern finns, alltså synkad), och svaret säger varför. Står beställningen kvar
   // som den var har claimen tappats till ett annat steg: busy.
-  await release(admin, input.id, ORDER_CLAIM, stamp, 'synced');
+  await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, 'synced');
   if (saved.error) throw new Error(`Leveransen kunde inte sparas: ${saved.error.message}`);
   return decideDeliver(await readDeliverRow(admin, input.id), deliveredOn, at) ?? { kind: 'busy' };
 }
@@ -269,7 +264,7 @@ export async function invoiceStoreOrder(
   if (settled) return settled;
   // Synkläget som det var, om claimen måste släppas utan att något gjorts (en gammal claim räknas som ett fel).
   const before = (first as InvoiceRow).fortnox_invoice_sync_status;
-  const stamp = await takeClaim(admin, input.id, INVOICE_CLAIM, before === 'pending' ? 'failed' : before);
+  const stamp = await takeStoreOrderClaim(admin, input.id, STORE_ORDER_INVOICE_CLAIM, before === 'pending' ? 'failed' : before);
   if (!stamp) return { kind: 'busy' };
 
   let invoice: { number: string; source: 'created' | 'adopted' };
@@ -278,18 +273,18 @@ export async function invoiceStoreOrder(
     const row = await readInvoiceRow(admin, input.id);
     const again = settledInvoice(row);
     if (again) {
-      await release(admin, input.id, INVOICE_CLAIM, stamp, row?.fortnox_invoice_number ? 'synced' : 'not_synced');
+      await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_INVOICE_CLAIM, stamp, row?.fortnox_invoice_number ? 'synced' : 'not_synced');
       return again;
     }
     const orderNumber = (row as InvoiceRow).fortnox_order_number as string;
     const outcome = await createOrAdoptInvoice(orderNumber, deps);
     if (outcome.kind === 'cancelled') {
-      await release(admin, input.id, INVOICE_CLAIM, stamp, 'not_synced');
+      await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_INVOICE_CLAIM, stamp, 'not_synced');
       return { kind: 'fortnox_order_cancelled', orderNumber };
     }
     invoice = outcome;
   } catch (e) {
-    await release(admin, input.id, INVOICE_CLAIM, stamp, e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed');
+    await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_INVOICE_CLAIM, stamp, e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed');
     throw e;
   }
 
@@ -325,7 +320,7 @@ export async function invoiceStoreOrder(
     fortnoxInvoiceNumber: invoice.number,
     error: saved.error?.message ?? 'ingen rad',
   });
-  await release(admin, input.id, INVOICE_CLAIM, stamp, 'failed');
+  await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_INVOICE_CLAIM, stamp, 'failed');
   return { kind: 'unsaved', invoiceNumber: invoice.number };
 }
 
@@ -426,7 +421,7 @@ export async function cancelStoreOrder(
   const before = (first as CancelRow).fortnox_order_sync_status;
   const restore = (current: CancelRow | null) =>
     current?.fortnox_order_number ? 'synced' : before === 'pending' || before === 'synced' ? 'failed' : before;
-  let stamp = await takeClaim(admin, input.id, ORDER_CLAIM, restore(first));
+  let stamp = await takeStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, restore(first));
   if (!stamp) return { kind: 'busy' };
   const done: string[] = [];
   // Fortnox-ordrar som makulerats men beställningen står kvar: bara möjligt när ett annat steg fått claimen emellan.
@@ -444,7 +439,7 @@ export async function cancelStoreOrder(
       // Claimen kan ha släppts under oss: en push vars claim blivit gammal släpper den när den sparar sitt nummer. Den
       // tas igen, så att ingen Levererad landar medan Fortnox-ordern makuleras. Håller någon annan den nu: busy.
       if (row && row.fortnox_order_claimed_at !== stamp) {
-        stamp = await takeClaim(admin, input.id, ORDER_CLAIM, restore(row));
+        stamp = await takeStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, restore(row));
         if (!stamp) {
           warnPartial(row.status, 'hann tas av ett annat steg');
           return { kind: 'busy' };
@@ -453,7 +448,7 @@ export async function cancelStoreOrder(
       }
       const again = decideCancel(row, input.expected);
       if (again) {
-        await release(admin, input.id, ORDER_CLAIM, stamp, restore(row));
+        await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, restore(row));
         warnPartial(row?.status ?? null, 'hann ändras här');
         return again;
       }
@@ -472,7 +467,7 @@ export async function cancelStoreOrder(
         if (done.includes(orderNumber)) continue;
         const state = await deps.readOrder(orderNumber);
         if (state.invoiceNumber) {
-          await release(admin, input.id, ORDER_CLAIM, stamp, restore(current));
+          await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, restore(current));
           warnPartial(current.status, 'makulerades inte: en annan order är fakturerad');
           return { kind: 'fortnox_order_invoiced', orderNumber, invoiceNumber: state.invoiceNumber };
         }
@@ -503,7 +498,7 @@ export async function cancelStoreOrder(
       for (const orderNumber of open) {
         const refused = await cancelInFortnox(orderNumber, deps);
         if (refused) {
-          await release(admin, input.id, ORDER_CLAIM, stamp, linked ? 'synced' : restore(current));
+          await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, linked ? 'synced' : restore(current));
           warnPartial(current.status, 'makulerades inte: en annan order nekades');
           return refused;
         }
@@ -516,11 +511,10 @@ export async function cancelStoreOrder(
           ...cancelled,
           fortnox_order_sync_status: linked ? 'synced' : 'not_synced',
           fortnox_order_claimed_at: null,
-          // Omförsöken stängs: cron hade annars tagit den igen (och hoppat över den). Utom när makuleringen tog över en
-          // push vars claim blivit gammal: dess POST kan fortfarande vara på väg, så ett svep planeras (storeOrderActions).
-          ...(before === 'pending'
-            ? planPortalFortnoxRetry({ outcome: 'failed', attempts: 0, retryUntil: null, now: deps.now() })
-            : { fortnox_next_attempt_at: null }),
+          // 🧨 Ett svep om 5 min (storeOrderActions), i stället för pushens omförsök: en POST som skickades före
+          // makuleringen (en push som dog, eller vars claim blev gammal) kan landa i Fortnox efter sökningen här. Svepet
+          // makulerar varje order med märkningen som då står öppen, och slutar när ingen gör det.
+          ...planPortalFortnoxRetry({ outcome: 'failed', attempts: 0, retryUntil: null, now: deps.now() }),
         })
         .eq('id', input.id)
         .eq('status', 'confirmed')
@@ -531,7 +525,7 @@ export async function cancelStoreOrder(
     }
     throw new Error('Beställningen ändrades medan den makulerades.');
   } catch (e) {
-    if (stamp) await release(admin, input.id, ORDER_CLAIM, stamp, linkedHere ? 'synced' : restore(row));
+    if (stamp) await releaseStoreOrderClaim(admin, input.id, STORE_ORDER_CLAIM, stamp, linkedHere ? 'synced' : restore(row));
     warnPartial(row?.status ?? null, `kunde inte makuleras här: ${errorText(e)}`);
     throw e;
   }

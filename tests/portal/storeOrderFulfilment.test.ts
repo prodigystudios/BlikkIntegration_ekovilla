@@ -577,7 +577,7 @@ describe('cancelStoreOrder', () => {
     expect(deps.cancel).not.toHaveBeenCalled();
   });
 
-  it('bekräftad med Fortnox-order: ordern makuleras FÖRST, sedan beställningen; omförsöken stängs och claimen släpps', async () => {
+  it('bekräftad med Fortnox-order: ordern makuleras FÖRST, sedan beställningen; ett svep planeras och claimen släpps', async () => {
     const m = db(storeOrder({ fortnox_next_attempt_at: '2026-09-29T10:05:00.000Z' }));
     const { deps, state } = fakeFortnox();
     deps.cancel.mockImplementation(async (n: string) => {
@@ -595,7 +595,9 @@ describe('cancelStoreOrder', () => {
       fortnox_order_number: '58',
       fortnox_order_sync_status: 'synced',
       fortnox_order_claimed_at: null,
-      fortnox_next_attempt_at: null,
+      // Svepet om 5 min (inte pushens omförsök): en POST som skickades före makuleringen kan landa efter sökningen.
+      fortnox_next_attempt_at: '2026-09-29T10:05:00.000Z',
+      fortnox_attempts: 1,
     });
   });
 
@@ -605,7 +607,7 @@ describe('cancelStoreOrder', () => {
     expect(await cancel(m, deps)).toEqual({ kind: 'cancelled', fortnoxOrderNumbers: ['57', '59'] });
     expect(deps.findOpen).toHaveBeenCalledWith(`crm-store-order:${ID}`);
     expect(state['57'].cancelled && state['59'].cancelled).toBe(true);
-    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: '57', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: null });
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: '57', fortnox_order_sync_status: 'synced', fortnox_next_attempt_at: '2026-09-29T10:05:00.000Z' });
   });
 
   it('🧨 raden har ett nummer, och en dubblett med märkningen står öppen (två försök skickade): båda makuleras', async () => {

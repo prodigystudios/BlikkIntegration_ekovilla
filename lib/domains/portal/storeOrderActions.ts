@@ -663,7 +663,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
           ? `Fortnox svarade: ${friendlyFortnoxMessage(e)}`
           : // Vårt eget fel (databasen, registret, sökningen): texten stannar i loggen.
             'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.';
-    console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: e instanceof Error ? e.message : String(e) });
+    console.error('[portal-store-orders] Fortnox-ordern kunde inte skapas', { id, outcome, error: errorText(e) });
     const sync = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
     const written = await finishPush(
       admin,
@@ -675,10 +675,11 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
       { withoutNumber: true, whileConfirmed: true },
     );
     // Ingen rad: ett annat försök hann skapa och spara ordern medan det här väntade (då är det klart, inget fel), eller
-    // beställningen makulerades (då söks en order som vår POST ändå kan ha skapat).
+    // beställningen makulerades. Då planeras ett svep (cron), som makulerar en order som vår POST ändå kan ha skapat;
+    // svepet görs aldrig i knappens anrop.
     if (!written) {
       const settled = await numberSavedMeanwhile(admin, id);
-      if (settled?.outcome === 'skipped' && (await cancelLeftoverOrders(id, reference, deps)) === 'retry') await requestLeftoverSweep(admin, id, deps.now());
+      if (settled?.outcome === 'skipped') await requestLeftoverSweep(admin, id, deps.now());
       if (settled) return { result: settled, sync: settled.outcome === 'exists' ? 'synced' : 'not_synced' };
     }
     return { result: { outcome, fortnoxOrderNumber: null, error }, sync };
@@ -717,7 +718,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
           id,
           kept: current.fortnox_order_number,
           extra: number,
-          error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+          error: errorText(cancelError),
         });
       }
       return { result: { outcome: 'exists', fortnoxOrderNumber: current.fortnox_order_number, error: null }, sync: 'synced' };
@@ -727,7 +728,7 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
     console.error('[portal-store-orders] 🧨 Fortnox-ordern skapades men numret sparades inte', {
       id,
       fortnoxOrderNumber: number,
-      error: e instanceof Error ? e.message : String(e),
+      error: errorText(e),
     });
     // Claimen släpps också, så att knappen inte svarar "skapas redan" i två minuter, och numret står i felet på raden, så
     // att sidan visar det efter en omläsning (ingen ska lägga upp ordern för hand i Fortnox).
@@ -819,7 +820,7 @@ export async function confirmStoreOrder(
   try {
     return { kind: 'confirmed', push: await pushStoreOrderToFortnox(admin, input.id, deps) };
   } catch (e) {
-    console.error('[portal-store-orders] Fortnox-försöket efter bekräftelsen föll', { id: input.id, error: e instanceof Error ? e.message : String(e) });
+    console.error('[portal-store-orders] Fortnox-försöket efter bekräftelsen föll', { id: input.id, error: errorText(e) });
     return {
       kind: 'confirmed',
       push: { outcome: 'failed', fortnoxOrderNumber: null, error: 'Fortnox-ordern kunde inte skapas just nu. Står felet kvar: tryck Skicka till Fortnox om en stund.' },
@@ -901,7 +902,7 @@ export async function retryStoreOrderFortnox(
       }
     } catch (e) {
       summary.errors += 1;
-      console.error('[portal-store-orders] Fortnox-försöket föll', { id: order.id, error: e instanceof Error ? e.message : String(e) });
+      console.error('[portal-store-orders] Fortnox-försöket föll', { id: order.id, error: errorText(e) });
     }
   }
   return summary;

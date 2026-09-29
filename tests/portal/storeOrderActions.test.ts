@@ -705,31 +705,34 @@ describe('pushStoreOrderToFortnox', () => {
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
   });
 
-  it('🧨 Fortnox nekar medan beställningen makulerades (ingen order): inget fel och inga nya försök på den makulerade', async () => {
+  it('🧨 Fortnox nekar medan beställningen makulerades: inget fel på den makulerade, och ett svep planeras (POST:en kan ha landat)', async () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null }));
     const deps = fortnoxDeps(async () => {
       Object.assign(row(m), { status: 'cancelled', fortnox_next_attempt_at: null, fortnox_order_sync_status: 'not_synced', fortnox_order_claimed_at: null });
       throw new FortnoxApiError(503, 'Fortnox POST /orders misslyckades (503)');
     });
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
-    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_error: null, fortnox_next_attempt_at: null, fortnox_order_sync_status: 'not_synced' });
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_error: null, fortnox_next_attempt_at: minutes(5), fortnox_attempts: 1 });
   });
 
-  it('🧨 POST:en föll (svaret kom aldrig) medan beställningen makulerades, men Fortnox skapade ordern: den makuleras', async () => {
+  it('🧨 POST:en föll (svaret kom aldrig) medan beställningen makulerades: knappen sveper inte själv, ett svep planeras åt cron', async () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null }));
     const deps = fortnoxDeps(async () => {
       Object.assign(row(m), { status: 'cancelled', fortnox_next_attempt_at: null, fortnox_order_claimed_at: null });
       throw new FortnoxApiError(504, 'Fortnox POST /orders misslyckades (504)');
     });
-    // Före POST:en finns ingen order; efteråt finns 801 (skapad fast svaret aldrig kom).
     deps.findOpen.mockImplementation(async () => ['801']);
     expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.findOpen).not.toHaveBeenCalled();
+    expect(deps.cancel).not.toHaveBeenCalled();
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: null, fortnox_error: null, fortnox_next_attempt_at: minutes(5) });
+    // Cron tar svepet: 801 makuleras.
+    Object.assign(row(m), { fortnox_next_attempt_at: minutes(-1) });
+    await retryStoreOrderFortnox(m.admin, { deps });
     expect(deps.cancel).toHaveBeenCalledWith('801');
-    expect(deps.cancel).toHaveBeenCalledTimes(1);
-    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: null, fortnox_error: null, fortnox_next_attempt_at: null });
   });
 
-  it('🧨 POST:en föll medan beställningen makulerades, och sökningen efteråt går inte: ett svep planeras', async () => {
+  it('🧨 POST:en föll medan beställningen makulerades, också när Fortnox inte går att söka: ett svep planeras', async () => {
     const m = db(confirmed({ fortnox_next_attempt_at: null }));
     const deps = fortnoxDeps(async () => {
       Object.assign(row(m), { status: 'cancelled', fortnox_next_attempt_at: null, fortnox_order_claimed_at: null });

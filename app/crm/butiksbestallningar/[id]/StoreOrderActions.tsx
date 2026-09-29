@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/lib/Toast';
@@ -395,6 +395,10 @@ function CancelDialog({
   onClose: () => void;
 }) {
   const [touched, setTouched] = useState(false);
+  // Fokus på skälet, inte på Avbryt (som dialogens farliga ton annars ger): det är det dialogen frågar efter. Efter
+  // dialogens egen autofokus, som sker när knapparna monteras.
+  const reasonRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => reasonRef.current?.focus(), []);
   const trimmed = reason.trim();
   const invalid = trimmed.length === 0;
   const consequence =
@@ -420,6 +424,7 @@ function CancelDialog({
       <label className="grid gap-1">
         <span className={crm.label}>Skäl till butiken</span>
         <textarea
+          ref={reasonRef}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           onBlur={() => setTouched(true)}

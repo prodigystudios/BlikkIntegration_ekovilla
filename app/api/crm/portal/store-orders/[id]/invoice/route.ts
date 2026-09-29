@@ -21,8 +21,9 @@ type RouteContext = { params: { id: string } };
 //   500 store_order_invoice_failed
 
 export const dynamic = 'force-dynamic';
-// Läsningen av ordern, createinvoice och läsningen igen, var och en med upp till ~23 s väntan vid 429.
-export const maxDuration = 120;
+// Läsningen av ordern, createinvoice och läsningen igen, var och en med upp till ~23 s väntan vid 429. Under claimens två
+// minuter, som Makulera: ett försök som fortfarande lever har alltid en claim som ingen annan kan ta.
+export const maxDuration = 100;
 
 export async function POST(_req: Request, context: RouteContext) {
   try {
