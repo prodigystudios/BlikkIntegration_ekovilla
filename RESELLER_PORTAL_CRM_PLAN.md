@@ -290,8 +290,12 @@ Varje kandidat måste fortfarande ha `crm.workorder.write`, annars prövas näst
 **Kunden saknas** (numret är `null` eller okänt):
 - Ordern skapas ändå, hos reservadmin, med butikens uppgifter i snapshoten. Fortnox-ordern kan inte
   skapas utan kund, så butiken ser "Mottagen" tills kunden är kopplad.
-- `reverse_vat` skrivs **inte** i snapshoten. Snapshotens värde vinner annars över kundkortet för
-  alltid (`resolveReverseVat` i `lib/domains/fortnox/helpers.ts`).
+- ~~`reverse_vat` skrivs **inte** i snapshoten.~~ **Ändrat 2026-09-29:** varje portaljobb har omvänd byggmoms, 0 %,
+  och snapshoten bär `reverse_vat: true` med eller utan kort (`PORTAL_JOB_VAT` i `jobIntake.ts`). Att snapshoten vinner
+  över kortet är nu avsikten.
+- **Ett kort som inte är ett företag räknas som inget kort** (ändrat 2026-09-29, `readCustomer` i `jobIntakeStore.ts`),
+  vare sig numret eller kopplingen för hand pekar på det: butiken är ett företag, kopplingen (3c) nekar ett sådant kort,
+  och omvänd byggmoms gäller aldrig en privatperson. Ordern tas emot utan kund, och säljaren kopplar rätt kort.
 - ✅ `POST /api/crm/portal/jobs/[workOrderId]/link-customer` (fas 3c), bara för portalordrar utan kund som
   inte finns i Fortnox. Den sätter kunden, bygger om snapshotens identitetsfält och momsen, sparar
   kopplingen i `crm_portal_resellers` och skapar Fortnox-ordern. Se "Fas 3c: resultat".
@@ -600,7 +604,8 @@ tas före utskicket och släpps om det misslyckas. En push som redan pågår ger
 **Så fungerar kopplingen** (`lib/domains/portal/linkCustomer.ts`):
 1. Sessionen läser ordern och kortet; service-rollen läser jobbet (sessionen ser bara brickans kolumner). En vanlig
    order, en order som redan har kund eller finns i Fortnox, och ett kort som inte finns ger var sitt svar.
-2. Kortets del av snapshoten byts (namn, org.nr, adress, moms), och momsen och beloppet räknas om. Kontakten och Er
+2. Kortets del av snapshoten byts (namn, org.nr, adress), och beloppet räknas om. Momsen är jobbets, 0 % och
+   `reverse_vat: true`, vad kortet än säger (ändrat 2026-09-29; förut kortets). Kontakten och Er
    referens fylls bara där ordern saknar dem: har säljaren fyllt i dem står de kvar. Märkningen, arbetsplatsen och
    kontakten på plats står kvar.
 3. Samma fullständighetskontroll som våra egna ordrar, på ordern som den blir. Saknas något: 409 med listan.
@@ -1044,7 +1049,8 @@ Spik 2 i testbolaget (2026-09-29, kund 14 vänd till SEVAT en stund och tillbaka
 
 Följder av kontot per rad:
 - ⚠️ **Kontot följer `reverseVat`** (snapshoten, annars kundkortet), inte procentsatsen ensam. Portaljobbets 0 % oavsett
-  kort (3b/3c) måste därför sätta omvänd moms på dokumentet, annars bokas jobbet till en butik med vanligt kort på 3004.
+  kort sätter därför omvänd moms på dokumentet (✅ 2026-09-29, `PORTAL_JOB_VAT`; prövat: ett jobb till SEHED med
+  vanlig moms på kortet blev order 36 i testbolaget, alla rader 0 % och 3231).
 - **Öppna ordrar som synkades före ändringen behåller sina konton** tills de synkas om ("Synka om" eller en
   artikelredigering); `createinvoice` kopierar orderns rader som de står.
 - CRM:et känner bara svensk moms: kundsynken skriver alltid SEVAT eller SEREVERSEDVAT på kortet. EU- och exportkonton
@@ -1335,7 +1341,11 @@ Ingen av dem stoppar fas 0–7.
 
 - ✅ **Momsen** (kontraktets fråga 4): besvarad av William 2026-09-29, se "Fas 8: spiken om momsen" och punkt 34.
 - ✅ **Kontot vid moms som avviker från kundkortet**: konto per rad, se "Fas 8: spiken om momsen".
-- **Fakturatexten vid moms som avviker från kundkortet** (senare, stoppar inget): Fortnox faktura skriver "Omvänd
+- **Köparens momsregistreringsnummer vid omvänd moms** (före fas 9, gäller hela CRM:et): en faktura med omvänd
+  byggmoms ska bära köparens momsregistreringsnummer, men fullständighetskontrollen kräver det inte, varken för
+  portaljobben eller för CRM:ets egna byggmomsordrar. Fortnox skriver "Ert VAT-nummer" ur kundkortets `VATNumber`.
+- **Fakturatexten vid moms som avviker från kundkortet** (senare, men **före fas 9**: då får varje portaljobb till en
+  butik med vanlig moms på kortet en faktura med 0 % utan texten, som en faktura med omvänd moms måste ha): Fortnox faktura skriver "Omvänd
   betalningsskyldighet" vid 25 % till en kund med omvänd moms, och texten saknas vid 0 % till en kund med vanlig moms.
   Texten följer kortets momstyp när dokumentet skapas; enda vägen är att kortet har dokumentets momstyp i det ögonblicket
   (vända kortet kring skapandet: risk att ett dokument som skapas för samma kund i Fortnox samtidigt får fel momstyp).

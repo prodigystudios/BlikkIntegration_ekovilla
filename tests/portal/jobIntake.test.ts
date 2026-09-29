@@ -60,7 +60,6 @@ const CARD: JobCustomerCard = {
   phone: '026-10 20 30',
   mobile: null,
   visit_address: { street: 'Verkstadsgatan 8', postal_code: '802 91', city: 'Gävle' },
-  reverse_vat: false,
   contacts: [{ name: 'Per Inköp', phone: '070-111 22 33', email: 'per@norrbygg.se', is_primary: true }],
 };
 
@@ -210,11 +209,20 @@ describe('arbetsordern', () => {
     expect(insert().project_name).toBe('Rönnvägen 18, Gävle');
   });
 
-  it('beloppet: 25 % moms på summan, eller 0 % när kundkortet har omvänd skattskyldighet', () => {
-    expect(insert()).toMatchObject({ vat_percent: 25, amount: 17837.5, pricing_summary: { subtotal: 14270, vat: 3567.5, total: 17837.5 } });
-    expect(insert({ ...CARD, reverse_vat: true })).toMatchObject({ vat_percent: 0, amount: 14270 });
-    // Utan kundkort: standardmomsen, tills kunden kopplas.
-    expect(insert(null)).toMatchObject({ vat_percent: 25, customer_id: null });
+  it('beloppet: omvänd byggmoms, 0 % på hela ordern, med eller utan kundkort (William 2026-09-29)', () => {
+    expect(insert()).toMatchObject({ vat_percent: 0, amount: 14270, pricing_summary: { subtotal: 14270, vat: 0, total: 14270 } });
+    expect(insert(null)).toMatchObject({ vat_percent: 0, amount: 14270, customer_id: null });
+  });
+
+  it('🧨 omvänd moms står på DOKUMENTET, med eller utan kort: den vinner över kortet i Fortnox-pushen och ger kontot 3231', () => {
+    expect(insert().customer_snapshot).toMatchObject({ reverse_vat: true });
+    expect(insert(null).customer_snapshot).toMatchObject({ reverse_vat: true });
+  });
+
+  it('kortets egen moms läses inte: ett kort med vanlig moms ger ändå 0 % och omvänd moms på dokumentet', () => {
+    const card = { ...CARD, reverse_vat: false } as JobCustomerCard;
+    expect(insert(card)).toMatchObject({ vat_percent: 0, amount: 14270 });
+    expect(insert(card).customer_snapshot).toMatchObject({ reverse_vat: true });
   });
 
   it('arbetsadressen är arbetsplatsen', () => {
@@ -282,13 +290,12 @@ describe('snapshoten', () => {
       label: '2026-015',
       end_contact_name: 'Ingrid Palm',
       end_contact_phone: '070-555 12 34',
-      reverse_vat: false,
+      reverse_vat: true,
     });
   });
 
-  it('🧨 utan kundkort: butikens uppgifter och INGEN moms i snapshoten (den hade vunnit över kortet för alltid)', () => {
+  it('utan kundkort: butikens uppgifter', () => {
     const snapshot = buildPortalJobCustomerSnapshot(job(), null);
-    expect(snapshot).not.toHaveProperty('reverse_vat');
     expect(snapshot).toMatchObject({
       customer_name: 'Norrbygg AB',
       company_name: 'Norrbygg AB',
@@ -378,7 +385,7 @@ describe('notisens orsaker', () => {
       { field: 'work_address', label: '', message: 'Arbetsadressen saknar ort.', fixAt: 'quote' },
     ] as const;
     expect(portalFortnoxBlockerReasons([...blockers], '1043')).toEqual([
-      'Butikens kundnummer 1043 finns inte i kundregistret.',
+      'Butikens kundnummer 1043 finns inte som företagskund i kundregistret.',
       'Organisationsnummer saknas på butikens kundkort.',
       'Arbetsadressen saknar ort.',
     ]);

@@ -33,7 +33,6 @@ const CARD = {
   phone: '026-10 20 30',
   mobile: null,
   visit_address: { street: 'Verkstadsgatan 8', postal_code: '802 91', city: 'Gävle' },
-  reverse_vat: false,
   contacts: [{ name: 'Per Inköp', phone: '070-111 22 33', email: 'per@norrbygg.se', is_primary: true }],
 };
 
@@ -218,6 +217,15 @@ describe('receivePortalJob', () => {
       expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
     });
 
+    it('kopplingen för hand pekar på ett privatkort: ingen kund, och kopplingen rörs inte', async () => {
+      const m = memoryAdmin({ crm_customers: [CARD, { ...MANUAL, customer_type: 'private' }], crm_portal_resellers: [linkedStore()] });
+      const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
+      body.store.ekovillaCustomerNumber = null;
+      await receivePortalJob(m.admin, portalJobSchema.parse(body), body, intakeDeps());
+      expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
+      expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: MANUAL.id });
+    });
+
     it('utan koppling och utan nummer: ingen kund (som i 3b)', async () => {
       const m = memoryAdmin({ crm_customers: [CARD], crm_portal_resellers: [{ reseller_id: 'res-norrbygg', name: 'x', customer_id: CUSTOMER_ID }] });
       const body = structuredClone(CONTRACT_JOB) as Record<string, any>;
@@ -226,6 +234,17 @@ describe('receivePortalJob', () => {
       expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
       expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
     });
+  });
+
+  it('🧨 numret pekar på ett privatkort: ingen kund, som ett okänt nummer (butiken är ett företag; jobbet har omvänd moms)', async () => {
+    const m = memoryAdmin({ crm_customers: [{ ...CARD, customer_type: 'private', company_name: null, organization_number: null, first_name: 'Eva', last_name: 'Ek', personal_number: '19800101-1234' }] });
+    const deps = intakeDeps();
+    await receivePortalJob(m.admin, job(), payload(), deps);
+    expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_number: '1043', customer_id: null });
+    expect(m.tables.crm_portal_jobs[0].customer_id).toBeNull();
+    expect(m.tables.crm_work_orders[0]).toMatchObject({ customer_id: null, quote_type: 'business', vat_percent: 0 });
+    expect(m.tables.crm_work_orders[0].customer_snapshot).toMatchObject({ customer_name: 'Norrbygg AB', reverse_vat: true });
+    expect(deps.assign).toHaveBeenCalledWith(expect.objectContaining({ customerId: null }));
   });
 
   it('ett okänt kundnummer: ingen kund på jobbet eller ordern, men butiken sparas med numret', async () => {
@@ -423,7 +442,7 @@ describe('followUpPortalJob', () => {
         href: `/crm/arbetsorder/${workOrderId}`,
       }),
     );
-    expect(sent[1].body).toContain('Butikens kundnummer 1043 finns inte i kundregistret.');
+    expect(sent[1].body).toContain('Butikens kundnummer 1043 finns inte som företagskund i kundregistret.');
   });
 
   it('kundkortet läses om: org.nr saknas när jobbet kommer och stoppar; ifyllt på kortet efteråt släpper det igenom', async () => {

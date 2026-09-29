@@ -92,11 +92,17 @@ async function readJob(admin: SupabaseClient, quoteId: string): Promise<JobRow |
   return (data as JobRow | null) ?? null;
 }
 
+/**
+ * Butikens kundkort, eller null. Ett kort som inte är ett företag behandlas som inget kort: butiken är ett företag
+ * (William 2026-09-28), kopplingen för hand nekar ett sådant kort (fas 3c), och jobbet har omvänd byggmoms, som aldrig
+ * gäller en privatperson (`PORTAL_JOB_VAT`). Ordern tas då emot utan kund, och säljaren kopplar rätt kort.
+ */
 async function readCustomer(admin: SupabaseClient, column: 'id' | 'fortnox_customer_id', value: string | null): Promise<JobCustomerCard | null> {
   if (!value) return null;
   const { data, error } = await admin.from('crm_customers').select(JOB_CUSTOMER_SELECT).eq(column, value).maybeSingle();
   if (error) throw new Error(`Butikens kundkort gick inte att läsa: ${error.message}`);
-  return (data as JobCustomerCard | null) ?? null;
+  const card = (data as JobCustomerCard | null) ?? null;
+  return card?.customer_type === 'business' ? card : null;
 }
 
 type ResellerLinkRow = { customer_id: string | null; customer_linked_at: string | null };

@@ -172,8 +172,9 @@ export function buildOfferRows(
       Discount: 0,
       DiscountType: 'PERCENT',
       // Reverse charge (omvänd skattskyldighet / byggmoms): the seller charges 0 % output VAT;
-      // the buyer accounts for it. The document's VAT regime comes from the customer card
-      // (synced from reverse_vat); matching the row VAT here keeps the document consistent.
+      // the buyer accounts for it. The VAT is the DOCUMENT's (snapshot, else the card). ⚠️ Fortnox
+      // own VAT type (and the invoice text) is taken from the customer card when the document is
+      // created, so the two can differ; see fortnoxSalesAccount.
       VAT: reverseVat ? 0 : vatPercent,
     };
 
@@ -464,7 +465,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const vatPercent = typeof quote.vat_percent === 'number' ? quote.vat_percent : 25;
     const lineItems = Array.isArray(quote.line_items) ? quote.line_items : [];
     // Reverse charge (byggmoms) and ROT are mutually exclusive (B2B vs private). When reverse
-    // charge applies, rows go out at 0 % VAT (the customer card supplies the SEREVERSEDVAT regime).
+    // charge applies, rows go out at 0 % VAT on account 3231 (fortnoxSalesAccount).
     const reverseVat = await resolveReverseVat(supabase, quote.customer_snapshot?.reverse_vat, quote.customer_id);
     const rotEnabled = quote.rot_details?.enabled === true && !reverseVat;
     // "Ert referensnummer" (offer field = YourReferenceNumber; orders/invoices use YourOrderNumber —
@@ -510,9 +511,9 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
         // "Ert referensnummer": ROT villa fastighetsbeteckning or företag märkning (offer field name).
         ...(referenceNumber ? { YourReferenceNumber: referenceNumber } : {}),
         // NOTE: do NOT send VATType on offers — Fortnox rejects it (400 "Felaktigt fältnamn
-        // (VATType)", offers have no such field). The document's VAT regime is taken from the
-        // customer card (kept in sync with our reverse_vat), and we send rows at the MATCHING VAT
-        // (0 % for reverse charge, else vatPercent) so header and rows are always consistent.
+        // (VATType)", offers have no such field). Fortnox takes the document's VAT type from the
+        // customer card at creation; the rows carry the document's VAT and account (buildOfferRows),
+        // which can differ from the card — see fortnoxSalesAccount.
         ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
         ...(deliveryAddress
           ? {

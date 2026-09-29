@@ -276,8 +276,9 @@ export function buildInvoiceRows(
       Description: fortnoxRowText(item.article_name || item.line_note || 'Artikel'),
       DeliveredQuantity: qty,
       Price: lineItemUnitPrice(item),
-      // Reverse charge (byggmoms) → 0 % VAT; the invoice's VAT regime comes from the customer
-      // card (synced from reverse_vat), so we match the row VAT to keep the document consistent.
+      // Reverse charge (byggmoms) → 0 % VAT. The VAT is the DOCUMENT's (snapshot, else the card).
+      // ⚠️ Fortnox own VAT type (and the invoice text) is taken from the customer card when the
+      // document is created, so the two can differ; see fortnoxSalesAccount.
       VAT: reverseVat ? 0 : vatPercent,
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
@@ -600,9 +601,9 @@ export async function createPartialInvoice(
         ...invoiceReference,
         ...(header.OurReference ? { OurReference: header.OurReference } : {}),
         ...(header.YourReference ? { YourReference: header.YourReference } : {}),
-        // No VATType on the payload (kept consistent with offers/orders): the customer card drives
-        // the VAT regime and rows carry the matching VAT (0 % for reverse charge, see
-        // buildInvoiceRows) so header and rows never diverge.
+        // No VATType on the payload: Fortnox rejects it (2001399). Fortnox takes the invoice's VAT
+        // type from the customer card at creation; the rows carry the document's VAT and account
+        // (buildInvoiceRows), which can differ from the card — see fortnoxSalesAccount.
         ...(rotEnabled ? { TaxReductionType: 'rot' } : {}),
         ...(header.DeliveryAddress1
           ? {

@@ -188,8 +188,10 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
       // material net (discount baked in) so quantity × price nets to it; otherwise the raw price +
       // a separate Discount % line, as before.
       Price: split ? split.materialUnitPrice : price,
-      // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows; the document's
-      // VAT regime comes from the customer card (synced from reverse_vat), so matching rows here.
+      // Reverse charge (omvänd skattskyldighet / byggmoms) → 0 % output VAT on rows. The VAT is the
+      // DOCUMENT's (snapshot, else the card). ⚠️ Fortnox own VAT type (and the invoice text) is taken
+      // from the customer card when the document is created, so the two can differ; see
+      // fortnoxSalesAccount.
       VAT: reverseVat ? 0 : vatPercent,
       Unit: item.article_unit_name || '',
       // DiscountType:'PERCENT' is required — Fortnox defaults to AMOUNT (kronor), which would
@@ -938,9 +940,10 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
           // Svensk dag: UTC-dygnet daterar en order skapad på natten till dagen före.
           OrderDate: stockholmTodayISO(),
           ...header,
-          // No VATType on the payload (Fortnox rejects it on offers; we keep orders consistent):
-          // the customer card drives the VAT regime, and rows carry the matching VAT (0 % for
-          // reverse charge, see buildOrderRows) so header and rows never diverge.
+          // No VATType on the payload: Fortnox rejects it on offers, orders and invoices (2001399).
+          // Fortnox takes the document's VAT type from the customer card at creation; the rows carry
+          // the document's VAT and account (buildOrderRows), which can differ from the card — see
+          // fortnoxSalesAccount.
           //
           // TaxReductionType is set HERE only. The ROT regime of an order never changes after it
           // exists, and re-sending it on an update would add a rejection path for no gain.
