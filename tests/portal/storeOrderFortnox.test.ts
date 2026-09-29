@@ -109,6 +109,23 @@ describe('buildStoreOrderFortnoxOrder', () => {
     expect(o.YourOrderNumber).toBe('R'.repeat(30));
   });
 
+  it('🧨 leveransadressen kapas vid 60 tecken (Fortnox kapar tyst där), och hela står i textraden', () => {
+    const b = body();
+    b.delivery.address.street = 'Industrivägen 12, lastkaj 4, porten mot järnvägen, fråga i receptionen';
+    const o = order({ body: b });
+    expect(o.DeliveryAddress1).toBe(b.delivery.address.street.slice(0, 60).trimEnd());
+    const rows = o.OrderRows as Record<string, unknown>[];
+    expect(rows[rows.length - 1].Description).toContain(`Leveransadress: ${b.delivery.address.street}`);
+  });
+
+  it('🧨 ett tecken på gränsen delas aldrig: ingen ensam halva av ett emoji', () => {
+    const b = body();
+    b.delivery.contactName = `${'A'.repeat(49)}😀 Kron`;
+    const ref = order({ body: b }).YourReference as string;
+    expect(ref).toBe('A'.repeat(49));
+    expect(/[\uD800-\uDFFF]/.test(ref)).toBe(false);
+  });
+
   it('tomma fält skickas inte: ingen referens, ingen mottagare, inget org.nr', () => {
     const b = body();
     b.delivery.contactName = '  ';

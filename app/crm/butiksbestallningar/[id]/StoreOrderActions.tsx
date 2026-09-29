@@ -71,23 +71,28 @@ function StepNumber({ n, done, className }: { n: number; done: boolean; classNam
   );
 }
 
-function CustomerStep({ props, busy, run }: { props: Props; busy: boolean; run: Runner }) {
-  const [editing, setEditing] = useState(false);
+type StepProps = { props: Props; busy: boolean; run: Runner; editing: boolean; setEditing: (editing: boolean) => void };
+
+function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
   const [customerId, setCustomerId] = useState('');
   const [customerLabel, setCustomerLabel] = useState('');
+  // Ett nytt val varje gång: ett kort som valdes och avbröts ska inte stå kvar nästa gång.
+  function edit(on: boolean) {
+    setCustomerId('');
+    setCustomerLabel('');
+    setEditing(on);
+  }
   const linked = props.customer && props.customer.fortnoxCustomerNumber;
   const open = editing || !props.customer;
 
   async function link() {
     if (!customerId) return;
     const done = await run(`/api/crm/portal/store-orders/${props.id}/customer`, 'PUT', { customer_id: customerId }, 'Kunden kunde inte kopplas.', (data) =>
-      data?.store_linked === false ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' } : 'Kunden är kopplad.',
+      data?.store_link_attempted && data?.store_linked === false
+        ? { error: 'Kunden är kopplad till beställningen, men kopplingen sparades inte på butiken.' }
+        : 'Kunden är kopplad.',
     );
-    if (done) {
-      setEditing(false);
-      setCustomerId('');
-      setCustomerLabel('');
-    }
+    if (done) edit(false);
   }
 
   return (
@@ -97,7 +102,7 @@ function CustomerStep({ props, busy, run }: { props: Props; busy: boolean; run: 
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <h3 className={crm.bodyStrong}>Butikens kundkort</h3>
           {props.customer && !editing ? (
-            <button type="button" onClick={() => setEditing(true)} disabled={busy} className={cn(crm.link, 'bg-transparent p-0 text-xs')}>
+            <button type="button" onClick={() => edit(true)} disabled={busy} className={cn(crm.link, 'bg-transparent p-0 text-xs')}>
               Byt
             </button>
           ) : null}
@@ -143,7 +148,7 @@ function CustomerStep({ props, busy, run }: { props: Props; busy: boolean; run: 
                   Koppla
                 </button>
                 {editing ? (
-                  <button type="button" onClick={() => setEditing(false)} disabled={busy} className={cn(crm.ghostButton, 'h-9')}>
+                  <button type="button" onClick={() => edit(false)} disabled={busy} className={cn(crm.ghostButton, 'h-9')}>
                     Avbryt
                   </button>
                 ) : null}
@@ -156,11 +161,21 @@ function CustomerStep({ props, busy, run }: { props: Props; busy: boolean; run: 
   );
 }
 
-function FreightStep({ props, busy, run }: { props: Props; busy: boolean; run: Runner }) {
-  const [editing, setEditing] = useState(false);
-  const [mode, setMode] = useState<'none' | 'charged'>(props.freight?.mode ?? 'charged');
-  const [priceText, setPriceText] = useState(props.freight?.mode === 'charged' ? String(props.freight.price).replace('.', ',') : '');
+const savedMode = (freight: StoreOrderFreight): 'none' | 'charged' => freight?.mode ?? 'charged';
+const savedPriceText = (freight: StoreOrderFreight) => (freight?.mode === 'charged' ? String(freight.price).replace('.', ',') : '');
+
+function FreightStep({ props, busy, run, editing, setEditing }: StepProps) {
+  const [mode, setMode] = useState<'none' | 'charged'>(savedMode(props.freight));
+  const [priceText, setPriceText] = useState(savedPriceText(props.freight));
   const [touched, setTouched] = useState(false);
+  // Fälten läses om ur det som är sparat varje gång: någon annan kan ha sparat under tiden, och en ändring som avbröts
+  // ska inte stå kvar och sparas nästa gång.
+  function edit(on: boolean) {
+    setMode(savedMode(props.freight));
+    setPriceText(savedPriceText(props.freight));
+    setTouched(false);
+    setEditing(on);
+  }
   const open = editing || props.freight === null;
   const price = parsePrice(priceText);
   const priceInvalid = mode === 'charged' && price === null;
@@ -182,7 +197,7 @@ function FreightStep({ props, busy, run }: { props: Props; busy: boolean; run: R
         <div className="flex flex-wrap items-baseline justify-between gap-x-3">
           <h3 className={crm.bodyStrong}>Frakt</h3>
           {props.freight !== null && !editing ? (
-            <button type="button" onClick={() => setEditing(true)} disabled={busy} className={cn(crm.link, 'bg-transparent p-0 text-xs')}>
+            <button type="button" onClick={() => edit(true)} disabled={busy} className={cn(crm.link, 'bg-transparent p-0 text-xs')}>
               Ändra
             </button>
           ) : null}
@@ -239,7 +254,7 @@ function FreightStep({ props, busy, run }: { props: Props; busy: boolean; run: R
                 Spara frakten
               </button>
               {editing ? (
-                <button type="button" onClick={() => setEditing(false)} disabled={busy} className={cn(crm.ghostButton, 'h-9')}>
+                <button type="button" onClick={() => edit(false)} disabled={busy} className={cn(crm.ghostButton, 'h-9')}>
                   Avbryt
                 </button>
               ) : null}
@@ -274,11 +289,13 @@ const STALE_CODES = new Set([
 /** Vad Fortnox-försöket blev, som säljaren läser det. */
 function fortnoxMessage(data: any, confirmed: boolean): SuccessMessage {
   const lead = confirmed ? 'Beställningen är bekräftad' : null;
+  // Felet först: en order som skapades men inte kunde kopplas har både ett nummer och ett fel, och felet är det viktiga.
+  if (data?.fortnox_error) {
+    if (data?.fortnox_order_number) return { error: lead ? `${lead}. ${data.fortnox_error}` : data.fortnox_error };
+    return { error: lead ? `${lead}, men Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` : `Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` };
+  }
   if (data?.fortnox_order_number) {
     return lead ? `${lead} och Fortnox-order ${data.fortnox_order_number} är skapad.` : `Fortnox-order ${data.fortnox_order_number} är skapad.`;
-  }
-  if (data?.fortnox_error) {
-    return { error: lead ? `${lead}, men Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` : `Fortnox-ordern kunde inte skapas. ${data.fortnox_error}` };
   }
   if (data?.fortnox_outcome === 'in_progress') return `${lead ?? 'Klart'}. Fortnox-ordern skapas av ett annat försök just nu.`;
   return `${lead ?? 'Klart'}.`;
@@ -289,6 +306,8 @@ export default function StoreOrderActions(props: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [editingCustomer, setEditingCustomer] = useState(false);
+  const [editingFreight, setEditingFreight] = useState(false);
 
   const run: Runner = async (url, method, body, failure, success) => {
     if (busy) return false;
@@ -354,8 +373,12 @@ export default function StoreOrderActions(props: Props) {
 
   const customerReady = Boolean(props.customer?.fortnoxCustomerNumber);
   const freightReady = props.freight !== null;
-  const ready = customerReady && freightReady;
-  const missing = [!customerReady ? 'koppla butikens kundkort' : null, !freightReady ? 'sätt frakten' : null].filter(Boolean).join(' och ');
+  // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
+  const editing = editingCustomer || editingFreight;
+  const ready = customerReady && freightReady && !editing;
+  const missing = editing
+    ? 'spara eller avbryt ändringen'
+    : [!customerReady ? 'koppla butikens kundkort' : null, !freightReady ? 'sätt frakten' : null].filter(Boolean).join(' och ');
 
   return (
     <section className={cn(crm.cardInner, 'grid gap-3')} aria-labelledby="store-order-confirm">
@@ -366,8 +389,8 @@ export default function StoreOrderActions(props: Props) {
         <p className={crm.meta}>När den är bekräftad kan butiken inte längre ändra den, och Fortnox-ordern skapas.</p>
       </div>
       <ol className="m-0 grid list-none gap-3.5 p-0">
-        <CustomerStep props={props} busy={busy} run={run} />
-        <FreightStep props={props} busy={busy} run={run} />
+        <CustomerStep props={props} busy={busy} run={run} editing={editingCustomer} setEditing={setEditingCustomer} />
+        <FreightStep props={props} busy={busy} run={run} editing={editingFreight} setEditing={setEditingFreight} />
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
           {/* Mitt för knappen, som är högre än de andra stegens rubrikrad. */}
           <StepNumber n={3} done={false} className="mt-2" />

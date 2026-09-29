@@ -86,7 +86,8 @@ export async function setStoreOrderFreight(
 // ------------------------------------------------------------------------------------------------------------ kunden
 
 export type LinkStoreOrderCustomerResult =
-  | { kind: 'linked'; storeLinked: boolean }
+  /** `storeLinked`: kopplingen sparades också på butiken (bara när beställningen kom utan kund). */
+  | { kind: 'linked'; storeLinked: boolean; storeLinkAttempted?: boolean }
   | { kind: 'not_found' }
   | { kind: 'not_received' }
   | { kind: 'customer_not_found' }
@@ -98,8 +99,9 @@ export type LinkStoreOrderCustomerResult =
 type LinkCard = { id: string; customer_type: string; fortnox_customer_id: string | null };
 
 /**
- * Butikens kundkort på beställningen, medan den är mottagen. Kopplingen sparas också på butiken, som i fas 3c, och gäller
- * då butikens nästa jobb och beställning när portalens nummer saknas eller är okänt.
+ * Butikens kundkort på beställningen, medan den är mottagen. Kom beställningen utan kund sparas kopplingen också på
+ * butiken, som i fas 3c, och gäller då butikens nästa jobb och beställning när portalens nummer saknas eller är okänt.
+ * Ett byte på en beställning som redan hade en kund gäller bara beställningen.
  */
 export async function linkStoreOrderCustomer(
   session: SupabaseClient,
@@ -118,6 +120,11 @@ export async function linkStoreOrderCustomer(
   if (card.customer_type !== 'business') return { kind: 'not_business' };
   if (!card.fortnox_customer_id?.trim()) return { kind: 'customer_not_in_fortnox' };
 
+  const before = await admin.from('crm_store_orders').select('customer_id').eq('id', input.id).maybeSingle();
+  if (before.error) throw new Error(`Beställningen gick inte att läsa: ${before.error.message}`);
+  if (!before.data) return { kind: 'not_found' };
+  const hadCustomer = Boolean((before.data as { customer_id: string | null }).customer_id);
+
   const saved = await admin
     .from('crm_store_orders')
     .update({ customer_id: card.id })
@@ -127,6 +134,10 @@ export async function linkStoreOrderCustomer(
   if (saved.error) throw new Error(`Kunden kunde inte kopplas: ${saved.error.message}`);
   const row = (saved.data ?? [])[0] as { id: string; reseller_id: string } | undefined;
   if (!row) return (await readStatus(admin, input.id)) ? { kind: 'not_received' } : { kind: 'not_found' };
+
+  // Ett byte gäller bara den här beställningen: butikens koppling (som gäller nästa jobb och beställning) sätts bara när
+  // beställningen kom utan kund, som i fas 3c. Ett byte hade annars flyttat butiken till ett kort som valts för en order.
+  if (hadCustomer) return { kind: 'linked', storeLinked: false, storeLinkAttempted: false };
 
   // Butikens koppling. Beställningen är redan kopplad här: ett fel loggas och sägs, men stoppar inget.
   const store = await admin
@@ -138,7 +149,7 @@ export async function linkStoreOrderCustomer(
   if (!storeLinked) {
     console.error('[portal-store-orders] butikens koppling sparades inte', { resellerId: row.reseller_id, error: store.error?.message });
   }
-  return { kind: 'linked', storeLinked };
+  return { kind: 'linked', storeLinked, storeLinkAttempted: true };
 }
 
 // ------------------------------------------------------------------------------------------------------ Fortnox-ordern
@@ -349,16 +360,23 @@ export async function pushStoreOrderToFortnox(
     );
   } catch (e) {
     // Ordern finns i Fortnox men inte hos oss. Nästa försök hittar den på märkningen och tar över den, i stället för
-    // att skapa en till; numret står i loggen och i svaret.
+    // att skapa en till; numret står i loggen och i svaret. Ett försök planeras om det går (databasen kan vara nere).
     console.error('[portal-store-orders] 🧨 Fortnox-ordern skapades men numret sparades inte', {
       id,
       fortnoxOrderNumber: number,
       error: e instanceof Error ? e.message : String(e),
     });
+    const revisit = await admin
+      .from('crm_store_orders')
+      .update({ fortnox_next_attempt_at: new Date(deps.now().getTime() + PORTAL_FORTNOX_SAFETY_NET_MS).toISOString() })
+      .eq('id', id)
+      .is('fortnox_order_number', null)
+      .then((r) => r, (err: unknown) => ({ error: { message: err instanceof Error ? err.message : String(err) } }));
+    if (revisit.error) console.error('[portal-store-orders] nytt försök kunde inte planeras', { id, error: revisit.error.message });
     return {
       outcome: 'blocked',
       fortnoxOrderNumber: number,
-      error: `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Nästa försök kopplar den; ingen ny order skapas.`,
+      error: `Fortnox-order ${number} skapades, men numret kunde inte sparas här. Tryck Skicka till Fortnox om några minuter, så kopplas den; ingen ny order skapas.`,
     };
   }
   return { outcome: adopted ? 'exists' : 'created', fortnoxOrderNumber: number, error: null };

@@ -151,7 +151,7 @@ describe('PUT …/freight', () => {
 
 describe('PUT …/customer', () => {
   it('kortet kopplas med sessionen och service-rollen; utfallen blir rätt status', async () => {
-    expect(await call('customer', { customer_id: CARD })).toMatchObject({ status: 200, body: { data: { store_linked: true } } });
+    expect(await call('customer', { customer_id: CARD })).toMatchObject({ status: 200, body: { data: { store_linked: true, store_link_attempted: true } } });
     const args = h.calls.find((c) => c.fn === 'linkStoreOrderCustomer')!.args;
     expect((args[0] as Json).kind).toBe('session');
     expect((args[1] as Json).kind).toBe('admin');
@@ -164,6 +164,9 @@ describe('PUT …/customer', () => {
       ['not_business', 422, 'portal_customer_not_business'],
       ['customer_not_in_fortnox', 422, 'store_order_customer_not_in_fortnox'],
     ];
+    // Ett byte: butiken rördes inte, och det är inget fel.
+    h.results.linkStoreOrderCustomer = { kind: 'linked', storeLinked: false, storeLinkAttempted: false };
+    expect(await call('customer', { customer_id: CARD })).toMatchObject({ status: 200, body: { data: { store_linked: false, store_link_attempted: false } } });
     for (const [kind, status, code] of cases) {
       h.results.linkStoreOrderCustomer = { kind };
       expect(await call('customer', { customer_id: CARD })).toMatchObject({ status, body: { errorDetails: { code } } });

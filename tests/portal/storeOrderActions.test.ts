@@ -106,9 +106,17 @@ describe('linkStoreOrderCustomer', () => {
 
   it('kopplar kortet på beställningen och butiken (som fas 3c)', async () => {
     const m = db(storeOrder({ customer_id: null }));
-    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: true });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: true, storeLinkAttempted: true });
     expect(row(m).customer_id).toBe(CARD_ID);
     expect(m.tables.crm_portal_resellers[0]).toMatchObject({ customer_id: CARD_ID, customer_linked_by: SELLER, customer_linked_at: NOW.toISOString() });
+  });
+
+  it('🧨 ett byte på en beställning som redan hade kund gäller bara beställningen: butiken rörs inte', async () => {
+    const other = '77777777-7777-4777-8777-777777777777';
+    const m = db(storeOrder(), { crm_customers: [CARD, { ...CARD, id: other, fortnox_customer_id: '2000' }] });
+    expect(await link(m, other)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: false });
+    expect(row(m).customer_id).toBe(other);
+    expect(m.tables.crm_portal_resellers[0].customer_id).toBeNull();
   });
 
   it('nekar ett kort som inte finns, en privatkund och ett kort utan kundnummer i Fortnox; ingenting sparas', async () => {
@@ -135,7 +143,7 @@ describe('linkStoreOrderCustomer', () => {
   it('butikens koppling föll: beställningen är ändå kopplad, och det sägs', async () => {
     const m = db(storeOrder({ customer_id: null }));
     m.failOn((c) => c.table === 'crm_portal_resellers', { message: 'nere' });
-    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: false });
+    expect(await link(m)).toEqual({ kind: 'linked', storeLinked: false, storeLinkAttempted: true });
     expect(row(m).customer_id).toBe(CARD_ID);
   });
 });
@@ -372,12 +380,14 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m)).toMatchObject({ fortnox_attempts: 3, fortnox_next_attempt_at: minutes(60) });
   });
 
-  it('🧨 numret gick inte att spara: svaret säger numret, och nästa försök tar över ordern i stället för att skapa en till', async () => {
-    const m = db(confirmed());
+  it('🧨 numret gick inte att spara: svaret säger numret, ett försök planeras, och det tar över ordern i stället för att skapa en till', async () => {
+    // Inget planerat sedan förut (t.ex. "Skicka till Fortnox" efter att omförsöken gett upp).
+    const m = db(confirmed({ fortnox_next_attempt_at: null }));
     m.failOn((c) => c.table === 'crm_store_orders' && c.op === 'update' && (c.values as Record<string, unknown>).fortnox_order_number === '801', { message: 'nere' });
     const result = await pushStoreOrderToFortnox(m.admin, ID, fortnoxDeps());
     expect(result).toMatchObject({ outcome: 'blocked', fortnoxOrderNumber: '801' });
     expect(result.error).toContain('ingen ny order skapas');
+    expect(row(m).fortnox_next_attempt_at).toBe(minutes(5));
 
     // Claimen blev gammal; nästa försök söker och hittar ordern.
     Object.assign(row(m), { fortnox_order_claimed_at: new Date(Date.now() - 10 * 60_000).toISOString() });

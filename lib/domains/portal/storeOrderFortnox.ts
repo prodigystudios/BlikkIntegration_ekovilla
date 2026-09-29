@@ -11,7 +11,7 @@ import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, t
  *
  * Fortnox gränser, uppmätta i testbolaget 2026-09-29:
  *   - `YourReference` över 50 tecken nekar hela ordern (2001600). Butikens mottagare får vara 200.
- *   - `YourOrderNumber` kapas tyst vid 30 tecken, leveransadressen vid 60 och en textrad vid 255.
+ *   - `YourOrderNumber` kapas tyst vid 30 tecken, leveransadressen (`DeliveryAddress1`) vid 60 och en textrad vid 255.
  *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar; över det nekas ordern (2001896).
  * Vi kapar själva, så att det som skickas är det som står i Fortnox, och det som inte ryms står i textraden.
  *
@@ -26,6 +26,7 @@ export const STORE_ORDER_FREIGHT_ARTICLE = '1050';
 
 export const FORTNOX_YOUR_REFERENCE_MAX = 50;
 export const FORTNOX_YOUR_ORDER_NUMBER_MAX = 30;
+export const FORTNOX_DELIVERY_ADDRESS_MAX = 60;
 export const FORTNOX_TEXT_ROW_MAX = 255;
 export const FORTNOX_COMMENTS_MAX = 1024;
 
@@ -53,8 +54,15 @@ const nonEmpty = (value: string | null | undefined) => {
   return trimmed ? trimmed : null;
 };
 
-/** Högst `max` tecken, utan mellanslag i slutet. */
-const cap = (value: string, max: number) => value.trim().slice(0, max).trimEnd();
+/**
+ * Högst `max` tecken, utan mellanslag i slutet. Räknat i UTF-16 som i JavaScript, och ett tecken som hamnar på gränsen
+ * delas aldrig: en ensam halva av ett tecken utanför BMP (ett emoji) hade blivit ett trasigt tecken hos Fortnox.
+ */
+function cap(value: string, max: number): string {
+  let out = value.trim().slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
+  return out.trimEnd();
+}
 
 /**
  * Beställningens rader som arbetsorderns rader, så att `buildOrderRows` bygger dem som alla andra ordrar: butikens
@@ -101,8 +109,8 @@ export function storeOrderLineItems(
 }
 
 /**
- * Orderns textrad: vilken beställning det är, önskad leverans och mottagaren. Butikens referens står här också när den
- * är längre än "Ert ordernummer" rymmer. Fortnox tar bort radbrytningar i en rad, så delarna skiljs med två
+ * Orderns textrad: vilken beställning det är, önskad leverans och mottagaren. Butikens referens och leveransadressen
+ * står här också när de är längre än Fortnox fält rymmer. Fortnox tar bort radbrytningar i en rad, så delarna skiljs med två
  * mellanslag, som arbetsorderns textrad.
  */
 export function storeOrderDocumentNote(body: Pick<StoreOrderBody, 'orderNumber' | 'delivery'>): string {
@@ -114,6 +122,7 @@ export function storeOrderDocumentNote(body: Pick<StoreOrderBody, 'orderNumber' 
     nonEmpty(delivery.desiredPeriod) ? `Leverans: ${delivery.desiredPeriod.trim()}` : null,
     recipient ? `Mottagare: ${recipient}` : null,
     reference && reference.length > FORTNOX_YOUR_ORDER_NUMBER_MAX ? `Butikens referens: ${reference}` : null,
+    delivery.address.street.trim().length > FORTNOX_DELIVERY_ADDRESS_MAX ? `Leveransadress: ${delivery.address.street.trim()}` : null,
   ];
   return cap(parts.filter(Boolean).join('  '), FORTNOX_TEXT_ROW_MAX);
 }
@@ -171,7 +180,7 @@ export function buildStoreOrderFortnoxOrder(input: StoreOrderFortnoxInput) {
       ...(ourReference ? { OurReference: cap(ourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourReference ? { YourReference: cap(yourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourOrderNumber ? { YourOrderNumber: cap(yourOrderNumber, FORTNOX_YOUR_ORDER_NUMBER_MAX) } : {}),
-      DeliveryAddress1: delivery.address.street.trim(),
+      DeliveryAddress1: cap(delivery.address.street, FORTNOX_DELIVERY_ADDRESS_MAX),
       DeliveryZipCode: delivery.address.postalCode.trim(),
       DeliveryCity: delivery.address.city.trim(),
       ...(comments ? { Comments: comments } : {}),

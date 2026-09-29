@@ -65,7 +65,7 @@ beforeEach(() => {
 describe('runPortalCron', () => {
   it('levererades något: omräkning och utskick en gång till, Fortnox sist', async () => {
     const summary = await runPortalCron({} as never, { env: {} });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);
     expect(summary).toMatchObject({
       sync: SYNC,
       messages: SWEEP,
@@ -82,13 +82,13 @@ describe('runPortalCron', () => {
   it('inget levererat: ingen extra runda', async () => {
     dispatch.mockResolvedValue(NOTHING);
     await runPortalCron({} as never, { env: {} });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);
   });
 
   it('integrationen av: omräkningen och Fortnox görs ändå, kön ligger kvar', async () => {
     dispatch.mockResolvedValue({ ran: false, reason: 'av' });
     const summary = await runPortalCron({} as never, { env: {} });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);
     expect(summary.dispatch).toEqual({ ran: false, reason: 'av' });
   });
 
@@ -109,7 +109,7 @@ describe('runPortalCron', () => {
     calls.length = 0;
     const summary = await runPortalCron({} as never, { env: {} });
     expect(summary.messages).toEqual({ error: 'meddelandena svarar inte' });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);
   });
 
   it('butiksbeställningarnas notiser görs om med samma klocka, efter dokumenten; ett fel där stoppar inget', async () => {
@@ -125,7 +125,7 @@ describe('runPortalCron', () => {
     calls.length = 0;
     const summary = await runPortalCron({} as never, { env: {} });
     expect(summary.storeOrderNotices).toEqual({ error: 'beställningarna svarar inte' });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'sync', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);
   });
 
   it('knapparna på portalsidan (fortnoxRetries: false): inga Fortnox-försök', async () => {
@@ -152,32 +152,26 @@ describe('runPortalCron', () => {
     expect(calls).toEqual(['sync', 'messages', 'dispatch']);
   });
 
-  it('butiksbeställningarnas Fortnox-försök efter jobbens, med samma klocka och det som är kvar av gränsen', async () => {
+  it('butiksbeställningarnas Fortnox-försök före jobbens, ett per varv, med samma klocka och resten av gränsen', async () => {
     let t = 0;
     const now = () => new Date(t);
     dispatch.mockImplementation(async () => {
       t += 10_000;
       return NOTHING;
     });
-    retry.mockImplementation(async () => {
+    storeOrderFortnox.mockImplementation(async () => {
       t += 30_000;
       return RETRY;
     });
     const summary = await runPortalCron({ admin: true } as never, { env: {}, now });
     const [admin, options] = storeOrderFortnox.mock.calls[0];
     expect(admin).toEqual({ admin: true });
-    expect(options.budgetMs).toBe(PORTAL_CRON_FORTNOX_START_BEFORE_MS - 40_000);
+    expect(options).toMatchObject({ limit: 1, budgetMs: PORTAL_CRON_FORTNOX_START_BEFORE_MS - 10_000 });
     expect(options.deps.now).toBe(now);
     expect(summary.storeOrderFortnox).toEqual(RETRY);
-
-    // Jobbens försök tog hela gränsen: inga försök för beställningarna i det här varvet.
-    calls.length = 0;
-    retry.mockImplementation(async () => {
-      t += PORTAL_CRON_FORTNOX_START_BEFORE_MS;
-      return RETRY;
-    });
-    await runPortalCron({} as never, { env: {}, now });
-    expect(calls.at(-1)).toBe('fortnox');
+    // Jobben får det som är kvar efter beställningarna.
+    expect(retry.mock.calls[0][1].budgetMs).toBe(PORTAL_CRON_FORTNOX_START_BEFORE_MS - 40_000);
+    expect(calls.slice(-2)).toEqual(['store-order-fortnox', 'fortnox']);
   });
 
   it('butiksbeställningarnas Fortnox-försök: aldrig från knapparna, och ett fel där stoppar inget', async () => {
@@ -194,7 +188,7 @@ describe('runPortalCron', () => {
     documents.mockResolvedValue(QUEUED_DOCUMENT);
     const now = () => new Date('2026-10-12T08:30:00.000Z');
     const summary = await runPortalCron({ admin: true } as never, { env: { A: '1' }, now });
-    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'dispatch', 'store-orders', 'fortnox', 'store-order-fortnox']);
+    expect(calls).toEqual(['sync', 'messages', 'dispatch', 'documents', 'dispatch', 'store-orders', 'store-order-fortnox', 'fortnox']);
     expect(summary.documents).toEqual(QUEUED_DOCUMENT);
     expect(dispatch.mock.calls[1][1]).toMatchObject({ env: { A: '1' }, now, budgetMs: PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS });
     // Samma klocka och de riktiga källorna (Fortnox, arkivet), om testet inte ger egna.
@@ -208,7 +202,7 @@ describe('runPortalCron', () => {
     const summary = await runPortalCron({} as never, { env: {}, documentSources: own });
     expect(documents.mock.calls[0][1].sources).toBe(own);
     expect(summary.documents).toEqual({ error: 'arkivet svarar inte' });
-    expect(calls.at(-1)).toBe('store-order-fortnox');
+    expect(calls.at(-1)).toBe('fortnox');
   });
 
   it('knapparna på portalsidan (180 s): dokumenten bara om varvet hunnit lite', async () => {

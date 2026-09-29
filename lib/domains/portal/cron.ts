@@ -28,8 +28,8 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *   5. Butiksbeställningarnas notiser som inte gick iväg (storeOrdersStore.ts, fas 8), inom samma startgräns som
  *      dokumenten och en egen tidsbudget: de köar inget, och statusen och dokumenten ska inte vänta på dem.
  *   6. Fortnox-omförsöken (jobFortnoxRetry.ts), sist: ett försök kan ta upp mot 40 s, och statusen ska inte vänta på
- *      dem. Bara så många som hinns inom tidsgränsen. Butiksbeställningarnas efter jobbens (storeOrderActions.ts,
- *      fas 8b), inom det som är kvar av samma gräns.
+ *      dem. Bara så många som hinns inom tidsgränsen. Butiksbeställningarnas (storeOrderActions.ts, fas 8b) först, ett
+ *      per varv, så att jobb som fortsätter att falla inte tar hela gränsen varje varv.
  *
  * Ett steg som kastar stoppar inte nästa; felet står i sammanfattningen.
  */
@@ -142,6 +142,18 @@ export async function runPortalCron(
     );
   }
 
+  // Butiksbeställningarnas Fortnox-försök före jobbens, ett per varv: annars hade jobb som fortsätter att falla tagit hela
+  // tidsgränsen varje varv, och en bekräftad beställnings fönster på 24 h runnit ut utan ett enda försök.
+  const storeOrdersRemaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);
+  if (options.fortnoxRetries !== false && storeOrdersRemaining > 0) {
+    summary.storeOrderFortnox = await step('butiksbeställningarnas Fortnox-försök', () =>
+      retryStoreOrderFortnox(admin, {
+        deps: { ...(options.storeOrderFortnoxDeps ?? storeOrderFortnoxDeps(admin)), now },
+        limit: 1,
+        budgetMs: storeOrdersRemaining,
+      }),
+    );
+  }
   const remaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);
   if (options.fortnoxRetries !== false && remaining > 0) {
     summary.fortnox = await step('Fortnox-försöken', () =>
@@ -149,15 +161,6 @@ export async function runPortalCron(
         followUp: options.followUp ?? ((quoteId) => followUpPortalJob(admin, quoteId)),
         now,
         budgetMs: remaining,
-      }),
-    );
-  }
-  const storeOrdersRemaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);
-  if (options.fortnoxRetries !== false && storeOrdersRemaining > 0) {
-    summary.storeOrderFortnox = await step('butiksbeställningarnas Fortnox-försök', () =>
-      retryStoreOrderFortnox(admin, {
-        deps: { ...(options.storeOrderFortnoxDeps ?? storeOrderFortnoxDeps(admin)), now },
-        budgetMs: storeOrdersRemaining,
       }),
     );
   }

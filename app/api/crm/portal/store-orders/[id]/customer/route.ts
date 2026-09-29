@@ -7,9 +7,9 @@ import { requireStoreOrderManager } from '../../_manage';
 type RouteContext = { params: { id: string } };
 
 // Butikens kundkort på en butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8b), medan den är mottagen. Kortet läses
-// med sessionen, och kopplingen sparas också på butiken (som fas 3c).
+// med sessionen. Kom beställningen utan kund sparas kopplingen också på butiken (som fas 3c); ett byte gäller bara den.
 //
-//   200 { store_linked }
+//   200 { store_linked, store_link_attempted }   butikens koppling sätts bara när beställningen kom utan kund
 //   400 validation_error
 //   403 store_order_forbidden                  varken ansvarig eller admin
 //   404 store_order_not_found / crm_customer_not_found
@@ -40,7 +40,7 @@ export async function PUT(req: Request, context: RouteContext) {
     });
     switch (result.kind) {
       case 'linked':
-        return ok({ store_linked: result.storeLinked });
+        return ok({ store_linked: result.storeLinked, store_link_attempted: result.storeLinkAttempted !== false });
       case 'not_found':
         return routeError(404, 'store_order_not_found', 'Beställningen hittades inte.');
       case 'not_received':
