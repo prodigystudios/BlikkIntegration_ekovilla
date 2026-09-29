@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–4b och 6 byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–4b, 6, 7 och 8a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -161,6 +161,7 @@ Ren logik som testas isolerat:
 | `assignment.ts` ✅, `county.ts` ✅, `resellers.ts` ✅ | Fördelningen till en säljare (kedjan, behörighetskravet, stegen mot databasen), länet ur postnummer och ort via Nominatim, och butikerna och reserven på portalsidan |
 | `jobState.ts` ✅ | Portalens tillstånd härlett ur arbetsordern |
 | `jobDocuments.ts` ✅, `jobDocumentsStore.ts` ✅, `jobDocumentsDecision.ts` ✅, `outboundContent.ts` ✅ | Dokumenten (fas 7). Den rena delen (sorterna, gränsen, filnamnet, köns händelse med en referens till filen, egenkontrollens prov mot orderns nummer) importeras av kortet och får aldrig dra in zod, databasen eller `node:crypto`. Frysningen, knappen, kortets läsning, "Öppna" och cron-sopningen ligger i `…Store.ts`; regeln "det senast beslutade vinner" i `…Decision.ts`; utskickets byte av referensen mot filens base64 i `outboundContent.ts` |
+| `storeOrders.ts` ✅, `storeOrderIntake.ts` ✅, `storeOrdersStore.ts` ✅, `storeOrdersView.ts` ✅ | Butiksbeställningarna (fas 8). Den rena delen (statusarna, summorna i hela ören, notisens sammanfattning och regeln för vilken notis som gäller) importeras av sidorna och får aldrig dra in zod eller databasen. Kroppens schema och besluten om en ny, ändrad och tillbakadragen står i `storeOrderIntake.ts`; intaget, notisen med lån och cron-sopningen i `…Store.ts`; sidornas läsning med sessionen i `…View.ts` |
 | `jobMessages.ts` ✅, `jobMessagesStore.ts` ✅ | Meddelandena (fas 6). Den rena delen (avdelningarna, `job.message`-kroppen och dess nyckel, tecken räknade som Postgres räknar dem) importeras av kortet "Butiken" och får aldrig dra in zod eller databasen. Intaget från portalen, notisen, svaret, trådens läsning och cron-sopningen ligger i `…Store.ts` |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
@@ -208,7 +209,7 @@ Additiva migreringar. Varje tabell får RLS, `revoke all` och uttryckliga grants
 | `crm_portal_job_documents` ✅ | Dokumenten till butiken (fas 7): `quote_id` (FK till jobbet), sort, läge (`building`/`ready`/`failed`), namnet butiken ser, storlek och sha256 för den frysta filen, källan (Fortnox-nr eller egenkontrollens sökväg), skälet när det inte gick, lånet och omförsöken (`attempts`, `next_attempt_at`), vem som skickade och namnet då (null = automatiskt), `ready_at` (händelsens tid), `queued_at` och härledd `outbound_key` (`job.document-<id>`). En automatisk orderbekräftelse per jobb (unikt index). Sessionen läser visningskolumnerna och lägger till ett beslut i eget namn genom svarsregeln; filen, hashen och kön är service-rollens. PDF:en fryses i den privata bucketen `portal-job-documents` (3 300 000 byte, bara PDF, inga policyer) |
 | `crm_portal_article_fields` ✅ | Per artikelnummer: `customer_name`, `category` (check), `labor_share` (0–1, `numeric(4,3)` som portalens kolumn), `note`, `sort_order`, `publish`. En publicerad artikel kräver kundnamn och kategori. Ingen FK mot cachen, som favoriterna. Ifylld med portalens 51 artiklar (se "Fas 2a: resultat") |
 | `crm_portal_pricelist_publications` ✅ | Varje publicering: giltig från, hash, löpnummer, Idempotency-Key (samma som händelsen i kön), kroppen, antalet artiklar, vem (id och namnet vid publiceringen) och när. Historik: sessionen får select och insert i eget namn, aldrig update eller delete. En tom lista kan inte sparas |
-| `crm_store_orders` (+ rader) | Butiksbeställningarna, i fas 8 |
+| `crm_store_orders` ✅ | Butiksbeställningarna (fas 8a): portalens `order_id` (unik), numret, butiken, kunden och den ansvarige (med namnet då), status (`received`, `withdrawn`, `confirmed`, `delivered`, `invoiced`, `cancelled`), den första kroppen som den kom (`intake_payload`, ändras aldrig) och den senast mottagna tolkade versionen (`payload`, med raderna), `store_version` och `portal_updated_at`, notisens lån och bokföring, och kolumnerna för 8b (frakten, bekräftelsen, Fortnox-ordern och fakturan med claim och omförsök, leveransen, makuleringen, utskickets markering). Raderna ligger i `payload`, som `line_items` på arbetsordern: en ändring är en enda villkorad UPDATE. Vakten `crm_store_orders_guard` låter statusen bara gå framåt, stänger innehållet och frakten efter bekräftelsen, skriver Fortnox-numren en gång och markerar raden för utskicket. Sessionen läser visningskolumnerna med `crm.access` och skriver aldrig; `crm_store_order_can_manage()` (invoker) säger vem som hanterar: den ansvarige och admin, med `crm.workorder.write` |
 
 **Kön** hämtas med en RPC som använder `for update skip locked` och bara kan köras av service_role.
 Den tar den **äldsta väntande händelsen per jobb**, så att händelserna för ett jobb kommer fram i
@@ -374,7 +375,8 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
 | **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt efter att det sparats och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
 | **7** ✅ | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) automatiskt efter bekräftelsen och sedan med knappen, egenkontrollen med knappen, i kortet "Butiken". PDF:en fryses i en privat bucket och kön bär en referens. Storlekskontroll: högst 3 300 000 byte före base64, under Vercels 4,5 MB. Beteendet prövas mot en databas med `supabase/checks/portal_job_documents.sql`. Resultaten står under tabellen | 4b, 6 |
-| **8** | Butiksbeställningar, väg B: intag med 409 efter bekräftelsen, sedan Fortnox (`buildOrderRows()`, fraktraden, momsen enligt beslutet), sedan status | Momsbeslutet |
+| **8a** ✅ | Butiksbeställningar, väg B, intaget: `crm_store_orders` med vakten, `POST`/`PUT`/`withdraw` under `/api/portal/store-orders`, 409 bara efter bekräftelsen, notisen till den ansvarige, sidorna (lista och en beställning, läsläge). Beteendet prövas mot en databas med `supabase/checks/portal_store_orders.sql`. Resultaten står under tabellen | Momsbeslutet |
+| **8b** | Ekovillas steg: frakten, Bekräfta (Fortnox-ordern, `buildOrderRows()` med 25 %), Levererad, Fakturera, Makulera, koppla kund, och statusen tillbaka (`store_order.*`). Ingen ny migrering planerad | 8a |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
 ### Fas 0: resultat (2026-09-27)
@@ -1005,6 +1007,146 @@ Punkterna 24–27 står därför bara här, tills portalen för in dem.
 
 **Till portalen:** punkt 28–30.
 
+### Fas 8: spiken om momsen (2026-09-29)
+
+Prövat i Fortnox testbolaget med kund 14 (Boli, `SEREVERSEDVAT`) och kund 15 (SEHED, `SEVAT`). Spikdokumenten står kvar i
+testbolaget: ordrar 27–31 och fakturor 14–18, alla obokförda.
+
+- `VATType` finns inte på dokumenten: Fortnox nekar fältet (2001399 "Felaktigt fältnamn") på ordern och på fakturan, vid
+  POST och PUT, som på offerten. Momstypen sitter bara på kundkortet.
+- Radmoms 25 % till en kund med omvänd moms godtas och följer med `createinvoice` (rätt moms i kronor). **Men kontot och
+  fakturatexten följer kundkortet:** raden bokförs på 3231 (försäljning med omvänd skattskyldighet), och Fortnox egen
+  fakturautskrift skriver "Omvänd betalningsskyldighet" bredvid 25 % moms. Åt andra hållet, 0 % till en kund med vanlig
+  moms, blir kontot 3004 (momsfri försäljning) och texten saknas.
+- `AccountNumber: 3001` per rad godtas, ärvs positionellt vid en PUT utan fältet och följer med till fakturan, men
+  fakturatexten står kvar.
+- Orderbekräftelsen i Fortnox skriver ingen sådan text, och inte heller vår egen PDF-design (den följer `TotalVAT`).
+
+**Williams beslut (2026-09-29):** momsen **som i CRM:et i dag**, per dokument: en butiksbeställning har 25 % (butiken är
+slutkund), också frakten; ett portaljobb (arbete åt butiken mot en annan slutkund) har 0 % på hela ordern. Inget konto per
+rad och ingen spärr: materialordrar till kunder med omvänd moms får i dag sin moms för hand på samma sätt, och varken
+ekonomi eller vd har sett något fel. Kontot och fakturatexten är en känd sak att ta med ekonomi (se "Öppna frågor").
+Portaljobbets 0 % oavsett kort byggs i 8b eller en egen liten PR.
+
+### Fas 8a: resultat (2026-09-29)
+
+**Williams beslut** (2026-09-29, "kör på förslagen"):
+- En egen sida "Butiksbeställningar" i CRM:et, med en lista och en sida per beställning. Menyposten läggs till när
+  integrationen slås på: menyn delas av hela appen (`AppSidebar.tsx`), och en ändring där rör det flöde som redan är
+  aktivt. Till dess nås sidan från notisen och adressen `/crm/butiksbestallningar`.
+- Se: alla med `crm.access`. Bekräfta, frakt, leverans, faktura och makulering (8b): den ansvarige och admin. Ekonomi får
+  ingen vy nu.
+- Notisen till den ansvarige, annars reserven: "Ny beställning från <butik>", "<butik> ändrade B-…", "<butik> drog
+  tillbaka B-…", med "B-2026-003 · 2 rader · 4 414 kr exkl. moms · Vecka 41".
+- Till 8b: frakten som artikel 1050 FRAKT (finns i prod, inte i testbolaget), pris från säljaren, antal 1, och bekräftelsen
+  kräver en fraktrad eller "Ingen frakt"; Fortnox-ordern skapas vid Bekräfta; Levererad med en knapp (datum), Fakturerad
+  med knappen Fakturera (`createinvoice`, en faktura som redan finns i Fortnox bokförs bara); makulering med ett skäl som
+  butiken ser, bara före Levererad, och Fortnox-ordern makuleras först; `ekovillaOrderNumber` är Fortnox-numret; Ekovilla
+  ändrar aldrig butikens rader.
+
+**Egna val som William inte sa emot:**
+- Raderna ligger i beställningens `payload` (jsonb), inte i en egen tabell: en ändring blir en enda villkorad UPDATE, och
+  ingen kan läsa halva ändringar. Det är samma form som `line_items` på arbetsordern.
+- `intake_payload` är den första kroppen som den kom (jämförs med en upprepning), `payload` den tolkade senaste versionen
+  (trimmad, tomt kundnummer som null), som visas och blir Fortnox-ordern.
+- Samma orderId med en annan första kropp ger 409 `store_order_conflict`, som jobbens `job_conflict`. En upprepning av
+  POST jämförs alltid med den FÖRSTA kroppen, också när beställningen ändrats sedan.
+- En ändring eller tillbakadragning av en makulerad eller redan tillbakadragen beställning ger 200 `ignored`, aldrig 409:
+  portalen läser varje 409 på en ändring som "Ekovilla hann bekräfta" och hade visat fel. En annan butik eller ett annat
+  nummer än beställningens ger 400 `store_order_mismatch`.
+- **En beställning skriver aldrig över en befintlig butik**, bara dess senaste kontakt (`last_seen_at`): portalen fryser
+  kroppen och håller beställningarna i kö tills integrationen slås på, så en beställning som är ny för CRM:et kan bära
+  veckogamla uppgifter om butiken. Bara jobben uppdaterar butiken. En butik som hör av sig första gången med en
+  beställning läggs till, med kortet som numret pekar på.
+- **Kunden** räknas med jobbens regel (numret, annars kopplingen för hand) när beställningen kommer, och igen när en
+  ändring kommer till en beställning utan kund. En kund som redan står på beställningen byts aldrig av butiken, och en
+  som kopplats för hand medan ändringen sparas skrivs inte över.
+- Fördelningen är jobbens utan länet: butikens säljare, kundansvarig, reserven.
+- **En tillbakadragning ger alltid en notis**, också när ingen notis är bokförd: bokföringen kan ha fallit efter att
+  "Ny beställning" kom fram.
+- **Reserven får bara notisen om den kan skriva arbetsordrar** (fördelningens krav). Finns ingen mottagare står lånet
+  kvar och notisen görs om efter fem minuter, så att en reserv som väljs under tiden får den.
+- **Beloppen räknas i heltalsören**, och schemat kräver hela ören (högst två decimaler), som kontraktet säger.
+
+**Så fungerar det** (`20260929065116_portal_store_orders.sql`, `lib/domains/portal/{storeOrders,storeOrderIntake,
+storeOrdersStore,storeOrdersView}.ts`, `app/api/portal/store-orders/**`, `app/crm/butiksbestallningar/**`):
+- **In:** grinden och svarscachen, `parsePortalBody` (JSON, nolltecken, Zod), orderId i kroppen måste vara sökvägens.
+  Ny: sparas en gång per orderId. Ändrad: bara om mottagen och `updatedAt` strikt nyare, i en UPDATE som också kräver
+  samma status och version som lästes; en samtidig ändring eller bekräftelse gör att beslutet tas om (högst tre gånger).
+  Tillbakadragen: bara från mottagen.
+- **Vakten** i databasen är skyddet som inte beror på koden: statusen bara framåt (mottagen → tillbakadragen,
+  bekräftad eller makulerad; bekräftad → levererad eller makulerad; levererad → fakturerad), innehållet, versionen och
+  frakten bara medan beställningen är mottagen, kunden byts bara före bekräftelsen (ett borttaget kort nollar den),
+  identiteten och den första kroppen aldrig, Fortnox-numren en gång. Checkar: bekräftad kräver fraktbeslut, levererad
+  kräver Fortnox-ordern, fakturerad kräver fakturanumret, makulerad kräver ett skäl.
+- **Notisen:** vilken som gäller räknas ur raden (`v<version>` eller `withdrawn`), skickas med ett lån på fem minuter
+  och bokförs först efter utskicket. Cron gör om det som inte gick iväg (äldre än två minuter, högst 20 per varv).
+- **Sidorna** läser med sessionen. Listan läser alla pågående (att bekräfta, leverera, fakturera) sida för sida med nyckel,
+  och de 500 senast mottagna av de avslutade; bara raderna och önskad leverans ur kroppen. Beställningssidan
+  (`StoreOrderDetail.tsx`) visar kunden beställningen är kopplad till bredvid portalens kundnummer. Tiderna formateras på
+  servern i svensk tid. Summan räknas ur butikens rader i heltalsören, aldrig ur butikens `costTotal`.
+- **Svarscachen:** ett 404 `unknown_order` sparas inte (`cacheable: false`), så att samma nyckel körs igen när
+  beställningen kommit fram; tillbakadragningens nyckel är fast. Samma sak för meddelandenas 404 `unknown_job` (fas 6).
+- **Cron:** notiserna görs om efter utskicket, inom varvets startgräns och en egen tidsbudget (20 s, 5 s från knapparna),
+  och frågorna efter nya och tillbakadragna som inte sagts är exakta.
+
+🧨 **Next 14.2: en route med bara PUT cachar varje fetch** (`hasNonStaticMethods` räknar POST två gånger och glömmer
+PUT). Ändringens route läste radens första version om och om igen och gav upp med 500 vid andra ändringen. Rättat med
+`fetchCache = 'force-no-store'`, och vakttestet (`routeGuards.test.ts`) kräver raden för varje portalroute utan POST,
+DELETE, PATCH och OPTIONS. Övriga PUT-routes i appen läser kakan (dynamiska) eller sätter `no-store` själva.
+
+**Granskningarna** (code-review high, elva rundor; varje runda granskade den förras rättelser, och den elfte fann inget
+nytt av vikt):
+- **Första:** 404 i svarscachen (tillbakadragningens fasta nyckel), kunden vid en ändring, cron läste de 500 äldsta och hela
+  kroppen, en notis utan mottagare gjordes om varje minut, summorna i sidan, jobbens routes med `parsePortalBody`, butikens
+  schema delat.
+- **Andra:** listan tappade äldre obekräftade, listan läste hela kroppen, exakt fråga efter nya som aldrig meddelats,
+  sidans tider ur etiketter, databasens feltext till användaren.
+- **Tredje:** beställningssidans fel, kunden på sidan, leveransdagen i svensk form, `isUuid`.
+- **Fjärde:** en veckogammal beställning skrev över butiken, bekräftade och levererade kunde försvinna ur listan,
+  förskjutning i stället för nyckel, notiserna före utskicket, tunn sida.
+- **Femte:** en tillbakadragning bokfördes tyst fast "Ny" kommit fram, notiserna utan tidsbudget, gränsen plus en.
+- **Sjätte:** lånet släpptes inte vid ett läsfel, meddelandenas 404 i svarscachen.
+- **Sjunde:** halva ören, en upprepning som föll på kundläsningen, butikens senaste kontakt, dubbletter mellan läsningarna.
+- **Åttonde:** vakten stängde inte butikens namn och ändringstiden efter bekräftelsen (migreringen ändrad på plats),
+  notiserna efter varvets startgräns, en notis utan mottagare gavs upp för gott, reservens behörighet.
+- **Nionde:** den ansvarige fick notisen utan behörighetskontroll (nu samma regel som reserven), notiserna efter
+  dokumenten.
+- **Tionde:** öresumman kunde gå över 2^53 vid schemats gränser (tak på priset), ett skriv för en ny butik, primitiverna
+  `ErrorState`/`EmptyState`.
+- **Elfte:** inget nytt av vikt. Nycklarnas namnrymd går till portalen (punkt 35).
+- **Lämnat, med skäl:** reservens och kundnumrets uppslag och notisens lån finns i kopior hos jobben och meddelandena (en
+  delad funktion hade rört fas 3b:s och 6:s prövade kod; egen PR), listan räknar summan ur raderna (i SQL hade
+  öresregeln dubblerats), en äldre ändring efter en fryst första kropp (portalen skickar bara den senaste ändringen),
+  vakten markerar också butikens tillbakadragning för utskicket (8b räknar fram "inget att skicka" och tar bort
+  markeringen), `no-store` i hela Supabase-klienten (rör varje route, alltså det aktiva flödet; föreslaget till William).
+
+**Prövat:**
+- **Migreringen:** i en tom tillfällig databas med stubbar, två körningar, och 21 mutationer av efterkontrollen, var och
+  en stoppad av sitt eget meddelande (en första runda var ogiltig: min kontroll av triggerns kolumner föll också på den
+  omuterade, rättad); lokalt två gånger i en transaktion som rullades tillbaka, sedan `supabase migration up`. Efter
+  åttonde granskningen ändrades vakten på plats (namnet och ändringstiden), prövades om på samma sätt och lades lokalt
+  in genom att köra den idempotenta filen igen (versionen var redan registrerad).
+- **`supabase/checks/portal_store_orders.sql`** med riktiga sessioner (admin, säljare, konsult, ekonomi, montör, anon):
+  läsningen, de dolda kolumnerna, regeln per roll och vakten. 44 mutationer av databasen, alla röda med sitt eget
+  meddelande (fem behövde först skärpta prov, där en annan spärr hann säga nej före den som prövades).
+- **Koden:** över 130 mutationer i nio omgångar, alla röda i vitest med "Tests N". De som först överlevde var luckor i
+  testerna (updatedAt utan millisekunder, summan med flyttalsfel, frågan efter ändringar, "kapad" utan obekräftade, en
+  upprepning som läste kunden), och testerna finns nu. En var likvärdig: länet stängs av två gånger (deps och tom adress).
+- **Lokalt** med en signerad avsändare: ny 201, upprepning ur cachen, ny nyckel 201 (samma), annan första kropp 409;
+  ändring med samma, äldre och nyare `updatedAt` (ignored, ignored, updated); tillbakadragen 200 två gånger; ändring av en
+  tillbakadragen ignored; okänd 404; bekräftad 409 på ändring och tillbakadragning; en notis per version; cron gjorde om
+  en missad notis.
+- **I webbläsaren** (headless Playwright): listan börjar på Att bekräfta, urvalen räknar rätt, beställningens läge,
+  ändringar, meddelande och frakt; en tillbakadragen säger att den inte ska levereras; konsulten läser; ekonomi och
+  utloggad når inte sidan; telefonbredd utan sidledsscroll.
+
+⚠️ **Lokalt kvar:** butiksbeställningarna so-lokal-8-1 (mottagen, version 3), so-lokal-8-2 (tillbakadragen),
+so-lokal-8-3 (satt till bekräftad för hand, utan Fortnox-order), so-lokal-8-4 (kunden kopplad vid en ändring) och
+so-lokal-8-5, butiken res-lokal-8 och notiserna.
+
+**Till portalen** (punkt 31–34 nedan).
+
 Stående regler: grenar heter `feature/…`, varje gren granskas före PR, merge med `--merge` efter
 gröna kontroller, migreringarna är additiva och får gå före koden, `npm run lint` på varje ändrad
 `.tsx`. Inga ändringar i `app/plannering/**` eller Blikks kod. Portalens ordrar planeras bara i nya
@@ -1141,13 +1283,39 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     lämnar `' ( ) *` okodade, och de får inte stå i ett RFC 5987-värde. En arbetsplats som "Storgatan 1 (bakgård)" ger ett
     felaktigt `filename*`. CRM:ets "Öppna" kodar dem.
 
+31. **Butiksbeställningarnas svar** (fas 8a):
+    - `POST /api/portal/store-orders`: 201 `{ "crmStoreOrderId" }`, också när samma orderId med samma kropp redan är
+      mottaget; 409 `store_order_conflict` när den första kroppen var en annan (under en annan nyckel; samma nyckel med
+      en annan kropp ger 422 `idempotency_key_reused`); 503 `no_assignee` med `Retry-After: 300`.
+    - `PUT /api/portal/store-orders/{orderId}`: 200 `{ "status": "updated" }` eller `{ "status": "ignored" }`; 409
+      `store_order_confirmed`; 404 `unknown_order`; 400 `store_order_mismatch` (en annan butik eller ett annat nummer).
+    - `POST …/{orderId}/withdraw`: 200 `{ "status": "withdrawn" }`, också när den redan är tillbakadragen, eller
+      `{ "status": "ignored" }`; 409 `store_order_confirmed`; 404 `unknown_order`.
+    - Alla: 400 `invalid_json`, `invalid_text` och `validation_error` med `details.issues`, och orderId i kroppen måste
+      vara sökvägens (400). Ett 404 `unknown_order` sparas inte i svarscachen: samma nyckel körs igen när beställningen
+      kommit fram. Samma gäller nu meddelandenas 404 `unknown_job`.
+32. **409 bara efter bekräftelsen** (kontraktet), också när Ekovilla makulerat: en ändring eller tillbakadragning av en
+    makulerad beställning får 200 `ignored`, och makuleringen kommer som `store_order.cancelled`.
+33. **Kroppens krav:** hela antal (heltal över noll), `unitCost` i hela ören (högst två decimaler), ingen rad i `m3`
+    (inblåsning är jobb), leveransadressens gata,
+    postnummer och ort ifyllda, högst 200 rader. `updatedAt` skrivs `YYYY-MM-DDTHH:MM:SS.mmmZ` och måste vara en tid som
+    finns. `ekovillaCustomerNumber` som tom sträng räknas som `null`, som för jobben.
+34. **Momsen** (William 2026-09-29): en butiksbeställning har 25 % (butiken är slutkund), också frakten; ett jobb har 0 %.
+    Portalens `DOMAIN.md` antar omvänd skattskyldighet på allt och behöver rättas för beställningarna.
+35. **Nycklarnas namnrymd:** svarscachen är unik på `Idempotency-Key` över alla portalens anrop, och kontraktets nycklar
+    kan i teorin krocka: `store-order-<id>-withdraw` är samma sträng som `store-order-<id2>` när id2 är `<id>-withdraw`,
+    och likadant för en ändrings `store-order-<id>-<updatedAt>`. Portalens id:n är uuid, så det händer inte i dag, men
+    kontraktet bör säga att id:n är uuid, eller nycklarna få ett eget prefix per anrop (`store-order-withdraw-<id>`).
+
 ## Öppna frågor
 
 Ingen av dem stoppar fas 0–7.
 
-- **Momsen** (kontraktets fråga 4). `reverse_vat` sitter på kunden och gäller alla kundens dokument,
-  medan produkter normalt har vanlig moms. Blockerar fas 8 och ska vara besvarad före första riktiga
-  jobbet i prod, eftersom Fortnox-ordern nu skapas automatiskt. Tas med ekonomi eller revisor.
+- ✅ **Momsen** (kontraktets fråga 4): besvarad av William 2026-09-29, se "Fas 8: spiken om momsen" och punkt 34.
+- **Kontot och fakturatexten vid moms som avviker från kundkortet** (till ekonomi, stoppar inget): Fortnox bokför en rad
+  med 25 % till en kund med omvänd moms på 3231 och skriver "Omvänd betalningsskyldighet" på fakturan, och en rad med
+  0 % till en kund med vanlig moms på 3004 utan texten. Det gäller dagens manuella materialordrar lika mycket som
+  butiksbeställningarna. Vill ekonomi ha det ändrat blir det en egen ändring (konto per rad) som gäller alla dokument.
 - ✅ **Ett avbrutet jobb** (fråga 5): `job.cancelled`, byggt i fas 4b (punkt 20).
 - ✅ **Dokumenten** (fråga 7): orderbekräftelsen och egenkontrollen, byggt i fas 7 (punkt 28–30).
 - **Planeringens datumbekräftelse** föreslår kontakten på plats (`resolveDocumentContact()` i

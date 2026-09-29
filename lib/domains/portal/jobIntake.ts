@@ -30,11 +30,12 @@ import { RESELLER_ID_PATTERN } from './resellers';
 
 export const PORTAL_JOB_PATH = '/api/portal/jobs';
 
-const trimmed = (max: number) => z.string().trim().max(max, `Högst ${max} tecken.`);
-const required = (max: number) => trimmed(max).min(1, 'Får inte vara tomt.');
-// Portalens id:n står i sökvägar (planens punkt 16): samma tecken som butikens id.
-const portalId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
-const amount = z.number().finite('Ogiltigt tal.');
+// Delas med butiksbeställningarna (storeOrderIntake.ts): samma gränser och samma meddelanden till portalen.
+export const trimmed = (max: number) => z.string().trim().max(max, `Högst ${max} tecken.`);
+export const required = (max: number) => trimmed(max).min(1, 'Får inte vara tomt.');
+// Portalens id:n står i sökvägar (planens punkt 16): samma tecken som butikens id. Delas med butiksbeställningarna.
+export const portalId = z.string().regex(RESELLER_ID_PATTERN, 'Ogiltigt id.');
+export const amount = z.number().finite('Ogiltigt tal.');
 const positive = (max: number) => amount.positive('Måste vara större än noll.').max(max, `Högst ${max}.`);
 
 const addressSchema = (street: z.ZodString) =>
@@ -65,16 +66,19 @@ const lineSchema = z
     path: ['unit'],
   });
 
+/** Butiken i portalens kropp: samma i ett jobb och i en butiksbeställning (fas 8), som delar butikens första kontakt. */
+export const portalStoreSchema = z.object({
+  resellerId: portalId,
+  name: required(200),
+  address: addressSchema(trimmed(200)),
+  // null = butiken är inte kopplad i portalen. En tom sträng betyder samma sak.
+  ekovillaCustomerNumber: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), trimmed(50).nullable()),
+});
+
 export const portalJobSchema = z.object({
   quoteId: portalId,
   quoteNumber: required(50),
-  store: z.object({
-    resellerId: portalId,
-    name: required(200),
-    address: addressSchema(trimmed(200)),
-    // null = butiken är inte kopplad i portalen. En tom sträng betyder samma sak.
-    ekovillaCustomerNumber: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), trimmed(50).nullable()),
-  }),
+  store: portalStoreSchema,
   workplace: z.object({
     // Installatörerna kör dit: alla tre delarna krävs.
     address: z.object({ street: required(200), postalCode: required(20), city: required(100) }),

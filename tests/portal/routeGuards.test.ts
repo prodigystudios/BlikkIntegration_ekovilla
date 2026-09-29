@@ -138,6 +138,15 @@ describe('routerna som svarar under /api/portal/ (middleware släpper dem utan s
       }
     });
 
+    it(`${name}: cachar inga fetch-anrop, också när Next inte räknar routen som dynamisk`, () => {
+      // 🧨 Next 14.2 sätter revalidate = 0 bara för routes med POST, DELETE, PATCH eller OPTIONS (hasNonStaticMethods i
+      // app-route/module.js räknar POST två gånger och glömmer PUT). En portalroute läser aldrig kakan, så en route med
+      // bara GET eller PUT cachar annars varje supabase-läsning (fas 4b: cron-routen, fas 8: ändringen av en beställning).
+      const methods = handlers(source).map((h) => h.method);
+      if (methods.some((m) => ['POST', 'DELETE', 'PATCH', 'OPTIONS'].includes(m))) return;
+      expect(source).toMatch(/export\s+const\s+fetchCache\s*=\s*['"]force-no-store['"]/);
+    });
+
     it(`${name}: tar inte in en sessionsgrind — inloggning hör hemma under /api/crm/portal/`, () => {
       expect(source).not.toMatch(/requirePermission|requireAnyPermission|requireSignedInUser|getCurrentUser|createSessionClient/);
     });

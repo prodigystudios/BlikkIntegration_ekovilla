@@ -8,6 +8,7 @@ import {
 } from './jobDocumentsStore';
 import { retryPortalFortnox, type PortalFortnoxRetrySummary } from './jobFortnoxRetry';
 import { sweepPortalJobMessages, type PortalJobMessagesSweepSummary } from './jobMessagesStore';
+import { sweepStoreOrderNotices, type StoreOrderNoticeSweepSummary } from './storeOrdersStore';
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
 
@@ -23,7 +24,9 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *   4. Dokumenten (jobDocumentsStore.ts, fas 7): den automatiska orderbekräftelsen efter en levererad bekräftelse,
  *      omförsöken och det som inte hann köas. Efter utskicket, eftersom en orderbekräftelse är tre Fortnox-anrop och
  *      statusen inte ska vänta på dem. Köades något skickas kön en gång till.
- *   5. Fortnox-omförsöken (jobFortnoxRetry.ts), sist: ett försök kan ta upp mot 40 s, och statusen ska inte vänta på
+ *   5. Butiksbeställningarnas notiser som inte gick iväg (storeOrdersStore.ts, fas 8), inom samma startgräns som
+ *      dokumenten och en egen tidsbudget: de köar inget, och statusen och dokumenten ska inte vänta på dem.
+ *   6. Fortnox-omförsöken (jobFortnoxRetry.ts), sist: ett försök kan ta upp mot 40 s, och statusen ska inte vänta på
  *      dem. Bara så många som hinns inom tidsgränsen.
  *
  * Ett steg som kastar stoppar inte nästa; felet står i sammanfattningen.
@@ -39,12 +42,15 @@ export const PORTAL_CRON_DOCUMENTS_START_BEFORE_MS = 150_000;
  * 30 s) ryms då.
  */
 export const PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS = 60_000;
+/** Knapparna på portalsidan påbörjar butiksbeställningarnas notiser i högst så här lång tid (cron: 20 s). */
+export const PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS = 5_000;
 /** Utskicket efter dokumenten tar nya händelser i högst så här lång tid; ett dokument kan ta 30 s till. */
 export const PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS = 30_000;
 
 export type PortalCronSummary = {
   sync: PortalJobSyncSummary | { error: string };
   messages: PortalJobMessagesSweepSummary | { error: string };
+  storeOrderNotices: StoreOrderNoticeSweepSummary | { error: string };
   dispatch: OutboxDispatchSummary | { error: string };
   resync?: PortalJobSyncSummary | { error: string };
   redispatch?: OutboxDispatchSummary | { error: string };
@@ -88,6 +94,7 @@ export async function runPortalCron(
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
+    storeOrderNotices: { candidates: 0, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 },
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
   };
@@ -95,7 +102,6 @@ export async function runPortalCron(
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
-
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
   if (now().getTime() - startedAt < documentsStartBefore) {
@@ -117,6 +123,17 @@ export async function runPortalCron(
         }),
       );
     }
+  }
+
+  // Butiksbeställningarnas notiser efter dokumenten (orderbekräftelserna ska inte tappa tid), inom samma startgräns: ett
+  // varv som redan tagit sin tid påbörjar inga, de väntar till nästa.
+  if (now().getTime() - startedAt < documentsStartBefore) {
+    summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
+      sweepStoreOrderNotices(admin, {
+        now,
+        budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
+      }),
+    );
   }
 
   const remaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);

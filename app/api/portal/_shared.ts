@@ -1,8 +1,10 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { z } from 'zod';
 import { waitUntil } from '@vercel/functions';
 import { routeError } from '@/lib/api/responses';
 import { readPortalSecret } from '@/lib/domains/portal/config';
+import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import {
   IDEMPOTENCY_KEY_HEADER,
   claimIdempotencyKey,
@@ -111,8 +113,12 @@ export async function verifyPortalRequest(
 
 // ---------------------------------------------------------------------------------------------------- svarscachen
 
-/** Vad en ändrande route svarar, och det som ska göras efter svaret (Fortnox-ordern, notiserna). */
-export type PortalHandlerResult = { response: NextResponse; after?: () => Promise<unknown> };
+/**
+ * Vad en ändrande route svarar, och det som ska göras efter svaret (Fortnox-ordern, notiserna). `cacheable: false` släpper
+ * nyckeln i stället för att spara svaret, för ett nej som kan bli ett ja vid ett senare försök med samma nyckel: en
+ * tillbakadragning (fast nyckel) av en beställning som ännu inte kommit fram (fas 8).
+ */
+export type PortalHandlerResult = { response: NextResponse; after?: () => Promise<unknown>; cacheable?: false };
 
 /** Vercel väntar in arbetet efter svaret; lokalt, utan Vercel, fortsätter det bara i processen. */
 function scheduleAfterResponse(work: Promise<unknown>) {
@@ -132,7 +138,8 @@ function cachedResponse(status: number, body: unknown) {
  *   503 request_in_progress      ett annat anrop med nyckeln körs just nu (Retry-After)
  *   500 portal_request_failed    routen kastade; nyckeln släpps, så att omförsöket körs på nytt
  *
- * Svaret sparas när det blir samma vid ett omförsök (2xx och bestående 4xx), annars släpps nyckeln. Det som ska göras
+ * Svaret sparas när det blir samma vid ett omförsök (2xx och bestående 4xx), annars släpps nyckeln. En route kan säga att
+ * ett visst svar inte är bestående (`cacheable: false`), och då släpps nyckeln också. Det som ska göras
  * efter svaret (`after`) körs bara av det anrop som faktiskt körde routen, aldrig av en upprepning.
  */
 export async function runIdempotentPortalRequest(
@@ -177,7 +184,7 @@ export async function runIdempotentPortalRequest(
 
   const { response } = result;
   try {
-    if (isCacheableResponseStatus(response.status)) {
+    if (result.cacheable !== false && isCacheableResponseStatus(response.status)) {
       const saved = await completeIdempotencyKey(admin, owned, response.status, await response.clone().json(), now());
       if (!saved) console.warn('[portal] svaret sparades inte: claimen var inte längre vår', { path });
     } else {
@@ -195,4 +202,55 @@ export async function runIdempotentPortalRequest(
     (options.schedule ?? scheduleAfterResponse)(work);
   }
   return response;
+}
+
+// ---------------------------------------------------------------------------------------------------------- kroppen
+
+/**
+ * Ett id i kroppen som måste vara sökvägens (butiksbeställningens orderId): 400 validation_error med fältets sökväg när
+ * de skiljer sig, annars null.
+ */
+export function portalPathIdMismatch(field: string, inBody: string, inPath: string): NextResponse | null {
+  if (inBody === inPath) return null;
+  return routeError(400, 'validation_error', `${field}: samma id som i sökvägen.`, {
+    issues: [{ path: field, message: 'Samma id som i sökvägen.' }],
+  });
+}
+
+export type ParsedPortalBody<T> = { ok: true; data: T; payload: unknown } | { ok: false; response: NextResponse };
+
+/**
+ * Kroppen som JSON och mot kontraktets schema, med samma svar som jobbets route när den inte håller:
+ *
+ *   400 invalid_json       kroppen är inte JSON
+ *   400 invalid_text       en text som Postgres inte kan spara (nolltecken, ensamt surrogat), med sökvägen
+ *   400 validation_error   kroppen följer inte kontraktet (details.issues: fälten, som `lines.1.unitCost`)
+ *
+ * `payload` är kroppen som den kom, `data` den tolkade (trimmad, med schemats standardvärden).
+ */
+export function parsePortalBody<T>(rawBody: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>): ParsedPortalBody<T> {
+  let payload: unknown;
+  try {
+    // Grinden behåller ett inledande BOM (det signerades); JSON.parse tål det inte.
+    payload = JSON.parse(rawBody.charCodeAt(0) === 0xfeff ? rawBody.slice(1) : rawBody);
+  } catch {
+    return { ok: false, response: routeError(400, 'invalid_json', 'Kroppen är inte JSON.') };
+  }
+  const unstorable = findUnstorableText(payload);
+  if (unstorable !== null) {
+    return {
+      ok: false,
+      response: routeError(400, 'invalid_text', `${unstorable}: innehåller ett nolltecken eller ett ensamt surrogat, som inte kan sparas.`),
+    };
+  }
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    const issues = parsed.error.issues.slice(0, 20).map((i) => ({ path: i.path.join('.'), message: i.message }));
+    const first = issues[0];
+    return {
+      ok: false,
+      response: routeError(400, 'validation_error', first ? `${first.path}: ${first.message}` : 'Ogiltig kropp.', { issues }),
+    };
+  }
+  return { ok: true, data: parsed.data, payload };
 }

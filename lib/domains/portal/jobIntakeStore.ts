@@ -101,7 +101,7 @@ async function readCustomer(admin: SupabaseClient, column: 'id' | 'fortnox_custo
 
 type ResellerLinkRow = { customer_id: string | null; customer_linked_at: string | null };
 
-async function readResellerLink(admin: SupabaseClient, resellerId: string): Promise<ResellerLinkRow | null> {
+export async function readResellerLink(admin: SupabaseClient, resellerId: string): Promise<ResellerLinkRow | null> {
   const { data, error } = await admin
     .from('crm_portal_resellers')
     .select('customer_id, customer_linked_at')

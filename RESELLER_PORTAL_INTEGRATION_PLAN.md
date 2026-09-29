@@ -2,13 +2,15 @@
 
 **Status:** kontrakt, beslutat med William 2026-09-27. Signaturen och omförsöken ändrades
 2026-09-28, och samma dag fördes CRM:ets rättelser 16–19 in (sökvägarna, prislistans nyckel,
-svarens kuvert och jobbets felkoder) och 20–23 från CRM:ets fas 4b (avbrutet jobb utan skäl,
-planeringens slutdag, bara framåt, tider och nycklar). Portalens halva av affärsflödet är byggd. CRM:ets transport
+svarens kuvert och jobbets felkoder), 20–23 från CRM:ets fas 4b (avbrutet jobb utan skäl,
+planeringens slutdag, bara framåt, tider och nycklar), 24–27 från fas 6 (meddelandena) och 28–30 från
+fas 7 (dokumenten).
+Portalens halva av affärsflödet är byggd. CRM:ets transport
 finns (fas 1a–1c), och portalens byggs nu, se "Det här finns i portalen".
 **Källa:** `prodigystudios/aterforsaljare-ekovilla`, filen `CRM_INTEGRATION.md`. En kopia ligger i
 CRM-repot som `RESELLER_PORTAL_INTEGRATION_PLAN.md`. Ändras kontraktet ändras det i båda.
 **Hur CRM:et bygger sin halva** står i CRM-repots `RESELLER_PORTAL_CRM_PLAN.md`, läst mot CRM:et
-@ `f43c7b8` (fas 4b, PR #254). Rättelserna står där under "Rättelser och luckor i kontraktet".
+@ `fbcd0ec` (fas 7, PR #257). Rättelserna står där under "Rättelser och luckor i kontraktet".
 Kontrollera varje filhänvisning mot koden innan du bygger på den. CRM:et byggs om (RBAC, SSR,
 säkerhetsmigreringar).
 
@@ -230,7 +232,8 @@ Den provar kopplingen åt båda hållen, från respektive admin- eller inställn
 - **Portarna:** CRM:et kör på :3000 och portalen på :3001: `DATA_SOURCE=supabase npm run dev -- -p
   3001`.
 - **Portalens `.env.local`:** `EKOVILLA_CRM_URL=http://localhost:3000` och ett lokalt
-  `PORTAL_CRM_SHARED_SECRET`, samma värde som i CRM:ets `.env.development.local`.
+  `PORTAL_CRM_SHARED_SECRET`, samma värde som i CRM:ets `.env.development.local`. Mot låtsas-CRM:et
+  också `EKOVILLA_CRM_STORE_ORDERS=on`, som skickar butiksbeställningarna.
 - **CRM:ets `.env.development.local`:** `RESELLER_PORTAL_URL=http://localhost:3001` och samma
   hemlighet.
 - **Kunden:** butikens `ekovilla_customer_number` i portalens lokala databas måste finnas som kund
@@ -477,7 +480,8 @@ Händelserna för ett och samma jobb kommer i ordning.
   Fortnox ger ingen händelse. `partially_invoiced` skickas inte.
 - **`job.cancelled`** skickas när arbetsordern avbryts eller tas bort, och bara före Utförd.
   `reason` är fritext till butiken, och får vara tom eller saknas. CRM:et har inget skäl att skicka
-  i dag (rättelse 20), och butiken ser då "Inget skäl angavs.". `cancelledAt` är en tidpunkt i UTC.
+  (rättelse 20). Sedan CRM-PR #255 skickar CRM:et `"reason": ""`, och butiken ser "Inget skäl
+  angavs.". `cancelledAt` är en tidpunkt i UTC.
   Inget kommer efter den.
 - **Bara framåt** (rättelse 22): efter `job.completed` kommer inga fler `job.scheduled`, och efter
   `job.completed` eller `job.invoiced` aldrig ett tidigare läge. `job.invoiced` kommer alltid efter
@@ -487,16 +491,27 @@ Händelserna för ett och samma jobb kommer i ordning.
   `completedAt` och `invoicedAt` är svenska kalenderdagar, `YYYY-MM-DD`. Nyckeln är unik per
   händelse, också när datumen går X → Y → X, eftersom `occurredAt` ingår i den.
 - **`job.message`:**
-  - `authorName` är säljarens namn.
-  - `department` är en av `Försäljning`, `Planering`, `Ekonomi`, eller tom sträng. Portalen nekar
-    andra värden med 400.
+  - `messageId` är CRM:ets uuid, och nyckeln är `job.message-<messageId>`, utan tid. `occurredAt`
+    är samma som `sentAt` (rättelse 24).
+  - `authorName` är svararens namn, eller `Ekovilla` när profilen saknar namn.
+  - `department` är en av `Försäljning`, `Planering` och `Ekonomi`. CRM:et skickar aldrig en tom,
+    men portalen tar emot tom sträng också. Andra värden nekas med 400.
+  - Namn och text trimmas och räknas i kodpunkter: högst 200 respektive 5000 tecken (rättelse 26).
+    Portalen räknar likadant.
   - Portalen visar det som "Anna Berg · Planering".
   - Portalen sparar meddelandet en gång per `messageId`, också om det kommer igen med en ny nyckel.
   - Ett meddelande tas emot också efter `job.cancelled`. Det är samtal, ingen status.
-- **`job.document`:**
-  - `kind` är `order_confirmation`, som skickas när Fortnox-ordern finns, eller `self_inspection`,
-    som skickas när jobbet är utfört.
-  - Ett nytt dokument av samma sort ersätter det gamla.
+- **`job.document`** (rättelse 28):
+  - `kind` är `order_confirmation` eller `self_inspection`. Orderbekräftelsen skickas en gång när
+    `job.confirmed` är mottagen, och igen när Ekovilla skickar en ny. Egenkontrollen skickas när
+    Ekovilla skickar den.
+  - Nyckeln är `job.document-<dokumentets uuid>`, utan tid, och samma nyckel ger alltid samma byte.
+    `occurredAt` är när PDF:en frystes.
+  - `name` är till exempel "Orderbekräftelse 20417 – Storgatan 1.pdf", högst 200 tecken.
+  - Ett nytt dokument av samma sort ersätter det gamla. CRM:et skickar aldrig ett äldre efter ett
+    nyare.
+  - Portalen tar emot dokument också efter `job.cancelled`, men CRM:et skickar inga då (rättelse
+    29).
   - PDF:en skickas i kroppen, och portalen sparar den i sin egen lagring. Vercel tar emot högst
     4,5 MB per anrop, så PDF:en får vara högst 3,3 MB före base64.
   - Portalen nekar med 400 det som inte är strikt base64, inte börjar som en PDF (`%PDF-`) eller är
@@ -508,8 +523,8 @@ Händelserna för ett och samma jobb kommer i ordning.
 | --- | --- | --- |
 | 200 | – | Händelsen är mottagen, eller var redan mottagen. |
 | 404 | `unknown_quote`, `unknown_order` | Portalen har ingen överlämnad offert eller beställning med det id:t. |
-| 409 | `cancelled` | Jobbet är redan avbrutet, och ingen status kommer efter `job.cancelled`. `job.message` tas emot ändå. |
-| 503 | `job_not_ready` | Offerten är överlämnad, men portalen har inte hunnit skapa jobbet ur svaret på ordern. Kommer med `Retry-After`, och CRM:et försöker igen. |
+| 409 | `cancelled` | Jobbet är redan avbrutet, och ingen status kommer efter `job.cancelled`. `job.message` och `job.document` tas emot ändå. |
+| 503 | `job_not_ready` | Offerten är överlämnad, men portalen har inte hunnit skapa jobbet ur svaret på ordern. Kommer med `Retry-After: 30`. CRM:et läser den inte, men gör om varje 5xx efter 30 s, 60 s, 120 s och så vidare, upp till en timme. |
 
 Plus felen under "Transporten" och "Idempotens".
 
@@ -522,11 +537,31 @@ Plus felen under "Transporten" och "Idempotens".
 CRM:et visar meddelandet på arbetsordern, på ett eget kort som är skilt från de interna
 kommentarerna, och meddelar säljaren. Säljarens svar går tillbaka som `job.message`.
 
+**CRM:ets svar** (rättelse 25):
+
+| Svar | Kod | När |
+| --- | --- | --- |
+| 201 | – | `{ messageId }`, också när samma meddelande redan är mottaget. |
+| 400 | `invalid_json`, `invalid_text`, `validation_error` | Kroppen håller inte. |
+| 404 | `unknown_job` | CRM:et har inget jobb för offerten. |
+| 409 | `work_order_removed` | Ekovilla har tagit bort arbetsordern. |
+| 409 | `message_conflict` | Samma `messageId` med ett annat innehåll. `sentAt` räknas som innehåll. Portalen bygger kroppen vid första försöket och skickar samma byte vid varje omförsök. |
+| 503 | `job_not_ready` | Med `Retry-After: 30`. Portalen försöker igen. |
+
+Namn och text räknas i kodpunkter, högst 200 och 5000 (rättelse 26). En avbruten, utförd eller
+fakturerad arbetsorder tar emot meddelanden (rättelse 27).
+
 ---
 
 ## Flöde 3: butiksbeställningar (portal → CRM, status tillbaka)
 
 ### Butiken beställer
+
+**Portalen håller beställningarna i utkorgen tills CRM:et tar emot dem** (William 28 september
+2026). CRM:et bygger dem i sin fas 8, som väntar på momsbeslutet. Utan `EKOVILLA_CRM_STORE_ORDERS=on`
+skickar portalen jobben och meddelandena som vanligt, men beställningarna ligger kvar i kö, med en
+ny titt var femtonde minut, utan att ett försök räknas. Slå på variabeln när CRM:et har
+fas 8, så går kön iväg.
 
 Butiken beställer produkter ur prislistan: allt utom inblåsning (`m3`) och etablering. Antalet är
 alltid hela enheter. Leveransen går till butiken, och **frakten sätter Ekovilla** som en rad i
@@ -620,7 +655,7 @@ Butikens egen tillbakadragning heter Tillbakadragen i portalen. Den är skild fr
 
 ## Det här finns i CRM:et i dag
 
-Läst mot `f43c7b8` (fas 4b, PR #254, 28 september). CRM:ets plan säger vilken fas som är klar.
+Läst mot `fbcd0ec` (fas 7, PR #257, 29 september). CRM:ets plan säger vilken fas som är klar.
 
 - **Transporten** (fas 1a–1c): signaturen, miljöspärren, utkorgen med omförsök, svarscachen för
   idempotens, grinden för `/api/portal/` och `POST /api/portal/ping`.
@@ -632,9 +667,13 @@ Läst mot `f43c7b8` (fas 4b, PR #254, 28 september). CRM:ets plan säger vilken 
   butikens kundkort på ordern och Fortnox-ordern direkt efter svaret.
 - **Status tillbaka** (fas 4a–4b, PR #253–#254): planerat datum på alla arbetsordrar, och
   `job.confirmed`, `job.scheduled`, `job.completed`, `job.invoiced` och `job.cancelled` till
-  portalen (`lib/domains/portal/jobState.ts`).
-- **Kvar i CRM:et:** meddelandena (6), dokumenten (7) och butiksbeställningarna (8, väntar på
-  momsbeslutet).
+  portalen (`lib/domains/portal/jobState.ts`). `job.cancelled` har `"reason": ""` sedan PR #255.
+- **Meddelandena** (fas 6, PR #256): `POST /api/portal/jobs/{quoteId}/messages` och svaren som
+  `job.message` (`lib/domains/portal/jobMessages.ts`).
+- **Dokumenten** (fas 7, PR #257): orderbekräftelsen och egenkontrollen som `job.document`
+  (`lib/domains/portal/jobDocuments.ts`).
+- **Kvar i CRM:et:** butiksbeställningarna (8, väntar på momsbeslutet). Portalen håller dem i kö tills
+  dess, se "Flöde 3".
 - **`crm_work_orders`**, i `supabase/migrations/20260925081734_baseline.sql`:
   - Nummer: `order_number`, med formatet `AO-YYYYMMDD-XXXXXX`.
   - Kund och innehåll: `customer_id`, `customer_snapshot`, `work_address`, `line_items`,
@@ -692,10 +731,13 @@ Läst mot `f43c7b8` (fas 4b, PR #254, 28 september). CRM:ets plan säger vilken 
   men bara det butiken själv gör, inte serverns egna skrivningar. Ändringen har `changed_at` som
   `updatedAt`. En ny beställning skickas efter svaret, en ändring och en tillbakadragning direkt,
   så att ett 409 syns på en gång. Beställningssidan säger om Ekovilla tagit emot den senaste.
+  Utan `EKOVILLA_CRM_STORE_ORDERS=on` ligger de kvar i kö tills CRM:et har sin fas 8
+  (`storeOrdersToCrmEnabled` i `lib/crm/config.ts`).
 - **Dokumenten** (`job.document`): PDF:en läggs i bucketen `job-documents` med secret key, och ett
   nytt dokument av samma sort ersätter det gamla, både raden och filen. Under Dokument på jobbet
   står det som kommit, och det som väntas med när det kommer. Butiken hämtar dem genom
-  `/jobb/{id}/dokument/{sort}`, som läser bucketen med sin session. Prefixet står i
+  `/jobb/{id}/dokument/{sort}`, som läser bucketen med sin session. Filnamnet står i
+  `filename*`, kodat enligt RFC 5987 också för `' ( ) *` (rättelse 30). Prefixet står i
   `lib/auth/publicPaths.ts`, så att proxyn släpper det utan session, och
   `tests/app/ekovillaRoutes.test.ts` kräver att varje handler under det börjar med grinden.
 - **"Prova kopplingen"** under Inställningar, för butikens admin: en signerad ping till CRM:et.

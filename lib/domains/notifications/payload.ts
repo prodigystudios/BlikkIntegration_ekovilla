@@ -185,6 +185,37 @@ export function buildPortalJobMessageNotification(input: {
 }
 
 /**
+ * En butik har skickat, ändrat eller dragit tillbaka en butiksbeställning i återförsäljarportalen
+ * (RESELLER_PORTAL_CRM_PLAN.md fas 8). Till den ansvarige, och till reserven när beställningen saknar en (William
+ * 2026-09-29). Brödtexten är sammanfattningen (`storeOrderSummary`): nummer, rader, summa exkl. moms och önskad
+ * leverans. Egen typ per sort, så att push-bannern för en ändring inte ersätter den för en ny beställning.
+ */
+export function buildStoreOrderNotification(input: {
+  storeOrderId: string;
+  kind: 'received' | 'changed' | 'withdrawn';
+  storeName: string;
+  orderNumber: string;
+  summary: string;
+}): NotificationContent {
+  const store = input.storeName.trim();
+  const number = input.orderNumber.trim();
+  const title =
+    input.kind === 'received'
+      ? `Ny beställning från ${store}`
+      : input.kind === 'changed'
+        ? `${store} ändrade ${number}`
+        : `${store} drog tillbaka ${number}`;
+  return {
+    type: `portal_store_order.${input.kind}`,
+    title,
+    body: input.summary,
+    href: `/crm/butiksbestallningar/${input.storeOrderId}`,
+    entity_type: 'store_order',
+    entity_id: input.storeOrderId,
+  };
+}
+
+/**
  * Fortnox-ordern för ett jobb från portalen skapades inte (kontrollerna stoppade, eller Fortnox svarade fel), eller
  * skapades utan en ändring som sparades under tiden. Till samma person som fick jobbet. Egen typ, så att push-bannern
  * inte ersätter "Nytt jobb" (taggen är typ + arbetsorder).

@@ -1,9 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { ok, routeError } from '@/lib/api/responses';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import { notifyPortalJobMessage, portalJobMessageSchema, receivePortalJobMessage } from '@/lib/domains/portal/jobMessagesStore';
-import { runIdempotentPortalRequest, verifyPortalRequest } from '../../../_shared';
+import { parsePortalBody, runIdempotentPortalRequest, verifyPortalRequest } from '../../../_shared';
 
 type RouteContext = { params: { quoteId: string } };
 
@@ -14,7 +13,7 @@ type RouteContext = { params: { quoteId: string } };
 //   400 invalid_json          kroppen är inte JSON
 //   400 invalid_text          en text som Postgres inte kan spara (nolltecken, ensamt surrogat), eller som den nekar
 //   400 validation_error      kroppen följer inte kontraktet (details.issues: fälten)
-//   404 unknown_job           inget jobb med det quoteId:t
+//   404 unknown_job           inget jobb med det quoteId:t (sparas inte i svarscachen: jobbet kan komma senare)
 //   409 work_order_removed    jobbets arbetsorder har tagits bort hos Ekovilla
 //   409 message_conflict      samma messageId är redan mottaget, med ett annat innehåll
 //   503 job_not_ready         jobbet tas emot just nu; portalen försöker igen (Retry-After)
@@ -35,25 +34,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
     // Grinden släpper bara sökvägens säkra tecken; ett id som inget jobb har blir 404 i uppslaget.
     const quoteId = context.params.quoteId;
 
-    let payload: unknown;
-    try {
-      // Grinden behåller ett inledande BOM (det signerades); JSON.parse tål det inte.
-      payload = JSON.parse(verified.rawBody.replace(/^﻿/, ''));
-    } catch {
-      return { response: routeError(400, 'invalid_json', 'Kroppen är inte JSON.') };
-    }
-    const unstorable = findUnstorableText(payload);
-    if (unstorable !== null) {
-      return {
-        response: routeError(400, 'invalid_text', `${unstorable}: innehåller ett nolltecken eller ett ensamt surrogat, som inte kan sparas.`),
-      };
-    }
-    const parsed = portalJobMessageSchema.safeParse(payload);
-    if (!parsed.success) {
-      const issues = parsed.error.issues.slice(0, 20).map((i) => ({ path: i.path.join('.'), message: i.message }));
-      const first = issues[0];
-      return { response: routeError(400, 'validation_error', first ? `${first.path}: ${first.message}` : 'Ogiltig kropp.', { issues }) };
-    }
+    const parsed = parsePortalBody(verified.rawBody, portalJobMessageSchema);
+    if (!parsed.ok) return { response: parsed.response };
 
     const message = parsed.data;
     const result = await receivePortalJobMessage(admin, quoteId, message);
@@ -69,7 +51,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
           },
         };
       case 'unknown_job':
-        return { response: routeError(404, 'unknown_job', 'Inget jobb med det id:t.') };
+        // Inte bestående: kommer jobbet fram senare (det kan ha fått 503 no_assignee) ska samma nyckel köras igen, inte
+        // få samma 404 ur svarscachen (fas 8, som butiksbeställningarnas unknown_order).
+        return { response: routeError(404, 'unknown_job', 'Inget jobb med det id:t.'), cacheable: false };
       case 'work_order_removed':
         return { response: routeError(409, 'work_order_removed', 'Jobbets arbetsorder har tagits bort hos Ekovilla.') };
       case 'conflict':

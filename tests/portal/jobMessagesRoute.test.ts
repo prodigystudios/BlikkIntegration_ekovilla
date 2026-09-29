@@ -146,6 +146,15 @@ describe('POST /api/portal/jobs/{quoteId}/messages', () => {
     expect(messages()).toHaveLength(0);
   });
 
+  it('okänt jobb sparas inte i svarscachen: kommer jobbet senare tas samma meddelande emot med samma nyckel', async () => {
+    h.db = database({ quote_id: 'q-annat' });
+    expect((await post()).status).toBe(404);
+    h.db.tables.crm_portal_jobs[0].quote_id = QUOTE;
+    const again = await post();
+    expect(again.status).toBe(201);
+    expect(messages()).toHaveLength(1);
+  });
+
   it('arbetsordern borttagen: 409 work_order_removed', async () => {
     h.db = database({ work_order_id: null });
     const res = await post();
