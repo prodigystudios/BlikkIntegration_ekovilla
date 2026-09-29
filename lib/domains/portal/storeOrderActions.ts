@@ -491,7 +491,11 @@ async function cancelledDuringPush(
 /** Två försök skickade samtidigt och ett annat nummer står på beställningen: vår order makuleras. Loggar bara. */
 async function cancelDuplicateOrder(id: string, kept: string, extra: string, deps: StoreOrderFortnoxDeps): Promise<void> {
   try {
-    await deps.cancel(extra);
+    const outcome = await cancelFortnoxOrderByState(extra, deps);
+    if (outcome.kind === 'invoiced') {
+      console.error('[portal-store-orders] 🧨 två Fortnox-ordrar för samma beställning; den extra är fakturerad', { id, kept, extra, fortnoxInvoiceNumber: outcome.invoiceNumber });
+      return;
+    }
     console.warn('[portal-store-orders] 🧨 två försök skickade samtidigt; vår order makulerades', { id, kept, cancelled: extra });
   } catch (cancelError) {
     console.error('[portal-store-orders] 🧨 två Fortnox-ordrar för samma beställning; den extra kunde inte makuleras', {

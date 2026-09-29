@@ -24,6 +24,7 @@ type RouteContext = { params: { id: string } };
 //   409 store_order_busy                        en makulering eller en push arbetar mot Fortnox-ordern just nu
 //   409 fortnox_not_connected
 //   502 store_order_fortnox_failed              Fortnox svarade inte på läsningen av ordern
+//   500 store_order_deliver_failed              databasen, eller claimen gick inte att läsa
 
 export const dynamic = 'force-dynamic';
 // Läsningen av Fortnox-ordern, med upp till ~23 s väntan vid 429.

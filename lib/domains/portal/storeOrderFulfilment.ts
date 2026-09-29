@@ -231,8 +231,10 @@ async function createOrAdoptInvoice(orderNumber: string, deps: StoreOrderFulfilm
   try {
     created = await deps.createInvoice(orderNumber);
   } catch (e) {
+    // Nejet avgörs på orderns läge, inte på koden: fakturerad av ett annat försök, eller makulerad under tiden.
     const after = await deps.readOrder(orderNumber).catch(() => null);
     if (after?.invoiceNumber) return { kind: 'invoice', number: after.invoiceNumber, source: 'adopted' };
+    if (after?.cancelled) return { kind: 'cancelled' };
     throw e;
   }
   if (created) return { kind: 'invoice', number: created, source: 'created' };

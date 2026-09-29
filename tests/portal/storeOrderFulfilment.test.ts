@@ -402,6 +402,17 @@ describe('invoiceStoreOrder', () => {
     expect(row(m)).toMatchObject({ status: 'delivered', fortnox_invoice_sync_status: 'not_synced', fortnox_invoice_claimed_at: null });
   });
 
+  it('🧨 Fortnox-ordern makulerades mellan läsningen och createinvoice: "makulerad i Fortnox", inte Fortnox råa fel', async () => {
+    const m = db(delivered());
+    const { deps, state } = fakeFortnox();
+    deps.createInvoice.mockImplementationOnce(async (n: string) => {
+      state[n].cancelled = true;
+      throw new FortnoxApiError(400, `Ordernummer ${n} är makulerad och kan inte behandlas.`, 2000397);
+    });
+    expect(await invoice(m, deps)).toEqual({ kind: 'fortnox_order_cancelled', orderNumber: '58' });
+    expect(row(m)).toMatchObject({ status: 'delivered', fortnox_invoice_claimed_at: null });
+  });
+
   it('Fortnox-ordern är makulerad i Fortnox: ingen faktura, och det sägs', async () => {
     const m = db(delivered());
     const { deps } = fakeFortnox({ '58': { cancelled: true } });

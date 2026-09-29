@@ -451,23 +451,18 @@ export default function StoreOrderActions(props: Props) {
   const refresh = () => startRefresh(() => router.refresh());
   const [editingCustomer, setEditingCustomer] = useState(false);
   const [editingFreight, setEditingFreight] = useState(false);
-  // Leveransdagen: i dag som förval (serverns svenska dag). Sidan kan stå öppen över midnatt, så övre gränsen är den senare
-  // av serverns och webbläsarens svenska dag, läst när fältet används; servern prövar ändå.
-  const [deliveredOn, setDeliveredOn] = useState(props.deliveredOnBounds.max);
-  // Rörd av säljaren: annars skickas "i dag" (null), och servern räknar dagen, också när fliken stått öppen i dagar.
-  const [deliveredOnTouched, setDeliveredOnTouched] = useState(false);
-  const [today, setToday] = useState(props.deliveredOnBounds.max);
-  const refreshToday = () => {
-    const now = stockholmTodayISO();
-    setToday(now > props.deliveredOnBounds.max ? now : props.deliveredOnBounds.max);
+  // Leveransdagen säljaren valt, eller null: då skickas "i dag" och servern räknar dagen, också när fliken stått öppen i
+  // dagar. Fältet visar serverns dag tills säljaren väljer.
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  // Webbläsarens svenska dag, läst när fältet används: sidan kan stå öppen över midnatt, så övre gränsen är den senare av
+  // den och serverns. Servern prövar ändå.
+  const [browserToday, setBrowserToday] = useState<string | null>(null);
+  const readBrowserToday = () => setBrowserToday(stockholmTodayISO());
+  const deliveredOnBounds = {
+    min: props.deliveredOnBounds.min,
+    max: browserToday && browserToday > props.deliveredOnBounds.max ? browserToday : props.deliveredOnBounds.max,
   };
-  const deliveredOnBounds = { min: props.deliveredOnBounds.min, max: today };
-  // Sidan lästes om (nya gränser från servern): ett orört fält visar den nya dagen. Bara när serverns dag ändras, inte när
-  // fältet rörs.
-  useEffect(() => {
-    setToday(props.deliveredOnBounds.max);
-    if (!deliveredOnTouched) setDeliveredOn(props.deliveredOnBounds.max);
-  }, [props.deliveredOnBounds.max]);
+  const shownDay = pickedDay ?? props.deliveredOnBounds.max;
   const [confirmingDelivery, setConfirmingDelivery] = useState(false);
   const [confirmingInvoice, setConfirmingInvoice] = useState(false);
   const [cancelling, setCancelling] = useState(false);
@@ -526,7 +521,7 @@ export default function StoreOrderActions(props: Props) {
     await run(
       `/api/crm/portal/store-orders/${props.id}/deliver`,
       'POST',
-      { deliveredOn: deliveredOnTouched ? deliveredOn : null },
+      { deliveredOn: pickedDay },
       'Leveransen kunde inte sparas.',
       () => 'Beställningen är markerad som levererad.',
       STEP_FULFIL_STALE_CODES,
@@ -610,7 +605,7 @@ export default function StoreOrderActions(props: Props) {
   }
 
   if (props.status === 'confirmed') {
-    const dayValid = isStoreOrderDeliveredOnAllowed(deliveredOn, deliveredOnBounds);
+    const dayValid = isStoreOrderDeliveredOnAllowed(shownDay, deliveredOnBounds);
     return (
       <section className={cn(crm.cardInner, 'grid gap-2.5')} aria-labelledby="store-order-delivery-step">
         <div className="grid gap-1">
@@ -625,14 +620,13 @@ export default function StoreOrderActions(props: Props) {
           <input
             type="date"
             aria-label="Leveransdag"
-            value={deliveredOn}
+            value={shownDay}
             min={deliveredOnBounds.min}
             max={deliveredOnBounds.max}
-            onFocus={refreshToday}
+            onFocus={readBrowserToday}
             onChange={(e) => {
-              refreshToday();
-              setDeliveredOnTouched(true);
-              setDeliveredOn(e.target.value);
+              readBrowserToday();
+              setPickedDay(e.target.value);
             }}
             aria-invalid={!dayValid}
             disabled={locked}
@@ -657,7 +651,7 @@ export default function StoreOrderActions(props: Props) {
         {confirmingDelivery ? (
           <CrmConfirmDialog
             title="Markera som levererad?"
-            message={`${deliveredOnTouched ? `Levererad ${formatStoreOrderDay(deliveredOn)}` : 'Levererad i dag'}. Butiken får beskedet, och det går inte att ångra.`}
+            message={`${pickedDay ? `Levererad ${formatStoreOrderDay(pickedDay)}` : 'Levererad i dag'}. Butiken får beskedet, och det går inte att ångra.`}
             confirmLabel={busy ? 'Sparar…' : 'Markera som levererad'}
             busy={busy}
             focusCancel
