@@ -103,6 +103,14 @@ describe('listStoreOrderViews', () => {
     expect(orders).toHaveLength(1000);
   });
 
+  it('exakt så många avslutade som gränsen: inte kapad; en till: kapad', async () => {
+    const closed = (n: number) => Array.from({ length: n }, (_, i) => listRow({ id: `x-${i}`, status: 'invoiced' }));
+    expect((await listStoreOrderViews(memoryAdmin({ crm_store_orders: closed(STORE_ORDER_LIST_LIMIT) }).admin)).capped).toBe(false);
+    const over = await listStoreOrderViews(memoryAdmin({ crm_store_orders: closed(STORE_ORDER_LIST_LIMIT + 1) }).admin);
+    expect(over.capped).toBe(true);
+    expect(over.orders).toHaveLength(STORE_ORDER_LIST_LIMIT);
+  });
+
   it('säger inte att listan är kapad när resten ryms', async () => {
     // De obekräftade räknas inte mot gränsen: de läses alltid alla.
     const rows = [

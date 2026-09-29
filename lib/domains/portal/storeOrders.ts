@@ -111,7 +111,7 @@ export function storeOrderTotals(
   return { lines: linesOre / 100, freight: freightOre / 100, net: netOre / 100, vat: vatOre / 100, total: (netOre + vatOre) / 100 };
 }
 
-/** Så många av de senaste avslutade, bekräftade och levererade som listan läser; de som väntar på bekräftelse läses alla. */
+/** Så många av de senaste avslutade (fakturerade, tillbakadragna, makulerade) som listan läser; de pågående läses alla. */
 export const STORE_ORDER_LIST_LIMIT = 500;
 
 const ore = new Intl.NumberFormat('sv-SE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -152,16 +152,16 @@ export function storeOrderNoticeKey(row: { status: StoreOrderStatus; store_versi
 /**
  * Vad som ska skickas nu, eller null om den ansvarige redan vet. Mellan två notiser kan flera ändringar ha kommit;
  * bara den senaste sägs. Har den ansvarige aldrig fått någon notis är beställningen "Ny", också om den hunnit ändras.
- * En beställning som dras tillbaka innan någon fått veta om den bokförs utan notis (`kind: null`): det finns inget att
- * ångra för den ansvarige.
+ * En tillbakadragning sägs alltid: att ingen notis är bokförd betyder inte att ingen kom fram (bokföringen kan ha
+ * fallit efter utskicket), och en ansvarig som fått "Ny beställning" får aldrig bli utan "drog tillbaka".
  */
 export function decideStoreOrderNotice(row: {
   status: StoreOrderStatus;
   store_version: number;
   notified_key: string | null;
-}): { key: string; kind: StoreOrderNoticeKind | null } | null {
+}): { key: string; kind: StoreOrderNoticeKind } | null {
   const key = storeOrderNoticeKey(row);
   if (!key || key === row.notified_key) return null;
-  if (key === 'withdrawn') return { key, kind: row.notified_key ? 'withdrawn' : null };
+  if (key === 'withdrawn') return { key, kind: 'withdrawn' };
   return { key, kind: row.notified_key ? 'changed' : 'received' };
 }

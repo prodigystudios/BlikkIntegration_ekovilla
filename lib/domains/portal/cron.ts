@@ -41,6 +41,8 @@ export const PORTAL_CRON_DOCUMENTS_START_BEFORE_MS = 150_000;
  * 30 s) ryms då.
  */
 export const PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS = 60_000;
+/** Knapparna på portalsidan påbörjar butiksbeställningarnas notiser i högst så här lång tid (cron: 20 s). */
+export const PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS = 5_000;
 /** Utskicket efter dokumenten tar nya händelser i högst så här lång tid; ett dokument kan ta 30 s till. */
 export const PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS = 30_000;
 
@@ -91,7 +93,7 @@ export async function runPortalCron(
     sync: await step('omräkningen', () => syncPortalJobs(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
-    storeOrderNotices: { candidates: 0, sent: 0, marked: 0, failed: 0, gaveUp: 0, errors: 0 },
+    storeOrderNotices: { candidates: 0, sent: 0, failed: 0, gaveUp: 0, errors: 0, deferred: 0 },
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
   };
@@ -99,7 +101,12 @@ export async function runPortalCron(
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
-  summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () => sweepStoreOrderNotices(admin, { now }));
+  summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
+    sweepStoreOrderNotices(admin, {
+      now,
+      budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
+    }),
+  );
 
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;

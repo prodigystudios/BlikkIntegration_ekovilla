@@ -83,7 +83,8 @@ export async function listStoreOrderViews(session: SupabaseClient): Promise<{ or
     .in('status', STORE_ORDER_STATUSES.filter((status) => !ACTIVE_STATUSES.includes(status)))
     .order('received_at', { ascending: false })
     .order('id', { ascending: true })
-    .limit(STORE_ORDER_LIST_LIMIT)
+    // En till än gränsen: bara så syns det om något faktiskt föll bort.
+    .limit(STORE_ORDER_LIST_LIMIT + 1)
     .then((result) => result);
   const active: ListRow[] = [];
   for (let after: string | null = null; ; ) {
@@ -99,9 +100,10 @@ export async function listStoreOrderViews(session: SupabaseClient): Promise<{ or
   // De avslutade lästes samtidigt som den första sidan.
   const closedRead = await closed;
   if (closedRead.error) throw new Error(`Beställningarna gick inte att läsa: ${closedRead.error.message}`);
-  const rest = (closedRead.data ?? []) as ListRow[];
+  const closedRows = (closedRead.data ?? []) as ListRow[];
+  const rest = closedRows.slice(0, STORE_ORDER_LIST_LIMIT);
   return {
-    capped: rest.length >= STORE_ORDER_LIST_LIMIT,
+    capped: closedRows.length > STORE_ORDER_LIST_LIMIT,
     orders: [...active, ...rest]
       .filter((row) => isStatus(row.status))
       .sort((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : a.id < b.id ? -1 : 1))
@@ -180,7 +182,6 @@ type DetailRow = Omit<ListRow, 'lines' | 'desired_period'> & {
   delivered_by_name: string | null;
   invoiced_on: string | null;
   invoiced_by_name: string | null;
-  fortnox_invoice_number: string | null;
   cancelled_at: string | null;
   cancelled_by_name: string | null;
   cancel_reason: string | null;

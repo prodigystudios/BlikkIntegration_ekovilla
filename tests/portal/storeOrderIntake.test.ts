@@ -233,9 +233,9 @@ describe('notisen', () => {
     expect(notice('received', 3, 'v3')).toBeNull();
   });
 
-  it('tillbakadragen: en notis om den ansvarige visste om beställningen, annars bara bokförd', () => {
+  it('tillbakadragen: alltid en notis, också när ingen notis är bokförd (den kan ha kommit fram ändå)', () => {
     expect(notice('withdrawn', 2, 'v2')).toEqual({ key: 'withdrawn', kind: 'withdrawn' });
-    expect(notice('withdrawn', 1, null)).toEqual({ key: 'withdrawn', kind: null });
+    expect(notice('withdrawn', 1, null)).toEqual({ key: 'withdrawn', kind: 'withdrawn' });
     expect(notice('withdrawn', 1, 'withdrawn')).toBeNull();
   });
 

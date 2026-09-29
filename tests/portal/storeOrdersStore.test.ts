@@ -425,18 +425,14 @@ describe('notifyStoreOrder', () => {
     expect(m.tables.crm_store_orders[0].notified_key).toBe('v3');
   });
 
-  it('tillbakadragen: en notis om den ansvarige visste om den; annars bara bokförd, ingen notis', async () => {
-    const known = db({ crm_store_orders: [storeRow({ status: 'withdrawn', withdrawn_at: NOW.toISOString(), notified_key: 'v1' })] });
-    const a = noticeDeps();
-    expect(await notifyStoreOrder(known.admin, 'order-1', a.deps)).toBe('sent');
-    expect(a.sent[0][0]).toMatchObject({ type: 'portal_store_order.withdrawn', title: 'Norrbygg AB drog tillbaka B-2026-003' });
-    expect(known.tables.crm_store_orders[0].notified_key).toBe('withdrawn');
-
-    const unknown = db({ crm_store_orders: [storeRow({ status: 'withdrawn', withdrawn_at: NOW.toISOString() })] });
-    const b = noticeDeps();
-    expect(await notifyStoreOrder(unknown.admin, 'order-1', b.deps)).toBe('marked');
-    expect(b.deps.notify).not.toHaveBeenCalled();
-    expect(unknown.tables.crm_store_orders[0]).toMatchObject({ notified_key: 'withdrawn', notify_claimed_at: null });
+  it('tillbakadragen: "<butik> drog tillbaka <nr>", också när ingen notis är bokförd sedan förut', async () => {
+    for (const notified of ['v1', null]) {
+      const m = db({ crm_store_orders: [storeRow({ status: 'withdrawn', withdrawn_at: NOW.toISOString(), notified_key: notified })] });
+      const { deps, sent } = noticeDeps();
+      expect(await notifyStoreOrder(m.admin, 'order-1', deps)).toBe('sent');
+      expect(sent[0][0]).toMatchObject({ type: 'portal_store_order.withdrawn', title: 'Norrbygg AB drog tillbaka B-2026-003' });
+      expect(m.tables.crm_store_orders[0]).toMatchObject({ notified_key: 'withdrawn', notify_claimed_at: null });
+    }
   });
 
   it('ingen ansvarig: reserven', async () => {
@@ -535,7 +531,7 @@ describe('sweepStoreOrderNotices', () => {
     });
     const { deps, sent } = noticeDeps();
     const summary = await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps });
-    expect(summary).toEqual({ candidates: 4, sent: 4, marked: 0, failed: 0, gaveUp: 0, errors: 0 });
+    expect(summary).toEqual({ candidates: 4, sent: 4, failed: 0, gaveUp: 0, errors: 0, deferred: 0 });
     // Kroppen läses inte i sopningen, bara när notisen skickas (en läsning per notis).
     const sweepReads = m.calls.filter((c) => c.table === 'crm_store_orders' && c.op === 'select' && c.limit === 500);
     expect(sweepReads).toHaveLength(3);
@@ -598,6 +594,17 @@ describe('sweepStoreOrderNotices', () => {
     await sweepStoreOrderNotices(m.admin, { now: () => NOW, deps: noticeDeps().deps });
     const exact = m.calls.find((c) => c.filters.some(([kind, col]) => kind === 'is' && col === 'notified_key'));
     expect(exact?.orders?.[0]).toEqual({ column: 'received_at', ascending: true });
+  });
+
+  it('tidsbudgeten: när den är slut påbörjas inga fler, och resten väntar till nästa varv', async () => {
+    const rows = Array.from({ length: 5 }, (_, i) => storeRow({ id: `o-${i}`, order_id: `o-${i}`, received_at: minutesAgo(10 + i) }));
+    const m = db({ crm_store_orders: rows });
+    let t = NOW.getTime();
+    const now = () => new Date(t);
+    const { deps } = noticeDeps({ now, notify: vi.fn(async () => { t += 4_000; }) });
+    const summary = await sweepStoreOrderNotices(m.admin, { now, deps, budgetMs: 10_000 });
+    // 0 s, 4 s och 8 s påbörjas; vid 12 s är tiden slut.
+    expect(summary).toMatchObject({ candidates: 5, sent: 3, deferred: 2 });
   });
 
   it('en läsning som faller kastar (steget i cron fångar det)', async () => {

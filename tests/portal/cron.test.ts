@@ -33,6 +33,7 @@ const {
   PORTAL_CRON_DOCUMENTS_START_BEFORE_MS,
   PORTAL_CRON_DOCUMENTS_DISPATCH_BUDGET_MS,
   PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS,
+  PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS,
 } = await import('@/lib/domains/portal/cron');
 
 const SYNC = { jobs: 1, queued: 1, unchanged: 0, conflicts: 0, errors: 0 };
@@ -40,7 +41,7 @@ const SENT = { ran: true, claimed: 1, sent: 1, retried: 0, dead: 0, returned: 0,
 const NOTHING = { ...SENT, claimed: 0, sent: 0 };
 const RETRY = { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 };
 const SWEEP = { queued: 1, notified: 0, errors: 0 };
-const STORE_ORDER_NOTICES = { candidates: 1, sent: 1, marked: 0, failed: 0, gaveUp: 0, errors: 0 };
+const STORE_ORDER_NOTICES = { candidates: 1, sent: 1, failed: 0, gaveUp: 0, errors: 0, deferred: 0 };
 const NO_DOCUMENTS = { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 };
 const QUEUED_DOCUMENT = { ...NO_DOCUMENTS, created: 1, queued: 1 };
 
@@ -109,6 +110,10 @@ describe('runPortalCron', () => {
     await runPortalCron({ admin: true } as never, { env: {}, now });
     expect(storeOrderNotices.mock.calls[0][0]).toEqual({ admin: true });
     expect(storeOrderNotices.mock.calls[0][1].now).toBe(now);
+    // Cron har notisernas egen budget; knapparna på portalsidan en kortare.
+    expect(storeOrderNotices.mock.calls[0][1].budgetMs).toBeUndefined();
+    await runPortalCron({} as never, { env: {}, fortnoxRetries: false });
+    expect(storeOrderNotices.mock.calls[1][1].budgetMs).toBe(PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS);
     storeOrderNotices.mockRejectedValue(new Error('beställningarna svarar inte'));
     calls.length = 0;
     const summary = await runPortalCron({} as never, { env: {} });

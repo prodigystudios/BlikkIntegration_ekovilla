@@ -357,7 +357,7 @@ async function readFallbackUser(admin: SupabaseClient): Promise<string | null> {
   return (data as { fallback_user_id?: string | null } | null)?.fallback_user_id ?? null;
 }
 
-export type StoreOrderNoticeOutcome = 'sent' | 'marked' | 'none' | 'busy' | 'no_recipient' | 'failed';
+export type StoreOrderNoticeOutcome = 'sent' | 'none' | 'busy' | 'no_recipient' | 'failed';
 
 /**
  * Notisen den ansvarige ska ha för beställningen som den står nu (`decideStoreOrderNotice`): ny, ändrad eller
@@ -380,10 +380,6 @@ export async function notifyStoreOrder(
   if (!row || !decision) {
     await finishNotice(admin, id, stamp);
     return 'none';
-  }
-  if (decision.kind === null) {
-    await finishNotice(admin, id, stamp, decision.key);
-    return 'marked';
   }
 
   const recipient = row.assigned_to ?? (await readFallbackUser(admin));
@@ -430,6 +426,8 @@ export const STORE_ORDER_NOTICE_SWEEP_AFTER_MS = 2 * 60_000;
 export const STORE_ORDER_NOTICE_WINDOW_MS = 14 * 24 * 3600_000;
 /** Notiser per varv. */
 export const STORE_ORDER_NOTICES_PER_ROUND = 20;
+/** Hur länge ett varv påbörjar nya notiser: en notis är några databasanrop och push till varje enhet. */
+export const STORE_ORDER_NOTICES_BUDGET_MS = 20_000;
 
 type SweepRow = Pick<NoticeRow, 'id' | 'status' | 'store_version' | 'notified_key' | 'notify_claimed_at'> & {
   received_at: string;
@@ -445,10 +443,11 @@ const SWEEP_READ_LIMIT = 500;
 export type StoreOrderNoticeSweepSummary = {
   candidates: number;
   sent: number;
-  marked: number;
   failed: number;
   gaveUp: number;
   errors: number;
+  /** Tiden tog slut: kvar till nästa varv. */
+  deferred: number;
 };
 
 /** När något senast hände med beställningen som den ansvarige ska få veta. */
@@ -462,9 +461,10 @@ const touchedAt = (row: SweepRow) => Date.parse(row.withdrawn_at ?? row.changed_
  */
 export async function sweepStoreOrderNotices(
   admin: SupabaseClient,
-  options: { now?: () => Date; deps?: StoreOrderNoticeDeps } = {},
+  options: { now?: () => Date; deps?: StoreOrderNoticeDeps; budgetMs?: number } = {},
 ): Promise<StoreOrderNoticeSweepSummary> {
   const now = options.now ?? (() => new Date());
+  const budgetMs = options.budgetMs ?? STORE_ORDER_NOTICES_BUDGET_MS;
   const deps = options.deps ?? { ...storeOrderNoticeDeps(admin), now };
   const at = now().getTime();
   const since = new Date(at - STORE_ORDER_NOTICE_WINDOW_MS).toISOString();
@@ -499,12 +499,16 @@ export async function sweepStoreOrderNotices(
     // Det som väntat längst först.
     .sort((a, b) => touchedAt(a) - touchedAt(b));
 
-  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, marked: 0, failed: 0, gaveUp: 0, errors: 0 };
+  const summary: StoreOrderNoticeSweepSummary = { candidates: due.length, sent: 0, failed: 0, gaveUp: 0, errors: 0, deferred: 0 };
   for (const row of due.slice(0, STORE_ORDER_NOTICES_PER_ROUND)) {
+    // Resten väntar till nästa varv: statusen och dokumenten i samma varv ska inte vänta på notiser.
+    if (now().getTime() - at >= budgetMs) {
+      summary.deferred += 1;
+      continue;
+    }
     try {
       const outcome = await notifyStoreOrder(admin, row.id, deps);
       if (outcome === 'sent') summary.sent += 1;
-      else if (outcome === 'marked') summary.marked += 1;
       else if (outcome === 'failed') summary.failed += 1;
       else if (outcome === 'no_recipient') summary.gaveUp += 1;
     } catch (e) {

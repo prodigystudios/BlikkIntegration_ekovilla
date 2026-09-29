@@ -10,7 +10,8 @@ import { parsePortalBody, runIdempotentPortalRequest, verifyPortalRequest } from
 // ansvarige skickas efter svaret.
 //
 //   400 invalid_json, invalid_text, validation_error   kroppen följer inte kontraktet
-//   409 store_order_conflict  beställningen är redan mottagen, med en annan första kropp
+//   409 store_order_conflict  beställningen är redan mottagen, med en annan första kropp (under en annan nyckel; samma
+//                             nyckel med en annan kropp stoppas redan av svarscachen, 422 idempotency_key_reused)
 //   503 no_assignee           ingen kan ta beställningen än (ingen reserv vald): portalen försöker igen
 //
 // Service-rollen: anropet har ingen användare bakom sig. Grinden är signaturen och svarscachen, och affärsnyckeln är
