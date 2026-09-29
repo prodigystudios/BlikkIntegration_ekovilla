@@ -1235,6 +1235,9 @@ med frakt, övertagandet (57), och i webbläsaren säljare, admin, konsult, buti
 - ⚠️ **Arbetsordrarna har samma leveransfel** (det aktiva flödet): `buildOrderDeliveryFields` skickar bara gata,
   postnummer och ort, så en kund med leveransadress på Fortnox-kortet får kortets leveransnamn och rad 2 på jobbets
   order. Egen liten PR, fråga William.
+- ⚠️ **Arbetsorderns huvud tvättar inte tankstreck** (det aktiva flödet): `buildOrderHeader` skickar Er referens och
+  leveransadressen som de står, och "—" där nekar hela pushen (2000359, uppmätt 2026-09-29 på en order). En kontakt med
+  tankstreck i namnet (macOS autokorrektur) fäller alltså jobbets Fortnox-order. Egen liten PR, fråga William.
 - ⚠️ **Artikel 1050 är en paketartikel i testbolaget:** Fortnox nekar raden ("raden måste innehålla en instans av det
   paketet"). Är 1050 FRAKT en vanlig artikel i prod? Annars nekas varje beställning med frakt.
 - En bekräftad beställning vars kundkort tas bort innan Fortnox-ordern finns kan inte kopplas om (vakten tillåter kund

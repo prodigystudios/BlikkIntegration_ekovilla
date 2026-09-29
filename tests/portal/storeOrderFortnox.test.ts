@@ -129,6 +129,25 @@ describe('buildStoreOrderFortnoxOrder', () => {
     expect(/[\uD800-\uDFFF]/.test(ref)).toBe(false);
   });
 
+  it('🧨 tankstreck i butikens fritext blir bindestreck: "—" i Er referens, adressen och Comments nekar ordern (uppmätt)', () => {
+    const b = body();
+    b.delivery.contactName = 'David — Kron';
+    b.delivery.address.street = 'Gatan 1 — baksidan';
+    b.delivery.reference = 'Inköp – 44';
+    b.delivery.message = 'Ring innan — porten är låst';
+    b.store.name = 'Norrbygg – Lager';
+    const o = order({ body: b, ourReference: 'Anna – Berg' });
+    expect(o).toMatchObject({
+      YourReference: 'David - Kron',
+      DeliveryAddress1: 'Gatan 1 - baksidan',
+      YourOrderNumber: 'Inköp - 44',
+      DeliveryName: 'Norrbygg - Lager',
+      OurReference: 'Anna - Berg',
+      Comments: 'Meddelande från butiken: Ring innan - porten är låst',
+    });
+    expect(JSON.stringify(o)).not.toMatch(/[\u2013\u2014]/);
+  });
+
   it('tomma fält skickas inte: ingen referens, ingen mottagare, inget org.nr', () => {
     const b = body();
     b.delivery.contactName = '  ';

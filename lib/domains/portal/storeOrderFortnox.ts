@@ -1,3 +1,4 @@
+import { fortnoxRowText } from '@/lib/domains/fortnox/helpers';
 import { buildOrderRows } from '@/lib/domains/fortnox/orders';
 import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, type StoreOrderStatus } from './storeOrders';
 
@@ -14,6 +15,10 @@ import { STORE_ORDER_VAT_PERCENT, type StoreOrderBody, type StoreOrderFreight, t
  *   - `YourOrderNumber` kapas tyst vid 30 tecken, leveransadressen (`DeliveryAddress1`) vid 60 och en textrad vid 255.
  *   - `Comments` (intern, skrivs inte ut) tar 1024 tecken och behåller radbrytningar; över det nekas ordern (2001896).
  * Vi kapar själva, så att det som skickas är det som står i Fortnox, och det som inte ryms står i textraden.
+ *
+ * 🧨 TANKSTRECK I HUVUDET NEKAR ORDERN: "—" i `YourReference`, `DeliveryAddress1` (2000359) och `Comments` (2004343),
+ * uppmätt 2026-09-29, som i radernas text. Beställningen är låst efter bekräftelsen, så ett sådant nej går inte att
+ * rätta. All butikens fritext i huvudet går därför genom `fortnoxRowText`, som raderna.
  *
  * 🧨 LEVERANSFÄLT SOM INTE SKICKAS FYLLS I UR KUNDKORTET: utan `DeliveryName` och `DeliveryAddress2` tog ordern kortets
  * leveransnamn och rad 2 bredvid beställningens gata, postnummer och ort (uppmätt 2026-09-29). Tom sträng rensar inte;
@@ -62,11 +67,12 @@ const nonEmpty = (value: string | null | undefined) => {
 };
 
 /**
- * Högst `max` tecken, utan mellanslag i slutet. Räknat i UTF-16 som i JavaScript, och ett tecken som hamnar på gränsen
- * delas aldrig: en ensam halva av ett tecken utanför BMP (ett emoji) hade blivit ett trasigt tecken hos Fortnox.
+ * Fritext till Fortnox: högst `max` tecken, utan mellanslag i slutet och utan tankstreck (`fortnoxRowText`). Räknat i
+ * UTF-16 som i JavaScript, och ett tecken som hamnar på gränsen delas aldrig: en ensam halva av ett tecken utanför BMP
+ * (ett emoji) hade blivit ett trasigt tecken hos Fortnox.
  */
 function cap(value: string, max: number): string {
-  let out = value.trim().slice(0, max);
+  let out = fortnoxRowText(value).trim().slice(0, max);
   if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
   return out.trimEnd();
 }
@@ -143,7 +149,7 @@ const COMMENTS_CUT = ' … (hela meddelandet står i CRM:et)';
 export function storeOrderComments(body: Pick<StoreOrderBody, 'delivery'>): string | null {
   const message = nonEmpty(body.delivery.message);
   if (!message) return null;
-  const text = `Meddelande från butiken: ${message}`;
+  const text = fortnoxRowText(`Meddelande från butiken: ${message}`);
   if (text.length <= FORTNOX_COMMENTS_MAX) return text;
   return `${cap(text, FORTNOX_COMMENTS_MAX - COMMENTS_CUT.length)}${COMMENTS_CUT}`;
 }
@@ -190,11 +196,11 @@ export function buildStoreOrderFortnoxOrder(input: StoreOrderFortnoxInput) {
       ...(ourReference ? { OurReference: cap(ourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourReference ? { YourReference: cap(yourReference, FORTNOX_YOUR_REFERENCE_MAX) } : {}),
       ...(yourOrderNumber ? { YourOrderNumber: cap(yourOrderNumber, FORTNOX_YOUR_ORDER_NUMBER_MAX) } : {}),
-      DeliveryName: body.store.name.trim(),
+      DeliveryName: fortnoxRowText(body.store.name.trim()),
       DeliveryAddress1: cap(delivery.address.street, FORTNOX_DELIVERY_ADDRESS_MAX),
       DeliveryAddress2: null,
-      DeliveryZipCode: delivery.address.postalCode.trim(),
-      DeliveryCity: delivery.address.city.trim(),
+      DeliveryZipCode: fortnoxRowText(delivery.address.postalCode.trim()),
+      DeliveryCity: fortnoxRowText(delivery.address.city.trim()),
       ...(comments ? { Comments: comments } : {}),
       OrderRows: rows,
     },

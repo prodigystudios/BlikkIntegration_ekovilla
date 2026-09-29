@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSessionClient } from '@/lib/supabase/session';
+import { storeOrderManageAccess } from '@/lib/domains/portal/storeOrderActions';
 import { invalidUuidParam, requirePermission, routeError } from '../../_shared';
 
 /**
@@ -20,15 +21,9 @@ export async function requireStoreOrderManager(
   if (badId) return { response: badId };
 
   const session = createSessionClient();
-  // Parallellt: läsningen skiljer 404 från 403, regeln avgör.
-  const [seen, allowed] = await Promise.all([
-    session.from('crm_store_orders').select('id').eq('id', id).maybeSingle(),
-    session.rpc('crm_store_order_can_manage', { p_id: id }),
-  ]);
-  if (seen.error) throw new Error(`Beställningen gick inte att läsa: ${seen.error.message}`);
-  if (!seen.data) return { response: routeError(404, 'store_order_not_found', 'Beställningen hittades inte.') };
-  if (allowed.error) throw new Error(`Behörigheten gick inte att pröva: ${allowed.error.message}`);
-  if (allowed.data !== true) {
+  const access = await storeOrderManageAccess(session, id);
+  if (access === 'not_found') return { response: routeError(404, 'store_order_not_found', 'Beställningen hittades inte.') };
+  if (access === 'forbidden') {
     return { response: routeError(403, 'store_order_forbidden', 'Bara den ansvarige för beställningen, eller en admin, kan göra det.') };
   }
   return { response: null, userId: gate.currentUser.id, session };

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
+  storeOrderManageAccess,
   confirmStoreOrder,
   linkStoreOrderCustomer,
   pushStoreOrderToFortnox,
@@ -83,6 +84,20 @@ function fortnoxDeps(
 
 const row = (m: ReturnType<typeof memoryAdmin>) => m.tables.crm_store_orders[0];
 const minutes = (n: number) => new Date(NOW.getTime() + n * 60_000).toISOString();
+
+describe('storeOrderManageAccess', () => {
+  it('en beställning sessionen inte ser: not_found; regeln säger nej: forbidden; annars allowed', async () => {
+    const rule = { value: true as unknown };
+    const m = db(storeOrder(), {}, { rpc: (name, args) => (name === 'crm_store_order_can_manage' && args.p_id === ID ? rule.value : null) });
+    expect(await storeOrderManageAccess(m.admin, ID)).toBe('allowed');
+    rule.value = false;
+    expect(await storeOrderManageAccess(m.admin, ID)).toBe('forbidden');
+    // Bara true släpper igenom.
+    rule.value = null;
+    expect(await storeOrderManageAccess(m.admin, ID)).toBe('forbidden');
+    expect(await storeOrderManageAccess(m.admin, '66666666-6666-4666-8666-666666666666')).toBe('not_found');
+  });
+});
 
 describe('setStoreOrderFreight', () => {
   it('frakten eller Ingen frakt, med vem och när', async () => {
@@ -587,12 +602,17 @@ describe('retryStoreOrderFortnox', () => {
     const later = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(1), fortnox_retry_until: minutes(60) }));
     expect((await retryStoreOrderFortnox(later.admin, { deps: fortnoxDeps() })).due).toBe(0);
 
-    // Planerat efter fönstret (ett lån som blev liggande): ges upp utan försök.
-    const expired = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-10) }));
+    // Planerat långt efter fönstret: ges upp utan försök.
+    const expired = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-20) }));
     const deps = fortnoxDeps();
     expect(await retryStoreOrderFortnox(expired.admin, { deps })).toMatchObject({ due: 1, gaveUp: 1, attempted: 0 });
     expect(deps.post).not.toHaveBeenCalled();
     expect(row(expired).fortnox_next_attempt_at).toBeNull();
+  });
+
+  it('🧨 ett lån som togs nära fönstrets slut (lånet ligger efter slutet): försöket görs ändå', async () => {
+    const lease = db(storeOrder({ status: 'confirmed', fortnox_next_attempt_at: minutes(-1), fortnox_retry_until: minutes(-6) }));
+    expect(await retryStoreOrderFortnox(lease.admin, { deps: fortnoxDeps() })).toMatchObject({ gaveUp: 0, attempted: 1 });
   });
 
   it('🧨 planerat inom fönstret men upplockat sent (ett per varv, andra före i kön): görs ändå', async () => {

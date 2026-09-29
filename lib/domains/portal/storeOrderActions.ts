@@ -42,6 +42,22 @@ import { readProfileName } from './storeOrdersStore';
 
 export type StoreOrderActor = { id: string };
 
+/**
+ * Får sessionen göra Ekovillas steg på beställningen? En beställning som sessionen ser (RLS, crm.access), och regeln
+ * crm_store_order_can_manage() (den ansvarige eller admin, med crm.workorder.write), frågade parallellt. Samma regel som
+ * sidan frågar. Kastar när databasen inte svarar.
+ */
+export async function storeOrderManageAccess(session: SupabaseClient, id: string): Promise<'allowed' | 'not_found' | 'forbidden'> {
+  const [seen, allowed] = await Promise.all([
+    session.from('crm_store_orders').select('id').eq('id', id).maybeSingle(),
+    session.rpc('crm_store_order_can_manage', { p_id: id }),
+  ]);
+  if (seen.error) throw new Error(`Beställningen gick inte att läsa: ${seen.error.message}`);
+  if (!seen.data) return 'not_found';
+  if (allowed.error) throw new Error(`Behörigheten gick inte att pröva: ${allowed.error.message}`);
+  return allowed.data === true ? 'allowed' : 'forbidden';
+}
+
 async function readStatus(admin: SupabaseClient, id: string): Promise<StoreOrderStatus | null> {
   const { data, error } = await admin.from('crm_store_orders').select('status').eq('id', id).maybeSingle();
   if (error) throw new Error(`Beställningen gick inte att läsa: ${error.message}`);
@@ -596,10 +612,12 @@ export async function retryStoreOrderFortnox(
   for (const order of due) {
     if (options.budgetMs !== undefined && deps.now().getTime() - startedAt >= options.budgetMs) break;
     const at = deps.now();
-    // Ett försök som planerades inom fönstret görs, också när det plockas upp sent (ett per varv, andra före i kön);
-    // bara ett som planerats efter fönstret (ett lån som blev liggande) ges upp.
+    // Ett försök som planerades inom fönstret görs, också när det plockas upp sent (ett per varv, andra före i kön), och
+    // också när det är ett lån som tagits nära slutet (lånet ligger upp till tio minuter efter). Bara ett som planerats
+    // längre bort än så ges upp.
     const expired =
-      order.fortnox_retry_until !== null && new Date(order.fortnox_next_attempt_at).getTime() > new Date(order.fortnox_retry_until).getTime();
+      order.fortnox_retry_until !== null &&
+      new Date(order.fortnox_next_attempt_at).getTime() > new Date(order.fortnox_retry_until).getTime() + PORTAL_FORTNOX_LEASE_MS;
     const lease = await admin
       .from('crm_store_orders')
       .update({ fortnox_next_attempt_at: expired ? null : new Date(at.getTime() + PORTAL_FORTNOX_LEASE_MS).toISOString() })

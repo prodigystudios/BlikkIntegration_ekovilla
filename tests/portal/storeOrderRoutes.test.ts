@@ -49,6 +49,12 @@ vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ((h.clie
 vi.mock('@/lib/domains/portal/storeOrderActions', () => {
   const fn = (name: string) => vi.fn(async (...args: unknown[]) => (h.calls.push({ fn: name, args }), h.results[name]));
   return {
+    // Grinden: samma svar som sessionens läsning och regeln hade gett.
+    storeOrderManageAccess: vi.fn(async (_session: unknown, id: string) => {
+      h.calls.push({ fn: 'rpc:crm_store_order_can_manage', args: [{ p_id: id }] });
+      if (!h.seen) return 'not_found';
+      return h.canManage === true ? 'allowed' : 'forbidden';
+    }),
     setStoreOrderFreight: fn('setStoreOrderFreight'),
     linkStoreOrderCustomer: fn('linkStoreOrderCustomer'),
     confirmStoreOrder: fn('confirmStoreOrder'),

@@ -8,7 +8,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
-import { formatStoreOrderKr as kr, storeOrderHasStep, type StoreOrderFreight, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
+import { formatStoreOrderKr as kr, type StoreOrderFreight, type StoreOrderStatus } from '@/lib/domains/portal/storeOrders';
 
 // Ekovillas steg på en butiksbeställning (RESELLER_PORTAL_CRM_PLAN.md fas 8b), för den ansvarige och admin (sidan frågar
 // crm_store_order_can_manage innan den visar kortet; routerna frågar igen). Stegen är en ordningsföljd: butikens
@@ -82,7 +82,7 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
     setCustomerLabel('');
     setEditing(on);
   }
-  const linked = props.customer && props.customer.fortnoxCustomerNumber;
+  const linked = Boolean(props.customer?.fortnoxCustomerNumber?.trim());
   const open = editing || !props.customer;
 
   async function link() {
@@ -110,7 +110,7 @@ function CustomerStep({ props, busy, run, editing, setEditing }: StepProps) {
         {props.customer && !editing ? (
           <p className={crm.fieldValue}>
             {props.customer.name}
-            {props.customer.fortnoxCustomerNumber ? (
+            {props.customer.fortnoxCustomerNumber?.trim() ? (
               <span className="text-slate-500">, kundnummer {props.customer.fortnoxCustomerNumber}</span>
             ) : (
               <span className="block text-xs text-rose-700">Kortet har inget kundnummer i Fortnox. Byt till butikens kort i Fortnox.</span>
@@ -281,21 +281,22 @@ type Runner = (
   body: unknown,
   failure: string,
   success: (data: any) => SuccessMessage,
+  staleCodes?: ReadonlySet<string>,
 ) => Promise<RunResult>;
 
-// Lägen där sidan inte längre stämmer med beställningen: läs om den.
-const STALE_CODES = new Set([
+// Lägen där sidan inte längre stämmer med beställningen: läs om den, och stäng ett öppet steg så att det nya syns.
+// Stegen och Bekräfta har var sina: ett kort utan kundnummer som säljaren just valt är ett felval, inte en gammal sida.
+const STEP_STALE_CODES = new Set(['store_order_not_received', 'store_order_customer_changed', 'store_order_freight_changed']);
+const CONFIRM_STALE_CODES = new Set([
   'store_order_not_received',
   'store_order_changed',
   'store_order_changed_here',
-  'store_order_customer_changed',
-  'store_order_freight_changed',
+  'store_order_not_confirmed',
+  'store_order_push_in_progress',
   // Bekräftelsens krav: sidan visade dem som uppfyllda, så den stämmer inte längre.
   'store_order_freight_missing',
   'store_order_customer_missing',
   'store_order_customer_not_in_fortnox',
-  'store_order_not_confirmed',
-  'store_order_push_in_progress',
 ]);
 
 /** Vad Fortnox-försöket blev, som säljaren läser det. */
@@ -326,7 +327,7 @@ export default function StoreOrderActions(props: Props) {
 
   // Två klick i samma bildruta ser båda `busy` som falskt; referensen stoppar det andra.
   const inFlight = useRef(false);
-  const run: Runner = async (url, method, body, failure, success) => {
+  const run: Runner = async (url, method, body, failure, success, staleCodes = STEP_STALE_CODES) => {
     if (inFlight.current) return 'failed';
     inFlight.current = true;
     setBusy(true);
@@ -336,7 +337,7 @@ export default function StoreOrderActions(props: Props) {
         toast.error(result.error || failure);
         // Läs om när sidan inte längre stämmer, och när svaret inte kom fram (nätet, 5xx, en tidsgräns): steget kan ha
         // gått igenom ändå, och en bekräftad beställning ska inte stå kvar som ny.
-        const stale = Boolean(result.code && STALE_CODES.has(result.code));
+        const stale = Boolean(result.code && staleCodes.has(result.code));
         if (stale || result.status === 0 || result.status >= 500) refresh();
         return stale ? 'stale' : 'failed';
       }
@@ -353,8 +354,13 @@ export default function StoreOrderActions(props: Props) {
 
   async function confirm() {
     const body = { version: props.storeVersion, freightSetAt: props.freightSetAt, customerId: props.customerId };
-    const ok = await run(`/api/crm/portal/store-orders/${props.id}/confirm`, 'POST', body, 'Beställningen kunde inte bekräftas.', (data) =>
-      fortnoxMessage(data, true),
+    const ok = await run(
+      `/api/crm/portal/store-orders/${props.id}/confirm`,
+      'POST',
+      body,
+      'Beställningen kunde inte bekräftas.',
+      (data) => fortnoxMessage(data, true),
+      CONFIRM_STALE_CODES,
     );
     setConfirming(false);
     return ok;
@@ -380,7 +386,7 @@ export default function StoreOrderActions(props: Props) {
         <button
           type="button"
           onClick={() =>
-            run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) => fortnoxMessage(data, false))
+            run(`/api/crm/portal/store-orders/${props.id}/fortnox`, 'POST', {}, 'Fortnox-ordern kunde inte skickas.', (data) => fortnoxMessage(data, false), CONFIRM_STALE_CODES)
           }
           disabled={busy}
           className={cn(crm.saveButton, 'px-4 sm:w-auto sm:justify-self-start')}
@@ -391,9 +397,10 @@ export default function StoreOrderActions(props: Props) {
     );
   }
 
-  if (props.status !== 'received' || !storeOrderHasStep(props)) return null;
+  if (props.status !== 'received') return null;
 
-  const customerReady = Boolean(props.customer?.fortnoxCustomerNumber);
+  // Samma prövning som servern: ett nummer som bara är blanksteg är inget nummer.
+  const customerReady = Boolean(props.customer?.fortnoxCustomerNumber?.trim());
   const freightReady = props.freight !== null;
   // Ett steg som ändras har osparade värden: Bekräfta hade bekräftat det som är sparat, inte det som står i fältet.
   const editing = editingCustomer || editingFreight;
