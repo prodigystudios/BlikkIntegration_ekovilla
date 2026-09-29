@@ -24,8 +24,9 @@ type RouteContext = { params: { id: string } };
 //   500 store_order_cancel_failed
 
 export const dynamic = 'force-dynamic';
-// Sökningen och makuleringen mot Fortnox, var och en med upp till ~23 s väntan vid 429. Under claimens två minuter: en
-// makulering som fortfarande lever har alltid en claim som ingen annan kan ta. Dör den mitt i läker det: Levererad nekar en
+// Sökningen, en läsning och en makulering per order och ibland ett varv till mot Fortnox, var och en med upp till ~23 s
+// väntan vid 429. Under claimens två minuter: en makulering som fortfarande lever har alltid en claim som ingen annan kan
+// ta. Dör den mitt i läker det: numret är kopplat och omförsöken stängda före första makuleringen, Levererad nekar en
 // makulerad Fortnox-order, och en ny makulering räknar "redan makulerad" som klar.
 export const maxDuration = 100;
 

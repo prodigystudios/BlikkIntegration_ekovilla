@@ -24,6 +24,7 @@ import {
   type StoreOrderRegisterArticle,
 } from './storeOrderFortnox';
 import { storeOrderFreightFromRow, type StoreOrderBody, type StoreOrderStatus } from './storeOrders';
+import { errorText, settle } from './settle';
 import { readProfileName } from './storeOrdersStore';
 
 /**
@@ -42,16 +43,6 @@ import { readProfileName } from './storeOrdersStore';
  */
 
 export type StoreOrderActor = { id: string };
-
-/** En fråga som aldrig kastar: ett avvisat löfte blir ett fel i Supabase-form, som ett fel från databasen. */
-export function settle<T extends { error: { message: string } | null }>(
-  query: PromiseLike<T>,
-): Promise<T | { data: null; error: { message: string } }> {
-  return Promise.resolve(query).then(
-    (r) => r,
-    (err: unknown) => ({ data: null, error: { message: err instanceof Error ? err.message : String(err) } }),
-  );
-}
 
 /**
  * Får sessionen göra Ekovillas steg på beställningen? En beställning som sessionen ser (RLS, crm.access), och regeln
@@ -377,7 +368,7 @@ async function cancelLeftoverOrders(id: string, reference: string, deps: StoreOr
     const blocked = storeOrderFortnoxFailure(e) === 'blocked';
     console.error(
       `[portal-store-orders] 🧨 beställningen är makulerad, men en Fortnox-order med märkningen kunde inte sökas eller makuleras; ${blocked ? 'bara för hand nu' : 'nytt försök planeras'}`,
-      { id, error: e instanceof Error ? e.message : String(e) },
+      { id, error: errorText(e) },
     );
     return blocked ? 'blocked' : 'retry';
   }
@@ -411,7 +402,7 @@ async function cancelledDuringPush(
       console.error('[portal-store-orders] 🧨 beställningen är makulerad, men dess Fortnox-order kunde inte makuleras; nytt försök planeras', {
         id,
         fortnoxOrderNumber: number,
-        error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+        error: errorText(cancelError),
       });
       await requestLeftoverSweep(admin, id, deps.now());
     }
@@ -465,11 +456,13 @@ export async function pushStoreOrderToFortnox(
   }
   // Inget att göra. Planen stängs ändå, så att cron inte tar beställningen igen: en som makulerades efter bekräftelsen
   // bär fortfarande skyddsnätet.
+  // En makulerad utan planerat svep: ingenting att göra, och ingen plan rörs (den är makuleringens, 8b2).
+  if (first.status === 'cancelled') return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
   if (first.fortnox_order_number) {
     await finishPush(admin, first, 'exists', {}, deps.now());
     return { outcome: 'exists', fortnoxOrderNumber: first.fortnox_order_number, error: null };
   }
-  // Bara en bekräftad: levererad kräver numret, och en makulerad eller tillbakadragen ska aldrig till Fortnox.
+  // Bara en bekräftad: levererad kräver numret, och en tillbakadragen ska aldrig till Fortnox.
   if (first.status !== 'confirmed') {
     // Bara om statusen står kvar: en bekräftelse som kommer i samma stund har satt sitt skyddsnät, som inte får nollas.
     const plan = planPortalFortnoxRetry({ outcome: 'skipped', attempts: first.fortnox_attempts ?? 0, retryUntil: first.fortnox_retry_until, now: deps.now() });
@@ -521,6 +514,12 @@ async function pushWithClaim(admin: SupabaseClient, id: string, deps: StoreOrder
   const row = await readPushRow(admin, id);
   if (!row || row.fortnox_order_number || row.status !== 'confirmed') {
     const values = { fortnox_order_sync_status: row?.fortnox_order_number ? 'synced' : 'not_synced', fortnox_order_claimed_at: null };
+    if (row?.status === 'cancelled') {
+      // Makulerad medan claimen togs (8b2): bara claimen släpps. Planen är makuleringens: ett svep, eller ingen.
+      const released = await admin.from('crm_store_orders').update(values).eq('id', id).eq('status', 'cancelled');
+      if (released.error) throw new Error(`Fortnox-försöket kunde inte bokföras: ${released.error.message}`);
+      return { outcome: 'skipped', fortnoxOrderNumber: null, error: null };
+    }
     if (row) await finishPush(admin, row, row.fortnox_order_number ? 'exists' : 'skipped', values, deps.now());
     return row?.fortnox_order_number
       ? { outcome: 'exists', fortnoxOrderNumber: row.fortnox_order_number, error: null }

@@ -779,6 +779,20 @@ describe('pushStoreOrderToFortnox', () => {
     expect(row(m).fortnox_next_attempt_at).toBeNull();
   });
 
+  it('🧨 makulerad medan pushen tog claimen, med ett planerat svep: bara claimen släpps, svepets plan står kvar', async () => {
+    const m = db(confirmed({ fortnox_next_attempt_at: minutes(5) }), {}, {
+      beforeExecute: (call, tables) => {
+        if (call.op === 'update' && (call.values as Record<string, unknown>).fortnox_order_sync_status === 'pending') {
+          Object.assign(tables.crm_store_orders[0], { status: 'cancelled', fortnox_next_attempt_at: minutes(7), fortnox_attempts: 1, fortnox_retry_until: minutes(60) });
+        }
+      },
+    });
+    const deps = fortnoxDeps();
+    expect(await pushStoreOrderToFortnox(m.admin, ID, deps)).toEqual({ outcome: 'skipped', fortnoxOrderNumber: null, error: null });
+    expect(deps.post).not.toHaveBeenCalled();
+    expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_next_attempt_at: minutes(7), fortnox_attempts: 1, fortnox_order_claimed_at: null });
+  });
+
   it('🧨 svepet görs bara av cron: en gammal sida som trycker Skicka till Fortnox rör varken Fortnox eller svepets plan', async () => {
     const m = db(storeOrder({ status: 'cancelled', fortnox_order_number: null, fortnox_next_attempt_at: minutes(3), fortnox_attempts: 1, fortnox_retry_until: minutes(60) }));
     const deps = fortnoxDeps(undefined, async () => '801');

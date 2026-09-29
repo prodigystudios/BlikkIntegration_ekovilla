@@ -599,6 +599,20 @@ describe('cancelStoreOrder', () => {
     expect(row(m)).toMatchObject({ status: 'cancelled', fortnox_order_number: '58' });
   });
 
+  it('makuleringen faller i Fortnox efter att sökningens order kopplats: synkläget följer numret', async () => {
+    const m = db(storeOrder({ fortnox_order_number: null, fortnox_order_sync_status: 'failed' }));
+    const { deps } = fakeFortnox({ '123': {} }, ['123']);
+    deps.cancel.mockImplementation(async () => {
+      throw new FortnoxApiError(500, 'Fortnox PUT misslyckades (500)');
+    });
+    deps.readOrder.mockImplementation(async (n: string) => {
+      if (deps.cancel.mock.calls.length > 0) throw new FortnoxApiError(503, 'Fortnox GET misslyckades (503)');
+      return { cancelled: false, invoiceNumber: n === 'x' ? 'x' : null };
+    });
+    await expect(cancel(m, deps)).rejects.toBeInstanceOf(FortnoxApiError);
+    expect(row(m)).toMatchObject({ status: 'confirmed', fortnox_order_number: '123', fortnox_order_sync_status: 'synced', fortnox_order_claimed_at: null });
+  });
+
   it('🧨 sökningen går inte fast raden har ett nummer: ingenting makuleras (dubbletterna vore okända)', async () => {
     const m = db();
     const { deps } = fakeFortnox();
