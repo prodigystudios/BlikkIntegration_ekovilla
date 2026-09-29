@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 
 type QuoteLineItem = {
@@ -97,6 +97,9 @@ type FortnoxOfferRow = {
   // discount is booked as 25 kr off the row and the Fortnox total diverges from the quote.
   DiscountType?: 'PERCENT' | 'AMOUNT';
   VAT?: number;
+  // Sätts på varje rad av buildOfferRows sista pass — se fortnoxSalesAccount i helpers.ts.
+  // `createorder` kopierar det till ordern.
+  AccountNumber?: number;
   HouseWork?: boolean;
   HouseWorkType?: string | null;
   [FORTNOX_TEXT_ROW]?: true;
@@ -224,7 +227,9 @@ export function buildOfferRows(
   // ROT property note (Fastighetsbeteckning / BRF org.nr) as a trailing text row — Fortnox has no
   // API field for it, so it rides along as a comment for whoever fills the husarbete dialog. Only
   // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
-  return appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Se fortnoxSalesAccount.
+  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
 }
 
 // Resolves the Fortnox customer number for a quote.

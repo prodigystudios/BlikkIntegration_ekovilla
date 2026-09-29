@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -123,6 +123,8 @@ type FortnoxOrderRow = {
   DeliveredQuantity?: number;
   Price?: number;
   VAT?: number;
+  // Sätts på varje rad av buildOrderRows sista pass — se fortnoxSalesAccount i helpers.ts.
+  AccountNumber?: number;
   // Unit avvisar null (2000699) — tom sträng är det enda tomvärdet den tar.
   Unit?: string;
   Discount?: number;
@@ -219,7 +221,9 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
   // fastighetsbeteckningen/BRF org.nr. Fortnox har inget API-fält för någondera, och raderna är det
   // enda som `createinvoice` kopierar vidare till fakturan (uppmätt 2026-09-16). Byggs ihop till EN
   // sträng i buildOrderHeader — två textrader i följd gör Fortnox till en felaktig prissatt rad.
-  return appendFortnoxTextNote(rows, documentNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  appendFortnoxTextNote(rows, documentNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
+  // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Se fortnoxSalesAccount.
+  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
 }
 
 // The header fields we own on a Fortnox order. Everything else on the document (customer, dates,
