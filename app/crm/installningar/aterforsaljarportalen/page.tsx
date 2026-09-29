@@ -18,7 +18,8 @@ import type { OutboxItemView } from './OutboxPanel';
 
 export const dynamic = 'force-dynamic';
 
-// Det butiken ser, med portalens ord (kontraktet: Bekräftad, Planerad, Utförd, Fakturerad).
+// Det butiken ser, med portalens ord (kontraktet: Bekräftad, Planerad, Utförd, Fakturerad; för en beställning Levererad
+// och Makulerad).
 const OUTBOX_KIND_LABELS: Record<PortalOutboxEventKind, string> = {
   pricelist: 'Prislistan',
   'job.confirmed': 'Bekräftad',
@@ -28,6 +29,10 @@ const OUTBOX_KIND_LABELS: Record<PortalOutboxEventKind, string> = {
   'job.cancelled': 'Avbruten',
   'job.message': 'Meddelande',
   'job.document': 'Dokument',
+  'store_order.confirmed': 'Bekräftad',
+  'store_order.delivered': 'Levererad',
+  'store_order.invoiced': 'Fakturerad',
+  'store_order.cancelled': 'Makulerad',
   other: 'Annan händelse',
 };
 
@@ -71,14 +76,26 @@ export default async function AterforsaljarportalenPage() {
         lastError: item.lastError,
         queuedAtLabel: formatStockholm(item.createdAt),
         nextAttemptLabel: item.nextAttemptAt ? formatStockholm(item.nextAttemptAt) : null,
-        job: item.job
+        subject: item.job
           ? {
+              kind: 'job' as const,
               label: [item.job.storeName, item.job.quoteNumber ? `offert ${item.job.quoteNumber}` : `jobb ${item.job.quoteId}`]
                 .filter(Boolean)
                 .join(', '),
               href: item.job.workOrderId ? `/crm/arbetsorder/${item.job.workOrderId}` : null,
             }
-          : null,
+          : item.storeOrder
+            ? {
+                kind: 'store_order' as const,
+                label: [
+                  item.storeOrder.storeName,
+                  `beställning ${item.storeOrder.orderNumber ?? item.storeOrder.orderId}`,
+                ]
+                  .filter(Boolean)
+                  .join(', '),
+                href: item.storeOrder.id ? `/crm/butiksbestallningar/${item.storeOrder.id}` : null,
+              }
+            : null,
         canRetry: item.canRetry,
       }))
     : outboxResult;

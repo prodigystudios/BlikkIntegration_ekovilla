@@ -162,7 +162,7 @@ Ren logik som testas isolerat:
 | `jobState.ts` ✅ | Portalens tillstånd härlett ur arbetsordern |
 | `jobDocuments.ts` ✅, `jobDocumentsStore.ts` ✅, `jobDocumentsDecision.ts` ✅, `outboundContent.ts` ✅ | Dokumenten (fas 7). Den rena delen (sorterna, gränsen, filnamnet, köns händelse med en referens till filen, egenkontrollens prov mot orderns nummer) importeras av kortet och får aldrig dra in zod, databasen eller `node:crypto`. Frysningen, knappen, kortets läsning, "Öppna" och cron-sopningen ligger i `…Store.ts`; regeln "det senast beslutade vinner" i `…Decision.ts`; utskickets byte av referensen mot filens base64 i `outboundContent.ts` |
 | `storeOrders.ts` ✅, `storeOrderIntake.ts` ✅, `storeOrdersStore.ts` ✅, `storeOrdersView.ts` ✅ | Butiksbeställningarna (fas 8). Den rena delen (statusarna, summorna i hela ören, notisens sammanfattning och regeln för vilken notis som gäller) importeras av sidorna och får aldrig dra in zod eller databasen. Kroppens schema och besluten om en ny, ändrad och tillbakadragen står i `storeOrderIntake.ts`; intaget, notisen med lån och cron-sopningen i `…Store.ts`; sidornas läsning med sessionen i `…View.ts` |
-| `storeOrderState.ts` ✅ | Butiksbeställningens läge hos portalen (fas 8b3), härlett ur raden: vilka `store_order.*` som ska köas. Ren, och varje händelse byggs helt ur raden, så att samma rad alltid ger samma nyckel och kropp |
+| `storeOrderState.ts` ✅, `storeOrderSync.ts` ✅ | Butiksbeställningens läge hos portalen (fas 8b3), härlett ur raden: vilka `store_order.*` som ska köas. Den rena delen bygger varje händelse helt ur raden, så att samma rad alltid ger samma nyckel och kropp; omräkningen mot databasen köar först och sparar läget sedan, villkorat på markeringen |
 | `jobMessages.ts` ✅, `jobMessagesStore.ts` ✅ | Meddelandena (fas 6). Den rena delen (avdelningarna, `job.message`-kroppen och dess nyckel, tecken räknade som Postgres räknar dem) importeras av kortet "Butiken" och får aldrig dra in zod eller databasen. Intaget från portalen, notisen, svaret, trådens läsning och cron-sopningen ligger i `…Store.ts` |
 
 Det finns ingen HMAC-hjälpare, ingen idempotenstabell och ingen kö i CRM:et i dag. Fortnox-klienten
@@ -341,6 +341,8 @@ Byggt i fas 4b; beslut, prövning och det portalen behöver står i "Fas 4b: res
     `scheduledFor: null` när sista kortet tas bort. Aldrig före `confirmed`.
   - `completed` och `invoiced`: arbetsorderns status. `partially_invoiced` skickas inte.
 - I testmiljön finns ingen cron. Portalsidan får knappen "Skicka väntande nu".
+- ✅ **Butiksbeställningarna** (fas 8b3) på samma sätt: vakten `crm_store_orders_guard` markerar, `storeOrderSync.ts`
+  räknar om i samma cron-varv, och `store_order.*` går i en egen kö per beställning. Se "Fas 8b3: resultat".
 
 ### Dokumenten ✅
 
@@ -383,7 +385,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **8a** ✅ | Butiksbeställningar, väg B, intaget: `crm_store_orders` med vakten, `POST`/`PUT`/`withdraw` under `/api/portal/store-orders`, 409 bara efter bekräftelsen, notisen till den ansvarige, sidorna (lista och en beställning, läsläge). Beteendet prövas mot en databas med `supabase/checks/portal_store_orders.sql`. Resultaten står under tabellen | Momsbeslutet |
 | **8b1** ✅ | Ekovillas steg före bekräftelsen: koppla kund, frakten, Bekräfta med Fortnox-ordern (`buildOrderRows()`, 25 %) och dess omförsök. Ingen migrering. Resultaten står under tabellen | 8a |
 | **8b2** ✅ | Levererad, Fakturera, Makulera, med svepet som makulerar kvarlämnade Fortnox-ordrar. Ingen migrering. Resultaten står under tabellen | 8b1 |
-| **8b3** | Statusen tillbaka (`store_order.*`), i två grenar: den rena tillståndsberäkningen (✅ `storeOrderState.ts`), sedan omräkningen mot databasen, cron-steget och utskicksfliken. Ingen migrering. Resultaten står under tabellen | 8b2 |
+| **8b3** ✅ | Statusen tillbaka (`store_order.*`), i två grenar: den rena tillståndsberäkningen (`storeOrderState.ts`), sedan omräkningen mot databasen, cron-steget, "Skicka om" och utskicksfliken (`storeOrderSync.ts`). Ingen migrering. Prövad hela vägen mot den riktiga lokala portalen. Resultaten står under tabellen | 8b2 |
 | **9** | Prod, när portalens prodprojekt finns: **reserven vald** på portalsidan (annars tas ett jobb utan säljare inte emot), hemligheten och `RESELLER_PORTAL_URL` i Production, första publiceringen, ett första riktigt jobb med en butik som vet om det | Allt ovan |
 
 ### Fas 0: resultat (2026-09-27)
@@ -1437,9 +1439,47 @@ lokala `so-lokal-*` kan bara prövas mot en fejkportal.
 `store_order.*` och kräver giltiga nycklar. 61 mutationer, alla röda utom två likvärdiga: en JSON-array kan inte bära
 lägets fält, och en fakturering som redan köats når aldrig utskicket (`waiting` och "fakturan har leveransen").
 
-**Gren 2:** `storeOrderSync.ts` (de markerade beställningarna, äldst först; kön; läget och markeringen i en villkorad
-UPDATE), cron-steget efter jobbens omräkning och i omräkningen efter utskicket, "Skicka om" markerar beställningen, och
-fliken "Utskick" visar `store_order.*` med beställningen.
+**Gren 2** (`lib/domains/portal/storeOrderSync.ts`, `cron.ts`, `app/api/crm/portal/events/[id]/retry`, `outboxView.ts`,
+fliken Utskick):
+- **Omräkningen** läser de markerade beställningarna, äldst först, högst 100 per varv. Den köar händelserna i ordning
+  och sparar läget och markeringen i EN UPDATE, villkorad på markeringen som lästes. Blir det noll rader (en ändring
+  under tiden, eller ett annat varv som hann före) sparas inget läge, och nästa varv köar samma nycklar igen, vilket kön
+  känner igen. En beställning som väntar på att bekräftelsen levereras får en ny markering (nu), sist i kön.
+- **Cron:** omräkningen direkt efter jobbens, och igen efter utskicket när något levererades, så att "levererad" följer
+  "bekräftad" i samma varv. Ett utskick till görs när jobben eller beställningarna köade något. Kön tar en händelse per
+  beställning och dragning, så en fakturering bakom en leverans går nästa varv.
+- **"Skicka om"** på en butikshändelse markerar beställningen (portalens orderId ur kön `store_order:<orderId>`), så att
+  det som väntade bakom en uppgiven bekräftelse följer i samma klick.
+- **Fliken Utskick** visar `store_order.*` som Bekräftad, Levererad, Fakturerad och Makulerad, med numret, dagen eller
+  början av skälet (80 tecken, räknade i tecken), och butiken och B-numret med länk till beställningen. Den läser
+  beställningarna med sessionen (`crm.access`). "Skickas inte om" säger "samma beställning".
+- `readConfirmedDelivery` delas med jobben (exporterad ur `jobSync.ts`, oförändrad).
+
+**Prövat (gren 2):**
+- vitest: `storeOrderSync` (13), cron (18), routerna, fliken. 52 mutationer, alla röda (en överlevde först: ett trasigt
+  läge prövades bara som en lista, och testet kräver nu att en nyckel av fel typ kastas bort).
+- **Mot en fejkportal** (:3101) som kontrollerar signaturen och prövar varje kropp mot portalens eget schema
+  (`crmEventSchema` ur portalrepot, zod 4, med `--conditions=react-server`): de 14 markerade lokala beställningarna gav
+  24 händelser, alla godtagna. Sju bekräftade, sex makulerade (8-3, 8-4 och 8b-15 bara makuleringen, trots nummer på
+  två av dem), sex levererade, fyra fakturerade. Tillbakadragen och mottagen gav ingenting, och markeringen togs bort.
+  En uppgiven bekräftelse (404) höll leveransen stilla, och "Skicka om" i fliken skickade bekräftelsen och leveransen i
+  samma klick.
+- **Mot den riktiga lokala portalen** (:3001, `EKOVILLA_CRM_STORE_ORDERS=on` bara i processens miljö), butiken Norrbygg
+  kopplad till kund 15 en stund:
+  - A beställd i portalens formulär, frakt 450 kr, Bekräfta (order 75 i testbolaget), Levererad och Fakturera (faktura
+    28). Portalen visade "Ekovillas order 75 · bekräftad · levererad · fakturerad 29 sep", och `confirmedAt` var
+    Bekräftas tid.
+  - B makulerad som mottagen: "Ekovilla makulerade beställningen 29 sep. Skäl: …", daterad vid makuleringen.
+  - C tillbakadragen i portalen: inget skickades, och markeringen togs bort.
+  - D bekräftad (order 76) och makulerad: båda kom fram, i ordning.
+- I webbläsaren: fliken som admin, länken till beställningen och telefonbredd utan sidledsscroll.
+
+⚠️ **Lokalt kvar:**
+- Alla `so-lokal-*` har sitt läge köat och skickat till fejkportalen.
+- `so-lokal-8b3-1` är levererad, lagd för hand med Fortnox-nummer 9901, som inte finns i Fortnox.
+- Portalens beställningar B-2026-004 till 007 (A–D) finns i båda lokala databaserna. Butiken Norrbygg har åter inget
+  kundnummer i portalen, men CRM:et har butiken med kund 15.
+- Testbolaget: order 75 med faktura 28 (obokförd), och order 76, makulerad.
 
 ---
 

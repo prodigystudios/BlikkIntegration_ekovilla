@@ -101,7 +101,8 @@ async function readWorkOrder(admin: SupabaseClient, id: string | null): Promise<
   };
 }
 
-async function readConfirmedDelivery(admin: SupabaseClient, key: string | undefined): Promise<ConfirmedDelivery> {
+/** Hur det gick för den köade bekräftelsen. Delas med butiksbeställningarna (storeOrderSync.ts). */
+export async function readConfirmedDelivery(admin: SupabaseClient, key: string | undefined): Promise<ConfirmedDelivery> {
   if (!key) return 'missing';
   const { data, error } = await admin.from('portal_outbound_events').select('status').eq('idempotency_key', key).maybeSingle();
   if (error) throw new Error(`Bekräftelsens status gick inte att läsa: ${error.message}`);
