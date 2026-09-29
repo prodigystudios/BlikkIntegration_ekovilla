@@ -353,14 +353,16 @@ async function finishNotice(admin: SupabaseClient, id: string, stamp: string, no
 }
 
 /**
- * Reserven, om den fortfarande kan skriva arbetsordrar: samma krav som fördelningen ställer på den (assignment.ts). En
- * reserv som bytt roll hade fått en länk till en sida den inte kan öppna, och notisen hade räknats som skickad.
+ * Vem notisen går till: den ansvarige, annars reserven, och bara den som fortfarande kan skriva arbetsordrar, samma krav
+ * som fördelningen ställer (assignment.ts). En som bytt roll hade fått en länk till en sida den inte kan öppna, och
+ * notisen hade räknats som skickad.
  */
-async function readFallbackUser(admin: SupabaseClient): Promise<string | null> {
+async function resolveNoticeRecipient(admin: SupabaseClient, assignedTo: string | null): Promise<string | null> {
+  if (assignedTo && (await userCanWriteWorkOrders(admin, assignedTo))) return assignedTo;
   const { data, error } = await admin.from('crm_portal_settings').select('fallback_user_id').eq('id', true).maybeSingle();
   if (error) throw new Error(`Reserven gick inte att läsa: ${error.message}`);
   const fallback = (data as { fallback_user_id?: string | null } | null)?.fallback_user_id ?? null;
-  return fallback && (await userCanWriteWorkOrders(admin, fallback)) ? fallback : null;
+  return fallback && fallback !== assignedTo && (await userCanWriteWorkOrders(admin, fallback)) ? fallback : null;
 }
 
 export type StoreOrderNoticeOutcome = 'sent' | 'none' | 'busy' | 'no_recipient' | 'failed';
@@ -386,7 +388,7 @@ export async function notifyStoreOrder(
   let recipient: string | null = null;
   try {
     row = await readNoticeRow(admin, id);
-    if (row && decideStoreOrderNotice(row)) recipient = row.assigned_to ?? (await readFallbackUser(admin));
+    if (row && decideStoreOrderNotice(row)) recipient = await resolveNoticeRecipient(admin, row.assigned_to);
   } catch (e) {
     await finishNotice(admin, id, stamp).catch((err) =>
       console.error('[portal-store-orders] lånet kunde inte släppas', { id, error: err instanceof Error ? err.message : String(err) }),
@@ -402,7 +404,7 @@ export async function notifyStoreOrder(
   }
 
   if (!recipient) {
-    // Den ansvariges profil är borttagen och ingen reserv som kan skriva arbetsordrar är vald. Lånet får stå kvar: nästa
+    // Varken den ansvarige eller en reserv kan skriva arbetsordrar (eller finns). Lånet får stå kvar: nästa
     // försök kommer när det gått ut (fem minuter), inte varje minut, och en reserv som väljs under tiden får notisen.
     console.error('[portal-store-orders] ingen att meddela: varken ansvarig eller reserv. Görs om när lånet gått ut.', { id });
     return 'no_recipient';

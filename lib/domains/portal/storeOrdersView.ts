@@ -68,6 +68,33 @@ type ListRow = {
 /** Pågående: något återstår för Ekovilla (bekräfta, leverera, fakturera). De läses alla, hur gamla de än är. */
 const ACTIVE_STATUSES: StoreOrderStatus[] = ['received', 'confirmed', 'delivered'];
 
+async function readActiveStoreOrders(session: SupabaseClient): Promise<ListRow[]> {
+  const active: ListRow[] = [];
+  for (let after: string | null = null; ; ) {
+    let page = session.from('crm_store_orders').select(LIST_SELECT).in('status', ACTIVE_STATUSES);
+    if (after) page = page.gt('id', after);
+    const { data, error } = await page.order('id', { ascending: true }).limit(PAGE);
+    if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
+    const rows = (data ?? []) as ListRow[];
+    active.push(...rows);
+    if (rows.length < PAGE) return active;
+    after = rows[rows.length - 1].id;
+  }
+}
+
+/** De senast mottagna avslutade, och en till än gränsen: bara så syns det om något faktiskt föll bort. */
+async function readClosedStoreOrders(session: SupabaseClient): Promise<ListRow[]> {
+  const { data, error } = await session
+    .from('crm_store_orders')
+    .select(LIST_SELECT)
+    .in('status', STORE_ORDER_STATUSES.filter((status) => !ACTIVE_STATUSES.includes(status)))
+    .order('received_at', { ascending: false })
+    .order('id', { ascending: true })
+    .limit(STORE_ORDER_LIST_LIMIT + 1);
+  if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
+  return (data ?? []) as ListRow[];
+}
+
 /**
  * Listan: ALLA pågående (att bekräfta, leverera och fakturera), så att ingen försvinner ur sitt urval hur många som än
  * kommit efter den, och de senaste av de avslutade (fakturerade, tillbakadragna, makulerade). `capped` säger att de
@@ -77,30 +104,7 @@ const ACTIVE_STATUSES: StoreOrderStatus[] = ['received', 'confirmed', 'delivered
  * medan sidorna läses hade annars gett en dubblett eller tappats. Ordningen sätts efteråt.
  */
 export async function listStoreOrderViews(session: SupabaseClient): Promise<{ orders: StoreOrderListItem[]; capped: boolean }> {
-  const closed = session
-    .from('crm_store_orders')
-    .select(LIST_SELECT)
-    .in('status', STORE_ORDER_STATUSES.filter((status) => !ACTIVE_STATUSES.includes(status)))
-    .order('received_at', { ascending: false })
-    .order('id', { ascending: true })
-    // En till än gränsen: bara så syns det om något faktiskt föll bort.
-    .limit(STORE_ORDER_LIST_LIMIT + 1)
-    .then((result) => result);
-  const active: ListRow[] = [];
-  for (let after: string | null = null; ; ) {
-    let page = session.from('crm_store_orders').select(LIST_SELECT).in('status', ACTIVE_STATUSES);
-    if (after) page = page.gt('id', after);
-    const { data, error } = await page.order('id', { ascending: true }).limit(PAGE);
-    if (error) throw new Error(`Beställningarna gick inte att läsa: ${error.message}`);
-    const rows = (data ?? []) as ListRow[];
-    active.push(...rows);
-    if (rows.length < PAGE) break;
-    after = rows[rows.length - 1].id;
-  }
-  // De avslutade lästes samtidigt som den första sidan.
-  const closedRead = await closed;
-  if (closedRead.error) throw new Error(`Beställningarna gick inte att läsa: ${closedRead.error.message}`);
-  const closedRows = (closedRead.data ?? []) as ListRow[];
+  const [active, closedRows] = await Promise.all([readActiveStoreOrders(session), readClosedStoreOrders(session)]);
   const rest = closedRows.slice(0, STORE_ORDER_LIST_LIMIT);
   // En beställning som bytte status mellan läsningarna (levererad → fakturerad) kan finnas i båda: en gång räcker.
   const unique = new Map<string, ListRow>();

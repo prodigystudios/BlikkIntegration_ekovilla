@@ -20,12 +20,13 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *      inte köats köas, och en notis om butikens meddelande som inte gick iväg görs om (jobMessagesStore.ts, fas 6).
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
  *   3. Levererades något räknas jobben om en gång till: "planerad" köas först när "bekräftad" är levererad, och annars
- *      hade butiken fått den en minut senare. Sedan görs notiserna om butiksbeställningar som inte gick iväg
- *      (storeOrdersStore.ts, fas 8): efter utskicket, eftersom de inte köar något och statusen inte ska vänta på dem.
+ *      hade butiken fått den en minut senare.
  *   4. Dokumenten (jobDocumentsStore.ts, fas 7): den automatiska orderbekräftelsen efter en levererad bekräftelse,
  *      omförsöken och det som inte hann köas. Efter utskicket, eftersom en orderbekräftelse är tre Fortnox-anrop och
  *      statusen inte ska vänta på dem. Köades något skickas kön en gång till.
- *   5. Fortnox-omförsöken (jobFortnoxRetry.ts), sist: ett försök kan ta upp mot 40 s, och statusen ska inte vänta på
+ *   5. Butiksbeställningarnas notiser som inte gick iväg (storeOrdersStore.ts, fas 8), inom samma startgräns som
+ *      dokumenten och en egen tidsbudget: de köar inget, och statusen och dokumenten ska inte vänta på dem.
+ *   6. Fortnox-omförsöken (jobFortnoxRetry.ts), sist: ett försök kan ta upp mot 40 s, och statusen ska inte vänta på
  *      dem. Bara så många som hinns inom tidsgränsen.
  *
  * Ett steg som kastar stoppar inte nästa; felet står i sammanfattningen.
@@ -101,18 +102,8 @@ export async function runPortalCron(
     summary.resync = await step('omräkningen efter utskicket', () => syncPortalJobs(admin, { now }));
     if (queuedSomething(summary.resync)) summary.redispatch = await step('utskicket efter omräkningen', dispatch);
   }
-  // Samma startgräns som dokumenten: ett varv som redan tagit sin tid påbörjar inga notiser, de väntar till nästa.
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
-  if (now().getTime() - startedAt < documentsStartBefore) {
-    summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
-      sweepStoreOrderNotices(admin, {
-        now,
-        budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
-      }),
-    );
-  }
-
   if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
       sweepPortalJobDocuments(admin, {
@@ -132,6 +123,17 @@ export async function runPortalCron(
         }),
       );
     }
+  }
+
+  // Butiksbeställningarnas notiser efter dokumenten (orderbekräftelserna ska inte tappa tid), inom samma startgräns: ett
+  // varv som redan tagit sin tid påbörjar inga, de väntar till nästa.
+  if (now().getTime() - startedAt < documentsStartBefore) {
+    summary.storeOrderNotices = await step('butiksbeställningarnas notiser', () =>
+      sweepStoreOrderNotices(admin, {
+        now,
+        budgetMs: options.fortnoxRetries === false ? PORTAL_CLICK_STORE_ORDER_NOTICES_BUDGET_MS : undefined,
+      }),
+    );
   }
 
   const remaining = PORTAL_CRON_FORTNOX_START_BEFORE_MS - (now().getTime() - startedAt);

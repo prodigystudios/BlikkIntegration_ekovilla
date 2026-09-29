@@ -36,8 +36,15 @@ function db(initial: Record<string, Record<string, unknown>[]> = {}, options: Pa
     {
       crm_portal_settings: [{ id: true, fallback_user_id: 'reserven' }],
       // Reserven måste kunna skriva arbetsordrar för att få en notis (samma krav som fördelningen).
-      profiles: [{ id: 'reserven', role: 'admin', full_name: 'Rolf Reserv' }, { id: 'ekonomen', role: 'ekonomi' }],
-      role_permissions: [{ role: 'admin', permission_key: 'crm.workorder.write' }],
+      profiles: [
+        { id: 'reserven', role: 'admin', full_name: 'Rolf Reserv' },
+        { id: 'saljaren', role: 'saljare', full_name: 'Sara Säljare' },
+        { id: 'ekonomen', role: 'ekonomi' },
+      ],
+      role_permissions: [
+        { role: 'admin', permission_key: 'crm.workorder.write' },
+        { role: 'saljare', permission_key: 'crm.workorder.write' },
+      ],
       user_permissions: [],
       ...initial,
     },
@@ -463,6 +470,13 @@ describe('notifyStoreOrder', () => {
     const later = new Date(NOW.getTime() + STORE_ORDER_NOTICE_LEASE_MS + 1);
     const { deps: laterDeps, sent } = noticeDeps({ now: () => later });
     expect(await notifyStoreOrder(m.admin, 'order-1', laterDeps)).toBe('sent');
+    expect(sent[0][0].recipient_user_id).toBe('reserven');
+  });
+
+  it('en ansvarig som inte längre kan skriva arbetsordrar: notisen går till reserven', async () => {
+    const m = db({ crm_store_orders: [storeRow({ assigned_to: 'ekonomen' })] });
+    const { deps, sent } = noticeDeps();
+    expect(await notifyStoreOrder(m.admin, 'order-1', deps)).toBe('sent');
     expect(sent[0][0].recipient_user_id).toBe('reserven');
   });
 
