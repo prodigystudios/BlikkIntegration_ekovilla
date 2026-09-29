@@ -397,7 +397,8 @@ export function portalFortnoxBlockerReasons(blockers: WorkOrderReadinessIssue[],
   return blockers.map((blocker) => {
     if (blocker.field === 'customer_link') {
       return customerNumber
-        ? `Butikens kundnummer ${customerNumber} finns inte i kundregistret.`
+        // Också när numret pekar på ett privatkort: det räknas inte som butikens (`readCustomer`).
+        ? `Butikens kundnummer ${customerNumber} finns inte som företagskund i kundregistret.`
         : 'Butiken har inget kundnummer i portalen, så jobbet är inte kopplat till någon kund.';
     }
     if (blocker.field === 'organization_number') return 'Organisationsnummer saknas på butikens kundkort.';

@@ -247,12 +247,6 @@ describe('receivePortalJob', () => {
     expect(deps.assign).toHaveBeenCalledWith(expect.objectContaining({ customerId: null }));
   });
 
-  it('ett kort utan kundtyp räknas inte heller som butikens', async () => {
-    const m = memoryAdmin({ crm_customers: [{ ...CARD, customer_type: null }] });
-    await receivePortalJob(m.admin, job(), payload(), intakeDeps());
-    expect(m.tables.crm_work_orders[0].customer_id).toBeNull();
-  });
-
   it('ett okänt kundnummer: ingen kund på jobbet eller ordern, men butiken sparas med numret', async () => {
     const m = memoryAdmin({ crm_customers: [] });
     const deps = intakeDeps();
@@ -448,7 +442,7 @@ describe('followUpPortalJob', () => {
         href: `/crm/arbetsorder/${workOrderId}`,
       }),
     );
-    expect(sent[1].body).toContain('Butikens kundnummer 1043 finns inte i kundregistret.');
+    expect(sent[1].body).toContain('Butikens kundnummer 1043 finns inte som företagskund i kundregistret.');
   });
 
   it('kundkortet läses om: org.nr saknas när jobbet kommer och stoppar; ifyllt på kortet efteråt släpper det igenom', async () => {

@@ -385,7 +385,7 @@ describe('notisens orsaker', () => {
       { field: 'work_address', label: '', message: 'Arbetsadressen saknar ort.', fixAt: 'quote' },
     ] as const;
     expect(portalFortnoxBlockerReasons([...blockers], '1043')).toEqual([
-      'Butikens kundnummer 1043 finns inte i kundregistret.',
+      'Butikens kundnummer 1043 finns inte som företagskund i kundregistret.',
       'Organisationsnummer saknas på butikens kundkort.',
       'Arbetsadressen saknar ort.',
     ]);
