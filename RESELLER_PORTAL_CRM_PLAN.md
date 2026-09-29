@@ -1095,7 +1095,8 @@ PUT). Ändringens route läste radens första version om och om igen och gav upp
 `fetchCache = 'force-no-store'`, och vakttestet (`routeGuards.test.ts`) kräver raden för varje portalroute utan POST,
 DELETE, PATCH och OPTIONS. Övriga PUT-routes i appen läser kakan (dynamiska) eller sätter `no-store` själva.
 
-**Granskningarna** (code-review high, åtta rundor; varje runda granskade den förras rättelser):
+**Granskningarna** (code-review high, elva rundor; varje runda granskade den förras rättelser, och den elfte fann inget
+nytt av vikt):
 - **Första:** 404 i svarscachen (tillbakadragningens fasta nyckel), kunden vid en ändring, cron läste de 500 äldsta och hela
   kroppen, en notis utan mottagare gjordes om varje minut, summorna i sidan, jobbens routes med `parsePortalBody`, butikens
   schema delat.
@@ -1109,9 +1110,16 @@ DELETE, PATCH och OPTIONS. Övriga PUT-routes i appen läser kakan (dynamiska) e
 - **Sjunde:** halva ören, en upprepning som föll på kundläsningen, butikens senaste kontakt, dubbletter mellan läsningarna.
 - **Åttonde:** vakten stängde inte butikens namn och ändringstiden efter bekräftelsen (migreringen ändrad på plats),
   notiserna efter varvets startgräns, en notis utan mottagare gavs upp för gott, reservens behörighet.
+- **Nionde:** den ansvarige fick notisen utan behörighetskontroll (nu samma regel som reserven), notiserna efter
+  dokumenten.
+- **Tionde:** öresumman kunde gå över 2^53 vid schemats gränser (tak på priset), ett skriv för en ny butik, primitiverna
+  `ErrorState`/`EmptyState`.
+- **Elfte:** inget nytt av vikt. Nycklarnas namnrymd går till portalen (punkt 35).
 - **Lämnat, med skäl:** reservens och kundnumrets uppslag och notisens lån finns i kopior hos jobben och meddelandena (en
   delad funktion hade rört fas 3b:s och 6:s prövade kod; egen PR), listan räknar summan ur raderna (i SQL hade
-  öresregeln dubblerats), en äldre ändring efter en fryst första kropp (portalen skickar bara den senaste ändringen).
+  öresregeln dubblerats), en äldre ändring efter en fryst första kropp (portalen skickar bara den senaste ändringen),
+  vakten markerar också butikens tillbakadragning för utskicket (8b räknar fram "inget att skicka" och tar bort
+  markeringen), `no-store` i hela Supabase-klienten (rör varje route, alltså det aktiva flödet; föreslaget till William).
 
 **Prövat:**
 - **Migreringen:** i en tom tillfällig databas med stubbar, två körningar, och 21 mutationer av efterkontrollen, var och
@@ -1294,6 +1302,10 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     finns. `ekovillaCustomerNumber` som tom sträng räknas som `null`, som för jobben.
 34. **Momsen** (William 2026-09-29): en butiksbeställning har 25 % (butiken är slutkund), också frakten; ett jobb har 0 %.
     Portalens `DOMAIN.md` antar omvänd skattskyldighet på allt och behöver rättas för beställningarna.
+35. **Nycklarnas namnrymd:** svarscachen är unik på `Idempotency-Key` över alla portalens anrop, och kontraktets nycklar
+    kan i teorin krocka: `store-order-<id>-withdraw` är samma sträng som `store-order-<id2>` när id2 är `<id>-withdraw`,
+    och likadant för en ändrings `store-order-<id>-<updatedAt>`. Portalens id:n är uuid, så det händer inte i dag, men
+    kontraktet bör säga att id:n är uuid, eller nycklarna få ett eget prefix per anrop (`store-order-withdraw-<id>`).
 
 ## Öppna frågor
 
