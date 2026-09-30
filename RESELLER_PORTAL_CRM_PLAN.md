@@ -127,6 +127,23 @@ databasen. Antingen står prods Supabase-värd i koden och nekas utanför prod, 
 en variabel med sin egen databasvärd som måste stämma med `SUPABASE_URL`. Prods värd finns i dag med
 flit inte i repot, så valet görs då. (Granskningen av fas 1b, 2026-09-28.)
 
+✅ **Löst 2026-09-30 (William: "kör på ditt förslag").** Lösningen är en lista över tillåtna databaser, inte prods värd
+i koden. `isPortalDatabaseAllowed` i `lib/domains/portal/config.ts` kräver utanför prod att varje satt databasadress
+(`SUPABASE_URL` och `NEXT_PUBLIC_SUPABASE_URL`) pekar på den här datorn eller testprojektet `TEST_DATABASE_HOST`
+(`aquwuqnqzuxljzkfoinn.supabase.co`). Spärren gäller åt båda hållen:
+- **Utåt:** `resolvePortalTarget` ger `wrong_environment`. Kön skickas då inte, prislistan köas inte och
+  inställningssidan visar skälet.
+- **Bakgrundsarbetet:** `runPortalCron` kör inget steg. "Skicka väntande nu" svarar 409 med skälet.
+- **Inåt:** grinden i `app/api/portal/_shared.ts` svarar 503 `portal_not_configured`, som när integrationen är av.
+  Det prövas efter signaturen, så bara portalens egna anrop loggas. Portalen försöker igen, och orsaken står bara i
+  vår logg.
+
+Ingen adress alls betyder ingen databas och alltså ingen kö; det nekas inte. Prod prövas inte.
+
+**Känt, med flit:** köandet i användarens egna åtgärder, som ett svar till butiken eller ett dokument, spärras inte.
+Med fel databas skriver varje åtgärd i appen till fel databas, också mot Fortnox, och det fångar T3 och T6. T6 är
+inloggningen med en testanvändare som bara finns i testprojektet.
+
 **T5. Den delade hemligheten.** `PORTAL_CRM_SHARED_SECRET` för testmiljön genereras av William i egen
 terminal (`openssl rand -hex 32`) och läggs i båda Vercel-projekten, Preview för grenen `testmiljo`.
 Den skrivs aldrig i en chatt, en commit eller en logg.

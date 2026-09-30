@@ -13,6 +13,7 @@ import { retryStoreOrderFortnox, storeOrderFortnoxDeps, type StoreOrderFortnoxDe
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
 import { syncStoreOrders, type StoreOrderSyncSummary } from './storeOrderSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
+import { isPortalDatabaseAllowed, WRONG_DATABASE_MESSAGE } from './config';
 
 /**
  * Ett varv av portalens bakgrundsarbete (RESELLER_PORTAL_CRM_PLAN.md fas 4b). Körs av cron-routen varje minut i prod
@@ -34,6 +35,9 @@ import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
  *      per varv, så att jobb som fortsätter att falla inte tar hela gränsen varje varv.
  *
  * Ett steg som kastar stoppar inte nästa; felet står i sammanfattningen.
+ *
+ * 🧨 Mot fel databas utanför prod (`isPortalDatabaseAllowed`, T4b) körs INGET steg: utskicket svarar som en
+ * avstängd integration med skälet, och de andra stegen bär skälet som fel.
  */
 
 /** Hur länge ett varv får påbörja Fortnox-försök. Routen har 300 s; utskicket tar högst ~90 s, ett försök ~40 s. */
@@ -96,6 +100,19 @@ export async function runPortalCron(
     storeOrderFortnoxDeps?: StoreOrderFortnoxDeps;
   },
 ): Promise<PortalCronSummary> {
+  if (!isPortalDatabaseAllowed(options.env)) {
+    const skipped = { error: WRONG_DATABASE_MESSAGE };
+    return {
+      sync: skipped,
+      storeOrderSync: skipped,
+      messages: skipped,
+      dispatch: { ran: false, reason: WRONG_DATABASE_MESSAGE },
+      storeOrderNotices: skipped,
+      documents: skipped,
+      fortnox: skipped,
+      storeOrderFortnox: skipped,
+    };
+  }
   const now = options.now ?? (() => new Date());
   const startedAt = now().getTime();
   const dispatch = () => dispatchPortalOutbox(admin, { env: options.env, now, fetchImpl: options.fetchImpl });

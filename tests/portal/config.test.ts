@@ -1,20 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { readPortalSecret, resolvePortalTarget } from '@/lib/domains/portal/config';
+import { isPortalDatabaseAllowed, readPortalSecret, resolvePortalTarget, TEST_DATABASE_HOST } from '@/lib/domains/portal/config';
 
 const SECRET = 'a'.repeat(64);
 
 // Miljöerna som de ser ut vid körning.
 const LOCAL = { NODE_ENV: 'development', SUPABASE_URL: 'http://127.0.0.1:55321', PORTAL_CRM_SHARED_SECRET: SECRET };
+const TEST_DB = `https://${TEST_DATABASE_HOST}`;
+const PROD_DB = 'https://prodref.supabase.co';
 const PREVIEW = {
   NODE_ENV: 'production',
   VERCEL_ENV: 'preview',
-  SUPABASE_URL: 'https://testref.supabase.co',
+  SUPABASE_URL: TEST_DB,
   PORTAL_CRM_SHARED_SECRET: SECRET,
 };
 const PROD = {
   NODE_ENV: 'production',
   VERCEL_ENV: 'production',
-  SUPABASE_URL: 'https://prodref.supabase.co',
+  SUPABASE_URL: PROD_DB,
   PORTAL_CRM_SHARED_SECRET: SECRET,
 };
 
@@ -109,11 +111,11 @@ describe('resolvePortalTarget', () => {
 
   it('🧨 de tvetydiga fallen räknas INTE som prod: prodportalen nekas', () => {
     const ambiguous = [
-      // Produktionsbygge utanför Vercel (`next start`, CI) mot en riktig databas.
-      { NODE_ENV: 'production', SUPABASE_URL: 'https://prodref.supabase.co' },
-      { NODE_ENV: 'production', VERCEL_ENV: 'development', SUPABASE_URL: 'https://prodref.supabase.co' },
+      // Produktionsbygge utanför Vercel (`next start`, CI) mot testprojektet.
+      { NODE_ENV: 'production', SUPABASE_URL: TEST_DB },
+      { NODE_ENV: 'production', VERCEL_ENV: 'development', SUPABASE_URL: TEST_DB },
       // `vercel env pull` lade VERCEL_ENV=production i .env.local, men det är `next dev`.
-      { NODE_ENV: 'development', VERCEL_ENV: 'production', SUPABASE_URL: 'https://prodref.supabase.co' },
+      { NODE_ENV: 'development', VERCEL_ENV: 'production', SUPABASE_URL: 'http://127.0.0.1:55321' },
       // Prods variabler mot den lokala stacken, med bara den publika adressen satt.
       { NODE_ENV: 'production', VERCEL_ENV: 'production', NEXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:55321' },
     ];
@@ -124,5 +126,67 @@ describe('resolvePortalTarget', () => {
       });
       expect(resolvePortalTarget({ ...env, PORTAL_CRM_SHARED_SECRET: SECRET, RESELLER_PORTAL_URL: TEST_PORTAL })).toMatchObject({ ok: true });
     }
+  });
+
+  /**
+   * T4b: testmiljön har ärvt prods Supabase-nycklar genom en allmän Preview-variabel. Portalspärren
+   * godtar testportalen, och "Skicka väntande nu" hade tömt prods kö dit.
+   */
+  it('🧨 utanför prod: ingen portal alls mot en annan databas än den lokala eller testprojektet', () => {
+    const wrongDatabase = [
+      { ...PREVIEW, SUPABASE_URL: PROD_DB },
+      { ...PREVIEW, SUPABASE_URL: undefined, NEXT_PUBLIC_SUPABASE_URL: PROD_DB },
+      // Serverklienten läser SUPABASE_URL, sessionsklienten den publika: båda måste stämma.
+      { ...PREVIEW, NEXT_PUBLIC_SUPABASE_URL: PROD_DB },
+      { ...LOCAL, NEXT_PUBLIC_SUPABASE_URL: PROD_DB },
+      // `next dev` utan .env.development.local, alltså mot prods databas.
+      { ...LOCAL, SUPABASE_URL: PROD_DB },
+      { NODE_ENV: 'development', VERCEL_ENV: 'production', SUPABASE_URL: PROD_DB, PORTAL_CRM_SHARED_SECRET: SECRET },
+      { NODE_ENV: 'production', SUPABASE_URL: PROD_DB, PORTAL_CRM_SHARED_SECRET: SECRET },
+    ];
+    for (const env of wrongDatabase) {
+      for (const url of [TEST_PORTAL, 'http://localhost:3001']) {
+        const target = resolvePortalTarget({ ...env, RESELLER_PORTAL_URL: url });
+        expect(target).toMatchObject({ ok: false, reason: 'wrong_environment' });
+        // Meddelandet upprepar inte adressen.
+        expect(JSON.stringify(target)).not.toContain('prodref');
+      }
+    }
+  });
+
+  it('prod prövar inte databasen', () => {
+    expect(resolvePortalTarget({ ...PROD, NEXT_PUBLIC_SUPABASE_URL: PROD_DB, RESELLER_PORTAL_URL: PROD_PORTAL })).toMatchObject({ ok: true });
+  });
+});
+
+describe('isPortalDatabaseAllowed', () => {
+  it('utanför prod: den här datorn eller testprojektet, i båda variablerna', () => {
+    expect(isPortalDatabaseAllowed(LOCAL)).toBe(true);
+    expect(isPortalDatabaseAllowed(PREVIEW)).toBe(true);
+    expect(isPortalDatabaseAllowed({ ...PREVIEW, NEXT_PUBLIC_SUPABASE_URL: TEST_DB })).toBe(true);
+    expect(isPortalDatabaseAllowed({ ...LOCAL, NEXT_PUBLIC_SUPABASE_URL: 'http://localhost:55321' })).toBe(true);
+    // Avslutande punkt är samma värd i DNS; ett tomt värde räknas som osatt.
+    expect(isPortalDatabaseAllowed({ ...PREVIEW, SUPABASE_URL: `${TEST_DB}./`, NEXT_PUBLIC_SUPABASE_URL: ' ' })).toBe(true);
+  });
+
+  it('🧨 utanför prod: en annan värd, en liknande värd eller en ogiltig adress nekas', () => {
+    for (const url of [
+      PROD_DB,
+      `https://${TEST_DATABASE_HOST}.example.com`,
+      `https://x${TEST_DATABASE_HOST}`,
+      'https://example.com',
+      'inte en adress',
+    ]) {
+      expect(isPortalDatabaseAllowed({ ...PREVIEW, SUPABASE_URL: url })).toBe(false);
+      expect(isPortalDatabaseAllowed({ ...LOCAL, NEXT_PUBLIC_SUPABASE_URL: url })).toBe(false);
+    }
+  });
+
+  it('ingen databasadress alls: ingen kö att tömma, så inget att neka', () => {
+    expect(isPortalDatabaseAllowed({ NODE_ENV: 'production', VERCEL_ENV: 'preview' })).toBe(true);
+  });
+
+  it('i prod: alltid, prods adress står inte i koden', () => {
+    expect(isPortalDatabaseAllowed(PROD)).toBe(true);
   });
 });

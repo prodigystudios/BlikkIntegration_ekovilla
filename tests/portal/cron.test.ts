@@ -69,6 +69,24 @@ beforeEach(() => {
 });
 
 describe('runPortalCron', () => {
+  /** T4b: testmiljön har ärvt prods Supabase-nycklar. Inget av portalens bakgrundsarbete får köras mot den databasen. */
+  it('🧨 utanför prod mot fel databas körs inget steg, och utskicket svarar som en avstängd integration', async () => {
+    const env = { NODE_ENV: 'production', VERCEL_ENV: 'preview', SUPABASE_URL: 'https://prodref.supabase.co' };
+    const summary = await runPortalCron({} as never, { env });
+    expect(calls).toEqual([]);
+    expect(summary.dispatch).toEqual({ ran: false, reason: expect.stringContaining('testprojektet') });
+    expect(summary.sync).toEqual({ error: expect.stringContaining('testprojektet') });
+    expect(summary.fortnox).toEqual({ error: expect.stringContaining('testprojektet') });
+    expect(JSON.stringify(summary)).not.toContain('prodref');
+  });
+
+  it('i prod prövas inte databasen', async () => {
+    await runPortalCron({} as never, {
+      env: { NODE_ENV: 'production', VERCEL_ENV: 'production', SUPABASE_URL: 'https://prodref.supabase.co' },
+    });
+    expect(calls[0]).toBe('sync');
+  });
+
   it('levererades något: omräkning och utskick en gång till, Fortnox sist', async () => {
     const summary = await runPortalCron({} as never, { env: {} });
     expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch', 'sync', 'store-order-sync', 'dispatch', 'documents', 'store-orders', 'store-order-fortnox', 'fortnox']);

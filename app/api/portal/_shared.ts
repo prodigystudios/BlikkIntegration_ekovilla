@@ -3,7 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { z } from 'zod';
 import { waitUntil } from '@vercel/functions';
 import { routeError } from '@/lib/api/responses';
-import { readPortalSecret } from '@/lib/domains/portal/config';
+import { isPortalDatabaseAllowed, readPortalSecret } from '@/lib/domains/portal/config';
 import { findUnstorableText } from '@/lib/domains/portal/inboundText';
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -32,7 +32,8 @@ import {
  * prövas innan en enda byte av kroppen tas emot. Ett anrop utan signaturheadrar loggas inte (det är skanners);
  * ett som har dem men inte stämmer loggas, utan orsaken i svaret.
  *
- *   503 portal_not_configured  hemligheten saknas i den här miljön: integrationen är av (så går koden ut mörk i prod)
+ *   503 portal_not_configured  hemligheten saknas i den här miljön: integrationen är av (så går koden ut mörk i prod);
+ *                              eller fel databas utanför prod (`isPortalDatabaseAllowed`), med orsaken bara i loggen
  *   400 invalid_path           sökvägen har andra tecken än A–Z, a–z, 0–9 och - _ . ~ (kontraktets punkt 16)
  *   401 unauthorized           signaturen saknas, stämmer inte, eller tidsstämpeln är för gammal
  *   413 body_too_large         kroppen är större än Vercel ändå tar emot
@@ -100,6 +101,16 @@ export async function verifyPortalRequest(
 
   const verdict = verifyPortalSignature({ secret, method: req.method, path, rawBody: bytes, timestampHeader, signatureHeader, nowSeconds });
   if (!verdict.ok) return unauthorized(verdict.reason, true);
+
+  // Fel databas utanför prod (T4b, `isPortalDatabaseAllowed`) svarar som en avstängd integration: portalen försöker
+  // igen, och inget skrivs förrän miljön är rättad. Prövas efter signaturen, så att bara portalens egna anrop loggas.
+  if (!isPortalDatabaseAllowed(env)) {
+    console.error('[portal] nekade ett signerat anrop: fel databas utanför prod', { method: req.method, path });
+    return {
+      ok: false,
+      response: routeError(503, 'portal_not_configured', 'Integrationen med återförsäljarportalen är inte påslagen.'),
+    };
+  }
 
   let rawBody: string;
   try {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { verifyPortalRequest } from '@/app/api/portal/_shared';
 import { signPortalRequest } from '@/lib/domains/portal/signature';
+import { TEST_DATABASE_HOST } from '@/lib/domains/portal/config';
 import { SIGNATURE_VECTOR } from './helpers/contractFixtures';
 
 const SECRET = 'a'.repeat(64);
@@ -100,6 +101,42 @@ describe('verifyPortalRequest', () => {
     if (result.ok) return;
     expect(result.response.status).toBe(503);
     expect((await json(result.response)).errorDetails?.code).toBe('portal_not_configured');
+  });
+
+  /** T4b: testportalens jobb får inte skrivas in i prods databas, om testmiljön ärvt prods nycklar. */
+  it('🧨 503 utanför prod mot en annan databas än den lokala eller testprojektet — också korrekt signerat', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const preview = { ...ENV, NODE_ENV: 'production', VERCEL_ENV: 'preview' };
+      for (const env of [
+        { ...preview, SUPABASE_URL: 'https://prodref.supabase.co' },
+        { ...preview, SUPABASE_URL: `https://${TEST_DATABASE_HOST}`, NEXT_PUBLIC_SUPABASE_URL: 'https://prodref.supabase.co' },
+      ]) {
+        const result = await verifyPortalRequest(signed('/api/portal/ping', ''), env, NOW);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(503);
+          const payload = await json(result.response);
+          expect(payload.errorDetails?.code).toBe('portal_not_configured');
+          expect(JSON.stringify(payload)).not.toContain('prodref');
+        }
+      }
+      expect(logged).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('prodref');
+
+      // Ett osignerat anrop (skanners) nekas som vanligt, utan att loggas.
+      logged.mockClear();
+      const unsigned = new NextRequest('https://app.ekovilla.se/api/portal/ping', { method: 'POST', body: '' });
+      const refused = await verifyPortalRequest(unsigned, { ...preview, SUPABASE_URL: 'https://prodref.supabase.co' }, NOW);
+      expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.response.status).toBe(401);
+      expect(logged).not.toHaveBeenCalled();
+
+      const ok = await verifyPortalRequest(signed('/api/portal/ping', ''), { ...preview, SUPABASE_URL: `https://${TEST_DATABASE_HOST}` }, NOW);
+      expect(ok).toEqual({ ok: true, rawBody: '' });
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it('🧨 401 på en signatur för en annan route — en signerad ping duger inte till något annat', async () => {
