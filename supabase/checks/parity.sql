@@ -16,6 +16,12 @@
 --   - triggers: protect_bucket_control_* på storage.buckets finns bara i prod — plattformens, de
 --     följer storage-api-versionen och finns inte i repots SQL.
 --
+-- Mot ett projekt skapat med Supabases NYA standard (testprojektet ekovilla-crm-test, 2026-09-30), dessutom:
+--   - sekvensernas behörigheter: korjournal_trips_id_seq och ops_material_orders_order_no_seq saknar anon,
+--     authenticated och service_role. Prod (och den lokala stacken) gav dem via den gamla standarden; baslinjen har
+--     inga sekvensgrants. Båda är identitetskolumner, och en insert drar numret utan sekvensrätt (prövat som
+--     service_role i en databas byggd från noll, 2026-09-30), så skillnaden är ofarlig.
+--
 -- `supabase db diff --db-url "$PROD_DB_URL"` visar dessutom alltid, och väntat:
 --   - cron-jobbet ovan,
 --   - ops_material_suppliers_order_email_subject_check: samma villkor, men prod lagrar

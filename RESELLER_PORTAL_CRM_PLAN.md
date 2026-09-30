@@ -85,6 +85,15 @@ Räkna med ungefär en halv dag, och börja lite innan någon ska testa.
 - Seed: `reference.sql` ja. Testanvändarna får **andra lösenord** än `dev.sql`, som ligger i repot.
   Ingen `articles.local.sql` (inköpspriser); artiklarna kommer från testbolaget via artikelsynken.
 - Kör `supabase/checks/parity.sql` mot test. Ett nytt projekt kan ha andra default privileges än prod.
+  🧨 **Så var det (2026-09-30):** i `ekovilla-crm-test` fick `service_role` ingenting på nya objekt i `public`
+  (prod och lokalt: allt). Efterkontrollen i `20260926134651_default_privileges_closed.sql` stoppade pushen. Filen
+  grantar nu `service_role` uttryckligen; i prod och lokalt är det en no-op. Baslinjen bär prods grants per objekt,
+  men förutsätter plattformens `usage on schema public` för API-rollerna — kontrollera den också.
+  🧨 **Kedjan gick inte att bygga från noll:** `20260927080615_rls_read_policies_app_keys.sql` kräver nyckeln
+  `crm.access`, som bara fanns som data (seeden kommer efter kedjan). Filen lägger nu in nyckeln själv (prods
+  beskrivning, `on conflict do nothing`). Hela kedjan + seeden prövad i en tom databas med ett nytt projekts
+  standard: alla 24 migreringar och seeden går igenom, och paritetskontrollen skiljer sig från den lokala bara i
+  buckets och två identitetssekvenser (ofarligt, står i `supabase/checks/parity.sql`).
 - Kontrollera vad projektet kostar.
 
 **T3. Vercel.**

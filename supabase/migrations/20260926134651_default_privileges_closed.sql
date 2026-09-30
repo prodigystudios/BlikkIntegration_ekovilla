@@ -38,6 +38,13 @@ alter default privileges for role postgres in schema public revoke all on sequen
 alter default privileges for role postgres in schema public revoke all on functions from anon, authenticated;
 alter default privileges for role postgres revoke execute on functions from public;
 
+-- service_role behåller allt, uttryckligen. Tillagt 2026-09-30: ett Supabase-projekt skapat nu (testprojektet
+-- ekovilla-crm-test) har inte den gamla standarden, och där fick service_role ingenting på nya objekt — efterkontrollen
+-- nedan stoppade pushen. I prod och lokalt är raderna en no-op: där fanns grantsen redan när filen kördes.
+alter default privileges for role postgres in schema public grant all on tables to service_role;
+alter default privileges for role postgres in schema public grant all on sequences to service_role;
+alter default privileges for role postgres in schema public grant all on functions to service_role;
+
 -- Efterkontroll: skapa ett objekt av varje slag, pröva vad det faktiskt fick och ta bort det igen. Det prövar
 -- effekten, inte hur pg_default_acl råkar vara skriven, och fångar också en grant som kommer den globala vägen eller
 -- via PUBLIC. En kommaseparerad privilegielista svarar sant om NÅGOT av dem finns. Allt sker i migreringens
