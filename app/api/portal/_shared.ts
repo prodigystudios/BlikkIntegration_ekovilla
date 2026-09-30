@@ -62,11 +62,7 @@ export async function verifyPortalRequest(
   nowSeconds: number = Date.now() / 1000,
 ): Promise<VerifiedPortalRequest> {
   const secret = readPortalSecret(env);
-  // Fel databas utanför prod (T4b, `isPortalDatabaseAllowed`) svarar som en avstängd integration: portalen
-  // försöker igen, och inget skrivs förrän miljön är rättad. Orsaken står bara i vår logg.
-  const wrongDatabase = Boolean(secret) && !isPortalDatabaseAllowed(env);
-  if (wrongDatabase) console.error('[portal] nekade: utanför prod körs integrationen bara mot den lokala databasen eller testprojektet');
-  if (!secret || wrongDatabase) {
+  if (!secret) {
     return {
       ok: false,
       response: routeError(503, 'portal_not_configured', 'Integrationen med återförsäljarportalen är inte påslagen.'),
@@ -105,6 +101,16 @@ export async function verifyPortalRequest(
 
   const verdict = verifyPortalSignature({ secret, method: req.method, path, rawBody: bytes, timestampHeader, signatureHeader, nowSeconds });
   if (!verdict.ok) return unauthorized(verdict.reason, true);
+
+  // Fel databas utanför prod (T4b, `isPortalDatabaseAllowed`) svarar som en avstängd integration: portalen försöker
+  // igen, och inget skrivs förrän miljön är rättad. Prövas efter signaturen, så att bara portalens egna anrop loggas.
+  if (!isPortalDatabaseAllowed(env)) {
+    console.error('[portal] nekade ett signerat anrop: fel databas utanför prod', { method: req.method, path });
+    return {
+      ok: false,
+      response: routeError(503, 'portal_not_configured', 'Integrationen med återförsäljarportalen är inte påslagen.'),
+    };
+  }
 
   let rawBody: string;
   try {

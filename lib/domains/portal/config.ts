@@ -26,6 +26,10 @@ export const TEST_PORTAL_HOST = 'test.partner.ekovilla.se';
 /** CRM:ets testprojekt i Supabase (`ekovilla-crm-test`, RESELLER_PORTAL_CRM_PLAN.md T2). */
 export const TEST_DATABASE_HOST = 'aquwuqnqzuxljzkfoinn.supabase.co';
 
+/** Skälet när `isPortalDatabaseAllowed` nekar. Upprepar inte adressen. */
+export const WRONG_DATABASE_MESSAGE =
+  'Utanför prod körs integrationen bara mot den lokala databasen eller testprojektet ekovilla-crm-test.';
+
 type Env = Record<string, string | undefined>;
 
 function hostnameOf(url: string): string | null {
@@ -48,6 +52,11 @@ function hostnameOf(url: string): string | null {
  * `SUPABASE_URL`, som serverklienten läser först, och `NEXT_PUBLIC_SUPABASE_URL`. Det är en lista över
  * tillåtna, som portalvärdarna: prods adress står med flit inte i koden. Är ingen adress satt finns
  * ingen databas och alltså ingen kö att tömma. I prod prövas inget här.
+ *
+ * Prövas i `resolvePortalTarget` (utskicket), `runPortalCron` (hela bakgrundsarbetet) och grinden för
+ * portalens anrop (app/api/portal/_shared.ts). Köandet i användarens egna åtgärder (ett svar, ett
+ * dokument) spärras inte: med fel databas är VARJE åtgärd i appen en skrivning i fel databas, och det
+ * fångar testmiljöns kontroll (T6), inte portalen.
  */
 export function isPortalDatabaseAllowed(env: Env): boolean {
   if (isProductionDeployment(env)) return true;
@@ -104,11 +113,7 @@ export function resolvePortalTarget(env: Env): PortalTarget {
       message: `Utanför prod skickar CRM:et bara till ${TEST_PORTAL_HOST} eller den här datorn, inte till ${host}.`,
     };
   } else if (!isPortalDatabaseAllowed(env)) {
-    return {
-      ok: false,
-      reason: 'wrong_environment',
-      message: 'Utanför prod körs integrationen bara mot den lokala databasen eller testprojektet ekovilla-crm-test.',
-    };
+    return { ok: false, reason: 'wrong_environment', message: WRONG_DATABASE_MESSAGE };
   }
 
   // Sökväg och frågesträng i variabeln tas inte med: anroparen bygger sökvägen själv.
