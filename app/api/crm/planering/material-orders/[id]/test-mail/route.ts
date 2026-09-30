@@ -7,8 +7,8 @@ type RouteContext = { params: { id: string } };
 
 // Testmail av en beställnings LAGRADE mail, till den inloggade — aldrig till fabriken.
 //
-// 🧨 MOTTAGAREN ÄR DIN EGEN ADRESS, ur sessionen. Ingen nyckel, ingen DB-skrivning. Fungerar i alla miljöer
-// och är den lokala QA-vägen för beställningsflödet: lokala dev-servern skickar på riktigt, men hit.
+// 🧨 MOTTAGAREN ÄR DIN EGEN ADRESS, ur sessionen. Ingen nyckel, ingen DB-skrivning. Den lokala QA-vägen för
+// beställningsflödet. Utanför prod går mailet bara fram om adressen står i NONPROD_MAIL_ALLOWLIST (lib/email.ts).
 export async function POST(_req: Request, context: RouteContext) {
   try {
     const gate = await requirePermission('planning.depot.manage');
@@ -39,7 +39,7 @@ export async function POST(_req: Request, context: RouteContext) {
       if (e instanceof EmailSendError) return routeError(502, 'material_order_test_mail_failed', `Testmailet kunde inte skickas: ${e.message}`);
       throw e;
     }
-    if (result.skipped) return routeError(503, 'material_order_test_mail_not_configured', 'Mail är inte konfigurerat i den här miljön — inget testmail skickades');
+    if (result.skipped) return routeError(503, 'material_order_test_mail_not_configured', 'Mail skickas inte härifrån: det är inte konfigurerat, eller så står din adress inte i NONPROD_MAIL_ALLOWLIST — inget testmail skickades');
     return ok({ sent_to: to });
   } catch (e: any) {
     return routeError(500, 'material_order_test_mail_unexpected', e?.message || 'Failed to send test mail');

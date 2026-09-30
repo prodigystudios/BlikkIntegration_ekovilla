@@ -1,3 +1,5 @@
+import { isProductionDeployment } from '@/lib/env';
+
 type SendEmailArgs = {
   to: string | string[];
   subject: string;
@@ -40,7 +42,8 @@ export type SendEmailResult = {
    */
   id: string | null;
   /**
-   * true när utskicket HOPPADES ÖVER för att RESEND_API_KEY/MAIL_FROM saknas utanför produktion.
+   * true när utskicket HOPPADES ÖVER utanför prod: RESEND_API_KEY/MAIL_FROM saknas, eller ingen
+   * mottagare i `to` står i NONPROD_MAIL_ALLOWLIST (se `sendEmail`).
    *
    * ⚠️ Ett överhoppat utskick får aldrig räknas som skickat. Anropare som bokför ett utskick måste
    * fråga efter det här fältet — att funktionen inte kastade betyder inte att något gick iväg.
@@ -87,19 +90,64 @@ function addressList(value: string | string[] | undefined): string[] | undefined
   return list.length > 0 ? list : undefined;
 }
 
+/** Själva adressen, med gemener: `Namn <a@b.se>` och ` A@B.se ` blir båda `a@b.se`. */
+function bareAddress(value: string): string {
+  const angled = /<([^<>]*)>\s*$/.exec(value);
+  return (angled ? angled[1] : value).trim().toLowerCase();
+}
+
+/**
+ * NONPROD_MAIL_ALLOWLIST: hela adresser, separerade med komma, semikolon eller blanksteg. Tom = ingen
+ * adress är tillåten, och inget mail lämnar miljön.
+ */
+export function parseMailAllowlist(raw: string | undefined): ReadonlySet<string> {
+  return new Set(
+    (raw || '')
+      .split(/[\s,;]+/)
+      .map(bareAddress)
+      .filter(Boolean),
+  );
+}
+
+/**
+ * Dela mottagarna i dem som står i listan och de andra. Jämförelsen gäller bara adressen, utan
+ * hänsyn till versaler eller ett visningsnamn; det som skickas är mottagaren som den skrevs.
+ *
+ * 🧨 En mottagare med mer än ett `@` spärras alltid: `kund@riktig.se, Anna <a@example.com>` hade annars
+ * godtagits på sin sista adress och skickats hel till Resend.
+ */
+export function splitByAllowlist(
+  recipients: string[] | undefined,
+  allowlist: ReadonlySet<string>,
+): { allowed: string[]; blocked: string[] } {
+  const allowed: string[] = [];
+  const blocked: string[] = [];
+  for (const recipient of recipients ?? []) {
+    const single = recipient.split('@').length === 2;
+    (single && allowlist.has(bareAddress(recipient)) ? allowed : blocked).push(recipient);
+  }
+  return { allowed, blocked };
+}
+
 /**
  * Skicka ett mail via Resend.
  *
- * 🧨 SKICKAR PÅ RIKTIGT I VARJE MILJÖ DÄR RESEND_API_KEY OCH MAIL_FROM FINNS — också lokalt (.env.local
- * har dem) och i Vercels preview. Bara när de saknas utanför produktion loggar funktionen och returnerar
- * `skipped: true`. En lokal QA av ett mailflöde kan alltså nå riktiga mottagare.
+ * Utanför prod (`isProductionDeployment`, lib/env.ts — lokalt, Vercels förhandsversioner, testmiljön)
+ * går mailet bara till mottagare i NONPROD_MAIL_ALLOWLIST. De andra tas bort ur `to` och `bcc` och
+ * loggas; blir ingen i `to` kvar skickas inget och svaret är `skipped: true`. Saknade nycklar ger också
+ * `skipped: true` där. I prod skickas till alla, och saknade nycklar kastar.
+ *
+ * ⚠️ Alla anropare frågar inte efter `skipped` — planeringens bekräftelser och kundnotisen bokför ett
+ * utskick som inte kastade som skickat. Utanför prod kan det alltså stå "skickat" för ett mail som bara
+ * loggades.
  */
 export async function sendEmail(args: SendEmailArgs, options: SendEmailOptions = {}): Promise<SendEmailResult> {
+  const production = isProductionDeployment(process.env);
   const apiKey = env('RESEND_API_KEY');
   const from = (args.from || env('MAIL_FROM')).trim();
 
   if (!apiKey || !from) {
-    if (process.env.NODE_ENV === 'production') {
+    if (production) {
       throw new EmailSendError('not_configured', 'Email not configured (need RESEND_API_KEY and MAIL_FROM)');
     }
     console.warn('[email] Skipping send (missing RESEND_API_KEY/MAIL_FROM)', {
@@ -111,14 +159,31 @@ export async function sendEmail(args: SendEmailArgs, options: SendEmailOptions =
     return { id: null, skipped: true };
   }
 
+  let to = Array.isArray(args.to) ? args.to : [args.to];
+  let bcc = addressList(args.bcc);
+
+  if (!production) {
+    const allowlist = parseMailAllowlist(process.env.NONPROD_MAIL_ALLOWLIST);
+    const toSplit = splitByAllowlist(to, allowlist);
+    const bccSplit = splitByAllowlist(bcc, allowlist);
+    const blocked = [...toSplit.blocked, ...bccSplit.blocked];
+    if (blocked.length > 0) {
+      console.warn('[email] Utanför prod: skickas inte till mottagare utanför NONPROD_MAIL_ALLOWLIST', {
+        blocked,
+        subject: args.subject,
+      });
+    }
+    if (toSplit.allowed.length === 0) return { id: null, skipped: true };
+    to = toSplit.allowed;
+    bcc = bccSplit.allowed.length > 0 ? bccSplit.allowed : undefined;
+  }
+
   const { Resend } = await import('resend');
   const resend = new Resend(apiKey);
 
-  const to = Array.isArray(args.to) ? args.to : [args.to];
   const replyTo = args.replyTo
     ? (Array.isArray(args.replyTo) ? args.replyTo : [args.replyTo]).map((item) => String(item).trim()).filter(Boolean)
     : undefined;
-  const bcc = addressList(args.bcc);
   const html = args.html || undefined;
   const text = typeof args.text === 'string' ? args.text : '';
 

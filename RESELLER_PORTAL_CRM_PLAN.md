@@ -1561,6 +1561,31 @@ seeden, Norrbygg utan kundnummer). CRM:et: AO-20260929-BB3B4E (fakturerad), AO-2
 order 79 makulerad; order 80 (det avbrutna jobbet) står kvar, som för varje avbruten arbetsorder.
 Skript: scratchpad/8b3 (session 783c9315): lib.mjs, steg1–7.mjs, steg6lib.mjs, kedjan.log.
 
+### Fas 5, T1: resultat (2026-09-30)
+
+Spärren sitter i `lib/email.ts`, `lib/sms.ts` och `lib/webPush.ts` och avgörs av `isProductionDeployment`
+(`lib/env.ts`), som faller stängt. Utanför prod gäller följande:
+
+- **Mejl:** går bara till adresser i `NONPROD_MAIL_ALLOWLIST` (hela adresser, separerade med komma). Andra mottagare tas
+  bort ur `to` och `bcc` och loggas. En mottagarsträng med mer än ett `@` spärras alltid. Blir ingen kvar i `to` skickas
+  inget, och svaret är `skipped`.
+- **Sms och push:** skickas aldrig, oavsett nycklar. Mottagaren och texten loggas (för push bara tjänstens värdnamn och
+  rubriken), och svaret är `skipped`.
+- **Saknade nycklar** ger `skipped`, inget kast. Det gäller också i Preview, där `NODE_ENV=production` förut fick
+  `sendEmail` att kasta.
+- **Push-prenumerationer** fungerar fortfarande. `isWebPushConfigured` är oförändrad, så testmiljön kan ha egna
+  VAPID-nycklar.
+
+Prod är oförändrat. `VERCEL_ENV` finns när prod kör, eftersom Vercel-projektet har `autoExposeSystemEnvs: true`
+(kontrollerat 2026-09-30).
+
+**Efter deployen:** Vercels produktionsloggar ska inte ha någon rad med `Utanför prod`. En sådan rad betyder att prod
+tror att den inte är prod, och då går inget mejl, sms eller push ut.
+
+**Känt, med flit:** planeringens bekräftelser, kundnotisen, tidpåminnelsen och pushens bokföring frågar inte efter
+`skipped`. Utanför prod står det därför "skickat" för något som bara loggades. Det kan inte hända i prod, där `skipped`
+aldrig förekommer.
+
 ---
 
 ## Rättelser och luckor i kontraktet

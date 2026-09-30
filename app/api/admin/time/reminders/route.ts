@@ -172,9 +172,9 @@ export async function POST(req: Request) {
           await sendSms({ to, body: reminderSmsBody({ reason, periodStart, origin, message: parsed.data.message }) });
           smsSent++;
         } catch (e) {
-          // Ett fel per mottagare stoppar inte de andra. sendSms KASTAR när Twilio saknar
-          // konfiguration, så utan try/catch hade en env-miss i en miljö fällt hela utskicket —
-          // efter att notiserna redan skrivits.
+          // Ett fel per mottagare stoppar inte de andra. sendSms KASTAR i prod när Twilio saknar
+          // konfiguration, så utan try/catch hade en env-miss fällt hela utskicket — efter att
+          // notiserna redan skrivits. (Utanför prod skickar den aldrig och svarar `skipped`.)
           smsFailed.push(row.full_name || 'Okänd');
           console.error('[time.reminder] sms failed', row.user_id, e);
         }
