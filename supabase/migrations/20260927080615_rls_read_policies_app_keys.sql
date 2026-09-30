@@ -36,6 +36,13 @@
 --
 -- Stramar åt, men koden är redan först: varje legitim läsare har redan sin nyckel. Idempotent, kan köras om.
 
+-- crm.access finns i prod sedan RBAC-passet, men som DATA: ingen migrering lägger in den. I en databas byggd från noll
+-- (`npm run db:reset`, testprojektet ekovilla-crm-test) kom den först med seeden, efter hela kedjan, och efterkontrollen
+-- nedan stoppade pushen mot testprojektet (2026-09-30). Tillagt då; i prod finns raden redan och filen körs inte om.
+-- Rollraderna kommer fortfarande från seeden (reference.sql, `on conflict do nothing`), med prods beskrivning här.
+insert into public.permissions (key, description) values ('crm.access', 'CRM: read access (any CRM role)')
+on conflict (key) do nothing;
+
 -- pg_get_expr skriver ut schemanamn för allt som inte syns i sökvägen; kontrollerna nedan förutsätter den här.
 set local search_path = public, extensions;
 
