@@ -127,6 +127,17 @@ databasen. Antingen står prods Supabase-värd i koden och nekas utanför prod, 
 en variabel med sin egen databasvärd som måste stämma med `SUPABASE_URL`. Prods värd finns i dag med
 flit inte i repot, så valet görs då. (Granskningen av fas 1b, 2026-09-28.)
 
+✅ **Löst 2026-09-30 (William: "kör på ditt förslag").** Lösningen är en lista över tillåtna databaser, inte prods värd
+i koden. `isPortalDatabaseAllowed` i `lib/domains/portal/config.ts` kräver utanför prod att varje satt databasadress
+(`SUPABASE_URL` och `NEXT_PUBLIC_SUPABASE_URL`) pekar på den här datorn eller testprojektet `TEST_DATABASE_HOST`
+(`aquwuqnqzuxljzkfoinn.supabase.co`). Spärren gäller åt båda hållen:
+- **Utåt:** `resolvePortalTarget` ger `wrong_environment`. Kön tar då ingenting, prislistan köas inte och
+  inställningssidan visar skälet.
+- **Inåt:** grinden i `app/api/portal/_shared.ts` svarar 503 `portal_not_configured`, som när integrationen är av.
+  Portalen försöker igen, och orsaken står bara i vår logg.
+
+Ingen adress alls betyder ingen databas och alltså ingen kö; det nekas inte. Prod prövas inte.
+
 **T5. Den delade hemligheten.** `PORTAL_CRM_SHARED_SECRET` för testmiljön genereras av William i egen
 terminal (`openssl rand -hex 32`) och läggs i båda Vercel-projekten, Preview för grenen `testmiljo`.
 Den skrivs aldrig i en chatt, en commit eller en logg.

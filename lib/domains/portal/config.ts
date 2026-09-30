@@ -1,4 +1,4 @@
-import { isProductionDeployment, LOCAL_HOSTNAMES } from '@/lib/env';
+import { isLocalUrl, isProductionDeployment, LOCAL_HOSTNAMES } from '@/lib/env';
 import { isUsablePortalSecret } from './signature';
 
 /**
@@ -16,12 +16,46 @@ import { isUsablePortalSecret } from './signature';
  * dem. En förbudslista hade släppt igenom andra stavningar av samma värd, som `partner.ekovilla.se.`
  * med avslutande punkt, eller portalens egna Vercel-adresser. Prod avgörs med
  * `isProductionDeployment` (lib/env.ts), som faller stängt.
+ *
+ * 🧨 Utanför prod är också DATABASEN låst, se `isPortalDatabaseAllowed`.
  */
 
 export const PRODUCTION_PORTAL_HOST = 'partner.ekovilla.se';
 export const TEST_PORTAL_HOST = 'test.partner.ekovilla.se';
 
+/** CRM:ets testprojekt i Supabase (`ekovilla-crm-test`, RESELLER_PORTAL_CRM_PLAN.md T2). */
+export const TEST_DATABASE_HOST = 'aquwuqnqzuxljzkfoinn.supabase.co';
+
 type Env = Record<string, string | undefined>;
+
+function hostnameOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.replace(/\.$/, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Får integrationen köra mot den här miljöns databas? (T4b i planen.)
+ *
+ * Portalspärren i `resolvePortalTarget` ser bara vart CRM:et skickar, inte varifrån. Ärver testmiljön
+ * prods Supabase-nycklar, t.ex. genom en allmän Preview-variabel i Vercel, godtar den testportalen,
+ * och då tar "Skicka väntande nu" händelser ur PRODS kö och skickar dem till testportalen, där de
+ * försvinner. Åt andra hållet hade testportalens jobb skrivits in i prods databas.
+ *
+ * Utanför prod måste därför VARJE satt databasadress vara den här datorn eller testprojektet. Det gäller
+ * `SUPABASE_URL`, som serverklienten läser först, och `NEXT_PUBLIC_SUPABASE_URL`. Det är en lista över
+ * tillåtna, som portalvärdarna: prods adress står med flit inte i koden. Är ingen adress satt finns
+ * ingen databas och alltså ingen kö att tömma. I prod prövas inget här.
+ */
+export function isPortalDatabaseAllowed(env: Env): boolean {
+  if (isProductionDeployment(env)) return true;
+  return [env.SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_URL]
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))
+    .every((value) => isLocalUrl(value) || hostnameOf(value) === TEST_DATABASE_HOST);
+}
 
 /** Hemligheten, trimmad, eller null om den saknas eller är för kort för att vara säker. */
 export function readPortalSecret(env: Env): string | null {
@@ -68,6 +102,12 @@ export function resolvePortalTarget(env: Env): PortalTarget {
       ok: false,
       reason: 'wrong_environment',
       message: `Utanför prod skickar CRM:et bara till ${TEST_PORTAL_HOST} eller den här datorn, inte till ${host}.`,
+    };
+  } else if (!isPortalDatabaseAllowed(env)) {
+    return {
+      ok: false,
+      reason: 'wrong_environment',
+      message: 'Utanför prod körs integrationen bara mot den lokala databasen eller testprojektet ekovilla-crm-test.',
     };
   }
 
