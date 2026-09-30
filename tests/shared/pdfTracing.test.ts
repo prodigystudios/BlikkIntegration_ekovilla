@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readdirSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 
@@ -40,6 +40,28 @@ describe('outputFileTracingIncludes', () => {
   it('varje nyckel är en route som finns', () => {
     for (const route of Object.keys(includes)) {
       expect(existsSync(join(process.cwd(), 'app', route, 'route.ts')), route).toBe(true);
+    }
+  });
+
+  // Portalens orderbekräftelse ritas i bakgrundsvarvet (runPortalCron) och när ett dokument byggs
+  // (portalDocumentSources). Routerna letas upp i app/, så att en ny route som kör varvet inte glöms.
+  it('varje route som kör portalens bakgrundsvarv eller bygger dess dokument har typsnitten och loggan', () => {
+    const routes: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name === 'route.ts' && /\b(runPortalCron|portalDocumentSources)\(/.test(readFileSync(path, 'utf8'))) {
+          routes.push(dirname(path).slice(join(process.cwd(), 'app').length).split('\\').join('/'));
+        }
+      }
+    };
+    walk(join(process.cwd(), 'app'));
+    expect(routes.length, 'hittar routerna — annars är testet tomt').toBeGreaterThanOrEqual(4);
+    for (const route of routes) {
+      expect(includes[route], route).toEqual(
+        expect.arrayContaining(['./public/brand/fonts/*.ttf', './public/brand/Ekovilla_logo_Figma.png']),
+      );
     }
   });
 

@@ -36,6 +36,26 @@ const nextConfig = {
         './public/brand/fonts/*.ttf',
         './public/brand/Ekovilla_logo_Figma.png',
       ],
+      // Återförsäljarportalen (fas 7): orderbekräftelsen till butiken ritas av samma kod i portalens bakgrundsvarv
+      // (lib/domains/portal/cron.ts → jobDocumentsStore.ts → getFortnoxOrderPdf). Varje route som kör varvet eller
+      // bygger ett dokument måste ha filerna — annars "Orderbekräftelsen kunde inte skapas" på Vercel, aldrig lokalt
+      // (upptäckt i testmiljön 2026-09-30). tests/shared/pdfTracing.test.ts letar upp routerna själv.
+      '/api/reseller-portal/cron': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
+      '/api/crm/portal/dispatch': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
+      '/api/crm/portal/events/[id]/retry': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
+      '/api/crm/portal/jobs/[workOrderId]/documents': [
+        './public/brand/fonts/*.ttf',
+        './public/brand/Ekovilla_logo_Figma.png',
+      ],
       // Löneunderlaget (attesten → PDF) läser samma typsnitt och logotyp genom lib/pdf/brandAssets.
       // Den modulen bygger sina sökvägar ur variabler, precis som offertrenderaren gjorde när
       // typsnitten föll bort i drift — listan här är alltså inte en försiktighetsåtgärd utan det
