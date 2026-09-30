@@ -220,9 +220,9 @@ export function orderEmailDataFromOrder(order: {
  * Skarpt utskick eller inte.
  *
  * 🧨 BARA `VERCEL_ENV === 'production'` OCH en egen flagga. `.env.local` har en skarp RESEND_API_KEY och
- * pekar på produktionsdatan — en lokal dev-server skickar alltså på riktigt, till fabriken. Preview kör
- * dessutom med NODE_ENV=production, så NODE_ENV säger ingenting. I alla andra lägen skickas bara testmail
- * till den inloggade.
+ * pekar på produktionsdatan. Utanför prod släpper sendEmail dessutom bara igenom NONPROD_MAIL_ALLOWLIST
+ * (lib/email.ts), men den här spärren står kvar på egen hand. Preview kör med NODE_ENV=production, så
+ * NODE_ENV säger ingenting. I alla andra lägen skickas bara testmail till den inloggade.
  */
 export function materialOrderSendMode(env: Record<string, string | undefined>): 'live' | 'blocked' {
   return env.VERCEL_ENV === 'production' && env.MATERIAL_ORDER_SEND_ENABLED === 'true' ? 'live' : 'blocked';

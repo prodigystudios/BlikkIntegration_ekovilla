@@ -255,6 +255,13 @@ describe('parseMailAllowlist och splitByAllowlist', () => {
     expect(splitByAllowlist(['a@example.com'], list)).toEqual({ allowed: [], blocked: ['a@example.com'] });
   });
 
+  it('en mottagare med flera adresser spärras, också när den sista är tillåten', () => {
+    const list = parseMailAllowlist('a@example.com');
+    for (const recipient of ['kund@riktig.se, Anna <a@example.com>', 'kund@riktig.se;a@example.com', 'a@example.com <a@example.com>']) {
+      expect(splitByAllowlist([recipient], list)).toEqual({ allowed: [], blocked: [recipient] });
+    }
+  });
+
   it('behåller mottagaren som den skrevs', () => {
     const list = parseMailAllowlist('a@example.com');
     expect(splitByAllowlist(['Anna <A@Example.com>', 'kund@example.com'], list)).toEqual({

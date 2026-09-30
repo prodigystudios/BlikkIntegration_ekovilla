@@ -112,6 +112,9 @@ export function parseMailAllowlist(raw: string | undefined): ReadonlySet<string>
 /**
  * Dela mottagarna i dem som står i listan och de andra. Jämförelsen gäller bara adressen, utan
  * hänsyn till versaler eller ett visningsnamn; det som skickas är mottagaren som den skrevs.
+ *
+ * 🧨 En mottagare med mer än ett `@` spärras alltid: `kund@riktig.se, Anna <a@example.com>` hade annars
+ * godtagits på sin sista adress och skickats hel till Resend.
  */
 export function splitByAllowlist(
   recipients: string[] | undefined,
@@ -120,7 +123,8 @@ export function splitByAllowlist(
   const allowed: string[] = [];
   const blocked: string[] = [];
   for (const recipient of recipients ?? []) {
-    (allowlist.has(bareAddress(recipient)) ? allowed : blocked).push(recipient);
+    const single = recipient.split('@').length === 2;
+    (single && allowlist.has(bareAddress(recipient)) ? allowed : blocked).push(recipient);
   }
   return { allowed, blocked };
 }

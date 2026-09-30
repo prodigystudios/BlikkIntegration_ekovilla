@@ -20,8 +20,8 @@ type RouteContext = {
 // exempelrader och ordernummer 0 och får ämnet "[TEST – inte skickad till fabriken]". Ingen DB-skrivning
 // och ingen aktivitetslogg (loggen läses med schedule.read, se ../route.ts).
 //
-// ⚠️ sendEmail SKICKAR PÅ RIKTIGT i varje miljö där RESEND_API_KEY och MAIL_FROM finns — också lokalt. Det
-// är därför testmailet går till dig: det är den lokala QA-vägen för mallen.
+// Testmailet går till dig: det är QA-vägen för mallen. Utanför prod går det bara fram om din adress står i
+// NONPROD_MAIL_ALLOWLIST (lib/email.ts).
 //
 // SESSIONSKLIENTEN: leverantören läses med RLS (depot.manage), och auth.getUser() behöver sessionen.
 export async function POST(req: Request, context: RouteContext) {
@@ -73,7 +73,7 @@ export async function POST(req: Request, context: RouteContext) {
     // Ett överhoppat utskick är inte ett skickat. Utan den här raden hade knappen sagt "skickat" i en miljö
     // där inget mail någonsin lämnade servern.
     if (result.skipped) {
-      return routeError(503, 'planning_supplier_test_mail_not_configured', 'Mail är inte konfigurerat i den här miljön — inget testmail skickades');
+      return routeError(503, 'planning_supplier_test_mail_not_configured', 'Mail skickas inte härifrån: det är inte konfigurerat, eller så står din adress inte i NONPROD_MAIL_ALLOWLIST — inget testmail skickades');
     }
 
     return ok({ sent_to: to });
