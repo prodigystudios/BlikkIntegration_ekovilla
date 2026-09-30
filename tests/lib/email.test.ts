@@ -17,16 +17,33 @@ const { send, ResendCtor } = vi.hoisted(() => {
 });
 vi.mock('resend', () => ({ Resend: ResendCtor }));
 
-import { sendEmail, EmailSendError } from '@/lib/email';
+import { sendEmail, EmailSendError, parseMailAllowlist, splitByAllowlist } from '@/lib/email';
 
 const base = { to: 'fabriken@example.com', subject: 'Beställning #14', text: 'Hej' };
 
+/** Prods driftsättning enligt `isProductionDeployment` (lib/env.ts): alla tre krävs. */
+function stubProduction() {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubEnv('VERCEL_ENV', 'production');
+  vi.stubEnv('SUPABASE_URL', 'https://prodref.supabase.co');
+}
+
+/** En förhandsversion i Vercel, som testmiljön: NODE_ENV är production även där. */
+function stubPreview() {
+  vi.stubEnv('NODE_ENV', 'production');
+  vi.stubEnv('VERCEL_ENV', 'preview');
+  vi.stubEnv('SUPABASE_URL', 'https://testref.supabase.co');
+}
+
+// Testerna utanför `utanför prod` prövar prods väg, så miljön är prods tills ett test säger annat.
 beforeEach(() => {
   send.mockReset();
   ResendCtor.mockClear();
   send.mockResolvedValue({ data: { id: 'email_123' }, error: null });
   vi.stubEnv('RESEND_API_KEY', 're_test');
   vi.stubEnv('MAIL_FROM', 'no-reply@example.com');
+  vi.stubEnv('NONPROD_MAIL_ALLOWLIST', '');
+  stubProduction();
 });
 
 afterEach(() => {
@@ -121,7 +138,6 @@ describe('svaret', () => {
 
 describe('utan konfiguration', () => {
   it('utanför produktion: hoppar över, säger det, och rör inte Resend', async () => {
-    // Pinnad: annars beror testet på vilken NODE_ENV sviten råkar köras under.
     vi.stubEnv('NODE_ENV', 'test');
     vi.stubEnv('RESEND_API_KEY', '');
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -130,12 +146,120 @@ describe('utan konfiguration', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  /** NODE_ENV är production också i Vercels förhandsversioner. Där kastade det förut. */
+  it('i en förhandsversion: hoppar över i stället för att kasta', async () => {
+    stubPreview();
+    vi.stubEnv('RESEND_API_KEY', '');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sendEmail(base)).resolves.toEqual({ id: null, skipped: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it('i produktion: kastar i stället för att tyst låta bli', async () => {
     vi.stubEnv('MAIL_FROM', '');
-    vi.stubEnv('NODE_ENV', 'production');
     const err = await sendEmail(base).catch((e) => e);
     expect(err).toBeInstanceOf(EmailSendError);
     expect(err.code).toBe('not_configured');
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe('utanför prod: bara mottagare i NONPROD_MAIL_ALLOWLIST', () => {
+  beforeEach(() => {
+    stubPreview();
+  });
+
+  it('en mottagare utanför listan får inget mail, och det loggas', async () => {
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', 'william@example.com');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sendEmail(base, { idempotencyKey: 'k' })).resolves.toEqual({ id: null, skipped: true });
+    expect(ResendCtor).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).toContain('fabriken@example.com');
+  });
+
+  it('en tom lista släpper inte igenom någon', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sendEmail(base)).resolves.toEqual({ id: null, skipped: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('en mottagare i listan får mailet, oavsett versaler och visningsnamn', async () => {
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', ' William@Example.com ');
+    await expect(sendEmail({ ...base, to: 'William Ali <william@EXAMPLE.com>' })).resolves.toEqual({
+      id: 'email_123',
+      skipped: false,
+    });
+    expect(send.mock.calls[0][0].to).toEqual(['William Ali <william@EXAMPLE.com>']);
+  });
+
+  it('bara de tillåtna i to och bcc får mailet; resten loggas', async () => {
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', 'a@example.com, b@example.com');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await sendEmail({ ...base, to: ['a@example.com', 'kund@example.com'], bcc: ['b@example.com', 'order@example.com'] });
+    expect(send.mock.calls[0][0].to).toEqual(['a@example.com']);
+    expect(send.mock.calls[0][0].bcc).toEqual(['b@example.com']);
+    const logged = JSON.stringify(warn.mock.calls);
+    expect(logged).toContain('kund@example.com');
+    expect(logged).toContain('order@example.com');
+  });
+
+  it('bcc tas bort helt när ingen i den är tillåten', async () => {
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', 'a@example.com');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await sendEmail({ ...base, to: 'a@example.com', bcc: 'order@example.com' });
+    expect(send.mock.calls[0][0].bcc).toBeUndefined();
+  });
+
+  /** Resend kräver en mottagare i `to`; en tillåten bcc ensam blir inget mail. */
+  it('ingen tillåten i to: inget skickas, också när bcc är tillåten', async () => {
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', 'b@example.com');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sendEmail({ ...base, bcc: 'b@example.com' })).resolves.toEqual({ id: null, skipped: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  /** `vercel env pull` lägger VERCEL_ENV=production i .env.local, men `next dev` är inte prod. */
+  it('lokalt med prods VERCEL_ENV gäller spärren ändå', async () => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('VERCEL_ENV', 'production');
+    vi.stubEnv('SUPABASE_URL', 'https://prodref.supabase.co');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(sendEmail(base)).resolves.toEqual({ id: null, skipped: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('i prod gäller listan inte: alla mottagare får mailet, också med en lista satt', async () => {
+    stubProduction();
+    vi.stubEnv('NONPROD_MAIL_ALLOWLIST', 'a@example.com');
+    await sendEmail({ ...base, to: ['a@example.com', 'kund@example.com'], bcc: 'order@example.com' });
+    expect(send.mock.calls[0][0].to).toEqual(['a@example.com', 'kund@example.com']);
+    expect(send.mock.calls[0][0].bcc).toEqual(['order@example.com']);
+  });
+});
+
+describe('parseMailAllowlist och splitByAllowlist', () => {
+  it('delar på komma, semikolon och blanksteg och jämför adressen med gemener', () => {
+    const list = parseMailAllowlist(' A@example.com,b@example.com;\nc@example.com  ');
+    expect([...list]).toEqual(['a@example.com', 'b@example.com', 'c@example.com']);
+  });
+
+  it('en tom eller saknad lista är tom', () => {
+    expect(parseMailAllowlist('').size).toBe(0);
+    expect(parseMailAllowlist(undefined).size).toBe(0);
+    expect(parseMailAllowlist(' , ; ').size).toBe(0);
+  });
+
+  it('en domän eller en del av en adress släpper inte igenom något', () => {
+    const list = parseMailAllowlist('example.com, @example.com, a@example');
+    expect(splitByAllowlist(['a@example.com'], list)).toEqual({ allowed: [], blocked: ['a@example.com'] });
+  });
+
+  it('behåller mottagaren som den skrevs', () => {
+    const list = parseMailAllowlist('a@example.com');
+    expect(splitByAllowlist(['Anna <A@Example.com>', 'kund@example.com'], list)).toEqual({
+      allowed: ['Anna <A@Example.com>'],
+      blocked: ['kund@example.com'],
+    });
   });
 });
