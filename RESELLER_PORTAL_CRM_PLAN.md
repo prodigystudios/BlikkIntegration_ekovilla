@@ -1662,7 +1662,15 @@ William testade själv 2026-10-01, och allt fungerade.
 
 **Öppet:**
 - **Förhandsvisningen av lista 160** på portalsidan föll ibland med "Något gick fel mot Fortnox": ett `FortnoxApiError`
-  utan felkod, och inte 429, som görs om. Publiceringen påverkades inte. Utred före fas 9.
+  utan felkod. Publiceringen påverkades inte.
+  - **Trolig orsak** (utredd 2026-10-01, inte bevisad med loggar): skyddet mot dubbla tokenförnyelser
+    (`inflightRefresh` i `lib/domains/fortnox/client.ts`) gäller bara inom en process. Fortnox byter refresh-token vid
+    varje förnyelse, så när två Vercel-instanser förnyar samtidigt vid utgången får den ena `invalid_grant`.
+  - Tokenen hade gått ut ungefär 19:30, och felet kom 19:54 när publiceringen och sidans omladdning körde samtidigt.
+    Förhandsvisningen gör bara ett anrop, så Fortnox gräns för antal anrop är uteslutet.
+  - Det gäller alla Fortnox-anrop i prod. Ett enstaka anrop kan fela precis vid tokenbytet, och ett nytt försök fungerar.
+  - **William 2026-10-01: vänta.** Förslaget om det kommer igen: vid `invalid_grant`, läs om raden och använd en token
+    som en annan instans redan sparat, i stället för att kasta. Logga också det råa felet i förhandsvisningen.
 - **Portalens Vault** i testmiljön (`crm_outbox_url`, `crm_outbox_secret`) är inte satt. Portalens omförsök körs därför
   inte, men direktförsöken fungerar. Williams överlämning från 2026-09-27 ligger kvar i portalens kö.
 - **Inför fas 9:** varje butiks kundkort i CRM:et måste ha ett Fortnox-nummer, annars skapas ingen Fortnox-order.
