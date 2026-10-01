@@ -14,6 +14,7 @@ import ResellersPanel, { type ResellerView } from './ResellersPanel';
 import OutboxPanel, { type OutboxItemView } from './OutboxPanel';
 import type { PricelistArticle, UnmarkedArticle } from '@/lib/domains/portal/pricelist';
 import type { PricelistDelivery } from '@/lib/domains/portal/pricelistPublish';
+import type { PartnerPriceDifference } from '@/lib/domains/portal/partnerPricelists';
 
 // Bara typer ur domänen: modulerna läser node:crypto och Fortnox, och får aldrig följa med till webbläsaren.
 // Etiketterna och tidpunkterna kommer färdiga från servern (page.tsx).
@@ -30,6 +31,20 @@ export type PricelistPreviewView =
     }
   | { ok: false; message: string };
 
+/**
+ * Butikernas egna prislistor (10b): vilka butiker som får vilken lista, och priserna som skiljer sig från 160. null = ingen
+ * butik har ett kundkort, och då visas inget.
+ */
+export type PartnerPricelistsView =
+  | {
+      ok: true;
+      sharedStores: string[];
+      lists: { code: string; stores: { name: string; customerName: string }[]; articleCount: number; differences: PartnerPriceDifference[] }[];
+      problems: { key: string; what: string; stores: string[]; message: string }[];
+    }
+  | { ok: false; message: string }
+  | null;
+
 export type PublicationView = {
   id: string;
   validFrom: string;
@@ -44,6 +59,7 @@ type ResellerPortalClientProps = {
   today: string;
   integration: PortalIntegrationView;
   preview: PricelistPreviewView;
+  partnerLists: PartnerPricelistsView;
   publications: PublicationView[] | { error: string };
   resellers: ResellerView[] | { error: string };
   fallbackUserId: string | null | { error: string };
@@ -112,6 +128,7 @@ export default function ResellerPortalClient({
   today,
   integration,
   preview,
+  partnerLists,
   publications,
   resellers,
   fallbackUserId,
@@ -250,8 +267,9 @@ export default function ResellerPortalClient({
             hidden={tab !== 'pricelist'}
             className={cn('grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]', tab !== 'pricelist' && 'hidden')}
           >
+            <div className="order-2 grid min-w-0 grid-cols-1 content-start gap-6 xl:order-1">
             {/* Förhandsvisningen: det som skickas */}
-            <section className={`${CARD} order-2 min-w-0 xl:order-1`} aria-labelledby="pricelist-preview-heading">
+            <section className={`${CARD} min-w-0`} aria-labelledby="pricelist-preview-heading">
               <h2 id="pricelist-preview-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
                 Förhandsvisning
               </h2>
@@ -369,6 +387,9 @@ export default function ResellerPortalClient({
               )}
             </section>
 
+            {partnerLists && <PartnerListsSection partnerLists={partnerLists} />}
+            </div>
+
             <div className="order-1 grid min-w-0 grid-cols-1 content-start gap-6 xl:order-2">
               {/* Publicera */}
               <section className={CARD} aria-labelledby="pricelist-publish-heading">
@@ -471,5 +492,101 @@ export default function ResellerPortalClient({
         </DialogShell>
       )}
     </div>
+  );
+}
+
+function storeList(names: string[]): string {
+  return names.join(', ');
+}
+
+/** Butikernas egna prislistor (10b): förhandsvisning, publiceras inte än. */
+function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<PartnerPricelistsView> }) {
+  return (
+    <section className={`${CARD} min-w-0`} aria-labelledby="partner-lists-heading">
+      <h2 id="partner-lists-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
+        Butikernas egna prislistor
+      </h2>
+      <p className="m-0 mb-3 text-sm text-slate-500">
+        En butik vars kundkort i Fortnox har en annan prislista än A eller 160 får en egen lista: lista 160, med kortets pris
+        där det skiljer sig. Kortens listor läses från Fortnox när sidan laddas.
+      </p>
+      <p className="m-0 mb-4 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-2.5 text-sm text-slate-600">
+        Förhandsvisning. I dag publiceras bara lista 160, och den gäller alla butiker.
+      </p>
+
+      {!partnerLists.ok ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">{partnerLists.message}</div>
+      ) : (
+        // grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut kortet i mobil.
+        <div className="grid grid-cols-1 gap-3">
+          {partnerLists.problems.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
+              <p className="m-0 font-semibold">
+                {partnerLists.problems.length === 1 ? 'En lista gick inte att läsa' : `${partnerLists.problems.length} listor gick inte att läsa`}
+              </p>
+              <ul className="m-0 mt-1.5 grid gap-1 pl-0">
+                {partnerLists.problems.map((p) => (
+                  <li key={p.key} className="list-none">
+                    <span className="font-semibold">{p.what}</span> ({storeList(p.stores)}): {p.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {partnerLists.lists.map((list) => (
+            <div key={list.code} className="min-w-0 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                <h3 className="m-0 text-sm font-bold text-slate-900">Lista {list.code}</h3>
+                <span className="text-xs text-slate-500">{articlesLabel(list.articleCount)}</span>
+              </div>
+              <p className="m-0 mt-0.5 text-xs text-slate-500">
+                {list.stores.map((s) => `${s.name} (${s.customerName})`).join(', ')}
+              </p>
+              {list.differences.length === 0 ? (
+                <p className="m-0 mt-2 text-sm text-slate-600">Inga priser skiljer sig från lista 160.</p>
+              ) : (
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full border-collapse text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-left text-xs font-semibold text-slate-500">
+                        <th className="py-1.5 pr-3">Artikel</th>
+                        <th className="py-1.5 pr-3">Kundnamn</th>
+                        <th className="py-1.5 pr-3 text-right">Lista 160</th>
+                        <th className="py-1.5 text-right">Lista {list.code}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.differences.map((d) => (
+                        <tr key={d.articleNumber} className="border-b border-slate-100 last:border-0">
+                          <td className="py-1.5 pr-3">
+                            <Link href={articleHref(d.articleNumber)} className="font-semibold text-slate-900 no-underline hover:underline">
+                              {d.articleNumber}
+                            </Link>
+                          </td>
+                          <td className="py-1.5 pr-3 text-slate-700">{d.customerName}</td>
+                          <td className="whitespace-nowrap py-1.5 pr-3 text-right tabular-nums text-slate-500">
+                            {d.sharedUnitCost === null ? 'Inte med' : formatKr(d.sharedUnitCost)}
+                          </td>
+                          <td className="whitespace-nowrap py-1.5 text-right tabular-nums font-semibold text-slate-900">
+                            {d.partnerUnitCost === null ? 'Inte med' : formatKr(d.partnerUnitCost)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {partnerLists.sharedStores.length > 0 && (
+            <p className="m-0 text-xs text-slate-500">
+              <span className="font-semibold text-slate-700">Lista 160:</span> {storeList(partnerLists.sharedStores)}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

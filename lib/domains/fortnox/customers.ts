@@ -316,6 +316,16 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
   return { processed: rows.length, corrected, remaining: count ?? 0 };
 }
 
+/**
+ * Kundkortets prislista i Fortnox (`PriceList`), läst direkt ur kortet. Portalens egna prislistor (återförsäljarportalen,
+ * 10b) läser den här och inte `crm_customers.price_list`: massynken skriver kolumnen ur Fortnox lista över kunder, och
+ * att det svaret har fältet är inte bekräftat. Ett tomt fält ger null.
+ */
+export async function getFortnoxCustomerPriceList(customerNumber: string): Promise<string | null> {
+  const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${encodeURIComponent(customerNumber)}`);
+  return detail.Customer?.PriceList?.trim() || null;
+}
+
 // Search Fortnox customers live (for use in quote form, etc.)
 export async function searchFortnoxCustomersLive(query: string): Promise<FortnoxCustomer[]> {
   const response = await fortnoxGet<FortnoxCustomerListResponse>('/customers', {
