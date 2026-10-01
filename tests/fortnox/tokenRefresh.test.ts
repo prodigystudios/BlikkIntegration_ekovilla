@@ -198,10 +198,10 @@ describe('Fortnox-tokenen', () => {
     // Sparad, och anspråket nollat av den som tog det.
     expect(h.db.row).toMatchObject({ access_token: 'AT1', refresh_token: 'RT1', expires_at: inMinutes(60), refresh_claimed_at: null });
     expect(apiBearers).toEqual(['Bearer AT1']);
-    // Ett cachat svar från token-ändpunkten vore en refresh-token som Fortnox redan förbrukat, och ett anrop som hänger
-    // får inte överleva anspråket.
+    // Ett cachat svar från token-ändpunkten vore en refresh-token som Fortnox redan förbrukat. Och MED FLIT ingen
+    // tidsgräns: ett avbrutet anrop som Fortnox redan utfört tappar den nya tokenen.
     expect(tokenCalls[0].cache).toBe('no-store');
-    expect(tokenCalls[0].signal).toBeInstanceOf(AbortSignal);
+    expect(tokenCalls[0].signal).toBeUndefined();
     expect(h.waitUntil).toHaveBeenCalledTimes(1);
   });
 

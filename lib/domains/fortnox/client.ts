@@ -188,9 +188,9 @@ export async function refreshAccessToken(refreshToken: string): Promise<FortnoxT
     method: 'POST',
     // Aldrig ur Next datacache: ett cachat svar ger en refresh-token som Fortnox redan har förbrukat.
     cache: 'no-store',
-    // Ett anrop som hänger får inte överleva anspråket: då hade en annan instans tagit över och förnyat med samma token
-    // medan vårt fortfarande var på väg. Samma gräns som connectionGuard.ts.
-    signal: AbortSignal.timeout(REFRESH_REQUEST_TIMEOUT_MS),
+    // MED FLIT ingen tidsgräns: Fortnox kan ha roterat tokenen när vi ger upp, och då är den nya tokenen borta och
+    // kedjan bruten. Tar anropet längre än anspråkets fönster och någon tar över, nekas den (invalid_grant) och väntar
+    // in vårt sparande.
     headers: {
       Authorization: basicAuthHeader(clientId, clientSecret),
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -227,9 +227,8 @@ const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
 // Bara en instans åt gången får förnya. Uppmätt mot testbolaget 2026-10-01: två förnyelser med samma refresh-token i
 // samma ögonblick får BÅDA nya tokens, men bara det senast utdelade paret gäller — sparas det andra är kedjan bruten.
-const REFRESH_REQUEST_TIMEOUT_MS = 10_000;
-// Ett anspråk äldre än så här räknas som övergivet (instansen dog). Längre än token-anropets tidsgräns plus sparandet
-// med omförsök (~5 s), så att ingen tar över medan förnyelsen pågår.
+// Ett anspråk äldre än så här räknas som övergivet (instansen dog). Långt över en förnyelse (under en sekund) plus
+// sparandet med omförsök (~5 s), så att ingen tar över medan förnyelsen pågår.
 const REFRESH_CLAIM_STALE_MS = 20_000;
 // Hur ofta den som väntar på någon annans förnyelse läser om raden, och hur länge den väntar som mest: längre än ett
 // övergivet anspråk plus en förnyelse, så att den hinner ta över.
