@@ -212,7 +212,7 @@ describe('runPortalCron', () => {
       return NOTHING;
     });
     await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
-    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch', 'invite-pricelists']);
+    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch']);
   });
 
   it('butiksbeställningarnas Fortnox-försök före jobbens, ett per varv, med samma klocka och resten av gränsen', async () => {
@@ -257,10 +257,10 @@ describe('runPortalCron', () => {
     expect(summary.invitePricelistsDispatch).toEqual(SENT);
   });
 
-  it('en ny butiks lista: från knapparna högst två butiker, och ett fel där stoppar inget', async () => {
+  it('en ny butiks lista: från knapparna en butik per klick, och ett fel där stoppar inget', async () => {
     invitePricelists.mockRejectedValue(new Error('Fortnox svarar inte'));
     const summary = await runPortalCron({} as never, { env: { NODE_ENV: 'production' }, fortnoxRetries: false });
-    expect(invitePricelists).toHaveBeenCalledWith({}, expect.objectContaining({ limit: 2 }));
+    expect(invitePricelists).toHaveBeenCalledWith({}, expect.objectContaining({ limit: 1 }));
     expect(summary.invitePricelists).toEqual({ error: 'Fortnox svarar inte' });
     expect(summary.invitePricelistsDispatch).toBeUndefined();
     expect(calls).toContain('documents');
@@ -306,7 +306,7 @@ describe('runPortalCron', () => {
       return SENT;
     });
     await runPortalCron({} as never, { env: {}, now: () => new Date(t), fortnoxRetries: false });
-    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch', 'sync', 'store-order-sync', 'dispatch', 'invite-pricelists']);
+    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch', 'sync', 'store-order-sync', 'dispatch']);
 
     // Cron (300 s) har kvar sin gräns.
     calls.length = 0;
@@ -323,7 +323,7 @@ describe('runPortalCron', () => {
       return NOTHING;
     });
     const summary = await runPortalCron({} as never, { env: {}, now: () => new Date(t) });
-    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch', 'invite-pricelists']);
+    expect(calls).toEqual(['sync', 'store-order-sync', 'messages', 'dispatch']);
     expect(summary.documents).toEqual(NO_DOCUMENTS);
   });
 });

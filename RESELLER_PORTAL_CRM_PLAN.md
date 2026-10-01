@@ -2153,7 +2153,10 @@ fungerade.
   - En rad som lagts in men inte köats köas nästa varv. En nyare publicering emellan tar bort raden. Ett annat varv i
     samma stund ger en rad och en händelse.
   - Ett fel görs om tidigast efter 15 minuter. En avstängd integration köar ingenting.
-  - Från knapparna tas högst två butiker per varv, i cron högst tio.
+  - Från knapparna tas en butik per klick, i cron högst tio, och bara inom samma startgräns som dokumenten: två
+    Fortnox-anrop per butik, och Fortnox-klienten har ingen tidsgräns.
+- **Publiceringen** nollar markeringen för butikerna som väntade på sin inbjudan när listorna lästes, så att steget
+  prövar dem igen.
 - **Cron:** steget körs efter utskicket, där inbjudan går fram. Köades en lista skickas kön en gång till i samma varv.
 - **Sidan:** en butik vars inbjudan inte gått fram får texten "När inbjudan gått fram får det sin lista av sig själv,
   med den senaste publiceringens datum."
@@ -2168,7 +2171,7 @@ fungerade.
 - Kund 13 står på A igen.
 - Efter granskningen kördes kedjan en gång till, med ett nytt företag: listan gick fram redan i det första varvet.
 
-**Granskningen** (en runda, nio fynd, sju lagade):
+**Granskningen** (två rundor). Runda 1 gav nio fynd, varav sju lagades:
 - Kontrollen av en nyare publicering görs **efter** köandet. En publicering som köar butikens lista före vår syns
   då, och vår lista står bakom den i butikens ordning. Vår lista stoppas medan den väntar, och raden tas bort om steget
   lade in den.
@@ -2186,6 +2189,14 @@ Lagades inte:
   mellan raden och köandet, några millisekunder, och att någon publicerar innan nästa varv.
 - **Publiceringen läses för varje butik.** Premissen "varje cron-varv" stämmer inte: ett varv utan kandidater läser
   ingenting, och kandidater finns bara efter en ny inbjudan.
+
+Runda 2 gav tre fynd, och alla lagades:
+- **En publicering som läste sina listor innan inbjudan gick fram och sparas efter steget.** Den saknar butiken, som
+  steget redan markerat klar. Publiceringen nollar därför markeringen för butikerna i sin egen förhandsvisnings
+  "väntar", så att steget prövar dem igen och lägger listan i den nya publiceringen.
+- **Ingen tidsgräns i knappvarvet.** Steget följer dokumentens startgräns och tar en butik per klick.
+- **`published_by` pekar på `profiles`, men inbjudarens id gör det inte.** En borttagen profil hade fällt varje
+  försök. Raden får därför bara inbjudarens namn.
 
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 

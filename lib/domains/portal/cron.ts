@@ -149,20 +149,23 @@ export async function runPortalCron(
       summary.redispatch = await step('utskicket efter omräkningen', dispatch);
     }
   }
-  // Efter utskicket: det är där inbjudan går fram. Från knapparna högst två butiker (två Fortnox-anrop var).
-  summary.invitePricelists = await step('butikernas listor efter inbjudan', () =>
-    sweepInvitePricelists(admin, {
-      now,
-      env: options.env,
-      sources: options.invitePricelistSources ?? invitePricelistSources(),
-      limit: options.fortnoxRetries === false ? 2 : undefined,
-    }),
-  );
-  if (queuedSomething(summary.invitePricelists)) {
-    summary.invitePricelistsDispatch = await step('utskicket efter listorna', dispatch);
-  }
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
+  // Efter utskicket: det är där inbjudan går fram. Två Fortnox-anrop per butik och klienten har ingen tidsgräns: samma
+  // startgräns som dokumenten, och från knapparna en butik per klick.
+  if (now().getTime() - startedAt < documentsStartBefore) {
+    summary.invitePricelists = await step('butikernas listor efter inbjudan', () =>
+      sweepInvitePricelists(admin, {
+        now,
+        env: options.env,
+        sources: options.invitePricelistSources ?? invitePricelistSources(),
+        limit: options.fortnoxRetries === false ? 1 : undefined,
+      }),
+    );
+    if (queuedSomething(summary.invitePricelists)) {
+      summary.invitePricelistsDispatch = await step('utskicket efter listorna', dispatch);
+    }
+  }
   if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
       sweepPortalJobDocuments(admin, {

@@ -83,7 +83,6 @@ export type InvitePricelistSweepSummary = {
 type InviteRow = {
   reseller_id: string;
   idempotency_key: string;
-  invited_by: string | null;
   invited_by_name: string | null;
   pricelist_attempted_at: string | null;
 };
@@ -249,8 +248,9 @@ async function settleStore(
           idempotency_key: idempotencyKey,
           payload,
           article_count: list.articles.length,
-          // Den som bjöd in: det var inbjudan som skickade listan.
-          published_by: invite.invited_by,
+          // Den som bjöd in, med namn: det var inbjudan som skickade listan. Utan id: published_by pekar på profiles,
+          // invited_by gör det inte, och en borttagen profil hade fällt varje försök.
+          published_by: null,
           published_by_name: invite.invited_by_name ? invite.invited_by_name.slice(0, 200) : null,
           reseller_id: resellerId,
           price_list_code: list.code,
@@ -286,7 +286,7 @@ export async function sweepInvitePricelists(
 
   const read = await admin
     .from('crm_portal_reseller_invites')
-    .select('reseller_id, idempotency_key, invited_by, invited_by_name, pricelist_attempted_at')
+    .select('reseller_id, idempotency_key, invited_by_name, pricelist_attempted_at')
     .is('pricelist_settled_at', null)
     .order('created_at', { ascending: false })
     .limit(INVITE_PRICELIST_CANDIDATE_LIMIT);

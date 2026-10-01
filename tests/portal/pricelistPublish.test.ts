@@ -477,6 +477,29 @@ describe('publishPricelist: butikernas egna listor (10b2)', () => {
     ]);
   });
 
+  // 10b3: gick r-b2:s inbjudan fram medan listorna lästes kan steget efter inbjudan redan ha lagt dess lista i den förra
+  // publiceringen och markerat den klar. Den nya publiceringen saknar butiken, och steget måste pröva den igen.
+  it('en ny publicering låter steget efter inbjudan pröva butikerna som väntade på inbjudan igen, och bara dem', async () => {
+    const db = fakeDb();
+    db.tables.crm_portal_reseller_invites = [
+      { reseller_id: 'r-b2', pricelist_settled_at: '2026-09-28T07:00:00Z' },
+      { reseller_id: 'r-b1', pricelist_settled_at: '2026-09-27T07:00:00Z' },
+    ];
+    const first = await publish({ db, partner: partner(), history, expectedHash: await batchHash() });
+    expect(first.result).toMatchObject({ kind: 'published', created: true });
+    expect(db.tables.crm_portal_reseller_invites.map((r) => [r.reseller_id, r.pricelist_settled_at])).toEqual([
+      ['r-b2', null],
+      ['r-b1', '2026-09-27T07:00:00Z'],
+    ]);
+    expect(db.log.filter((l) => l.table === 'crm_portal_reseller_invites').map((l) => [l.client, l.op])).toEqual([['admin', 'update']]);
+
+    // Samma publicering igen (ett dubbelklick) gör ingenting nytt.
+    db.tables.crm_portal_reseller_invites[0].pricelist_settled_at = '2026-09-28T08:00:00Z';
+    const again = await publish({ db, partner: partner(), history, expectedHash: await batchHash() });
+    expect(again.result).toMatchObject({ kind: 'published', created: false });
+    expect(db.tables.crm_portal_reseller_invites[0].pricelist_settled_at).toBe('2026-09-28T08:00:00Z');
+  });
+
   it('förhandsvisningens hash är hela publiceringens: lista 160:s egen hash räcker inte när butiker har egna listor', async () => {
     const { result, db } = await publish({ partner: partner(), history, expectedHash: await currentHash(sources()) });
     expect(result.kind).toBe('changed');

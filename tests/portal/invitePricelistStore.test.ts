@@ -131,7 +131,7 @@ describe('sweepInvitePricelists', () => {
         idempotency_key: key,
         payload: { validFrom: VALID_FROM, resellerId: STORE, articles: OWN.articles },
         article_count: 2,
-        published_by: 'user-1',
+        published_by: null,
         published_by_name: 'Test Admin',
         price_list_code: 'B',
       }),
