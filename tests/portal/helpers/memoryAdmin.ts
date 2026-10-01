@@ -46,6 +46,8 @@ const UNIQUE: Record<string, string[]> = {
   crm_portal_job_messages: ['id', 'direction,message_id'],
   crm_portal_job_documents: ['id'],
   crm_portal_partners: ['customer_id'],
+  // Det unika indexet är (sequence, coalesce(reseller_id, '')); en butiks rad krockar på löpnummer och butik.
+  crm_portal_pricelist_publications: ['idempotency_key', 'sequence,reseller_id'],
   crm_portal_reseller_invites: ['id', 'idempotency_key', 'reseller_id,attempt'],
   crm_portal_resellers: ['reseller_id'],
   crm_store_orders: ['id', 'order_id'],

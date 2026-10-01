@@ -639,7 +639,7 @@ function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<Partn
           {partnerLists.waiting.length > 0 && (
             <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
               <span className="font-semibold">Inbjudan har inte gått fram:</span> {storeList(partnerLists.waiting)}. Företaget finns
-              inte i portalen än och får ingen lista nu.
+              inte i portalen än. När inbjudan gått fram får det sin lista av sig själv, med den senaste publiceringens datum.
             </p>
           )}
           {partnerLists.sharedStores.length > 0 && (
