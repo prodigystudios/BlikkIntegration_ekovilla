@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { emptyPortalArticleFields } from '@/lib/domains/portal/articleFields';
 import { listFromPublished } from '@/lib/domains/portal/invitePricelist';
-import { INVITE_PRICELIST_RETRY_MS, sweepInvitePricelists, type InvitePricelistSources } from '@/lib/domains/portal/invitePricelistStore';
+import {
+  INVITE_PRICELIST_CANDIDATE_LIMIT,
+  INVITE_PRICELIST_RETRY_MS,
+  sweepInvitePricelists,
+  type InvitePricelistSources,
+} from '@/lib/domains/portal/invitePricelistStore';
 import { PRICELIST_PATH, buildPricelistDraft, pricelistIdempotencyKey, type ListPrice } from '@/lib/domains/portal/pricelist';
 import { RESELLERS_PATH } from '@/lib/domains/portal/partners';
 import { memoryAdmin, type Call } from './helpers/memoryAdmin';
@@ -11,9 +16,10 @@ import { memoryAdmin, type Call } from './helpers/memoryAdmin';
  *   - bara efter att inbjudan gått fram, och en gång per butik: kortet läses i Fortnox en gång;
  *   - listan läggs i den SENASTE publiceringen (samma löpnummer och datum) och köas i butikens ordning;
  *   - inget att göra (ingen publicering, redan med, den gemensamma listan) läser inte listan och markerar butiken klar;
- *   - en butik som haft en egen lista får 160 som egen lista;
+ *   - en butik som haft en egen lista får 160 som egen lista, också utan kort;
  *   - ett avbrott mellan raden och köandet köar raden nästa varv; en nyare publicering eller ett annat varv i samma stund
- *     ger aldrig en lista efter en nyare eller två rader;
+ *     ger aldrig en lista efter en nyare eller två rader, och en nyare som saknar butiken får butikens lista;
+ *   - leveranserna läses i portioner, och de nyaste inbjudningarna först;
  *   - ett fel görs om först efter 15 minuter; avstängd integration köar ingenting.
  */
 
@@ -184,6 +190,13 @@ describe('sweepInvitePricelists', () => {
     }
   });
 
+  it('en butik utan kort som haft en egen lista får 160 som egen lista, som i publiceringen', async () => {
+    const t = setup({ stores: [store(STORE, null)], publications: [publicationRow(1, STORE, 'f'.repeat(64)), publicationRow(3, null, SHARED.hash)] });
+    expect(await t.sweep()).toMatchObject({ queued: 1 });
+    expect(storeRows(t.tables).find((r) => r.sequence === 3)).toMatchObject({ content_hash: SHARED.hash, price_list_code: '160' });
+    expect(t.sources.cardPriceList).not.toHaveBeenCalled();
+  });
+
   it('en butik utan kundnummer i Fortnox får den gemensamma listan', async () => {
     const t = setup({ stores: [store(STORE, null)] });
     expect(await t.sweep()).toMatchObject({ settled: 1 });
@@ -221,21 +234,53 @@ describe('sweepInvitePricelists', () => {
     expect(rowsOf(t.tables, 'crm_portal_reseller_invites')[0]).toMatchObject({ pricelist_settled_at: later.toISOString(), pricelist_error: null });
   });
 
-  // En publicering mellan vår rad och köandet har butiken (inbjudan har gått fram). Vår lista får inte gå fram efter den.
-  it('tar bort sin rad och köar ingenting när en nyare publicering hann komma', async () => {
-    let inserted = false;
+  // En publicering N+1 kom medan vi köade i N. Testet lägger in den när vår lista just köats, före kontrollen efter köandet.
+  function newerAfterOurEnqueue(newer: (tables: Record<string, Row[]>) => void, onOurs?: (ours: Row) => void) {
+    let enqueued = false;
+    return (call: Call, tables: Record<string, Row[]>) => {
+      if (call.table === 'portal_outbound_events' && call.op === 'upsert' && !enqueued) enqueued = true;
+      else if (enqueued && call.table === 'crm_portal_pricelist_publications' && call.op === 'select' && !tables.crm_portal_pricelist_publications.some((r) => r.sequence === 4)) {
+        newer(tables);
+        const ours = tables.portal_outbound_events.find((e) => e.path === PRICELIST_PATH);
+        if (ours) onOurs?.(ours);
+      }
+    };
+  }
+  const newerShared = (tables: Record<string, Row[]>) => tables.crm_portal_pricelist_publications.push(publicationRow(4, null, SHARED.hash));
+
+  it('en nyare publicering med butiken: vår lista stoppas och raden tas bort, den nyares lista gäller', async () => {
+    const theirs = publicationRow(4, STORE, OWN.hash, OWN.articles);
     const t = setup({
-      beforeExecute: (call, tables) => {
-        if (call.table !== 'crm_portal_pricelist_publications') return;
-        if (call.op === 'upsert') inserted = true;
-        else if (inserted && call.op === 'select' && !tables.crm_portal_pricelist_publications.some((r) => r.sequence === 4)) {
-          tables.crm_portal_pricelist_publications.push(publicationRow(4, null, SHARED.hash));
-        }
-      },
+      beforeExecute: newerAfterOurEnqueue((tables) => {
+        newerShared(tables);
+        tables.crm_portal_pricelist_publications.push(theirs);
+        tables.portal_outbound_events.push({ ...event(theirs.idempotency_key as string, 'pending'), seq: 1 });
+      }),
     });
     expect(await t.sweep()).toMatchObject({ settled: 1, queued: 0 });
-    expect(storeRows(t.tables)).toEqual([]);
-    expect(listEvents(t.tables)).toEqual([]);
+    expect(storeRows(t.tables).map((r) => r.sequence)).toEqual([4]);
+    expect(listEvents(t.tables).map((e) => [e.idempotency_key, e.status])).toEqual([
+      [pricelistIdempotencyKey(VALID_FROM, OWN.hash, 3, STORE), 'superseded'],
+      [theirs.idempotency_key, 'pending'],
+    ]);
+  });
+
+  // Den nyare publiceringens förhandsvisning lästes innan inbjudan gick fram: butiken saknas där och ska få sin lista.
+  it('en nyare publicering utan butiken: vår lista stoppas, och listan läggs i den nyare', async () => {
+    const t = setup({ beforeExecute: newerAfterOurEnqueue(newerShared) });
+    expect(await t.sweep()).toMatchObject({ queued: 1, failed: 0 });
+    expect(storeRows(t.tables).map((r) => r.sequence)).toEqual([4]);
+    expect(listEvents(t.tables).map((e) => [e.idempotency_key, e.status])).toEqual([
+      [pricelistIdempotencyKey(VALID_FROM, OWN.hash, 3, STORE), 'superseded'],
+      [pricelistIdempotencyKey(VALID_FROM, OWN.hash, 4, STORE), 'pending'],
+    ]);
+  });
+
+  it('vår lista hann börja gå före den nyare: den får gå, och den nyare får butikens lista efter den', async () => {
+    const t = setup({ beforeExecute: newerAfterOurEnqueue(newerShared, (ours) => (ours.status = 'sending')) });
+    expect(await t.sweep()).toMatchObject({ queued: 1 });
+    expect(storeRows(t.tables).map((r) => r.sequence)).toEqual([3, 4]);
+    expect(listEvents(t.tables).map((e) => e.status)).toEqual(['sending', 'pending']);
   });
 
   // Ett annat varv lade in butiken i samma stund (löpnummer och butik är unika): dess rad gäller och köas en gång.
@@ -268,6 +313,25 @@ describe('sweepInvitePricelists', () => {
     });
     expect(await t.sweep(NOW, { limit: 2 })).toMatchObject({ candidates: 3, queued: 2, deferred: 1 });
     expect(await t.sweep(NOW, { limit: 2 })).toMatchObject({ candidates: 1, queued: 1, deferred: 0 });
+  });
+
+  // Nycklarna står i adressen (`in.(…)`): hundratals i en fråga hade gjort adressen för lång.
+  it('läser leveranserna i portioner', async () => {
+    const ids = Array.from({ length: 250 }, (_, i) => `6f1c2a9e-4b7d-4f0e-9a51-${String(i).padStart(12, '0')}`);
+    const t = setup({ invites: ids.map((id) => invite(id, 1)), events: [] });
+    await t.sweep();
+    const reads = t.calls.filter((c) => c.table === 'portal_outbound_events' && c.op === 'select');
+    expect(reads.map((c) => (c.filters.find((f) => f[0] === 'in')?.[2] as unknown[]).length)).toEqual([100, 100, 50]);
+  });
+
+  // En inbjudan som aldrig går fram blir aldrig klar. De äldsta först hade låtit dem tränga ut en ny.
+  it('tar de nyaste inbjudningarna först, så att gamla som aldrig gick fram inte tränger ut en ny', async () => {
+    const old = Array.from({ length: INVITE_PRICELIST_CANDIDATE_LIMIT }, (_, i) => ({
+      ...invite(`gammal-${i}`, 1),
+      created_at: `2026-09-01T00:00:${String(i % 60).padStart(2, '0')}.${String(i).padStart(3, '0')}Z`,
+    }));
+    const t = setup({ invites: [...old, invite(STORE, 1)] });
+    expect(await t.sweep()).toMatchObject({ candidates: 1, queued: 1 });
   });
 
   it('avstängd integration: ingenting läses eller köas', async () => {

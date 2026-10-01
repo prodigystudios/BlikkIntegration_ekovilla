@@ -2166,6 +2166,26 @@ fungerade.
   och gick fram (201) i samma varv; artikel 16767 kostade 650 kr i stället för 560 kr.
 - En förhandsvisning efteråt gav butiken samma hash (`9cd4903e…`), med 160 oförändrad.
 - Kund 13 står på A igen.
+- Efter granskningen kördes kedjan en gång till, med ett nytt företag: listan gick fram redan i det första varvet.
+
+**Granskningen** (en runda, nio fynd, sju lagade):
+- Kontrollen av en nyare publicering görs **efter** köandet. En publicering som köar butikens lista före vår syns
+  då, och vår lista står bakom den i butikens ordning. Vår lista stoppas medan den väntar, och raden tas bort om steget
+  lade in den.
+- Den nyare publiceringen kan sakna butiken, om dess förhandsvisning lästes innan inbjudan gick fram. Butiken prövas
+  därför mot den, och listan läggs där.
+- Har vår lista redan börjat gå får den gå, eftersom den går före den nyare.
+- En krock med ett annat varv läser om publiceringen i stället för att kasta.
+- Leveranserna läses i portioner om hundra.
+- De nyaste inbjudningarna läses först. En inbjudan som aldrig går fram blir aldrig klar, och de äldsta först hade
+  låtit sådana tränga ut en ny.
+- En butik utan kort som haft en egen lista får 160 som egen lista, som i publiceringen.
+
+Lagades inte:
+- **En rad som aldrig köades i en äldre publicering** blir kvar i historien som "inte köad". Det kräver att varvet dör
+  mellan raden och köandet, några millisekunder, och att någon publicerar innan nästa varv.
+- **Publiceringen läses för varje butik.** Premissen "varje cron-varv" stämmer inte: ett varv utan kandidater läser
+  ingenting, och kandidater finns bara efter en ny inbjudan.
 
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 
