@@ -61,7 +61,11 @@ export default async function AterforsaljarportalenPage() {
     // hash betyder samma sak.
     loadPricelistBatch(pricelistBatchSources(session)).then(
       (load) => ({ ok: true as const, load }),
-      (e: unknown) => ({ ok: false as const, message: describeSourceError(e) }),
+      (e: unknown) => {
+        // Beskedet till sidan är den vänliga texten; orsaken syns bara här.
+        console.error('[portal-pricelist] förhandsvisningen gick inte att läsa', e instanceof Error ? e.message : e);
+        return { ok: false as const, message: describeSourceError(e) };
+      },
     ),
     listPricelistPublications(session).then(
       (publications) => ({ ok: true as const, publications }),
