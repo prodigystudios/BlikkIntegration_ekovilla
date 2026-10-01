@@ -10,6 +10,7 @@ import {
   PARTNER_INELIGIBLE_MESSAGES,
   PORTAL_PARTNER_TYPES,
   PORTAL_PARTNER_TYPE_LABELS,
+  newPortalResellerId,
   type InviteAdmin,
   type InviteStore,
   type PortalPartnerType,
@@ -82,7 +83,17 @@ async function request<T>(url: string, init: RequestInit): Promise<{ data: T } |
   }
 }
 
-export default function PortalPartnerCard({ customerId }: { customerId: string }) {
+export default function PortalPartnerCard({
+  customerId,
+  cardVersion,
+}: {
+  customerId: string;
+  /**
+   * Ändras när kortet sparas på sidan (till exempel "Skapa i Fortnox", som ger kundnumret). Rutan läses då om, så att
+   * knappen och förvalen följer kortet utan att sidan laddas om.
+   */
+  cardVersion: string;
+}) {
   const toast = useToast();
   const [view, setView] = useState<PortalPartnerView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -104,7 +115,7 @@ export default function PortalPartnerCard({ customerId }: { customerId: string }
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, cardVersion]);
 
   async function changeType(next: PortalPartnerType | null) {
     if (!view || savingType || next === view.partnerType) return;
@@ -125,7 +136,7 @@ export default function PortalPartnerCard({ customerId }: { customerId: string }
   function openNew() {
     if (!view) return;
     setFormError(null);
-    setDialog({ mode: 'new', resellerId: globalThis.crypto.randomUUID(), store: { ...view.defaults }, admin: { ...EMPTY_ADMIN } });
+    setDialog({ mode: 'new', resellerId: newPortalResellerId(), store: { ...view.defaults }, admin: { ...EMPTY_ADMIN } });
   }
 
   function openResend(store: PartnerStoreView) {
@@ -163,7 +174,9 @@ export default function PortalPartnerCard({ customerId }: { customerId: string }
     const status = result.data.delivery?.status;
     if (status === 'sent') toast.success(`Inbjudan skickad till ${email}.`);
     else if (status === 'dead') toast.error(invite?.failure ?? 'Portalen nekade inbjudan.');
-    else toast.success('Inbjudan är köad. Portalen svarade inte än, så den skickas igen automatiskt.');
+    else if (status === 'not_queued') toast.error('Inbjudan är sparad men inte skickad. Tryck på Skicka inbjudan igen.');
+    else if (status) toast.success('Inbjudan är köad. Portalen svarade inte än, så den skickas igen automatiskt.');
+    else toast.success('Inbjudan är sparad. Statusen står på kortet.');
   }
 
   const cardClass =
@@ -244,6 +257,13 @@ export default function PortalPartnerCard({ customerId }: { customerId: string }
             );
           })}
         </ul>
+      ) : null}
+
+      {loadError ? (
+        <p role="alert" className="mt-3 grid gap-0.5 text-xs text-rose-700">
+          <span>Rutan gick inte att läsa om. Ladda om sidan innan du bjuder in något mer.</span>
+          <span className="text-rose-600">{loadError}</span>
+        </p>
       ) : null}
 
       {canInvite ? (

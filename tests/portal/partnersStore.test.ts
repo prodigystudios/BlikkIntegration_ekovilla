@@ -234,15 +234,35 @@ describe('invitePortalReseller: ett nytt företag', () => {
     );
     const result = await invitePortalReseller(t.deps, newInvite());
     expect(result).toMatchObject({ kind: 'invited', created: false, attempt: 1 });
-    expect(t.tables.portal_outbound_events).toHaveLength(0);
+    // Vinnarens inbjudan, en gång: samma nyckel, så vinnarens eget köande hittar samma händelse.
+    expect(t.tables.portal_outbound_events.map((e) => e.idempotency_key)).toEqual([resellerInviteIdempotencyKey(RESELLER_ID, 1)]);
+    expect(t.tables.crm_portal_reseller_invites).toHaveLength(1);
   });
 
-  it('butiken finns redan på kortet utan inbjudan (förra anropet dog efter steg 1): bara inbjudan läggs till', async () => {
-    const row = { reseller_id: RESELLER_ID, name: 'Beijer Gävle', street: '', postal_code: '', city: 'Gävle', customer_number: '1234', customer_id: CARD_ID };
+  it('butiken finns redan på kortet utan inbjudan (förra anropet dog efter steg 1): raden får formulärets uppgifter', async () => {
+    const row = { reseller_id: RESELLER_ID, name: 'Gammalt namn', street: '', postal_code: '', city: 'Kalmar', customer_number: '1234', customer_id: CARD_ID, customer_linked_by: 'x' };
     const t = setup({ crm_portal_resellers: [row] });
     expect(await invitePortalReseller(t.deps, newInvite())).toMatchObject({ kind: 'invited', created: true, attempt: 1 });
-    expect(t.tables.crm_portal_resellers).toEqual([row]);
-    expect(t.calls.filter((c) => c.table === 'crm_portal_resellers' && c.op !== 'select')).toHaveLength(0);
+    // Inget företag finns i portalen än, så det rättade formuläret gäller både raden och kroppen.
+    expect(t.tables.crm_portal_resellers).toEqual([
+      { ...row, name: 'Beijer Gävle', street: 'Industrigatan 4', postal_code: '802 22', city: 'Gävle' },
+    ]);
+    expect(JSON.parse(t.sent[0].body)).toMatchObject({ name: 'Beijer Gävle', address: { city: 'Gävle' } });
+  });
+
+  it('🧨 kön föll efter att inbjudan sparats: samma formulär igen köar den, med samma nyckel och kropp', async () => {
+    const t = setup();
+    t.failOn((call) => call.table === 'portal_outbound_events' && call.op === 'upsert', { message: 'nere' });
+    expect(await invitePortalReseller(t.deps, newInvite())).toMatchObject({ kind: 'db_error' });
+    expect(t.sent).toHaveLength(0);
+
+    const again = await invitePortalReseller(t.deps, newInvite({ admin: { name: 'Annan', email: 'annan@exempel.se' } }));
+    expect(again).toMatchObject({ kind: 'invited', created: false, attempt: 1, delivery: { status: 'sent' } });
+    expect(t.tables.crm_portal_reseller_invites).toHaveLength(1);
+    expect(t.sent).toHaveLength(1);
+    expect(t.sent[0].headers[IDEMPOTENCY_KEY_HEADER]).toBe(resellerInviteIdempotencyKey(RESELLER_ID, 1));
+    // Den sparade inbjudans kropp, inte det andra trycket.
+    expect(JSON.parse(t.sent[0].body).admin).toEqual(ADMIN);
   });
 
   it('portalen nekar adressen: händelsen ges upp och kortet visar varför', async () => {
@@ -320,6 +340,18 @@ describe('invitePortalReseller: skicka inbjudan igen', () => {
     expect(await invitePortalReseller(t.deps, resend({ resellerId: 'res-annan', expectedAttempt: 0 }))).toEqual({ kind: 'store_not_found' });
     expect(await invitePortalReseller(t.deps, resend({ resellerId: 'res-finns-inte', expectedAttempt: 0 }))).toEqual({ kind: 'store_not_found' });
     expect(writes(t.calls)).toHaveLength(0);
+  });
+
+  it('ett företag som kom till portalen på annat sätt, på ett kort med en trasig e-post: företagets e-post blir tom', async () => {
+    const row = { reseller_id: 'res-norrbygg', name: 'Norrbygg AB', street: '', postal_code: '', city: 'Sundsvall', customer_number: '1234', customer_id: CARD_ID };
+    const t = setup({ crm_customers: [cardRow({ email: 'info at norrbygg.se' })], crm_portal_resellers: [row] });
+    await invitePortalReseller(t.deps, resend({ resellerId: 'res-norrbygg', expectedAttempt: 0 }));
+    expect(JSON.parse(t.sent[0].body).email).toBe('');
+
+    // Nästa försök tar förra kroppen, också för ett id som inte är ett uuid.
+    t.tables.crm_customers[0].email = 'ny@norrbygg.se';
+    await invitePortalReseller(t.deps, resend({ resellerId: 'res-norrbygg', expectedAttempt: 1, admin: { name: 'Cia', email: 'cia@exempel.se' } }));
+    expect(JSON.parse(t.sent[1].body)).toMatchObject({ resellerId: 'res-norrbygg', email: '', admin: { email: 'cia@exempel.se' } });
   });
 
   it('ett företag som kom till portalen på annat sätt: första inbjudan byggs ur butikens rad och kortet', async () => {

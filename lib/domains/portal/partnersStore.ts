@@ -74,15 +74,15 @@ type InviteRow = {
   reseller_id: string;
   attempt: number;
   idempotency_key: string;
-  payload: unknown;
   admin_name: string;
   admin_email: string;
   invited_by_name: string | null;
   created_at: string;
 };
+type InviteRowWithPayload = InviteRow & { payload: unknown };
 
 const STORE_SELECT = 'reseller_id, name, street, postal_code, city, customer_number';
-const INVITE_SELECT = 'reseller_id, attempt, idempotency_key, payload, admin_name, admin_email, invited_by_name, created_at';
+const INVITE_SELECT = 'reseller_id, attempt, idempotency_key, admin_name, admin_email, invited_by_name, created_at';
 
 async function readCard(session: SupabaseClient, customerId: string): Promise<PartnerCard | null> {
   const { data, error } = await session.from('crm_customers').select(PARTNER_CARD_SELECT).eq('id', customerId).maybeSingle();
@@ -96,20 +96,31 @@ async function readPartnerType(session: SupabaseClient, customerId: string): Pro
   return ((data as { partner_type: PortalPartnerType } | null) ?? null)?.partner_type ?? null;
 }
 
-/** Det senaste försöket per företag. Några få företag per kort, och några få försök per företag. */
-async function readLatestInvites(client: SupabaseClient, resellerIds: string[]): Promise<Map<string, InviteRow>> {
+/**
+ * Det senaste försöket per företag. Några få företag per kort, och några få försök per företag. Kroppen läses bara av
+ * inbjudan, som behöver den för nästa försök; rutan visar den aldrig.
+ */
+async function readLatestInvites(client: SupabaseClient, resellerIds: string[]): Promise<Map<string, InviteRow>>;
+async function readLatestInvites(
+  client: SupabaseClient,
+  resellerIds: string[],
+  options: { withPayload: true },
+): Promise<Map<string, InviteRowWithPayload>>;
+async function readLatestInvites(
+  client: SupabaseClient,
+  resellerIds: string[],
+  options?: { withPayload: true },
+): Promise<Map<string, InviteRow | InviteRowWithPayload>> {
   if (resellerIds.length === 0) return new Map();
   const { data, error } = await client
     .from('crm_portal_reseller_invites')
-    .select(INVITE_SELECT)
+    .select(options?.withPayload ? `${INVITE_SELECT}, payload` : INVITE_SELECT)
     .in('reseller_id', resellerIds)
     .order('attempt', { ascending: false });
   if (error) throw new Error(`Inbjudningarna gick inte att läsa: ${error.message}`);
   const latest = new Map<string, InviteRow>();
-  for (const row of (data ?? []) as InviteRow[]) {
-    const seen = latest.get(row.reseller_id);
-    if (!seen || row.attempt > seen.attempt) latest.set(row.reseller_id, row);
-  }
+  // Högsta försöket först: den första raden per företag är den senaste.
+  for (const row of (data ?? []) as unknown as InviteRow[]) if (!latest.has(row.reseller_id)) latest.set(row.reseller_id, row);
   return latest;
 }
 
@@ -266,28 +277,65 @@ async function deliveryOf(admin: SupabaseClient, key: string): Promise<OutboxDel
   }
 }
 
+/** Steg 3 och 4: köa försöket och gör ett första utskick. Kastar bara om köandet föll. */
+async function queueInvite(deps: InviteDeps, resellerId: string, idempotencyKey: string, payload: unknown): Promise<void> {
+  await enqueuePortalEvent(deps.admin, {
+    idempotencyKey,
+    path: RESELLERS_PATH,
+    payload,
+    orderingKey: resellerInviteOrderingKey(resellerId),
+    supersedeKey: resellerInviteSupersedeKey(resellerId),
+  });
+  try {
+    await dispatchPortalOutbox(deps.admin, { env: deps.env, ...INVITE_DISPATCH, now: deps.now, fetchImpl: deps.fetchImpl });
+  } catch (e) {
+    // Händelsen ligger i kön; utskicket görs om av cron och med "Skicka väntande nu".
+    console.error('[portal-invite] första utskicket misslyckades', e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * Samma formulär en gång till (ett dubbelklick, eller ett nytt tryck efter ett fel): inbjudan finns redan. Föll förra
+ * anropet efter att inbjudan sparats men innan den köades, köas den nu, med sin egen kropp och nyckel. Annars hade den
+ * aldrig skickats, och knappen sagt att allt gick bra.
+ */
+async function settleExistingInvite(deps: InviteDeps, resellerId: string, latest: InviteRowWithPayload): Promise<InvitePortalResellerResult> {
+  let delivery = await deliveryOf(deps.admin, latest.idempotency_key);
+  if (delivery?.status === 'not_queued') {
+    try {
+      await queueInvite(deps, resellerId, latest.idempotency_key, latest.payload);
+    } catch (e) {
+      return { kind: 'db_error', message: e instanceof Error ? e.message : 'Inbjudan kunde inte köas.' };
+    }
+    delivery = await deliveryOf(deps.admin, latest.idempotency_key);
+  }
+  return { kind: 'invited', created: false, resellerId, attempt: latest.attempt, delivery };
+}
+
 /**
  * Bjuder in ett företag till portalen, eller skickar inbjudan igen (kontraktets flöde 5).
  *
  * Ordningen, och varför den tål ett avbrott var som helst:
  *   1. butikens rad (service-rollen), kopplad till kortet som en koppling för hand. Det första jobbet har då kund,
- *      också om portalen inte skulle skicka kundnumret. Samma id en gång till = samma rad.
+ *      också om portalen inte skulle skicka kundnumret. Samma id en gång till = samma rad. Finns raden men ingen
+ *      inbjudan, finns inget företag i portalen än, och formulärets uppgifter skrivs på raden.
  *   2. inbjudan med nästa försöksnummer (service-rollen). Unik på (företaget, försöket): två samtidiga tryck blir ett.
  *   3. händelsen i kön (service-rollen; samma nyckel = samma händelse). En äldre väntande inbjudan till samma företag
  *      ersätts: bara den senaste admin behöver fram.
  *   4. ett första utskick. Det som inte hinner eller inte går fram ligger kvar i kön.
- * Dör anropet efter 1 står företaget på kortet utan inbjudan, och "Skicka inbjudan igen" gör klart det. Dör det efter 2
- * står inbjudan som "inte köad", och samma knapp köar ett nytt försök.
+ * Dör anropet efter 1 står företaget på kortet utan inbjudan, och samma formulär eller "Bjud in en admin" gör klart det.
+ * Dör det efter 2 gör samma formulär klart köandet, och "Skicka inbjudan igen" köar ett nytt försök.
  */
 export async function invitePortalReseller(deps: InviteDeps, input: InvitePortalResellerInput): Promise<InvitePortalResellerResult> {
   // Avstängd integration: ingenting sparas eller köas, så att ingen inbjudan går iväg den dag hemligheten sätts.
   const target = resolvePortalTarget(deps.env);
   if (!target.ok) return { kind: 'integration_off', message: target.message };
 
-  const [card, partnerType, existingStore] = await Promise.all([
+  const [card, partnerType, existingStore, invites] = await Promise.all([
     readCard(deps.session, input.customerId),
     readPartnerType(deps.session, input.customerId),
     readStore(deps.session, input.resellerId),
+    readLatestInvites(deps.session, [input.resellerId], { withPayload: true }),
   ]);
   if (!card) return { kind: 'not_found' };
   const eligibility = partnerEligibility(card);
@@ -296,47 +344,41 @@ export async function invitePortalReseller(deps: InviteDeps, input: InvitePortal
 
   let store = existingStore;
   if (store && store.customer_id !== card.id) return input.mode === 'new' ? { kind: 'reseller_id_taken' } : { kind: 'store_not_found' };
+  if (!store && input.mode === 'resend') return { kind: 'store_not_found' };
 
-  if (!store) {
-    if (input.mode === 'resend') return { kind: 'store_not_found' };
-    // Steg 1. Bara om id:t är ledigt; ett samtidigt tryck med samma id hann annars först, och då gäller dess rad.
-    const at = deps.now().toISOString();
-    const inserted = await deps.admin.from('crm_portal_resellers').upsert(
-      {
-        reseller_id: input.resellerId,
-        name: input.store.name,
-        street: input.store.street,
-        postal_code: input.store.postalCode,
-        city: input.store.city,
-        customer_number: eligibility.customerNumber,
-        customer_id: card.id,
-        customer_linked_by: deps.actor.id,
-        customer_linked_at: at,
-        first_seen_at: at,
-        last_seen_at: at,
-      },
-      { onConflict: 'reseller_id', ignoreDuplicates: true },
-    );
-    if (inserted.error) return { kind: 'db_error', message: `Företaget kunde inte sparas: ${inserted.error.message}` };
-    store = await readStore(deps.admin, input.resellerId);
-    if (!store) return { kind: 'db_error', message: 'Företaget sparades men gick inte att läsa tillbaka.' };
-    if (store.customer_id !== card.id) return { kind: 'reseller_id_taken' };
+  const latest = invites.get(input.resellerId) ?? null;
+  if (input.mode === 'new' && latest) return settleExistingInvite(deps, input.resellerId, latest);
+  if (input.mode === 'resend' && (latest?.attempt ?? 0) !== input.expectedAttempt) return { kind: 'changed' };
+
+  if (input.mode === 'new') {
+    const details = { name: input.store.name, street: input.store.street, postal_code: input.store.postalCode, city: input.store.city };
+    if (store) {
+      // Steg 1 gjordes av ett anrop som dog innan inbjudan sparades. Formuläret kan ha rättats sedan dess.
+      const updated = await deps.admin.from('crm_portal_resellers').update(details).eq('reseller_id', input.resellerId).eq('customer_id', card.id);
+      if (updated.error) return { kind: 'db_error', message: `Företaget kunde inte sparas: ${updated.error.message}` };
+    } else {
+      // Steg 1. Bara om id:t är ledigt; ett samtidigt tryck med samma id hann annars först, och då gäller dess rad.
+      const at = deps.now().toISOString();
+      const inserted = await deps.admin.from('crm_portal_resellers').upsert(
+        {
+          reseller_id: input.resellerId,
+          ...details,
+          customer_number: eligibility.customerNumber,
+          customer_id: card.id,
+          customer_linked_by: deps.actor.id,
+          customer_linked_at: at,
+          first_seen_at: at,
+          last_seen_at: at,
+        },
+        { onConflict: 'reseller_id', ignoreDuplicates: true },
+      );
+      if (inserted.error) return { kind: 'db_error', message: `Företaget kunde inte sparas: ${inserted.error.message}` };
+      store = await readStore(deps.admin, input.resellerId);
+      if (!store) return { kind: 'db_error', message: 'Företaget sparades men gick inte att läsa tillbaka.' };
+      if (store.customer_id !== card.id) return { kind: 'reseller_id_taken' };
+    }
   }
-
-  const latest = (await readLatestInvites(deps.session, [input.resellerId])).get(input.resellerId) ?? null;
-  const latestAttempt = latest?.attempt ?? 0;
-
-  if (input.mode === 'new' && latest) {
-    // Samma formulär en gång till: inbjudan finns redan.
-    return {
-      kind: 'invited',
-      created: false,
-      resellerId: input.resellerId,
-      attempt: latest.attempt,
-      delivery: await deliveryOf(deps.admin, latest.idempotency_key),
-    };
-  }
-  if (input.mode === 'resend' && latestAttempt !== input.expectedAttempt) return { kind: 'changed' };
+  if (!store) return { kind: 'store_not_found' };
 
   const payload: ResellerInvitePayload =
     input.mode === 'new'
@@ -356,7 +398,7 @@ export async function invitePortalReseller(deps: InviteDeps, input: InvitePortal
         });
 
   // Steg 2.
-  const attempt = latestAttempt + 1;
+  const attempt = (latest?.attempt ?? 0) + 1;
   const idempotencyKey = resellerInviteIdempotencyKey(input.resellerId, attempt);
   const saved = await deps.admin
     .from('crm_portal_reseller_invites')
@@ -375,36 +417,16 @@ export async function invitePortalReseller(deps: InviteDeps, input: InvitePortal
     if (saved.error.code !== '23505') return { kind: 'db_error', message: `Inbjudan kunde inte sparas: ${saved.error.message}` };
     // Ett samtidigt tryck tog försöksnumret. Ett nytt företag har då sin inbjudan; ett "skicka igen" visar läget.
     if (input.mode === 'resend') return { kind: 'changed' };
-    const winner = (await readLatestInvites(deps.admin, [input.resellerId])).get(input.resellerId);
+    const winner = (await readLatestInvites(deps.admin, [input.resellerId], { withPayload: true })).get(input.resellerId);
     if (!winner) return { kind: 'db_error', message: 'Inbjudan krockade men gick inte att läsa.' };
-    return {
-      kind: 'invited',
-      created: false,
-      resellerId: input.resellerId,
-      attempt: winner.attempt,
-      delivery: await deliveryOf(deps.admin, winner.idempotency_key),
-    };
+    return settleExistingInvite(deps, input.resellerId, winner);
   }
 
-  // Steg 3.
+  // Steg 3 och 4.
   try {
-    await enqueuePortalEvent(deps.admin, {
-      idempotencyKey,
-      path: RESELLERS_PATH,
-      payload,
-      orderingKey: resellerInviteOrderingKey(input.resellerId),
-      supersedeKey: resellerInviteSupersedeKey(input.resellerId),
-    });
+    await queueInvite(deps, input.resellerId, idempotencyKey, payload);
   } catch (e) {
     return { kind: 'db_error', message: e instanceof Error ? e.message : 'Inbjudan kunde inte köas.' };
-  }
-
-  // Steg 4.
-  try {
-    await dispatchPortalOutbox(deps.admin, { env: deps.env, ...INVITE_DISPATCH, now: deps.now, fetchImpl: deps.fetchImpl });
-  } catch (e) {
-    // Händelsen ligger i kön; utskicket görs om av cron och med "Skicka väntande nu".
-    console.error('[portal-invite] första utskicket misslyckades', e instanceof Error ? e.message : e);
   }
 
   return {

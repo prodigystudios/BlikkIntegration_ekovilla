@@ -1265,7 +1265,12 @@ export default function CustomerDetailClient({
               </button>
             </div>
           ) : null}
-          {portalPartnerEnabled && isB2B ? <PortalPartnerCard customerId={customer.id} /> : null}
+          {portalPartnerEnabled && isB2B ? (
+            <PortalPartnerCard
+              customerId={customer.id}
+              cardVersion={`${customer.updated_at}|${customer.fortnox_customer_id ?? ''}|${customer.customer_type}`}
+            />
+          ) : null}
           {historySidebar}
         </div>
       </div>

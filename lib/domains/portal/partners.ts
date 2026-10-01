@@ -43,6 +43,19 @@ export function resellerInviteIdempotencyKey(resellerId: string, attempt: number
 /** CRM:et väljer företagets id: ett uuid med gemener, som `crypto.randomUUID()` ger. */
 export const PORTAL_RESELLER_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
+/**
+ * Ett nytt företags id (uuid v4), valt av formuläret när det öppnas. `getRandomValues` och inte `randomUUID`: den
+ * senare finns bara i en säker miljö (https eller localhost), och formuläret ska gå att öppna också över http på
+ * det lokala nätet.
+ */
+export function newPortalResellerId(): string {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 // ------------------------------------------------------------------------------------------------------- kortet
 
 type CardAddress = { street?: string | null; street_address?: string | null; postal_code?: string | null; city?: string | null } | null;
@@ -115,17 +128,22 @@ function addressOf(address: CardAddress): { street: string; postalCode: string; 
   return street || postalCode || city ? { street, postalCode, city } : null;
 }
 
-/** Formulärets förval ur kortet: besöksadressen, annars fakturaadressen, annars leveransadressen. */
+/**
+ * Formulärets förval ur kortet: besöksadressen, annars fakturaadressen, annars leveransadressen. Kortets e-post bara om
+ * den är EN giltig adress: förvalet går också rakt till portalen, när ett företag utan inbjudan får sin första admin,
+ * och portalen hade nekat hela inbjudan för ett fält som admin aldrig såg.
+ */
 export function defaultInviteStore(card: PartnerCard): InviteStore {
   const address = addressOf(card.visit_address) ?? addressOf(card.invoice_address) ??
     addressOf(card.delivery_address) ?? { street: '', postalCode: '', city: '' };
+  const email = (card.email ?? '').trim().toLowerCase();
   return {
     name: (card.company_name ?? '').trim().slice(0, 200),
     street: address.street.slice(0, 200),
     postalCode: address.postalCode.slice(0, 20),
     city: address.city.slice(0, 100),
     phone: (card.phone ?? '').trim().slice(0, 50),
-    email: (card.email ?? '').trim().toLowerCase().slice(0, 254),
+    email: email.length <= 254 && z.string().email().safeParse(email).success ? email : '',
   };
 }
 
@@ -133,7 +151,7 @@ export function defaultInviteStore(card: PartnerCard): InviteStore {
 
 /** Kroppen i kontraktets flöde 5. Sparas också på inbjudan, så att nästa försök har företagets uppgifter. */
 export const resellerInvitePayloadSchema = z.object({
-  resellerId: z.string().regex(PORTAL_RESELLER_UUID),
+  resellerId: z.string().min(1),
   name: z.string(),
   organizationNumber: z.string(),
   address: z.object({ street: z.string(), postalCode: z.string(), city: z.string() }),
@@ -179,7 +197,7 @@ export function nextResellerInvitePayload(input: {
   admin: InviteAdmin;
 }): ResellerInvitePayload {
   const previous = resellerInvitePayloadSchema.safeParse(input.previous);
-  if (previous.success && previous.data.resellerId === input.store.resellerId) {
+  if (previous.success) {
     return { ...previous.data, ekovillaCustomerNumber: input.customerNumber, admin: { name: input.admin.name, email: input.admin.email } };
   }
   const defaults = defaultInviteStore(input.card);

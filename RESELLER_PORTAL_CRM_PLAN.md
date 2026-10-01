@@ -1996,7 +1996,19 @@ Playwright som admin gav tolv gröna kontroller:
 
 Fejkportalen fick tre signerade anrop med kontraktets exakta fält. Fjorton skydd är mutationsprövade.
 
+**Granskningen** (en runda, tio fynd, åtta lagade):
+- Ett nytt tryck efter att köandet föll köar nu den sparade inbjudan.
+- En kvarlämnad rad får formulärets uppgifter.
+- Kortets e-post följer bara med som förval om den är giltig.
+- Rutan läses om när kortet sparas, till exempel efter "Skapa i Fortnox".
+- Ett fel vid omläsningen visas.
+- Id:t byggs med `getRandomValues`, som finns också utanför https.
+
+Två fynd lagades inte: den fjärde kopian av fetch-hjälparen, och företaget som står kvar efter ett nej (nedan).
+
 **Känt:**
+- Ett företag vars första inbjudan nekas står kvar på kortet och under "Butiker och säljare" tills en inbjudan går
+  fram. Rutan visar varför det nekades och erbjuder "Skicka inbjudan igen". Att kunna ta bort det byggs om det behövs.
 - "Senast hörd av" under "Butiker och säljare" visar inbjudans tid för en butik som ännu inte hört av sig.
 - Portalens mottagare finns inte än. Tills den finns ger varje inbjudan 404 i portalen och ges upp. Kör därför inte
   inbjudan mot test.partner.ekovilla.se förrän portalen byggt flöde 5.

@@ -8,6 +8,7 @@ import {
   describeInviteFailure,
   inviteAdminSchema,
   inviteStoreSchema,
+  newPortalResellerId,
   nextResellerInvitePayload,
   partnerEligibility,
   resellerInviteIdempotencyKey,
@@ -107,6 +108,13 @@ describe('formuläret', () => {
     expect(defaultInviteStore(card({ visit_address: { street_address: 'Gamla vägen 1', city: 'Gävle' } })).street).toBe('Gamla vägen 1');
     expect(defaultInviteStore(card({ visit_address: null, invoice_address: null }))).toMatchObject({ street: '', postalCode: '', city: '' });
   });
+
+  it('kortets e-post bara när den är en giltig adress: förvalet går också rakt till portalen', () => {
+    for (const email of ['info at bygg.se', 'a@b.se; c@d.se', `${'x'.repeat(250)}@b.se`]) {
+      expect(defaultInviteStore(card({ email })).email).toBe('');
+    }
+    expect(defaultInviteStore(card({ email: null })).email).toBe('');
+  });
 });
 
 describe('kroppen till portalen (flöde 5)', () => {
@@ -155,6 +163,9 @@ describe('kroppen till portalen (flöde 5)', () => {
 
   it('id:t är ett uuid med gemener, som crypto.randomUUID ger', () => {
     expect(PORTAL_RESELLER_UUID.test(globalThis.crypto.randomUUID())).toBe(true);
+    const ids = Array.from({ length: 500 }, () => newPortalResellerId());
+    expect(ids.every((id) => PORTAL_RESELLER_UUID.test(id))).toBe(true);
+    expect(new Set(ids).size).toBe(500);
     expect(PORTAL_RESELLER_UUID.test(RESELLER_ID.toUpperCase())).toBe(false);
     expect(PORTAL_RESELLER_UUID.test('res-norrbygg')).toBe(false);
   });
@@ -190,7 +201,7 @@ describe('nästa försök', () => {
       ekovillaCustomerNumber: '1234',
       admin,
     };
-    for (const p of [undefined, null, { trasig: true }, { ...previous, resellerId: globalThis.crypto.randomUUID() }]) {
+    for (const p of [undefined, null, { trasig: true }, { ...previous, ekovillaCustomerNumber: '' }]) {
       expect(nextResellerInvitePayload({ previous: p, store: storeRow, card: card(), customerNumber: '1234', admin })).toEqual(expected);
     }
   });
