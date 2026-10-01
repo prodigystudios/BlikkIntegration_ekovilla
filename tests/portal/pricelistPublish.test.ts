@@ -7,6 +7,9 @@ import {
   readRegisterArticles,
   type PricelistSources,
 } from '@/lib/domains/portal/pricelistPublish';
+import { loadPricelistBatch, type PricelistBatchSources, type PricelistHistory } from '@/lib/domains/portal/pricelistBatchSources';
+import type { PartnerPricelistSources } from '@/lib/domains/portal/partnerPricelistSources';
+import type { PortalStoreCard } from '@/lib/domains/portal/partnerPricelists';
 import { PORTAL_SIGNATURE_HEADER, PORTAL_TIMESTAMP_HEADER, verifyPortalSignature } from '@/lib/domains/portal/signature';
 
 /**
@@ -51,10 +54,15 @@ function fakeDb() {
           if (failure) return { data: null, error: failure };
           const rows = tables[table] ?? (tables[table] = []);
           if (op === 'upsert') {
-            if (rows.some((r) => r[onConflict] === values![onConflict])) return { data: [], error: null };
-            const row = { id: `${table}-${rows.length + 1}`, seq: rows.length + 1, status: 'pending', attempts: 0, ...values };
-            rows.push(row);
-            return { data: [{ ...row }], error: null };
+            // Flera rader i ett anrop, som PostgREST: en rad vars nyckel finns hoppas över.
+            const written: Row[] = [];
+            for (const value of Array.isArray(values) ? values : [values!]) {
+              if (rows.some((r) => r[onConflict] === value[onConflict])) continue;
+              const row = { id: `${table}-${rows.length + 1}`, seq: rows.length + 1, status: 'pending', attempts: 0, ...value };
+              rows.push(row);
+              written.push({ ...row });
+            }
+            return { data: written, error: null };
           }
           const hit = rows.filter((r) => filters.every((f) => f(r)));
           if (op === 'update') hit.forEach((r) => Object.assign(r, values));
@@ -68,7 +76,7 @@ function fakeDb() {
           return { data: sorted.slice(0, limit).map((r) => ({ ...r })), error: null };
         };
         const chain: any = {
-          upsert: (v: Row, o: { onConflict: string }) => ((op = 'upsert'), (values = v), (onConflict = o.onConflict), chain),
+          upsert: (v: Row | Row[], o: { onConflict: string }) => ((op = 'upsert'), (values = v as Row), (onConflict = o.onConflict), chain),
           update: (v: Row) => ((op = 'update'), (values = v), chain),
           select: () => chain,
           order: (c: string, o?: { ascending?: boolean }) => (orders.push([c, o?.ascending !== false]), chain),
@@ -122,10 +130,20 @@ function portalFetch(status = 201) {
   return vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response('ok', { status }));
 }
 
+/** Inga butiker med kundkort och ingen historik: publiceringen är bara lista 160, som före 10b2. */
+const NO_PARTNERS: PartnerPricelistSources = { stores: async () => [], cardListCode: async () => null, listPrices: async () => [] };
+const NO_HISTORY = async (): Promise<PricelistHistory> => ({ everOwn: new Set(), notInPortal: new Set() });
+
+function batchSources(src: PricelistSources, partner: PartnerPricelistSources = NO_PARTNERS, history = NO_HISTORY): PricelistBatchSources {
+  return { pricelist: src, partner, history };
+}
+
 async function publish(opts: {
   db?: ReturnType<typeof fakeDb>;
   env?: Record<string, string | undefined>;
   src?: ReturnType<typeof sources>;
+  partner?: PartnerPricelistSources;
+  history?: () => Promise<PricelistHistory>;
   validFrom?: string;
   expectedHash?: string;
   fetchImpl?: ReturnType<typeof portalFetch>;
@@ -136,7 +154,15 @@ async function publish(opts: {
   const expectedHash = opts.expectedHash ?? (await currentHash(sources()));
   src.calls.length = 0;
   const result = await publishPricelist(
-    { session: db.session, admin: db.admin, env: opts.env ?? ENV, sources: src, today: TODAY, actor: { id: 'user-1', name: 'Admin Adminsson' }, fetchImpl },
+    {
+      session: db.session,
+      admin: db.admin,
+      env: opts.env ?? ENV,
+      loadBatch: () => loadPricelistBatch(batchSources(src, opts.partner, opts.history)),
+      today: TODAY,
+      actor: { id: 'user-1', name: 'Admin Adminsson' },
+      fetchImpl,
+    },
     { validFrom: opts.validFrom ?? '2026-10-01', expectedHash },
   );
   return { result, db, src, fetchImpl };
@@ -219,12 +245,14 @@ describe('publishPricelist: publiceringen', () => {
       ],
     };
 
+    const delivery = expect.objectContaining({ status: 'sent', attempts: 1, lastHttpStatus: 201, lastError: null, nextAttemptAt: null });
     expect(result).toEqual({
       kind: 'published',
       created: true,
       idempotencyKey: key,
       articleCount: 1,
-      delivery: expect.objectContaining({ status: 'sent', attempts: 1, lastHttpStatus: 201, lastError: null, nextAttemptAt: null }),
+      delivery,
+      lists: [{ resellerId: null, code: '160', articleCount: 1, idempotencyKey: key, delivery }],
     });
 
     expect(db.tables.crm_portal_pricelist_publications).toEqual([
@@ -237,6 +265,8 @@ describe('publishPricelist: publiceringen', () => {
         article_count: 1,
         published_by: 'user-1',
         published_by_name: 'Admin Adminsson',
+        reseller_id: null,
+        price_list_code: '160',
       }),
     ]);
     // Vem som skrev vad: publiceringen med sessionen, kön bara med service-rollen.
@@ -378,5 +408,95 @@ describe('publishPricelist: publiceringen', () => {
   it('utkastet byggs om på servern ur källorna, också registret för alla artiklar på listan', async () => {
     const { src } = await publish();
     expect(src.calls).toEqual(expect.arrayContaining(['fields', 'prices', 'register:2410509']));
+  });
+});
+
+// ------------------------------------------------------------------------------------------- butikernas listor (10b2)
+
+describe('publishPricelist: butikernas egna listor (10b2)', () => {
+  const store = (resellerId: string, customerId: string): PortalStoreCard => ({
+    resellerId,
+    storeName: `Butik ${resellerId}`,
+    customerId,
+    customerName: `Kort ${customerId}`,
+    customerNumber: `nr-${customerId}`,
+    cardVisible: true,
+  });
+  // r-b1 och r-b2 på ett kort med lista B, r-160 på ett kort med A. r-old har haft en egen lista men saknar kort nu,
+  // och r-b2:s inbjudan har inte gått fram.
+  const partner = (cards: Record<string, string | Error> = { 'nr-k1': 'B', 'nr-k2': 'A' }): PartnerPricelistSources => ({
+    stores: async () => [store('r-b1', 'k1'), store('r-b2', 'k1'), store('r-160', 'k2')],
+    cardListCode: async (n) => {
+      const v = cards[n];
+      if (v instanceof Error) throw v;
+      return v ?? null;
+    },
+    listPrices: async () => [{ articleNumber: '2410509', fromQuantity: 0, price: 300 }],
+  });
+  const history = async (): Promise<PricelistHistory> => ({ everOwn: new Set(['r-old']), notInPortal: new Set(['r-b2']) });
+
+  async function batchHash(p = partner()) {
+    return (await loadPricelistBatch(batchSources(sources(), p, history))).batch.hash;
+  }
+
+  it('lista 160 och en egen lista per butik, var och en i butikens ordning; en butik som väntar på inbjudan får ingen', async () => {
+    const { result, db, fetchImpl } = await publish({ partner: partner(), history, expectedHash: await batchHash() });
+    const shared = await currentHash(sources());
+    const own = db.tables.crm_portal_pricelist_publications.find((r) => r.reseller_id === 'r-b1')!.content_hash;
+
+    expect(result).toMatchObject({ kind: 'published', created: true });
+    expect(result.kind === 'published' && result.lists.map((l) => [l.resellerId, l.code, l.idempotencyKey])).toEqual([
+      [null, '160', `pricelist-2026-10-01-${shared}-1`],
+      ['r-b1', 'B', `pricelist-2026-10-01-${own}-1-r-b1`],
+      // Har haft en egen lista: får 160 som egen, annars hade portalen räknat på den gamla för alltid.
+      ['r-old', '160', `pricelist-2026-10-01-${shared}-1-r-old`],
+    ]);
+    expect(db.tables.crm_portal_pricelist_publications.map((r) => [r.reseller_id, r.price_list_code, r.sequence])).toEqual([
+      [null, '160', 1],
+      ['r-b1', 'B', 1],
+      ['r-old', '160', 1],
+    ]);
+    expect(db.tables.portal_outbound_events.map((e) => [e.ordering_key, e.payload.resellerId, e.status])).toEqual([
+      ['pricelist', null, 'sent'],
+      ['pricelist:r-b1', 'r-b1', 'sent'],
+      ['pricelist:r-old', 'r-old', 'sent'],
+    ]);
+    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(init!.body as string));
+    expect(bodies.map((b) => [b.resellerId, b.articles[0].unitCost])).toEqual([
+      [null, 342],
+      ['r-b1', 300],
+      ['r-old', 342],
+    ]);
+  });
+
+  it('förhandsvisningens hash är hela publiceringens: lista 160:s egen hash räcker inte när butiker har egna listor', async () => {
+    const { result, db } = await publish({ partner: partner(), history, expectedHash: await currentHash(sources()) });
+    expect(result.kind).toBe('changed');
+    expect(db.log).toEqual([]);
+  });
+
+  it('🧨 ett kort som inte går att läsa: ingenting publiceras, inte heller lista 160', async () => {
+    const broken = partner({ 'nr-k1': new FortnoxNotConnectedError(), 'nr-k2': 'A' });
+    const { result, db, fetchImpl } = await publish({ partner: broken, history, expectedHash: await batchHash(broken) });
+    expect(result).toEqual({ kind: 'blocked', problems: [expect.stringMatching(/^Kundkortet Kort k1: /)] });
+    expect(db.log).toEqual([]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('samma listor igen: ingen ny rad eller händelse; en lista som nekats ger en ny publicering av alla', async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) =>
+      new Response('nej', { status: JSON.parse(init!.body as string).resellerId === 'r-b1' ? 422 : 201 }),
+    );
+    const first = await publish({ partner: partner(), history, expectedHash: await batchHash(), fetchImpl });
+    expect(first.result.kind === 'published' && first.result.lists.map((l) => l.delivery?.status)).toEqual(['sent', 'dead', 'sent']);
+
+    const again = await publish({ db: first.db, partner: partner(), history, expectedHash: await batchHash() });
+    expect(again.result).toMatchObject({ kind: 'published', created: true });
+    expect(first.db.tables.crm_portal_pricelist_publications.map((r) => r.sequence)).toEqual([1, 1, 1, 2, 2, 2]);
+
+    const third = await publish({ db: first.db, partner: partner(), history, expectedHash: await batchHash() });
+    expect(third.result).toMatchObject({ kind: 'published', created: false });
+    expect(first.db.tables.crm_portal_pricelist_publications).toHaveLength(6);
+    expect(third.fetchImpl).not.toHaveBeenCalled();
   });
 });

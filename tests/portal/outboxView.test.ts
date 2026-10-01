@@ -26,6 +26,11 @@ describe('portalOutboxEventKind / Detail', () => {
     expect(portalOutboxEventDetail('job.scheduled', { data: { scheduledFor: null, scheduledUntil: null } })).toBe('Inte längre planerad');
     expect(portalOutboxEventDetail('job.confirmed', { data: { ekovillaOrderNumber: '26' } })).toBe('Order 26');
     expect(portalOutboxEventDetail('pricelist', { validFrom: '2026-10-01' })).toBe('Giltig från 2026-10-01');
+    // En butiks egen lista (10b2): samma sort, i butikens ordning, och detaljen säger att listan är butikens.
+    expect(portalOutboxEventKind('pricelist:res-a', { validFrom: '2026-10-01', resellerId: 'res-a' })).toBe('pricelist');
+    expect(portalOutboxEventDetail('pricelist', { validFrom: '2026-10-01', resellerId: 'res-a' })).toBe(
+      'Giltig från 2026-10-01, butikens egen lista',
+    );
     expect(portalOutboxEventDetail('job.cancelled', { data: {} })).toBeNull();
     expect(portalOutboxEventDetail('job.message', { data: { authorName: 'Anna Berg', body: 'Hej' } })).toBe('Anna Berg');
     // Dokumentets kropp i kön har namnet och en referens, aldrig innehållet (fas 7).

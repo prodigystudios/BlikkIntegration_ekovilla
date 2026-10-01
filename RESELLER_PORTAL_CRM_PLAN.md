@@ -2068,6 +2068,52 @@ Fem lagades inte:
 - **Hashen "i onödan":** fel premiss, `buildPricelistDraft` räknar den alltid, och 10b2 behöver den.
 - **Partnerlistornas hash** används först av 10b2.
 
+### 10b2: resultat (2026-10-01)
+
+**William 2026-10-01:** en ny partner med egen lista får sin lista automatiskt när inbjudan gått fram, med samma
+giltighetsdatum som den senaste publiceringen. Det byggs i 10b3.
+
+**Byggt:**
+- **Migreringen** `20261001102248_portal_pricelist_per_store.sql` lägger till `reseller_id` och `price_list_code` på
+  `crm_portal_pricelist_publications` (båda får vara null). Nyckelns check godtar nu också `…-<löpnummer>-<id>`.
+  - Den är additiv, och en rad utan butik har samma form som förut.
+  - Den prövades två gånger i en transaktion. Fel nyckel, ett id av bara punkter och en butik som saknas i nyckeln nekas.
+- **`pricelistBatch.ts`** (ren) avgör vad en publicering består av:
+  - lista 160;
+  - en egen lista per butik vars kort har en;
+  - lista 160 som egen lista till butiker som haft en egen;
+  - ingen lista till en butik vars inbjudan inte gått fram.
+
+  Ett kort eller en lista som inte går att läsa stoppar allt. Med bara lista 160 är hashen listans egen, så
+  publiceringen är exakt som förut: samma förhandsvisning, nyckel, kropp och ordning. Det gäller prod.
+- **`pricelistBatchSources.ts`** läser allt samtidigt: lista 160, butikernas listor och historiken. Historiken är vilka
+  butiker som haft en egen lista och vilka inbjudningar som gått fram. Publiceringarna och inbjudningarna läses sida för
+  sida, eftersom PostgREST kapar vid 1000 rader.
+- **`publishPricelist`:**
+  - Den får läsningen injicerad (`loadBatch`) och sparar alla rader i ett anrop.
+  - Varje butiks lista köas i butikens ordning, `pricelist:<id>`, så att "Skicka om" fungerar per butik.
+  - Samma listor till samma butiker, med samma datum och utan nej, räknas som samma publicering.
+- **Historiken** visar en publicering per löpnummer, med varje lista och den sämsta statusen.
+- **Sidan:** förhandsvisningen bär hela publiceringens hash. Kortet för butikernas listor visar kopiorna av 160 och
+  butikerna som väntar på sin inbjudan, och publiceringen räknar listorna. Fliken Utskick visar en butiks lista som
+  "Prislistan, butikens egen lista".
+
+**Prövat lokalt mot testbolaget och en fejkportal:**
+- Med kund 13 på B gick tre listor ut: 160 till alla, och B till Bergströms två butiker (650 kr i stället för 560 kr på
+  artikel 16767).
+- Med kund 13 tillbaka på A gick tre listor ut igen. Den här gången var det 160 som egen lista till de två butikerna.
+- Alla anrop var signerade och mottagna, och historiken visade listorna per butik.
+- Tolv skydd är mutationsprövade.
+
+**Lärdom:** en sidladdning föll en gång med "Något gick fel mot Fortnox", direkt efter att ett skript i en annan process
+förnyat den lokala Fortnox-tokenen. Det är samma race mellan processer som under "Fas 5: resultat". Nästa laddning
+fungerade.
+
+### 10b3: listan efter inbjudan (nästa)
+
+När inbjudan till ett företag på ett kort med egen lista har gått fram, köar CRM:et företagets lista med den senaste
+publiceringens datum. Listan köas i inbjudans ordning (`reseller:<id>`), så att den aldrig hinner före företaget.
+
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 
 **Fortfarande öppet inför fas 9** (Williams beslut behövs; se också "Öppna frågor" nedan):
