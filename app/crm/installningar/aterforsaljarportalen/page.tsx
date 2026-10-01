@@ -3,16 +3,22 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { resolvePortalTarget } from '@/lib/domains/portal/config';
 import { PORTAL_ARTICLE_CATEGORY_LABELS } from '@/lib/domains/portal/articleFields';
-import { PRICELIST_SKIP_REASON_LABELS } from '@/lib/domains/portal/pricelist';
+import { PRICELIST_SKIP_REASON_LABELS, buildPricelistDraft } from '@/lib/domains/portal/pricelist';
+import { loadPartnerPricelists, partnerPricelistSources } from '@/lib/domains/portal/partnerPricelistSources';
 import { getPortalSettings, listPortalResellers } from '@/lib/domains/portal/resellers';
 import {
   describeSourceError,
   listPricelistPublications,
-  loadPricelistDraft,
+  loadPricelistInputs,
   pricelistSources,
 } from '@/lib/domains/portal/pricelistPublish';
 import { listPortalOutboxAttention, type PortalOutboxEventKind } from '@/lib/domains/portal/outboxView';
-import ResellerPortalClient, { type PortalIntegrationView, type PricelistPreviewView, type PublicationView } from './ResellerPortalClient';
+import ResellerPortalClient, {
+  type PartnerPricelistsView,
+  type PortalIntegrationView,
+  type PricelistPreviewView,
+  type PublicationView,
+} from './ResellerPortalClient';
 import type { ResellerView } from './ResellersPanel';
 import type { OutboxItemView } from './OutboxPanel';
 
@@ -54,8 +60,8 @@ export default async function AterforsaljarportalenPage() {
 
   const failure = (fallback: string) => (e: unknown) => ({ error: e instanceof Error ? e.message : fallback });
   const [draftResult, publicationsResult, resellersResult, settingsResult, outboxResult] = await Promise.all([
-    loadPricelistDraft(pricelistSources(session)).then(
-      (draft) => ({ ok: true as const, draft }),
+    loadPricelistInputs(pricelistSources(session)).then(
+      (inputs) => ({ ok: true as const, inputs, draft: buildPricelistDraft(inputs) }),
       (e: unknown) => ({ ok: false as const, message: describeSourceError(e) }),
     ),
     listPricelistPublications(session).then(
@@ -120,6 +126,31 @@ export default async function AterforsaljarportalenPage() {
       }
     : { ok: false, message: draftResult.message };
 
+  // Partnerlistorna (10b) räknas på samma läsning som den gemensamma. Utan någon butik med kundkort visas inget, som i
+  // prod före påslaget.
+  let partnerLists: PartnerPricelistsView = null;
+  if (draftResult.ok) {
+    try {
+      const partner = await loadPartnerPricelists(partnerPricelistSources(session), draftResult.inputs, draftResult.draft);
+      const storeNames = (stores: { storeName: string }[]) => stores.map((s) => s.storeName);
+      if (partner.sharedStores.length + partner.lists.length + partner.problems.length > 0) {
+        partnerLists = {
+          ok: true,
+          sharedStores: storeNames(partner.sharedStores),
+          lists: partner.lists.map((l) => ({
+            code: l.code,
+            stores: l.stores.map((s) => ({ name: s.storeName, customerName: s.customerName })),
+            articleCount: l.articles.length,
+            differences: l.differences,
+          })),
+          problems: partner.problems.map((p) => ({ what: p.what, stores: storeNames(p.stores), message: p.message })),
+        };
+      }
+    } catch (e) {
+      partnerLists = { ok: false, message: e instanceof Error ? e.message : 'Butikernas prislistor gick inte att läsa.' };
+    }
+  }
+
   const publications: PublicationView[] | { error: string } = publicationsResult.ok
     ? publicationsResult.publications.map((p) => ({
         id: p.id,
@@ -141,6 +172,7 @@ export default async function AterforsaljarportalenPage() {
       today={stockholmTodayISO()}
       integration={integration}
       preview={preview}
+      partnerLists={partnerLists}
       publications={publications}
       resellers={resellers}
       fallbackUserId={fallbackUserId}

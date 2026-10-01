@@ -61,12 +61,23 @@ export function pricelistSources(session: SupabaseClient): PricelistSources {
   };
 }
 
-/** Utkastet som det ser ut nu: portalfälten, lista 160 ur Fortnox och registret för artiklarna på någon av dem. */
-export async function loadPricelistDraft(sources: PricelistSources): Promise<PricelistDraft> {
+/** Det utkastet byggs av: portalfälten, lista 160 ur Fortnox och registret för artiklarna på någon av dem. */
+export type PricelistInputs = { fields: PortalArticleFields[]; register: RegisterArticle[]; prices: ListPrice[] };
+
+/**
+ * Källorna som de ser ut nu. Partnerlistorna (10b) bygger på samma läsning, så att de och den gemensamma listan
+ * räknas på samma portalfält och samma register.
+ */
+export async function loadPricelistInputs(sources: PricelistSources): Promise<PricelistInputs> {
   const [fields, prices] = await Promise.all([sources.fields(), sources.prices()]);
   const numbers = [...new Set([...fields.map((f) => f.article_number), ...prices.map((p) => p.articleNumber)])].sort();
   const register = await sources.register(numbers);
-  return buildPricelistDraft({ fields, register, prices });
+  return { fields, register, prices };
+}
+
+/** Utkastet som det ser ut nu. */
+export async function loadPricelistDraft(sources: PricelistSources): Promise<PricelistDraft> {
+  return buildPricelistDraft(await loadPricelistInputs(sources));
 }
 
 /** Ett fel från källorna, som en användare kan läsa. Fortnox egna fel översätts; andra får sitt eget meddelande. */

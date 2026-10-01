@@ -2023,6 +2023,36 @@ Två fynd lagades inte: den fjärde kopian av fetch-hjälparen, och företaget s
   - Med den regeln får en butik som gått tillbaka till 160 den gemensamma listan vid nästa publicering.
   - Med dagens regel behåller en sådan butik sin gamla egna lista för alltid. CRM:et skulle då behöva skicka en egen
     kopia av 160 till varje butik som en gång haft en egen lista.
+- **CRM:et väntar inte på portalens svar.** 10b2 skickar en egen lista till varje butik som en gång haft en, med 160:s
+  innehåll om kortet gått tillbaka. Det blir rätt med båda reglerna, så portalens ändring är en förenkling, inget krav.
+- **Två PR:er:**
+  - 10b1 är förhandsvisningen. Den behöver ingen migrering och ändrar inte publiceringen.
+  - 10b2 publicerar alla listor samtidigt, med historik per butik. Den behöver en migrering.
+
+### 10b1: resultat (2026-10-01)
+
+**Byggt:**
+- **`partnerPricelists.ts`** (ren) har reglerna:
+  - kortets lista, där A, 160 eller inget betyder den gemensamma;
+  - 160 med partnerns grundpris ovanpå;
+  - priserna som skiljer sig;
+  - butikerna grupperade per lista.
+- **`partnerPricelistSources.ts`** läser butikerna med kort (sessionen), kortets `PriceList` och partnerlistans priser.
+  - Fortnox läses en gång per kort och en gång per lista.
+  - Ett kort eller en lista som inte går att läsa blir ett synligt problem för just sina butiker.
+- **`getFortnoxCustomerPriceList`** i `lib/domains/fortnox/customers.ts` läser kortet direkt.
+  `loadPricelistInputs` lämnar ut källorna, så att partnerlistorna räknas på samma portalfält och register som 160.
+- **Portalsidan** har kortet "Butikernas egna prislistor" under förhandsvisningen.
+  - Kortet visar varje egen lista med butikerna och priserna som skiljer sig från 160, och vilka butiker som får 160.
+  - Det syns bara när någon butik har ett kundkort, alltså inte i prod före påslaget.
+  - Det säger att bara lista 160 publiceras än.
+
+**Prövat lokalt mot testbolaget:**
+- Testbolaget har listorna A, B och 160, och alla lästa kunder står på A.
+- Kund 13 (Bergströms, två butiker) sattes på B. Kortet visade då lista B med 48 artiklar och sex avvikande priser
+  bland de markerade artiklarna. Kund 13 står på A igen.
+- På mobil rymdes kortet först inte (grid-fällan); det är rättat med `grid-cols-1` och `min-w-0`.
+- Sju skydd är mutationsprövade.
 
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 
