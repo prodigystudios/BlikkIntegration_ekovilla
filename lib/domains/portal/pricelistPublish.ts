@@ -6,7 +6,8 @@ import { listPortalArticleFields } from './articleFieldsStore';
 import { resolvePortalTarget } from './config';
 import { dispatchPortalOutbox, enqueuePortalEvent } from './outbox';
 import { NOT_QUEUED, readOutboxDeliveries, type OutboxDelivery } from './outboxDelivery';
-import type { PricelistBatchItem } from './pricelistBatch';
+import { chunkIds, readAllPages } from '@/lib/domains/planning/pagedRead';
+import { pricelistBatchKey, type PricelistBatchItem } from './pricelistBatch';
 import type { PricelistBatchLoad } from './pricelistBatchSources';
 import {
   PRICELIST_PATH,
@@ -153,49 +154,53 @@ const DELIVERY_SEVERITY: Record<PricelistDelivery['status'], number> = {
   sent: 0,
 };
 
-const KEY_CHUNK = 100;
-
 async function readDeliveriesChunked(client: SupabaseClient, keys: string[]): Promise<Map<string, PricelistDelivery>> {
   const out = new Map<string, PricelistDelivery>();
-  for (let i = 0; i < keys.length; i += KEY_CHUNK) {
-    for (const [key, delivery] of await readOutboxDeliveries(client, keys.slice(i, i + KEY_CHUNK))) out.set(key, delivery);
-  }
+  for (const chunk of chunkIds(keys)) for (const [key, delivery] of await readOutboxDeliveries(client, chunk)) out.set(key, delivery);
   return out;
 }
 
 /**
  * De senaste publiceringarna med varje listas utskick. Sessionsklienten: publiceringarna, kön och butikerna kräver
- * crm.portal.manage. Raderna läses med ett tak; en publicering har en rad per butik med egen lista, några tiotal som mest.
+ * crm.portal.manage. Varje publicering har en rad för lista 160; de `limit` senaste av dem avgör vilka publiceringar som
+ * visas, och sedan läses alla deras rader, sida för sida. Ett tak på rader hade kunnat klippa den äldsta publiceringen
+ * mitt i, utan dess rad för lista 160.
  */
 export async function listPricelistPublications(session: SupabaseClient, limit = 10): Promise<PricelistPublication[]> {
-  const { data, error } = await session
+  const heads = await session
     .from('crm_portal_pricelist_publications')
-    .select(PUBLICATION_SELECT)
+    .select('sequence')
+    .is('reseller_id', null)
     .order('sequence', { ascending: false })
-    .order('created_at', { ascending: false })
-    .limit(500);
+    .limit(limit);
+  if (heads.error) throw new Error(`Publiceringarna gick inte att läsa: ${heads.error.message}`);
+  const sequences = ((heads.data ?? []) as { sequence: number }[]).map((h) => h.sequence);
+  if (sequences.length === 0) return [];
+
+  const { rows, error } = await readAllPages<PublicationRow>((from, to) =>
+    session
+      .from('crm_portal_pricelist_publications')
+      .select(PUBLICATION_SELECT)
+      // Löpnumret är ett heltal: större än det minsta minus ett = från och med det minsta.
+      .gt('sequence', Math.min(...sequences) - 1)
+      .order('sequence', { ascending: false })
+      .order('id')
+      .range(from, to),
+  );
   if (error) throw new Error(`Publiceringarna gick inte att läsa: ${error.message}`);
 
   const groups = new Map<number, PublicationRow[]>();
-  for (const row of (data ?? []) as PublicationRow[]) {
-    if (!groups.has(row.sequence) && groups.size >= limit) break;
-    groups.set(row.sequence, [...(groups.get(row.sequence) ?? []), row]);
-  }
-  const rows = [...groups.values()].flat();
+  for (const row of rows) groups.set(row.sequence, [...(groups.get(row.sequence) ?? []), row]);
   const deliveries = await readDeliveriesChunked(session, rows.map((r) => r.idempotency_key));
 
-  const storeIds = [...new Set(rows.flatMap((r) => (r.reseller_id ? [r.reseller_id] : [])))];
   const names = new Map<string, string>();
-  for (let i = 0; i < storeIds.length; i += KEY_CHUNK) {
-    const stores = await session
-      .from('crm_portal_resellers')
-      .select('reseller_id, name')
-      .in('reseller_id', storeIds.slice(i, i + KEY_CHUNK));
+  for (const ids of chunkIds([...new Set(rows.flatMap((r) => (r.reseller_id ? [r.reseller_id] : [])))])) {
+    const stores = await session.from('crm_portal_resellers').select('reseller_id, name').in('reseller_id', ids);
     if (stores.error) throw new Error(`Butikerna gick inte att läsa: ${stores.error.message}`);
     for (const st of (stores.data ?? []) as { reseller_id: string; name: string }[]) names.set(st.reseller_id, st.name);
   }
 
-  return [...groups.values()].map((group) => {
+  return [...groups.values()].sort((a, b) => b[0].sequence - a[0].sequence).map((group) => {
     // Den gemensamma listan först, sedan butikerna efter namn.
     const lists: PricelistPublicationList[] = group
       .map((r) => ({
@@ -207,9 +212,10 @@ export async function listPricelistPublications(session: SupabaseClient, limit =
         idempotencyKey: r.idempotency_key,
         delivery: deliveries.get(r.idempotency_key) ?? NOT_QUEUED,
       }))
-      .sort((a, b) =>
-        a.resellerId === null ? -1 : b.resellerId === null ? 1 : (a.storeName ?? a.resellerId).localeCompare(b.storeName ?? b.resellerId, 'sv'),
-      );
+      .sort((a, b) => {
+        if (a.resellerId === null || b.resellerId === null) return a.resellerId === b.resellerId ? 0 : a.resellerId === null ? -1 : 1;
+        return (a.storeName ?? a.resellerId).localeCompare(b.storeName ?? b.resellerId, 'sv');
+      });
     const head = group.find((r) => r.reseller_id === null) ?? group[0];
     const shared = lists[0];
     const worst = lists.reduce((w, l) => (DELIVERY_SEVERITY[l.delivery.status] > DELIVERY_SEVERITY[w.delivery.status] ? l : w), shared);
@@ -267,9 +273,10 @@ type LatestRow = { reseller_id: string | null; content_hash: string; valid_from:
 
 /** Är den senaste publiceringen samma publicering: samma datum och samma listor till samma butiker? */
 function sameBatch(rows: LatestRow[], items: PricelistBatchItem[], validFrom: string): boolean {
-  if (rows.length !== items.length) return false;
-  const want = new Set(items.map((i) => `${i.resellerId ?? ''}|${i.hash}`));
-  return rows.every((r) => r.valid_from === validFrom && want.has(`${r.reseller_id ?? ''}|${r.content_hash}`));
+  return (
+    rows.every((r) => r.valid_from === validFrom) &&
+    pricelistBatchKey(rows.map((r) => ({ resellerId: r.reseller_id, hash: r.content_hash }))) === pricelistBatchKey(items)
+  );
 }
 
 /**
@@ -379,6 +386,8 @@ export async function publishPricelist(
     .select('id');
   if (inserted.error) {
     if (inserted.error.code === '42501') return { kind: 'forbidden' };
+    // Löpnumret och butiken är unika: någon annan publicerade med samma löpnummer i samma stund. Ingenting sparades.
+    if (inserted.error.code === '23505') return { kind: 'changed' };
     return { kind: 'db_error', message: inserted.error.message };
   }
   const created = (inserted.data ?? []).length > 0;

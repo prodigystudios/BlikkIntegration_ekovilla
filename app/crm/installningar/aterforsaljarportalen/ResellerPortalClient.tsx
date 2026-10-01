@@ -53,7 +53,6 @@ export type PartnerPricelistsView =
       waiting: string[];
       problems: { key: string; what: string; stores: string[]; message: string }[];
     }
-  | { ok: false; message: string }
   | null;
 
 type DeliveryView = PricelistDelivery & { sentAtLabel: string | null; nextAttemptLabel: string | null };
@@ -200,7 +199,10 @@ export default function ResellerPortalClient({
           : `${what}, men portalen nekade den: ${dead[0].delivery?.lastError ?? 'okänt fel'}`,
       );
     } else if (statuses.includes('not_queued')) toast.error(`${what}, men kunde inte köas. Publicera igen.`);
-    else toast.info(`${what} och väntar i kön.`);
+    else {
+      const lastError = !many ? lists[0]?.delivery?.lastError : null;
+      toast.info(`${what} och väntar i kön.${lastError ? ` Senaste försöket: ${lastError}` : ''}`);
+    }
     router.refresh();
   }
 
@@ -564,11 +566,8 @@ function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<Partn
         sidan laddas.
       </p>
 
-      {!partnerLists.ok ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">{partnerLists.message}</div>
-      ) : (
-        // grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut kortet i mobil.
-        <div className="grid grid-cols-1 gap-3">
+      {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut kortet i mobil. */}
+      <div className="grid grid-cols-1 gap-3">
           {partnerLists.problems.length > 0 && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
               <p className="m-0 font-semibold">
@@ -648,8 +647,7 @@ function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<Partn
               <span className="font-semibold text-slate-700">Lista 160:</span> {storeList(partnerLists.sharedStores)}
             </p>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 }

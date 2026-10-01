@@ -15,8 +15,9 @@
 -- Oförändrad: sessionen har select och insert på hela tabellen (crm.portal.manage, bara i eget namn), och det gäller
 -- de nya kolumnerna också. Inga nya grants behövs; efterkontrollen nedan prövar det.
 --
--- Additiv i effekt: två nya kolumner som får vara null, och en nyckelcheck som godtar allt den gamla godtog (en rad
--- utan butik har samma form som förut). Kan gå till prod före koden. Idempotent, kan köras om.
+-- Additiv i effekt: två nya kolumner som får vara null, en nyckelcheck som godtar allt den gamla godtog (en rad utan
+-- butik har samma form som förut), och ett unikt index på löpnumret per butik. Indexet fäller migreringen om två rader
+-- redan delar löpnummer; den rullas då tillbaka i sin helhet. Kan gå till prod före koden. Idempotent, kan köras om.
 
 alter table public.crm_portal_pricelist_publications add column if not exists reseller_id text;
 alter table public.crm_portal_pricelist_publications add column if not exists price_list_code text;
@@ -41,6 +42,11 @@ alter table public.crm_portal_pricelist_publications
     and idempotency_key = 'pricelist-' || substring(idempotency_key from 11 for 10) || '-' || content_hash || '-' || sequence::text
       || coalesce('-' || reseller_id, '')
   );
+
+-- En publicering har en rad för lista 160 och en per butik. Två samtidiga publiceringar som räknat fram samma löpnummer
+-- hade annars blandats ihop i historiken; nu nekas den andra, och publiceringen svarar "ändrad" (pricelistPublish.ts).
+create unique index if not exists crm_portal_pricelist_publications_sequence_reseller_key
+  on public.crm_portal_pricelist_publications (sequence, coalesce(reseller_id, ''));
 
 -- Vilka butiker som har haft en egen lista: de får en egen lista vid varje publicering, också när kortet gått tillbaka
 -- till 160 (lib/domains/portal/pricelistBatch.ts).

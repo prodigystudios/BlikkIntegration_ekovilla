@@ -50,6 +50,12 @@ describe('prislistorna per butik (SQL)', () => {
     expect(sql).not.toMatch(/drop column|\bgrant\b|\brevoke\b|set not null/);
   });
 
+  it('en publicering har en rad per butik och en för lista 160: löpnumret är unikt per butik', () => {
+    expect(sql).toContain(
+      "create unique index if not exists crm_portal_pricelist_publications_sequence_reseller_key on public.crm_portal_pricelist_publications (sequence, coalesce(reseller_id, ''));",
+    );
+  });
+
   it('inga astrala tecken i filen', () => {
     expect([...RAW].filter((c) => c.codePointAt(0)! > 0xffff)).toEqual([]);
   });

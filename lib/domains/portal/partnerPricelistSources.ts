@@ -176,11 +176,3 @@ export function buildPartnerPricelists(reads: PartnerPricelistReads, inputs: Pri
   }
   return { sharedStores: grouped.shared, lists, problems };
 }
-
-export async function loadPartnerPricelists(
-  sources: PartnerPricelistSources,
-  inputs: PricelistInputs,
-  shared: PricelistDraft,
-): Promise<PartnerPricelistsPreview> {
-  return buildPartnerPricelists(await readPartnerPricelists(sources), inputs, shared);
-}

@@ -47,6 +47,17 @@ export function pricelistBatchHash(items: Pick<PricelistBatchItem, 'resellerId' 
   return createHash('sha256').update(canonicalJson(content), 'utf8').digest('hex');
 }
 
+/**
+ * Vilka listor som går till vilka butiker, som en jämförbar nyckel: samma nyckel = samma publicering (bortsett från
+ * datumet). Används av publiceringen och av sidans "samma innehåll publicerades".
+ */
+export function pricelistBatchKey(lists: Pick<PricelistBatchItem, 'resellerId' | 'hash'>[]): string {
+  return lists
+    .map((l) => `${l.resellerId ?? ''}|${l.hash}`)
+    .sort()
+    .join(',');
+}
+
 export function buildPricelistBatch(input: {
   shared: PricelistDraft;
   partner: PartnerPricelistsPreview;
@@ -66,8 +77,14 @@ export function buildPricelistBatch(input: {
       else own.push({ resellerId: store.resellerId, code: list.code, articles: list.articles, hash: list.hash });
     }
   }
-  // Ett kort som inte gick att läsa stoppar publiceringen; dess butiker får ingen kopia av 160 under tiden.
-  for (const problem of input.partner.problems) for (const store of problem.stores) handled.add(store.resellerId);
+  // Ett kort som inte gick att läsa stoppar publiceringen; dess butiker får ingen kopia av 160 under tiden. Utom för en
+  // butik som väntar på sin inbjudan: den får ingen lista ändå, och ska inte kunna stoppa de andras.
+  const problems: PricelistBatchDraft['problems'] = [];
+  for (const problem of input.partner.problems) {
+    const stores = problem.stores.filter((st) => !input.notInPortal.has(st.resellerId));
+    for (const store of stores) handled.add(store.resellerId);
+    if (stores.length > 0) problems.push({ ...problem, stores });
+  }
 
   for (const resellerId of input.everOwn) {
     if (handled.has(resellerId) || input.notInPortal.has(resellerId)) continue;
@@ -79,5 +96,5 @@ export function buildPricelistBatch(input: {
     { resellerId: null, code: RESELLER_PRICE_LIST_CODE, articles: input.shared.articles, hash: input.shared.hash },
     ...own,
   ];
-  return { items, hash: pricelistBatchHash(items), waiting, problems: input.partner.problems };
+  return { items, hash: pricelistBatchHash(items), waiting, problems };
 }

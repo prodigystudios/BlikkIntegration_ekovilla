@@ -213,6 +213,14 @@ describe('publishPricelist: det som stoppar', () => {
     expect(db.log).toEqual([]);
   });
 
+  it('någon annan publicerade med samma löpnummer i samma stund (23505): ändrad, ingenting köas', async () => {
+    const db = fakeDb();
+    db.failures['session:crm_portal_pricelist_publications:upsert'] = { code: '23505', message: 'duplicate key value' };
+    const { result } = await publish({ db });
+    expect(result.kind).toBe('changed');
+    expect(db.tables.portal_outbound_events).toEqual([]);
+  });
+
   it('RLS nekar publiceringen: ingenting köas', async () => {
     const db = fakeDb();
     db.failures['session:crm_portal_pricelist_publications:upsert'] = { code: '42501', message: 'rls' };

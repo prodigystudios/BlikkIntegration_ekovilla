@@ -2103,7 +2103,21 @@ giltighetsdatum som den senaste publiceringen. Det byggs i 10b3.
   artikel 16767).
 - Med kund 13 tillbaka på A gick tre listor ut igen. Den här gången var det 160 som egen lista till de två butikerna.
 - Alla anrop var signerade och mottagna, och historiken visade listorna per butik.
-- Tolv skydd är mutationsprövade.
+- Femton skydd är mutationsprövade.
+
+**Granskningen** (en runda, tio fynd, nio lagade):
+- En butik som väntar på sin inbjudan kan inte stoppa publiceringen.
+- Publiceringens tak höjdes till 120 s.
+- Historiken läser hela publiceringar och klipper dem aldrig.
+- Löpnumret är unikt per butik (unikt index): en samtidig publicering får "ändrad".
+- En väntande butik står bara under "väntar".
+- Sidindelningen och de uppdelade läsningarna använder `planning/pagedRead.ts`.
+- Nyckeln för "samma publicering" är delad (`pricelistBatchKey`).
+- Den döda koden är borta.
+- Notisen visar det senaste felet igen.
+
+Lagades inte: läsningen av vilka butiker som haft en egen lista växer med publiceringarna. Det blir några tusen små rader
+per år, som sidindelningen klarar. En vy med `distinct` hade krävt nya grants för liten vinst.
 
 **Lärdom:** en sidladdning föll en gång med "Något gick fel mot Fortnox", direkt efter att ett skript i en annan process
 förnyat den lokala Fortnox-tokenen. Det är samma race mellan processer som under "Fas 5: resultat". Nästa laddning

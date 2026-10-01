@@ -9,11 +9,12 @@ import {
   type PortalStoreCard,
 } from '@/lib/domains/portal/partnerPricelists';
 import {
+  buildPartnerPricelists,
   listPortalStoreCards,
-  loadPartnerPricelists,
   readPartnerPricelists,
   type PartnerPricelistSources,
 } from '@/lib/domains/portal/partnerPricelistSources';
+import type { PricelistDraft } from '@/lib/domains/portal/pricelist';
 import { buildPricelistDraft, pricelistContentHash, type ListPrice, type PricelistArticle } from '@/lib/domains/portal/pricelist';
 import type { PricelistInputs } from '@/lib/domains/portal/pricelistPublish';
 import { FortnoxApiError } from '@/lib/domains/fortnox/client';
@@ -120,6 +121,11 @@ const INPUTS: PricelistInputs = {
   prices: [price('1', 100), price('2', 200)],
 };
 const SHARED = buildPricelistDraft(INPUTS);
+
+/** Läsningen och sammanställningen, som sidan och publiceringen gör dem. */
+async function loadPartnerPricelists(s: PartnerPricelistSources, inputs: PricelistInputs, shared: PricelistDraft) {
+  return buildPartnerPricelists(await readPartnerPricelists(s), inputs, shared);
+}
 
 function sources(cards: Record<string, string | null | Error>, lists: Record<string, ListPrice[] | Error>, stores: PortalStoreCard[]) {
   const cardCalls: string[] = [];

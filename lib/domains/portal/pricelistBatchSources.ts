@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { chunkIds, readAllPages } from '@/lib/domains/planning/pagedRead';
 import { readOutboxDeliveries } from './outboxDelivery';
 import {
   buildPartnerPricelists,
@@ -31,21 +32,14 @@ export type PricelistBatchSources = {
   history: () => Promise<PricelistHistory>;
 };
 
-/** PostgREST kapar ett svar vid 1000 rader utan att säga till. Sida för sida, med en unik sista ordning. */
-const PAGE = 1000;
-const KEY_CHUNK = 100;
-
+/** PostgREST kapar vid 1000 rader utan att säga till: sida för sida (pagedRead.ts), och ett fel stoppar. */
 async function readAll<T>(
   page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
   what: string,
 ): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await page(from, from + PAGE - 1);
-    if (error) throw new Error(`${what} gick inte att läsa: ${error.message}`);
-    out.push(...((data ?? []) as T[]));
-    if ((data ?? []).length < PAGE) return out;
-  }
+  const { rows, error } = await readAllPages<T>(page);
+  if (error) throw new Error(`${what} gick inte att läsa: ${error.message}`);
+  return rows;
 }
 
 export async function readPricelistHistory(session: SupabaseClient): Promise<PricelistHistory> {
@@ -73,12 +67,9 @@ export async function readPricelistHistory(session: SupabaseClient): Promise<Pri
   const existing = new Set(stores.map((s) => s.reseller_id));
   const everOwn = new Set(own.map((r) => r.reseller_id).filter((id) => existing.has(id)));
 
-  const keys = invites.map((i) => i.idempotency_key);
   const sent = new Set<string>();
-  for (let i = 0; i < keys.length; i += KEY_CHUNK) {
-    for (const [key, delivery] of await readOutboxDeliveries(session, keys.slice(i, i + KEY_CHUNK))) {
-      if (delivery.status === 'sent') sent.add(key);
-    }
+  for (const keys of chunkIds(invites.map((i) => i.idempotency_key))) {
+    for (const [key, delivery] of await readOutboxDeliveries(session, keys)) if (delivery.status === 'sent') sent.add(key);
   }
   const delivered = new Set(invites.filter((i) => sent.has(i.idempotency_key)).map((i) => i.reseller_id));
   const notInPortal = new Set(invites.map((i) => i.reseller_id).filter((id) => !delivered.has(id)));

@@ -6,8 +6,9 @@ import { publishPricelist } from '@/lib/domains/portal/pricelistPublish';
 import { loadPricelistBatch, pricelistBatchSources } from '@/lib/domains/portal/pricelistBatchSources';
 import { ok, routeError, validationError, requirePermission } from '../../../_shared';
 
-// Läsningen av lista 160 och butikernas listor, sparandet och ett första utskick (högst 15 s mot portalen).
-export const maxDuration = 60;
+// Läsningen av lista 160, butikernas kort och listor i Fortnox (som kan få vänta ut Fortnox gräns), sparandet och ett
+// första utskick (högst 15 s mot portalen).
+export const maxDuration = 120;
 
 const bodySchema = z.object({
   valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ange giltig från som ÅÅÅÅ-MM-DD'),
