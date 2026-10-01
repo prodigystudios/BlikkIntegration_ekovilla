@@ -4,7 +4,8 @@ import { listFortnoxPriceListPrices, RESELLER_PRICE_LIST_CODE } from '@/lib/doma
 import type { PortalArticleFields } from './articleFields';
 import { listPortalArticleFields } from './articleFieldsStore';
 import { resolvePortalTarget } from './config';
-import { dispatchPortalOutbox, enqueuePortalEvent, type OutboxEventStatus } from './outbox';
+import { dispatchPortalOutbox, enqueuePortalEvent } from './outbox';
+import { NOT_QUEUED, readOutboxDeliveries, type OutboxDelivery } from './outboxDelivery';
 import {
   PRICELIST_ORDERING_KEY,
   PRICELIST_PATH,
@@ -78,56 +79,8 @@ export function describeSourceError(e: unknown): string {
 
 // ----------------------------------------------------------------------------------------------------- leveransen
 
-export type PricelistDelivery = {
-  /** `not_queued`: publiceringen finns men händelsen gick inte att köa. En ny publicering köar den. */
-  status: OutboxEventStatus | 'not_queued';
-  attempts: number;
-  lastHttpStatus: number | null;
-  lastError: string | null;
-  sentAt: string | null;
-  /** När en väntande händelse tidigast görs om; "Skicka väntande nu" tar den inte före det. */
-  nextAttemptAt: string | null;
-};
-
-const DELIVERY_SELECT = 'idempotency_key, status, attempts, last_http_status, last_error, sent_at, next_attempt_at';
-
-type DeliveryRow = {
-  idempotency_key: string;
-  status: OutboxEventStatus;
-  attempts: number;
-  last_http_status: number | null;
-  last_error: string | null;
-  sent_at: string | null;
-  next_attempt_at: string | null;
-};
-
-const NOT_QUEUED: PricelistDelivery = {
-  status: 'not_queued',
-  attempts: 0,
-  lastHttpStatus: null,
-  lastError: null,
-  sentAt: null,
-  nextAttemptAt: null,
-};
-
-function toDelivery(row: DeliveryRow | undefined): PricelistDelivery {
-  if (!row) return NOT_QUEUED;
-  return {
-    status: row.status,
-    attempts: row.attempts,
-    lastHttpStatus: row.last_http_status,
-    lastError: row.last_error,
-    sentAt: row.sent_at,
-    nextAttemptAt: row.status === 'pending' ? row.next_attempt_at : null,
-  };
-}
-
-async function readDeliveries(client: SupabaseClient, keys: string[]): Promise<Map<string, PricelistDelivery>> {
-  if (keys.length === 0) return new Map();
-  const { data, error } = await client.from('portal_outbound_events').select(DELIVERY_SELECT).in('idempotency_key', keys);
-  if (error) throw new Error(`Utskickens status gick inte att läsa: ${error.message}`);
-  return new Map(((data ?? []) as DeliveryRow[]).map((row) => [row.idempotency_key, toDelivery(row)]));
-}
+/** Hur det gick för publiceringens händelse i kön. Läses som inbjudningarnas, se outboxDelivery.ts. */
+export type PricelistDelivery = OutboxDelivery;
 
 // ---------------------------------------------------------------------------------------------------- historiken
 
@@ -160,7 +113,7 @@ export async function listPricelistPublications(session: SupabaseClient, limit =
     published_by_name: string | null;
     created_at: string;
   }[];
-  const deliveries = await readDeliveries(session, rows.map((r) => r.idempotency_key));
+  const deliveries = await readOutboxDeliveries(session, rows.map((r) => r.idempotency_key));
   return rows.map((r) => ({
     id: r.id,
     validFrom: r.valid_from,
@@ -253,7 +206,7 @@ export async function publishPricelist(
   if (latest && latest.valid_from === input.validFrom && latest.content_hash === draft.hash) {
     let latestStatus: PricelistDelivery['status'];
     try {
-      latestStatus = ((await readDeliveries(deps.admin, [latest.idempotency_key])).get(latest.idempotency_key) ?? NOT_QUEUED).status;
+      latestStatus = ((await readOutboxDeliveries(deps.admin, [latest.idempotency_key])).get(latest.idempotency_key) ?? NOT_QUEUED).status;
     } catch (e) {
       return { kind: 'db_error', message: e instanceof Error ? e.message : 'Utskickets status gick inte att läsa.' };
     }
@@ -305,7 +258,7 @@ export async function publishPricelist(
 
   let delivery: PricelistDelivery | null = null;
   try {
-    delivery = (await readDeliveries(deps.admin, [idempotencyKey])).get(idempotencyKey) ?? NOT_QUEUED;
+    delivery = (await readOutboxDeliveries(deps.admin, [idempotencyKey])).get(idempotencyKey) ?? NOT_QUEUED;
   } catch (e) {
     console.error('[portal-pricelist] status efter utskicket', e instanceof Error ? e.message : e);
   }

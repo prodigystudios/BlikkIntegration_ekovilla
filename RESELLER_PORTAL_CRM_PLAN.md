@@ -1,6 +1,6 @@
 # Återförsäljarportalen: CRM:ets genomförandeplan och testmiljön
 
-**Status:** fas 0–4b, 6, 7 och 8a byggda, resten plan. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
+**Status:** fas 0–8 byggda och fas 5 klar. 10a byggs 2026-10-01; 10b och fas 9 återstår. Skriven 2026-09-27, läst mot CRM:et @ `2cea02c`, uppdaterad samma
 dag efter genomgången med William.
 **Kontraktet** står i `RESELLER_PORTAL_INTEGRATION_PLAN.md` (kopia av portalens `CRM_INTEGRATION.md`).
 Det här dokumentet säger **hur** CRM:ets halva byggs, i vilken ordning, och hur det testas hela
@@ -1849,8 +1849,8 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
 ## Nästa: partner från CRM:et och egna priser (beslut 2026-10-01)
 
 Fas 5 är klar, och fas 9 (påslaget i prod) väntar på portalens prodprojekt. Under tiden har William svarat på hur fler
-bygghandlare och andra partner ska komma in. **Det här tas i en ny session.** Börja med att läsa det här avsnittet,
-"Fas 5: resultat" och portalens `DOMAIN.md` (aktörer, roller, "en återförsäljare är en butik").
+bygghandlare och andra partner ska komma in. Designfrågorna avgjordes 2026-10-01, se "Besluten" nedan. **10a byggs på
+grenen `feature/reseller-portal-10a`.**
 
 **Williams svar:**
 1. **Inbjudan sker från CRM:et, inte med skript.** En kund flaggas som partner eller återförsäljare, och kundkortet får
@@ -1873,28 +1873,146 @@ bygghandlare och andra partner ska komma in. **Det här tas i en ny session.** B
 - Prislistan är gemensam: lista 160, med `reseller_id` null. Portalens `pricelists.reseller_id` har stöd för en lista
   per butik, men CRM:et publicerar bara den gemensamma.
 
-**Designfrågor att avgöra först:**
-- **Flaggan:** en egen typ på kundkortet, partner eller återförsäljare, eller en kolumn? Kortet måste vara ett
-  företagskort med Fortnox-nummer, annars nekas knappen med en förklaring.
-- **Ett kort kan bli flera företag i portalen,** eftersom en kedja kan dela kundnummer mellan butiker. Knappen behöver
-  då kunna bjuda in fler butiker från samma kort, var och en med eget namn, egen ort och egen admin. Kortet visar vilka
-  butiker som redan finns.
-- **Kontraktet:** ett nytt signerat och idempotent anrop från CRM:et till portalen som skapar företaget, sätter
-  `ekovilla_customer_number` och bjuder in den första admin. Portalen svarar med företagets id. CRM:et skapar då raden i
-  `crm_portal_resellers` direkt, med kundkopplingen, så att det första jobbet aldrig saknar kund. Portalsidan behöver
-  bygga mottagandet. William för det vidare.
-- **Egna priser:** Fortnox kundkort har redan ett prislistefält (`PriceList`). Förslaget är att partnerns lista hämtas
-  därifrån, med lista 160 som standard, och publiceras per butik (`reseller_id`). Det behöver också avgöras hur en
-  prisändring på en partnerlista publiceras: per partner eller alla samtidigt.
-- **Partnertyp:** behöver ett ventilationsföretag butiksbeställningarna, eller bara jobben? Ska typen synas i portalen,
-  till exempel i texter och i guiden?
-- **Kedjevyn** tas senare. Modellen ska inte låsa den: ett kort med flera butiker kan bli grunden.
+**Fakta som styrde besluten** (läst i båda repona 2026-10-01):
+- Kundkortets typ är bara `business` eller `private`, och `customer_type` styr moms och ROT. Partnerskapet kan alltså
+  inte bli en ny kundtyp.
+- Sessionen har **tabellgrant** på `crm_customers`. En ny kolumn där hade varit skrivbar för varje säljare som får ändra
+  kortet, och en kolumnspärr gör ingenting mot en tabellgrant.
+- I portalen är `reseller_users.user_id` primärnyckel: **ett konto hör till exakt ett företag**. Samma e-postadress kan
+  inte bli admin i två butiker.
+- Portalens inbjudan är Supabase `inviteUserByEmail`. Länken gäller i **24 timmar och en gång**, så CRM:et måste kunna
+  skicka inbjudan igen.
+- Portalen läser prislistan med "egen lista före gemensam, sedan senaste datum"
+  (`lib/data/supabase/pricelist.ts`). **En butik som en gång fått en egen lista ser alltså aldrig en nyare gemensam.**
+- CRM:ets utskick går via kön och läser aldrig portalens svarskropp. Bara status och början av ett felsvar sparas.
+- Massynken av kunder läser Fortnox lista över kunder och skriver `price_list` ur den. Att listanropet har `PriceList`
+  är inte bekräftat, så kolumnen kan vara inaktuell.
 
-**Förslag på faser** (små PR:er, som förut):
-- **10a:** flaggan och knappen på kundkortet, kontraktet och mottagandet i portalen, och raden i
-  `crm_portal_resellers` direkt.
-- **10b:** egna prislistor, med partnerns lista ur Fortnox kundkort och publicering per butik.
-- **Senare:** kedjevyn.
+### Besluten (William 2026-10-01)
+
+1. **Samma portal för alla partner.** Typen, Återförsäljare eller Partner, finns bara i CRM:et. Ett
+   ventilationsföretag ser också Beställningar och butikstexterna. Typen kan skickas till portalen senare.
+2. **Partnerns prislista är den som står på kundkortet i Fortnox** (`PriceList`). Står standardlistan `A`, `160` eller
+   inget där gäller lista 160. Priser och lista ändras i Fortnox, som i dag.
+3. **En partnerlista har bara de avvikande priserna.** Övriga artiklar får sitt pris från 160.
+4. **Alla listor publiceras samtidigt.** Publicera-knappen skickar 160 och varje partnerlista med samma giltighetsdatum.
+5. **Bara admin** (`crm.portal.manage`) flaggar och bjuder in, eftersom inbjudan skapar konton i ett annat system.
+   Säljarna kan inte (antagande, inte invänt mot).
+
+### 10a: partnern bjuds in från kundkortet
+
+**I CRM:et:**
+- **Flaggan** är en egen tabell, `crm_portal_partners` (`customer_id` som nyckel och `partner_type` `reseller` eller
+  `partner`). Bara `crm.portal.manage` läser och skriver den. Den ger ingen åtkomst i sig, men knappen kräver den.
+- **Rutan "Återförsäljarportalen"** sitter i kundkortets högerspalt. Den syns bara när integrationen är påslagen i
+  miljön och användaren har `crm.portal.manage`, och bara på företagskort. I prod syns den alltså inte förrän fas 9.
+  - Saknar kortet Fortnox-nummer säger rutan det, och knappen saknas.
+  - Där väljer admin typen och trycker på **"Bjud in till portalen"**. Butikens namn och adress är förifyllda från
+    kortet. Admin fyller i den första adminens namn och e-post.
+  - Rutan listar kortets företag i portalen, både inbjudna och de som kopplats på annat sätt, med inbjudans status och
+    **"Skicka inbjudan igen"**. Ett kort kan bli flera företag, eftersom en kedja kan dela kundnummer mellan butiker.
+- **CRM:et väljer företagets id själv**, ett uuid. Inbjudan sparar först raden i `crm_portal_resellers`, med
+  kundkopplingen som en koppling för hand (`customer_linked_by` och `customer_linked_at`), och sedan inbjudan i
+  `crm_portal_reseller_invites`. Därefter köas anropet och skickas direkt, som publiceringen av prislistan. Det
+  första jobbet har alltså alltid kund, och kön sköter omförsöken.
+- Intaget kopplar redan om butiken efter kundnumret när ett jobb kommer, och låter en koppling för hand stå kvar när
+  numret saknas. Inget i intaget behöver ändras.
+
+**Kontraktet, flöde 5: partner bjuds in (CRM → portal).** William för det vidare till portalen.
+
+`POST /api/ekovilla/resellers`, signerat som de andra anropen.
+`Idempotency-Key: reseller-invite-<resellerId>-<n>`, där `n` är CRM:ets försöksnummer för företaget: 1 för inbjudan,
+2 för första "Skicka inbjudan igen" och så vidare. Kön gör om samma försök med samma nyckel.
+
+```json
+{
+  "resellerId": "6f1c2a9e-4b7d-4f0e-9a51-0c3d2e8b7a64",
+  "name": "Beijer Bygg Gävle",
+  "organizationNumber": "556123-4567",
+  "address": { "street": "Industrigatan 4", "postalCode": "802 22", "city": "Gävle" },
+  "phone": "026-12 34 56",
+  "email": "gavle@exempel.se",
+  "ekovillaCustomerNumber": "1234",
+  "admin": { "name": "Anna Berg", "email": "anna.berg@exempel.se" }
+}
+```
+
+- `resellerId` är ett uuid med gemener, valt av CRM:et. Portalen använder det som företagets `id`.
+- `organizationNumber`, `phone` och `email` gäller företaget och kan vara tomma strängar.
+  `ekovillaCustomerNumber` är alltid satt: CRM:et bjuder bara in kort med Fortnox-nummer.
+- Längder enligt CRM:ets tabell: `name` 1–200 tecken, `street` högst 200, `postalCode` högst 20, `city` högst 100.
+  `admin.name` 1–200 tecken och `admin.email` högst 254.
+
+Svaren har kontraktets kuvert (punkt 18). Framgång är `{ "ok": true, "data": { "resellerId": "…", "admin": "invited" } }`,
+där `admin` är `invited` eller `active`. CRM:et läser inte kroppen vid framgång. Ett fel bär koden i
+`errorDetails.code`.
+- **201**, när företaget inte fanns: portalen skapar företaget med uppgifterna och kundnumret, och bjuder in admin med
+  rollen admin.
+- **200**, när företaget redan finns (ett omförsök, eller "Skicka inbjudan igen"). Företagets uppgifter och kundnummer
+  ändras inte, eftersom butiken kan ha ändrat dem under Inställningar. För admin gäller:
+  - en användare i företaget som inte valt lösenord får inbjudan igen;
+  - en användare i företaget som redan valt lösenord får ingenting;
+  - en adress som inte finns i portalen bjuds in som admin i företaget.
+- **409 med koden `admin_email_taken`**, när adressen hör till ett konto i ett **annat** företag. Portalen prövar det
+  innan den skapar något. CRM:et visar felet, och admin kan försöka igen med en annan adress.
+- **422** för en ogiltig kropp. Texten i `error` visas för admin på kundkortet.
+
+Allt annat följer kontraktet: 5xx görs om, övriga 4xx ges upp och visas på kortet.
+
+### 10a: resultat (2026-10-01)
+
+**Byggt:**
+- **Migreringen** `20261001083346_portal_partners.sql` skapar två tabeller:
+  - `crm_portal_partners`, flaggan. Sessionen läser och skriver den bakom RLS (`crm.portal.manage`, bara i eget namn).
+  - `crm_portal_reseller_invites`, försöken med kroppen som skickades. Sessionen läser, service_role skriver.
+
+  Den är additiv och kan gå till prod före koden. Den prövades två gånger i en transaktion och sedan per roll:
+  säljaren ser och skriver ingenting, admin bara i eget namn, och sessionen kan inte skriva inbjudningar.
+- **Domänen:** `partners.ts` är ren (reglerna, kroppen och portalens nej i klartext). `partnersStore.ts` har rutan,
+  flaggan och inbjudan. Läsningen av en händelses status i kön är utbruten till `outboxDelivery.ts`, som publiceringen
+  av prislistan också använder.
+- **Routerna:** `GET` och `PUT /api/crm/portal/partners/[customerId]`, och `POST …/invites` med `mode` `new` eller
+  `resend`.
+- **Rutan** `app/crm/kunder/PortalPartnerCard.tsx` i kundkortets högerspalt. Sidan visar den bara för
+  `crm.portal.manage` och bara när integrationen är påslagen.
+  - Den syns alltså inte i prod förrän fas 9.
+  - Fliken Utskick visar en inbjudan som "Inbjudan", med företaget och adminen.
+
+**Så beter sig inbjudan:**
+- Ett dubbelklick blir samma inbjudan, eftersom formuläret väljer företagets id när det öppnas.
+- "Skicka igen" kräver det försök admin såg. Ett försök som fortfarande väntar ersätts av det nya.
+- Ett nekat första försök följs av ett nytt försök som skapar företaget, med förra försökets uppgifter.
+- Ett företag som kom till portalen på annat sätt (skript, jobb) får "Bjud in en admin", byggt ur butikens rad och
+  kortet.
+
+**Prövat lokalt mot en fejkportal** (signaturen prövad som portalen gör, 409 `admin_email_taken` för en viss adress):
+Playwright som admin gav tolv gröna kontroller:
+- flaggan, och formuläret förifyllt ur kortet;
+- inbjudan skickad, med adressen i gemener;
+- portalens nej på kortet, och "Skicka igen" med en ny adress;
+- ett kort med företag från jobb, och ett kort utan kundnummer;
+- fliken Utskick;
+- säljaren ser ingen ruta.
+
+Fejkportalen fick tre signerade anrop med kontraktets exakta fält. Fjorton skydd är mutationsprövade.
+
+**Känt:**
+- "Senast hörd av" under "Butiker och säljare" visar inbjudans tid för en butik som ännu inte hört av sig.
+- Portalens mottagare finns inte än. Tills den finns ger varje inbjudan 404 i portalen och ges upp. Kör därför inte
+  inbjudan mot test.partner.ekovilla.se förrän portalen byggt flöde 5.
+
+### 10b: egna prislistor
+
+- Publiceringen läser kortets `PriceList` **direkt från Fortnox** (`GET /customers/{nummer}`) för varje kort som har
+  butiker i portalen, inte ur CRM:ets kolumn.
+- Ett kort med en egen lista ger varje butik på kortet en egen lista: 160 med kortets avvikande priser ovanpå. Allt
+  publiceras i ett svep med samma datum. Faller en lista att läsa publiceras ingenting.
+- **Förslag till portalen inför 10b:** välj den senaste listan efter datum, och vid samma datum egen före gemensam.
+  - Med den regeln får en butik som gått tillbaka till 160 den gemensamma listan vid nästa publicering.
+  - Med dagens regel behåller en sådan butik sin gamla egna lista för alltid. CRM:et skulle då behöva skicka en egen
+    kopia av 160 till varje butik som en gång haft en egen lista.
+
+**Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 
 **Fortfarande öppet inför fas 9** (Williams beslut behövs; se också "Öppna frågor" nedan):
 - vem är reserven i prod?

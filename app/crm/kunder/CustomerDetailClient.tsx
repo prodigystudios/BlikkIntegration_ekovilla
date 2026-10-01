@@ -7,6 +7,7 @@ import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import CollapsibleCardSection from './CollapsibleCardSection';
+import PortalPartnerCard from './PortalPartnerCard';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
@@ -244,7 +245,16 @@ function AddressEditColumn({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CustomerDetailClient({ customerId, fortnoxConnected }: { customerId: string; fortnoxConnected: boolean }) {
+export default function CustomerDetailClient({
+  customerId,
+  fortnoxConnected,
+  portalPartnerEnabled = false,
+}: {
+  customerId: string;
+  fortnoxConnected: boolean;
+  /** Partnerrutan: crm.portal.manage och påslagen integration, avgjort på servern (kunder/[id]/page.tsx). */
+  portalPartnerEnabled?: boolean;
+}) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // When opened from the offer or a work order, go back there. Only same-origin CRM paths are
@@ -1255,6 +1265,7 @@ export default function CustomerDetailClient({ customerId, fortnoxConnected }: {
               </button>
             </div>
           ) : null}
+          {portalPartnerEnabled && isB2B ? <PortalPartnerCard customerId={customer.id} /> : null}
           {historySidebar}
         </div>
       </div>
