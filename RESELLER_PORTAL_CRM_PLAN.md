@@ -1846,6 +1846,63 @@ Tas med till portalen och ändras i båda kopiorna av kontraktet.
     kvar, men `scheduled_for` och `scheduled_until` byts. CRM:et skickar ingen `job.scheduled` efter `job.completed`
     (rättelse 22), så bara ett uppspelat anrop kan göra det. Förslag: portalen ignorerar datumen när jobbet är utfört.
 
+## Nästa: partner från CRM:et och egna priser (beslut 2026-10-01)
+
+Fas 5 är klar, och fas 9 (påslaget i prod) väntar på portalens prodprojekt. Under tiden har William svarat på hur fler
+bygghandlare och andra partner ska komma in. **Det här tas i en ny session.** Börja med att läsa det här avsnittet,
+"Fas 5: resultat" och portalens `DOMAIN.md` (aktörer, roller, "en återförsäljare är en butik").
+
+**Williams svar:**
+1. **Inbjudan sker från CRM:et, inte med skript.** En kund flaggas som partner eller återförsäljare, och kundkortet får
+   knappen **"Bjud in till portalen"**. Det hör hemma där, eftersom en partner måste vara kund hos Ekovilla med
+   kundnummer.
+2. **En gemensam vy för en kedja**, till exempel Beijer i flera län, kan behövas. Den tas **senare**.
+3. **Egna priser per partner: ja.** En partner kan vara en återförsäljare, men också till exempel ett
+   ventilationsföretag som säljer in isoleringen åt sina kunder när de gör ventilationsarbete.
+
+**Läget i dag** (portalen och CRM:et):
+- Varje butik är ett eget företag i portalen, med egna användare, offerter, jobb, beställningar, logga, villkor och
+  påslag. Portalens RLS (`private.current_reseller_id()`) spärrar allt till det egna företaget.
+- Ett konto hör till exakt en butik. Butiker i samma kedja är separata företag, även när de delar kundnummer (beslut
+  2026-09-26).
+- Ett nytt företag och dess första admin skapas i dag med skript (`scripts/testmiljo.mjs` i portalen). Det finns ingen
+  yta för det. `resellers.ekovilla_customer_number` sätts bara av Ekovilla. Därefter bjuder butikens admin in sina
+  kollegor under Inställningar.
+- I CRM:et dyker en butik upp under "Butiker och säljare" först när den skickar sitt första jobb. Saknar den
+  kundnummer måste den kopplas för hand (3c), annars skapas ingen Fortnox-order. Det såg vi i testmiljön 2026-09-30.
+- Prislistan är gemensam: lista 160, med `reseller_id` null. Portalens `pricelists.reseller_id` har stöd för en lista
+  per butik, men CRM:et publicerar bara den gemensamma.
+
+**Designfrågor att avgöra först:**
+- **Flaggan:** en egen typ på kundkortet, partner eller återförsäljare, eller en kolumn? Kortet måste vara ett
+  företagskort med Fortnox-nummer, annars nekas knappen med en förklaring.
+- **Ett kort kan bli flera företag i portalen,** eftersom en kedja kan dela kundnummer mellan butiker. Knappen behöver
+  då kunna bjuda in fler butiker från samma kort, var och en med eget namn, egen ort och egen admin. Kortet visar vilka
+  butiker som redan finns.
+- **Kontraktet:** ett nytt signerat och idempotent anrop från CRM:et till portalen som skapar företaget, sätter
+  `ekovilla_customer_number` och bjuder in den första admin. Portalen svarar med företagets id. CRM:et skapar då raden i
+  `crm_portal_resellers` direkt, med kundkopplingen, så att det första jobbet aldrig saknar kund. Portalsidan behöver
+  bygga mottagandet. William för det vidare.
+- **Egna priser:** Fortnox kundkort har redan ett prislistefält (`PriceList`). Förslaget är att partnerns lista hämtas
+  därifrån, med lista 160 som standard, och publiceras per butik (`reseller_id`). Det behöver också avgöras hur en
+  prisändring på en partnerlista publiceras: per partner eller alla samtidigt.
+- **Partnertyp:** behöver ett ventilationsföretag butiksbeställningarna, eller bara jobben? Ska typen synas i portalen,
+  till exempel i texter och i guiden?
+- **Kedjevyn** tas senare. Modellen ska inte låsa den: ett kort med flera butiker kan bli grunden.
+
+**Förslag på faser** (små PR:er, som förut):
+- **10a:** flaggan och knappen på kundkortet, kontraktet och mottagandet i portalen, och raden i
+  `crm_portal_resellers` direkt.
+- **10b:** egna prislistor, med partnerns lista ur Fortnox kundkort och publicering per butik.
+- **Senare:** kedjevyn.
+
+**Fortfarande öppet inför fas 9** (Williams beslut behövs; se också "Öppna frågor" nedan):
+- vem är reserven i prod?
+- ska köparens momsnummer krävas vid omvänd moms (hela CRM:et)?
+- fakturatexten vid 0 % till en butik med vanlig moms på kortet;
+- vem planeringens datumbekräftelse går till;
+- menyposten "Butiksbeställningar" vid påslaget.
+
 ## Öppna frågor
 
 Ingen av dem stoppar fas 0–7.
