@@ -1,4 +1,5 @@
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { waitUntil } from '@vercel/functions';
+import { getSupabaseAdminUncached } from '@/lib/supabase/server';
 import type { FortnoxTokenResponse } from './types';
 
 export const FORTNOX_API_BASE = 'https://api.fortnox.se/3';
@@ -42,6 +43,19 @@ export class FortnoxApiError extends Error {
   ) {
     super(message);
     this.name = 'FortnoxApiError';
+  }
+}
+
+// Fortnox nekar refresh-tokenen (`{"error":"invalid_grant"}`). Uppmätt mot testbolaget 2026-10-01: en refresh-token
+// går att använda EN gång — återanvänd nekas direkt, men den token den första förnyelsen gav lever vidare.
+class FortnoxRefreshTokenRejectedError extends FortnoxApiError {}
+
+// Refresh-tokenen nekas och ingen annan instans har sparat en ny: kedjan är bruten och bara en ny koppling hjälper.
+// Ärver FortnoxApiError så att varje ställe som redan fångar Fortnox-fel fortsätter göra det.
+export class FortnoxConnectionExpiredError extends FortnoxApiError {
+  constructor(cause: FortnoxApiError) {
+    super(cause.status, `Fortnox-kopplingen har slutat gälla: ${cause.message}`);
+    this.name = 'FortnoxConnectionExpiredError';
   }
 }
 
@@ -135,6 +149,10 @@ export function friendlyFortnoxMessage(e: unknown): string {
   if (e instanceof FortnoxPushInProgressError) {
     return e.message;
   }
+  // Rutan i inställningarna säger fortfarande "Kopplad" (raden finns kvar), så beskedet måste säga vad som hjälper.
+  if (e instanceof FortnoxConnectionExpiredError) {
+    return 'Fortnox-kopplingen har slutat gälla. Be en administratör koppla från och ansluta Fortnox igen i CRM-inställningarna.';
+  }
   if (e instanceof FortnoxApiError) {
     if (e.fortnoxCode && FRIENDLY_FORTNOX_MESSAGES[e.fortnoxCode]) {
       return FRIENDLY_FORTNOX_MESSAGES[e.fortnoxCode];
@@ -166,6 +184,8 @@ export async function refreshAccessToken(refreshToken: string): Promise<FortnoxT
 
   const res = await fetch(FORTNOX_TOKEN_URL, {
     method: 'POST',
+    // Aldrig ur Next datacache: ett cachat svar ger en refresh-token som Fortnox redan har förbrukat.
+    cache: 'no-store',
     headers: {
       Authorization: basicAuthHeader(clientId, clientSecret),
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -178,72 +198,214 @@ export async function refreshAccessToken(refreshToken: string): Promise<FortnoxT
 
   if (!res.ok) {
     const text = await res.text();
-    throw new FortnoxApiError(res.status, `Token refresh misslyckades: ${text}`);
+    const message = `Token refresh misslyckades: ${text}`;
+    if (res.status === 400 && parseOAuthError(text) === 'invalid_grant') {
+      throw new FortnoxRefreshTokenRejectedError(res.status, message);
+    }
+    throw new FortnoxApiError(res.status, message);
   }
 
   return res.json() as Promise<FortnoxTokenResponse>;
 }
 
+// Token-ändpunktens fel är OAuth:s, inte Fortnox ErrorInformation: `{"error":"invalid_grant","error_description":…}`.
+function parseOAuthError(text: string): string | undefined {
+  try {
+    const error = (JSON.parse(text) as { error?: unknown })?.error;
+    return typeof error === 'string' ? error : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 
-// Single-flight guard: when a refresh is in progress, concurrent callers await
-// the same promise instead of each firing their own. Fortnox rotates the
-// refresh_token on every refresh and invalidates the previous one, so two
-// parallel refreshes would leave the second with an invalid_grant and break the
-// token chain. Scoped per process – the dominant race source (batched sync GETs)
-// runs in one process, so this fully covers it.
-let inflightRefresh: Promise<string> | null = null;
+// Bara en instans åt gången får förnya. Uppmätt mot testbolaget 2026-10-01: två förnyelser med samma refresh-token i
+// samma ögonblick får BÅDA nya tokens, men bara det senast utdelade paret gäller — sparas det andra är kedjan bruten.
+// Ett anspråk äldre än så här räknas som övergivet (instansen dog): förnyelsen tar under en sekund, sparandet högst ~5 s.
+const REFRESH_CLAIM_STALE_MS = 15_000;
+// Hur ofta den som väntar på någon annans förnyelse läser om raden, och hur länge den väntar som mest.
+const REFRESH_CLAIM_POLL_MS = 250;
+const REFRESH_CLAIM_MAX_WAIT_MS = 30_000;
+// Hur länge en nekad förnyelse väntar på att en annan instans sparar sin nya token (en instans utan låset, under en
+// deploy, eller en som tog över ett anspråk för tidigt). Fortnox nekar den återanvända tokenen fortare (~0,2 s) än den
+// första förnyelsen hinner svara (~0,7 s), så den andra måste vänta in sparandet.
+const REJECTED_REFRESH_REREAD_DELAYS_MS = [250, 500, 1000, 2000];
+// Sparandet av en förnyad token görs om: Fortnox har redan förbrukat den gamla, så ett tappat sparande bryter kedjan.
+const PERSIST_RETRY_DELAYS_MS = [250, 1000, 3000];
 
-// Refresh the access token and persist the rotated tokens. Re-reads the row
-// first and re-checks expiry: a caller queued behind the lock may find the token
-// already refreshed by the call it waited on, in which case it must NOT refresh
-// again with the now-rotated refresh_token.
-async function refreshAndPersist(): Promise<string> {
-  const supabase = getSupabaseAdmin();
+type TokenRow = { access_token: string; refresh_token: string; expires_at: string };
+type TokenStore = ReturnType<typeof getSupabaseAdminUncached>;
+
+function isFresh(row: Pick<TokenRow, 'expires_at'>): boolean {
+  return Date.now() + TOKEN_EXPIRY_BUFFER_MS < new Date(row.expires_at).getTime();
+}
+
+async function readTokenRow(supabase: TokenStore): Promise<TokenRow | null> {
   const { data } = await supabase
     .from('fortnox_integrations')
     .select('access_token, refresh_token, expires_at')
     .eq('provider', 'fortnox')
     .maybeSingle();
+  return data;
+}
 
-  if (!data) throw new FortnoxNotConnectedError();
+// Single-flight guard: when a refresh is in progress, concurrent callers await
+// the same promise instead of each firing their own. Scoped per process; across
+// instances the claim on the row (refresh_claimed_at) does the same job.
+let inflightRefresh: Promise<string> | null = null;
 
-  const expiresAt = new Date(data.expires_at).getTime();
-  if (Date.now() + TOKEN_EXPIRY_BUFFER_MS < expiresAt) {
-    return data.access_token;
+// Refresh the access token and persist the rotated tokens. Re-reads the row
+// first and re-checks expiry: a caller queued behind the lock may find the token
+// already refreshed by the call it waited on, in which case it must NOT refresh
+// again with the now-rotated refresh_token. Another instance holding the claim is
+// waited out the same way: its saved token makes the row fresh.
+async function refreshAndPersist(): Promise<string> {
+  const supabase = getSupabaseAdminUncached();
+  const giveUpAt = Date.now() + REFRESH_CLAIM_MAX_WAIT_MS;
+
+  for (;;) {
+    const row = await readTokenRow(supabase);
+    if (!row) throw new FortnoxNotConnectedError();
+    if (isFresh(row)) return row.access_token;
+
+    const claim = await claimRefresh(supabase, row.refresh_token);
+    if (claim !== 'held') return refreshWith(supabase, row.refresh_token, claim === 'claimed');
+
+    if (Date.now() >= giveUpAt) {
+      console.error('[fortnox-token] en annan instans håller förnyelsen och blir inte klar');
+      throw new FortnoxApiError(503, 'Fortnox-tokenen förnyas av en annan instans som inte blir klar');
+    }
+    await sleep(REFRESH_CLAIM_POLL_MS);
+  }
+}
+
+type RefreshClaim = 'claimed' | 'held' | 'unavailable';
+
+// Anspråket på att förnya med `refreshToken`, som claimFortnoxPush: två villkorade UPDATE, eftersom PostgREST inte godtar
+// .or() på en ändring. Av två samtidiga vinner en; den andra träffar 0 rader. 0 rader betyder också att tokenen redan har
+// bytts — läs om. Ett fel (kolumnen finns inte än) förnyar som förut, utan lås: att stänga ute Fortnox vore värre.
+async function claimRefresh(supabase: TokenStore, refreshToken: string): Promise<RefreshClaim> {
+  const stamp = { refresh_claimed_at: new Date().toISOString() };
+  const staleBefore = new Date(Date.now() - REFRESH_CLAIM_STALE_MS).toISOString();
+
+  const free = await supabase
+    .from('fortnox_integrations')
+    .update(stamp)
+    .eq('provider', 'fortnox')
+    .eq('refresh_token', refreshToken)
+    .is('refresh_claimed_at', null)
+    .select('id');
+  if (free.error) return claimUnavailable(free.error);
+  if (free.data && free.data.length > 0) return 'claimed';
+
+  const abandoned = await supabase
+    .from('fortnox_integrations')
+    .update(stamp)
+    .eq('provider', 'fortnox')
+    .eq('refresh_token', refreshToken)
+    .lt('refresh_claimed_at', staleBefore)
+    .select('id');
+  if (abandoned.error) return claimUnavailable(abandoned.error);
+  return abandoned.data && abandoned.data.length > 0 ? 'claimed' : 'held';
+}
+
+function claimUnavailable(error: { message: string }): RefreshClaim {
+  console.error('[fortnox-token] anspråket gick inte att ta; förnyar utan lås', error.message);
+  return 'unavailable';
+}
+
+async function refreshWith(supabase: TokenStore, refreshToken: string, claimed: boolean): Promise<string> {
+  let refreshed: FortnoxTokenResponse;
+  try {
+    refreshed = await refreshAccessToken(refreshToken);
+  } catch (e) {
+    // De som väntar ska inte behöva vänta ut anspråket. Ett fel här är ofarligt: anspråket blir övergivet ändå.
+    if (claimed) {
+      await supabase
+        .from('fortnox_integrations')
+        .update({ refresh_claimed_at: null })
+        .eq('provider', 'fortnox')
+        .eq('refresh_token', refreshToken)
+        .select('id');
+    }
+    if (!(e instanceof FortnoxRefreshTokenRejectedError)) {
+      console.error('[fortnox-token] förnyelsen misslyckades', e instanceof Error ? e.message : e);
+      throw e;
+    }
+    return adoptConcurrentRefresh(supabase, refreshToken, e);
   }
 
-  const refreshed = await refreshAccessToken(data.refresh_token);
-  const newExpiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
-
-  await supabase
-    .from('fortnox_integrations')
-    .update({
-      access_token: refreshed.access_token,
-      refresh_token: refreshed.refresh_token,
-      expires_at: newExpiresAt,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('provider', 'fortnox');
-
+  await persistRefreshedTokens(supabase, refreshToken, refreshed);
   return refreshed.access_token;
+}
+
+// Fortnox nekade tokenen vi läste: en annan instans förnyade med samma token en stund före oss (utan anspråket — under en
+// deploy, eller efter att vi tog över ett anspråk den fortfarande höll) och sparar just nu sin nya. Byts raden medan vi
+// väntar är kedjan hel — använd den. Annars är den bruten.
+async function adoptConcurrentRefresh(
+  supabase: TokenStore,
+  rejectedRefreshToken: string,
+  cause: FortnoxRefreshTokenRejectedError,
+): Promise<string> {
+  for (const delay of REJECTED_REFRESH_REREAD_DELAYS_MS) {
+    await sleep(delay);
+    const row = await readTokenRow(supabase);
+    if (!row) throw new FortnoxNotConnectedError();
+    if (row.refresh_token !== rejectedRefreshToken) {
+      console.warn('[fortnox-token] refresh-tokenen var redan förbrukad; använder den som en annan instans sparade');
+      return row.access_token;
+    }
+  }
+  console.error('[fortnox-token] refresh-tokenen nekas och ingen ny har sparats: kopplingen måste göras om', cause.message);
+  throw new FortnoxConnectionExpiredError(cause);
+}
+
+// Sparar bara över den token vi förnyade med: har någon kopplat om Fortnox under tiden ligger den nya kopplingen kvar.
+// Misslyckas sparandet trots omförsöken gäller access-tokenen ändå i en timme, men nästa förnyelse kommer att nekas.
+// Rör inte refresh_claimed_at: anspråket gäller bara den gamla refresh-tokenen, och före migreringen hade en okänd
+// kolumn fällt sparandet — och med det kedjan.
+async function persistRefreshedTokens(
+  supabase: TokenStore,
+  usedRefreshToken: string,
+  refreshed: FortnoxTokenResponse,
+): Promise<void> {
+  const expiresAt = new Date(Date.now() + refreshed.expires_in * 1000).toISOString();
+  for (let attempt = 0; ; attempt++) {
+    const { data, error } = await supabase
+      .from('fortnox_integrations')
+      .update({
+        access_token: refreshed.access_token,
+        refresh_token: refreshed.refresh_token,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('provider', 'fortnox')
+      .eq('refresh_token', usedRefreshToken)
+      .select('id');
+
+    if (!error) {
+      if (data && data.length > 0) {
+        console.info('[fortnox-token] förnyad, gäller till', expiresAt);
+      } else {
+        console.warn('[fortnox-token] raden byttes under förnyelsen (ny koppling?); den ligger kvar orörd');
+      }
+      return;
+    }
+    if (attempt >= PERSIST_RETRY_DELAYS_MS.length) {
+      console.error('[fortnox-token] den förnyade tokenen kunde inte sparas: nästa förnyelse kommer att nekas', error.message);
+      return;
+    }
+    await sleep(PERSIST_RETRY_DELAYS_MS[attempt]);
+  }
 }
 
 // Returns a valid access token, refreshing if needed (5-minute buffer).
 async function getValidAccessToken(): Promise<string> {
-  const supabase = getSupabaseAdmin();
-  const { data } = await supabase
-    .from('fortnox_integrations')
-    .select('access_token, expires_at')
-    .eq('provider', 'fortnox')
-    .maybeSingle();
+  const row = await readTokenRow(getSupabaseAdminUncached());
 
-  if (!data) throw new FortnoxNotConnectedError();
-
-  const expiresAt = new Date(data.expires_at).getTime();
-  if (Date.now() + TOKEN_EXPIRY_BUFFER_MS < expiresAt) {
-    return data.access_token;
-  }
+  if (!row) throw new FortnoxNotConnectedError();
+  if (isFresh(row)) return row.access_token;
 
   // Near/at expiry: collapse all concurrent refreshes into one in-flight call.
   // Cleared on settle so the next expiry cycle (or a retry after failure) starts fresh.
@@ -251,6 +413,9 @@ async function getValidAccessToken(): Promise<string> {
     inflightRefresh = refreshAndPersist().finally(() => {
       inflightRefresh = null;
     });
+    // Fortnox roterar tokenen innan vi sparat den nya. Har svaret redan gått (en anropare som inte väntade in
+    // förnyelsen) får Vercel inte frysa instansen mittemellan. Utanför Vercel gör anropet ingenting.
+    waitUntil(inflightRefresh.catch(() => {}));
   }
   return inflightRefresh;
 }

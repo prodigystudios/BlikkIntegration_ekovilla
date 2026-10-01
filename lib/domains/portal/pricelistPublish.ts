@@ -318,6 +318,7 @@ export async function publishPricelist(
   try {
     load = await deps.loadBatch();
   } catch (e) {
+    console.error('[portal-pricelist] listorna gick inte att läsa inför publiceringen', e instanceof Error ? e.message : e);
     return { kind: 'source_error', message: describeSourceError(e) };
   }
   const { shared, batch } = load;
