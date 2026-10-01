@@ -2052,7 +2052,21 @@ Två fynd lagades inte: den fjärde kopian av fetch-hjälparen, och företaget s
 - Kund 13 (Bergströms, två butiker) sattes på B. Kortet visade då lista B med 48 artiklar och sex avvikande priser
   bland de markerade artiklarna. Kund 13 står på A igen.
 - På mobil rymdes kortet först inte (grid-fällan); det är rättat med `grid-cols-1` och `min-w-0`.
-- Sju skydd är mutationsprövade.
+- Nio skydd är mutationsprövade.
+
+**Granskningen** (en runda, nio fynd, fyra lagade):
+- Ett kundkort som sessionen inte ser blir ett problem, aldrig tyst lista 160.
+- Fortnox läses parallellt med lista 160, högst fyra anrop åt gången: `readPartnerPricelists` läser,
+  `buildPartnerPricelists` är ren.
+- Problemens React-nyckel är kortets id eller listans kod.
+- Testets Fortnox-mock släpps i `finally`.
+
+Fem lagades inte:
+- **Två läsningar av butikstabellen på sidan:** 10b2:s publicering behöver läsningen utan sidan.
+- **Koder som bara skiljer sig i versaler:** Fortnox äger koden, och två läsningar av samma lista är ofarliga.
+- **Felöversättningen två gånger:** fyra rader med olika prefix.
+- **Hashen "i onödan":** fel premiss, `buildPricelistDraft` räknar den alltid, och 10b2 behöver den.
+- **Partnerlistornas hash** används först av 10b2.
 
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 

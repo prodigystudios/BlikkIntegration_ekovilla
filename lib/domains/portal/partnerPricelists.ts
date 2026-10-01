@@ -70,6 +70,8 @@ export type PortalStoreCard = {
   customerName: string;
   /** Kortets kundnummer i Fortnox. null = kortet finns inte i Fortnox, och har alltså ingen egen lista. */
   customerNumber: string | null;
+  /** false = kortet är dolt för sessionen (RLS). Dess lista går inte att läsa; `lookups` har då ett fel för kortet. */
+  cardVisible: boolean;
 };
 
 export type CardListLookup =
@@ -85,13 +87,16 @@ export type StoresByList = {
   failed: { customerId: string; customerName: string; stores: PortalStoreCard[]; message: string }[];
 };
 
-/** Delar butikerna efter kortets lista. `lookups` har ett svar per kort med kundnummer. */
+/**
+ * Delar butikerna efter kortets lista. `lookups` har ett svar per kort med kundnummer, och ett fel per dolt kort. Ett kort
+ * utan kundnummer och utan svar har den gemensamma listan.
+ */
 export function groupStoresByList(stores: PortalStoreCard[], lookups: Map<string, CardListLookup>): StoresByList {
   const shared: PortalStoreCard[] = [];
   const own = new Map<string, PortalStoreCard[]>();
   const failed = new Map<string, StoresByList['failed'][number]>();
   for (const store of stores) {
-    const lookup = store.customerNumber ? lookups.get(store.customerId) : { ok: true as const, code: null };
+    const lookup = lookups.get(store.customerId) ?? (store.customerNumber ? undefined : { ok: true as const, code: null });
     if (!lookup) throw new Error(`Kortets lista saknas för ${store.customerId}.`);
     if (!lookup.ok) {
       const entry = failed.get(store.customerId) ?? { customerId: store.customerId, customerName: store.customerName, stores: [], message: lookup.message };

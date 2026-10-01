@@ -58,6 +58,7 @@ export async function listPortalStoreCards(session: SupabaseClient): Promise<Por
     // Kortet kan vara dolt för sessionen fast kopplingen finns; då finns inget nummer att läsa listan på.
     customerName: row.customer ? getCrmCustomerDisplayName(row.customer) : 'Okänt kundkort',
     customerNumber: row.customer?.fortnox_customer_id?.trim() || null,
+    cardVisible: row.customer !== null,
   }));
 }
 
@@ -87,54 +88,99 @@ export type PartnerPricelistsPreview = {
   /** Butiker med kundkort som får den gemensamma listan. */
   sharedStores: PortalStoreCard[];
   lists: PartnerListPreview[];
-  /** Det som inte gick att läsa: ett kort eller en lista, med butikerna det gäller. Publiceringen stoppas av varje. */
-  problems: { what: string; stores: PortalStoreCard[]; message: string }[];
+  /**
+   * Det som inte gick att läsa: ett kort eller en lista, med butikerna det gäller. `key` är unik (kortets id eller
+   * listans kod). Publiceringen stoppas av varje sådant.
+   */
+  problems: { key: string; what: string; stores: PortalStoreCard[]; message: string }[];
 };
 
+/** Allt partnerlistorna läser, före sammanställningen. Beror inte på lista 160, och kan läsas samtidigt som den. */
+export type PartnerPricelistReads = {
+  stores: PortalStoreCard[];
+  /** Kortets lista, per kort som har ett kundnummer eller är dolt för sessionen. */
+  lookups: Map<string, CardListLookup>;
+  /** Priserna per egen lista. */
+  lists: Map<string, { ok: true; prices: ListPrice[] } | { ok: false; message: string }>;
+};
+
+/** Fortnox tillåter några anrop i sekunden; fyra åt gången räcker för att sidan inte ska vänta i onödan. */
+const FORTNOX_PARALLEL = 4;
+
+async function eachLimited<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
 /**
- * Varje butiks lista som den ser ut nu. Bygger på samma källor som den gemensamma listan (`inputs`, `shared`), så att en
- * partnerlista bara skiljer sig där kortets lista har ett annat pris.
+ * Butikerna, varje korts lista och varje egen listas priser. Ett kort eller en lista som inte går att läsa sparas som
+ * ett fel och stoppar inte resten. Ett kort som sessionen inte ser är ett fel, inte lista 160: dess lista går inte att
+ * läsa, och butiken hade annars fått fel priser utan att någon märkt det.
  */
-export async function loadPartnerPricelists(
-  sources: PartnerPricelistSources,
-  inputs: PricelistInputs,
-  shared: PricelistDraft,
-): Promise<PartnerPricelistsPreview> {
+export async function readPartnerPricelists(sources: PartnerPricelistSources): Promise<PartnerPricelistReads> {
   const stores = await sources.stores();
 
   const lookups = new Map<string, CardListLookup>();
+  const toRead = new Map<string, string>();
   for (const store of stores) {
-    if (!store.customerNumber || lookups.has(store.customerId)) continue;
-    try {
-      lookups.set(store.customerId, { ok: true, code: partnerListCode(await sources.cardListCode(store.customerNumber)) });
-    } catch (e) {
-      lookups.set(store.customerId, { ok: false, message: describeFortnoxError(e) });
+    if (!store.cardVisible) {
+      lookups.set(store.customerId, { ok: false, message: 'Kundkortet syns inte för dig, så dess prislista går inte att läsa.' });
+    } else if (store.customerNumber) {
+      toRead.set(store.customerId, store.customerNumber);
     }
   }
+  await eachLimited([...toRead], FORTNOX_PARALLEL, async ([customerId, customerNumber]) => {
+    try {
+      lookups.set(customerId, { ok: true, code: partnerListCode(await sources.cardListCode(customerNumber)) });
+    } catch (e) {
+      lookups.set(customerId, { ok: false, message: describeFortnoxError(e) });
+    }
+  });
 
-  const grouped = groupStoresByList(stores, lookups);
+  const codes = [...new Set([...lookups.values()].flatMap((l) => (l.ok && l.code !== null ? [l.code] : [])))];
+  const lists: PartnerPricelistReads['lists'] = new Map();
+  await eachLimited(codes, FORTNOX_PARALLEL, async (code) => {
+    try {
+      lists.set(code, { ok: true, prices: await sources.listPrices(code) });
+    } catch (e) {
+      lists.set(code, { ok: false, message: describeFortnoxError(e) });
+    }
+  });
+  return { stores, lookups, lists };
+}
+
+/**
+ * Varje butiks lista som den ser ut nu. Ren. Bygger på samma källor som den gemensamma listan (`inputs`, `shared`), så
+ * att en partnerlista bara skiljer sig där kortets lista har ett annat pris.
+ */
+export function buildPartnerPricelists(reads: PartnerPricelistReads, inputs: PricelistInputs, shared: PricelistDraft): PartnerPricelistsPreview {
+  const grouped = groupStoresByList(reads.stores, reads.lookups);
   const problems: PartnerPricelistsPreview['problems'] = grouped.failed.map((f) => ({
+    key: `card:${f.customerId}`,
     what: `Kundkortet ${f.customerName}`,
     stores: f.stores,
     message: f.message,
   }));
   const lists: PartnerListPreview[] = [];
-  for (const { code, stores: listStores } of grouped.own) {
-    let prices: ListPrice[];
-    try {
-      prices = await sources.listPrices(code);
-    } catch (e) {
-      problems.push({ what: `Lista ${code}`, stores: listStores, message: describeFortnoxError(e) });
+  for (const { code, stores } of grouped.own) {
+    const read = reads.lists.get(code);
+    if (!read?.ok) {
+      problems.push({ key: `list:${code}`, what: `Lista ${code}`, stores, message: read?.message ?? 'Listan lästes inte.' });
       continue;
     }
-    const draft = buildPricelistDraft({ ...inputs, prices: overlayListPrices(inputs.prices, prices) });
-    lists.push({
-      code,
-      stores: listStores,
-      articles: draft.articles,
-      hash: draft.hash,
-      differences: partnerPriceDifferences(shared.articles, draft.articles),
-    });
+    const draft = buildPricelistDraft({ ...inputs, prices: overlayListPrices(inputs.prices, read.prices) });
+    lists.push({ code, stores, articles: draft.articles, hash: draft.hash, differences: partnerPriceDifferences(shared.articles, draft.articles) });
   }
   return { sharedStores: grouped.shared, lists, problems };
+}
+
+export async function loadPartnerPricelists(
+  sources: PartnerPricelistSources,
+  inputs: PricelistInputs,
+  shared: PricelistDraft,
+): Promise<PartnerPricelistsPreview> {
+  return buildPartnerPricelists(await readPartnerPricelists(sources), inputs, shared);
 }

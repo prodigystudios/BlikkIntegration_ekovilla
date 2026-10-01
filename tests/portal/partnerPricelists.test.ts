@@ -8,7 +8,12 @@ import {
   type CardListLookup,
   type PortalStoreCard,
 } from '@/lib/domains/portal/partnerPricelists';
-import { listPortalStoreCards, loadPartnerPricelists, type PartnerPricelistSources } from '@/lib/domains/portal/partnerPricelistSources';
+import {
+  listPortalStoreCards,
+  loadPartnerPricelists,
+  readPartnerPricelists,
+  type PartnerPricelistSources,
+} from '@/lib/domains/portal/partnerPricelistSources';
 import { buildPricelistDraft, pricelistContentHash, type ListPrice, type PricelistArticle } from '@/lib/domains/portal/pricelist';
 import type { PricelistInputs } from '@/lib/domains/portal/pricelistPublish';
 import { FortnoxApiError } from '@/lib/domains/fortnox/client';
@@ -75,8 +80,8 @@ describe('partnerPriceDifferences', () => {
   });
 });
 
-function store(resellerId: string, customerId: string, customerNumber: string | null = `nr-${customerId}`): PortalStoreCard {
-  return { resellerId, storeName: `Butik ${resellerId}`, customerId, customerName: `Kort ${customerId}`, customerNumber };
+function store(resellerId: string, customerId: string, customerNumber: string | null = `nr-${customerId}`, cardVisible = true): PortalStoreCard {
+  return { resellerId, storeName: `Butik ${resellerId}`, customerId, customerName: `Kort ${customerId}`, customerNumber, cardVisible };
 }
 
 describe('groupStoresByList', () => {
@@ -171,13 +176,44 @@ describe('loadPartnerPricelists', () => {
       stores,
     );
     const preview = await loadPartnerPricelists(s, INPUTS, SHARED);
-    expect(preview.problems.map((p) => [p.what, p.stores.map((x) => x.resellerId)])).toEqual([
-      ['Kundkortet Kort k1', ['a']],
-      ['Lista 170', ['b']],
+    expect(preview.problems.map((p) => [p.key, p.what, p.stores.map((x) => x.resellerId)])).toEqual([
+      ['card:k1', 'Kundkortet Kort k1', ['a']],
+      ['list:170', 'Lista 170', ['b']],
     ]);
     expect(preview.problems[1].message).toBe('Listan finns inte');
     // En tom partnerlista är 160:s priser.
     expect(preview.lists.map((l) => [l.code, l.differences])).toEqual([['161', []]]);
+  });
+
+  it('🧨 ett kort som sessionen inte ser: ett problem, aldrig lista 160, och inget läses från Fortnox', async () => {
+    const { s, cardCalls } = sources({}, {}, [store('a', 'k1', null, false), store('b', 'k2', null)]);
+    const preview = await loadPartnerPricelists(s, INPUTS, SHARED);
+    expect(preview.problems.map((p) => [p.key, p.stores.map((x) => x.resellerId)])).toEqual([['card:k1', ['a']]]);
+    expect(preview.problems[0].message).toMatch(/syns inte/);
+    // Ett synligt kort utan kundnummer finns inte i Fortnox och har den gemensamma listan.
+    expect(preview.sharedStores.map((x) => x.resellerId)).toEqual(['b']);
+    expect(cardCalls).toEqual([]);
+  });
+
+  it('högst fyra anrop till Fortnox åt gången, och alla blir gjorda', async () => {
+    const stores = Array.from({ length: 10 }, (_, i) => store(`s${i}`, `k${i}`));
+    let inFlight = 0;
+    let peak = 0;
+    const s: PartnerPricelistSources = {
+      stores: async () => stores,
+      cardListCode: async (n) => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 5));
+        inFlight -= 1;
+        return n === 'nr-k3' ? '161' : null;
+      },
+      listPrices: async () => [],
+    };
+    const reads = await readPartnerPricelists(s);
+    expect(peak).toBe(4);
+    expect(reads.lookups.size).toBe(10);
+    expect([...reads.lists.keys()]).toEqual(['161']);
   });
 
   it('inga butiker med kort: inget läses från Fortnox', async () => {
@@ -198,8 +234,8 @@ describe('listPortalStoreCards', () => {
       ],
     });
     expect(await listPortalStoreCards(db.admin)).toEqual([
-      { resellerId: 'a', storeName: 'Alfa', customerId: 'k2', customerName: 'Okänt kundkort', customerNumber: null },
-      { resellerId: 'b', storeName: 'Beta', customerId: 'k1', customerName: 'Bygg AB', customerNumber: '13' },
+      { resellerId: 'a', storeName: 'Alfa', customerId: 'k2', customerName: 'Okänt kundkort', customerNumber: null, cardVisible: false },
+      { resellerId: 'b', storeName: 'Beta', customerId: 'k1', customerName: 'Bygg AB', customerNumber: '13', cardVisible: true },
     ]);
   });
 });
@@ -213,11 +249,14 @@ describe('getFortnoxCustomerPriceList', () => {
       ...(await importOriginal<typeof import('@/lib/domains/fortnox/client')>()),
       fortnoxGet: vi.fn(async (path: string) => (calls.push(path), { Customer: { CustomerNumber: '13', PriceList: priceList } })),
     }));
-    const { getFortnoxCustomerPriceList } = await import('@/lib/domains/fortnox/customers');
-    expect(await getFortnoxCustomerPriceList('13')).toBe('161');
-    priceList = '';
-    expect(await getFortnoxCustomerPriceList('A/1')).toBeNull();
-    expect(calls).toEqual(['/customers/13', '/customers/A%2F1']);
-    vi.doUnmock('@/lib/domains/fortnox/client');
+    try {
+      const { getFortnoxCustomerPriceList } = await import('@/lib/domains/fortnox/customers');
+      expect(await getFortnoxCustomerPriceList('13')).toBe('161');
+      priceList = '';
+      expect(await getFortnoxCustomerPriceList('A/1')).toBeNull();
+      expect(calls).toEqual(['/customers/13', '/customers/A%2F1']);
+    } finally {
+      vi.doUnmock('@/lib/domains/fortnox/client');
+    }
   });
 });

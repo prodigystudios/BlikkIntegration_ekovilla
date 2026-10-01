@@ -40,7 +40,7 @@ export type PartnerPricelistsView =
       ok: true;
       sharedStores: string[];
       lists: { code: string; stores: { name: string; customerName: string }[]; articleCount: number; differences: PartnerPriceDifference[] }[];
-      problems: { what: string; stores: string[]; message: string }[];
+      problems: { key: string; what: string; stores: string[]; message: string }[];
     }
   | { ok: false; message: string }
   | null;
@@ -526,7 +526,7 @@ function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<Partn
               </p>
               <ul className="m-0 mt-1.5 grid gap-1 pl-0">
                 {partnerLists.problems.map((p) => (
-                  <li key={p.what} className="list-none">
+                  <li key={p.key} className="list-none">
                     <span className="font-semibold">{p.what}</span> ({storeList(p.stores)}): {p.message}
                   </li>
                 ))}
