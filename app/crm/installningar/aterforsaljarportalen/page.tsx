@@ -33,6 +33,7 @@ const OUTBOX_KIND_LABELS: Record<PortalOutboxEventKind, string> = {
   'store_order.delivered': 'Levererad',
   'store_order.invoiced': 'Fakturerad',
   'store_order.cancelled': 'Makulerad',
+  'reseller.invite': 'Inbjudan',
   other: 'Annan händelse',
 };
 

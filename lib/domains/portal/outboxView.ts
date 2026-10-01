@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { OutboxEventStatus } from './outbox';
 import { PORTAL_JOB_QUEUE_PREFIX } from './jobState';
+import { RESELLER_INVITE_QUEUE_PREFIX } from './partners';
 import { STORE_ORDER_QUEUE_PREFIX } from './storeOrderState';
 
 /**
@@ -24,6 +25,7 @@ export type PortalOutboxEventKind =
   | 'store_order.delivered'
   | 'store_order.invoiced'
   | 'store_order.cancelled'
+  | 'reseller.invite'
   | 'other';
 
 export type PortalOutboxItem = {
@@ -87,6 +89,8 @@ const graphemes = new Intl.Segmenter('sv', { granularity: 'grapheme' });
 
 export function portalOutboxEventKind(orderingKey: string, payload: unknown): PortalOutboxEventKind {
   if (orderingKey === 'pricelist') return 'pricelist';
+  // Inbjudan har ingen typ i kroppen: kroppen är hela företaget (flöde 5).
+  if (orderingKey.startsWith(RESELLER_INVITE_QUEUE_PREFIX)) return 'reseller.invite';
   const type = (payload as { type?: unknown } | null)?.type;
   return typeof type === 'string' && EVENT_TYPES.has(type) ? (type as PortalOutboxEventKind) : 'other';
 }
@@ -127,6 +131,10 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
       return str(data.name);
     case 'pricelist':
       return str(body.validFrom) ? `Giltig från ${body.validFrom}` : null;
+    case 'reseller.invite': {
+      const invite = (payload ?? {}) as { name?: unknown; admin?: { email?: unknown } };
+      return [str(invite.name), str(invite.admin?.email)].filter(Boolean).join(' · ') || null;
+    }
     default:
       return null;
   }

@@ -45,6 +45,8 @@ const UNIQUE: Record<string, string[]> = {
   crm_portal_jobs: ['quote_id', 'reserved_work_order_id', 'work_order_id'],
   crm_portal_job_messages: ['id', 'direction,message_id'],
   crm_portal_job_documents: ['id'],
+  crm_portal_partners: ['customer_id'],
+  crm_portal_reseller_invites: ['id', 'idempotency_key', 'reseller_id,attempt'],
   crm_portal_resellers: ['reseller_id'],
   crm_store_orders: ['id', 'order_id'],
   crm_work_orders: ['id', 'order_number'],
