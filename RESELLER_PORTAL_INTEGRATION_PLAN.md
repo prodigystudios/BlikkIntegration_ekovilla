@@ -4,13 +4,15 @@
 2026-09-28, och samma dag fördes CRM:ets rättelser 16–19 in (sökvägarna, prislistans nyckel,
 svarens kuvert och jobbets felkoder), 20–23 från CRM:ets fas 4b (avbrutet jobb utan skäl,
 planeringens slutdag, bara framåt, tider och nycklar), 24–27 från fas 6 (meddelandena), 28–30 från
-fas 7 (dokumenten) och 31–35 från fas 8a (butiksbeställningarnas intag och momsen).
-Portalens halva av affärsflödet är byggd. CRM:ets transport
-finns (fas 1a–1c), och portalens byggs nu, se "Det här finns i portalen".
+fas 7 (dokumenten), 31–35 från fas 8a (butiksbeställningarnas intag och momsen) och 36–38 från fas
+8b3 och den lokala genomkörningen 29 september (kontot, beställningarnas status tillbaka och en sen
+planering). Båda halvorna är byggda, och CRM:et kördes mot portalen lokalt 29 september, alla
+flöden. Flöde 5, inbjudan från kundkortet, kom från CRM:ets 10a 1 oktober och är byggt i båda.
+Se "Det här finns i portalen".
 **Källa:** `prodigystudios/aterforsaljare-ekovilla`, filen `CRM_INTEGRATION.md`. En kopia ligger i
 CRM-repot som `RESELLER_PORTAL_INTEGRATION_PLAN.md`. Ändras kontraktet ändras det i båda.
 **Hur CRM:et bygger sin halva** står i CRM-repots `RESELLER_PORTAL_CRM_PLAN.md`, läst mot CRM:et
-@ `4859771` (fas 8a, PR #258). Rättelserna står där under "Rättelser och luckor i kontraktet".
+@ `f77d0cb` (PR #265). Rättelserna står där under "Rättelser och luckor i kontraktet".
 Kontrollera varje filhänvisning mot koden innan du bygger på den. CRM:et byggs om (RBAC, SSR,
 säkerhetsmigreringar).
 
@@ -65,7 +67,7 @@ jobb. Allt det kommer från CRM:et.
 
 ---
 
-## Fyra flöden
+## Fem flöden
 
 | # | Flöde | Riktning | Vad CRM:et gör |
 | --- | --- | --- | --- |
@@ -73,6 +75,7 @@ jobb. Allt det kommer från CRM:et.
 | 2 | Jobb | portal → CRM, status tillbaka | Tar emot ordern, hittar butikens kund, fördelar till en säljare, skapar arbetsordern och Fortnox-ordern, och skickar status, meddelanden och dokument tillbaka. |
 | 3 | Butiksbeställning | portal → CRM, status tillbaka | Tar emot, ändrar eller drar tillbaka en beställning före bekräftelsen. Lägger på frakt, bekräftar och skickar status tillbaka. |
 | 4 | Meddelanden på jobb | båda håll | Visar butikens meddelanden på arbetsordern och skickar säljarens svar tillbaka. |
+| 5 | Partner bjuds in | CRM → portal | Bjuder in en partner från kundkortet. Portalen skapar företaget och bjuder in dess första admin. |
 
 ---
 
@@ -490,7 +493,9 @@ Händelserna för ett och samma jobb kommer i ordning.
 - **Bara framåt** (rättelse 22): efter `job.completed` kommer inga fler `job.scheduled`, och efter
   `job.completed` eller `job.invoiced` aldrig ett tidigare läge. `job.invoiced` kommer alltid efter
   `job.completed`. CRM:et skickar inget efter `job.confirmed` förrän den är mottagen. Portalen
-  räknar ändå statusen ur datumen och flyttar aldrig jobbet bakåt.
+  räknar ändå statusen ur datumen och flyttar aldrig jobbet bakåt. Kommer en `job.scheduled` efter
+  Utförd, till exempel ett uppspelat anrop, svarar portalen 200 och låter datumen stå (rättelse
+  38).
 - **Tider** (rättelse 23): `occurredAt`, `confirmedAt` och `cancelledAt` är ISO 8601 i UTC med `Z`.
   `completedAt` och `invoicedAt` är svenska kalenderdagar, `YYYY-MM-DD`. Nyckeln är unik per
   händelse, också när datumen går X → Y → X, eftersom `occurredAt` ingår i den.
@@ -565,7 +570,7 @@ fakturerad arbetsorder tar emot meddelanden (rättelse 27).
 2026). Utan `EKOVILLA_CRM_STORE_ORDERS=on` skickar portalen jobben och meddelandena som vanligt,
 men beställningarna ligger kvar i kö, med en ny titt var femtonde minut, utan att ett försök räknas.
 Kroppen byggs först när beställningen skickas. CRM:et tar emot beställningar sedan fas 8a (PR #258),
-och bekräftelsen, frakten och statusen tillbaka kommer i 8b. Slå på variabeln när William bestämt
+och bekräftar dem, lägger på frakten och skickar statusen tillbaka sedan 8b (PR #261–#264). Slå på variabeln när William bestämt
 det, så går kön iväg.
 
 Butiken beställer produkter ur prislistan: allt utom inblåsning (`m3`) och etablering. Antalet är
@@ -672,20 +677,117 @@ butiken. Beställningen har 25 % moms, också frakten (William 29 september 2026
 | `store_order.invoiced` | `orderId`, `invoicedAt` (datum) | Fakturerad |
 | `store_order.cancelled` | `orderId`, `reason` | Makulerad, Ekovillas beslut. Portalen daterar den med `occurredAt`. |
 
+**Regler för händelserna** (rättelse 37):
+
+- **Nyckeln** är `<type>-<orderId>-<occurredAt>`. `occurredAt` är när Ekovilla gjorde steget
+  (Bekräfta, Levererad, Fakturera, Makulera), i UTC med `Z`, inte när händelsen köades.
+- **`confirmedAt`** är samma tid som `occurredAt`, alltså när beställningen låstes och inte när
+  Fortnox-numret kom. `store_order.confirmed` skickas först när Fortnox-numret finns, och inget
+  efter den skickas förrän den är mottagen (2xx).
+- **`store_order.cancelled`** kan komma till en beställning som aldrig fått
+  `store_order.confirmed`, också när portalen redan fått 409 på en ändring. Portalen gör den
+  Makulerad ändå.
+- **`reason`** är aldrig tom. Portalen tar ändå emot en tom och visar då "Inget skäl angavs.".
+
 Butikens egen tillbakadragning heter Tillbakadragen i portalen. Den är skild från Makulerad, som
 är Ekovillas.
 
 ---
 
+## Flöde 5: partner bjuds in (CRM → portal)
+
+**Varför:** fler bygghandlare och andra partner ska in i portalen. Förut skapades ett företag och
+dess första admin med skript (`scripts/testmiljo.mjs`). Nu bjuder Ekovilla in från kundkortet i
+CRM:et (CRM:ets 10a, beslut William 1 oktober 2026).
+
+**I CRM:et:**
+
+- **En kund flaggas** som återförsäljare eller partner. Typen finns bara i CRM:et, och portalen är
+  densamma för båda.
+- **Rutan "Återförsäljarportalen"** sitter på företagskortet. Där finns "Bjud in till portalen" och
+  "Skicka inbjudan igen". Bara `crm.portal.manage` ser den, och bara kort med Fortnox-nummer kan
+  bjudas in.
+- **CRM:et väljer företagets id själv**, ett uuid, och skickar inbjudan genom kön.
+
+**Inbjudan:**
+
+- `POST {RESELLER_PORTAL_URL}/api/ekovilla/resellers`
+- `Idempotency-Key: reseller-invite-<resellerId>-<n>`, där `n` är CRM:ets försöksnummer för
+  företaget: 1 för inbjudan, 2 för första "Skicka inbjudan igen" och så vidare. Kön gör om samma
+  försök med samma nyckel.
+
+```json
+{
+  "resellerId": "6f1c2a9e-4b7d-4f0e-9a51-0c3d2e8b7a64",
+  "name": "Beijer Bygg Gävle",
+  "organizationNumber": "556123-4567",
+  "address": { "street": "Industrigatan 4", "postalCode": "802 22", "city": "Gävle" },
+  "phone": "026-12 34 56",
+  "email": "gavle@exempel.se",
+  "ekovillaCustomerNumber": "1234",
+  "admin": { "name": "Anna Berg", "email": "anna.berg@exempel.se" }
+}
+```
+
+**Fälten:**
+
+- `resellerId` är ett uuid med gemener. Portalen använder det som företagets `id`.
+- `organizationNumber`, `phone` och `email` gäller företaget och kan vara tomma strängar.
+- `ekovillaCustomerNumber` är alltid satt, eftersom CRM:et bara bjuder in kort med Fortnox-nummer.
+  Det blir `resellers.ekovilla_customer_number`.
+- Längderna är CRM:ets:
+  - `name` 1–200 tecken
+  - `street` högst 200, `postalCode` högst 20 och `city` högst 100
+  - `phone` högst 50
+  - `admin.name` 1–200 tecken och `admin.email` högst 254
+- Båda adresserna skrivs med gemener.
+
+**Portalens svar** har kontraktets kuvert. Vid framgång är `data` `{ "resellerId": "…", "admin":
+"invited" }`, där `admin` är `invited` eller `active`. CRM:et läser inte kroppen vid framgång.
+
+| Status | När |
+| --- | --- |
+| 201 | Företaget fanns inte. Det skapas med uppgifterna och kundnumret, och admin bjuds in med rollen admin. |
+| 200 | Företaget finns redan, efter ett omförsök eller "Skicka inbjudan igen". Uppgifterna och kundnumret ändras inte, eftersom butiken kan ha ändrat dem under Inställningar. Admin hanteras så här: <ul><li>en användare i företaget som inte valt lösenord får inbjudan igen (`invited`);</li><li>en användare i företaget som valt lösenord får ingenting (`active`);</li><li>en adress som inte finns i portalen bjuds in som admin i företaget (`invited`).</li></ul> |
+| 409 `admin_email_taken` | Adressen hör till ett konto i ett annat företag. Portalen prövar det innan den skapar något. CRM:et visar felet, och admin kan försöka igen med en annan adress. |
+| 400 `validation_error` | Kroppen följer inte kontraktet. `error` säger vilket fält, och CRM:et visar texten på kundkortet. |
+
+Allt annat följer transporten: 5xx görs om, och övriga 4xx ges upp och visas på kortet.
+
+**Så tolkar portalen kontraktet:**
+
+- **Ett ogiltigt fält ger 400 `validation_error`**, som på portalens andra routes. CRM:ets plan säger
+  422. CRM:et gör likadant med båda: ger upp och visar `error`.
+- **"Valt lösenord" betyder att kontot är bekräftat.** Supabase bekräftar kontot när mottagaren
+  trycker på knappen i inbjudan, och sidan för att välja lösenord kommer direkt efter. Om hen stänger
+  sidan där, är hen `active` utan lösenord och får använda "Glömt lösenord". En ny inbjudan går inte
+  att skicka till ett bekräftat konto.
+- **En användare som redan finns i företaget behåller sin roll.** Den görs alltså inte till admin.
+- **Adressen jämförs utan hänsyn till stora och små bokstäver.** Adresser från Inställningar sparas
+  som de skrevs.
+- **Gränserna är CRM:ets och inte Inställningarnas.** Postnumret får vara 20 tecken och telefonen 50,
+  medan Inställningarna tillåter 10 och 40. Vid "Skicka inbjudan igen" skickar CRM:et förra försökets
+  företagsuppgifter igen, så ett nej för ett sådant fält hade blivit samma nej varje gång. Butiken
+  rättar fältet i Inställningar, nästa gång den sparar.
+- **Ett aktivt konto utan företag** ska inte finnas, men kan bli kvar om kopplingen föll efter en
+  inbjudan i Inställningar. Det ger också 409 `admin_email_taken`, och portalen loggar det. Det
+  märks först vid inbjudan, så företaget hinner skapas, och nästa försök får 200.
+- **Ett nytt företag får portalens standard:** 25 % påslag, 30 dagars giltighet och inga villkor.
+  Butikens admin fyller i resten i guiden på `/kom-igang` och under Inställningar. Prislistan är den
+  gemensamma tills CRM:et skickar en egen.
+- **Mejlet är portalens vanliga inbjudan** (`supabase/templates/invite.html`). Länken gäller i 24
+  timmar och fungerar en gång.
+
+---
+
 ## Det här finns i CRM:et i dag
 
-Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken fas som är klar.
+Läst mot `f77d0cb` (PR #265, 29 september). CRM:ets plan säger vilken fas som är klar.
 
 - **Transporten** (fas 1a–1c): signaturen, miljöspärren, utkorgen med omförsök, svarscachen för
   idempotens, grinden för `/api/portal/` och `POST /api/portal/ping`.
 - **Prislistan** (fas 2a–2b): portalfälten per artikel och publiceringen med en knapp, som köar
-  `POST /api/ekovilla/pricelists`. Prövad mot en låtsasportal. Portalens mottagare finns sedan 28
-  september och är prövad mot portalens låtsas-CRM, men inte mot CRM:et.
+  `POST /api/ekovilla/pricelists`. Prövad mot den riktiga portalen lokalt 29 september.
 - **Butikerna och fördelningen** (fas 3a): butik → säljare, reserven och länet ur postnummer och ort.
 - **Jobbet in** (fas 3b–3c, PR #251–#252): `POST /api/portal/jobs`, arbetsordern hos rätt säljare,
   butikens kundkort på ordern och Fortnox-ordern direkt efter svaret.
@@ -698,9 +800,15 @@ Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken 
   (`lib/domains/portal/jobDocuments.ts`).
 - **Butiksbeställningarnas intag** (fas 8a, PR #258): ny, ändrad och tillbakadragen, med en notis
   till den ansvarige och sidan `/crm/butiksbestallningar` (`lib/domains/portal/storeOrderIntake.ts`).
-- **Kvar i CRM:et:** fas 8b, alltså bekräftelsen med frakten, Fortnox-ordern, leveransen, fakturan,
-  makuleringen och `store_order.*` tillbaka. Portalen håller beställningarna i kö tills
-  `EKOVILLA_CRM_STORE_ORDERS=on`, se "Flöde 3".
+- **Butiksbeställningarna hos Ekovilla** (fas 8b1–8b3, PR #261–#264): koppla kund, frakten, Bekräfta
+  med Fortnox-ordern, Levererad, Fakturera, Makulera och `store_order.*` tillbaka. Portalen håller
+  beställningarna i kö tills `EKOVILLA_CRM_STORE_ORDERS=on`, se "Flöde 3".
+- **Kontot per rad** efter dokumentets moms (PR #259), se "Momsen".
+- **Lokal genomkörning** 29 september: CRM:et mot den riktiga portalen, alla flöden, med 81
+  kontroller gröna ("Lokal genomkörning av hela kedjan" i CRM:ets plan).
+- **Inbjudan från kundkortet** (10a, läst mot `35472e5` 1 oktober): flaggan, rutan och
+  `POST /api/ekovilla/resellers` genom kön (`lib/domains/portal/partners.ts`). Se "Flöde 5".
+- **Kvar i CRM:et:** fas 9, prod.
 - **`crm_work_orders`**, i `supabase/migrations/20260925081734_baseline.sql`:
   - Nummer: `order_number`, med formatet `AO-YYYYMMDD-XXXXXX`.
   - Kund och innehåll: `customer_id`, `customer_snapshot`, `work_address`, `line_items`,
@@ -728,6 +836,7 @@ Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken 
   - `ping.ts`: "Prova kopplingen".
   - `idempotency.ts`: svarscachen för `Idempotency-Key`, med tabellen `crm_idempotency_keys`.
   - `pricelist.ts`: prislistans kropp mot kontraktet.
+  - `resellers.ts`: inbjudans kropp mot kontraktet.
 - **Utkorgen** `crm_outbound_events`, med utskicket i `lib/crm/outbox.ts`:
   - `hand_over_quote()` köar ordern i samma transaktion som överlämningen.
   - Kroppen byggs vid första försöket med `toEkovillaOrder()` och butikens kundnummer
@@ -740,13 +849,22 @@ Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken 
   - När CRM:et svarat 201 skapas jobbet som Mottaget, med `data.crmWorkOrderId` och beloppen
     räknade med `pricing.ts`. Offertsidan visar om ordern skickas, har tagits emot eller inte kom
     fram.
-- **Mottagaren** `app/api/ekovilla/*`, med `POST /api/ekovilla/ping`, `POST /api/ekovilla/events`
-  och `POST /api/ekovilla/pricelists`. Prislistan sparas med `receive_pricelist()` i en transaktion,
-  och den senast mottagna gäller vid samma `validFrom`.
+- **Mottagaren** `app/api/ekovilla/*`, med `POST /api/ekovilla/ping`, `POST /api/ekovilla/events`,
+  `POST /api/ekovilla/pricelists` och `POST /api/ekovilla/resellers`. Prislistan sparas med
+  `receive_pricelist()` i en transaktion, och den senast mottagna gäller vid samma `validFrom`.
+- **Inbjudan från CRM:et** (flöde 5) skapar företaget med secret key och bjuder in admin på samma
+  sätt som Inställningar gör (`receiveResellerInvite` i `lib/data/supabase/crm.ts`). Låtsas-CRM:et
+  har `npm run latsas-crm -- bjud-in`. Prövat mot lokal Supabase 1 oktober:
+  - Inbjudan gav 201, och samma försök igen gav samma svar utan ett nytt mejl.
+  - "Skicka inbjudan igen" gav 200 och ett nytt mejl, och företaget ändrades inte.
+  - En admin som valt lösenord gav 200 `active`, utan mejl.
+  - En adress i ett annat företag gav 409 `admin_email_taken`, också med versaler, och inget skapades.
+  - Admin loggade in och kom till guiden i sitt nya företag, och såg bara det.
 - **Jobbens händelser:** `job.confirmed`, `job.scheduled`, `job.completed`, `job.invoiced` och
   `job.cancelled`, med svaren i tabellen under "Portalens svar på händelserna". Varje händelse
   sätter sitt datum, och statusen räknas fram ur datumen (`lib/domains/jobs/events.ts`). En sen
-  händelse flyttar alltså aldrig jobbet bakåt. Jobbet har planeringens första och sista dag och
+  händelse flyttar alltså aldrig jobbet bakåt, och en sen planering efter Utförd ändrar inte
+  datumen (rättelse 38). Jobbet har planeringens första och sista dag och
   statusen Avbrutet med skälet.
 - **Meddelandena åt båda hållen:**
   - Butikens meddelande sparas, köas i jobbets kö i utkorgen av triggern `job_messages_enqueue`, och
@@ -758,7 +876,7 @@ Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken 
   men bara det butiken själv gör, inte serverns egna skrivningar. Ändringen har `changed_at` som
   `updatedAt`. En ny beställning skickas efter svaret, en ändring och en tillbakadragning direkt,
   så att ett 409 syns på en gång. Beställningssidan säger om Ekovilla tagit emot den senaste.
-  Utan `EKOVILLA_CRM_STORE_ORDERS=on` ligger de kvar i kö tills CRM:et har sin fas 8
+  Utan `EKOVILLA_CRM_STORE_ORDERS=on` ligger de kvar i kö tills William slår på den
   (`storeOrdersToCrmEnabled` i `lib/crm/config.ts`).
 - **Dokumenten** (`job.document`): PDF:en läggs i bucketen `job-documents` med secret key, och ett
   nytt dokument av samma sort ersätter det gamla, både raden och filen. Under Dokument på jobbet
@@ -784,6 +902,7 @@ Läst mot `4859771` (fas 8a, PR #258, 29 september). CRM:ets plan säger vilken 
 - **William beslutade momsen per dokument, som i CRM:et i dag** (rättelse 34, prövat i Fortnox
   testbolag): en butiksbeställning har 25 %, också frakten, eftersom butiken är slutkund. Ett jobb har
   0 % på hela ordern (omvänd skattskyldighet). `DOMAIN.md` säger samma sak.
-- **Kvar hos ekonomi:** Fortnox tar kontot och fakturatexten ur kundkortet. En beställning till en
-  butik med omvänd moms bokförs därför på 3231 och får texten "Omvänd betalningsskyldighet" bredvid
-  25 % moms, som CRM:ets materialordrar i dag.
+- **Kontot** (rättelse 36): sedan CRM-PR #259 har varje rad sitt konto efter dokumentets moms, och
+  inte efter kundkortet. En butiksbeställning (25 %) bokförs alltså på 3001.
+- **Kvar, före CRM:ets fas 9:** fakturatexten "Omvänd betalningsskyldighet" följer fortfarande
+  kundkortet. Det är en öppen fråga i CRM:ets plan.
