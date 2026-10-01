@@ -10,9 +10,9 @@
 -- Låset i processen (inflightRefresh i lib/domains/fortnox/client.ts) räcker alltså inte; den här kolumnen är låset
 -- mellan instanserna, med samma mönster som dokumentens push-anspråk (claimFortnoxPush, *_claimed_at).
 --
---   refresh_claimed_at   när en instans tog anspråket på att förnya raden. Anspråket tas bara på den refresh-token som
---                        står i raden, och räknas som övergivet efter 15 sekunder (instansen dog). Ett nytt sparande
---                        byter refresh-tokenen, så ett kvarlämnat värde låser aldrig nästa förnyelse.
+--   refresh_claimed_at   när en instans tog anspråket på att förnya raden. Anspråket tas bara på den token som står i
+--                        raden (versionen är expires_at), och räknas som övergivet efter 20 sekunder (instansen dog). Den som tog det
+--                        nollar det när den nya tokenen sparas, eller släpper det om förnyelsen misslyckas.
 --
 -- ÅTKOMST
 -- Oförändrad. Bara servern (service_role) läser och skriver raden; den har grant på hela tabellen, och det gäller den nya
@@ -26,7 +26,9 @@ set lock_timeout = '5s';
 alter table public.fortnox_integrations add column if not exists refresh_claimed_at timestamptz;
 
 comment on column public.fortnox_integrations.refresh_claimed_at is
-  'Anspråket på att förnya Fortnox-tokenen (en instans i taget). Övergivet efter 15 s. Se lib/domains/fortnox/client.ts.';
+  'Anspråket på att förnya Fortnox-tokenen (en instans i taget). Övergivet efter 20 s. Se lib/domains/fortnox/client.ts.';
+
+reset lock_timeout;
 
 -- ------------------------------------------------------------------------------------------------ efterkontroll
 
