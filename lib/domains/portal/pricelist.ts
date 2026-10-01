@@ -22,12 +22,20 @@ import {
  *
  * Idempotency-Key är `pricelist-<validFrom>-<hash>-<löpnummer>`. Hashen tas över artiklarna. Löpnumret skiljer en
  * publicering av samma lista som kommer EFTER en annan (X, Y, X igen) från ett omförsök av samma publicering; vilken
- * det är avgör pricelistPublish.ts.
+ * det är avgör pricelistPublish.ts. En butiks egen lista (10b2) har butikens id sist: `…-<löpnummer>-<id>`.
  */
 
 export const PRICELIST_PATH = '/api/ekovilla/pricelists';
-/** Prislistorna går fram i den ordning de publicerades. */
+/** Den gemensamma listan går fram i den ordning den publicerades. */
 export const PRICELIST_ORDERING_KEY = 'pricelist';
+
+/**
+ * En butiks egna listor har en egen ordning (10b2). Så kan en uppgiven lista till en butik skickas om
+ * (`requeueDeadPortalEvent` tar bara den senaste för sin nyckel), och en butik väntar aldrig på en annans.
+ */
+export function pricelistOrderingKey(resellerId: string | null): string {
+  return resellerId === null ? PRICELIST_ORDERING_KEY : `${PRICELIST_ORDERING_KEY}:${resellerId}`;
+}
 
 export type PricelistArticle = {
   articleNumber: string;
@@ -43,8 +51,8 @@ export type PricelistArticle = {
 
 export type PricelistPayload = {
   validFrom: string;
-  /** null = listan gäller alla butiker (kontraktet). */
-  resellerId: null;
+  /** null = listan gäller alla butiker (kontraktet). Annars butikens egen lista (10b2). */
+  resellerId: string | null;
   articles: PricelistArticle[];
 };
 
@@ -108,8 +116,8 @@ export function pricelistContentHash(articles: PricelistArticle[]): string {
   return createHash('sha256').update(canonicalJson(articles), 'utf8').digest('hex');
 }
 
-export function pricelistIdempotencyKey(validFrom: string, hash: string, sequence: number): string {
-  return `pricelist-${validFrom}-${hash}-${sequence}`;
+export function pricelistIdempotencyKey(validFrom: string, hash: string, sequence: number, resellerId: string | null = null): string {
+  return `pricelist-${validFrom}-${hash}-${sequence}${resellerId === null ? '' : `-${resellerId}`}`;
 }
 
 export function buildPricelistDraft(input: {

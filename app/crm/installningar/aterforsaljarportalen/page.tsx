@@ -3,15 +3,12 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import { resolvePortalTarget } from '@/lib/domains/portal/config';
 import { PORTAL_ARTICLE_CATEGORY_LABELS } from '@/lib/domains/portal/articleFields';
-import { PRICELIST_SKIP_REASON_LABELS, buildPricelistDraft } from '@/lib/domains/portal/pricelist';
-import { buildPartnerPricelists, partnerPricelistSources, readPartnerPricelists } from '@/lib/domains/portal/partnerPricelistSources';
+import { PRICELIST_SKIP_REASON_LABELS } from '@/lib/domains/portal/pricelist';
+import { RESELLER_PRICE_LIST_CODE } from '@/lib/domains/fortnox/priceLists';
+import { loadPricelistBatch, pricelistBatchSources } from '@/lib/domains/portal/pricelistBatchSources';
+import { pricelistBatchKey } from '@/lib/domains/portal/pricelistBatch';
 import { getPortalSettings, listPortalResellers } from '@/lib/domains/portal/resellers';
-import {
-  describeSourceError,
-  listPricelistPublications,
-  loadPricelistInputs,
-  pricelistSources,
-} from '@/lib/domains/portal/pricelistPublish';
+import { describeSourceError, listPricelistPublications, type PricelistDelivery } from '@/lib/domains/portal/pricelistPublish';
 import { listPortalOutboxAttention, type PortalOutboxEventKind } from '@/lib/domains/portal/outboxView';
 import ResellerPortalClient, {
   type PartnerPricelistsView,
@@ -59,9 +56,11 @@ export default async function AterforsaljarportalenPage() {
     : { enabled: false, message: target.message };
 
   const failure = (fallback: string) => (e: unknown) => ({ error: e instanceof Error ? e.message : fallback });
-  const [draftResult, publicationsResult, resellersResult, settingsResult, outboxResult, partnerReads] = await Promise.all([
-    loadPricelistInputs(pricelistSources(session)).then(
-      (inputs) => ({ ok: true as const, inputs, draft: buildPricelistDraft(inputs) }),
+  const [batchResult, publicationsResult, resellersResult, settingsResult, outboxResult] = await Promise.all([
+    // Lista 160, butikernas egna listor och historiken (10b2): samma läsning som publiceringen, så att förhandsvisningens
+    // hash betyder samma sak.
+    loadPricelistBatch(pricelistBatchSources(session)).then(
+      (load) => ({ ok: true as const, load }),
       (e: unknown) => ({ ok: false as const, message: describeSourceError(e) }),
     ),
     listPricelistPublications(session).then(
@@ -71,11 +70,6 @@ export default async function AterforsaljarportalenPage() {
     listPortalResellers(session).catch(failure('Butikerna gick inte att läsa.')),
     getPortalSettings(session).catch(failure('Portalens inställningar gick inte att läsa.')),
     listPortalOutboxAttention(session).catch(failure('Utskicken gick inte att läsa.')),
-    // Kortens listor och partnerlistorna i Fortnox (10b), samtidigt som lista 160: de beror inte på den.
-    readPartnerPricelists(partnerPricelistSources(session)).then(
-      (reads) => ({ ok: true as const, reads }),
-      (e: unknown) => ({ ok: false as const, message: e instanceof Error ? e.message : 'Butikernas prislistor gick inte att läsa.' }),
-    ),
   ]);
 
   const outbox: OutboxItemView[] | { error: string } = Array.isArray(outboxResult)
@@ -117,39 +111,73 @@ export default async function AterforsaljarportalenPage() {
     : resellersResult;
   const fallbackUserId = 'error' in settingsResult ? settingsResult : settingsResult.fallbackUserId;
 
-  const preview: PricelistPreviewView = draftResult.ok
+  const storeNames = new Map(Array.isArray(resellersResult) ? resellersResult.map((r) => [r.resellerId, r.name]) : []);
+  const nameOf = (resellerId: string) => storeNames.get(resellerId) ?? resellerId;
+  const withLabels = (delivery: PricelistDelivery) => ({
+    ...delivery,
+    sentAtLabel: delivery.sentAt ? formatStockholm(delivery.sentAt) : null,
+    nextAttemptLabel: delivery.nextAttemptAt ? formatStockholm(delivery.nextAttemptAt) : null,
+  });
+
+  // Samma listor till samma butiker som en tidigare publicering: värt att veta innan man publicerar igen.
+  const sameAs =
+    batchResult.ok && publicationsResult.ok
+      ? publicationsResult.publications.find(
+          (p) =>
+            pricelistBatchKey(p.lists.map((l) => ({ resellerId: l.resellerId, hash: l.contentHash }))) ===
+            pricelistBatchKey(batchResult.load.batch.items),
+        )
+      : undefined;
+
+  const preview: PricelistPreviewView = batchResult.ok
     ? {
         ok: true,
-        hash: draftResult.draft.hash,
-        articles: draftResult.draft.articles.map((a) => ({ ...a, categoryLabel: PORTAL_ARTICLE_CATEGORY_LABELS[a.category] })),
-        skipped: draftResult.draft.skipped.map((s) => ({
+        hash: batchResult.load.batch.hash,
+        listCount: batchResult.load.batch.items.length,
+        blocked: batchResult.load.batch.problems.length > 0,
+        sameAs: sameAs ? { validFrom: sameAs.validFrom, createdAtLabel: formatStockholm(sameAs.createdAt) } : null,
+        articles: batchResult.load.shared.articles.map((a) => ({ ...a, categoryLabel: PORTAL_ARTICLE_CATEGORY_LABELS[a.category] })),
+        skipped: batchResult.load.shared.skipped.map((s) => ({
           articleNumber: s.articleNumber,
           customerName: s.customerName,
           reasons: s.reasons.map((r) => PRICELIST_SKIP_REASON_LABELS[r]),
         })),
-        unmarked: draftResult.draft.unmarked,
+        unmarked: batchResult.load.shared.unmarked,
       }
-    : { ok: false, message: draftResult.message };
+    : { ok: false, message: batchResult.message };
 
-  // Partnerlistorna (10b) räknas på samma läsning som den gemensamma. Utan någon butik med kundkort visas inget, som i
-  // prod före påslaget.
+  // Butikernas egna listor (10b). Utan någon butik med kundkort eller tidigare egen lista visas inget, som i prod före
+  // påslaget.
   let partnerLists: PartnerPricelistsView = null;
-  if (!partnerReads.ok) {
-    partnerLists = { ok: false, message: partnerReads.message };
-  } else if (draftResult.ok && partnerReads.reads.stores.length > 0) {
-    const partner = buildPartnerPricelists(partnerReads.reads, draftResult.inputs, draftResult.draft);
-    const storeNames = (stores: { storeName: string }[]) => stores.map((s) => s.storeName);
-    partnerLists = {
-      ok: true,
-      sharedStores: storeNames(partner.sharedStores),
-      lists: partner.lists.map((l) => ({
-        code: l.code,
-        stores: l.stores.map((s) => ({ name: s.storeName, customerName: s.customerName })),
-        articleCount: l.articles.length,
-        differences: l.differences,
-      })),
-      problems: partner.problems.map((p) => ({ key: p.key, what: p.what, stores: storeNames(p.stores), message: p.message })),
-    };
+  if (batchResult.ok) {
+    const { partner, batch } = batchResult.load;
+    const names = (stores: { storeName: string }[]) => stores.map((st) => st.storeName);
+    // En butik som väntar på sin inbjudan står bara under "väntar", inte under sin lista: den får ingen lista nu.
+    const waitingIds = new Set(batch.waiting.map((st) => st.resellerId));
+    // Butiker som haft en egen lista och nu får 160 som egen (pricelistBatch.ts).
+    const copies = batch.items.flatMap((i) => (i.resellerId !== null && i.code === RESELLER_PRICE_LIST_CODE ? [i.resellerId] : []));
+    if (partner.sharedStores.length + partner.lists.length + partner.problems.length + copies.length > 0) {
+      partnerLists = {
+        ok: true,
+        sharedStores: names(partner.sharedStores.filter((st) => !copies.includes(st.resellerId))),
+        lists: partner.lists.flatMap((l) => {
+          const stores = l.stores.filter((st) => !waitingIds.has(st.resellerId));
+          if (stores.length === 0) return [];
+          return [
+            {
+              code: l.code,
+              stores: stores.map((st) => ({ name: st.storeName, customerName: st.customerName })),
+              articleCount: l.articles.length,
+              differences: l.differences,
+            },
+          ];
+        }),
+        copies: copies.map(nameOf),
+        waiting: names(batch.waiting),
+        // Publiceringens problem, inte förhandsvisningens: en väntande butiks kort stoppar inget (pricelistBatch.ts).
+        problems: batch.problems.map((pr) => ({ key: pr.key, what: pr.what, stores: names(pr.stores), message: pr.message })),
+      };
+    }
   }
 
   const publications: PublicationView[] | { error: string } = publicationsResult.ok
@@ -160,11 +188,14 @@ export default async function AterforsaljarportalenPage() {
         articleCount: p.articleCount,
         publishedByName: p.publishedByName,
         createdAtLabel: formatStockholm(p.createdAt),
-        delivery: {
-          ...p.delivery,
-          sentAtLabel: p.delivery.sentAt ? formatStockholm(p.delivery.sentAt) : null,
-          nextAttemptLabel: p.delivery.nextAttemptAt ? formatStockholm(p.delivery.nextAttemptAt) : null,
-        },
+        delivery: withLabels(p.delivery),
+        lists: p.lists.map((l) => ({
+          key: l.idempotencyKey,
+          label: l.resellerId === null ? 'Alla butiker' : (l.storeName ?? l.resellerId),
+          code: l.code,
+          articleCount: l.articleCount,
+          delivery: withLabels(l.delivery),
+        })),
       }))
     : { error: publicationsResult.message };
 

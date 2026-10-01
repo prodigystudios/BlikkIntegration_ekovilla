@@ -88,7 +88,8 @@ const REASON_PREVIEW = 80;
 const graphemes = new Intl.Segmenter('sv', { granularity: 'grapheme' });
 
 export function portalOutboxEventKind(orderingKey: string, payload: unknown): PortalOutboxEventKind {
-  if (orderingKey === 'pricelist') return 'pricelist';
+  // En butiks egen lista har butikens ordning, `pricelist:<id>` (10b2).
+  if (orderingKey === 'pricelist' || orderingKey.startsWith('pricelist:')) return 'pricelist';
   // Inbjudan har ingen typ i kroppen: kroppen är hela företaget (flöde 5).
   if (orderingKey.startsWith(RESELLER_INVITE_QUEUE_PREFIX)) return 'reseller.invite';
   const type = (payload as { type?: unknown } | null)?.type;
@@ -97,7 +98,7 @@ export function portalOutboxEventKind(orderingKey: string, payload: unknown): Po
 
 /** Det viktigaste ur kroppen, som text. Ren. */
 export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: unknown): string | null {
-  const body = (payload ?? {}) as { data?: Record<string, unknown>; validFrom?: unknown; articles?: unknown };
+  const body = (payload ?? {}) as { data?: Record<string, unknown>; validFrom?: unknown; articles?: unknown; resellerId?: unknown };
   const data = body.data ?? {};
   const str = (v: unknown) => (typeof v === 'string' && v ? v : null);
   switch (kind) {
@@ -129,8 +130,10 @@ export function portalOutboxEventDetail(kind: PortalOutboxEventKind, payload: un
     case 'job.document':
       // Kroppen i kön bär filnamnet och en referens till filen, aldrig innehållet (jobDocuments.ts).
       return str(data.name);
-    case 'pricelist':
-      return str(body.validFrom) ? `Giltig från ${body.validFrom}` : null;
+    case 'pricelist': {
+      const from = str(body.validFrom) ? `Giltig från ${body.validFrom}` : null;
+      return str(body.resellerId) ? [from, 'butikens egen lista'].filter(Boolean).join(', ') : from;
+    }
     case 'reseller.invite': {
       const invite = (payload ?? {}) as { name?: unknown; admin?: { email?: unknown } };
       return [str(invite.name), str(invite.admin?.email)].filter(Boolean).join(' · ') || null;

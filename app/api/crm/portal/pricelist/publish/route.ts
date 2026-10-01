@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { createSessionClient } from '@/lib/supabase/session';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
-import { publishPricelist, pricelistSources } from '@/lib/domains/portal/pricelistPublish';
+import { publishPricelist } from '@/lib/domains/portal/pricelistPublish';
+import { loadPricelistBatch, pricelistBatchSources } from '@/lib/domains/portal/pricelistBatchSources';
 import { ok, routeError, validationError, requirePermission } from '../../../_shared';
 
-// Läsningen av lista 160, sparandet och ett första utskick (högst 15 s mot portalen).
-export const maxDuration = 60;
+// Läsningen av lista 160, butikernas kort och listor i Fortnox (som kan få vänta ut Fortnox gräns), sparandet och ett
+// första utskick (högst 15 s mot portalen).
+export const maxDuration = 120;
 
 const bodySchema = z.object({
   valid_from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ange giltig från som ÅÅÅÅ-MM-DD'),
@@ -14,8 +16,8 @@ const bodySchema = z.object({
   expected_hash: z.string().regex(/^[0-9a-f]{64}$/, 'Förhandsvisningen saknas'),
 });
 
-// Publicera prislistan till återförsäljarportalen (RESELLER_PORTAL_CRM_PLAN.md fas 2b). Reglerna bor i
-// publishPricelist; här är bara HTTP.
+// Publicera prislistorna till återförsäljarportalen (RESELLER_PORTAL_CRM_PLAN.md fas 2b, och 10b2: lista 160 och
+// butikernas egna, samtidigt). Reglerna bor i publishPricelist; här är bara HTTP.
 //
 // Två klienter: sessionen för publiceringen och portalfälten (RLS: crm.portal.manage), service-rollen för kön, som
 // bara service_role skriver (fas 1b). Se "Reviewed elevations" i SUPABASE_CONVENTIONS.md.
@@ -33,7 +35,7 @@ export async function POST(req: Request) {
         session,
         admin: getSupabaseAdmin(),
         env: process.env,
-        sources: pricelistSources(session),
+        loadBatch: () => loadPricelistBatch(pricelistBatchSources(session)),
         today: stockholmTodayISO(),
         actor: { id: gate.currentUser.id, name: gate.currentUser.name ?? null },
       },
@@ -49,6 +51,12 @@ export async function POST(req: Request) {
         return routeError(502, 'portal_pricelist_source', outcome.message);
       case 'empty':
         return routeError(422, 'portal_pricelist_empty', 'Ingen artikel kommer med i prislistan. En tom lista publiceras inte.');
+      case 'blocked':
+        return routeError(
+          422,
+          'portal_pricelist_blocked',
+          `Ingenting publicerades: ${outcome.problems.length === 1 ? 'en lista' : `${outcome.problems.length} listor`} gick inte att läsa. ${outcome.problems.join(' ')}`,
+        );
       case 'changed':
         return routeError(
           409,
@@ -66,6 +74,7 @@ export async function POST(req: Request) {
             idempotency_key: outcome.idempotencyKey,
             article_count: outcome.articleCount,
             delivery: outcome.delivery,
+            lists: outcome.lists,
           },
           outcome.created ? 201 : 200,
         );

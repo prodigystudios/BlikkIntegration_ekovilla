@@ -24,7 +24,14 @@ export type PortalIntegrationView = { enabled: true; host: string } | { enabled:
 export type PricelistPreviewView =
   | {
       ok: true;
+      /** Hela publiceringens hash: lista 160 och butikernas egna (10b2). */
       hash: string;
+      /** Antal listor som publiceras: lista 160 och en per butik med egen lista. */
+      listCount: number;
+      /** Ett kort eller en lista gick inte att läsa: ingenting kan publiceras. */
+      blocked: boolean;
+      /** En tidigare publicering med samma listor till samma butiker. */
+      sameAs: { validFrom: string; createdAtLabel: string } | null;
       articles: (PricelistArticle & { categoryLabel: string })[];
       skipped: { articleNumber: string; customerName: string; reasons: string[] }[];
       unmarked: UnmarkedArticle[];
@@ -40,10 +47,15 @@ export type PartnerPricelistsView =
       ok: true;
       sharedStores: string[];
       lists: { code: string; stores: { name: string; customerName: string }[]; articleCount: number; differences: PartnerPriceDifference[] }[];
+      /** Butiker som haft en egen lista och nu får lista 160 som egen. */
+      copies: string[];
+      /** Butiker med egen lista vars inbjudan inte gått fram: de finns inte i portalen än. */
+      waiting: string[];
       problems: { key: string; what: string; stores: string[]; message: string }[];
     }
-  | { ok: false; message: string }
   | null;
+
+type DeliveryView = PricelistDelivery & { sentAtLabel: string | null; nextAttemptLabel: string | null };
 
 export type PublicationView = {
   id: string;
@@ -52,7 +64,10 @@ export type PublicationView = {
   articleCount: number;
   publishedByName: string | null;
   createdAtLabel: string;
-  delivery: PricelistDelivery & { sentAtLabel: string | null; nextAttemptLabel: string | null };
+  /** Den sämsta statusen bland publiceringens listor. */
+  delivery: DeliveryView;
+  /** Lista 160 och butikernas egna listor (10b2). */
+  lists: { key: string; label: string; code: string | null; articleCount: number; delivery: DeliveryView }[];
 };
 
 type ResellerPortalClientProps = {
@@ -108,7 +123,7 @@ async function post<T>(url: string, body?: unknown): Promise<ApiResult<T>> {
   return { ok: true, data: json.data as T };
 }
 
-function DeliveryBadge({ delivery }: { delivery: PublicationView['delivery'] }) {
+function DeliveryBadge({ delivery }: { delivery: DeliveryView }) {
   switch (delivery.status) {
     case 'sent':
       return <Badge variant="accent">Mottagen</Badge>;
@@ -146,9 +161,9 @@ export default function ResellerPortalClient({
   const deadCount = Array.isArray(outbox) ? outbox.filter((i) => i.status === 'dead').length : 0;
   const articles = preview.ok ? preview.articles : [];
   const validFromOk = /^\d{4}-\d{2}-\d{2}$/.test(validFrom) && validFrom >= today;
-  // Samma innehåll som en tidigare publicering: värt att veta innan man publicerar igen.
-  const sameContent = preview.ok ? history.find((p) => p.contentHash === preview.hash) : undefined;
-  const canPublish = integration.enabled && preview.ok && articles.length > 0 && validFromOk && busy === null;
+  const sameContent = preview.ok ? preview.sameAs : null;
+  const ownListCount = preview.ok ? preview.listCount - 1 : 0;
+  const canPublish = integration.enabled && preview.ok && !preview.blocked && articles.length > 0 && validFromOk && busy === null;
 
   // Kategorierna i listans ordning, som portalen grupperar dem.
   const rowsWithHeadings = useMemo(
@@ -159,7 +174,7 @@ export default function ResellerPortalClient({
   async function handlePublish() {
     if (!preview.ok) return;
     setBusy('publish');
-    const result = await post<{ created: boolean; article_count: number; delivery: PricelistDelivery | null }>(
+    const result = await post<{ created: boolean; article_count: number; lists: { delivery: PricelistDelivery | null }[] }>(
       '/api/crm/portal/pricelist/publish',
       { valid_from: validFrom, expected_hash: preview.hash },
     );
@@ -169,12 +184,25 @@ export default function ResellerPortalClient({
       toast.error(result.error);
       return;
     }
-    const { created, delivery } = result.data;
-    const what = created ? 'Prislistan är publicerad' : 'Samma prislista var redan publicerad';
-    if (delivery?.status === 'sent') toast.success(`${what} och mottagen av portalen.`);
-    else if (delivery?.status === 'dead') toast.error(`${what}, men portalen nekade den: ${delivery.lastError ?? 'okänt fel'}`);
-    else if (delivery?.status === 'not_queued') toast.error(`${what}, men kunde inte köas. Publicera igen.`);
-    else toast.info(`${what} och väntar i kön.${delivery?.lastError ? ` Senaste försöket: ${delivery.lastError}` : ''}`);
+    const { created, lists } = result.data;
+    const many = lists.length > 1;
+    const what = created
+      ? many ? 'Prislistorna är publicerade' : 'Prislistan är publicerad'
+      : many ? 'Samma prislistor var redan publicerade' : 'Samma prislista var redan publicerad';
+    const statuses = lists.map((l) => l.delivery?.status);
+    const dead = lists.filter((l) => l.delivery?.status === 'dead');
+    if (statuses.every((st) => st === 'sent')) toast.success(`${what} och ${many ? 'mottagna' : 'mottagen'} av portalen.`);
+    else if (dead.length > 0) {
+      toast.error(
+        many
+          ? `${what}, men portalen nekade ${dead.length === 1 ? 'en av dem' : `${dead.length} av dem`}. Se Publiceringar.`
+          : `${what}, men portalen nekade den: ${dead[0].delivery?.lastError ?? 'okänt fel'}`,
+      );
+    } else if (statuses.includes('not_queued')) toast.error(`${what}, men kunde inte köas. Publicera igen.`);
+    else {
+      const lastError = !many ? lists[0]?.delivery?.lastError : null;
+      toast.info(`${what} och väntar i kön.${lastError ? ` Senaste försöket: ${lastError}` : ''}`);
+    }
     router.refresh();
   }
 
@@ -394,14 +422,18 @@ export default function ResellerPortalClient({
               {/* Publicera */}
               <section className={CARD} aria-labelledby="pricelist-publish-heading">
                 <h2 id="pricelist-publish-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
-                  Publicera prislistan
+                  {ownListCount > 0 ? 'Publicera prislistorna' : 'Publicera prislistan'}
                 </h2>
                 <p className="m-0 mb-4 text-sm text-slate-600">
                   {!preview.ok
                     ? 'Prislistan gick inte att läsa.'
-                    : articles.length === 1
-                      ? 'En artikel skickas.'
-                      : `${articles.length} artiklar skickas.`}
+                    : preview.blocked
+                      ? 'En av butikernas listor gick inte att läsa, så ingenting kan publiceras. Se Butikernas egna prislistor.'
+                      : ownListCount > 0
+                        ? `Lista 160 med ${articlesLabel(articles.length)}, och ${ownListCount === 1 ? 'en egen lista' : `${ownListCount} egna listor`} till butiker.`
+                        : articles.length === 1
+                          ? 'En artikel skickas.'
+                          : `${articles.length} artiklar skickas.`}
                   {integration.enabled && <span className="text-slate-400"> Till {integration.host}.</span>}
                 </p>
 
@@ -417,7 +449,7 @@ export default function ResellerPortalClient({
 
                 {sameContent && (
                   <p className="m-0 mt-3 text-xs text-slate-500">
-                    Samma innehåll publicerades {sameContent.createdAtLabel}, giltig från {sameContent.validFrom}.
+                    Samma innehåll publicerades {sameContent.createdAtLabel}, giltigt från {sameContent.validFrom}.
                   </p>
                 )}
 
@@ -464,6 +496,24 @@ export default function ResellerPortalClient({
                         {p.delivery.nextAttemptLabel && (
                           <div className="mt-0.5 text-xs text-slate-500">Nästa försök {p.delivery.nextAttemptLabel}</div>
                         )}
+                        {p.lists.length > 1 && (
+                          <ul className="m-0 mt-2 grid gap-1.5 border-t border-slate-100 pl-0 pt-2">
+                            {p.lists.map((l) => (
+                              <li key={l.key} className="list-none">
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                                  <span className="min-w-0 text-slate-700">
+                                    <span className="font-semibold">{l.label}</span>
+                                    {l.code ? `, lista ${l.code}` : ''}
+                                  </span>
+                                  <DeliveryBadge delivery={l.delivery} />
+                                </div>
+                                {l.delivery.status !== 'sent' && l.delivery.lastError && (
+                                  <div className="mt-0.5 break-words text-xs text-red-700">{l.delivery.lastError}</div>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -476,8 +526,12 @@ export default function ResellerPortalClient({
       {confirming && preview.ok && (
         <DialogShell
           eyebrow="Publicera prislistan"
-          title={`Publicera ${articlesLabel(articles.length)}?`}
-          description={`Prislistan blir en ny lista för alla butiker och gäller nya offerter från ${validFrom}. Offerter som redan finns behåller sina priser.`}
+          title={ownListCount > 0 ? `Publicera ${preview.listCount} prislistor?` : `Publicera ${articlesLabel(articles.length)}?`}
+          description={
+            ownListCount > 0
+              ? `Lista 160 blir en ny lista för alla butiker, och ${ownListCount === 1 ? 'en butik får' : `${ownListCount} butiker får`} en egen lista. Alla gäller nya offerter från ${validFrom}. Offerter som redan finns behåller sina priser.`
+              : `Prislistan blir en ny lista för alla butiker och gäller nya offerter från ${validFrom}. Offerter som redan finns behåller sina priser.`
+          }
           onClose={() => (busy === null ? setConfirming(false) : undefined)}
           panelClassName="max-w-md"
         >
@@ -499,31 +553,27 @@ function storeList(names: string[]): string {
   return names.join(', ');
 }
 
-/** Butikernas egna prislistor (10b): förhandsvisning, publiceras inte än. */
+/** Butikernas egna prislistor (10b): vilka butiker som får vilken lista när prislistorna publiceras. */
 function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<PartnerPricelistsView> }) {
   return (
     <section className={`${CARD} min-w-0`} aria-labelledby="partner-lists-heading">
       <h2 id="partner-lists-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
         Butikernas egna prislistor
       </h2>
-      <p className="m-0 mb-3 text-sm text-slate-500">
+      <p className="m-0 mb-4 text-sm text-slate-500">
         En butik vars kundkort i Fortnox har en annan prislista än A eller 160 får en egen lista: lista 160, med kortets pris
-        där det skiljer sig. Kortens listor läses från Fortnox när sidan laddas.
-      </p>
-      <p className="m-0 mb-4 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-2.5 text-sm text-slate-600">
-        Förhandsvisning. I dag publiceras bara lista 160, och den gäller alla butiker.
+        där det skiljer sig. Den publiceras tillsammans med lista 160, med samma datum. Kortens listor läses från Fortnox när
+        sidan laddas.
       </p>
 
-      {!partnerLists.ok ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">{partnerLists.message}</div>
-      ) : (
-        // grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut kortet i mobil.
-        <div className="grid grid-cols-1 gap-3">
+      {/* grid-cols-1 = minmax(0, 1fr): utan den blir kolumnen lika bred som tabellen och trycker ut kortet i mobil. */}
+      <div className="grid grid-cols-1 gap-3">
           {partnerLists.problems.length > 0 && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-sm text-red-800">
               <p className="m-0 font-semibold">
                 {partnerLists.problems.length === 1 ? 'En lista gick inte att läsa' : `${partnerLists.problems.length} listor gick inte att läsa`}
               </p>
+              <p className="m-0 mt-0.5">Ingenting kan publiceras förrän det är löst, inte heller lista 160.</p>
               <ul className="m-0 mt-1.5 grid gap-1 pl-0">
                 {partnerLists.problems.map((p) => (
                   <li key={p.key} className="list-none">
@@ -580,13 +630,24 @@ function PartnerListsSection({ partnerLists }: { partnerLists: NonNullable<Partn
             </div>
           ))}
 
+          {partnerLists.copies.length > 0 && (
+            <p className="m-0 text-xs text-slate-500">
+              <span className="font-semibold text-slate-700">Lista 160 som egen lista:</span> {storeList(partnerLists.copies)}. De har
+              haft en egen lista, och utan en ny räknar portalen fortfarande på den gamla.
+            </p>
+          )}
+          {partnerLists.waiting.length > 0 && (
+            <p className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs text-amber-800">
+              <span className="font-semibold">Inbjudan har inte gått fram:</span> {storeList(partnerLists.waiting)}. Företaget finns
+              inte i portalen än och får ingen lista nu.
+            </p>
+          )}
           {partnerLists.sharedStores.length > 0 && (
             <p className="m-0 text-xs text-slate-500">
               <span className="font-semibold text-slate-700">Lista 160:</span> {storeList(partnerLists.sharedStores)}
             </p>
           )}
-        </div>
-      )}
+      </div>
     </section>
   );
 }
