@@ -405,7 +405,7 @@ Små PR:er. Varje går ut mörk och går att stanna på.
 | **3c** ✅ | Koppla kund på en portalorder utan kund. Beteendet prövas mot en databas med `supabase/checks/portal_customer_link.sql`. Resultaten står under tabellen | 3b |
 | **4a** ✅ | Planerat datum på alla arbetsordrar: kolumnerna, triggern, ifyllnaden, visningen. Fristående från portalen. Beteendet prövas mot en databas med `supabase/checks/work_order_planned_days.sql`. Resultaten står under tabellen | — |
 | **4b** ✅ | Status tillbaka: markeringen, `jobState.ts`, cron-routen och utskicket, omförsöken av Fortnox-pushen. Från 1b: en uppgiven händelse håller inte kvar resten av jobbets kö, så "planerad" köas först när "bekräftad" är LEVERERAD (inte bara köad). Portalsidan visar uppgivna händelser (404, 403, 409 m.fl.) och kan skicka om dem. Beteendet prövas mot en databas med `supabase/checks/portal_job_status.sql`. Resultaten står under tabellen | 1b, 3b, 4a |
-| **5** | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare | 4b |
+| **5** ✅ | Testmiljön, T1–T6 i Del 1. När jobb in och status tillbaka fungerar lokalt, före första externa testare. Resultaten står under tabellen | 4b |
 | **6** ✅ | Meddelanden åt båda hållen och kortet "Butiken": `POST /api/portal/jobs/{quoteId}/messages`, notisen `portal_job.message`, svaret som `job.message` direkt efter att det sparats och inte vid nästa cron. Beteendet prövas mot en databas med `supabase/checks/portal_job_messages.sql`. Resultaten står under tabellen | 4b |
 | **7** ✅ | Dokumenten: orderbekräftelsen (`getFortnoxOrderPdf()`) automatiskt efter bekräftelsen och sedan med knappen, egenkontrollen med knappen, i kortet "Butiken". PDF:en fryses i en privat bucket och kön bär en referens. Storlekskontroll: högst 3 300 000 byte före base64, under Vercels 4,5 MB. Beteendet prövas mot en databas med `supabase/checks/portal_job_documents.sql`. Resultaten står under tabellen | 4b, 6 |
 | **8a** ✅ | Butiksbeställningar, väg B, intaget: `crm_store_orders` med vakten, `POST`/`PUT`/`withdraw` under `/api/portal/store-orders`, 409 bara efter bekräftelsen, notisen till den ansvarige, sidorna (lista och en beställning, läsläge). Beteendet prövas mot en databas med `supabase/checks/portal_store_orders.sql`. Resultaten står under tabellen | Momsbeslutet |
@@ -1590,10 +1590,83 @@ Prod är oförändrat. `VERCEL_ENV` finns när prod kör, eftersom Vercel-projek
 
 **Efter deployen:** Vercels produktionsloggar ska inte ha någon rad med `Utanför prod`. En sådan rad betyder att prod
 tror att den inte är prod, och då går inget mejl, sms eller push ut.
+✅ Kontrollerat 2026-09-30: inga sådana rader, och ett testmejl i prod kom fram.
 
 **Känt, med flit:** planeringens bekräftelser, kundnotisen, tidpåminnelsen och pushens bokföring frågar inte efter
 `skipped`. Utanför prod står det därför "skickat" för något som bara loggades. Det kan inte hända i prod, där `skipped`
 aldrig förekommer.
+
+### Fas 5: resultat (2026-09-30)
+
+**Miljön, T2–T6:**
+
+- **Supabase:** `ekovilla-crm-test` (ref `aquwuqnqzuxljzkfoinn`, eu-north-1). Schemat kom in med `supabase db push`, med
+  CLI:t länkat mot test. Prod nås som förut bara med `--db-url` och länkas aldrig.
+  - Kedjan hade aldrig byggts från noll, och två efterkontroller stoppade pushen. Båda är lagade i #268:
+    - `service_role` fick inga default privileges i ett nytt projekt.
+    - `crm.access` fanns bara som data, inte i någon migrering.
+  - Paritet: test stämmer med lokalt. De enda skillnaderna är två identitetssekvenser och plattformens
+    `protect_bucket_control_*`, båda väntade och beskrivna i `supabase/checks/parity.sql`.
+  - Seed: `reference.sql` och `dev.sql` i en transaktion. Testanvändarna har ett eget lösenord, inte `dev.sql`:s.
+    Buckets kom in med `seed buckets`.
+- **Vercel:**
+  - Grenen `testmiljo` uppdateras genom att fast-forwardas till `main`. Ignored Build Step bygger prod och `testmiljo`
+    och inget annat.
+  - Domänen test.app.ekovilla.se pekar på `testmiljo`. Vercel Authentication är avstängd för projektet: läget "alla
+    utom egna domäner" skyddade också grenens domän, och då fick portalens anrop Vercels inloggningssida.
+  - De 13 Preview-variablerna gäller alla grenar, eftersom grenen inte gick att välja innan den hade en deploy. Det är
+    ofarligt: värdena är testvärden, bara `testmiljo` byggs, och ingen variabel delas med Production.
+- **Fortnox:** testmiljön har en egen app mot testbolaget.
+  - 🧨 Samma app i två databaser fungerar inte. Den nyaste kopplingen gör den äldres refresh-token ogiltig: lokalt kom
+    `invalid_grant` direkt efter att testmiljön kopplats med den lokala appen.
+  - Efter bytet förnyades tokens i båda miljöerna, med tvingad förnyelse.
+- **T5 och T6:**
+  - Hemligheten finns i båda projekten. CRM:et har `RESELLER_PORTAL_URL=https://test.partner.ekovilla.se`, portalen
+    `EKOVILLA_CRM_URL=https://test.app.ekovilla.se` och `EKOVILLA_CRM_STORE_ORDERS=on`.
+  - En signerad ping går igenom åt båda hållen med 200, och fel hemlighet ger 401.
+  - Inloggningen med en testanvändare lyckas, och sidans kod pekar på testprojektet, inte prod.
+
+**Kedjan i testmiljön** kördes med Playwright i Williams inloggade webbläsarprofil, utan lösenord i filer. Ett svep
+mellan test.app och test.partner gav 42 gröna kontroller. De röda var mina egna skriptfel och förberedelser som
+saknades, plus felet nedan, och alla gick igenom när de kördes om.
+
+1. **Prislistan:** publicerad. Portalen visar 48 artiklar som gäller från 2026-09-30.
+2. **Jobbet:** offert 2026-005 → kundlänk och signering → överlämning → arbetsorder AO-20260930-71DD2F. Notiserna
+   "Nytt jobb" och "Fortnox-ordern kunde inte skapas" kom, eftersom butiken saknade kundnummer.
+3. **Koppla kund (3c):** Testbygg AB kopplades till Testbolaget Bygg AB.
+   - Kortet fick först skickas till Fortnox, där det blev kund 18. Felet var "Ingen Fortnox-kundkoppling hittades".
+   - Därefter gick det: Fortnox-order 81, och portalen visar Bekräftad med "Ekovillas order 81".
+4. **Status:** planerad 12–14 okt, flyttad 20–21, borttagen (tillbaka till Bekräftad), planerad 22 okt, Utförd och
+   Fakturerad, plus en Fortnox-faktura. En flytt efter Utförd skickade ingenting.
+5. **Meddelanden:** fungerar åt båda hållen, med notisen och "Test Admin · Planering".
+6. **Dokument:** egenkontrollen och orderbekräftelsen, den senare efter #269.
+7. **Beställningar:**
+   - B-2026-002: frakt 450, Fortnox-order 82 med 25 % moms, levererad, faktura 32.
+   - B-2026-003: Fortnox-order 83, makulerad med skäl.
+   - Alla statusar syns i portalen.
+
+William testade själv 2026-10-01, och allt fungerade.
+
+**Hittat och lagat (#269):** orderbekräftelsen till butiken gick inte att skapa på Vercel, med felet "Något gick fel".
+- De fyra routes som kör portalens bakgrundsvarv eller bygger dess dokument fick inte med typsnitten och loggan, eftersom
+  `outputFileTracingIncludes` gäller per route.
+- Lokalt syns felet aldrig. I prod hade det slagit till vid påslaget.
+- `tests/shared/pdfTracing.test.ts` letar nu själv upp varje route som anropar `runPortalCron` eller
+  `portalDocumentSources`.
+
+**Så används testmiljön:**
+- **Ingen cron:** statusen skickas med "Skicka väntande nu" under Återförsäljarportalen → Utskick.
+- **Reserven** är Test Admin.
+- **Testbygg AB** är kopplad till Testbolaget Bygg AB, Fortnox-kund 18.
+- **Kundlänken** visas bara på Skicka-sidan i samma ögonblick som offerten skickas. Databasen har bara hashen.
+
+**Öppet:**
+- **Förhandsvisningen av lista 160** på portalsidan föll ibland med "Något gick fel mot Fortnox": ett `FortnoxApiError`
+  utan felkod, och inte 429, som görs om. Publiceringen påverkades inte. Utred före fas 9.
+- **Portalens Vault** i testmiljön (`crm_outbox_url`, `crm_outbox_secret`) är inte satt. Portalens omförsök körs därför
+  inte, men direktförsöken fungerar. Williams överlämning från 2026-09-27 ligger kvar i portalens kö.
+- **Inför fas 9:** varje butiks kundkort i CRM:et måste ha ett Fortnox-nummer, annars skapas ingen Fortnox-order.
+  Portalens `ekovillaCustomerNumber` ska vara det numret.
 
 ---
 
