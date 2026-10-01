@@ -13,6 +13,7 @@ import { retryStoreOrderFortnox, storeOrderFortnoxDeps, type StoreOrderFortnoxDe
 import { syncPortalJobs, type PortalJobSyncSummary } from './jobSync';
 import { syncStoreOrders, type StoreOrderSyncSummary } from './storeOrderSync';
 import { dispatchPortalOutbox, type OutboxDispatchSummary } from './outbox';
+import { invitePricelistSources, sweepInvitePricelists, type InvitePricelistSources, type InvitePricelistSweepSummary } from './invitePricelistStore';
 import { isPortalDatabaseAllowed, WRONG_DATABASE_MESSAGE } from './config';
 
 /**
@@ -25,6 +26,8 @@ import { isPortalDatabaseAllowed, WRONG_DATABASE_MESSAGE } from './config';
  *   2. Kön skickas (outbox.ts). Gör ingenting när integrationen är av i miljön; då ligger händelserna kvar.
  *   3. Levererades något räknas jobben och beställningarna om en gång till: det som följer "bekräftad" köas först när
  *      den är levererad, och annars hade butiken fått det en minut senare.
+ *   3b. En ny butik vars inbjudan gått fram får sin egen lista (invitePricelistStore.ts, 10b3): efter utskicket, där
+ *      inbjudan går fram. Köades en lista skickas kön en gång till. Kortet läses i Fortnox en gång per ny butik.
  *   4. Dokumenten (jobDocumentsStore.ts, fas 7): den automatiska orderbekräftelsen efter en levererad bekräftelse,
  *      omförsöken och det som inte hann köas. Efter utskicket, eftersom en orderbekräftelse är tre Fortnox-anrop och
  *      statusen inte ska vänta på dem. Köades något skickas kön en gång till.
@@ -64,6 +67,8 @@ export type PortalCronSummary = {
   resync?: PortalJobSyncSummary | { error: string };
   storeOrderResync?: StoreOrderSyncSummary | { error: string };
   redispatch?: OutboxDispatchSummary | { error: string };
+  invitePricelists: InvitePricelistSweepSummary | { error: string };
+  invitePricelistsDispatch?: OutboxDispatchSummary | { error: string };
   documents: PortalJobDocumentsSweepSummary | { error: string };
   documentsDispatch?: OutboxDispatchSummary | { error: string };
   fortnox: PortalFortnoxRetrySummary | { error: string };
@@ -82,7 +87,13 @@ async function step<T>(name: string, run: () => Promise<T>): Promise<T | { error
 
 const sentSomething = (s: OutboxDispatchSummary | { error: string }) => 'ran' in s && s.ran && s.sent > 0;
 const queuedSomething = (
-  s: PortalJobSyncSummary | StoreOrderSyncSummary | PortalJobDocumentsSweepSummary | { error: string } | undefined,
+  s:
+    | PortalJobSyncSummary
+    | StoreOrderSyncSummary
+    | PortalJobDocumentsSweepSummary
+    | InvitePricelistSweepSummary
+    | { error: string }
+    | undefined,
 ) => s !== undefined && 'queued' in s && s.queued > 0;
 
 export async function runPortalCron(
@@ -98,6 +109,8 @@ export async function runPortalCron(
     documentSources?: PortalDocumentSources;
     /** Butiksbeställningarnas Fortnox-anrop. Testerna ger egna. */
     storeOrderFortnoxDeps?: StoreOrderFortnoxDeps;
+    /** Var de nya butikernas kort och listor läses (Fortnox). Testerna ger egna. */
+    invitePricelistSources?: InvitePricelistSources;
   },
 ): Promise<PortalCronSummary> {
   if (!isPortalDatabaseAllowed(options.env)) {
@@ -107,6 +120,7 @@ export async function runPortalCron(
       storeOrderSync: skipped,
       messages: skipped,
       dispatch: { ran: false, reason: WRONG_DATABASE_MESSAGE },
+      invitePricelists: skipped,
       storeOrderNotices: skipped,
       documents: skipped,
       fortnox: skipped,
@@ -122,6 +136,7 @@ export async function runPortalCron(
     storeOrderSync: await step('butiksbeställningarnas omräkning', () => syncStoreOrders(admin, { now })),
     messages: await step('meddelandena', () => sweepPortalJobMessages(admin, { now })),
     dispatch: await step('utskicket', dispatch),
+    invitePricelists: { candidates: 0, queued: 0, settled: 0, failed: 0, deferred: 0 },
     storeOrderNotices: { candidates: 0, sent: 0, failed: 0, noRecipient: 0, errors: 0, deferred: 0 },
     documents: { created: 0, queued: 0, failed: 0, retried: 0, errors: 0 },
     fortnox: { due: 0, attempted: 0, gaveUp: 0, skipped: 0, errors: 0 },
@@ -136,6 +151,21 @@ export async function runPortalCron(
   }
   const documentsStartBefore =
     options.fortnoxRetries === false ? PORTAL_CLICK_DOCUMENTS_START_BEFORE_MS : PORTAL_CRON_DOCUMENTS_START_BEFORE_MS;
+  // Efter utskicket: det är där inbjudan går fram. Två Fortnox-anrop per butik och klienten har ingen tidsgräns: samma
+  // startgräns som dokumenten, och från knapparna en butik per klick.
+  if (now().getTime() - startedAt < documentsStartBefore) {
+    summary.invitePricelists = await step('butikernas listor efter inbjudan', () =>
+      sweepInvitePricelists(admin, {
+        now,
+        env: options.env,
+        sources: options.invitePricelistSources ?? invitePricelistSources(),
+        limit: options.fortnoxRetries === false ? 1 : undefined,
+      }),
+    );
+    if (queuedSomething(summary.invitePricelists)) {
+      summary.invitePricelistsDispatch = await step('utskicket efter listorna', dispatch);
+    }
+  }
   if (now().getTime() - startedAt < documentsStartBefore) {
     summary.documents = await step('dokumenten', () =>
       sweepPortalJobDocuments(admin, {

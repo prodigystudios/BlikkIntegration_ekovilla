@@ -294,6 +294,8 @@ function sameBatch(rows: LatestRow[], items: PricelistBatchItem[], validFrom: st
  *   2. varje lista köas (service-rollen; samma nyckel = samma händelse), den gemensamma i sin ordning och varje butiks
  *      egna i butikens,
  *   3. ett första utskick. Det som inte hinner eller inte går fram ligger kvar i kön.
+ * En ny publicering öppnar också steget efter inbjudan (10b3) för butikerna som väntade på sin inbjudan när listorna
+ * lästes, se nedan.
  * Dör anropet efter 1 eller mitt i 2 är publiceringen den senaste och inte nekad, så samma publicering igen köar resten.
  */
 export async function publishPricelist(
@@ -392,6 +394,19 @@ export async function publishPricelist(
     return { kind: 'db_error', message: inserted.error.message };
   }
   const created = (inserted.data ?? []).length > 0;
+
+  // 10b3: butikerna som väntade på sin inbjudan när listorna lästes har ingen lista här. Gick inbjudan fram under tiden
+  // kan steget efter inbjudan (invitePricelistStore.ts) redan ha lagt butikens lista i den förra publiceringen och
+  // markerat butiken klar, och den här publiceringen är nu den senaste, utan butiken. Steget prövar butiken igen.
+  // Service-rollen: sessionen läser inbjudningarna men skriver dem inte. Ett fel stoppar inte publiceringen.
+  if (created && batch.waiting.length > 0) {
+    for (const ids of chunkIds(batch.waiting.map((st) => st.resellerId))) {
+      const reopened = await deps.admin.from('crm_portal_reseller_invites').update({ pricelist_settled_at: null }).in('reseller_id', ids);
+      if (reopened.error) {
+        console.error('[portal-pricelist] butikerna som väntade på inbjudan kunde inte prövas igen', reopened.error.message);
+      }
+    }
+  }
 
   try {
     for (const { item, idempotencyKey, payload } of planned) {

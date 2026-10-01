@@ -2123,10 +2123,80 @@ per år, som sidindelningen klarar. En vy med `distinct` hade krävt nya grants 
 förnyat den lokala Fortnox-tokenen. Det är samma race mellan processer som under "Fas 5: resultat". Nästa laddning
 fungerade.
 
-### 10b3: listan efter inbjudan (nästa)
+### 10b3: listan efter inbjudan (2026-10-01)
 
-När inbjudan till ett företag på ett kort med egen lista har gått fram, köar CRM:et företagets lista med den senaste
-publiceringens datum. Listan köas i inbjudans ordning (`reseller:<id>`), så att den aldrig hinner före företaget.
+**Williams beslut 2026-10-01** (alla enligt förslaget):
+- **När:** ett steg i portalens cron, efter att inbjudan gått fram. Steget körs också av "Skicka väntande nu", eftersom
+  testmiljön saknar cron. Det körs en gång per butik, så kortet läses i Fortnox en gång.
+  - Listan köas inte vid inbjudan i `reseller:<id>`, som planen först sa. Det hade gett samma butik två ordningar i kön,
+    och då kan en sen lista gå fram efter en nyare. "Skicka om" ser dessutom bara senare händelser i samma ordning.
+  - Listan går i butikens egen ordning, `pricelist:<id>`, som publiceringens listor.
+- **Raden:** listan läggs till i den **senaste** publiceringen, med samma löpnummer och datum. En publicering är
+  fortfarande alla listor.
+- **Innehållet:** den **publicerade** lista 160 med kortets grundpriser ovanpå, inte 160 som den ser ut nu. Det som
+  ändrats i Fortnox eller i portalfälten sedan publiceringen går ut först vid nästa Publicera.
+
+**Byggt:**
+- **Migreringen** `20261001152140_portal_invite_pricelist.sql` ger `crm_portal_reseller_invites` tre kolumner:
+  `pricelist_settled_at`, `pricelist_attempted_at` och `pricelist_error` (högst 500 tecken).
+  - Den är additiv. Sessionen läser kolumnerna men skriver dem aldrig; servern skriver.
+  - Efterkontrollen prövar det, och den prövades med tre mutationer.
+- **`invitePricelist.ts`** (ren): `listFromPublished` byter 160:s grundpris mot kortets, avrundat till ören.
+  - Med en oförändrad 160 blir listan exakt den en publicering hade byggt, med samma hash.
+  - En artikel som saknar pris på 160 men har ett på kortets lista kommer med först vid nästa publicering.
+- **`invitePricelistStore.ts`** (`sweepInvitePricelists`) tar butiker vars inbjudan gått fram och som inte är klara:
+  - Klar utan lista: ingen publicering än, butiken redan med i den senaste, kortet på den gemensamma listan (A, 160,
+    ingen) eller inget kundnummer.
+  - En butik som haft en egen lista får 160 som egen lista.
+  - Ordningen tål ett avbrott var som helst. Först läggs raden in, sedan kontrolleras att ingen nyare publicering kommit,
+    sedan köas listan och sist markeras butiken klar.
+  - En rad som lagts in men inte köats köas nästa varv. En nyare publicering emellan tar bort raden. Ett annat varv i
+    samma stund ger en rad och en händelse.
+  - Ett fel görs om tidigast efter 15 minuter. En avstängd integration köar ingenting.
+  - Från knapparna tas en butik per klick, i cron högst tio, och bara inom samma startgräns som dokumenten: två
+    Fortnox-anrop per butik, och Fortnox-klienten har ingen tidsgräns.
+- **Publiceringen** nollar markeringen för butikerna som väntade på sin inbjudan när listorna lästes, så att steget
+  prövar dem igen.
+- **Cron:** steget körs efter utskicket, där inbjudan går fram. Köades en lista skickas kön en gång till i samma varv.
+- **Sidan:** en butik vars inbjudan inte gått fram får texten "När inbjudan gått fram får det sin lista av sig själv,
+  med den senaste publiceringens datum."
+
+**Prövat lokalt mot testbolaget och fejkportalen** (inbjudan med admin@example.test, sedan två varv av
+`runPortalCron` som "Skicka väntande nu"):
+- Kund 13 sattes på B och ett nytt företag bjöds in på kortet. Inbjudan gick fram (201).
+- Varv 1 markerade Bergströms två befintliga butiker som klara utan att läsa Fortnox; de var redan med i publicering 3.
+- Varv 2 lade den nya butikens lista i publicering 3 (2026-10-01, lista B, 48 artiklar). Den köades i `pricelist:<id>`
+  och gick fram (201) i samma varv; artikel 16767 kostade 650 kr i stället för 560 kr.
+- En förhandsvisning efteråt gav butiken samma hash (`9cd4903e…`), med 160 oförändrad.
+- Kund 13 står på A igen.
+- Efter granskningen kördes kedjan en gång till, med ett nytt företag: listan gick fram redan i det första varvet.
+
+**Granskningen** (två rundor). Runda 1 gav nio fynd, varav sju lagades:
+- Kontrollen av en nyare publicering görs **efter** köandet. En publicering som köar butikens lista före vår syns
+  då, och vår lista står bakom den i butikens ordning. Vår lista stoppas medan den väntar, och raden tas bort om steget
+  lade in den.
+- Den nyare publiceringen kan sakna butiken, om dess förhandsvisning lästes innan inbjudan gick fram. Butiken prövas
+  därför mot den, och listan läggs där.
+- Har vår lista redan börjat gå får den gå, eftersom den går före den nyare.
+- En krock med ett annat varv läser om publiceringen i stället för att kasta.
+- Leveranserna läses i portioner om hundra.
+- De nyaste inbjudningarna läses först. En inbjudan som aldrig går fram blir aldrig klar, och de äldsta först hade
+  låtit sådana tränga ut en ny.
+- En butik utan kort som haft en egen lista får 160 som egen lista, som i publiceringen.
+
+Lagades inte:
+- **En rad som aldrig köades i en äldre publicering** blir kvar i historien som "inte köad". Det kräver att varvet dör
+  mellan raden och köandet, några millisekunder, och att någon publicerar innan nästa varv.
+- **Publiceringen läses för varje butik.** Premissen "varje cron-varv" stämmer inte: ett varv utan kandidater läser
+  ingenting, och kandidater finns bara efter en ny inbjudan.
+
+Runda 2 gav tre fynd, och alla lagades:
+- **En publicering som läste sina listor innan inbjudan gick fram och sparas efter steget.** Den saknar butiken, som
+  steget redan markerat klar. Publiceringen nollar därför markeringen för butikerna i sin egen förhandsvisnings
+  "väntar", så att steget prövar dem igen och lägger listan i den nya publiceringen.
+- **Ingen tidsgräns i knappvarvet.** Steget följer dokumentens startgräns och tar en butik per klick.
+- **`published_by` pekar på `profiles`, men inbjudarens id gör det inte.** En borttagen profil hade fällt varje
+  försök. Raden får därför bara inbjudarens namn.
 
 **Senare:** kedjevyn. Modellen låser den inte: ett kort med flera butiker kan bli grunden.
 
