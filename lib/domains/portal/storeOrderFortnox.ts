@@ -67,15 +67,8 @@ export function pickStoreOrderFortnoxMatch(orders: readonly FortnoxOrderListItem
   return pickStoreOrderFortnoxMatches(orders, reference)[0] ?? null;
 }
 
-/**
- * Fakturanumret en Fortnox-order pekar på (`InvoiceReference`), eller null. 🧨 En ofakturerad order svarar med strängen
- * "0", inte null (uppmätt 2026-09-29, order 71 före och efter createinvoice): "0" är ingen faktura.
- */
-export function fortnoxInvoiceReference(value: unknown): string | null {
-  if (typeof value !== 'string' && typeof value !== 'number') return null;
-  const text = String(value).trim();
-  return text === '' || /^0+$/.test(text) ? null : text;
-}
+// Flyttad till fortnox-domänen (delas med arbetsorderns Avbruten); namnet står kvar här för anroparna.
+export { fortnoxInvoiceReference } from '@/lib/domains/fortnox/orderCancel';
 
 /** Det ur artikelregistret raderna tar: benämningen och enhetskoden (portalen skickar enheten med gemener). */
 export type StoreOrderRegisterArticle = { article_number: string; description: string | null; unit: string | null };
