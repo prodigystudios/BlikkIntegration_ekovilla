@@ -31,6 +31,15 @@ export class FortnoxPushInProgressError extends Error {
   }
 }
 
+// En avbruten arbetsorder skapas aldrig i Fortnox (lib/domains/fortnox/workOrderCancel.ts): dess Fortnox-order är
+// makulerad, eller fanns aldrig, och en ny öppen order hade varit just den drift makuleringen finns för att hindra.
+export class WorkOrderCancelledError extends Error {
+  constructor() {
+    super('Arbetsordern är avbruten och skickas inte till Fortnox.');
+    this.name = 'WorkOrderCancelledError';
+  }
+}
+
 export class FortnoxApiError extends Error {
   constructor(
     public readonly status: number,
@@ -148,7 +157,7 @@ export function friendlyFortnoxMessage(e: unknown): string {
   if (e instanceof FortnoxNotConnectedError) {
     return 'Fortnox är inte kopplat. Be en administratör ansluta Fortnox i CRM-inställningarna.';
   }
-  if (e instanceof FortnoxPushInProgressError) {
+  if (e instanceof FortnoxPushInProgressError || e instanceof WorkOrderCancelledError) {
     return e.message;
   }
   // Rutan i inställningarna säger fortfarande "Kopplad" (raden finns kvar), så beskedet måste säga vad som hjälper.

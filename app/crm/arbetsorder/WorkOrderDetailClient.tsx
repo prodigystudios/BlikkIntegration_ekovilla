@@ -51,6 +51,18 @@ import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
+
+// Svaren där Fortnox stoppade ett byte till eller från Avbruten (PATCH-routen, workOrderCancel.ts). Ingenting sparades.
+// `crm_work_order_update_failed_after_fortnox_cancel` står inte med: där ÄR Fortnox-ordern makulerad, och ett nytt
+// tryck på Spara med Avbruten kvar är det som läker det.
+const FORTNOX_STATUS_REFUSALS = new Set([
+  'crm_work_order_fortnox_cancel_failed',
+  'crm_work_order_fortnox_invoiced',
+  'crm_work_order_fortnox_cancelled',
+  'crm_work_order_fortnox_unreadable',
+  'fortnox_push_in_progress',
+  'fortnox_not_connected',
+]);
 type WorkOrderTab = 'overview' | 'files' | 'time';
 type FortnoxSyncStatus = 'not_synced' | 'pending' | 'synced' | 'failed';
 
@@ -643,7 +655,15 @@ export default function WorkOrderDetailClient({
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte spara arbetsorder'); return; }
+      if (!res.ok || !json.ok) {
+        toast.error(json?.error || 'Kunde inte spara arbetsorder');
+        // Fortnox sa nej till makuleringen (eller till att öppna en makulerad order igen): ingenting sparades, och
+        // väljaren går tillbaka till den sparade statusen. Övriga ändringar står kvar i formuläret.
+        if (FORTNOX_STATUS_REFUSALS.has(json?.errorDetails?.code)) {
+          setDraft((d) => (d ? { ...d, status: workOrder.status } : d));
+        }
+        return;
+      }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem);
       setEditingOverview(false);
       // Kontaktperson/arbetsadress/ansvarig speglas på Fortnox-ordern. Synken är icke-fatal —
@@ -651,6 +671,8 @@ export default function WorkOrderDetailClient({
       // ändrad kontakt kunde ligga rätt i CRM och fel i Fortnox utan att någon märkte det.
       if (json.data?.fortnox_error) {
         toast.error(`Arbetsorder sparad men Fortnox-synk misslyckades: ${json.data.fortnox_error}`);
+      } else if (json.data?.fortnox_cancelled) {
+        toast.success(`Arbetsordern är avbruten och Fortnox-order ${json.data.fortnox_cancelled} makulerad`);
       } else {
         toast.success('Arbetsorder sparad');
       }

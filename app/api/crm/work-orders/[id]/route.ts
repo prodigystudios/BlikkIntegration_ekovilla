@@ -1,7 +1,8 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { getEffectivePermissions } from '@/lib/auth/permissions';
+import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderDocumentNoteChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
+import { cancelWorkOrderWithFortnox, isWorkOrderFortnoxOrderCancelled, mayUpdateWorkOrder, workOrderStatusFortnoxStep, type CancelWorkOrderResult } from '@/lib/domains/fortnox/workOrderCancel';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
@@ -284,7 +285,75 @@ export async function PATCH(req: Request, context: RouteContext) {
       }
     }
 
-    const { data, error } = await updateCrmWorkOrder(supabase, context.params.id, updateInput);
+    // 🧨 AVBRUTEN MAKULERAR FORTNOX-ORDERN — och arbetsordern blir inte Avbruten om Fortnox inte tar emot det
+    // (William 2026-10-02: "så våra system inte driftar iväg"). Före det här ändrade Avbruten bara vår status, och
+    // Fortnox-ordern låg kvar öppen. Säger Fortnox nej sparas ingenting i den här PATCH:en, och säljaren får beskedet.
+    // Regeln och claimen bor i lib/domains/fortnox/workOrderCancel.ts.
+    const fortnoxStep = workOrderStatusFortnoxStep(current?.status, updateInput.status);
+    const fortnoxOrderNumber = current?.fortnox_order_number ?? null;
+    if (fortnoxStep !== 'none') {
+      // RLS-policyn (ansvarig eller crm.admin), prövad FÖRE Fortnox: nekar databasen sparandet efteråt är ordern
+      // redan makulerad där. Samma 403 som update-vägen svarar.
+      const permissions = await getEffectivePermissions();
+      if (!mayUpdateWorkOrder(current?.assigned_to, crmUser.currentUser.id, can(permissions, 'crm.admin'))) {
+        return routeError(403, 'crm_work_order_forbidden', 'Du kan bara redigera arbetsorder du är ansvarig för.');
+      }
+    }
+    // Tillbaka från Avbruten: en makulerad Fortnox-order går inte att öppna igen, så arbetsordern får inte heller öppnas.
+    // En order som avbröts före regeln har sin Fortnox-order öppen och kan återupptas som förut.
+    if (fortnoxStep === 'reactivate' && fortnoxOrderNumber) {
+      let cancelledInFortnox: boolean;
+      try {
+        cancelledInFortnox = await isWorkOrderFortnoxOrderCancelled(fortnoxOrderNumber);
+      } catch (e) {
+        if (e instanceof FortnoxNotConnectedError) return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
+        console.error('[fortnox] Läsningen före återupptagandet misslyckades:', (e as Error)?.message);
+        return routeError(502, 'crm_work_order_fortnox_unreadable',
+          `Fortnox-order ${fortnoxOrderNumber} gick inte att läsa, så arbetsordern står kvar som Avbruten: ${friendlyFortnoxMessage(e)}`);
+      }
+      if (cancelledInFortnox) {
+        return routeError(409, 'crm_work_order_fortnox_cancelled',
+          `Fortnox-order ${fortnoxOrderNumber} är makulerad och kan inte öppnas igen, så arbetsordern står kvar som Avbruten.`);
+      }
+    }
+
+    type Updated = Awaited<ReturnType<typeof updateCrmWorkOrder>>;
+    let cancelledFortnoxOrder: string | null = null;
+    let updated: Updated;
+    if (fortnoxStep === 'cancel') {
+      let outcome: CancelWorkOrderResult<Updated>;
+      try {
+        outcome = await cancelWorkOrderWithFortnox(context.params.id, () => updateCrmWorkOrder(supabase, context.params.id, updateInput));
+      } catch (e) {
+        if (e instanceof FortnoxNotConnectedError) return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
+        console.error('[fortnox] Makuleringen av arbetsorderns Fortnox-order misslyckades:', (e as Error)?.message);
+        return routeError(502, 'crm_work_order_fortnox_cancel_failed',
+          `Fortnox makulerade inte order ${fortnoxOrderNumber ?? ''}: ${friendlyFortnoxMessage(e)} Arbetsordern är inte avbruten.`);
+      }
+      if (outcome.kind === 'busy') {
+        return routeError(409, 'fortnox_push_in_progress',
+          'Fortnox-ordern skapas eller uppdateras just nu. Försök igen om en liten stund — arbetsordern är inte avbruten.');
+      }
+      if (outcome.kind === 'invoiced') {
+        return routeError(409, 'crm_work_order_fortnox_invoiced',
+          `Fortnox-order ${outcome.fortnoxOrderNumber} är fakturerad (faktura ${outcome.invoiceNumber}) och kan inte makuleras. Arbetsordern är inte avbruten.`);
+      }
+      cancelledFortnoxOrder = outcome.fortnoxOrderNumber;
+      updated = outcome.saved;
+    } else {
+      updated = await updateCrmWorkOrder(supabase, context.params.id, updateInput);
+    }
+    const { data, error } = updated;
+
+    if (error && cancelledFortnoxOrder) {
+      // Det enda läget där systemen skiljer sig: Fortnox tog makuleringen, sparandet föll. Ett nytt försök läker det —
+      // en redan makulerad order räknas som klar och sparandet görs om.
+      console.error('[fortnox] 🧨 Fortnox-ordern makulerades, men arbetsordern sparades inte', {
+        id: context.params.id, fortnoxOrderNumber: cancelledFortnoxOrder, error: error.message,
+      });
+      return routeError(500, 'crm_work_order_update_failed_after_fortnox_cancel',
+        `Fortnox-order ${cancelledFortnoxOrder} är makulerad, men arbetsordern kunde inte sparas. Försök igen — ordern makuleras inte två gånger.`);
+    }
 
     if (error) {
       // 0 rows = the order is missing OR the caller isn't its assigned owner (UPDATE RLS is
@@ -322,6 +391,11 @@ export async function PATCH(req: Request, context: RouteContext) {
     // ⚠️ Speglar EXAKT syncWorkOrderHeaderToFortnox null-villkor, via samma delade regel — annars
     // larmar routen om en ändring synken gärna hade skickat, eller tiger om en den inte kan.
     const invoicedInFortnox = Boolean(current?.fortnox_order_number) && isFortnoxOrderClosed(current);
+    // En avbruten order speglas inte: dess Fortnox-order är makulerad (eller, avbruten före regeln, död för oss), och en
+    // skrivning dit nekas och hade stämplat ordern 'failed'. Gäller också själva avbrytandet — Redigera skickar alltid
+    // med de speglade fälten, så samma PATCH hade annars header-synkat mot ordern den just makulerat.
+    const cancelledWorkOrder = Boolean(current?.fortnox_order_number)
+      && (updateInput.status ?? current?.status) === 'cancelled';
     // ⚠️ Den fulla pushen bara för en order som REDAN ligger i Fortnox och inte är fakturerad.
     //
     //  • Utan nummer skulle `updateWorkOrderInFortnox` falla tillbaka på create och alltså SKAPA
@@ -336,7 +410,11 @@ export async function PATCH(req: Request, context: RouteContext) {
     const rowPush = (rotChanged || documentNoteChanged)
       && Boolean(current?.fortnox_order_number)
       && !isFortnoxOrderClosed(current);
-    if (invoicedInFortnox) {
+    if (cancelledWorkOrder) {
+      if (mirroredFieldChanged || rotChanged || documentNoteChanged) {
+        fortnoxError = 'Arbetsordern är avbruten, så ändringen speglas inte till Fortnox. Den är sparad i CRM.';
+      }
+    } else if (invoicedInFortnox) {
       // Ingen push — Fortnox avvisar varje skrivning mot ett fakturerat dokument. Men svaret ska
       // säga vad som faktiskt gäller, och BARA när något speglat verkligen ändrats.
       //
@@ -401,10 +479,10 @@ export async function PATCH(req: Request, context: RouteContext) {
     // `updateCrmWorkOrder` returnerade FÖRE synkförsöket, och ordersidan fortsatte visa "Synkad".
     if (attemptedPush || fortnoxError) {
       const fresh = await getCrmWorkOrder(supabase, context.params.id);
-      return ok({ item: fresh.data ?? data, fortnox_error: fortnoxError });
+      return ok({ item: fresh.data ?? data, fortnox_error: fortnoxError, fortnox_cancelled: cancelledFortnoxOrder });
     }
 
-    return ok({ item: data, fortnox_error: null });
+    return ok({ item: data, fortnox_error: null, fortnox_cancelled: cancelledFortnoxOrder });
   } catch (e: any) {
     return routeError(500, 'crm_work_order_update_unexpected', e?.message || 'Failed to update work order');
   }

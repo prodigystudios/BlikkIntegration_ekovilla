@@ -56,6 +56,11 @@ export async function POST(_req: Request, context: RouteContext) {
         'Ordern är fakturerad i Fortnox och kan inte synkas om. Rättningar går att göra i CRM, '
         + 'men når inte kundens orderbekräftelse eller faktura.');
     }
+    // En avbruten order synkas inte heller: dess Fortnox-order är makulerad (en omsynk nekas och stämplar 'failed'), och
+    // utan nummer hade omsynken skapat en ny, öppen order. Se lib/domains/fortnox/workOrderCancel.ts.
+    if ((currentRow as { status?: string | null } | null)?.status === 'cancelled') {
+      return routeError(409, 'crm_work_order_cancelled_locked', 'Arbetsordern är avbruten och synkas inte mot Fortnox.');
+    }
 
     let fortnoxError: string | null = null;
     try {

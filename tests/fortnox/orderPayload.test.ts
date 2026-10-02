@@ -21,7 +21,7 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 });
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxPost, fortnoxPut } from '@/lib/domains/fortnox/client';
+import { fortnoxPost, fortnoxPut, WorkOrderCancelledError } from '@/lib/domains/fortnox/client';
 import { pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 const WORK_ORDER_ID = 'wo-1';
@@ -858,5 +858,53 @@ describe('syncWorkOrderHeaderToFortnox — speglingen av en rättad märkning', 
 
     expect(result).toBeNull();
     expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+});
+
+// En avbruten arbetsorder skapas aldrig i Fortnox och får inga rad-PUT:ar (lib/domains/fortnox/workOrderCancel.ts).
+// Utan nummer hade create-vägen öppnat en ny order åt en avbruten arbetsorder; med nummer är ordern makulerad, och
+// PUT:en hade nekats och stämplat ordern 'failed'.
+/** Varje update() mot crm_work_orders: fejken returnerar samma kedja för tabellen. */
+function workOrderUpdates() {
+  const admin = getSupabaseAdmin() as unknown as { from: (t: string) => { update: ReturnType<typeof vi.fn> } };
+  return admin.from('crm_work_orders').update.mock.calls;
+}
+
+describe('avbruten arbetsorder — ingenting till Fortnox', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fortnoxPost).mockResolvedValue({ Order: { DocumentNumber: 131 } } as never);
+    vi.mocked(fortnoxPut).mockResolvedValue({} as never);
+  });
+
+  it('skapar ingen order för en avbruten arbetsorder, och tar ingen claim', async () => {
+    installSupabaseMock({ beforeClaim: { id: WORK_ORDER_ID, status: 'cancelled', fortnox_order_number: null } });
+
+    await expect(pushWorkOrderToFortnox(WORK_ORDER_ID)).rejects.toBeInstanceOf(WorkOrderCancelledError);
+    expect(fortnoxPost).not.toHaveBeenCalled();
+    // Ingen claim: den hade skrivit 'pending' över synkläget, och sedan 'not_synced' över det som stod.
+    expect(workOrderUpdates()).toHaveLength(0);
+  });
+
+  // 🧨 Avbrytandet håller samma claim medan statusen sparas: ett skapande som läste raden före det ser 'cancelled' i
+  // omläsningen med claimen — och stämplar inte 'failed' (ingenting misslyckades, ingenting skulle skickas).
+  it('stannar i omläsningen när ordern avbröts medan claimen togs', async () => {
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, status: 'draft', fortnox_order_number: null },
+      afterClaim: { ...baseRow, status: 'cancelled' },
+    });
+
+    await expect(pushWorkOrderToFortnox(WORK_ORDER_ID)).rejects.toBeInstanceOf(WorkOrderCancelledError);
+    expect(fortnoxPost).not.toHaveBeenCalled();
+    expect(workOrderUpdates().at(-1)?.[0]).toEqual({ fortnox_order_sync_status: 'not_synced' });
+  });
+
+  it('skickar inga rader till en avbruten orders makulerade Fortnox-order', async () => {
+    installSupabaseMock({ beforeClaim: { ...baseRow, status: 'cancelled', fortnox_order_number: '131' } });
+
+    await expect(updateWorkOrderInFortnox(WORK_ORDER_ID)).rejects.toBeInstanceOf(WorkOrderCancelledError);
+    expect(fortnoxPut).not.toHaveBeenCalled();
+    // Inte ens 'pending': spärren står före stämpeln.
+    expect(workOrderUpdates()).toHaveLength(0);
   });
 });

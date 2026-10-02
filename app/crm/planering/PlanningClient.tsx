@@ -794,7 +794,7 @@ export default function PlanningClient({
       });
       const j = await r.json();
       if (!j.ok) return toast.error(j.error || 'Kunde inte ändra status');
-      toast.success('Status uppdaterad');
+      toast.success(j.data?.fortnox_cancelled ? `Avbruten och Fortnox-order ${j.data.fortnox_cancelled} makulerad` : 'Status uppdaterad');
       await refresh();
     },
     [toast, refresh],
