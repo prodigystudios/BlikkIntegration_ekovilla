@@ -551,14 +551,16 @@ export default function CustomerDetailClient({
       if (!res.ok || !json.ok) {
         setDeleteError(json?.error || 'Kunden kunde inte tas bort.');
         setConfirmDelete(false);
+        setDeleting(false);
         return;
       }
+      // `deleting` står kvar tills sidan lämnas: ett andra klick under navigeringen hade fått 404 och visat ett fel
+      // för en borttagning som lyckades.
       toast.success('Kunden är borttagen');
       router.push('/crm/kunder');
     } catch {
       setDeleteError('Kunden kunde inte tas bort. Kontrollera anslutningen och försök igen.');
       setConfirmDelete(false);
-    } finally {
       setDeleting(false);
     }
   }
@@ -1309,14 +1311,17 @@ export default function CustomerDetailClient({
             <div className="rounded-2xl border border-rose-200 bg-white p-5">
               <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">Ta bort kund</p>
               <p className="mb-3 text-xs leading-relaxed text-slate-500">
-                {customer.fortnox_customer_id
-                  ? 'Kunden tas bort här och i Fortnox. Det går inte att ångra.'
-                  : 'Kunden tas bort. Det går inte att ångra.'}
+                {/* Utan koppling vore ett klick genom en oåterkallelig bekräftelse dömt att få nej (409). */}
+                {customer.fortnox_customer_id && !fortnoxConnected
+                  ? 'Kunden finns i Fortnox, och Fortnox är inte kopplat. Den kan tas bort när kopplingen är tillbaka.'
+                  : customer.fortnox_customer_id
+                    ? 'Kunden tas bort här och i Fortnox. Det går inte att ångra.'
+                    : 'Kunden tas bort. Det går inte att ångra.'}
               </p>
               <button
                 type="button"
                 onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
-                disabled={deleting}
+                disabled={deleting || (Boolean(customer.fortnox_customer_id) && !fortnoxConnected)}
                 className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-rose-200 bg-white text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Ta bort kund
@@ -1341,7 +1346,9 @@ export default function CustomerDetailClient({
           confirmLabel={deleting ? 'Tar bort…' : 'Ta bort kund'}
           busy={deleting}
           onConfirm={deleteCustomer}
-          onCancel={() => setConfirmDelete(false)}
+          // CrmModal stänger på Escape och klick utanför oavsett `busy`. Under borttagningen hade det sett ut som
+          // ett avbrott fast anropet fortsätter.
+          onCancel={() => { if (!deleting) setConfirmDelete(false); }}
         />
       ) : null}
 

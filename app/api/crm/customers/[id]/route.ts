@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
@@ -13,6 +13,12 @@ import {
 import { invalidUuidParam, ok, pickProvidedFields, requireCrmAdmin, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
+
+// Fortnox egna meddelanden slutar oftast med punkt, men inte alla; beskedet nedan fortsätter med en ny mening.
+function asSentence(text: string): string {
+  const trimmed = text.trim();
+  return /[.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
 
 export async function GET(_req: Request, context: RouteContext) {
   try {
@@ -149,20 +155,28 @@ export async function DELETE(_req: Request, context: RouteContext) {
         if (e.fortnoxError instanceof FortnoxNotConnectedError) {
           return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e.fortnoxError));
         }
-        return routeError(502, 'crm_customer_fortnox_delete_failed',
-          `Fortnox tog inte bort kund ${e.fortnoxCustomerNumber}: ${friendlyFortnoxMessage(e.fortnoxError)} Ingenting är borttaget.`);
+        const reason = asSentence(friendlyFortnoxMessage(e.fortnoxError));
+        // "Ingenting är borttaget" bara när det är säkert: läsningen föll, eller Fortnox svarade nej. Ett nätverksfel
+        // eller 5xx på själva borttagningen kan ha hunnit fram — ett nytt försök läser kunden först och läker det.
+        const refused = e.fortnoxError instanceof FortnoxApiError && e.fortnoxError.status >= 400 && e.fortnoxError.status < 500;
+        if (e.stage === 'read' || refused) {
+          return routeError(502, 'crm_customer_fortnox_delete_failed',
+            `Fortnox tog inte bort kund ${e.fortnoxCustomerNumber}: ${reason} Ingenting är borttaget.`);
+        }
+        return routeError(502, 'crm_customer_fortnox_delete_uncertain',
+          `Fortnox svarade inte på borttagningen av kund ${e.fortnoxCustomerNumber}: ${reason} `
+          + 'Det är oklart om kunden hann tas bort där; här står den kvar. Försök igen.');
       }
       if (e instanceof CustomerLocalDeleteError) {
         console.error('[crm] Kunden togs inte bort efter Fortnox:', e.message);
         if (!e.fortnoxCustomerNumber) {
           return routeError(500, 'crm_customer_delete_failed', `Kunden kunde inte tas bort: ${e.message}`);
         }
-        // Utan lösgjort nummer får ett nytt försök inte uppmanas: Fortnox återanvänder kundnummer, och numret kan
-        // redan tillhöra en ny kund (lib/domains/fortnox/customerDelete.ts).
-        return routeError(500, 'crm_customer_delete_failed', e.detached
-          ? `Kunden är borttagen i Fortnox (kund ${e.fortnoxCustomerNumber}) men inte här (${e.message}). Försök igen.`
-          : `Kunden är borttagen i Fortnox (kund ${e.fortnoxCustomerNumber}) men inte här (${e.message}). `
-            + 'Försök inte igen — Fortnox kan redan ha gett numret till en ny kund. Kontakta support.');
+        // Ett nytt försök är säkert även när numret inte hann kopplas loss: det läser kunden i Fortnox först, och ett
+        // nummer som gått till en ny kund stoppas av jämförelsen (sameFortnoxCustomer).
+        if (!e.detached) console.error('[crm] Fortnox-numret står kvar på kunden efter raderingen i Fortnox', e.fortnoxCustomerNumber);
+        return routeError(500, 'crm_customer_delete_failed',
+          `Kunden är borttagen i Fortnox (kund ${e.fortnoxCustomerNumber}) men inte här (${e.message}). Försök igen.`);
       }
       throw e;
     }
@@ -173,6 +187,11 @@ export async function DELETE(_req: Request, context: RouteContext) {
     if (outcome.kind === 'blocked') {
       return routeError(409, 'crm_customer_has_links',
         describeCustomerDeletionBlockers(outcome.blockers) ?? 'Kunden kan inte tas bort.', outcome.blockers);
+    }
+    if (outcome.kind === 'fortnox_mismatch') {
+      return routeError(409, 'crm_customer_fortnox_mismatch',
+        `Kund ${outcome.fortnoxCustomerNumber} i Fortnox${outcome.fortnoxName ? ` ("${outcome.fortnoxName}")` : ''} `
+        + 'stämmer inte med det här kundkortet — numret kan ha gått till en annan kund. Ingenting är borttaget.');
     }
 
     return ok({ deleted: true, fortnox_customer_number: outcome.fortnoxCustomerNumber });

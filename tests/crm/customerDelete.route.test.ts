@@ -80,16 +80,54 @@ describe('DELETE /api/crm/customers/[id]', () => {
   });
 
   it('Fortnox nej → 502 med Fortnox skäl och att ingenting är borttaget', async () => {
-    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(
-      new CustomerFortnoxDeleteError('1042', new FortnoxApiError(400, 'x', 9999999, 'Kunden har fakturor')));
+    // Uppmätt i testbolaget 2026-10-02.
+    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(new CustomerFortnoxDeleteError('7',
+      new FortnoxApiError(400, 'x', 2000000, 'Det går inte att radera kund 7 eftersom den används på en faktura/order.'), 'delete'));
     const res = await del();
     expect(res.status).toBe(502);
-    expect((await res.json()).error).toBe('Fortnox tog inte bort kund 1042: Kunden har fakturor Ingenting är borttaget.');
+    expect((await res.json()).error)
+      .toBe('Fortnox tog inte bort kund 7: Det går inte att radera kund 7 eftersom den används på en faktura/order. Ingenting är borttaget.');
+  });
+
+  it('ett skäl utan punkt får en, så att nästa mening inte flyter ihop', async () => {
+    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(
+      new CustomerFortnoxDeleteError('1042', new FortnoxApiError(400, 'x', 9999999, 'Kunden har fakturor'), 'delete'));
+    expect((await (await del()).json()).error).toBe('Fortnox tog inte bort kund 1042: Kunden har fakturor. Ingenting är borttaget.');
+  });
+
+  it('🧨 nätverksfel på själva borttagningen → säger INTE "ingenting är borttaget"', async () => {
+    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(new CustomerFortnoxDeleteError('1042', new Error('socket hang up'), 'delete'));
+    const res = await del();
+    expect(res.status).toBe(502);
+    const json = await res.json();
+    expect(json.errorDetails.code).toBe('crm_customer_fortnox_delete_uncertain');
+    expect(json.error).not.toContain('Ingenting är borttaget');
+    expect(json.error).toContain('Försök igen');
+  });
+
+  it('5xx på borttagningen räknas också som osäkert', async () => {
+    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(
+      new CustomerFortnoxDeleteError('1042', new FortnoxApiError(503, 'x'), 'delete'));
+    expect((await (await del()).json()).errorDetails.code).toBe('crm_customer_fortnox_delete_uncertain');
+  });
+
+  it('nätverksfel på läsningen → säkert att ingenting är borttaget', async () => {
+    vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(new CustomerFortnoxDeleteError('1042', new Error('socket hang up'), 'read'));
+    expect((await (await del()).json()).error).toContain('Ingenting är borttaget');
+  });
+
+  it('numret tillhör en annan kund i Fortnox → 409 med Fortnox-namnet', async () => {
+    vi.mocked(deleteCrmCustomerWithFortnox).mockResolvedValue({ kind: 'fortnox_mismatch', fortnoxCustomerNumber: '21', fortnoxName: 'Ny Kund AB' });
+    const res = await del();
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.errorDetails.code).toBe('crm_customer_fortnox_mismatch');
+    expect(json.error).toBe('Kund 21 i Fortnox ("Ny Kund AB") stämmer inte med det här kundkortet — numret kan ha gått till en annan kund. Ingenting är borttaget.');
   });
 
   it('Fortnox inte kopplat → 409 med anslutningsbeskedet', async () => {
     vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(
-      new CustomerFortnoxDeleteError('1042', new FortnoxNotConnectedError()));
+      new CustomerFortnoxDeleteError('1042', new FortnoxNotConnectedError(), 'read'));
     const res = await del();
     expect(res.status).toBe(409);
     expect((await res.json()).errorDetails.code).toBe('fortnox_not_connected');
@@ -104,10 +142,10 @@ describe('DELETE /api/crm/customers/[id]', () => {
     expect(error).toMatch(/Försök igen\.$/);
   });
 
-  it('🧨 numret INTE lösgjort → beskedet avråder från ett nytt försök (Fortnox återanvänder numret)', async () => {
+  it('numret INTE lösgjort → ett nytt försök är ändå säkert (läsningen stoppar ett återanvänt nummer)', async () => {
     vi.mocked(deleteCrmCustomerWithFortnox).mockRejectedValue(new CustomerLocalDeleteError('Ingen rad togs bort.', '1042', false));
     const { error } = await (await del()).json();
-    expect(error).toContain('Försök inte igen');
+    expect(error).toMatch(/Försök igen\.$/);
   });
 
   it('vår radering föll utan Fortnox-koppling → 500 utan ord om Fortnox', async () => {

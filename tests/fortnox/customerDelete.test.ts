@@ -7,9 +7,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // aldrig når vår rad, och att frågorna mot databasen läser rätt kolumner.
 
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
+vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/fortnox/client')>();
+  return { ...actual, fortnoxGet: vi.fn() };
+});
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet } from '@/lib/domains/fortnox/client';
 import {
   CustomerFortnoxDeleteError,
   CustomerLocalDeleteError,
@@ -18,7 +22,9 @@ import {
   deleteCrmCustomerWithFortnox,
   describeCustomerDeletionBlockers,
   fortnoxCustomerAlreadyGone,
+  sameFortnoxCustomer,
   type CustomerDeleteDeps,
+  type FortnoxCustomerIdentity,
 } from '@/lib/domains/fortnox/customerDelete';
 import { makeQueryChain } from '../crm/helpers/supabase';
 
@@ -68,10 +74,39 @@ describe('fortnoxCustomerAlreadyGone', () => {
   });
 });
 
+describe('sameFortnoxCustomer', () => {
+  const business = { customer_type: 'business' as const, company_name: 'Dubblett AB', first_name: null, last_name: null, organization_number: '556000-0001', personal_number: null };
+  const privatePerson = { customer_type: 'private' as const, company_name: null, first_name: 'Anna', last_name: 'Berg', organization_number: null, personal_number: '19800101-1234' };
+
+  it('org.numret avgör när båda har ett — namnet spelar då ingen roll', () => {
+    expect(sameFortnoxCustomer(business, { name: 'Dubblett Aktiebolag', organisationNumber: '5560000001' })).toBe(true);
+    expect(sameFortnoxCustomer(business, { name: 'Dubblett AB', organisationNumber: '556999-9999' })).toBe(false);
+  });
+
+  it('personnumret jämförs på de tio sista siffrorna (12 mot 10 siffror)', () => {
+    expect(sameFortnoxCustomer(privatePerson, { name: 'Någon annan', organisationNumber: '800101-1234' })).toBe(true);
+    expect(sameFortnoxCustomer(privatePerson, { name: 'Anna Berg', organisationNumber: '19900101-1234' })).toBe(false);
+  });
+
+  it('utan nummer på ena sidan: namnet, utan hänsyn till versaler och mellanslag', () => {
+    expect(sameFortnoxCustomer({ ...business, organization_number: null }, { name: '  dubblett   ab ', organisationNumber: '5560000001' })).toBe(true);
+    expect(sameFortnoxCustomer(business, { name: 'Dubblett AB', organisationNumber: null })).toBe(true);
+    expect(sameFortnoxCustomer({ ...privatePerson, personal_number: null }, { name: 'Anna Berg', organisationNumber: null })).toBe(true);
+    expect(sameFortnoxCustomer({ ...business, organization_number: null }, { name: 'Ny Kund AB', organisationNumber: null })).toBe(false);
+  });
+
+  it('inget namn hos oss räknas aldrig som samma', () => {
+    expect(sameFortnoxCustomer({ ...business, company_name: null, organization_number: null }, { name: '', organisationNumber: null })).toBe(false);
+  });
+});
+
 /** Fejkade beroenden som skriver varje anrop i en logg, så att ordningen går att pröva. */
 function fakeDeps(opts: {
   fortnoxId?: string | null;
   missing?: boolean;
+  /** Kunden bakom numret i Fortnox; null = okänt nummer. */
+  remote?: FortnoxCustomerIdentity | null;
+  readFortnox?: () => Promise<void>;
   blockers?: typeof NONE;
   fortnox?: () => Promise<void>;
   nameCalls?: () => Promise<void>;
@@ -88,10 +123,17 @@ function fakeDeps(opts: {
         company_name: 'Dubblett AB',
         first_name: null,
         last_name: null,
+        organization_number: '556000-0001',
+        personal_number: null,
         fortnox_customer_id: opts.fortnoxId === undefined ? '1042' : opts.fortnoxId,
       };
     },
     countBlockers: async () => { log.push('count'); return opts.blockers ?? NONE; },
+    readFortnoxCustomer: async (nr) => {
+      log.push(`fortnox-read:${nr}`);
+      await opts.readFortnox?.();
+      return opts.remote === undefined ? { name: 'Dubblett AB', organisationNumber: '5560000001' } : opts.remote;
+    },
     deleteInFortnox: async (nr) => { log.push(`fortnox:${nr}`); await opts.fortnox?.(); },
     nameUnnamedCalls: async (_id, name) => { log.push(`calls:${name}`); await opts.nameCalls?.(); },
     deleteRow: async () => { log.push('delete'); return opts.deleted ?? true; },
@@ -104,7 +146,29 @@ describe('deleteCrmCustomerWithFortnox', () => {
   it('Fortnox först, sedan samtalen, sist vår rad', async () => {
     const { deps, log } = fakeDeps();
     await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toEqual({ kind: 'deleted', fortnoxCustomerNumber: '1042' });
-    expect(log).toEqual(['read', 'count', 'fortnox:1042', 'calls:Dubblett AB', 'delete']);
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'fortnox:1042', 'calls:Dubblett AB', 'delete']);
+  });
+
+  it('🧨 numret tillhör en annan kund i Fortnox (återanvänt): ingenting tas bort', async () => {
+    const { deps, log } = fakeDeps({ remote: { name: 'Ny Kund AB', organisationNumber: '5569999999' } });
+    await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toEqual({
+      kind: 'fortnox_mismatch', fortnoxCustomerNumber: '1042', fortnoxName: 'Ny Kund AB',
+    });
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042']);
+  });
+
+  it('Fortnox känner inte till numret: ingen borttagning där, vår rad tas bort', async () => {
+    const { deps, log } = fakeDeps({ remote: null });
+    await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toEqual({ kind: 'deleted', fortnoxCustomerNumber: '1042' });
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'calls:Dubblett AB', 'delete']);
+  });
+
+  it('läsningen i Fortnox faller → stage read, ingenting borttaget', async () => {
+    const { deps, log } = fakeDeps({ readFortnox: async () => { throw new Error('nätverk'); } });
+    const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
+    expect(thrown).toBeInstanceOf(CustomerFortnoxDeleteError);
+    expect(thrown.stage).toBe('read');
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042']);
   });
 
   it('en kund som inte finns: ingenting mer görs', async () => {
@@ -127,7 +191,8 @@ describe('deleteCrmCustomerWithFortnox', () => {
     expect(thrown).toBeInstanceOf(CustomerFortnoxDeleteError);
     expect(thrown.fortnoxCustomerNumber).toBe('1042');
     expect(thrown.fortnoxError).toBe(no);
-    expect(log).toEqual(['read', 'count', 'fortnox:1042']);
+    expect(thrown.stage).toBe('delete');
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'fortnox:1042']);
   });
 
   it('Fortnox inte kopplat räknas som nej, inte som borttagen', async () => {
@@ -147,6 +212,7 @@ describe('deleteCrmCustomerWithFortnox', () => {
       const { deps, log } = fakeDeps({ fortnoxId });
       await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toEqual({ kind: 'deleted', fortnoxCustomerNumber: null });
       expect(log).toEqual(['read', 'count', 'calls:Dubblett AB', 'delete']);
+      expect(log.some((l) => l.startsWith('fortnox'))).toBe(false);
     }
   });
 
@@ -156,7 +222,7 @@ describe('deleteCrmCustomerWithFortnox', () => {
     expect(thrown).toBeInstanceOf(CustomerLocalDeleteError);
     expect(thrown.fortnoxCustomerNumber).toBe('1042');
     expect(thrown.detached).toBe(true);
-    expect(log).toEqual(['read', 'count', 'fortnox:1042', 'calls:Dubblett AB', 'delete', 'detach']);
+    expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'fortnox:1042', 'calls:Dubblett AB', 'delete', 'detach']);
   });
 
   it('samtalen faller → raden tas inte bort, numret kopplas loss', async () => {
@@ -225,14 +291,30 @@ describe('customerDeleteDeps — frågorna', () => {
       .rejects.toThrow('permission denied');
   });
 
-  it('samtalen: bara de utan företagsnamn, på kund eller prospekt, via sessionen', async () => {
+  it('samtalen: bara de utan företagsnamn som blir helt utan referens, via sessionen', async () => {
     vi.mocked(getSupabaseAdmin).mockReturnValue(recordingClient({ data: null, error: null }).client as never);
     const session = recordingClient({ data: null, error: null });
     await customerDeleteDeps(session.client as never).nameUnnamedCalls(ID, 'Dubblett AB');
     const calls = session.chains.crm_calls;
     expect(calls.update).toHaveBeenCalledWith({ company_name: 'Dubblett AB' });
-    expect(calls.or).toHaveBeenCalledWith(`customer_id.eq.${ID},prospect_id.eq.${ID}`);
     expect(calls.is).toHaveBeenCalledWith('company_name', null);
+    // Ett samtal vars andra referens pekar på en kund som står kvar ska INTE få den raderade kundens namn.
+    expect(calls.or).toHaveBeenCalledWith(
+      `and(customer_id.eq.${ID},prospect_id.is.null),and(customer_id.eq.${ID},prospect_id.eq.${ID}),and(customer_id.is.null,prospect_id.eq.${ID})`);
+  });
+
+  it('Fortnox-kunden läses på numret; 404 = okänd, annat fel kastas', async () => {
+    vi.mocked(getSupabaseAdmin).mockReturnValue(recordingClient({ data: null, error: null }).client as never);
+    const deps = customerDeleteDeps(recordingClient({ data: null, error: null }).client as never);
+    vi.mocked(fortnoxGet).mockResolvedValueOnce({ Customer: { Name: 'Dubblett AB', OrganisationNumber: '556000-0001' } });
+    await expect(deps.readFortnoxCustomer('1042')).resolves.toEqual({ name: 'Dubblett AB', organisationNumber: '556000-0001' });
+    expect(fortnoxGet).toHaveBeenCalledWith('/customers/1042');
+
+    vi.mocked(fortnoxGet).mockRejectedValueOnce(new FortnoxApiError(404, 'x'));
+    await expect(deps.readFortnoxCustomer('1042')).resolves.toBeNull();
+
+    vi.mocked(fortnoxGet).mockRejectedValueOnce(new FortnoxApiError(500, 'x'));
+    await expect(deps.readFortnoxCustomer('1042')).rejects.toBeInstanceOf(FortnoxApiError);
   });
 
   it('raderingen går via sessionen och ser om raden försvann', async () => {
