@@ -22,6 +22,10 @@ import type { FortnoxCustomer } from './types';
  *    Ett nummer på vår rad kan alltså tillhöra en ANNAN kund i Fortnox — togs vår kund bort direkt i Fortnox och en ny
  *    skapades efteråt. Kunden läses därför först och jämförs med kortet (`sameFortnoxCustomer`); stämmer den inte tas
  *    ingenting bort. Och går vår radering fel efter Fortnox ja kopplas numret loss från vår rad.
+ *  - 🧨 Jämförelsen räcker inte ensam för ett OMFÖRSÖK: Fortnox-importen matchar på nummer och skriver över vår rad med
+ *    den nya kundens namn och org.nr, och efter det går jämförelsen igenom. Ett läge där vår rad kan stå kvar med ett
+ *    nummer Fortnox redan tagit bort får därför aldrig sluta i "försök igen": ett osäkert svar på borttagningen avgörs
+ *    direkt genom att läsa om kunden, och bara när det inte går (eller numret inte kunde kopplas loss) avråder beskedet.
  *  - Samtalens namn: `crm_calls_reference_or_company_check` kräver prospect_id, customer_id eller company_name, och båda
  *    id:na blir NULL när kunden raderas (ON DELETE SET NULL). Ett samtal loggat på kundkortet utan eget företagsnamn hade
  *    fällt hela raderingen — efter att Fortnox redan sagt ja. Samtalet får kundens namn, samma namn det visades med.
@@ -92,17 +96,23 @@ export function sameFortnoxCustomer(
   return name !== '' && name === normalizedName(fortnox.name);
 }
 
+/** Fortnox svarade nej (4xx). 404 räknas inte — det är "redan borttagen". */
+function fortnoxRefused(e: unknown): boolean {
+  return e instanceof FortnoxApiError && e.status >= 400 && e.status < 500 && e.status !== 404;
+}
+
 /**
- * Fortnox tog inte bort kunden. `fortnoxError` bär Fortnox fel.
+ * Kunden togs inte bort i Fortnox, eller vi vet inte. `fortnoxError` bär Fortnox fel.
  *
- * `stage` säger hur säkert "ingenting borttaget" är: 'read' föll före borttagningen, så den är säker; 'delete' är säker
- * bara när Fortnox svarade med ett nej (4xx). Ett nätverksfel eller 5xx på borttagningen kan ha hunnit fram.
+ * `deleted`: 'no' när det är säkert att ingenting är borttaget (läsningen föll, Fortnox sa nej, eller kunden fanns kvar
+ * vid omläsningen efter ett osäkert svar). 'unknown' när borttagningen fick ett nätverksfel eller 5xx och omläsningen
+ * också föll — den kan ha hunnit fram, och vår rad står kvar med numret.
  */
 export class CustomerFortnoxDeleteError extends Error {
   constructor(
     public readonly fortnoxCustomerNumber: string,
     public readonly fortnoxError: unknown,
-    public readonly stage: 'read' | 'delete',
+    public readonly deleted: 'no' | 'unknown',
   ) {
     super(`Fortnox tog inte bort kund ${fortnoxCustomerNumber}`);
     this.name = 'CustomerFortnoxDeleteError';
@@ -245,7 +255,7 @@ export type DeleteCustomerResult =
 /**
  * Tar bort kunden i Fortnox och sedan hos oss. Se reglerna och ordningen överst i filen.
  *
- * Kastar `CustomerFortnoxDeleteError` när Fortnox säger nej eller inte svarar (se `stage`) och
+ * Kastar `CustomerFortnoxDeleteError` när Fortnox säger nej eller inte svarar (se `deleted`) och
  * `CustomerLocalDeleteError` när vår radering faller efter Fortnox. Läsfel före Fortnox kastas som de är.
  */
 export async function deleteCrmCustomerWithFortnox(
@@ -264,7 +274,7 @@ export async function deleteCrmCustomerWithFortnox(
     try {
       fortnoxCustomer = await deps.readFortnoxCustomer(fortnoxCustomerNumber);
     } catch (e) {
-      throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'read');
+      throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'no');
     }
     // null: Fortnox känner inte till numret — borttagen där redan. Annars måste det vara vår kund.
     if (fortnoxCustomer) {
@@ -274,7 +284,18 @@ export async function deleteCrmCustomerWithFortnox(
       try {
         await deps.deleteInFortnox(fortnoxCustomerNumber);
       } catch (e) {
-        if (!fortnoxCustomerAlreadyGone(e)) throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'delete');
+        if (!fortnoxCustomerAlreadyGone(e)) {
+          if (fortnoxRefused(e)) throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'no');
+          // Nätverksfel eller 5xx: borttagningen kan ha hunnit fram. Avgör det NU — se OMFÖRSÖK överst.
+          let after: FortnoxCustomerIdentity | null;
+          try {
+            after = await deps.readFortnoxCustomer(fortnoxCustomerNumber);
+          } catch {
+            throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'unknown');
+          }
+          if (after) throw new CustomerFortnoxDeleteError(fortnoxCustomerNumber, e, 'no');
+          // Borta: borttagningen gick fram trots felet. Vidare till vår rad.
+        }
       }
     }
   }

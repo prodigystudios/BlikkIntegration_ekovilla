@@ -104,9 +104,11 @@ describe('sameFortnoxCustomer', () => {
 function fakeDeps(opts: {
   fortnoxId?: string | null;
   missing?: boolean;
-  /** Kunden bakom numret i Fortnox; null = okänt nummer. */
-  remote?: FortnoxCustomerIdentity | null;
+  /** Kunden bakom numret i Fortnox; null = okänt nummer. En lista ger ett svar per läsning, sista upprepas. */
+  remote?: FortnoxCustomerIdentity | null | (FortnoxCustomerIdentity | null)[];
+  /** Kastar vid läsning nummer n (1-baserat); utan `readFailsOn` vid varje läsning. */
   readFortnox?: () => Promise<void>;
+  readFailsOn?: number;
   blockers?: typeof NONE;
   fortnox?: () => Promise<void>;
   nameCalls?: () => Promise<void>;
@@ -114,6 +116,8 @@ function fakeDeps(opts: {
   detach?: () => Promise<void>;
 } = {}) {
   const log: string[] = [];
+  let reads = 0;
+  const remotes = Array.isArray(opts.remote) ? opts.remote : [opts.remote === undefined ? { name: 'Dubblett AB', organisationNumber: '5560000001' } : opts.remote];
   const deps: CustomerDeleteDeps = {
     read: async () => {
       log.push('read');
@@ -130,9 +134,10 @@ function fakeDeps(opts: {
     },
     countBlockers: async () => { log.push('count'); return opts.blockers ?? NONE; },
     readFortnoxCustomer: async (nr) => {
+      reads += 1;
       log.push(`fortnox-read:${nr}`);
-      await opts.readFortnox?.();
-      return opts.remote === undefined ? { name: 'Dubblett AB', organisationNumber: '5560000001' } : opts.remote;
+      if (opts.readFailsOn === undefined || opts.readFailsOn === reads) await opts.readFortnox?.();
+      return remotes[Math.min(reads, remotes.length) - 1];
     },
     deleteInFortnox: async (nr) => { log.push(`fortnox:${nr}`); await opts.fortnox?.(); },
     nameUnnamedCalls: async (_id, name) => { log.push(`calls:${name}`); await opts.nameCalls?.(); },
@@ -163,12 +168,42 @@ describe('deleteCrmCustomerWithFortnox', () => {
     expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'calls:Dubblett AB', 'delete']);
   });
 
-  it('läsningen i Fortnox faller → stage read, ingenting borttaget', async () => {
+  it('läsningen i Fortnox faller → deleted: no, ingenting borttaget', async () => {
     const { deps, log } = fakeDeps({ readFortnox: async () => { throw new Error('nätverk'); } });
     const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
     expect(thrown).toBeInstanceOf(CustomerFortnoxDeleteError);
-    expect(thrown.stage).toBe('read');
+    expect(thrown.deleted).toBe('no');
     expect(log).toEqual(['read', 'count', 'fortnox-read:1042']);
+  });
+
+  describe('🧨 osäkert svar på borttagningen (nätverksfel/5xx) avgörs direkt med en omläsning', () => {
+    const shaky = () => { throw new FortnoxApiError(503, 'x'); };
+
+    it('borta vid omläsningen → borttagningen gick fram, vår rad tas bort', async () => {
+      const { deps, log } = fakeDeps({ fortnox: async () => shaky(), remote: [{ name: 'Dubblett AB', organisationNumber: '5560000001' }, null] });
+      await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toEqual({ kind: 'deleted', fortnoxCustomerNumber: '1042' });
+      expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'fortnox:1042', 'fortnox-read:1042', 'calls:Dubblett AB', 'delete']);
+    });
+
+    it('kvar vid omläsningen → deleted: no, vår rad orörd', async () => {
+      const { deps, log } = fakeDeps({ fortnox: async () => shaky() });
+      const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
+      expect(thrown.deleted).toBe('no');
+      expect(log).not.toContain('delete');
+    });
+
+    it('omläsningen faller också → deleted: unknown, vår rad orörd', async () => {
+      const { deps, log } = fakeDeps({ fortnox: async () => shaky(), readFortnox: async () => { throw new Error('nere'); }, readFailsOn: 2 });
+      const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
+      expect(thrown).toBeInstanceOf(CustomerFortnoxDeleteError);
+      expect(thrown.deleted).toBe('unknown');
+      expect(log).not.toContain('delete');
+    });
+
+    it('ett nätverksfel som inte är Fortnox räknas likadant', async () => {
+      const { deps } = fakeDeps({ fortnox: async () => { throw new Error('socket hang up'); }, remote: [{ name: 'Dubblett AB', organisationNumber: '5560000001' }, null] });
+      await expect(deleteCrmCustomerWithFortnox(ID, deps)).resolves.toMatchObject({ kind: 'deleted' });
+    });
   });
 
   it('en kund som inte finns: ingenting mer görs', async () => {
@@ -191,7 +226,8 @@ describe('deleteCrmCustomerWithFortnox', () => {
     expect(thrown).toBeInstanceOf(CustomerFortnoxDeleteError);
     expect(thrown.fortnoxCustomerNumber).toBe('1042');
     expect(thrown.fortnoxError).toBe(no);
-    expect(thrown.stage).toBe('delete');
+    expect(thrown.deleted).toBe('no');
+    // Ett nej läses inte om — det är säkert.
     expect(log).toEqual(['read', 'count', 'fortnox-read:1042', 'fortnox:1042']);
   });
 
