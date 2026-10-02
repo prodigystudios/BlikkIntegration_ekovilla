@@ -283,8 +283,8 @@ export function buildInvoiceRows(
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
       // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
-      // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
-      // har redan prövats mot skarp Fortnox och fallit.
+      // rotRowHouseWork — läs mätningarna där innan du ändrar något här. Rader utan kryss blir
+      // uttryckligen "inte husarbete" i sista passet (withExplicitRotHouseWork).
       ...(rotRowHouseWork(item, rotEnabled) ?? {}),
     });
   });

@@ -546,13 +546,12 @@ export const FORTNOX_TEXT_ROW = Symbol('fortnoxTextRow');
  * raden uppdateras på plats. Fältet skickas ändå, för en rad som ALDRIG haft en enhet ska inte
  * kunna få en.
  *
- * ⚠️ HUSARBETE SÄTTS INTE HÄR — medvetet. Ett uttryckligt `HouseWork: false` stämplar
- * EMPTYHOUSEWORK, och ett dokument som inte är ROT i Fortnox avvisar varje husarbetesfält med
- * 2004021 (se rotRowHouseWork punkt 1). Vår `rotEnabled` är inte samma sak som dokumentets läge:
- * en orders `TaxReductionType` sätts BARA vid create, så en order som skapades innan ROT kryssades
- * i är inte ett ROT-dokument — och då hade varje Radtext-rad sänkt hela omsynken med 2004021.
- * Att låta vår kryssruta äga flaggan i stället för artikelregistret är ett eget beslut; tills det
- * är fattat rör vi inte husarbete här.
+ * ⚠️ HUSARBETE SÄTTS INTE HÄR. Det sätter radbyggarnas sista pass (withExplicitRotHouseWork), på
+ * ett ROT-dokument, för textrader som för alla andra rader utan kryss: `HouseWork: false` +
+ * `HouseWorkType: null`. Beslutet att låta vår kryssruta äga flaggan i stället för artikelregistret
+ * togs 2026-10-02 (se rotRowHouseWork punkt 2). Den gamla oron här — en order som är `none` i
+ * Fortnox fast CRM säger ROT — är hanterad: `false` + `null` accepteras på ett `none`-dokument
+ * (mätt), och nekas husarbetsraderna skickar taxReductions.ts `rot` och försöker igen.
  */
 export function fortnoxTextRowFields() {
   return {
