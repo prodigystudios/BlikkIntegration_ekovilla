@@ -52,10 +52,11 @@ import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 
-// Svaren där Fortnox stoppade ett byte till eller från Avbruten (PATCH-routen, workOrderCancel.ts). Ingenting sparades.
-// `crm_work_order_update_failed_after_fortnox_cancel` står inte med: där ÄR Fortnox-ordern makulerad, och ett nytt
-// tryck på Spara med Avbruten kvar är det som läker det.
-const FORTNOX_STATUS_REFUSALS = new Set([
+// Svaren där ett byte till eller från Avbruten stoppades (PATCH-routen, workOrderCancel.ts): av Fortnox, eller av en
+// delfakturering. Ingenting sparades. `crm_work_order_update_failed_after_fortnox_cancel` står inte med: där ÄR
+// Fortnox-ordern makulerad, och ett nytt tryck på Spara med Avbruten kvar är det som läker det.
+const CANCEL_STATUS_REFUSALS = new Set([
+  'crm_work_order_partially_invoiced',
   'crm_work_order_fortnox_cancel_failed',
   'crm_work_order_fortnox_invoiced',
   'crm_work_order_fortnox_cancelled',
@@ -657,9 +658,9 @@ export default function WorkOrderDetailClient({
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
         toast.error(json?.error || 'Kunde inte spara arbetsorder');
-        // Fortnox sa nej till makuleringen (eller till att öppna en makulerad order igen): ingenting sparades, och
+        // Avbrytandet nekades (av Fortnox eller en delfakturering), eller att öppna en makulerad order igen: ingenting sparades, och
         // väljaren går tillbaka till den sparade statusen. Övriga ändringar står kvar i formuläret.
-        if (FORTNOX_STATUS_REFUSALS.has(json?.errorDetails?.code)) {
+        if (CANCEL_STATUS_REFUSALS.has(json?.errorDetails?.code)) {
           setDraft((d) => (d ? { ...d, status: workOrder.status } : d));
         }
         return;
@@ -952,6 +953,8 @@ export default function WorkOrderDetailClient({
   // delfaktureringen gatar medvetet INTE på synkstatusen. Samma regel som servern (isFortnoxOrderClosed).
   const fortnoxOrderClosed = !workOrder.partial_invoicing_started_at
     && (Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced');
+  // Faktureringen har börjat: en sådan order avbryts inte (workOrderInvoicingStarted på servern, som också räknar rundorna).
+  const invoicingStarted = workOrder.status === 'partially_invoiced' || Boolean(workOrder.partial_invoicing_started_at);
   // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
   //
   // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
@@ -1264,7 +1267,11 @@ export default function WorkOrderDetailClient({
                         {(WORK_ORDER_STATUS_OPTIONS.includes(workOrder.status)
                           ? WORK_ORDER_STATUS_OPTIONS
                           : [workOrder.status, ...WORK_ORDER_STATUS_OPTIONS]
-                        ).map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                        )
+                          // En delfakturerad order avbryts inte (routen nekar, workOrderInvoicingStarted): inget val
+                          // som alltid ger fel. Rundor utan kolumn ser formuläret inte; där säger routen nej.
+                          .filter((value) => !(value === 'cancelled' && invoicingStarted))
+                          .map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
                       </Select>
                     )}
                   </label>

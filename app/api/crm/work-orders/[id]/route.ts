@@ -333,6 +333,10 @@ export async function PATCH(req: Request, context: RouteContext) {
         return routeError(502, 'crm_work_order_fortnox_cancel_failed',
           `Fortnox makulerade inte order ${fortnoxOrderNumber ?? ''}: ${friendlyFortnoxMessage(e)} Arbetsordern är inte avbruten.`);
       }
+      // En delfakturerad arbetsorder avbryts inte (workOrderInvoicingStarted, prövad med claimarna tagna).
+      if (outcome.kind === 'invoicing_started') {
+        return routeError(409, 'crm_work_order_partially_invoiced', 'Arbetsordern är delfakturerad och kan inte avbrytas.');
+      }
       if (outcome.kind === 'busy') {
         return routeError(409, 'fortnox_push_in_progress',
           'Fortnox-ordern skapas eller uppdateras just nu. Försök igen om en liten stund — arbetsordern är inte avbruten.');

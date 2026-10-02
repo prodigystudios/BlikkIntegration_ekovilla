@@ -119,3 +119,23 @@ describe('createPartialInvoice — ett känt inaktuellt orderhuvud', () => {
     expect(fortnoxPost).toHaveBeenCalled();
   });
 });
+
+// 🧨 Avbrytandet (fortnox/workOrderCancel.ts) håller fakturans claim medan det sparar, men delfakturan prövade Avbruten
+// bara FÖRE sin claim. Ett avbrytande däremellan hade fått en riktig faktura utställd och Delfakturerad skriven över
+// Avbruten. Delfakturan läser därför statusen igen med claimen tagen.
+describe('createPartialInvoice — avbruten medan claimen togs', () => {
+  it('ställer inte ut någon faktura, och stämplar inte failed', async () => {
+    const workOrders = getSupabaseAdmin().from('crm_work_orders') as unknown as {
+      single: ReturnType<typeof vi.fn>;
+      update: ReturnType<typeof vi.fn>;
+    };
+    workOrders.single
+      .mockResolvedValueOnce({ data: { ...workOrderRow, fortnox_order_number: '131' }, error: null })
+      .mockResolvedValueOnce({ data: { status: 'cancelled' }, error: null });
+
+    await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
+      .rejects.toThrow('Arbetsordern är avbruten och kan inte faktureras.');
+    expect(fortnoxPost).not.toHaveBeenCalled();
+    expect(workOrders.update.mock.calls.at(-1)?.[0]).toEqual({ fortnox_invoice_sync_status: 'not_synced' });
+  });
+});

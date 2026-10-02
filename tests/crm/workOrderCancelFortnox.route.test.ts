@@ -237,6 +237,42 @@ describe('PATCH arbetsorder → Avbruten', () => {
   });
 });
 
+// En delfakturerad arbetsorder avbryts inte (William 2026-10-02). Domänen avgör det med claimarna tagna
+// (tests/fortnox/workOrderCancel.test.ts); routen svarar.
+describe('PATCH arbetsorder → Avbruten, delfakturerad', () => {
+  it('svarar 409 och sparar ingenting', async () => {
+    vi.mocked(cancelWorkOrderWithFortnox).mockResolvedValue({ kind: 'invoicing_started' });
+
+    const res = await patch(formSave('cancelled'));
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.errorDetails.code).toBe('crm_work_order_partially_invoiced');
+    expect(json.error).toBe('Arbetsordern är delfakturerad och kan inte avbrytas.');
+    expect(updateCrmWorkOrder).not.toHaveBeenCalled();
+  });
+
+  // Behörigheten först: den som inte får spara ordern får 403, inte ett besked om dess fakturering.
+  it('svarar 403 före allt om faktureringen för den som inte får spara ordern', async () => {
+    install({ ...order, assigned_to: 'someone-else', status: 'partially_invoiced', partial_invoicing_started_at: '2026-10-01T10:00:00Z' });
+
+    const res = await patch({ status: 'cancelled' });
+
+    expect(res.status).toBe(403);
+    expect(cancelWorkOrderWithFortnox).not.toHaveBeenCalled();
+  });
+
+  // Bara avbrytandet: en delfakturerad order får fortfarande byta mellan sina vanliga steg.
+  it('stoppar inte andra statusbyten på en delfakturerad order', async () => {
+    install({ ...order, status: 'partially_invoiced', partial_invoicing_started_at: '2026-10-01T10:00:00Z' });
+
+    const res = await patch({ status: 'in_progress' });
+
+    expect(res.status).toBe(200);
+    expect(cancelWorkOrderWithFortnox).not.toHaveBeenCalled();
+  });
+});
+
 describe('PATCH arbetsorder ← Avbruten', () => {
   it('öppnar inte en arbetsorder vars Fortnox-order är makulerad', async () => {
     install({ ...order, status: 'cancelled' });
