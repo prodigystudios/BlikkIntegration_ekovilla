@@ -204,11 +204,15 @@ export default function NotificationBell({ className, collapsed = false }: { cla
                 <ul role="list" className="m-0 grid list-none gap-0 p-0">
                   {items.map((n) => (
                     <li key={n.id}>
+                      {/* `justify-start`: den globala `button`-regeln i globals.css sätter
+                          `justify-content: center`, och i ett rutnät krymper den enda kolumnen
+                          då till innehållets bredd och centreras — varje rad hamnade på sin
+                          egen vänsterkant trots `text-left`. */}
                       <button
                         type="button"
                         onClick={() => onRowClick(n)}
                         className={cn(
-                          'grid w-full gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50',
+                          'grid w-full justify-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition-colors hover:bg-slate-50',
                           !n.read && 'bg-emerald-50/50',
                         )}
                       >
