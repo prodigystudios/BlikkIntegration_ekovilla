@@ -1,9 +1,16 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { getCrmCustomer, updateCrmCustomer } from '@/lib/domains/crm/customers';
 import { deriveVatNumberForWrite } from '@/lib/domains/crm/orgNumber';
 import { updateFortnoxCustomer, fortnoxCustomerFieldsChanged } from '@/lib/domains/fortnox/customers';
-import { invalidUuidParam, ok, pickProvidedFields, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
+import {
+  CustomerFortnoxDeleteError,
+  CustomerLocalDeleteError,
+  customerDeleteDeps,
+  deleteCrmCustomerWithFortnox,
+  describeCustomerDeletionBlockers,
+} from '@/lib/domains/fortnox/customerDelete';
+import { invalidUuidParam, ok, pickProvidedFields, requireCrmAdmin, requireCrmUser, requirePermission, routeError, updateCrmCustomerSchema, validationError } from '../_lib';
 
 type RouteContext = { params: { id: string } };
 
@@ -118,5 +125,52 @@ export async function PATCH(req: Request, context: RouteContext) {
     return ok({ item: data });
   } catch (e: any) {
     return routeError(500, 'crm_customer_update_unexpected', e?.message || 'Failed to update customer');
+  }
+}
+
+// Tar bort kunden hos oss och i Fortnox, eller ingenstans. Reglerna och ordningen står i
+// lib/domains/fortnox/customerDelete.ts. Bara admin: samma nyckel som tabellens raderingspolicy.
+export async function DELETE(_req: Request, context: RouteContext) {
+  try {
+    const crmAdmin = await requireCrmAdmin();
+    if (crmAdmin.response) return crmAdmin.response;
+
+    const badId = invalidUuidParam(context.params.id);
+    if (badId) return badId;
+
+    const supabase = createSessionClient();
+    let outcome: Awaited<ReturnType<typeof deleteCrmCustomerWithFortnox>>;
+    try {
+      outcome = await deleteCrmCustomerWithFortnox(context.params.id, customerDeleteDeps(supabase));
+    } catch (e) {
+      if (e instanceof CustomerFortnoxDeleteError) {
+        // Beskedet till användaren är det begripliga; loggen bär Fortnox egen text.
+        console.error('[fortnox] Kunden togs inte bort i Fortnox:', (e.fortnoxError as Error)?.message);
+        if (e.fortnoxError instanceof FortnoxNotConnectedError) {
+          return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e.fortnoxError));
+        }
+        return routeError(502, 'crm_customer_fortnox_delete_failed',
+          `Fortnox tog inte bort kund ${e.fortnoxCustomerNumber}: ${friendlyFortnoxMessage(e.fortnoxError)} Ingenting är borttaget.`);
+      }
+      if (e instanceof CustomerLocalDeleteError) {
+        console.error('[crm] Kunden togs inte bort efter Fortnox:', e.message);
+        return routeError(500, 'crm_customer_delete_failed', e.fortnoxCustomerNumber
+          ? `Kunden är borttagen i Fortnox men inte här (${e.message}). Försök igen — Fortnox-steget hoppas då över.`
+          : `Kunden kunde inte tas bort: ${e.message}`);
+      }
+      throw e;
+    }
+
+    if (outcome.kind === 'not_found') {
+      return routeError(404, 'crm_customer_not_found', 'Kunden hittades inte.');
+    }
+    if (outcome.kind === 'blocked') {
+      return routeError(409, 'crm_customer_has_links',
+        describeCustomerDeletionBlockers(outcome.blockers) ?? 'Kunden kan inte tas bort.', outcome.blockers);
+    }
+
+    return ok({ deleted: true, fortnox_customer_number: outcome.fortnoxCustomerNumber });
+  } catch (e: any) {
+    return routeError(500, 'crm_customer_delete_unexpected', e?.message || 'Failed to delete customer');
   }
 }
