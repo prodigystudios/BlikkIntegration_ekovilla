@@ -1248,9 +1248,9 @@ async function putOrderHeaderAndRows(
 
   // 🧨 RAD-PUT:EN GÅR GENOM SKATTEREDUKTIONSPOSTEN. Har ordern en post — och efter `createorder` har
   // den offertens kopia — nekas hela PUT:en (2003227) så fort arbetet blivit mindre än postens belopp.
-  // Det gäller ÄVEN med ROT avslaget (taxReduction null): en kopierad post står i vägen ändå. Första
-  // försöket är exakt den vanliga PUT:en; posten och `TaxReductionType` rörs bara när Fortnox kräver
-  // det. Efter PUT:en får posten orderns belopp. Se taxReductions.ts.
+  // Det gäller ÄVEN med ROT avslaget (taxReduction null): en kopierad post står i vägen ändå. Har
+  // avdraget minskat sänks posten före; själva PUT:en är den vanliga, och `TaxReductionType` skickas
+  // bara när Fortnox nekat den. Efter PUT:en får posten orderns belopp. Se taxReductions.ts.
   const taxReduction = rotEnabled ? await resolveOrderTaxReduction(supabase, workOrder, linkedQuote, vatPercent) : null;
   await writeDocumentKeepingTaxReduction<WrittenDocument>(
     'ORDER', orderNumber, taxReduction,

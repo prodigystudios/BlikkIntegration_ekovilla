@@ -520,6 +520,45 @@ describe('writeDocumentKeepingTaxReduction mot fakens Fortnox', () => {
     });
   });
 
+  // Granskningsfynd: `none` och `rot` är två skrivningar. Föll `rot` stod ordern kvar som `none`, och
+  // eftersom ordrar aldrig skickar typen nekades varje senare push för husarbetsraderna.
+  it('en avbruten none → rot läker vid nästa push', async () => {
+    fake.seedDoc('ORDER', '90', labourRows(10000));
+    tolvan('ORDER', '90', 3750);
+    const noLabour: Row[] = [{ Price: 5000, OrderedQuantity: 1, VAT: 25 }, { Price: 0, OrderedQuantity: 0, VAT: 25 }];
+    const orderWriter = (rows: Row[], failRot = false) => async (reductionType?: 'none' | 'rot') => {
+      if (failRot && reductionType === 'rot') throw new Error('ECONNRESET');
+      return (await fortnoxPut<{ Order?: { TaxReduction?: number | null } }>('/orders/90', {
+        Order: { OrderRows: reductionType === 'none' ? withoutHouseWork(rows) : rows, ...(reductionType ? { TaxReductionType: reductionType } : {}) },
+      }))?.Order;
+    };
+
+    await expect(writeDocumentKeepingTaxReduction('ORDER', '90', target(0), orderWriter(noLabour, true))).rejects.toThrow('ECONNRESET');
+    expect(fake.docView('ORDER', '90').TaxReductionType).toBe('none');
+
+    // Arbetet tillbaka: husarbetsrader på ett none-dokument nekas — och läks med rot.
+    await writeDocumentKeepingTaxReduction('ORDER', '90', target(3750), orderWriter(labourRows(10000)));
+    expect(fake.docView('ORDER', '90').TaxReductionType).toBe('rot');
+    expect(fake.postsFor('ORDER', '90').map((p) => p.AskedAmount)).toEqual([3750]);
+  });
+
+  it('misslyckas sänkningen i återhämtningen kastas Fortnox ursprungliga fel — ingen none', async () => {
+    fake.seedDoc('OFFER', '37', labourRows(20000));
+    tolvan('OFFER', '37', 7500);
+    const realPut = fake.put.bind(fake);
+    vi.mocked(fortnoxPut).mockImplementation((async (path: string, body: any) => {
+      if (path.startsWith('/taxreductions/')) throw fortnoxError(503, 0, 'Tjänsten otillgänglig');
+      return realPut(path, body);
+    }) as never);
+    const types: (string | undefined)[] = [];
+
+    await expect(writeDocumentKeepingTaxReduction('OFFER', '37', target(3750), async (reductionType) => {
+      types.push(reductionType);
+      return offerWriter('37', labourRows(10000))(reductionType);
+    })).rejects.toMatchObject({ fortnoxCode: 2003227 });
+    expect(types).toEqual([undefined]);
+  });
+
   it('ett dokumentfel som inte rör posterna går rakt igenom', async () => {
     fake.seedDoc('OFFER', '37', labourRows(10000));
     const boom = fortnoxError(400, 2000359, 'Otillåtna tecken');

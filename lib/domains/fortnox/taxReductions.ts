@@ -48,7 +48,9 @@
 // som kan ärva husarbete positionellt och av Fortnox avrundning.
 //
 // ⚠️ CRM BÄR EN SÖKANDE och äger posterna på dokument det skickar: fler poster än en slås ihop till
-// vår. Delar man avdraget mellan två sökande för hand i Fortnox skrivs det över vid nästa push.
+// vår. Delar man avdraget mellan två sökande för hand i Fortnox skrivs det över vid nästa push. Och
+// en post ekonomi skrivit in för hand (CRM utan giltigt personnummer) försvinner om dokumentet måste
+// gå via `none` — CRM har ingen sökande att skapa en ny med.
 //
 // ⚠️ POSTENS EGNA STEG ÄR BEST EFFORT. Ett fel loggas och pushen fortsätter; fallbacken är läget
 // före den här modulen (Fortnox räknar ur raderna, ingen sökande). Bara själva dokumentskrivningen
@@ -380,8 +382,17 @@ export async function writeDocumentKeepingTaxReduction<T extends WrittenDocument
   try {
     written = await write();
   } catch (e) {
-    if (!isFortnoxCode(e, POSTS_EXCEED_DOCUMENT)) throw e;
-    written = await recoverFromPostsAboveDocument(type, documentNumber, target, write, e);
+    if (target && NONE_WITH_HOUSEWORK_ROWS.some((code) => isFortnoxCode(e, code))) {
+      // ROT gäller i CRM men dokumentet står som `none` — en återhämtning som avbröts mellan `none`
+      // och `rot` (nätverksfel, timeout). Ordrar skickar aldrig typen själva, så utan det här nekades
+      // varje senare push för husarbetsraderna och faktureringen låg spärrad. `rot` är uppmätt
+      // ofarligt på ett ROT-dokument; ett `none`-dokument har inga poster att krocka med.
+      console.warn(`[fortnox-skattereduktion] ${type} ${documentNumber}: dokumentet stod som none med ROT i CRM — skickar rot`);
+      written = await write('rot');
+    } else {
+      if (!isFortnoxCode(e, POSTS_EXCEED_DOCUMENT)) throw e;
+      written = await recoverFromPostsAboveDocument(type, documentNumber, target, write, e);
+    }
   }
 
   if (target) await syncTaxReductionAfterDocumentWrite(type, documentNumber, target, written);
