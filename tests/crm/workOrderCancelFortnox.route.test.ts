@@ -25,7 +25,7 @@ vi.mock('@/lib/domains/fortnox/orders', () => ({
 // De rena reglerna (stegen, RLS-speglingen) är äkta; Fortnox-vägarna fejkas.
 vi.mock('@/lib/domains/fortnox/workOrderCancel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/fortnox/workOrderCancel')>();
-  return { ...actual, cancelWorkOrderWithFortnox: vi.fn(), isWorkOrderFortnoxOrderCancelled: vi.fn() };
+  return { ...actual, cancelWorkOrderWithFortnox: vi.fn(), checkWorkOrderReactivation: vi.fn() };
 });
 
 vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
@@ -35,7 +35,7 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
-import { cancelWorkOrderWithFortnox, isWorkOrderFortnoxOrderCancelled } from '@/lib/domains/fortnox/workOrderCancel';
+import { cancelWorkOrderWithFortnox, checkWorkOrderReactivation } from '@/lib/domains/fortnox/workOrderCancel';
 import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
 
 const { PATCH } = await import('@/app/api/crm/work-orders/[id]/route');
@@ -196,6 +196,35 @@ describe('PATCH arbetsorder → Avbruten', () => {
     expect(json.error).toContain('131');
   });
 
+  // 🧨 WITH CHECK: Redigera skickar alltid ansvarig. Byter den ansvarige till en kollega i samma sparning nekar policyn
+  // den nya raden — efter att Fortnox redan makulerat. Prövas därför före.
+  it('nekar den ansvarige som lämnar över och avbryter i samma sparning — innan Fortnox anropas', async () => {
+    const res = await patch({ ...formSave('cancelled'), assigned_to: '99999999-9999-4999-8999-999999999999' });
+
+    expect(res.status).toBe(403);
+    expect(cancelWorkOrderWithFortnox).not.toHaveBeenCalled();
+  });
+
+  // Raden sparades medan claimen höll 'pending'; svaret ska bära läget efter släppet.
+  it('läser om raden efter avbrytandet', async () => {
+    vi.mocked(getCrmWorkOrder)
+      .mockResolvedValueOnce({ data: order, error: null } as never)
+      .mockResolvedValueOnce({ data: { ...order, status: 'cancelled', fortnox_order_sync_status: 'synced' }, error: null } as never);
+    vi.mocked(updateCrmWorkOrder).mockResolvedValue({ data: { ...order, status: 'cancelled', fortnox_order_sync_status: 'pending' }, error: null } as never);
+
+    const json = await (await patch({ status: 'cancelled' })).json();
+
+    expect(json.data.item.fortnox_order_sync_status).toBe('synced');
+  });
+
+  // En lyckad makulering ska inte läsas som ett fel för att märkningen ändrades i samma sparning.
+  it('säger inget om speglingen när märkningen ändras i själva avbrytandet', async () => {
+    const json = await (await patch({ ...formSave('cancelled'), label: 'NY' })).json();
+
+    expect(json.data.fortnox_error).toBeNull();
+    expect(json.data.fortnox_cancelled).toBe('131');
+  });
+
   // Utan nummer går avbrytandet ändå genom domänen: claimen stänger ute ett skapande som är på väg.
   it('går genom claimen också när ordern aldrig skapats i Fortnox', async () => {
     install({ ...order, fortnox_order_number: null });
@@ -211,7 +240,7 @@ describe('PATCH arbetsorder → Avbruten', () => {
 describe('PATCH arbetsorder ← Avbruten', () => {
   it('öppnar inte en arbetsorder vars Fortnox-order är makulerad', async () => {
     install({ ...order, status: 'cancelled' });
-    vi.mocked(isWorkOrderFortnoxOrderCancelled).mockResolvedValue(true);
+    vi.mocked(checkWorkOrderReactivation).mockResolvedValue({ kind: 'fortnox_cancelled', fortnoxOrderNumber: '131' });
 
     const res = await patch({ status: 'scheduled' });
 
@@ -223,7 +252,7 @@ describe('PATCH arbetsorder ← Avbruten', () => {
   // En order som avbröts före regeln har sin Fortnox-order öppen: den går att återuppta som förut.
   it('öppnar en avbruten order vars Fortnox-order fortfarande är öppen', async () => {
     install({ ...order, status: 'cancelled' });
-    vi.mocked(isWorkOrderFortnoxOrderCancelled).mockResolvedValue(false);
+    vi.mocked(checkWorkOrderReactivation).mockResolvedValue({ kind: 'allowed' });
 
     const res = await patch({ status: 'scheduled' });
 
@@ -235,7 +264,7 @@ describe('PATCH arbetsorder ← Avbruten', () => {
   // Fail-closed: går Fortnox inte att läsa vet vi inte om ordern är makulerad.
   it('står kvar som Avbruten när Fortnox-ordern inte går att läsa', async () => {
     install({ ...order, status: 'cancelled' });
-    vi.mocked(isWorkOrderFortnoxOrderCancelled).mockRejectedValue(new Error('timeout'));
+    vi.mocked(checkWorkOrderReactivation).mockRejectedValue(new Error('timeout'));
 
     const res = await patch({ status: 'scheduled' });
 
@@ -243,14 +272,7 @@ describe('PATCH arbetsorder ← Avbruten', () => {
     expect(updateCrmWorkOrder).not.toHaveBeenCalled();
   });
 
-  it('öppnar en avbruten order utan Fortnox-order utan att fråga Fortnox', async () => {
-    install({ ...order, status: 'cancelled', fortnox_order_number: null });
 
-    const res = await patch({ status: 'scheduled' });
-
-    expect(res.status).toBe(200);
-    expect(isWorkOrderFortnoxOrderCancelled).not.toHaveBeenCalled();
-  });
 });
 
 describe('PATCH på en avbruten arbetsorder', () => {

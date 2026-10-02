@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { evaluateWorkOrderReadiness, type WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
-import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage, WorkOrderCancelledError } from '@/lib/domains/fortnox/client';
 import { pushWorkOrderToFortnox, type PushOrderResult } from '@/lib/domains/fortnox/orders';
 import { JOB_CUSTOMER_SELECT, buildPortalCustomerLinkUpdate, type JobCustomerCard, type LinkableWorkOrder } from './jobIntake';
 import { recordPortalFortnoxOutcome, type PortalFortnoxOutcome } from './jobFortnoxRetry';
@@ -146,9 +146,10 @@ export async function linkPortalJobCustomer(
       fortnoxError = 'Fortnox-ordern skapades, men en ändring som sparades under tiden kom inte med. Synka om arbetsordern.';
     }
   } catch (e) {
-    outcome = e instanceof FortnoxPushInProgressError ? 'in_progress' : 'failed';
+    // En avbruten arbetsorder skapas inte i Fortnox (fortnox/workOrderCancel.ts): inget fel, inga omförsök.
+    outcome = e instanceof FortnoxPushInProgressError ? 'in_progress' : e instanceof WorkOrderCancelledError ? 'skipped' : 'failed';
     fortnoxError =
-      e instanceof FortnoxNotConnectedError || e instanceof FortnoxPushInProgressError
+      e instanceof FortnoxNotConnectedError || e instanceof FortnoxPushInProgressError || e instanceof WorkOrderCancelledError
         ? friendlyFortnoxMessage(e)
         : `Fortnox svarade: ${friendlyFortnoxMessage(e)}`;
     console.error('[portal-link] Fortnox-ordern kunde inte skapas', { workOrderId: input.workOrderId, error: e instanceof Error ? e.message : String(e) });

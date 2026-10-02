@@ -1990,6 +1990,9 @@ export default function WorkOrderDetailClient({
                     Ordern är fakturerad i Fortnox och tar inte emot fler ändringar. Rättningar går
                     att göra här i CRM, men når inte kundens orderbekräftelse eller faktura.
                   </p>
+                ) : workOrder.status === 'cancelled' ? (
+                  // Samma återvändsgränd: routen nekar en avbruten order (workOrderCancel.ts), med nummer eller utan.
+                  <p className="text-xs text-slate-500">Arbetsordern är avbruten och synkas inte mot Fortnox.</p>
                 ) : !canEdit ? (
                   // Synkstatusen är fakta som hör till underlaget — knappen som ÄNDRAR den gör det
                   // inte. Statusbadgen i sidhuvudet bär redan läget.

@@ -10,7 +10,7 @@ vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn() }));
 import { FortnoxApiError } from '@/lib/domains/fortnox/client';
 import {
   cancelWorkOrderWithFortnox,
-  isWorkOrderFortnoxOrderCancelled,
+  checkWorkOrderReactivation,
   mayUpdateWorkOrder,
   workOrderStatusFortnoxStep,
   type WorkOrderCancelDeps,
@@ -62,12 +62,20 @@ describe('workOrderStatusFortnoxStep', () => {
   });
 });
 
-describe('mayUpdateWorkOrder — RLS-policyn, prövad före Fortnox', () => {
-  it('den ansvarige får', () => expect(mayUpdateWorkOrder('u1', 'u1', false)).toBe(true));
-  it('crm.admin får, utan att vara ansvarig', () => expect(mayUpdateWorkOrder('u2', 'u1', true)).toBe(true));
-  it('en annan säljare får inte', () => expect(mayUpdateWorkOrder('u2', 'u1', false)).toBe(false));
+describe('mayUpdateWorkOrder — RLS-policyn, båda halvorna, prövad före Fortnox', () => {
+  const same = (a: string | null) => ({ current: a, next: a });
+  it('den ansvarige får', () => expect(mayUpdateWorkOrder(same('u1'), 'u1', false)).toBe(true));
+  it('crm.admin får, utan att vara ansvarig', () => expect(mayUpdateWorkOrder(same('u2'), 'u1', true)).toBe(true));
+  it('en annan säljare får inte (USING)', () => expect(mayUpdateWorkOrder(same('u2'), 'u1', false)).toBe(false));
   // Ingen ansvarig: policyn jämför uid = NULL, som aldrig är sant.
-  it('ingen ansvarig och inte admin: får inte', () => expect(mayUpdateWorkOrder(null, 'u1', false)).toBe(false));
+  it('ingen ansvarig och inte admin: får inte', () => expect(mayUpdateWorkOrder(same(null), 'u1', false)).toBe(false));
+  // 🧨 WITH CHECK: den ansvarige som lämnar över i samma sparning nekas av policyn på den NYA raden. Prövades bara den
+  // gamla hade Fortnox makulerat och sparandet sedan fallit — varje nytt försök på samma sätt.
+  it('den ansvarige som byter till en kollega i samma sparning: får inte (WITH CHECK)', () =>
+    expect(mayUpdateWorkOrder({ current: 'u1', next: 'u2' }, 'u1', false)).toBe(false));
+  it('den ansvarige som tar bort sig själv: får inte', () =>
+    expect(mayUpdateWorkOrder({ current: 'u1', next: null }, 'u1', false)).toBe(false));
+  it('crm.admin får byta ansvarig', () => expect(mayUpdateWorkOrder({ current: 'u1', next: 'u2' }, 'u3', true)).toBe(true));
 });
 
 describe('cancelWorkOrderWithFortnox', () => {
@@ -156,12 +164,34 @@ describe('cancelWorkOrderWithFortnox', () => {
     expect(log).toEqual(['read', 'claim', 'read', 'save', 'release:failed']);
   });
 
-  it('skriver inte tillbaka claimens eget pending', async () => {
+  // Claimen gick att ta trots 'pending' bara för att den var gammal: ett försök som dog.
+  it('skriver inte tillbaka claimens eget pending, utan failed', async () => {
     const { deps, save, log } = fakeDeps({ rows: [{ fortnox_order_number: null, fortnox_order_sync_status: 'pending' }] });
 
     await cancelWorkOrderWithFortnox(ID, save, deps);
 
-    expect(log.at(-1)).toBe('release:not_synced');
+    expect(log.at(-1)).toBe('release:failed');
+  });
+
+  // 🧨 Granskningens fynd: ett nej fick tidigare 'synced' tillbaka, och en order vars rader aldrig nådde Fortnox
+  // ('failed') hade då gått att fakturera — på de gamla raderna.
+  it.each(['failed', 'not_synced'])('lämnar ett %s orört när Fortnox säger nej', async (prior) => {
+    const { deps, save, log } = fakeDeps({
+      rows: [{ fortnox_order_number: '89', fortnox_order_sync_status: prior }],
+      cancel: async () => { throw refused(); },
+      order: { cancelled: false, invoiceNumber: null },
+    });
+
+    await expect(cancelWorkOrderWithFortnox(ID, save, deps)).rejects.toBeInstanceOf(FortnoxApiError);
+    expect(log.at(-1)).toBe(`release:${prior}`);
+  });
+
+  it('lämnar ett failed orört också efter en lyckad makulering', async () => {
+    const { deps, save, log } = fakeDeps({ rows: [{ fortnox_order_number: '89', fortnox_order_sync_status: 'failed' }] });
+
+    await cancelWorkOrderWithFortnox(ID, save, deps);
+
+    expect(log.at(-1)).toBe('release:failed');
   });
 
   // 🧨 Numret läses OM med claimen: ett skapande som slutfördes mellan första läsningen och claimen har sparat sitt.
@@ -188,9 +218,26 @@ describe('cancelWorkOrderWithFortnox', () => {
   });
 });
 
-describe('isWorkOrderFortnoxOrderCancelled', () => {
-  it('läser orderns läge', async () => {
+describe('checkWorkOrderReactivation', () => {
+  it('nekar när Fortnox-ordern är makulerad', async () => {
     const { deps } = fakeDeps({ rows: [], order: { cancelled: true, invoiceNumber: null } });
-    expect(await isWorkOrderFortnoxOrderCancelled('89', deps)).toBe(true);
+    expect(await checkWorkOrderReactivation('89', deps)).toEqual({ kind: 'fortnox_cancelled', fortnoxOrderNumber: '89' });
+  });
+
+  // Avbruten före regeln: Fortnox-ordern står öppen.
+  it('släpper igenom när Fortnox-ordern är öppen', async () => {
+    const { deps } = fakeDeps({ rows: [], order: { cancelled: false, invoiceNumber: null } });
+    expect(await checkWorkOrderReactivation('80', deps)).toEqual({ kind: 'allowed' });
+  });
+
+  it('frågar inte Fortnox när ordern aldrig skapats där', async () => {
+    const { deps } = fakeDeps({ rows: [] });
+    expect(await checkWorkOrderReactivation(null, deps)).toEqual({ kind: 'allowed' });
+    expect(deps.readOrder).not.toHaveBeenCalled();
+  });
+
+  it('kastar när Fortnox inte svarar (anroparen låter ordern stå kvar)', async () => {
+    const { deps } = fakeDeps({ rows: [], order: new Error('timeout') });
+    await expect(checkWorkOrderReactivation('89', deps)).rejects.toThrow('timeout');
   });
 });
