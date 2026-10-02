@@ -15,6 +15,7 @@ import { isPeriodLocked, periodLabel, TIME_PERIOD_STATUS_LABELS, type TimeApprov
 import { auditActionLabel, auditWorkDate, describeAuditChange, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { uploadReceipt, type UploadedReceipt } from './uploadReceipt';
 import TimeEntryModal, { type EditableEntry, type ReferenceData } from './TimeEntryModal';
+import { periodWindow, selectDayInWeek } from './periodWindow';
 
 // Tidrapporten, CRM-versionen. Sedan 2026-09-01 är det HIT menyn och startsidans genvägar pekar —
 // Blikks /tidrapport lever kvar som rutt men länkas inte längre från något håll.
@@ -175,34 +176,37 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
   const monday = React.useMemo(() => startOfWeek(parseISO(anchorIso)), [anchorIso]);
   const weekDays = React.useMemo(() => buildWeekDays(monday), [monday]);
   const thisMondayIso = React.useMemo(() => fmtISO(startOfWeek(stockholmToday())), []);
+  // Vald dag: den som stod i adressen om sidan öppnades från en genväg, annars idag.
+  const [pickedIso, setPickedIso] = React.useState(initialDate ?? todayIso);
 
-  // Månaden som veckans måndag ligger i — det är den perioden lönen räknar på.
-  const monthAnchor = React.useMemo(() => ({ year: monday.getFullYear(), month: monday.getMonth() }), [monday]);
+  // Den valda dagen HÄRLEDS, den synkas inte i en effekt. Byts veckan pekar det valda datumet på en
+  // dag som inte längre står i remsan, och rättelsen måste ske i samma rendering — en effekt kör
+  // efter målningen, så en bildruta hade visat den nya veckans remsa under den gamla dagens rubrik,
+  // rader och låsläge. Regeln bor i selectDayInWeek.
+  const weekIsos = React.useMemo(() => weekDays.map((day) => day.iso), [weekDays]);
+  const selectedIso = selectDayInWeek(weekIsos, pickedIso, todayIso);
 
-  // En hämtning som täcker BÅDE veckan och dess månad: en vecka kan spänna över ett månadsskifte,
-  // och då ska varken dagrutorna eller månadssumman tappa rader.
-  const fetchRange = React.useMemo(() => {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const monthStart = `${monthAnchor.year}-${pad(monthAnchor.month + 1)}-01`;
-    const lastDay = new Date(Date.UTC(monthAnchor.year, monthAnchor.month + 1, 0)).getUTCDate();
-    const monthEnd = `${monthAnchor.year}-${pad(monthAnchor.month + 1)}-${pad(lastDay)}`;
-    const weekStart = weekDays[0].iso;
-    const weekEnd = weekDays[6].iso;
-    return {
-      from: weekStart < monthStart ? weekStart : monthStart,
-      to: weekEnd > monthEnd ? weekEnd : monthEnd,
-      monthStart,
-      monthEnd,
-      // Attestperioden är alltid en kalendermånad — samma månad som summorna nedan.
-      period: `${monthAnchor.year}-${pad(monthAnchor.month + 1)}`,
-    };
-  }, [monthAnchor, weekDays]);
+  // ⚠️ MÅNADEN ÄR DEN VALDA DAGENS, inte veckans måndags. Med måndagen stod veckan 28 sep–4 okt på
+  // september även den 2 oktober, och en inlämnad september såg ut att låsa ute oktober. Se
+  // periodWindow.ts. Hämtningen täcker BÅDE veckan och månaden: en vecka kan spänna över ett
+  // månadsskifte, och då ska varken dagrutorna eller månadssumman tappa rader.
+  const fetchRange = React.useMemo(() => periodWindow(weekIsos, selectedIso), [weekIsos, selectedIso]);
+  const monthAnchor = React.useMemo(
+    () => ({ year: Number(fetchRange.monthStart.slice(0, 4)), month: Number(fetchRange.monthStart.slice(5, 7)) - 1 }),
+    [fetchRange],
+  );
 
   const [entries, setEntries] = React.useState<EntryRow[]>([]);
   const [compensations, setCompensations] = React.useState<CompensationItem[]>([]);
   const [audit, setAudit] = React.useState<TimeEntryAuditRow[]>([]);
-  const [approval, setApproval] = React.useState<TimeApprovalRow | null>(null);
-  const [approvalStatus, setApprovalStatus] = React.useState<TimePeriodStatus>('open');
+  // Attesten bär sin PERIOD. Månaden följer den valda dagen, så ett klick över månadsskiftet inom
+  // samma vecka byter period innan svaret är framme — utan perioden hade förra månadens status
+  // gällt för den nya under tiden, och en öppen oktober hade blixtrat förbi som "Inlämnad".
+  const [approvalState, setApprovalState] = React.useState<{
+    period: string;
+    approval: TimeApprovalRow | null;
+    status: TimePeriodStatus;
+  } | null>(null);
   const [reference, setReference] = React.useState<ReferenceData>({ time_code: [], internal_project: [], absence_type: [] });
   // Laddningsläget HÄRLEDS ur vilket intervall som faktiskt är hämtat, det sätts inte för hand.
   //
@@ -215,8 +219,6 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
   const [modalDate, setModalDate] = React.useState<string | null>(null);
   const [editing, setEditing] = React.useState<EditableEntry | null>(null);
   const [busyId, setBusyId] = React.useState<string | null>(null);
-  // Vald dag: den som stod i adressen om sidan öppnades från en genväg, annars idag.
-  const [pickedIso, setPickedIso] = React.useState(initialDate ?? todayIso);
 
   const loading = loadedKey !== `${fetchRange.from}:${fetchRange.to}`;
 
@@ -254,8 +256,11 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
       // och alla rapportknappar var borta. Fail open — databasen är garantin, och att tyst låsa
       // någon ute ur sin egen tidrapport på ett nätverksfel är värre än en knapp som svarar 409.
       const approvalOk = approvalRes.ok && approvalJson.ok;
-      setApproval(approvalOk ? (approvalJson.data.approval || null) : null);
-      setApprovalStatus(approvalOk ? (approvalJson.data.status || 'open') : 'open');
+      setApprovalState({
+        period: fetchRange.period,
+        approval: approvalOk ? (approvalJson.data.approval || null) : null,
+        status: approvalOk ? (approvalJson.data.status || 'open') : 'open',
+      });
 
       if (!entriesRes.ok || !entriesJson.ok) throw new Error(entriesJson?.error || 'Kunde inte hämta tidrader');
       setEntries(entriesJson.data.items || []);
@@ -267,8 +272,7 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
       if (seq === loadSeq.current) {
         setError((e as Error).message);
         // Nätverksfel kastar innan raderna ovan hann köras — samma resonemang, samma utfall.
-        setApproval(null);
-        setApprovalStatus('open');
+        setApprovalState({ period: fetchRange.period, approval: null, status: 'open' });
       }
     } finally {
       // Även efter ett fel: felrutan förklarar vad som hände, ett evigt skelett gör det inte.
@@ -277,16 +281,6 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
   }, [fetchRange]);
 
   React.useEffect(() => { void load(); }, [load]);
-
-  // Den valda dagen HÄRLEDS, den synkas inte i en effekt. Byts veckan pekar det valda datumet på en
-  // dag som inte längre står i remsan, och rättelsen måste ske i samma rendering — en effekt kör
-  // efter målningen, så en bildruta hade visat den nya veckans remsa under den gamla dagens rubrik,
-  // rader och låsläge. Idag väljs när den ligger i veckan, annars måndagen: man bläddrar bakåt för
-  // att titta på en vecka, och då är dess början rätt startpunkt.
-  const weekIsos = React.useMemo(() => weekDays.map((day) => day.iso), [weekDays]);
-  const selectedIso = weekIsos.includes(pickedIso)
-    ? pickedIso
-    : weekIsos.includes(todayIso) ? todayIso : weekIsos[0];
 
   const byDate = React.useMemo(() => {
     const map = new Map<string, EntryRow[]>();
@@ -341,6 +335,12 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
 
   // Inlämnad eller attesterad → månaden är fryst. UI:t döljer knapparna, databasen är garantin:
   // policy + trigger nekar även om någon skickar anropet ändå.
+  //
+  // En status som hör till en annan månad än den som visas gäller inte här. Tills svaret är framme
+  // är perioden `open` — samma fail open som vid ett fel ovan, och av samma skäl.
+  const currentApproval = approvalState?.period === fetchRange.period ? approvalState : null;
+  const approval = currentApproval?.approval ?? null;
+  const approvalStatus: TimePeriodStatus = currentApproval?.status ?? 'open';
   const locked = isPeriodLocked(approvalStatus);
 
   // Låset gäller en MÅNAD, men vyn visar en VECKA — och en vecka kan ligga i två månader. Bara den
