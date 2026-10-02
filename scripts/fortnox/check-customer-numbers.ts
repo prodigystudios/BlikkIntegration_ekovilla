@@ -47,6 +47,21 @@ function pgEnv(dbUrl: string): { env: NodeJS.ProcessEnv; host: string } {
     abort('Databas-URL:en går inte att tolka. (Den skrivs inte ut.)');
   }
   const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
+  // Avkodat: URL-parsern procentkodar sökvägen. Text efter databasnamnet ("…/postgres prod eko" — hände 2026-10-02 när
+  // en etikett följde med in i variabeln) ger annars Postgres obegripliga 'database "postgres%20prod%20eko" does not exist'.
+  let database: string;
+  try {
+    database = decodeURIComponent(url.pathname.replace(/^\//, '')) || 'postgres';
+  } catch {
+    database = url.pathname;
+  }
+  if (/[\s/%]/.test(database)) {
+    const masked = `${url.protocol}//${url.username}:***@${url.host}/${database}${url.search}`;
+    abort(`Databasnamnet i URL:en blev "${database}" — det står något efter databasnamnet i variabeln.\n`
+      + `   URL:en utan lösenord: ${masked}\n`
+      + '   Den ska sluta på /postgres. Klipp bort resten (fungerar när lösenordet saknar mellanslag):\n'
+      + '   export PROD_DB_URL="${PROD_DB_URL%% *}"');
+  }
   return {
     host: url.hostname,
     env: {
@@ -55,7 +70,7 @@ function pgEnv(dbUrl: string): { env: NodeJS.ProcessEnv; host: string } {
       PGPORT: url.port || '5432',
       PGUSER: decodeURIComponent(url.username),
       PGPASSWORD: decodeURIComponent(url.password),
-      PGDATABASE: url.pathname.replace(/^\//, '') || 'postgres',
+      PGDATABASE: database,
       PGSSLMODE: url.searchParams.get('sslmode') ?? (local ? 'disable' : 'require'),
       PGAPPNAME: 'check-customer-numbers',
     },
