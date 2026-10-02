@@ -190,7 +190,11 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
   // september även den 2 oktober, och en inlämnad september såg ut att låsa ute oktober. Se
   // periodWindow.ts. Hämtningen täcker BÅDE veckan och månaden: en vecka kan spänna över ett
   // månadsskifte, och då ska varken dagrutorna eller månadssumman tappa rader.
-  const fetchRange = React.useMemo(() => periodWindow(weekIsos, selectedIso), [weekIsos, selectedIso]);
+  //
+  // Memot nycklas på MÅNADEN, inte på dagen: varje nytt fetchRange-objekt ger en ny `load` och en ny
+  // hämtning, och ett klick mellan två dagar i samma månad ska inte hämta om något.
+  const selectedMonth = selectedIso.slice(0, 7);
+  const fetchRange = React.useMemo(() => periodWindow(weekIsos, `${selectedMonth}-01`), [weekIsos, selectedMonth]);
   const monthAnchor = React.useMemo(
     () => ({ year: Number(fetchRange.monthStart.slice(0, 4)), month: Number(fetchRange.monthStart.slice(5, 7)) - 1 }),
     [fetchRange],
@@ -414,7 +418,9 @@ export default function TidClient({ initialDate = null }: { initialDate?: string
         {fmtISO(monday) !== thisMondayIso ? (
           <button
             type="button"
-            onClick={() => setAnchorIso(todayIso)}
+            // Dagen också, inte bara veckan: en tidigare vald dag i samma vecka hade annars legat
+            // kvar — och med den dess månad.
+            onClick={() => { setAnchorIso(todayIso); setPickedIso(todayIso); }}
             className="py-1.5 justify-self-center rounded-lg text-sm font-semibold text-slate-600 underline underline-offset-2"
           >
             Gå till denna vecka
