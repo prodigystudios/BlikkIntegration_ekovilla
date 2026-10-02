@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, withExplicitRotHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget } from './taxReductions';
 
@@ -232,7 +232,8 @@ export function buildOfferRows(
   // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
   appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
   // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Se fortnoxSalesAccount.
-  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
+  // Krysset i CRM styr varje rad på ett ROT-dokument — även ett urkryss. Se withExplicitRotHouseWork.
+  return withFortnoxSalesAccount(withExplicitRotHouseWork(rows, rotEnabled), vatPercent, reverseVat);
 }
 
 // Resolves the Fortnox customer number for a quote.

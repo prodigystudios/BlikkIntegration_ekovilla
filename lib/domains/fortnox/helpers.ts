@@ -121,22 +121,31 @@ export function splitRotMaterialRow(
   return { materialUnitPrice, labour };
 }
 
-// Husarbete-fälten för EN rad på ett dokument: skickas BARA på rader vi själva menar är arbete,
-// och bara på ROT-dokument. Allt annat utelämnas helt.
+// Husarbete-fälten för EN rad på ett dokument: `true` + typ bara på rader vi själva menar är arbete,
+// och bara på ROT-dokument. Övriga rader på ett ROT-dokument får sitt uttryckliga "inte husarbete"
+// av `withExplicitRotHouseWork` i radbyggarnas sista pass; på ett icke-ROT-dokument utelämnas allt.
 //
 // Regeln ser försiktig ut och är det med flit. Tre mätningar mot Fortnox 2026-08-19 ligger bakom
-// den, och två av dem motbevisade var sin rimlig idé. Läs dem innan du breddar något här.
+// den, och två av dem motbevisade var sin rimlig idé. Läs dem innan du breddar något här — och
+// punkt 2, som ändrades 2026-10-02.
 //
 // 1. ⚠️ INGENTING PÅ ETT ICKE-ROT-DOKUMENT. Ett icke-ROT-dokument (`TaxReductionType: 'none'`)
 //    nekar VILKEN husarbetestyp som helst — även den tomma — med 2004021. Se
 //    FORTNOX_INTEGRATION.md sekt. 4 punkt 2.
 //
-// 2. 🧨 `HouseWork: false` SKICKAS ALDRIG. Mätt: artikel 1058 (Arbetskostnad per man,
-//    husarbete-flaggad i Fortnox) lades som en vanlig rad utan kryss, och vårt uttryckliga `false`
-//    TOG BORT artikelns flagga. Dokumentationens påstående att artikelflaggan ärvs "oavsett vad vi
-//    skickar" gäller alltså bara när vi är TYSTA — den står inte emot ett uttryckligt `false`.
-//    Följden hade varit tyst: varje monterings- och framkörningsrad (1012, 1024–1026, 1058, 1068)
-//    utan kryss hade tappat sitt ROT-avdrag, och det syns inte hos oss — bara på dokumentet.
+// 2. `HouseWork: false` TAR BORT ARTIKELNS FLAGGA — och sedan 2026-10-02 är det MENINGEN. Mätt
+//    2026-08-19: artikel 1058 (Arbetskostnad per man, husarbete-flaggad i Fortnox) lades utan kryss,
+//    och vårt uttryckliga `false` tog bort artikelns flagga. Då lästes det som en fara (montering
+//    utan kryss hade tappat ROT), och regeln blev att vara TYST. Men tystnad betyder att Fortnox
+//    ärver flaggan — från artikeln, och från raden som låg på samma position förut — så ett URKRYSS
+//    i CRM nådde aldrig Fortnox, och en av misstag ROT-flaggad artikel gav fel avdrag som fick
+//    rättas för hand (William, incidenter i drift). Sedan skattereduktionsposten ägs av CRM
+//    (taxReductions.ts) räknas dessutom bara ikryssade rader i beloppet.
+//    ⇒ KRYSSET I CRM STYR. På ett ROT-dokument skickas `HouseWork: false` + `HouseWorkType: null`
+//      på varje rad utan kryss (`withExplicitRotHouseWork`). Mätt mot testbolaget 2026-10-02,
+//      offert 56: ROT-artikel utan kryss räknas inte; kryssa i → räknas; kryssa ur → borta i
+//      Fortnox; en ny rad på en gammal husarbetsrads plats ärver inte; två pushar med radändring
+//      emellan befordrar ingenting (typen är null, se punkt 3). Monteringsrader MÅSTE alltså kryssas.
 //
 // 3. 🧨 EN TYP UTAN FLAGGA BLIR ÄNDÅ HUSARBETE. Mätt, och den stängde en hel designidé:
 //    redovisningen ville ha `HouseWorkType` på materialrader (utan flagga) för att ROT-underlaget
@@ -150,6 +159,20 @@ export function splitRotMaterialRow(
 //      materialrader måste den sitta på ARTIKELN i Fortnox — med den kända följden att artikeln
 //      sedan nekar varje icke-ROT-dokument den hamnar på. Det är en verksamhetsavvägning, inte en
 //      kodfråga.
+/**
+ * Sista passet på ett ROT-dokument: varje rad som inte är husarbete säger det uttryckligen —
+ * `HouseWork: false` OCH `HouseWorkType: null` (flaggan ensam lämnar typen, punkt 3). Annars ärvs
+ * flaggan från artikeln eller från raden på samma position, och ett urkryss når aldrig Fortnox.
+ * Se punkt 2 ovan. Icke-ROT-dokument rörs inte (punkt 1).
+ */
+export function withExplicitRotHouseWork<T extends object>(rows: T[], rotEnabled: boolean): T[] {
+  if (!rotEnabled) return rows;
+  // Spridningen tar med symbolnyckeln FORTNOX_TEXT_ROW.
+  return rows.map((row) => ((row as { HouseWork?: unknown }).HouseWork === true
+    ? row
+    : { ...row, HouseWork: false, HouseWorkType: null }));
+}
+
 export function rotRowHouseWork(
   item: { is_rot_work?: boolean | null; house_work_type?: string | null },
   rotEnabled: boolean,

@@ -131,7 +131,8 @@ describe('buildOrderRows – ROT labour carve-out', () => {
     expect(material.Price).toBeCloseTo(120, 6); // 12000 material over 100 units
     expect(material.OrderedQuantity).toBe(100);
     expect(material.DeliveredQuantity).toBe(100);
-    expect(material.HouseWork).toBeUndefined();      // material är aldrig husarbete
+    expect(material.HouseWork).toBe(false);          // material är aldrig husarbete — uttryckligen
+    expect(material.HouseWorkType).toBeNull();
     expect(labor.ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
     expect(labor.Price).toBe(8000);
     expect(labor.OrderedQuantity).toBe(1);
