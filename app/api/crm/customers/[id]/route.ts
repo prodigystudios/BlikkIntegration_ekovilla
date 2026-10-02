@@ -154,9 +154,15 @@ export async function DELETE(_req: Request, context: RouteContext) {
       }
       if (e instanceof CustomerLocalDeleteError) {
         console.error('[crm] Kunden togs inte bort efter Fortnox:', e.message);
-        return routeError(500, 'crm_customer_delete_failed', e.fortnoxCustomerNumber
-          ? `Kunden är borttagen i Fortnox men inte här (${e.message}). Försök igen — Fortnox-steget hoppas då över.`
-          : `Kunden kunde inte tas bort: ${e.message}`);
+        if (!e.fortnoxCustomerNumber) {
+          return routeError(500, 'crm_customer_delete_failed', `Kunden kunde inte tas bort: ${e.message}`);
+        }
+        // Utan lösgjort nummer får ett nytt försök inte uppmanas: Fortnox återanvänder kundnummer, och numret kan
+        // redan tillhöra en ny kund (lib/domains/fortnox/customerDelete.ts).
+        return routeError(500, 'crm_customer_delete_failed', e.detached
+          ? `Kunden är borttagen i Fortnox (kund ${e.fortnoxCustomerNumber}) men inte här (${e.message}). Försök igen.`
+          : `Kunden är borttagen i Fortnox (kund ${e.fortnoxCustomerNumber}) men inte här (${e.message}). `
+            + 'Försök inte igen — Fortnox kan redan ha gett numret till en ny kund. Kontakta support.');
       }
       throw e;
     }

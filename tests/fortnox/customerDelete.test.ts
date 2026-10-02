@@ -55,12 +55,13 @@ describe('describeCustomerDeletionBlockers', () => {
 });
 
 describe('fortnoxCustomerAlreadyGone', () => {
-  it('404 och "Kunde inte hitta kund" räknas som borttagen', () => {
+  it('404 räknas som borttagen — det Fortnox svarar på ett raderat nummer (testbolaget 2026-10-02)', () => {
     expect(fortnoxCustomerAlreadyGone(new FortnoxApiError(404, 'x'))).toBe(true);
-    expect(fortnoxCustomerAlreadyGone(new FortnoxApiError(400, 'x', 2000433, 'Kunde inte hitta kund'))).toBe(true);
   });
 
-  it('ett annat nej, eller ett fel som inte är Fortnox, räknas inte', () => {
+  it('ett nej, eller ett fel som inte är Fortnox, räknas inte', () => {
+    // Uppmätta nej: kund med faktura/order, och kund med en offert utan order (2003614).
+    expect(fortnoxCustomerAlreadyGone(new FortnoxApiError(400, 'x', 2003614, 'Offerter med kund 21 måste ha order skapad'))).toBe(false);
     expect(fortnoxCustomerAlreadyGone(new FortnoxApiError(400, 'x', 2000310, 'Posten används'))).toBe(false);
     expect(fortnoxCustomerAlreadyGone(new FortnoxNotConnectedError())).toBe(false);
     expect(fortnoxCustomerAlreadyGone(new Error('nätverk'))).toBe(false);
@@ -75,6 +76,7 @@ function fakeDeps(opts: {
   fortnox?: () => Promise<void>;
   nameCalls?: () => Promise<void>;
   deleted?: boolean;
+  detach?: () => Promise<void>;
 } = {}) {
   const log: string[] = [];
   const deps: CustomerDeleteDeps = {
@@ -93,6 +95,7 @@ function fakeDeps(opts: {
     deleteInFortnox: async (nr) => { log.push(`fortnox:${nr}`); await opts.fortnox?.(); },
     nameUnnamedCalls: async (_id, name) => { log.push(`calls:${name}`); await opts.nameCalls?.(); },
     deleteRow: async () => { log.push('delete'); return opts.deleted ?? true; },
+    detachFortnoxNumber: async () => { log.push('detach'); await opts.detach?.(); },
   };
   return { deps, log };
 }
@@ -147,19 +150,39 @@ describe('deleteCrmCustomerWithFortnox', () => {
     }
   });
 
-  it('ingen rad borttagen efter Fortnox ja → CustomerLocalDeleteError med numret', async () => {
-    const { deps } = fakeDeps({ deleted: false });
+  it('🧨 ingen rad borttagen efter Fortnox ja → numret kopplas loss (Fortnox återanvänder kundnummer)', async () => {
+    const { deps, log } = fakeDeps({ deleted: false });
     const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
     expect(thrown).toBeInstanceOf(CustomerLocalDeleteError);
     expect(thrown.fortnoxCustomerNumber).toBe('1042');
+    expect(thrown.detached).toBe(true);
+    expect(log).toEqual(['read', 'count', 'fortnox:1042', 'calls:Dubblett AB', 'delete', 'detach']);
   });
 
-  it('samtalen faller → raden tas inte bort, felet säger att Fortnox redan sagt ja', async () => {
+  it('samtalen faller → raden tas inte bort, numret kopplas loss', async () => {
     const { deps, log } = fakeDeps({ nameCalls: async () => { throw new Error('rls'); } });
     const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
     expect(thrown).toBeInstanceOf(CustomerLocalDeleteError);
-    expect(thrown.fortnoxCustomerNumber).toBe('1042');
+    expect(thrown.detached).toBe(true);
     expect(log).not.toContain('delete');
+    expect(log).toContain('detach');
+  });
+
+  it('lösgörandet faller också → detached: false, och felet bär fortfarande numret', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { deps } = fakeDeps({ deleted: false, detach: async () => { throw new Error('nere'); } });
+    const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
+    expect(thrown).toBeInstanceOf(CustomerLocalDeleteError);
+    expect(thrown.fortnoxCustomerNumber).toBe('1042');
+    expect(thrown.detached).toBe(false);
+  });
+
+  it('utan Fortnox-nummer finns inget att koppla loss', async () => {
+    const { deps, log } = fakeDeps({ fortnoxId: null, deleted: false });
+    const thrown = await deleteCrmCustomerWithFortnox(ID, deps).catch((e) => e);
+    expect(thrown).toBeInstanceOf(CustomerLocalDeleteError);
+    expect(thrown.fortnoxCustomerNumber).toBeNull();
+    expect(log).not.toContain('detach');
   });
 });
 
@@ -222,5 +245,16 @@ describe('customerDeleteDeps — frågorna', () => {
     // En DELETE som RLS filtrerar bort svarar error: null och ingen rad.
     const filtered = recordingClient({ data: null, error: null });
     await expect(customerDeleteDeps(filtered.client as never).deleteRow(ID)).resolves.toBe(false);
+  });
+
+  it('lösgörandet nollar numret och synkläget, och kastar när ingen rad uppdaterades', async () => {
+    vi.mocked(getSupabaseAdmin).mockReturnValue(recordingClient({ data: null, error: null }).client as never);
+    const updated = recordingClient({ data: { id: ID }, error: null });
+    await customerDeleteDeps(updated.client as never).detachFortnoxNumber(ID);
+    expect(updated.chains.crm_customers.update).toHaveBeenCalledWith({ fortnox_customer_id: null, sync_status: 'not_synced' });
+    expect(updated.chains.crm_customers.eq).toHaveBeenCalledWith('id', ID);
+
+    const none = recordingClient({ data: null, error: null });
+    await expect(customerDeleteDeps(none.client as never).detachFortnoxNumber(ID)).rejects.toThrow('Ingen rad');
   });
 });

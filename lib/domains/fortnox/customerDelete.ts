@@ -15,8 +15,11 @@ import { FortnoxApiError, fortnoxDelete } from './client';
  * 🧨 ORDNINGEN: spärren → Fortnox → samtalens namn → vår rad.
  *  - Fortnox före vår rad: Fortnox-importen (`syncFortnoxCustomers`) skapar en rad för varje kundnummer den inte hittar
  *    hos oss, inaktiva också. En kund som bara försvann här hade kommit tillbaka vid nästa import.
- *  - En kund som Fortnox inte känner till räknas som borttagen där. Går vår radering fel efter Fortnox ja står kunden
- *    kvar här med ett nummer som inte finns längre — ett nytt försök tar sig då förbi Fortnox och läker det.
+ *  - En kund som Fortnox inte känner till (404) räknas som borttagen där: den togs bort direkt i Fortnox, eller av ett
+ *    tidigare försök.
+ *  - 🧨 FORTNOX ÅTERANVÄNDER KUNDNUMMER (uppmätt i testbolaget 2026-10-02: kund 21 raderad, nästa nya kund fick 21).
+ *    Går vår radering fel efter Fortnox ja kopplas numret därför loss från vår rad. Annars hade ett nytt försök, efter
+ *    att någon hunnit skapa en ny Fortnox-kund, tagit bort DEN kunden.
  *  - Samtalens namn: `crm_calls_reference_or_company_check` kräver prospect_id, customer_id eller company_name, och båda
  *    id:na blir NULL när kunden raderas (ON DELETE SET NULL). Ett samtal loggat på kundkortet utan eget företagsnamn hade
  *    fällt hela raderingen — efter att Fortnox redan sagt ja. Samtalet får kundens namn, samma namn det visades med.
@@ -50,12 +53,9 @@ export function describeCustomerDeletionBlockers(blockers: CustomerDeletionBlock
   return `Kunden har ${list} och kan inte tas bort.`;
 }
 
-/**
- * Fortnox känner inte till kundnumret. 404 är vad API:t svarar på ett okänt nummer; koden 2000433 ("Kunde inte hitta
- * kund") är samma besked när det kommer som 400.
- */
+/** Fortnox känner inte till kundnumret: DELETE och GET på ett raderat nummer svarar 404 (testbolaget 2026-10-02). */
 export function fortnoxCustomerAlreadyGone(e: unknown): boolean {
-  return e instanceof FortnoxApiError && (e.status === 404 || e.fortnoxCode === 2000433);
+  return e instanceof FortnoxApiError && e.status === 404;
 }
 
 /** Fortnox tog inte bort kunden. Ingenting är borttaget, varken där eller här. `fortnoxError` bär Fortnox fel. */
@@ -66,9 +66,16 @@ export class CustomerFortnoxDeleteError extends Error {
   }
 }
 
-/** Kunden är borttagen i Fortnox (eller fanns inte där) men står kvar hos oss. Ett nytt försök läker det. */
+/**
+ * Kunden står kvar hos oss. Med ett `fortnoxCustomerNumber` är den redan borttagen i Fortnox (eller fanns inte där);
+ * `detached` säger om numret hann kopplas loss från vår rad, så att ett nytt försök inte går till Fortnox igen.
+ */
 export class CustomerLocalDeleteError extends Error {
-  constructor(message: string, public readonly fortnoxCustomerNumber: string | null) {
+  constructor(
+    message: string,
+    public readonly fortnoxCustomerNumber: string | null,
+    public readonly detached: boolean = false,
+  ) {
     super(message);
     this.name = 'CustomerLocalDeleteError';
   }
@@ -91,6 +98,8 @@ export type CustomerDeleteDeps = {
   nameUnnamedCalls: (customerId: string, name: string) => Promise<void>;
   /** true när raden togs bort, false när ingen rad matchade (redan borta, eller nekad av RLS). */
   deleteRow: (customerId: string) => Promise<boolean>;
+  /** Tar bort Fortnox-numret från vår rad. Se ÅTERANVÄNDER KUNDNUMMER ovan. */
+  detachFortnoxNumber: (customerId: string) => Promise<void>;
 };
 
 /**
@@ -150,6 +159,15 @@ export function customerDeleteDeps(session: SupabaseClient): CustomerDeleteDeps 
       if (error) throw new Error(error.message);
       return Boolean(data);
     },
+    detachFortnoxNumber: async (id) => {
+      const { data, error } = await session
+        .from('crm_customers')
+        .update({ fortnox_customer_id: null, sync_status: 'not_synced' })
+        .eq('id', id)
+        .select('id')
+        .maybeSingle();
+      if (error || !data) throw new Error(error?.message || 'Ingen rad uppdaterades.');
+    },
   };
 }
 
@@ -189,7 +207,18 @@ export async function deleteCrmCustomerWithFortnox(
     await deps.nameUnnamedCalls(customerId, getCrmCustomerDisplayName(customer));
     if (!await deps.deleteRow(customerId)) throw new Error('Ingen rad togs bort.');
   } catch (e) {
-    throw new CustomerLocalDeleteError((e as Error)?.message || 'Okänt fel', fortnoxCustomerNumber);
+    const message = (e as Error)?.message || 'Okänt fel';
+    if (!fortnoxCustomerNumber) throw new CustomerLocalDeleteError(message, null);
+    let detached = false;
+    try {
+      await deps.detachFortnoxNumber(customerId);
+      detached = true;
+    } catch (detachError) {
+      console.error('[crm] Fortnox-numret kunde inte kopplas loss efter raderingen i Fortnox', {
+        customerId, fortnoxCustomerNumber, error: (detachError as Error)?.message,
+      });
+    }
+    throw new CustomerLocalDeleteError(message, fortnoxCustomerNumber, detached);
   }
 
   return { kind: 'deleted', fortnoxCustomerNumber };
