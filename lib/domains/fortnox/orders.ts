@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError, WorkOrderCancelledError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveCustomerPersonalNumber, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -12,6 +12,8 @@ import { ORDER_PDF_MODE, type OrderPdfMode } from './documentPdfMode';
 import type { FortnoxCompanySettingsResponse } from './offerPdf';
 import type { FortnoxOrderResponse } from './orderPdfDesign';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import type { PricingLineItem } from '@/lib/domains/crm/pricing';
+import { prepareTaxReductionForDocumentWrite, resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, type TaxReductionTarget } from './taxReductions';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -32,6 +34,9 @@ type CustomerSnapshot = {
   // Minnet av att märkningen tömts på arbetsordern. Sätts av mergeWorkOrderSnapshotOverrides, som
   // ser övergången; läses av orderReferenceNumberField för att faktiskt blanka YourOrderNumber.
   label_cleared?: boolean | null;
+  // Bara för skattereduktionsposten: namnet är reserv bakom ROT-sektionens, numret bakom kundkortets.
+  customer_name?: string | null;
+  personal_number?: string | null;
 };
 
 // The work order's OWN address column — what the order detail page edits, and (since
@@ -46,6 +51,10 @@ type RotDetails = {
   enabled?: boolean | null;
   property_designation?: string | null;
   brf_org_number?: string | null;
+  // Läses bara av skattereduktionsposten (taxReductions.ts) — inte av ordern själv.
+  applicant_name?: string | null;
+  rot_percent?: number | null;
+  max_deduction?: number | null;
 };
 
 type WorkOrderRow = {
@@ -638,10 +647,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
 
   // ⚠️ JÄMFÖR BARA DET SOM NÅR DOKUMENTET, aldrig hela kolumnen.
   //
-  // `rot_details` bär också `rot_percent` och `max_deduction`, som Fortnox ALDRIG får se — de läses
-  // bara av vår egen preliminära "Att betala" (se ROT_DOCUMENT_KEYS). En rättad procentsats hade
-  // annars dragit igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har,
-  // med allt vad `assertLineItemsArePriced` och 'failed'-stämpling innebär.
+  // `rot_details` bär också `rot_percent` och `max_deduction`. De når Fortnox bara via
+  // skattereduktionspostens belopp (taxReductions.ts), och den följer med nästa fulla push — men de
+  // drar medvetet inte igång en egen (se ROT_DOCUMENT_KEYS). En rättad procentsats hade annars
+  // kostat en full positionsbaserad rad-PUT, med allt vad `assertLineItemsArePriced` och
+  // 'failed'-stämpling innebär.
   //
   // Och `customer_snapshot` bär telefon, e-post, slutkundens uppgifter, org.nr och personnummer —
   // inget av det når Fortnox. Hela kolumnen jämförd gjorde en rättad telefon på arbetsplatsen till
@@ -939,7 +949,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const { header, documentNote } = await buildOrderHeader(workOrder, linkedQuote, rotEnabled, supabase);
       const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
-      const response = await fortnoxPost<{ Order: { DocumentNumber: string } }>('/orders', {
+      const response = await fortnoxPost<{ Order: { DocumentNumber: string; TaxReduction?: number | null } }>('/orders', {
         Order: {
           CustomerNumber: customerNumber,
           // Svensk dag: UTC-dygnet daterar en order skapad på natten till dagen före.
@@ -967,6 +977,13 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
         .from('crm_work_orders')
         .update({ fortnox_order_number: fortnoxOrderNumber })
         .eq('id', workOrderId);
+
+      // Ny order utan offert: ingen post finns, så den skapas här. EFTER att numret sparats — posten
+      // är best effort och får aldrig stå mellan en skapad order och vår vetskap om den.
+      if (rotEnabled) {
+        const taxReduction = await resolveOrderTaxReduction(supabase, workOrder, linkedQuote, vatPercent);
+        await syncTaxReductionAfterDocumentWrite('ORDER', fortnoxOrderNumber, taxReduction, response.Order);
+      }
     }
 
     await supabase
@@ -1158,6 +1175,30 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
 }
 
 /**
+ * Vad orderns skattereduktionspost ska säga — se taxReductions.ts. Beloppet räknas över samma
+ * aktiva rader som går till dokumentet, med ORDERNS ROT-uppgifter (resolveOrderRotDetails).
+ */
+async function resolveOrderTaxReduction(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  workOrder: Pick<WorkOrderRow, 'customer_id' | 'customer_snapshot' | 'line_items' | 'rot_details'> & { client_name?: string | null },
+  linkedQuote: { rot_details?: RotDetails | null } | null | undefined,
+  vatPercent: number,
+): Promise<TaxReductionTarget> {
+  const rot = resolveOrderRotDetails(workOrder, linkedQuote);
+  return {
+    amount: rotAskedAmount(activeLineItems(workOrder.line_items) as PricingLineItem[], vatPercent, rot),
+    applicant: resolveTaxReductionApplicant({
+      applicantName: rot?.applicant_name,
+      customerName: workOrder.customer_snapshot?.customer_name ?? workOrder.client_name,
+      cardPersonalNumber: await resolveCustomerPersonalNumber(supabase, workOrder.customer_id, null),
+      snapshotPersonalNumber: workOrder.customer_snapshot?.personal_number,
+    }),
+    propertyDesignation: rot?.property_designation ?? null,
+    brfOrgNumber: rot?.brf_org_number ?? null,
+  };
+}
+
+/**
  * PUT header + ALLA artikelrader på en Fortnox-order som redan finns.
  *
  * Den enda platsen som skriver arbetsorderns rader till Fortnox. Delas av omsynken
@@ -1205,7 +1246,18 @@ async function putOrderHeaderAndRows(
   });
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
-  await fortnoxPut(`/orders/${orderNumber}`, { Order: { ...header, OrderRows: orderRows } });
+  // 🧨 SKATTEREDUKTIONSPOSTEN SÄNKS FÖRE PUT:EN. Har ordern en post — och efter `createorder` har den
+  // offertens kopia — nekas hela rad-PUT:en (2003227) så fort arbetet blivit mindre än postens
+  // belopp. Efter PUT:en får posten orderns belopp. Se taxReductions.ts.
+  const taxReduction = rotEnabled ? await resolveOrderTaxReduction(supabase, workOrder, linkedQuote, vatPercent) : null;
+  if (taxReduction) await prepareTaxReductionForDocumentWrite('ORDER', orderNumber, taxReduction);
+
+  const written = await fortnoxPut<{ Order?: { TaxReduction?: number | null } }>(
+    `/orders/${orderNumber}`,
+    { Order: { ...header, OrderRows: orderRows } },
+  );
+
+  if (taxReduction) await syncTaxReductionAfterDocumentWrite('ORDER', orderNumber, taxReduction, written?.Order);
 
   // Minnet av rensningen släcks när PUT:en gått igenom — samma regel och samma skäl som i
   // syncWorkOrderHeaderToFortnox. Utan den här raden hade radvägen rensat referensnumret vid VARJE

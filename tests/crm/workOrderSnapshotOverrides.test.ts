@@ -288,10 +288,10 @@ describe('mergeWorkOrderRotDetails', () => {
     });
   });
 
-  // 🧨 `documentChanged` är smalare än `changed` och styr PUSHEN. Procent och maxavdrag läses bara
-  // av pricing.ts för vår egen preliminära "Att betala" — Fortnox räknar avdraget själv och får
-  // aldrig siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad
-  // rad-PUT, med assertLineItemsArePriced som kan stämpla 'failed' och spärra faktureringen.
+  // 🧨 `documentChanged` är smalare än `changed` och styr PUSHEN. Procent och maxavdrag når Fortnox
+  // bara via skattereduktionspostens belopp, vid nästa push som ändå sker — de drar inte igång en
+  // egen. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT, med
+  // assertLineItemsArePriced som kan stämpla 'failed' och spärra faktureringen.
   describe('documentChanged', () => {
     it('är false för fält Fortnox aldrig ser', () => {
       const res = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50, max_deduction: 75000 });

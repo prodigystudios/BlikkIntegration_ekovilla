@@ -9,8 +9,9 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
+import { documentHasTaxReductionPosts, prepareTaxReductionForDocumentWrite, resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, type TaxReductionTarget } from './taxReductions';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -69,6 +70,7 @@ type QuoteRow = {
   rot_details: {
     enabled?: boolean | null;
     rot_percent?: number | null;
+    max_deduction?: number | null;
     applicant_name?: string | null;
     personal_number?: string | null;
     property_designation?: string | null;
@@ -501,7 +503,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     // who we and the installers call, not something the customer's document should carry. Fortnox
     // rewrites Remarks per document type on createorder anyway, so it never survived offer→order.
 
-    const offerBody = {
+    const offerBody: { Offer: Record<string, unknown> } = {
       Offer: {
         CustomerNumber: fortnoxCustomerNumber,
         OfferDate: quote.quote_date,
@@ -526,25 +528,60 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
       },
     };
 
+    // Skattereduktionsposten — en egen resurs hos Fortnox, som `POST /offers` aldrig skapar. Utan
+    // den följer avdraget raderna tills någon öppnar husarbetesfliken; därefter fryser det. Se
+    // taxReductions.ts för mätningarna bakom ordningen nedan.
+    const taxReduction: TaxReductionTarget | null = rotEnabled
+      ? {
+          amount: rotAskedAmount(lineItems, vatPercent, quote.rot_details),
+          applicant: resolveTaxReductionApplicant({
+            applicantName: quote.rot_details?.applicant_name,
+            customerName: snapshot?.customer_name ?? quote.customer_name,
+            cardPersonalNumber: await resolveCustomerPersonalNumber(supabase, quote.customer_id, fortnoxCustomerNumber),
+            snapshotPersonalNumber: snapshot?.personal_number,
+          }),
+          propertyDesignation: quote.rot_details?.property_designation ?? null,
+          brfOrgNumber: quote.rot_details?.brf_org_number ?? null,
+        }
+      : null;
+
     const existingOfferNumber = quote.fortnox_offer_number;
     let offerNumber: string;
     let updated: boolean;
+    let writtenOffer: { DocumentNumber?: string; TaxReduction?: number | null } | undefined;
 
     if (existingOfferNumber) {
+      if (taxReduction) {
+        // FÖRE PUT:en: ett minskat avdrag måste ner i posten först, annars nekas hela offerten (2003227).
+        await prepareTaxReductionForDocumentWrite('OFFER', existingOfferNumber, taxReduction);
+      } else if (await documentHasTaxReductionPosts('OFFER', existingOfferNumber)) {
+        // 🧨 ROT AVSLAGET PÅ EN OFFERT SOM HAR EN POST. Utelämnad typ behåller ROT-regimen, och utan
+        // husarbetsrader nekas då hela PUT:en (2003227). `none` går igenom, och Fortnox tar själv bort
+        // posterna — den sista går inte att radera på egen hand (mätt 2026-10-02, offert 40).
+        offerBody.Offer.TaxReductionType = 'none';
+      }
       // Update the existing Fortnox offer instead of creating a duplicate
-      const response = await fortnoxPut<{ Offer: { DocumentNumber: string } }>(
+      const response = await fortnoxPut<{ Offer: { DocumentNumber: string; TaxReduction?: number | null } }>(
         `/offers/${existingOfferNumber}`,
         offerBody,
       );
+      writtenOffer = response.Offer;
       offerNumber = response.Offer?.DocumentNumber ?? existingOfferNumber;
       updated = true;
     } else {
-      const response = await fortnoxPost<{ Offer: { DocumentNumber: string } }>('/offers', offerBody);
+      const response = await fortnoxPost<{ Offer: { DocumentNumber: string; TaxReduction?: number | null } }>('/offers', offerBody);
+      writtenOffer = response.Offer;
       offerNumber = response.Offer?.DocumentNumber;
       updated = false;
     }
 
     if (!offerNumber) throw new Error('Fortnox returnerade inget offertnummer');
+
+    // EFTER: posten får CRM:s belopp och sökande. Best effort — ett fel loggas och offerten står kvar
+    // som synkad, med Fortnox egen uträkning ur raderna (läget före posten fanns).
+    if (taxReduction) {
+      await syncTaxReductionAfterDocumentWrite('OFFER', offerNumber, taxReduction, writtenOffer);
+    }
 
     await supabase
       .from('crm_quotes')
