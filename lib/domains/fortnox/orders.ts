@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { lineItemQuantity } from '@/lib/domains/crm/lineItems';
 import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, MIRRORED_WORK_ADDRESS_KEYS, ROT_DOCUMENT_KEYS, workOrderDocumentNoteChanged } from '@/lib/domains/crm/workOrderSyncFields';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
-import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError, WorkOrderCancelledError } from './client';
 import { activeLineItems } from './partialInvoices';
 import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
@@ -752,9 +752,9 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   // eller läsas i sin helhet.
   const { data: existing, error } = await supabase
     .from('crm_work_orders')
-    .select('id, fortnox_order_number')
+    .select('id, status, fortnox_order_number')
     .eq('id', workOrderId)
-    .single<{ id: string; fortnox_order_number: string | null }>();
+    .single<{ id: string; status: string | null; fortnox_order_number: string | null }>();
 
   if (error || !existing) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
 
@@ -771,6 +771,10 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
   if (existing.fortnox_order_number) {
     return { fortnox_order_number: existing.fortnox_order_number };
   }
+
+  // En avbruten arbetsorder skapas inte i Fortnox (workOrderCancel.ts). Prövas igen med claimen nedan: avbrytandet håller
+  // samma claim medan statusen sparas, så ett skapande som hann läsa raden före det ser 'cancelled' där.
+  if (existing.status === 'cancelled') throw new WorkOrderCancelledError();
 
   // Atomically claim the push so a concurrent request can't create a SECOND Fortnox order
   // for this work order (the create branch below has no Fortnox-side dedup for standalone
@@ -791,11 +795,12 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
     // som landar mitt i pushen är `resyncHeaderIfSnapshotChangedDuringPush` i slutet av try:t.
     const { data: workOrder, error: readError } = await supabase
       .from('crm_work_orders')
-      .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
+      .select('id, status, quote_id, customer_id, assigned_to, customer_snapshot, work_address, project_name, client_name, amount, vat_percent, currency_code, line_items, fortnox_order_number, rot_details')
       .eq('id', workOrderId)
-      .single<WorkOrderRow>();
+      .single<WorkOrderRow & { status: string | null }>();
 
     if (readError || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+    if (workOrder.status === 'cancelled') throw new WorkOrderCancelledError();
 
     // 🧨 IDEMPOTENSEN PRÖVAS OM — den smala läsningen ovan skedde FÖRE claimen.
     //
@@ -994,7 +999,8 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       ...(mirrorNeedsManualFix ? { mirrorNeedsManualFix: true } : {}),
     };
   } catch (e) {
-    const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
+    // En avbruten order har inte misslyckats: ingenting skickades, och den ska inte skickas.
+    const syncStatus = e instanceof FortnoxNotConnectedError || e instanceof WorkOrderCancelledError ? 'not_synced' : 'failed';
     await supabase
       .from('crm_work_orders')
       .update({ fortnox_order_sync_status: syncStatus })
@@ -1252,11 +1258,15 @@ export async function updateWorkOrderInFortnox(
 
   const { data: workOrder, error } = await supabase
     .from('crm_work_orders')
-    .select('id, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, project_name, fortnox_order_number, line_items, rot_details')
+    .select('id, status, quote_id, customer_id, assigned_to, customer_snapshot, work_address, vat_percent, project_name, fortnox_order_number, line_items, rot_details')
     .eq('id', workOrderId)
-    .single<WorkOrderRow>();
+    .single<WorkOrderRow & { status: string | null }>();
 
   if (error || !workOrder) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+
+  // En avbruten order skickas inte: med nummer är Fortnox-ordern makulerad (PUT:en nekas och hade stämplat 'failed'),
+  // utan nummer hade create-vägen nedan skapat en ny, öppen order. Före 'pending', så att ingenting stämplas om.
+  if (workOrder.status === 'cancelled') throw new WorkOrderCancelledError();
 
   // Not yet in Fortnox → create it (which also stores the number + synced state).
   if (!workOrder.fortnox_order_number) {

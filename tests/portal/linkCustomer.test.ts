@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { linkPortalJobCustomer, type LinkPortalCustomerDeps } from '@/lib/domains/portal/linkCustomer';
 import { buildPortalCustomerLinkUpdate, buildPortalWorkOrderInsert, portalJobSchema, type JobCustomerCard } from '@/lib/domains/portal/jobIntake';
-import { FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError } from '@/lib/domains/fortnox/client';
+import { FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError, WorkOrderCancelledError } from '@/lib/domains/fortnox/client';
 import { CONTRACT_JOB } from './helpers/contractFixtures';
 import { memoryAdmin } from './helpers/memoryAdmin';
 
@@ -251,6 +251,16 @@ describe('linkPortalJobCustomer', () => {
     (t.deps.push as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new FortnoxPushInProgressError());
     await t.link();
     expect(t.admin.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 0, fortnox_next_attempt_at: '2026-09-28T12:05:00.000Z' });
+  });
+
+  // En avbruten arbetsorder skapas inte i Fortnox (fortnox/workOrderCancel.ts): inget fel från Fortnox, inga omförsök.
+  it('avbruten arbetsorder: kopplad, ingen Fortnox-order, inga omförsök, och det sägs som det är', async () => {
+    const t = setup();
+    t.admin.tables.crm_portal_jobs[0].fortnox_next_attempt_at = '2026-09-28T12:03:00.000Z';
+    (t.deps.push as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new WorkOrderCancelledError());
+    const result = (await t.link()) as { fortnoxError: string };
+    expect(result.fortnoxError).toBe('Arbetsordern är avbruten och skickas inte till Fortnox.');
+    expect(t.admin.tables.crm_portal_jobs[0]).toMatchObject({ fortnox_attempts: 0, fortnox_next_attempt_at: null });
   });
 
   it('Fortnox-ordern skapades vid kopplingen: inga omförsök', async () => {

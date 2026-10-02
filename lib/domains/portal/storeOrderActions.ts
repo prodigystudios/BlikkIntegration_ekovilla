@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FortnoxApiError, FortnoxNotConnectedError, fortnoxGet, fortnoxPost, fortnoxPut, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { documentOrganisationNumber } from '@/lib/domains/fortnox/helpers';
+import { cancelFortnoxOrder, cancelFortnoxOrderByState, readFortnoxOrderState, type FortnoxOrderState } from '@/lib/domains/fortnox/orderCancel';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import {
   PORTAL_FORTNOX_LEASE_MS,
@@ -213,44 +214,17 @@ export type StoreOrderFortnoxDeps = {
   now: () => Date;
 };
 
-export type StoreOrderFortnoxOrderState = {
-  cancelled: boolean;
-  /** Fakturan ordern pekar på, eller null. */
-  invoiceNumber: string | null;
-};
-
-/** GET /orders/{n}: makulerad, och fakturan (InvoiceReference, där "0" är ingen). */
-export async function readStoreOrderFortnoxOrder(orderNumber: string): Promise<StoreOrderFortnoxOrderState> {
-  const { Order } = await fortnoxGet<{ Order?: { Cancelled?: boolean | null; InvoiceReference?: string | number | null } }>(
-    `/orders/${encodeURIComponent(orderNumber)}`,
-  );
-  return { cancelled: Order?.Cancelled === true, invoiceNumber: fortnoxInvoiceReference(Order?.InvoiceReference) };
-}
+// Orderns läge och makuleringen är generiska Fortnox-operationer och bor i fortnox-domänen (delas med arbetsorderns
+// Avbruten). Namnen står kvar här för butiksbeställningarnas anropare.
+export type StoreOrderFortnoxOrderState = FortnoxOrderState;
+export const readStoreOrderFortnoxOrder = readFortnoxOrderState;
+export { cancelFortnoxOrder, cancelFortnoxOrderByState };
 
 /** Ordrarna som bär märkningen och inte är makulerade: svepet här, och Makulera (./storeOrderFulfilment.ts). */
 export async function findOpenStoreOrderFortnoxOrders(reference: string): Promise<string[]> {
   return pickStoreOrderFortnoxMatches(await searchStoreOrderFortnoxOrders(reference), reference);
 }
 
-/**
- * Makulerar en Fortnox-order och avgör ett nej på orderns läge, inte på Fortnox felkod (8b2): en som redan är makulerad
- * (också när Fortnox lista släpar efter) är klar, en fakturerad kan inte makuleras. Annat kastas. Delas av Makulera,
- * svepet och pushen som makulerar sin egen order.
- */
-export async function cancelFortnoxOrderByState(
-  orderNumber: string,
-  deps: Pick<StoreOrderFortnoxDeps, 'cancel' | 'readOrder'>,
-): Promise<{ kind: 'cancelled' } | { kind: 'invoiced'; invoiceNumber: string }> {
-  try {
-    await deps.cancel(orderNumber);
-    return { kind: 'cancelled' };
-  } catch (e) {
-    const state = await deps.readOrder(orderNumber).catch(() => null);
-    if (state?.cancelled) return { kind: 'cancelled' };
-    if (state?.invoiceNumber) return { kind: 'invoiced', invoiceNumber: state.invoiceNumber };
-    throw e;
-  }
-}
 
 /**
  * PUT /orders/{n}/createinvoice (Fakturera, 8b2): fakturans nummer, eller null när svaret inte bär det. 🧨 Svaret är
@@ -263,10 +237,6 @@ export async function createFortnoxInvoiceFromOrder(orderNumber: string): Promis
   return fortnoxInvoiceReference(response.Order?.InvoiceReference) ?? fortnoxInvoiceReference(response.Invoice?.DocumentNumber);
 }
 
-/** PUT /orders/{n}/cancel: den extra ordern här, och Makulera (./storeOrderFulfilment.ts). */
-export async function cancelFortnoxOrder(orderNumber: string): Promise<void> {
-  await fortnoxPut(`/orders/${encodeURIComponent(orderNumber)}/cancel`);
-}
 
 /**
  * Fortnox-ordrarna vars ExternalInvoiceReference1 BÖRJAR med märkningen (så söker Fortnox): träffarna jämförs exakt av
