@@ -1570,6 +1570,67 @@ seeden, Norrbygg utan kundnummer). CRM:et: AO-20260929-BB3B4E (fakturerad), AO-2
 order 79 makulerad; order 80 (det avbrutna jobbet) står kvar, som för varje avbruten arbetsorder.
 Skript: scratchpad/8b3 (session 783c9315): lib.mjs, steg1–7.mjs, steg6lib.mjs, kedjan.log.
 
+### Lokal genomkörning 2, i webbläsaren (2026-10-02)
+
+Samma uppsättning som 2026-09-29, men varje steg klickades i gränssnittet som en inloggad användare, också på CRM-sidan
+(förra gången gick planering, status, faktura, svar, dokument och avbryt via API-anrop). CRM:et (`main` @ `3085d4a1`)
+kördes på :3002 och portalen (`main` @ `9244aca`) på :3001, båda i egna git-worktrees med `node_modules` som APFS-kloner,
+eftersom en annan `next dev` på :3000 delar `.next/`. Båda lokala databaserna, Fortnox testbolaget, ett cron-varv i taget.
+**Godkänd av William 2026-10-02.**
+
+1. **Flöde 5:** admin gjorde kund 12 (Niclas Malmström Byggare AB) till återförsäljare och bjöd in den från kundkortet.
+   Portalen skapade företaget med kundnummer 12 och bjöd in adminen. Efter "Glömt lösenord" valde adminen lösenord,
+   loggade in och gick igenom "Kom igång", där org.nr, momsnummer, adress, telefon och e-post från CRM:et var förifyllda.
+   Kortet A gav ingen egen lista (10b3).
+2. **Prislistan:** lista 160 (48 artiklar, giltig från 2026-10-02) blev en ny gemensam lista. Båda butikerna såg den
+   under Prislista.
+3. **Jobben:**
+   - A: Norrbygg gjorde en ny privatoffert med ROT. Skicka-sidan visade kundlänken, och kunden signerade i den.
+     Norrbygg saknade kundnummer i portalen, så CRM:et spärrade Fortnox och skickade notisen. Butiken kopplades för hand
+     på arbetsordern ("Koppla och skicka till Fortnox"), och då kom Fortnox-order 86 och Bekräftad.
+   - B: den nya butiken gjorde en företagsoffert, med Företag förvalt och ingen ROT, och registrerade "Kunden har
+     godkänt" per telefon. Fortnox-order 85 skapades direkt via kundnumret.
+   - Kropparna saknade kundpris, påslag, personnummer, signatur och ROT, som kontraktet säger.
+4. **Planeringen**, med drag i veckovyn: placera, dra i kanten, flytta, tillbaka till backloggen och placera igen gav
+   portalen 12–13, 15–16, Bekräftad utan datum och sedan 14 okt. B fick 13 okt.
+5. **Meddelanden och dokument:**
+   - Butikens meddelande gav notisen, och svaret från rutan Butiken kom fram som "Test Admin · Planering".
+   - Orderbekräftelsen gick av sig själv, och en ny ersatte den.
+   - Egenkontrollen lämnades in av montören i fältvyn, med montören i bilens team (+ team), och skickades till butiken.
+   - Butiken laddade ner båda PDF:erna.
+6. **Utfört och fakturerat:** Fakturera i förloppet gav Utförd. "Fakturera allt" gav faktura 33 och Fakturerad.
+7. **Butiksbeställningarna:**
+   - B-2026-004 ändrades före bekräftelsen och blev version 2. Den fick frakt 450 kr och bekräftades (order 87). Efter
+     det gick den inte att ändra. Den markerades levererad och fakturerades (faktura 34).
+   - B-2026-005 bekräftades utan frakt och makulerades sedan med skäl (order 88). Butiken ser skälet.
+   - B-2026-006 drogs tillbaka av butiken.
+8. **Det avbrutna jobbet (2026-015):** kopplingen för hand gällde Norrbyggs nästa jobb. Fortnox föll på seedens artikel
+   2410920, som inte finns i testbolaget; när raden togs bort i artikeleditorn skapades order 89. Jobbet planerades och
+   avbröts sedan från planeringskortet, och portalen visade Avbrutet med "Inget skäl angavs.". Meddelanden gick
+   fortfarande fram, både på det avbrutna och på det fakturerade jobbet.
+
+**Ett fynd i CRM:et, lagat:** en avbruten arbetsorder makulerades aldrig i Fortnox (Williams fynd). Rättat i #279, som
+makulerar Fortnox-ordern först och sparar Avbruten bara om Fortnox tar emot det. #280 hindrar att en delfakturerad
+arbetsorder avbryts.
+
+**Iakttagelser till portalen:**
+- Lokalt når portalens auth inte sin mallserver (`kong:8088` vägrar anslutning). Inbjudan och återställningen får därför
+  Supabase engelska standardmejl, med länken till `/auth/v1/verify`. Det gäller bara den lokala miljön.
+- En admin räknas som aktiv så fort e-posten bekräftats, det vill säga när knappen "Välj lösenord" har klickats, även om
+  inget lösenord valts. Ett omskick från CRM:et svarar då 200 `active` och skickar inget mejl. Vägen ut är "Glömt
+  lösenord", och den fungerade.
+
+**Lokala artefakter, inte fel:** seedens offerter har fasta id:n, så 2026-011 nekades med 422 `idempotency_key_reused`
+(CRM-databasen såg den 29/9). Fyra Bergströms-butiker från fejkportalen gav 422 `unknown_reseller` vid publiceringen.
+
+⚠️ **Lokalt kvar:**
+- Portalens databas har testets företag, offerter, jobb, meddelanden, dokument och beställningar. Portalsessionen kör
+  `npm run db:reset` där.
+- Testbolaget har ordrarna 85–89 och fakturorna 33–35, obokförda. Ordrarna 21, 35, 80, 85, 88 och 89 är makulerade
+  (de flesta i proven av #279/#280), och order 22 är delfakturerad.
+
+Skript: scratchpad (session `fd93a9fd`): `lib.mjs`, `steg1*–steg12.mjs`, `kedjan.log`, `shots/`.
+
 ### Fas 5, T1: resultat (2026-09-30)
 
 Spärren sitter i `lib/email.ts`, `lib/sms.ts` och `lib/webPush.ts` och avgörs av `isProductionDeployment`
@@ -2244,7 +2305,7 @@ Ingen av dem stoppar fas 0–7.
   arbetsordern) och ett SQL-texttest för grants och `security definer`.
 - Kön: 5xx och timeout görs om, 4xx ger upp, tre snabba flyttar blir en händelse.
 
-**Lokalt↔lokalt** (✅ hela kedjan mot den riktiga portalen 2026-09-29, se "Lokal genomkörning av hela kedjan"):
+**Lokalt↔lokalt** (✅ hela kedjan mot den riktiga portalen 2026-09-29, och i webbläsaren 2026-10-02, se "Lokal genomkörning av hela kedjan" och "Lokal genomkörning 2"):
 - ✅ Publicera prislistan två gånger: samma nyckel, samma svar (mot fejkportalen, fas 2b; mot portalen 2026-09-29).
 - Samma jobb från portalen två gånger ger en arbetsorder och en Fortnox-order. Samma `quoteId` med en
   ny nyckel ger den befintliga.
