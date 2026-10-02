@@ -17,7 +17,12 @@ export default async function KundProfilPage({ params }: { params: Promise<{ id:
   const portalPartnerEnabled = Boolean(perms && can(perms, 'crm.portal.manage')) && resolvePortalTarget(process.env).ok;
   return (
     <Suspense>
-      <CustomerDetailClient customerId={id} fortnoxConnected={fortnoxStatus.connected} portalPartnerEnabled={portalPartnerEnabled} />
+      <CustomerDetailClient
+        customerId={id}
+        fortnoxConnected={fortnoxStatus.connected}
+        portalPartnerEnabled={portalPartnerEnabled}
+        canDeleteCustomer={Boolean(perms && can(perms, 'crm.admin'))}
+      />
     </Suspense>
   );
 }

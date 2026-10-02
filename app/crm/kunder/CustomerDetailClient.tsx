@@ -23,6 +23,7 @@ import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
 import { CreditReportSummary } from '@/app/crm/components/CreditReport';
 import ContactFormModal from '@/app/crm/components/ContactFormModal';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { applyContactToList } from '@/app/crm/lib/contactForm';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -249,11 +250,14 @@ export default function CustomerDetailClient({
   customerId,
   fortnoxConnected,
   portalPartnerEnabled = false,
+  canDeleteCustomer = false,
 }: {
   customerId: string;
   fortnoxConnected: boolean;
   /** Partnerrutan: crm.portal.manage och påslagen integration, avgjort på servern (kunder/[id]/page.tsx). */
   portalPartnerEnabled?: boolean;
+  /** "Ta bort kund": crm.admin, avgjort på servern. DELETE-routen prövar samma nyckel själv. */
+  canDeleteCustomer?: boolean;
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -297,6 +301,11 @@ export default function CustomerDetailClient({
   const [saving, setSaving] = useState(false);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  // Serverns nej (offerter som spärrar, Fortnox skäl) står kvar i rutan: det kräver en åtgärd, och
+  // en toast är borta efter fem sekunder.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [fetchingCredit, setFetchingCredit] = useState(false);
   const [enriching, setEnriching] = useState(false);
 
@@ -528,6 +537,32 @@ export default function CustomerDetailClient({
       }
     } catch { toast.error('Fel vid Fortnox-push'); }
     finally { setPushingFortnox(false); }
+  }
+
+  // Tar bort kunden här och i Fortnox, eller ingenstans (lib/domains/fortnox/customerDelete.ts).
+  // Alltid till kundregistret efteråt: en returnTo pekar på offerten eller ordern kunden kom ifrån.
+  async function deleteCustomer() {
+    if (!customer) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/crm/customers/${customer.id}`, { method: 'DELETE' });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) {
+        setDeleteError(json?.error || 'Kunden kunde inte tas bort.');
+        setConfirmDelete(false);
+        setDeleting(false);
+        return;
+      }
+      // `deleting` står kvar tills sidan lämnas: ett andra klick under navigeringen hade fått 404 och visat ett fel
+      // för en borttagning som lyckades.
+      toast.success('Kunden är borttagen');
+      router.push('/crm/kunder');
+    } catch {
+      setDeleteError('Kunden kunde inte tas bort. Kontrollera anslutningen och försök igen.');
+      setConfirmDelete(false);
+      setDeleting(false);
+    }
   }
 
   // Enrich the customer's company data from tic.io (fills only empty fields). Mainly for
@@ -1272,8 +1307,50 @@ export default function CustomerDetailClient({
             />
           ) : null}
           {historySidebar}
+          {canDeleteCustomer ? (
+            <div className="rounded-2xl border border-rose-200 bg-white p-5">
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">Ta bort kund</p>
+              <p className="mb-3 text-xs leading-relaxed text-slate-500">
+                {/* Utan koppling vore ett klick genom en oåterkallelig bekräftelse dömt att få nej (409). */}
+                {customer.fortnox_customer_id && !fortnoxConnected
+                  ? 'Kunden finns i Fortnox, och Fortnox är inte kopplat. Den kan tas bort när kopplingen är tillbaka.'
+                  : customer.fortnox_customer_id
+                    ? 'Kunden tas bort här och i Fortnox. Det går inte att ångra.'
+                    : 'Kunden tas bort. Det går inte att ångra.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
+                disabled={deleting || (Boolean(customer.fortnox_customer_id) && !fortnoxConnected)}
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-rose-200 bg-white text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Ta bort kund
+              </button>
+              {deleteError ? (
+                <p role="alert" className="m-0 mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800">
+                  {deleteError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
+
+      {confirmDelete ? (
+        <CrmConfirmDialog
+          tone="danger"
+          title={`Ta bort ${displayName}?`}
+          message={customer.fortnox_customer_id
+            ? `Kunden tas bort här och som kund ${customer.fortnox_customer_id} i Fortnox, tillsammans med sina kontaktpersoner. Det går inte att ångra.`
+            : 'Kunden tas bort tillsammans med sina kontaktpersoner. Det går inte att ångra.'}
+          confirmLabel={deleting ? 'Tar bort…' : 'Ta bort kund'}
+          busy={deleting}
+          onConfirm={deleteCustomer}
+          // CrmModal stänger på Escape och klick utanför oavsett `busy`. Under borttagningen hade det sett ut som
+          // ett avbrott fast anropet fortsätter.
+          onCancel={() => { if (!deleting) setConfirmDelete(false); }}
+        />
+      ) : null}
 
       {/* Samma formulär som offertpanelen och offertformuläret öppnar — ett formulär, tre
           ingångar. Låg tidigare som ett inbyggt formulär här, utan möjlighet att RÄTTA en rad. */}
