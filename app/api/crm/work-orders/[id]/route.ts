@@ -2,7 +2,7 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { getCrmWorkOrder, updateCrmWorkOrder, listWorkOrderInvoiceRounds, redactWorkOrderForField, getWorkOrderReportedSacks, getWorkOrderSourceQuote, mergeWorkOrderSnapshotOverrides, mergeWorkOrderRotDetails, workOrderMirroredFieldsChanged, workOrderClearIsUnexpressible, workOrderDocumentNoteChanged, isFortnoxOrderClosed } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
-import { cancelWorkOrderWithFortnox, checkWorkOrderReactivation, mayUpdateWorkOrder, workOrderCancelBlockedByInvoicing, workOrderStatusFortnoxStep, type CancelWorkOrderResult } from '@/lib/domains/fortnox/workOrderCancel';
+import { cancelWorkOrderWithFortnox, checkWorkOrderReactivation, mayUpdateWorkOrder, workOrderStatusFortnoxStep, type CancelWorkOrderResult } from '@/lib/domains/fortnox/workOrderCancel';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { isNoRowsError, ok, pickProvidedFields, requireCrmUser, requirePermission, requireSignedInUser, routeError, updateCrmWorkOrderSchema, validationError } from '../_lib';
 
@@ -291,20 +291,6 @@ export async function PATCH(req: Request, context: RouteContext) {
     // Regeln och claimen bor i lib/domains/fortnox/workOrderCancel.ts.
     const fortnoxStep = workOrderStatusFortnoxStep(current?.status, updateInput.status);
     const fortnoxOrderNumber = current?.fortnox_order_number ?? null;
-    // En delfakturerad arbetsorder avbryts inte (workOrderCancelBlockedByInvoicing). Rundorna läses fail-closed: ett
-    // läsfel hade sett ut som "inga fakturor" och släppt igenom en makulering.
-    if (fortnoxStep === 'cancel') {
-      const rounds = await listWorkOrderInvoiceRounds(supabase, context.params.id);
-      if (rounds.error) {
-        console.error('[crm] Fakturarundorna före avbrytandet gick inte att läsa:', rounds.error.message);
-        return routeError(503, 'crm_work_order_read_failed',
-          'Kunde inte läsa arbetsorderns fakturor just nu. Försök igen — ingenting har ändrats.');
-      }
-      if (workOrderCancelBlockedByInvoicing(current ?? {}, (rounds.data ?? []).length)) {
-        return routeError(409, 'crm_work_order_partially_invoiced',
-          'Arbetsordern är delfakturerad och kan inte avbrytas.');
-      }
-    }
     if (fortnoxStep !== 'none') {
       // RLS-policyn (ansvarig eller crm.admin), båda halvorna, prövad FÖRE Fortnox: nekar databasen sparandet efteråt
       // är ordern redan makulerad där. WITH CHECK räknas också, eftersom Redigera kan byta ansvarig i samma sparning.
@@ -346,6 +332,10 @@ export async function PATCH(req: Request, context: RouteContext) {
         console.error('[fortnox] Makuleringen av arbetsorderns Fortnox-order misslyckades:', (e as Error)?.message);
         return routeError(502, 'crm_work_order_fortnox_cancel_failed',
           `Fortnox makulerade inte order ${fortnoxOrderNumber ?? ''}: ${friendlyFortnoxMessage(e)} Arbetsordern är inte avbruten.`);
+      }
+      // En delfakturerad arbetsorder avbryts inte (workOrderInvoicingStarted, prövad med claimarna tagna).
+      if (outcome.kind === 'invoicing_started') {
+        return routeError(409, 'crm_work_order_partially_invoiced', 'Arbetsordern är delfakturerad och kan inte avbrytas.');
       }
       if (outcome.kind === 'busy') {
         return routeError(409, 'fortnox_push_in_progress',

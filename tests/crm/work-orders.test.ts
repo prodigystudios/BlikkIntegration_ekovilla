@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createCrmWorkOrderFromQuote } from '@/lib/domains/crm/work-orders';
+import { createCrmWorkOrderFromQuote, workOrderInvoicingStarted } from '@/lib/domains/crm/work-orders';
 
 // Återlänkningen (steg 3 nedan) körs med elevated klient, inte sessionsklienten — se
 // kommentaren i work-orders.ts. vi.hoisted: mock-fabriken körs före modulens toppnivå, så
@@ -550,4 +550,19 @@ describe('createCrmWorkOrderFromQuote — fullständighetskontrollen', () => {
     expect(result.error).toBeNull();
     expect(captured.insert).not.toBeNull();
   });
+});
+
+// En delfakturerad arbetsorder avbryts inte (William 2026-10-02, fortnox/workOrderCancel.ts). Varje tecken prövas ensamt:
+// ett fall där alla tre står samtidigt hade inte märkt att ett av dem slutat räknas.
+describe('workOrderInvoicingStarted', () => {
+  it('ofakturerad: nej', () =>
+    expect(workOrderInvoicingStarted({ status: 'in_progress', partial_invoicing_started_at: null }, 0)).toBe(false));
+  it('bara statusen delfakturerad: ja', () =>
+    expect(workOrderInvoicingStarted({ status: 'partially_invoiced', partial_invoicing_started_at: null }, 0)).toBe(true));
+  // Satt tillbaka till Pågående efter en delfaktura: statusen säger ingenting, kolumnen gör det.
+  it('bara kolumnen (tillbaka på Pågående efter en delfaktura): ja', () =>
+    expect(workOrderInvoicingStarted({ status: 'in_progress', partial_invoicing_started_at: '2026-10-01' }, 0)).toBe(true));
+  // 🧨 Rundan finns men kolumnen skrevs aldrig (createPartialInvoice skriver den efter rundan).
+  it('bara en runda utan kolumnen: ja', () =>
+    expect(workOrderInvoicingStarted({ status: 'completed', partial_invoicing_started_at: null }, 1)).toBe(true));
 });

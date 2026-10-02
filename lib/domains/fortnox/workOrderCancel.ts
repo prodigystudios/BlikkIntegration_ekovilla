@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { countWorkOrderInvoiceRounds, workOrderInvoicingStarted } from '@/lib/domains/crm/work-orders';
 import { claimFortnoxPush } from './helpers';
 import { cancelFortnoxOrder, cancelFortnoxOrderByState, readFortnoxOrderState, type FortnoxOrderState } from './orderCancel';
 
@@ -13,10 +14,13 @@ import { cancelFortnoxOrder, cancelFortnoxOrderByState, readFortnoxOrderState, t
  * som redan är makulerad räknas som klar (ett nytt försök efter ett avbrott läker sig själv), en fakturerad kan inte
  * makuleras, och allt annat kastas.
  *
- * 🧨 ORDNINGEN. Orderns push-claim tas först, och statusen sparas medan den hålls. Utan claimen kunde ett skapande som
- * redan var på väg (portalintaget, "Skicka till Fortnox") hinna POST:a en ny order efter att vi läst raden utan nummer,
- * och en avbruten arbetsorder hade fått en öppen Fortnox-order. `pushWorkOrderToFortnox` vägrar dessutom en avbruten
- * order, så ett skapande som kommer efter claimen släpps inte heller igenom.
+ * 🧨 ORDNINGEN. Orderns push-claim och fakturans claim tas först, och statusen sparas medan de hålls.
+ *   - Orderns: utan den kunde ett skapande som redan var på väg (portalintaget, "Skicka till Fortnox") hinna POST:a en ny
+ *     order efter att vi läst raden utan nummer. `pushWorkOrderToFortnox` vägrar dessutom en avbruten order.
+ *   - Fakturans: en delfakturerad order avbryts inte, men delfakturan tar fakturans claim, inte orderns. Utan den hade en
+ *     delfaktura på väg kunnat passera kontrollen, ställa ut en riktig faktura och skriva Delfakturerad över Avbruten.
+ *     Delfaktureringen prövas därför först när båda claimarna är våra, och createPartialInvoice prövar Avbruten igen
+ *     efter sin.
  */
 
 /** Vad ett statusbyte kräver av Fortnox. */
@@ -33,20 +37,6 @@ export function workOrderStatusFortnoxStep(
 }
 
 /**
- * Stoppar faktureringen ett avbrytande? Ja så fort den börjat: en delfakturerad arbetsorder ska inte gå att avbryta
- * (William 2026-10-02). Tre tecken, vilket som helst räcker — statusen, `partial_invoicing_started_at` och
- * fakturarundorna. Statusen räcker inte ensam: en delfakturerad order kan sättas tillbaka till Pågående. Kolumnen räcker
- * inte heller: createPartialInvoice skriver den EFTER rundan, så en misslyckad skrivning lämnar rundor utan kolumn
- * (saveWorkOrderLineItems prövar samma par). En helfakturerad order stoppas redan av routens låsta status.
- */
-export function workOrderCancelBlockedByInvoicing(
-  order: { status?: string | null; partial_invoicing_started_at?: string | null },
-  invoiceRoundCount: number,
-): boolean {
-  return order.status === 'partially_invoiced' || Boolean(order.partial_invoicing_started_at) || invoiceRoundCount > 0;
-}
-
-/**
  * Får användaren spara arbetsordern? Exakt RLS-policyn `crm_work_orders_update_visible`, båda halvorna: USING på den
  * ansvarige som står (`current`) och WITH CHECK på den som blir (`next`, samma när PATCH:en inte byter). Den ansvarige
  * eller `crm.admin`. Prövas FÖRE makuleringen: nekar databasen sparandet efteråt är Fortnox-ordern redan makulerad.
@@ -60,34 +50,55 @@ export function mayUpdateWorkOrder(
   return Boolean(assignee.current) && assignee.current === userId && assignee.next === userId;
 }
 
-type CancelRow = { fortnox_order_number: string | null; fortnox_order_sync_status: string | null };
+type CancelRow = {
+  status: string | null;
+  partial_invoicing_started_at: string | null;
+  fortnox_order_number: string | null;
+  fortnox_order_sync_status: string | null;
+  fortnox_invoice_sync_status: string | null;
+};
+
+/** Orderns push-claim (skapandet, synken) och fakturans (delfakturan, Fakturera allt). Samma kolumnpar som de tar. */
+export type WorkOrderClaim = 'order' | 'invoice';
 
 export type WorkOrderCancelDeps = {
-  /** Orderns push-claim, samma som skapandet tar (`claimFortnoxPush`). */
-  claim: (workOrderId: string) => Promise<boolean>;
+  claim: (workOrderId: string, which: WorkOrderClaim) => Promise<boolean>;
   read: (workOrderId: string) => Promise<CancelRow | null>;
-  /** Släpper claimen genom att skriva tillbaka synkläget. */
-  setSyncStatus: (workOrderId: string, status: string) => Promise<void>;
+  countInvoiceRounds: (workOrderId: string) => Promise<number>;
+  /** Släpper en claim genom att skriva tillbaka synkläget. */
+  setSyncStatus: (workOrderId: string, which: WorkOrderClaim, status: string) => Promise<void>;
   cancel: (orderNumber: string) => Promise<void>;
   readOrder: (orderNumber: string) => Promise<FortnoxOrderState>;
 };
 
+const CLAIM_COLUMNS: Record<WorkOrderClaim, [string, string]> = {
+  order: ['fortnox_order_sync_status', 'fortnox_order_claimed_at'],
+  invoice: ['fortnox_invoice_sync_status', 'fortnox_invoice_claimed_at'],
+};
+
 export function workOrderCancelDeps(): WorkOrderCancelDeps {
+  // Elevated som claimarna: kontrollen av rundorna får inte filtreras av sessionens RLS (en admin utan
+  // crm.workorder.read hade sett noll rundor). Routen har redan prövat att användaren får spara ordern.
   const admin = getSupabaseAdmin();
   return {
-    claim: (id) => claimFortnoxPush(admin, 'crm_work_orders', id, 'fortnox_order_sync_status', 'fortnox_order_claimed_at'),
+    claim: (id, which) => claimFortnoxPush(admin, 'crm_work_orders', id, ...CLAIM_COLUMNS[which]),
     read: async (id) => {
       const { data, error } = await admin
         .from('crm_work_orders')
-        .select('fortnox_order_number, fortnox_order_sync_status')
+        .select('status, partial_invoicing_started_at, fortnox_order_number, fortnox_order_sync_status, fortnox_invoice_sync_status')
         .eq('id', id)
         .maybeSingle();
       if (error) throw new Error(`Arbetsordern gick inte att läsa: ${error.message}`);
       return (data as CancelRow | null) ?? null;
     },
-    setSyncStatus: async (id, status) => {
-      const { error } = await admin.from('crm_work_orders').update({ fortnox_order_sync_status: status }).eq('id', id);
-      if (error) console.error('[fortnox] Claimen släpptes inte efter makuleringen', { id, error: error.message });
+    countInvoiceRounds: async (id) => {
+      const { count, error } = await countWorkOrderInvoiceRounds(admin, id);
+      if (error) throw new Error(`Fakturarundorna gick inte att läsa: ${error.message}`);
+      return count ?? 0;
+    },
+    setSyncStatus: async (id, which, status) => {
+      const { error } = await admin.from('crm_work_orders').update({ [CLAIM_COLUMNS[which][0]]: status }).eq('id', id);
+      if (error) console.error('[fortnox] Claimen släpptes inte efter avbrytandet', { id, which, error: error.message });
     },
     cancel: cancelFortnoxOrder,
     readOrder: readFortnoxOrderState,
@@ -95,18 +106,20 @@ export function workOrderCancelDeps(): WorkOrderCancelDeps {
 }
 
 export type CancelWorkOrderResult<S> =
-  /** Fortnox-ordern är makulerad (eller fanns inte), och `save` har körts med claimen. Läs `saved` för sparningens utfall. */
+  /** Fortnox-ordern är makulerad (eller fanns inte), och `save` har körts med claimarna. Läs `saved` för sparningens utfall. */
   | { kind: 'saved'; fortnoxOrderNumber: string | null; saved: S }
-  /** Ett skapande håller orderns claim: Fortnox-ordern kan vara på väg. Ingenting gjort. */
+  /** Ett skapande eller en fakturering håller en claim. Ingenting gjort. */
   | { kind: 'busy' }
+  /** Faktureringen har börjat (delfakturerad): ordern avbryts inte. Ingenting gjort, Fortnox inte tillfrågat. */
+  | { kind: 'invoicing_started' }
   /** Fortnox-ordern är fakturerad och kan inte makuleras. Ingenting gjort. */
   | { kind: 'invoiced'; fortnoxOrderNumber: string; invoiceNumber: string };
 
 /**
- * Makulerar arbetsorderns Fortnox-order och sparar sedan statusen (`save`), medan orderns claim hålls.
+ * Makulerar arbetsorderns Fortnox-order och sparar sedan statusen (`save`), medan orderns och fakturans claim hålls.
  *
- * Kastar Fortnox fel (anslutningen, ett nej av annat skäl): ingenting är då sparat, och claimen är släppt. Kastar också
- * när `save` kastar, efter att claimen släppts.
+ * Kastar Fortnox fel (anslutningen, ett nej av annat skäl) och läsfel: ingenting är då sparat, och claimarna är släppta.
+ * Kastar också när `save` kastar, efter att claimarna släppts.
  */
 export async function cancelWorkOrderWithFortnox<S>(
   workOrderId: string,
@@ -114,23 +127,43 @@ export async function cancelWorkOrderWithFortnox<S>(
   deps: WorkOrderCancelDeps = workOrderCancelDeps(),
 ): Promise<CancelWorkOrderResult<S>> {
   const before = await deps.read(workOrderId);
-  if (!await deps.claim(workOrderId)) return { kind: 'busy' };
+  if (!await deps.claim(workOrderId, 'order')) return { kind: 'busy' };
 
-  // Synkläget som släpper claimen: det som stod före claimen. 🧨 ALDRIG ett påhittat 'synced': stod ordern 'failed'
+  // Synkläget som släpper en claim: det som stod före den. 🧨 ALDRIG ett påhittat 'synced': stod ordern 'failed'
   // (raderna nådde inte Fortnox) och Fortnox sa nej till makuleringen, hade ett 'synced' här släppt igenom faktureringen
-  // av de gamla raderna (assertOrderRowsSynced). Bara claimens eget 'pending' byts: mot 'synced' när ett skapande hann
-  // spara sitt nummer mellan läsningen och claimen, annars mot 'failed' (claimen gick bara att ta för att den var gammal,
-  // alltså ett försök som dog).
+  // av de gamla raderna (assertOrderRowsSynced). Bara claimens eget 'pending' byts: för ordern mot 'synced' när ett
+  // skapande hann spara sitt nummer mellan läsningen och claimen; annars mot 'failed' (claimen gick bara att ta för att
+  // den var gammal, alltså ett försök som dog).
   let fortnoxOrderNumber: string | null = null;
-  const release = () => {
+  let invoiceClaimed = false;
+  const releaseOrder = () => {
     const prior = before?.fortnox_order_sync_status ?? 'not_synced';
     const createdMeanwhile = Boolean(fortnoxOrderNumber) && !before?.fortnox_order_number;
-    return deps.setSyncStatus(workOrderId, prior !== 'pending' ? prior : createdMeanwhile ? 'synced' : 'failed');
+    return deps.setSyncStatus(workOrderId, 'order', prior !== 'pending' ? prior : createdMeanwhile ? 'synced' : 'failed');
+  };
+  const releaseInvoice = () => {
+    const prior = before?.fortnox_invoice_sync_status ?? 'not_synced';
+    return deps.setSyncStatus(workOrderId, 'invoice', prior !== 'pending' ? prior : 'failed');
+  };
+  const release = async () => {
+    if (invoiceClaimed) await releaseInvoice();
+    await releaseOrder();
   };
 
   try {
-    // Omläst med claimen: ett skapande som slutfördes efter läsningen ovan har sparat sitt nummer nu.
+    if (!await deps.claim(workOrderId, 'invoice')) {
+      await releaseOrder();
+      return { kind: 'busy' };
+    }
+    invoiceClaimed = true;
+
+    // Omläst med claimarna: ett skapande som slutfördes efter läsningen ovan har sparat sitt nummer nu, och en delfaktura
+    // som hann före har lagt sin runda.
     const row = await deps.read(workOrderId);
+    if (workOrderInvoicingStarted(row ?? {}, await deps.countInvoiceRounds(workOrderId))) {
+      await release();
+      return { kind: 'invoicing_started' };
+    }
     fortnoxOrderNumber = row?.fortnox_order_number ?? null;
     if (fortnoxOrderNumber) {
       const outcome = await cancelFortnoxOrderByState(fortnoxOrderNumber, deps);

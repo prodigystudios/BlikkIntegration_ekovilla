@@ -517,7 +517,19 @@ export async function createPartialInvoice(
   );
   if (!claimed) throw new FortnoxPushInProgressError();
 
+  // 🧨 AVBRUTEN PRÖVAS IGEN MED CLAIMEN. Kontrollen ovan gjordes före den, och ett avbrytande som landade däremellan
+  // hade annars fått en riktig faktura utställd och Delfakturerad skriven över Avbruten. Avbrytandet håller samma claim
+  // medan det sparar (fortnox/workOrderCancel.ts), så den här läsningen ser 'cancelled' om det hann före.
+  let cancelledMeanwhile = false;
   try {
+    const { data: fresh, error: freshError } = await supabase
+      .from('crm_work_orders').select('status').eq('id', workOrderId).single<{ status: string | null }>();
+    if (freshError || !fresh) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
+    if (fresh.status === 'cancelled') {
+      cancelledMeanwhile = true;
+      throw new PartialInvoiceError('Arbetsordern är avbruten och kan inte faktureras.');
+    }
+
     const vatPercent = typeof workOrder.vat_percent === 'number' ? workOrder.vat_percent : 25;
     // Reverse charge (byggmoms) excludes ROT and forces 0 % rows + SEREVERSEDVAT on the invoice.
     const reverseVat = await resolveReverseVat(supabase, workOrder.customer_snapshot?.reverse_vat, workOrder.customer_id);
@@ -672,7 +684,8 @@ export async function createPartialInvoice(
 
     return { fortnox_invoice_number: invoiceNumber, round_number: roundNumber, status };
   } catch (e) {
-    const syncStatus = e instanceof FortnoxNotConnectedError ? 'not_synced' : 'failed';
+    // Ett avbrytande som hann före är inget misslyckande: ingenting skickades, och ingenting ska skickas.
+    const syncStatus = e instanceof FortnoxNotConnectedError || cancelledMeanwhile ? 'not_synced' : 'failed';
     await supabase
       .from('crm_work_orders')
       .update({ fortnox_invoice_sync_status: syncStatus })

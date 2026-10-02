@@ -953,6 +953,8 @@ export default function WorkOrderDetailClient({
   // delfaktureringen gatar medvetet INTE på synkstatusen. Samma regel som servern (isFortnoxOrderClosed).
   const fortnoxOrderClosed = !workOrder.partial_invoicing_started_at
     && (Boolean(workOrder.fortnox_invoice_number) || workOrder.status === 'invoiced');
+  // Faktureringen har börjat: en sådan order avbryts inte (workOrderInvoicingStarted på servern, som också räknar rundorna).
+  const invoicingStarted = workOrder.status === 'partially_invoiced' || Boolean(workOrder.partial_invoicing_started_at);
   // ROT som artikelraderna ska gata på: UTKASTET medan översikten redigeras, annars det sparade.
   //
   // 🧨 `rotEnabled` i WorkOrderArticles avgör om raden ens HAR "ROT-arbete", typväljaren och
@@ -1265,7 +1267,11 @@ export default function WorkOrderDetailClient({
                         {(WORK_ORDER_STATUS_OPTIONS.includes(workOrder.status)
                           ? WORK_ORDER_STATUS_OPTIONS
                           : [workOrder.status, ...WORK_ORDER_STATUS_OPTIONS]
-                        ).map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
+                        )
+                          // En delfakturerad order avbryts inte (routen nekar, workOrderInvoicingStarted): inget val
+                          // som alltid ger fel. Rundor utan kolumn ser formuläret inte; där säger routen nej.
+                          .filter((value) => !(value === 'cancelled' && invoicingStarted))
+                          .map((value) => <option key={value} value={value}>{workOrderStatusLabel[value]}</option>)}
                       </Select>
                     )}
                   </label>
