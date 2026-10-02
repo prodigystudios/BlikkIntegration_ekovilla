@@ -20,24 +20,39 @@
 //    PUT på plats i stället för radera-och-skapa. Övriga poster går att radera.
 // 6. `createorder` KOPIERAR offertens post till ordern (samma belopp, sökande, beteckning). Ordern
 //    har sedan samma fällor som offerten.
-// 7. ROT avslaget på en offert med post: utan husarbetsrader nekas dagens payload (2003227), men
-//    `TaxReductionType: 'none'` går igenom och Fortnox tar då bort posterna själv. Se offers.ts.
+// 7. Utan husarbetsrader kvar (ROT avslaget, allt arbete borta) nekas dagens payload (2003227), men
+//    `TaxReductionType: 'none'` går igenom och Fortnox tar då bort posterna själv — på offert OCH
+//    order. `'rot'` igen går också, och är ofarligt på ett dokument som redan är ROT. Med en
+//    husarbetsrad kvar nekas `'none'` (2004001); en rad som utelämnar `HouseWork` ÄRVER flaggan från
+//    raden som låg på samma position — orderns projektnot hamnar t.ex. där arbetsraden låg när
+//    arbetet skrivs av. 🧨 Uttryckligt `HouseWork: false` räcker inte, TYPEN ärvs och nekas
+//    (2004021); `HouseWork: false` + `HouseWorkType: null` går igenom (`withoutHouseWork`).
 // 8. `PropertyDesignation` och `ResidenceAssociationOrganisationNumber` FINNS på posten — tvärtemot
 //    vad FORTNOX_INTEGRATION.md sekt. 4b påstår om API:t. Vi skickar dem; textraden/referensen
 //    finns kvar som förut.
+// 9. Fortnox avrundar underlaget NEDÅT till hela kronor (416,66 → 416) och taket är 30 % av det,
+//    golvat. CRM räknar på oavrundat underlag och kan alltså hamna en krona över. `referencenumber`
+//    filtreras på serverns sida. "Övrigt" (OTHERCOSTS) på en husarbetsrad nekas redan av Fortnox.
 //
 // ⚖️ BELOPPET ÄR CRM:S `rotDeduction` (computePricing) — samma tal säljaren ser i formuläret. Det
 // går inte att låta Fortnox räkna: med en post på plats rapporterar dokumentet postens belopp, inte
 // sitt eget tak (punkt 2), och den sista posten går inte att ta bort för att läsa taket (punkt 5).
 // Därmed når `rot_percent` och `max_deduction` Fortnox, via posten. Saknas en post (nytt dokument)
-// läser vi Fortnox egen uträkning ur svaret och begär aldrig mer än den.
+// läser vi Fortnox egen uträkning ur svaret och begär aldrig mer än den. Nekar Fortnox CRM:s belopp
+// (en procentsats över lagens, avrundningen i punkt 9) begärs Fortnox tak i stället.
+//
+// 🧭 SKRIVNINGEN ÄR REAKTIV, inte förutsägande. Första försöket är exakt dokumentets vanliga
+// payload, så ett dokument utan poster — varje företagsoffert — kostar inte ett enda extra anrop.
+// Först när Fortnox nekar med 2003227 sänks posterna till minimum, och räcker inte det (inga
+// husarbetsrader kvar) skickas `'none'` (punkt 7). Taket kan inte förutsägas: det bestäms av rader
+// som kan ärva husarbete positionellt och av Fortnox avrundning.
 //
 // ⚠️ CRM BÄR EN SÖKANDE och äger posterna på dokument det skickar: fler poster än en slås ihop till
 // vår. Delar man avdraget mellan två sökande för hand i Fortnox skrivs det över vid nästa push.
 //
-// ⚠️ ALLT HÄR ÄR BEST EFFORT. Ett fel loggas och pushen fortsätter. Fallbacken är exakt läget före
-// den här modulen (Fortnox räknar ur raderna, ingen sökande) — och ett fel här får aldrig stämpla
-// en order 'failed', för det spärrar faktureringen.
+// ⚠️ POSTENS EGNA STEG ÄR BEST EFFORT. Ett fel loggas och pushen fortsätter; fallbacken är läget
+// före den här modulen (Fortnox räknar ur raderna, ingen sökande). Bara själva dokumentskrivningen
+// får kasta — och den gör det bara när den hade kastat utan posterna också.
 
 import { computePricing, type PricingLineItem, type RotPricingInput } from '@/lib/domains/crm/pricing';
 import { normalizePersonalNumber } from '@/lib/domains/crm/personalNumber';
@@ -207,8 +222,8 @@ export function postMatchesPayload(post: FortnoxTaxReductionPost, payload: TaxRe
 }
 
 /** Sökanden att skriva: CRM:s om den finns, annars den posten redan bär — så beloppet ändå kan rättas. */
-function applicantFor(target: TaxReductionTarget, post: FortnoxTaxReductionPost): TaxReductionApplicant | null {
-  if (target.applicant) return target.applicant;
+function applicantFor(ours: TaxReductionApplicant | null | undefined, post: FortnoxTaxReductionPost): TaxReductionApplicant | null {
+  if (ours) return ours;
   const name = String(post.CustomerName ?? '').trim();
   const personalNumber = String(post.SocialSecurityNumber ?? '').trim();
   return name && personalNumber ? { name, personalNumber } : null;
@@ -216,11 +231,45 @@ function applicantFor(target: TaxReductionTarget, post: FortnoxTaxReductionPost)
 
 // ── Mot Fortnox ──────────────────────────────────────────────────────────────
 
-function logFailure(type: TaxReductionDocumentType, documentNumber: string, step: string, e: unknown): void {
-  const reason = e instanceof FortnoxApiError
+/** Posterna begär mer än dokumentets nya rader ger. Nekar HELA dokumentskrivningen. */
+const POSTS_EXCEED_DOCUMENT = 2003227;
+/** Posten begär mer än dokumentet ger. Nekar posten. */
+const POST_EXCEEDS_DOCUMENT = 2003228;
+/** `TaxReductionType: 'none'` med husarbetsrader kvar — flaggan (2004001) eller typen (2004021). */
+const NONE_WITH_HOUSEWORK_ROWS = [2004001, 2004021];
+/**
+ * Lagens ROT-sats sedan 2026-01-01 (50 % gällde 2025-05-12–2025-12-31). Används BARA när Fortnox
+ * nekat CRM:s belopp, för att begära Fortnox tak i stället — mätt: taket är 30 % av underlaget,
+ * golvat (punkt 9). Ändras lagen och Fortnox med den nekas även det här beloppet, och felet loggas.
+ */
+const ROT_RATE = 0.3;
+
+/**
+ * Raderna i `'none'`-skrivningen: uttryckligen utan husarbete. Ett `none`-dokument får inte ha
+ * något, och utelämnade fält ärvs positionellt — även typen, så flaggan ensam räcker inte (punkt 7).
+ *
+ * ⚠️ BARA I `none`-SKRIVNINGEN. På ett ROT-dokument tar ett uttryckligt `false` bort artikelns egen
+ * husarbetsflagga (se rotRowHouseWork i helpers.ts) — där ska vi vara tysta.
+ */
+export function withoutHouseWork<R extends object>(rows: R[]): Array<R & { HouseWork: false; HouseWorkType: null }> {
+  return rows.map((row) => ({ ...row, HouseWork: false as const, HouseWorkType: null }));
+}
+
+/** Dokumentet som Fortnox svarar med efter en skrivning — de fält posten behöver. */
+export type WrittenDocument = { TaxReduction?: number | null; BasisTaxReduction?: number | null };
+
+function isFortnoxCode(e: unknown, code: number): boolean {
+  return e instanceof FortnoxApiError && e.fortnoxCode === code;
+}
+
+function describe(e: unknown): string {
+  return e instanceof FortnoxApiError
     ? `${e.fortnoxMessage ?? e.message}${e.fortnoxCode ? ` (kod ${e.fortnoxCode})` : ''}`
     : (e as Error)?.message ?? String(e);
-  console.error(`[fortnox-skattereduktion] ${type} ${documentNumber}: ${step} misslyckades — ${reason}`);
+}
+
+function logFailure(type: TaxReductionDocumentType, documentNumber: string, step: string, e: unknown): void {
+  console.error(`[fortnox-skattereduktion] ${type} ${documentNumber}: ${step} misslyckades — ${describe(e)}`);
 }
 
 async function listPosts(type: TaxReductionDocumentType, documentNumber: string): Promise<FortnoxTaxReductionPost[]> {
@@ -237,8 +286,9 @@ async function readPost(id: number): Promise<FortnoxTaxReductionPost> {
 }
 
 /**
- * Skriver posten. Nekar Fortnox kroppen och den bar fastighetsuppgifter görs ett försök till utan
- * dem: ett felformaterat BRF-nummer får inte kosta själva beloppet, för det är beloppet kunden ser.
+ * Skriver posten. Nekar Fortnox kroppen av något annat skäl än beloppet, och den bar
+ * fastighetsuppgifter, görs ett försök till utan dem: ett felformaterat BRF-nummer får inte kosta
+ * själva beloppet, för det är beloppet kunden ser.
  */
 async function writePost(id: number | null, payload: TaxReductionPayload): Promise<void> {
   const send = (body: TaxReductionPayload) =>
@@ -248,46 +298,146 @@ async function writePost(id: number | null, payload: TaxReductionPayload): Promi
   } catch (e) {
     const { PropertyDesignation, ResidenceAssociationOrganisationNumber, ...rest } = payload.TaxReduction;
     const hadPlace = PropertyDesignation !== undefined || ResidenceAssociationOrganisationNumber !== undefined;
-    if (!(e instanceof FortnoxApiError) || e.status !== 400 || !hadPlace) throw e;
-    console.warn(`[fortnox-skattereduktion] ${rest.ReferenceDocumentType} ${rest.ReferenceNumber}: fastighetsuppgifterna nekades (${e.fortnoxMessage ?? e.message}) — skickar beloppet utan dem`);
+    const aboutAmount = isFortnoxCode(e, POST_EXCEEDS_DOCUMENT) || isFortnoxCode(e, POSTS_EXCEED_DOCUMENT);
+    if (!(e instanceof FortnoxApiError) || e.status !== 400 || aboutAmount || !hadPlace) throw e;
+    console.warn(`[fortnox-skattereduktion] ${rest.ReferenceDocumentType} ${rest.ReferenceNumber}: fastighetsuppgifterna nekades (${describe(e)}) — skickar beloppet utan dem`);
     await send({ TaxReduction: rest });
   }
 }
 
-/** Har dokumentet poster? Fel räknas som nej — anroparen behåller då dagens beteende. */
-export async function documentHasTaxReductionPosts(type: TaxReductionDocumentType, documentNumber: string): Promise<boolean> {
+/**
+ * Beloppet att begära: målet, och nekar Fortnox det — Fortnox tak ur dokumentets underlag (punkt 9).
+ */
+async function writePostAmount(
+  id: number | null,
+  payload: TaxReductionPayload,
+  written: WrittenDocument | null | undefined,
+): Promise<void> {
   try {
-    return (await listPosts(type, documentNumber)).length > 0;
+    await writePost(id, payload);
   } catch (e) {
-    logFailure(type, documentNumber, 'uppslaget av poster', e);
-    return false;
+    if (!isFortnoxCode(e, POST_EXCEEDS_DOCUMENT)) throw e;
+    const basis = Number(written?.BasisTaxReduction);
+    const ceiling = Number.isFinite(basis) ? Math.floor(Math.floor(basis) * ROT_RATE) : null;
+    if (ceiling == null || ceiling < 1 || ceiling >= payload.TaxReduction.AskedAmount) throw e;
+    const { ReferenceDocumentType, ReferenceNumber, AskedAmount } = payload.TaxReduction;
+    console.warn(`[fortnox-skattereduktion] ${ReferenceDocumentType} ${ReferenceNumber}: ${AskedAmount} kr nekades — begär Fortnox tak ${ceiling} kr`);
+    await writePost(id, { TaxReduction: { ...payload.TaxReduction, AskedAmount: ceiling } });
   }
 }
 
 /**
- * FÖRE dokument-PUT:en på ett dokument som redan finns: städa bort extra poster och sänk vår, så att
- * PUT:en inte nekas med 2003227 när avdraget minskat. Höjningar väntar till efteråt.
+ * FÖRE dokumentskrivningen: städa bort extra poster och sänk vår till målet, så att den vanliga
+ * skrivningen oftast går igenom på första försöket när avdraget minskat. Höjningar väntar till efteråt.
  */
-export async function prepareTaxReductionForDocumentWrite(
+async function lowerPostsTowards(
   type: TaxReductionDocumentType,
   documentNumber: string,
-  target: TaxReductionTarget,
+  target: TaxReductionTarget | null,
+  amount: number,
 ): Promise<void> {
-  try {
-    const posts = await listPosts(type, documentNumber);
-    const { keep, extra } = pickKeptPost(posts, target.applicant?.personalNumber ?? null);
-    if (!keep?.Id) return;
-    // Bara andra poster än den vi behåller — den sista går inte att radera (punkt 5 överst).
-    for (const post of extra) if (post.Id) await fortnoxDelete(`/taxreductions/${post.Id}`);
-    const current = await readPost(keep.Id);
-    const lowered = amountBeforeDocumentWrite(current.AskedAmount, target.amount);
-    if (lowered == null) return;
-    const applicant = applicantFor(target, current);
-    if (!applicant) return;
-    await writePost(keep.Id, buildTaxReductionPayload(type, documentNumber, lowered, applicant, target));
-  } catch (e) {
-    logFailure(type, documentNumber, 'sänkningen före dokumentet', e);
+  const posts = await listPosts(type, documentNumber);
+  const { keep, extra } = pickKeptPost(posts, target?.applicant?.personalNumber ?? null);
+  if (!keep?.Id) return;
+  // Bara andra poster än den vi behåller — den sista går inte att radera (punkt 5 överst).
+  for (const post of extra) if (post.Id) await fortnoxDelete(`/taxreductions/${post.Id}`);
+  const current = await readPost(keep.Id);
+  const lowered = amountBeforeDocumentWrite(current.AskedAmount, amount);
+  if (lowered == null) return;
+  const applicant = applicantFor(target?.applicant, current);
+  if (!applicant) throw new Error('posten saknar sökande och kan inte skrivas om');
+  await writePost(keep.Id, buildTaxReductionPayload(type, documentNumber, lowered, applicant, target ?? {
+    // ROT avslaget i CRM: posten behåller sina egna uppgifter, bara beloppet sänks.
+    propertyDesignation: null, brfOrgNumber: null,
+  }));
+}
+
+/**
+ * Skriver ett dokument som redan finns i Fortnox, med skattereduktionsposten i rätt ordning.
+ *
+ * `write` gör själva dokument-PUT:en och får ett `TaxReductionType` att lägga till när Fortnox
+ * kräver det — vid `'none'` också raderna genom `withoutHouseWork`. `target` är null när ROT inte gäller enligt CRM — posten skrivs då inte, men den kan
+ * fortfarande stå i vägen (kopierad av `createorder`, kvar från innan ROT slogs av), och då röjs den.
+ *
+ * Kastar bara när skrivningen hade kastat utan poster också: 2003227 rör posterna och hanteras här,
+ * allt annat går rakt igenom till anroparen som förut.
+ */
+export async function writeDocumentKeepingTaxReduction<T extends WrittenDocument>(
+  type: TaxReductionDocumentType,
+  documentNumber: string,
+  target: TaxReductionTarget | null,
+  write: (reductionType?: 'none' | 'rot') => Promise<T | undefined>,
+): Promise<T | undefined> {
+  if (target) {
+    try {
+      await lowerPostsTowards(type, documentNumber, target, target.amount);
+    } catch (e) {
+      logFailure(type, documentNumber, 'sänkningen före dokumentet', e);
+    }
   }
+
+  let written: T | undefined;
+  try {
+    written = await write();
+  } catch (e) {
+    if (!isFortnoxCode(e, POSTS_EXCEED_DOCUMENT)) throw e;
+    written = await recoverFromPostsAboveDocument(type, documentNumber, target, write, e);
+  }
+
+  if (target) await syncTaxReductionAfterDocumentWrite(type, documentNumber, target, written);
+  return written;
+}
+
+/** Fortnox nekade dokumentet för att posterna begär mer än raderna ger (2003227). */
+async function recoverFromPostsAboveDocument<T extends WrittenDocument>(
+  type: TaxReductionDocumentType,
+  documentNumber: string,
+  target: TaxReductionTarget | null,
+  write: (reductionType?: 'none' | 'rot') => Promise<T | undefined>,
+  original: unknown,
+): Promise<T | undefined> {
+  // Steg 1, bara med ROT i CRM: posten ner till Fortnox minimum och samma skrivning igen. Räcker
+  // när det finns husarbete kvar — ett lägre tak än förut, eller CRM:s belopp över Fortnox (punkt
+  // 9). Efteråt får posten sitt riktiga belopp.
+  if (target) {
+    try {
+      await lowerPostsTowards(type, documentNumber, target, 1);
+    } catch (e) {
+      logFailure(type, documentNumber, 'sänkningen efter nekat dokument', e);
+      throw original;
+    }
+    try {
+      const written = await write();
+      console.warn(`[fortnox-skattereduktion] ${type} ${documentNumber}: dokumentet nekades (2003227) — gick igenom med posten sänkt`);
+      return written;
+    } catch (e) {
+      if (!isFortnoxCode(e, POSTS_EXCEED_DOCUMENT)) throw e;
+    }
+  }
+  // Steg 2: inget husarbete som kan bära posten — eller ROT avslaget i CRM, då inget ska bära den.
+  // Den sista posten går varken att radera eller sätta under 1 kr. Bara `'none'` med raderna
+  // uttryckligen utan husarbete går igenom, och då tar Fortnox själv bort posterna (punkt 7). Gäller
+  // ROT fortfarande i CRM återställs regimen direkt — utan post, som ett nytt ROT-dokument.
+  let cleared: T | undefined;
+  try {
+    cleared = await write('none');
+  } catch (e) {
+    if (!NONE_WITH_HOUSEWORK_ROWS.some((code) => isFortnoxCode(e, code))) throw e;
+    // ÅTERVÄNDSGRÄND: en rad utan belopp (typiskt orderns projektnot, som hamnat på arbetsradens
+    // plats) har ärvt husarbetsflaggan. Underlaget är 0, så posten ryms inte; den sista posten går
+    // inte att radera; och `none` nekas för flaggans skull. Inget API-anrop tar sig ur det — en
+    // människa måste rensa husarbetet på dokumentet i Fortnox. Säg det i stället för Fortnox kod.
+    logFailure(type, documentNumber, 'none med husarbetsrader kvar', e);
+    throw new FortnoxApiError(
+      400,
+      `${type} ${documentNumber}: skattereduktionsposten ryms inte och kan inte tas bort (${describe(e)})`,
+      undefined,
+      'Fortnox-dokumentet har kvar en skattereduktion men inga ROT-belopp som kan bära den. '
+        + 'Rensa husarbetet (skattereduktionen) på dokumentet i Fortnox och synka igen.',
+    );
+  }
+  console.warn(`[fortnox-skattereduktion] ${type} ${documentNumber}: inga husarbetsrader kvar — posten borttagen via TaxReductionType none`);
+  return target ? write('rot') : cleared;
 }
 
 /**
@@ -299,7 +449,7 @@ export async function syncTaxReductionAfterDocumentWrite(
   type: TaxReductionDocumentType,
   documentNumber: string,
   target: TaxReductionTarget,
-  writtenDocument: { TaxReduction?: number | null } | null | undefined,
+  writtenDocument: WrittenDocument | null | undefined,
 ): Promise<void> {
   try {
     const posts = await listPosts(type, documentNumber);
@@ -310,7 +460,7 @@ export async function syncTaxReductionAfterDocumentWrite(
       const ceiling = typeof writtenDocument?.TaxReduction === 'number' ? Math.floor(writtenDocument.TaxReduction) : null;
       const amount = ceiling == null ? target.amount : Math.min(target.amount, ceiling);
       if (amount < 1) return;
-      await writePost(null, buildTaxReductionPayload(type, documentNumber, amount, target.applicant, target));
+      await writePostAmount(null, buildTaxReductionPayload(type, documentNumber, amount, target.applicant, target), writtenDocument);
       return;
     }
 
@@ -318,11 +468,11 @@ export async function syncTaxReductionAfterDocumentWrite(
     for (const post of extra) if (post.Id) await fortnoxDelete(`/taxreductions/${post.Id}`);
     if (target.amount < 1) return;
     const current = await readPost(keep.Id);
-    const applicant = applicantFor(target, current);
+    const applicant = applicantFor(target.applicant, current);
     if (!applicant) return;
     const payload = buildTaxReductionPayload(type, documentNumber, target.amount, applicant, target);
     if (postMatchesPayload(current, payload)) return;
-    await writePost(keep.Id, payload);
+    await writePostAmount(keep.Id, payload, writtenDocument);
   } catch (e) {
     logFailure(type, documentNumber, 'posten efter dokumentet', e);
   }

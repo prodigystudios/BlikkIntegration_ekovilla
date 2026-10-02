@@ -13,7 +13,7 @@ import type { FortnoxCompanySettingsResponse } from './offerPdf';
 import type { FortnoxOrderResponse } from './orderPdfDesign';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { PricingLineItem } from '@/lib/domains/crm/pricing';
-import { prepareTaxReductionForDocumentWrite, resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, type TaxReductionTarget } from './taxReductions';
+import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget, type WrittenDocument } from './taxReductions';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -1246,18 +1246,21 @@ async function putOrderHeaderAndRows(
   });
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
 
-  // 🧨 SKATTEREDUKTIONSPOSTEN SÄNKS FÖRE PUT:EN. Har ordern en post — och efter `createorder` har den
-  // offertens kopia — nekas hela rad-PUT:en (2003227) så fort arbetet blivit mindre än postens
-  // belopp. Efter PUT:en får posten orderns belopp. Se taxReductions.ts.
+  // 🧨 RAD-PUT:EN GÅR GENOM SKATTEREDUKTIONSPOSTEN. Har ordern en post — och efter `createorder` har
+  // den offertens kopia — nekas hela PUT:en (2003227) så fort arbetet blivit mindre än postens belopp.
+  // Det gäller ÄVEN med ROT avslaget (taxReduction null): en kopierad post står i vägen ändå. Första
+  // försöket är exakt den vanliga PUT:en; posten och `TaxReductionType` rörs bara när Fortnox kräver
+  // det. Efter PUT:en får posten orderns belopp. Se taxReductions.ts.
   const taxReduction = rotEnabled ? await resolveOrderTaxReduction(supabase, workOrder, linkedQuote, vatPercent) : null;
-  if (taxReduction) await prepareTaxReductionForDocumentWrite('ORDER', orderNumber, taxReduction);
-
-  const written = await fortnoxPut<{ Order?: { TaxReduction?: number | null } }>(
-    `/orders/${orderNumber}`,
-    { Order: { ...header, OrderRows: orderRows } },
+  await writeDocumentKeepingTaxReduction<WrittenDocument>(
+    'ORDER', orderNumber, taxReduction,
+    async (reductionType) => (await fortnoxPut<{ Order?: WrittenDocument }>(
+      `/orders/${orderNumber}`,
+      reductionType === 'none'
+        ? { Order: { ...header, OrderRows: withoutHouseWork(orderRows), TaxReductionType: 'none' } }
+        : { Order: { ...header, OrderRows: orderRows, ...(reductionType ? { TaxReductionType: reductionType } : {}) } },
+    ))?.Order,
   );
-
-  if (taxReduction) await syncTaxReductionAfterDocumentWrite('ORDER', orderNumber, taxReduction, written?.Order);
 
   // Minnet av rensningen släcks när PUT:en gått igenom — samma regel och samma skäl som i
   // syncWorkOrderHeaderToFortnox. Utan den här raden hade radvägen rensat referensnumret vid VARJE
