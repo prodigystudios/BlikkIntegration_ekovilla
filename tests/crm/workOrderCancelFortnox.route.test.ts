@@ -14,7 +14,7 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 
 vi.mock('@/lib/domains/crm/work-orders', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/work-orders')>();
-  return { ...actual, getCrmWorkOrder: vi.fn(), updateCrmWorkOrder: vi.fn() };
+  return { ...actual, getCrmWorkOrder: vi.fn(), updateCrmWorkOrder: vi.fn(), listWorkOrderInvoiceRounds: vi.fn() };
 });
 
 vi.mock('@/lib/domains/fortnox/orders', () => ({
@@ -33,7 +33,7 @@ vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
-import { getCrmWorkOrder, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
+import { getCrmWorkOrder, listWorkOrderInvoiceRounds, updateCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 import { cancelWorkOrderWithFortnox, checkWorkOrderReactivation } from '@/lib/domains/fortnox/workOrderCancel';
 import { FortnoxApiError, FortnoxNotConnectedError } from '@/lib/domains/fortnox/client';
@@ -92,6 +92,7 @@ beforeEach(() => {
   vi.mocked(updateWorkOrderInFortnox).mockResolvedValue({ fortnox_order_number: '131' } as never);
   install(order);
   fortnoxAccepts();
+  vi.mocked(listWorkOrderInvoiceRounds).mockResolvedValue({ data: [], error: null } as never);
 });
 
 describe('PATCH arbetsorder → Avbruten', () => {
@@ -234,6 +235,46 @@ describe('PATCH arbetsorder → Avbruten', () => {
 
     expect(cancelWorkOrderWithFortnox).toHaveBeenCalledOnce();
     expect(json.data.fortnox_cancelled).toBeNull();
+  });
+});
+
+// En delfakturerad arbetsorder avbryts inte (William 2026-10-02) — och Fortnox tillfrågas aldrig.
+describe('PATCH arbetsorder → Avbruten, delfakturerad', () => {
+  it.each([
+    // Varje tecken ensamt.
+    ['bara statusen delfakturerad', { status: 'partially_invoiced', partial_invoicing_started_at: null }, 0],
+    ['bara kolumnen: tillbaka på Pågående efter en delfaktura', { status: 'in_progress', partial_invoicing_started_at: '2026-10-01T10:00:00Z' }, 0],
+    ['bara en runda: kolumnen skrevs aldrig', { status: 'completed', partial_invoicing_started_at: null }, 1],
+  ])('nekas: %s', async (_name, fields, rounds) => {
+    install({ ...order, ...fields });
+    vi.mocked(listWorkOrderInvoiceRounds).mockResolvedValue({ data: Array.from({ length: rounds }, (_, i) => ({ id: `r${i}` })), error: null } as never);
+
+    const res = await patch(formSave('cancelled'));
+
+    expect(res.status).toBe(409);
+    expect((await res.json()).errorDetails.code).toBe('crm_work_order_partially_invoiced');
+    expect(cancelWorkOrderWithFortnox).not.toHaveBeenCalled();
+    expect(updateCrmWorkOrder).not.toHaveBeenCalled();
+  });
+
+  // Fail-closed: ett läsfel hade sett ut som "inga fakturor".
+  it('nekas när fakturarundorna inte går att läsa', async () => {
+    vi.mocked(listWorkOrderInvoiceRounds).mockResolvedValue({ data: null, error: { message: 'timeout' } } as never);
+
+    const res = await patch({ status: 'cancelled' });
+
+    expect(res.status).toBe(503);
+    expect(cancelWorkOrderWithFortnox).not.toHaveBeenCalled();
+  });
+
+  // Bara avbrytandet: en delfakturerad order får fortfarande byta mellan sina vanliga steg.
+  it('stoppar inte andra statusbyten på en delfakturerad order', async () => {
+    install({ ...order, status: 'partially_invoiced', partial_invoicing_started_at: '2026-10-01T10:00:00Z' });
+
+    const res = await patch({ status: 'in_progress' });
+
+    expect(res.status).toBe(200);
+    expect(listWorkOrderInvoiceRounds).not.toHaveBeenCalled();
   });
 });
 

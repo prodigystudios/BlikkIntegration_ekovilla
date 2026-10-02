@@ -33,6 +33,20 @@ export function workOrderStatusFortnoxStep(
 }
 
 /**
+ * Stoppar faktureringen ett avbrytande? Ja så fort den börjat: en delfakturerad arbetsorder ska inte gå att avbryta
+ * (William 2026-10-02). Tre tecken, vilket som helst räcker — statusen, `partial_invoicing_started_at` och
+ * fakturarundorna. Statusen räcker inte ensam: en delfakturerad order kan sättas tillbaka till Pågående. Kolumnen räcker
+ * inte heller: createPartialInvoice skriver den EFTER rundan, så en misslyckad skrivning lämnar rundor utan kolumn
+ * (saveWorkOrderLineItems prövar samma par). En helfakturerad order stoppas redan av routens låsta status.
+ */
+export function workOrderCancelBlockedByInvoicing(
+  order: { status?: string | null; partial_invoicing_started_at?: string | null },
+  invoiceRoundCount: number,
+): boolean {
+  return order.status === 'partially_invoiced' || Boolean(order.partial_invoicing_started_at) || invoiceRoundCount > 0;
+}
+
+/**
  * Får användaren spara arbetsordern? Exakt RLS-policyn `crm_work_orders_update_visible`, båda halvorna: USING på den
  * ansvarige som står (`current`) och WITH CHECK på den som blir (`next`, samma när PATCH:en inte byter). Den ansvarige
  * eller `crm.admin`. Prövas FÖRE makuleringen: nekar databasen sparandet efteråt är Fortnox-ordern redan makulerad.

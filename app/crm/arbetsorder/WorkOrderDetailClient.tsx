@@ -52,10 +52,11 @@ import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 
 type WorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress' | 'completed' | 'partially_invoiced' | 'invoiced' | 'cancelled';
 
-// Svaren där Fortnox stoppade ett byte till eller från Avbruten (PATCH-routen, workOrderCancel.ts). Ingenting sparades.
-// `crm_work_order_update_failed_after_fortnox_cancel` står inte med: där ÄR Fortnox-ordern makulerad, och ett nytt
-// tryck på Spara med Avbruten kvar är det som läker det.
-const FORTNOX_STATUS_REFUSALS = new Set([
+// Svaren där ett byte till eller från Avbruten stoppades (PATCH-routen, workOrderCancel.ts): av Fortnox, eller av en
+// delfakturering. Ingenting sparades. `crm_work_order_update_failed_after_fortnox_cancel` står inte med: där ÄR
+// Fortnox-ordern makulerad, och ett nytt tryck på Spara med Avbruten kvar är det som läker det.
+const CANCEL_STATUS_REFUSALS = new Set([
+  'crm_work_order_partially_invoiced',
   'crm_work_order_fortnox_cancel_failed',
   'crm_work_order_fortnox_invoiced',
   'crm_work_order_fortnox_cancelled',
@@ -657,9 +658,9 @@ export default function WorkOrderDetailClient({
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.ok) {
         toast.error(json?.error || 'Kunde inte spara arbetsorder');
-        // Fortnox sa nej till makuleringen (eller till att öppna en makulerad order igen): ingenting sparades, och
+        // Avbrytandet nekades (av Fortnox eller en delfakturering), eller att öppna en makulerad order igen: ingenting sparades, och
         // väljaren går tillbaka till den sparade statusen. Övriga ändringar står kvar i formuläret.
-        if (FORTNOX_STATUS_REFUSALS.has(json?.errorDetails?.code)) {
+        if (CANCEL_STATUS_REFUSALS.has(json?.errorDetails?.code)) {
           setDraft((d) => (d ? { ...d, status: workOrder.status } : d));
         }
         return;

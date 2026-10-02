@@ -12,6 +12,7 @@ import {
   cancelWorkOrderWithFortnox,
   checkWorkOrderReactivation,
   mayUpdateWorkOrder,
+  workOrderCancelBlockedByInvoicing,
   workOrderStatusFortnoxStep,
   type WorkOrderCancelDeps,
 } from '@/lib/domains/fortnox/workOrderCancel';
@@ -60,6 +61,21 @@ describe('workOrderStatusFortnoxStep', () => {
   ])('%s → %s = %s', (from, to, step) => {
     expect(workOrderStatusFortnoxStep(from, to)).toBe(step);
   });
+});
+
+// En delfakturerad arbetsorder ska inte gå att avbryta (William 2026-10-02).
+describe('workOrderCancelBlockedByInvoicing', () => {
+  it('ofakturerad: får avbrytas', () =>
+    expect(workOrderCancelBlockedByInvoicing({ status: 'in_progress', partial_invoicing_started_at: null }, 0)).toBe(false));
+  // Varje tecken prövas ensamt: ett fall där alla tre står samtidigt hade inte märkt att ett av dem slutat räknas.
+  it('bara statusen delfakturerad: får inte', () =>
+    expect(workOrderCancelBlockedByInvoicing({ status: 'partially_invoiced', partial_invoicing_started_at: null }, 0)).toBe(true));
+  // Satt tillbaka till Pågående efter en delfaktura: statusen säger ingenting, kolumnen gör det.
+  it('bara kolumnen (tillbaka på Pågående efter en delfaktura): får inte', () =>
+    expect(workOrderCancelBlockedByInvoicing({ status: 'in_progress', partial_invoicing_started_at: '2026-10-01' }, 0)).toBe(true));
+  // 🧨 Rundan finns men kolumnen skrevs aldrig (createPartialInvoice skriver den efter rundan).
+  it('en runda utan kolumnen: får inte', () =>
+    expect(workOrderCancelBlockedByInvoicing({ status: 'completed', partial_invoicing_started_at: null }, 1)).toBe(true));
 });
 
 describe('mayUpdateWorkOrder — RLS-policyn, båda halvorna, prövad före Fortnox', () => {
