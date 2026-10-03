@@ -9,8 +9,9 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
+import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget } from './taxReductions';
 
 type QuoteLineItem = {
   article_number?: string | null;
@@ -69,6 +70,7 @@ type QuoteRow = {
   rot_details: {
     enabled?: boolean | null;
     rot_percent?: number | null;
+    max_deduction?: number | null;
     applicant_name?: string | null;
     personal_number?: string | null;
     property_designation?: string | null;
@@ -526,22 +528,51 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
       },
     };
 
+    // Skattereduktionsposten — en egen resurs hos Fortnox, som `POST /offers` aldrig skapar. Utan
+    // den följer avdraget raderna tills någon öppnar husarbetesfliken; därefter fryser det. Se
+    // taxReductions.ts för mätningarna bakom ordningen nedan.
+    const taxReduction: TaxReductionTarget | null = rotEnabled
+      ? {
+          amount: rotAskedAmount(lineItems, vatPercent, quote.rot_details),
+          applicant: resolveTaxReductionApplicant({
+            applicantName: quote.rot_details?.applicant_name,
+            customerName: snapshot?.customer_name ?? quote.customer_name,
+            cardPersonalNumber: await resolveCustomerPersonalNumber(supabase, quote.customer_id, fortnoxCustomerNumber),
+            snapshotPersonalNumber: snapshot?.personal_number,
+          }),
+          propertyDesignation: quote.rot_details?.property_designation ?? null,
+          brfOrgNumber: quote.rot_details?.brf_org_number ?? null,
+        }
+      : null;
+
     const existingOfferNumber = quote.fortnox_offer_number;
     let offerNumber: string;
     let updated: boolean;
+    type WrittenOffer = { DocumentNumber?: string; TaxReduction?: number | null; BasisTaxReduction?: number | null };
 
     if (existingOfferNumber) {
-      // Update the existing Fortnox offer instead of creating a duplicate
-      const response = await fortnoxPut<{ Offer: { DocumentNumber: string } }>(
-        `/offers/${existingOfferNumber}`,
-        offerBody,
+      // Update the existing Fortnox offer instead of creating a duplicate. Skrivningen går genom
+      // posten: ett minskat avdrag måste ner i den FÖRST, annars nekas hela offerten (2003227) — och
+      // med ROT avslaget kan bara `none` få bort den. Första försöket är ändå exakt `offerBody`.
+      const written = await writeDocumentKeepingTaxReduction<WrittenOffer>(
+        'OFFER', existingOfferNumber, taxReduction,
+        async (reductionType) => (await fortnoxPut<{ Offer?: WrittenOffer }>(
+          `/offers/${existingOfferNumber}`,
+          reductionType === 'none'
+            ? { Offer: { ...offerBody.Offer, TaxReductionType: 'none', OfferRows: withoutHouseWork(offerRows) } }
+            : reductionType ? { Offer: { ...offerBody.Offer, TaxReductionType: reductionType } } : offerBody,
+        ))?.Offer,
       );
-      offerNumber = response.Offer?.DocumentNumber ?? existingOfferNumber;
+      offerNumber = written?.DocumentNumber ?? existingOfferNumber;
       updated = true;
     } else {
-      const response = await fortnoxPost<{ Offer: { DocumentNumber: string } }>('/offers', offerBody);
+      const response = await fortnoxPost<{ Offer: WrittenOffer & { DocumentNumber: string } }>('/offers', offerBody);
       offerNumber = response.Offer?.DocumentNumber;
       updated = false;
+      if (!offerNumber) throw new Error('Fortnox returnerade inget offertnummer');
+      // Ny offert: ingen post finns, och dokumentsvaret bär Fortnox egen uträkning — posten skapas
+      // med CRM:s belopp, aldrig över den. Best effort: ett fel loggas, offerten står som synkad.
+      if (taxReduction) await syncTaxReductionAfterDocumentWrite('OFFER', offerNumber, taxReduction, response.Offer);
     }
 
     if (!offerNumber) throw new Error('Fortnox returnerade inget offertnummer');

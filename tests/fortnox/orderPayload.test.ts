@@ -437,9 +437,9 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(result.mirrorFailed).toBe(true);
   });
 
-  // ⚠️ `rot_percent` och `max_deduction` når ALDRIG Fortnox (se ROT_DOCUMENT_KEYS) — de läses bara
-  // av vår egen preliminära "Att betala". En rättad procentsats mitt i pushen får därför inte dra
-  // igång en full positionsbaserad rad-PUT för en ändring dokumentet inte ens har.
+  // ⚠️ `rot_percent` och `max_deduction` rör inte raderna (se ROT_DOCUMENT_KEYS) — de når Fortnox
+  // bara via skattereduktionspostens belopp vid nästa push. En rättad procentsats mitt i pushen får
+  // därför inte dra igång en full positionsbaserad rad-PUT.
   it('reparerar inte för ROT-fält som aldrig når dokumentet', async () => {
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
@@ -449,7 +449,7 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
         fortnox_order_number: '131',
         status: 'in_progress',
         fortnox_invoice_number: null,
-        // Bara procenten och maxavdraget skiljer — dokumentet ser ingen skillnad.
+        // Bara procenten och maxavdraget skiljer — raderna och huvudet är desamma.
         rot_details: { enabled: false, rot_percent: 50, max_deduction: 75000 },
       },
     });

@@ -40,13 +40,13 @@ export const MIRRORED_SNAPSHOT_KEYS = [
 ] as const;
 
 /**
- * De ROT-fält som faktiskt NÅR FORTNOX-DOKUMENTET.
+ * De ROT-fält vars ändring drar igång en full push av arbetsordern.
  *
- * ⚠️ `rot_percent` och `max_deduction` står medvetet UTANFÖR. De läses bara av `pricing.ts` för vår
- * egen preliminära "Att betala" — Fortnox räknar det verkliga avdraget själv och får aldrig
- * siffrorna. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT
- * (plus `assertLineItemsArePriced`, som kan stämpla 'failed' och spärra faktureringen) för en
- * ändring dokumentet aldrig ser.
+ * ⚠️ `rot_percent` och `max_deduction` står medvetet UTANFÖR. Sedan 2026-10-02 når de Fortnox — de
+ * styr skattereduktionspostens belopp (taxReductions.ts) — men bara när ordern ändå pushas. Låg de
+ * med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT (plus
+ * `assertLineItemsArePriced`, som kan stämpla 'failed' och spärra faktureringen) för en ändring
+ * som inte rör raderna. En egen, lättare väg för bara posten är inte byggd.
  */
 export const ROT_DOCUMENT_KEYS = ['enabled', 'property_designation', 'brf_org_number'] as const;
 

@@ -2351,10 +2351,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   <Input value={draft.rot_brf_org_number} onChange={(e) => setDraft((d) => ({ ...d, rot_brf_org_number: e.target.value }))} placeholder="Om bostadsrätt" />
                 </Field>
               </div>
-              {/* The percent above only drives the offer's preliminary "Att betala". Fortnox
-                  computes the actual ROT reduction with its own configured rate when the
-                  invoice is created (we send the per-row ROT flag, not an amount), so a value
-                  other than Fortnox's rate would make the quoted figure differ from the bill. */}
+              {/* Procenten och maxavdraget ger beloppet som begärs i Fortnox skattereduktionspost
+                  (taxReductions.ts) — aldrig mer än Fortnox egen uträkning på en ny offert. Det
+                  är Skatteverket som till slut beslutar, därav "preliminär". */}
               <p className="text-xs text-slate-500">
                 Skattereduktionen ovan är preliminär. Det slutliga ROT-avdraget beräknas av Fortnox/Skatteverket vid fakturering.
               </p>
