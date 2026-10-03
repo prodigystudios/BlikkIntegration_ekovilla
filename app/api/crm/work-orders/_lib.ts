@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { quoteLineItemSchema } from '../quotes/_lib';
 import { WORK_ORDER_FILE_CATEGORIES } from '@/lib/domains/crm/workOrderFiles/types';
 import { CONSTRUCTION_SLUGS } from '@/lib/domains/crm/constructions';
+import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission, requireSignedInUser, pickProvidedFields } from '../_shared';
 
@@ -330,7 +331,8 @@ export const updateCrmWorkOrderSchema = z.object({
   // hade de legat här som optional utan värde hade varje sparning tömt dem.
   rot_details: z.object({
     enabled: z.boolean().optional(),
-    property_designation: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional(),
+    // Semikolon → kolon: Fortnox husarbetesflik sparar inte "6;3". Se propertyDesignation.ts.
+    property_designation: z.preprocess((value) => normalizePropertyDesignation(normalizeOptionalText(value)), z.string().nullable()).optional(),
     // NULLBARA: ett tömt fält måste kunna SPARAS som tomt. Utan null hade klienten fått utelämna
     // nyckeln, och merge-regeln läser en saknad nyckel som "rör inte" — fälten hade gått att ändra
     // men aldrig att tömma, med en sparning som rapporterade lyckat och det gamla värdet kvar.

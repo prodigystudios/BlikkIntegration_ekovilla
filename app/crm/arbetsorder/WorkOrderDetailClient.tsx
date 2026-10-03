@@ -47,6 +47,7 @@ import { formatDate, formatDayRange, formatDateTime, formatCurrency, joinAddress
 import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
+import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -1523,7 +1524,7 @@ export default function WorkOrderDetailClient({
                     <div className="grid gap-3 border-t border-[#e0e8dc] pt-3">
                       <label className="grid gap-1 text-sm text-slate-600">
                         <span className={crm.sectionTitle}>Fastighetsbeteckning</span>
-                        <Input value={draft.rot_property_designation} onChange={(e) => setField('rot_property_designation', e.target.value)} placeholder="Ex. Haggården 6:3" />
+                        <Input value={draft.rot_property_designation} onChange={(e) => setField('rot_property_designation', fixPropertyDesignationTyping(e.target.value))} placeholder="Ex. Haggården 6:3" />
                       </label>
                       <label className="grid gap-1 text-sm text-slate-600">
                         <span className={crm.sectionTitle}>BRF org.nr</span>

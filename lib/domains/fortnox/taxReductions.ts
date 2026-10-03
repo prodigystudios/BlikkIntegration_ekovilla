@@ -59,6 +59,7 @@
 
 import { computePricing, type PricingLineItem, type RotPricingInput } from '@/lib/domains/crm/pricing';
 import { normalizePersonalNumber } from '@/lib/domains/crm/personalNumber';
+import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
 import { FortnoxApiError, fortnoxDelete, fortnoxGet, fortnoxPost, fortnoxPut } from './client';
 
 export type TaxReductionDocumentType = 'OFFER' | 'ORDER';
@@ -198,7 +199,9 @@ export function buildTaxReductionPayload(
   applicant: TaxReductionApplicant,
   place: Pick<TaxReductionTarget, 'propertyDesignation' | 'brfOrgNumber'>,
 ): TaxReductionPayload {
-  const property = place.propertyDesignation?.trim();
+  // Semikolon → kolon även här: en beteckning sparad före saneringen hade annars nått posten som
+  // "6;3", som husarbetesfliken i Fortnox inte går att spara med. Se propertyDesignation.ts.
+  const property = normalizePropertyDesignation(place.propertyDesignation);
   const brf = place.brfOrgNumber?.trim();
   return {
     TaxReduction: {
