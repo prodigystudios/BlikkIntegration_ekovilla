@@ -29,6 +29,7 @@ export {
   ROT_DOCUMENT_KEYS,
 } from './workOrderSyncFields';
 import { ROT_DOCUMENT_KEYS } from './workOrderSyncFields';
+import { normalizePropertyDesignation } from './propertyDesignation';
 
 export const crmWorkOrderSelect = `
   id,
@@ -766,7 +767,15 @@ export function mergeWorkOrderRotDetails(
     merged[key] = overrides[key];
     // Jämför som sträng: procenten kan ligga som tal i kolumnen och komma tillbaka som tal ur
     // schemat, men `null` och `undefined` måste läsas som samma tomhet.
-    if (String(base[key] ?? '') !== String(overrides[key] ?? '')) {
+    //
+    // ⚠️ Beteckningen jämförs SANERAD. Schemat gör "6;3" till "6:3" (propertyDesignation.ts), och
+    // klienten skickar ROT-blocket vid varje sparning — en äldre rad med semikolon hade annars räknats
+    // som ändrad vid första sparningen, med en full push mot en öppen order och en missvisande
+    // "syns inte på fakturan"-varning på en fakturerad. Skattereduktionsposten saneras vid pushen ändå.
+    const same = key === 'property_designation'
+      ? normalizePropertyDesignation(String(base[key] ?? '')) === normalizePropertyDesignation(String(overrides[key] ?? ''))
+      : String(base[key] ?? '') === String(overrides[key] ?? '');
+    if (!same) {
       changed = true;
       if ((ROT_DOCUMENT_KEYS as readonly string[]).includes(key)) documentChanged = true;
     }

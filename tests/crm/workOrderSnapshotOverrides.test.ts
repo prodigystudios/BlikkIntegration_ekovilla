@@ -292,6 +292,22 @@ describe('mergeWorkOrderRotDetails', () => {
   // bara via skattereduktionspostens belopp, vid nästa push som ändå sker — de drar inte igång en
   // egen. Låg de med hade en rättad procentsats dragit igång en full positionsbaserad rad-PUT, med
   // assertLineItemsArePriced som kan stämpla 'failed' och spärra faktureringen.
+  // Schemat skriver beteckningen med kolon. En äldre rad med semikolon får inte se ändrad ut bara för
+  // att den sparas om — då hade en fakturerad order fått en varning för en ändring ingen gjort.
+  describe('fastighetsbeteckningen jämförs sanerad', () => {
+    it('semikolon mot kolon, eller dubbla mellanslag, är ingen ändring', () => {
+      const res = mergeWorkOrderRotDetails({ ...CURRENT, property_designation: 'Villa  6;3' }, { property_designation: 'Villa 6:3' });
+      expect(res.changed).toBe(false);
+      expect(res.documentChanged).toBe(false);
+    });
+
+    it('en verklig ändring av beteckningen är fortfarande en ändring', () => {
+      const res = mergeWorkOrderRotDetails({ ...CURRENT, property_designation: 'Villa 6;3' }, { property_designation: 'Villa 7:1' });
+      expect(res.changed).toBe(true);
+      expect(res.documentChanged).toBe(true);
+    });
+  });
+
   describe('documentChanged', () => {
     it('är false för fält Fortnox aldrig ser', () => {
       const res = mergeWorkOrderRotDetails(CURRENT, { rot_percent: 50, max_deduction: 75000 });
