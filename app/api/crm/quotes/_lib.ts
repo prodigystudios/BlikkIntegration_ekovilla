@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { CONSTRUCTION_VALUES_WITH_EMPTY } from '@/lib/domains/crm/constructions';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
+import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { listCrmSellers } from '@/lib/domains/crm/customers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -74,7 +75,8 @@ const rotDetailsSchema = z.object({
   enabled: z.boolean().optional().default(false),
   applicant_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   personal_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
-  property_designation: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Semikolon → kolon: Fortnox husarbetesflik sparar inte "6;3". Se propertyDesignation.ts.
+  property_designation: z.preprocess((value) => normalizePropertyDesignation(normalizeOptionalText(value)), z.string().nullable()).optional().default(null),
   rot_percent: z.preprocess(parseAmount, z.number().finite('Ogiltig ROT-procent').min(0).max(100)).optional().default(30),
   max_deduction: z.preprocess(parseAmount, z.number().finite('Ogiltigt maxavdrag').min(0)).optional().default(50000),
   brf_org_number: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),

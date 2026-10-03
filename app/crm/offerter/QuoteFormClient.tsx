@@ -56,6 +56,7 @@ import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
+import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
 import {
   buildMeasurementLines,
   hasMeasurementBlock,
@@ -2339,7 +2340,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <Field fieldId="field-rot-property" label="Fastighetsbeteckning" className="md:col-span-2" error={fieldErrors.rot_property_designation}>
-                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))} placeholder="Fastighetsbeteckning" />
+                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: fixPropertyDesignationTyping(e.target.value) }))} placeholder="Ex. Haggården 6:3" />
                 </Field>
                 <Field label="Skattereduktion %">
                   <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" />
@@ -2926,7 +2927,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             <Field label="Fastighetsbeteckning">
               <Input
                 value={draft.rot_property_designation}
-                onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: e.target.value }))}
+                onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: fixPropertyDesignationTyping(e.target.value) }))}
                 placeholder="T.ex. Gläntan 1:14"
                 autoFocus
               />
