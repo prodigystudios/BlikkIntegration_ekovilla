@@ -452,7 +452,7 @@ describe('writeDocumentKeepingTaxReduction mot fakens Fortnox', () => {
 
     await writeDocumentKeepingTaxReduction('ORDER', '90', target(0), async (reductionType) => {
       types.push(reductionType);
-      // Projektnoten (0 kr) hamnar där arbetsraden låg och ärver husarbetet — som när arbetet skrivs av.
+      // En 0-kronorsrad som inte säger något ärver arbetsradens plats och husarbete.
       const rows: Row[] = [{ Price: 5000, OrderedQuantity: 1, VAT: 25 }, { Price: 0, OrderedQuantity: 0, VAT: 25 }];
       return (await fake.put('/orders/90', { Order: { OrderRows: reductionType === 'none' ? withoutHouseWork(rows) : rows, ...(reductionType ? { TaxReductionType: reductionType } : {}) } })).Order;
     });
@@ -736,13 +736,31 @@ describe('pushQuoteToFortnox — skattereduktionsposten', () => {
     expect(fake.postsFor('OFFER', n)).toHaveLength(0);
   });
 
-  // Granskningsfynd 1: en ROT-rad ligger kvar på sin plats och ärver husarbetet. `none` hade nekats
-  // (2004001) — dagens payload går igenom, som före ändringen.
-  it('ROT avslaget med en kvarliggande ROT-rad: pushen går igenom som förut', async () => {
+  // ROT avslaget med ROT-raden kvar på sin plats: dagens payload går igenom (posten ryms), men
+  // offerten stod kvar som ROT med ärvt husarbete — och createorder förde det vidare till ordern.
+  // Mätt 2026-10-02 (offert 58). Svaret säger ROT → en none-skrivning med rensade rader.
+  it('ROT avslaget med en kvarliggande ROT-rad: offerten blir none och posten försvinner', async () => {
     const { fortnox_offer_number: n } = await push(rotQuote());
     await expect(push(rotQuote({ fortnox_offer_number: n, rot_details: { enabled: false } }))).resolves.toEqual(expect.objectContaining({ updated: true }));
-    const puts = vi.mocked(fortnoxPut).mock.calls.filter(([path]) => path === `/offers/${n}`);
-    expect(puts.map(([, body]) => (body as { Offer: Record<string, unknown> }).Offer.TaxReductionType)).not.toContain('none');
+
+    expect(fake.docView('OFFER', n).TaxReductionType).toBe('none');
+    expect(fake.postsFor('OFFER', n)).toHaveLength(0);
+    expect(fake.docs.get(`OFFER:${n}`)!.rows.every((r) => !r.HouseWork && !r.HouseWorkType)).toBe(true);
+  });
+
+  // Granskningsfynd: syftet med urkryss-ändringen, genom hela pushen. En ikryssad rad bär en del av
+  // posten; kryssas den ur sjunker underlaget under posten — posten sänks, PUT:en går igenom och
+  // raden är inte längre husarbete.
+  it('ett urkryss på en offert med post: raden slutar vara husarbete och posten följer CRM', async () => {
+    const ticked = { id: 'a', pricing_mode: 'item', unit_price: '8000', quantity: '1', is_rot_work: true };
+    const { fortnox_offer_number: n } = await push(rotQuote({ line_items: [material, ticked, withLabour('10000')[1]] }));
+    expect(fake.docView('OFFER', n).TaxReduction).toBe(6750);
+
+    await push(rotQuote({ fortnox_offer_number: n, line_items: [material, { ...ticked, is_rot_work: false }, withLabour('10000')[1]] }));
+
+    expect(fake.docs.get(`OFFER:${n}`)!.rows[1]).toEqual(expect.objectContaining({ HouseWork: false, HouseWorkType: null }));
+    expect(fake.postsFor('OFFER', n).map((p) => p.AskedAmount)).toEqual([3750]);
+    expect(fake.docView('OFFER', n).TaxReduction).toBe(3750);
   });
 
   it('en företagsoffert skickas som förut — inga postanrop alls', async () => {
@@ -750,8 +768,9 @@ describe('pushQuoteToFortnox — skattereduktionsposten', () => {
     const { fortnox_offer_number: n } = await push(rotQuote(business));
     await push(rotQuote({ ...business, fortnox_offer_number: n, line_items: [{ ...material, unit_price: '6000' }] }));
 
-    const put = vi.mocked(fortnoxPut).mock.calls.find(([path]) => path === `/offers/${n}`)!;
-    expect((put[1] as { Offer: Record<string, unknown> }).Offer).not.toHaveProperty('TaxReductionType');
+    const puts = vi.mocked(fortnoxPut).mock.calls.filter(([path]) => path === `/offers/${n}`);
+    expect(puts).toHaveLength(1); // ingen none-skrivning — offerten var aldrig ROT
+    expect((puts[0][1] as { Offer: Record<string, unknown> }).Offer).not.toHaveProperty('TaxReductionType');
     expect(vi.mocked(fortnoxGet).mock.calls.map(([path]) => path)).not.toContain('/taxreductions');
     expect(vi.mocked(fortnoxPost).mock.calls.map(([path]) => path)).not.toContain('/taxreductions');
   });
@@ -830,7 +849,7 @@ describe('arbetsordern — orderns post', () => {
     expect(fake.postsFor('ORDER', String(m))).toHaveLength(0);
   });
 
-  // Arbetet avskrivet på en ROT-order: projektnoten ärver arbetsradens plats. none → rot igen, utan post.
+  // Arbetet avskrivet på en ROT-order: inget husarbete kvar som kan bära posten. none → rot igen, utan post.
   it('allt arbete avskrivet med ROT kvar: ordern går igenom och är fortfarande ROT', async () => {
     fake.seedDoc('ORDER', '90', [{ Price: 5000, OrderedQuantity: 1, VAT: 25 }, { Price: 10000, OrderedQuantity: 1, VAT: 25, HouseWork: true }]);
     tolvan('ORDER', '90', 3750);

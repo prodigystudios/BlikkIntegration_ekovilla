@@ -4,7 +4,7 @@ import { isFortnoxOrderClosed, LINE_ITEM_CRM_ONLY_KEYS, MIRRORED_SNAPSHOT_KEYS, 
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemRowTotal } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxGetBinary, fortnoxPost, fortnoxPut, FortnoxApiError, FortnoxNotConnectedError, FortnoxPushInProgressError, WorkOrderCancelledError } from './client';
 import { activeLineItems } from './partialInvoices';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveCustomerPersonalNumber, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, buildOrderProjectNote, fortnoxTextRowFields, assertLineItemsArePriced, assertOrderRowsSynced, claimFortnoxPush, resolveCustomerPersonalNumber, resolveDocumentOrganisationNumber, resolveOurReference, resolveReverseVat, resolveRotReference, rotLaborRow, rotRowHouseWork, withExplicitRotHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 // Läget kommer från documentPdfMode (ingen pdf-lib), typerna raderas vid kompilering. Själva
 // renderaren laddas dynamiskt i renderOrderDocument, så PDF-motorn aldrig hamnar på kallstarten
 // för de routes som bara sparar en arbetsorder. Samma uppdelning som offers.ts.
@@ -212,8 +212,8 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
       Discount: carve === 0 ? discount : 0,
       DiscountType: 'PERCENT',
       // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
-      // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
-      // har redan prövats mot skarp Fortnox och fallit.
+      // rotRowHouseWork — läs mätningarna där innan du ändrar något här. Rader utan kryss blir
+      // uttryckligen "inte husarbete" i sista passet (withExplicitRotHouseWork).
       ...(rotRowHouseWork(item, rotEnabled) ?? {}),
     };
     // The per-row free text (Radtext) gets its own text row — only when an article name is
@@ -234,7 +234,8 @@ export function buildOrderRows(allLineItems: WorkOrderRow['line_items'], vatPerc
   // sträng i buildOrderHeader — två textrader i följd gör Fortnox till en felaktig prissatt rad.
   appendFortnoxTextNote(rows, documentNote, { ...fortnoxTextRowFields(), OrderedQuantity: 0, DeliveredQuantity: 0, VAT: reverseVat ? 0 : vatPercent });
   // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Se fortnoxSalesAccount.
-  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
+  // Krysset i CRM styr varje rad på ett ROT-dokument — även ett urkryss. Se withExplicitRotHouseWork.
+  return withFortnoxSalesAccount(withExplicitRotHouseWork(rows, rotEnabled), vatPercent, reverseVat);
 }
 
 // The header fields we own on a Fortnox order. Everything else on the document (customer, dates,

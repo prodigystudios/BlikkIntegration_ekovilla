@@ -9,7 +9,7 @@ import { OFFER_PDF_MODE, OFFER_PDF_LAYOUT, mayRenderLocally, shouldRenderLocally
 import type {
   FortnoxCompanySettingsResponse, FortnoxOfferResponse, FortnoxTaxReductionResponse,
 } from './offerPdf';
-import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
+import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, withExplicitRotHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
 import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget } from './taxReductions';
 
@@ -193,9 +193,10 @@ export function buildOfferRows(
       row.Discount = discount;
     }
     // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
-    // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
-    // har redan prövats mot skarp Fortnox och fallit. Den utbrutna materialraden ovan får varken
-    // flagga eller typ.
+    // rotRowHouseWork — läs mätningarna där innan du ändrar något här; två rimliga idéer har redan
+    // prövats mot skarp Fortnox och fallit. Den utbrutna materialraden ovan får inget här — den,
+    // och varje annan rad utan kryss, blir uttryckligen "inte husarbete" i sista passet
+    // (withExplicitRotHouseWork).
     const houseWork = rotRowHouseWork(item, rotEnabled);
     if (houseWork) {
       row.HouseWork = houseWork.HouseWork;
@@ -232,7 +233,8 @@ export function buildOfferRows(
   // set on ROT documents (the caller passes null otherwise). Propagates offer → order → invoice.
   appendFortnoxTextNote(rows, rotPropertyNote, { ...fortnoxTextRowFields(), Quantity: 0, VAT: reverseVat ? 0 : vatPercent });
   // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Se fortnoxSalesAccount.
-  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
+  // Krysset i CRM styr varje rad på ett ROT-dokument — även ett urkryss. Se withExplicitRotHouseWork.
+  return withFortnoxSalesAccount(withExplicitRotHouseWork(rows, rotEnabled), vatPercent, reverseVat);
 }
 
 // Resolves the Fortnox customer number for a quote.
@@ -548,7 +550,7 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     const existingOfferNumber = quote.fortnox_offer_number;
     let offerNumber: string;
     let updated: boolean;
-    type WrittenOffer = { DocumentNumber?: string; TaxReduction?: number | null; BasisTaxReduction?: number | null };
+    type WrittenOffer = { DocumentNumber?: string; TaxReductionType?: string | null; TaxReduction?: number | null; BasisTaxReduction?: number | null };
 
     if (existingOfferNumber) {
       // Update the existing Fortnox offer instead of creating a duplicate. Skrivningen går genom
@@ -565,6 +567,22 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
       );
       offerNumber = written?.DocumentNumber ?? existingOfferNumber;
       updated = true;
+
+      // 🧨 ROT AVSLAGET I CRM NÅDDE ALDRIG FORTNOX. Vi utelämnar typen, och då behåller Fortnox ROT;
+      // raderna ärver husarbetet positionellt och posten står kvar — `createorder` för sedan vidare
+      // allt till ordern, och kundens faktura får ett avdrag CRM inte visar (mätt 2026-10-02, offert
+      // 58). Svaret säger vad offerten är; står den kvar som ROT görs en `none`-skrivning med raderna
+      // uttryckligen utan husarbete, och Fortnox tar själv bort posterna. Ett extra anrop bara i just
+      // det fallet. Best effort: misslyckas den står offerten som förut, och felet loggas.
+      if (!rotEnabled && written?.TaxReductionType === 'rot') {
+        try {
+          await fortnoxPut(`/offers/${existingOfferNumber}`, {
+            Offer: { ...offerBody.Offer, TaxReductionType: 'none', OfferRows: withoutHouseWork(offerRows) },
+          });
+        } catch (e) {
+          console.error(`[fortnox-skattereduktion] OFFER ${existingOfferNumber}: ROT avslaget i CRM men offerten kunde inte göras om till none — ${(e as Error)?.message ?? e}`);
+        }
+      }
     } else {
       const response = await fortnoxPost<{ Offer: WrittenOffer & { DocumentNumber: string } }>('/offers', offerBody);
       offerNumber = response.Offer?.DocumentNumber;

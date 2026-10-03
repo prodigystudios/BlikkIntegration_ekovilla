@@ -24,9 +24,10 @@
 //    `TaxReductionType: 'none'` går igenom och Fortnox tar då bort posterna själv — på offert OCH
 //    order. `'rot'` igen går också, och är ofarligt på ett dokument som redan är ROT. Med en
 //    husarbetsrad kvar nekas `'none'` (2004001); en rad som utelämnar `HouseWork` ÄRVER flaggan från
-//    raden som låg på samma position — orderns projektnot hamnar t.ex. där arbetsraden låg när
-//    arbetet skrivs av. 🧨 Uttryckligt `HouseWork: false` räcker inte, TYPEN ärvs och nekas
-//    (2004021); `HouseWork: false` + `HouseWorkType: null` går igenom (`withoutHouseWork`).
+//    raden som låg på samma position. På ett ROT-dokument skickar vi sedan 2026-10-02 aldrig en rad
+//    utan fälten (withExplicitRotHouseWork i helpers.ts), men med ROT avslaget i CRM gör vi det. 🧨
+//    Uttryckligt `HouseWork: false` räcker inte, TYPEN ärvs och nekas (2004021); `HouseWork: false`
+//    + `HouseWorkType: null` går igenom (`withoutHouseWork`).
 // 8. `PropertyDesignation` och `ResidenceAssociationOrganisationNumber` FINNS på posten — tvärtemot
 //    vad FORTNOX_INTEGRATION.md sekt. 4b påstår om API:t. Vi skickar dem; textraden/referensen
 //    finns kvar som förut.
@@ -250,8 +251,8 @@ const ROT_RATE = 0.3;
  * Raderna i `'none'`-skrivningen: uttryckligen utan husarbete. Ett `none`-dokument får inte ha
  * något, och utelämnade fält ärvs positionellt — även typen, så flaggan ensam räcker inte (punkt 7).
  *
- * ⚠️ BARA I `none`-SKRIVNINGEN. På ett ROT-dokument tar ett uttryckligt `false` bort artikelns egen
- * husarbetsflagga (se rotRowHouseWork i helpers.ts) — där ska vi vara tysta.
+ * Samma fält som withExplicitRotHouseWork (helpers.ts) sätter på okryssade rader på ett
+ * ROT-dokument — men här på VARJE rad, även de ikryssade: i `none`-skrivningen får inget vara kvar.
  */
 export function withoutHouseWork<R extends object>(rows: R[]): Array<R & { HouseWork: false; HouseWorkType: null }> {
   return rows.map((row) => ({ ...row, HouseWork: false as const, HouseWorkType: null }));
@@ -434,9 +435,9 @@ async function recoverFromPostsAboveDocument<T extends WrittenDocument>(
     cleared = await write('none');
   } catch (e) {
     if (!NONE_WITH_HOUSEWORK_ROWS.some((code) => isFortnoxCode(e, code))) throw e;
-    // ÅTERVÄNDSGRÄND: en rad utan belopp (typiskt orderns projektnot, som hamnat på arbetsradens
-    // plats) har ärvt husarbetsflaggan. Underlaget är 0, så posten ryms inte; den sista posten går
-    // inte att radera; och `none` nekas för flaggans skull. Inget API-anrop tar sig ur det — en
+    // ÅTERVÄNDSGRÄND: `none` nekas trots att raderna skickades uttryckligen utan husarbete — en
+    // anropare som inte rensat raderna, eller ett Fortnox-beteende vi inte mätt. Underlaget räcker
+    // inte för posten, och den sista posten går inte att radera. Inget API-anrop tar sig ur det — en
     // människa måste rensa husarbetet på dokumentet i Fortnox. Säg det i stället för Fortnox kod.
     logFailure(type, documentNumber, 'none med husarbetsrader kvar', e);
     throw new FortnoxApiError(

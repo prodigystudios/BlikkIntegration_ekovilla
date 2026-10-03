@@ -50,6 +50,17 @@ describe('buildOrderRows', () => {
     expect((noDiscount as any).Discount).toBe(0);
   });
 
+  // Orderns projektnot är en textrad. På ett ROT-dokument säger den uttryckligen att den inte är
+  // husarbete — annars ärver den positionellt, t.ex. arbetsradens plats när arbetet skrivs av.
+  it('projektnoten på en ROT-order bär HouseWork false + typ null; på en icke-ROT-order inget', () => {
+    const items = [{ pricing_mode: 'item', unit_price: '100', quantity: '1' }];
+    const rot = buildOrderRows(items, 25, true, false, 'Projekt: Vind');
+    expect(rot.at(-1)).toEqual(expect.objectContaining({ Description: 'Projekt: Vind', HouseWork: false, HouseWorkType: null }));
+    const plain = buildOrderRows(items, 25, false, false, 'Projekt: Vind');
+    expect(plain.at(-1)).not.toHaveProperty('HouseWork');
+    expect(plain.at(-1)).not.toHaveProperty('HouseWorkType');
+  });
+
   it('marks HouseWork only when ROT is enabled and the row is rot work', () => {
     const [withRot] = buildOrderRows([{ pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: true }], 25, true);
     expect((withRot as any).HouseWork).toBe(true);
@@ -131,7 +142,8 @@ describe('buildOrderRows – ROT labour carve-out', () => {
     expect(material.Price).toBeCloseTo(120, 6); // 12000 material over 100 units
     expect(material.OrderedQuantity).toBe(100);
     expect(material.DeliveredQuantity).toBe(100);
-    expect(material.HouseWork).toBeUndefined();      // material är aldrig husarbete
+    expect(material.HouseWork).toBe(false);          // material är aldrig husarbete — uttryckligen
+    expect(material.HouseWorkType).toBeNull();
     expect(labor.ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
     expect(labor.Price).toBe(8000);
     expect(labor.OrderedQuantity).toBe(1);

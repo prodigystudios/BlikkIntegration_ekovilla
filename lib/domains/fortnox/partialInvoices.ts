@@ -6,7 +6,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
 import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
-import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withFortnoxSalesAccount } from './helpers';
+import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withExplicitRotHouseWork, withFortnoxSalesAccount } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
 
@@ -200,8 +200,8 @@ export function validateLineItemEdit(
     //   • En rad sparad innan fältet fanns saknar det helt. Rå strängjämförelse hade läst
     //     '' ≠ 'CONSTRUCTION' som en ändring och låst en helt legitim antalssänkning. Båda sidor
     //     normaliseras därför mot defaulten.
-    //   • På en rad som inte är ROT-arbete LÄSES typen aldrig (`rotRowHouseWork` returnerar null
-    //     utan flaggan), så där ändrar den ingenting och ska inte spärra något.
+    //   • På en rad som inte är ROT-arbete LÄSES typen aldrig (raden går ut med `HouseWorkType:
+    //     null`, se withExplicitRotHouseWork), så där ändrar den ingenting och ska inte spärra något.
     const houseWorkType = (item: PartialInvoiceLineItem | undefined) =>
       String(item?.house_work_type || DEFAULT_ROT_HOUSE_WORK_TYPE);
     if (cur?.is_rot_work === true && houseWorkType(cur) !== houseWorkType(next)) {
@@ -283,8 +283,8 @@ export function buildInvoiceRows(
       ...(item.article_unit_name ? { Unit: item.article_unit_name } : {}),
       ...(discount > 0 ? { Discount: discount, DiscountType: 'PERCENT' as const } : {}),
       // Husarbete bara på rader vi själva menar är arbete, och bara på ROT-dokument. Regeln bor i
-      // rotRowHouseWork — läs de tre mätningarna där innan du breddar något här; två rimliga idéer
-      // har redan prövats mot skarp Fortnox och fallit.
+      // rotRowHouseWork — läs mätningarna där innan du ändrar något här. Rader utan kryss blir
+      // uttryckligen "inte husarbete" i sista passet (withExplicitRotHouseWork).
       ...(rotRowHouseWork(item, rotEnabled) ?? {}),
     });
   });
@@ -295,7 +295,8 @@ export function buildInvoiceRows(
   // Kontot sist, på varje rad: dokumentets moms, inte kundkortets. Fakturan skapas med POST, så
   // inget ärvs positionellt här, men utan fältet väljer Fortnox kontot ur kundkortet. Se
   // fortnoxSalesAccount.
-  return withFortnoxSalesAccount(rows, vatPercent, reverseVat);
+  // Krysset i CRM styr varje rad på ett ROT-dokument — även ett urkryss. Se withExplicitRotHouseWork.
+  return withFortnoxSalesAccount(withExplicitRotHouseWork(rows, rotEnabled), vatPercent, reverseVat);
 }
 
 // This round's subtotal ex VAT (quantity × discounted unit price), matching pricing_summary.subtotal.

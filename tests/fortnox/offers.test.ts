@@ -195,26 +195,35 @@ describe('buildOfferRows', () => {
     expect(rotRow.HouseWork).toBe(true);
     expect(rotRow.HouseWorkType).toBe('CONSTRUCTION');
 
-    // 🧨 En rad som INTE är arbete får varken flagga eller typ. Att lägga en typ där (utan flagga)
-    // prövades 2026-08-19 på redovisningens begäran och FUNGERADE INTE: raden kom visserligen in som
-    // Bygg utan flagga, men vid nästa radändring omvaliderar Fortnox dokumentet och befordrar varje
-    // rad som bär en typ till husarbete. Andra pushen hade alltså begärt ROT på materialet.
-    // (Vakten för en UTBRUTEN materialrad ligger i carve-out-testerna längre ner.)
+    // 🧨 En rad som INTE är arbete säger det uttryckligen: `false` OCH typen `null`. Aldrig en typ
+    // utan flagga — det prövades 2026-08-19 och vid nästa radändring befordrade Fortnox varje rad
+    // som bar en typ till husarbete, alltså ROT på materialet. Typen null befordras inte (mätt
+    // 2026-10-02, två pushar med radändring emellan). Utbruten materialrad: carve-out-testerna nedan.
     const [material] = buildOfferRows([{ unit_price: '100', quantity: '1', is_rot_work: false }], 25, true);
-    expect(material.HouseWork).toBeUndefined();
-    expect(material.HouseWorkType).toBeUndefined();
+    expect(material.HouseWork).toBe(false);
+    expect(material.HouseWorkType).toBeNull();
   });
 
-  it('skickar ALDRIG HouseWork: false — artikelns egen flagga måste få råda', () => {
-    // 🧨 Mätt 2026-08-19: artikel 1058 är husarbete-flaggad i Fortnox, och ett uttryckligt `false`
-    // från oss TOG BORT den flaggan. Varje monterings- och framkörningsrad utan kryss hade tyst
-    // tappat sitt ROT-avdrag — och det syns inte hos oss, bara på dokumentet.
+  // ⚖️ KRYSSET I CRM STYR (2026-10-02). Förut var vi tysta på rader utan kryss — och då ärvde Fortnox
+  // flaggan från artikeln (1058, 1024–1026 …) eller från raden som låg på samma plats. Ett urkryss
+  // nådde aldrig Fortnox, och en av misstag ROT-flaggad artikel gav fel avdrag som fick rättas för
+  // hand. Uttryckligt false + null tar bort artikelns flagga — det är meningen.
+  it('varje rad utan kryss på ett ROT-dokument är uttryckligen INTE husarbete — även textrader', () => {
     const rows = buildOfferRows([
-      { unit_price: '100', quantity: '1', is_rot_work: false },
-      { unit_price: '100', quantity: '1' },
-      { unit_price: '100', quantity: '10', labor_cost: '40' },
+      { pricing_mode: 'item', unit_price: '100', quantity: '1', is_rot_work: false, article_number: '1058' },
+      { pricing_mode: 'item', unit_price: '100', quantity: '1', line_note: 'text under', article_name: 'Artikel' },
+      { pricing_mode: 'item', unit_price: '100', quantity: '10', labor_cost: '40' },
     ], 25, true);
-    for (const row of rows) expect(row.HouseWork).not.toBe(false);
+    for (const row of rows) {
+      if (row.HouseWork === true) {
+        expect(row.HouseWorkType, JSON.stringify(row)).toBe('CONSTRUCTION');
+      } else {
+        expect(row.HouseWork, JSON.stringify(row)).toBe(false);
+        expect(row.HouseWorkType, JSON.stringify(row)).toBeNull();
+      }
+    }
+    // Bara den utbrutna arbetsraden (10058) är husarbete.
+    expect(rows.filter((row) => row.HouseWork === true).map((row) => row.ArticleNumber)).toEqual(['10058']);
   });
 
   it('OMITTERAR husarbete-fälten helt på ett icke-ROT-dokument', () => {
@@ -261,8 +270,8 @@ describe('buildOfferRows – ROT labour carve-out', () => {
     // Material reduced by the carved labour: 20000 net − 8000 = 12000 over 100 units = 120/unit.
     expect(material.Price).toBeCloseTo(120, 6);
     expect(material.Quantity).toBe(100);
-    expect(material.HouseWork).toBeUndefined();      // material är aldrig husarbete
-    expect(material.HouseWorkType).toBeUndefined();
+    expect(material.HouseWork).toBe(false);          // material är aldrig husarbete — uttryckligen
+    expect(material.HouseWorkType).toBeNull();
     // Aggregated labour row: the carved sum on article 10058, flagged husarbete Bygg.
     expect(labor.ArticleNumber).toBe(ROT_LABOR_ARTICLE_NUMBER);
     expect(labor.Description).toBe('Arbetskostnad ROT');
@@ -299,7 +308,7 @@ describe('buildOfferRows – ROT labour carve-out', () => {
       );
       expect(rows, belopp).toHaveLength(1);        // ingen 10058-rad
       expect(rows[0].Price, belopp).toBe(100);     // materialraden orörd
-      expect(rows[0].HouseWork, belopp).toBeUndefined();
+      expect(rows[0].HouseWork, belopp).toBe(false);
     }
   });
 
