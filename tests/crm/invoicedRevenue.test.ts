@@ -138,13 +138,15 @@ describe('uninvoicedAmount', () => {
     expect(uninvoicedAmount({ vat_percent: 25, amount: 62_500, invoice_rounds: [{ amount: 30_000 }, { amount: '5000.50' }] })).toBe(14_999.5);
   });
 
-  it('räknar hela nettot som kvar när rundorna inte går att läsa', () => {
+  // PostgREST ger tom lista när RLS döljer rundorna; null ska aldrig komma, men får inte krascha.
+  it('räknar hela nettot som kvar när rundorna saknas', () => {
     expect(uninvoicedAmount({ vat_percent: 0, amount: 50_000, invoice_rounds: null })).toBe(50_000);
   });
 
-  // Antalet kan sänkas till det fakturerade efter en runda, och då kan nettot hamna under det
-  // som redan fakturerats till ett äldre pris. Kvar att fakturera är då noll, inte ett minus.
+  // Rundorna avrundas till hela ören, nettot inte. En helt fakturerad order kan därför landa en
+  // bråkdel av ett öre under noll, och ett lager ska då visa noll kvar.
   it('går aldrig under noll', () => {
-    expect(uninvoicedAmount({ vat_percent: 0, amount: 20_000, invoice_rounds: [{ amount: 30_000 }] })).toBe(0);
+    const net = { vat_percent: 0, amount: 1_000, pricing_summary: { subtotal: 999.996, total: 1_000 } };
+    expect(uninvoicedAmount({ ...net, invoice_rounds: [{ amount: 1_000 }] })).toBe(0);
   });
 });
