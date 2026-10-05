@@ -14,7 +14,7 @@ import OverviewWeeklyGoals from './overview/OverviewWeeklyGoals';
 import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData';
 
 export default function CrmOverview({ userId }: { userId: string | null }) {
-  const { state, loading, refreshing, load, summary, blank, summaryFailed } = useCrmOverviewData();
+  const { state, loading, refreshing, load, summary, blank, summaryFailed, scoreboardFailed } = useCrmOverviewData();
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -120,10 +120,9 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
           <OverviewWeeklyGoals
             loading={loading}
             summaryFailed={summaryFailed}
-            goalsFailed={blank('goals', state.goals.length)}
+            scoreboardFailed={scoreboardFailed}
             summary={summary}
-            goals={state.goals}
-            weekByUser={state.summary?.weekByUser}
+            scoreboard={state.scoreboard}
           />
         </div>
       </div>

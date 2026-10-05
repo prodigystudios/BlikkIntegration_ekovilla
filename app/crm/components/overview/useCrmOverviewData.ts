@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getCrmOverviewWindow, weeklyFromMonthly } from '@/lib/domains/crm/goals';
+import { getCrmOverviewWindow } from '@/lib/domains/crm/goals';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
-import type { CallItem, GoalItem, QuoteItem, TaskItem, WorkOrderItem } from './overviewTypes';
+import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
+import type { CallItem, QuoteItem, TaskItem, WorkOrderItem } from './overviewTypes';
 
 // The page's numbers come pre-counted from /api/crm/overview; the lists are only what the four
 // "senaste …"-cards render, five rows each. Counting list rows in the browser is what this
@@ -13,7 +14,9 @@ type LoadState = {
   calls: CallItem[];
   tasks: TaskItem[];
   quotes: QuoteItem[];
-  goals: GoalItem[];
+  // Lagets veckotavla: utfall per säljare mot veckomålen, läst förbi RLS så att alla ser hela
+  // laget. Ersätter målhämtningen — tavlan bär både målen och utfallet.
+  scoreboard: WeeklyScoreboard | null;
   workOrders: WorkOrderItem[];
   // Vilka hämtningar som inte gick att läsa. Varje sektion föder sin egen yta, så ett fel i en
   // av dem släcker den ytan och inget mer. Tidigare kastade fyra av sex hämtningar och
@@ -23,19 +26,19 @@ type LoadState = {
   failed: SectionKey[];
 };
 
-export type SectionKey = 'summary' | 'calls' | 'tasks' | 'quotes' | 'goals' | 'workOrders';
+export type SectionKey = 'summary' | 'calls' | 'tasks' | 'quotes' | 'scoreboard' | 'workOrders';
 
 // Enda stället ordningen bestäms. Både hämtningarna och failed-listan itererar den här, så de
 // kan inte glida isär — och Record<SectionKey, string> nedan gör att en ny sektion inte kan
 // läggas till utan att också få en URL.
-const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'tasks', 'quotes', 'goals', 'workOrders'];
+const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'tasks', 'quotes', 'scoreboard', 'workOrders'];
 
 export const sectionLabel: Record<SectionKey, string> = {
   summary: 'siffrorna',
   calls: 'samtal',
   tasks: 'uppgifter',
   quotes: 'offerter',
-  goals: 'mål',
+  scoreboard: 'veckomålen',
   workOrders: 'arbetsordrar',
 };
 
@@ -94,19 +97,16 @@ const EMPTY_SUMMARY: CrmOverviewSummary = {
   truncated: [],
 };
 
-// Summeringen plus det översikten räknar fram ur målen: fördelningsremsans delade nämnare och
-// teamets veckomål (månadsbudgeten ÷ 4).
+// Summeringen plus fördelningsremsans delade nämnare. Veckomålen räknas inte längre här — de
+// kommer färdiga med veckotavlan.
 export type OverviewFigures = CrmOverviewSummary & {
   flowScale: number;
-  callsTarget: number;
-  quotesTarget: number;
-  orderValueTarget: number;
 };
 
 // Översiktens hämtningar och tillstånd. Korten får var sin sektion härifrån, och readSection ovan
 // är skälet till att en sektion som fallerar bara släcker sin egen yta.
 export function useCrmOverviewData() {
-  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -129,6 +129,11 @@ export function useCrmOverviewData() {
         week_start: overviewWindow.weekStart,
         week_end: overviewWindow.weekEnd,
       });
+      const scoreboardQuery = new URLSearchParams({
+        today: overviewWindow.today,
+        week_start: overviewWindow.weekStart,
+        week_end: overviewWindow.weekEnd,
+      });
 
       const url: Record<SectionKey, string> = {
         summary: `/api/crm/overview?${summaryQuery}`,
@@ -143,7 +148,7 @@ export function useCrmOverviewData() {
         // the offer list's default order leads with drafts and lost quotes, the order board's
         // with the earliest installation date — so a brand new order is the table's last row.
         quotes: `/api/crm/quotes?sort=updated_desc&limit=${RECENT_ITEM_LIMIT}`,
-        goals: '/api/crm/goals?period_type=month',
+        scoreboard: `/api/crm/overview/scoreboard?${scoreboardQuery}`,
         workOrders: `/api/crm/work-orders?sort=created_desc&limit=${RECENT_ITEM_LIMIT}`,
       };
 
@@ -157,6 +162,9 @@ export function useCrmOverviewData() {
       // En 200 utan data.summary i kroppen är inget svar heller — sidans alla siffror kommer
       // därifrån, så den saknade nyttolasten flaggas som ett fel i stället för att bli nollor.
       const summaryData = (section.summary.json?.data?.summary as CrmOverviewSummary | undefined) ?? null;
+      // Samma regel för tavlan: utan data.scoreboard finns inga mål att visa, och det är ett fel —
+      // inte "inga veckomål satta".
+      const scoreboardData = (section.scoreboard.json?.data?.scoreboard as WeeklyScoreboard | undefined) ?? null;
 
       // Vid Uppdatera behålls föregående innehåll för de sektioner som inte gick att läsa. Ett
       // glapp på en manuell uppdatering ska inte kasta bort ytor som stod rätt på skärmen —
@@ -168,9 +176,11 @@ export function useCrmOverviewData() {
         calls: section.calls.ok ? itemsOf<CallItem>(section.calls) : keep ? prev.calls : [],
         tasks: section.tasks.ok ? itemsOf<TaskItem>(section.tasks) : keep ? prev.tasks : [],
         quotes: section.quotes.ok ? itemsOf<QuoteItem>(section.quotes) : keep ? prev.quotes : [],
-        goals: section.goals.ok ? itemsOf<GoalItem>(section.goals) : keep ? prev.goals : [],
+        scoreboard: scoreboardData ?? (keep ? prev.scoreboard : null),
         workOrders: section.workOrders.ok ? itemsOf<WorkOrderItem>(section.workOrders) : keep ? prev.workOrders : [],
-        failed: SECTION_ORDER.filter((key) => !section[key].ok || (key === 'summary' && summaryData == null)),
+        failed: SECTION_ORDER.filter((key) => !section[key].ok
+          || (key === 'summary' && summaryData == null)
+          || (key === 'scoreboard' && scoreboardData == null)),
       }));
     } catch {
       // Bakkant. allSettled avvisar inte, men getCrmOverviewWindow och URLSearchParams ligger
@@ -178,7 +188,7 @@ export function useCrmOverviewData() {
       if (loadId !== loadIdRef.current) return;
       setState((prev) => mode === 'refresh'
         ? { ...prev, failed: [...SECTION_ORDER] }
-        : { summary: null, calls: [], tasks: [], quotes: [], goals: [], workOrders: [], failed: [...SECTION_ORDER] });
+        : { summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
       if (loadId === loadIdRef.current) {
         setLoading(false);
@@ -193,25 +203,16 @@ export function useCrmOverviewData() {
     return () => { loadIdRef.current += 1; };
   }, [load]);
 
-  // The figures are counted by /api/crm/overview; what's left here is the team's targets, which
-  // come from the goals list, and the flow bars' shared scale.
+  // The figures are counted by /api/crm/overview; what's left here is the flow bars' shared scale.
   const summary = useMemo<OverviewFigures>(() => {
     const counted = state.summary ?? EMPTY_SUMMARY;
-    // Monthly budgets → weekly targets (÷4) so the team summary compares against ~one week.
-    const callsTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.calls_target, 0)));
-    const quotesTarget = Math.round(weeklyFromMonthly(state.goals.reduce((total, goal) => total + goal.quotes_target, 0)));
-    const orderValueTarget = weeklyFromMonthly(state.goals.reduce((total, goal) => total + Number(goal.order_value_target || 0), 0));
-
     return {
       ...counted,
       // Delad nämnare för fördelningsremsans tre staplar — den största av lagren, så ingen kan
       // spränga spåret och de tre förblir jämförbara med varandra.
       flowScale: Math.max(counted.activeQuoteValue, counted.openOrderValue, counted.toInvoiceOrderValue),
-      callsTarget,
-      quotesTarget,
-      orderValueTarget,
     };
-  }, [state.summary, state.goals]);
+  }, [state.summary]);
 
   const failed = (key: SectionKey) => state.failed.includes(key);
   // En sektion visar sitt FELLÄGE bara när den inte har något att visa. Efter en misslyckad
@@ -221,6 +222,9 @@ export function useCrmOverviewData() {
   // Summeringen föder varenda siffra på sidan — nyckeltalen, statusbilden, fokusraderna och
   // topplistans utfall. Fallerar den är EMPTY_SUMMARY:s nollor inte "noll" utan "vi vet inte".
   const summaryFailed = failed('summary') && state.summary == null;
+  // Tavlan föder målraderna och listan per säljare. Fallerar den är en tom lista "vi vet inte",
+  // inte "inga veckomål satta".
+  const scoreboardFailed = failed('scoreboard') && state.scoreboard == null;
 
-  return { state, loading, refreshing, load, summary, blank, summaryFailed };
+  return { state, loading, refreshing, load, summary, blank, summaryFailed, scoreboardFailed };
 }

@@ -78,22 +78,3 @@ export type WorkOrderItem = {
   created_at: string;
   fortnox_invoiced_at: string | null;
 };
-
-export type GoalUser = {
-  id: string;
-  full_name: string | null;
-  role: 'sales' | 'admin' | 'member' | 'konsult';
-};
-
-export type GoalItem = {
-  id: string;
-  user_id: string;
-  period_type: 'week' | 'month';
-  period_start: string;
-  calls_target: number;
-  quotes_target: number;
-  quote_value_target: number | string;
-  order_count_target: number;
-  order_value_target: number | string;
-  user: GoalUser | GoalUser[] | null;
-};
