@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   invoicedAt,
   invoicedRevenue,
+  uninvoicedAmount,
   type InvoicedOrderRow,
   type InvoiceRoundRow,
 } from '@/lib/domains/crm/invoicedRevenue';
@@ -123,5 +124,27 @@ describe('rundornas bas är orderns netto', () => {
     const { subtotal } = computePricing(lines as PricingLineItem[], 25);
 
     expect(billed).toBeCloseTo(subtotal, 2);
+  });
+});
+
+// "Att fakturera" och "Order" på översikten visar det som ÄNNU INTE fakturerats. En delfakturerad
+// order stod kvar där med hela sitt värde, också den del som redan syns i Fakturerat.
+describe('uninvoicedAmount', () => {
+  it('är hela nettot när inget fakturerats', () => {
+    expect(uninvoicedAmount({ vat_percent: 25, amount: 62_500, invoice_rounds: [] })).toBe(50_000);
+  });
+
+  it('drar av rundorna som redan gått ut, ex moms mot ex moms', () => {
+    expect(uninvoicedAmount({ vat_percent: 25, amount: 62_500, invoice_rounds: [{ amount: 30_000 }, { amount: '5000.50' }] })).toBe(14_999.5);
+  });
+
+  it('räknar hela nettot som kvar när rundorna inte går att läsa', () => {
+    expect(uninvoicedAmount({ vat_percent: 0, amount: 50_000, invoice_rounds: null })).toBe(50_000);
+  });
+
+  // Antalet kan sänkas till det fakturerade efter en runda, och då kan nettot hamna under det
+  // som redan fakturerats till ett äldre pris. Kvar att fakturera är då noll, inte ett minus.
+  it('går aldrig under noll', () => {
+    expect(uninvoicedAmount({ vat_percent: 0, amount: 20_000, invoice_rounds: [{ amount: 30_000 }] })).toBe(0);
   });
 });
