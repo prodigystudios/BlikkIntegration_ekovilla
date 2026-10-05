@@ -6,5 +6,21 @@ export const MONEY_NOTE = 'Belopp exklusive moms. Avbrutna order räknas inte.';
 export function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
   if (!Number.isFinite(numeric)) return '–';
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
+  try {
+    return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: currencyCode || 'SEK', maximumFractionDigits: 0 }).format(numeric);
+  } catch {
+    // Valutakoden valideras bara på längd (tre tecken). En kod Intl inte känner kastar RangeError,
+    // och det mitt i renderingen fäller hela översikten — Säljcoachen kan plocka fram vilken gammal
+    // offert som helst. Talet visas ändå, med koden som den står.
+    return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(numeric)} ${currencyCode}`;
+  }
+}
+
+const MONTHS_LONG = ['januari', 'februari', 'mars', 'april', 'maj', 'juni', 'juli', 'augusti', 'september', 'oktober', 'november', 'december'];
+
+/** "25 september" — med år när det inte är läsarens: "3 mars 2025". Byggs ur strängen, ingen tidszon. */
+export function formatQuoteDay(day: string, today: string): string {
+  const [year, month, date] = day.split('-').map(Number);
+  const label = `${date} ${MONTHS_LONG[month - 1]}`;
+  return day.slice(0, 4) === today.slice(0, 4) ? label : `${label} ${year}`;
 }

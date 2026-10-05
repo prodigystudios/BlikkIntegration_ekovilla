@@ -88,7 +88,7 @@ const EMPTY_SUMMARY: CrmOverviewSummary = {
   openWorkOrders: 0, openOrderValue: 0, workOrdersToInvoice: 0, toInvoiceOrderValue: 0,
   callsLast7Days: 0, followUpCalls: 0, standaloneCalls: 0,
   openTasks: 0, overdueTasks: 0, todayTasks: 0,
-  lastVisibleCallAt: null, lastOwnCallAt: null, oldestWaitingQuote: null,
+  lastVisibleCallAt: null, lastOwnCallAt: null, oldestWaitingQuote: null, oldestWaitingQuoteFailed: false,
   weekTeam: { calls: 0, quotes: 0, quoteValue: 0, orderCount: 0, orderValue: 0, invoicedValue: 0 },
   weekByUser: {},
   truncated: [],

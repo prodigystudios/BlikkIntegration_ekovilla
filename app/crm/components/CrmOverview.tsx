@@ -110,7 +110,9 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
           och ordrarna. På telefon, där statistiken ovanför är dold, är det här sidans början: man
           går in för att göra något. Att agera på får den bredare kolumnen — den bär flera rader,
           coachen ett tips. `items-start`: korten ska inte sträckas till varandras höjd. */}
-      <div className={cn('grid items-start gap-4', canSell && 'lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]')}>
+      {/* `grid-cols-1` och inte ett implicit auto-spår: ett auto-spår växer till innehållets
+          min-content, och ett långt obrutet kundnamn hade sprängt kortet på telefon (CRM grid blowout). */}
+      <div className={cn('grid grid-cols-1 items-start gap-4', canSell && 'lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]')}>
         <OverviewNextActions
           loading={loading}
           summaryFailed={summaryFailed}
@@ -119,7 +121,11 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
           userId={userId}
         />
         {canSell ? (
-          <OverviewSalesCoach loading={loading} summaryFailed={summaryFailed} quote={summary.oldestWaitingQuote} />
+          <OverviewSalesCoach
+            loading={loading}
+            failed={summaryFailed || summary.oldestWaitingQuoteFailed}
+            quote={summary.oldestWaitingQuote}
+          />
         ) : null}
       </div>
 
