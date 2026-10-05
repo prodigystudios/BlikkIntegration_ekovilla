@@ -808,13 +808,33 @@ export default function WorkOrderDetailClient({
     try {
       const res = await fetch(`/api/crm/work-orders/${workOrder.id}/invoice`, { method: 'POST' });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa faktura i Fortnox'); return; }
+      if (!res.ok || !json.ok) {
+        if (json?.errorDetails?.code === 'fortnox_invoice_not_recorded') { await handleInvoiceNotRecorded(json.error); return; }
+        toast.error(json?.error || 'Kunde inte skapa faktura i Fortnox'); return;
+      }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem, { keepDraft: editingOverview });
       if (json.data?.rounds) setInvoiceRounds(json.data.rounds as InvoiceRound[]);
       const number = (json.data?.item as WorkOrderItem | undefined)?.fortnox_invoice_number;
       toast.success(number ? `Faktura skapad i Fortnox (#${number})` : 'Faktura skapad i Fortnox');
     } catch { toast.error('Fel vid skapande av faktura'); }
     finally { setCreatingInvoice(false); setConfirmInvoiceOpen(false); }
+  }
+
+  // 🧨 Fakturan FINNS i Fortnox men sparandet i CRM fallerade. Rutan stängs och ordern läses om, så
+  // att samma antal inte står ett klick från en andra faktura, och beskedet ("Fakturera INTE igen")
+  // ligger kvar så länge notisen tillåter.
+  async function handleInvoiceNotRecorded(message: string) {
+    toast.error(message, { ttl: 10_000 });
+    setShowPartialModal(false);
+    try {
+      const res = await fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' });
+      const json = await res.json().catch(() => ({}));
+      if (!json?.ok) return;
+      if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem, { keepDraft: editingOverview });
+      setInvoiceRounds((json.data?.rounds as InvoiceRound[] | undefined) ?? []);
+    } catch {
+      // Beskedet är redan visat; sidan rättar sig vid nästa laddning.
+    }
   }
 
   // Delfakturering: invoice the chosen per-article quantities now (one round). On success the
@@ -829,7 +849,10 @@ export default function WorkOrderDetailClient({
         body: JSON.stringify({ lines }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa delfaktura'); return; }
+      if (!res.ok || !json.ok) {
+        if (json?.errorDetails?.code === 'fortnox_invoice_not_recorded') { await handleInvoiceNotRecorded(json.error); return; }
+        toast.error(json?.error || 'Kunde inte skapa delfaktura'); return;
+      }
       if (json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem, { keepDraft: editingOverview });
       if (json.data?.rounds) setInvoiceRounds(json.data.rounds as InvoiceRound[]);
       setShowPartialModal(false);

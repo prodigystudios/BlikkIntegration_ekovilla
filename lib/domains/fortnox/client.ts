@@ -40,6 +40,21 @@ export class WorkOrderCancelledError extends Error {
   }
 }
 
+// 🧨 FAKTURAN FINNS I FORTNOX, MEN CRM VET INTE OM DEN. Kastas när en delfaktura skapats hos Fortnox och sparandet
+// efteråt fallerade. Meddelandet MÅSTE nå användaren ordagrant: friendlyFortnoxMessage svarar annars "Försök igen" —
+// och ett nytt försök på en runda som inte sparats fakturerar samma antal en gång till.
+export class FortnoxInvoiceNotRecordedError extends Error {
+  constructor(
+    public readonly invoiceNumber: string,
+    message: string,
+    /** Sparades rundan? Falskt = antalen är okända för CRM och samma antal kan faktureras igen. */
+    public readonly roundRecorded: boolean,
+  ) {
+    super(message);
+    this.name = 'FortnoxInvoiceNotRecordedError';
+  }
+}
+
 export class FortnoxApiError extends Error {
   constructor(
     public readonly status: number,
@@ -157,7 +172,7 @@ export function friendlyFortnoxMessage(e: unknown): string {
   if (e instanceof FortnoxNotConnectedError) {
     return 'Fortnox är inte kopplat. Be en administratör ansluta Fortnox i CRM-inställningarna.';
   }
-  if (e instanceof FortnoxPushInProgressError || e instanceof WorkOrderCancelledError) {
+  if (e instanceof FortnoxPushInProgressError || e instanceof WorkOrderCancelledError || e instanceof FortnoxInvoiceNotRecordedError) {
     return e.message;
   }
   // Rutan i inställningarna säger fortfarande "Kopplad" (raden finns kvar), så beskedet måste säga vad som hjälper.
