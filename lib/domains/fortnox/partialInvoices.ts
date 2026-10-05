@@ -5,7 +5,7 @@ import { lineItemQuantity, isConfiguredLineItem, isUnpricedLineItem } from '@/li
 // Radmatchningen delas med ordersidans artikeleditor, som låser samma rader i förväg.
 import { QTY_EPS, invoicedFloorMessage, invoicedOnLine, isBelowInvoiced, roundQty } from '@/lib/domains/crm/invoicedLines';
 import { lineItemUnitPrice, lineItemDiscountPercent, lineItemEffectiveUnitPrice, lineItemRotLabor } from '@/lib/domains/crm/pricing';
-import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, FortnoxInvoiceNotRecordedError, FortnoxNotConnectedError, FortnoxPushInProgressError } from './client';
 import { appendFortnoxTextNote, buildRotPropertyNote, fortnoxRowText, claimFortnoxPush, resolveReverseVat, resolveRotReference, rotRowHouseWork, withExplicitRotHouseWork, withFortnoxSalesAccount } from './helpers';
 import { DEFAULT_ROT_HOUSE_WORK_TYPE } from './types';
 import { pushWorkOrderToFortnox, updateWorkOrderInFortnox } from './orders';
@@ -645,7 +645,15 @@ export async function createPartialInvoice(
         : { line_id: null, index, quantity }];
     });
 
-    await supabase.from('crm_work_order_invoices').insert({
+    // 🧨 FAKTURAN FINNS NU HOS KUNDEN. Ingen av de två skrivningarna nedan får fallera tyst:
+    //   · Rundan är det enda som säger vilka antal som fakturerats. Saknas den ser raderna
+    //     ofakturerade ut, och samma antal kan faktureras en gång till.
+    //   · Ordern bär status och partial_invoicing_started_at. "Fakturera allt" räknar numera också
+    //     rundorna (workOrderInvoicingStarted), så en saknad uppdatering kan inte längre få orderns
+    //     createinvoice att fakturera hela ordern — men den lämnar ordern med fel status.
+    // Varje skrivning prövas två gånger. Fallerar den ändå får användaren fakturanumret och beskedet
+    // att INTE fakturera igen, och loggen bär det som behövs för att lägga in rundan för hand.
+    const roundRow = {
       work_order_id: workOrderId,
       round_number: roundNumber,
       fortnox_invoice_number: invoiceNumber,
@@ -653,22 +661,33 @@ export async function createPartialInvoice(
       amount: roundSubtotal(basis, requestByKey),
       line_quantities: lineQuantities,
       created_by: actorUserId,
-    });
+    };
+    if (!(await recordInvoiceRound(supabase, roundRow))) {
+      console.error('[Fortnox] delfaktura skapad men rundan EJ sparad — lägg in raden för hand:', JSON.stringify(roundRow));
+      throw new FortnoxInvoiceNotRecordedError(invoiceNumber,
+        `Faktura ${invoiceNumber} skapades i Fortnox men kunde inte sparas i CRM. Fakturera INTE igen — `
+        + 'be en administratör lägga in delfakturan, annars faktureras samma antal två gånger.');
+    }
 
     const status: 'partially_invoiced' | 'invoiced' = isFinalRound ? 'invoiced' : 'partially_invoiced';
     const nowIso = new Date().toISOString();
-    await supabase
-      .from('crm_work_orders')
-      .update({
-        fortnox_invoice_sync_status: 'synced',
-        status,
-        // Ingen snapshot längre: basen ÄR de levande raderna. En andra, frusen bild av samma sak
-        // var det som lät "Fakturera resten" och valideringen svara olika.
-        ...(workOrder.partial_invoicing_started_at ? {} : { partial_invoicing_started_at: nowIso }),
-        // The terminal fortnox_invoice_number/at mirror the LAST round, for the existing card + reports.
-        ...(isFinalRound ? { fortnox_invoice_number: invoiceNumber, fortnox_invoiced_at: nowIso } : {}),
-      })
-      .eq('id', workOrderId);
+    const orderPatch = {
+      fortnox_invoice_sync_status: 'synced',
+      status,
+      // Ingen snapshot längre: basen ÄR de levande raderna. En andra, frusen bild av samma sak
+      // var det som lät "Fakturera resten" och valideringen svara olika.
+      ...(workOrder.partial_invoicing_started_at ? {} : { partial_invoicing_started_at: nowIso }),
+      // The terminal fortnox_invoice_number/at mirror the LAST round, for the existing card + reports.
+      ...(isFinalRound ? { fortnox_invoice_number: invoiceNumber, fortnox_invoiced_at: nowIso } : {}),
+    };
+    const updateOrder = () => supabase.from('crm_work_orders').update(orderPatch).eq('id', workOrderId);
+    const orderUpdate = await updateOrder();
+    if (orderUpdate.error && (await updateOrder()).error) {
+      console.error(`[Fortnox] delfaktura ${invoiceNumber} sparad men arbetsorder ${workOrderId} ej uppdaterad:`, JSON.stringify(orderPatch));
+      throw new FortnoxInvoiceNotRecordedError(invoiceNumber,
+        `Faktura ${invoiceNumber} skapades i Fortnox och är sparad, men arbetsorderns status kunde inte uppdateras. `
+        + 'Ladda om sidan innan du fortsätter.');
+    }
 
     // Annotate the Fortnox order's internal Comments so finance can see it's been (part-)invoiced
     // via standalone invoices — the order keeps no native InvoiceReference in this flow. Uses
@@ -693,6 +712,31 @@ export async function createPartialInvoice(
       .eq('id', workOrderId);
     throw e;
   }
+}
+
+/**
+ * Sparar rundan, med ett omförsök. Sant när raden bevisligen finns.
+ *
+ * ⚠️ LÄS INNAN NÄSTA FÖRSÖK. Ett fel kan betyda att svaret tappades efter att raden skrevs — då
+ * hade omförsöket studsat på (work_order_id, round_number) och rapporterat en sparad runda som
+ * förlorad. Raden räknas som vår bara om den bär vårt fakturanummer.
+ */
+async function recordInvoiceRound(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  row: { work_order_id: string; round_number: number; fortnox_invoice_number: string } & Record<string, unknown>,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { error } = await supabase.from('crm_work_order_invoices').insert(row);
+    if (!error) return true;
+    const { data } = await supabase
+      .from('crm_work_order_invoices')
+      .select('fortnox_invoice_number')
+      .eq('work_order_id', row.work_order_id)
+      .eq('round_number', row.round_number)
+      .maybeSingle<{ fortnox_invoice_number: string | null }>();
+    if (data?.fortnox_invoice_number === row.fortnox_invoice_number) return true;
+  }
+  return false;
 }
 
 // "Fakturera allt" once delfakturering has already started: invoice every line's remaining quantity

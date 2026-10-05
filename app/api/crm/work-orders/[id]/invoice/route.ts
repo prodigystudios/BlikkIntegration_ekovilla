@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { getCrmWorkOrder, listWorkOrderInvoiceRounds } from '@/lib/domains/crm/work-orders';
+import { countWorkOrderInvoiceRounds, getCrmWorkOrder, listWorkOrderInvoiceRounds, workOrderInvoicingStarted } from '@/lib/domains/crm/work-orders';
 import { createInvoiceFromWorkOrder } from '@/lib/domains/fortnox/orders';
 import { invoiceRemainingForWorkOrder, PartialInvoiceError } from '@/lib/domains/fortnox/partialInvoices';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
@@ -30,7 +30,16 @@ export async function POST(_req: Request, context: RouteContext) {
     if (readError) return routeError(500, 'crm_work_order_fetch_failed', readError.message);
     if (!current) return routeError(404, 'crm_work_order_not_found', 'Arbetsordern hittades inte.');
 
-    const partialStarted = current.status === 'partially_invoiced' || Boolean(current.partial_invoicing_started_at);
+    // 🧨 RUNDORNA RÄKNAS OCKSÅ, inte bara status och kolumn. createPartialInvoice skriver dem EFTER
+    // rundan; fallerar den skrivningen står ordern kvar som "Fakturera" utan kolumn. Utan rundorna
+    // här gick "Fakturera allt" då till orderns createinvoice — som fakturerar HELA ordern, också
+    // det som redan delfakturerats. Samma fråga som avbrytandet ställer (workOrderCancel.ts).
+    // Fail closed: ett läsfel får aldrig se ut som "inga rundor".
+    const { count: roundCount, error: roundsError } = await countWorkOrderInvoiceRounds(supabase, context.params.id);
+    if (roundsError || roundCount == null) {
+      return routeError(500, 'crm_work_order_rounds_fetch_failed', roundsError?.message || 'Kunde inte läsa fakturarundorna.');
+    }
+    const partialStarted = workOrderInvoicingStarted(current, roundCount);
 
     // Allow only when the order is set for invoicing or mid-delfakturering, unless it's already
     // invoiced (idempotent re-run after a transient failure).
