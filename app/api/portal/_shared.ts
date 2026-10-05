@@ -65,7 +65,7 @@ export async function verifyPortalRequest(
   if (!secret) {
     return {
       ok: false,
-      response: routeError(503, 'portal_not_configured', 'Integrationen med återförsäljarportalen är inte påslagen.'),
+      response: routeError(503, 'portal_not_configured', 'Integrationen med partnerportalen är inte påslagen.'),
     };
   }
 
@@ -76,7 +76,7 @@ export async function verifyPortalRequest(
 
   const unauthorized = (reason: string, log: boolean) => {
     if (log) console.warn('[portal] nekade ett anrop', { method: req.method, path, reason });
-    return { ok: false as const, response: routeError(401, 'unauthorized', 'Anropet är inte signerat av återförsäljarportalen.') };
+    return { ok: false as const, response: routeError(401, 'unauthorized', 'Anropet är inte signerat av partnerportalen.') };
   };
 
   const timestampHeader = req.headers.get(PORTAL_TIMESTAMP_HEADER);
@@ -108,7 +108,7 @@ export async function verifyPortalRequest(
     console.error('[portal] nekade ett signerat anrop: fel databas utanför prod', { method: req.method, path });
     return {
       ok: false,
-      response: routeError(503, 'portal_not_configured', 'Integrationen med återförsäljarportalen är inte påslagen.'),
+      response: routeError(503, 'portal_not_configured', 'Integrationen med partnerportalen är inte påslagen.'),
     };
   }
 

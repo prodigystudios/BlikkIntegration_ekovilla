@@ -58,7 +58,7 @@ export async function GET(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     const view = await listPortalJobDocuments(createSessionClient(), getSupabaseAdmin(), context.params.workOrderId);
-    if (!view) return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
+    if (!view) return routeError(404, 'portal_job_not_found', 'Ordern kom inte från partnerportalen.');
     return ok(view);
   } catch (e) {
     console.error('[portal-documents] dokumenten gick inte att läsa', { error: e instanceof Error ? e.message : e });
@@ -102,7 +102,7 @@ export async function POST(req: Request, context: RouteContext) {
       case 'blocked':
         return routeError(409, 'portal_document_blocked', result.message);
       case 'not_found':
-        return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
+        return routeError(404, 'portal_job_not_found', 'Ordern kom inte från partnerportalen.');
       case 'forbidden':
         return routeError(403, 'portal_document_forbidden', 'Bara den som har ordern, eller en admin, kan skicka dokument till butiken.');
       case 'no_source':

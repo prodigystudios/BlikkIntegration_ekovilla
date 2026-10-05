@@ -225,7 +225,7 @@ export default function ResellerPortalClient({
   return (
     <div className="grid grid-cols-1 gap-6">
       <div>
-        <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Återförsäljarportalen</h1>
+        <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Partnerportalen</h1>
         <p className="m-0 mt-1 max-w-3xl text-sm text-slate-500">
           Prislistan butikerna räknar sina offerter på, och vem på Ekovilla som får deras jobb.
         </p>
@@ -241,7 +241,7 @@ export default function ResellerPortalClient({
       )}
 
       <Tabs>
-        <TabsList aria-label="Återförsäljarportalen">
+        <TabsList aria-label="Partnerportalen">
           <TabsTrigger id="portal-tab-pricelist" aria-controls="portal-panel-pricelist" active={tab === 'pricelist'} onClick={() => setTab('pricelist')}>
             Prislistan
           </TabsTrigger>

@@ -39,7 +39,7 @@ export const CRM_NAV_ITEMS: CrmNavItem[] = [
       { href: '/crm/installningar', label: 'Översikt', description: 'Mål, användare och integrationer', permission: 'crm.settings.manage' },
       { href: '/crm/installningar/artiklar', label: 'Artiklar', description: 'Skapa och redigera Fortnox-artiklar', permission: 'crm.article.manage' },
       { href: '/crm/installningar/enheter', label: 'Enheter', description: 'Hantera Fortnox-enheter', permission: 'crm.unit.manage' },
-      { href: '/crm/installningar/aterforsaljarportalen', label: 'Återförsäljarportalen', description: 'Prislistan till butikerna', permission: 'crm.portal.manage' },
+      { href: '/crm/installningar/aterforsaljarportalen', label: 'Partnerportalen', description: 'Prislistan till butikerna', permission: 'crm.portal.manage' },
     ],
   },
 ];

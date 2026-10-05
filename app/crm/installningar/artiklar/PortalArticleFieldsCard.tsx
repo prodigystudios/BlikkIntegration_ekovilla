@@ -144,7 +144,7 @@ export default function PortalArticleFieldsCard({
   return (
     <section className={CARD} aria-labelledby="portal-fields-heading">
       <h2 id="portal-fields-heading" className="m-0 mb-1 text-base font-bold text-slate-900">
-        Återförsäljarportalen
+        Partnerportalen
       </h2>
       <p className="m-0 mb-4 text-sm text-slate-500">Det butikerna ser i prislistan. Sparas i CRM:et, inte i Fortnox.</p>
 

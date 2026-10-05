@@ -50,7 +50,7 @@ describe('describeCustomerDeletionBlockers', () => {
     expect(describeCustomerDeletionBlockers({ quotes: 3, workOrders: 1, portal: 0 }))
       .toBe('Kunden har 3 offerter och 1 arbetsorder och kan inte tas bort.');
     expect(describeCustomerDeletionBlockers({ quotes: 2, workOrders: 1, portal: 1 }))
-      .toBe('Kunden har 2 offerter, 1 arbetsorder och 1 koppling till återförsäljarportalen och kan inte tas bort.');
+      .toBe('Kunden har 2 offerter, 1 arbetsorder och 1 koppling till partnerportalen och kan inte tas bort.');
   });
 
   it('varje sort spärrar ensam', () => {

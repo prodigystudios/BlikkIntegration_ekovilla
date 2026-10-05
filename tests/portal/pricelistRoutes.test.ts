@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { adminUser, salesUser } from '../crm/helpers/supabase';
 
 /**
- * Routerna på sidan Återförsäljarportalen (fas 2b): publiceringen och "Skicka väntande nu". Grinden före allt: utan
+ * Routerna på sidan Partnerportalen (fas 2b): publiceringen och "Skicka väntande nu". Grinden före allt: utan
  * inloggning 401, utan crm.portal.manage 403, och i båda fallen har ingen klient byggts och ingenting körts. Sedan
  * kroppen (400) och översättningen av domänens utfall till HTTP.
  */

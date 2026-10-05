@@ -43,7 +43,7 @@ const EMPTY: Record<Filter, string> = {
   delivered: 'Inga levererade beställningar väntar på faktura.',
   invoiced: 'Inga fakturerade beställningar än.',
   closed: 'Inga tillbakadragna eller makulerade beställningar.',
-  all: 'Inga butiksbeställningar än. De kommer hit när en butik beställer material i återförsäljarportalen.',
+  all: 'Inga butiksbeställningar än. De kommer hit när en butik beställer material i partnerportalen.',
 };
 
 export default function StoreOrdersClient({
@@ -67,7 +67,7 @@ export default function StoreOrdersClient({
     <div className="grid grid-cols-1 gap-4">
       <div>
         <h1 className={crm.pageTitle}>Butiksbeställningar</h1>
-        <p className={cn('mt-1', crm.pageSubtitle)}>Material som butikerna beställer i återförsäljarportalen.</p>
+        <p className={cn('mt-1', crm.pageSubtitle)}>Material som butikerna beställer i partnerportalen.</p>
       </div>
 
       {error ? <ErrorState title={error} message="Ladda om sidan för att försöka igen." /> : null}

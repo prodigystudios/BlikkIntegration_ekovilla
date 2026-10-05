@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isUuid } from '@/lib/api/responses';
 
 /**
- * Brickan "Från återförsäljarportalen · <butik> · offert <nr>" i arbetsorderns sidhuvud (RESELLER_PORTAL_CRM_PLAN.md
+ * Brickan "Från partnerportalen · <butik> · offert <nr>" i arbetsorderns sidhuvud (RESELLER_PORTAL_CRM_PLAN.md
  * fas 3b, William 2026-09-28).
  *
  * SESSIONSKLIENTEN: sessionen får läsa just de här kolumnerna i `crm_portal_jobs` (kolumngrant), och bara för en

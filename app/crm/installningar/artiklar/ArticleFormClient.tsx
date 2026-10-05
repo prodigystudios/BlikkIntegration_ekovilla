@@ -365,7 +365,7 @@ export default function ArticleFormClient({
 
           {portal && 'error' in portal && (
             <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              Återförsäljarportalens fält kunde inte läsas. Ladda om sidan för att försöka igen.
+              Partnerportalens fält kunde inte läsas. Ladda om sidan för att försöka igen.
             </div>
           )}
           {portal && !('error' in portal) && articleNumber && (

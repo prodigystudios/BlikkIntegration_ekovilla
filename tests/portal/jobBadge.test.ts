@@ -3,7 +3,7 @@ import { getPortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import { memoryAdmin } from './helpers/memoryAdmin';
 
 /**
- * Brickan "Från återförsäljarportalen" (fas 3b). Läses med sessionen; RLS och kolumngranten prövas i
+ * Brickan "Från partnerportalen" (fas 3b). Läses med sessionen; RLS och kolumngranten prövas i
  * supabase/checks/portal_jobs.sql. Här: uppslaget på arbetsordern, en vanlig order ger ingen bricka, ett id som inte
  * är en uuid frågas aldrig (Postgres hade kastat 22P02), och ett databasfel kastar (sidan fångar det).
  */

@@ -13,7 +13,7 @@ export default async function CrmArticlesPage() {
   const [articles, fortnoxStatus, portalFields] = await Promise.all([
     listCachedFortnoxArticles({ activeOnly: false }),
     getFortnoxConnectionStatus(),
-    // Återförsäljarportalens fält (RLS: crm.article.manage). Ett läsfel döljer bara kolumnen, inte listan.
+    // Partnerportalens fält (RLS: crm.article.manage). Ett läsfel döljer bara kolumnen, inte listan.
     listPortalArticleFields(createSessionClient()).catch((e: unknown) => {
       console.error('[portal] artikelfälten', e instanceof Error ? e.message : e);
       return null;
