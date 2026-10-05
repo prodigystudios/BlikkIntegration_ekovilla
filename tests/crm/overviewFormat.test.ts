@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { formatDate } from '@/app/crm/lib/format';
 import { formatCurrency, formatQuoteDay, stockholmDateISO } from '@/app/crm/components/overview/overviewFormat';
 
 // Översiktens formatering: Säljcoachens datum och belopp, tabellernas datum.
@@ -42,5 +43,11 @@ describe('stockholmDateISO', () => {
   it('ett datum som inte går att läsa ger ett streck, inget kast', () => {
     expect(stockholmDateISO('inte ett datum')).toBe('–');
     expect(stockholmDateISO(null)).toBe('–');
+  });
+
+  // Tabellerna kör strecket vidare genom CRM:ets formatDate — det ska komma ut som ett streck.
+  it('strecket överlever formatDate, som tabellerna kedjar på', () => {
+    expect(formatDate(stockholmDateISO('inte ett datum'))).toBe('–');
+    expect(formatDate(stockholmDateISO('2026-10-04T22:30:00Z'))).toBe(formatDate('2026-10-05'));
   });
 });
