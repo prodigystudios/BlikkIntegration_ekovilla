@@ -12,7 +12,7 @@ const order = (id: string, invoicedDay: string): ReportOrderRow => ({
   amount: 0,
   status: 'invoiced',
   created_at: `${invoicedDay}T08:00:00Z`,
-  fortnox_invoiced_at: `${invoicedDay}T08:00:00Z`,
+  fortnox_invoiced_at: `${invoicedDay}T08:00:00Z`, partial_invoicing_started_at: null,
   assigned_to: null,
   client_name: null,
 });

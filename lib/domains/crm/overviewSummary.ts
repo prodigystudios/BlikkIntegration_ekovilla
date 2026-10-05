@@ -125,7 +125,7 @@ export type OrderWindowRow = NetAmountRow & {
   created_at: string;
   fortnox_invoiced_at: string | null;
   /** Satt = ordern faktureras i rundor, som räknas i stället för ordern — se invoicedRevenue. */
-  partial_invoicing_started_at?: string | null;
+  partial_invoicing_started_at: string | null;
   assigned_to: string | null;
 };
 export type CallWindowRow = {

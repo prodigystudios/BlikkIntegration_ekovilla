@@ -222,7 +222,7 @@ const DEFAULT_VAT_PERCENT = 25;
 /** Ören: `total` och `amount` skrivs från samma objekt, så allt över detta är verklig oenighet. */
 const AMOUNT_TOLERANCE = 0.5;
 
-function toNumber(value: unknown): number {
+export function toNumber(value: unknown): number {
   const n = typeof value === 'number' ? value : Number(String(value ?? ''));
   return Number.isFinite(n) ? n : 0;
 }

@@ -34,12 +34,10 @@ export type ReportOrderRow = NetAmountRow & {
   created_at: string;
   fortnox_invoiced_at: string | null;
   /** Satt = ordern faktureras i rundor, som räknas i stället för ordern — se invoicedRevenue. */
-  partial_invoicing_started_at?: string | null;
+  partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name: string | null;
 };
-
-export type ReportInvoiceRoundRow = InvoiceRoundRow;
 
 export type ReportCallRow = { user_id: string | null; call_at: string };
 export type ReportSellerRow = { id: string; full_name: string | null };
@@ -48,7 +46,7 @@ export type ReportData = {
   quotes: ReportQuoteRow[];
   orders: ReportOrderRow[];
   /** Delfakturarundor skapade inom perioden, oavsett när ordern skapades eller slutfakturerades. */
-  invoiceRounds: ReportInvoiceRoundRow[];
+  invoiceRounds: InvoiceRoundRow[];
   calls: ReportCallRow[];
   sellers: ReportSellerRow[];
 };
@@ -114,7 +112,7 @@ export type PartitionedOrders = {
 export function partitionOrders(
   orders: ReportOrderRow[],
   range: ReportRange,
-  invoiceRounds: ReportInvoiceRoundRow[],
+  invoiceRounds: InvoiceRoundRow[],
 ): PartitionedOrders {
   return {
     // Avbrutna order faller bort här och inte i varje aggregat: en order som aldrig blev av är
@@ -520,10 +518,15 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
   const firstError = quotesRes.error || ordersRes.error || roundsRes.error || callsRes.error || sellersRes.error;
   if (firstError) throw new Error(firstError.message);
 
+  // Utan `as`: klienten härleder radtypen ur select-strängen, så en select som tappar
+  // partial_invoicing_started_at fäller typkontrollen i stället för att dubbelräkna — se invoicedRevenue.
+  const orders: ReportOrderRow[] = ordersRes.data ?? [];
+  const invoiceRounds: InvoiceRoundRow[] = roundsRes.data ?? [];
+
   return {
     quotes: (quotesRes.data as ReportQuoteRow[]) || [],
-    orders: (ordersRes.data as ReportOrderRow[]) || [],
-    invoiceRounds: (roundsRes.data as ReportInvoiceRoundRow[]) || [],
+    orders,
+    invoiceRounds,
     calls: (callsRes.data as ReportCallRow[]) || [],
     sellers: (sellersRes.data as ReportSellerRow[]) || [],
   };

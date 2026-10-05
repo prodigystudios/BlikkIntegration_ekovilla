@@ -1,4 +1,4 @@
-import { netAmount, type NetAmountRow } from './pricing';
+import { netAmount, toNumber, type NetAmountRow } from './pricing';
 import { isDeadWorkOrder } from './work-orders';
 
 // ── Fakturerat: en post per FAKTURA, inte en per order ──
@@ -31,14 +31,16 @@ export type InvoicedOrderRow = NetAmountRow & {
    * Satt = ordern faktureras i rundor, och rundorna räknas i stället för ordern.
    *
    * ⚠️ MÅSTE HÄMTAS av varje läsning som matar invoicedRevenue. Saknas den i en select räknas varje
-   * slutfakturerad delfakturaorder dubbelt: en gång som order och en gång som sina rundor.
+   * slutfakturerad delfakturaorder dubbelt: en gång som order och en gång som sina rundor. Därför
+   * obligatorisk, och läsningarna tilldelar sina rader utan `as` — då fäller typkontrollen en select
+   * som tappat kolumnen.
    *
    * Känt och inte jagat: createPartialInvoice sätter kolumnen EFTER att rundan lagts in. Fallerar
    * just den skrivningen, och ordern sedan stängs genom att antalen sänks till det fakturerade
    * (work-orders.ts, `closes`), blir ordern `invoiced` utan kolumnen och räknas här dubbelt. Det
    * kräver ett databasfel mitt i en runda; workOrderInvoicingStarted är den fullständiga frågan.
    */
-  partial_invoicing_started_at?: string | null;
+  partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name?: string | null;
 };
@@ -75,11 +77,6 @@ export function invoicedAt(order: Pick<InvoicedOrderRow, 'fortnox_invoiced_at' |
   return order.fortnox_invoiced_at || order.created_at;
 }
 
-function roundAmount(value: unknown): number {
-  const n = typeof value === 'number' ? value : Number(String(value ?? ''));
-  return Number.isFinite(n) ? n : 0;
-}
-
 /**
  * Varje faktura bland raderna, i ETT svep eller per runda. Filtrerar inte på period — anroparen
  * gör det på `at` med sin egen fönsterregel, så rapportens och översiktens fönster förblir sina.
@@ -109,7 +106,7 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
     const order = Array.isArray(round.work_order) ? round.work_order[0] : round.work_order;
     if (!order || isDeadWorkOrder(order.status)) return [];
     return [{
-      amount: roundAmount(round.amount),
+      amount: toNumber(round.amount),
       at: round.created_at,
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
