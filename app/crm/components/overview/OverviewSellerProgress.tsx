@@ -106,7 +106,7 @@ function SkeletonRow() {
 }
 
 // Hur många säljare som syns innan man ber om resten — samma tak som listan i det gamla
-// målkortet. Raderna går över hela bredden, och utan tak sköt ett stort lag ner Nästa fokus,
+// målkortet. Raderna går över hela bredden, och utan tak sköt ett stort lag ner Att agera på,
 // sidans handlingskort, långt under skärmkanten.
 const SELLER_PREVIEW_COUNT = 3;
 

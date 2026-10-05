@@ -12,6 +12,15 @@ export function StarIcon({ className }: IconProps) {
   );
 }
 
+/** Konturstjärna: en stjärna som INTE är nådd än — Att agera på pekar mot den. Den fyllda är upptagen. */
+export function StarOutlineIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d="M10 1.6l2.57 5.2 5.74.84-4.15 4.05.98 5.71L10 14.7l-5.14 2.7.98-5.71L1.69 7.64l5.74-.84L10 1.6z" />
+    </svg>
+  );
+}
+
 /** Pokal för den som leder topplistan — i varumärkesgrönt, aldrig i stjärnans guld. */
 export function TrophyIcon({ className }: IconProps) {
   return (

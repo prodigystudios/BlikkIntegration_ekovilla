@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import type { MetricProgress, ScoreboardMetric, ScoreboardMetrics, ScoreboardSeller } from '@/lib/domains/crm/weeklyScoreboard';
 import {
   achievementSentence,
+  callsToStar,
+  callsToStarSentence,
   dismissAchievements,
   newAchievements,
   parseDismissedAchievements,
@@ -207,5 +209,42 @@ describe('weekLabel', () => {
   // under TZ=America/Los_Angeles 2026-10-05.
   it('över ett årsskifte följer veckonumret ISO', () => {
     expect(weekLabel('2026-12-28', '2027-01-04')).toBe('Vecka 53, 28 dec–3 jan');
+  });
+});
+
+describe('callsToStar — "du är N samtal från stjärnan"', () => {
+  const andreas = (calls: Partial<MetricProgress>) => seller('u1', 'Andreas Östlund', { calls: { target: 10, ...calls } });
+
+  it('räknar läsarens återstående samtal och tilltalar med förnamnet', () => {
+    expect(callsToStar([seller('u2', 'Tony Bejedal', { calls: { done: 0, target: 10 } }), andreas({ done: 9 })], 'u1'))
+      .toEqual({ name: 'Andreas', remaining: 1 });
+  });
+
+  it('pekar bara mot LÄSARENS stjärna — en kollegas rad ger inget', () => {
+    expect(callsToStar([andreas({ done: 2 })], 'u2')).toBeNull();
+    expect(callsToStar([andreas({ done: 2 })], null)).toBeNull();
+  });
+
+  it('tystnar när målet är nått — bannern firar det i stället', () => {
+    expect(callsToStar([andreas({ done: 10, reached: true })], 'u1')).toBeNull();
+    // Över målet: aldrig "-2 samtal från stjärnan".
+    expect(callsToStar([andreas({ done: 12, reached: false })], 'u1')).toBeNull();
+  });
+
+  it('säger inget utan samtalsmål — då finns ingen stjärna att peka mot', () => {
+    expect(callsToStar([seller('u1', 'Andreas Östlund', { calls: { done: 3 }, quotes: { done: 0, target: 4 } })], 'u1')).toBeNull();
+  });
+
+  it('räknar hela samtal när målet är ett bråktal', () => {
+    expect(callsToStar([andreas({ done: 10, target: 10.5 })], 'u1')).toEqual({ name: 'Andreas', remaining: 1 });
+  });
+
+  it('tilltalar inte med reservnamnet när profilen saknar namn', () => {
+    expect(callsToStar([seller('u1', 'Okänd användare', { calls: { done: 2, target: 5 } })], 'u1')).toEqual({ name: null, remaining: 3 });
+  });
+
+  it('meningen böjs i singular vid ett', () => {
+    expect(callsToStarSentence(1)).toBe('Ett samtal till och du når veckans samtalsmål.');
+    expect(callsToStarSentence(4)).toBe('4 samtal till och du når veckans samtalsmål.');
   });
 });

@@ -4,15 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCrmOverviewWindow } from '@/lib/domains/crm/goals';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
-import type { CallItem, QuoteItem, TaskItem, WorkOrderItem } from './overviewTypes';
+import type { QuoteItem, WorkOrderItem } from './overviewTypes';
 
-// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the four
+// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the two
 // "senaste …"-cards render, five rows each. Counting list rows in the browser is what this
 // replaced — see lib/domains/crm/overviewSummary.ts for why that could not hold.
 type LoadState = {
   summary: CrmOverviewSummary | null;
-  calls: CallItem[];
-  tasks: TaskItem[];
   quotes: QuoteItem[];
   // Lagets veckotavla: utfall per säljare mot veckomålen, läst förbi RLS så att alla ser hela
   // laget. Ersätter målhämtningen — tavlan bär både målen och utfallet.
@@ -26,17 +24,15 @@ type LoadState = {
   failed: SectionKey[];
 };
 
-export type SectionKey = 'summary' | 'calls' | 'tasks' | 'quotes' | 'scoreboard' | 'workOrders';
+export type SectionKey = 'summary' | 'quotes' | 'scoreboard' | 'workOrders';
 
 // Enda stället ordningen bestäms. Både hämtningarna och failed-listan itererar den här, så de
 // kan inte glida isär — och Record<SectionKey, string> nedan gör att en ny sektion inte kan
 // läggas till utan att också få en URL.
-const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'tasks', 'quotes', 'scoreboard', 'workOrders'];
+const SECTION_ORDER: SectionKey[] = ['summary', 'quotes', 'scoreboard', 'workOrders'];
 
 export const sectionLabel: Record<SectionKey, string> = {
   summary: 'siffrorna',
-  calls: 'samtal',
-  tasks: 'uppgifter',
   quotes: 'offerter',
   scoreboard: 'veckomålen',
   workOrders: 'arbetsordrar',
@@ -48,8 +44,8 @@ type Section = { ok: boolean; json: any };
 // en otolkbar kropp är samma sak här: sektionen gick inte att läsa.
 //
 // 🧨 Varje sektion har en EGEN AbortController och en egen timer. Med en delad controller för alla
-// sex — och kropparna lästa först efter Promise.allSettled — räckte EN hängande endpoint för att
-// avbryta de fem andras olästa kroppsströmmar: deras res.json() avvisades, alla sex flaggades, och
+// sektioner — och kropparna lästa först efter Promise.allSettled — räckte EN hängande endpoint för att
+// avbryta de andras olästa kroppsströmmar: deras res.json() avvisades, alla flaggades, och
 // sidan tömdes. Det var precis den allt-eller-inget-släckning allSettled infördes för att ta bort.
 // Kroppen läses därför direkt efter headern, innanför sektionens egen timeout, och timern rensas
 // när sektionen är klar — annars hinner den brinna medan man väntar in en långsam granne.
@@ -92,6 +88,7 @@ const EMPTY_SUMMARY: CrmOverviewSummary = {
   openWorkOrders: 0, openOrderValue: 0, workOrdersToInvoice: 0, toInvoiceOrderValue: 0,
   callsLast7Days: 0, followUpCalls: 0, standaloneCalls: 0,
   openTasks: 0, overdueTasks: 0, todayTasks: 0,
+  lastVisibleCallAt: null, lastOwnCallAt: null,
   weekTeam: { calls: 0, quotes: 0, quoteValue: 0, orderCount: 0, orderValue: 0, invoicedValue: 0 },
   weekByUser: {},
   truncated: [],
@@ -106,7 +103,7 @@ export type OverviewFigures = CrmOverviewSummary & {
 // Översiktens hämtningar och tillstånd. Korten får var sin sektion härifrån, och readSection ovan
 // är skälet till att en sektion som fallerar bara släcker sin egen yta.
 export function useCrmOverviewData() {
-  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, quotes: [], scoreboard: null, workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -137,13 +134,6 @@ export function useCrmOverviewData() {
 
       const url: Record<SectionKey, string> = {
         summary: `/api/crm/overview?${summaryQuery}`,
-        // Båda hämtningarna gick förut utan parametrar och landade på domänens tak — 50 samtal
-        // och 100 uppgifter för att rendera fem rader var. Sorteringen sker i Postgres FÖRE
-        // kapningen, så de fem var alltid rätt fem; det här är nyttolast, inte korrekthet.
-        calls: `/api/crm/calls?limit=${RECENT_ITEM_LIMIT}`,
-        // status=open serverfiltrerar det kortet ändå bara visar. Utan den hämtades även
-        // avklarade uppgifter hem för att kastas av ett klientfilter.
-        tasks: `/api/crm/tasks?status=open&limit=${RECENT_ITEM_LIMIT}`,
         // These two lists are now only the cards' five rows. Both sorts have to be asked for:
         // the offer list's default order leads with drafts and lost quotes, the order board's
         // with the earliest installation date — so a brand new order is the table's last row.
@@ -173,8 +163,6 @@ export function useCrmOverviewData() {
       const keep = mode === 'refresh';
       setState((prev) => ({
         summary: summaryData ?? (keep ? prev.summary : null),
-        calls: section.calls.ok ? itemsOf<CallItem>(section.calls) : keep ? prev.calls : [],
-        tasks: section.tasks.ok ? itemsOf<TaskItem>(section.tasks) : keep ? prev.tasks : [],
         quotes: section.quotes.ok ? itemsOf<QuoteItem>(section.quotes) : keep ? prev.quotes : [],
         scoreboard: scoreboardData ?? (keep ? prev.scoreboard : null),
         workOrders: section.workOrders.ok ? itemsOf<WorkOrderItem>(section.workOrders) : keep ? prev.workOrders : [],
@@ -188,7 +176,7 @@ export function useCrmOverviewData() {
       if (loadId !== loadIdRef.current) return;
       setState((prev) => mode === 'refresh'
         ? { ...prev, failed: [...SECTION_ORDER] }
-        : { summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [...SECTION_ORDER] });
+        : { summary: null, quotes: [], scoreboard: null, workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
       if (loadId === loadIdRef.current) {
         setLoading(false);
@@ -219,8 +207,8 @@ export function useCrmOverviewData() {
   // Uppdatera ligger förra omgångens innehåll kvar, och då är synligt-men-inte-uppdaterat bättre
   // än en felruta där det nyss stod fem rader. Banderollen uppe säger ändå vad som inte kom in.
   const blank = (key: SectionKey, count: number) => failed(key) && count === 0;
-  // Summeringen föder varenda siffra på sidan — nyckeltalen, statusbilden, fokusraderna och
-  // topplistans utfall. Fallerar den är EMPTY_SUMMARY:s nollor inte "noll" utan "vi vet inte".
+  // Summeringen föder nyckeltalen och Att agera på (tavlan och topplistan har sin egen hämtning).
+  // Fallerar den är EMPTY_SUMMARY:s nollor inte "noll" utan "vi vet inte".
   const summaryFailed = failed('summary') && state.summary == null;
   // Tavlan föder målraderna och listan per säljare. Fallerar den är en tom lista "vi vet inte",
   // inte "inga veckomål satta".

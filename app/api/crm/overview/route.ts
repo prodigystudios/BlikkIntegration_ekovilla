@@ -63,7 +63,7 @@ export async function GET(req: Request) {
     // Session client on purpose: RLS decides what the reader may count, exactly as it did when the
     // page counted list rows. The task figures are personal precisely because of that policy.
     const supabase = createSessionClient();
-    const summary = await fetchCrmOverviewSummary(supabase, window);
+    const summary = await fetchCrmOverviewSummary(supabase, window, crmUser.currentUser.id);
 
     return ok({ summary });
   } catch (e: any) {

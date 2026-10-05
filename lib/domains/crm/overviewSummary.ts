@@ -103,6 +103,14 @@ export type CrmOverviewSummary = {
   overdueTasks: number;
   todayTasks: number;
   /**
+   * Senaste samtalet läsaren SER, oavsett ålder — RLS ger admin allas, andra sina egna plus
+   * kollegors på egna prospekt. Null = inget synligt samtal alls. Avgör tillsammans med
+   * callsLast7Days om samtalsloggen legat stilla (staleCalls på översikten).
+   */
+  lastVisibleCallAt: string | null;
+  /** Läsarens EGET senaste samtal, oavsett ålder. Null = har aldrig loggat ett. */
+  lastOwnCallAt: string | null;
+  /**
    * The whole team's actuals for the CURRENT WEEK — the window the weekly targets are set in, and
    * the same window the leaderboard uses per seller. The two must be able to reconcile: a team
    * figure over a rolling 7 days could not equal the sum of per-seller figures over the week, and
@@ -158,6 +166,8 @@ export type CrmOverviewRows = {
   invoiceRoundWindow: InvoiceRoundRow[];
   callWindow: CallWindowRow[];
   openTasks: TaskDueRow[];
+  lastVisibleCallAt: string | null;
+  lastOwnCallAt: string | null;
   counts: {
     pipelineProspects: number;
     newProspects: number;
@@ -299,6 +309,9 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
     overdueTasks: openTaskDays.filter((day) => day != null && day < window.today).length,
     todayTasks: openTaskDays.filter((day) => day === window.today).length,
 
+    lastVisibleCallAt: rows.lastVisibleCallAt,
+    lastOwnCallAt: rows.lastOwnCallAt,
+
     weekTeam,
     weekByUser,
     truncated: rows.truncated,
@@ -314,6 +327,13 @@ async function readRows<T>(name: string, query: RowQuery<T>, truncated: string[]
   const rows = data ?? [];
   if (rows.length >= ROW_CAP) truncated.push(name);
   return rows;
+}
+
+// Det senaste radhuvudet ur en sortering med limit(1). Inget tak att slå i, så inget i `truncated`.
+async function readLatestCallAt(name: string, query: RowQuery<{ call_at: string }>): Promise<string | null> {
+  const { data, error } = await query;
+  if (error) throw new Error(`${name}: ${error.message}`);
+  return data?.[0]?.call_at ?? null;
 }
 
 async function readCount(name: string, query: CountableQuery): Promise<number> {
@@ -374,6 +394,8 @@ export async function fetchWeekActualRows(
 export async function fetchCrmOverviewSummary(
   supabase: SupabaseClient,
   window: CrmOverviewWindow,
+  /** Läsaren — för hens eget senaste samtal. */
+  userId: string,
 ): Promise<CrmOverviewSummary> {
   const truncated: string[] = [];
   const prospectCount = (build: (q: any) => any, name: string) =>
@@ -384,6 +406,8 @@ export async function fetchCrmOverviewSummary(
     quoteStocks,
     orderStocks,
     openTasks,
+    lastVisibleCallAt,
+    lastOwnCallAt,
     pipelineProspects,
     newProspects,
     quotedProspects,
@@ -411,6 +435,21 @@ export async function fetchCrmOverviewSummary(
       .eq('kind', 'note')
       .eq('status', 'active')
       .limit(ROW_CAP), truncated),
+    // Hur länge sedan det senaste samtalet var, oavsett ålder: fönstret ovan räcker inte, för
+    // frågan ställs just när det är tomt. Det egna går på crm_calls_user_call_at_idx. Låg förut i
+    // webbläsaren, ur översiktens fem senaste samtal — med kundernas kontaktuppgifter i köpet, en
+    // blind fläck när de fem var kollegors, och en tyst nolla när listan inte gick att läsa.
+    readLatestCallAt('last_visible_call', supabase
+      .from('crm_calls')
+      .select('call_at')
+      .order('call_at', { ascending: false })
+      .limit(1)),
+    readLatestCallAt('last_own_call', supabase
+      .from('crm_calls')
+      .select('call_at')
+      .eq('user_id', userId)
+      .order('call_at', { ascending: false })
+      .limit(1)),
     prospectCount((q) => q.in('status', PIPELINE_PROSPECT_STATUSES), 'prospects_pipeline'),
     prospectCount((q) => q.eq('status', 'new'), 'prospects_new'),
     prospectCount((q) => q.eq('status', 'quoted'), 'prospects_quoted'),
@@ -423,6 +462,8 @@ export async function fetchCrmOverviewSummary(
       quoteStocks,
       orderStocks,
       openTasks,
+      lastVisibleCallAt,
+      lastOwnCallAt,
       counts: { pipelineProspects, newProspects, quotedProspects, qualifiedProspects },
       truncated,
     },

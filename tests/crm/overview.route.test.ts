@@ -83,7 +83,13 @@ describe('GET /api/crm/overview — fönstret', () => {
     await GET(req(WINDOW));
     expect(mockFetch).toHaveBeenCalledWith(expect.anything(), {
       today: '2026-08-17', since: '2026-08-10', weekStart: '2026-08-17', weekEnd: '2026-08-24',
-    });
+    }, expect.any(String));
+  });
+
+  // Läsarens eget senaste samtal frågas på läsarens id — ur sessionen, aldrig ur frågesträngen.
+  it('skickar med den inloggades id för det egna senaste samtalet', async () => {
+    await GET(req(`${WINDOW}&user_id=någon-annan`));
+    expect(mockFetch).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'user-sales-1');
   });
 
   it('svarar 500 med kod när räkningen fallerar', async () => {
