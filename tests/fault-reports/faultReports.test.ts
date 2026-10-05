@@ -144,6 +144,8 @@ describe('buildFaultReportEmail', () => {
   it('includes category, reporter and a deep link when a base url is given', () => {
     const { subject, html, text } = buildFaultReportEmail(report, 'https://app.example.se/');
     expect(subject).toContain('Isoleringsmaskin');
+    expect(text).toContain('Gäller: Isoleringsmaskin');
+    expect(html).toContain('<strong>Gäller:</strong> Isoleringsmaskin');
     expect(text).toContain('Bertil');
     expect(text).toContain('Läcker olja');
     expect(html).toContain('https://app.example.se/felanmalan?arende=r9&scope=inbox');
@@ -184,7 +186,7 @@ describe('fault_reports_category_chk', () => {
       }
     }
     if (!latest) throw new Error('fault_reports_category_chk hittades inte i supabase/migrations');
-    return [...latest.matchAll(/'([a-z_]+)'/g)].map((v) => v[1]).sort();
+    return [...latest.matchAll(/'([^']+)'/g)].map((v) => v[1]).sort();
   }
 
   it('tillåter exakt de kategorier som koden erbjuder', () => {

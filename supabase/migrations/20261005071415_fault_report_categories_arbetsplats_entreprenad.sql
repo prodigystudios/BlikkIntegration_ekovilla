@@ -16,3 +16,5 @@ alter table public.fault_reports
   add constraint fault_reports_category_chk check (
     category in ('truck', 'lager', 'lastbil', 'isoleringsmaskin', 'maskiner', 'arbetsplats', 'entreprenad')
   );
+
+reset lock_timeout;

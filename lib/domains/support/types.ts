@@ -1,8 +1,8 @@
 // Appärenden — domäntyper. DB lagrar stabila engelska nycklar (text + CHECK); de svenska
 // etiketterna bor här så listan, formuläret och notiserna renderar samma ord.
 //
-// Skilt från lib/domains/fault-reports/* med flit: felanmälan gäller företagets utrustning och
-// fan-outar till flera arbetsledare, det här gäller appen och går till utvecklaren. Se
+// Skilt från lib/domains/fault-reports/* med flit: felanmälan gäller verksamheten (utrustning, arbetsplats,
+// entreprenad) och fan-outar till flera arbetsledare, det här gäller appen och går till utvecklaren. Se
 // supabase/archive/sql/20260812_app_tickets.sql för resonemanget.
 
 export const TICKET_KINDS = ['bug', 'idea'] as const;
