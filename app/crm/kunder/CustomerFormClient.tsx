@@ -12,6 +12,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import type { AccountManagerOption } from './accountManagerDefault';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
@@ -188,9 +189,9 @@ function AddressColumn({
   );
 }
 
-type Props = { fortnoxConnected: boolean };
+type Props = { fortnoxConnected: boolean; defaultAccountManager?: AccountManagerOption | null };
 
-export default function CustomerFormClient({ fortnoxConnected }: Props) {
+export default function CustomerFormClient({ fortnoxConnected, defaultAccountManager }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
@@ -205,7 +206,8 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const cancelTo = returnTo
     ? `${returnTo}${returnTo.includes('?') ? '&' : '?'}restore_quote=1`
     : '/crm/kunder';
-  const [draft, setDraft] = useState<Draft>(initial);
+  // Kundansvarig förvald till säljaren som skapar kunden (se accountManagerDefault.ts).
+  const [draft, setDraft] = useState<Draft>(() => ({ ...initial, account_manager_id: defaultAccountManager?.id ?? '' }));
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);
   // The invoice address defaults to the visit address + contact email so the common
@@ -794,6 +796,13 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
             <p className={cn('mb-3', crm.sectionTitle)}>Kundansvarig</p>
             <Select value={draft.account_manager_id} onChange={(e) => set('account_manager_id', e.target.value)}>
               <option value="">— Ingen —</option>
+              {/* Förvalet finns från första renderingen, katalogen kommer efter. Utan ett eget
+                  alternativ hade rullistan visat "Ingen" medan formuläret bar ett id. */}
+              {draft.account_manager_id && !sellers.some((s) => s.id === draft.account_manager_id) ? (
+                <option value={draft.account_manager_id}>
+                  {draft.account_manager_id === defaultAccountManager?.id ? defaultAccountManager.name : 'Okänd säljare'}
+                </option>
+              ) : null}
               {sellers.map((s) => (
                 <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
               ))}
