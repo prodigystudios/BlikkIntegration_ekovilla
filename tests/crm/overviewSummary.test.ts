@@ -45,6 +45,7 @@ function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
     quoteWindow: [],
     orderStocks: [],
     orderWindow: [],
+    invoiceRoundWindow: [],
     callWindow: [],
     openTasks: [],
     counts: { pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0 },
@@ -346,5 +347,45 @@ describe('composeCrmOverviewSummary — ex moms', () => {
       quoteStocks: [{ status: 'draft', amount: 125_000, vat_percent: 25 }],
     }), WINDOW);
     expect(summary.activeQuoteValue).toBe(100_000);
+  });
+});
+
+// Topplistan räknade bara ordrar med status `invoiced`. En säljare vars order delfakturerades i
+// veckan fick 0 kr i Fakturerat, och veckan sista rundan gick fick säljaren hela ordervärdet — samma
+// fel som i rapporten, och rättat med samma funktion (invoicedRevenue).
+describe('composeCrmOverviewSummary — delfakturering räknas per runda', () => {
+  const partial = { status: 'partially_invoiced', assigned_to: ANNA };
+
+  it('räknar veckans delfakturarunda för laget och för säljaren', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderWindow: [],
+      invoiceRoundWindow: [{ amount: '30000.00', created_at: '2026-08-18T09:00:00+00:00', work_order: partial }],
+    }), WINDOW);
+
+    expect(summary.weekTeam.invoicedValue).toBe(30_000);
+    expect(summary.weekByUser[ANNA].invoicedValue).toBe(30_000);
+  });
+
+  it('räknar bara sista rundan veckan ordern slutfakturerades, inte hela ordervärdet', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderWindow: [
+        { vat_percent: 0, status: 'invoiced', amount: 50_000, created_at: '2026-06-01T08:00:00+00:00', fortnox_invoiced_at: '2026-08-19T09:00:00+00:00', partial_invoicing_started_at: '2026-08-05T09:00:00+00:00', assigned_to: ANNA },
+      ],
+      invoiceRoundWindow: [{ amount: 20_000, created_at: '2026-08-19T09:00:00+00:00', work_order: { status: 'invoiced', assigned_to: ANNA } }],
+    }), WINDOW);
+
+    expect(summary.weekTeam.invoicedValue).toBe(20_000);
+    expect(summary.weekByUser[ANNA].invoicedValue).toBe(20_000);
+  });
+
+  it('håller en runda utanför veckan utanför', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      invoiceRoundWindow: [
+        { amount: 1_000, created_at: '2026-08-16T23:30:00+00:00', work_order: partial }, // söndagen före
+        { amount: 2_000, created_at: '2026-08-24T00:30:00+00:00', work_order: partial }, // nästa måndag
+      ],
+    }), WINDOW);
+
+    expect(summary.weekTeam.invoicedValue).toBe(0);
   });
 });

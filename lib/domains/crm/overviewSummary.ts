@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { netAmount, type NetAmountRow } from './pricing';
+import { invoicedRevenue, type InvoiceRoundRow } from './invoicedRevenue';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
 
 // ── The CRM overview's read model ──
@@ -123,6 +124,8 @@ export type OrderWindowRow = NetAmountRow & {
   status: string;
   created_at: string;
   fortnox_invoiced_at: string | null;
+  /** Satt = ordern faktureras i rundor, som räknas i stället för ordern — se invoicedRevenue. */
+  partial_invoicing_started_at?: string | null;
   assigned_to: string | null;
 };
 export type CallWindowRow = {
@@ -139,6 +142,8 @@ export type CrmOverviewRows = {
   quoteWindow: QuoteWindowRow[];
   orderStocks: OrderStockRow[];
   orderWindow: OrderWindowRow[];
+  /** Delfakturarundor från veckans början, med sin order inbäddad. */
+  invoiceRoundWindow: InvoiceRoundRow[];
   callWindow: CallWindowRow[];
   openTasks: TaskDueRow[];
   counts: {
@@ -222,8 +227,15 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
     if (!isDeadWorkOrder(order.status) && inWindow(order.created_at, window.weekStart, window.weekEnd)) {
       addWeek(order.assigned_to, { orderCount: 1, orderValue: netAmount(order) });
     }
-    if (order.status === 'invoiced' && inWindow(order.fortnox_invoiced_at, window.weekStart, window.weekEnd)) {
-      addWeek(order.assigned_to, { invoicedValue: netAmount(order) });
+  }
+  // Fakturerat räknas per FAKTURA, samma funktion som rapporteringen: en delfakturerad order bidrar
+  // med varje runda den vecka rundan gick ut, och inte med hela ordervärdet den vecka sista gick.
+  // Ingen created_at-reserv för en order utan fakturastämpel, till skillnad från rapporten — se testet
+  // "kräver både statusen och stämpeln".
+  const invoices = invoicedRevenue(rows.orderWindow, rows.invoiceRoundWindow, (order) => order.fortnox_invoiced_at);
+  for (const invoice of invoices) {
+    if (inWindow(invoice.at, window.weekStart, window.weekEnd)) {
+      addWeek(invoice.assigned_to, { invoicedValue: invoice.amount });
     }
   }
 
@@ -301,6 +313,7 @@ export async function fetchCrmOverviewSummary(
     quoteWindow,
     orderStocks,
     orderWindow,
+    invoiceRoundWindow,
     callWindow,
     openTasks,
     pipelineProspects,
@@ -329,8 +342,15 @@ export async function fetchCrmOverviewSummary(
     // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
     readRows<OrderWindowRow>('order_window', supabase
       .from('crm_work_orders')
-      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, assigned_to')
+      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
       .or(`created_at.gte.${window.weekStart},fortnox_invoiced_at.gte.${window.weekStart}`)
+      .limit(ROW_CAP), truncated),
+    // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
+    // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
+    readRows<InvoiceRoundRow>('invoice_round_window', supabase
+      .from('crm_work_order_invoices')
+      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
+      .gte('created_at', window.weekStart)
       .limit(ROW_CAP), truncated),
     // The widest window on the page: the calls metric card is explicitly the rolling 7 days, and the
     // week is a subset of it, so one read serves both. outcome + prospect_id come along because the
@@ -359,6 +379,7 @@ export async function fetchCrmOverviewSummary(
       quoteWindow,
       orderStocks,
       orderWindow,
+      invoiceRoundWindow,
       callWindow,
       openTasks,
       counts: { pipelineProspects, newProspects, quotedProspects, qualifiedProspects },

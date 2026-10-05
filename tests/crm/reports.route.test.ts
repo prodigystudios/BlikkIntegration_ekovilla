@@ -20,7 +20,7 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
 vi.mock('@/lib/domains/crm/reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/reports')>();
-  return { ...actual, fetchReportData: vi.fn(async () => ({ quotes: [], orders: [], calls: [], sellers: [] })) };
+  return { ...actual, fetchReportData: vi.fn(async () => ({ quotes: [], orders: [], invoiceRounds: [], calls: [], sellers: [] })) };
 });
 vi.mock('@/lib/domains/planning/productionLoader', () => ({
   fetchProductionData: vi.fn(async () => ({ data: { reports: [], segments: [], trucks: [] }, error: null })),

@@ -8,8 +8,10 @@ import {
   buildFunnel,
   buildPerCustomer,
   composeSalesReport,
+  buildPeriodTotals,
   type ReportQuoteRow,
   type ReportOrderRow,
+  type ReportInvoiceRoundRow,
   type ReportCallRow,
   type ReportSellerRow,
 } from '@/lib/domains/crm/reports';
@@ -43,7 +45,7 @@ const sellers: ReportSellerRow[] = [
 // Every fixture order above is both created and invoiced inside this range, so the split
 // leaves the original expectations intact — the new behaviour is exercised separately below.
 const RANGE = { from: '2026-01-01', to: '2026-02-28' };
-const split = partitionOrders(orders, RANGE);
+const split = partitionOrders(orders, RANGE, []);
 
 describe('monthsInRange', () => {
   it('lists inclusive months across a year boundary', () => {
@@ -56,7 +58,7 @@ describe('monthsInRange', () => {
 
 describe('buildSalesOverTime', () => {
   it('buckets quote/order/invoiced value by month', () => {
-    const result = buildSalesOverTime(quotes, split.created, split.invoiced, ['2026-01', '2026-02']);
+    const result = buildSalesOverTime(quotes, split.created, split.revenue, ['2026-01', '2026-02']);
     expect(result).toEqual([
       { period: '2026-01', quoteValue: 3000, orderValue: 1000, invoicedValue: 1000 },
       { period: '2026-02', quoteValue: 500, orderValue: 4500, invoicedValue: 1500 },
@@ -70,8 +72,8 @@ describe('buildSalesOverTime', () => {
     const crossMonth: ReportOrderRow[] = [
       { vat_percent: 0, amount: 2000, status: 'invoiced', created_at: '2026-01-30T10:00:00Z', fortnox_invoiced_at: '2026-02-04T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
     ];
-    const crossSplit = partitionOrders(crossMonth, RANGE);
-    const result = buildSalesOverTime([], crossSplit.created, crossSplit.invoiced, ['2026-01', '2026-02']);
+    const crossSplit = partitionOrders(crossMonth, RANGE, []);
+    const result = buildSalesOverTime([], crossSplit.created, crossSplit.revenue, ['2026-01', '2026-02']);
     expect(result).toEqual([
       { period: '2026-01', quoteValue: 0, orderValue: 2000, invoicedValue: 0 },
       { period: '2026-02', quoteValue: 0, orderValue: 0, invoicedValue: 2000 },
@@ -81,14 +83,14 @@ describe('buildSalesOverTime', () => {
 
 describe('buildPerSeller', () => {
   it('aggregates calls, quotes and order value per seller', () => {
-    const rows = buildPerSeller(quotes, split.created, split.invoiced, calls, sellers);
+    const rows = buildPerSeller(quotes, split.created, split.revenue, calls, sellers);
     const anna = rows.find((r) => r.userId === 'u1')!;
     const bjorn = rows.find((r) => r.userId === 'u2')!;
     expect(anna).toMatchObject({ userName: 'Anna', calls: 2, quotes: 2, quoteValue: 1500, wonValue: 1000, orders: 2, orderValue: 2500, invoicedValue: 2500 });
     expect(bjorn).toMatchObject({ userName: 'Björn', calls: 1, quotes: 1, quoteValue: 2000, wonValue: 0, orders: 1, orderValue: 3000, invoicedValue: 0 });
   });
   it('sorts by order value descending', () => {
-    const rows = buildPerSeller(quotes, split.created, split.invoiced, calls, sellers);
+    const rows = buildPerSeller(quotes, split.created, split.revenue, calls, sellers);
     expect(rows[0].userId).toBe('u2'); // 3000 > 2500
   });
 });
@@ -105,7 +107,7 @@ describe('buildFunnel', () => {
 
 describe('buildPerCustomer', () => {
   it('aggregates by customer and ranks on total activity in the period', () => {
-    const rows = buildPerCustomer(split.created, split.invoiced);
+    const rows = buildPerCustomer(split.created, split.revenue);
     // Ordered on order value + invoiced value, so Kund A (2500 + 2500) outranks Kund B
     // (3000 + 0). Ranking on order value alone would bury customers whose activity in the
     // period was an invoice against an order placed earlier.
@@ -120,7 +122,7 @@ describe('buildPerCustomer', () => {
 
 describe('composeSalesReport', () => {
   it('assembles all four report sections', () => {
-    const report = composeSalesReport({ quotes, orders, calls, sellers }, { from: '2026-01-01', to: '2026-02-28' });
+    const report = composeSalesReport({ quotes, orders, invoiceRounds: [], calls, sellers }, { from: '2026-01-01', to: '2026-02-28' });
     expect(report.salesOverTime).toHaveLength(2);
     expect(report.perSeller).toHaveLength(2);
     expect(report.funnel.quotes.count).toBe(3);
@@ -146,7 +148,7 @@ describe('orders billed in-range but created earlier', () => {
     vat_percent: 0, amount: 1000, status: 'in_progress', created_at: '2026-02-03T10:00:00Z',
     fortnox_invoiced_at: null, assigned_to: 'u2', client_name: 'Kund D',
   };
-  const febSplit = partitionOrders([earlierOrder, febOrder], FEB);
+  const febSplit = partitionOrders([earlierOrder, febOrder], FEB, []);
 
   it('counts it as invoiced but not as order value', () => {
     expect(febSplit.invoiced).toEqual([earlierOrder]);
@@ -154,12 +156,12 @@ describe('orders billed in-range but created earlier', () => {
   });
 
   it('puts its revenue in the invoiced line and leaves order value alone', () => {
-    const result = buildSalesOverTime([], febSplit.created, febSplit.invoiced, ['2026-02']);
+    const result = buildSalesOverTime([], febSplit.created, febSplit.revenue, ['2026-02']);
     expect(result).toEqual([{ period: '2026-02', quoteValue: 0, orderValue: 1000, invoicedValue: 9000 }]);
   });
 
   it('credits the seller with the revenue without inflating their order value', () => {
-    const rows = buildPerSeller([], febSplit.created, febSplit.invoiced, [], sellers);
+    const rows = buildPerSeller([], febSplit.created, febSplit.revenue, [], sellers);
     expect(rows.find((r) => r.userId === 'u1')).toMatchObject({ orderValue: 0, invoicedValue: 9000 });
     expect(rows.find((r) => r.userId === 'u2')).toMatchObject({ orderValue: 1000, invoicedValue: 0 });
   });
@@ -167,13 +169,13 @@ describe('orders billed in-range but created earlier', () => {
   // Antalet order hör ihop med ordervärdet: en order som fakturerades i perioden men skapades
   // tidigare får inte räknas, annars visar kolumnen ett antal som värdet bredvid inte täcker.
   it('counts only the orders created in the range, matching the order value', () => {
-    const rows = buildPerSeller([], febSplit.created, febSplit.invoiced, [], sellers);
+    const rows = buildPerSeller([], febSplit.created, febSplit.revenue, [], sellers);
     expect(rows.find((r) => r.userId === 'u1')).toMatchObject({ orders: 0, orderValue: 0 });
     expect(rows.find((r) => r.userId === 'u2')).toMatchObject({ orders: 1, orderValue: 1000 });
   });
 
   it('lists the customer with the money that moved and no order of its own', () => {
-    const rows = buildPerCustomer(febSplit.created, febSplit.invoiced);
+    const rows = buildPerCustomer(febSplit.created, febSplit.revenue);
     expect(rows.find((r) => r.customer === 'Kund C')).toEqual({ customer: 'Kund C', orderValue: 0, invoicedValue: 9000, orderCount: 0 });
   });
 
@@ -184,7 +186,7 @@ describe('orders billed in-range but created earlier', () => {
       vat_percent: 0, amount: 1000, status: 'in_progress', created_at: '2026-02-05T10:00:00Z',
       fortnox_invoiced_at: null, assigned_to: null, client_name: `Kund ${i}`,
     }));
-    const rows = buildPerCustomer(tenOrderingCustomers, [earlierOrder]);
+    const rows = buildPerCustomer(tenOrderingCustomers, febSplit.revenue);
     expect(rows).toHaveLength(10);
     expect(rows[0]).toMatchObject({ customer: 'Kund C', invoicedValue: 9000 });
   });
@@ -193,9 +195,9 @@ describe('orders billed in-range but created earlier', () => {
   // dropped or double-counted a row. (Above the cut they legitimately differ: the table is
   // a top list, and rows 11+ are simply not shown.)
   it('accounts for every invoiced krona the chart shows when nothing is truncated', () => {
-    const rows = buildPerCustomer(febSplit.created, febSplit.invoiced);
+    const rows = buildPerCustomer(febSplit.created, febSplit.revenue);
     const tableTotal = rows.reduce((t, r) => t + r.invoicedValue, 0);
-    const chartTotal = buildSalesOverTime([], febSplit.created, febSplit.invoiced, ['2026-02'])[0].invoicedValue;
+    const chartTotal = buildSalesOverTime([], febSplit.created, febSplit.revenue, ['2026-02'])[0].invoicedValue;
     expect(rows.length).toBeLessThan(10);
     expect(tableTotal).toBe(chartTotal);
   });
@@ -210,7 +212,7 @@ describe('orders billed in-range but created earlier', () => {
   });
 
   it('survives the whole composition end to end', () => {
-    const report = composeSalesReport({ quotes: [], orders: [earlierOrder, febOrder], calls: [], sellers }, FEB);
+    const report = composeSalesReport({ quotes: [], orders: [earlierOrder, febOrder], invoiceRounds: [], calls: [], sellers }, FEB);
     expect(report.salesOverTime[0].invoicedValue).toBe(9000);
     expect(report.funnel.invoiced.value).toBe(0);
   });
@@ -236,7 +238,7 @@ describe('partitionOrders', () => {
       amount: 500, status: 'in_progress', created_at: '2025-12-01T10:00:00Z',
       fortnox_invoiced_at: '2026-01-10T10:00:00Z', assigned_to: null, client_name: null,
     };
-    expect(partitionOrders([odd], RANGE_JAN).invoiced).toEqual([]);
+    expect(partitionOrders([odd], RANGE_JAN, []).invoiced).toEqual([]);
   });
 
   it('includes both ends of the range inclusively', () => {
@@ -244,7 +246,7 @@ describe('partitionOrders', () => {
       { vat_percent: 0, amount: 1, status: 'invoiced', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
       { vat_percent: 0, amount: 2, status: 'invoiced', created_at: '2026-01-31T23:59:00Z', fortnox_invoiced_at: null, assigned_to: null, client_name: null },
     ];
-    const result = partitionOrders(edges, RANGE_JAN);
+    const result = partitionOrders(edges, RANGE_JAN, []);
     expect(result.created).toHaveLength(2);
     expect(result.invoiced).toHaveLength(2);
   });
@@ -254,7 +256,7 @@ describe('partitionOrders', () => {
       amount: 700, status: 'invoiced', created_at: '2025-11-01T10:00:00Z',
       fortnox_invoiced_at: '2025-12-01T10:00:00Z', assigned_to: null, client_name: null,
     };
-    const result = partitionOrders([outside], RANGE_JAN);
+    const result = partitionOrders([outside], RANGE_JAN, []);
     expect(result.created).toEqual([]);
     expect(result.invoiced).toEqual([]);
   });
@@ -279,17 +281,17 @@ describe('rapporten redovisar ex moms', () => {
     { amount: 100000, vat_percent: 0, pricing_summary: { subtotal: 100000, total: 100000 }, status: 'won', quote_date: '2026-03-02', assigned_to: 'u2', customer_name: 'Byggbolaget' },
   ];
   const momsRange = { from: '2026-03-01', to: '2026-03-31' };
-  const momsSplit = partitionOrders([privat, byggmoms], momsRange);
+  const momsSplit = partitionOrders([privat, byggmoms], momsRange, []);
 
   it('summerar månadsvärdena netto', () => {
-    const [march] = buildSalesOverTime(momsQuotes, momsSplit.created, momsSplit.invoiced, ['2026-03']);
+    const [march] = buildSalesOverTime(momsQuotes, momsSplit.created, momsSplit.revenue, ['2026-03']);
     expect(march.quoteValue).toBe(200000);
     expect(march.orderValue).toBe(200000);
     expect(march.invoicedValue).toBe(200000);
   });
 
   it('rankar två säljare med samma netto lika, oavsett kundens momsläge', () => {
-    const rows = buildPerSeller(momsQuotes, momsSplit.created, momsSplit.invoiced, [], [
+    const rows = buildPerSeller(momsQuotes, momsSplit.created, momsSplit.revenue, [], [
       { id: 'u1', full_name: 'Anna' }, { id: 'u2', full_name: 'Björn' },
     ]);
     const anna = rows.find((r) => r.userId === 'u1')!;
@@ -310,7 +312,7 @@ describe('rapporten redovisar ex moms', () => {
   });
 
   it('håller kundtabellen netto', () => {
-    const rows = buildPerCustomer(momsSplit.created, momsSplit.invoiced);
+    const rows = buildPerCustomer(momsSplit.created, momsSplit.revenue);
     const p = rows.find((r) => r.customer === 'Privatkund')!;
     const b = rows.find((r) => r.customer === 'Byggbolaget')!;
     expect(p.orderValue).toBe(100000);
@@ -336,19 +338,19 @@ describe('avbrutna order räknas inte som omsättning', () => {
     vat_percent: 0, amount: 2000, status: 'cancelled', created_at: '2026-04-11T10:00:00Z',
     fortnox_invoiced_at: null, assigned_to: 'u1', client_name: 'Kund B',
   };
-  const split = partitionOrders([levande, avbruten], RANGE);
+  const split = partitionOrders([levande, avbruten], RANGE, []);
 
   it('plockas bort redan i partitioneringen', () => {
     expect(split.created).toEqual([levande]);
   });
 
   it('syns inte i ordervärdet över tid', () => {
-    const [april] = buildSalesOverTime([], split.created, split.invoiced, ['2026-04']);
+    const [april] = buildSalesOverTime([], split.created, split.revenue, ['2026-04']);
     expect(april.orderValue).toBe(5000);
   });
 
   it('räknas varken som värde eller antal hos säljaren', () => {
-    const rows = buildPerSeller([], split.created, split.invoiced, [], [{ id: 'u1', full_name: 'Anna' }]);
+    const rows = buildPerSeller([], split.created, split.revenue, [], [{ id: 'u1', full_name: 'Anna' }]);
     expect(rows[0]).toMatchObject({ orders: 1, orderValue: 5000 });
   });
 
@@ -357,12 +359,12 @@ describe('avbrutna order räknas inte som omsättning', () => {
   });
 
   it('försvinner ur kundtabellen i stället för att stå där med ett värde', () => {
-    const rows = buildPerCustomer(split.created, split.invoiced);
+    const rows = buildPerCustomer(split.created, split.revenue);
     expect(rows.map((r) => r.customer)).toEqual(['Kund A']);
   });
 
   it('överlever hela kompositionen', () => {
-    const report = composeSalesReport({ quotes: [], orders: [levande, avbruten], calls: [], sellers: [] }, RANGE);
+    const report = composeSalesReport({ quotes: [], orders: [levande, avbruten], invoiceRounds: [], calls: [], sellers: [] }, RANGE);
     expect(report.salesOverTime[0].orderValue).toBe(5000);
     expect(report.funnel.orders.count).toBe(1);
     expect(report.perCustomer).toHaveLength(1);
@@ -374,6 +376,75 @@ describe('avbrutna order räknas inte som omsättning', () => {
         vat_percent: 0, amount: 100, status, created_at: `2026-04-0${i + 1}T10:00:00Z`,
         fortnox_invoiced_at: null, assigned_to: null, client_name: `Kund ${i}`,
       }));
-    expect(partitionOrders(alla, RANGE).created).toHaveLength(7);
+    expect(partitionOrders(alla, RANGE, []).created).toHaveLength(7);
+  });
+});
+
+// ── Delfakturerade ordrar ──
+//
+// Rapporten räknade bara ordrar med status `invoiced`. En order mitt i delfaktureringen gav därför
+// 0 kr i Fakturerat, och när sista rundan gick landade HELA ordervärdet i sista rundans månad — en
+// order delfakturerad med 30 000 kr i augusti och 20 000 kr i september visade 0 kr i augusti och
+// 50 000 kr i september. Nu räknas varje runda i sin egen månad.
+describe('delfakturerade ordrar räknas per runda', () => {
+  const AUG = { from: '2026-08-01', to: '2026-08-31' };
+  const SEP = { from: '2026-09-01', to: '2026-09-30' };
+  const AUG_SEP = { from: '2026-08-01', to: '2026-09-30' };
+
+  // Vunnen i juli, delfakturerad i augusti, slutfakturerad i september.
+  const closed: ReportOrderRow = {
+    id: 'wo-1', vat_percent: 0, amount: 50_000, status: 'invoiced', created_at: '2026-07-10T08:00:00Z',
+    fortnox_invoiced_at: '2026-09-12T08:00:00Z', partial_invoicing_started_at: '2026-08-14T08:00:00Z',
+    assigned_to: 'u1', client_name: 'Kund D',
+  };
+  const done = { status: 'invoiced', assigned_to: 'u1', client_name: 'Kund D' };
+  const rounds: ReportInvoiceRoundRow[] = [
+    { amount: 30_000, created_at: '2026-08-14T08:00:00Z', work_order: done },
+    { amount: '20000.00', created_at: '2026-09-12T08:00:00Z', work_order: done },
+  ];
+  // Varje period hämtar bara sina egna rundor (fetchReportData filtrerar på created_at).
+  const inRange = (range: { from: string; to: string }) => rounds.filter((r) => r.created_at.slice(0, 10) >= range.from && r.created_at.slice(0, 10) <= range.to);
+  const data = (range: { from: string; to: string }, orders: ReportOrderRow[] = [closed]) => ({ quotes: [], orders, invoiceRounds: inRange(range), calls: [], sellers });
+
+  it('visar augustirundan i augusti, fast ordern inte var färdigfakturerad då', () => {
+    // Augustis hämtning ser inte ordern alls — den skapades i juli och slutfakturerades i september.
+    const report = composeSalesReport(data(AUG, []), AUG);
+    expect(report.salesOverTime).toEqual([{ period: '2026-08', quoteValue: 0, orderValue: 0, invoicedValue: 30_000 }]);
+    expect(report.periodSummary.metrics.find((metric) => metric.key === 'invoicedValue')?.actual).toBe(30_000);
+    expect(report.perSeller.find((row) => row.userId === 'u1')?.invoicedValue).toBe(30_000);
+    expect(report.perCustomer).toEqual([{ customer: 'Kund D', orderValue: 0, invoicedValue: 30_000, orderCount: 0 }]);
+  });
+
+  it('visar bara sista rundan i september, inte hela ordervärdet', () => {
+    const report = composeSalesReport(data(SEP), SEP);
+    expect(report.salesOverTime[0].invoicedValue).toBe(20_000);
+    expect(report.perSeller.find((row) => row.userId === 'u1')?.invoicedValue).toBe(20_000);
+    expect(report.perCustomer[0].invoicedValue).toBe(20_000);
+  });
+
+  it('räknar ordern exakt en gång över hela förloppet', () => {
+    const report = composeSalesReport(data(AUG_SEP), AUG_SEP);
+    expect(report.salesOverTime.map((point) => point.invoicedValue)).toEqual([30_000, 20_000]);
+    expect(report.perSeller.find((row) => row.userId === 'u1')?.invoicedValue).toBe(50_000);
+    expect(report.perCustomer[0].invoicedValue).toBe(50_000);
+  });
+
+  it('räknar en order mitt i delfaktureringen', () => {
+    const midway: ReportOrderRow = { ...closed, status: 'partially_invoiced', fortnox_invoiced_at: null };
+    const midwayRound: ReportInvoiceRoundRow = { ...rounds[0], work_order: { ...done, status: 'partially_invoiced' } };
+    const report = composeSalesReport({ quotes: [], orders: [midway], invoiceRounds: [midwayRound], calls: [], sellers }, AUG);
+    expect(report.salesOverTime[0].invoicedValue).toBe(30_000);
+  });
+
+  // Lönsamheten räknar JOBB, och jobbet är färdigt först med sista rundan. Dess population ändras
+  // alltså inte av att pengarna nu fördelas per runda.
+  it('låter lönsamheten räkna jobbet i månaden det slutfakturerades', () => {
+    expect(partitionOrders([closed], AUG, inRange(AUG)).invoiced).toEqual([]);
+    expect(partitionOrders([closed], SEP, inRange(SEP)).invoiced).toEqual([closed]);
+  });
+
+  it('räknar jämförelseperiodens huvudtal på samma sätt', () => {
+    expect(buildPeriodTotals(data(AUG, []), AUG).invoicedValue).toBe(30_000);
+    expect(buildPeriodTotals(data(SEP), SEP).invoicedValue).toBe(20_000);
   });
 });
