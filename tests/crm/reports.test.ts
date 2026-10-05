@@ -443,6 +443,18 @@ describe('delfakturerade ordrar räknas per runda', () => {
     expect(partitionOrders([closed], SEP, inRange(SEP)).invoiced).toEqual([closed]);
   });
 
+  // Hämtningen är en supermängd: en order SKAPAD i perioden följer med även om den fakturerades
+  // efter den. Dess faktura hör till fakturamånaden och får inte läcka in i perioden.
+  it('håller fakturor utanför perioden utanför, både i ett svep och per runda', () => {
+    const wonInAugBilledInOct: ReportOrderRow = {
+      vat_percent: 0, amount: 9_000, status: 'invoiced', created_at: '2026-08-03T08:00:00Z',
+      fortnox_invoiced_at: '2026-10-02T08:00:00Z', assigned_to: 'u2', client_name: 'Kund E',
+    };
+    const report = composeSalesReport({ quotes: [], orders: [wonInAugBilledInOct], invoiceRounds: rounds, calls: [], sellers }, AUG);
+    expect(report.salesOverTime[0]).toMatchObject({ orderValue: 9_000, invoicedValue: 30_000 });
+    expect(report.perSeller.find((row) => row.userId === 'u2')?.invoicedValue).toBe(0);
+  });
+
   it('räknar jämförelseperiodens huvudtal på samma sätt', () => {
     expect(buildPeriodTotals(data(AUG, []), AUG).invoicedValue).toBe(30_000);
     expect(buildPeriodTotals(data(SEP), SEP).invoicedValue).toBe(20_000);
