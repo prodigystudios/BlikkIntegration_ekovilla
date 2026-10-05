@@ -53,7 +53,7 @@ export async function GET(_req: Request, context: RouteContext) {
     if (badId) return badId;
 
     const view = await listPortalJobMessages(createSessionClient(), getSupabaseAdmin(), context.params.workOrderId);
-    if (!view) return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
+    if (!view) return routeError(404, 'portal_job_not_found', 'Ordern kom inte från partnerportalen.');
     return ok(view);
   } catch (e) {
     console.error('[portal-messages] tråden gick inte att läsa', { error: e instanceof Error ? e.message : e });
@@ -100,7 +100,7 @@ export async function POST(req: Request, context: RouteContext) {
       case 'invalid':
         return routeError(400, 'invalid_text', 'Meddelandet innehåller tecken som inte kan sparas.');
       case 'not_found':
-        return routeError(404, 'portal_job_not_found', 'Ordern kom inte från återförsäljarportalen.');
+        return routeError(404, 'portal_job_not_found', 'Ordern kom inte från partnerportalen.');
       case 'forbidden':
         return routeError(403, 'portal_reply_forbidden', 'Bara den som har ordern, eller en admin, kan svara butiken.');
       case 'conflict':

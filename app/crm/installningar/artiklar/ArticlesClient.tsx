@@ -230,7 +230,7 @@ export default function ArticlesClient({ initialArticles, fortnoxConnected, port
                     I arbetsbeskr.
                   </th>
                   {portal && (
-                    <th className="py-2 pr-3" title="Med i återförsäljarportalens prislista">
+                    <th className="py-2 pr-3" title="Med i partnerportalens prislista">
                       Portal
                     </th>
                   )}

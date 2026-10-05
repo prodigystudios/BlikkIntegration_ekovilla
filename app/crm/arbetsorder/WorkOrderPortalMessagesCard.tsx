@@ -72,7 +72,7 @@ function Message({ message, now }: { message: PortalJobMessageView; now: Date })
         {message.delivery === 'sending' ? <p className="m-0 text-xs text-slate-500">Skickas …</p> : null}
         {message.delivery === 'failed' ? (
           <p className="m-0 text-xs font-medium text-rose-700">
-            Kom inte fram till butiken. En admin kan skicka om det under Inställningar, Återförsäljarportalen, Utskick.
+            Kom inte fram till butiken. En admin kan skicka om det under Inställningar, Partnerportalen, Utskick.
           </p>
         ) : null}
       </div>
@@ -217,7 +217,7 @@ export default function WorkOrderPortalMessagesCard({ workOrderId, storeName, ca
             Syns för butiken
           </span>
         </div>
-        <p className={cn(crm.meta, 'm-0')}>Samtalet med {storeName} i återförsäljarportalen.</p>
+        <p className={cn(crm.meta, 'm-0')}>Samtalet med {storeName} i partnerportalen.</p>
       </header>
 
       {!view && !loadError ? <p className="m-0 text-sm text-slate-500">Hämtar meddelandena …</p> : null}

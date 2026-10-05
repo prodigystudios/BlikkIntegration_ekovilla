@@ -241,7 +241,7 @@ describe('arbetsordern', () => {
     expect(handoff.desired_installation_date).toBeNull();
     expect(handoff.handoff_notes).toBe(
       [
-        'Jobb från återförsäljarportalen: Norrbygg AB, offert 2026-015.',
+        'Jobb från partnerportalen: Norrbygg AB, offert 2026-015.',
         'Fastighetsbeteckning: Gävle Rönnen 3:2',
         'Vindslucka: inne',
         'Önskad period: Vecka 42',
@@ -256,7 +256,7 @@ describe('arbetsordern', () => {
     j.workplace.atticHatch = 'outside';
     expect(portalJobHandoffNotes(j)).toBe(
       [
-        'Jobb från återförsäljarportalen: Norrbygg AB, offert 2026-015.',
+        'Jobb från partnerportalen: Norrbygg AB, offert 2026-015.',
         'Vindslucka: ute',
         'Önskad period: Vecka 42',
         'Meddelande från butiken: Hunden är lös, ring först.',

@@ -139,7 +139,7 @@ const ATTIC_HATCH_LABEL: Record<PortalJob['workplace']['atticHatch'], string> = 
 export function portalJobHandoffNotes(job: PortalJob): string {
   const w = job.workplace;
   const rows = [
-    `Jobb från återförsäljarportalen: ${job.store.name.trim()}, offert ${job.quoteNumber.trim()}.`,
+    `Jobb från partnerportalen: ${job.store.name.trim()}, offert ${job.quoteNumber.trim()}.`,
     w.propertyDesignation.trim() ? `Fastighetsbeteckning: ${w.propertyDesignation.trim()}` : null,
     `Vindslucka: ${ATTIC_HATCH_LABEL[w.atticHatch]}`,
     w.desiredPeriod.trim() ? `Önskad period: ${w.desiredPeriod.trim()}` : null,

@@ -52,7 +52,7 @@ export function describeCustomerDeletionBlockers(blockers: CustomerDeletionBlock
   const parts = [
     blockers.quotes > 0 ? countNoun(blockers.quotes, 'offert', 'offerter') : null,
     blockers.workOrders > 0 ? countNoun(blockers.workOrders, 'arbetsorder', 'arbetsordrar') : null,
-    blockers.portal > 0 ? countNoun(blockers.portal, 'koppling till återförsäljarportalen', 'kopplingar till återförsäljarportalen') : null,
+    blockers.portal > 0 ? countNoun(blockers.portal, 'koppling till partnerportalen', 'kopplingar till partnerportalen') : null,
   ].filter((part): part is string => Boolean(part));
   if (parts.length === 0) return null;
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} och ${parts[parts.length - 1]}`;
