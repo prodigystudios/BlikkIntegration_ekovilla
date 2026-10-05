@@ -7,6 +7,7 @@ import type { NetAmountRow } from '@/lib/domains/crm/pricing';
 
 export type QuoteItem = NetAmountRow & QuoteNameFields & {
   id: string;
+  project_name: string | null;
   quote_number: string | null;
   fortnox_offer_number: string | null;
   currency_code: string;
@@ -16,6 +17,7 @@ export type QuoteItem = NetAmountRow & QuoteNameFields & {
 
 export type WorkOrderItem = NetAmountRow & {
   id: string;
+  project_name: string | null;
   order_number: string | null;
   fortnox_order_number: string | null;
   client_name: string;

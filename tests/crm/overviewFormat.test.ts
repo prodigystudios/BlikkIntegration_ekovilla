@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatCurrency, formatQuoteDay, stockholmDay } from '@/app/crm/components/overview/overviewFormat';
+import { formatCurrency, formatQuoteDay, stockholmDateISO } from '@/app/crm/components/overview/overviewFormat';
 
 // Översiktens formatering: Säljcoachens datum och belopp, tabellernas datum.
 
@@ -27,20 +27,20 @@ describe('formatCurrency', () => {
   });
 });
 
-describe('stockholmDay', () => {
+describe('stockholmDateISO', () => {
   // Explicita tidpunkter: zonen är Stockholms oavsett vilken zon testet körs i.
   it('ger den svenska dagen strax efter midnatt — inte UTC:s gårdag', () => {
-    expect(stockholmDay('2026-10-04T22:30:00Z')).toBe('2026-10-05'); // sommartid, UTC+2
-    expect(stockholmDay('2026-12-31T23:30:00Z')).toBe('2027-01-01'); // normaltid, UTC+1
+    expect(stockholmDateISO('2026-10-04T22:30:00Z')).toBe('2026-10-05'); // sommartid, UTC+2
+    expect(stockholmDateISO('2026-12-31T23:30:00Z')).toBe('2027-01-01'); // normaltid, UTC+1
   });
 
   it('dagen före midnatt stannar på sin dag', () => {
-    expect(stockholmDay('2026-10-04T21:30:00Z')).toBe('2026-10-04');
+    expect(stockholmDateISO('2026-10-04T21:30:00Z')).toBe('2026-10-04');
   });
 
   // Ett ogiltigt datum får Intl att kasta, och ett kast under renderingen släcker hela översikten.
   it('ett datum som inte går att läsa ger ett streck, inget kast', () => {
-    expect(stockholmDay('inte ett datum')).toBe('–');
-    expect(stockholmDay(null)).toBe('–');
+    expect(stockholmDateISO('inte ett datum')).toBe('–');
+    expect(stockholmDateISO(null)).toBe('–');
   });
 });

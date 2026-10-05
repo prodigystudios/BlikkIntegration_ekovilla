@@ -32,7 +32,7 @@ export function formatQuoteDay(day: string, today: string): string {
  * toISOString().slice(0, 10) hade gett gårdagen mellan 00 och 02 svensk tid. Ett ogiltigt datum får
  * Intl att kasta, och ett kast under renderingen släcker hela översikten.
  */
-export function stockholmDay(timestamp: string | null | undefined): string {
+export function stockholmDateISO(timestamp: string | null | undefined): string {
   if (!timestamp) return '–';
   const date = new Date(timestamp);
   return Number.isNaN(date.getTime()) ? '–' : stockholmTodayISO(date);
