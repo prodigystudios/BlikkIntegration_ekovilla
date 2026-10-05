@@ -1,106 +1,34 @@
 "use client";
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useCan } from '@/lib/UserProfileContext';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import { weeklyFromMonthly } from '@/lib/domains/crm/goals';
-import type { CrmOverviewWeekActuals } from '@/lib/domains/crm/overviewSummary';
+import type { ScoreboardSeller, WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
 import { MONEY_NOTE, formatCurrency } from './overviewFormat';
 import { OverviewLoadingRows, SectionError } from './OverviewStates';
-import type { GoalItem } from './overviewTypes';
 import type { OverviewFigures } from './useCrmOverviewData';
 
-function getGoalUser(value: GoalItem['user']) {
-  if (Array.isArray(value)) return value[0] || null;
-  return value || null;
-}
-
-function hasActiveGoalTarget(goal: GoalItem) {
-  return goal.calls_target > 0 || goal.quotes_target > 0 || Number(goal.quote_value_target) > 0
-    || goal.order_count_target > 0 || Number(goal.order_value_target) > 0;
-}
-
-export default function OverviewWeeklyGoals({ loading, summaryFailed, goalsFailed, summary, goals, weekByUser }: {
+export default function OverviewWeeklyGoals({ loading, summaryFailed, scoreboardFailed, summary, scoreboard }: {
   loading: boolean;
   summaryFailed: boolean;
-  /** Målen kunde inte läsas och det finns inget tidigare innehåll att visa. */
-  goalsFailed: boolean;
+  /** Veckotavlan kunde inte läsas och det finns inget tidigare innehåll att visa. */
+  scoreboardFailed: boolean;
   summary: OverviewFigures;
-  goals: GoalItem[];
-  weekByUser: Record<string, CrmOverviewWeekActuals> | undefined;
+  scoreboard: WeeklyScoreboard | null;
 }) {
   // Länken till målen öppnar /crm/installningar — samma nyckel som den sidan kräver.
   const canAdjustGoals = useCan('crm.settings.manage');
-  const teamLeaderboard = useMemo(() => {
-    // Goals are MONTHLY budgets; the leaderboard shows the weekly target (budget ÷ 4) against THIS
-    // WEEK's actuals. The actuals are counted per user by /api/crm/overview — summing them here
-    // meant reading them out of a capped list, which is exactly what stopped being trustworthy.
-    const week = weekByUser ?? {};
-
-    return goals
-      .filter(hasActiveGoalTarget)
-      .map((goal) => {
-        const user = getGoalUser(goal.user);
-        // Weekly targets derived from the monthly budget (÷4). Count targets are rounded for
-        // a clean "x / y" display; value targets stay exact (formatted as currency).
-        const callsTarget = Math.round(weeklyFromMonthly(goal.calls_target));
-        const quotesTarget = Math.round(weeklyFromMonthly(goal.quotes_target));
-        const quoteValueTarget = weeklyFromMonthly(goal.quote_value_target);
-        const orderCountTarget = Math.round(weeklyFromMonthly(goal.order_count_target));
-        const orderValueTarget = weeklyFromMonthly(goal.order_value_target);
-
-        const actuals = week[goal.user_id];
-        const callsDone = actuals?.calls ?? 0;
-        const quotesDone = actuals?.quotes ?? 0;
-        const quoteValueDone = actuals?.quoteValue ?? 0;
-        const orderCountDone = actuals?.orderCount ?? 0;
-        const orderValueDone = actuals?.orderValue ?? 0;
-        const invoicedValueDone = actuals?.invoicedValue ?? 0;
-        const progressValues = [
-          callsTarget > 0 ? callsDone / callsTarget : null,
-          quotesTarget > 0 ? quotesDone / quotesTarget : null,
-          quoteValueTarget > 0 ? quoteValueDone / quoteValueTarget : null,
-          orderCountTarget > 0 ? orderCountDone / orderCountTarget : null,
-          orderValueTarget > 0 ? orderValueDone / orderValueTarget : null,
-        ].filter((value): value is number => value != null);
-        const progressScore = progressValues.length > 0
-          ? progressValues.reduce((total, value) => total + value, 0) / progressValues.length
-          : 0;
-
-        return {
-          id: goal.id,
-          userId: goal.user_id,
-          userName: user?.full_name || 'Okänd användare',
-          role: user?.role || 'sales',
-          callsDone,
-          callsTarget,
-          quotesDone,
-          quotesTarget,
-          quoteValueDone,
-          quoteValueTarget,
-          orderCountDone,
-          orderCountTarget,
-          orderValueDone,
-          orderValueTarget,
-          invoicedValueDone,
-          progressScore,
-        };
-      })
-      .sort((left, right) => {
-        if (right.progressScore !== left.progressScore) return right.progressScore - left.progressScore;
-        if (right.callsDone !== left.callsDone) return right.callsDone - left.callsDone;
-        return left.userName.localeCompare(right.userName, 'sv');
-      });
-  }, [goals, weekByUser]);
+  const team = scoreboard?.team ?? null;
+  const sellers = scoreboard?.sellers ?? [];
+  // Båda läsningarna kan slå i radtaket, och de delar frågenamn — nämn varje fråga en gång.
+  const truncated = Array.from(new Set([...summary.truncated, ...(scoreboard?.truncated ?? [])]));
 
   /* Höger kolumn: ETT kort. Måluppföljningen och topplistan visade samma data på två
       aggregeringsnivåer — de tre målraderna ÄR team-summan av de rader topplistan redan
-      listade per säljare, i kortet direkt under. För en säljare var det värre än dubblering:
-      RLS ger hen bara sitt eget mål, så "Topplista" innehöll exakt EN rad, hen själv, med
-      samma siffror som stod ovanför. Nu är teamets rader kortets huvuddel och säljarna en
-      lista under dem. */
+      listade per säljare, i kortet direkt under. Nu är teamets rader kortets huvuddel och
+      säljarna en lista under dem. */
   return (
     <div className={crm.cardInner}>
       {/* Kortet var "Fördelning och mål" och bar båda: fyra lagerrader ovanför en avdelare,
@@ -109,10 +37,11 @@ export default function OverviewWeeklyGoals({ loading, summaryFailed, goalsFaile
 
           Fördelningsläsningen som försvann i den flytten — de tre lagren mot en delad
           nämnare — finns tillbaka högst upp på sidan, i fördelningsremsan. */}
-      {/* ⚠️ INTE "Teamet". /api/crm/overview kör på sessionsklienten (route.ts:66), så RLS
-          gäller: crm_calls_select_visible ger en säljare bara sina egna samtal, och
-          crm_goals_select_visible bara sitt eget mål. Siffrorna här är teamets för en admin
-          och den egna för alla andra — rubriken får inte påstå något om vilket. */}
+      {/* Målraderna och listan kommer från veckotavlan (/api/crm/overview/scoreboard), som räknar
+          HELA laget för alla läsare. Förut kom utfallet från summeringen, som går på sessionen:
+          crm_calls_select_visible gav en säljare bara de egna samtalen, så kollegornas Samtal
+          stod som 0 i listan — samtidigt som målen (admin-klienten) visade alla säljare.
+          Sena uppgifter kommer fortfarande från summeringen och är läsarens egna. */}
       <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className={cn('mb-1', crm.sectionTitle)}>Måluppföljning</p>
@@ -128,39 +57,38 @@ export default function OverviewWeeklyGoals({ loading, summaryFailed, goalsFaile
           <Link href="/crm/installningar" className={cn('shrink-0 text-xs', crm.link)}>Justera mål</Link>
         ) : null}
       </div>
-      {loading ? <OverviewLoadingRows /> : summaryFailed ? <SectionError /> : (
+      {loading ? <OverviewLoadingRows /> : (
         <div className="grid gap-3">
           {/* Everything below is measured against a WEEKLY target, so the actuals are the
-              week's — the same window the topplista under this card uses per säljare. With a
+              week's — the same window the list under this card uses per säljare. With a
               rolling 7 days the team row could never equal the sum of the seller rows beside
               it, and one of the two would have to be read as broken. */}
-          {/* Målen kommer från /api/crm/goals, inte från summeringen. Fallerar den hämtningen
-              blir varje target 0, hasGoal falskt, och raderna tappar sitt "/ mål" tyst — ett
-              500-svar ser då ut som "ingen budget satt". Topplistan fick sin flagga för exakt
-              den tvetydigheten; det här är samma sak en nivå upp. Sena uppgifter räknas av
-              summeringen och står kvar. */}
-          {goalsFailed ? <SectionError /> : (
+          {/* Fallerar tavlan finns varken mål eller utfall — då en felruta, inte rader utan
+              "/ mål" som ser ut som "ingen budget satt". */}
+          {scoreboardFailed || !team ? <SectionError /> : (
             <>
-              <StatusStrip label="Offerter mot mål" value={summary.weekTeam.quotes} goal={summary.quotesTarget} tone="progress" />
-              <StatusStrip label="Ordervärde mot mål" value={summary.weekTeam.orderValue} goal={summary.orderValueTarget} tone="progress" currency />
-              <StatusStrip label="Samtal mot mål" value={summary.weekTeam.calls} goal={summary.callsTarget} tone="progress" />
+              <StatusStrip label="Offerter mot mål" value={team.quotes.done} goal={team.quotes.target ?? 0} tone="progress" />
+              <StatusStrip label="Ordervärde mot mål" value={team.orderValue.done} goal={team.orderValue.target ?? 0} tone="progress" currency />
+              <StatusStrip label="Samtal mot mål" value={team.calls.done} goal={team.calls.target ?? 0} tone="progress" />
             </>
           )}
           {/* Sena uppgifter är inget mål — det är ett larm utan target. Avdelaren som förut
               skilde lager från mål skiljer nu mål från larm. */}
           <div className="my-1 h-px bg-slate-100" />
-          <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="attention" />
+          {summaryFailed ? <SectionError /> : (
+            <StatusStrip label="Sena uppgifter" value={summary.overdueTasks} tone="attention" />
+          )}
           {/* Only ever shows if a query hit its row cap. The point of counting server-side
               was that a truncated read stops being silent — so it says so. */}
-          {summary.truncated.length > 0 ? (
+          {truncated.length > 0 ? (
             <p className="m-0 text-[11px] leading-4 text-amber-700">
-              Räknat på ett kapat urval ({summary.truncated.join(', ')}) — siffrorna kan vara för låga.
+              Räknat på ett kapat urval ({truncated.join(', ')}) — siffrorna kan vara för låga.
             </p>
           ) : null}
 
           {/* Mål saknas och mål som inte gick att läsa ger båda en tom lista — utan
-              failed('goals')-grenen ovan hade ett 500-svar renderats som "inga mål satta". */}
-          {!goalsFailed && teamLeaderboard.length === 0 ? (
+              scoreboardFailed hade ett 500-svar renderats som "inga mål satta". */}
+          {!scoreboardFailed && team && sellers.length === 0 ? (
             <p className="m-0 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500">
               Inga veckomål satta ännu. Lägg in mål i Inställningar för att aktivera uppföljningen.
             </p>
@@ -172,11 +100,11 @@ export default function OverviewWeeklyGoals({ loading, summaryFailed, goalsFaile
               här. Att dölja listan för en ensam säljare tog alltså bort tre uppföljningar hen
               inte kunde se någon annanstans. Rangordningen döljs i stället när det bara finns
               en rad; att sätta "#1" på ensamheten säger ingenting. */}
-          {!goalsFailed && teamLeaderboard.length > 0 ? (
+          {!scoreboardFailed && sellers.length > 0 ? (
             <>
               <div className="my-1 h-px bg-slate-100" />
               <p className={cn('m-0', crm.sectionTitle)}>Per säljare</p>
-              <SellerGoalList entries={teamLeaderboard} />
+              <SellerGoalList entries={sellers} />
             </>
           ) : null}
         </div>
@@ -241,27 +169,7 @@ const SELLER_PREVIEW_COUNT = 3;
 
 // Raderna som förut var kortet "Teamöversikt / Topplista". Kortchromet är borta — de bor numera
 // inne i måluppföljningskortet, under teamets rader, eftersom de är samma data en nivå ner.
-function SellerGoalList({
-  entries,
-}: {
-  entries: Array<{
-    id: string;
-    userName: string;
-    role: string;
-    callsDone: number;
-    callsTarget: number;
-    quotesDone: number;
-    quotesTarget: number;
-    quoteValueDone: number;
-    quoteValueTarget: number;
-    orderCountDone: number;
-    orderCountTarget: number;
-    orderValueDone: number;
-    orderValueTarget: number;
-    invoicedValueDone: number;
-    progressScore: number;
-  }>;
-}) {
+function SellerGoalList({ entries }: { entries: ScoreboardSeller[] }) {
   const [showAll, setShowAll] = useState(false);
   const visible = showAll ? entries : entries.slice(0, SELLER_PREVIEW_COUNT);
 
@@ -269,23 +177,23 @@ function SellerGoalList({
     <>
       <div className="grid gap-2">
         {visible.map((entry, index) => (
-          <div key={entry.id} className="rounded-xl border border-slate-100 p-3">
+          <div key={entry.userId} className="rounded-xl border border-slate-100 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 {entries.length > 1 ? (
                   <span className={cn('tabular-nums', crm.metaStrong)}>{index + 1}.</span>
                 ) : null}
-                <strong className={crm.bodyStrong}>{entry.userName}</strong>
+                <strong className={crm.bodyStrong}>{entry.name}</strong>
               </div>
               <span className={cn('tabular-nums', crm.metaStrong)}>{Math.round(entry.progressScore * 100)} %</span>
             </div>
             <div className="mt-2 grid gap-1">
-              <TeamProgressRow label="Samtal" value={entry.callsDone} target={entry.callsTarget} />
-              <TeamProgressRow label="Offerter" value={entry.quotesDone} target={entry.quotesTarget} />
-              <TeamProgressRow label="Offertvärde" value={entry.quoteValueDone} target={entry.quoteValueTarget} currency />
-              <TeamProgressRow label="Antal ordrar" value={entry.orderCountDone} target={entry.orderCountTarget} />
-              <TeamProgressRow label="Ordervärde" value={entry.orderValueDone} target={entry.orderValueTarget} currency />
-              <TeamProgressRow label="Fakturerat ordervärde" value={entry.invoicedValueDone} currency />
+              <TeamProgressRow label="Samtal" value={entry.metrics.calls.done} target={entry.metrics.calls.target ?? undefined} />
+              <TeamProgressRow label="Offerter" value={entry.metrics.quotes.done} target={entry.metrics.quotes.target ?? undefined} />
+              <TeamProgressRow label="Offertvärde" value={entry.metrics.quoteValue.done} target={entry.metrics.quoteValue.target ?? undefined} currency />
+              <TeamProgressRow label="Antal ordrar" value={entry.metrics.orderCount.done} target={entry.metrics.orderCount.target ?? undefined} />
+              <TeamProgressRow label="Ordervärde" value={entry.metrics.orderValue.done} target={entry.metrics.orderValue.target ?? undefined} currency />
+              <TeamProgressRow label="Fakturerat ordervärde" value={entry.metrics.invoicedValue.done} target={entry.metrics.invoicedValue.target ?? undefined} currency />
             </div>
           </div>
         ))}

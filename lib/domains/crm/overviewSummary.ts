@@ -137,6 +137,18 @@ export type CallWindowRow = {
 };
 export type TaskDueRow = { due_at: string | null };
 
+/**
+ * De fyra fönstrade läsningarna bakom veckans utfall. Delas med lagets veckotavla
+ * (weeklyScoreboard.ts), som läser samma rader med admin-klienten — samma frågor och samma
+ * aritmetik, så att tavlan och översiktens egna veckosiffror inte kan glida isär.
+ */
+export type CrmWeekActualRows = Pick<CrmOverviewRows, 'quoteWindow' | 'orderWindow' | 'invoiceRoundWindow' | 'callWindow'>;
+
+export type CrmWeekActuals = {
+  weekTeam: CrmOverviewWeekActuals;
+  weekByUser: Record<string, CrmOverviewWeekActuals>;
+};
+
 export type CrmOverviewRows = {
   quoteStocks: QuoteStockRow[];
   quoteWindow: QuoteWindowRow[];
@@ -188,18 +200,13 @@ function addActuals(base: CrmOverviewWeekActuals, patch: Partial<CrmOverviewWeek
 }
 
 /**
- * Pure: rows in, read model out. The queries are the impure half (fetchCrmOverviewSummary).
+ * Pure: the week's actuals for the team and per seller, in one pass. Used by the overview's own
+ * summary and by the team scoreboard, so the two are the same arithmetic by construction.
  */
-export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOverviewWindow): CrmOverviewSummary {
-  const activeQuotes = rows.quoteStocks.filter((quote) => ACTIVE_QUOTE_STATUSES.includes(quote.status as CrmQuoteStatus));
-  const openOrders = rows.orderStocks.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
-  const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
-
-  const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
-  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
-  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
-  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
-
+export function composeWeekActuals(
+  rows: CrmWeekActualRows,
+  window: Pick<CrmOverviewWindow, 'weekStart' | 'weekEnd'>,
+): CrmWeekActuals {
   // Every figure measured against a target is scoped to the current week, for the team and per
   // seller in the same pass — so the team row and the leaderboard row for the same metric are the
   // same arithmetic and can be checked against each other.
@@ -241,6 +248,24 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
       addWeek(invoice.assigned_to, { invoicedValue: invoice.amount });
     }
   }
+
+  return { weekTeam, weekByUser };
+}
+
+/**
+ * Pure: rows in, read model out. The queries are the impure half (fetchCrmOverviewSummary).
+ */
+export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOverviewWindow): CrmOverviewSummary {
+  const activeQuotes = rows.quoteStocks.filter((quote) => ACTIVE_QUOTE_STATUSES.includes(quote.status as CrmQuoteStatus));
+  const openOrders = rows.orderStocks.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
+  const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
+
+  const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
+  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
+  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
+  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
+
+  const { weekTeam, weekByUser } = composeWeekActuals(rows, window);
 
   const callsInWindow = rows.callWindow.filter((call) => inWindow(call.call_at, window.since));
   const openTaskDays = rows.openTasks.map((task) => dayOf(task.due_at));
@@ -298,6 +323,49 @@ async function readCount(name: string, query: CountableQuery): Promise<number> {
 }
 
 /**
+ * The four windowed reads behind the week's actuals, with whatever client the caller holds: the
+ * overview's own summary reads them through the session (RLS decides what the reader counts), the
+ * team scoreboard through the admin client. `callsFrom` is the only difference — the summary also
+ * needs the rolling 7 days, which always reach back past the week's Monday.
+ */
+export async function fetchWeekActualRows(
+  client: SupabaseClient,
+  weekStart: string,
+  callsFrom: string,
+  truncated: string[],
+): Promise<CrmWeekActualRows> {
+  const [quoteWindow, orderWindow, invoiceRoundWindow, callWindow] = await Promise.all([
+    // Only the week is read: every quote figure is either a stock (the summary's quote_stocks) or
+    // measured against the weekly target. `since` would fetch days nothing reads.
+    readRows<QuoteWindowRow>('quote_window', client
+      .from('crm_quotes')
+      .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
+      .gte('quote_date', weekStart)
+      .limit(ROW_CAP), truncated),
+    // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
+    // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
+    readRows<OrderWindowRow>('order_window', client
+      .from('crm_work_orders')
+      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
+      .or(`created_at.gte.${weekStart},fortnox_invoiced_at.gte.${weekStart}`)
+      .limit(ROW_CAP), truncated),
+    // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
+    // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
+    readRows<InvoiceRoundRow>('invoice_round_window', client
+      .from('crm_work_order_invoices')
+      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
+      .gte('created_at', weekStart)
+      .limit(ROW_CAP), truncated),
+    readRows<CallWindowRow>('call_window', client
+      .from('crm_calls')
+      .select('user_id, call_at, outcome, prospect_id')
+      .gte('call_at', callsFrom)
+      .limit(ROW_CAP), truncated),
+  ]);
+  return { quoteWindow, orderWindow, invoiceRoundWindow, callWindow };
+}
+
+/**
  * Reads the overview's numbers with the caller's Supabase client, so RLS decides what counts —
  * the same scoping the page had when it counted list rows in the browser. That matters most for
  * the tasks: dashboard_work_items is the reader's PERSONAL board, and its row policy is what keeps
@@ -312,57 +380,29 @@ export async function fetchCrmOverviewSummary(
     readCount(name, build(supabase.from('crm_customers').select('id', { count: 'exact', head: true }).eq('customer_stage', 'prospect')));
 
   const [
+    weekRows,
     quoteStocks,
-    quoteWindow,
     orderStocks,
-    orderWindow,
-    invoiceRoundWindow,
-    callWindow,
     openTasks,
     pipelineProspects,
     newProspects,
     quotedProspects,
     qualifiedProspects,
   ] = await Promise.all([
+    // The widest call window on the page: the calls metric card is explicitly the rolling 7 days,
+    // and the week is a subset of it, so one read serves both. outcome + prospect_id come along
+    // because the two follow-up figures are counted from these same rows instead of by their own scans.
+    fetchWeekActualRows(supabase, window.weekStart, window.since, truncated),
     readRows<QuoteStockRow>('quote_stocks', supabase
       .from('crm_quotes')
       .select('status, amount, vat_percent, pricing_summary')
       .in('status', ACTIVE_QUOTE_STATUSES)
-      .limit(ROW_CAP), truncated),
-    // Only the week is read: every quote figure on the page is either a stock (above) or measured
-    // against the weekly target. `since` would fetch days nothing reads.
-    readRows<QuoteWindowRow>('quote_window', supabase
-      .from('crm_quotes')
-      .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
-      .gte('quote_date', window.weekStart)
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
       // Rundorna inbäddade: en delfakturerad order står i lagret med det som återstår, inte hela värdet.
       .select('status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)')
       .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
-      .limit(ROW_CAP), truncated),
-    // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
-    // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
-    readRows<OrderWindowRow>('order_window', supabase
-      .from('crm_work_orders')
-      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
-      .or(`created_at.gte.${window.weekStart},fortnox_invoiced_at.gte.${window.weekStart}`)
-      .limit(ROW_CAP), truncated),
-    // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
-    // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
-    readRows<InvoiceRoundRow>('invoice_round_window', supabase
-      .from('crm_work_order_invoices')
-      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
-      .gte('created_at', window.weekStart)
-      .limit(ROW_CAP), truncated),
-    // The widest window on the page: the calls metric card is explicitly the rolling 7 days, and the
-    // week is a subset of it, so one read serves both. outcome + prospect_id come along because the
-    // two follow-up figures are counted from these same rows instead of by their own scans.
-    readRows<CallWindowRow>('call_window', supabase
-      .from('crm_calls')
-      .select('user_id, call_at, outcome, prospect_id')
-      .gte('call_at', window.since)
       .limit(ROW_CAP), truncated),
     // 'active' is the stored value the task domain maps to 'open'; 'done' and 'cancelled' are out.
     readRows<TaskDueRow>('open_tasks', supabase
@@ -379,12 +419,9 @@ export async function fetchCrmOverviewSummary(
 
   return composeCrmOverviewSummary(
     {
+      ...weekRows,
       quoteStocks,
-      quoteWindow,
       orderStocks,
-      orderWindow,
-      invoiceRoundWindow,
-      callWindow,
       openTasks,
       counts: { pipelineProspects, newProspects, quotedProspects, qualifiedProspects },
       truncated,
