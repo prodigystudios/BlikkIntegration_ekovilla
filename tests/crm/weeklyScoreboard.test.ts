@@ -85,6 +85,14 @@ describe('composeWeeklyScoreboard — veckomålen', () => {
     expect(sellers.find((row) => row.userId === BOSSE)?.metrics.calls.reached).toBe(false);
   });
 
+  it('ett kronmål nås på hela kronor — samma avrundning som tavlan visar', () => {
+    // Budget 100 000 → 25 000 per vecka. 24 999,60 visas som "25 000 kr / 25 000 kr" och ska då ha stjärnan.
+    const goals = [goal(ANNA, 'Anna', { orderValue: 100_000 }), goal(BOSSE, 'Bosse', { orderValue: 100_000 })];
+    const sellers = board(goals, actuals({ [ANNA]: week({ orderValue: 24_999.6 }), [BOSSE]: week({ orderValue: 24_999.4 }) })).sellers;
+    expect(sellers.find((row) => row.userId === ANNA)?.metrics.orderValue.reached).toBe(true);
+    expect(sellers.find((row) => row.userId === BOSSE)?.metrics.orderValue.reached).toBe(false);
+  });
+
   it('fakturerat mäts mot sin egen budget, i kronor utan avrundning', () => {
     const [anna] = board([goal(ANNA, 'Anna', { invoicedValue: 250_002 })], actuals({ [ANNA]: week({ invoicedValue: 62_500.5 }) })).sellers;
     expect(anna.metrics.invoicedValue).toEqual({ done: 62_500.5, target: 62_500.5, reached: true });

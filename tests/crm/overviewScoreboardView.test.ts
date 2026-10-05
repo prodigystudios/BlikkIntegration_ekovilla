@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import type { MetricProgress, ScoreboardMetric, ScoreboardMetrics, ScoreboardSeller } from '@/lib/domains/crm/weeklyScoreboard';
 import {
   achievementSentence,
-  achievementSignature,
+  dismissAchievements,
+  newAchievements,
+  parseDismissedAchievements,
   competitionRanks,
   countGoals,
   firstName,
@@ -130,12 +132,53 @@ describe('listAchievements och bannerns meningar', () => {
     expect(moreAchievementsSentence(3)).toBe('Ytterligare 3 veckomål är nådda.');
   });
 
-  it('signaturen ändras när ett nytt mål nås eller veckan byts — men inte av ordningen', () => {
-    const items = listAchievements(sellers, null);
-    const base = achievementSignature('2026-10-05', items);
-    expect(achievementSignature('2026-10-05', [...items].reverse())).toBe(base);
-    expect(achievementSignature('2026-10-05', items.slice(0, 2))).not.toBe(base);
-    expect(achievementSignature('2026-10-12', items)).not.toBe(base);
+});
+
+describe('bannerns stängda mål', () => {
+  const anna = { userId: 'anna', name: 'Anna Ek', metric: 'calls' as const };
+  const bosse = { userId: 'bosse', name: 'Bosse Berg', metric: 'quotes' as const };
+  const cilla = { userId: 'cilla', name: 'Cilla Ås', metric: 'orderValue' as const };
+  const WEEK = '2026-10-05';
+
+  it('visas när inget är stängt, och aldrig utan nådda mål', () => {
+    expect(newAchievements(WEEK, [anna], null)).toEqual([anna]);
+    expect(newAchievements(WEEK, [], null)).toEqual([]);
+  });
+
+  it('förblir stängd för samma mål, i vilken ordning de än kommer', () => {
+    const closed = dismissAchievements(WEEK, [anna, bosse], null);
+    expect(newAchievements(WEEK, [bosse, anna], closed)).toEqual([]);
+  });
+
+  it('förblir stängd när ett mål FALLER BORT — det är inga nyheter', () => {
+    const closed = dismissAchievements(WEEK, [anna, bosse], null);
+    expect(newAchievements(WEEK, [anna], closed)).toEqual([]);
+  });
+
+  it('kommer tillbaka när ett NYTT mål nås samma vecka — och rubriken är det nya', () => {
+    const closed = dismissAchievements(WEEK, [anna], null);
+    expect(newAchievements(WEEK, [anna, cilla], closed)).toEqual([cilla]);
+  });
+
+  it('det som stängts tidigare i veckan förblir stängt när nästa stängs', () => {
+    // Anna stängd, föll bort; Cilla kom och stängdes. Kommer Anna tillbaka är hon inte ny.
+    const first = dismissAchievements(WEEK, [anna], null);
+    const second = dismissAchievements(WEEK, [cilla], first);
+    expect(newAchievements(WEEK, [anna, cilla], second)).toEqual([]);
+  });
+
+  it('en ny vecka börjar utan något stängt', () => {
+    const closed = dismissAchievements(WEEK, [anna], null);
+    expect(newAchievements('2026-10-12', [anna], closed)).toEqual([anna]);
+    expect(dismissAchievements('2026-10-12', [bosse], closed)).toEqual({ weekStart: '2026-10-12', keys: ['bosse:quotes'] });
+  });
+
+  it('läser bara tillbaka det som har rätt form', () => {
+    expect(parseDismissedAchievements(null)).toBeNull();
+    expect(parseDismissedAchievements('inte json')).toBeNull();
+    expect(parseDismissedAchievements('2026-10-05|anna:calls')).toBeNull();
+    expect(parseDismissedAchievements(JSON.stringify({ weekStart: WEEK }))).toBeNull();
+    expect(parseDismissedAchievements(JSON.stringify({ weekStart: WEEK, keys: ['anna:calls', 7] }))).toEqual({ weekStart: WEEK, keys: ['anna:calls'] });
   });
 });
 

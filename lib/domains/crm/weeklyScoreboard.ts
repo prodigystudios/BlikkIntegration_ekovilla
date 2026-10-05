@@ -87,11 +87,19 @@ function weeklyTarget(metric: ScoreboardMetric, monthly: number): number | null 
   return target > 0 ? target : null;
 }
 
+// Ett kronmål nås på hela kronor — samma avrundning som tavlan visar beloppen med. Annars kunde
+// 24 999,60 mot 25 000 stå som "25 000 kr / 25 000 kr" utan stjärna, och stjärnan säga emot
+// siffran bredvid den. Antalen är redan heltal.
+function isReached(metric: ScoreboardMetric, done: number, target: number | null): boolean {
+  if (target == null) return false;
+  return COUNT_METRICS.has(metric) ? done >= target : Math.round(done) >= Math.round(target);
+}
+
 function metricsOf(actuals: CrmOverviewWeekActuals | undefined, budget: MonthlyBudget): ScoreboardMetrics {
   return Object.fromEntries(SCOREBOARD_METRICS.map((metric) => {
     const done = actuals?.[metric] ?? 0;
     const target = weeklyTarget(metric, budget[metric]);
-    return [metric, { done, target, reached: target != null && done >= target }];
+    return [metric, { done, target, reached: isReached(metric, done, target) }];
   })) as ScoreboardMetrics;
 }
 

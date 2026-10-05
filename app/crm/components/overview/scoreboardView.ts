@@ -121,12 +121,45 @@ export function moreAchievementsSentence(more: number): string | null {
   return more === 1 ? 'Ytterligare ett veckomål är nått.' : `Ytterligare ${more} veckomål är nådda.`;
 }
 
+/** Ett nått mål som nyckel: vem och vilket mått. */
+export function achievementKey(achievement: Achievement): string {
+  return `${achievement.userId}:${achievement.metric}`;
+}
+
+/** Vad läsaren har stängt bannern för: veckan och de mål som stod i den. */
+export type DismissedAchievements = { weekStart: string; keys: string[] };
+
 /**
- * Bannerns identitet. Stängd banner förblir stängd tills något NYTT mål nås samma vecka — då
- * ändras signaturen och bannern kommer tillbaka. Ny vecka = ny signatur.
+ * De nådda mål läsaren INTE redan stängt — bannern visas bara när det finns något här, och dess
+ * rubrik är det första av dem, så att en återkommande banner berättar om det som är nytt.
+ *
+ * Det räcker inte att jämföra med en signatur: när ett mål faller bort — en order avbryts och
+ * ordervärdet sjunker under målet — ändras signaturen, och bannern kom tillbaka och berättade om mål
+ * läsaren redan stängt. Ett mål som faller bort och sedan nås igen är inte heller nytt. Ny vecka =
+ * inget stängt.
  */
-export function achievementSignature(weekStart: string, achievements: Achievement[]): string {
-  return `${weekStart}|${achievements.map((item) => `${item.userId}:${item.metric}`).sort().join(',')}`;
+export function newAchievements(weekStart: string, achievements: Achievement[], dismissed: DismissedAchievements | null): Achievement[] {
+  if (!dismissed || dismissed.weekStart !== weekStart) return achievements;
+  const closed = new Set(dismissed.keys);
+  return achievements.filter((achievement) => !closed.has(achievementKey(achievement)));
+}
+
+/** Det som sparas när läsaren stänger: allt som är stängt den här veckan, gammalt och nytt. */
+export function dismissAchievements(weekStart: string, achievements: Achievement[], dismissed: DismissedAchievements | null): DismissedAchievements {
+  const earlier = dismissed?.weekStart === weekStart ? dismissed.keys : [];
+  return { weekStart, keys: Array.from(new Set([...earlier, ...achievements.map(achievementKey)])).sort() };
+}
+
+/** Läser det sparade tillbaka. Allt som inte har rätt form räknas som "inget stängt". */
+export function parseDismissedAchievements(raw: string | null): DismissedAchievements | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    if (typeof value?.weekStart !== 'string' || !Array.isArray(value?.keys)) return null;
+    return { weekStart: value.weekStart, keys: value.keys.filter((key: unknown): key is string => typeof key === 'string') };
+  } catch {
+    return null;
+  }
 }
 
 /** Två bokstäver till avataren: för- och efternamnets första. Ett ensamt namn ger en. */
