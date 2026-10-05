@@ -12,6 +12,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import { defaultAccountManagerId } from './accountManagerDefault';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
@@ -188,9 +189,9 @@ function AddressColumn({
   );
 }
 
-type Props = { fortnoxConnected: boolean };
+type Props = { fortnoxConnected: boolean; currentUserId?: string | null };
 
-export default function CustomerFormClient({ fortnoxConnected }: Props) {
+export default function CustomerFormClient({ fortnoxConnected, currentUserId }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
@@ -220,18 +221,27 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
   const [fetchingCredit, setFetchingCredit] = useState(false);
   const [sellers, setSellers] = useState<Seller[]>([]);
 
-  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog).
+  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog). När katalogen är på
+  // plats förväljs den som skapar kunden, om hen är säljare (se accountManagerDefault.ts).
+  // Förvalet väntar på katalogen: före den finns bara "— Ingen —" i rullistan, och ett id utan
+  // eget alternativ hade visat "Ingen" medan formuläret skickade ett namn.
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         const res = await fetch('/api/crm/sellers', { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
-        if (active && res.ok && json.ok) setSellers(json.data?.sellers || []);
+        if (!active || !res.ok || !json.ok) return;
+        const list: Seller[] = json.data?.sellers || [];
+        setSellers(list);
+        setDraft((d) => {
+          const id = defaultAccountManagerId(d.account_manager_id, list, currentUserId);
+          return id === d.account_manager_id ? d : { ...d, account_manager_id: id };
+        });
       } catch { /* icke-kritiskt */ }
     })();
     return () => { active = false; };
-  }, []);
+  }, [currentUserId]);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
@@ -798,7 +808,7 @@ export default function CustomerFormClient({ fortnoxConnected }: Props) {
                 <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
               ))}
             </Select>
-            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Kan sättas senare.</p>
+            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Du är förvald om du är säljare.</p>
           </div>
 
           {/* Fortnox */}
