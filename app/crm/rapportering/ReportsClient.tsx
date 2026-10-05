@@ -745,7 +745,7 @@ export default function ReportsClient() {
           {/* 1b. Lönsamhet — vad som blev kvar av det som fakturerades */}
           <SectionCard
             title="Lönsamhet"
-            subtitle="Täckningsgrad på jobb som fakturerades i perioden, räknad på rapporterade säckar och rapporterad tid. Bara jobb med komplett underlag räknas."
+            subtitle="Täckningsgrad på jobb som slutfakturerades i perioden, räknad på rapporterade säckar och rapporterad tid. Bara jobb med komplett underlag räknas."
             action={<ExportButton onClick={() => downloadCsv(
               `lonsamhet_${report.range.from}_${report.range.to}.csv`,
               [singlePoint ? 'Period' : 'Månad', 'TG1 efter material (%)', 'TG2 efter arbete (%)'],
@@ -765,7 +765,7 @@ export default function ReportsClient() {
               </div>
             ) : report.profitability.jobs === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">
-                Inga jobb fakturerades i perioden.
+                Inga jobb slutfakturerades i perioden.
               </div>
             ) : report.profitability.jobsTb1 === 0 && report.profitability.jobsTb2 === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-5 py-8 text-center text-sm text-slate-500">

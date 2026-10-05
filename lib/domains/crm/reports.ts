@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { netAmount, type NetAmountRow } from './pricing';
 import { isDeadWorkOrder } from './work-orders';
+import { invoicedAt, invoicedRevenue, type InvoicedRevenue, type InvoiceRoundRow } from './invoicedRevenue';
 import {
   buildPeriodSummary,
   type PeriodSummary,
@@ -32,6 +33,8 @@ export type ReportOrderRow = NetAmountRow & {
   status: string | null;
   created_at: string;
   fortnox_invoiced_at: string | null;
+  /** Satt = ordern faktureras i rundor, som räknas i stället för ordern — se invoicedRevenue. */
+  partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name: string | null;
 };
@@ -42,6 +45,8 @@ export type ReportSellerRow = { id: string; full_name: string | null };
 export type ReportData = {
   quotes: ReportQuoteRow[];
   orders: ReportOrderRow[];
+  /** Delfakturarundor skapade inom perioden, oavsett när ordern skapades eller slutfakturerades. */
+  invoiceRounds: InvoiceRoundRow[];
   calls: ReportCallRow[];
   sellers: ReportSellerRow[];
 };
@@ -79,12 +84,10 @@ export function monthsInRange(from: string, to: string): string[] {
 // the report showed 18 % of what had really been invoiced. The fetch now pulls a superset
 // (created in range OR invoiced in range) and the rows are split here, so every figure is
 // keyed to the date that belongs to it: order value to when the order was won, invoiced
-// revenue to when it was billed.
+// revenue to when it was billed — per invoice, so a delfakturerad order's rounds each land on
+// their own date (see invoicedRevenue).
 
-/** The date an order's revenue is attributed to. Rows predating fortnox_invoiced_at fall back to their creation date. */
-export function invoicedAt(order: ReportOrderRow): string {
-  return order.fortnox_invoiced_at || order.created_at;
-}
+export { invoicedAt };
 
 /** Inclusive day comparison against the range, matching how the fetch filters. */
 function withinRange(timestamp: string | null | undefined, range: ReportRange): boolean {
@@ -96,11 +99,21 @@ function withinRange(timestamp: string | null | undefined, range: ReportRange): 
 export type PartitionedOrders = {
   /** Orders created inside the range, minus the cancelled ones — the basis for order value and the conversion funnel. */
   created: ReportOrderRow[];
-  /** Orders billed inside the range, whenever they were created — the basis for invoiced revenue. */
+  /**
+   * Orders whose invoicing was COMPLETED inside the range, whenever they were created — the job
+   * population for profitability. Not the revenue: a delfakturerad order joins this list with its
+   * final round, while its money is spread over the rounds in `revenue`.
+   */
   invoiced: ReportOrderRow[];
+  /** Every invoice billed inside the range, in one go or per round — the basis for invoiced revenue. */
+  revenue: InvoicedRevenue[];
 };
 
-export function partitionOrders(orders: ReportOrderRow[], range: ReportRange): PartitionedOrders {
+export function partitionOrders(
+  orders: ReportOrderRow[],
+  range: ReportRange,
+  invoiceRounds: InvoiceRoundRow[],
+): PartitionedOrders {
   return {
     // Avbrutna order faller bort här och inte i varje aggregat: en order som aldrig blev av är
     // ingen omsättning, och då ska den inte synas som ordervärde, som ett antal order eller som
@@ -110,6 +123,7 @@ export function partitionOrders(orders: ReportOrderRow[], range: ReportRange): P
     // En order som fakturerats och SEDAN avbrutits faller alltså ur fakturerat helt — rätt så
     // länge en avbeställning krediteras, och det finns ingen sådan rad i drift (mätt 2026-08-21).
     invoiced: orders.filter((o) => o.status === 'invoiced' && withinRange(invoicedAt(o), range)),
+    revenue: invoicedRevenue(orders, invoiceRounds, invoicedAt).filter((invoice) => withinRange(invoice.at, range)),
   };
 }
 
@@ -120,7 +134,7 @@ export type SalesOverTimePoint = { period: string; quoteValue: number; orderValu
 export function buildSalesOverTime(
   quotes: ReportQuoteRow[],
   ordersCreated: ReportOrderRow[],
-  ordersInvoiced: ReportOrderRow[],
+  invoiced: InvoicedRevenue[],
   months: string[],
 ): SalesOverTimePoint[] {
   const quoteByMonth = new Map<string, number>();
@@ -135,16 +149,11 @@ export function buildSalesOverTime(
     const key = monthKey(o.created_at);
     if (key) orderByMonth.set(key, (orderByMonth.get(key) || 0) + netAmount(o));
   }
-  // Invoiced revenue belongs to the month it was INVOICED, not when the order was created.
-  //
-  // DELFAKTURERING CAVEAT (deferred): a `partially_invoiced` order is excluded here, so its
-  // already-billed amount is undercounted until the final round flips it to `invoiced` (then
-  // the FULL order amount lands in the final round's month). Precise per-round attribution —
-  // summing crm_work_order_invoices.amount by each round's created_at — is roadmap D2 and is
-  // intentionally not wired in yet. `orderValue` is status-agnostic and unaffected.
-  for (const o of ordersInvoiced) {
-    const key = monthKey(invoicedAt(o));
-    if (key) invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + netAmount(o));
+  // Invoiced revenue belongs to the month it was INVOICED, not when the order was created — and
+  // for a delfakturerad order, to the month of each round.
+  for (const invoice of invoiced) {
+    const key = monthKey(invoice.at);
+    if (key) invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + invoice.amount);
   }
 
   return months.map((period) => ({
@@ -173,7 +182,7 @@ export type SellerReportRow = {
 export function buildPerSeller(
   quotes: ReportQuoteRow[],
   ordersCreated: ReportOrderRow[],
-  ordersInvoiced: ReportOrderRow[],
+  invoiced: InvoicedRevenue[],
   calls: ReportCallRow[],
   sellers: ReportSellerRow[],
 ): SellerReportRow[] {
@@ -206,9 +215,9 @@ export function buildPerSeller(
     row.orders += 1;
     row.orderValue += netAmount(o);
   }
-  for (const o of ordersInvoiced) {
-    if (!o.assigned_to) continue;
-    ensure(o.assigned_to).invoicedValue += netAmount(o);
+  for (const invoice of invoiced) {
+    if (!invoice.assigned_to) continue;
+    ensure(invoice.assigned_to).invoicedValue += invoice.amount;
   }
 
   return [...acc.values()].sort((a, b) => b.orderValue - a.orderValue || b.quoteValue - a.quoteValue || a.userName.localeCompare(b.userName, 'sv'));
@@ -241,12 +250,12 @@ export type CustomerReportRow = { customer: string; orderValue: number; invoiced
 
 export function buildPerCustomer(
   ordersCreated: ReportOrderRow[],
-  ordersInvoiced: ReportOrderRow[],
+  invoiced: InvoicedRevenue[],
   topN = 10,
 ): CustomerReportRow[] {
   const acc = new Map<string, CustomerReportRow>();
-  const ensure = (order: ReportOrderRow): CustomerReportRow => {
-    const customer = (order.client_name || '').trim() || 'Okänd kund';
+  const ensure = (clientName: string | null): CustomerReportRow => {
+    const customer = (clientName || '').trim() || 'Okänd kund';
     let row = acc.get(customer);
     if (!row) {
       row = { customer, orderValue: 0, invoicedValue: 0, orderCount: 0 };
@@ -256,14 +265,14 @@ export function buildPerCustomer(
   };
 
   for (const o of ordersCreated) {
-    const row = ensure(o);
+    const row = ensure(o.client_name);
     row.orderValue += netAmount(o);
     row.orderCount += 1;
   }
   // A customer billed this period whose order was placed in an earlier one lands here with
   // no order value of its own. Truthful: the money moved this period, the order did not.
-  for (const o of ordersInvoiced) {
-    ensure(o).invoicedValue += netAmount(o);
+  for (const invoice of invoiced) {
+    ensure(invoice.client_name).invoicedValue += invoice.amount;
   }
 
   // Ranked on total activity, not order value alone: a customer billed 330 480 kr this
@@ -281,10 +290,11 @@ export function buildPerCustomer(
 // TG över en period, räknad på VERKLIGT utfall: rapporterade säckar och rapporterad tid. Underlaget
 // kommer från lib/domains/crm/afterCalculation.ts, en order i taget; det här slår ihop dem.
 //
-// ⚠️ POPULATIONEN ÄR ORDRAR FAKTURERADE I PERIODEN, samma mängd som "Fakturerat" i serien ovanför.
+// ⚠️ POPULATIONEN ÄR ORDRAR FAKTURERADE I PERIODEN, samma ordrar som "Fakturerat" i serien ovanför.
 // Skälet är att talen ska gå att läsa tillsammans: ett jobb hör lönsamhetsmässigt till den period
 // det slutfördes i, inte den det såldes i, och en order skapad i mars men fakturerad i juni har sin
-// kostnad i juni.
+// kostnad i juni. En delfakturerad order räknas här först med sista rundan — jobbet är inte färdigt
+// förrän då — medan dess rundor syns i "Fakturerat" var och en i sin egen månad.
 //
 // ⚠️ BARA KOMPLETTA JOBB RÄKNAS (Williams beslut 2026-08-29). Ett jobb vars material eller tid inte
 // går att räkna hålls UTANFÖR både täljare och nämnare — det är samma disciplin som quoteMargin
@@ -394,7 +404,7 @@ export function buildProfitability(
  * in dem partitionerade mot FEL intervall.
  */
 export function buildPeriodTotals(data: ReportData, range: ReportRange): PeriodTotals {
-  const orders = partitionOrders(data.orders, range);
+  const orders = partitionOrders(data.orders, range, data.invoiceRounds);
   const sum = (rows: NetAmountRow[]) => rows.reduce((total, row) => total + netAmount(row), 0);
   return {
     calls: data.calls.length,
@@ -402,7 +412,7 @@ export function buildPeriodTotals(data: ReportData, range: ReportRange): PeriodT
     quoteValue: sum(data.quotes),
     orders: orders.created.length,
     orderValue: sum(orders.created),
-    invoicedValue: sum(orders.invoiced),
+    invoicedValue: orders.revenue.reduce((total, invoice) => total + invoice.amount, 0),
   };
 }
 
@@ -453,7 +463,7 @@ export function composeSalesReport(
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
-  const orders = partitionOrders(data.orders, range);
+  const orders = partitionOrders(data.orders, range, data.invoiceRounds);
   return {
     range,
     production: opts?.production ?? unavailableProduction(months, range),
@@ -466,10 +476,10 @@ export function composeSalesReport(
       goals: opts?.goals,
       previous: opts?.previous,
     }),
-    salesOverTime: buildSalesOverTime(data.quotes, orders.created, orders.invoiced, months),
-    perSeller: buildPerSeller(data.quotes, orders.created, orders.invoiced, data.calls, data.sellers),
+    salesOverTime: buildSalesOverTime(data.quotes, orders.created, orders.revenue, months),
+    perSeller: buildPerSeller(data.quotes, orders.created, orders.revenue, data.calls, data.sellers),
     funnel: buildFunnel(data.quotes, orders.created),
-    perCustomer: buildPerCustomer(orders.created, orders.invoiced),
+    perCustomer: buildPerCustomer(orders.created, orders.revenue),
     profitability: buildProfitability(orders.invoiced, afterCalculations, months, {
       unavailable: opts?.profitabilityUnavailable,
     }),
@@ -483,7 +493,7 @@ export function composeSalesReport(
 // nödutgång och inte den väg någon rad ska ta.
 export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
   const toEnd = `${range.to}T23:59:59.999Z`;
-  const [quotesRes, ordersRes, callsRes, sellersRes] = await Promise.all([
+  const [quotesRes, ordersRes, roundsRes, callsRes, sellersRes] = await Promise.all([
     admin.from('crm_quotes').select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name').gte('quote_date', range.from).lte('quote_date', range.to),
     // Superset: created in range OR billed in range. Filtering on created_at alone dropped
     // revenue from every order billed later than the period it was won in — see
@@ -492,18 +502,31 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
       // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
       // INTE här — de behövs bara för de fakturerade ordrarna, och tolv månaders rader hade varit
       // en tung nyttolast att dra hem för att sedan kasta det mesta.
-      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, assigned_to, client_name')
+      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name')
       .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`),
+    // Delfakturarundorna i perioden, med sin order inbäddad: en runda i augusti hör ofta till en
+    // order som varken skapades eller slutfakturerades i augusti, och finns då inte bland ordrarna
+    // ovan. `amount` är redan ex moms — se invoicedRevenue.
+    admin.from('crm_work_order_invoices')
+      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to, client_name)')
+      .gte('created_at', range.from)
+      .lte('created_at', toEnd),
     admin.from('crm_calls').select('user_id, call_at').gte('call_at', range.from).lte('call_at', toEnd),
     admin.from('profiles').select('id, full_name, role').in('role', ['sales', 'admin', 'konsult']),
   ]);
 
-  const firstError = quotesRes.error || ordersRes.error || callsRes.error || sellersRes.error;
+  const firstError = quotesRes.error || ordersRes.error || roundsRes.error || callsRes.error || sellersRes.error;
   if (firstError) throw new Error(firstError.message);
+
+  // Utan `as`: klienten härleder radtypen ur select-strängen, så en select som tappar
+  // partial_invoicing_started_at fäller typkontrollen i stället för att dubbelräkna — se invoicedRevenue.
+  const orders: ReportOrderRow[] = ordersRes.data ?? [];
+  const invoiceRounds: InvoiceRoundRow[] = roundsRes.data ?? [];
 
   return {
     quotes: (quotesRes.data as ReportQuoteRow[]) || [],
-    orders: (ordersRes.data as ReportOrderRow[]) || [],
+    orders,
+    invoiceRounds,
     calls: (callsRes.data as ReportCallRow[]) || [],
     sellers: (sellersRes.data as ReportSellerRow[]) || [],
   };

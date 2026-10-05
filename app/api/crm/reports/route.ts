@@ -166,7 +166,7 @@ export async function GET(req: Request) {
     // ⚠️ Lönsamheten får inte kunna sänka rapporten. Kalkylen vilar på två inställningstabeller och
     // artikelcachen; felar någon av dem ska säljsiffrorna fortfarande visas, och lönsamhetsdelen
     // stå tom. Det är skillnaden mellan en del av sidan som saknas och en sida som inte laddar.
-    const invoicedIds = partitionOrders(data.orders, range).invoiced
+    const invoicedIds = partitionOrders(data.orders, range, data.invoiceRounds).invoiced
       .map((order) => order.id)
       .filter((id): id is string => Boolean(id));
 
