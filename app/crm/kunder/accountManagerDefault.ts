@@ -1,21 +1,23 @@
 // Förvalet för kundansvarig i formuläret "Ny kund".
 //
 // Säljarna bad om det (2026-10-05): en ny kund blev ofta utan ansvarig för att ingen kom ihåg
-// väljaren. Den som skapar kunden förväljs därför, men bara om hen står i säljarkatalogen
-// (/api/crm/sellers, profiles med rollen sales eller admin). Alla andra får tomt som förut,
-// eftersom en kundansvarig utanför katalogen inte går att välja bort i rullistan.
+// väljaren. Den som skapar kunden förväljs därför, men bara med rollen `sales`.
 //
-// Ett värde som redan står i fältet lämnas orört. Förvalet är ett förslag, inte en regel.
+// ⚠️ INTE admin, fast admin står i säljarkatalogen. En admin skapar kunder åt andra: från en offert
+// som tillhör en annan säljare (då hade admin blivit kundansvarig, och den vunna offertens säljare
+// kunnat ta över bara ett TOMT fält, se setAccountManagerIfUnset), eller en butik till
+// Partnerportalen (där kundansvarig går före länets säljare när portaljobben fördelas).
 //
-// ⚠️ Bara formuläret. Servern sätter inget förval: prospekt ur samtalsloggen och importerna
-// blir utan ansvarig som förut. Det är också därför den vunna offertens säljare fortfarande
-// kan fylla i en tom kundansvarig (setAccountManagerIfUnset).
-export function defaultAccountManagerId(
-  current: string,
-  sellers: ReadonlyArray<{ id: string }>,
-  currentUserId: string | null | undefined,
-): string {
-  if (current) return current;
-  if (!currentUserId) return '';
-  return sellers.some((s) => s.id === currentUserId) ? currentUserId : '';
+// Bara formuläret. Servern sätter inget förval, så prospekt ur samtalsloggen och importerna blir
+// utan ansvarig som förut. Förvalet räknas ut på servern så att fältet är ifyllt från första
+// renderingen: en sparning hinner aldrig gå iväg innan säljarkatalogen laddats.
+export type AccountManagerOption = { id: string; name: string };
+
+export function defaultAccountManager(
+  profile: { id: string; role: string; full_name: string | null } | null,
+): AccountManagerOption | null {
+  if (!profile || profile.role !== 'sales') return null;
+  // Samma namnregel som rullistans alternativ (`full_name || id`), så att raden inte byter text
+  // när katalogen kommer.
+  return { id: profile.id, name: profile.full_name || profile.id };
 }

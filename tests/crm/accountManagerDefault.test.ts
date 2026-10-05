@@ -1,28 +1,26 @@
 import { describe, it, expect } from 'vitest';
-import { defaultAccountManagerId } from '@/app/crm/kunder/accountManagerDefault';
+import { defaultAccountManager } from '@/app/crm/kunder/accountManagerDefault';
 
-const sellers = [{ id: 'saljare-1' }, { id: 'admin-1' }];
+const profile = (role: string, full_name: string | null = 'Test Person') => ({ id: `${role}-1`, role, full_name });
 
-describe('defaultAccountManagerId', () => {
-  it('förväljer den som skapar kunden när hen står i säljarkatalogen', () => {
-    expect(defaultAccountManagerId('', sellers, 'saljare-1')).toBe('saljare-1');
-    expect(defaultAccountManagerId('', sellers, 'admin-1')).toBe('admin-1');
+describe('defaultAccountManager', () => {
+  it('förväljer en säljare (rollen sales) med namnet', () => {
+    expect(defaultAccountManager(profile('sales', 'Test Säljare'))).toEqual({ id: 'sales-1', name: 'Test Säljare' });
   });
 
-  it('lämnar tomt för den som inte är säljare (ett id utan alternativ i rullistan)', () => {
-    expect(defaultAccountManagerId('', sellers, 'ekonomi-1')).toBe('');
+  it('förväljer INTE admin, fast admin står i säljarkatalogen', () => {
+    expect(defaultAccountManager(profile('admin'))).toBeNull();
   });
 
-  it('lämnar tomt utan inloggad användare', () => {
-    expect(defaultAccountManagerId('', sellers, null)).toBe('');
-    expect(defaultAccountManagerId('', sellers, undefined)).toBe('');
+  it('förväljer ingen annan roll', () => {
+    for (const role of ['konsult', 'ekonomi', 'member']) expect(defaultAccountManager(profile(role))).toBeNull();
   });
 
-  it('lämnar tomt medan katalogen är tom', () => {
-    expect(defaultAccountManagerId('', [], 'saljare-1')).toBe('');
+  it('förväljer ingen utan profil', () => {
+    expect(defaultAccountManager(null)).toBeNull();
   });
 
-  it('skriver aldrig över ett värde som redan står i fältet', () => {
-    expect(defaultAccountManagerId('admin-1', sellers, 'saljare-1')).toBe('admin-1');
+  it('faller tillbaka på id:t utan namn, som rullistans alternativ', () => {
+    expect(defaultAccountManager(profile('sales', null))).toEqual({ id: 'sales-1', name: 'sales-1' });
   });
 });

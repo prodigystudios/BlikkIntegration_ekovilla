@@ -12,7 +12,7 @@ import { useToast } from '@/lib/Toast';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
-import { defaultAccountManagerId } from './accountManagerDefault';
+import type { AccountManagerOption } from './accountManagerDefault';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
@@ -189,9 +189,9 @@ function AddressColumn({
   );
 }
 
-type Props = { fortnoxConnected: boolean; currentUserId?: string | null };
+type Props = { fortnoxConnected: boolean; defaultAccountManager?: AccountManagerOption | null };
 
-export default function CustomerFormClient({ fortnoxConnected, currentUserId }: Props) {
+export default function CustomerFormClient({ fortnoxConnected, defaultAccountManager }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const toast = useToast();
@@ -206,7 +206,8 @@ export default function CustomerFormClient({ fortnoxConnected, currentUserId }: 
   const cancelTo = returnTo
     ? `${returnTo}${returnTo.includes('?') ? '&' : '?'}restore_quote=1`
     : '/crm/kunder';
-  const [draft, setDraft] = useState<Draft>(initial);
+  // Kundansvarig förvald till säljaren som skapar kunden (se accountManagerDefault.ts).
+  const [draft, setDraft] = useState<Draft>(() => ({ ...initial, account_manager_id: defaultAccountManager?.id ?? '' }));
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);
   // The invoice address defaults to the visit address + contact email so the common
@@ -221,27 +222,18 @@ export default function CustomerFormClient({ fortnoxConnected, currentUserId }: 
   const [fetchingCredit, setFetchingCredit] = useState(false);
   const [sellers, setSellers] = useState<Seller[]>([]);
 
-  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog). När katalogen är på
-  // plats förväljs den som skapar kunden, om hen är säljare (se accountManagerDefault.ts).
-  // Förvalet väntar på katalogen: före den finns bara "— Ingen —" i rullistan, och ett id utan
-  // eget alternativ hade visat "Ingen" medan formuläret skickade ett namn.
+  // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog).
   useEffect(() => {
     let active = true;
     (async () => {
       try {
         const res = await fetch('/api/crm/sellers', { cache: 'no-store' });
         const json = await res.json().catch(() => ({}));
-        if (!active || !res.ok || !json.ok) return;
-        const list: Seller[] = json.data?.sellers || [];
-        setSellers(list);
-        setDraft((d) => {
-          const id = defaultAccountManagerId(d.account_manager_id, list, currentUserId);
-          return id === d.account_manager_id ? d : { ...d, account_manager_id: id };
-        });
+        if (active && res.ok && json.ok) setSellers(json.data?.sellers || []);
       } catch { /* icke-kritiskt */ }
     })();
     return () => { active = false; };
-  }, [currentUserId]);
+  }, []);
 
   function set<K extends keyof Draft>(key: K, value: Draft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
@@ -804,11 +796,18 @@ export default function CustomerFormClient({ fortnoxConnected, currentUserId }: 
             <p className={cn('mb-3', crm.sectionTitle)}>Kundansvarig</p>
             <Select value={draft.account_manager_id} onChange={(e) => set('account_manager_id', e.target.value)}>
               <option value="">— Ingen —</option>
+              {/* Förvalet finns från första renderingen, katalogen kommer efter. Utan ett eget
+                  alternativ hade rullistan visat "Ingen" medan formuläret bar ett id. */}
+              {draft.account_manager_id && !sellers.some((s) => s.id === draft.account_manager_id) ? (
+                <option value={draft.account_manager_id}>
+                  {draft.account_manager_id === defaultAccountManager?.id ? defaultAccountManager.name : 'Okänd säljare'}
+                </option>
+              ) : null}
               {sellers.map((s) => (
                 <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
               ))}
             </Select>
-            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Du är förvald om du är säljare.</p>
+            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Kan sättas senare.</p>
           </div>
 
           {/* Fortnox */}
