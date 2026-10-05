@@ -10,7 +10,7 @@ export function buildFaultReportEmail(report: FaultReportView, appBaseUrl?: stri
   const text = [
     'En ny felanmälan har registrerats.',
     '',
-    `Utrustning: ${report.category_label}`,
+    `Gäller: ${report.category_label}`,
     `Anmäld av: ${report.reporter_name}`,
     '',
     'Beskrivning:',
@@ -23,7 +23,7 @@ export function buildFaultReportEmail(report: FaultReportView, appBaseUrl?: stri
   const html = `
     <div style="font-family:Arial,Helvetica,sans-serif;color:#0f172a;line-height:1.5">
       <h2 style="margin:0 0 12px">Ny felanmälan</h2>
-      <p style="margin:0 0 4px"><strong>Utrustning:</strong> ${esc(report.category_label)}</p>
+      <p style="margin:0 0 4px"><strong>Gäller:</strong> ${esc(report.category_label)}</p>
       <p style="margin:0 0 12px"><strong>Anmäld av:</strong> ${esc(report.reporter_name)}</p>
       <p style="margin:0 0 4px"><strong>Beskrivning:</strong></p>
       <p style="margin:0 0 16px;white-space:pre-wrap">${esc(report.comment)}</p>

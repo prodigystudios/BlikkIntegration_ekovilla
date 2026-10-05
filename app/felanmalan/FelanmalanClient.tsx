@@ -42,7 +42,7 @@ export default function FelanmalanClient({ isRecipient }: { isRecipient: boolean
     <div className="grid grid-cols-1 gap-4">
       <header className="grid gap-1">
         <h1 className={crm.pageTitle}>Felanmälan</h1>
-        <p className={crm.pageSubtitle}>Anmäl trasig utrustning — arbetsledare tar vid och återkopplar i ärendet.</p>
+        <p className={crm.pageSubtitle}>Anmäl fel och brister — arbetsledare tar vid och återkopplar i ärendet.</p>
       </header>
 
       <div role="tablist" aria-label="Felanmälan" className="flex flex-wrap gap-2">
@@ -129,7 +129,7 @@ function NewReportForm({ onCreated }: { onCreated: () => void }) {
           onChange={(e) => setCategory(e.target.value as FaultCategory)}
           disabled={submitting}
         >
-          <option value="" disabled>Välj utrustning…</option>
+          <option value="" disabled>Välj…</option>
           {FAULT_CATEGORIES.map((c) => (
             <option key={c} value={c}>{categoryLabel[c]}</option>
           ))}
