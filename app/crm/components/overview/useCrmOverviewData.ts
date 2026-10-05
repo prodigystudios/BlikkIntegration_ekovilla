@@ -75,8 +75,8 @@ function itemsOf<T>(section: Section): T[] {
   return section.ok && Array.isArray(section.json?.data?.items) ? section.json.data.items : [];
 }
 
-// Rows per "senaste …" card. Five fills the column next to the status panel and the leaderboard
-// without turning the overview into a list page — the cards' own "Visa alla" leads there.
+// Rows per "senaste …" card. Five is enough to find what you just worked on without turning the
+// overview into a list page — the cards' own "Visa alla" leads there.
 export const RECENT_ITEM_LIMIT = 5;
 
 // Utan tak väntar en hämtning hur länge som helst, och "Uppdatera" låg utgråad på "Uppdaterar…"
