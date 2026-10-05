@@ -149,7 +149,7 @@ export const CRM_QUOTES_PAGE_SIZE = 100;
 //
 // 'created_desc' is what the offer list asks for: newest first, so the quote you just wrote is at
 // the top. 'follow_up_asc' is the same list's other view — the nearest follow-up first, most
-// urgent at the top. 'updated_desc' serves the overview's "senaste offertlägen". The historical
+// urgent at the top. 'updated_desc' serves the overview's "Senaste offerter" table. The historical
 // default, 'status_asc', is the old working order (status sorts draft → follow_up → lost → sent →
 // won, then nearest follow-up); it stays the default so every other caller is untouched, but note
 // what it does at the row cap: the cut happens server-side, from the tail, so WON quotes go first

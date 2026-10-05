@@ -1,12 +1,35 @@
 "use client";
 
-import Link from 'next/link';
 import EmptyState from '@/components/ui/EmptyState';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
-import { formatCurrency } from './overviewFormat';
+import { documentRef, formatDate } from '@/app/crm/lib/format';
+import { netAmount } from '@/lib/domains/crm/pricing';
+import { formatCurrency, stockholmDateISO } from './overviewFormat';
+import { CustomerCell, RecentTable, recentWidth, type RecentColumn } from './OverviewRecentTable';
 import { RecentCard } from './OverviewStates';
 import type { WorkOrderItem } from './overviewTypes';
+
+const COLUMNS: Array<RecentColumn<WorkOrderItem>> = [
+  // Numret via documentRef: Fortnox-numret först, det interna bara som reserv. Visning, inte
+  // uppslag — länken går på id:t.
+  { header: 'Ordernr', className: recentWidth.number, cell: (order) => documentRef(order.fortnox_order_number, order.order_number) },
+  {
+    header: 'Kund',
+    className: recentWidth.name,
+    cell: (order) => <CustomerCell href={`/crm/arbetsorder/${order.id}`} customer={order.client_name} project={order.project_name} />,
+  },
+  // Netto, som resten av översikten. Ordervärdet — inte resten att fakturera, som nyckeltalet Att
+  // fakturera visar för en delfakturerad order.
+  { header: 'Exkl. moms', className: recentWidth.amount, cell: (order) => formatCurrency(netAmount(order), order.currency_code) },
+  // Listan är sorterad på när ordern skapades (created_desc).
+  { header: 'Skapad', className: recentWidth.date, cell: (order) => formatDate(stockholmDateISO(order.created_at)) },
+  {
+    header: 'Status',
+    className: recentWidth.status,
+    cell: (order) => <span className={cn(crm.badge, workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>,
+  },
+];
 
 export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   loading: boolean;
@@ -16,17 +39,7 @@ export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   return (
     <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed}>
       {workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
-        <div className="grid gap-2">
-          {workOrders.map((order) => (
-            <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
-              <div className="min-w-0">
-                <strong className={cn('block truncate', crm.bodyStrong)}>{order.project_name}</strong>
-                <p className={cn('m-0 truncate', crm.meta)}>{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
-              </div>
-              <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
-            </Link>
-          ))}
-        </div>
+        <RecentTable label="Senaste ordrar" columns={COLUMNS} rows={workOrders} />
       )}
     </RecentCard>
   );

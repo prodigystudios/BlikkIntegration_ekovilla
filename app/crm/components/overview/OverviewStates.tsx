@@ -6,7 +6,7 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import { RECENT_ITEM_LIMIT } from './useCrmOverviewData';
 
 // En tom lista och en lista som inte gick att läsa ser likadana ut i data men betyder motsatta
-// saker. Utan den här skulle ett 500-svar renderas som "Inga offertsteg registrerade ännu."
+// saker. Utan den här skulle ett 500-svar renderas som "Inga offerter ännu."
 export function SectionError() {
   return (
     <div className="rounded-xl border border-dashed border-rose-200 bg-rose-50/70 px-4 py-3 text-xs text-rose-800">
@@ -26,23 +26,34 @@ export function TruncatedNote({ queries, className }: { queries: string[]; class
   );
 }
 
-export function RecentCard({ title, href, loading, failed, children }: { title: string; href: string; loading: boolean; failed?: boolean; children: React.ReactNode }) {
+// Skelettet har tabellens höjd: en rubrikrad och RECENT_ITEM_LIMIT rader med kund och projekt.
+// Med listkortens 56 px höga rader hade kortet krympt när datan landade.
+function TableSkeleton() {
   return (
-    <div className={crm.cardInner}>
-      <div className="mb-3 flex items-center justify-between gap-3">
-        {/* h2, inte strong: korten är syskon till Att agera på och tavlan, så en skärmläsares
-            rubriklista tappade annars halva sidan. Preflight nollar h2:ans grad, vikt och marginal,
-            så klasserna nedan bestämmer utseendet precis som förut. */}
-        <h2 className={cn('m-0', crm.cardTitle)}>{title}</h2>
-        <Link href={href} className={cn('text-xs', crm.link)}>Visa alla</Link>
-      </div>
-      {loading ? <OverviewLoadingRows rows={RECENT_ITEM_LIMIT} /> : failed ? <SectionError /> : children}
+    <div className="grid gap-1.5" aria-hidden="true">
+      <div className="h-4 w-1/2 rounded bg-[#e6ece2]" />
+      {Array.from({ length: RECENT_ITEM_LIMIT }).map((_, i) => (
+        <div key={i} className="h-11 animate-pulse rounded-md bg-[#dfe6da]" />
+      ))}
     </div>
   );
 }
 
-// Skeleton row count is per caller: the recent lists settle on five rows, so a three-row skeleton
-// would make the whole column jump when the data lands.
+export function RecentCard({ title, href, loading, failed, children }: { title: string; href: string; loading: boolean; failed?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={cn(crm.cardInner, 'min-w-0')}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        {/* h2, inte strong: korten är syskon till Att agera på och tavlan, och en skärmläsares
+            rubriklista tappade annars halva sidan. */}
+        <h2 className={cn('m-0', crm.cardTitle)}>{title}</h2>
+        <Link href={href} className={cn('text-xs', crm.link)}>Visa alla</Link>
+      </div>
+      {loading ? <TableSkeleton /> : failed ? <SectionError /> : children}
+    </div>
+  );
+}
+
+// Skeleton row count is per caller, so that the card keeps its height when the data lands.
 export function OverviewLoadingRows({ rows = 3 }: { rows?: number }) {
   return (
     <div className="grid gap-2">

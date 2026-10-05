@@ -1,41 +1,27 @@
 import type { QuoteStatus, WorkOrderStatus } from '@/app/crm/lib/crmTokens';
+import type { QuoteNameFields } from '@/app/crm/lib/quoteDisplay';
+import type { NetAmountRow } from '@/lib/domains/crm/pricing';
 
-// Raderna som översiktens listhämtningar lämnar ut. Siffrorna finns inte här — de kommer
-// färdigräknade från /api/crm/overview, se CrmOverviewSummary.
+// Raderna som översiktens två tabeller läser ur list-API:erna — bara fälten tabellerna använder.
+// Siffrorna finns inte här: de kommer färdigräknade från /api/crm/overview, se CrmOverviewSummary.
 
-export type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
-
-export type QuoteProspect = {
+export type QuoteItem = NetAmountRow & QuoteNameFields & {
   id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  status: ProspectStatus;
-};
-
-export type QuoteItem = {
-  id: string;
-  prospect_id: string | null;
-  customer_name: string | null;
-  project_name: string;
-  amount: number | string;
+  project_name: string | null;
+  quote_number: string | null;
+  fortnox_offer_number: string | null;
   currency_code: string;
   status: QuoteStatus;
-  quote_date: string;
-  follow_up_date: string | null;
-  assigned_to: string;
   updated_at: string;
-  prospect: QuoteProspect | QuoteProspect[] | null;
 };
 
-export type WorkOrderItem = {
+export type WorkOrderItem = NetAmountRow & {
   id: string;
-  project_name: string;
+  project_name: string | null;
+  order_number: string | null;
+  fortnox_order_number: string | null;
   client_name: string;
-  amount: number | string;
   currency_code: string;
   status: WorkOrderStatus;
-  assigned_to: string;
   created_at: string;
-  fortnox_invoiced_at: string | null;
 };
