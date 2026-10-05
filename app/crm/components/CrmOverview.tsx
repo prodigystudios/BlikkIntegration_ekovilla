@@ -65,7 +65,7 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
       <OverviewKpiCards loading={loading} summaryFailed={summaryFailed} summary={summary} />
 
       {/* Summeringens kapning, på sidnivå och i alla bredder. Den gäller inte bara nyckeltalen
-          (dolda på telefon) utan också Nästa fokus — sena uppgifter och samtal räknas i samma
+          (dolda på telefon) utan också Att agera på — sena uppgifter och samtal räknas i samma
           summering. Låg förut i målkortet, som syntes överallt. */}
       <TruncatedNote queries={summary.truncated} />
 
@@ -97,8 +97,8 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
 
       {/* Varje säljare mot sina egna veckomål, över hela bredden: sex mått per rad behöver
           plats. Ersätter högerkolumnens "Veckans mål", vars lagrader nu är tavlan ovanför och vars
-          säljarlista nu är det här. Sena uppgifter, kortets sista rad, står redan först i Nästa
-          fokus när det finns några. */}
+          säljarlista nu är det här. Sena uppgifter, kortets sista rad, står först i Att agera på
+          när det finns några. */}
       <OverviewSellerProgress loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
 
       {/* Att agera på först, sedan de senaste offerterna och ordrarna. På telefon, där statistiken
@@ -108,7 +108,6 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
         summaryFailed={summaryFailed}
         summary={summary}
         scoreboard={state.scoreboard}
-        calls={state.calls}
         userId={userId}
       />
 

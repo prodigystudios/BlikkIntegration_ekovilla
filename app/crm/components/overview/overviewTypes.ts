@@ -5,30 +5,6 @@ import type { QuoteStatus, WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 
 export type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'quoted' | 'won' | 'lost';
 
-export type CallProspect = {
-  id: string;
-  company_name: string;
-  contact_name: string | null;
-  city: string | null;
-  source: string | null;
-  status: ProspectStatus;
-};
-
-export type CallItem = {
-  id: string;
-  prospect_id: string | null;
-  company_name: string | null;
-  contact_name: string | null;
-  city: string | null;
-  source: string | null;
-  user_id: string;
-  outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative';
-  summary: string;
-  next_step: string | null;
-  call_at: string;
-  prospect: CallProspect | CallProspect[] | null;
-};
-
 export type QuoteProspect = {
   id: string;
   company_name: string;

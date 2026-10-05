@@ -30,7 +30,7 @@ export function RecentCard({ title, href, loading, failed, children }: { title: 
   return (
     <div className={crm.cardInner}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        {/* h2, inte strong: korten är syskon till "Nästa fokus" och statusbilden, så en skärmläsares
+        {/* h2, inte strong: korten är syskon till Att agera på och tavlan, så en skärmläsares
             rubriklista tappade annars halva sidan. Preflight nollar h2:ans grad, vikt och marginal,
             så klasserna nedan bestämmer utseendet precis som förut. */}
         <h2 className={cn('m-0', crm.cardTitle)}>{title}</h2>

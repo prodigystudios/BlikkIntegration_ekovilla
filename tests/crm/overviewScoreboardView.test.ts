@@ -239,6 +239,10 @@ describe('callsToStar — "du är N samtal från stjärnan"', () => {
     expect(callsToStar([andreas({ done: 10, target: 10.5 })], 'u1')).toEqual({ name: 'Andreas', remaining: 1 });
   });
 
+  it('tilltalar inte med reservnamnet när profilen saknar namn', () => {
+    expect(callsToStar([seller('u1', 'Okänd användare', { calls: { done: 2, target: 5 } })], 'u1')).toEqual({ name: null, remaining: 3 });
+  });
+
   it('meningen böjs i singular vid ett', () => {
     expect(callsToStarSentence(1)).toBe('Ett samtal till och du når veckans samtalsmål.');
     expect(callsToStarSentence(4)).toBe('4 samtal till och du når veckans samtalsmål.');

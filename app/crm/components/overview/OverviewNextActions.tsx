@@ -1,6 +1,7 @@
 "use client";
 
 import Link from 'next/link';
+import Badge from '@/components/ui/Badge';
 import { useCan } from '@/lib/UserProfileContext';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -9,17 +10,16 @@ import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
 import { buildOverviewActions, staleCalls } from './overviewActions';
 import { StarOutlineIcon } from './OverviewIcons';
 import { OverviewLoadingRows, SectionError } from './OverviewStates';
-import type { CallItem } from './overviewTypes';
 import { callsToStar, callsToStarSentence } from './scoreboardView';
 
 // Läsarens egen väg till samtalsstjärnan, ur veckotavlan. Står ovanför åtgärdsraderna och räknas
 // inte in i dem: det är ett mål att sträcka sig mot, inte något som har blivit liggande.
-function CallsToStarNudge({ name, remaining }: { name: string; remaining: number }) {
+function CallsToStarNudge({ name, remaining }: { name: string | null; remaining: number }) {
   return (
     <div className="flex min-w-0 items-start gap-3 rounded-xl border border-[color:var(--ek-star-border)] bg-[color:var(--ek-star-wash)] px-3.5 py-2.5">
       <StarOutlineIcon className="mt-0.5 h-5 w-5 shrink-0 text-[color:var(--ek-star)]" />
       <div className="grid min-w-0 flex-1 gap-0.5">
-        <strong className={crm.bodyStrong}>{name}, du är {remaining} samtal från stjärnan</strong>
+        <strong className={crm.bodyStrong}>{name ? `${name}, du` : 'Du'} är {remaining} samtal från stjärnan</strong>
         <p className="m-0 text-xs leading-snug text-slate-600">{callsToStarSentence(remaining)}</p>
       </div>
       <Link href="/crm/samtal" className={cn('mt-0.5 shrink-0 text-xs', crm.link)}>Till samtalen →</Link>
@@ -27,13 +27,11 @@ function CallsToStarNudge({ name, remaining }: { name: string; remaining: number
   );
 }
 
-export default function OverviewNextActions({ loading, summaryFailed, summary, scoreboard, calls, userId }: {
+export default function OverviewNextActions({ loading, summaryFailed, summary, scoreboard, userId }: {
   loading: boolean;
   summaryFailed: boolean;
   summary: CrmOverviewSummary;
   scoreboard: WeeklyScoreboard | null;
-  /** De senaste samtalen läsaren ser — bara för att kunna säga hur länge loggen legat stilla. */
-  calls: CallItem[];
   userId: string | null;
 }) {
   // Admin ser hela lagets samtal, säljaren sina egna — samma nyckel (crm.admin) som styr vad API:t
@@ -41,11 +39,17 @@ export default function OverviewNextActions({ loading, summaryFailed, summary, s
   const seesWholeTeam = useCan('crm.admin');
   const nextActions = buildOverviewActions({
     overdueTasks: summary.overdueTasks,
+    todayTasks: summary.todayTasks,
     followUpCalls: summary.followUpCalls,
     newProspects: summary.newProspects,
     standaloneCalls: summary.standaloneCalls,
     quoteFollowUps: summary.quoteFollowUps,
-    staleCalls: staleCalls({ callsLast7Days: summary.callsLast7Days, calls, seesWholeTeam, userId }),
+    staleCalls: staleCalls({
+      callsLast7Days: summary.callsLast7Days,
+      lastVisibleCallAt: summary.lastVisibleCallAt,
+      lastOwnCallAt: summary.lastOwnCallAt,
+      seesWholeTeam,
+    }),
     seesWholeTeam,
   });
   // Ur tavlan, inte summeringen: den bär läsarens veckomål. Fallerar summeringen står den kvar.
@@ -54,21 +58,19 @@ export default function OverviewNextActions({ loading, summaryFailed, summary, s
   // ovanför felrutan, samma påstående som nyckeltalen döljs för.
   const showCount = !loading && !summaryFailed && nextActions.length > 0;
 
-  /* Kortet är medvetet tight: högst ACTION_LIMIT rader (buildOverviewActions kapar där), så att
-      det som ligger under syns utan att man scrollar förbi en rubrik med luft omkring sig. */
   return (
     <section aria-labelledby="overview-next-actions" className={crm.cardInner}>
       {/* Rubriken är kortets enda rad ovanför innehållet. Den bar förut en kicker med versaler
           ("ATT AGERA PÅ") ovanför "Nästa fokus" — två rubriker för ett kort. */}
       <div className="mb-3 flex items-center gap-2">
         <h2 id="overview-next-actions" className={cn('m-0', crm.cardTitle)}>Att agera på</h2>
-        {/* En siffra i en fylld cirkel, som i mockupen. Inte ett piller: pillret (ljus botten, ram,
-            ett ord) är reserverat för status, och de två ska inte gå att förväxla. */}
+        {/* Antalet rader nedanför — alla visas, så siffran är det man ser. Badge:ns accent är
+            repots antalsmarkör ("framhävning, inte status"); statuspillren bor i crmTokens. */}
         {showCount ? (
-          <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-[color:var(--ek-green)] px-1.5 text-[11px] font-semibold tabular-nums text-white">
+          <Badge variant="accent" className="py-0 tabular-nums">
             <span aria-hidden="true">{nextActions.length}</span>
-            <span className="sr-only">{nextActions.length === 1 ? 'en sak' : `${nextActions.length} saker`}</span>
-          </span>
+            <span className="sr-only">{nextActions.length === 1 ? 'en sak att agera på' : `${nextActions.length} saker att agera på`}</span>
+          </Badge>
         ) : null}
       </div>
       <div className="grid gap-1.5">

@@ -1,3 +1,4 @@
+import { UNKNOWN_SELLER_NAME } from '@/lib/domains/crm/goals';
 import type { MetricProgress, ScoreboardMetric, ScoreboardMetrics, ScoreboardSeller } from '@/lib/domains/crm/weeklyScoreboard';
 // planningDates och inte lib/domains/planning/insights: insights drar med sig serverns läskod (och
 // node:assert) in i webbläsarens paket. planningDates har inga importer alls.
@@ -162,8 +163,8 @@ export function parseDismissedAchievements(raw: string | null): DismissedAchieve
   }
 }
 
-/** Läsarens väg till samtalsstjärnan: förnamnet och hur många samtal som återstår. */
-export type CallsToStar = { name: string; remaining: number };
+/** Läsarens väg till samtalsstjärnan: förnamnet (null utan namn) och hur många samtal som återstår. */
+export type CallsToStar = { name: string | null; remaining: number };
 
 /**
  * Hur många samtal läsaren har kvar till veckans samtalsmål — "Andreas, du är 1 samtal från
@@ -182,7 +183,9 @@ export function callsToStar(sellers: ScoreboardSeller[], viewerId: string | null
   // Ingen reached-kontroll: för ett antalsmått är "nått" detsamma som att inget återstår.
   if (!seller || !calls || calls.target == null) return null;
   const remaining = Math.ceil(calls.target - calls.done);
-  return remaining > 0 ? { name: firstName(seller.name), remaining } : null;
+  if (remaining <= 0) return null;
+  // Utan namn i profilen står tavlans reservnamn där — "Okänd, du är 3 samtal …" vore fel tilltal.
+  return { name: seller.name === UNKNOWN_SELLER_NAME ? null : firstName(seller.name), remaining };
 }
 
 /** "Ett samtal till och du når veckans samtalsmål." */

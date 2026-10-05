@@ -1,6 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
+/**
+ * Namnet på veckotavlan när målets användare saknar ett i profilen. Här och inte i
+ * weeklyScoreboard.ts: översikten läser det i webbläsaren, och goals.ts finns redan i dess paket —
+ * tavlans modul drar med sig summeringens läskod.
+ */
+export const UNKNOWN_SELLER_NAME = 'Okänd användare';
+
 // Budgets are set monthly; the leaderboard derives the weekly target as budget ÷ this.
 export const GOAL_WEEKS_PER_MONTH = 4;
 

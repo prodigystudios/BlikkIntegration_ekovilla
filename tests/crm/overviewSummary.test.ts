@@ -48,6 +48,8 @@ function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
     invoiceRoundWindow: [],
     callWindow: [],
     openTasks: [],
+    lastVisibleCallAt: null,
+    lastOwnCallAt: null,
     counts: { pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0 },
     truncated: [],
     ...overrides,
@@ -253,6 +255,16 @@ describe('composeCrmOverviewSummary — uppgifter och genomsläpp', () => {
     expect(summary.openTasks).toBe(5);
     expect(summary.overdueTasks).toBe(2);
     expect(summary.todayTasks).toBe(1);
+  });
+
+  it('släpper igenom de senaste samtalen orörda — staleCalls på översikten räknar dygnen', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      lastVisibleCallAt: '2026-08-01T09:00:00+00:00',
+      lastOwnCallAt: '2026-07-20T09:00:00+00:00',
+    }), WINDOW);
+
+    expect(summary.lastVisibleCallAt).toBe('2026-08-01T09:00:00+00:00');
+    expect(summary.lastOwnCallAt).toBe('2026-07-20T09:00:00+00:00');
   });
 
   it('släpper igenom head-räkningarna och kapningsflaggan orörda', () => {

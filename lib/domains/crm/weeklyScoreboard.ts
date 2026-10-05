@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { listCrmGoals, mapCrmGoalRows, weeklyFromMonthly, type CrmGoal, type CrmGoalRow } from './goals';
+import { UNKNOWN_SELLER_NAME, listCrmGoals, mapCrmGoalRows, weeklyFromMonthly, type CrmGoal, type CrmGoalRow } from './goals';
 import {
   composeWeekActuals,
   fetchWeekActualRows,
@@ -132,7 +132,7 @@ export function composeWeeklyScoreboard(
       const metrics = metricsOf(input.actuals.weekByUser[goal.user_id], budget);
       return {
         userId: goal.user_id,
-        name: goal.user?.full_name || 'Okänd användare',
+        name: goal.user?.full_name || UNKNOWN_SELLER_NAME,
         metrics,
         progressScore: progressScore(metrics),
       };
