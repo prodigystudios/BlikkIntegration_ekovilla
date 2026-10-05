@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { netAmount, type NetAmountRow } from './pricing';
-import { invoicedRevenue, type InvoiceRoundRow } from './invoicedRevenue';
+import { invoicedRevenue, uninvoicedAmount, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
 
 // ── The CRM overview's read model ──
@@ -119,7 +119,7 @@ export type CrmOverviewSummary = {
 
 export type QuoteStockRow = NetAmountRow & { status: string };
 export type QuoteWindowRow = NetAmountRow & { quote_date: string; assigned_to: string | null };
-export type OrderStockRow = NetAmountRow & { status: string };
+export type OrderStockRow = OrderWithRounds & { status: string };
 export type OrderWindowRow = NetAmountRow & {
   status: string;
   created_at: string;
@@ -196,6 +196,9 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
   const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
 
   const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
+  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
+  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
+  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
 
   // Every figure measured against a target is scoped to the current week, for the team and per
   // seller in the same pass — so the team row and the leaderboard row for the same metric are the
@@ -253,9 +256,9 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
     quoteFollowUps: rows.quoteStocks.filter((quote) => quote.status === 'follow_up').length,
 
     openWorkOrders: openOrders.length,
-    openOrderValue: sum(openOrders),
+    openOrderValue: sumUninvoiced(openOrders),
     workOrdersToInvoice: toInvoiceOrders.length,
-    toInvoiceOrderValue: sum(toInvoiceOrders),
+    toInvoiceOrderValue: sumUninvoiced(toInvoiceOrders),
 
     // All three read from the rows and the window alone — no query row-count is trusted, which is
     // what makes them testable without a database. The two follow-up figures are WINDOWED on
@@ -335,7 +338,8 @@ export async function fetchCrmOverviewSummary(
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
-      .select('status, amount, vat_percent, pricing_summary')
+      // Rundorna inbäddade: en delfakturerad order står i lagret med det som återstår, inte hela värdet.
+      .select('status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)')
       .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
       .limit(ROW_CAP), truncated),
     // Superset: created in the week OR invoiced in it. An order created in June and invoiced this

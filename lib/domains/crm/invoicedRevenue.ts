@@ -77,6 +77,28 @@ export function invoicedAt(order: Pick<InvoicedOrderRow, 'fortnox_invoiced_at' |
   return order.fortnox_invoiced_at || order.created_at;
 }
 
+/** En order med de delfakturarundor som redan gått ut (`invoice_rounds:crm_work_order_invoices(amount)`). */
+export type OrderWithRounds = NetAmountRow & {
+  /**
+   * Tom lista = inga rundor. PostgREST svarar med tom lista också när RLS döljer rundorna för
+   * läsaren — då räknas hela nettot som kvar, samma tal som före avdraget. Null tåls för säkerhets skull.
+   */
+  invoice_rounds: Array<{ amount: number | string | null }> | null;
+};
+
+/**
+ * Det som ÅTERSTÅR att fakturera på ordern: nettot minus de rundor som redan gått ut.
+ *
+ * Utan avdraget stod en delfakturerad order kvar i "Att fakturera" med hela sitt värde, också den
+ * del som redan fakturerats och syns i Fakturerat. Aldrig under noll: varje runda avrundas till hela ören
+ * (roundSubtotal) medan nettot inte gör det, så en helt fakturerad order kan hamna en bråkdel av
+ * ett öre under — ett lager visar då noll kvar, inte ett minus.
+ */
+export function uninvoicedAmount(order: OrderWithRounds): number {
+  const billed = (order.invoice_rounds ?? []).reduce((total, round) => total + toNumber(round.amount), 0);
+  return Math.max(0, netAmount(order) - billed);
+}
+
 /**
  * Varje faktura bland raderna, i ETT svep eller per runda. Filtrerar inte på period — anroparen
  * gör det på `at` med sin egen fönsterregel, så rapportens och översiktens fönster förblir sina.

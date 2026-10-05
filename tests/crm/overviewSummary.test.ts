@@ -76,14 +76,14 @@ describe('composeCrmOverviewSummary — lagren', () => {
   it('delar ordrarna i öppet arbete och faktureringssteget, och lämnar avslutade och avbrutna utanför', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderStocks: [
-        { vat_percent: 0, status: 'draft', amount: 1_000 },
-        { vat_percent: 0, status: 'scheduled', amount: 2_000 },
-        { vat_percent: 0, status: 'ready', amount: 4_000 },        // pensionerad status, lever kvar i gamla rader
-        { vat_percent: 0, status: 'in_progress', amount: 8_000 },
-        { vat_percent: 0, status: 'completed', amount: 16_000 },
-        { vat_percent: 0, status: 'partially_invoiced', amount: 32_000 },
-        { vat_percent: 0, status: 'invoiced', amount: 64_000 },
-        { vat_percent: 0, status: 'cancelled', amount: 128_000 },
+        { vat_percent: 0, status: 'draft', amount: 1_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'scheduled', amount: 2_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'ready', amount: 4_000, invoice_rounds: [] },        // pensionerad status, lever kvar i gamla rader
+        { vat_percent: 0, status: 'in_progress', amount: 8_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'completed', amount: 16_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'partially_invoiced', amount: 32_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'invoiced', amount: 64_000, invoice_rounds: [] },
+        { vat_percent: 0, status: 'cancelled', amount: 128_000, invoice_rounds: [] },
       ],
     }), WINDOW);
 
@@ -304,8 +304,8 @@ describe('composeCrmOverviewSummary — ex moms', () => {
   it('summerar orderlagren netto', () => {
     const summary = composeCrmOverviewSummary(rows({
       orderStocks: [
-        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 } },
-        { status: 'completed', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 } },
+        { status: 'scheduled', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 }, invoice_rounds: [] },
+        { status: 'completed', amount: 125_000, vat_percent: 25, pricing_summary: { subtotal: 100_000, total: 125_000 }, invoice_rounds: [] },
       ],
     }), WINDOW);
     expect(summary.openOrderValue).toBe(100_000);
@@ -387,5 +387,33 @@ describe('composeCrmOverviewSummary — delfakturering räknas per runda', () =>
     }), WINDOW);
 
     expect(summary.weekTeam.invoicedValue).toBe(0);
+  });
+});
+
+describe('composeCrmOverviewSummary — orderlagren visar det som ännu inte fakturerats', () => {
+  it('låter en delfakturerad order stå i Att fakturera med sin rest, inte hela värdet', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderStocks: [
+        { vat_percent: 0, status: 'partially_invoiced', amount: 50_000, invoice_rounds: [{ amount: 30_000 }] },
+        { vat_percent: 0, status: 'completed', amount: 10_000, invoice_rounds: [] },
+      ],
+    }), WINDOW);
+
+    expect(summary.toInvoiceOrderValue).toBe(30_000);
+    // Antalet ändras inte: ordern ÄR fortfarande i faktureringssteget.
+    expect(summary.workOrdersToInvoice).toBe(2);
+  });
+
+  // En order kan sättas tillbaka i ett arbetsläge efter en runda. Det fakturerade har ändå lämnat
+  // orderlagret — det syns i Fakturerat.
+  it('drar av redan fakturerade rundor också i det öppna orderlagret', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      orderStocks: [
+        { vat_percent: 0, status: 'in_progress', amount: 40_000, invoice_rounds: [{ amount: 15_000 }] },
+      ],
+    }), WINDOW);
+
+    expect(summary.openOrderValue).toBe(25_000);
+    expect(summary.openWorkOrders).toBe(1);
   });
 });

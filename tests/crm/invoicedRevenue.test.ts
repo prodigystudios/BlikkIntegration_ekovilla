@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   invoicedAt,
   invoicedRevenue,
+  uninvoicedAmount,
   type InvoicedOrderRow,
   type InvoiceRoundRow,
 } from '@/lib/domains/crm/invoicedRevenue';
@@ -123,5 +124,29 @@ describe('rundornas bas är orderns netto', () => {
     const { subtotal } = computePricing(lines as PricingLineItem[], 25);
 
     expect(billed).toBeCloseTo(subtotal, 2);
+  });
+});
+
+// "Att fakturera" och "Order" på översikten visar det som ÄNNU INTE fakturerats. En delfakturerad
+// order stod kvar där med hela sitt värde, också den del som redan syns i Fakturerat.
+describe('uninvoicedAmount', () => {
+  it('är hela nettot när inget fakturerats', () => {
+    expect(uninvoicedAmount({ vat_percent: 25, amount: 62_500, invoice_rounds: [] })).toBe(50_000);
+  });
+
+  it('drar av rundorna som redan gått ut, ex moms mot ex moms', () => {
+    expect(uninvoicedAmount({ vat_percent: 25, amount: 62_500, invoice_rounds: [{ amount: 30_000 }, { amount: '5000.50' }] })).toBe(14_999.5);
+  });
+
+  // PostgREST ger tom lista när RLS döljer rundorna; null ska aldrig komma, men får inte krascha.
+  it('räknar hela nettot som kvar när rundorna saknas', () => {
+    expect(uninvoicedAmount({ vat_percent: 0, amount: 50_000, invoice_rounds: null })).toBe(50_000);
+  });
+
+  // Rundorna avrundas till hela ören, nettot inte. En helt fakturerad order kan därför landa en
+  // bråkdel av ett öre under noll, och ett lager ska då visa noll kvar.
+  it('går aldrig under noll', () => {
+    const net = { vat_percent: 0, amount: 1_000, pricing_summary: { subtotal: 999.996, total: 1_000 } };
+    expect(uninvoicedAmount({ ...net, invoice_rounds: [{ amount: 1_000 }] })).toBe(0);
   });
 });
