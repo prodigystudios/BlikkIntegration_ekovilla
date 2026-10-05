@@ -1,3 +1,5 @@
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+
 // Samma mening på båda ställena den behövs: bandet och statusbilden visar båda nettobelopp, och
 // båda utelämnar avbrutna order — stockraderna genom sina statuslistor (OPEN_/TO_INVOICE_ i
 // overviewSummary), veckoraden genom isDeadWorkOrder-vakten. Delad konstant så de inte glider isär.
@@ -23,4 +25,15 @@ export function formatQuoteDay(day: string, today: string): string {
   const [year, month, date] = day.split('-').map(Number);
   const label = `${date} ${MONTHS_LONG[month - 1]}`;
   return day.slice(0, 4) === today.slice(0, 4) ? label : `${label} ${year}`;
+}
+
+/**
+ * Den svenska kalenderdagen en tidsstämpel faller på, ÅÅÅÅ-MM-DD — "–" när den inte går att läsa.
+ * toISOString().slice(0, 10) hade gett gårdagen mellan 00 och 02 svensk tid. Ett ogiltigt datum får
+ * Intl att kasta, och ett kast under renderingen släcker hela översikten.
+ */
+export function stockholmDay(timestamp: string | null | undefined): string {
+  if (!timestamp) return '–';
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? '–' : stockholmTodayISO(date);
 }

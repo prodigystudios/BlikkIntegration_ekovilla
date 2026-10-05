@@ -4,9 +4,20 @@ import Link from 'next/link';
 import EmptyState from '@/components/ui/EmptyState';
 import { cn } from '@/lib/shared/cn';
 import { crm, workOrderStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
-import { formatCurrency } from './overviewFormat';
-import { RecentCard } from './OverviewStates';
+import { documentRef } from '@/app/crm/lib/format';
+import { netAmount } from '@/lib/domains/crm/pricing';
+import { formatCurrency, stockholmDay } from './overviewFormat';
+import { RecentCard, RecentCell, RecentTable, recentColumn } from './OverviewStates';
 import type { WorkOrderItem } from './overviewTypes';
+
+const HEADERS = [
+  { label: 'Ordernr', className: recentColumn.number },
+  { label: 'Företag', className: recentColumn.name },
+  { label: 'Exkl. moms', className: recentColumn.amount },
+  // Listan är sorterad på när ordern skapades (created_desc).
+  { label: 'Skapad', className: recentColumn.date },
+  { label: 'Status', className: recentColumn.status },
+];
 
 export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   loading: boolean;
@@ -16,17 +27,33 @@ export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   return (
     <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed}>
       {workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
-        <div className="grid gap-2">
+        <RecentTable label="Senaste ordrar" headers={HEADERS}>
           {workOrders.map((order) => (
-            <Link key={order.id} href={`/crm/arbetsorder/${order.id}`} className="flex min-w-0 items-start justify-between gap-3 rounded-xl border border-slate-100 p-3 no-underline transition hover:border-slate-200 hover:bg-slate-50">
-              <div className="min-w-0">
-                <strong className={cn('block truncate', crm.bodyStrong)}>{order.project_name}</strong>
-                <p className={cn('m-0 truncate', crm.meta)}>{order.client_name} · {formatCurrency(order.amount, order.currency_code)}</p>
-              </div>
-              <span className={cn('shrink-0 rounded-full border px-2.5 py-0.5 text-[11px] font-semibold', workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
-            </Link>
+            <tr key={order.id}>
+              {/* Numret via documentRef: Fortnox-numret först, det interna bara som reserv. Visning,
+                  inte uppslag — länken nedan går på id:t. */}
+              <RecentCell className={cn(recentColumn.number, 'truncate tabular-nums text-slate-500')}>
+                {documentRef(order.fortnox_order_number, order.order_number)}
+              </RecentCell>
+              <RecentCell className={recentColumn.name}>
+                <Link href={`/crm/arbetsorder/${order.id}`} className={cn('font-semibold', crm.link)}>
+                  {order.client_name}
+                </Link>
+              </RecentCell>
+              {/* Netto, som resten av översikten. Ordervärdet — inte resten att fakturera, som
+                  nyckeltalet Att fakturera visar för en delfakturerad order. */}
+              <RecentCell className={cn(recentColumn.amount, 'whitespace-nowrap tabular-nums')}>
+                {formatCurrency(netAmount(order), order.currency_code)}
+              </RecentCell>
+              <RecentCell className={cn(recentColumn.date, 'whitespace-nowrap tabular-nums text-slate-500')}>
+                {stockholmDay(order.created_at)}
+              </RecentCell>
+              <RecentCell className={recentColumn.status}>
+                <span className={cn(crm.badge, workOrderStatusClass[order.status])}>{workOrderStatusLabel[order.status]}</span>
+              </RecentCell>
+            </tr>
           ))}
-        </div>
+        </RecentTable>
       )}
     </RecentCard>
   );

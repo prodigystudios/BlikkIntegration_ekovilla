@@ -129,19 +129,14 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
         ) : null}
       </div>
 
-      {/* Offert → order, i den ordning säljarna arbetar. Korten Öppna uppgifter och Senaste samtal
-          låg här till 2026-10-05: de fanns inte i VD:ns mockup, och deras varningar — sena uppgifter
-          och en samtalslogg som legat stilla — står nu i Att agera på. */}
-      <div className="grid gap-4 xl:grid-cols-2">
-        {/* ⚠️ Raderna bär `min-w-0` på själva länken, inte bara på textkolumnen. Raden är ett
-            GRID-item i listan nedan, och ett auto-spår får inte bli smalare än itemets
-            min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
-            Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
-            statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
-        {/* Raderna djuplänkar till posten, inte till listan. Förut gick varje rad till samma
-            mål som kortets "Visa alla", så ett klick på "Nyprod Villa HJO" landade i en lista
-            där man fick leta upp raden igen — sämst på telefon, där sidan finns för att man
-            snabbt ska nå en offert eller order. */}
+      {/* Offert → order, i den ordning säljarna arbetar, som tabeller enligt mockupen. Korten Öppna
+          uppgifter och Senaste samtal låg här till 2026-10-05: de fanns inte i VD:ns mockup, och deras
+          varningar — sena uppgifter och en samtalslogg som legat stilla — står nu i Att agera på.
+          Bredvid varandra först när VARJE tabell får 34rem: fem kolumner i en halv bredd lämnade
+          74 px åt företagsnamnet vid 1280 px med fäst meny. auto-fit räknar på det utrymme sidan
+          faktiskt har, så menyns läge avgör — inte bara skärmen. min(100%, …) håller spåret inom
+          skärmen på telefon. */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,34rem),1fr))] gap-4">
         <OverviewRecentQuotes loading={loading} failed={blank('quotes', state.quotes.length)} quotes={state.quotes} />
         <OverviewRecentOrders loading={loading} failed={blank('workOrders', state.workOrders.length)} workOrders={state.workOrders} />
       </div>
