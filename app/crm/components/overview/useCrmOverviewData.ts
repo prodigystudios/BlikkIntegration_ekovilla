@@ -4,15 +4,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getCrmOverviewWindow } from '@/lib/domains/crm/goals';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
-import type { CallItem, QuoteItem, TaskItem, WorkOrderItem } from './overviewTypes';
+import type { CallItem, QuoteItem, WorkOrderItem } from './overviewTypes';
 
-// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the four
-// "senaste …"-cards render, five rows each. Counting list rows in the browser is what this
+// The page's numbers come pre-counted from /api/crm/overview; the lists are only what the two
+// "senaste …"-cards render, five rows each, plus the five latest calls behind Att agera på's
+// stale-log line (staleCalls in overviewActions.ts). Counting list rows in the browser is what this
 // replaced — see lib/domains/crm/overviewSummary.ts for why that could not hold.
 type LoadState = {
   summary: CrmOverviewSummary | null;
   calls: CallItem[];
-  tasks: TaskItem[];
   quotes: QuoteItem[];
   // Lagets veckotavla: utfall per säljare mot veckomålen, läst förbi RLS så att alla ser hela
   // laget. Ersätter målhämtningen — tavlan bär både målen och utfallet.
@@ -26,17 +26,16 @@ type LoadState = {
   failed: SectionKey[];
 };
 
-export type SectionKey = 'summary' | 'calls' | 'tasks' | 'quotes' | 'scoreboard' | 'workOrders';
+export type SectionKey = 'summary' | 'calls' | 'quotes' | 'scoreboard' | 'workOrders';
 
 // Enda stället ordningen bestäms. Både hämtningarna och failed-listan itererar den här, så de
 // kan inte glida isär — och Record<SectionKey, string> nedan gör att en ny sektion inte kan
 // läggas till utan att också få en URL.
-const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'tasks', 'quotes', 'scoreboard', 'workOrders'];
+const SECTION_ORDER: SectionKey[] = ['summary', 'calls', 'quotes', 'scoreboard', 'workOrders'];
 
 export const sectionLabel: Record<SectionKey, string> = {
   summary: 'siffrorna',
   calls: 'samtal',
-  tasks: 'uppgifter',
   quotes: 'offerter',
   scoreboard: 'veckomålen',
   workOrders: 'arbetsordrar',
@@ -106,7 +105,7 @@ export type OverviewFigures = CrmOverviewSummary & {
 // Översiktens hämtningar och tillstånd. Korten får var sin sektion härifrån, och readSection ovan
 // är skälet till att en sektion som fallerar bara släcker sin egen yta.
 export function useCrmOverviewData() {
-  const [state, setState] = useState<LoadState>({ summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [] });
+  const [state, setState] = useState<LoadState>({ summary: null, calls: [], quotes: [], scoreboard: null, workOrders: [], failed: [] });
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -137,13 +136,10 @@ export function useCrmOverviewData() {
 
       const url: Record<SectionKey, string> = {
         summary: `/api/crm/overview?${summaryQuery}`,
-        // Båda hämtningarna gick förut utan parametrar och landade på domänens tak — 50 samtal
-        // och 100 uppgifter för att rendera fem rader var. Sorteringen sker i Postgres FÖRE
-        // kapningen, så de fem var alltid rätt fem; det här är nyttolast, inte korrekthet.
+        // Gick förut utan parametrar och landade på domänens tak — 50 samtal för att läsa fem.
+        // Sorteringen sker i Postgres FÖRE kapningen, så de fem är alltid de senaste. Listan visas
+        // inte längre; den ger bara dygnen i "inte loggat ett samtal på N dagar" (staleCalls).
         calls: `/api/crm/calls?limit=${RECENT_ITEM_LIMIT}`,
-        // status=open serverfiltrerar det kortet ändå bara visar. Utan den hämtades även
-        // avklarade uppgifter hem för att kastas av ett klientfilter.
-        tasks: `/api/crm/tasks?status=open&limit=${RECENT_ITEM_LIMIT}`,
         // These two lists are now only the cards' five rows. Both sorts have to be asked for:
         // the offer list's default order leads with drafts and lost quotes, the order board's
         // with the earliest installation date — so a brand new order is the table's last row.
@@ -174,7 +170,6 @@ export function useCrmOverviewData() {
       setState((prev) => ({
         summary: summaryData ?? (keep ? prev.summary : null),
         calls: section.calls.ok ? itemsOf<CallItem>(section.calls) : keep ? prev.calls : [],
-        tasks: section.tasks.ok ? itemsOf<TaskItem>(section.tasks) : keep ? prev.tasks : [],
         quotes: section.quotes.ok ? itemsOf<QuoteItem>(section.quotes) : keep ? prev.quotes : [],
         scoreboard: scoreboardData ?? (keep ? prev.scoreboard : null),
         workOrders: section.workOrders.ok ? itemsOf<WorkOrderItem>(section.workOrders) : keep ? prev.workOrders : [],
@@ -188,7 +183,7 @@ export function useCrmOverviewData() {
       if (loadId !== loadIdRef.current) return;
       setState((prev) => mode === 'refresh'
         ? { ...prev, failed: [...SECTION_ORDER] }
-        : { summary: null, calls: [], tasks: [], quotes: [], scoreboard: null, workOrders: [], failed: [...SECTION_ORDER] });
+        : { summary: null, calls: [], quotes: [], scoreboard: null, workOrders: [], failed: [...SECTION_ORDER] });
     } finally {
       if (loadId === loadIdRef.current) {
         setLoading(false);

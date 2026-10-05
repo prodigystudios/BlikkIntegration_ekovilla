@@ -162,6 +162,36 @@ export function parseDismissedAchievements(raw: string | null): DismissedAchieve
   }
 }
 
+/** Läsarens väg till samtalsstjärnan: förnamnet och hur många samtal som återstår. */
+export type CallsToStar = { name: string; remaining: number };
+
+/**
+ * Hur många samtal läsaren har kvar till veckans samtalsmål — "Andreas, du är 1 samtal från
+ * stjärnan" i VD:ns mockup. Null när läsaren inte står på tavlan, saknar samtalsmål eller redan nått
+ * det: då finns ingen stjärna att peka mot, och ett nått mål firas redan av bannern.
+ *
+ * Bara samtalen, med flit: det är det enda målet en säljare kan flytta själv samma dag. Ett
+ * kronmål "12 000 kr från stjärnan" säger inget om vad man ska göra härnäst.
+ *
+ * Samtalsmålet är redan ett heltal (weeklyTarget avrundar antalsmålen). Uppåtavrundningen är
+ * bara ett skydd: blir målet någon gång ett bråktal ska raden ändå säga ett helt samtal, inte en halv.
+ */
+export function callsToStar(sellers: ScoreboardSeller[], viewerId: string | null): CallsToStar | null {
+  const seller = sellers.find((row) => row.userId === viewerId);
+  const calls = seller?.metrics.calls;
+  // Ingen reached-kontroll: för ett antalsmått är "nått" detsamma som att inget återstår.
+  if (!seller || !calls || calls.target == null) return null;
+  const remaining = Math.ceil(calls.target - calls.done);
+  return remaining > 0 ? { name: firstName(seller.name), remaining } : null;
+}
+
+/** "Ett samtal till och du når veckans samtalsmål." */
+export function callsToStarSentence(remaining: number): string {
+  return remaining === 1
+    ? 'Ett samtal till och du når veckans samtalsmål.'
+    : `${remaining} samtal till och du når veckans samtalsmål.`;
+}
+
 /** Två bokstäver till avataren: för- och efternamnets första. Ett ensamt namn ger en. */
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
