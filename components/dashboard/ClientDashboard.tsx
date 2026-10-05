@@ -113,7 +113,7 @@ const baseExtra: Record<string, Omit<QuickLink, 'href' | 'title'>> = {
       <path d="M8 9h8M8 12h8M8 15h5" strokeLinecap="round" />
     </svg>
   ) },
-  '/felanmalan': { desc: 'Anmäl trasig utrustning', icon: (
+  '/felanmalan': { desc: 'Anmäl fel och brister', icon: (
     <svg width="28" height="28" viewBox="0 0 24 24" strokeWidth={1.7} stroke="currentColor" fill="none" aria-hidden>
       <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M12 9v4M12 17h.01" strokeLinecap="round" strokeLinejoin="round" />

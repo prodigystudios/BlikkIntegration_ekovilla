@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   createFaultReportSchema,
   updateFaultReportSchema,
@@ -16,7 +18,7 @@ import { dedupeRecipients, dedupeEmails } from '@/lib/domains/fault-reports/reci
 import { buildFaultReportEmail } from '@/lib/domains/fault-reports/email';
 
 describe('createFaultReportSchema', () => {
-  it('accepts each of the five categories', () => {
+  it('accepts each category', () => {
     for (const c of FAULT_CATEGORIES) {
       expect(createFaultReportSchema.parse({ category: c, comment: 'trasig' }).category).toBe(c);
     }
@@ -58,6 +60,8 @@ describe('category / status label completeness', () => {
   it('every category has a Swedish label', () => {
     for (const c of FAULT_CATEGORIES) expect(categoryLabel[c]).toBeTruthy();
     expect(categoryLabel.isoleringsmaskin).toBe('Isoleringsmaskin');
+    expect(categoryLabel.arbetsplats).toBe('Arbetsplats');
+    expect(categoryLabel.entreprenad).toBe('Entreprenad');
   });
   it('every status has a Swedish label', () => {
     for (const s of FAULT_STATUSES) expect(statusLabel[s]).toBeTruthy();
@@ -140,6 +144,8 @@ describe('buildFaultReportEmail', () => {
   it('includes category, reporter and a deep link when a base url is given', () => {
     const { subject, html, text } = buildFaultReportEmail(report, 'https://app.example.se/');
     expect(subject).toContain('Isoleringsmaskin');
+    expect(text).toContain('Gäller: Isoleringsmaskin');
+    expect(html).toContain('<strong>Gäller:</strong> Isoleringsmaskin');
     expect(text).toContain('Bertil');
     expect(text).toContain('Läcker olja');
     expect(html).toContain('https://app.example.se/felanmalan?arende=r9&scope=inbox');
@@ -154,5 +160,36 @@ describe('buildFaultReportEmail', () => {
     const { html } = buildFaultReportEmail(evil);
     expect(html).not.toContain('<script>');
     expect(html).toContain('&lt;script&gt;');
+  });
+});
+
+// Kategorin är text med en CHECK i databasen. Glider listan i koden och CHECK:en isär nekas inskicket
+// med ett 500 (eller, åt andra hållet, visas en sparad kategori som 'Maskiner'). Testet läser den
+// SENASTE definitionen av fault_reports_category_chk i kedjan och jämför mängderna.
+describe('fault_reports_category_chk', () => {
+  const dir = resolve(process.cwd(), 'supabase/migrations');
+
+  function latestCategoryCheck(): string[] {
+    let latest: string | null = null;
+    for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+      const sql = readFileSync(resolve(dir, file), 'utf8').replace(/--.*$/gm, '');
+      for (const m of sql.matchAll(/fault_reports_category_chk"?\s+check\s*\(/gi)) {
+        // Parentesen efter CHECK balanseras, så att nästa constraint i samma CREATE TABLE inte följer med.
+        let depth = 1;
+        let i = m.index! + m[0].length;
+        while (depth > 0 && i < sql.length) {
+          if (sql[i] === '(') depth += 1;
+          if (sql[i] === ')') depth -= 1;
+          i += 1;
+        }
+        latest = sql.slice(m.index!, i);
+      }
+    }
+    if (!latest) throw new Error('fault_reports_category_chk hittades inte i supabase/migrations');
+    return [...latest.matchAll(/'([^']+)'/g)].map((v) => v[1]).sort();
+  }
+
+  it('tillåter exakt de kategorier som koden erbjuder', () => {
+    expect(latestCategoryCheck()).toEqual([...FAULT_CATEGORIES].sort());
   });
 });

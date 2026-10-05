@@ -1,7 +1,15 @@
 // Felanmälan domain types. DB stores stable English keys (text + CHECK); Swedish labels live
 // here so the UI and notifications render consistently.
 
-export const FAULT_CATEGORIES = ['truck', 'lager', 'lastbil', 'isoleringsmaskin', 'maskiner'] as const;
+export const FAULT_CATEGORIES = [
+  'truck',
+  'lager',
+  'lastbil',
+  'isoleringsmaskin',
+  'maskiner',
+  'arbetsplats',
+  'entreprenad',
+] as const;
 export type FaultCategory = (typeof FAULT_CATEGORIES)[number];
 
 export const FAULT_STATUSES = ['new', 'in_progress', 'resolved'] as const;
@@ -13,6 +21,8 @@ export const categoryLabel: Record<FaultCategory, string> = {
   lastbil: 'Lastbil',
   isoleringsmaskin: 'Isoleringsmaskin',
   maskiner: 'Maskiner',
+  arbetsplats: 'Arbetsplats',
+  entreprenad: 'Entreprenad',
 };
 
 export const statusLabel: Record<FaultStatus, string> = {
