@@ -1,7 +1,7 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { getCrmWorkOrder, listWorkOrderInvoiceRounds } from '@/lib/domains/crm/work-orders';
 import { createPartialInvoice, PartialInvoiceError } from '@/lib/domains/fortnox/partialInvoices';
-import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxInvoiceNotRecordedError, FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError, invalidUuidParam, partialInvoiceSchema, validationError } from '../../../_lib';
 
 type RouteContext = { params: { id: string } };
@@ -41,6 +41,8 @@ export async function POST(req: Request, context: RouteContext) {
       if (e instanceof PartialInvoiceError) return routeError(409, 'partial_invoice_invalid', e.message);
       if (e instanceof FortnoxNotConnectedError) return routeError(409, 'fortnox_not_connected', friendlyFortnoxMessage(e));
       if (e instanceof FortnoxPushInProgressError) return routeError(409, 'fortnox_push_in_progress', friendlyFortnoxMessage(e));
+      // Fakturan FINNS — egen kod, så att svaret aldrig läses som "ingenting skapades".
+      if (e instanceof FortnoxInvoiceNotRecordedError) return routeError(500, 'fortnox_invoice_not_recorded', e.message);
       console.error('[Fortnox] partial invoice:', (e as Error)?.message);
       return routeError(502, 'fortnox_invoice_failed', friendlyFortnoxMessage(e));
     }

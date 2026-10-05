@@ -31,7 +31,8 @@ vi.mock('@/lib/domains/fortnox/partialInvoices', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/fortnox/partialInvoices')>();
   return { ...actual, invoiceRemainingForWorkOrder: vi.fn(), createPartialInvoice: vi.fn() };
 });
-vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({})) }));
+vi.mock('@/lib/supabase/session', () => ({ createSessionClient: vi.fn(() => ({ client: 'session' })) }));
+vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({ client: 'admin' })) }));
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
 
 import { getCurrentUser } from '@/lib/auth/route';
@@ -89,6 +90,16 @@ describe('POST /invoice — "Fakturera allt" väljer väg på rundorna', () => {
     expect(createInvoiceFromWorkOrder).not.toHaveBeenCalled();
   });
 
+  // Sessionens RLS får inte kunna dölja rundorna — noll synliga rundor hade skickat ordern till
+  // createinvoice. Samma skäl som avbrytandet räknar med admin-klienten.
+  it('räknar rundorna med admin-klienten, inte sessionens', async () => {
+    roundCount(1);
+
+    await invoicePOST(invoiceReq(), ctx);
+
+    expect(countWorkOrderInvoiceRounds).toHaveBeenCalledWith({ client: 'admin' }, WORK_ORDER_ID);
+  });
+
   it('använder orderns createinvoice när ingen runda finns', async () => {
     roundCount(0);
 
@@ -120,7 +131,7 @@ describe('POST /invoice — "Fakturera allt" väljer väg på rundorna', () => {
 // Beskedet "Fakturera INTE igen" måste nå användaren ordagrant genom båda rutterna — det
 // generiska svaret var "Försök igen", och ett nytt försök fakturerar samma antal en gång till.
 describe('faktura skapad men inte sparad — beskedet når fram', () => {
-  const notRecorded = new FortnoxInvoiceNotRecordedError('9001', 'Faktura 9001 skapades i Fortnox men kunde inte sparas i CRM. Fakturera INTE igen.');
+  const notRecorded = new FortnoxInvoiceNotRecordedError('9001', 'Faktura 9001 skapades i Fortnox men kunde inte sparas i CRM. Fakturera INTE igen.', false);
 
   it('genom "Fakturera allt"', async () => {
     roundCount(1);
@@ -129,6 +140,8 @@ describe('faktura skapad men inte sparad — beskedet når fram', () => {
     const json = await (await invoicePOST(invoiceReq(), ctx)).json();
 
     expect(json.error).toBe(notRecorded.message);
+    // Egen kod: klienten stänger rutan och läser om ordern på just den.
+    expect(json.errorDetails.code).toBe('fortnox_invoice_not_recorded');
   });
 
   it('genom delfaktureringen', async () => {
@@ -137,5 +150,6 @@ describe('faktura skapad men inte sparad — beskedet når fram', () => {
     const json = await (await partialPOST(partialReq(), ctx)).json();
 
     expect(json.error).toBe(notRecorded.message);
+    expect(json.errorDetails.code).toBe('fortnox_invoice_not_recorded');
   });
 });

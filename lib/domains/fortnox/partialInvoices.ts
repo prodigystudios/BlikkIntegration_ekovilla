@@ -666,7 +666,7 @@ export async function createPartialInvoice(
       console.error('[Fortnox] delfaktura skapad men rundan EJ sparad — lägg in raden för hand:', JSON.stringify(roundRow));
       throw new FortnoxInvoiceNotRecordedError(invoiceNumber,
         `Faktura ${invoiceNumber} skapades i Fortnox men kunde inte sparas i CRM. Fakturera INTE igen — `
-        + 'be en administratör lägga in delfakturan, annars faktureras samma antal två gånger.');
+        + 'be en administratör lägga in delfakturan, annars faktureras samma antal två gånger.', false);
     }
 
     const status: 'partially_invoiced' | 'invoiced' = isFinalRound ? 'invoiced' : 'partially_invoiced';
@@ -681,12 +681,16 @@ export async function createPartialInvoice(
       ...(isFinalRound ? { fortnox_invoice_number: invoiceNumber, fortnox_invoiced_at: nowIso } : {}),
     };
     const updateOrder = () => supabase.from('crm_work_orders').update(orderPatch).eq('id', workOrderId);
-    const orderUpdate = await updateOrder();
-    if (orderUpdate.error && (await updateOrder()).error) {
-      console.error(`[Fortnox] delfaktura ${invoiceNumber} sparad men arbetsorder ${workOrderId} ej uppdaterad:`, JSON.stringify(orderPatch));
+    const firstUpdate = await updateOrder();
+    const orderUpdateError = firstUpdate.error ? (await updateOrder()).error : null;
+    if (orderUpdateError) {
+      // Känt och inte jagat: är det SISTA rundan blir ordern stående i sin gamla status med allt
+      // fakturerat — "Fakturera resten" svarar då att inget återstår. Rundorna stämmer, så inget
+      // kan faktureras två gånger; statusen får rättas för hand.
+      console.error(`[Fortnox] delfaktura ${invoiceNumber} sparad men arbetsorder ${workOrderId} ej uppdaterad (${orderUpdateError.message}):`, JSON.stringify(orderPatch));
       throw new FortnoxInvoiceNotRecordedError(invoiceNumber,
         `Faktura ${invoiceNumber} skapades i Fortnox och är sparad, men arbetsorderns status kunde inte uppdateras. `
-        + 'Ladda om sidan innan du fortsätter.');
+        + 'Ladda om sidan innan du fortsätter.', true);
     }
 
     // Annotate the Fortnox order's internal Comments so finance can see it's been (part-)invoiced
@@ -704,6 +708,11 @@ export async function createPartialInvoice(
 
     return { fortnox_invoice_number: invoiceNumber, round_number: roundNumber, status };
   } catch (e) {
+    // 🧨 CLAIMEN HÅLLS när fakturan finns men rundan inte sparats. 'failed' hade släppt den, och då
+    // stod ett nytt försök med samma antal ett klick bort — rundan som skulle stoppa det saknas ju.
+    // Den blir gammal efter två minuter (claimFortnoxPush), men det dubbelklick och den kollega som
+    // klickar direkt efter är just de som stoppas. Det fulla skyddet är att boka rundan före anropet.
+    if (e instanceof FortnoxInvoiceNotRecordedError && !e.roundRecorded) throw e;
     // Ett avbrytande som hann före är inget misslyckande: ingenting skickades, och ingenting ska skickas.
     const syncStatus = e instanceof FortnoxNotConnectedError || cancelledMeanwhile ? 'not_synced' : 'failed';
     await supabase
@@ -728,13 +737,17 @@ async function recordInvoiceRound(
   for (let attempt = 0; attempt < 2; attempt++) {
     const { error } = await supabase.from('crm_work_order_invoices').insert(row);
     if (!error) return true;
-    const { data } = await supabase
+    const { data, error: readError } = await supabase
       .from('crm_work_order_invoices')
       .select('fortnox_invoice_number')
       .eq('work_order_id', row.work_order_id)
       .eq('round_number', row.round_number)
       .maybeSingle<{ fortnox_invoice_number: string | null }>();
     if (data?.fortnox_invoice_number === row.fortnox_invoice_number) return true;
+    // Vad som hände står i loggen: en annan fakturas rad på samma rundnummer kräver ett nytt nummer
+    // när rundan läggs in för hand, ett nätverksfel gör det inte.
+    console.error(`[Fortnox] runda ${row.round_number} på ${row.work_order_id}, försök ${attempt + 1}: ${error.message}`
+      + (readError ? ` · återläsning: ${readError.message}` : data ? ` · rundnumret upptaget av faktura ${data.fortnox_invoice_number}` : ''));
   }
   return false;
 }

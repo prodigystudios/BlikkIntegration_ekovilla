@@ -59,6 +59,8 @@ let workOrders: Record<string, any>;
 let orderPatchResults: Result[];
 /** Orderns uppdateringar med `status`, i den ordning de gjordes. */
 let orderPatches: Array<Record<string, unknown>>;
+/** Alla andra uppdateringar av ordern — claimen och felgrenens syncstatus. */
+let otherPatches: Array<Record<string, unknown>>;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -70,13 +72,14 @@ beforeEach(() => {
 
   orderPatchResults = [];
   orderPatches = [];
+  otherPatches = [];
   workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
   workOrders.single = vi.fn()
     .mockResolvedValueOnce({ data: workOrderRow, error: null })
     .mockResolvedValue({ data: { status: 'completed' }, error: null });
   const claimAndCatchUpdate = workOrders.update;
   workOrders.update = vi.fn((patch: Record<string, unknown>) => {
-    if (!('status' in patch)) return claimAndCatchUpdate(patch);
+    if (!('status' in patch)) { otherPatches.push(patch); return claimAndCatchUpdate(patch); }
     orderPatches.push(patch);
     const result = orderPatchResults.shift() ?? { error: null };
     return makeChain(result);
@@ -140,6 +143,27 @@ describe('createPartialInvoice — rundan måste sparas', () => {
     expect(orderPatches).toEqual([]);
   });
 
+  // 🧨 'failed' hade SLÄPPT claimen, och då stod ett nytt försök med samma antal ett klick bort.
+  it('håller claimen — skriver inte failed — när rundan inte sparats', async () => {
+    invoices.insert.mockResolvedValue(failure);
+
+    await invoiceFour().catch(() => {});
+
+    const syncWrites = otherPatches.map((patch) => patch.fortnox_invoice_sync_status);
+    expect(syncWrites).toEqual(['pending']); // bara claimen
+  });
+
+  it('loggar varje misslyckat försök med orsaken', async () => {
+    invoices.insert.mockResolvedValue(failure);
+    invoices.maybeSingle.mockResolvedValue({ data: { fortnox_invoice_number: '8000' }, error: null });
+
+    await invoiceFour().catch(() => {});
+
+    const log = vi.mocked(console.error).mock.calls.flat().join(' ');
+    expect(log).toMatch(/försök 1: connection reset/);
+    expect(log).toMatch(/försök 2: connection reset · rundnumret upptaget av faktura 8000/);
+  });
+
   // Beskedet får inte tvättas till "Något gick fel. Försök igen." — ett nytt försök på en runda som
   // inte sparats fakturerar samma antal en gång till.
   it('når användaren ordagrant genom friendlyFortnoxMessage', async () => {
@@ -164,6 +188,9 @@ describe('createPartialInvoice — ordern måste uppdateras', () => {
 
     expect(error).toBeInstanceOf(FortnoxInvoiceNotRecordedError);
     expect(error.message).toMatch(/Faktura 9001 skapades i Fortnox och är sparad/);
+    expect(error.roundRecorded).toBe(true);
     expect(invoices.insert).toHaveBeenCalledTimes(1);
+    // Rundan finns, så claimen får släppas: ett nytt försök läser rundan och fakturerar inte igen.
+    expect(otherPatches.at(-1)).toEqual({ fortnox_invoice_sync_status: 'failed' });
   });
 });

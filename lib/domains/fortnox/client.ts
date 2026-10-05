@@ -44,7 +44,12 @@ export class WorkOrderCancelledError extends Error {
 // efteråt fallerade. Meddelandet MÅSTE nå användaren ordagrant: friendlyFortnoxMessage svarar annars "Försök igen" —
 // och ett nytt försök på en runda som inte sparats fakturerar samma antal en gång till.
 export class FortnoxInvoiceNotRecordedError extends Error {
-  constructor(public readonly invoiceNumber: string, message: string) {
+  constructor(
+    public readonly invoiceNumber: string,
+    message: string,
+    /** Sparades rundan? Falskt = antalen är okända för CRM och samma antal kan faktureras igen. */
+    public readonly roundRecorded: boolean,
+  ) {
     super(message);
     this.name = 'FortnoxInvoiceNotRecordedError';
   }

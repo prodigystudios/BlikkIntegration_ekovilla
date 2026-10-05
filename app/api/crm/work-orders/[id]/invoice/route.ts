@@ -1,8 +1,9 @@
 import { createSessionClient } from '@/lib/supabase/session';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { countWorkOrderInvoiceRounds, getCrmWorkOrder, listWorkOrderInvoiceRounds, workOrderInvoicingStarted } from '@/lib/domains/crm/work-orders';
 import { createInvoiceFromWorkOrder } from '@/lib/domains/fortnox/orders';
 import { invoiceRemainingForWorkOrder, PartialInvoiceError } from '@/lib/domains/fortnox/partialInvoices';
-import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
+import { FortnoxInvoiceNotRecordedError, FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { ok, requirePermission, routeError, invalidUuidParam } from '../../_lib';
 
 type RouteContext = { params: { id: string } };
@@ -33,9 +34,12 @@ export async function POST(_req: Request, context: RouteContext) {
     // 🧨 RUNDORNA RÄKNAS OCKSÅ, inte bara status och kolumn. createPartialInvoice skriver dem EFTER
     // rundan; fallerar den skrivningen står ordern kvar som "Fakturera" utan kolumn. Utan rundorna
     // här gick "Fakturera allt" då till orderns createinvoice — som fakturerar HELA ordern, också
-    // det som redan delfakturerats. Samma fråga som avbrytandet ställer (workOrderCancel.ts).
+    // det som redan delfakturerats. Samma fråga som avbrytandet ställer (workOrderCancel.ts), och med
+    // admin-klienten av samma skäl som där: sessionens RLS får inte kunna dölja rundorna — noll
+    // synliga rundor hade skickat ordern till createinvoice. Bara ett antal läses, och permissionen
+    // är redan prövad ovan.
     // Fail closed: ett läsfel får aldrig se ut som "inga rundor".
-    const { count: roundCount, error: roundsError } = await countWorkOrderInvoiceRounds(supabase, context.params.id);
+    const { count: roundCount, error: roundsError } = await countWorkOrderInvoiceRounds(getSupabaseAdmin(), context.params.id);
     if (roundsError || roundCount == null) {
       return routeError(500, 'crm_work_order_rounds_fetch_failed', roundsError?.message || 'Kunde inte läsa fakturarundorna.');
     }
@@ -69,6 +73,8 @@ export async function POST(_req: Request, context: RouteContext) {
       if (e instanceof FortnoxPushInProgressError) {
         return routeError(409, 'fortnox_push_in_progress', friendlyFortnoxMessage(e));
       }
+      // Fakturan FINNS — egen kod, så att svaret aldrig läses som "ingenting skapades".
+      if (e instanceof FortnoxInvoiceNotRecordedError) return routeError(500, 'fortnox_invoice_not_recorded', e.message);
       console.error('[Fortnox] create invoice:', (e as Error)?.message);
       return routeError(502, 'fortnox_invoice_failed', friendlyFortnoxMessage(e));
     }
