@@ -15,6 +15,17 @@ export function SectionError() {
   );
 }
 
+// Syns bara när en fråga slog i radtaket. Poängen med att räkna på servern var att en kapad läsning
+// slutar vara tyst — så den säger det, intill de siffror den gäller.
+export function TruncatedNote({ queries, className }: { queries: string[]; className?: string }) {
+  if (queries.length === 0) return null;
+  return (
+    <p className={cn('m-0 text-[11px] leading-4 text-amber-700', className)}>
+      Räknat på ett kapat urval ({queries.join(', ')}) — siffrorna kan vara för låga.
+    </p>
+  );
+}
+
 export function RecentCard({ title, href, loading, failed, children }: { title: string; href: string; loading: boolean; failed?: boolean; children: React.ReactNode }) {
   return (
     <div className={crm.cardInner}>

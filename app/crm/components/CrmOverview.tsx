@@ -12,8 +12,8 @@ import OverviewOpenTasks from './overview/OverviewOpenTasks';
 import OverviewRecentCalls from './overview/OverviewRecentCalls';
 import OverviewRecentOrders from './overview/OverviewRecentOrders';
 import OverviewRecentQuotes from './overview/OverviewRecentQuotes';
+import OverviewSellerProgress from './overview/OverviewSellerProgress';
 import OverviewTeamBoard from './overview/OverviewTeamBoard';
-import OverviewWeeklyGoals from './overview/OverviewWeeklyGoals';
 import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData';
 
 export default function CrmOverview({ userId }: { userId: string | null }) {
@@ -91,51 +91,40 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
         <OverviewLeaderboard loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
       </div>
 
-      {/* Main content grid */}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.6fr)]">
-        {/* ⚠️ `content-start` — utan den STRÄCKS korten här. Kolumnerna är grid-syskon och blir
-            lika höga, och den här kolumnens auto-rader ärver `align-content: normal`, som för grid
-            löser till stretch: raderna blåses upp och fyller vad statusbilden + topplistan bestämt.
-            Effekten är att innehållshöjd inte styr något — en trimning av "Nästa fokus" åt kortet
-            upp direkt, och korten under låg kvar. Mätt i Chrome 2026-08-17: fokuskortet 90 px
-            naturligt, 317 px utsträckt. */}
-        <div className="grid content-start gap-4">
-          <OverviewNextActions loading={loading} summaryFailed={summaryFailed} summary={summary} />
+      {/* Varje säljare mot sina egna veckomål, över hela bredden: sex mått per rad behöver
+          plats. Ersätter högerkolumnens "Veckans mål", vars lagrader nu är tavlan ovanför och vars
+          säljarlista nu är det här. Sena uppgifter, kortets sista rad, står redan först i Nästa
+          fokus när det finns några. */}
+      <OverviewSellerProgress loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
 
-          {/* Recent items grid. Order follows the flow the sellers work in: offert → order on the
-              first row, then the two activity lists. Prospects had their own card here until
-              2026-08-17 and were dropped — that stage isn't in use right now. */}
-          <div className="grid gap-4 xl:grid-cols-2">
-            {/* ⚠️ Raderna bär `min-w-0` på själva länken, inte bara på textkolumnen. Raden är ett
-                GRID-item i listan nedan, och ett auto-spår får inte bli smalare än itemets
-                min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
-                Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
-                statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
-            {/* Raderna djuplänkar till posten, inte till listan. Förut gick varje rad till samma
-                mål som kortets "Visa alla", så ett klick på "Nyprod Villa HJO" landade i en lista
-                där man fick leta upp raden igen — sämst på telefon, där sidan finns för att man
-                snabbt ska nå en offert eller order. Parametrarna finns redan i respektive vy:
-                ?quote_id= (QuotesClient), ?task_id= (TasksClient), ?call_id= (CallsClient). */}
-            <OverviewRecentQuotes loading={loading} failed={blank('quotes', state.quotes.length)} quotes={state.quotes} />
-            <OverviewRecentOrders loading={loading} failed={blank('workOrders', state.workOrders.length)} workOrders={state.workOrders} />
-            <OverviewOpenTasks loading={loading} failed={blank('tasks', state.tasks.length)} tasks={state.tasks} />
-            <OverviewRecentCalls
-              loading={loading}
-              failed={blank('calls', state.calls.length)}
-              calls={state.calls}
-              callsLast7Days={summary.callsLast7Days}
-              userId={userId}
-            />
-          </div>
-        </div>
+      {/* En kolumn. Högerkolumnen bar bara målkortet, och utan den finns inget syskon som kan
+          sträcka raderna här (det `content-start` skyddade mot förut). */}
+      <div className="grid gap-4">
+        <OverviewNextActions loading={loading} summaryFailed={summaryFailed} summary={summary} />
 
-        <div className="grid content-start gap-4">
-          <OverviewWeeklyGoals
+        {/* Recent items grid. Order follows the flow the sellers work in: offert → order on the
+            first row, then the two activity lists. Prospects had their own card here until
+            2026-08-17 and were dropped — that stage isn't in use right now. */}
+        <div className="grid gap-4 xl:grid-cols-2">
+          {/* ⚠️ Raderna bär `min-w-0` på själva länken, inte bara på textkolumnen. Raden är ett
+              GRID-item i listan nedan, och ett auto-spår får inte bli smalare än itemets
+              min-content — som med `truncate` (white-space: nowrap) är hela projektnamnets bredd.
+              Textkolumnens min-w-0 räcker alltså inte: raden växte förbi kortet och sköt ut
+              statusbadgen utanför kanten så fort namnet var långt. Mätt i Chrome 2026-08-17. */}
+          {/* Raderna djuplänkar till posten, inte till listan. Förut gick varje rad till samma
+              mål som kortets "Visa alla", så ett klick på "Nyprod Villa HJO" landade i en lista
+              där man fick leta upp raden igen — sämst på telefon, där sidan finns för att man
+              snabbt ska nå en offert eller order. Parametrarna finns redan i respektive vy:
+              ?quote_id= (QuotesClient), ?task_id= (TasksClient), ?call_id= (CallsClient). */}
+          <OverviewRecentQuotes loading={loading} failed={blank('quotes', state.quotes.length)} quotes={state.quotes} />
+          <OverviewRecentOrders loading={loading} failed={blank('workOrders', state.workOrders.length)} workOrders={state.workOrders} />
+          <OverviewOpenTasks loading={loading} failed={blank('tasks', state.tasks.length)} tasks={state.tasks} />
+          <OverviewRecentCalls
             loading={loading}
-            summaryFailed={summaryFailed}
-            scoreboardFailed={scoreboardFailed}
-            summary={summary}
-            scoreboard={state.scoreboard}
+            failed={blank('calls', state.calls.length)}
+            calls={state.calls}
+            callsLast7Days={summary.callsLast7Days}
+            userId={userId}
           />
         </div>
       </div>

@@ -6,7 +6,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
 import { StarIcon } from './OverviewIcons';
-import { SectionError } from './OverviewStates';
+import { SectionError, TruncatedNote } from './OverviewStates';
 import {
   BOARD_METRICS,
   METRIC_LABEL,
@@ -120,6 +120,8 @@ export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboar
                 ) : null}
               </div>
             </div>
+            {/* Tavlans kapning gäller också raderna per säljare och topplistan — samma läsning. */}
+            <TruncatedNote queries={scoreboard?.truncated ?? []} className="md:col-span-2" />
           </div>
         )}
       </div>

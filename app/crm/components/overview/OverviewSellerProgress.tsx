@@ -32,9 +32,9 @@ function MetricCell({ metric, progress }: { metric: ScoreboardMetric; progress: 
           <span className="text-slate-500"> / {formatMetricValue(metric, progress.target)}</span>
         ) : null}
       </p>
-      {/* Ingen stapel utan mål — en tom stapel hade sett ut som "noll av något". Platsen hålls
-          ändå, så att raderna står i linje. */}
-      <div className="mt-1.5 h-1 rounded-full bg-[color:var(--crm-track)]" aria-hidden="true">
+      {/* Ingen stapel utan mål, inte ens spåret — ett tomt spår hade sett ut som "noll av något".
+          Platsen hålls ändå, så att raderna står i linje. */}
+      <div className={cn('mt-1.5 h-1 rounded-full', percent != null && 'bg-[color:var(--crm-track)]')} aria-hidden="true">
         {percent != null && percent > 0 ? (
           <div className="h-full rounded-full bg-[color:var(--crm-flow-3)]" style={{ width: `${percent}%` }} />
         ) : null}
