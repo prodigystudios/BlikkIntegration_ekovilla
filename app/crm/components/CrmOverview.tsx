@@ -14,6 +14,7 @@ import OverviewRecentOrders from './overview/OverviewRecentOrders';
 import OverviewRecentQuotes from './overview/OverviewRecentQuotes';
 import OverviewSellerProgress from './overview/OverviewSellerProgress';
 import OverviewTeamBoard from './overview/OverviewTeamBoard';
+import { TruncatedNote } from './overview/OverviewStates';
 import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData';
 
 export default function CrmOverview({ userId }: { userId: string | null }) {
@@ -64,6 +65,11 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
 
       {/* Var pengarna står — se OverviewKpiCards för varför lagren delar nämnare och fakturerat inte gör det. */}
       <OverviewKpiCards loading={loading} summaryFailed={summaryFailed} summary={summary} />
+
+      {/* Summeringens kapning, på sidnivå och i alla bredder. Den gäller inte bara nyckeltalen
+          (dolda på telefon) utan också Nästa fokus — sena uppgifter och samtal räknas i samma
+          summering. Låg förut i målkortet, som syntes överallt. */}
+      <TruncatedNote queries={summary.truncated} />
 
       {/* Rutan skiljer på grad: faller summeringen är sidans numeriska halva borta, faller en
           lista är det ett kort. Förut var allt samma röda ruta ovanför en tömd sida. */}

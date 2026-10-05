@@ -4,7 +4,6 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { CrmOverviewSummary } from '@/lib/domains/crm/overviewSummary';
 import { MONEY_NOTE, formatCurrency } from './overviewFormat';
-import { TruncatedNote } from './OverviewStates';
 import type { OverviewFigures } from './useCrmOverviewData';
 
 // De tre lagerstegen, i den ordning pengarna rör sig. Tonerna är varumärkets egen ramp
@@ -90,11 +89,7 @@ export default function OverviewKpiCards({ loading, summaryFailed, summary }: {
           <CardBody label="Fakturerat" value={summary.weekTeam.invoicedValue} helper="denna vecka" loading={loading} />
         </div>
       </div>
-      {/* Summeringens kapning hör till de här beloppen — de är summeringens synliga halva. */}
-      <div className="mt-2 flex flex-wrap items-baseline justify-end gap-x-4 gap-y-1">
-        <TruncatedNote queries={summary.truncated} />
-        <p className={cn('m-0', crm.meta)}>{MONEY_NOTE}</p>
-      </div>
+      <p className={cn('m-0 mt-2 text-right', crm.meta)}>{MONEY_NOTE}</p>
     </div>
   );
 }
