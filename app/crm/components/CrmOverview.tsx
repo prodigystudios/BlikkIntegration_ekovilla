@@ -4,12 +4,15 @@ import Link from 'next/link';
 import ChangelogCard from './ChangelogCard';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import OverviewFlowStrip from './overview/OverviewFlowStrip';
+import OverviewAchievementBanner from './overview/OverviewAchievementBanner';
+import OverviewKpiCards from './overview/OverviewKpiCards';
+import OverviewLeaderboard from './overview/OverviewLeaderboard';
 import OverviewNextActions from './overview/OverviewNextActions';
 import OverviewOpenTasks from './overview/OverviewOpenTasks';
 import OverviewRecentCalls from './overview/OverviewRecentCalls';
 import OverviewRecentOrders from './overview/OverviewRecentOrders';
 import OverviewRecentQuotes from './overview/OverviewRecentQuotes';
+import OverviewTeamBoard from './overview/OverviewTeamBoard';
 import OverviewWeeklyGoals from './overview/OverviewWeeklyGoals';
 import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData';
 
@@ -56,8 +59,11 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
         </div>
       </div>
 
-      {/* Var pengarna står — se OverviewFlowStrip för varför lagren delar nämnare och fakturerat inte gör det. */}
-      <OverviewFlowStrip loading={loading} summaryFailed={summaryFailed} summary={summary} />
+      {/* Veckans nådda mål. Syns bara när någon har en stjärna och läsaren inte redan stängt den. */}
+      <OverviewAchievementBanner scoreboard={state.scoreboard} userId={userId} />
+
+      {/* Var pengarna står — se OverviewKpiCards för varför lagren delar nämnare och fakturerat inte gör det. */}
+      <OverviewKpiCards loading={loading} summaryFailed={summaryFailed} summary={summary} />
 
       {/* Rutan skiljer på grad: faller summeringen är sidans numeriska halva borta, faller en
           lista är det ett kort. Förut var allt samma röda ruta ovanför en tömd sida. */}
@@ -77,6 +83,13 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
           </p>
         </div>
       ) : null}
+
+      {/* Lagets vecka och säljarna i den, ur samma tavla. Dolda under 640 px som nyckeltalen: på
+          telefon går man in för att se en offert eller ringa, inte för att läsa statistik. */}
+      <div className="hidden gap-4 sm:grid xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,1fr)]">
+        <OverviewTeamBoard loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} />
+        <OverviewLeaderboard loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
+      </div>
 
       {/* Main content grid */}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.6fr)]">

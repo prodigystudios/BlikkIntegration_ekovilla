@@ -66,6 +66,14 @@
      statuskartor — "Vunnen" och "en vald flik" ska inte se likadana ut. */
   --ek-accent-soft: #e9f1eb;
   --ek-accent-soft-border: #c6dccd;
+  /* Stjärnan: ETT budskap, "veckomålet är nått". Inget annat får bära den här tonen — inte
+     ettan i en topplista, inte en ring som räknar mål. Guld (42°) och inte bärnsten: varningen
+     --crm-attention (#b45309, 26°) är redan "kräver åtgärd", och en färg får inte betyda två
+     saker på samma sida. 3,1:1 mot kortbakgrunden #f9fbf7, alltså nog för en ikon. Tvätten och
+     kanten är bannerns yta. */
+  --ek-star: #b8870f;
+  --ek-star-wash: #fbf5e4;
+  --ek-star-border: #ecdcb0;
 }
 
 /* Melodic Frost — CRM-specific design tokens */
