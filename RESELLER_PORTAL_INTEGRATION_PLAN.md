@@ -1,4 +1,4 @@
-# Återförsäljarportalen ↔ CRM:et: integrationen (fas 5 och 6)
+# Partnerportalen ↔ CRM:et: integrationen (fas 5 och 6)
 
 **Status:** kontrakt, beslutat med William 2026-09-27. Signaturen och omförsöken ändrades
 2026-09-28, och samma dag fördes CRM:ets rättelser 16–19 in (sökvägarna, prislistans nyckel,
@@ -426,7 +426,7 @@ Ingen granskning hos Ekovilla. Butikens godkännande räcker.
      som text i `internal_handoff.handoff_notes`, inte som egna nycklar.
      `desired_installation_date` lämnas tom.
    - **Spårbarhet:** kopplingen sparas i `crm_portal_jobs`, och ordern får brickan "Från
-     återförsäljarportalen · <butik>".
+     partnerportalen · <butik>" (förut "Från återförsäljarportalen", namnbytet 4 oktober 2026).
 
 5. **Svara** med `201 { "ok": true, "data": { "crmWorkOrderId": "…" } }` så snart arbetsordern
    finns. Portalen läser `data.crmWorkOrderId` och skapar jobbet i läget **Mottagen av Ekovilla**.
@@ -704,9 +704,9 @@ CRM:et (CRM:ets 10a, beslut William 1 oktober 2026).
 
 - **En kund flaggas** som återförsäljare eller partner. Typen finns bara i CRM:et, och portalen är
   densamma för båda.
-- **Rutan "Återförsäljarportalen"** sitter på företagskortet. Där finns "Bjud in till portalen" och
-  "Skicka inbjudan igen". Bara `crm.portal.manage` ser den, och bara kort med Fortnox-nummer kan
-  bjudas in.
+- **Rutan "Partnerportalen"** sitter på företagskortet. Den hette "Återförsäljarportalen" tills
+  portalen bytte namn 4 oktober 2026. Där finns "Bjud in till portalen" och "Skicka inbjudan
+  igen". Bara `crm.portal.manage` ser den, och bara kort med Fortnox-nummer kan bjudas in.
 - **CRM:et väljer företagets id själv**, ett uuid, och skickar inbjudan genom kön.
 
 **Inbjudan:**
@@ -748,7 +748,7 @@ CRM:et (CRM:ets 10a, beslut William 1 oktober 2026).
 | Status | När |
 | --- | --- |
 | 201 | Företaget fanns inte. Det skapas med uppgifterna och kundnumret, och admin bjuds in med rollen admin. |
-| 200 | Företaget finns redan, efter ett omförsök eller "Skicka inbjudan igen". Uppgifterna och kundnumret ändras inte, eftersom butiken kan ha ändrat dem under Inställningar. Admin hanteras så här: <ul><li>en användare i företaget som inte valt lösenord får inbjudan igen (`invited`);</li><li>en användare i företaget som valt lösenord får ingenting (`active`);</li><li>en adress som inte finns i portalen bjuds in som admin i företaget (`invited`).</li></ul> |
+| 200 | Företaget finns redan, efter ett omförsök eller "Skicka inbjudan igen". Uppgifterna och kundnumret ändras inte, eftersom butiken kan ha ändrat dem under Inställningar. Admin hanteras så här: <ul><li>en användare i företaget som inte valt lösenord får inbjudan igen, eller länken för att välja lösenord om hen redan öppnat inbjudan (`invited`);</li><li>en användare i företaget som valt lösenord får ingenting (`active`);</li><li>en adress som inte finns i portalen bjuds in som admin i företaget (`invited`).</li></ul> |
 | 409 `admin_email_taken` | Adressen hör till ett konto i ett annat företag. Portalen prövar det innan den skapar något. CRM:et visar felet, och admin kan försöka igen med en annan adress. |
 | 400 `validation_error` | Kroppen följer inte kontraktet. `error` säger vilket fält, och CRM:et visar texten på kundkortet. |
 
@@ -758,10 +758,17 @@ Allt annat följer transporten: 5xx görs om, och övriga 4xx ges upp och visas 
 
 - **Ett ogiltigt fält ger 400 `validation_error`**, som på portalens andra routes. CRM:ets plan säger
   422. CRM:et gör likadant med båda: ger upp och visar `error`.
-- **"Valt lösenord" betyder att kontot är bekräftat.** Supabase bekräftar kontot när mottagaren
-  trycker på knappen i inbjudan, och sidan för att välja lösenord kommer direkt efter. Om hen stänger
-  sidan där, är hen `active` utan lösenord och får använda "Glömt lösenord". En ny inbjudan går inte
-  att skicka till ett bekräftat konto.
+- **"Valt lösenord" betyder att lösenordet valts i portalen** (`reseller_users.password_set_at`,
+  sedan 2 oktober 2026). Förut räknades ett bekräftat konto som aktivt. Men Supabase bekräftar kontot
+  redan när mottagaren trycker på knappen i inbjudan, så den som sedan stängde sidan för att välja
+  lösenord fick inget mejl vid "Skicka inbjudan igen" (CRM:ets test 2 oktober).
+  - En ny inbjudan går inte att skicka till ett bekräftat konto. Den som öppnat inbjudan men inte
+    valt lösenord får därför i stället länken för att välja lösenord, samma mejl som "Glömt
+    lösenord", och svaret är `invited`. Mejlets text passar båda fallen.
+  - Konton som var bekräftade före ändringen räknas som att de valt lösenord.
+- **Lösenordet väljs inom en timme efter knappen i mejlet** (sedan 5 oktober 2026). Efter det visar
+  portalen "Länken har gått ut" och vägen till "Glömt lösenordet?". Inget ändras för CRM:et:
+  "Skicka inbjudan igen" ger då länken för att välja lösenord, som ovan, och svaret är `invited`.
 - **En användare som redan finns i företaget behåller sin roll.** Den görs alltså inte till admin.
 - **Adressen jämförs utan hänsyn till stora och små bokstäver.** Adresser från Inställningar sparas
   som de skrevs.
