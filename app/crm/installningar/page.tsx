@@ -19,7 +19,7 @@ export default async function CrmSettingsPage() {
       .in('role', ['sales', 'admin', 'konsult']),
     supabase
       .from('crm_goals')
-      .select('id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)')
+      .select('id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, invoiced_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)')
       .eq('period_type', 'month')
       .eq('period_start', currentMonthStart),
     supabase

@@ -21,6 +21,7 @@ type GoalItem = {
   quote_value_target: number | string;
   order_count_target: number;
   order_value_target: number | string;
+  invoiced_value_target: number | string;
 };
 
 type GoalDraft = {
@@ -29,10 +30,12 @@ type GoalDraft = {
   quote_value_target: string;
   order_count_target: string;
   order_value_target: string;
+  invoiced_value_target: string;
 };
 
 const EMPTY_DRAFT: GoalDraft = {
   calls_target: '', quotes_target: '', quote_value_target: '', order_count_target: '', order_value_target: '',
+  invoiced_value_target: '',
 };
 
 function formatGoalInputValue(value: number | string | null | undefined) {
@@ -83,6 +86,7 @@ export default function CrmGoalsPanel({
           quote_value_target: formatGoalInputValue(goal?.quote_value_target),
           order_count_target: formatGoalInputValue(goal?.order_count_target),
           order_value_target: formatGoalInputValue(goal?.order_value_target),
+          invoiced_value_target: formatGoalInputValue(goal?.invoiced_value_target),
         }];
       }),
     );
@@ -93,7 +97,8 @@ export default function CrmGoalsPanel({
       const draft = drafts[member.id];
       return draft && (
         Number(draft.calls_target) > 0 || Number(draft.quotes_target) > 0 || Number(draft.quote_value_target) > 0 ||
-        Number(draft.order_count_target) > 0 || Number(draft.order_value_target) > 0
+        Number(draft.order_count_target) > 0 || Number(draft.order_value_target) > 0 ||
+        Number(draft.invoiced_value_target) > 0
       );
     }).length,
     [drafts, team],
@@ -135,6 +140,7 @@ export default function CrmGoalsPanel({
         quote_value_target: Number(drafts[member.id]?.quote_value_target || 0),
         order_count_target: Number(drafts[member.id]?.order_count_target || 0),
         order_value_target: Number(drafts[member.id]?.order_value_target || 0),
+        invoiced_value_target: Number(drafts[member.id]?.invoiced_value_target || 0),
       }));
 
       const res = await fetch('/api/crm/goals', {
@@ -166,7 +172,7 @@ export default function CrmGoalsPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="grid gap-1">
           <strong className="text-base font-bold text-slate-950">Månadsbudget per säljare</strong>
-          <p className="m-0 text-sm leading-6 text-slate-600">Sätt budget per månad för samtal, offerter, offertvärde, antal ordrar och ordervärde. Topplistan visar veckomål (budget ÷ {GOAL_WEEKS_PER_MONTH}).</p>
+          <p className="m-0 text-sm leading-6 text-slate-600">Sätt budget per månad för samtal, offerter, offertvärde, antal ordrar, ordervärde och fakturerat. Topplistan visar veckomål (budget ÷ {GOAL_WEEKS_PER_MONTH}).</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <div className="rounded-[22px] border border-slate-200 bg-white/90 px-4 py-3 text-right shadow-[0_10px_20px_rgba(15,23,42,0.04)]">
@@ -233,6 +239,11 @@ export default function CrmGoalsPanel({
                       <span>Ordervärde (SEK, ex moms)</span>
                       <Input value={draft.order_value_target} onChange={(e) => setDraftValue(member.id, 'order_value_target', e.target.value)} inputMode="decimal" placeholder="0" />
                       <WeeklyHint value={draft.order_value_target} currency />
+                    </label>
+                    <label className="grid gap-1 text-xs font-medium text-slate-500">
+                      <span>Fakturerat (SEK, ex moms)</span>
+                      <Input value={draft.invoiced_value_target} onChange={(e) => setDraftValue(member.id, 'invoiced_value_target', e.target.value)} inputMode="decimal" placeholder="0" />
+                      <WeeklyHint value={draft.invoiced_value_target} currency />
                     </label>
                   </div>
                 </div>

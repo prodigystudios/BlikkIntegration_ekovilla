@@ -18,7 +18,7 @@ const ANNA = 'user-anna';
 const BOSSE = 'user-bosse';
 const CILLA = 'user-cilla';
 
-type Budget = Partial<{ calls: number; quotes: number; quoteValue: number; orderCount: number; orderValue: number }>;
+type Budget = Partial<{ calls: number; quotes: number; quoteValue: number; orderCount: number; orderValue: number; invoicedValue: number }>;
 
 function goal(userId: string, name: string | null, budget: Budget): CrmGoal {
   return {
@@ -31,6 +31,7 @@ function goal(userId: string, name: string | null, budget: Budget): CrmGoal {
     quote_value_target: budget.quoteValue ?? 0,
     order_count_target: budget.orderCount ?? 0,
     order_value_target: budget.orderValue ?? 0,
+    invoiced_value_target: budget.invoicedValue ?? 0,
     created_by: 'user-admin',
     updated_by: 'user-admin',
     created_at: '2026-09-01T08:00:00Z',
@@ -84,9 +85,19 @@ describe('composeWeeklyScoreboard — veckomålen', () => {
     expect(sellers.find((row) => row.userId === BOSSE)?.metrics.calls.reached).toBe(false);
   });
 
-  it('fakturerat räknas men har inget mål — budgetkolumnen finns inte ännu', () => {
-    const [anna] = board([goal(ANNA, 'Anna', { calls: 40 })], actuals({ [ANNA]: week({ invoicedValue: 12_500 }) })).sellers;
+  it('fakturerat mäts mot sin egen budget, i kronor utan avrundning', () => {
+    const [anna] = board([goal(ANNA, 'Anna', { invoicedValue: 250_002 })], actuals({ [ANNA]: week({ invoicedValue: 62_500.5 }) })).sellers;
+    expect(anna.metrics.invoicedValue).toEqual({ done: 62_500.5, target: 62_500.5, reached: true });
+  });
+
+  it('fakturerat utan budget har inget mål — och räknas inte in i snittet', () => {
+    const [anna] = board([goal(ANNA, 'Anna', { calls: 40 })], actuals({ [ANNA]: week({ calls: 5, invoicedValue: 12_500 }) })).sellers;
     expect(anna.metrics.invoicedValue).toEqual({ done: 12_500, target: null, reached: false });
+    expect(anna.progressScore).toBe(0.5);
+  });
+
+  it('en budget med bara fakturerat räcker för att stå på tavlan', () => {
+    expect(board([goal(ANNA, 'Anna', { invoicedValue: 400_000 })], actuals({})).sellers.map((row) => row.userId)).toEqual([ANNA]);
   });
 });
 

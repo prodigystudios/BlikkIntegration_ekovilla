@@ -69,8 +69,7 @@ function budgetOf(goal: CrmGoal): MonthlyBudget {
     quoteValue: Number(goal.quote_value_target) || 0,
     orderCount: Number(goal.order_count_target) || 0,
     orderValue: Number(goal.order_value_target) || 0,
-    // Fakturerat har ännu ingen budgetkolumn i crm_goals.
-    invoicedValue: 0,
+    invoicedValue: Number(goal.invoiced_value_target) || 0,
   };
 }
 

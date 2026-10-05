@@ -32,6 +32,9 @@ export const upsertCrmGoalsSchema = z.object({
     quote_value_target: nonNegativeNumberSchema,
     order_count_target: nonNegativeIntSchema,
     order_value_target: nonNegativeNumberSchema,
+    // Valfri med flit, utan standardvärde: en sida laddad före kolumnen skickar den inte, och då
+    // ska upserten lämna den sparade budgeten orörd — ett standardvärde 0 hade nollat den.
+    invoiced_value_target: nonNegativeNumberSchema.optional(),
   })).min(1, 'Minst ett mål krävs').max(50, 'För många mål i samma uppdatering'),
 });
 
