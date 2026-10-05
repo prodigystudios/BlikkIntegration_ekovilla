@@ -213,11 +213,6 @@ export function useCrmOverviewData() {
     };
   }, [state.summary, state.goals]);
 
-  // Quotes and orders arrive already ordered and already five rows long — the fetches ask for
-  // sort=updated_desc / sort=created_desc with limit=5, and re-sorting them here would leave two
-  // competing definitions of the same card's order, with the query's parameter looking
-  // authoritative. Calls and tasks come from routes without those parameters, so they are shaped
-  // here: calls arrive newest-first (call_at desc) and only need the slice; tasks need both.
   const failed = (key: SectionKey) => state.failed.includes(key);
   // En sektion visar sitt FELLÄGE bara när den inte har något att visa. Efter en misslyckad
   // Uppdatera ligger förra omgångens innehåll kvar, och då är synligt-men-inte-uppdaterat bättre
