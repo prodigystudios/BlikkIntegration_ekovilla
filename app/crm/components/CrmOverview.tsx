@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import ChangelogCard from './ChangelogCard';
+import { useCan } from '@/lib/UserProfileContext';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import OverviewAchievementBanner from './overview/OverviewAchievementBanner';
@@ -10,6 +11,7 @@ import OverviewLeaderboard from './overview/OverviewLeaderboard';
 import OverviewNextActions from './overview/OverviewNextActions';
 import OverviewRecentOrders from './overview/OverviewRecentOrders';
 import OverviewRecentQuotes from './overview/OverviewRecentQuotes';
+import OverviewSalesCoach from './overview/OverviewSalesCoach';
 import OverviewSellerProgress from './overview/OverviewSellerProgress';
 import OverviewTeamBoard from './overview/OverviewTeamBoard';
 import { TruncatedNote } from './overview/OverviewStates';
@@ -17,6 +19,9 @@ import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData'
 
 export default function CrmOverview({ userId }: { userId: string | null }) {
   const { state, loading, refreshing, load, summary, blank, summaryFailed, scoreboardFailed } = useCrmOverviewData();
+  // Säljcoachen är för den som säljer: coachens API kräver crm.write, och en konsult (läsbehörig)
+  // hade fått en knapp till en sida där varje fråga nekas.
+  const canSell = useCan('crm.write');
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -101,15 +106,22 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
           när det finns några. */}
       <OverviewSellerProgress loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
 
-      {/* Att agera på först, sedan de senaste offerterna och ordrarna. På telefon, där statistiken
-          ovanför är dold, är det här sidans början: man går in för att göra något. */}
-      <OverviewNextActions
-        loading={loading}
-        summaryFailed={summaryFailed}
-        summary={summary}
-        scoreboard={state.scoreboard}
-        userId={userId}
-      />
+      {/* Att agera på och Säljcoachen bredvid varandra, som i mockupen, sedan de senaste offerterna
+          och ordrarna. På telefon, där statistiken ovanför är dold, är det här sidans början: man
+          går in för att göra något. Att agera på får den bredare kolumnen — den bär flera rader,
+          coachen ett tips. `items-start`: korten ska inte sträckas till varandras höjd. */}
+      <div className={cn('grid items-start gap-4', canSell && 'lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]')}>
+        <OverviewNextActions
+          loading={loading}
+          summaryFailed={summaryFailed}
+          summary={summary}
+          scoreboard={state.scoreboard}
+          userId={userId}
+        />
+        {canSell ? (
+          <OverviewSalesCoach loading={loading} summaryFailed={summaryFailed} quote={summary.oldestWaitingQuote} />
+        ) : null}
+      </div>
 
       {/* Offert → order, i den ordning säljarna arbetar. Korten Öppna uppgifter och Senaste samtal
           låg här till 2026-10-05: de fanns inte i VD:ns mockup, och deras varningar — sena uppgifter

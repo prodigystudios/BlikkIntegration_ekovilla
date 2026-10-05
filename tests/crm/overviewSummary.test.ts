@@ -50,6 +50,7 @@ function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
     openTasks: [],
     lastVisibleCallAt: null,
     lastOwnCallAt: null,
+    oldestWaitingQuote: null,
     counts: { pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0 },
     truncated: [],
     ...overrides,
@@ -429,3 +430,41 @@ describe('composeCrmOverviewSummary — orderlagren visar det som ännu inte fak
     expect(summary.openWorkOrders).toBe(1);
   });
 });
+
+describe('composeCrmOverviewSummary — Säljcoachens väntande offert', () => {
+  // WINDOW.today = 2026-08-17.
+  const waiting = (patch: Record<string, unknown> = {}) => ({
+    id: 'q1',
+    quote_date: '2026-08-11',
+    amount: 1250,
+    vat_percent: 25,
+    pricing_summary: { subtotal: 1000, vat: 250, total: 1250 },
+    currency_code: 'SEK',
+    customer_name: 'Jimmy Nilsson',
+    prospect: null,
+    ...patch,
+  });
+
+  it('lämnar ut nettobeloppet och dygnen sedan offertdatumet, räknat mot läsarens dag', () => {
+    const summary = composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting() as any }), WINDOW);
+    expect(summary.oldestWaitingQuote).toEqual({ id: 'q1', customerName: 'Jimmy Nilsson', netAmount: 1000, currencyCode: 'SEK', waitingDays: 6 });
+  });
+
+  it('en offert från i dag har inte väntat — inget tips', () => {
+    expect(composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting({ quote_date: '2026-08-17' }) as any }), WINDOW).oldestWaitingQuote).toBeNull();
+  });
+
+  it('ingen väntande offert ger null', () => {
+    expect(composeCrmOverviewSummary(rows(), WINDOW).oldestWaitingQuote).toBeNull();
+  });
+
+  it('prospektets firmanamn går före offertens kundnamn, i båda formerna PostgREST svarar med', () => {
+    const named = (prospect: unknown, customer_name: string | null = 'Jimmy Nilsson') =>
+      composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting({ prospect, customer_name }) as any }), WINDOW).oldestWaitingQuote?.customerName;
+    expect(named({ company_name: 'Acme AB' })).toBe('Acme AB');
+    expect(named([{ company_name: 'Acme AB' }])).toBe('Acme AB');
+    expect(named({ company_name: null })).toBe('Jimmy Nilsson');
+    expect(named(null, null)).toBe('Okänd kund');
+  });
+});
+

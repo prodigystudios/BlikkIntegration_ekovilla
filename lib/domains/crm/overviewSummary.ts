@@ -111,6 +111,12 @@ export type CrmOverviewSummary = {
   /** Läsarens EGET senaste samtal, oavsett ålder. Null = har aldrig loggat ett. */
   lastOwnCallAt: string | null;
   /**
+   * Läsarens äldsta offert som väntar på kunden — Säljcoach-kortets tips. Null = ingen väntar, eller
+   * den äldsta skrevs i dag. Den enda raden i en summering av tal, och den är läsarens EGEN: läst
+   * med sessionen och filtrerad på assigned_to.
+   */
+  oldestWaitingQuote: WaitingQuote | null;
+  /**
    * The whole team's actuals for the CURRENT WEEK — the window the weekly targets are set in, and
    * the same window the leaderboard uses per seller. The two must be able to reconcile: a team
    * figure over a rolling 7 days could not equal the sum of per-seller figures over the week, and
@@ -144,6 +150,26 @@ export type CallWindowRow = {
   prospect_id: string | null;
 };
 export type TaskDueRow = { due_at: string | null };
+export type WaitingQuoteRow = NetAmountRow & {
+  id: string;
+  quote_date: string;
+  currency_code: string | null;
+  customer_name: string | null;
+  prospect: { company_name: string | null } | Array<{ company_name: string | null }> | null;
+};
+
+export type WaitingQuote = {
+  id: string;
+  customerName: string;
+  /** Netto, som varje krontal på översikten. */
+  netAmount: number;
+  currencyCode: string;
+  /** Hela dygn sedan offertdatumet, räknat mot läsarens egen dag (window.today). */
+  waitingDays: number;
+};
+
+/** De offertlägen där bollen ligger hos kunden: skickad, eller markerad för uppföljning. */
+export const WAITING_QUOTE_STATUSES: CrmQuoteStatus[] = ['sent', 'follow_up'];
 
 /**
  * De fyra fönstrade läsningarna bakom veckans utfall. Delas med lagets veckotavla
@@ -168,6 +194,8 @@ export type CrmOverviewRows = {
   openTasks: TaskDueRow[];
   lastVisibleCallAt: string | null;
   lastOwnCallAt: string | null;
+  /** Läsarens äldsta väntande offert, eller null. Redan filtrerad på status och uppföljningsdatum. */
+  oldestWaitingQuote: WaitingQuoteRow | null;
   counts: {
     pipelineProspects: number;
     newProspects: number;
@@ -262,6 +290,30 @@ export function composeWeekActuals(
   return { weekTeam, weekByUser };
 }
 
+// Hela dygn mellan två kalenderdagar (YYYY-MM-DD). Båda tolkas som UTC-midnatt, så ingen
+// sommartidsväxling kan ge 23 eller 25 timmar.
+function daysBetweenDays(fromDay: string, toDay: string): number {
+  return Math.round((Date.parse(`${toDay}T00:00:00Z`) - Date.parse(`${fromDay}T00:00:00Z`)) / 86_400_000);
+}
+
+function toWaitingQuote(row: WaitingQuoteRow | null, today: string): WaitingQuote | null {
+  if (!row) return null;
+  const quoteDay = dayOf(row.quote_date);
+  if (quoteDay == null) return null;
+  const waitingDays = daysBetweenDays(quoteDay, today);
+  // En offert från i dag har inte väntat på något — "som väntat 0 dagar, ring i dag" vore brus.
+  if (!(waitingDays >= 1)) return null;
+  const prospect = Array.isArray(row.prospect) ? row.prospect[0] ?? null : row.prospect;
+  return {
+    id: row.id,
+    // Samma ordning som översiktens offertlista: prospektets firmanamn, annars offertens kundnamn.
+    customerName: prospect?.company_name || row.customer_name || 'Okänd kund',
+    netAmount: netAmount(row),
+    currencyCode: row.currency_code || 'SEK',
+    waitingDays,
+  };
+}
+
 /**
  * Pure: rows in, read model out. The queries are the impure half (fetchCrmOverviewSummary).
  */
@@ -311,6 +363,7 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
 
     lastVisibleCallAt: rows.lastVisibleCallAt,
     lastOwnCallAt: rows.lastOwnCallAt,
+    oldestWaitingQuote: toWaitingQuote(rows.oldestWaitingQuote, window.today),
 
     weekTeam,
     weekByUser,
@@ -327,6 +380,13 @@ async function readRows<T>(name: string, query: RowQuery<T>, truncated: string[]
   const rows = data ?? [];
   if (rows.length >= ROW_CAP) truncated.push(name);
   return rows;
+}
+
+// Första raden ur en sortering med limit(1), eller null.
+async function readFirstRow<T>(name: string, query: RowQuery<T>): Promise<T | null> {
+  const { data, error } = await query;
+  if (error) throw new Error(`${name}: ${error.message}`);
+  return data?.[0] ?? null;
 }
 
 // Det senaste radhuvudet ur en sortering med limit(1). Inget tak att slå i, så inget i `truncated`.
@@ -408,6 +468,7 @@ export async function fetchCrmOverviewSummary(
     openTasks,
     lastVisibleCallAt,
     lastOwnCallAt,
+    oldestWaitingQuote,
     pipelineProspects,
     newProspects,
     quotedProspects,
@@ -450,6 +511,18 @@ export async function fetchCrmOverviewSummary(
       .eq('user_id', userId)
       .order('call_at', { ascending: false })
       .limit(1)),
+    // Säljcoachens tips: läsarens äldsta offert där bollen ligger hos kunden. En offert med en
+    // uppföljning planerad framåt hoppas över — säljaren har redan bestämt när, och "ring i dag"
+    // hade sagt emot det. Ordnad på offertdatumet, som för en skickad offert är dagen den gick ut.
+    readFirstRow<WaitingQuoteRow>('oldest_waiting_quote', supabase
+      .from('crm_quotes')
+      .select('id, quote_date, amount, vat_percent, pricing_summary, currency_code, customer_name, prospect:crm_customers!prospect_id(company_name)')
+      .eq('assigned_to', userId)
+      .in('status', WAITING_QUOTE_STATUSES)
+      // window.today är Zod-validerat ÅÅÅÅ-MM-DD i rutten — säkert att foga in i filtersträngen.
+      .or(`follow_up_date.is.null,follow_up_date.lte.${window.today}`)
+      .order('quote_date', { ascending: true })
+      .limit(1)),
     prospectCount((q) => q.in('status', PIPELINE_PROSPECT_STATUSES), 'prospects_pipeline'),
     prospectCount((q) => q.eq('status', 'new'), 'prospects_new'),
     prospectCount((q) => q.eq('status', 'quoted'), 'prospects_quoted'),
@@ -464,6 +537,7 @@ export async function fetchCrmOverviewSummary(
       openTasks,
       lastVisibleCallAt,
       lastOwnCallAt,
+      oldestWaitingQuote,
       counts: { pipelineProspects, newProspects, quotedProspects, qualifiedProspects },
       truncated,
     },
