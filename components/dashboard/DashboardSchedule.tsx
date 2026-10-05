@@ -582,10 +582,14 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   // en) fick entreprenaden aldrig se resten: hela texten låg bara i `title`, som en telefon inte
   // visar. Kortet fälls därför ut på plats — samma text som /mina-jobb redan visar okapad.
   //
-  // Bara ett kort där något FAKTISKT är kapat blir tryckbart. Ett kort som lovar mer och sedan inte
-  // visar något nytt är samma tomma löfte som en "Öppna"-knapp utan order bakom. Listan mäts därför
-  // efter varje rendering, via `data-clip-key` på rubriken och beskrivningen. Ett utfällt kort är
-  // inte längre kapat men måste gå att fälla ihop, så det räknas som tryckbart ändå (`expandable`).
+  // Bara ett kort där något FAKTISKT är kapat får pilen och blir tryckbart. Ett kort som lovar mer
+  // och sedan inte visar något nytt är samma tomma löfte som en "Öppna"-knapp utan order bakom.
+  // Rubriken och beskrivningen bär därför `data-clip-key` och mäts när listan renderas om och när
+  // någon av dem ändrar storlek.
+  //
+  // ⚠️ Ett UTFÄLLT kort mäts inte, det behåller sitt senaste svar. Utfällt är det aldrig kapat, och
+  // ett nytt mått hade tagit bort pilen. Då försvann knappen i samma ögonblick som kortet fälldes
+  // ihop, och fokus följde med den.
   const [expandedKeys, setExpandedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const [clippedKeys, setClippedKeys] = useState<ReadonlySet<string>>(() => new Set());
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -600,18 +604,33 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   useEffect(() => {
     const root = listRef.current;
     if (!root) return;
+    const targets = Array.from(root.querySelectorAll<HTMLElement>('[data-clip-key]'));
     const measure = () => {
-      const next = new Set<string>();
-      root.querySelectorAll<HTMLElement>('[data-clip-key]').forEach((el) => {
-        if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1) next.add(el.dataset.clipKey as string);
+      const measured = new Set<string>();
+      const clipped = new Set<string>();
+      for (const el of targets) {
+        const key = el.dataset.clipKey as string;
+        if (expandedKeys.has(key)) continue;
+        measured.add(key);
+        // Höjden får en pixels marginal, för line-clamp avrundar. Bredden får ingen: ellipsen syns
+        // vid minsta överskott, och då ska kortet gå att fälla ut.
+        if (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth) clipped.add(key);
+      }
+      setClippedKeys((prev) => {
+        const next = new Set(Array.from(prev).filter((k) => expandedKeys.has(k) && !measured.has(k)));
+        clipped.forEach((k) => next.add(k));
+        return next.size === prev.size && Array.from(next).every((k) => prev.has(k)) ? prev : next;
       });
-      setClippedKeys((prev) => (prev.size === next.size && Array.from(next).every((k) => prev.has(k)) ? prev : next));
     };
-    measure();
-    // Bredden avgör var texten kapas: en vriden telefon eller ett smalare fönster ändrar svaret.
-    if (typeof ResizeObserver === 'undefined') return;
+    if (typeof ResizeObserver === 'undefined') {
+      measure();
+      return;
+    }
+    // Bredden avgör var texten kapas: en vriden telefon, ett smalare fönster eller en bredare
+    // högerkolumn i kortet ändrar svaret. Observern anropar `measure` en gång direkt också.
     const observer = new ResizeObserver(measure);
     observer.observe(root);
+    targets.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [grouped, loading, compact, expandedKeys]);
 
@@ -763,24 +782,33 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                   // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy —
                   // alltså ingenting att öppna. Den fälls i stället ut på plats, men bara när
                   // något är kapat (se clippedKeys): annars ska kortet inte SE ut som en knapp,
-                  // för pekaren, tab-stoppet, rollen och chevronen lovar en handling som inte finns.
+                  // för pekaren och pilen lovar en handling som inte finns.
+                  //
+                  // Utfällningen bärs av pilen, en riktig <button aria-expanded>, inte av kortet.
+                  // Ett kort med role="button" gör Tid-knappen inuti osynlig för skärmläsare.
+                  // Kortet tar ändå emot trycket var som helst, för fingrarnas skull.
                   const cardKey = `${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`;
                   const opens = !isCrmItem(it) || !!it.work_order_id;
                   const isPlaceholder = !opens;
                   const expanded = isPlaceholder && expandedKeys.has(cardKey);
                   const expandable = isPlaceholder && (expanded || clippedKeys.has(cardKey));
-                  const activate = opens ? () => openDetail(it) : expandable ? () => toggleExpanded(cardKey) : undefined;
                   return (
                     <div
                       key={cardKey}
-                      onClick={activate}
-                      onKeyDown={activate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } } : undefined}
-                      role={activate ? 'button' : undefined}
-                      tabIndex={activate ? 0 : undefined}
-                      aria-expanded={expandable ? expanded : undefined}
+                      onClick={opens ? () => openDetail(it) : expandable ? () => {
+                        // Slutet på en textmarkering är också ett klick. Den som markerar en
+                        // rad för att kopiera den ska inte få kortet ihopfällt under sig.
+                        if (window.getSelection()?.toString()) return;
+                        toggleExpanded(cardKey);
+                      } : undefined}
+                      // Bara när fokus står på själva kortet. Enter på Tid-knappen inuti bubblar
+                      // hit, och preventDefault hade då stoppat knappen och öppnat ordern i stället.
+                      onKeyDown={opens ? (e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } } : undefined}
+                      role={opens ? 'button' : undefined}
+                      tabIndex={opens ? 0 : undefined}
                       className={cn(
                         'relative grid rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
-                        activate && 'cursor-pointer',
+                        (opens || expandable) && 'cursor-pointer',
                         compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
                       )}
                       style={{ borderLeft: `3px solid ${theme.accent}` }}
@@ -866,9 +894,19 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                               </svg>
                             )}
                             {expandable && (
-                              <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className={cn('text-slate-500 transition-transform', expanded && 'rotate-180')}>
-                                <path fill="currentColor" d="M6 9l6 6 6-6" />
-                              </svg>
+                              // `p-0`: annars ärver ikonknappen globals.css `padding: 10px 14px`.
+                              // stopPropagation: kortets eget klick hade annars fällt tillbaka.
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); toggleExpanded(cardKey); }}
+                                aria-expanded={expanded}
+                                aria-label={expanded ? 'Visa mindre' : 'Visa hela texten'}
+                                className="inline-flex rounded-md border-0 bg-transparent p-0 text-slate-500"
+                              >
+                                <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className={cn('transition-transform', expanded && 'rotate-180')}>
+                                  <path fill="currentColor" d="M6 9l6 6 6-6" />
+                                </svg>
+                              </button>
                             )}
                             {positionLabel && (
                               <span title="Placering i dag/lastbil" className="min-w-[34px] rounded-full border border-slate-700 bg-slate-900 px-[7px] py-1 text-center text-[10px] font-bold text-white">
