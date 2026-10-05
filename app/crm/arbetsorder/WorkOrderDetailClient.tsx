@@ -1090,9 +1090,9 @@ export default function WorkOrderDetailClient({
               {portalJob ? (
                 <span
                   className={cn(crm.badge, 'min-w-0 max-w-full truncate border-slate-200 bg-white text-slate-600')}
-                  title={`Från återförsäljarportalen · ${portalJob.storeName} · offert ${portalJob.quoteNumber}`}
+                  title={`Från partnerportalen · ${portalJob.storeName} · offert ${portalJob.quoteNumber}`}
                 >
-                  Från återförsäljarportalen · {portalJob.storeName} · offert {portalJob.quoteNumber}
+                  Från partnerportalen · {portalJob.storeName} · offert {portalJob.quoteNumber}
                 </span>
               ) : null}
             </div>

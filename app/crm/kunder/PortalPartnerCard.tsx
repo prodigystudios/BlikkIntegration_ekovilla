@@ -20,7 +20,7 @@ import type { PartnerStoreView, PortalPartnerView } from '@/lib/domains/portal/p
 import type { OutboxDelivery } from '@/lib/domains/portal/outboxDelivery';
 
 /**
- * Rutan "Återförsäljarportalen" på kundkortet (RESELLER_PORTAL_CRM_PLAN.md 10a): flaggan, kortets företag i portalen
+ * Rutan "Partnerportalen" på kundkortet (RESELLER_PORTAL_CRM_PLAN.md 10a): flaggan, kortets företag i portalen
  * och inbjudan. Visas bara när integrationen är påslagen och användaren har crm.portal.manage (sidan avgör), och bara
  * på företagskort.
  */
@@ -184,8 +184,8 @@ export default function PortalPartnerCard({
 
   if (!view) {
     return (
-      <section className={cardClass} aria-label="Återförsäljarportalen">
-        <p className={cn('mb-3', crm.sectionTitle)}>Återförsäljarportalen</p>
+      <section className={cardClass} aria-label="Partnerportalen">
+        <p className={cn('mb-3', crm.sectionTitle)}>Partnerportalen</p>
         {loadError ? (
           <p className="text-xs text-rose-700">{loadError}</p>
         ) : (
@@ -198,8 +198,8 @@ export default function PortalPartnerCard({
   const canInvite = view.partnerType !== null && view.eligibility.ok;
 
   return (
-    <section className={cardClass} aria-label="Återförsäljarportalen">
-      <p className={cn('mb-3', crm.sectionTitle)}>Återförsäljarportalen</p>
+    <section className={cardClass} aria-label="Partnerportalen">
+      <p className={cn('mb-3', crm.sectionTitle)}>Partnerportalen</p>
 
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Partnertyp">
         {[null, ...PORTAL_PARTNER_TYPES].map((type) => {
