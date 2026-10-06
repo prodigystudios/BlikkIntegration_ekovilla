@@ -496,8 +496,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
               defaultValue={DEFAULT_QUOTE_STATUS_FILTER}
               labelOf={quoteStatusLabel}
               counts={counts}
-              // Samma bredd som orderlistans statusfilter, så att verktygsraderna står likadant.
-              className="w-full sm:w-[14rem]"
+              className="w-full sm:w-[190px]"
             />
             <SortFilter
               value={sort}

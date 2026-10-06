@@ -77,8 +77,9 @@ export function workOrderStatusesFor(selected: readonly WorkOrderStatusFilterOpt
 }
 
 /**
- * Filterknappens text. Ett startval läses som det det är — "Utom Förlorad", "Utom Avslutad,
- * Avbruten" — i stället för ett antal man måste öppna menyn för att tolka.
+ * Filterknappens text: hur många statusar som är valda, "5 av 7 statusar" (William, 2026-10-06 —
+ * förut stod de urkryssade utskrivna, "Utom Avslutad, Avbruten"). En enda vald status står med sitt
+ * namn, eftersom namnet säger mer än "1 av 7" och är lika kort.
  */
 export function summarizeStatusFilter<T extends string>(
   selected: readonly T[],
@@ -89,9 +90,7 @@ export function summarizeStatusFilter<T extends string>(
   if (chosen.length === options.length) return 'Alla statusar';
   if (chosen.length === 0) return 'Ingen status';
   if (chosen.length === 1) return labelOf(chosen[0]);
-  const excluded = options.filter((option) => !selected.includes(option));
-  if (excluded.length <= 2) return `Utom ${excluded.map(labelOf).join(', ')}`;
-  return `${chosen.length} statusar`;
+  return `${chosen.length} av ${options.length} statusar`;
 }
 
 /** Är valet något annat än startvalet? Räknas som ett aktivt filter på mobilens filterknapp. */

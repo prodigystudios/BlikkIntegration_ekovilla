@@ -91,9 +91,9 @@ describe('parseStatusFilterParam', () => {
 });
 
 describe('summarizeStatusFilter — filterknappens text', () => {
-  it('startvalen läses som det de är', () => {
-    expect(summarizeStatusFilter(DEFAULT_QUOTE_STATUS_FILTER, QUOTE_STATUS_FILTER_OPTIONS, quoteLabel)).toBe('Utom Förlorad');
-    expect(summarizeStatusFilter(DEFAULT_WORK_ORDER_STATUS_FILTER, WORK_ORDER_STATUS_FILTER_OPTIONS, orderLabel)).toBe('Utom Avslutad, Avbruten');
+  it('säger hur många som är valda, inte vilka som är urkryssade (William 2026-10-06)', () => {
+    expect(summarizeStatusFilter(DEFAULT_QUOTE_STATUS_FILTER, QUOTE_STATUS_FILTER_OPTIONS, quoteLabel)).toBe('4 av 5 statusar');
+    expect(summarizeStatusFilter(DEFAULT_WORK_ORDER_STATUS_FILTER, WORK_ORDER_STATUS_FILTER_OPTIONS, orderLabel)).toBe('5 av 7 statusar');
   });
 
   it('allt, inget och en enda', () => {
@@ -102,8 +102,10 @@ describe('summarizeStatusFilter — filterknappens text', () => {
     expect(summarizeStatusFilter(['follow_up'], QUOTE_STATUS_FILTER_OPTIONS, quoteLabel)).toBe('Följ upp');
   });
 
-  it('fler än två urkryssade → antalet valda', () => {
-    expect(summarizeStatusFilter(['draft', 'sent'], QUOTE_STATUS_FILTER_OPTIONS, quoteLabel)).toBe('2 statusar');
+  it('ett urkryssat val nämns inte vid namn', () => {
+    const text = summarizeStatusFilter(['draft', 'sent', 'follow_up', 'won'], QUOTE_STATUS_FILTER_OPTIONS, quoteLabel);
+    expect(text).toBe('4 av 5 statusar');
+    expect(text).not.toContain('Förlorad');
   });
 });
 

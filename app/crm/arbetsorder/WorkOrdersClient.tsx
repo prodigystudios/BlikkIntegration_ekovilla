@@ -555,8 +555,7 @@ export default function WorkOrdersClient({
               defaultValue={DEFAULT_WORK_ORDER_STATUS_FILTER}
               labelOf={workOrderStatusFilterLabel}
               counts={counts}
-              // Bredare än de andra två: startvalets text, "Utom Avslutad, Avbruten", ska rymmas.
-              className="w-full sm:w-[14rem]"
+              className="w-full sm:w-[190px]"
             />
             <SortFilter
               value={sort}
