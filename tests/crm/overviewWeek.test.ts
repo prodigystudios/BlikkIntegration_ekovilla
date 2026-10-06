@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseWeekParam, scoreboardWindowFor, shiftWeek } from '@/app/crm/components/overview/overviewWeek';
+import { isPastWeek, parseWeekParam, scoreboardWindowFor, shiftWeek } from '@/app/crm/components/overview/overviewWeek';
 
 // Översiktens veckobyte: ?vecka=… tillbaka, veckostegen och vilken dag som väljer månadsbudget för
 // en tidigare vecka. Allt räknas på ÅÅÅÅ-MM-DD-strängar, så testerna gäller i varje tidszon.
@@ -28,11 +28,23 @@ describe('parseWeekParam', () => {
 
 describe('shiftWeek', () => {
   // Sommartiden slutar 25 okt och börjar 29 mars 2026: veckan över växlingen är 169 respektive 167
-  // timmar. Strängaritmetiken ska ändå landa på nästa måndag.
-  it('landar på måndagen över en sommartidsväxling, åt båda hållen', () => {
-    expect(shiftWeek('2026-10-19', 1)).toBe('2026-10-26');
-    expect(shiftWeek('2026-10-26', -1)).toBe('2026-10-19');
-    expect(shiftWeek('2026-03-23', 1)).toBe('2026-03-30');
+  // timmar. Under TZ=UTC (CI, Vercel) är varje vecka 168 timmar och ett naivt "lokal midnatt + 7 × 24 h"
+  // vore lika grönt — därför sätts zonen inifrån testet, som i tests/planning/dates.test.ts. Fyra zoner:
+  // en med sommartid åt vardera håll, UTC och en långt österut.
+  it('landar på måndagen över en sommartidsväxling, åt båda hållen, i varje zon', () => {
+    const original = process.env.TZ;
+    try {
+      for (const tz of ['UTC', 'Europe/Stockholm', 'America/Los_Angeles', 'Pacific/Kiritimati']) {
+        process.env.TZ = tz;
+        expect(shiftWeek('2026-10-19', 1)).toBe('2026-10-26');
+        expect(shiftWeek('2026-10-26', -1)).toBe('2026-10-19');
+        expect(shiftWeek('2026-03-23', 1)).toBe('2026-03-30');
+        expect(shiftWeek('2026-11-02', -1)).toBe('2026-10-26'); // Los Angeles växlar 1 nov
+      }
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
   });
 
   it('över ett årsskifte', () => {
@@ -56,5 +68,17 @@ describe('scoreboardWindowFor', () => {
   it('fönstret är exakt en vecka — rutten avvisar allt annat', () => {
     const { weekStart, weekEnd } = scoreboardWindowFor('2026-10-19', CURRENT);
     expect([weekStart, weekEnd]).toEqual(['2026-10-19', '2026-10-26']);
+  });
+});
+
+describe('isPastWeek', () => {
+  it('bara veckor före denna — inte denna, inte kommande', () => {
+    expect(isPastWeek('2026-09-28', '2026-10-05')).toBe(true);
+    expect(isPastWeek('2026-10-05', '2026-10-05')).toBe(false);
+    expect(isPastWeek('2026-11-02', '2026-10-05')).toBe(false);
+  });
+
+  it('över ett årsskifte', () => {
+    expect(isPastWeek('2026-12-28', '2027-01-04')).toBe(true);
   });
 });

@@ -1,20 +1,14 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { z } from 'zod';
+import { overviewDaySchema } from './_dates';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
 import { fetchCrmOverviewSummary, type CrmOverviewWindow } from '@/lib/domains/crm/overviewSummary';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// Formen räcker inte: `today` går in i ett databasfilter (Säljcoachens offert), och 2026-02-30 har
-// rätt form men får Postgres att vägra — ett 500 där sidan förut fick sina siffror.
-const dateSchema = z.string()
-  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum (ÅÅÅÅ-MM-DD)')
-  .refine((value) => {
-    // Date.parse först: månad 13 ger NaN, och toISOString på ett ogiltigt datum KASTAR.
-    const time = Date.parse(`${value}T00:00:00Z`);
-    return Number.isFinite(time) && new Date(time).toISOString().slice(0, 10) === value;
-  }, 'Datumet finns inte');
+// Riktiga datum, inte bara formen — se overviewDaySchema.
+const dateSchema = overviewDaySchema;
 
 // The overview asks for eight days at most (today plus the rolling seven). The margin is for a
 // reader whose calendar day differs from the server's, not for arbitrary history.

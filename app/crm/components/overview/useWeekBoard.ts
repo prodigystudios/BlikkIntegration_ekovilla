@@ -19,22 +19,32 @@ export function useWeekBoard() {
   // null = denna vecka.
   const [selected, setSelected] = useState<string | null>(null);
   const [board, setBoard] = useState<WeekBoardState | null>(null);
-  // Samma skydd som översiktens laddning: ett svar från en överkörd vecka skriver inte över en senare.
+  // Ett svar från en överkörd vecka skriver inte över en senare, och hämtningen avbryts — tio snabba
+  // tryck bakåt ska inte låta nio tavlor räknas klart på servern i onödan.
   const loadIdRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancel = () => {
+    loadIdRef.current += 1;
+    abortRef.current?.abort();
+    abortRef.current = null;
+  };
 
   const fetchWeek = useCallback(async (weekStart: string) => {
-    const loadId = loadIdRef.current + 1;
-    loadIdRef.current = loadId;
+    cancel();
+    const loadId = loadIdRef.current;
+    const controller = new AbortController();
+    abortRef.current = controller;
     setBoard((prev) => ({
       weekStart,
-      // Samma vecka igen (Uppdatera): behåll det som står kvar medan den läses om.
+      // Samma vecka igen (Uppdatera): det som står kvar visas medan den läses om.
       scoreboard: prev?.weekStart === weekStart ? prev.scoreboard : null,
       loading: true,
       failed: false,
     }));
     const range = scoreboardWindowFor(weekStart, getCrmOverviewWindow());
     const query = new URLSearchParams({ today: range.today, week_start: range.weekStart, week_end: range.weekEnd });
-    const section = await readSection(`/api/crm/overview/scoreboard?${query}`);
+    const section = await readSection(`/api/crm/overview/scoreboard?${query}`, controller.signal);
     if (loadId !== loadIdRef.current) return;
     const scoreboard = (section.json?.data?.scoreboard as WeeklyScoreboard | undefined) ?? null;
     setBoard((prev) => ({
@@ -54,11 +64,14 @@ export function useWeekBoard() {
     window.history.replaceState({}, '', url.toString());
   };
 
-  /** Välj en vecka (måndagens datum). Denna vecka — eller null — går tillbaka till nuläget. */
-  const select = useCallback((weekStart: string | null) => {
-    const next = weekStart === getCrmOverviewWindow().weekStart ? null : weekStart;
-    // Ett överkört svar på väg in ska inte landa när man gått tillbaka till denna vecka.
-    if (next == null) loadIdRef.current += 1;
+  /**
+   * Välj en vecka (måndagens datum). `currentWeekStart` är veckan som denna vecka-tavlan faktiskt
+   * laddat — inte klockans — så att etiketten och siffrorna aldrig namnger olika veckor i en flik
+   * som stått öppen över en söndagsnatt. Denna vecka, eller null, går tillbaka till nuläget.
+   */
+  const select = useCallback((weekStart: string | null, currentWeekStart: string) => {
+    const next = weekStart === currentWeekStart ? null : weekStart;
+    if (next == null) cancel();
     setSelected(next);
     writeUrl(next);
     if (next) void fetchWeek(next);
@@ -69,9 +82,8 @@ export function useWeekBoard() {
   // en hydreringskrock. Samma mönster som DashboardSchedule.tsx.
   useEffect(() => {
     const week = parseWeekParam(new URLSearchParams(window.location.search).get(WEEK_PARAM));
-    if (week) select(week);
-    // Räkna upp vid avmontering så att ett svar som landar efteråt räknas som överkört.
-    return () => { loadIdRef.current += 1; };
+    if (week) select(week, getCrmOverviewWindow().weekStart);
+    return cancel;
   }, [select]);
 
   /** Läs om den valda veckan (Uppdatera). Denna vecka läses om av översiktens egen laddning. */

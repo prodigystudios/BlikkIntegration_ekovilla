@@ -65,11 +65,13 @@ function BoardSkeleton() {
 //
 // Veckobytet sitter här, i tavlans rubrik där veckan redan stod, men styr också topplistan och
 // raderna per säljare (CrmOverview).
-export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboard, week }: {
+export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboard, week, isPastWeek }: {
   loading: boolean;
   scoreboardFailed: boolean;
   scoreboard: WeeklyScoreboard | null;
   week: WeekNavProps;
+  /** En vecka som redan passerat — ringen säger då hur den slutade, inte vad som är kvar. */
+  isPastWeek: boolean;
 }) {
   // Samma nyckel som /crm/installningar kräver — länken ska inte skicka någon till en spärrad sida.
   const canAdjustGoals = useCan('crm.settings.manage');
@@ -118,7 +120,7 @@ export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboar
             <div className="flex items-center gap-4 md:flex-col md:gap-2 md:border-l md:border-[#e0e8dc] md:pl-6">
               <GoalsRing reached={goals.reached} set={goals.set} />
               <div className="grid gap-1 md:text-center">
-                <p className={cn('m-0', crm.metaStrong)}>{goalsCaption(goals, !week.isCurrent)}</p>
+                <p className={cn('m-0', crm.metaStrong)}>{goalsCaption(goals, isPastWeek)}</p>
                 {/* Bara denna vecka: en länk till Inställningar för en månad som redan passerat
                     hade lovat något den inte kan hålla. */}
                 {goals.set === 0 && canAdjustGoals && week.isCurrent ? (

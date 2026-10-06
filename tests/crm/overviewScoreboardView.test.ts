@@ -20,6 +20,7 @@ import {
   rankSellers,
   weekLabel,
   weekName,
+  weekTitle,
 } from '@/app/crm/components/overview/scoreboardView';
 
 // Veckotavlans visningslogik på CRM-översikten: ordningen i topplistan, vilka stjärnor bannern
@@ -263,5 +264,10 @@ describe('veckobytet — texterna för en avslutad vecka', () => {
   it('veckans namn för meningar', () => {
     expect(weekName('2026-09-28')).toBe('vecka 40');
     expect(weekName('2026-12-28')).toBe('vecka 53');
+  });
+
+  it('veckans namn som etikett', () => {
+    expect(weekTitle('2026-09-28')).toBe('Vecka 40');
+    expect(weekLabel('2026-09-28', '2026-10-05')).toBe('Vecka 40, 28 sep–4 okt');
   });
 });

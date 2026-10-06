@@ -218,11 +218,21 @@ function addDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-/** "vecka 40" — för meningar som "Sorterat på samtal vecka 40". */
-export function weekName(weekStart: string): string {
+// ISO-veckans nummer för en måndag (ÅÅÅÅ-MM-DD). Datumet byggs ur strängens delar som LOKAL dag —
+// isoWeek läser lokala fält, och en UTC-midnatt hade blivit söndagen innan väster om Greenwich.
+function weekNumberOf(weekStart: string): number {
   const [year, month, day] = weekStart.split('-').map(Number);
-  // Lokal dag, som i weekLabel nedan: isoWeek läser lokala fält.
-  return `vecka ${isoWeek(new Date(year, month - 1, day))}`;
+  return isoWeek(new Date(year, month - 1, day));
+}
+
+/** "vecka 40" — inne i en mening: "Sorterat på samtal vecka 40". */
+export function weekName(weekStart: string): string {
+  return `vecka ${weekNumberOf(weekStart)}`;
+}
+
+/** "Vecka 40" — fristående, som en etikett. */
+export function weekTitle(weekStart: string): string {
+  return `Vecka ${weekNumberOf(weekStart)}`;
 }
 
 /** "Vecka 41, 5–11 okt" — eller "Vecka 40, 28 sep–4 okt" över ett månadsskifte. Slutet är exklusivt. */
@@ -233,8 +243,5 @@ export function weekLabel(weekStart: string, weekEnd: string): string {
   const range = startMonth === lastMonth
     ? `${startDay}–${lastDay} ${MONTHS[lastMonth - 1]}`
     : `${startDay} ${MONTHS[startMonth - 1]}–${lastDay} ${MONTHS[lastMonth - 1]}`;
-  // Datumet byggs ur strängens delar som LOKAL dag — isoWeek läser lokala fält, och en UTC-midnatt
-  // hade blivit söndagen innan väster om Greenwich.
-  const [startYear] = weekStart.split('-').map(Number);
-  return `Vecka ${isoWeek(new Date(startYear, startMonth - 1, startDay))}, ${range}`;
+  return `${weekTitle(weekStart)}, ${range}`;
 }

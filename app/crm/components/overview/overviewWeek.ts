@@ -29,14 +29,16 @@ export function shiftWeek(weekStart: string, weeks: number): string {
 }
 
 /**
- * Tavlans fönster för en vald vecka.
- *
- * Denna vecka: läsarens eget fönster, oförändrat. En annan vecka: veckans TORSDAG som dag. Dagen
- * väljer månadsbudget (scoreboardMonthStart i weeklyScoreboard.ts), och en ISO-vecka hör till
- * torsdagens månad — där ligger minst fyra av veckans sju dagar. Måndagen hade mätt veckan 28 sep–
- * 4 okt mot septembers budget, fast fyra av dagarna ligger i oktober.
+ * Tavlans fönster för en vald vecka. Denna vecka: läsarens eget fönster, oförändrat. En annan vecka:
+ * veckans torsdag som dag — rutten kräver en dag INOM veckan. Dagen väljer inte längre budget;
+ * det gör veckans torsdag på servern (scoreboardMonthStart), live och i efterhand likadant.
  */
 export function scoreboardWindowFor(weekStart: string, current: ScoreboardWeek): ScoreboardWeek {
   if (weekStart === current.weekStart) return current;
   return { weekStart, weekEnd: addDaysISO(weekStart, 7), today: addDaysISO(weekStart, 3) };
+}
+
+/** Ligger veckan före denna vecka? Strängjämförelse på ÅÅÅÅ-MM-DD-måndagar. */
+export function isPastWeek(weekStart: string, currentWeekStart: string): boolean {
+  return weekStart < currentWeekStart;
 }

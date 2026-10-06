@@ -186,9 +186,16 @@ describe('composeWeeklyScoreboard — ordningen', () => {
 });
 
 describe('scoreboardMonthStart', () => {
-  it('en vecka som korsar ett månadsskifte mäts mot dagens månad', () => {
-    expect(scoreboardMonthStart('2026-10-01')).toBe('2026-10-01');
-    expect(scoreboardMonthStart('2026-09-30')).toBe('2026-09-01');
+  // Veckan 28 sep–4 okt har fyra dagar i oktober: torsdagen 1 okt. Samma svar vilken dag man tittar.
+  it('en vecka som korsar ett månadsskifte mäts mot torsdagens månad', () => {
+    expect(scoreboardMonthStart('2026-09-28')).toBe('2026-10-01');
+    expect(scoreboardMonthStart('2026-08-31')).toBe('2026-09-01'); // torsdag 3 sep
+    expect(scoreboardMonthStart('2026-09-21')).toBe('2026-09-01'); // torsdag 24 sep
+  });
+
+  it('över ett årsskifte', () => {
+    expect(scoreboardMonthStart('2026-12-28')).toBe('2026-12-01'); // torsdag 31 dec
+    expect(scoreboardMonthStart('2027-01-25')).toBe('2027-01-01'); // torsdag 28 jan
   });
 });
 
@@ -215,9 +222,10 @@ function fakeClient(tables: Record<string, unknown[]>) {
 describe('fetchWeeklyScoreboard — frågorna', () => {
   const WINDOW = { today: '2026-10-01', ...WEEK };
 
-  it('läser samtalen från veckans måndag och budgeten för dagens månad', async () => {
+  it('läser samtalen från veckans måndag och budgeten för torsdagens månad', async () => {
     const { client, calls } = fakeClient({});
-    await fetchWeeklyScoreboard(client, WINDOW);
+    // Måndagen 28 sep: dagen ligger i september, men veckan hör till oktober.
+    await fetchWeeklyScoreboard(client, { ...WINDOW, today: '2026-09-28' });
 
     expect(calls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', '2026-09-28'] });
     expect(calls).toContainEqual({ table: 'crm_goals', method: 'eq', args: ['period_type', 'month'] });

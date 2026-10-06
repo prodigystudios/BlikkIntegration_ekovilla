@@ -34,7 +34,8 @@ const SECTION_ORDER: SectionKey[] = ['summary', 'quotes', 'scoreboard', 'workOrd
 export const sectionLabel: Record<SectionKey, string> = {
   summary: 'siffrorna',
   quotes: 'offerter',
-  scoreboard: 'veckomålen',
+  // Denna veckas tavla — bannern och "N samtal från stjärnan" bygger på den även när en annan vecka visas.
+  scoreboard: 'denna veckas mål',
   workOrders: 'arbetsordrar',
 };
 
@@ -53,9 +54,11 @@ export type Section = { ok: boolean; json: any };
 // `undefined` som sentinel, inte null: en 200 med trasig kropp gav annars ok:true och json:null,
 // summeringen föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" utan
 // felruta — okänt renderat som en säker nolla.
-export async function readSection(url: string): Promise<Section> {
+export async function readSection(url: string, signal?: AbortSignal): Promise<Section> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  // En överkörd hämtning (veckobytet) avbryts utifrån — samma väg som tidsgränsen.
+  signal?.addEventListener('abort', () => controller.abort(), { once: true });
   try {
     const res = await fetch(url, { cache: 'no-store', signal: controller.signal });
     const json = await res.json().catch(() => undefined);

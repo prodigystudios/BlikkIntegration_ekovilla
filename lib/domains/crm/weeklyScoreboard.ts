@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { addDaysISO } from '@/lib/domains/planning/timezone';
 import { UNKNOWN_SELLER_NAME, listCrmGoals, mapCrmGoalRows, weeklyFromMonthly, type CrmGoal, type CrmGoalRow } from './goals';
 import {
   composeWeekActuals,
@@ -154,9 +155,16 @@ export function composeWeeklyScoreboard(
   };
 }
 
-/** Månadsbudgetens nyckel för läsarens dag: en vecka som korsar ett månadsskifte mäts mot dagens månad. */
-export function scoreboardMonthStart(today: string): string {
-  return `${today.slice(0, 7)}-01`;
+/**
+ * Månadsbudgetens nyckel för en vecka: TORSDAGENS månad. En ISO-vecka hör till torsdagens månad —
+ * där ligger minst fyra av veckans sju dagar — och det är samma månad vilken dag man än tittar.
+ *
+ * Förut var det läsarens dag. En vecka som korsade ett månadsskifte mättes då mot september måndag–
+ * onsdag och mot oktober torsdag–söndag: målen och stjärnorna bytte mitt i veckan, och när veckan
+ * sedan bläddrades fram i efterhand (översiktens veckobyte) fanns det ingen "dag" att välja på.
+ */
+export function scoreboardMonthStart(weekStart: string): string {
+  return `${addDaysISO(weekStart, 3).slice(0, 7)}-01`;
 }
 
 /**
@@ -166,8 +174,8 @@ export function scoreboardMonthStart(today: string): string {
 export async function fetchWeeklyScoreboard(admin: SupabaseClient, window: ScoreboardWindow): Promise<WeeklyScoreboard> {
   const truncated: string[] = [];
   const [rows, goals] = await Promise.all([
-    fetchWeekActualRows(admin, window, window.weekStart, truncated),
-    listCrmGoals(admin, { periodType: 'month', periodStart: scoreboardMonthStart(window.today) }).then(({ data, error }) => {
+    fetchWeekActualRows(admin, window, { from: window.weekStart, to: window.weekEnd }, truncated),
+    listCrmGoals(admin, { periodType: 'month', periodStart: scoreboardMonthStart(window.weekStart) }).then(({ data, error }) => {
       if (error) throw new Error(`goals: ${error.message}`);
       return mapCrmGoalRows(data as CrmGoalRow[] | null);
     }),
