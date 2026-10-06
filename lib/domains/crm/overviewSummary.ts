@@ -103,6 +103,25 @@ export type CrmOverviewSummary = {
   overdueTasks: number;
   todayTasks: number;
   /**
+   * Senaste samtalet läsaren SER, oavsett ålder — RLS ger admin allas, andra sina egna plus
+   * kollegors på egna prospekt. Null = inget synligt samtal alls. Avgör tillsammans med
+   * callsLast7Days om samtalsloggen legat stilla (staleCalls på översikten).
+   */
+  lastVisibleCallAt: string | null;
+  /** Läsarens EGET senaste samtal, oavsett ålder. Null = har aldrig loggat ett. */
+  lastOwnCallAt: string | null;
+  /**
+   * Läsarens äldsta offert som väntar på kunden — Säljcoach-kortets tips. Null = ingen att ringa om
+   * i dag (se frågan i fetchCrmOverviewSummary). Den enda raden i en summering av tal, och den är
+   * läsarens EGEN: läst med sessionen och filtrerad på assigned_to.
+   */
+  oldestWaitingQuote: WaitingQuote | null;
+  /**
+   * Tipsfrågan gick inte att läsa. Den är valfri, så den fäller inte summeringen — bara kortet
+   * visar felläget. Utan flaggan hade ett fel sett ut som "ingen offert väntar".
+   */
+  oldestWaitingQuoteFailed: boolean;
+  /**
    * The whole team's actuals for the CURRENT WEEK — the window the weekly targets are set in, and
    * the same window the leaderboard uses per seller. The two must be able to reconcile: a team
    * figure over a rolling 7 days could not equal the sum of per-seller figures over the week, and
@@ -136,6 +155,48 @@ export type CallWindowRow = {
   prospect_id: string | null;
 };
 export type TaskDueRow = { due_at: string | null };
+// Namnfälten skickas råa: namnet sätts av quoteCustomerName (app/crm/lib/quoteDisplay.ts) i
+// webbläsaren, samma regel som offertlistan, säljtavlan och offertpanelen — ögonblicksbilden före
+// den levande kolumnen. Domänlagret importerar inte från app/.
+type QuoteNameColumns = {
+  customer_name: string | null;
+  customer_snapshot: { customer_name?: string | null; company_name?: string | null } | null;
+  prospect: { company_name: string } | Array<{ company_name: string }> | null;
+};
+
+export type WaitingQuoteRow = NetAmountRow & QuoteNameColumns & {
+  id: string;
+  quote_date: string;
+  currency_code: string | null;
+};
+
+export type WaitingQuote = QuoteNameColumns & {
+  id: string;
+  /**
+   * Offertdatumet (ÅÅÅÅ-MM-DD). INTE dagen offerten skickades — någon sådan tidpunkt finns inte;
+   * quote_date sätts när offerten skapas och går att ändra. Därför säger kortet "daterad", aldrig
+   * "har väntat N dagar".
+   */
+  quoteDate: string;
+  /** Netto, som nyckeltalen och tavlan. */
+  netAmount: number;
+  currencyCode: string;
+};
+
+/** De offertlägen där bollen ligger hos kunden: skickad, eller markerad för uppföljning. */
+export const WAITING_QUOTE_STATUSES: CrmQuoteStatus[] = ['sent', 'follow_up'];
+
+/**
+ * De fyra fönstrade läsningarna bakom veckans utfall. Delas med lagets veckotavla
+ * (weeklyScoreboard.ts), som läser samma rader med admin-klienten — samma frågor och samma
+ * aritmetik, så att tavlan och översiktens egna veckosiffror inte kan glida isär.
+ */
+export type CrmWeekActualRows = Pick<CrmOverviewRows, 'quoteWindow' | 'orderWindow' | 'invoiceRoundWindow' | 'callWindow'>;
+
+export type CrmWeekActuals = {
+  weekTeam: CrmOverviewWeekActuals;
+  weekByUser: Record<string, CrmOverviewWeekActuals>;
+};
 
 export type CrmOverviewRows = {
   quoteStocks: QuoteStockRow[];
@@ -146,6 +207,11 @@ export type CrmOverviewRows = {
   invoiceRoundWindow: InvoiceRoundRow[];
   callWindow: CallWindowRow[];
   openTasks: TaskDueRow[];
+  lastVisibleCallAt: string | null;
+  lastOwnCallAt: string | null;
+  /** Läsarens äldsta väntande offert, eller null. Redan filtrerad på status och datum i frågan. */
+  oldestWaitingQuote: WaitingQuoteRow | null;
+  oldestWaitingQuoteFailed: boolean;
   counts: {
     pipelineProspects: number;
     newProspects: number;
@@ -188,18 +254,13 @@ function addActuals(base: CrmOverviewWeekActuals, patch: Partial<CrmOverviewWeek
 }
 
 /**
- * Pure: rows in, read model out. The queries are the impure half (fetchCrmOverviewSummary).
+ * Pure: the week's actuals for the team and per seller, in one pass. Used by the overview's own
+ * summary and by the team scoreboard, so the two are the same arithmetic by construction.
  */
-export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOverviewWindow): CrmOverviewSummary {
-  const activeQuotes = rows.quoteStocks.filter((quote) => ACTIVE_QUOTE_STATUSES.includes(quote.status as CrmQuoteStatus));
-  const openOrders = rows.orderStocks.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
-  const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
-
-  const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
-  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
-  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
-  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
-
+export function composeWeekActuals(
+  rows: CrmWeekActualRows,
+  window: Pick<CrmOverviewWindow, 'weekStart' | 'weekEnd'>,
+): CrmWeekActuals {
   // Every figure measured against a target is scoped to the current week, for the team and per
   // seller in the same pass — so the team row and the leaderboard row for the same metric are the
   // same arithmetic and can be checked against each other.
@@ -242,6 +303,41 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
     }
   }
 
+  return { weekTeam, weekByUser };
+}
+
+function toWaitingQuote(row: WaitingQuoteRow | null, today: string): WaitingQuote | null {
+  if (!row) return null;
+  const quoteDay = dayOf(row.quote_date);
+  // Daterad i dag eller framåt: den har inte hunnit vänta på något, och "ring i dag" vore brus.
+  // Strängjämförelse på ÅÅÅÅ-MM-DD, samma regel som inWindow.
+  if (quoteDay == null || quoteDay >= today) return null;
+  return {
+    id: row.id,
+    quoteDate: quoteDay,
+    netAmount: netAmount(row),
+    currencyCode: row.currency_code || 'SEK',
+    customer_name: row.customer_name,
+    customer_snapshot: row.customer_snapshot,
+    prospect: row.prospect,
+  };
+}
+
+/**
+ * Pure: rows in, read model out. The queries are the impure half (fetchCrmOverviewSummary).
+ */
+export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOverviewWindow): CrmOverviewSummary {
+  const activeQuotes = rows.quoteStocks.filter((quote) => ACTIVE_QUOTE_STATUSES.includes(quote.status as CrmQuoteStatus));
+  const openOrders = rows.orderStocks.filter((order) => OPEN_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
+  const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
+
+  const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
+  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
+  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
+  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
+
+  const { weekTeam, weekByUser } = composeWeekActuals(rows, window);
+
   const callsInWindow = rows.callWindow.filter((call) => inWindow(call.call_at, window.since));
   const openTaskDays = rows.openTasks.map((task) => dayOf(task.due_at));
 
@@ -274,6 +370,11 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
     overdueTasks: openTaskDays.filter((day) => day != null && day < window.today).length,
     todayTasks: openTaskDays.filter((day) => day === window.today).length,
 
+    lastVisibleCallAt: rows.lastVisibleCallAt,
+    lastOwnCallAt: rows.lastOwnCallAt,
+    oldestWaitingQuote: toWaitingQuote(rows.oldestWaitingQuote, window.today),
+    oldestWaitingQuoteFailed: rows.oldestWaitingQuoteFailed,
+
     weekTeam,
     weekByUser,
     truncated: rows.truncated,
@@ -291,10 +392,64 @@ async function readRows<T>(name: string, query: RowQuery<T>, truncated: string[]
   return rows;
 }
 
+// Första raden ur en sortering med limit(1), eller null. Inget tak att slå i, så inget i `truncated`.
+async function readFirstRow<T>(name: string, query: RowQuery<T>): Promise<T | null> {
+  const { data, error } = await query;
+  if (error) throw new Error(`${name}: ${error.message}`);
+  return data?.[0] ?? null;
+}
+
+async function readLatestCallAt(name: string, query: RowQuery<{ call_at: string }>): Promise<string | null> {
+  return (await readFirstRow(name, query))?.call_at ?? null;
+}
+
 async function readCount(name: string, query: CountableQuery): Promise<number> {
   const { count, error } = await query;
   if (error) throw new Error(`${name}: ${error.message}`);
   return count ?? 0;
+}
+
+/**
+ * The four windowed reads behind the week's actuals, with whatever client the caller holds: the
+ * overview's own summary reads them through the session (RLS decides what the reader counts), the
+ * team scoreboard through the admin client. `callsFrom` is the only difference — the summary also
+ * needs the rolling 7 days, which always reach back past the week's Monday.
+ */
+export async function fetchWeekActualRows(
+  client: SupabaseClient,
+  weekStart: string,
+  callsFrom: string,
+  truncated: string[],
+): Promise<CrmWeekActualRows> {
+  const [quoteWindow, orderWindow, invoiceRoundWindow, callWindow] = await Promise.all([
+    // Only the week is read: every quote figure is either a stock (the summary's quote_stocks) or
+    // measured against the weekly target. `since` would fetch days nothing reads.
+    readRows<QuoteWindowRow>('quote_window', client
+      .from('crm_quotes')
+      .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
+      .gte('quote_date', weekStart)
+      .limit(ROW_CAP), truncated),
+    // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
+    // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
+    readRows<OrderWindowRow>('order_window', client
+      .from('crm_work_orders')
+      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
+      .or(`created_at.gte.${weekStart},fortnox_invoiced_at.gte.${weekStart}`)
+      .limit(ROW_CAP), truncated),
+    // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
+    // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
+    readRows<InvoiceRoundRow>('invoice_round_window', client
+      .from('crm_work_order_invoices')
+      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
+      .gte('created_at', weekStart)
+      .limit(ROW_CAP), truncated),
+    readRows<CallWindowRow>('call_window', client
+      .from('crm_calls')
+      .select('user_id, call_at, outcome, prospect_id')
+      .gte('call_at', callsFrom)
+      .limit(ROW_CAP), truncated),
+  ]);
+  return { quoteWindow, orderWindow, invoiceRoundWindow, callWindow };
 }
 
 /**
@@ -306,63 +461,40 @@ async function readCount(name: string, query: CountableQuery): Promise<number> {
 export async function fetchCrmOverviewSummary(
   supabase: SupabaseClient,
   window: CrmOverviewWindow,
+  /** Läsaren — för hens eget senaste samtal. */
+  userId: string,
 ): Promise<CrmOverviewSummary> {
   const truncated: string[] = [];
   const prospectCount = (build: (q: any) => any, name: string) =>
     readCount(name, build(supabase.from('crm_customers').select('id', { count: 'exact', head: true }).eq('customer_stage', 'prospect')));
 
   const [
+    weekRows,
     quoteStocks,
-    quoteWindow,
     orderStocks,
-    orderWindow,
-    invoiceRoundWindow,
-    callWindow,
     openTasks,
+    lastVisibleCallAt,
+    lastOwnCallAt,
+    oldestWaitingQuote,
     pipelineProspects,
     newProspects,
     quotedProspects,
     qualifiedProspects,
   ] = await Promise.all([
+    // The widest call window on the page: the calls metric card is explicitly the rolling 7 days,
+    // and the week is a subset of it, so one read serves both. outcome + prospect_id come along
+    // because the two follow-up figures are counted from these same rows instead of by their own scans.
+    fetchWeekActualRows(supabase, window.weekStart, window.since, truncated),
     readRows<QuoteStockRow>('quote_stocks', supabase
       .from('crm_quotes')
       .select('status, amount, vat_percent, pricing_summary')
       .in('status', ACTIVE_QUOTE_STATUSES)
-      .limit(ROW_CAP), truncated),
-    // Only the week is read: every quote figure on the page is either a stock (above) or measured
-    // against the weekly target. `since` would fetch days nothing reads.
-    readRows<QuoteWindowRow>('quote_window', supabase
-      .from('crm_quotes')
-      .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
-      .gte('quote_date', window.weekStart)
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
       // Rundorna inbäddade: en delfakturerad order står i lagret med det som återstår, inte hela värdet.
       .select('status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)')
       .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
-      .limit(ROW_CAP), truncated),
-    // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
-    // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
-    readRows<OrderWindowRow>('order_window', supabase
-      .from('crm_work_orders')
-      .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
-      .or(`created_at.gte.${window.weekStart},fortnox_invoiced_at.gte.${window.weekStart}`)
-      .limit(ROW_CAP), truncated),
-    // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
-    // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
-    readRows<InvoiceRoundRow>('invoice_round_window', supabase
-      .from('crm_work_order_invoices')
-      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
-      .gte('created_at', window.weekStart)
-      .limit(ROW_CAP), truncated),
-    // The widest window on the page: the calls metric card is explicitly the rolling 7 days, and the
-    // week is a subset of it, so one read serves both. outcome + prospect_id come along because the
-    // two follow-up figures are counted from these same rows instead of by their own scans.
-    readRows<CallWindowRow>('call_window', supabase
-      .from('crm_calls')
-      .select('user_id, call_at, outcome, prospect_id')
-      .gte('call_at', window.since)
       .limit(ROW_CAP), truncated),
     // 'active' is the stored value the task domain maps to 'open'; 'done' and 'cancelled' are out.
     readRows<TaskDueRow>('open_tasks', supabase
@@ -371,6 +503,41 @@ export async function fetchCrmOverviewSummary(
       .eq('kind', 'note')
       .eq('status', 'active')
       .limit(ROW_CAP), truncated),
+    // Hur länge sedan det senaste samtalet var, oavsett ålder: fönstret ovan räcker inte, för
+    // frågan ställs just när det är tomt. Det egna går på crm_calls_user_call_at_idx. Låg förut i
+    // webbläsaren, ur översiktens fem senaste samtal — med kundernas kontaktuppgifter i köpet, en
+    // blind fläck när de fem var kollegors, och en tyst nolla när listan inte gick att läsa.
+    readLatestCallAt('last_visible_call', supabase
+      .from('crm_calls')
+      .select('call_at')
+      .order('call_at', { ascending: false })
+      .limit(1)),
+    readLatestCallAt('last_own_call', supabase
+      .from('crm_calls')
+      .select('call_at')
+      .eq('user_id', userId)
+      .order('call_at', { ascending: false })
+      .limit(1)),
+    // Säljcoachens tips: läsarens äldsta offert där bollen ligger hos kunden. Två slags offerter
+    // hoppas över: en med uppföljning planerad framåt (säljaren har redan bestämt när, och "ring i
+    // dag" hade sagt emot det) och en som gått ut (kunden kan inte längre tacka ja — den ska
+    // stängas, inte ringas om). Ordnad på offertdatumet, med created_at och id som skiljelinje, så
+    // att två offerter från samma dag inte byter plats mellan laddningar.
+    //
+    // VALFRI: ett fel här fäller inte summeringen, bara Säljcoach-kortet (oldestWaitingQuoteFailed).
+    readFirstRow<WaitingQuoteRow>('oldest_waiting_quote', supabase
+      .from('crm_quotes')
+      .select('id, quote_date, amount, vat_percent, pricing_summary, currency_code, customer_name, customer_snapshot, prospect:crm_customers!prospect_id(company_name)')
+      .eq('assigned_to', userId)
+      .in('status', WAITING_QUOTE_STATUSES)
+      // window.today är ett riktigt datum (rutten prövar det, inte bara formen) — säkert att foga in.
+      .or(`follow_up_date.is.null,follow_up_date.lte.${window.today}`)
+      .or(`valid_until.is.null,valid_until.gte.${window.today}`)
+      .order('quote_date', { ascending: true })
+      .order('created_at', { ascending: true })
+      .order('id', { ascending: true })
+      .limit(1))
+      .then((row) => ({ row, failed: false }), () => ({ row: null, failed: true })),
     prospectCount((q) => q.in('status', PIPELINE_PROSPECT_STATUSES), 'prospects_pipeline'),
     prospectCount((q) => q.eq('status', 'new'), 'prospects_new'),
     prospectCount((q) => q.eq('status', 'quoted'), 'prospects_quoted'),
@@ -379,13 +546,14 @@ export async function fetchCrmOverviewSummary(
 
   return composeCrmOverviewSummary(
     {
+      ...weekRows,
       quoteStocks,
-      quoteWindow,
       orderStocks,
-      orderWindow,
-      invoiceRoundWindow,
-      callWindow,
       openTasks,
+      lastVisibleCallAt,
+      lastOwnCallAt,
+      oldestWaitingQuote: oldestWaitingQuote.row,
+      oldestWaitingQuoteFailed: oldestWaitingQuote.failed,
       counts: { pipelineProspects, newProspects, quotedProspects, qualifiedProspects },
       truncated,
     },

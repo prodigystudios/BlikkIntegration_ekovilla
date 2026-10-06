@@ -79,11 +79,25 @@ describe('GET /api/crm/overview — fönstret', () => {
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
+  // `today` går in i ett databasfilter: rätt form räcker inte, datumet måste finnas.
+  it('avvisar datum med rätt form som inte finns — utan att kasta', async () => {
+    const res = await GET(req('today=2026-02-30&since=2026-02-23&week_start=2026-02-23&week_end=2026-03-02'));
+    expect(res.status).toBe(400);
+    expect((await GET(req('today=2026-13-01&since=2026-12-25&week_start=2026-12-28&week_end=2027-01-04'))).status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('släpper igenom sidans eget fönster och skickar det vidare oförändrat', async () => {
     await GET(req(WINDOW));
     expect(mockFetch).toHaveBeenCalledWith(expect.anything(), {
       today: '2026-08-17', since: '2026-08-10', weekStart: '2026-08-17', weekEnd: '2026-08-24',
-    });
+    }, expect.any(String));
+  });
+
+  // Läsarens eget senaste samtal frågas på läsarens id — ur sessionen, aldrig ur frågesträngen.
+  it('skickar med den inloggades id för det egna senaste samtalet', async () => {
+    await GET(req(`${WINDOW}&user_id=någon-annan`));
+    expect(mockFetch).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'user-sales-1');
   });
 
   it('svarar 500 med kod när räkningen fallerar', async () => {

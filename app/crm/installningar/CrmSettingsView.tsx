@@ -32,6 +32,7 @@ type GoalItem = {
   quote_value_target: number | string;
   order_count_target: number;
   order_value_target: number | string;
+  invoiced_value_target: number | string;
 };
 
 const roleClass: Record<CrmTeamMember['role'], string> = {

@@ -1,13 +1,20 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
+/**
+ * Namnet på veckotavlan när målets användare saknar ett i profilen. Här och inte i
+ * weeklyScoreboard.ts: översikten läser det i webbläsaren, och goals.ts finns redan i dess paket —
+ * tavlans modul drar med sig summeringens läskod.
+ */
+export const UNKNOWN_SELLER_NAME = 'Okänd användare';
+
 // Budgets are set monthly; the leaderboard derives the weekly target as budget ÷ this.
 export const GOAL_WEEKS_PER_MONTH = 4;
 
 export type CrmGoalPeriodType = 'week' | 'month';
 
 export const crmGoalSelect =
-  'id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)';
+  'id, user_id, period_type, period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, invoiced_value_target, created_by, updated_by, created_at, updated_at, user:profiles!crm_goals_user_id_fkey(id, full_name, role)';
 
 type GoalUserRow = {
   id: string;
@@ -25,6 +32,7 @@ export type CrmGoalRow = {
   quote_value_target: number | string;
   order_count_target: number;
   order_value_target: number | string;
+  invoiced_value_target: number | string;
   created_by: string;
   updated_by: string;
   created_at: string;
@@ -50,6 +58,8 @@ type UpsertCrmGoalInput = {
   quote_value_target: number;
   order_count_target: number;
   order_value_target: number;
+  // Valfri: utelämnad lämnar upserten den sparade budgeten orörd (en flik från före kolumnen).
+  invoiced_value_target?: number;
   created_by: string;
   updated_by: string;
 };

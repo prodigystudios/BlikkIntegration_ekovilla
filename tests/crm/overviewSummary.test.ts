@@ -5,6 +5,7 @@ import {
   TO_INVOICE_WORK_ORDER_STATUSES,
   ACTIVE_QUOTE_STATUSES,
   type CrmOverviewRows,
+  type WaitingQuoteRow,
   type CrmOverviewWindow,
 } from '@/lib/domains/crm/overviewSummary';
 
@@ -48,6 +49,10 @@ function rows(overrides: Partial<CrmOverviewRows> = {}): CrmOverviewRows {
     invoiceRoundWindow: [],
     callWindow: [],
     openTasks: [],
+    lastVisibleCallAt: null,
+    lastOwnCallAt: null,
+    oldestWaitingQuote: null,
+    oldestWaitingQuoteFailed: false,
     counts: { pipelineProspects: 0, newProspects: 0, quotedProspects: 0, qualifiedProspects: 0 },
     truncated: [],
     ...overrides,
@@ -255,6 +260,16 @@ describe('composeCrmOverviewSummary — uppgifter och genomsläpp', () => {
     expect(summary.todayTasks).toBe(1);
   });
 
+  it('släpper igenom de senaste samtalen orörda — staleCalls på översikten räknar dygnen', () => {
+    const summary = composeCrmOverviewSummary(rows({
+      lastVisibleCallAt: '2026-08-01T09:00:00+00:00',
+      lastOwnCallAt: '2026-07-20T09:00:00+00:00',
+    }), WINDOW);
+
+    expect(summary.lastVisibleCallAt).toBe('2026-08-01T09:00:00+00:00');
+    expect(summary.lastOwnCallAt).toBe('2026-07-20T09:00:00+00:00');
+  });
+
   it('släpper igenom head-räkningarna och kapningsflaggan orörda', () => {
     const summary = composeCrmOverviewSummary(rows({
       counts: { pipelineProspects: 778, newProspects: 12, quotedProspects: 3, qualifiedProspects: 9 },
@@ -415,5 +430,57 @@ describe('composeCrmOverviewSummary — orderlagren visar det som ännu inte fak
 
     expect(summary.openOrderValue).toBe(25_000);
     expect(summary.openWorkOrders).toBe(1);
+  });
+});
+
+describe('composeCrmOverviewSummary — Säljcoachens väntande offert', () => {
+  // WINDOW.today = 2026-08-17.
+  const waiting = (patch: Partial<WaitingQuoteRow> = {}): WaitingQuoteRow => ({
+    id: 'q1',
+    quote_date: '2026-08-11',
+    amount: 1250,
+    vat_percent: 25,
+    pricing_summary: { subtotal: 1000, total: 1250 },
+    currency_code: 'SEK',
+    customer_name: 'Jimmy Nilsson',
+    customer_snapshot: { customer_name: 'Jimmy Nilsson (då)' },
+    prospect: null,
+    ...patch,
+  });
+
+  it('lämnar ut nettobeloppet, offertdatumet och namnfälten råa', () => {
+    const summary = composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting() }), WINDOW);
+    expect(summary.oldestWaitingQuote).toEqual({
+      id: 'q1',
+      quoteDate: '2026-08-11',
+      netAmount: 1000,
+      currencyCode: 'SEK',
+      // Råa: namnet sätts av quoteCustomerName i webbläsaren, ögonblicksbilden före kolumnen.
+      customer_name: 'Jimmy Nilsson',
+      customer_snapshot: { customer_name: 'Jimmy Nilsson (då)' },
+      prospect: null,
+    });
+  });
+
+  it('en offert daterad i dag har inte väntat — inget tips', () => {
+    expect(composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting({ quote_date: '2026-08-17' }) }), WINDOW).oldestWaitingQuote).toBeNull();
+  });
+
+  it('en offert daterad framåt har inte heller det', () => {
+    expect(composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting({ quote_date: '2026-08-20' }) }), WINDOW).oldestWaitingQuote).toBeNull();
+  });
+
+  it('dagen före räcker', () => {
+    expect(composeCrmOverviewSummary(rows({ oldestWaitingQuote: waiting({ quote_date: '2026-08-16' }) }), WINDOW).oldestWaitingQuote?.quoteDate).toBe('2026-08-16');
+  });
+
+  it('ingen väntande offert ger null', () => {
+    expect(composeCrmOverviewSummary(rows(), WINDOW).oldestWaitingQuote).toBeNull();
+  });
+
+  // Ett fel i tipsfrågan ska synas som ett fel, inte som "ingen offert att ringa om".
+  it('släpper igenom att tipsfrågan inte gick att läsa', () => {
+    expect(composeCrmOverviewSummary(rows({ oldestWaitingQuoteFailed: true }), WINDOW).oldestWaitingQuoteFailed).toBe(true);
+    expect(composeCrmOverviewSummary(rows(), WINDOW).oldestWaitingQuoteFailed).toBe(false);
   });
 });
