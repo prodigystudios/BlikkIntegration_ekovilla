@@ -13,15 +13,29 @@ export function formatDate(value: string | null | undefined): string {
 // mönster skiftar mellan ICU-versioner. null utan giltig startdag: anroparen väljer vad som står då.
 // En saknad, ogiltig eller tidigare slutdag ger startdagen.
 export function formatDayRange(start: string | null | undefined, end: string | null | undefined): string | null {
+  const parts = formatDayRangeParts(start, end);
+  if (!parts) return null;
+  return parts.to ? `${parts.from} – ${parts.to}` : parts.from;
+}
+
+/**
+ * formatDayRange i sina två led, för den som styr radbrytningen (orderlistans smala kolumn bryter
+ * bara vid tankstrecket). `to` är null när perioden står som en enhet — en dag, eller "12–14 okt.
+ * 2026" inom samma månad. formatDayRange är leden ihopsatta, så reglerna finns på ett ställe.
+ */
+export function formatDayRangeParts(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): { from: string; to: string | null } | null {
   if (!start) return null;
   const from = new Date(`${start}T12:00:00`);
   const to = new Date(`${end || start}T12:00:00`);
   if (Number.isNaN(from.getTime())) return null;
-  if (Number.isNaN(to.getTime()) || to.getTime() <= from.getTime()) return formatDate(start);
-  if (from.getFullYear() !== to.getFullYear()) return `${formatDate(start)} – ${formatDate(end)}`;
-  if (from.getMonth() === to.getMonth()) return `${from.getDate()}–${formatDate(end)}`;
+  if (Number.isNaN(to.getTime()) || to.getTime() <= from.getTime()) return { from: formatDate(start), to: null };
+  if (from.getFullYear() !== to.getFullYear()) return { from: formatDate(start), to: formatDate(end) };
+  if (from.getMonth() === to.getMonth()) return { from: `${from.getDate()}–${formatDate(end)}`, to: null };
   const dayMonth = new Intl.DateTimeFormat('sv-SE', { day: 'numeric', month: 'short' }).format(from);
-  return `${dayMonth} – ${formatDate(end)}`;
+  return { from: dayMonth, to: formatDate(end) };
 }
 
 export function formatDateTime(value: string | null | undefined): string {
