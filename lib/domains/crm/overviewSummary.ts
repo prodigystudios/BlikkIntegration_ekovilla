@@ -409,18 +409,34 @@ async function readCount(name: string, query: CountableQuery): Promise<number> {
   return count ?? 0;
 }
 
+// The calls' upper bound only when the caller gives one — see `calls` on fetchWeekActualRows.
+function callsBefore<Q extends { lt(column: string, value: string): Q }>(query: Q, to: string | null): Q {
+  return to ? query.lt('call_at', to) : query;
+}
+
 /**
  * The four windowed reads behind the week's actuals, with whatever client the caller holds: the
  * overview's own summary reads them through the session (RLS decides what the reader counts), the
  * team scoreboard through the admin client. `callsFrom` is the only difference — the summary also
  * needs the rolling 7 days, which always reach back past the week's Monday.
+ *
+ * The quote, order and invoice reads are bounded on BOTH sides by the week (`weekEnd` exclusive):
+ * their rows only ever feed composeWeekActuals, which keeps the week anyway, so for the current week
+ * the bound changes nothing. For an earlier week (the overview's week switcher) it is what keeps the
+ * read the size of one week — open-ended, a week from March read every row since March, and past
+ * ROW_CAP the figures went quietly low.
+ *
+ * The calls take their upper bound from the caller (`callsTo`): the scoreboard bounds them by the
+ * week, the summary does not — its rolling seven days and follow-up figures have always counted a
+ * call dated ahead (call_at is client-set), and that is not this function's to change.
  */
 export async function fetchWeekActualRows(
   client: SupabaseClient,
-  weekStart: string,
-  callsFrom: string,
+  week: Pick<CrmOverviewWindow, 'weekStart' | 'weekEnd'>,
+  calls: { from: string; to: string | null },
   truncated: string[],
 ): Promise<CrmWeekActualRows> {
+  const { weekStart, weekEnd } = week;
   const [quoteWindow, orderWindow, invoiceRoundWindow, callWindow] = await Promise.all([
     // Only the week is read: every quote figure is either a stock (the summary's quote_stocks) or
     // measured against the weekly target. `since` would fetch days nothing reads.
@@ -428,13 +444,15 @@ export async function fetchWeekActualRows(
       .from('crm_quotes')
       .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
       .gte('quote_date', weekStart)
+      .lt('quote_date', weekEnd)
       .limit(ROW_CAP), truncated),
     // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
     // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
     readRows<OrderWindowRow>('order_window', client
       .from('crm_work_orders')
       .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
-      .or(`created_at.gte.${weekStart},fortnox_invoiced_at.gte.${weekStart}`)
+      // Both bounds inside each branch: created IN the week, or invoiced IN it.
+      .or(`and(created_at.gte.${weekStart},created_at.lt.${weekEnd}),and(fortnox_invoiced_at.gte.${weekStart},fortnox_invoiced_at.lt.${weekEnd})`)
       .limit(ROW_CAP), truncated),
     // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
     // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
@@ -442,11 +460,12 @@ export async function fetchWeekActualRows(
       .from('crm_work_order_invoices')
       .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
       .gte('created_at', weekStart)
+      .lt('created_at', weekEnd)
       .limit(ROW_CAP), truncated),
-    readRows<CallWindowRow>('call_window', client
+    readRows<CallWindowRow>('call_window', callsBefore(client
       .from('crm_calls')
       .select('user_id, call_at, outcome, prospect_id')
-      .gte('call_at', callsFrom)
+      .gte('call_at', calls.from), calls.to)
       .limit(ROW_CAP), truncated),
   ]);
   return { quoteWindow, orderWindow, invoiceRoundWindow, callWindow };
@@ -484,7 +503,7 @@ export async function fetchCrmOverviewSummary(
     // The widest call window on the page: the calls metric card is explicitly the rolling 7 days,
     // and the week is a subset of it, so one read serves both. outcome + prospect_id come along
     // because the two follow-up figures are counted from these same rows instead of by their own scans.
-    fetchWeekActualRows(supabase, window.weekStart, window.since, truncated),
+    fetchWeekActualRows(supabase, window, { from: window.since, to: null }, truncated),
     readRows<QuoteStockRow>('quote_stocks', supabase
       .from('crm_quotes')
       .select('status, amount, vat_percent, pricing_summary')

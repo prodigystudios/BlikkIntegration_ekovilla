@@ -118,11 +118,14 @@ const SELLER_PREVIEW_COUNT = 3;
 //
 // Dold under 640 px som resten av statistiken, och helt borta när ingen har veckomål — tavlan
 // säger det redan, med länken till Inställningar för den som får sätta mål.
-export default function OverviewSellerProgress({ loading, scoreboardFailed, scoreboard, userId }: {
+export default function OverviewSellerProgress({ loading, scoreboardFailed, scoreboard, userId, pastWeekLabel, isPastWeek }: {
   loading: boolean;
   scoreboardFailed: boolean;
   scoreboard: WeeklyScoreboard | null;
   userId: string | null;
+  /** "Vecka 40" när en annan vecka än denna är vald i tavlan — annars null. */
+  pastWeekLabel: string | null;
+  isPastWeek: boolean;
 }) {
   // Samma nyckel som /crm/installningar kräver — länken skickade förr en säljare till en sida hen
   // inte kommer in på.
@@ -137,8 +140,12 @@ export default function OverviewSellerProgress({ loading, scoreboardFailed, scor
   return (
     <section aria-labelledby="overview-seller-progress" className={cn(crm.cardInner, 'hidden p-4 sm:block')}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 id="overview-seller-progress" className={cn('m-0', crm.cardTitle)}>Utveckling mot veckans mål</h2>
-        {canAdjustGoals ? (
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 id="overview-seller-progress" className={cn('m-0', crm.cardTitle)}>Utveckling mot veckans mål</h2>
+          {pastWeekLabel ? <span className={crm.meta}>{pastWeekLabel}</span> : null}
+        </div>
+        {/* Inte för en vecka som passerat — samma skäl som tavlans "Sätt veckomål". */}
+        {canAdjustGoals && !isPastWeek ? (
           <Link href="/crm/installningar" className={cn('shrink-0 text-xs', crm.link)}>Justera mål</Link>
         ) : null}
       </div>

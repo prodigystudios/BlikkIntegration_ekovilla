@@ -32,6 +32,15 @@ export function TrophyIcon({ className }: IconProps) {
   );
 }
 
+/** Pil för veckobytet. `direction` vänder den. */
+export function ChevronIcon({ className, direction }: IconProps & { direction: 'left' | 'right' }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+      <path d={direction === 'left' ? 'M12 4.5 6.5 10l5.5 5.5' : 'M8 4.5l5.5 5.5L8 15.5'} />
+    </svg>
+  );
+}
+
 export function CloseIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden="true" className={className}>

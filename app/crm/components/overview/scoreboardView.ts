@@ -64,11 +64,18 @@ export function countGoals(metrics: ScoreboardMetrics): { reached: number; set: 
   return { reached: withTarget.filter((metric) => metrics[metric].reached).length, set: withTarget.length };
 }
 
-/** Raden under ringen. Saklig: hur långt det är kvar, inte ett omdöme om laget. */
-export function goalsCaption({ reached, set }: { reached: number; set: number }): string {
+/**
+ * Raden under ringen. Saklig: hur långt det är kvar, inte ett omdöme om laget. För en avslutad
+ * vecka finns inget "kvar" — då säger den hur veckan slutade.
+ */
+export function goalsCaption({ reached, set }: { reached: number; set: number }, past = false): string {
   if (set === 0) return 'Inga veckomål satta';
-  if (reached === set) return 'Alla veckomål nådda';
   const left = set - reached;
+  if (past) {
+    if (left === 0) return 'Alla veckomål nåddes';
+    return left === 1 ? 'Ett mål nåddes inte' : `${left} mål nåddes inte`;
+  }
+  if (left === 0) return 'Alla veckomål nådda';
   return left === 1 ? 'Ett mål kvar' : `${left} mål kvar`;
 }
 
@@ -211,6 +218,23 @@ function addDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+// ISO-veckans nummer för en måndag (ÅÅÅÅ-MM-DD). Datumet byggs ur strängens delar som LOKAL dag —
+// isoWeek läser lokala fält, och en UTC-midnatt hade blivit söndagen innan väster om Greenwich.
+function weekNumberOf(weekStart: string): number {
+  const [year, month, day] = weekStart.split('-').map(Number);
+  return isoWeek(new Date(year, month - 1, day));
+}
+
+/** "vecka 40" — inne i en mening: "Sorterat på samtal vecka 40". */
+export function weekName(weekStart: string): string {
+  return `vecka ${weekNumberOf(weekStart)}`;
+}
+
+/** "Vecka 40" — fristående, som en etikett. */
+export function weekTitle(weekStart: string): string {
+  return `Vecka ${weekNumberOf(weekStart)}`;
+}
+
 /** "Vecka 41, 5–11 okt" — eller "Vecka 40, 28 sep–4 okt" över ett månadsskifte. Slutet är exklusivt. */
 export function weekLabel(weekStart: string, weekEnd: string): string {
   const last = addDays(weekEnd, -1);
@@ -219,8 +243,5 @@ export function weekLabel(weekStart: string, weekEnd: string): string {
   const range = startMonth === lastMonth
     ? `${startDay}–${lastDay} ${MONTHS[lastMonth - 1]}`
     : `${startDay} ${MONTHS[startMonth - 1]}–${lastDay} ${MONTHS[lastMonth - 1]}`;
-  // Datumet byggs ur strängens delar som LOKAL dag — isoWeek läser lokala fält, och en UTC-midnatt
-  // hade blivit söndagen innan väster om Greenwich.
-  const [startYear] = weekStart.split('-').map(Number);
-  return `Vecka ${isoWeek(new Date(startYear, startMonth - 1, startDay))}, ${range}`;
+  return `${weekTitle(weekStart)}, ${range}`;
 }

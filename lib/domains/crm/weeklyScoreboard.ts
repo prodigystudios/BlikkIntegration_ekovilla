@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { addDaysISO } from '@/lib/domains/planning/timezone';
 import { UNKNOWN_SELLER_NAME, listCrmGoals, mapCrmGoalRows, weeklyFromMonthly, type CrmGoal, type CrmGoalRow } from './goals';
 import {
   composeWeekActuals,
@@ -154,9 +155,19 @@ export function composeWeeklyScoreboard(
   };
 }
 
-/** Månadsbudgetens nyckel för läsarens dag: en vecka som korsar ett månadsskifte mäts mot dagens månad. */
-export function scoreboardMonthStart(today: string): string {
-  return `${today.slice(0, 7)}-01`;
+/**
+ * Månadsbudgetens nyckel för en vecka: MÅNADEN DÄR FLEST AV VECKANS DAGAR LIGGER. Spelar bara roll
+ * för veckan där månaden byts — alla andra veckor ligger helt i sin månad. 28 sep–4 okt (3 dagar i
+ * september, 4 i oktober) mäts mot oktober. Räknas som torsdagens månad: torsdagen är veckans
+ * mittdag, så dess månad har alltid minst fyra av de sju dagarna (samma regel som veckonumren).
+ * Beslutat av William 2026-10-06, med alternativen måndagens månad och en per dag delad vecka.
+ *
+ * Förut var det läsarens dag. En vecka som korsade ett månadsskifte mättes då mot september måndag–
+ * onsdag och mot oktober torsdag–söndag: målen och stjärnorna bytte mitt i veckan, och när veckan
+ * sedan bläddrades fram i efterhand (översiktens veckobyte) fanns det ingen "dag" att välja på.
+ */
+export function scoreboardMonthStart(weekStart: string): string {
+  return `${addDaysISO(weekStart, 3).slice(0, 7)}-01`;
 }
 
 /**
@@ -166,8 +177,8 @@ export function scoreboardMonthStart(today: string): string {
 export async function fetchWeeklyScoreboard(admin: SupabaseClient, window: ScoreboardWindow): Promise<WeeklyScoreboard> {
   const truncated: string[] = [];
   const [rows, goals] = await Promise.all([
-    fetchWeekActualRows(admin, window.weekStart, window.weekStart, truncated),
-    listCrmGoals(admin, { periodType: 'month', periodStart: scoreboardMonthStart(window.today) }).then(({ data, error }) => {
+    fetchWeekActualRows(admin, window, { from: window.weekStart, to: window.weekEnd }, truncated),
+    listCrmGoals(admin, { periodType: 'month', periodStart: scoreboardMonthStart(window.weekStart) }).then(({ data, error }) => {
       if (error) throw new Error(`goals: ${error.message}`);
       return mapCrmGoalRows(data as CrmGoalRow[] | null);
     }),

@@ -89,6 +89,18 @@ describe('GET /api/crm/overview/scoreboard — fönstret', () => {
     expect((await GET(req('today=idag&week_start=2026-09-28&week_end=2026-10-05'))).status).toBe(400);
   });
 
+  // Veckans gränser går in i databasfilter sedan veckobytet. 2026-02-30 tolkas av JS som 2 mars, så
+  // sjudagarskontrollen hade släppt igenom den — och Postgres vägrat, ett 500.
+  it('avvisar datum med rätt form som inte finns', async () => {
+    const res = await GET(req('today=2026-02-24&week_start=2026-02-23&week_end=2026-02-30'));
+    expect(res.status).toBe(400);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('släpper igenom en tidigare vecka', async () => {
+    expect((await GET(req('today=2026-03-26&week_start=2026-03-23&week_end=2026-03-30'))).status).toBe(200);
+  });
+
   // Läsningen går förbi RLS, så fönstret får inte kunna vidgas: då hade vem som helst i CRM:et
   // kunnat begära lagets siffror över godtycklig historik — och fått fulltabellsskanningar.
   it('avvisar ett fönster som inte är exakt en vecka', async () => {

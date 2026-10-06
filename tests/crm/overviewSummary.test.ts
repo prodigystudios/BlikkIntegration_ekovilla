@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   composeCrmOverviewSummary,
+  fetchCrmOverviewSummary,
   OPEN_WORK_ORDER_STATUSES,
   TO_INVOICE_WORK_ORDER_STATUSES,
   ACTIVE_QUOTE_STATUSES,
@@ -482,5 +483,40 @@ describe('composeCrmOverviewSummary — Säljcoachens väntande offert', () => {
   it('släpper igenom att tipsfrågan inte gick att läsa', () => {
     expect(composeCrmOverviewSummary(rows({ oldestWaitingQuoteFailed: true }), WINDOW).oldestWaitingQuoteFailed).toBe(true);
     expect(composeCrmOverviewSummary(rows(), WINDOW).oldestWaitingQuoteFailed).toBe(false);
+  });
+});
+
+// En låtsasklient som svarar tomt på allt och minns varje filter — för att se VILKA frågor som ställs.
+function recordingClient() {
+  const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
+  const client = {
+    from(table: string) {
+      const chain: any = new Proxy({}, {
+        get(_target, method: string) {
+          if (method === 'then') return (resolve: (value: unknown) => unknown) => Promise.resolve({ data: [], error: null, count: 0 }).then(resolve);
+          return (...args: unknown[]) => { calls.push({ table, method, args }); return chain; };
+        },
+      });
+      return chain;
+    },
+  };
+  return { client: client as any, calls };
+}
+
+describe('fetchCrmOverviewSummary — frågorna', () => {
+  // Veckobytet gav veckoläsningarna en övre gräns. Samtalen undantas här: summeringens sju dagar och
+  // uppföljningssiffror har alltid räknat ett samtal daterat framåt (call_at sätts av klienten).
+  it('lägger ingen övre gräns på summeringens samtal', async () => {
+    const { client, calls } = recordingClient();
+    await fetchCrmOverviewSummary(client, WINDOW, 'user-1');
+    const windowCalls = calls.filter((call) => call.table === 'crm_calls' && call.method === 'gte');
+    expect(windowCalls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', WINDOW.since] });
+    expect(calls.filter((call) => call.table === 'crm_calls' && call.method === 'lt')).toEqual([]);
+  });
+
+  it('men offerterna läses bara inom veckan', async () => {
+    const { client, calls } = recordingClient();
+    await fetchCrmOverviewSummary(client, WINDOW, 'user-1');
+    expect(calls).toContainEqual({ table: 'crm_quotes', method: 'lt', args: ['quote_date', WINDOW.weekEnd] });
   });
 });

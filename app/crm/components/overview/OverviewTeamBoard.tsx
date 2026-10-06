@@ -6,6 +6,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { WeeklyScoreboard } from '@/lib/domains/crm/weeklyScoreboard';
 import { StarIcon } from './OverviewIcons';
+import OverviewWeekNav, { type WeekNavProps } from './OverviewWeekNav';
 import { SectionError, TruncatedNote } from './OverviewStates';
 import {
   BOARD_METRICS,
@@ -14,7 +15,6 @@ import {
   formatProgress,
   goalsCaption,
   progressPercent,
-  weekLabel,
 } from './scoreboardView';
 
 const RING_RADIUS = 42;
@@ -62,10 +62,16 @@ function BoardSkeleton() {
 
 // Hela företagets vecka mot summan av säljarnas veckomål. Samma siffror för alla läsare —
 // tavlan läses förbi RLS (se weeklyScoreboard.ts) — så rubriken får säga "hela företaget".
-export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboard }: {
+//
+// Veckobytet sitter här, i tavlans rubrik där veckan redan stod, men styr också topplistan och
+// raderna per säljare (CrmOverview).
+export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboard, week, isPastWeek }: {
   loading: boolean;
   scoreboardFailed: boolean;
   scoreboard: WeeklyScoreboard | null;
+  week: WeekNavProps;
+  /** En vecka som redan passerat — ringen säger då hur den slutade, inte vad som är kvar. */
+  isPastWeek: boolean;
 }) {
   // Samma nyckel som /crm/installningar kräver — länken ska inte skicka någon till en spärrad sida.
   const canAdjustGoals = useCan('crm.settings.manage');
@@ -74,9 +80,9 @@ export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboar
 
   return (
     <section aria-labelledby="overview-team-board" className={cn(crm.cardInner, 'min-w-0 p-4')}>
-      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <h2 id="overview-team-board" className={cn('m-0', crm.cardTitle)}>Veckans tavla</h2>
-        {scoreboard ? <p className={cn('m-0', crm.meta)}>{weekLabel(scoreboard.weekStart, scoreboard.weekEnd)}</p> : null}
+        <OverviewWeekNav {...week} />
       </div>
       <p className={cn('m-0 mt-0.5', crm.meta)}>Hela företaget</p>
 
@@ -114,8 +120,10 @@ export default function OverviewTeamBoard({ loading, scoreboardFailed, scoreboar
             <div className="flex items-center gap-4 md:flex-col md:gap-2 md:border-l md:border-[#e0e8dc] md:pl-6">
               <GoalsRing reached={goals.reached} set={goals.set} />
               <div className="grid gap-1 md:text-center">
-                <p className={cn('m-0', crm.metaStrong)}>{goalsCaption(goals)}</p>
-                {goals.set === 0 && canAdjustGoals ? (
+                <p className={cn('m-0', crm.metaStrong)}>{goalsCaption(goals, isPastWeek)}</p>
+                {/* Bara denna vecka: en länk till Inställningar för en månad som redan passerat
+                    hade lovat något den inte kan hålla. */}
+                {goals.set === 0 && canAdjustGoals && week.isCurrent ? (
                   <Link href="/crm/installningar" className={cn('text-xs', crm.link)}>Sätt veckomål</Link>
                 ) : null}
               </div>

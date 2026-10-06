@@ -18,11 +18,14 @@ import {
 
 // Säljarnas topplista för veckan, ett mått i taget. Bara de som har en månadsbudget står med —
 // samma urval som tavlan — så att en admin som loggat ett samtal inte dyker upp som säljare.
-export default function OverviewLeaderboard({ loading, scoreboardFailed, scoreboard, userId }: {
+export default function OverviewLeaderboard({ loading, scoreboardFailed, scoreboard, userId, weekCaption, isPastWeek }: {
   loading: boolean;
   scoreboardFailed: boolean;
   scoreboard: WeeklyScoreboard | null;
   userId: string | null;
+  /** "den här veckan" eller "vecka 40" — veckan som tavlan ovanför visar. */
+  weekCaption: string;
+  isPastWeek: boolean;
 }) {
   const [metric, setMetric] = useState<ScoreboardMetric>('calls');
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -85,7 +88,8 @@ export default function OverviewLeaderboard({ loading, scoreboardFailed, scorebo
       >
         {loading ? <OverviewLoadingRows rows={3} /> : scoreboardFailed ? <SectionError /> : ranked.length === 0 ? (
           <p className="m-0 rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
-            Ingen säljare har veckomål ännu.
+            {/* Dåtid för en vecka som passerat — den får inga mål i efterhand, så "ännu" vore fel. */}
+            {isPastWeek ? `Ingen säljare hade veckomål ${weekCaption}.` : 'Ingen säljare har veckomål ännu.'}
           </p>
         ) : (
           <>
@@ -116,7 +120,7 @@ export default function OverviewLeaderboard({ loading, scoreboardFailed, scorebo
                 );
               })}
             </ol>
-            <p className={cn('m-0 mt-2', crm.micro)}>Sorterat på {METRIC_LABEL[metric].toLocaleLowerCase('sv-SE')} den här veckan.</p>
+            <p className={cn('m-0 mt-2', crm.micro)}>Sorterat på {METRIC_LABEL[metric].toLocaleLowerCase('sv-SE')} {weekCaption}.</p>
           </>
         )}
       </div>

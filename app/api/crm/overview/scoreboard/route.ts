@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { overviewDaySchema } from '../_dates';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
 import { fetchWeeklyScoreboard, type ScoreboardWindow } from '@/lib/domains/crm/weeklyScoreboard';
@@ -9,7 +10,8 @@ export const runtime = 'nodejs';
 // som tappar den läsningen cachar varje fetch — också supabase-js. Billig försäkring.
 export const fetchCache = 'force-no-store';
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum (ÅÅÅÅ-MM-DD)');
+// Riktiga datum, inte bara formen: veckans gränser går in i databasfilter sedan veckobytet.
+const dateSchema = overviewDaySchema;
 
 const querySchema = z.object({
   today: dateSchema,
