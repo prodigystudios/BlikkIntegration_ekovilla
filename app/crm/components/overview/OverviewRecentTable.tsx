@@ -40,14 +40,21 @@ export function RecentTable<T extends { id: string }>({ label, columns, rows, ro
 
   // Hela raden är klickbar för musen och fingret, som när raderna var länkade kort. Tangentbordet
   // och skärmläsaren har kundlänken (ett tabbstopp per rad), så klickytan behöver ingen egen roll.
-  // Ett klick PÅ länken sköter länken själv; Cmd/Ctrl-klick öppnar en ny flik som en länk hade gjort.
+  // Ett klick PÅ länken sköter länken själv. Resten härmar en länk: Cmd/Ctrl/Shift och mittenknappen
+  // öppnar en ny flik, och den som drar för att markera ett belopp eller nummer blir kvar på sidan.
   function onRowClick(event: MouseEvent<HTMLTableRowElement>, href: string) {
     if ((event.target as HTMLElement).closest('a')) return;
-    if (event.metaKey || event.ctrlKey) {
+    if (window.getSelection()?.toString()) return;
+    if (event.metaKey || event.ctrlKey || event.shiftKey) {
       window.open(href, '_blank', 'noopener');
       return;
     }
     router.push(href);
+  }
+
+  function onRowAuxClick(event: MouseEvent<HTMLTableRowElement>, href: string) {
+    if (event.button !== 1 || (event.target as HTMLElement).closest('a')) return;
+    window.open(href, '_blank', 'noopener');
   }
 
   return (
@@ -75,6 +82,7 @@ export function RecentTable<T extends { id: string }>({ label, columns, rows, ro
           <tr
             key={row.id}
             onClick={(event) => onRowClick(event, rowHref(row))}
+            onAuxClick={(event) => onRowAuxClick(event, rowHref(row))}
             className="cursor-pointer transition-colors hover:bg-white/70 has-[a:focus-visible]:bg-white/70"
           >
             {columns.map((column) => (
