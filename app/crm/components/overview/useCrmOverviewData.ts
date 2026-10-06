@@ -38,7 +38,7 @@ export const sectionLabel: Record<SectionKey, string> = {
   workOrders: 'arbetsordrar',
 };
 
-type Section = { ok: boolean; json: any };
+export type Section = { ok: boolean; json: any };
 
 // Hämtar EN sektion och läser dess kropp. Kastar aldrig — ett avvisat löfte, ett icke-ok svar och
 // en otolkbar kropp är samma sak här: sektionen gick inte att läsa.
@@ -53,7 +53,7 @@ type Section = { ok: boolean; json: any };
 // `undefined` som sentinel, inte null: en 200 med trasig kropp gav annars ok:true och json:null,
 // summeringen föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" utan
 // felruta — okänt renderat som en säker nolla.
-async function readSection(url: string): Promise<Section> {
+export async function readSection(url: string): Promise<Section> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {

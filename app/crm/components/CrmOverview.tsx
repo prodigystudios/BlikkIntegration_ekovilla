@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import ChangelogCard from './ChangelogCard';
 import { useCan } from '@/lib/UserProfileContext';
+import { getCrmOverviewWindow } from '@/lib/domains/crm/goals';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import OverviewAchievementBanner from './overview/OverviewAchievementBanner';
@@ -15,13 +16,38 @@ import OverviewSalesCoach from './overview/OverviewSalesCoach';
 import OverviewSellerProgress from './overview/OverviewSellerProgress';
 import OverviewTeamBoard from './overview/OverviewTeamBoard';
 import { TruncatedNote } from './overview/OverviewStates';
+import { shiftWeek } from './overview/overviewWeek';
+import { weekName } from './overview/scoreboardView';
 import { sectionLabel, useCrmOverviewData } from './overview/useCrmOverviewData';
+import { useWeekBoard } from './overview/useWeekBoard';
 
 export default function CrmOverview({ userId }: { userId: string | null }) {
   const { state, loading, refreshing, load, summary, blank, summaryFailed, scoreboardFailed } = useCrmOverviewData();
   // Säljcoachen är för den som säljer: coachens API kräver crm.write, och en konsult (läsbehörig)
   // hade fått en knapp till en sida där varje fråga nekas.
   const canSell = useCan('crm.write');
+
+  // Veckobytet: tavlan, topplistan och raderna per säljare kan visa en tidigare vecka. Bannern och
+  // "N samtal från stjärnan" läser alltid state.scoreboard — denna vecka — vad som än är valt.
+  const week = useWeekBoard();
+  const isCurrentWeek = week.selected == null;
+  const shownWeekStart = week.selected ?? getCrmOverviewWindow().weekStart;
+  const board = isCurrentWeek
+    ? { scoreboard: state.scoreboard, loading, failed: scoreboardFailed }
+    : {
+      scoreboard: week.board?.scoreboard ?? null,
+      loading: week.board?.loading ?? true,
+      // Som scoreboardFailed: felläget bara när det inte finns något att visa.
+      failed: (week.board?.failed ?? false) && !week.board?.scoreboard,
+    };
+  const weekNav = {
+    weekStart: shownWeekStart,
+    isCurrent: isCurrentWeek,
+    onPrev: () => week.select(shiftWeek(shownWeekStart, -1)),
+    onNext: () => week.select(shiftWeek(shownWeekStart, 1)),
+    onCurrent: () => week.select(null),
+  };
+  const shownWeekName = weekName(shownWeekStart);
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -54,7 +80,10 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
               verktygsåtgärd; att öppna uppgifter är navigering. De såg likadana ut. */}
           <button
             type="button"
-            onClick={() => void load('refresh')}
+            onClick={() => {
+              void load('refresh');
+              week.reload();
+            }}
             disabled={loading || refreshing}
             className="inline-flex h-8 items-center px-1 text-sm font-semibold text-slate-600 transition hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -96,15 +125,28 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
       {/* Lagets vecka och säljarna i den, ur samma tavla. Dolda under 640 px som nyckeltalen: på
           telefon går man in för att se en offert eller ringa, inte för att läsa statistik. */}
       <div className="hidden gap-4 sm:grid xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,1fr)]">
-        <OverviewTeamBoard loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} />
-        <OverviewLeaderboard loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
+        <OverviewTeamBoard loading={board.loading} scoreboardFailed={board.failed} scoreboard={board.scoreboard} week={weekNav} />
+        <OverviewLeaderboard
+          loading={board.loading}
+          scoreboardFailed={board.failed}
+          scoreboard={board.scoreboard}
+          userId={userId}
+          weekCaption={isCurrentWeek ? 'den här veckan' : shownWeekName}
+          isCurrentWeek={isCurrentWeek}
+        />
       </div>
 
       {/* Varje säljare mot sina egna veckomål, över hela bredden: sex mått per rad behöver
           plats. Ersätter högerkolumnens "Veckans mål", vars lagrader nu är tavlan ovanför och vars
           säljarlista nu är det här. Sena uppgifter, kortets sista rad, står först i Att agera på
           när det finns några. */}
-      <OverviewSellerProgress loading={loading} scoreboardFailed={scoreboardFailed} scoreboard={state.scoreboard} userId={userId} />
+      <OverviewSellerProgress
+        loading={board.loading}
+        scoreboardFailed={board.failed}
+        scoreboard={board.scoreboard}
+        userId={userId}
+        pastWeekLabel={isCurrentWeek ? null : `V${shownWeekName.slice(1)}`}
+      />
 
       {/* Att agera på och Säljcoachen bredvid varandra, som i mockupen, sedan de senaste offerterna
           och ordrarna. På telefon, där statistiken ovanför är dold, är det här sidans början: man

@@ -414,13 +414,19 @@ async function readCount(name: string, query: CountableQuery): Promise<number> {
  * overview's own summary reads them through the session (RLS decides what the reader counts), the
  * team scoreboard through the admin client. `callsFrom` is the only difference — the summary also
  * needs the rolling 7 days, which always reach back past the week's Monday.
+ *
+ * Every read is bounded on BOTH sides by the week (`weekEnd` exclusive). For the current week the
+ * upper bound changes nothing — it lies in the future. For an earlier week (the overview's week
+ * switcher) it is what keeps the read the size of one week: open-ended, a week from March read
+ * every row since March, and past ROW_CAP the figures went quietly low.
  */
 export async function fetchWeekActualRows(
   client: SupabaseClient,
-  weekStart: string,
+  week: Pick<CrmOverviewWindow, 'weekStart' | 'weekEnd'>,
   callsFrom: string,
   truncated: string[],
 ): Promise<CrmWeekActualRows> {
+  const { weekStart, weekEnd } = week;
   const [quoteWindow, orderWindow, invoiceRoundWindow, callWindow] = await Promise.all([
     // Only the week is read: every quote figure is either a stock (the summary's quote_stocks) or
     // measured against the weekly target. `since` would fetch days nothing reads.
@@ -428,13 +434,15 @@ export async function fetchWeekActualRows(
       .from('crm_quotes')
       .select('amount, vat_percent, pricing_summary, quote_date, assigned_to')
       .gte('quote_date', weekStart)
+      .lt('quote_date', weekEnd)
       .limit(ROW_CAP), truncated),
     // Superset: created in the week OR invoiced in it. An order created in June and invoiced this
     // week belongs to one figure each, and to neither date alone, so it must be fetched on either.
     readRows<OrderWindowRow>('order_window', client
       .from('crm_work_orders')
       .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
-      .or(`created_at.gte.${weekStart},fortnox_invoiced_at.gte.${weekStart}`)
+      // Both bounds inside each branch: created IN the week, or invoiced IN it.
+      .or(`and(created_at.gte.${weekStart},created_at.lt.${weekEnd}),and(fortnox_invoiced_at.gte.${weekStart},fortnox_invoiced_at.lt.${weekEnd})`)
       .limit(ROW_CAP), truncated),
     // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
     // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
@@ -442,11 +450,13 @@ export async function fetchWeekActualRows(
       .from('crm_work_order_invoices')
       .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
       .gte('created_at', weekStart)
+      .lt('created_at', weekEnd)
       .limit(ROW_CAP), truncated),
     readRows<CallWindowRow>('call_window', client
       .from('crm_calls')
       .select('user_id, call_at, outcome, prospect_id')
       .gte('call_at', callsFrom)
+      .lt('call_at', weekEnd)
       .limit(ROW_CAP), truncated),
   ]);
   return { quoteWindow, orderWindow, invoiceRoundWindow, callWindow };
@@ -484,7 +494,7 @@ export async function fetchCrmOverviewSummary(
     // The widest call window on the page: the calls metric card is explicitly the rolling 7 days,
     // and the week is a subset of it, so one read serves both. outcome + prospect_id come along
     // because the two follow-up figures are counted from these same rows instead of by their own scans.
-    fetchWeekActualRows(supabase, window.weekStart, window.since, truncated),
+    fetchWeekActualRows(supabase, window, window.since, truncated),
     readRows<QuoteStockRow>('quote_stocks', supabase
       .from('crm_quotes')
       .select('status, amount, vat_percent, pricing_summary')

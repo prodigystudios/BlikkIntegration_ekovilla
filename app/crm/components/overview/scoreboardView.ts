@@ -64,11 +64,18 @@ export function countGoals(metrics: ScoreboardMetrics): { reached: number; set: 
   return { reached: withTarget.filter((metric) => metrics[metric].reached).length, set: withTarget.length };
 }
 
-/** Raden under ringen. Saklig: hur långt det är kvar, inte ett omdöme om laget. */
-export function goalsCaption({ reached, set }: { reached: number; set: number }): string {
+/**
+ * Raden under ringen. Saklig: hur långt det är kvar, inte ett omdöme om laget. För en avslutad
+ * vecka finns inget "kvar" — då säger den hur veckan slutade.
+ */
+export function goalsCaption({ reached, set }: { reached: number; set: number }, past = false): string {
   if (set === 0) return 'Inga veckomål satta';
-  if (reached === set) return 'Alla veckomål nådda';
   const left = set - reached;
+  if (past) {
+    if (left === 0) return 'Alla veckomål nåddes';
+    return left === 1 ? 'Ett mål nåddes inte' : `${left} mål nåddes inte`;
+  }
+  if (left === 0) return 'Alla veckomål nådda';
   return left === 1 ? 'Ett mål kvar' : `${left} mål kvar`;
 }
 
@@ -209,6 +216,13 @@ function addDays(iso: string, days: number): string {
   const date = new Date(`${iso}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
+}
+
+/** "vecka 40" — för meningar som "Sorterat på samtal vecka 40". */
+export function weekName(weekStart: string): string {
+  const [year, month, day] = weekStart.split('-').map(Number);
+  // Lokal dag, som i weekLabel nedan: isoWeek läser lokala fält.
+  return `vecka ${isoWeek(new Date(year, month - 1, day))}`;
 }
 
 /** "Vecka 41, 5–11 okt" — eller "Vecka 40, 28 sep–4 okt" över ett månadsskifte. Slutet är exklusivt. */

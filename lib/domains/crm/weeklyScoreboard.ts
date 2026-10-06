@@ -166,7 +166,7 @@ export function scoreboardMonthStart(today: string): string {
 export async function fetchWeeklyScoreboard(admin: SupabaseClient, window: ScoreboardWindow): Promise<WeeklyScoreboard> {
   const truncated: string[] = [];
   const [rows, goals] = await Promise.all([
-    fetchWeekActualRows(admin, window.weekStart, window.weekStart, truncated),
+    fetchWeekActualRows(admin, window, window.weekStart, truncated),
     listCrmGoals(admin, { periodType: 'month', periodStart: scoreboardMonthStart(window.today) }).then(({ data, error }) => {
       if (error) throw new Error(`goals: ${error.message}`);
       return mapCrmGoalRows(data as CrmGoalRow[] | null);

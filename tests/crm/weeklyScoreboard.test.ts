@@ -199,7 +199,7 @@ function fakeClient(tables: Record<string, unknown[]>) {
   const client = {
     from(table: string) {
       const chain: Record<string, unknown> = {};
-      for (const method of ['select', 'eq', 'in', 'or', 'gte', 'lte', 'order', 'limit']) {
+      for (const method of ['select', 'eq', 'in', 'or', 'gte', 'lt', 'lte', 'order', 'limit']) {
         chain[method] = (...args: unknown[]) => {
           calls.push({ table, method, args });
           return chain;
@@ -222,6 +222,23 @@ describe('fetchWeeklyScoreboard — frågorna', () => {
     expect(calls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', '2026-09-28'] });
     expect(calls).toContainEqual({ table: 'crm_goals', method: 'eq', args: ['period_type', 'month'] });
     expect(calls).toContainEqual({ table: 'crm_goals', method: 'eq', args: ['period_start', '2026-10-01'] });
+  });
+
+  // Veckobytet på översikten läser äldre veckor. Utan övre gräns läste en vecka från mars varje rad
+  // sedan mars, och förbi radtaket blev siffrorna tyst för låga.
+  it('läser varje fönster bara inom veckan — båda gränserna', async () => {
+    const { client, calls } = fakeClient({});
+    await fetchWeeklyScoreboard(client, WINDOW);
+
+    for (const [table, column] of [['crm_quotes', 'quote_date'], ['crm_work_order_invoices', 'created_at'], ['crm_calls', 'call_at']]) {
+      expect(calls).toContainEqual({ table, method: 'gte', args: [column, '2026-09-28'] });
+      expect(calls).toContainEqual({ table, method: 'lt', args: [column, '2026-10-05'] });
+    }
+    expect(calls).toContainEqual({
+      table: 'crm_work_orders',
+      method: 'or',
+      args: ['and(created_at.gte.2026-09-28,created_at.lt.2026-10-05),and(fortnox_invoiced_at.gte.2026-09-28,fortnox_invoiced_at.lt.2026-10-05)'],
+    });
   });
 
   it('filtrerar inte samtalen på läsaren — kollegornas samtal kommer med', async () => {

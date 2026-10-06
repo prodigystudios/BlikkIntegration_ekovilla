@@ -19,6 +19,7 @@ import {
   progressPercent,
   rankSellers,
   weekLabel,
+  weekName,
 } from '@/app/crm/components/overview/scoreboardView';
 
 // Veckotavlans visningslogik på CRM-översikten: ordningen i topplistan, vilka stjärnor bannern
@@ -246,5 +247,21 @@ describe('callsToStar — "du är N samtal från stjärnan"', () => {
   it('meningen böjs i singular vid ett', () => {
     expect(callsToStarSentence(1)).toBe('Ett samtal till och du når veckans samtalsmål.');
     expect(callsToStarSentence(4)).toBe('4 samtal till och du når veckans samtalsmål.');
+  });
+});
+
+describe('veckobytet — texterna för en avslutad vecka', () => {
+  it('ringen säger hur veckan slutade, inte vad som är kvar', () => {
+    expect(goalsCaption({ reached: 6, set: 6 }, true)).toBe('Alla veckomål nåddes');
+    expect(goalsCaption({ reached: 5, set: 6 }, true)).toBe('Ett mål nåddes inte');
+    expect(goalsCaption({ reached: 2, set: 6 }, true)).toBe('4 mål nåddes inte');
+    expect(goalsCaption({ reached: 0, set: 0 }, true)).toBe('Inga veckomål satta');
+    // Denna vecka som förut.
+    expect(goalsCaption({ reached: 5, set: 6 })).toBe('Ett mål kvar');
+  });
+
+  it('veckans namn för meningar', () => {
+    expect(weekName('2026-09-28')).toBe('vecka 40');
+    expect(weekName('2026-12-28')).toBe('vecka 53');
   });
 });
