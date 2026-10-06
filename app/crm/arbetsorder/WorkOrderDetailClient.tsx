@@ -594,7 +594,10 @@ export default function WorkOrderDetailClient({
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...(titleChanged ? { project_name: nextTitle } : {}),
-          status: draft.status,
+          // Statusen skickas BARA när den ändrats här. Den byts också medan sidan står öppen —
+          // planeringen gör Ej planerad → Planerad när ordern läggs ut — och en alltid-skickad status
+          // hade skrivit tillbaka den sidan laddades med, så fort någon sparade en anteckning.
+          ...(draft.status !== workOrder.status ? { status: draft.status } : {}),
           assigned_to: draft.assigned_to || null,
           desired_installation_date: draft.desired_installation_date || null,
           notes: draft.notes,

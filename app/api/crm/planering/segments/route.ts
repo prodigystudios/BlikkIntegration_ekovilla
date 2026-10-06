@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { listSegments, listTrucks, placeSegment, STAGE_NOT_ON_WORK_ORDER } from '@/lib/domains/planning/schedule';
+import { listSegments, listTrucks, placeSegment, readWorkOrderStatus, STAGE_NOT_ON_WORK_ORDER } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, requirePermission, listSegmentsQuerySchema, placeSegmentSchema } from '../_lib';
 
@@ -81,7 +81,12 @@ export async function POST(req: Request) {
       },
     });
 
-    return ok({ item: data }, 201);
+    // Kortet kan just ha gjort ordern Planerad (triggern), men `data` lästes före triggern. Svaret ska
+    // bära statusen som den står nu — se readWorkOrderStatus.
+    const status = await readWorkOrderStatus(supabase, parsed.data.work_order_id);
+    const item = data?.job && status ? { ...data, job: { ...data.job, status } } : data;
+
+    return ok({ item }, 201);
   } catch (e: any) {
     return routeError(500, 'planning_segment_create_unexpected', e?.message || 'Failed to place segment');
   }

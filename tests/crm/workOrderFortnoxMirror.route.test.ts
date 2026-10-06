@@ -66,9 +66,9 @@ const openOrder = {
   fortnox_invoice_number: null as string | null,
 };
 
-// ⚠️ `status` är OBLIGATORISKT i updateCrmWorkOrderSchema — klienten skickar alltid orderns
-// nuvarande status vid varje sparning, och routen läser ett oförändrat värde som en no-op. Utan
-// det faller varje PATCH på 400 och testet mäter valideringen i stället för speglingen.
+// `status` skickas med här som ordersidan gjorde förr — routen läser ett oförändrat värde som en
+// no-op. (Sedan 2026-10-06 är fältet valfritt och sidan skickar det bara när det ändrats; testerna
+// mäter speglingen, inte statusen.)
 function patchReq(payload: Record<string, unknown>) {
   return new Request(`http://localhost/api/crm/work-orders/${WORK_ORDER_ID}`, {
     method: 'PATCH',
@@ -448,5 +448,22 @@ describe('PATCH arbetsorder/line-items — speglingen', () => {
     const json = await (await lineItemsPATCH(req, ctx)).json();
 
     expect(json.data.fortnox_error).toBeTruthy();
+  });
+});
+
+describe('PATCH arbetsorder — statusen skickas bara när den ändrats', () => {
+  // Ordersidan skickar statusen bara när den ändrats (2026-10-06). Statusen byts också medan sidan
+  // står öppen — planeringens trigger gör Ej planerad → Planerad när ordern läggs ut — och en
+  // alltid-skickad status skrev tillbaka den sidan laddades med så fort någon sparade en anteckning.
+  it('en sparning utan status går igenom och rör inte kolumnen', async () => {
+    install({ ...openOrder, status: 'scheduled' });
+
+    const res = await PATCH(patchReq({ notes: 'Ring före', label: openOrder.customer_snapshot.label }), ctx);
+
+    expect(res.status).toBe(200);
+    expect(updateCrmWorkOrder).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(updateCrmWorkOrder).mock.calls[0][2] as Record<string, unknown>;
+    expect(input).not.toHaveProperty('status');
+    expect(input.notes).toBe('Ring före');
   });
 });

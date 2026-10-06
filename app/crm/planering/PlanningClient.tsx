@@ -31,6 +31,7 @@ import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
+import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
 import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
 import OnOrderNote from './OnOrderNote';
@@ -600,7 +601,9 @@ export default function PlanningClient({
       // job's backlog count so its badge stays in sync.
       if (j.data?.item) {
         const created = j.data.item as OpsSegment;
-        setSegments((prev) => [...prev, created]);
+        // Statusen är ORDERNS och gäller dess alla kort och poster, inte bara den här. Routen läser den
+        // efter databasens trigger (se readWorkOrderStatus), så den kan just ha blivit Planerad.
+        setSegments((prev) => segmentsWithOrderStatus([...prev, created], item.id, created.job?.status));
         // 🧨 SPANNEN MÅSTE FÖLJA MED. `scopeSpans` är nämnaren i veckofördelningen och sätts annars
         // bara av loadSegments — ett nyss placerat jobb hade då saknat spann helt och bidragit med
         // NOLL kr till "Veckan totalt" tills sidan laddades om. Den som just la ut ett jobb hade
@@ -609,8 +612,14 @@ export default function PlanningClient({
           ...prev,
           { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
         ]);
-        // Matchar på key, inte id: annars hade räknaren tickat upp på ordens ALLA etapper.
-        setBacklog((prev) => prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)));
+        // Räknaren matchar på key, inte id: annars hade den tickat upp på ordens ALLA etapper.
+        setBacklog((prev) =>
+          backlogWithOrderStatus(
+            prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)),
+            item.id,
+            created.job?.status,
+          ),
+        );
       } else {
         refresh();
       }
@@ -682,8 +691,17 @@ export default function PlanningClient({
         return;
       }
       toast.success('Jobbet avplanerat');
+      // Var det ordens sista kort har databasen satt tillbaka Planerad → Ej planerad. Det går inte att
+      // avgöra här (tavlan har bara den synliga perioden laddad), så routen svarar med statusen. Gick
+      // den inte att läsa läses backloggen om i stället för att gissa.
+      const woId = seg?.work_order_id ?? null;
+      if (woId) {
+        const status = typeof j.data?.work_order_status === 'string' ? (j.data.work_order_status as string) : null;
+        if (status) setBacklog((prev) => backlogWithOrderStatus(prev, woId, status));
+        else loadBacklog().catch(() => {});
+      }
     },
-    [segments, refresh, toast],
+    [segments, refresh, toast, loadBacklog],
   );
 
   // Crew is per-segment, so add/remove patch the one segment's crew locally (snappy) rather than

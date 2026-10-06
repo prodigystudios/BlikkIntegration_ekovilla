@@ -302,7 +302,11 @@ export const listCrmWorkOrdersQuerySchema = z.object({
 });
 
 export const updateCrmWorkOrderSchema = z.object({
-  status: workOrderStatusSchema,
+  // Optional UTAN default: utelämnad betyder "rör inte". Ordersidans Spara skickar den bara när den
+  // ändrats — statusen byts också av andra medan sidan står öppen (planeringens trigger gör Ej planerad
+  // → Planerad när ordern läggs ut, faktureringen sätter sina lägen), och en alltid-skickad status
+  // hade skrivit tillbaka värdet sidan laddades med.
+  status: workOrderStatusSchema.optional(),
   // Orderns titel. Samma regel som när ordern skapas (createStandaloneWorkOrderSchema): den får
   // inte vara tom — kolumnen är `not null`, och titeln är det planeringen, tidrapporten och
   // Fortnox-textraden visar. Optional UTAN default: utelämnad betyder "rör inte".

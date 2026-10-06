@@ -450,6 +450,25 @@ export async function removeSegment(supabase: SupabaseClient, id: string) {
   return supabase.from('ops_segments').delete().eq('id', id);
 }
 
+/**
+ * Arbetsorderns status som den står EFTER en ändring på schemat.
+ *
+ * Triggern ops_segments_sync_work_order_status (20261006185916) gör Ej planerad → Planerad när ordens
+ * första kort läggs ut, och tillbaka när det sista tas bort. Raden som insert/delete själv returnerar
+ * lästes i samma sats som kortet skrevs, alltså FÖRE triggern, och bär den gamla statusen (prövat mot
+ * PostgREST). Därför en egen läsning efteråt — tavlan visar då databasens svar i stället för att
+ * gissa regeln på egen hand.
+ *
+ * null = gick inte att läsa, eller ingen order (platshållare). Skrivningen är redan gjord, så en
+ * misslyckad läsning fäller den inte; anroparen får läsa om på annat sätt.
+ */
+export async function readWorkOrderStatus(supabase: SupabaseClient, workOrderId: string | null): Promise<string | null> {
+  if (!workOrderId) return null;
+  const { data, error } = await supabase.from('crm_work_orders').select('status').eq('id', workOrderId).maybeSingle();
+  if (error || !data) return null;
+  return (data as { status?: string | null }).status ?? null;
+}
+
 // The job reference + work order id for a segment, for audit-log summaries (e.g. logging a delete
 // before the row is gone). Returns a 'jobb' fallback if the segment/work order can't be read.
 export async function getSegmentRef(
