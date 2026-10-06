@@ -5,9 +5,9 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
-import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
+import { RowAssignee } from '@/app/crm/components/RowAssignee';
+import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import { documentRef } from '@/app/crm/lib/format';
-import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
@@ -96,6 +96,25 @@ function formatDate(value: string | null | undefined) {
   if (Number.isNaN(date.getTime())) return '–';
   return new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(date);
 }
+
+// Radens adress. Ett vanligt klick öppnar panelen på plats (onOpenRow/onOpen); adressen är vad
+// Cmd-klick och mittenknappen öppnar i en ny flik, och djuplänken där öppnar samma panel.
+const quoteHref = (quote: QuoteItem) => `/crm/offerter?quote_id=${quote.id}`;
+
+// Kolumnbredderna — kunden tar resten. På telefon står kund och status kvar: namnet går före
+// beloppet, som i kortlistan tabellen ersatte. Resten kommer in med bredden: numret och beloppet
+// från 640 px, uppföljningen från 768, ansvarig från 1024, datum och kundtyp från 1280.
+// Beloppskolumnen rymmer momsbasens längsta etikett, "omvänd skattskyldighet", på en rad.
+const quoteWidth = {
+  number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
+  customer: '',
+  type: 'hidden w-[4.75rem] xl:table-cell',
+  assignee: 'hidden w-[10rem] lg:table-cell',
+  date: 'hidden w-[7rem] whitespace-nowrap tabular-nums text-slate-500 xl:table-cell',
+  followUp: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
+  amount: 'hidden w-[9rem] text-right tabular-nums sm:table-cell',
+  status: 'w-[6.75rem] text-right sm:w-[7.5rem]',
+} as const;
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
 
@@ -314,6 +333,83 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     return () => { active = false; };
   }, []);
 
+  function openQuote(id: string) {
+    setDetailQuoteId(id);
+    setDetailPanelOpen(true);
+  }
+
+  const columns: Array<CrmTableColumn<QuoteItem>> = [
+    // Numret via documentRef: Fortnox-numret först, det interna bara som reserv.
+    { header: 'Offertnr', className: quoteWidth.number, cell: (item) => documentRef(item.fortnox_offer_number, item.quote_number) },
+    {
+      header: 'Kund',
+      className: quoteWidth.customer,
+      cell: (item) => (
+        <CustomerCell href={quoteHref(item)} customer={quoteCustomerName(item)} project={item.project_name} onOpen={() => openQuote(item.id)} />
+      ),
+    },
+    { header: 'Typ', className: quoteWidth.type, cell: (item) => (item.quote_type === 'private' ? 'Privat' : 'Företag') },
+    {
+      header: 'Ansvarig',
+      className: quoteWidth.assignee,
+      // Inget 'Okänd'-fallback: katalogen hämtas i en egen request, så ett tomt uppslag betyder
+      // oftast "inte hämtad ännu" och inte "okänd person". RowAssignee skiljer de två tillstånden åt.
+      cell: (item) => (
+        <RowAssignee name={item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? null) : null} assigned={Boolean(item.assigned_to)} />
+      ),
+    },
+    { header: 'Datum', className: quoteWidth.date, cell: (item) => formatDate(item.quote_date) },
+    {
+      header: 'Följ upp',
+      className: quoteWidth.followUp,
+      cell: (item) => {
+        if (!item.follow_up_date) return <span className="text-slate-400">–</span>;
+        const overdue = isQuoteOverdue(item);
+        return (
+          <span className={overdue ? 'font-semibold text-amber-700' : 'text-slate-500'} title={overdue ? 'Uppföljningen är försenad' : undefined}>
+            {overdue ? '⚠ ' : ''}{formatDate(item.follow_up_date)}
+          </span>
+        );
+      },
+    },
+    {
+      header: 'Belopp',
+      className: quoteWidth.amount,
+      // Privat → inkl. moms, företag → exkl. moms, med basen utskriven under (pricing.ts).
+      cell: (item) => {
+        const amount = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
+        return (
+          <>
+            <span className="block whitespace-nowrap font-semibold text-slate-900">{formatCurrency(amount.primary, item.currency_code)}</span>
+            <span className="block whitespace-nowrap text-[11px] text-slate-500">{amount.basisSuffix}</span>
+          </>
+        );
+      },
+    },
+    {
+      header: 'Status',
+      className: quoteWidth.status,
+      cell: (item) => {
+        // Guardad uppslagning, som översiktens tabell: en okänd status ska inte släcka listan.
+        const status = quoteStatusMeta[item.status];
+        return (
+          <>
+            <span className={cn(crm.badge, status?.className ?? 'border-slate-200 bg-slate-50 text-slate-700')}>{status?.label ?? item.status}</span>
+            {item.work_order_id ? (
+              <span className="mt-1 block break-words text-[11px] font-semibold text-emerald-700">
+                Order {documentRef(workOrderFortnoxById.get(item.work_order_id) ?? null, item.work_order_number)}
+              </span>
+            ) : null}
+            {/* Uppföljningskolumnen är dold under 768 px — där bär statusen signalen i stället. */}
+            {isQuoteOverdue(item) ? (
+              <span className="mt-1 block text-[11px] font-semibold text-amber-700 md:hidden">Försenad uppföljning</span>
+            ) : null}
+          </>
+        );
+      },
+    },
+  ];
+
   return (
     <div className="grid grid-cols-1 gap-4">
 
@@ -413,7 +509,9 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
 
         {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
         {loading ? <div className="text-sm text-slate-500">Laddar offerter…</div> : null}
-        {!loading && quotes.length === 0 ? (
+        {/* Tomläget gatas på felet också: efter ett misslyckat anrop är listan tom, och "inga
+            offerter matchar" under felrutan hade pekat åt fel håll (FRONTEND_SYSTEM.md). */}
+        {!loading && !error && quotes.length === 0 ? (
           // 🧨 Ansvarigfiltret måste NÄMNAS här. Det är OCH:at med sökrutan och står på "Mina" från
           // start, så en kollegas offertnummer ger noll träffar — och den gamla texten läste sig då
           // som "offerten finns inte". Rader utan ansvarig faller bort av samma skäl (`in(...)`
@@ -437,90 +535,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
         ) : null}
 
         {!loading && quotes.length > 0 ? (
-          <div className="grid gap-1">
-            {quotes.map((item) => {
-              const overdue = isQuoteOverdue(item);
-              const statusMeta = quoteStatusMeta[item.status];
-              // Inget 'Okänd'-fallback: katalogen hämtas i en egen request, så ett tomt uppslag
-              // betyder oftast "inte hämtad ännu" och inte "okänd person". RowAssignee skiljer
-              // de två tillstånden åt.
-              const sellerName = item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? null) : null;
-              // Private → show price incl moms; business → show ex moms (with the basis tagged).
-              const amountDisplay = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
-
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => { setDetailQuoteId(item.id); setDetailPanelOpen(true); }}
-                  className={cn(
-                    'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
-                    overdue ? 'border-amber-200' : 'border-[#e3e9df]',
-                  )}
-                >
-                  {/* Status accent rail */}
-                  <span className={cn('w-1.5 shrink-0', statusMeta.accent)} aria-hidden="true" />
-
-                  {/* Ansvarig-kolumnen är 116px och inte 48px: den rymmer namnet, inte bara en
-                      initialbricka man måste hovra på. Utrymmet tas ur identitetskolumnen, som är
-                      den flexibla — de två högerkolumnerna har fast innehåll. */}
-                  <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] md:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
-                    {/* Number badge + identity + chips */}
-                    <div className="flex min-w-0 items-center gap-2">
-                      <DocumentNumberBadge label="Offert" value={documentRef(item.fortnox_offer_number, item.quote_number)} />
-                      <div className="grid min-w-0 gap-0.5">
-                        <strong className="truncate text-[13px] font-bold text-slate-900">{item.project_name}</strong>
-                        <span className="truncate text-[11px] text-slate-500">{quoteCustomerName(item)}</span>
-                        <div className="flex flex-wrap items-center gap-1 pt-0.5">
-                          <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', statusMeta.className)}>
-                            {statusMeta.label}
-                          </span>
-                          <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                            {item.quote_type === 'private' ? 'Privat' : 'Företag'}
-                          </span>
-                          {item.work_order_id ? (
-                            <span className="inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">
-                              Order {documentRef(workOrderFortnoxById.get(item.work_order_id) ?? null, item.work_order_number)}
-                            </span>
-                          ) : null}
-                          {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
-                          <RowAssigneeChip name={sellerName} />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Ansvarig säljare, i en fast slot så den aldrig driver i sidled */}
-                    <RowAssignee name={sellerName} assigned={Boolean(item.assigned_to)} />
-
-                    {/* Dates */}
-                    <div className="hidden flex-col gap-0.5 sm:flex">
-                      <span className="text-[11px] font-medium text-slate-600">{formatDate(item.quote_date)}</span>
-                      {item.follow_up_date ? (
-                        <span className={cn('text-[11px] font-semibold', overdue ? 'text-amber-700' : 'text-slate-400')}>
-                          {overdue ? '⚠ ' : ''}Följ upp {formatDate(item.follow_up_date)}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-slate-300">Ingen uppföljning</span>
-                      )}
-                    </div>
-
-                    {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
-                    <div className="flex items-center justify-end gap-2">
-                      <span className="hidden flex-col items-end leading-tight sm:flex">
-                        <span className="whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:text-sm">
-                          {formatCurrency(amountDisplay.primary, item.currency_code)}
-                        </span>
-                        <span className="text-[10px] font-medium text-slate-400">{amountDisplay.basisSuffix}</span>
-                      </span>
-                      <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M9 18l6-6-6-6" />
-                      </svg>
-                    </div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+          <CrmTable size="regular" label="Offerter" columns={columns} rows={quotes} rowHref={quoteHref} onOpenRow={(item) => openQuote(item.id)} />
         ) : null}
 
         {/* Visa fler — server-side pagination so the list never silently truncates. Without it the

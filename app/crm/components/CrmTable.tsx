@@ -23,13 +23,16 @@ export type CrmTableColumn<T> = { header: string; className?: string; cell: (row
  */
 export type CrmTableSize = 'compact' | 'regular';
 
-const sizeClass: Record<CrmTableSize, { table: string; header: string; cell: string }> = {
+const sizeClass: Record<CrmTableSize, { container: string; table: string; header: string; cell: string }> = {
   compact: {
+    container: 'rounded-none border-0',
     table: 'table-fixed text-xs text-slate-700',
     header: 'px-0 pb-1.5 pr-3 pt-0 text-[11px] font-medium normal-case tracking-normal text-slate-500 last:pr-0',
     cell: 'border-[#eef2ec] px-0 py-2 pr-3 text-xs last:pr-0',
   },
   regular: {
+    // Lite luft mot filterraden ovanför; i översiktens kort står rubriken ovanför i stället.
+    container: 'mt-1 rounded-none border-0',
     table: 'table-fixed text-[13px] text-slate-700',
     header: 'px-0 pb-2 pr-4 pt-0 text-xs font-medium normal-case tracking-normal text-slate-500 last:pr-0',
     cell: 'border-[#eef2ec] px-0 py-2.5 pr-4 text-[13px] last:pr-0',
@@ -84,7 +87,7 @@ export function CrmTable<T extends { id: string }>({ label, size, columns, rows,
 
   return (
     <SizeContext.Provider value={size}>
-      <DataTable aria-label={label} className={classes.table} containerClassName="rounded-none border-0">
+      <DataTable aria-label={label} className={classes.table} containerClassName={classes.container}>
         <thead>
           <tr>
             {columns.map((column) => (
