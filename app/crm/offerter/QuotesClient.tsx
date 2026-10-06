@@ -503,7 +503,8 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
               onChange={setSort}
               options={(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => ({ value, label: quoteSortMeta[value].label }))}
               label="Sortera offerter"
-              className="w-full sm:w-[170px]"
+              // 190 px som de andra två och som orderlistans sortering.
+              className="w-full sm:w-[190px]"
             />
             <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[190px]" />
           </div>

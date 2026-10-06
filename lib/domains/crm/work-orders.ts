@@ -597,7 +597,12 @@ function applyWorkOrderListFilters<Q extends {
 // order (installation date in the future) is the LAST row in the table, so once the company
 // passes CRM_WORK_ORDERS_PAGE_SIZE orders a client-sorted "latest" list would quietly show the
 // oldest jobs instead.
-export type CrmWorkOrderSort = 'installation_asc' | 'created_desc';
+//
+// 'planned_asc' är orderlistans "Närmast installation" sedan 2026-10-06 (William): listan visar
+// det PLANERADE datumet (planned_start_day, som schemats trigger skriver), och en ordning på önskat
+// datum hade då sett osorterad ut. Ej inplanerade ordrar hamnar sist, där sinsemellan efter önskat
+// datum. 'installation_asc' (önskat datum) står kvar som standard för de andra anroparna.
+export type CrmWorkOrderSort = 'installation_asc' | 'planned_asc' | 'created_desc';
 
 export async function listCrmWorkOrdersWithFilters(
   supabase: SupabaseClient,
@@ -610,9 +615,14 @@ export async function listCrmWorkOrdersWithFilters(
     .select(crmWorkOrderSelect, { count: 'exact' });
   const ordered = options.sort === 'created_desc'
     ? selected.order('created_at', { ascending: false })
-    : selected
-      .order('desired_installation_date', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: false });
+    : options.sort === 'planned_asc'
+      ? selected
+        .order('planned_start_day', { ascending: true, nullsFirst: false })
+        .order('desired_installation_date', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false })
+      : selected
+        .order('desired_installation_date', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false });
 
   return applyWorkOrderListFilters(ordered.range(offset, offset + limit - 1), options);
 }

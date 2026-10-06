@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, workOrderStatusLabel, workOrderStatusClass, type SyncStatus } from '@/app/crm/lib/crmTokens';
-import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
+import { formatDayRange, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import StatusFilter from '@/app/crm/components/StatusFilter';
@@ -38,6 +38,9 @@ type WorkOrderItem = {
   amount: number | string;
   currency_code: string;
   desired_installation_date: string | null;
+  // Schemats första och sista dag (fas 4a) — skrivs bara av en trigger på planeringskorten.
+  planned_start_day: string | null;
+  planned_end_day: string | null;
   status: WorkOrderStatus;
   assigned_to: string | null;
   assignee: { id: string; full_name: string | null } | null;
@@ -52,17 +55,17 @@ type WorkOrderItem = {
 
 // Radordning. Samma två val som offertlistan har, med arbetsorderns egna datum: 'created_desc' är
 // senast skapad först — samma default som offertlistan, så den order du nyss lade upp ligger
-// överst — och 'installation_asc' är brädans arbetskö, närmast installation först med de
-// försenade överst. Arbetsordern har inget uppföljningsdatum att sortera på; det fältet finns
-// bara på offerten.
+// överst — och 'planned_asc' är arbetskön, närmast PLANERAD start först (det datum kolumnen
+// Planerad visar), ej inplanerade sist. Arbetsordern har inget uppföljningsdatum att sortera på;
+// det fältet finns bara på offerten.
 //
 // Defaulten sätts här och skickas alltid med i frågan. Domänens egen default är fortfarande
-// 'installation_asc' — den gäller andra anropare (arbetskön), och den ska den fortsätta göra.
-type WorkOrderSort = 'created_desc' | 'installation_asc';
+// 'installation_asc' (önskat datum) — den gäller andra anropare, och den ska den fortsätta göra.
+type WorkOrderSort = 'created_desc' | 'planned_asc';
 
 const WORK_ORDER_SORTS: ReadonlyArray<{ value: WorkOrderSort; label: string }> = [
   { value: 'created_desc', label: 'Senast skapad' },
-  { value: 'installation_asc', label: 'Närmast installation' },
+  { value: 'planned_asc', label: 'Närmast installation' },
 ];
 
 // Status filtering and pagination are server-side (see lib/domains/crm/work-orders.ts). The list
@@ -86,7 +89,8 @@ const orderWidth = {
   number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
   customer: '',
   assignee: 'hidden w-[2.75rem] sm:table-cell xl:w-[10rem]',
-  planned: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
+  // En period över ett månadsskifte ("30 sep. – 2 okt. 2026") bryts vid tankstrecket, se cellen.
+  planned: 'hidden w-[8rem] tabular-nums text-slate-500 md:table-cell',
   margin: 'hidden w-[6.5rem] whitespace-nowrap tabular-nums lg:table-cell',
   amount: 'hidden w-[7rem] whitespace-nowrap text-right tabular-nums sm:table-cell',
   status: 'w-[6.75rem] pr-0 text-right sm:w-[8rem] sm:pr-4 sm:text-left',
@@ -431,15 +435,22 @@ export default function WorkOrdersClient({
       // och backat: "Planerad" är ordet verksamheten använder. Att det sammanfaller med statusen
       // `scheduled` är känt och accepterat; en rad kan alltså läsa "Ej planerad" i statusen och ett
       // streck under Planerad.
+      //
+      // 🧨 Kolumnen visar det PLANERADE datumet — schemats första och sista dag, samma utskrift som
+      // på ordern — inte önskat installationsdatum (William, 2026-10-06). Förut stod önskat datum
+      // här under rubriken Planerad, och en order planerad till ett annat datum än kunden önskat
+      // såg ut att ligga på önskemålet. Förseningen räknas fortfarande på önskat datum, som på
+      // ordern, och står under statusen — aldrig som färg på det planerade datumet.
       header: 'Planerad',
       className: orderWidth.planned,
       cell: (item) => {
-        const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
-        return (
-          <span className={overdue ? 'font-semibold text-rose-600' : 'text-slate-500'} title={overdue ? 'Försenad' : undefined}>
-            {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
-          </span>
-        );
+        const range = formatDayRange(item.planned_start_day, item.planned_end_day);
+        if (!range) return '–';
+        // Bryts bara vid tankstrecket: "30 dec. 2026 –" / "2 jan. 2027", aldrig mitt i ett datum.
+        const [from, to] = range.split(' – ');
+        return to
+          ? <><span className="whitespace-nowrap">{from} –</span> <span className="whitespace-nowrap">{to}</span></>
+          : <span className="whitespace-nowrap">{range}</span>;
       },
     },
     // Kolumnen finns bara för den som får läsa kostnaderna (canSeeMargins, från servern). 403 från
@@ -461,9 +472,11 @@ export default function WorkOrdersClient({
           {item.partial_invoicing_started_at && item.status !== 'invoiced' && item.status !== 'partially_invoiced' ? (
             <span className="mt-1 block text-[11px] font-semibold text-amber-700">Delfakturerad</span>
           ) : null}
-          {/* Planerad-kolumnen är dold under 768 px — där bär statusen förseningen i stället. */}
+          {/* Önskat installationsdatum har passerat utan att ordern är klar — samma regel som på
+              ordern (isWorkOrderOverdue). Står här och inte i Planerad-kolumnen, som visar det
+              planerade datumet; önskat datum syns inte i listan, så title säger vad det gäller. */}
           {isWorkOrderOverdue(item.desired_installation_date, item.status) ? (
-            <span className="mt-1 block text-[11px] font-semibold text-rose-700 md:hidden">Försenad</span>
+            <span className="mt-1 block text-[11px] font-semibold text-rose-700" title="Önskat installationsdatum har passerat">Försenad</span>
           ) : null}
           {/* Bara AVVIKELSEN. "Fortnox: Synkad" hade stått på i stort sett varje rad, och mitt bland
               dem hade den enda som betydde något försvunnit. Att raden saknas betyder alltså att
@@ -562,7 +575,8 @@ export default function WorkOrdersClient({
               onChange={setSort}
               options={WORK_ORDER_SORTS}
               label="Sortera arbetsorder"
-              className="w-full sm:w-[170px]"
+              // 190 px som de andra två: "Närmast installation" kapades vid 170.
+              className="w-full sm:w-[190px]"
             />
             <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} showMine={canBeAssignee} className="w-full sm:w-[190px]" />
           </div>

@@ -295,9 +295,10 @@ export const listCrmWorkOrdersQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(2000).optional(),
   // Pagination offset for the "Visa fler" board.
   offset: z.coerce.number().int().min(0).optional(),
-  // Row order. Default (installation_asc) is the board's work queue; 'created_desc' is for
-  // callers that want the newest orders, which the default sort puts LAST in the table.
-  sort: z.enum(['installation_asc', 'created_desc']).optional(),
+  // Row order. Default (installation_asc, desired date) is the board's work queue; 'planned_asc'
+  // is the list's "Närmast installation" on the planned date; 'created_desc' is for callers that
+  // want the newest orders, which the default sort puts LAST in the table.
+  sort: z.enum(['installation_asc', 'planned_asc', 'created_desc']).optional(),
 });
 
 export const updateCrmWorkOrderSchema = z.object({
