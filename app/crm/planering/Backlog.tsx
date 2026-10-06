@@ -1,7 +1,9 @@
+import { useMemo, useState } from 'react';
 import type React from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
-import type { SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import type { BacklogPlacement, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import { placementDayLabel } from './planningDates';
 import { statusMeta, SackBadge, JobRef, MapLink } from './jobCard';
 import { formatDate } from '@/app/crm/lib/format';
 import SearchField from './SearchField';
@@ -29,6 +31,10 @@ type BacklogProps = {
   onSalesFilterChange: (value: string | null) => void;
   salesOptions: ReadonlyArray<{ id: string; name: string }>;
   onSelect: (id: string) => void;
+  /** Bilarna på tavlan, för namn och färg på placeringsraderna. */
+  trucks: ReadonlyArray<OpsTruck>;
+  /** Hoppa tavlan till kortet och markera det. */
+  onJumpToPlacement: (item: SchedulableWorkOrder, placement: BacklogPlacement) => void;
   onDragStartItem: (e: React.DragEvent, item: SchedulableWorkOrder) => void;
   onDropUnschedule: (e: React.DragEvent) => void;
   onDragOver: (e: React.DragEvent) => void;
@@ -50,8 +56,9 @@ function shortDate(value: string | null): string | null {
 export default function Backlog({
   items, loading, canWrite, selectedKey, filter, onFilterChange, counts, loadError,
   search, onSearchChange, salesFilter, onSalesFilterChange, salesOptions,
-  onSelect, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
+  onSelect, trucks, onJumpToPlacement, onDragStartItem, onDropUnschedule, onDragOver, dropActive,
 }: BacklogProps) {
+  const truckById = useMemo(() => new Map(trucks.map((t) => [t.id, t])), [trucks]);
   // An empty panel has four different meanings and only one instruction fits each. Ordered by which
   // outranks which:
   //
@@ -145,19 +152,14 @@ export default function Backlog({
               // Identiteten är `key`, inte `id`: en uppdelad order ger flera poster som delar id.
               const isSelected = item.key === selectedKey;
               return (
+                  // Kortet är dragbart; det VALBARA (role=button) är bara innehållet ovanför
+                  // placeringsraderna. Raderna är egna knappar och får inte ligga inuti en annan
+                  // knapp — det är ogiltigt för skärmläsare, och kortets Enter/klick hade valt
+                  // posten samtidigt som raden hoppade.
                   <div
                     key={item.key}
-                    role="button"
-                    tabIndex={0}
                     draggable={canWrite}
                     onDragStart={(e) => onDragStartItem(e, item)}
-                    onClick={() => canWrite && onSelect(item.key)}
-                    onKeyDown={(e) => {
-                      if ((e.key === 'Enter' || e.key === ' ') && canWrite) {
-                        e.preventDefault();
-                        onSelect(item.key);
-                      }
-                    }}
                     className={cn(
                       'relative rounded-xl border bg-white p-2.5 pl-3.5 text-left shadow-[0_1px_2px_rgba(20,44,27,0.06)] transition',
                       isSelected ? 'border-emerald-400 ring-2 ring-emerald-500/20' : 'border-[#e0e8dc] hover:border-[#c8d4c3]',
@@ -165,6 +167,18 @@ export default function Backlog({
                     )}
                   >
                     <span className={cn('absolute bottom-2.5 left-0 top-2.5 w-[3px] rounded-full', statusMeta(item.status).rail)} />
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => canWrite && onSelect(item.key)}
+                      onKeyDown={(e) => {
+                        if ((e.key === 'Enter' || e.key === ' ') && canWrite) {
+                          e.preventDefault();
+                          onSelect(item.key);
+                        }
+                      }}
+                      className="rounded-md outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+                    >
                     <div className="flex items-baseline justify-between gap-2">
                       <span className="text-[11px] font-bold text-slate-900">{item.project_name}</span>
                       <JobRef job={item} />
@@ -195,11 +209,6 @@ export default function Backlog({
                     )}
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
                       <SackBadge sacks={item.total_sacks} />
-                      {item.segment_count > 0 && (
-                        <span className="whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2 py-px text-[10px] font-bold text-violet-700">
-                          {item.segment_count} placering{item.segment_count > 1 ? 'ar' : ''}
-                        </span>
-                      )}
                       {item.desired_installation_date && (
                         <span className="whitespace-nowrap rounded-full border border-sky-200 bg-sky-50 px-2 py-px text-[10px] font-bold text-sky-700">
                           Önskat {shortDate(item.desired_installation_date)}
@@ -209,6 +218,8 @@ export default function Backlog({
                         {statusMeta(item.status).label}
                       </span>
                     </div>
+                    </div>
+                    <PlacementRows item={item} truckById={truckById} onJump={onJumpToPlacement} />
                   </div>
               );
             })}
@@ -222,5 +233,88 @@ export default function Backlog({
         </p>
       )}
     </section>
+  );
+}
+
+// Hur många rader som syns innan resten fälls in bakom "+N till". Två räcker för det vanliga
+// (ett jobb, eller ett jobb på två bilar) utan att kortet växer så att backloggen blir svår att skumma.
+const VISIBLE_PLACEMENTS = 2;
+
+/**
+ * VAR posten ligger på schemat: en rad per kort, med bilens färg som på tavlan. Klick hoppar tavlan
+ * dit (PlanningClient → jumpToPlacement).
+ *
+ * En bil som tagits ur bruk har ingen rad på tavlan, så dess kort går inte att visa där. Raden står
+ * kvar — kortet finns — men är inte klickbar och säger varför.
+ */
+function PlacementRows({
+  item,
+  truckById,
+  onJump,
+}: {
+  item: SchedulableWorkOrder;
+  truckById: ReadonlyMap<string, OpsTruck>;
+  onJump: (item: SchedulableWorkOrder, placement: BacklogPlacement) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const list = item.placements;
+  if (list.length === 0) return null;
+  const shown = expanded ? list : list.slice(0, VISIBLE_PLACEMENTS);
+  const rest = list.length - VISIBLE_PLACEMENTS;
+  const row = 'flex w-full min-w-0 items-center gap-1.5 rounded-md border-0 px-1 py-[3px] text-left text-[10px] leading-tight';
+  return (
+    <div className="-mx-1 mt-2 grid gap-px border-t border-[#e8efe5] pt-1.5">
+      {shown.map((p) => {
+        const truck = truckById.get(p.truck_id);
+        const { week, days } = placementDayLabel(p.start_day, p.end_day);
+        const body = (
+          <>
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truck?.color || '#cbd5e1' }} />
+            <span className={cn('min-w-0 flex-1 truncate font-semibold', truck ? 'text-slate-700' : 'text-slate-400')}>
+              {truck?.name ?? 'Bil ur bruk'}
+            </span>
+            {p.on_hold && (
+              <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-1.5 text-[9px] font-bold text-amber-700">Pausad</span>
+            )}
+            <span className="shrink-0 tabular-nums text-slate-600">
+              <span className="text-slate-400">{week}</span> {days}
+            </span>
+          </>
+        );
+        if (!truck) {
+          return (
+            <div key={p.segment_id} className={row} title="Bilen är inte i bruk, så kortet visas inte på tavlan.">
+              {body}
+              <span className="h-2.5 w-2.5 shrink-0" aria-hidden="true" />
+            </div>
+          );
+        }
+        return (
+          <button
+            key={p.segment_id}
+            type="button"
+            onClick={() => onJump(item, p)}
+            title="Visa på tavlan"
+            aria-label={`Visa på tavlan: ${truck.name}, ${week} ${days}${p.on_hold ? ', pausad' : ''}`}
+            className={cn(row, 'group/row transition hover:bg-[#f3f6f1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30')}
+          >
+            {body}
+            <svg className="h-2.5 w-2.5 shrink-0 text-slate-300 transition group-hover/row:text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </button>
+        );
+      })}
+      {rest > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="justify-self-start rounded border-0 px-1 py-0.5 text-[10px] font-semibold text-slate-500 transition hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/30"
+        >
+          {expanded ? 'Visa färre' : `+${rest} till`}
+        </button>
+      )}
+    </div>
   );
 }

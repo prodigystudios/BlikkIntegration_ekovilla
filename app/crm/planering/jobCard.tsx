@@ -30,6 +30,14 @@ export function statusMeta(status: string) {
   };
 }
 
+// Kortet backloggen pekade ut ("Visa på tavlan"), i vecko- och månadsvyn. Violett, som den gamla
+// placeringschippen, så blicken hittar rätt. Läggs SIST i cn så den vinner över pausens ring.
+//
+// ⚠️ Ingen opacitetspuls (animate-pulse). Den tonade ned hela kortet så att ringen knappt syntes, och
+// ett nedtonat kort betyder redan något annat här: pausat. Ringen ligger kvar en stund och tonar
+// sedan ut genom kortets egen `transition` (PlanningClient släpper markeringen).
+export const FOCUSED_CARD = 'ring-2 ring-violet-500 ring-offset-2';
+
 export function StatusPill({ status, className }: { status: string; className?: string }) {
   const m = statusMeta(status);
   return (

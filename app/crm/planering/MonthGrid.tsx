@@ -4,7 +4,7 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
-import { SegmentCardBody, type SegmentActions } from './jobCard';
+import { FOCUSED_CARD, SegmentCardBody, type SegmentActions } from './jobCard';
 import type { JobMargin } from './useJobMargins';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
@@ -25,6 +25,11 @@ type MonthGridProps = {
   onDayDrop: (e: React.DragEvent, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
+  /**
+   * Kortet backloggen just pekade ut ("Visa på tavlan"). Får `data-segment-id` som alla kort — det
+   * PlanningClient letar upp för att skrolla dit — och en ring en stund. null = inget utpekat.
+   */
+  focusedSegmentId?: string | null;
   actions: SegmentActions;
   dayNotes: DayNote[];
   /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
@@ -48,6 +53,7 @@ export default function MonthGrid({
   onDayDrop,
   onSegDragStart,
   onSegClick,
+  focusedSegmentId,
   actions,
   dayNotes,
   margins,
@@ -153,6 +159,7 @@ export default function MonthGrid({
                       return (
                       <div
                         key={seg.id}
+                        data-segment-id={seg.id}
                         draggable={canWrite}
                         onDragStart={(ev) => onSegDragStart(ev, seg)}
                         onClick={(ev) => ev.stopPropagation()}
@@ -166,6 +173,7 @@ export default function MonthGrid({
                           seg.job && 'hover:ring-2 hover:ring-emerald-400/40',
                           canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                           seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
+                          seg.id === focusedSegmentId && FOCUSED_CARD,
                         )}
                       >
                         <SegmentCardBody

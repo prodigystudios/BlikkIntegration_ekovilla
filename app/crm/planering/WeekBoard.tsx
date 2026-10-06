@@ -15,7 +15,7 @@ import type { DepotDeliveryOnBoard } from '@/lib/domains/planning/depotStock';
 import type { ExpectedDelivery } from '@/lib/domains/planning/expectedDeliveries';
 import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { weekTotals, type WeekSlice } from '@/lib/domains/planning/weekValue';
-import { CrewEditor, CrewAvatars, SegmentCardBody, type SegmentActions } from './jobCard';
+import { CrewEditor, CrewAvatars, FOCUSED_CARD, SegmentCardBody, type SegmentActions } from './jobCard';
 import type { JobMargin } from './useJobMargins';
 import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
@@ -52,6 +52,11 @@ type WeekBoardProps = {
   onCellDrop: (e: React.DragEvent, truckId: string, dayISO: string) => void;
   onSegDragStart: (e: React.DragEvent, seg: OpsSegment) => void;
   onSegClick: (seg: OpsSegment) => void;
+  /**
+   * Kortet backloggen just pekade ut ("Visa på tavlan"). Får `data-segment-id` som alla kort — det
+   * PlanningClient letar upp för att skrolla dit — och en ring en stund. null = inget utpekat.
+   */
+  focusedSegmentId?: string | null;
   actions: SegmentActions;
   /** Marginal per ARBETSORDER (inte per segment) — flera etapper av samma jobb delar post. */
   margins: Record<string, JobMargin>;
@@ -104,7 +109,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, weekSlices, todayISO, canWrite, placing, people, jobTypes,
-  onCellClick, onCellDrop, onSegDragStart, onSegClick, actions,
+  onCellClick, onCellDrop, onSegDragStart, onSegClick, focusedSegmentId, actions,
   dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins, revenueAnchors,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
@@ -431,6 +436,7 @@ export default function WeekBoard({
                       return (
                         <div
                           key={seg.id}
+                          data-segment-id={seg.id}
                           draggable={canWrite}
                           onDragStart={(ev) => onSegDragStart(ev, seg)}
                           onClick={(ev) => ev.stopPropagation()}
@@ -447,6 +453,7 @@ export default function WeekBoard({
                             seg.job && 'hover:ring-2 hover:ring-emerald-400/40',
                             canWrite ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer',
                             seg.on_hold && 'opacity-60 ring-1 ring-amber-200',
+                            seg.id === focusedSegmentId && FOCUSED_CARD,
                           )}
                         >
                           {canWrite && (

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  monthStackStart, parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO,
+  monthStackStart, parseISO, placementDayLabel, sectionStart, shortDayISO, firstWeekday, planPlacementJump, startOfWeek, stockholmToday, stockholmTodayISO,
   weeksBetweenMondays, WEEKDAYS_SHORT,
 } from '@/app/crm/planering/planningDates';
 
@@ -222,5 +222,69 @@ describe('shortDayISO', () => {
     days.forEach((d, i) => {
       expect(shortDayISO(`2026-09-${d}`)).toBe(`${WEEKDAYS_SHORT[i]} ${Number(d)}/9`);
     });
+  });
+});
+
+describe('placementDayLabel', () => {
+  it('en dag: veckan och dagen', () => {
+    expect(placementDayLabel('2026-10-13', '2026-10-13')).toEqual({ week: 'v.42', days: 'tis 13/10' });
+  });
+
+  it('flera dagar i samma vecka: en vecka, ett spann', () => {
+    expect(placementDayLabel('2026-10-13', '2026-10-15')).toEqual({ week: 'v.42', days: 'tis 13/10 – tor 15/10' });
+  });
+
+  it('över ett veckoskifte: båda veckorna', () => {
+    expect(placementDayLabel('2026-10-16', '2026-10-19')).toEqual({ week: 'v.42–43', days: 'fre 16/10 – mån 19/10' });
+  });
+
+  it('över ett årsskifte: ISO-veckorna, inte kalenderårets', () => {
+    expect(placementDayLabel('2026-12-31', '2027-01-04')).toEqual({ week: 'v.53–1', days: 'tor 31/12 – mån 4/1' });
+  });
+});
+
+describe('firstWeekday', () => {
+  it('null när spannet bara ligger på lördag–söndag', () => {
+    expect(firstWeekday('2026-10-17', '2026-10-17')).toBeNull(); // lör
+    expect(firstWeekday('2026-10-17', '2026-10-18')).toBeNull(); // lör–sön
+  });
+
+  it('första vardagen efter en helgstart, och startdagen när den är en vardag', () => {
+    expect(firstWeekday('2026-10-17', '2026-10-19')).toBe('2026-10-19'); // lör–mån → mån
+    expect(firstWeekday('2026-10-16', '2026-10-17')).toBe('2026-10-16'); // fre–lör → fre
+    expect(firstWeekday('2026-10-18', '2026-10-30')).toBe('2026-10-19'); // sön–… → mån
+  });
+});
+
+// Vecka 42 = mån 12/10 – sön 18/10; vecka 43 börjar mån 19/10.
+describe('planPlacementJump', () => {
+  const week42 = { from: '2026-10-12', to: '2026-10-18' };
+  const week41 = { from: '2026-10-05', to: '2026-10-11' };
+
+  it('ritas redan i veckan som visas: bara skrolla', () => {
+    expect(planPlacementJump({ start_day: '2026-10-14', end_day: '2026-10-14' }, week42, true)).toEqual({ goTo: null, showWeekend: false });
+  });
+
+  it('ett kort fre–tis som syns i veckan efter sin startdag hoppar inte bort', () => {
+    expect(planPlacementJump({ start_day: '2026-10-09', end_day: '2026-10-13' }, week42, true)).toEqual({ goTo: null, showWeekend: false });
+  });
+
+  // Granskningens fall: med dold helg ritas kortet inte i lördagens vecka.
+  it('lör–mån med dold helg går till måndagens vecka, och helgen förblir dold', () => {
+    expect(planPlacementJump({ start_day: '2026-10-17', end_day: '2026-10-19' }, week41, true)).toEqual({ goTo: '2026-10-19', showWeekend: false });
+  });
+
+  it('en vecka som bara täcker kortets helgdagar räknas inte som att kortet syns', () => {
+    expect(planPlacementJump({ start_day: '2026-10-17', end_day: '2026-10-19' }, week42, true)).toEqual({ goTo: '2026-10-19', showWeekend: false });
+  });
+
+  it('med helgen synlig (eller i månadsvyn) räcker överlapp', () => {
+    expect(planPlacementJump({ start_day: '2026-10-17', end_day: '2026-10-19' }, week42, false)).toEqual({ goTo: null, showWeekend: false });
+    expect(planPlacementJump({ start_day: '2026-10-21', end_day: '2026-10-21' }, week42, false)).toEqual({ goTo: '2026-10-21', showWeekend: false });
+  });
+
+  it('ett rent helgkort slår på helgen — och går dit om veckan inte visas', () => {
+    expect(planPlacementJump({ start_day: '2026-10-17', end_day: '2026-10-18' }, week42, true)).toEqual({ goTo: null, showWeekend: true });
+    expect(planPlacementJump({ start_day: '2026-10-24', end_day: '2026-10-24' }, week42, true)).toEqual({ goTo: '2026-10-24', showWeekend: true });
   });
 });

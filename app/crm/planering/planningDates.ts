@@ -56,6 +56,7 @@ export function shortDayISO(iso: string): string {
 // fördelningen av omsättning över veckor jämför dagnummer räknade i domänen med spann räknade här.
 // Två ankringar för samma tal är en glidning som väntar på att hända.
 export { daysBetweenInclusiveISO as daysBetweenInclusive } from '@/lib/domains/planning/timezone';
+import { daysBetweenInclusiveISO } from '@/lib/domains/planning/timezone';
 
 // Monday of the week containing d.
 export function startOfWeek(d: Date): Date {
@@ -116,6 +117,67 @@ export function isoWeek(d: Date): number {
   date.setUTCDate(date.getUTCDate() - dayNum + 3);
   const firstThursday = new Date(Date.UTC(date.getUTCFullYear(), 0, 4));
   return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+}
+
+/**
+ * Var ett kort ligger, för backloggens placeringsrader: veckan för sig (dämpas i UI:t) och dagarna.
+ *
+ *   samma dag        { week: 'v.42',    days: 'tis 14/10' }
+ *   samma vecka      { week: 'v.42',    days: 'tis 14/10 – tor 16/10' }
+ *   över veckoskifte { week: 'v.42–43', days: 'fre 16/10 – mån 19/10' }
+ *
+ * Kalenderdagar rakt igenom (parseISO + isoWeek på lokala datumdelar), ingen klocka och inget
+ * millisekundspann — ett datum ligger i samma vecka i alla zoner.
+ */
+export function placementDayLabel(startDay: string, endDay: string): { week: string; days: string } {
+  const startWeek = isoWeek(parseISO(startDay));
+  const endWeek = isoWeek(parseISO(endDay));
+  return {
+    week: startWeek === endWeek ? `v.${startWeek}` : `v.${startWeek}–${endWeek}`,
+    days: startDay === endDay ? shortDayISO(startDay) : `${shortDayISO(startDay)} – ${shortDayISO(endDay)}`,
+  };
+}
+
+/**
+ * Spannets första vardag, eller null om det bara ligger på lördag–söndag. En helg är högst två dagar
+ * i rad, så svaret finns alltid bland de tre första dagarna.
+ */
+export function firstWeekday(startDay: string, endDay: string): string | null {
+  const days = Math.min(daysBetweenInclusiveISO(startDay, endDay), 3);
+  for (let i = 0; i < days; i += 1) {
+    const iso = addDaysISO(startDay, i);
+    const weekday = parseISO(iso).getDay();
+    if (weekday !== 0 && weekday !== 6) return iso;
+  }
+  return null;
+}
+
+/**
+ * Vad "Visa på tavlan" måste göra för att kortet ska RITAS: vilken dag tavlan ska gå till (dess vecka
+ * eller månad), och om helgen måste slås på.
+ *
+ * ⚠️ RITAS, inte "ligger i perioden". Med dold helg ritar veckovyn bara kortets vardagar, så ett
+ * kort lör–mån syns inte i lördagens vecka — tavlan går till måndagens. Och en vecka som bara
+ * täcker kortets helgdagar räknas inte som att kortet redan syns.
+ *
+ * `weekendHidden` = veckovyn med helgen dold (månadsvyn visar alltid alla dagar).
+ * `goTo: null` = kortet ritas redan i det som visas; bara skrolla.
+ */
+export function planPlacementJump(
+  placement: { start_day: string; end_day: string },
+  shown: { from: string; to: string },
+  weekendHidden: boolean,
+): { goTo: string | null; showWeekend: boolean } {
+  const { start_day: start, end_day: end } = placement;
+  const firstDrawn = weekendHidden ? firstWeekday(start, end) : start;
+  if (firstDrawn === null) {
+    // Bara helg: helgen måste på, och då ritas kortet om det överlappar det som visas.
+    return { goTo: start <= shown.to && end >= shown.from ? null : start, showWeekend: true };
+  }
+  const from = start > shown.from ? start : shown.from;
+  const to = end < shown.to ? end : shown.to;
+  const drawnHere = from <= to && (!weekendHidden || firstWeekday(from, to) !== null);
+  return { goTo: drawnHere ? null : firstDrawn, showWeekend: false };
 }
 
 export type WeekDay = { iso: string; date: Date; weekday: string; dayLabel: string; isWeekend: boolean };

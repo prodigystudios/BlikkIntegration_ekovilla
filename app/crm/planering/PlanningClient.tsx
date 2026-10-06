@@ -8,7 +8,7 @@ import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { formatDayRange } from '@/app/crm/lib/format';
-import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import type { BacklogPlacement, OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
@@ -22,7 +22,7 @@ import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/
 import { revenueAnchorSegments, scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
+  parseISO, planPlacementJump, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -33,6 +33,7 @@ import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
+import { withPlacementAdded, withPlacementMoved, withPlacementRemoved } from '@/lib/domains/planning/backlogPlacements';
 import ConfirmModal from './ConfirmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
@@ -164,6 +165,9 @@ export default function PlanningClient({
 
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
+  // Perioden `segments` faktiskt gäller. Skiljer sig från `range` medan en ny vecka laddas — "Visa på
+  // tavlan" behöver veta när den nya perioden är på plats innan den kan säga att ett kort saknas.
+  const [loadedRange, setLoadedRange] = useState<{ from: string; to: string } | null>(null);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
   // Jobbens ALLA placeringar, även utanför den hämtade veckan — nämnaren när veckans omsättning
   // fördelas över de dagar jobbet faktiskt utförs. Se fönsterfällan i listScopeSpans.
@@ -334,6 +338,7 @@ export default function PlanningClient({
     );
     if (!data) return;
     setSegments(data.segments);
+    setLoadedRange({ from, to });
     setScopeSpans(data.scopeSpans ?? []);
     setTrucks(data.trucks);
     setBoardLoaded(true);
@@ -621,10 +626,16 @@ export default function PlanningClient({
           ...prev,
           { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
         ]);
-        // Räknaren matchar på key, inte id: annars hade den tickat upp på ordens ALLA etapper.
+        // Kortet (och räknaren) på key, inte id: annars hade det hamnat på ordens ALLA etapper.
         setBacklog((prev) =>
           backlogWithOrderStatus(
-            prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)),
+            withPlacementAdded(prev, item.key, {
+              segment_id: created.id,
+              truck_id: created.truck_id,
+              start_day: created.start_day,
+              end_day: created.end_day,
+              on_hold: created.on_hold,
+            }),
             item.id,
             created.job?.status,
           ),
@@ -654,6 +665,19 @@ export default function PlanningClient({
             : s,
         ),
       );
+      // Backloggens rad för kortet ska peka dit kortet nu ligger — annars hoppar "Visa på tavlan" till
+      // den gamla dagen. Ordning och jobbtyp syns inte i raden och rör den inte.
+      const { truck_id, start_day, end_day, on_hold } = patch;
+      if (truck_id !== undefined || start_day !== undefined || end_day !== undefined || on_hold !== undefined) {
+        setBacklog((cur) =>
+          withPlacementMoved(cur, id, {
+            ...(truck_id !== undefined ? { truck_id } : {}),
+            ...(start_day !== undefined ? { start_day } : {}),
+            ...(end_day !== undefined ? { end_day } : {}),
+            ...(on_hold !== undefined ? { on_hold } : {}),
+          }),
+        );
+      }
       // Samma skäl som vid placeringen: utan det här ligger jobbets värde kvar i den vecka det
       // flyttades FRÅN tills sidan laddas om.
       setScopeSpans((cur) =>
@@ -691,7 +715,7 @@ export default function PlanningClient({
       const key = seg?.work_order_id ? scopeKey(seg.work_order_id, seg.stage_id ?? null) : null;
       setSegments((prev) => prev.filter((s) => s.id !== id));
       setScopeSpans((prev) => prev.filter((sp) => sp.segment_id !== id));
-      if (key) setBacklog((prev) => prev.map((b) => (b.key === key ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
+      if (key) setBacklog((prev) => withPlacementRemoved(prev, key, id));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
       if (!j.ok) {
@@ -1088,6 +1112,66 @@ export default function PlanningClient({
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
     [segments, hiddenTrucks, matchBoard],
   );
+
+  // ── "Visa på tavlan" från backloggens placeringsrader ─────────────────────────
+  // Kortet som ska markeras och dess dagar, och om det hittats på tavlan än. Hittat = skrollat dit,
+  // och markeringens nedräkning börjar. Inte hittat = perioden laddas fortfarande.
+  const [focus, setFocus] = useState<{ id: string; start: string; end: string; found: boolean } | null>(null);
+
+  const jumpToPlacement = useCallback(
+    (item: SchedulableWorkOrder, p: BacklogPlacement) => {
+      // Ingenting får dölja kortet: en bortvald bil visas igen (samma regel som revealTruck redan
+      // följer), en sökning i tavlan som inte matchar jobbet töms, och ett kort som bara ligger på
+      // en helg får helgen påslagen. (En inaktiv bil har ingen rad på tavlan alls; den raden är inte
+      // klickbar i backloggen.)
+      revealTruck(p.truck_id);
+      if (!matchBoard(item)) setBoardSearch('');
+      // Vart tavlan ska för att kortet RITAS — med dold helg ritas bara vardagarna, och ett kort som
+      // redan överlappar det som visas (också "Hela månaden" och månadsvyns kantdagar) skrollas bara
+      // fram. Se planPlacementJump.
+      const plan = planPlacementJump(p, range, view === 'week' && !showWeekend);
+      if (plan.showWeekend) toggleWeekend();
+      if (plan.goTo) {
+        const target = parseISO(plan.goTo);
+        // Veckor räknas i dygn och avrundas (weeksBetweenMondays) — en ren ms-division hade gett
+        // 0,994 eller 1,006 över en sommartidsväxling.
+        if (view === 'week') setWeekOffset(weeksBetweenMondays(startOfWeek(todayAnchor), startOfWeek(target)));
+        else setMonthOffset((target.getFullYear() - todayAnchor.getFullYear()) * 12 + target.getMonth() - todayAnchor.getMonth());
+      }
+      setFocus({ id: p.segment_id, start: p.start_day, end: p.end_day, found: false });
+    },
+    [revealTruck, matchBoard, view, showWeekend, toggleWeekend, range, todayAnchor],
+  );
+
+  // Letar upp kortet efter varje omritning tills det finns: en ny period laddas asynkront, och en
+  // nyss avdold bil, tömd sökning eller påslagen helg syns först i nästa rendering.
+  //
+  // ⚠️ "Saknas" avgörs av DATAN, inte av en klocka. Först när perioden kortet ligger i har laddats
+  // (loadedRange) och kortet ändå inte ritats finns det inte kvar där backloggen trodde — någon annan
+  // flyttade eller tog bort det. En tidsgräns från klicket hade sagt det om en långsam laddning.
+  useEffect(() => {
+    if (!focus || focus.found) return;
+    const el = document.querySelector<HTMLElement>(`[data-segment-id="${focus.id}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFocus({ ...focus, found: true });
+      return;
+    }
+    const periodLoaded = loadedRange !== null && focus.start <= loadedRange.to && focus.end >= loadedRange.from;
+    if (!periodLoaded) return;
+    setFocus(null);
+    toast.info('Kortet ligger inte där längre — det kan ha flyttats eller tagits bort. Backloggen läses om.');
+    loadBacklog().catch(() => {});
+  }, [focus, visibleSegments, loadedRange, toast, loadBacklog]);
+
+  // Hittat: ringen ligger kvar medan skrollen landar och blicken hittar dit, sedan släpps den. Inte
+  // hittat: släpps tyst efter en lång stund ifall laddningen dog — annars hade ett kort som till slut
+  // dök upp kunnat rycka tavlan dit långt senare.
+  useEffect(() => {
+    if (!focus) return;
+    const t = setTimeout(() => setFocus(null), focus.found ? 3000 : 15000);
+    return () => clearTimeout(t);
+  }, [focus]);
 
   // Marginalen per jobb: TG1/TB2 vid insäljning, plus utfallet när det finns.
   //
@@ -1519,6 +1603,8 @@ export default function PlanningClient({
           onSalesFilterChange={chooseSalesFilter}
           salesOptions={salesOptions}
           onSelect={onSelect}
+          trucks={trucks}
+          onJumpToPlacement={jumpToPlacement}
           onDragStartItem={onBacklogDragStart}
           onDropUnschedule={onBacklogDrop}
           onDragOver={(e) => {
@@ -1595,6 +1681,7 @@ export default function PlanningClient({
                         onCellDrop={onCellDrop}
                         onSegDragStart={onSegDragStart}
                         onSegClick={onSegClick}
+                        focusedSegmentId={focus?.id ?? null}
                         actions={actions}
                         dayNotes={dayNotes}
                         onAddNote={addDayNote}
@@ -1631,6 +1718,7 @@ export default function PlanningClient({
                 onDayDrop={onMonthDayDrop}
                 onSegDragStart={onSegDragStart}
                 onSegClick={onSegClick}
+                focusedSegmentId={focus?.id ?? null}
                 actions={actions}
                 dayNotes={dayNotes}
                 margins={margins}
