@@ -30,6 +30,7 @@ export {
 } from './workOrderSyncFields';
 import { ROT_DOCUMENT_KEYS } from './workOrderSyncFields';
 import { normalizePropertyDesignation } from './propertyDesignation';
+import { WORK_ORDER_STATUS_FILTER_OPTIONS, WORK_ORDER_STATUS_FILTER_STATUSES, type WorkOrderStatusFilterOption } from './listStatusFilter';
 
 export const crmWorkOrderSelect = `
   id,
@@ -110,7 +111,8 @@ export type CrmWorkOrderStatus = 'draft' | 'scheduled' | 'ready' | 'in_progress'
  *
  * Läses AVSIKTLIGT inte som "det som saknas i BOARD_FILTER_STATUSES". `cancelled` ligger utanför
  * brädans grupper idag, men den dagen någon lägger till en Avbrutna-flik hade en sådan härledning
- * tyst börjat räkna avbrutna order som omsättning igen.
+ * tyst börjat räkna avbrutna order som omsättning igen. Orderlistans statusfilter har sedan
+ * 2026-10-06 just ett sådant val (listStatusFilter.ts) — härled alltså aldrig härifrån ur ett filter.
  */
 export const DEAD_WORK_ORDER_STATUSES: CrmWorkOrderStatus[] = ['cancelled'];
 
@@ -525,12 +527,12 @@ export async function createCrmWorkOrderFromQuote(supabase: SupabaseClient, quot
 // PostgREST row cap once the company accumulates orders (see SUPABASE_CONVENTIONS.md).
 export const CRM_WORK_ORDERS_PAGE_SIZE = 100;
 
-// The board's composite status filters → the concrete statuses each one covers. Mirrors the
-// client's matchesFilter so server-side filtering and the chip labels agree. `all` = no status
-// filter (includes cancelled, exactly like the old client-side 'all'). Kept here so the list
-// query and the per-filter counts can never diverge.
+// The board's former composite status filters (its tabs) → the concrete statuses each one covers.
+// `all` = no status filter (includes cancelled). The list itself filters on single statuses since
+// 2026-10-06 (`statusIn`, lib/domains/crm/listStatusFilter.ts); the groups stay for the overview
+// summary and for the route's `filter` parameter, which a browser tab opened before that deploy
+// still sends.
 export type CrmWorkOrderBoardFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
-export const CRM_WORK_ORDER_BOARD_FILTERS: CrmWorkOrderBoardFilter[] = ['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced'];
 export const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrderStatus[] | null> = {
   all: null,
   draft: ['draft'],
@@ -544,6 +546,8 @@ export const BOARD_FILTER_STATUSES: Record<CrmWorkOrderBoardFilter, CrmWorkOrder
 type WorkOrderListFilters = {
   search?: string;
   filter?: CrmWorkOrderBoardFilter;
+  /** The list's status filter, already expanded to statuses. An empty list matches no rows. */
+  statusIn?: readonly string[];
   status?: CrmWorkOrderStatus;
   assignedToIn?: string[];
   workOrderId?: string;
@@ -577,6 +581,8 @@ function applyWorkOrderListFilters<Q extends {
   }
   const statuses = options.filter ? BOARD_FILTER_STATUSES[options.filter] : null;
   if (statuses) query = query.in('status', statuses);
+  // Inget ikryssat = inga rader: PostgREST svarar `status=in.()` med en tom lista, inte ett fel.
+  if (options.statusIn) query = query.in('status', [...options.statusIn]);
   if (options.status) query = query.eq('status', options.status);
   if (options.assignedToIn && options.assignedToIn.length > 0) query = query.in('assigned_to', options.assignedToIn);
   if (options.workOrderId) query = query.eq('id', options.workOrderId);
@@ -611,27 +617,28 @@ export async function listCrmWorkOrdersWithFilters(
   return applyWorkOrderListFilters(ordered.range(offset, offset + limit - 1), options);
 }
 
-// Per-filter counts for the board chips. One head-count query per filter (count-only, no rows
-// transferred) so the chips stay accurate at any table size — same pattern as the customer
-// stage counts. The assignee/search scope is applied so the counts match the visible list.
-export async function getCrmWorkOrderFilterCounts(
+// Per-status counts for the list's status filter — the number beside each checkbox. One head-count
+// query per option (count-only, no rows transferred) so the numbers stay accurate at any table size.
+// The assignee/search scope is applied so the counts match the visible list; the status selection
+// is not, so an unticked status still says how many orders it hides.
+export async function getCrmWorkOrderStatusCounts(
   supabase: SupabaseClient,
   options: { search?: string; assignedToIn?: string[] },
-): Promise<Record<CrmWorkOrderBoardFilter, number>> {
+): Promise<Record<WorkOrderStatusFilterOption, number>> {
   const entries = await Promise.all(
-    CRM_WORK_ORDER_BOARD_FILTERS.map(async (filter) => {
+    WORK_ORDER_STATUS_FILTER_OPTIONS.map(async (option) => {
       const query = applyWorkOrderListFilters(
         supabase.from('crm_work_orders').select('id', { count: 'exact', head: true }),
-        { search: options.search, filter, assignedToIn: options.assignedToIn },
+        { search: options.search, statusIn: WORK_ORDER_STATUS_FILTER_STATUSES[option], assignedToIn: options.assignedToIn },
       );
-      // Throw rather than fall back to 0 — a failed count would render as a chip reading 0 next to
-      // a list full of rows, with nothing saying the number is wrong. Same rule as the quote counts.
+      // Throw rather than fall back to 0 — a failed count would render as "Pågående 0" next to a
+      // list full of rows, with nothing saying the number is wrong. Same rule as the quote counts.
       const { count, error } = await query;
-      if (error) throw new Error(`work_order_counts:${filter}: ${error.message}`);
-      return [filter, count ?? 0] as const;
+      if (error) throw new Error(`work_order_counts:${option}: ${error.message}`);
+      return [option, count ?? 0] as const;
     }),
   );
-  return Object.fromEntries(entries) as Record<CrmWorkOrderBoardFilter, number>;
+  return Object.fromEntries(entries) as Record<WorkOrderStatusFilterOption, number>;
 }
 
 // ── Snapshot-överlagringarna från ordervyn ───────────────────────────────────

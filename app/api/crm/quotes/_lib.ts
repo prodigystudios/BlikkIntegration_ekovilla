@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { CONSTRUCTION_VALUES_WITH_EMPTY } from '@/lib/domains/crm/constructions';
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
+import { parseStatusFilterParam, QUOTE_STATUS_FILTER_OPTIONS } from '@/lib/domains/crm/listStatusFilter';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { listCrmSellers } from '@/lib/domains/crm/customers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -150,8 +151,19 @@ export const listCrmQuotesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(2000).optional(),
   // Pagination offset for the offer list's "Visa fler".
   offset: z.coerce.number().int().min(0).optional(),
-  // Tab filter (status group). Server-side so the paginated list is correct.
+  // Former tab filter (status group). The list sends `statuses` since 2026-10-06; this stays for a
+  // browser tab opened before that deploy.
   filter: z.enum(['all', 'active', 'follow_up', 'won', 'lost']).optional(),
+  // The list's status filter: the ticked statuses, comma-separated. Absent = no status filter,
+  // empty = nothing ticked (no rows). An unknown status is a 400, not a silently dropped choice.
+  statuses: z.string().optional().transform((raw, ctx) => {
+    const parsed = parseStatusFilterParam(raw, QUOTE_STATUS_FILTER_OPTIONS);
+    if (parsed === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Okänd status i statusfiltret' });
+      return z.NEVER;
+    }
+    return parsed;
+  }),
   // Assignee scope — comma-separated user ids ('mine' is resolved to the current user id on the
   // client before sending). Empty/absent = everyone.
   assignee: z.string().trim().optional(),

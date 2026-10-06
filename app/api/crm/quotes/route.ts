@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { createCrmQuote, getCrmQuote, getCrmQuoteFilterCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
+import { createCrmQuote, getCrmQuote, getCrmQuoteStatusCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
@@ -27,6 +27,9 @@ export async function GET(req: Request) {
       limit: url.searchParams.get('limit') || undefined,
       offset: url.searchParams.get('offset') || undefined,
       filter: url.searchParams.get('filter') || undefined,
+      // ⚠️ `?? undefined`, inte `|| undefined`: en tom parameter betyder "inget ikryssat" och ska
+      // ge en tom lista, inte tolkas som att filtret saknas och visa alla offerter.
+      statuses: url.searchParams.get('statuses') ?? undefined,
       assignee: url.searchParams.get('assignee') || undefined,
       sort: url.searchParams.get('sort') || undefined,
     });
@@ -53,6 +56,7 @@ export async function GET(req: Request) {
       ...scope,
       status: parsedQuery.data.status,
       filter: parsedQuery.data.filter,
+      statusIn: parsedQuery.data.statuses,
       limit,
       offset,
       sort: parsedQuery.data.sort,
@@ -63,13 +67,14 @@ export async function GET(req: Request) {
       return routeError(500, 'crm_quotes_list_failed', error.message);
     }
 
-    // Per-tab counts (scoped to the same search + assignee filter). Only the offer list asks for
-    // them (counts=1, first page); the board, the customer detail and the overview skip the extra
-    // count queries. Same contract as the work-orders route.
+    // Per-status counts for the status filter (scoped to the same search + assignee filter, not to
+    // the status selection). Only the offer list asks for them (counts=1, first page); the board,
+    // the customer detail and the overview skip the extra count queries. Same contract as the
+    // work-orders route.
     const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
-    const counts = wantCounts ? await getCrmQuoteFilterCounts(supabase, scope) : undefined;
+    const statusCounts = wantCounts ? await getCrmQuoteStatusCounts(supabase, scope) : undefined;
 
-    return ok({ items: data || [], total: count ?? 0, offset, limit, counts });
+    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts });
   } catch (e: any) {
     return routeError(500, 'crm_quotes_unexpected', e?.message || 'Failed to list quotes');
   }
