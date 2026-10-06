@@ -7,6 +7,7 @@ import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
+import { formatDayRange } from '@/app/crm/lib/format';
 import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
@@ -33,6 +34,7 @@ import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
 import ConfirmModal from './ConfirmModal';
+import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
 import OnOrderNote from './OnOrderNote';
 import ActivityLogModal from './ActivityLogModal';
@@ -228,6 +230,9 @@ export default function PlanningClient({
   const [truckPicker, setTruckPicker] = useState<{ dayISO: string; scopeKey: string } | null>(null);
   const [copySeg, setCopySeg] = useState<OpsSegment | null>(null);
   const [confirmSeg, setConfirmSeg] = useState<OpsSegment | null>(null);
+  // Kortet som just lagts ut från backloggen: "Vill du notifiera kunden?" frågas om det, och Ja öppnar
+  // orderbekräftelsen (confirmSeg) för samma kort.
+  const [notifySeg, setNotifySeg] = useState<OpsSegment | null>(null);
   const [adminOpen, setAdminOpen] = useState(false);
   // Området admin-modalen öppnar på. Bristbanderollen öppnar Lager; Administrera-knappen det första.
   const [adminArea, setAdminArea] = useState<AdminAreaKey | undefined>(undefined);
@@ -604,6 +609,10 @@ export default function PlanningClient({
         // Statusen är ORDERNS och gäller dess alla kort och poster, inte bara den här. Routen läser den
         // efter databasens trigger (se readWorkOrderStatus), så den kan just ha blivit Planerad.
         setSegments((prev) => segmentsWithOrderStatus([...prev, created], item.id, created.job?.status));
+        // Frågan hör till UTLÄGGNINGEN från backloggen (William 2026-10-06), därför här och inte i
+        // kopiera-till-bil eller flytten: alla tre vägarna ut ur backloggen (dra, klicka, månadsvyns
+        // bilväljare) går genom place().
+        setNotifySeg(created);
         // 🧨 SPANNEN MÅSTE FÖLJA MED. `scopeSpans` är nämnaren i veckofördelningen och sätts annars
         // bara av loadSegments — ett nyss placerat jobb hade då saknat spann helt och bidragit med
         // NOLL kr till "Veckan totalt" tills sidan laddades om. Den som just la ut ett jobb hade
@@ -1717,6 +1726,21 @@ export default function PlanningClient({
             <button onClick={() => setCopySeg(null)} className={cn(crm.ghostButton, 'mt-3 w-full')}>Avbryt</button>
           </div>
         </div>
+      )}
+
+      {/* Efter utläggningen: notifiera kunden? Ja öppnar orderbekräftelsen nedan för samma kort. */}
+      {notifySeg && (
+        <CrmConfirmDialog
+          title="Vill du notifiera kunden?"
+          message={`${notifySeg.job?.project_name ?? 'Ordern'} är planerad ${formatDayRange(notifySeg.start_day, notifySeg.end_day) ?? notifySeg.start_day}. Skicka en orderbekräftelse med mejl eller SMS?`}
+          confirmLabel="Ja, skicka"
+          cancelLabel="Inte nu"
+          onConfirm={() => {
+            setConfirmSeg(notifySeg);
+            setNotifySeg(null);
+          }}
+          onCancel={() => setNotifySeg(null)}
+        />
       )}
 
       {/* Order confirmation (SMS/email) */}
