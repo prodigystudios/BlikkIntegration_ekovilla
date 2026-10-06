@@ -26,26 +26,29 @@ function stockWidth(value: number, scale: number) {
   return Math.min(100, (value / scale) * 100);
 }
 
-const cardClass = cn(crm.cardInner, 'relative min-w-0 overflow-hidden px-4 pb-4 pt-3.5');
+const cardClass = cn(crm.cardInner, 'relative min-w-0 overflow-hidden px-4 pb-3.5 pt-3');
 
+// Etikett och antal till vänster, beloppet till höger — två rader i stället för tre. Blir kortet
+// för smalt för båda (xl med fäst meny) bryts beloppet till en egen rad i stället för att klippas.
 function CardBody({ label, value, helper, loading }: { label: string; value: number; helper: string; loading: boolean }) {
   return (
-    <>
-      <p className="m-0 text-xs font-semibold text-slate-600">{label}</p>
-      {/* Skelettet står på talets plats, så kortet har sin höjd redan under laddningen och
-          ingenting hoppar när siffrorna landar. */}
-      {loading ? (
-        <>
-          <div className="mt-1.5 h-6 w-28 animate-pulse rounded-md bg-[#dfe6da]" />
-          <div className="mt-1.5 h-3.5 w-10 animate-pulse rounded bg-[#e6ece2]" />
-        </>
-      ) : (
-        <>
-          <p className={cn('m-0 mt-1 truncate', crm.display)}>{formatCurrency(value, 'SEK')}</p>
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+      <div>
+        <p className="m-0 whitespace-nowrap text-xs font-semibold text-slate-600">{label}</p>
+        {/* Skeletten står på talens platser, så kortet har sin höjd redan under laddningen och
+            ingenting hoppar när siffrorna landar. */}
+        {loading ? (
+          <div className="mt-1 h-3.5 w-10 animate-pulse rounded bg-[#e6ece2]" />
+        ) : (
           <p className={cn('m-0 mt-0.5', crm.meta)}>{helper}</p>
-        </>
+        )}
+      </div>
+      {loading ? (
+        <div className="h-6 w-28 animate-pulse rounded-md bg-[#dfe6da]" />
+      ) : (
+        <p className={cn('m-0 min-w-0 truncate', crm.display)}>{formatCurrency(value, 'SEK')}</p>
       )}
-    </>
+    </div>
   );
 }
 

@@ -10,7 +10,7 @@ import {
   competitionRanks,
   countGoals,
   firstName,
-  formatProgress,
+  formatMetricValue,
   goalsCaption,
   initials,
   leads,
@@ -40,15 +40,14 @@ function seller(userId: string, name: string, patch: Parameters<typeof metrics>[
   return { userId, name, metrics: metrics(patch), progressScore: 0 };
 }
 
-describe('formatProgress och progressPercent', () => {
-  it('visar utfall mot mål, i kronor för värdena', () => {
-    expect(formatProgress('calls', { done: 5, target: 20, reached: false })).toBe('5 / 20');
+describe('formatMetricValue och progressPercent', () => {
+  it('visar antal som tal och värdena i kronor', () => {
+    expect(formatMetricValue('calls', 5)).toBe('5');
     // sv-SE sätter hårda mellanslag i tusental och före "kr" — jämför på vanliga.
-    expect(formatProgress('orderValue', { done: 0, target: 400_000, reached: false }).replace(/ /g, ' ')).toBe('0 kr / 400 000 kr');
+    expect(formatMetricValue('orderValue', 400_000).replace(/ /g, ' ')).toBe('400 000 kr');
   });
 
-  it('visar bara utfallet när måttet saknar mål — och ritar ingen stapel', () => {
-    expect(formatProgress('calls', { done: 7, target: null, reached: false })).toBe('7');
+  it('ritar ingen stapel när måttet saknar mål', () => {
     expect(progressPercent({ done: 7, target: null, reached: false })).toBeNull();
   });
 
