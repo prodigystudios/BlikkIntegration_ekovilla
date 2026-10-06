@@ -35,11 +35,13 @@ export default function CrmOverview({ userId }: { userId: string | null }) {
   // veckan okänd och etiketten ritas inte — den server-renderas, och serverns klocka går på UTC, så
   // måndagar 00–02 hade servern och webbläsaren skrivit olika veckor (hydreringskrock).
   const loadedWeekStart = state.scoreboard?.weekStart ?? null;
-  // Pilarna trycks bara i webbläsaren, så där räcker klockan som reserv tills tavlan laddats.
+  // Klockan som reserv — men bara där den inte kan krocka med servern: i pilarnas klick, för en vald
+  // vecka (sätts först i webbläsaren) och efter första laddningen (som bara sker i webbläsaren). Utan
+  // reserven blev etiketten tom för gott om denna veckas tavla inte gick att läsa.
   const currentWeekStart = () => loadedWeekStart ?? getCrmOverviewWindow().weekStart;
   const isCurrentWeek = week.selected == null;
-  const shownWeekStart = week.selected ?? loadedWeekStart;
-  const isPast = week.selected != null && loadedWeekStart != null && isPastWeek(week.selected, loadedWeekStart);
+  const shownWeekStart = week.selected ?? loadedWeekStart ?? (loading ? null : getCrmOverviewWindow().weekStart);
+  const isPast = week.selected != null && isPastWeek(week.selected, currentWeekStart());
   const board = isCurrentWeek
     ? { scoreboard: state.scoreboard, loading, failed: scoreboardFailed }
     : {

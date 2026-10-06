@@ -55,6 +55,7 @@ export type Section = { ok: boolean; json: any };
 // summeringen föll tillbaka på EMPTY_SUMMARY, och sidan visade "0 kr" och "Läget är lugnt" utan
 // felruta — okänt renderat som en säker nolla.
 export async function readSection(url: string, signal?: AbortSignal): Promise<Section> {
+  if (signal?.aborted) return { ok: false, json: null };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   // En överkörd hämtning (veckobytet) avbryts utifrån — samma väg som tidsgränsen.
