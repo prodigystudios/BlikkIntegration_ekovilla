@@ -22,7 +22,7 @@ import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/
 import { revenueAnchorSegments, scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, sectionStart, shortDayISO, spansWeekday, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
+  parseISO, planPlacementJump, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -1122,17 +1122,17 @@ export default function PlanningClient({
     (item: SchedulableWorkOrder, p: BacklogPlacement) => {
       // Ingenting får dölja kortet: en bortvald bil visas igen (samma regel som revealTruck redan
       // följer), en sökning i tavlan som inte matchar jobbet töms, och ett kort som bara ligger på
-      // en helg får helgen påslagen — annars landar hoppet där kortet inte ritas. (En inaktiv bil
-      // har ingen rad på tavlan alls; den raden är inte klickbar i backloggen.)
+      // en helg får helgen påslagen. (En inaktiv bil har ingen rad på tavlan alls; den raden är inte
+      // klickbar i backloggen.)
       revealTruck(p.truck_id);
       if (!matchBoard(item)) setBoardSearch('');
-      if (view === 'week' && !showWeekend && !spansWeekday(p.start_day, p.end_day)) toggleWeekend();
-      // Ritas redan i det som visas — kortet ÖVERLAPPAR perioden, också "Hela månaden" och
-      // månadsvyns kantdagar: bara skrolla. (Startdagen ensam räcker inte: ett jobb fre–tis ritas i
-      // veckan efter sin startdag också.)
-      const visible = p.start_day <= range.to && p.end_day >= range.from;
-      if (!visible) {
-        const target = parseISO(p.start_day);
+      // Vart tavlan ska för att kortet RITAS — med dold helg ritas bara vardagarna, och ett kort som
+      // redan överlappar det som visas (också "Hela månaden" och månadsvyns kantdagar) skrollas bara
+      // fram. Se planPlacementJump.
+      const plan = planPlacementJump(p, range, view === 'week' && !showWeekend);
+      if (plan.showWeekend) toggleWeekend();
+      if (plan.goTo) {
+        const target = parseISO(plan.goTo);
         // Veckor räknas i dygn och avrundas (weeksBetweenMondays) — en ren ms-division hade gett
         // 0,994 eller 1,006 över en sommartidsväxling.
         if (view === 'week') setWeekOffset(weeksBetweenMondays(startOfWeek(todayAnchor), startOfWeek(target)));
@@ -1140,7 +1140,7 @@ export default function PlanningClient({
       }
       setFocus({ id: p.segment_id, start: p.start_day, end: p.end_day, found: false });
     },
-    [revealTruck, matchBoard, view, showWeekend, toggleWeekend, range.from, range.to, todayAnchor],
+    [revealTruck, matchBoard, view, showWeekend, toggleWeekend, range, todayAnchor],
   );
 
   // Letar upp kortet efter varje omritning tills det finns: en ny period laddas asynkront, och en

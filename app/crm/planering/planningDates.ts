@@ -139,16 +139,45 @@ export function placementDayLabel(startDay: string, endDay: string): { week: str
 }
 
 /**
- * Ligger spannet på minst en vardag? Ett kort som bara ligger på lördag–söndag ritas inte i
- * veckovyn när helgen är dold — "Visa på tavlan" slår då på helgen i stället för att leta förgäves.
- * En helg är högst två dagar i rad, så tre dagar eller fler har alltid en vardag.
+ * Spannets första vardag, eller null om det bara ligger på lördag–söndag. En helg är högst två dagar
+ * i rad, så svaret finns alltid bland de tre första dagarna.
  */
-export function spansWeekday(startDay: string, endDay: string): boolean {
-  if (daysBetweenInclusiveISO(startDay, endDay) >= 3) return true;
-  return [startDay, endDay].some((iso) => {
+export function firstWeekday(startDay: string, endDay: string): string | null {
+  const days = Math.min(daysBetweenInclusiveISO(startDay, endDay), 3);
+  for (let i = 0; i < days; i += 1) {
+    const iso = addDaysISO(startDay, i);
     const weekday = parseISO(iso).getDay();
-    return weekday !== 0 && weekday !== 6;
-  });
+    if (weekday !== 0 && weekday !== 6) return iso;
+  }
+  return null;
+}
+
+/**
+ * Vad "Visa på tavlan" måste göra för att kortet ska RITAS: vilken dag tavlan ska gå till (dess vecka
+ * eller månad), och om helgen måste slås på.
+ *
+ * ⚠️ RITAS, inte "ligger i perioden". Med dold helg ritar veckovyn bara kortets vardagar, så ett
+ * kort lör–mån syns inte i lördagens vecka — tavlan går till måndagens. Och en vecka som bara
+ * täcker kortets helgdagar räknas inte som att kortet redan syns.
+ *
+ * `weekendHidden` = veckovyn med helgen dold (månadsvyn visar alltid alla dagar).
+ * `goTo: null` = kortet ritas redan i det som visas; bara skrolla.
+ */
+export function planPlacementJump(
+  placement: { start_day: string; end_day: string },
+  shown: { from: string; to: string },
+  weekendHidden: boolean,
+): { goTo: string | null; showWeekend: boolean } {
+  const { start_day: start, end_day: end } = placement;
+  const firstDrawn = weekendHidden ? firstWeekday(start, end) : start;
+  if (firstDrawn === null) {
+    // Bara helg: helgen måste på, och då ritas kortet om det överlappar det som visas.
+    return { goTo: start <= shown.to && end >= shown.from ? null : start, showWeekend: true };
+  }
+  const from = start > shown.from ? start : shown.from;
+  const to = end < shown.to ? end : shown.to;
+  const drawnHere = from <= to && (!weekendHidden || firstWeekday(from, to) !== null);
+  return { goTo: drawnHere ? null : firstDrawn, showWeekend: false };
 }
 
 export type WeekDay = { iso: string; date: Date; weekday: string; dayLabel: string; isWeekend: boolean };
