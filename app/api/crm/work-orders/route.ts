@@ -1,5 +1,6 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { listCrmWorkOrdersWithFilters, getCrmWorkOrderFilterCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
+import { listCrmWorkOrdersWithFilters, getCrmWorkOrderStatusCounts, legacyWorkOrderTabCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
+import { workOrderStatusesFor } from '@/lib/domains/crm/listStatusFilter';
 import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requirePermission, routeError, validationError } from './_lib';
 
 export async function GET(req: Request) {
@@ -23,6 +24,9 @@ export async function GET(req: Request) {
       q: url.searchParams.get('q') || undefined,
       status: url.searchParams.get('status') || undefined,
       filter: url.searchParams.get('filter') || undefined,
+      // ⚠️ `?? undefined`, inte `|| undefined`: en tom parameter betyder "inget ikryssat" och ska
+      // ge en tom lista, inte tolkas som att filtret saknas och visa alla ordrar.
+      statuses: url.searchParams.get('statuses') ?? undefined,
       assignee: url.searchParams.get('assignee') || undefined,
       work_order_id: url.searchParams.get('work_order_id') || undefined,
       customer_id: url.searchParams.get('customer_id') || undefined,
@@ -49,6 +53,8 @@ export async function GET(req: Request) {
       search,
       status: parsedQuery.data.status,
       filter,
+      // Valen översätts till statusar här: Planerad täcker också den pensionerade `ready`.
+      statusIn: parsedQuery.data.statuses ? workOrderStatusesFor(parsedQuery.data.statuses) : undefined,
       assignedToIn,
       workOrderId: parsedQuery.data.work_order_id,
       customerId: parsedQuery.data.customer_id,
@@ -62,13 +68,16 @@ export async function GET(req: Request) {
       return routeError(500, 'crm_work_orders_list_failed', error.message);
     }
 
-    // Per-filter chip counts (scoped to the same search + assignee filter). Only the board
-    // requests them (counts=1, first page) — other consumers of this route (säljtavla, customer
-    // detail, overview) skip the extra count queries.
+    // Per-status counts for the status filter (scoped to the same search + assignee filter, not to
+    // the status selection). Only the list requests them (counts=1, first page) — other consumers
+    // of this route (säljtavla, customer detail, overview) skip the extra count queries.
     const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
-    const counts = wantCounts ? await getCrmWorkOrderFilterCounts(supabase, { search, assignedToIn }) : undefined;
+    const statusCounts = wantCounts ? await getCrmWorkOrderStatusCounts(supabase, { search, assignedToIn }) : undefined;
 
-    return ok({ items: data || [], total: count ?? 0, offset, limit, counts });
+    // En flik från före 2026-10-06 frågar med filter= och läser `counts` — se legacyWorkOrderTabCounts.
+    const counts = statusCounts && filter ? legacyWorkOrderTabCounts(statusCounts) : undefined;
+
+    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts, counts });
   } catch (e: any) {
     return routeError(500, 'crm_work_orders_unexpected', e?.message || 'Failed to list work orders');
   }

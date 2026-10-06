@@ -3,6 +3,7 @@ import { quoteLineItemSchema } from '../quotes/_lib';
 import { WORK_ORDER_FILE_CATEGORIES } from '@/lib/domains/crm/workOrderFiles/types';
 import { CONSTRUCTION_SLUGS } from '@/lib/domains/crm/constructions';
 import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
+import { parseStatusFilterParam, WORK_ORDER_STATUS_FILTER_OPTIONS } from '@/lib/domains/crm/listStatusFilter';
 import { MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 export { ok, routeError, validationError, invalidUuidParam, isNoRowsError, requireCrmUser, requireCrmWriter, requirePermission, requireSignedInUser, pickProvidedFields } from '../_shared';
 
@@ -270,8 +271,20 @@ export const createWorkOrderCommentSchema = z.object({
 export const listCrmWorkOrdersQuerySchema = z.object({
   q: z.string().trim().optional(),
   status: workOrderStatusSchema.optional(),
-  // Board composite filter (status group). Server-side so the paginated list is correct.
+  // Former board filter (status group). The list sends `statuses` since 2026-10-06; this stays for
+  // a browser tab opened before that deploy.
   filter: z.enum(['all', 'draft', 'scheduled', 'active', 'completed', 'invoiced']).optional(),
+  // The list's status filter: the ticked options, comma-separated (WORK_ORDER_STATUS_FILTER_OPTIONS;
+  // 'scheduled' also covers the retired 'ready'). Absent = no status filter, empty = nothing ticked
+  // (no rows). An unknown option is a 400, not a silently dropped choice.
+  statuses: z.string().optional().transform((raw, ctx) => {
+    const parsed = parseStatusFilterParam(raw, WORK_ORDER_STATUS_FILTER_OPTIONS);
+    if (parsed === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Okänd status i statusfiltret' });
+      return z.NEVER;
+    }
+    return parsed;
+  }),
   // Assignee scope — comma-separated user ids ('mine' is resolved to the current user id on
   // the client before sending). Empty/absent = everyone.
   assignee: z.string().trim().optional(),

@@ -7,11 +7,13 @@ import { salesUser, adminUser, memberUser, effectivePermissionsForRole } from '.
 
 vi.mock('@/lib/auth/route', () => ({ getCurrentUser: vi.fn() }));
 
-vi.mock('@/lib/domains/crm/quotes', () => ({
+vi.mock('@/lib/domains/crm/quotes', async (importOriginal) => ({
+  // Ren summering av statusräknarna — den riktiga, så att testet prövar vad gamla flikar får.
+  legacyQuoteTabCounts: (await importOriginal<typeof import('@/lib/domains/crm/quotes')>()).legacyQuoteTabCounts,
   listCrmQuotesWithFilters: vi.fn(),
-  // Flikräknarna körs bara när routen får counts=1, men exporten måste finnas i mocken: routen
+  // Statusräknarna körs bara när routen får counts=1, men exporten måste finnas i mocken: routen
   // importerar den, och en saknad namngiven export kastar vid import och blir ett 500 i stället.
-  getCrmQuoteFilterCounts: vi.fn(async () => ({ all: 0, active: 0, follow_up: 0, won: 0, lost: 0 })),
+  getCrmQuoteStatusCounts: vi.fn(async () => ({ draft: 1, sent: 2, follow_up: 3, won: 4, lost: 5 })),
   CRM_QUOTES_PAGE_SIZE: 100,
   createCrmQuote: vi.fn(),
   getCrmQuote: vi.fn(),
@@ -339,6 +341,50 @@ describe('GET /api/crm/quotes — svar', () => {
 
     expect(res.status).toBe(500);
     expect((await res.json()).errorDetails.code).toBe('crm_quotes_list_failed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/crm/quotes — statusfiltret (?statuses=)
+// ---------------------------------------------------------------------------
+
+describe('GET /api/crm/quotes — statusfiltret', () => {
+  beforeEach(() => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockList.mockResolvedValue({ data: [], error: null, count: 0 } as any);
+  });
+
+  it('skickar de ikryssade statusarna till domänen, i menyns ordning', async () => {
+    expect((await collectionGET(req('/api/crm/quotes?statuses=won,draft'))).status).toBe(200);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ statusIn: ['draft', 'won'] });
+  });
+
+  it('en TOM parameter är "inget ikryssat" — inte "inget filter"', async () => {
+    // 🧨 `|| undefined` hade gjort den tomma strängen till undefined och visat ALLA offerter när
+    // användaren just kryssat ur allt.
+    expect((await collectionGET(req('/api/crm/quotes?statuses='))).status).toBe(200);
+    expect(mockList.mock.calls[0][1]).toMatchObject({ statusIn: [] });
+  });
+
+  it('utan parameter filtreras det inte på status', async () => {
+    await collectionGET(req('/api/crm/quotes'));
+    expect((mockList.mock.calls[0][1] as any).statusIn).toBeUndefined();
+  });
+
+  it('en okänd status är 400', async () => {
+    expect((await collectionGET(req('/api/crm/quotes?statuses=draft,bogus'))).status).toBe(400);
+    expect(mockList).not.toHaveBeenCalled();
+  });
+
+  it('counts=1 ger räknarna per status — och inga flikräknare till den nya listan', async () => {
+    const body = await (await collectionGET(req('/api/crm/quotes?counts=1&statuses=draft'))).json();
+    expect(body.data.statusCounts).toEqual({ draft: 1, sent: 2, follow_up: 3, won: 4, lost: 5 });
+    expect(body.data.counts).toBeUndefined();
+  });
+
+  it('en flik från före driftsättningen (filter=) får sina flikräknare, framräknade ur statusarna', async () => {
+    const body = await (await collectionGET(req('/api/crm/quotes?counts=1&filter=active'))).json();
+    expect(body.data.counts).toEqual({ all: 15, active: 6, follow_up: 3, won: 4, lost: 5 });
   });
 });
 

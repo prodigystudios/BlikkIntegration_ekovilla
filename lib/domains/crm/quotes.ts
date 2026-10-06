@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConstructionSlug } from './constructions';
 import { convertProspectToCustomer, setAccountManagerIfUnset } from './customers';
+import { QUOTE_STATUS_FILTER_OPTIONS, type QuoteStatusFilterOption } from './listStatusFilter';
 
 export const crmQuoteSelect = `
   id,
@@ -156,11 +157,12 @@ export const CRM_QUOTES_PAGE_SIZE = 100;
 // and SENT ones next — the two groups the money figures are built on.
 export type CrmQuoteSort = 'status_asc' | 'updated_desc' | 'created_desc' | 'follow_up_asc';
 
-// The offer list's tabs → the concrete statuses each one covers, so the page filter and its chip
-// counts can never diverge from each other. 'all' = no status filter. Mirrors
-// BOARD_FILTER_STATUSES for work orders.
+// The offer list's former tabs → the concrete statuses each one covers. 'all' = no status filter.
+// Mirrors BOARD_FILTER_STATUSES for work orders. The list itself filters on single statuses since
+// 2026-10-06 (`statusIn`, lib/domains/crm/listStatusFilter.ts); the groups stay for the overview's
+// ACTIVE_QUOTE_STATUSES and for the route's `filter` parameter, which a browser tab opened before
+// that deploy still sends.
 export type CrmQuoteListFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
-export const CRM_QUOTE_LIST_FILTERS: CrmQuoteListFilter[] = ['all', 'active', 'follow_up', 'won', 'lost'];
 export const QUOTE_FILTER_STATUSES: Record<CrmQuoteListFilter, CrmQuoteStatus[] | null> = {
   all: null,
   // "Aktiva" = still in play: not won, not lost.
@@ -174,6 +176,8 @@ type ListCrmQuotesOptions = {
   search?: string;
   status?: CrmQuoteStatus;
   filter?: CrmQuoteListFilter;
+  /** The list's status filter — the ticked statuses. An empty list matches no rows. */
+  statusIn?: readonly CrmQuoteStatus[];
   assignedToIn?: string[];
   prospectId?: string;
   customerId?: string;
@@ -198,6 +202,8 @@ function applyQuoteListFilters<Q extends {
   }
   const statuses = options.filter ? QUOTE_FILTER_STATUSES[options.filter] : null;
   if (statuses) query = query.in('status', statuses);
+  // Inget ikryssat = inga rader: PostgREST svarar `status=in.()` med en tom lista, inte ett fel.
+  if (options.statusIn) query = query.in('status', [...options.statusIn]);
   if (options.status) query = query.eq('status', options.status);
   if (options.assignedToIn && options.assignedToIn.length > 0) query = query.in('assigned_to', options.assignedToIn);
   if (options.prospectId) query = query.eq('prospect_id', options.prospectId);
@@ -226,28 +232,45 @@ export async function listCrmQuotesWithFilters(supabase: SupabaseClient, options
   return applyQuoteListFilters(ordered.range(offset, offset + limit - 1), options);
 }
 
-// Per-filter counts for the offer list's tabs. One head-count query per tab (count only, no rows
-// transferred) so the numbers stay exact at any table size. The search and assignee scope is
-// applied so the counts describe the same set the list is showing.
-export async function getCrmQuoteFilterCounts(
+// Per-status counts for the offer list's status filter — the number beside each checkbox. One
+// head-count query per status (count only, no rows transferred) so the numbers stay exact at any
+// table size. The search and assignee scope is applied so the counts describe the same set the list
+// is showing; the status selection itself is NOT, so an unticked status still says how many it hides.
+export async function getCrmQuoteStatusCounts(
   supabase: SupabaseClient,
   options: { search?: string; assignedToIn?: string[]; prospectId?: string; customerId?: string },
-): Promise<Record<CrmQuoteListFilter, number>> {
+): Promise<Record<QuoteStatusFilterOption, number>> {
   const entries = await Promise.all(
-    CRM_QUOTE_LIST_FILTERS.map(async (filter) => {
+    QUOTE_STATUS_FILTER_OPTIONS.map(async (status) => {
       const query = applyQuoteListFilters(
         supabase.from('crm_quotes').select('id', { count: 'exact', head: true }),
-        { ...options, filter },
+        { ...options, statusIn: [status] },
       );
-      // Throw rather than fall back to 0: a failed count would otherwise render as "Alla 0" beside
-      // a hundred visible rows, with nothing telling the reader the number is wrong. Silent zeros
-      // are the failure mode this whole change exists to remove.
+      // Throw rather than fall back to 0: a failed count would otherwise render as "Utkast 0" beside
+      // a list full of drafts, with nothing telling the reader the number is wrong.
       const { count, error } = await query;
-      if (error) throw new Error(`quote_counts:${filter}: ${error.message}`);
-      return [filter, count ?? 0] as const;
+      if (error) throw new Error(`quote_counts:${status}: ${error.message}`);
+      return [status, count ?? 0] as const;
     }),
   );
-  return Object.fromEntries(entries) as Record<CrmQuoteListFilter, number>;
+  return Object.fromEntries(entries) as Record<QuoteStatusFilterOption, number>;
+}
+
+/**
+ * Flikräknarna ur statusräknarna — bara för en webbläsarflik som öppnades före 2026-10-06 och
+ * fortfarande frågar med `filter=` och läser `counts`. Utan dem hade dess flikar stått kvar på
+ * gamla siffror tills sidan laddades om. Ingen extra fråga: grupperna är summor av statusarna.
+ * Kan tas bort när ingen sådan flik rimligen finns kvar.
+ */
+export function legacyQuoteTabCounts(counts: Record<QuoteStatusFilterOption, number>): Record<CrmQuoteListFilter, number> {
+  const sum = (statuses: readonly CrmQuoteStatus[]) => statuses.reduce((total, status) => total + (counts[status] ?? 0), 0);
+  return {
+    all: sum(QUOTE_STATUS_FILTER_OPTIONS),
+    active: sum(QUOTE_FILTER_STATUSES.active ?? []),
+    follow_up: counts.follow_up,
+    won: counts.won,
+    lost: counts.lost,
+  };
 }
 
 export async function getCrmQuote(supabase: SupabaseClient, id: string) {

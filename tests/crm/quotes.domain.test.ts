@@ -143,7 +143,7 @@ describe('markCrmQuoteWon — offertens ansvariga blir kundansvarig', () => {
 // kan inte lagas i webbläsaren.
 // ---------------------------------------------------------------------------
 
-import { listCrmQuotesWithFilters, getCrmQuoteFilterCounts, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
+import { listCrmQuotesWithFilters, getCrmQuoteStatusCounts, legacyQuoteTabCounts, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { makeSupabaseMock } from './helpers/supabase';
 
 describe('listCrmQuotesWithFilters — radordningen', () => {
@@ -203,6 +203,18 @@ describe('listCrmQuotesWithFilters — sidindelning och flikfilter', () => {
     expect((supabase._query.in as any).mock.calls).toEqual([['status', ['draft', 'sent', 'follow_up']]]);
   });
 
+  it('statusfiltrets val går till servern som en in-lista', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { statusIn: ['draft', 'won'] });
+    expect((supabase._query.in as any).mock.calls).toEqual([['status', ['draft', 'won']]]);
+  });
+
+  it('inget ikryssat ger en tom in-lista — inga rader, inte alla', async () => {
+    const supabase = makeSupabaseMock({ data: [], error: null });
+    await listCrmQuotesWithFilters(supabase as any, { statusIn: [] });
+    expect((supabase._query.in as any).mock.calls).toEqual([['status', []]]);
+  });
+
   it('"Alla" sätter inget statusfilter', async () => {
     const supabase = makeSupabaseMock({ data: [], error: null });
     await listCrmQuotesWithFilters(supabase as any, { filter: 'all' });
@@ -232,16 +244,26 @@ describe('listCrmQuotesWithFilters — sidindelning och flikfilter', () => {
   });
 });
 
-describe('getCrmQuoteFilterCounts', () => {
-  it('räknar varje flik med head-frågor i samma sök- och ansvarig-skop', async () => {
-    const supabase = makeSupabaseMock({ data: null, error: null, count: 7 } as any);
-    const counts = await getCrmQuoteFilterCounts(supabase as any, { search: 'tak', assignedToIn: ['anna'] });
+describe('legacyQuoteTabCounts — flikräknarna för en flik från före statusfiltret', () => {
+  it('grupperna är summor av statusarna, Alla är allt', () => {
+    expect(legacyQuoteTabCounts({ draft: 1, sent: 2, follow_up: 3, won: 4, lost: 5 }))
+      .toEqual({ all: 15, active: 6, follow_up: 3, won: 4, lost: 5 });
+  });
+});
 
-    expect(counts).toEqual({ all: 7, active: 7, follow_up: 7, won: 7, lost: 7 });
+describe('getCrmQuoteStatusCounts', () => {
+  it('räknar varje status med head-frågor i samma sök- och ansvarig-skop', async () => {
+    const supabase = makeSupabaseMock({ data: null, error: null, count: 7 } as any);
+    const counts = await getCrmQuoteStatusCounts(supabase as any, { search: 'tak', assignedToIn: ['anna'] });
+
+    expect(counts).toEqual({ draft: 7, sent: 7, follow_up: 7, won: 7, lost: 7 });
     // head: true — räkningen ska inte dra över några rader.
     expect((supabase._query.select as any).mock.calls[0]).toEqual(['id', { count: 'exact', head: true }]);
-    // Skopet appliceras på varje flik, annars beskriver räknarna en annan mängd än listan visar.
+    // Skopet appliceras på varje status, annars beskriver räknarna en annan mängd än listan visar.
     expect((supabase._query.or as any).mock.calls.length).toBe(5);
     expect((supabase._query.in as any).mock.calls).toContainEqual(['assigned_to', ['anna']]);
+    // En fråga per status, var och en på just sin status.
+    const statusCalls = (supabase._query.in as any).mock.calls.filter(([column]: [string]) => column === 'status');
+    expect(statusCalls).toEqual([['status', ['draft']], ['status', ['sent']], ['status', ['follow_up']], ['status', ['won']], ['status', ['lost']]]);
   });
 });
