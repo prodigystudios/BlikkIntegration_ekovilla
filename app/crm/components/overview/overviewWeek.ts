@@ -31,7 +31,8 @@ export function shiftWeek(weekStart: string, weeks: number): string {
 /**
  * Tavlans fönster för en vald vecka. Denna vecka: läsarens eget fönster, oförändrat. En annan vecka:
  * veckans torsdag som dag — rutten kräver en dag INOM veckan. Dagen väljer inte längre budget;
- * det gör veckans torsdag på servern (scoreboardMonthStart), live och i efterhand likadant.
+ * servern mäter veckan mot månaden med flest av veckans dagar (scoreboardMonthStart), live och i
+ * efterhand likadant.
  */
 export function scoreboardWindowFor(weekStart: string, current: ScoreboardWeek): ScoreboardWeek {
   if (weekStart === current.weekStart) return current;

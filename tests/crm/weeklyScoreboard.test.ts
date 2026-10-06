@@ -186,16 +186,18 @@ describe('composeWeeklyScoreboard — ordningen', () => {
 });
 
 describe('scoreboardMonthStart', () => {
-  // Veckan 28 sep–4 okt har fyra dagar i oktober: torsdagen 1 okt. Samma svar vilken dag man tittar.
-  it('en vecka som korsar ett månadsskifte mäts mot torsdagens månad', () => {
+  // Veckan 28 sep–4 okt har tre dagar i september och fyra i oktober. Samma svar vilken dag man tittar.
+  it('en vecka som korsar ett månadsskifte mäts mot månaden med flest av veckans dagar', () => {
     expect(scoreboardMonthStart('2026-09-28')).toBe('2026-10-01');
-    expect(scoreboardMonthStart('2026-08-31')).toBe('2026-09-01'); // torsdag 3 sep
-    expect(scoreboardMonthStart('2026-09-21')).toBe('2026-09-01'); // torsdag 24 sep
+    expect(scoreboardMonthStart('2026-08-31')).toBe('2026-09-01'); // 1 dag aug, 6 sep
+    expect(scoreboardMonthStart('2026-10-26')).toBe('2026-10-01'); // 6 dagar okt, 1 nov
+    expect(scoreboardMonthStart('2027-03-29')).toBe('2027-04-01'); // 3 dagar mars, 4 april
+    expect(scoreboardMonthStart('2026-09-21')).toBe('2026-09-01'); // hela veckan i september
   });
 
   it('över ett årsskifte', () => {
-    expect(scoreboardMonthStart('2026-12-28')).toBe('2026-12-01'); // torsdag 31 dec
-    expect(scoreboardMonthStart('2027-01-25')).toBe('2027-01-01'); // torsdag 28 jan
+    expect(scoreboardMonthStart('2026-12-28')).toBe('2026-12-01'); // 4 dagar dec, 3 jan
+    expect(scoreboardMonthStart('2027-01-25')).toBe('2027-01-01'); // hela veckan i januari
   });
 });
 
@@ -222,7 +224,7 @@ function fakeClient(tables: Record<string, unknown[]>) {
 describe('fetchWeeklyScoreboard — frågorna', () => {
   const WINDOW = { today: '2026-10-01', ...WEEK };
 
-  it('läser samtalen från veckans måndag och budgeten för torsdagens månad', async () => {
+  it('läser samtalen från veckans måndag och budgeten för månaden med flest av veckans dagar', async () => {
     const { client, calls } = fakeClient({});
     // Måndagen 28 sep: dagen ligger i september, men veckan hör till oktober.
     await fetchWeeklyScoreboard(client, { ...WINDOW, today: '2026-09-28' });

@@ -156,8 +156,11 @@ export function composeWeeklyScoreboard(
 }
 
 /**
- * Månadsbudgetens nyckel för en vecka: TORSDAGENS månad. En ISO-vecka hör till torsdagens månad —
- * där ligger minst fyra av veckans sju dagar — och det är samma månad vilken dag man än tittar.
+ * Månadsbudgetens nyckel för en vecka: MÅNADEN DÄR FLEST AV VECKANS DAGAR LIGGER. Spelar bara roll
+ * för veckan där månaden byts — alla andra veckor ligger helt i sin månad. 28 sep–4 okt (3 dagar i
+ * september, 4 i oktober) mäts mot oktober. Räknas som torsdagens månad: torsdagen är veckans
+ * mittdag, så dess månad har alltid minst fyra av de sju dagarna (samma regel som veckonumren).
+ * Beslutat av William 2026-10-06, med alternativen måndagens månad och en per dag delad vecka.
  *
  * Förut var det läsarens dag. En vecka som korsade ett månadsskifte mättes då mot september måndag–
  * onsdag och mot oktober torsdag–söndag: målen och stjärnorna bytte mitt i veckan, och när veckan

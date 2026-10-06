@@ -60,8 +60,8 @@ describe('scoreboardWindowFor', () => {
     expect(scoreboardWindowFor('2026-10-05', CURRENT)).toEqual(CURRENT);
   });
 
-  // Dagen väljer månadsbudget. Veckan 28 sep–4 okt har fyra dagar i oktober: torsdagen 1 okt.
-  it('en tidigare vecka mäts mot torsdagens månad', () => {
+  // Rutten kräver en dag inom veckan; torsdagen ligger alltid där.
+  it('en tidigare vecka får sin torsdag som dag', () => {
     expect(scoreboardWindowFor('2026-09-28', CURRENT)).toEqual({ weekStart: '2026-09-28', weekEnd: '2026-10-05', today: '2026-10-01' });
   });
 
