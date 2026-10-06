@@ -62,6 +62,8 @@ export default async function EkonomiWorkOrdersPage() {
           // 🧨 Byrån står aldrig som ansvarig på en order. Utan den här startar listan på "Mina"
           // och öppnas TOM — den hade sett ut som att det inte finns några arbetsordrar alls.
           canBeAssignee={false}
+          // TG-kolumnen följer samma nyckel som kostnadsrutten (crm.report.read).
+          canSeeMargins={held.has('crm.report.read')}
         />
       </Suspense>
     </PageShell>

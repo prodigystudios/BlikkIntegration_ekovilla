@@ -6,14 +6,15 @@ import { crm, workOrderStatusClass, workOrderStatusLabel } from '@/app/crm/lib/c
 import { documentRef, formatDate } from '@/app/crm/lib/format';
 import { netAmount } from '@/lib/domains/crm/pricing';
 import { formatCurrency, stockholmDateISO } from './overviewFormat';
-import { CustomerCell, RecentTable, recentWidth, type RecentColumn } from './OverviewRecentTable';
+import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
+import { recentWidth } from './OverviewRecentTable';
 import { RecentCard } from './OverviewStates';
 import type { WorkOrderItem } from './overviewTypes';
 
 // Postens adress — kundlänken och radklicket går dit, så den står en gång.
 const orderHref = (order: WorkOrderItem) => `/crm/arbetsorder/${order.id}`;
 
-const COLUMNS: Array<RecentColumn<WorkOrderItem>> = [
+const COLUMNS: Array<CrmTableColumn<WorkOrderItem>> = [
   // Numret via documentRef: Fortnox-numret först, det interna bara som reserv. Visning, inte
   // uppslag — länken går på id:t.
   { header: 'Ordernr', className: recentWidth.number, cell: (order) => documentRef(order.fortnox_order_number, order.order_number) },
@@ -42,7 +43,7 @@ export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   return (
     <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed}>
       {workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
-        <RecentTable label="Senaste ordrar" columns={COLUMNS} rows={workOrders} rowHref={orderHref} />
+        <CrmTable size="compact" label="Senaste ordrar" columns={COLUMNS} rows={workOrders} rowHref={orderHref} />
       )}
     </RecentCard>
   );
