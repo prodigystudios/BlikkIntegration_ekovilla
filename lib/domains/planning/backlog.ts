@@ -4,6 +4,7 @@ import { hasUnallocatedWork, type StageScope, type WorkOrderStage } from '@/lib/
 import { scopeKey } from './weekValue';
 import type { BacklogPlacement, SchedulableWorkOrder } from './types';
 import { sortPlacements } from './backlogPlacements';
+import { chunkIds, readAllPages } from './pagedRead';
 
 // resolveJobAddress is the single source for the job-site address; re-exported under its old name
 // so existing tests/imports keep working.
@@ -154,15 +155,25 @@ export async function listSchedulableWorkOrders(
   const ids = rows.map((r) => r.id);
   // ⚠️ stage_id måste med: att etapp 1 är utplacerad säger ingenting om etapp 2, och utan den hade
   // hela ordern räknats som planerad så fort dess första etapp lagts ut.
-  const { data: segs, error: segErr } = await supabase
-    .from('ops_segments')
-    .select('id, work_order_id, stage_id, truck_id, start_day, end_day, on_hold')
-    .in('work_order_id', ids);
-
-  if (segErr) return { data: [], error: segErr };
+  // ⚠️ SIDINDELAD OCH CHUNKAD (pagedRead.ts). PostgREST kapar vid 1000 rader utan att fela, och en
+  // kapad läsning här hade lagt ordrar som ligger på schemat under "Oplanerade" — utan rader att
+  // hitta dem med. `.in()` ligger i URL:en, därav portionerna.
+  const segs: PlacementRow[] = [];
+  for (const chunk of chunkIds(ids)) {
+    const { rows: page, error: segErr } = await readAllPages<PlacementRow>((from, to) =>
+      supabase
+        .from('ops_segments')
+        .select('id, work_order_id, stage_id, truck_id, start_day, end_day, on_hold')
+        .in('work_order_id', chunk)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (segErr) return { data: [], error: segErr };
+    segs.push(...page);
+  }
 
   // Räknaren OCH listan ur samma kort: segment_count är listans längd, aldrig en egen räkning.
-  const placements = placementsByScope((segs ?? []) as PlacementRow[]);
+  const placements = placementsByScope(segs);
 
   const items = rows.flatMap((r) =>
     backlogItemsForStatus(

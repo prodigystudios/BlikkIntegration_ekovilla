@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  monthStackStart, parseISO, placementDayLabel, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO,
+  monthStackStart, parseISO, placementDayLabel, sectionStart, shortDayISO, spansWeekday, startOfWeek, stockholmToday, stockholmTodayISO,
   weeksBetweenMondays, WEEKDAYS_SHORT,
 } from '@/app/crm/planering/planningDates';
 
@@ -240,5 +240,21 @@ describe('placementDayLabel', () => {
 
   it('över ett årsskifte: ISO-veckorna, inte kalenderårets', () => {
     expect(placementDayLabel('2026-12-31', '2027-01-04')).toEqual({ week: 'v.53–1', days: 'tor 31/12 – mån 4/1' });
+  });
+});
+
+describe('spansWeekday', () => {
+  it('ett kort på bara lördag–söndag har ingen vardag', () => {
+    expect(spansWeekday('2026-10-17', '2026-10-17')).toBe(false); // lör
+    expect(spansWeekday('2026-10-17', '2026-10-18')).toBe(false); // lör–sön
+  });
+
+  it('en helgkant mot en vardag räknas', () => {
+    expect(spansWeekday('2026-10-16', '2026-10-17')).toBe(true); // fre–lör
+    expect(spansWeekday('2026-10-18', '2026-10-19')).toBe(true); // sön–mån
+  });
+
+  it('tre dagar eller fler har alltid en vardag', () => {
+    expect(spansWeekday('2026-10-17', '2026-10-19')).toBe(true); // lör–mån
   });
 });

@@ -47,10 +47,22 @@ describe('backloggens kort och räknare hålls ihop', () => {
     expect(next[1]).toBe(backlog[1]); // etapp 2 orörd
   });
 
-  it('ett borttaget kort försvinner ur listan och räknaren går ner — aldrig under noll', () => {
+  it('ett borttaget kort försvinner ur listan och räknaren följer listan', () => {
     const next = withPlacementRemoved(backlog, 'wo1:s1', 'a');
     expect(next[0]).toMatchObject({ segment_count: 0, placements: [] });
-    expect(withPlacementRemoved(next, 'wo1:s1', 'a')[0].segment_count).toBe(0);
+  });
+
+  // Räknaren är listans längd, aldrig ±1: annars hade "Planerade" kunnat stå på en post utan rader.
+  it('ett kort som inte finns i listan ändrar ingenting — inte heller räknaren', () => {
+    const next = withPlacementRemoved(backlog, 'wo1:s1', 'a');
+    expect(withPlacementRemoved(next, 'wo1:s1', 'a')).toBe(next);
+  });
+
+  // En omladdning av backloggen kan hinna före placeringens egen uppdatering och redan bära kortet.
+  it('samma kort två gånger ger en rad och räknaren ett', () => {
+    const once = withPlacementAdded(backlog, 'wo1:s2', p('n', '2026-10-14'));
+    expect(withPlacementAdded(once, 'wo1:s2', p('n', '2026-10-14'))).toBe(once);
+    expect(once[1]).toMatchObject({ segment_count: 1 });
   });
 
   it('en flytt ändrar bil, dagar och paus på kortet och sorterar om; räknaren rörs inte', () => {

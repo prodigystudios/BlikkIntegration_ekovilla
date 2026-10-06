@@ -22,7 +22,7 @@ import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/
 import { revenueAnchorSegments, scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
+  parseISO, sectionStart, shortDayISO, spansWeekday, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -165,6 +165,9 @@ export default function PlanningClient({
 
   const [backlog, setBacklog] = useState<SchedulableWorkOrder[]>([]);
   const [trucks, setTrucks] = useState<OpsTruck[]>([]);
+  // Perioden `segments` faktiskt gäller. Skiljer sig från `range` medan en ny vecka laddas — "Visa på
+  // tavlan" behöver veta när den nya perioden är på plats innan den kan säga att ett kort saknas.
+  const [loadedRange, setLoadedRange] = useState<{ from: string; to: string } | null>(null);
   const [segments, setSegments] = useState<OpsSegment[]>([]);
   // Jobbens ALLA placeringar, även utanför den hämtade veckan — nämnaren när veckans omsättning
   // fördelas över de dagar jobbet faktiskt utförs. Se fönsterfällan i listScopeSpans.
@@ -335,6 +338,7 @@ export default function PlanningClient({
     );
     if (!data) return;
     setSegments(data.segments);
+    setLoadedRange({ from, to });
     setScopeSpans(data.scopeSpans ?? []);
     setTrucks(data.trucks);
     setBoardLoaded(true);
@@ -1110,55 +1114,64 @@ export default function PlanningClient({
   );
 
   // ── "Visa på tavlan" från backloggens placeringsrader ─────────────────────────
-  // Kortet som ska markeras, och om det hittats på tavlan än. Hittat = skrollat dit, och
-  // markeringens nedräkning börjar. Inte hittat = perioden laddas fortfarande.
-  const [focus, setFocus] = useState<{ id: string; found: boolean } | null>(null);
+  // Kortet som ska markeras och dess dagar, och om det hittats på tavlan än. Hittat = skrollat dit,
+  // och markeringens nedräkning börjar. Inte hittat = perioden laddas fortfarande.
+  const [focus, setFocus] = useState<{ id: string; start: string; end: string; found: boolean } | null>(null);
 
   const jumpToPlacement = useCallback(
     (item: SchedulableWorkOrder, p: BacklogPlacement) => {
       // Ingenting får dölja kortet: en bortvald bil visas igen (samma regel som revealTruck redan
-      // följer), och en sökning i tavlan som inte matchar jobbet töms — annars landar hoppet på en
-      // vecka där kortet inte syns, och raden ser trasig ut.
+      // följer), en sökning i tavlan som inte matchar jobbet töms, och ett kort som bara ligger på
+      // en helg får helgen påslagen — annars landar hoppet där kortet inte ritas. (En inaktiv bil
+      // har ingen rad på tavlan alls; den raden är inte klickbar i backloggen.)
       revealTruck(p.truck_id);
       if (!matchBoard(item)) setBoardSearch('');
-      // Redan inom det som visas — också "Hela månaden" och månadsvyns kantdagar: bara skrolla.
-      if (p.start_day < range.from || p.start_day > range.to) {
+      if (view === 'week' && !showWeekend && !spansWeekday(p.start_day, p.end_day)) toggleWeekend();
+      // Ritas redan i det som visas — kortet ÖVERLAPPAR perioden, också "Hela månaden" och
+      // månadsvyns kantdagar: bara skrolla. (Startdagen ensam räcker inte: ett jobb fre–tis ritas i
+      // veckan efter sin startdag också.)
+      const visible = p.start_day <= range.to && p.end_day >= range.from;
+      if (!visible) {
         const target = parseISO(p.start_day);
         // Veckor räknas i dygn och avrundas (weeksBetweenMondays) — en ren ms-division hade gett
         // 0,994 eller 1,006 över en sommartidsväxling.
         if (view === 'week') setWeekOffset(weeksBetweenMondays(startOfWeek(todayAnchor), startOfWeek(target)));
         else setMonthOffset((target.getFullYear() - todayAnchor.getFullYear()) * 12 + target.getMonth() - todayAnchor.getMonth());
       }
-      setFocus({ id: p.segment_id, found: false });
+      setFocus({ id: p.segment_id, start: p.start_day, end: p.end_day, found: false });
     },
-    [revealTruck, matchBoard, range.from, range.to, view, todayAnchor],
+    [revealTruck, matchBoard, view, showWeekend, toggleWeekend, range.from, range.to, todayAnchor],
   );
 
-  // Letar upp kortet efter varje omritning tills det finns: en ny vecka laddas asynkront, och en
-  // nyss avdold bil eller tömd sökning syns först i nästa rendering.
+  // Letar upp kortet efter varje omritning tills det finns: en ny period laddas asynkront, och en
+  // nyss avdold bil, tömd sökning eller påslagen helg syns först i nästa rendering.
+  //
+  // ⚠️ "Saknas" avgörs av DATAN, inte av en klocka. Först när perioden kortet ligger i har laddats
+  // (loadedRange) och kortet ändå inte ritats finns det inte kvar där backloggen trodde — någon annan
+  // flyttade eller tog bort det. En tidsgräns från klicket hade sagt det om en långsam laddning.
   useEffect(() => {
     if (!focus || focus.found) return;
     const el = document.querySelector<HTMLElement>(`[data-segment-id="${focus.id}"]`);
-    if (!el) return;
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    setFocus({ id: focus.id, found: true });
-  }, [focus, visibleSegments]);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFocus({ ...focus, found: true });
+      return;
+    }
+    const periodLoaded = loadedRange !== null && focus.start <= loadedRange.to && focus.end >= loadedRange.from;
+    if (!periodLoaded) return;
+    setFocus(null);
+    toast.info('Kortet ligger inte där längre — det kan ha flyttats eller tagits bort. Backloggen läses om.');
+    loadBacklog().catch(() => {});
+  }, [focus, visibleSegments, loadedRange, toast, loadBacklog]);
 
   // Hittat: ringen ligger kvar medan skrollen landar och blicken hittar dit, sedan släpps den. Inte
-  // hittat inom rimlig tid: kortet finns inte kvar
-  // där backloggen trodde (någon annan flyttade eller tog bort det) — säg det i stället för att
-  // tyst inte göra något.
+  // hittat: släpps tyst efter en lång stund ifall laddningen dog — annars hade ett kort som till slut
+  // dök upp kunnat rycka tavlan dit långt senare.
   useEffect(() => {
     if (!focus) return;
-    const t = setTimeout(
-      () => {
-        setFocus(null);
-        if (!focus.found) toast.info('Kortet syns inte på tavlan. Det kan ha flyttats eller tagits bort — ladda om sidan.');
-      },
-      focus.found ? 3000 : 8000,
-    );
+    const t = setTimeout(() => setFocus(null), focus.found ? 3000 : 15000);
     return () => clearTimeout(t);
-  }, [focus, toast]);
+  }, [focus]);
 
   // Marginalen per jobb: TG1/TB2 vid insäljning, plus utfallet när det finns.
   //

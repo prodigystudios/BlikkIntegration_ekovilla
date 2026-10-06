@@ -1,9 +1,9 @@
 // Backlogpostens kort (`placements`) och räknare (`segment_count`) när tavlan ändras lokalt.
 //
-// ⚠️ BÅDA I SAMMA STEG, alltid. Räknaren styr filtret Oplanerade/Planerade och listan visar var
-// kortet ligger; ändras den ena utan den andra står "Planerade" på en post utan rader, eller tvärt
-// om. Servern bygger dem ur samma läsning (listSchedulableWorkOrders); här hålls de ihop mellan två
-// omladdningar.
+// ⚠️ RÄKNAREN ÄR LISTANS LÄNGD, aldrig ±1. Räknaren styr filtret Oplanerade/Planerade och listan
+// visar var kortet ligger; räknades de var för sig kunde "Planerade" stå på en post utan rader, eller
+// tvärtom. Servern bygger dem ur samma läsning (listSchedulableWorkOrders), och här sätts räknaren
+// om ur listan efter varje ändring.
 //
 // Samma array tillbaka när inget ändras, så att en oförändrad backlog inte ritar om.
 
@@ -19,28 +19,27 @@ export function sortPlacements(list: BacklogPlacement[]): BacklogPlacement[] {
   );
 }
 
-/** Ett nytt kort på posten `key` (matchar på nyckeln: etapp 1 och etapp 2 delar arbetsorder-id). */
+/**
+ * Ett nytt kort på posten `key` (matchar på nyckeln: etapp 1 och etapp 2 delar arbetsorder-id).
+ *
+ * Idempotent: finns kortet redan — en omladdning av backloggen hann före placeringens egen
+ * uppdatering — ändras ingenting. Annars hade det stått två gånger och räknaren legat ett för högt.
+ */
 export function withPlacementAdded<T extends BacklogEntry>(items: T[], key: string, placement: BacklogPlacement): T[] {
-  if (!items.some((b) => b.key === key)) return items;
-  return items.map((b) =>
-    b.key === key
-      ? { ...b, segment_count: b.segment_count + 1, placements: sortPlacements([...b.placements, placement]) }
-      : b,
-  );
+  const target = items.find((b) => b.key === key);
+  if (!target || target.placements.some((p) => p.segment_id === placement.segment_id)) return items;
+  return items.map((b) => (b.key === key ? withPlacements(b, sortPlacements([...b.placements, placement])) : b));
 }
 
-/** Kortet `segmentId` togs bort från posten `key`. Räknaren går aldrig under noll. */
+/** Kortet `segmentId` togs bort från posten `key`. Fanns det inte där ändras ingenting. */
 export function withPlacementRemoved<T extends BacklogEntry>(items: T[], key: string, segmentId: string): T[] {
-  if (!items.some((b) => b.key === key)) return items;
-  return items.map((b) =>
-    b.key === key
-      ? {
-          ...b,
-          segment_count: Math.max(0, b.segment_count - 1),
-          placements: b.placements.filter((p) => p.segment_id !== segmentId),
-        }
-      : b,
-  );
+  const target = items.find((b) => b.key === key);
+  if (!target || !target.placements.some((p) => p.segment_id === segmentId)) return items;
+  return items.map((b) => (b.key === key ? withPlacements(b, b.placements.filter((p) => p.segment_id !== segmentId)) : b));
+}
+
+function withPlacements<T extends BacklogEntry>(entry: T, placements: BacklogPlacement[]): T {
+  return { ...entry, placements, segment_count: placements.length };
 }
 
 /** Kortet `segmentId` flyttades, pausades eller ändrade längd. Räknaren rörs inte. */

@@ -56,6 +56,7 @@ export function shortDayISO(iso: string): string {
 // fördelningen av omsättning över veckor jämför dagnummer räknade i domänen med spann räknade här.
 // Två ankringar för samma tal är en glidning som väntar på att hända.
 export { daysBetweenInclusiveISO as daysBetweenInclusive } from '@/lib/domains/planning/timezone';
+import { daysBetweenInclusiveISO } from '@/lib/domains/planning/timezone';
 
 // Monday of the week containing d.
 export function startOfWeek(d: Date): Date {
@@ -135,6 +136,19 @@ export function placementDayLabel(startDay: string, endDay: string): { week: str
     week: startWeek === endWeek ? `v.${startWeek}` : `v.${startWeek}–${endWeek}`,
     days: startDay === endDay ? shortDayISO(startDay) : `${shortDayISO(startDay)} – ${shortDayISO(endDay)}`,
   };
+}
+
+/**
+ * Ligger spannet på minst en vardag? Ett kort som bara ligger på lördag–söndag ritas inte i
+ * veckovyn när helgen är dold — "Visa på tavlan" slår då på helgen i stället för att leta förgäves.
+ * En helg är högst två dagar i rad, så tre dagar eller fler har alltid en vardag.
+ */
+export function spansWeekday(startDay: string, endDay: string): boolean {
+  if (daysBetweenInclusiveISO(startDay, endDay) >= 3) return true;
+  return [startDay, endDay].some((iso) => {
+    const weekday = parseISO(iso).getDay();
+    return weekday !== 0 && weekday !== 6;
+  });
 }
 
 export type WeekDay = { iso: string; date: Date; weekday: string; dayLabel: string; isWeekend: boolean };
