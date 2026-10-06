@@ -11,6 +11,9 @@ import { CustomerCell, RecentTable, recentWidth, type RecentColumn } from './Ove
 import { RecentCard } from './OverviewStates';
 import type { QuoteItem } from './overviewTypes';
 
+// Postens adress — kundlänken och radklicket går dit, så den står en gång.
+const quoteHref = (quote: QuoteItem) => `/crm/offerter?quote_id=${quote.id}`;
+
 const COLUMNS: Array<RecentColumn<QuoteItem>> = [
   // Numret via documentRef: Fortnox-numret först, det interna bara som reserv.
   { header: 'Offertnr', className: recentWidth.number, cell: (quote) => documentRef(quote.fortnox_offer_number, quote.quote_number) },
@@ -19,7 +22,7 @@ const COLUMNS: Array<RecentColumn<QuoteItem>> = [
   {
     header: 'Kund',
     className: recentWidth.name,
-    cell: (quote) => <CustomerCell href={`/crm/offerter?quote_id=${quote.id}`} customer={quoteCustomerName(quote)} project={quote.project_name} />,
+    cell: (quote) => <CustomerCell href={quoteHref(quote)} customer={quoteCustomerName(quote)} project={quote.project_name} />,
   },
   // Netto, som resten av översikten. `amount` är bruttot (subtotal + moms).
   { header: 'Exkl. moms', className: recentWidth.amount, cell: (quote) => formatCurrency(netAmount(quote), quote.currency_code) },
@@ -47,7 +50,7 @@ export default function OverviewRecentQuotes({ loading, failed, quotes }: {
   return (
     <RecentCard title="Senaste offerter" href="/crm/offerter" loading={loading} failed={failed}>
       {quotes.length === 0 ? <EmptyState description="Inga offerter ännu." /> : (
-        <RecentTable label="Senaste offerter" columns={COLUMNS} rows={quotes} />
+        <RecentTable label="Senaste offerter" columns={COLUMNS} rows={quotes} rowHref={quoteHref} />
       )}
     </RecentCard>
   );
