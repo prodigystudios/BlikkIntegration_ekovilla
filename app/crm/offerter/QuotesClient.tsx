@@ -496,7 +496,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
               defaultValue={DEFAULT_QUOTE_STATUS_FILTER}
               labelOf={quoteStatusLabel}
               counts={counts}
-              // Bredare än de andra två: startvalets text, "Utom Avslutad, Avbruten", ska rymmas.
+              // Samma bredd som orderlistans statusfilter, så att verktygsraderna står likadant.
               className="w-full sm:w-[14rem]"
             />
             <SortFilter

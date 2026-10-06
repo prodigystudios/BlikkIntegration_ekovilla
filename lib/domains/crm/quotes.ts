@@ -256,6 +256,23 @@ export async function getCrmQuoteStatusCounts(
   return Object.fromEntries(entries) as Record<QuoteStatusFilterOption, number>;
 }
 
+/**
+ * Flikräknarna ur statusräknarna — bara för en webbläsarflik som öppnades före 2026-10-06 och
+ * fortfarande frågar med `filter=` och läser `counts`. Utan dem hade dess flikar stått kvar på
+ * gamla siffror tills sidan laddades om. Ingen extra fråga: grupperna är summor av statusarna.
+ * Kan tas bort när ingen sådan flik rimligen finns kvar.
+ */
+export function legacyQuoteTabCounts(counts: Record<QuoteStatusFilterOption, number>): Record<CrmQuoteListFilter, number> {
+  const sum = (statuses: readonly CrmQuoteStatus[]) => statuses.reduce((total, status) => total + (counts[status] ?? 0), 0);
+  return {
+    all: sum(QUOTE_STATUS_FILTER_OPTIONS),
+    active: sum(QUOTE_FILTER_STATUSES.active ?? []),
+    follow_up: counts.follow_up,
+    won: counts.won,
+    lost: counts.lost,
+  };
+}
+
 export async function getCrmQuote(supabase: SupabaseClient, id: string) {
   return supabase
     .from('crm_quotes')

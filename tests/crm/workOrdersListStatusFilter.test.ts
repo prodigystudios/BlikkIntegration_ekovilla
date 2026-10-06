@@ -67,9 +67,16 @@ describe('GET /api/crm/work-orders — statusfiltret', () => {
     expect(mockList).not.toHaveBeenCalled();
   });
 
-  it('counts=1 ger räknarna per val', async () => {
+  it('counts=1 ger räknarna per val — och inga flikräknare till den nya listan', async () => {
     const body = await (await GET(req('/api/crm/work-orders?counts=1'))).json();
     expect(body.data.statusCounts).toMatchObject({ scheduled: 2, invoiced: 6, cancelled: 7 });
+    expect(body.data.counts).toBeUndefined();
+  });
+
+  it('en flik från före driftsättningen (filter=) får sina flikräknare, framräknade ur statusarna', async () => {
+    const body = await (await GET(req('/api/crm/work-orders?counts=1&filter=all'))).json();
+    // Fakturera = Fakturera + Delfakturerad; Alla = allt, också Avbruten, som förut.
+    expect(body.data.counts).toEqual({ all: 28, draft: 1, scheduled: 2, active: 3, completed: 9, invoiced: 6 });
   });
 });
 

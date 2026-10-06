@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { createCrmQuote, getCrmQuote, getCrmQuoteStatusCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
+import { createCrmQuote, getCrmQuote, getCrmQuoteStatusCounts, legacyQuoteTabCounts, listCrmQuotesWithFilters, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { pushQuoteToFortnox } from '@/lib/domains/fortnox/offers';
 import { FortnoxNotConnectedError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import {
@@ -74,7 +74,10 @@ export async function GET(req: Request) {
     const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
     const statusCounts = wantCounts ? await getCrmQuoteStatusCounts(supabase, scope) : undefined;
 
-    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts });
+    // En flik från före 2026-10-06 frågar med filter= och läser `counts` — se legacyQuoteTabCounts.
+    const counts = statusCounts && parsedQuery.data.filter ? legacyQuoteTabCounts(statusCounts) : undefined;
+
+    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts, counts });
   } catch (e: any) {
     return routeError(500, 'crm_quotes_unexpected', e?.message || 'Failed to list quotes');
   }

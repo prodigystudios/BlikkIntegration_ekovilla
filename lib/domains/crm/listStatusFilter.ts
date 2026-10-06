@@ -7,6 +7,10 @@
 // offerterna allt utom Förlorad (en vunnen offert syns, Williams val). Valet sparas inte — varje
 // besök börjar om här, som ansvarigfiltret.
 
+// Bara typer — de raderas vid kompileringen, så modulen drar inte in domänfilerna i klientbundlen.
+import type { CrmQuoteStatus } from './quotes';
+import type { CrmWorkOrderStatus } from './work-orders';
+
 export const QUOTE_STATUS_FILTER_OPTIONS = ['draft', 'sent', 'follow_up', 'won', 'lost'] as const;
 export type QuoteStatusFilterOption = (typeof QUOTE_STATUS_FILTER_OPTIONS)[number];
 
@@ -22,7 +26,7 @@ export type WorkOrderStatusFilterOption = (typeof WORK_ORDER_STATUS_FILTER_OPTIO
  * bär den pensionerade `ready`, som visas som Planerad (crmTokens) och annars hade fallit bort ur
  * varje urval utom "alla".
  */
-export const WORK_ORDER_STATUS_FILTER_STATUSES: Record<WorkOrderStatusFilterOption, readonly string[]> = {
+export const WORK_ORDER_STATUS_FILTER_STATUSES: Record<WorkOrderStatusFilterOption, readonly CrmWorkOrderStatus[]> = {
   draft: ['draft'],
   scheduled: ['scheduled', 'ready'],
   in_progress: ['in_progress'],
@@ -35,6 +39,14 @@ export const WORK_ORDER_STATUS_FILTER_STATUSES: Record<WorkOrderStatusFilterOpti
 export const DEFAULT_WORK_ORDER_STATUS_FILTER: readonly WorkOrderStatusFilterOption[] = [
   'draft', 'scheduled', 'in_progress', 'completed', 'partially_invoiced',
 ];
+
+// 🧨 Kompileringsvakter: valen ovan är skrivna för hand, och en ny status i CrmQuoteStatus eller
+// CrmWorkOrderStatus hade annars aldrig dykt upp i menyn — dold av varje startval, 400 som
+// parameter, aldrig räknad. Glider listorna isär slutar de här två raderna kompilera.
+type SameMembers<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+export const QUOTE_STATUS_FILTER_COVERS_STATUSES: SameMembers<QuoteStatusFilterOption, CrmQuoteStatus> = true;
+// Orderns val är statusarna utom den pensionerade `ready`, som Planerad bär.
+export const WORK_ORDER_STATUS_FILTER_COVERS_STATUSES: SameMembers<WorkOrderStatusFilterOption | 'ready', CrmWorkOrderStatus> = true;
 
 /**
  * Frågeparametern `statuses`: valen i menyns ordning, kommaseparerade.
@@ -60,7 +72,7 @@ export function parseStatusFilterParam<T extends string>(raw: string | undefined
 }
 
 /** Orderns val → statusarna frågan ska matcha. */
-export function workOrderStatusesFor(selected: readonly WorkOrderStatusFilterOption[]): string[] {
+export function workOrderStatusesFor(selected: readonly WorkOrderStatusFilterOption[]): CrmWorkOrderStatus[] {
   return selected.flatMap((option) => WORK_ORDER_STATUS_FILTER_STATUSES[option]);
 }
 

@@ -12,6 +12,7 @@ export function FilterMenu({
   badge,
   heading,
   headerAction,
+  align = 'right',
   className,
   children,
 }: {
@@ -23,6 +24,12 @@ export function FilterMenu({
   heading: string;
   /** Länkknappar till höger om rubriken (Rensa, Visa alla …). */
   headerAction?: ReactNode;
+  /**
+   * Vilken kant av knappen menyn hänger från. Höger som standard (Ansvarig står ytterst till höger);
+   * vänster för ett filter som kan stå ytterst till vänster, annars sticker den bredare menyn ut
+   * utanför kortet.
+   */
+  align?: 'left' | 'right';
   className?: string;
   children: ReactNode;
 }) {
@@ -74,7 +81,10 @@ export function FilterMenu({
           aria-label={heading}
           // Minst 240 px, annars knappens bredd (hela raden på mobilen). 320 px hög: statusfiltrets
           // sju rader ryms utan rullning.
-          className="absolute right-0 z-[60] mt-2 max-h-80 w-full min-w-[240px] overflow-y-auto rounded-xl border border-[#d6e1d0] bg-[#f9fbf7] p-1.5 shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]"
+          className={cn(
+            'absolute z-[60] mt-2 max-h-80 w-full min-w-[240px] overflow-y-auto rounded-xl border border-[#d6e1d0] bg-[#f9fbf7] p-1.5 shadow-[0_18px_36px_-12px_rgba(20,44,27,0.28)]',
+            align === 'left' ? 'left-0' : 'right-0',
+          )}
         >
           <div className="flex items-center justify-between px-2 pb-1 pt-1">
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{heading}</span>

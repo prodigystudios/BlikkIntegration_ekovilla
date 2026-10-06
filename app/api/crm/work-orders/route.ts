@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { listCrmWorkOrdersWithFilters, getCrmWorkOrderStatusCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
+import { listCrmWorkOrdersWithFilters, getCrmWorkOrderStatusCounts, legacyWorkOrderTabCounts, createStandaloneCrmWorkOrder, CRM_WORK_ORDERS_PAGE_SIZE } from '@/lib/domains/crm/work-orders';
 import { workOrderStatusesFor } from '@/lib/domains/crm/listStatusFilter';
 import { createStandaloneWorkOrderSchema, listCrmWorkOrdersQuerySchema, ok, requirePermission, routeError, validationError } from './_lib';
 
@@ -74,7 +74,10 @@ export async function GET(req: Request) {
     const wantCounts = url.searchParams.get('counts') === '1' && offset === 0;
     const statusCounts = wantCounts ? await getCrmWorkOrderStatusCounts(supabase, { search, assignedToIn }) : undefined;
 
-    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts });
+    // En flik från före 2026-10-06 frågar med filter= och läser `counts` — se legacyWorkOrderTabCounts.
+    const counts = statusCounts && filter ? legacyWorkOrderTabCounts(statusCounts) : undefined;
+
+    return ok({ items: data || [], total: count ?? 0, offset, limit, statusCounts, counts });
   } catch (e: any) {
     return routeError(500, 'crm_work_orders_unexpected', e?.message || 'Failed to list work orders');
   }

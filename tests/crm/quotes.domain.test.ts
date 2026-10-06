@@ -143,7 +143,7 @@ describe('markCrmQuoteWon — offertens ansvariga blir kundansvarig', () => {
 // kan inte lagas i webbläsaren.
 // ---------------------------------------------------------------------------
 
-import { listCrmQuotesWithFilters, getCrmQuoteStatusCounts, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
+import { listCrmQuotesWithFilters, getCrmQuoteStatusCounts, legacyQuoteTabCounts, CRM_QUOTES_PAGE_SIZE } from '@/lib/domains/crm/quotes';
 import { makeSupabaseMock } from './helpers/supabase';
 
 describe('listCrmQuotesWithFilters — radordningen', () => {
@@ -241,6 +241,13 @@ describe('listCrmQuotesWithFilters — sidindelning och flikfilter', () => {
     // Numret som appen visar överallt måste gå att söka på — samma läxa som orderlistan fick.
     expect(filter).toContain('quote_number.ilike');
     expect(filter).toContain('fortnox_offer_number.ilike');
+  });
+});
+
+describe('legacyQuoteTabCounts — flikräknarna för en flik från före statusfiltret', () => {
+  it('grupperna är summor av statusarna, Alla är allt', () => {
+    expect(legacyQuoteTabCounts({ draft: 1, sent: 2, follow_up: 3, won: 4, lost: 5 }))
+      .toEqual({ all: 15, active: 6, follow_up: 3, won: 4, lost: 5 });
   });
 });
 

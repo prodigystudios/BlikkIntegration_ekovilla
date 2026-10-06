@@ -51,6 +51,8 @@ export default function StatusFilter<T extends string>({
           {changed ? <FilterMenuAction onClick={() => onChange([...defaultValue])}>Återställ</FilterMenuAction> : null}
         </span>
       )}
+      // Statusfiltret står först i raden — längst till vänster när filtren bryts till egen rad.
+      align="left"
       className={className}
     >
       {options.map((option) => (

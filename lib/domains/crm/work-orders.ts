@@ -641,6 +641,24 @@ export async function getCrmWorkOrderStatusCounts(
   return Object.fromEntries(entries) as Record<WorkOrderStatusFilterOption, number>;
 }
 
+/**
+ * Flikräknarna ur statusräknarna — bara för en webbläsarflik som öppnades före 2026-10-06 och
+ * fortfarande frågar med `filter=` och läser `counts`. Utan dem hade dess flikar stått kvar på
+ * gamla siffror tills sidan laddades om. Ingen extra fråga: flikarna är summor av statusvalen
+ * (Fakturera = Fakturera + Delfakturerad, Alla = allt inklusive Avbruten, som förut).
+ * Kan tas bort när ingen sådan flik rimligen finns kvar.
+ */
+export function legacyWorkOrderTabCounts(counts: Record<WorkOrderStatusFilterOption, number>): Record<CrmWorkOrderBoardFilter, number> {
+  return {
+    all: WORK_ORDER_STATUS_FILTER_OPTIONS.reduce((total, option) => total + (counts[option] ?? 0), 0),
+    draft: counts.draft,
+    scheduled: counts.scheduled,
+    active: counts.in_progress,
+    completed: counts.completed + counts.partially_invoiced,
+    invoiced: counts.invoiced,
+  };
+}
+
 // ── Snapshot-överlagringarna från ordervyn ───────────────────────────────────
 //
 // Tre olika personer/värden bor i samma jsonb-kolumn och redigeras i samma formulär:

@@ -7,7 +7,9 @@ import { salesUser, adminUser, memberUser, effectivePermissionsForRole } from '.
 
 vi.mock('@/lib/auth/route', () => ({ getCurrentUser: vi.fn() }));
 
-vi.mock('@/lib/domains/crm/quotes', () => ({
+vi.mock('@/lib/domains/crm/quotes', async (importOriginal) => ({
+  // Ren summering av statusräknarna — den riktiga, så att testet prövar vad gamla flikar får.
+  legacyQuoteTabCounts: (await importOriginal<typeof import('@/lib/domains/crm/quotes')>()).legacyQuoteTabCounts,
   listCrmQuotesWithFilters: vi.fn(),
   // Statusräknarna körs bara när routen får counts=1, men exporten måste finnas i mocken: routen
   // importerar den, och en saknad namngiven export kastar vid import och blir ett 500 i stället.
@@ -374,9 +376,15 @@ describe('GET /api/crm/quotes — statusfiltret', () => {
     expect(mockList).not.toHaveBeenCalled();
   });
 
-  it('counts=1 ger räknarna per status', async () => {
+  it('counts=1 ger räknarna per status — och inga flikräknare till den nya listan', async () => {
     const body = await (await collectionGET(req('/api/crm/quotes?counts=1&statuses=draft'))).json();
     expect(body.data.statusCounts).toEqual({ draft: 1, sent: 2, follow_up: 3, won: 4, lost: 5 });
+    expect(body.data.counts).toBeUndefined();
+  });
+
+  it('en flik från före driftsättningen (filter=) får sina flikräknare, framräknade ur statusarna', async () => {
+    const body = await (await collectionGET(req('/api/crm/quotes?counts=1&filter=active'))).json();
+    expect(body.data.counts).toEqual({ all: 15, active: 6, follow_up: 3, won: 4, lost: 5 });
   });
 });
 
