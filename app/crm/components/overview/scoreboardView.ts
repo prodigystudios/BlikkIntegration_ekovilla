@@ -45,12 +45,6 @@ export function formatMetricValue(metric: ScoreboardMetric, value: number): stri
   return isMoneyMetric(metric) ? kronor.format(value) : count.format(value);
 }
 
-/** "5 / 20", "0 kr / 400 000 kr" — eller bara utfallet när måttet saknar mål. */
-export function formatProgress(metric: ScoreboardMetric, progress: MetricProgress): string {
-  const done = formatMetricValue(metric, progress.done);
-  return progress.target == null ? done : `${done} / ${formatMetricValue(metric, progress.target)}`;
-}
-
 /** Andelen av målet för en stapel, 0–100. Null när det inte finns något mål — då ritas ingen stapel. */
 export function progressPercent(progress: MetricProgress): number | null {
   if (progress.target == null) return null;
