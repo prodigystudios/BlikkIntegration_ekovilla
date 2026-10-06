@@ -8,7 +8,7 @@ import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { formatDayRange } from '@/app/crm/lib/format';
-import type { OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
+import type { BacklogPlacement, OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
 import type { AssignablePerson, CrewMember } from '@/lib/domains/planning/crew';
 import type { DayNote } from '@/lib/domains/planning/dayNotes';
@@ -33,6 +33,7 @@ import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
 import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
+import { withPlacementAdded, withPlacementMoved, withPlacementRemoved } from '@/lib/domains/planning/backlogPlacements';
 import ConfirmModal from './ConfirmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
@@ -621,10 +622,16 @@ export default function PlanningClient({
           ...prev,
           { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
         ]);
-        // Räknaren matchar på key, inte id: annars hade den tickat upp på ordens ALLA etapper.
+        // Kortet (och räknaren) på key, inte id: annars hade det hamnat på ordens ALLA etapper.
         setBacklog((prev) =>
           backlogWithOrderStatus(
-            prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)),
+            withPlacementAdded(prev, item.key, {
+              segment_id: created.id,
+              truck_id: created.truck_id,
+              start_day: created.start_day,
+              end_day: created.end_day,
+              on_hold: created.on_hold,
+            }),
             item.id,
             created.job?.status,
           ),
@@ -654,6 +661,19 @@ export default function PlanningClient({
             : s,
         ),
       );
+      // Backloggens rad för kortet ska peka dit kortet nu ligger — annars hoppar "Visa på tavlan" till
+      // den gamla dagen. Ordning och jobbtyp syns inte i raden och rör den inte.
+      const { truck_id, start_day, end_day, on_hold } = patch;
+      if (truck_id !== undefined || start_day !== undefined || end_day !== undefined || on_hold !== undefined) {
+        setBacklog((cur) =>
+          withPlacementMoved(cur, id, {
+            ...(truck_id !== undefined ? { truck_id } : {}),
+            ...(start_day !== undefined ? { start_day } : {}),
+            ...(end_day !== undefined ? { end_day } : {}),
+            ...(on_hold !== undefined ? { on_hold } : {}),
+          }),
+        );
+      }
       // Samma skäl som vid placeringen: utan det här ligger jobbets värde kvar i den vecka det
       // flyttades FRÅN tills sidan laddas om.
       setScopeSpans((cur) =>
@@ -691,7 +711,7 @@ export default function PlanningClient({
       const key = seg?.work_order_id ? scopeKey(seg.work_order_id, seg.stage_id ?? null) : null;
       setSegments((prev) => prev.filter((s) => s.id !== id));
       setScopeSpans((prev) => prev.filter((sp) => sp.segment_id !== id));
-      if (key) setBacklog((prev) => prev.map((b) => (b.key === key ? { ...b, segment_count: Math.max(0, b.segment_count - 1) } : b)));
+      if (key) setBacklog((prev) => withPlacementRemoved(prev, key, id));
       const r = await fetch(`${API}/segments/${id}`, { method: 'DELETE' });
       const j = await r.json();
       if (!j.ok) {
@@ -1088,6 +1108,57 @@ export default function PlanningClient({
     () => segments.filter((s) => !hiddenTrucks.has(s.truck_id) && (s.job ? matchBoard(s.job) : true)),
     [segments, hiddenTrucks, matchBoard],
   );
+
+  // ── "Visa på tavlan" från backloggens placeringsrader ─────────────────────────
+  // Kortet som ska markeras, och om det hittats på tavlan än. Hittat = skrollat dit, och
+  // markeringens nedräkning börjar. Inte hittat = perioden laddas fortfarande.
+  const [focus, setFocus] = useState<{ id: string; found: boolean } | null>(null);
+
+  const jumpToPlacement = useCallback(
+    (item: SchedulableWorkOrder, p: BacklogPlacement) => {
+      // Ingenting får dölja kortet: en bortvald bil visas igen (samma regel som revealTruck redan
+      // följer), och en sökning i tavlan som inte matchar jobbet töms — annars landar hoppet på en
+      // vecka där kortet inte syns, och raden ser trasig ut.
+      revealTruck(p.truck_id);
+      if (!matchBoard(item)) setBoardSearch('');
+      // Redan inom det som visas — också "Hela månaden" och månadsvyns kantdagar: bara skrolla.
+      if (p.start_day < range.from || p.start_day > range.to) {
+        const target = parseISO(p.start_day);
+        // Veckor räknas i dygn och avrundas (weeksBetweenMondays) — en ren ms-division hade gett
+        // 0,994 eller 1,006 över en sommartidsväxling.
+        if (view === 'week') setWeekOffset(weeksBetweenMondays(startOfWeek(todayAnchor), startOfWeek(target)));
+        else setMonthOffset((target.getFullYear() - todayAnchor.getFullYear()) * 12 + target.getMonth() - todayAnchor.getMonth());
+      }
+      setFocus({ id: p.segment_id, found: false });
+    },
+    [revealTruck, matchBoard, range.from, range.to, view, todayAnchor],
+  );
+
+  // Letar upp kortet efter varje omritning tills det finns: en ny vecka laddas asynkront, och en
+  // nyss avdold bil eller tömd sökning syns först i nästa rendering.
+  useEffect(() => {
+    if (!focus || focus.found) return;
+    const el = document.querySelector<HTMLElement>(`[data-segment-id="${focus.id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFocus({ id: focus.id, found: true });
+  }, [focus, visibleSegments]);
+
+  // Hittat: ringen ligger kvar medan skrollen landar och blicken hittar dit, sedan släpps den. Inte
+  // hittat inom rimlig tid: kortet finns inte kvar
+  // där backloggen trodde (någon annan flyttade eller tog bort det) — säg det i stället för att
+  // tyst inte göra något.
+  useEffect(() => {
+    if (!focus) return;
+    const t = setTimeout(
+      () => {
+        setFocus(null);
+        if (!focus.found) toast.info('Kortet syns inte på tavlan. Det kan ha flyttats eller tagits bort — ladda om sidan.');
+      },
+      focus.found ? 3000 : 8000,
+    );
+    return () => clearTimeout(t);
+  }, [focus, toast]);
 
   // Marginalen per jobb: TG1/TB2 vid insäljning, plus utfallet när det finns.
   //
@@ -1519,6 +1590,8 @@ export default function PlanningClient({
           onSalesFilterChange={chooseSalesFilter}
           salesOptions={salesOptions}
           onSelect={onSelect}
+          trucks={trucks}
+          onJumpToPlacement={jumpToPlacement}
           onDragStartItem={onBacklogDragStart}
           onDropUnschedule={onBacklogDrop}
           onDragOver={(e) => {
@@ -1595,6 +1668,7 @@ export default function PlanningClient({
                         onCellDrop={onCellDrop}
                         onSegDragStart={onSegDragStart}
                         onSegClick={onSegClick}
+                        focusedSegmentId={focus?.id ?? null}
                         actions={actions}
                         dayNotes={dayNotes}
                         onAddNote={addDayNote}
@@ -1631,6 +1705,7 @@ export default function PlanningClient({
                 onDayDrop={onMonthDayDrop}
                 onSegDragStart={onSegDragStart}
                 onSegClick={onSegClick}
+                focusedSegmentId={focus?.id ?? null}
                 actions={actions}
                 dayNotes={dayNotes}
                 margins={margins}

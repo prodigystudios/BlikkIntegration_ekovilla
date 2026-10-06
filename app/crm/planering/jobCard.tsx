@@ -21,6 +21,14 @@ import { isMarginLoss } from '@/lib/domains/crm/preCalculation';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
+// Kortet backloggen pekade ut ("Visa på tavlan"), i vecko- och månadsvyn. Violett, som den gamla
+// placeringschippen, så blicken hittar rätt. Läggs SIST i cn så den vinner över pausens ring.
+//
+// ⚠️ Ingen opacitetspuls (animate-pulse). Den tonade ned hela kortet så att ringen knappt syntes, och
+// ett nedtonat kort betyder redan något annat här: pausat. Ringen ligger kvar en stund och tonar
+// sedan ut genom kortets egen `transition` (PlanningClient släpper markeringen).
+export const FOCUSED_CARD = 'ring-2 ring-violet-500 ring-offset-2';
+
 export function statusMeta(status: string) {
   const s = status as WorkOrderStatus;
   return {

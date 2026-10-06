@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  monthStackStart, parseISO, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO,
+  monthStackStart, parseISO, placementDayLabel, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO,
   weeksBetweenMondays, WEEKDAYS_SHORT,
 } from '@/app/crm/planering/planningDates';
 
@@ -222,5 +222,23 @@ describe('shortDayISO', () => {
     days.forEach((d, i) => {
       expect(shortDayISO(`2026-09-${d}`)).toBe(`${WEEKDAYS_SHORT[i]} ${Number(d)}/9`);
     });
+  });
+});
+
+describe('placementDayLabel', () => {
+  it('en dag: veckan och dagen', () => {
+    expect(placementDayLabel('2026-10-13', '2026-10-13')).toEqual({ week: 'v.42', days: 'tis 13/10' });
+  });
+
+  it('flera dagar i samma vecka: en vecka, ett spann', () => {
+    expect(placementDayLabel('2026-10-13', '2026-10-15')).toEqual({ week: 'v.42', days: 'tis 13/10 – tor 15/10' });
+  });
+
+  it('över ett veckoskifte: båda veckorna', () => {
+    expect(placementDayLabel('2026-10-16', '2026-10-19')).toEqual({ week: 'v.42–43', days: 'fre 16/10 – mån 19/10' });
+  });
+
+  it('över ett årsskifte: ISO-veckorna, inte kalenderårets', () => {
+    expect(placementDayLabel('2026-12-31', '2027-01-04')).toEqual({ week: 'v.53–1', days: 'tor 31/12 – mån 4/1' });
   });
 });

@@ -31,6 +31,21 @@ export type SchedulableWorkOrder = JobDisplay & {
   // Hur många ops_segments som redan täcker just DEN HÄR posten (0 = inte utplacerad). Räknas per
   // (work_order_id, stage_id): att etapp 1 är placerad säger ingenting om etapp 2.
   segment_count: number;
+  /**
+   * VAR posten ligger: ett element per kort, sorterat på startdag. Räknas ur samma läsning som
+   * segment_count, så de två kan inte glida isär — och tavlans lokala uppdateringar ändrar båda i
+   * samma steg (backlogPlacements.ts). Tom = inte utplacerad.
+   */
+  placements: BacklogPlacement[];
+};
+
+/** Ett kort på schemat, sett från backloggen: nog för att visa var det ligger och hoppa dit. */
+export type BacklogPlacement = {
+  segment_id: string;
+  truck_id: string;
+  start_day: string; // 'YYYY-MM-DD'
+  end_day: string; // 'YYYY-MM-DD'
+  on_hold: boolean;
 };
 
 export type OpsTruck = {

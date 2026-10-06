@@ -2,7 +2,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, type WorkOrderJobRow } from './display';
 import { hasUnallocatedWork, type StageScope, type WorkOrderStage } from '@/lib/domains/crm/workOrderStages';
 import { scopeKey } from './weekValue';
-import type { SchedulableWorkOrder } from './types';
+import type { BacklogPlacement, SchedulableWorkOrder } from './types';
+import { sortPlacements } from './backlogPlacements';
 
 // resolveJobAddress is the single source for the job-site address; re-exported under its old name
 // so existing tests/imports keep working.
@@ -52,6 +53,8 @@ export function mapWorkOrderToBacklogItem(
     contact_phone: str(snap.phone) || null,
     assigned_to: row.assigned_to ?? null,
     segment_count: segmentCount,
+    // Fylls av listSchedulableWorkOrders, som har korten. Räknaren ovan kommer ur samma läsning.
+    placements: [],
   };
 }
 
@@ -153,23 +156,48 @@ export async function listSchedulableWorkOrders(
   // hela ordern räknats som planerad så fort dess första etapp lagts ut.
   const { data: segs, error: segErr } = await supabase
     .from('ops_segments')
-    .select('work_order_id, stage_id')
+    .select('id, work_order_id, stage_id, truck_id, start_day, end_day, on_hold')
     .in('work_order_id', ids);
 
   if (segErr) return { data: [], error: segErr };
 
-  const counts = new Map<string, number>();
-  for (const s of (segs ?? []) as Array<{ work_order_id: string; stage_id: string | null }>) {
-    const key = scopeKey(s.work_order_id, s.stage_id ?? null);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
+  // Räknaren OCH listan ur samma kort: segment_count är listans längd, aldrig en egen räkning.
+  const placements = placementsByScope((segs ?? []) as PlacementRow[]);
 
   const items = rows.flatMap((r) =>
     backlogItemsForStatus(
       r.status,
       (r.crm_work_order_stages ?? []) as WorkOrderStage[],
-      expandWorkOrderToBacklogItems(r, (stageId) => counts.get(scopeKey(r.id, stageId)) ?? 0),
-    ),
+      expandWorkOrderToBacklogItems(r, (stageId) => placements.get(scopeKey(r.id, stageId))?.length ?? 0),
+    ).map((item) => ({ ...item, placements: placements.get(item.key) ?? [] })),
   );
   return { data: items, error: null };
+}
+
+type PlacementRow = {
+  id: string;
+  work_order_id: string;
+  stage_id: string | null;
+  truck_id: string;
+  start_day: string;
+  end_day: string;
+  on_hold: boolean | null;
+};
+
+/**
+ * Korten grupperade per backlogpost (scopeKey), sorterade på startdag.
+ *
+ * ⚠️ stage_id ingår i nyckeln: att etapp 1 är utplacerad säger ingenting om etapp 2, och utan den
+ * hade hela ordern räknats som planerad så fort dess första etapp lagts ut.
+ */
+export function placementsByScope(rows: PlacementRow[]): Map<string, BacklogPlacement[]> {
+  const out = new Map<string, BacklogPlacement[]>();
+  for (const r of rows) {
+    const key = scopeKey(r.work_order_id, r.stage_id ?? null);
+    const list = out.get(key) ?? [];
+    list.push({ segment_id: r.id, truck_id: r.truck_id, start_day: r.start_day, end_day: r.end_day, on_hold: Boolean(r.on_hold) });
+    out.set(key, list);
+  }
+  for (const [key, list] of out) out.set(key, sortPlacements(list));
+  return out;
 }

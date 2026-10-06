@@ -118,6 +118,25 @@ export function isoWeek(d: Date): number {
   return 1 + Math.round((date.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
 }
 
+/**
+ * Var ett kort ligger, för backloggens placeringsrader: veckan för sig (dämpas i UI:t) och dagarna.
+ *
+ *   samma dag        { week: 'v.42',    days: 'tis 14/10' }
+ *   samma vecka      { week: 'v.42',    days: 'tis 14/10 – tor 16/10' }
+ *   över veckoskifte { week: 'v.42–43', days: 'fre 16/10 – mån 19/10' }
+ *
+ * Kalenderdagar rakt igenom (parseISO + isoWeek på lokala datumdelar), ingen klocka och inget
+ * millisekundspann — ett datum ligger i samma vecka i alla zoner.
+ */
+export function placementDayLabel(startDay: string, endDay: string): { week: string; days: string } {
+  const startWeek = isoWeek(parseISO(startDay));
+  const endWeek = isoWeek(parseISO(endDay));
+  return {
+    week: startWeek === endWeek ? `v.${startWeek}` : `v.${startWeek}–${endWeek}`,
+    days: startDay === endDay ? shortDayISO(startDay) : `${shortDayISO(startDay)} – ${shortDayISO(endDay)}`,
+  };
+}
+
 export type WeekDay = { iso: string; date: Date; weekday: string; dayLabel: string; isWeekend: boolean };
 
 export function buildWeekDays(monday: Date): WeekDay[] {
