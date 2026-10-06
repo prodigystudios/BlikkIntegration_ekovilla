@@ -25,6 +25,14 @@
 -- FÖLJDER AV STATUSBYTET
 --   * updated_at bumpas (set_timestamp_crm_work_orders). Statusen är en riktig ändring av ordern, till skillnad från
 --     planerat datum som bara är en kopia av schemat. Det sker bara vid första utläggningen och sista avplaneringen.
+--     Kostnaden: kopplar någon en portalkund (linkCustomer, krockkontroll på updated_at) i exakt samma stund som ordern
+--     läggs ut första gången svarar kopplingen 409 portal_job_changed och görs om.
+--   * Egen trigger, inte inbakad i ops_segments_sync_planned_days. Vid första utläggningen skriver de var sin gång på
+--     samma order i samma transaktion (portalmarkeringen sätts då två gånger, ofarligt). Datumregeln rörs inte.
+--   * Raden som insert/delete returnerar till PostgREST är läst FÖRE triggern och bär den gamla statusen (prövat).
+--     Planeringens rutter läser därför statusen efteråt (readWorkOrderStatus) och tavlan visar den.
+--   * Ordersidans Spara skickar statusen bara när den ändrats. Förut skickades den alltid, och en sida som stod öppen
+--     medan ordern lades ut hade skrivit tillbaka Ej planerad.
 --   * Portalen: crm_work_orders_mark_portal_job markerar jobbet, men jobState.ts härleder "planerad" ur datumen, inte
 --     ur statusen. Butiken ser alltså ingenting nytt.
 --   * Fortnox: ingenting. Statusen når Fortnox bara vid Avbruten, och den går via PATCH-routen.

@@ -1,5 +1,5 @@
 import { createSessionClient } from '@/lib/supabase/session';
-import { moveSegment, removeSegment, getSegmentRef } from '@/lib/domains/planning/schedule';
+import { moveSegment, removeSegment, getSegmentRef, readWorkOrderStatus } from '@/lib/domains/planning/schedule';
 import { logActivity, describeSegmentPatch } from '@/lib/domains/planning/activity';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, moveSegmentSchema } from '../../_lib';
 
@@ -84,7 +84,12 @@ export async function DELETE(_req: Request, context: RouteContext) {
       summary: `Tog bort ${ref} från kalendern`,
     });
 
-    return ok({ ok: true });
+    // Var det ordens sista kort har triggern satt tillbaka Planerad → Ej planerad. Bara databasen vet
+    // det (tavlan har inte alla ordens kort laddade), så svaret bär statusen som den står nu.
+    // null = gick inte att läsa; klienten läser då om backloggen.
+    const workOrderStatus = await readWorkOrderStatus(supabase, workOrderId);
+
+    return ok({ ok: true, work_order_status: workOrderStatus });
   } catch (e: any) {
     return routeError(500, 'planning_segment_delete_unexpected', e?.message || 'Failed to remove segment');
   }

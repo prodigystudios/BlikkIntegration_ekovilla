@@ -31,7 +31,7 @@ import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
 import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
-import { statusAfterScheduleChange } from '@/lib/domains/planning/scheduleStatus';
+import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
 import ConfirmModal from './ConfirmModal';
 import PlanningAdminModal, { type AdminAreaKey } from './PlanningAdminModal';
 import OnOrderNote from './OnOrderNote';
@@ -601,15 +601,9 @@ export default function PlanningClient({
       // job's backlog count so its badge stays in sync.
       if (j.data?.item) {
         const created = j.data.item as OpsSegment;
-        // Ordern ligger nu på schemat, så databasens trigger har gjort Ej planerad → Planerad. Svaret
-        // bär fortfarande den gamla statusen (raden lästes i samma sats som kortet skapades, före
-        // triggern), så bytet speglas här — på ordens ALLA kort och backlogposter, inte bara den här.
-        const placedStatus = (status: string) => statusAfterScheduleChange(status, true);
-        setSegments((prev) =>
-          [...prev, created].map((s) =>
-            s.work_order_id === item.id && s.job ? { ...s, job: { ...s.job, status: placedStatus(s.job.status) } } : s,
-          ),
-        );
+        // Statusen är ORDERNS och gäller dess alla kort och poster, inte bara den här. Routen läser den
+        // efter databasens trigger (se readWorkOrderStatus), så den kan just ha blivit Planerad.
+        setSegments((prev) => segmentsWithOrderStatus([...prev, created], item.id, created.job?.status));
         // 🧨 SPANNEN MÅSTE FÖLJA MED. `scopeSpans` är nämnaren i veckofördelningen och sätts annars
         // bara av loadSegments — ett nyss placerat jobb hade då saknat spann helt och bidragit med
         // NOLL kr till "Veckan totalt" tills sidan laddades om. Den som just la ut ett jobb hade
@@ -619,12 +613,12 @@ export default function PlanningClient({
           { key: item.key, segment_id: created.id, truck_id: created.truck_id, start_day: created.start_day, end_day: created.end_day },
         ]);
         // Räknaren matchar på key, inte id: annars hade den tickat upp på ordens ALLA etapper.
-        // Statusen däremot är ordens, och gäller varje post med samma id.
         setBacklog((prev) =>
-          prev.map((b) => {
-            const counted = b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b;
-            return counted.id === item.id ? { ...counted, status: placedStatus(counted.status) } : counted;
-          }),
+          backlogWithOrderStatus(
+            prev.map((b) => (b.key === item.key ? { ...b, segment_count: b.segment_count + 1 } : b)),
+            item.id,
+            created.job?.status,
+          ),
         );
       } else {
         refresh();
@@ -697,11 +691,15 @@ export default function PlanningClient({
         return;
       }
       toast.success('Jobbet avplanerat');
-      // Var det ordens sista kort har triggern satt tillbaka Planerad → Ej planerad. Det går inte att
-      // avgöra här: tavlan har bara den synliga perioden laddad, och backloggens räknare täcker inte
-      // ett kort vars etapp inte längre visas som post. Gissar vi fel visar backloggen "Ej planerad"
-      // på en order som ligger kvar. Backloggen läses därför om — det är en enda läsning.
-      if (key) loadBacklog().catch(() => {});
+      // Var det ordens sista kort har databasen satt tillbaka Planerad → Ej planerad. Det går inte att
+      // avgöra här (tavlan har bara den synliga perioden laddad), så routen svarar med statusen. Gick
+      // den inte att läsa läses backloggen om i stället för att gissa.
+      const woId = seg?.work_order_id ?? null;
+      if (woId) {
+        const status = typeof j.data?.work_order_status === 'string' ? (j.data.work_order_status as string) : null;
+        if (status) setBacklog((prev) => backlogWithOrderStatus(prev, woId, status));
+        else loadBacklog().catch(() => {});
+      }
     },
     [segments, refresh, toast, loadBacklog],
   );

@@ -682,7 +682,10 @@ export function SegmentMenu({
                 <div>
                   <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Status</p>
                   <div className="space-y-0.5">
-                    {WORK_ORDER_STATUS_OPTIONS.map((st) => {
+                    {/* Ingen "Ej planerad" på ett kort som ligger på schemat: statusen följer schemat
+                        (triggern ops_segments_sync_work_order_status) och går tillbaka av sig själv
+                        när ordens sista kort tas bort. Står ordern ändå där visas den som vald. */}
+                    {WORK_ORDER_STATUS_OPTIONS.filter((st) => st !== 'draft' || st === status).map((st) => {
                       const active = st === status;
                       const m = statusMeta(st);
                       return (
