@@ -8,6 +8,14 @@ import { crm, syncStatusLabel, workOrderStatusLabel, workOrderStatusClass, type 
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
+import StatusFilter from '@/app/crm/components/StatusFilter';
+import {
+  DEFAULT_WORK_ORDER_STATUS_FILTER,
+  WORK_ORDER_STATUS_FILTER_OPTIONS,
+  isStatusFilterChanged,
+  statusFilterParam,
+  type WorkOrderStatusFilterOption,
+} from '@/lib/domains/crm/listStatusFilter';
 import { RowAssignee } from '@/app/crm/components/RowAssignee';
 import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -40,8 +48,6 @@ type WorkOrderItem = {
   partial_invoicing_started_at?: string | null;
 };
 
-type WorkOrderFilter = 'all' | 'draft' | 'scheduled' | 'active' | 'completed' | 'invoiced';
-
 // Status labels/classes are centralised in crmTokens (shared with detail + card).
 
 // Radordning. Samma två val som offertlistan har, med arbetsorderns egna datum: 'created_desc' är
@@ -59,14 +65,12 @@ const WORK_ORDER_SORTS: ReadonlyArray<{ value: WorkOrderSort; label: string }> =
   { value: 'installation_asc', label: 'Närmast installation' },
 ];
 
-const FILTERS: Array<[WorkOrderFilter, string]> = [
-  ['all', 'Alla'], ['draft', 'Ej planerade'], ['scheduled', 'Planerade'], ['active', 'Pågående'], ['completed', 'Fakturera'], ['invoiced', 'Avslutade'],
-];
-
-// Status filtering and pagination are now server-side (see lib/domains/crm/work-orders.ts).
-// The board fetches one page per filter and accumulates via "Visa fler".
+// Status filtering and pagination are server-side (see lib/domains/crm/work-orders.ts). The list
+// fetches one page per status selection and accumulates via "Visa fler".
 const PAGE_SIZE = 100;
-const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, scheduled: 0, active: 0, completed: 0, invoiced: 0 };
+
+// Statusfiltrets etiketter — samma ord som statuspillret i tabellen (Planerad täcker också `ready`).
+const workOrderStatusFilterLabel = (option: WorkOrderStatusFilterOption) => workOrderStatusLabel[option];
 
 
 
@@ -185,12 +189,16 @@ export default function WorkOrdersClient({
   // Täckningsgraden per order — egen rutt, se useWorkOrderMargins. Ingen fråga utan behörigheten.
   const { margins: workOrderMargins, forbidden: marginsForbidden } = useWorkOrderMargins(canSeeMargins ? workOrders.map((item) => item.id) : []);
   const [total, setTotal] = useState(0);
-  const [counts, setCounts] = useState<Record<WorkOrderFilter, number>>(EMPTY_COUNTS);
+  // Antal per status, för statusfiltrets meny. null tills första svaret kommit.
+  const [counts, setCounts] = useState<Partial<Record<WorkOrderStatusFilterOption, number>> | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<WorkOrderFilter>('all');
+  // Startar på allt utom Avslutad och Avbruten (listStatusFilter.ts) och börjar om vid varje besök.
+  const [statusFilter, setStatusFilter] = useState<WorkOrderStatusFilterOption[]>(() => [...DEFAULT_WORK_ORDER_STATUS_FILTER]);
+  // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
+  const statusParam = statusFilterParam(statusFilter, WORK_ORDER_STATUS_FILTER_OPTIONS);
   const [sort, setSort] = useState<WorkOrderSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Startar på den inloggades egna ordrar — samma val som offertlistan och säljtavlan.
@@ -211,20 +219,19 @@ export default function WorkOrdersClient({
   // only sees the values captured when it was created, so comparing two closure reads across an
   // await would compare a string with itself. The ref is written by the first-page effect, which
   // runs on every change to the scope.
-  const listScope = `${search.trim()}|${filter}|${sort}|${assigneeParam}`;
+  const listScope = `${search.trim()}|${statusParam}|${sort}|${assigneeParam}`;
   const listScopeRef = useRef(listScope);
 
-  // Vad chip-siffrorna är räknade över. En ordning kan inte flytta en rad mellan chipsen, så ett
-  // sorteringsbyte skulle annars dra sex exakta COUNT-scan för siffror som inte kan röra sig
-  // (samma spärr som offertlistan har, av samma skäl). Filtret ligger kvar i nyckeln: den
-  // omräkningen fanns före den här ändringen och är inte vår att ta bort här.
-  const countScope = `${search.trim()}|${filter}|${assigneeParam}`;
+  // Vad statusräknarna är räknade över. Varken ordningen eller statusvalet kan ändra dem — varje
+  // status räknas alltid — så ett byte av någon av dem skulle annars dra sju exakta COUNT-scan för
+  // siffror som inte kan röra sig (samma spärr som offertlistan har, av samma skäl).
+  const countScope = `${search.trim()}|${assigneeParam}`;
   const countedScope = useRef<string | null>(null);
 
   function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
-    query.set('filter', filter);
+    if (statusParam !== null) query.set('statuses', statusParam);
     query.set('sort', sort);
     if (assigneeParam) query.set('assignee', assigneeParam);
     query.set('offset', String(nextOffset));
@@ -368,14 +375,14 @@ export default function WorkOrdersClient({
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); return; }
         setWorkOrders(Array.isArray(json?.data?.items) ? json.data.items : []);
         setTotal(json?.data?.total ?? 0);
-        if (json?.data?.counts) { setCounts(json.data.counts); countedScope.current = countScope; }
+        if (json?.data?.statusCounts) { setCounts(json.data.statusCounts); countedScope.current = countScope; }
       } catch { if (active) { setError('Kunde inte ladda arbetsorder.'); setWorkOrders([]); setTotal(0); } }
       finally { if (active) setLoading(false); }
     }
     void load();
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search, filter, sort, assigneeParam]);
+  }, [search, statusParam, sort, assigneeParam]);
 
   const hasMore = workOrders.length < total;
 
@@ -390,7 +397,9 @@ export default function WorkOrdersClient({
   }, [assignees]);
 
   // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
-  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  // Statusen räknas när den avviker från startvalet — startvalet i sig är inget val användaren gjort.
+  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_WORK_ORDER_STATUS_FILTER) ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  const narrowedByStatus = statusParam !== null;
 
   // Radens adress — ekonomiytan har sin egen detaljvy under sin egen basePath.
   const orderHref = (item: WorkOrderItem) => `${basePath}/${item.id}`;
@@ -502,66 +511,61 @@ export default function WorkOrdersClient({
 
       {/* List card */}
       <div className="grid gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-2.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-3">
-        {/* Search + mobile filter toggle */}
-        <div className="flex items-center gap-2">
-          <Input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Sök på ordernummer, projekt eller kund"
-            className="flex-1 sm:max-w-xs"
-          />
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((o) => !o)}
-            aria-expanded={filtersOpen}
-            aria-label="Filter"
-            className={cn(
-              'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg border p-0 transition sm:hidden',
-              filtersOpen || activeFilterCount > 0
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                : 'border-[#dce4d8] bg-white text-slate-600',
-            )}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 6h16M7 12h10M10 18h4" />
-            </svg>
-            {activeFilterCount > 0 ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
-                {activeFilterCount}
-              </span>
-            ) : null}
-          </button>
-        </div>
-
-        {/* Filters — collapsible on mobile, inline on desktop */}
-        <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
-          <div className="flex flex-wrap gap-2">
-            {FILTERS.map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setFilter(value)}
-                className={cn(
-                  'rounded-full border px-2.5 py-1 text-[13px] font-semibold transition',
-                  filter === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
-                )}
-                style={filter === value ? { backgroundColor: 'var(--crm-primary)', borderColor: 'var(--crm-primary)' } : undefined}
-              >
-                {label} <span className={cn('ml-0.5', filter === value ? 'text-white/70' : 'text-slate-500')}>{counts[value]}</span>
-              </button>
-            ))}
+        {/* Sök och filter på en rad (William, 2026-10-06): statusflikarna blev ett filter bredvid
+            Sortera och Ansvarig, och sökrutan tar platsen. Smalare än ~1000 px står filtren på en
+            egen rad, och på mobilen fälls de ihop bakom filterknappen. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex min-w-0 items-center gap-2 sm:min-w-[16rem] sm:flex-1">
+            <Input
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Sök på ordernummer, projekt eller kund"
+              className="flex-1"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg border p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                  : 'border-[#dce4d8] bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </button>
           </div>
-          {/* Sortering och ansvarig i samma grupp till höger, som i offertlistan — annars hamnar
-              de två urvalskontrollerna på var sitt ställe i raden så fort pillren radbryter. */}
-          <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center sm:gap-2">
+
+          {/* Status, sortering och ansvarig är alla server-side: listan är paginerad, så att gallra
+              eller ordna den laddade sidan skulle bara röra de första hundra. */}
+          <div className={cn('flex-col gap-2 sm:flex sm:flex-row sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
+            <StatusFilter
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={WORK_ORDER_STATUS_FILTER_OPTIONS}
+              defaultValue={DEFAULT_WORK_ORDER_STATUS_FILTER}
+              labelOf={workOrderStatusFilterLabel}
+              counts={counts}
+              // Bredare än de andra två: startvalets text, "Utom Avslutad, Avbruten", ska rymmas.
+              className="w-full sm:w-[14rem]"
+            />
             <SortFilter
               value={sort}
               onChange={setSort}
               options={WORK_ORDER_SORTS}
               label="Sortera arbetsorder"
-              className="w-full sm:w-[180px]"
+              className="w-full sm:w-[170px]"
             />
-            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} showMine={canBeAssignee} className="w-full sm:w-[200px]" />
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} showMine={canBeAssignee} className="w-full sm:w-[190px]" />
           </div>
         </div>
 
@@ -571,21 +575,35 @@ export default function WorkOrdersClient({
               arbetsorder matchar" under felrutan hade pekat åt fel håll (FRONTEND_SYSTEM.md). */}
           {!loading && !error && workOrders.length === 0 ? (
             // 🧨 Samma skäl som i offertlistan, och skarpare här: `assigned_to` är SÄLJAREN, så en
-            // planerare ser en tom tavla tills filtret rensas. Knappen är vägen ut.
+            // planerare ser en tom tavla tills filtret rensas. Statusfiltret döljer dessutom Avslutad
+            // och Avbruten från start, så en sådan order som söks fram syns inte. Knapparna är vägen ut.
             <div className="grid justify-items-center gap-3 rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
               <span>
-                {assigneeFilter.length > 0
-                  ? 'Inga arbetsorder matchar just nu — listan visar bara ett urval av ansvariga.'
+                {narrowedByStatus || assigneeFilter.length > 0
+                  ? `Inga arbetsorder matchar just nu — listan visar bara ett urval av ${narrowedByStatus && assigneeFilter.length > 0 ? 'statusar och ansvariga' : narrowedByStatus ? 'statusar' : 'ansvariga'}.`
                   : 'Inga arbetsorder matchar just nu.'}
               </span>
-              {assigneeFilter.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setAssigneeFilter([])}
-                  className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
-                >
-                  Visa alla ansvariga
-                </button>
+              {narrowedByStatus || assigneeFilter.length > 0 ? (
+                <span className="flex flex-wrap justify-center gap-2">
+                  {narrowedByStatus ? (
+                    <button
+                      type="button"
+                      onClick={() => setStatusFilter([...WORK_ORDER_STATUS_FILTER_OPTIONS])}
+                      className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                    >
+                      Visa alla statusar
+                    </button>
+                  ) : null}
+                  {assigneeFilter.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setAssigneeFilter([])}
+                      className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                    >
+                      Visa alla ansvariga
+                    </button>
+                  ) : null}
+                </span>
               ) : null}
             </div>
           ) : null}

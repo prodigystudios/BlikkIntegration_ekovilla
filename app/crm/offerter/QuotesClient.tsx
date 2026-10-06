@@ -5,10 +5,18 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
+import StatusFilter from '@/app/crm/components/StatusFilter';
 import { RowAssignee } from '@/app/crm/components/RowAssignee';
 import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import { documentRef } from '@/app/crm/lib/format';
 import { resolveQuoteVatBreakdown, quoteAmountDisplay } from '@/lib/domains/crm/pricing';
+import {
+  DEFAULT_QUOTE_STATUS_FILTER,
+  QUOTE_STATUS_FILTER_OPTIONS,
+  isStatusFilterChanged,
+  statusFilterParam,
+  type QuoteStatusFilterOption,
+} from '@/lib/domains/crm/listStatusFilter';
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
@@ -60,29 +68,22 @@ type QuoteItem = {
   updated_at: string;
 };
 
-type QuoteFilter = 'all' | 'active' | 'follow_up' | 'won' | 'lost';
 type QuoteSort = 'created_desc' | 'follow_up_asc';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const quoteFilterMeta: Record<QuoteFilter, { label: string }> = {
-  all: { label: 'Alla' },
-  active: { label: 'Aktiva' },
-  follow_up: { label: 'Följ upp' },
-  won: { label: 'Vunna' },
-  lost: { label: 'Förlorade' },
-};
 
 const quoteSortMeta: Record<QuoteSort, { label: string }> = {
   created_desc: { label: 'Senast skapad' },
   follow_up_asc: { label: 'Följ upp först' },
 };
 
-// The list pages the same way the order board does: one page per filter, accumulated with
-// "Visa fler". Filtering, counting and ordering all happen server-side — the row cap cuts before
-// the browser sees anything, so a client-side tab would have been counting a truncated set.
+// The list pages the same way the order board does: one page per status selection, accumulated
+// with "Visa fler". Filtering, counting and ordering all happen server-side — the row cap cuts
+// before the browser sees anything, so a client-side filter would have been counting a truncated set.
 const PAGE_SIZE = 100;
-const EMPTY_COUNTS: Record<QuoteFilter, number> = { all: 0, active: 0, follow_up: 0, won: 0, lost: 0 };
+
+// Statusfiltrets etiketter — samma ord som statuspillret i tabellen.
+const quoteStatusLabel = (status: QuoteStatusFilterOption) => quoteStatusMeta[status]?.label ?? status;
 
 function formatCurrency(value: number | string, currencyCode: string) {
   const numeric = typeof value === 'number' ? value : Number(String(value));
@@ -130,12 +131,16 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
 
   const [quotes, setQuotes] = useState<QuoteItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [counts, setCounts] = useState<Record<QuoteFilter, number>>(EMPTY_COUNTS);
+  // Antal per status, för statusfiltrets meny. null tills första svaret kommit.
+  const [counts, setCounts] = useState<Partial<Record<QuoteStatusFilterOption, number>> | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<QuoteFilter>('all');
+  // Startar på allt utom Förlorad (listStatusFilter.ts) och börjar om vid varje besök.
+  const [statusFilter, setStatusFilter] = useState<QuoteStatusFilterOption[]>(() => [...DEFAULT_QUOTE_STATUS_FILTER]);
+  // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
+  const statusParam = statusFilterParam(statusFilter, QUOTE_STATUS_FILTER_OPTIONS);
   const [sort, setSort] = useState<QuoteSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Startar på den inloggades egna offerter — samma val som orderlistan och säljtavlan.
@@ -153,13 +158,13 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   const presetQuoteId = searchParams.get('quote_id') || '';
   const shouldOpenCreate = searchParams.get('new') === '1';
 
-  // What the tab counts are computed over. They don't depend on the tab (every tab is counted) nor
-  // on the sort (order can't change a count), so re-requesting five exact COUNTs on a sort toggle
-  // would be five O(n) scans for a number that cannot move.
+  // What the status counts are computed over. They don't depend on the status selection (every
+  // status is counted) nor on the sort (order can't change a count), so re-requesting five exact
+  // COUNTs on a toggle would be five O(n) scans for numbers that cannot move.
   const countScope = `${search.trim()}|${assigneeParam}|${presetProspectId}`;
   const countedScope = useRef<string | null>(null);
 
-  // Bumped when something happens that can move a row between tabs, to force a reload.
+  // Bumped when something happens that can move a row between statuses, to force a reload.
   const [reloadKey, setReloadKey] = useState(0);
 
   // What the visible list is a page of. Held in a ref as well as read from the render closure:
@@ -169,14 +174,14 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   // whether the list moved out from under its request. reloadKey ingår: en offert som markeras
   // Vunnen laddar om förstasidan utan att någon annan del av nyckeln rör sig, och en 'Visa fler'
   // i luften skulle då lägga sin sida ovanpå den nya.
-  const listScope = `${countScope}|${filter}|${sort}|${reloadKey}`;
+  const listScope = `${countScope}|${statusParam}|${sort}|${reloadKey}`;
   const listScopeRef = useRef(listScope);
 
   function buildListQuery(nextOffset: number, withCounts: boolean) {
     const query = new URLSearchParams();
     if (search.trim()) query.set('q', search.trim());
     if (presetProspectId) query.set('prospect_id', presetProspectId);
-    query.set('filter', filter);
+    if (statusParam !== null) query.set('statuses', statusParam);
     query.set('sort', sort);
     if (assigneeParam) query.set('assignee', assigneeParam);
     query.set('offset', String(nextOffset));
@@ -251,7 +256,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     setHasHandledPreset(false);
   }, [presetProspectId, shouldOpenCreate]);
 
-  // Load the first page. Search, tab, sort and assignee are all server-side, so every one of them
+  // Load the first page. Search, status, sort and assignee are all server-side, so every one of them
   // starts a fresh page rather than re-filtering what happens to be in the browser.
   useEffect(() => {
     let active = true;
@@ -266,22 +271,22 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
         if (!res.ok || !json.ok) { setError(json?.error || 'Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); return; }
         setQuotes(Array.isArray(json?.data?.items) ? json.data.items : []);
         setTotal(json?.data?.total ?? 0);
-        if (json?.data?.counts) { setCounts(json.data.counts); countedScope.current = countScope; }
+        if (json?.data?.statusCounts) { setCounts(json.data.statusCounts); countedScope.current = countScope; }
       } catch { if (active) { setError('Kunde inte ladda offerter.'); setQuotes([]); setTotal(0); } }
       finally { if (active) setLoading(false); }
     }
     void load();
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetProspectId, search, filter, sort, assigneeParam, reloadKey]);
+  }, [presetProspectId, search, statusParam, sort, assigneeParam, reloadKey]);
 
   // Deep-link: open a specific quote's detail panel when arriving with ?quote_id= (e.g. from a
   // customer's related list). Handled once the matching quote is loaded so a manual close isn't
   // re-triggered.
   useEffect(() => { setHasHandledQuotePreset(false); }, [presetQuoteId]);
 
-  // The linked quote need not be on the loaded page any more: it may be won while the tab shows
-  // "Aktiva", or simply sit past the first page. Fetch that one row so the link opens the panel it
+  // The linked quote need not be on the loaded page any more: it may be lost while the status
+  // filter hides Förlorad, or simply sit past the first page. Fetch that one row so the link opens the panel it
   // promised — but keep it OUT of the list, which stays exactly the page the server returned. A
   // prepended row would sit at the top in defiance of the chosen sort once the panel closes.
   useEffect(() => {
@@ -304,7 +309,9 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   }, [presetQuoteId, hasHandledQuotePreset, loading, quotes, linkedQuote]);
 
   // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
-  const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  // Statusen räknas när den avviker från startvalet — startvalet i sig är inget val användaren gjort.
+  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_QUOTE_STATUS_FILTER) ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  const narrowedByStatus = statusParam !== null;
   const hasMore = quotes.length < total;
 
   const assigneeNameById = useMemo(() => {
@@ -445,74 +452,61 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
 
       {/* Quote list */}
       <div className="grid gap-2 rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-2.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)] md:p-3">
-        {/* Search + mobile filter toggle */}
-        <div className="flex items-center gap-2">
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Sök på offert, kund eller anteckning"
-            className="flex-1 sm:max-w-xs"
-          />
-          <button
-            type="button"
-            onClick={() => setFiltersOpen((o) => !o)}
-            aria-expanded={filtersOpen}
-            aria-label="Filter"
-            className={cn(
-              'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg border p-0 transition sm:hidden',
-              filtersOpen || activeFilterCount > 0
-                ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                : 'border-[#dce4d8] bg-white text-slate-600',
-            )}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 6h16M7 12h10M10 18h4" />
-            </svg>
-            {activeFilterCount > 0 ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
-                {activeFilterCount}
-              </span>
-            ) : null}
-          </button>
-        </div>
-
-        {/* Filters — collapsible on mobile, inline on desktop */}
-        <div className={cn('flex-col gap-3 sm:flex sm:flex-row sm:flex-wrap sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
-          <div className="flex flex-wrap gap-1.5">
-            {((['all', 'active', 'follow_up', 'won', 'lost']) as const).map((value) => {
-              const active = filter === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setFilter(value)}
-                  className={cn(
-                    'inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-1 text-[13px] font-semibold transition',
-                    active ? 'border-transparent text-white' : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
-                  )}
-                  style={active ? { backgroundColor: 'var(--crm-primary)' } : undefined}
-                >
-                  {quoteFilterMeta[value].label}
-                  <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-bold', active ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600')}>
-                    {counts[value]}
-                  </span>
-                </button>
-              );
-            })}
+        {/* Sök och filter på en rad (William, 2026-10-06): statusflikarna blev ett filter bredvid
+            Sortera och Ansvarig, och sökrutan tar platsen. Smalare än ~1000 px står filtren på en
+            egen rad, och på mobilen fälls de ihop bakom filterknappen. */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <div className="flex min-w-0 items-center gap-2 sm:min-w-[16rem] sm:flex-1">
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Sök på offert, kund eller anteckning"
+              className="flex-1"
+            />
+            <button
+              type="button"
+              onClick={() => setFiltersOpen((o) => !o)}
+              aria-expanded={filtersOpen}
+              aria-label="Filter"
+              className={cn(
+                'relative inline-flex h-[2.6rem] w-[2.6rem] shrink-0 items-center justify-center rounded-lg border p-0 transition sm:hidden',
+                filtersOpen || activeFilterCount > 0
+                  ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                  : 'border-[#dce4d8] bg-white text-slate-600',
+              )}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" />
+              </svg>
+              {activeFilterCount > 0 ? (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">
+                  {activeFilterCount}
+                </span>
+              ) : null}
+            </button>
           </div>
-          {/* Sortering och ansvarig ligger i samma grupp till höger — annars hamnar de två
-              urvalskontrollerna på var sitt ställe i raden så fort pillren radbryter.
-              Sorteringen är server-side: listan är paginerad, så att ordna den laddade
-              sidan skulle bara sortera de första hundra. */}
-          <div className="flex flex-col gap-3 sm:ml-auto sm:flex-row sm:items-center sm:gap-2">
+
+          {/* Status, sortering och ansvarig är alla server-side: listan är paginerad, så att gallra
+              eller ordna den laddade sidan skulle bara röra de första hundra. */}
+          <div className={cn('flex-col gap-2 sm:flex sm:flex-row sm:items-center', filtersOpen ? 'flex' : 'hidden')}>
+            <StatusFilter
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={QUOTE_STATUS_FILTER_OPTIONS}
+              defaultValue={DEFAULT_QUOTE_STATUS_FILTER}
+              labelOf={quoteStatusLabel}
+              counts={counts}
+              // Bredare än de andra två: startvalets text, "Utom Avslutad, Avbruten", ska rymmas.
+              className="w-full sm:w-[14rem]"
+            />
             <SortFilter
               value={sort}
               onChange={setSort}
               options={(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => ({ value, label: quoteSortMeta[value].label }))}
               label="Sortera offerter"
-              className="w-full sm:w-[180px]"
+              className="w-full sm:w-[170px]"
             />
-            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[200px]" />
+            <AssigneeFilter value={assigneeFilter} onChange={setAssigneeFilter} users={assignees} className="w-full sm:w-[190px]" />
           </div>
         </div>
 
@@ -521,24 +515,38 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
         {/* Tomläget gatas på felet också: efter ett misslyckat anrop är listan tom, och "inga
             offerter matchar" under felrutan hade pekat åt fel håll (FRONTEND_SYSTEM.md). */}
         {!loading && !error && quotes.length === 0 ? (
-          // 🧨 Ansvarigfiltret måste NÄMNAS här. Det är OCH:at med sökrutan och står på "Mina" från
-          // start, så en kollegas offertnummer ger noll träffar — och den gamla texten läste sig då
-          // som "offerten finns inte". Rader utan ansvarig faller bort av samma skäl (`in(...)`
-          // matchar aldrig null), och på mobilen är filterraden dessutom hopfälld.
+          // 🧨 Filtren måste NÄMNAS här. Ansvarigfiltret är OCH:at med sökrutan och står på "Mina"
+          // från start, så en kollegas offertnummer ger noll träffar — och den gamla texten läste
+          // sig då som "offerten finns inte". Rader utan ansvarig faller bort av samma skäl
+          // (`in(...)` matchar aldrig null). Statusfiltret döljer Förlorad från start, så en förlorad
+          // offert som söks fram syns inte heller. På mobilen är filterraden dessutom hopfälld.
           <div className="grid justify-items-center gap-3 rounded-xl border border-dashed border-slate-200 px-4 py-10 text-center text-sm text-slate-400">
             <span>
-              {assigneeFilter.length > 0
-                ? 'Inga offerter matchar just nu — listan visar bara ett urval av ansvariga.'
+              {narrowedByStatus || assigneeFilter.length > 0
+                ? `Inga offerter matchar just nu — listan visar bara ett urval av ${narrowedByStatus && assigneeFilter.length > 0 ? 'statusar och ansvariga' : narrowedByStatus ? 'statusar' : 'ansvariga'}.`
                 : 'Inga offerter matchar just nu.'}
             </span>
-            {assigneeFilter.length > 0 ? (
-              <button
-                type="button"
-                onClick={() => setAssigneeFilter([])}
-                className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
-              >
-                Visa alla ansvariga
-              </button>
+            {narrowedByStatus || assigneeFilter.length > 0 ? (
+              <span className="flex flex-wrap justify-center gap-2">
+                {narrowedByStatus ? (
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter([...QUOTE_STATUS_FILTER_OPTIONS])}
+                    className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                  >
+                    Visa alla statusar
+                  </button>
+                ) : null}
+                {assigneeFilter.length > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => setAssigneeFilter([])}
+                    className="px-3 py-1.5 rounded-lg border border-solid border-[#dce4d8] bg-white text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3]"
+                  >
+                    Visa alla ansvariga
+                  </button>
+                ) : null}
+              </span>
             ) : null}
           </div>
         ) : null}
@@ -590,8 +598,9 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
             // Keep the open panel alive across a reload that may drop its row from the page: hold
-            // the patched quote outside the list. Without this, marking a draft "Vunnen" from the
-            // "Aktiva" tab would reload the list, lose the row, and unmount the panel mid-click.
+            // the patched quote outside the list. Without this, marking a draft "Förlorad" while the
+            // status filter hides Förlorad would reload the list, lose the row, and unmount the panel
+            // mid-click.
             // ⚠️ Funktionellt, inte ur renderingens ögonblicksbild: en långsam Fortnox-push som
             // svarar efter en statusändring hade annars skrivit tillbaka den gamla statusen.
             // QuoteDetailPatch:s egen dokumentation varnar för just det, och lådan gör den
@@ -601,8 +610,8 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
               const base = quotes.find((q) => q.id === patch.id) ?? current;
               return base && base.id === patch.id ? { ...base, ...patch } : current;
             });
-            // A status change moves the row between tabs and moves two counters. The tabs are
-            // server-side now, so the browser can no longer make that happen by re-filtering an
+            // A status change can move the row out of the status selection and moves two counters.
+            // The filter is server-side, so the browser can't make that happen by re-filtering an
             // array — it has to ask again, counts included.
             if (patch.status && patch.status !== patched?.status) {
               countedScope.current = null;
