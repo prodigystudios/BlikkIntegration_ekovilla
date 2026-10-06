@@ -11,8 +11,12 @@ import { crm } from '@/app/crm/lib/crmTokens';
 // listsidorna Offerter och Arbetsorder. Admins tabellutseende (ram, versala rubriker) åsidosätts med
 // klasser, som AdminContacts gör: tabellen ligger i ett kort och följer VD:ns mockup.
 
-/** En kolumn: rubriken, bredden/synligheten (samma klass på <th> och <td>) och cellens innehåll. */
-export type CrmTableColumn<T> = { header: string; className?: string; cell: (row: T) => ReactNode };
+/**
+ * En kolumn: rubriken, bredden/synligheten (samma klass på <th> och <td>) och cellens innehåll.
+ * `headerContent` ersätter rubrikens text när den behöver mer än en sträng — t.ex. en rubrik som
+ * bara skärmläsaren hör medan kolumnen är för smal för ordet. `header` är fortfarande nyckeln.
+ */
+export type CrmTableColumn<T> = { header: string; headerContent?: ReactNode; className?: string; cell: (row: T) => ReactNode };
 
 /**
  * Två täthetsgrader av samma tabell. `compact` är översiktens kort, där två tabeller står bredvid
@@ -43,8 +47,8 @@ const sizeClass: Record<CrmTableSize, { container: string; table: string; header
 // anropare behöver skicka med den.
 const SizeContext = createContext<CrmTableSize>('compact');
 
-/** Andraradens textstorlek i en cell — projektet under kunden, momsbasen under beloppet. */
-export function useCrmTableDetailText() {
+/** Andraradens textstorlek i kundcellen — projektet under kunden. */
+function useCrmTableDetailText() {
   return useContext(SizeContext) === 'regular' ? 'text-xs' : 'text-[11px]';
 }
 
@@ -92,7 +96,7 @@ export function CrmTable<T extends { id: string }>({ label, size, columns, rows,
           <tr>
             {columns.map((column) => (
               <DataTableHeaderCell key={column.header} scope="col" className={cn(classes.header, column.className)}>
-                {column.header}
+                {column.headerContent ?? column.header}
               </DataTableHeaderCell>
             ))}
           </tr>

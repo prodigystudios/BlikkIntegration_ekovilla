@@ -122,7 +122,8 @@ export const workOrderStatusClass: Record<WorkOrderStatus, string> = {
   cancelled: 'border-rose-200 bg-rose-50 text-rose-700', // Avbruten — röd
 };
 
-// Solid accent colour per status — used as a left rail on list rows for quick scanning.
+// Solid accent colour per status — the left rail on planning job cards and the dot in the planning
+// legend. (The work-order list used it too until it became a table, 2026-10-06.)
 export const workOrderStatusAccent: Record<WorkOrderStatus, string> = {
   draft: 'bg-yellow-400', // Ej planerad — gul
   scheduled: 'bg-green-400', // Planerad — ljusgrön

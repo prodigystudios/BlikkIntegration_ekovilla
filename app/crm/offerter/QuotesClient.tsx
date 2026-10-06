@@ -101,18 +101,20 @@ function formatDate(value: string | null | undefined) {
 // Cmd-klick och mittenknappen öppnar i en ny flik, och djuplänken där öppnar samma panel.
 const quoteHref = (quote: QuoteItem) => `/crm/offerter?quote_id=${quote.id}`;
 
-// Kolumnbredderna — kunden tar resten. På telefon står kund och status kvar: namnet går före
-// beloppet, som i kortlistan tabellen ersatte. Resten kommer in med bredden: numret och beloppet
-// från 640 px, uppföljningen från 768, ansvarig från 1024, datum och kundtyp från 1280.
-// Beloppskolumnen rymmer momsbasens längsta etikett, "omvänd skattskyldighet", på en rad.
+// Kolumnbredderna — kunden tar resten och håller sig kring 170 px eller mer i varje bredd. På
+// telefon står kund och status kvar: namnet går före beloppet, som i kortlistan tabellen ersatte.
+// Resten kommer in med bredden: numret, ansvarigs bricka och beloppet från 640 px, uppföljningen
+// från 768, datumet från 1024 (där sidomenyn tar sin plats), kundtypen och ansvarigs namn från
+// 1280. Från 1280 ryms momsbasens längsta etikett, "omvänd skattskyldighet", på en rad; smalare
+// bryts den hellre än att rinna in i statusen.
 const quoteWidth = {
   number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
   customer: '',
   type: 'hidden w-[4.75rem] xl:table-cell',
-  assignee: 'hidden w-[10rem] lg:table-cell',
-  date: 'hidden w-[7rem] whitespace-nowrap tabular-nums text-slate-500 xl:table-cell',
+  assignee: 'hidden w-[2.75rem] sm:table-cell xl:w-[10rem]',
+  date: 'hidden w-[7rem] whitespace-nowrap tabular-nums text-slate-500 lg:table-cell',
   followUp: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
-  amount: 'hidden w-[9rem] text-right tabular-nums sm:table-cell',
+  amount: 'hidden w-[7.5rem] text-right tabular-nums sm:table-cell xl:w-[9rem]',
   status: 'w-[6.75rem] text-right sm:w-[7.5rem]',
 } as const;
 
@@ -351,11 +353,14 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     { header: 'Typ', className: quoteWidth.type, cell: (item) => (item.quote_type === 'private' ? 'Privat' : 'Företag') },
     {
       header: 'Ansvarig',
+      // Smal kolumn med bara brickan (namnet i title) tills det finns plats för namnet vid 1280 px.
+      // Rubrikordet ryms inte i den smala kolumnen, så där hörs det bara av skärmläsaren.
+      headerContent: <span className="sr-only xl:not-sr-only">Ansvarig</span>,
       className: quoteWidth.assignee,
       // Inget 'Okänd'-fallback: katalogen hämtas i en egen request, så ett tomt uppslag betyder
       // oftast "inte hämtad ännu" och inte "okänd person". RowAssignee skiljer de två tillstånden åt.
       cell: (item) => (
-        <RowAssignee name={item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? null) : null} assigned={Boolean(item.assigned_to)} />
+        <RowAssignee name={item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? null) : null} assigned={Boolean(item.assigned_to)} nameClassName="hidden xl:inline" />
       ),
     },
     { header: 'Datum', className: quoteWidth.date, cell: (item) => formatDate(item.quote_date) },
@@ -381,7 +386,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
         return (
           <>
             <span className="block whitespace-nowrap font-semibold text-slate-900">{formatCurrency(amount.primary, item.currency_code)}</span>
-            <span className="block whitespace-nowrap text-[11px] text-slate-500">{amount.basisSuffix}</span>
+            <span className="block text-[11px] leading-tight text-slate-500">{amount.basisSuffix}</span>
           </>
         );
       },

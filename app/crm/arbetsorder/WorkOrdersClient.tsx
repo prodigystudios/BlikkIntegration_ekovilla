@@ -70,15 +70,16 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
 
 
 
-// Kolumnbredderna — kunden tar resten. På telefon står kund och status kvar: namnet går före
-// beloppet, som i kortlistan tabellen ersatte. Resten kommer in med bredden: numret och beloppet
-// från 640 px, planerat datum från 768, ansvarig från 1024, täckningsgraden från 1280.
+// Kolumnbredderna — kunden tar resten och håller sig kring 180 px eller mer i varje bredd. På
+// telefon står kund och status kvar: namnet går före beloppet, som i kortlistan tabellen ersatte.
+// Resten kommer in med bredden: numret, ansvarigs bricka och beloppet från 640 px, planerat datum
+// från 768, täckningsgraden från 1024 (där sidomenyn tar sin plats), ansvarigs namn från 1280.
 const orderWidth = {
   number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
   customer: '',
-  assignee: 'hidden w-[10rem] lg:table-cell',
+  assignee: 'hidden w-[2.75rem] sm:table-cell xl:w-[10rem]',
   planned: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
-  margin: 'hidden w-[6.5rem] whitespace-nowrap tabular-nums xl:table-cell',
+  margin: 'hidden w-[6.5rem] whitespace-nowrap tabular-nums lg:table-cell',
   amount: 'hidden w-[7rem] whitespace-nowrap text-right tabular-nums sm:table-cell',
   status: 'w-[6.75rem] text-right sm:w-[8rem]',
 } as const;
@@ -140,6 +141,7 @@ export default function WorkOrdersClient({
   canEdit = true,
   basePath = '/crm/arbetsorder',
   canBeAssignee = true,
+  canSeeMargins,
 }: {
   currentUserId: string | null;
   /**
@@ -164,13 +166,20 @@ export default function WorkOrdersClient({
    * och tar bort "Mina" ur menyn.
    */
   canBeAssignee?: boolean;
+  /**
+   * Får den som tittar läsa täckningsgraden (crm.report.read, samma nyckel som kostnadsrutten
+   * kräver)? Läses på servern av samma skäl som offertlistans behörigheter: en klient som frågar
+   * själv hade visat en tom TG-kolumn tills 403-svaret kom, och sedan ritat om hela tabellen utan
+   * den. Utan nyckeln hämtas inga kostnader alls.
+   */
+  canSeeMargins: boolean;
 }) {
   const router = useRouter();
   const toast = useToast();
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
-  // Täckningsgraden per order — egen rutt, se useWorkOrderMargins.
-  const { margins: workOrderMargins, forbidden: marginsForbidden } = useWorkOrderMargins(workOrders.map((item) => item.id));
+  // Täckningsgraden per order — egen rutt, se useWorkOrderMargins. Ingen fråga utan behörigheten.
+  const { margins: workOrderMargins, forbidden: marginsForbidden } = useWorkOrderMargins(canSeeMargins ? workOrders.map((item) => item.id) : []);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<Record<WorkOrderFilter, number>>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
@@ -392,11 +401,15 @@ export default function WorkOrdersClient({
     },
     {
       header: 'Ansvarig',
+      // Smal kolumn med bara brickan (namnet i title) tills det finns plats för namnet vid 1280 px.
+      // Rubrikordet ryms inte i den smala kolumnen, så där hörs det bara av skärmläsaren.
+      headerContent: <span className="sr-only xl:not-sr-only">Ansvarig</span>,
       className: orderWidth.assignee,
       cell: (item) => (
         <RowAssignee
           name={item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? item.assignee?.full_name ?? null) : null}
           assigned={Boolean(item.assigned_to)}
+          nameClassName="hidden xl:inline"
         />
       ),
     },
@@ -416,9 +429,9 @@ export default function WorkOrdersClient({
         );
       },
     },
-    // Kolumnen finns bara för den som får läsa kostnaderna: utan behörighet svarar rutten 403, och
-    // en kolumn med bara tomma celler vore brus.
-    ...(marginsForbidden ? [] : [{
+    // Kolumnen finns bara för den som får läsa kostnaderna (canSeeMargins, från servern). 403 från
+    // rutten tar också bort den — behörigheten kan ha dragits in sedan sidan laddades.
+    ...(!canSeeMargins || marginsForbidden ? [] : [{
       header: 'TG',
       className: orderWidth.margin,
       cell: (item: WorkOrderItem) => <MarginCell margin={workOrderMargins[item.id]} />,

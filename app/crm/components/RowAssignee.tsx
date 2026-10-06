@@ -21,8 +21,8 @@ import { cn } from '@/lib/shared/cn';
  * att påstå något falskt om en rad som är korrekt tilldelad, och att skriva "Ej tilldelad" vore
  * ännu värre. Strecket säger bara att vi inte vet ännu, och löses upp när katalogen landar.
  *
- * Synligheten styrs av tabellkolumnen (dold på smala skärmar, där listans ansvarigfilter redan
- * står på "Mina" från start), inte här.
+ * Synligheten styrs av tabellkolumnen, inte här. Där kolumnen är smal står brickan ensam och
+ * `title` bär namnet; `nameClassName` säger från vilken bredd namnet skrivs ut bredvid.
  */
 
 export function initialsOf(name: string | null | undefined) {
@@ -33,7 +33,7 @@ export function initialsOf(name: string | null | undefined) {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-export function RowAssignee({ name, assigned }: { name: string | null; assigned: boolean }) {
+export function RowAssignee({ name, assigned, nameClassName }: { name: string | null; assigned: boolean; nameClassName?: string }) {
   const label = name ?? (assigned ? '—' : 'Ej tilldelad');
   const title = name ?? (assigned ? 'Ansvarig kunde inte hämtas' : 'Ej tilldelad');
 
@@ -48,7 +48,7 @@ export function RowAssignee({ name, assigned }: { name: string | null; assigned:
       >
         {initialsOf(name)}
       </span>
-      <span className={cn('truncate', name ? 'text-slate-700' : 'text-slate-400')}>{label}</span>
+      <span className={cn('truncate', name ? 'text-slate-700' : 'text-slate-400', nameClassName)}>{label}</span>
     </div>
   );
 }
