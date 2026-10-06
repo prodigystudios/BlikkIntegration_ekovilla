@@ -7,14 +7,15 @@ import { documentRef, formatDate } from '@/app/crm/lib/format';
 import { quoteCustomerName } from '@/app/crm/lib/quoteDisplay';
 import { netAmount } from '@/lib/domains/crm/pricing';
 import { formatCurrency, stockholmDateISO } from './overviewFormat';
-import { CustomerCell, RecentTable, recentWidth, type RecentColumn } from './OverviewRecentTable';
+import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
+import { recentWidth } from './OverviewRecentTable';
 import { RecentCard } from './OverviewStates';
 import type { QuoteItem } from './overviewTypes';
 
 // Postens adress — kundlänken och radklicket går dit, så den står en gång.
 const quoteHref = (quote: QuoteItem) => `/crm/offerter?quote_id=${quote.id}`;
 
-const COLUMNS: Array<RecentColumn<QuoteItem>> = [
+const COLUMNS: Array<CrmTableColumn<QuoteItem>> = [
   // Numret via documentRef: Fortnox-numret först, det interna bara som reserv.
   { header: 'Offertnr', className: recentWidth.number, cell: (quote) => documentRef(quote.fortnox_offer_number, quote.quote_number) },
   // "Kund", inte mockupens "Företag": privatkunder står här också, och i CRM:et betyder Företag
@@ -50,7 +51,7 @@ export default function OverviewRecentQuotes({ loading, failed, quotes }: {
   return (
     <RecentCard title="Senaste offerter" href="/crm/offerter" loading={loading} failed={failed}>
       {quotes.length === 0 ? <EmptyState description="Inga offerter ännu." /> : (
-        <RecentTable label="Senaste offerter" columns={COLUMNS} rows={quotes} rowHref={quoteHref} />
+        <CrmTable size="compact" label="Senaste offerter" columns={COLUMNS} rows={quotes} rowHref={quoteHref} />
       )}
     </RecentCard>
   );
