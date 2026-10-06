@@ -1,7 +1,8 @@
 "use client";
 
-import type { ReactNode } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { DataTable, DataTableCell, DataTableHeaderCell } from '@/components/ui/DataTable';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -28,11 +29,27 @@ export const recentWidth = {
   status: 'w-[6.75rem] text-right',
 } as const;
 
-export function RecentTable<T extends { id: string }>({ label, columns, rows }: {
+export function RecentTable<T extends { id: string }>({ label, columns, rows, rowHref }: {
   label: string;
   columns: Array<RecentColumn<T>>;
   rows: T[];
+  /** Vart ett klick på raden leder — samma mål som kundlänken i raden. */
+  rowHref: (row: T) => string;
 }) {
+  const router = useRouter();
+
+  // Hela raden är klickbar för musen och fingret, som när raderna var länkade kort. Tangentbordet
+  // och skärmläsaren har kundlänken (ett tabbstopp per rad), så klickytan behöver ingen egen roll.
+  // Ett klick PÅ länken sköter länken själv; Cmd/Ctrl-klick öppnar en ny flik som en länk hade gjort.
+  function onRowClick(event: MouseEvent<HTMLTableRowElement>, href: string) {
+    if ((event.target as HTMLElement).closest('a')) return;
+    if (event.metaKey || event.ctrlKey) {
+      window.open(href, '_blank', 'noopener');
+      return;
+    }
+    router.push(href);
+  }
+
   return (
     <DataTable aria-label={label} className="table-fixed text-xs text-slate-700" containerClassName="rounded-none border-0">
       <thead>
@@ -49,9 +66,17 @@ export function RecentTable<T extends { id: string }>({ label, columns, rows }: 
         </tr>
       </thead>
       <tbody>
-        {/* `relative` på raden: RowLink sträcker sin klickyta över den. */}
+        {/* 🧨 INGEN `relative` på raden och ingen länk vars ::after sträcks över den. Safari (även på
+            datorn) bortser från position på <tr> — den beräknas som static — så överlägget hamnade på
+            en förälder långt upp, och den sista radens länk täckte HELA sidan: varje klick öppnade
+            samma arbetsorder. Chrome stöder relative på rader, så det syntes inte där. Rättat
+            2026-10-06; därför onClick här. */}
         {rows.map((row) => (
-          <tr key={row.id} className="relative transition-colors hover:bg-white/70">
+          <tr
+            key={row.id}
+            onClick={(event) => onRowClick(event, rowHref(row))}
+            className="cursor-pointer transition-colors hover:bg-white/70 has-[a:focus-visible]:bg-white/70"
+          >
             {columns.map((column) => (
               <DataTableCell key={column.header} className={cn('border-[#eef2ec] px-0 py-2 pr-3 text-xs last:pr-0', column.className)}>
                 {column.cell(row)}
@@ -65,10 +90,9 @@ export function RecentTable<T extends { id: string }>({ label, columns, rows }: 
 }
 
 /**
- * Radens länk. Den står i kundcellen men dess ::after täcker hela raden: ett tryck på beloppet eller
- * statusen landar också på posten, som när raderna var länkade kort — och det är fortfarande ett
- * tabbstopp per rad. Fokusringen ritas på ::after (inåt, så att tabellens kant inte klipper den),
- * inte på länken, vars egen ring kapades av kundcellens ellips.
+ * Radens länk, i kundcellen: ett tabbstopp per rad (raden själv tar musklicken, se RecentTable).
+ * Fokusringen är appens (2 px --ek-accent, som globals.css) men ritas INÅT — en kontur utanför
+ * länken kapades av kundcellens ellips (overflow: hidden). Raden ljusnar dessutom medan länken har fokus.
  */
 export function RowLink({ href, title, children }: { href: string; title: string; children: ReactNode }) {
   return (
@@ -77,7 +101,7 @@ export function RowLink({ href, title, children }: { href: string; title: string
       title={title}
       className={cn(
         crm.link,
-        'block break-words outline-none after:absolute after:inset-0 after:rounded-md after:content-[""] focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-[color:var(--ek-accent-ring)] sm:truncate',
+        'block break-words rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--ek-accent)] sm:truncate',
       )}
     >
       {children}

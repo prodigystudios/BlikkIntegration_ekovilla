@@ -10,6 +10,9 @@ import { CustomerCell, RecentTable, recentWidth, type RecentColumn } from './Ove
 import { RecentCard } from './OverviewStates';
 import type { WorkOrderItem } from './overviewTypes';
 
+// Postens adress — kundlänken och radklicket går dit, så den står en gång.
+const orderHref = (order: WorkOrderItem) => `/crm/arbetsorder/${order.id}`;
+
 const COLUMNS: Array<RecentColumn<WorkOrderItem>> = [
   // Numret via documentRef: Fortnox-numret först, det interna bara som reserv. Visning, inte
   // uppslag — länken går på id:t.
@@ -17,7 +20,7 @@ const COLUMNS: Array<RecentColumn<WorkOrderItem>> = [
   {
     header: 'Kund',
     className: recentWidth.name,
-    cell: (order) => <CustomerCell href={`/crm/arbetsorder/${order.id}`} customer={order.client_name} project={order.project_name} />,
+    cell: (order) => <CustomerCell href={orderHref(order)} customer={order.client_name} project={order.project_name} />,
   },
   // Netto, som resten av översikten. Ordervärdet — inte resten att fakturera, som nyckeltalet Att
   // fakturera visar för en delfakturerad order.
@@ -39,7 +42,7 @@ export default function OverviewRecentOrders({ loading, failed, workOrders }: {
   return (
     <RecentCard title="Senaste ordrar" href="/crm/arbetsorder" loading={loading} failed={failed}>
       {workOrders.length === 0 ? <EmptyState description="Inga arbetsordrar ännu." /> : (
-        <RecentTable label="Senaste ordrar" columns={COLUMNS} rows={workOrders} />
+        <RecentTable label="Senaste ordrar" columns={COLUMNS} rows={workOrders} rowHref={orderHref} />
       )}
     </RecentCard>
   );
