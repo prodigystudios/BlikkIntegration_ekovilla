@@ -106,7 +106,11 @@ const quoteHref = (quote: QuoteItem) => `/crm/offerter?quote_id=${quote.id}`;
 // Resten kommer in med bredden: numret, ansvarigs bricka och beloppet från 640 px, uppföljningen
 // från 768, datumet från 1024 (där sidomenyn tar sin plats), kundtypen och ansvarigs namn från
 // 1280. Från 1280 ryms momsbasens längsta etikett, "omvänd skattskyldighet", på en rad; smalare
-// bryts den hellre än att rinna in i statusen.
+// bryts den hellre än att rinna ut över kanten.
+//
+// Beloppet står längst ut och statusen bredvid (William, 2026-10-06). På telefon är beloppet dolt
+// och statusen sista synliga kolumn: där ligger den mot högerkanten utan eget indrag (`last:pr-0`
+// träffar den dolda beloppscellen, inte statusen), från 640 px vänsterställd i sin kolumn.
 const quoteWidth = {
   number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
   customer: '',
@@ -115,7 +119,7 @@ const quoteWidth = {
   date: 'hidden w-[7rem] whitespace-nowrap tabular-nums text-slate-500 lg:table-cell',
   followUp: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
   amount: 'hidden w-[7.5rem] text-right tabular-nums sm:table-cell xl:w-[9rem]',
-  status: 'w-[6.75rem] text-right sm:w-[7.5rem]',
+  status: 'w-[6.75rem] pr-0 text-right sm:w-[7.5rem] sm:pr-4 sm:text-left',
 } as const;
 
 // ─── QuotesClient ─────────────────────────────────────────────────────────────
@@ -378,20 +382,6 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
       },
     },
     {
-      header: 'Belopp',
-      className: quoteWidth.amount,
-      // Privat → inkl. moms, företag → exkl. moms, med basen utskriven under (pricing.ts).
-      cell: (item) => {
-        const amount = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
-        return (
-          <>
-            <span className="block whitespace-nowrap font-semibold text-slate-900">{formatCurrency(amount.primary, item.currency_code)}</span>
-            <span className="block text-[11px] leading-tight text-slate-500">{amount.basisSuffix}</span>
-          </>
-        );
-      },
-    },
-    {
       header: 'Status',
       className: quoteWidth.status,
       cell: (item) => {
@@ -409,6 +399,20 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
             {isQuoteOverdue(item) ? (
               <span className="mt-1 block text-[11px] font-semibold text-amber-700 md:hidden">Försenad uppföljning</span>
             ) : null}
+          </>
+        );
+      },
+    },
+    {
+      header: 'Belopp',
+      className: quoteWidth.amount,
+      // Privat → inkl. moms, företag → exkl. moms, med basen utskriven under (pricing.ts).
+      cell: (item) => {
+        const amount = quoteAmountDisplay(item.quote_type, resolveQuoteVatBreakdown(item));
+        return (
+          <>
+            <span className="block whitespace-nowrap font-semibold text-slate-900">{formatCurrency(amount.primary, item.currency_code)}</span>
+            <span className="block text-[11px] leading-tight text-slate-500">{amount.basisSuffix}</span>
           </>
         );
       },

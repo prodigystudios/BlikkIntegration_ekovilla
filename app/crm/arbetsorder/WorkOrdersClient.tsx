@@ -74,6 +74,10 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
 // telefon står kund och status kvar: namnet går före beloppet, som i kortlistan tabellen ersatte.
 // Resten kommer in med bredden: numret, ansvarigs bricka och beloppet från 640 px, planerat datum
 // från 768, täckningsgraden från 1024 (där sidomenyn tar sin plats), ansvarigs namn från 1280.
+//
+// Beloppet står längst ut och statusen bredvid (William, 2026-10-06). På telefon är beloppet dolt
+// och statusen sista synliga kolumn: där ligger den mot högerkanten utan eget indrag (`last:pr-0`
+// träffar den dolda beloppscellen, inte statusen), från 640 px vänsterställd i sin kolumn.
 const orderWidth = {
   number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
   customer: '',
@@ -81,7 +85,7 @@ const orderWidth = {
   planned: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
   margin: 'hidden w-[6.5rem] whitespace-nowrap tabular-nums lg:table-cell',
   amount: 'hidden w-[7rem] whitespace-nowrap text-right tabular-nums sm:table-cell',
-  status: 'w-[6.75rem] text-right sm:w-[8rem]',
+  status: 'w-[6.75rem] pr-0 text-right sm:w-[8rem] sm:pr-4 sm:text-left',
 } as const;
 
 // Fortnox-avvikelsens färg under statusen. Bara textfärgen: raden bär redan statuspillret, och en
@@ -436,7 +440,6 @@ export default function WorkOrdersClient({
       className: orderWidth.margin,
       cell: (item: WorkOrderItem) => <MarginCell margin={workOrderMargins[item.id]} />,
     }]),
-    { header: 'Belopp', className: orderWidth.amount, cell: (item) => <span className="font-semibold text-slate-900">{formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}</span> },
     {
       header: 'Status',
       className: orderWidth.status,
@@ -464,6 +467,7 @@ export default function WorkOrdersClient({
         </>
       ),
     },
+    { header: 'Belopp', className: orderWidth.amount, cell: (item) => <span className="font-semibold text-slate-900">{formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}</span> },
   ];
 
   return (
