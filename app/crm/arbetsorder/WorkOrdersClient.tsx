@@ -4,12 +4,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import { crm, syncStatusLabel, syncStatusClass, workOrderStatusLabel, workOrderStatusClass, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
+import { crm, syncStatusLabel, workOrderStatusLabel, workOrderStatusClass, type SyncStatus } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
-import DocumentNumberBadge from '@/app/crm/components/DocumentNumberBadge';
-import { RowAssignee, RowAssigneeChip } from '@/app/crm/components/RowAssignee';
+import { RowAssignee } from '@/app/crm/components/RowAssignee';
+import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
@@ -70,45 +70,67 @@ const EMPTY_COUNTS: Record<WorkOrderFilter, number> = { all: 0, draft: 0, schedu
 
 
 
+// Kolumnbredderna — kunden tar resten. På telefon står kund och status kvar: namnet går före
+// beloppet, som i kortlistan tabellen ersatte. Resten kommer in med bredden: numret och beloppet
+// från 640 px, planerat datum från 768, ansvarig från 1024, täckningsgraden från 1280.
+const orderWidth = {
+  number: 'hidden w-[7rem] break-words tabular-nums text-slate-500 sm:table-cell',
+  customer: '',
+  assignee: 'hidden w-[10rem] lg:table-cell',
+  planned: 'hidden w-[8rem] whitespace-nowrap tabular-nums md:table-cell',
+  margin: 'hidden w-[6.5rem] whitespace-nowrap tabular-nums xl:table-cell',
+  amount: 'hidden w-[7rem] whitespace-nowrap text-right tabular-nums sm:table-cell',
+  status: 'w-[6.75rem] text-right sm:w-[8rem]',
+} as const;
+
+// Fortnox-avvikelsens färg under statusen. Bara textfärgen: raden bär redan statuspillret, och en
+// andra ram under den hade tävlat med det.
+const syncDeviationText: Record<Exclude<SyncStatus, 'synced'>, string> = {
+  not_synced: 'text-slate-500',
+  pending: 'text-amber-700',
+  failed: 'text-rose-700',
+};
+
 /**
- * Ett täckningsgradschip i radens märkesrad.
+ * En täckningsgrad i kolumnen TG.
  *
- * ⚠️ VARJE CHIP BÄR SITT EGET NAMN. De två talen mäter olika saker — TG1 vad som är kvar efter
+ * ⚠️ VARJE RAD BÄR SITT EGET NAMN. De två talen mäter olika saker — TG1 vad som är kvar efter
  * materialet, TG2 vad som är kvar efter arbetet också — och etiketten är det som gör dem
  * jämförbara mellan rader. Det som INTE får hända är en tyst reserv: samma plats får aldrig betyda
  * TG1 på en rad och TG2 på nästa, för då jämförs två jobb som om talen mätte samma sak. Med
- * utskrivna namn finns den tvetydigheten inte, och saknas ett av talen uteblir bara dess chip.
+ * utskrivna namn finns den tvetydigheten inte, och saknas ett av talen uteblir bara dess rad.
  *
  * ⚠️ INGA TRÖSKLAR. Offertens 25/40 är satta för förkalkylens TG och TB2 ligger per definition
  * lägre — återanvänds de lyser varje rad rött. Bara förlust färgas, för den är sann utan att någon
  * behöver dra en gräns.
  *
  * ⚠️ INGEN "prel."-MÄRKNING BEHÖVS. Talen räknas bara när materialkostnaden är KOMPLETT — går någon
- * del inte att prissätta blir den null och chippet uteblir. Ett tal som syns är alltså ett tal som
+ * del inte att prissätta blir den null och raden uteblir. Ett tal som syns är alltså ett tal som
  * stämmer, och det är hela skälet till att kolumnen går att lita på.
  */
-function MarginChip({ label, percent }: { label: string; percent: number }) {
+function MarginLine({ label, percent }: { label: string; percent: number }) {
   const loss = percent < 0;
   return (
     <span
       title={label === 'TG1' ? 'Täckningsgrad efter material' : 'Täckningsgrad efter material och arbete'}
-      className={cn(
-        'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-        loss ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-slate-200 bg-slate-50 text-slate-600',
-      )}
+      className={cn('block', loss ? 'font-semibold text-rose-700' : 'text-slate-600')}
     >
       {label} {percent.toFixed(1).replace('.', ',')} %
     </span>
   );
 }
 
-/** Radens täckningsgrader. Båda visas när de finns; ingen ersätter den andra. */
-function MarginChips({ margin }: { margin: WorkOrderMargin | undefined }) {
+/**
+ * Radens täckningsgrader. Båda visas när de finns; ingen ersätter den andra. Tom medan svaret inte
+ * kommit (talen hämtas i en egen rutt efter listan), streck när inget av talen går att räkna.
+ */
+function MarginCell({ margin }: { margin: WorkOrderMargin | undefined }) {
   if (!margin) return null;
+  if (margin.tg1 == null && margin.tg2 == null) return <span className="text-slate-400">–</span>;
   return (
     <>
-      {margin.tg1 != null ? <MarginChip label="TG1" percent={margin.tg1} /> : null}
-      {margin.tg2 != null ? <MarginChip label="TG2" percent={margin.tg2} /> : null}
+      {margin.tg1 != null ? <MarginLine label="TG1" percent={margin.tg1} /> : null}
+      {margin.tg2 != null ? <MarginLine label="TG2" percent={margin.tg2} /> : null}
     </>
   );
 }
@@ -148,7 +170,7 @@ export default function WorkOrdersClient({
   const searchParams = useSearchParams();
   const [workOrders, setWorkOrders] = useState<WorkOrderItem[]>([]);
   // Täckningsgraden per order — egen rutt, se useWorkOrderMargins.
-  const { margins: workOrderMargins } = useWorkOrderMargins(workOrders.map((item) => item.id));
+  const { margins: workOrderMargins, forbidden: marginsForbidden } = useWorkOrderMargins(workOrders.map((item) => item.id));
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<Record<WorkOrderFilter, number>>(EMPTY_COUNTS);
   const [loading, setLoading] = useState(true);
@@ -357,6 +379,80 @@ export default function WorkOrdersClient({
   // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
   const activeFilterCount = (filter !== 'all' ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
 
+  // Radens adress — ekonomiytan har sin egen detaljvy under sin egen basePath.
+  const orderHref = (item: WorkOrderItem) => `${basePath}/${item.id}`;
+
+  const columns: Array<CrmTableColumn<WorkOrderItem>> = [
+    // Numret via documentRef: Fortnox-numret först, det interna bara som reserv.
+    { header: 'Ordernr', className: orderWidth.number, cell: (item) => documentRef(item.fortnox_order_number, item.order_number) },
+    {
+      header: 'Kund',
+      className: orderWidth.customer,
+      cell: (item) => <CustomerCell href={orderHref(item)} customer={item.client_name} project={item.project_name} />,
+    },
+    {
+      header: 'Ansvarig',
+      className: orderWidth.assignee,
+      cell: (item) => (
+        <RowAssignee
+          name={item.assigned_to ? (assigneeNameById.get(item.assigned_to) ?? item.assignee?.full_name ?? null) : null}
+          assigned={Boolean(item.assigned_to)}
+        />
+      ),
+    },
+    {
+      // "Planerad" är ett MEDVETET VAL (William, 2026-08-23) — ändra inte. Prövat som "Installation"
+      // och backat: "Planerad" är ordet verksamheten använder. Att det sammanfaller med statusen
+      // `scheduled` är känt och accepterat; en rad kan alltså läsa "Ej planerad" i statusen och ett
+      // streck under Planerad.
+      header: 'Planerad',
+      className: orderWidth.planned,
+      cell: (item) => {
+        const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
+        return (
+          <span className={overdue ? 'font-semibold text-rose-600' : 'text-slate-500'} title={overdue ? 'Försenad' : undefined}>
+            {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
+          </span>
+        );
+      },
+    },
+    // Kolumnen finns bara för den som får läsa kostnaderna: utan behörighet svarar rutten 403, och
+    // en kolumn med bara tomma celler vore brus.
+    ...(marginsForbidden ? [] : [{
+      header: 'TG',
+      className: orderWidth.margin,
+      cell: (item: WorkOrderItem) => <MarginCell margin={workOrderMargins[item.id]} />,
+    }]),
+    { header: 'Belopp', className: orderWidth.amount, cell: (item) => <span className="font-semibold text-slate-900">{formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}</span> },
+    {
+      header: 'Status',
+      className: orderWidth.status,
+      cell: (item) => (
+        <>
+          <span className={cn(crm.badge, workOrderStatusClass[item.status] ?? 'border-slate-200 bg-slate-50 text-slate-700')}>
+            {workOrderStatusLabel[item.status] ?? item.status}
+          </span>
+          {/* Faktureringsläget är skilt från arbetsstatusen: sätts vid första delfakturan. */}
+          {item.partial_invoicing_started_at && item.status !== 'invoiced' && item.status !== 'partially_invoiced' ? (
+            <span className="mt-1 block text-[11px] font-semibold text-amber-700">Delfakturerad</span>
+          ) : null}
+          {/* Planerad-kolumnen är dold under 768 px — där bär statusen förseningen i stället. */}
+          {isWorkOrderOverdue(item.desired_installation_date, item.status) ? (
+            <span className="mt-1 block text-[11px] font-semibold text-rose-700 md:hidden">Försenad</span>
+          ) : null}
+          {/* Bara AVVIKELSEN. "Fortnox: Synkad" hade stått på i stort sett varje rad, och mitt bland
+              dem hade den enda som betydde något försvunnit. Att raden saknas betyder alltså att
+              ordern ÄR synkad. */}
+          {item.fortnox_order_sync_status !== 'synced' ? (
+            <span className={cn('mt-1 block text-[11px] font-semibold', syncDeviationText[item.fortnox_order_sync_status])}>
+              Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
+            </span>
+          ) : null}
+        </>
+      ),
+    },
+  ];
+
   return (
     <div className="grid grid-cols-1 gap-4">
       {/* Page header */}
@@ -454,7 +550,9 @@ export default function WorkOrdersClient({
 
         {/* List */}
         {loading ? <div className="py-4 text-sm text-slate-500">Laddar arbetsorder…</div> : null}
-          {!loading && workOrders.length === 0 ? (
+          {/* Tomläget gatas på felet också: efter ett misslyckat anrop är listan tom, och "inga
+              arbetsorder matchar" under felrutan hade pekat åt fel håll (FRONTEND_SYSTEM.md). */}
+          {!loading && !error && workOrders.length === 0 ? (
             // 🧨 Samma skäl som i offertlistan, och skarpare här: `assigned_to` är SÄLJAREN, så en
             // planerare ser en tom tavla tills filtret rensas. Knappen är vägen ut.
             <div className="grid justify-items-center gap-3 rounded-2xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-8 text-center text-sm text-slate-500">
@@ -476,97 +574,7 @@ export default function WorkOrdersClient({
           ) : null}
 
           {!loading && workOrders.length > 0 ? (
-            <div className="grid gap-1">
-              {workOrders.map((item) => {
-                const overdue = isWorkOrderOverdue(item.desired_installation_date, item.status);
-                const sellerName = item.assigned_to
-                  ? (assigneeNameById.get(item.assigned_to) ?? item.assignee?.full_name ?? null)
-                  : null;
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => router.push(`${basePath}/${item.id}`)}
-                    className={cn(
-                      'group relative flex items-stretch overflow-hidden rounded-lg border bg-white text-left shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:border-[#cfdcc9] hover:shadow-[0_8px_20px_-10px_rgba(20,44,27,0.30)]',
-                      overdue ? 'border-rose-200' : 'border-[#e3e9df]',
-                    )}
-                  >
-                    {/* Status accent rail */}
-                    <span className={cn('w-1.5 shrink-0', workOrderStatusAccent[item.status])} aria-hidden="true" />
-
-                    {/* Ansvarig-kolumnen är 116px och inte 48px: den rymmer namnet, inte bara en
-                        initialbricka man måste hovra på. Utrymmet tas ur identitetskolumnen, som är
-                        den flexibla — de två högerkolumnerna har fast innehåll. */}
-                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 px-2.5 py-1.5 sm:grid-cols-[minmax(0,1fr)_48px_140px_128px] md:grid-cols-[minmax(0,1fr)_116px_140px_128px] lg:grid-cols-[minmax(0,1fr)_150px_140px_128px] sm:items-center sm:gap-3">
-                      {/* Number badge + identity + chips */}
-                      <div className="flex min-w-0 items-center gap-2">
-                        <DocumentNumberBadge label="Order" value={documentRef(item.fortnox_order_number, item.order_number)} />
-                        <div className="grid min-w-0 gap-0.5">
-                          <strong className="truncate text-[13px] font-bold text-slate-900">{item.project_name}</strong>
-                          <span className="truncate text-[11px] text-slate-500">{item.client_name}</span>
-                          <div className="flex flex-wrap items-center gap-1 pt-0.5">
-                            <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', workOrderStatusClass[item.status])}>
-                              {workOrderStatusLabel[item.status]}
-                            </span>
-                            {item.partial_invoicing_started_at && item.status !== 'invoiced' && item.status !== 'partially_invoiced' ? (
-                              <span className="inline-flex items-center rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Delfakturerad</span>
-                            ) : null}
-                            {overdue ? (
-                              <span className="inline-flex items-center rounded-md border border-rose-200 bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
-                                Försenad
-                              </span>
-                            ) : null}
-                            <span className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
-                              {(item.line_items || []).length} {(item.line_items || []).length === 1 ? 'rad' : 'rader'}
-                            </span>
-                            {/* Bara AVVIKELSEN. "Fortnox: Synkad" stod på i stort sett varje rad i
-                                listan — femtiotalet chippar som alla sa samma sak, och mitt bland
-                                dem försvann den enda som betydde något. Kvar syns de tre andra
-                                lägena: "Ej synkad", "Väntar" och "Misslyckad". Att chippen saknas
-                                betyder alltså att ordern ÄR synkad. */}
-                            {item.fortnox_order_sync_status !== 'synced' ? (
-                              <span className={cn('inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-semibold', syncStatusClass[item.fortnox_order_sync_status])}>
-                                Fortnox: {syncStatusLabel[item.fortnox_order_sync_status]}
-                              </span>
-                            ) : null}
-                            <MarginChips margin={workOrderMargins[item.id]} />
-                            {/* Ansvarig på mobil, där kolumnen till höger inte får plats */}
-                            <RowAssigneeChip name={sellerName} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Ansvarig, i en fast slot så den aldrig driver i sidled */}
-                      <RowAssignee name={sellerName} assigned={Boolean(item.assigned_to)} />
-
-                      {/* Date */}
-                      <div className="hidden flex-col gap-0.5 sm:flex">
-                        {/* "Planerad" är ett MEDVETET VAL (William, 2026-08-23) — ändra inte.
-                            Prövat som "Installation" och backat: etiketten plus datumet under
-                            läses som en enhet, och "Planerad" är ordet verksamheten använder.
-                            Att det sammanfaller med statusen `scheduled` är känt och accepterat;
-                            en rad kan alltså läsa "Ej planerad … PLANERAD –". */}
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Planerad</span>
-                        <span className={cn('text-[11px] font-medium', overdue ? 'text-rose-600' : 'text-slate-600')}>
-                          {overdue ? '⚠ ' : ''}{formatDate(item.desired_installation_date)}
-                        </span>
-                      </div>
-
-                      {/* Amount + chevron (amount hidden on mobile — name takes priority) */}
-                      <div className="flex items-center justify-end gap-2">
-                        <span className="hidden whitespace-nowrap text-[13px] font-bold tabular-nums text-slate-900 sm:inline sm:text-sm">
-                          {formatCurrency(item.pricing_summary?.total ?? item.amount, item.currency_code)}
-                        </span>
-                        <svg className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-400" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M9 18l6-6-6-6" />
-                        </svg>
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <CrmTable size="regular" label="Arbetsorder" columns={columns} rows={workOrders} rowHref={orderHref} />
           ) : null}
 
           {/* Visa fler — server-side pagination so the board never silently truncates */}
