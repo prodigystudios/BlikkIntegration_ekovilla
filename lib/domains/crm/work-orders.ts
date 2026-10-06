@@ -613,7 +613,10 @@ export async function listCrmWorkOrdersWithFilters(
   const selected = supabase
     .from('crm_work_orders')
     .select(crmWorkOrderSelect, { count: 'exact' });
-  const ordered = options.sort === 'created_desc'
+  // 🧨 `id` SIST i varje ordning: `.range()` sidindelar, och utan en unik sista nyckel får rader med
+  // samma datum och samma created_at (en import, samma transaktion) byta plats mellan två frågor —
+  // "Visa fler" visar då en rad två gånger och en annan aldrig.
+  const ordered = (options.sort === 'created_desc'
     ? selected.order('created_at', { ascending: false })
     : options.sort === 'planned_asc'
       ? selected
@@ -622,7 +625,8 @@ export async function listCrmWorkOrdersWithFilters(
         .order('created_at', { ascending: false })
       : selected
         .order('desired_installation_date', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+  ).order('id', { ascending: true });
 
   return applyWorkOrderListFilters(ordered.range(offset, offset + limit - 1), options);
 }

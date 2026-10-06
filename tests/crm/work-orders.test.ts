@@ -387,6 +387,7 @@ describe('listCrmWorkOrdersWithFilters — radordningen', () => {
     expect((supabase._query.order as any).mock.calls).toEqual([
       ['desired_installation_date', { ascending: true, nullsFirst: false }],
       ['created_at', { ascending: false }],
+      ['id', { ascending: true }],
     ]);
   });
 
@@ -398,13 +399,24 @@ describe('listCrmWorkOrdersWithFilters — radordningen', () => {
       ['planned_start_day', { ascending: true, nullsFirst: false }],
       ['desired_installation_date', { ascending: true, nullsFirst: false }],
       ['created_at', { ascending: false }],
+      ['id', { ascending: true }],
     ]);
   });
 
   it('sort=created_desc sorterar nyast först och rör inte installationsdatumet', async () => {
     const supabase = makeSupabaseMock({ data: [], error: null });
     await listCrmWorkOrdersWithFilters(supabase as any, { sort: 'created_desc' });
-    expect((supabase._query.order as any).mock.calls).toEqual([['created_at', { ascending: false }]]);
+    expect((supabase._query.order as any).mock.calls).toEqual([['created_at', { ascending: false }], ['id', { ascending: true }]]);
+  });
+
+  it('varje ordning slutar på id — sidindelningen kräver en unik sista nyckel', async () => {
+    // Utan den kan två rader med samma datum och created_at byta plats mellan förstasidan och
+    // "Visa fler", så att en rad visas två gånger och en annan aldrig.
+    for (const sort of ['installation_asc', 'planned_asc', 'created_desc'] as const) {
+      const supabase = makeSupabaseMock({ data: [], error: null });
+      await listCrmWorkOrdersWithFilters(supabase as any, { sort });
+      expect((supabase._query.order as any).mock.calls.at(-1)).toEqual(['id', { ascending: true }]);
+    }
   });
 });
 

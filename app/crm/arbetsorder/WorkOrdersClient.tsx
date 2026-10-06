@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, workOrderStatusLabel, workOrderStatusClass, type SyncStatus } from '@/app/crm/lib/crmTokens';
-import { formatDayRange, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
+import { formatDayRangeParts, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import StatusFilter from '@/app/crm/components/StatusFilter';
@@ -444,13 +444,12 @@ export default function WorkOrdersClient({
       header: 'Planerad',
       className: orderWidth.planned,
       cell: (item) => {
-        const range = formatDayRange(item.planned_start_day, item.planned_end_day);
+        const range = formatDayRangeParts(item.planned_start_day, item.planned_end_day);
         if (!range) return '–';
         // Bryts bara vid tankstrecket: "30 dec. 2026 –" / "2 jan. 2027", aldrig mitt i ett datum.
-        const [from, to] = range.split(' – ');
-        return to
-          ? <><span className="whitespace-nowrap">{from} –</span> <span className="whitespace-nowrap">{to}</span></>
-          : <span className="whitespace-nowrap">{range}</span>;
+        return range.to
+          ? <><span className="whitespace-nowrap">{range.from} –</span> <span className="whitespace-nowrap">{range.to}</span></>
+          : <span className="whitespace-nowrap">{range.from}</span>;
       },
     },
     // Kolumnen finns bara för den som får läsa kostnaderna (canSeeMargins, från servern). 403 från
