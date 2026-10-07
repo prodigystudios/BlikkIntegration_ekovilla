@@ -14,6 +14,7 @@ import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/p
 import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
 import type { ReportOverview, ReportSales, SalesTrend } from './reportKpis';
+import type { ReportRevenue } from './reportRevenue';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -47,6 +48,24 @@ export type ReportOrderRow = NetAmountRow & {
   client_name: string | null;
   /** 'private' eller 'business' (NOT NULL i schemat) — typisk order per kundtyp. Obligatorisk av samma skäl som på offerten. */
   quote_type: string;
+  /** Kunden — "Kunder" under Omsättning. null: ordern saknar kundkort, och kunden känns då igen på client_name. */
+  customer_id: string | null;
+  /** `rot_details->enabled` — ROT-andelen. JSON, så `true` och inget annat räknas som ikryssat. */
+  rot_enabled: unknown;
+  /** Kundkortets SNI-kod, för kundsegmentet. Som lista när klienten inte vet att relationen är många-till-en. */
+  customer: ReportOrderCustomer | ReportOrderCustomer[] | null;
+};
+
+export type ReportOrderCustomer = { sni_code: string | null };
+
+/**
+ * En delfakturarunda som rapporten läser den: orderns kundtyp obligatorisk i inbäddningen. Utan den
+ * hade varje runda räknats som fakturerat till ett företag — andelen privat hade blivit för låg utan
+ * att något felade.
+ */
+type ReportRoundOrder = { status: string | null; assigned_to: string | null; client_name: string | null; quote_type: string };
+export type ReportInvoiceRoundRow = Omit<InvoiceRoundRow, 'work_order'> & {
+  work_order: ReportRoundOrder | ReportRoundOrder[] | null;
 };
 
 export type ReportCallRow = { user_id: string | null; call_at: string };
@@ -56,7 +75,7 @@ export type ReportData = {
   quotes: ReportQuoteRow[];
   orders: ReportOrderRow[];
   /** Delfakturarundor skapade inom perioden, oavsett när ordern skapades eller slutfakturerades. */
-  invoiceRounds: InvoiceRoundRow[];
+  invoiceRounds: ReportInvoiceRoundRow[];
   calls: ReportCallRow[];
   sellers: ReportSellerRow[];
 };
@@ -465,6 +484,11 @@ export type SalesReport = {
    * se reportKpis.ts. null = kunde inte räknas.
    */
   sales: ReportSales | null;
+  /**
+   * Omsättningsflikens nyckeltal: fakturerat per kundtyp och månad, book-to-bill, ledtid, ROT,
+   * orderstock per läge, kundsegment och kunder — se reportRevenue.ts. null = kunde inte räknas.
+   */
+  revenue: ReportRevenue | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   perCustomer: CustomerReportRow[];
@@ -497,6 +521,8 @@ export function composeSalesReport(
     trend?: SalesTrend | null;
     /** Försäljningsflikens nyckeltal, färdigräknade i rutten — hit rate behöver dagens datum. */
     sales?: ReportSales | null;
+    /** Omsättningsflikens nyckeltal, färdigräknade i rutten — de har egna läsningar. */
+    revenue?: ReportRevenue | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -509,6 +535,7 @@ export function composeSalesReport(
     overview: opts?.overview ?? null,
     trend: opts?.trend ?? null,
     sales: opts?.sales ?? null,
+    revenue: opts?.revenue ?? null,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,
@@ -568,7 +595,11 @@ function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<Re
       // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
       // INTE här — de behövs bara för de fakturerade ordrarna, och tolv månaders rader hade varit
       // en tung nyttolast att dra hem för att sedan kasta det mesta.
-      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name, quote_type')
+      //
+      // ⚠️ KUNDKORTET MED UTPEKAD NYCKEL (`!crm_work_orders_customer_id_fkey`). Ordern har två nycklar
+      // mot crm_customers — customer_id och prospect_id — och utan utpekningen vägrar PostgREST
+      // inbäddningen ("more than one relationship"), vilket fäller hela rapporten.
+      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name, quote_type, customer_id, rot_enabled:rot_details->enabled, customer:crm_customers!crm_work_orders_customer_id_fkey(sni_code)')
       .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`)
       .order('id', { ascending: true })
       .range(from, to),
@@ -580,11 +611,11 @@ function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<Re
  * som varken skapades eller slutfakturerades i augusti, och finns då inte bland ordrarna ovan.
  * `amount` är redan ex moms — se invoicedRevenue.
  */
-function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Promise<InvoiceRoundRow[]> {
+function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Promise<ReportInvoiceRoundRow[]> {
   const toEnd = `${range.to}T23:59:59.999Z`;
   return readEveryRow('crm_work_order_invoices', (from, to) =>
     admin.from('crm_work_order_invoices')
-      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to, client_name)')
+      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to, client_name, quote_type)')
       .gte('created_at', range.from)
       .lte('created_at', toEnd)
       .order('id', { ascending: true })
@@ -610,7 +641,7 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
   const [quotes, orders, invoiceRounds, calls, sellers]: [
     ReportQuoteRow[],
     ReportOrderRow[],
-    InvoiceRoundRow[],
+    ReportInvoiceRoundRow[],
     ReportCallRow[],
     ReportSellerRow[],
   ] = await Promise.all([

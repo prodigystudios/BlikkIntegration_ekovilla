@@ -16,6 +16,9 @@ const order = (id: string, invoicedDay: string): ReportOrderRow => ({
   assigned_to: null,
   client_name: null,
   quote_type: 'business',
+  customer_id: null,
+  rot_enabled: null,
+  customer: null,
 });
 
 const calc = (revenue: number | null, tb1: number | null, tb2: number | null) => ({ revenue, tb1, tb2 });

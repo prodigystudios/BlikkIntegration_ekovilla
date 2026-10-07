@@ -361,7 +361,7 @@ describe('buildSalesTrend', () => {
   const quoteRow = (quote_date: string, amount: number) =>
     ({ amount, vat_percent: 0, status: 'sent', quote_date, assigned_to: null, customer_name: null, quote_type: 'business' });
   const orderRow = (created_at: string, amount: number, over: Record<string, unknown> = {}) =>
-    ({ amount, vat_percent: 0, status: 'scheduled', created_at, fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', ...over });
+    ({ amount, vat_percent: 0, status: 'scheduled', created_at, fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null, ...over });
 
   const window = { from: '2026-06-29', to: '2026-10-07' };
   const trend = buildSalesTrend({
@@ -461,7 +461,7 @@ describe('buildPerSeller — hit rate per säljare', () => {
   });
   const sellerOrder: ReportOrderRow = {
     amount: 5000, vat_percent: 0, status: 'scheduled', created_at: '2026-08-12T08:00:00Z', fortnox_invoiced_at: null,
-    partial_invoicing_started_at: null, assigned_to: 'u3', client_name: null, quote_type: 'business',
+    partial_invoicing_started_at: null, assigned_to: 'u3', client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null,
   };
 
   it('vunna ÷ ALLA säljarens offerter — utkast, förlorade och skickade i nämnaren', () => {
@@ -676,7 +676,7 @@ describe('median', () => {
 describe('buildTypicalOrder', () => {
   const order = (amount: number, quote_type: string, vat_percent = 0): ReportOrderRow => ({
     amount, vat_percent, status: 'scheduled', created_at: '2026-08-12T08:00:00Z', fortnox_invoiced_at: null,
-    partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type,
+    partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type, customer_id: null, rot_enabled: null, customer: null,
   });
 
   it('median och snitt per kundtyp — snittet dras upp av ett stort jobb, medianen inte', () => {

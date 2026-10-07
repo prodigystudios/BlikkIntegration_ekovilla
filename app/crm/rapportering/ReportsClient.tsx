@@ -191,7 +191,7 @@ export default function ReportsClient() {
         <section role="tabpanel" id={`report-tabpanel-${activeTab}`} aria-labelledby={`report-tab-${activeTab}`}>
           {activeTab === 'oversikt' ? <OverviewTab report={report} periodLabel={periodLabel} /> : null}
           {activeTab === 'forsaljning' ? <SalesTab report={report} periodLabel={periodLabel} /> : null}
-          {activeTab === 'omsattning' ? <RevenueTab report={report} /> : null}
+          {activeTab === 'omsattning' ? <RevenueTab report={report} periodLabel={periodLabel} /> : null}
           {activeTab === 'produktion' ? <ProductionTab report={report} activeRangeKey={activeRangeKey} /> : null}
           {/* ⚠️ `time === null` = läsaren saknar `time.entry.read.all`; fliken finns då inte alls (se
               visibleReportTabs), så den här grenen nås inte heller via ?flik=tid. */}

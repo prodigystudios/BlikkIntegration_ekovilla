@@ -43,9 +43,11 @@ export type InvoicedOrderRow = NetAmountRow & {
   partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name?: string | null;
+  /** 'private' eller 'business' — förs vidare till fakturan. Rapporten läser den, översikten inte. */
+  quote_type?: string | null;
 };
 
-type InvoiceRoundOrder = { status: string | null; assigned_to: string | null; client_name?: string | null };
+type InvoiceRoundOrder = { status: string | null; assigned_to: string | null; client_name?: string | null; quote_type?: string | null };
 
 /** En delfakturarunda, med sin order inbäddad (`work_order:crm_work_orders(...)`). */
 export type InvoiceRoundRow = {
@@ -66,6 +68,8 @@ export type InvoicedRevenue = {
   at: string;
   assigned_to: string | null;
   client_name: string | null;
+  /** Orderns kundtyp, när läsningen hämtade den — annars null. */
+  quote_type: string | null;
 };
 
 /**
@@ -126,6 +130,7 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       at,
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
+      quote_type: order.quote_type ?? null,
     }];
   });
 
@@ -140,6 +145,7 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       at: round.created_at,
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
+      quote_type: order.quote_type ?? null,
     }];
   });
 
