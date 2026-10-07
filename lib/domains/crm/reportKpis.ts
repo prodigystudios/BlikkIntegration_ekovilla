@@ -361,10 +361,10 @@ export function trendWindow(last12: ReportRange, firstActivityDay: string | null
 
 /**
  * Månadens dagar inom fönstret. `partial` är satt när fönstret skär månaden — den pågår, eller CRM:et
- * startade mitt i den — och är då de dagar som räknas. Delas av trenden och hit rate per månad, så
- * att de två alltid märker samma månader som delmånader.
+ * startade mitt i den — och är då de dagar som räknas. Delas av trenden, hit rate per månad och
+ * fakturerat per månad (reportRevenue.ts), så att de alltid märker samma månader som delmånader.
  */
-function monthSpan(period: string, window: ReportRange): { from: string; to: string; partial: ReportRange | null } {
+export function monthSpan(period: string, window: ReportRange): { from: string; to: string; partial: ReportRange | null } {
   const month = monthBounds(period);
   const from = month.from > window.from ? month.from : window.from;
   const to = month.to < window.to ? month.to : window.to;
@@ -372,7 +372,7 @@ function monthSpan(period: string, window: ReportRange): { from: string; to: str
 }
 
 /** Ligger månaden helt eller delvis i den valda perioden? */
-function monthTouches(period: string, selected: ReportRange): boolean {
+export function monthTouches(period: string, selected: ReportRange): boolean {
   const month = monthBounds(period);
   return month.from <= selected.to && month.to >= selected.from;
 }

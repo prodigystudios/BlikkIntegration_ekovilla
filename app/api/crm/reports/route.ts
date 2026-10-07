@@ -21,7 +21,13 @@ import {
   type ReportSales,
   type SalesTrend,
 } from '@/lib/domains/crm/reportKpis';
-import { fetchFirstActivityDay, fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import {
+  fetchCustomerOrderRows,
+  fetchFirstActivityDay,
+  fetchOpenQuoteRows,
+  fetchOrderStockRows,
+} from '@/lib/domains/crm/reportKpisLoader';
+import { buildReportRevenue, countOrdersPerCustomer, type ReportRevenue } from '@/lib/domains/crm/reportRevenue';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
@@ -102,6 +108,11 @@ export async function GET(req: Request) {
       ),
       fetchOpenQuoteRows(admin).catch((e: any) => {
         console.warn(`[Rapport] De öppna offerterna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+      // Varje kunds order sedan start, för "återkommande kunder" under Omsättning.
+      fetchCustomerOrderRows(admin).then(countOrdersPerCustomer, (e: any) => {
+        console.warn(`[Rapport] Kundernas order kunde inte läsas: ${e?.message || e}`);
         return null;
       }),
     ]);
@@ -271,7 +282,7 @@ export async function GET(req: Request) {
     }
 
     const todayIso = today(now);
-    const [orderStockRows, basis, openQuoteRows] = await overviewReads;
+    const [orderStockRows, basis, openQuoteRows, ordersSinceStart] = await overviewReads;
     const overview = buildReportOverview({
       quotes: data.quotes,
       range,
@@ -309,6 +320,23 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Försäljningens nyckeltal kunde inte räknas: ${e?.message || e}`);
     }
 
+    // Omsättningsflikens nyckeltal. Fakturerat per månad läser trendens rader i trendens fönster
+    // (Williams beslut 2026-10-07); orderstocken per läge är ögonblicksbildens rader. Felar någon av de
+    // läsningarna blir bara den delen null.
+    let revenue: ReportRevenue | null = null;
+    try {
+      revenue = buildReportRevenue({
+        period: periodOrders,
+        range,
+        trend: trendData ? { data: trendData, window: trendRange } : null,
+        orderStockRows,
+        ordersSinceStart,
+        previousTotals: previous?.totals ?? null,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Omsättningens nyckeltal kunde inte räknas: ${e?.message || e}`);
+    }
+
     const report = composeSalesReport(data, range, afterCalculations, {
       profitabilityUnavailable,
       goals,
@@ -319,6 +347,7 @@ export async function GET(req: Request) {
       overview,
       trend,
       sales,
+      revenue,
     });
 
     return ok(report);

@@ -146,6 +146,10 @@ export function formatSigned(percent: number) {
   const rounded = Math.round(percent);
   return `${rounded > 0 ? '+' : ''}${formatCount(rounded)} %`;
 }
+/** Ett tal med kommatecken: "2,95". `minDecimals` lägre än `decimals` skriver hela tal utan decimal: "13", "7,5". */
+export function formatDecimal(value: number, decimals: number, minDecimals = decimals) {
+  return new Intl.NumberFormat('sv-SE', { minimumFractionDigits: minDecimals, maximumFractionDigits: decimals }).format(value);
+}
 /** Procent med en decimal och kommatecken, eller "–". */
 export function formatPercent(value: number | null, decimals: 0 | 1 = 0) {
   if (value == null || !Number.isFinite(value)) return '–';

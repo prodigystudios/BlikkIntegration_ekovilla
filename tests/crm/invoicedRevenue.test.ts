@@ -37,8 +37,12 @@ const stamp = (o: InvoicedOrderRow) => o.fortnox_invoiced_at;
 describe('invoicedRevenue — ordrar fakturerade i ett svep', () => {
   it('ger en faktura med orderns netto på orderns datum', () => {
     expect(invoicedRevenue([order()], [], stamp)).toEqual([
-      { amount: 50_000, at: '2026-09-10T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' },
+      { amount: 50_000, at: '2026-09-10T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A', quote_type: null },
     ]);
+  });
+
+  it('för vidare orderns kundtyp — rapportens andel privat', () => {
+    expect(invoicedRevenue([order({ quote_type: 'private' })], [], stamp)[0].quote_type).toBe('private');
   });
 
   it('räknas ex moms, samma bas som resten av rapporten', () => {
@@ -63,7 +67,7 @@ describe('invoicedRevenue — delfakturerade ordrar', () => {
   it('räknar rundorna för en order som är MITT I delfaktureringen', () => {
     const midway = order({ status: 'partially_invoiced', fortnox_invoiced_at: null, partial_invoicing_started_at: '2026-08-05T08:00:00Z' });
     const result = invoicedRevenue([midway], [round(30_000, '2026-08-05T08:00:00Z')], stamp);
-    expect(result).toEqual([{ amount: 30_000, at: '2026-08-05T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A' }]);
+    expect(result).toEqual([{ amount: 30_000, at: '2026-08-05T08:00:00Z', assigned_to: 'u1', client_name: 'Kund A', quote_type: null }]);
   });
 
   // Den slutfakturerade ordern är `invoiced` med fortnox_invoiced_at = sista rundans dag. Räknas
@@ -85,7 +89,12 @@ describe('invoicedRevenue — delfakturerade ordrar', () => {
   // på `in_progress`). Pengarna är fakturerade ändå.
   it('räknar en runda oavsett vilket arbetsläge ordern står i nu', () => {
     const result = invoicedRevenue([], [round(2_800, '2026-10-02T11:59:28Z', { status: 'in_progress', assigned_to: 'u2', client_name: 'Kund B' })], stamp);
-    expect(result).toEqual([{ amount: 2_800, at: '2026-10-02T11:59:28Z', assigned_to: 'u2', client_name: 'Kund B' }]);
+    expect(result).toEqual([{ amount: 2_800, at: '2026-10-02T11:59:28Z', assigned_to: 'u2', client_name: 'Kund B', quote_type: null }]);
+  });
+
+  it('för vidare rundans orders kundtyp', () => {
+    const result = invoicedRevenue([], [round(2_800, '2026-10-02T11:59:28Z', { status: 'invoiced', assigned_to: 'u2', client_name: 'Kund B', quote_type: 'private' })], stamp);
+    expect(result[0].quote_type).toBe('private');
   });
 
   it('läser ett belopp som kommer som sträng', () => {

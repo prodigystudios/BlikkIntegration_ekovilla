@@ -36,6 +36,11 @@ vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
     { status: 'draft', amount: 5_000, vat_percent: 0, valid_until: '2000-01-01', follow_up_date: null },
   ]),
   fetchFirstActivityDay: vi.fn(async () => '2026-06-29'),
+  fetchCustomerOrderRows: vi.fn(async () => [
+    { status: 'invoiced', customer_id: 'k1', client_name: 'Kund 1' },
+    { status: 'scheduled', customer_id: 'k1', client_name: 'Kund 1' },
+    { status: 'scheduled', customer_id: 'k2', client_name: 'Kund 2' },
+  ]),
 }));
 vi.mock('@/lib/domains/planning/productionLoader', () => ({
   fetchProductionData: vi.fn(async () => ({ data: { reports: [], segments: [], trucks: [] }, error: null })),
@@ -60,7 +65,7 @@ vi.mock('@/lib/domains/time/reportLoader', () => ({
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
-import { fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchCustomerOrderRows, fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { fetchInvoicedValue, fetchReportData, fetchTrendData } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -73,6 +78,7 @@ const mockInvoicedValue = vi.mocked(fetchInvoicedValue);
 const mockTrendData = vi.mocked(fetchTrendData);
 const mockReportData = vi.mocked(fetchReportData);
 const mockFirstActivity = vi.mocked(fetchFirstActivityDay);
+const mockCustomerOrders = vi.mocked(fetchCustomerOrderRows);
 
 const req = () => new Request('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
 
@@ -375,5 +381,97 @@ describe('GET /api/crm/reports — Försäljningens nyckeltal', () => {
   it('tratten är borta ur svaret', async () => {
     const { json } = await body(salesUser);
     expect(json.data).not.toHaveProperty('funnel');
+  });
+});
+
+describe('GET /api/crm/reports — Omsättningens nyckeltal', () => {
+  const order = (over: Record<string, unknown>) => ({
+    amount: 10_000, vat_percent: 0, status: 'scheduled', created_at: '2026-09-10T08:00:00Z', fortnox_invoiced_at: null,
+    partial_invoicing_started_at: null, assigned_to: null, client_name: 'Kund 1', quote_type: 'business',
+    customer_id: 'k1', rot_enabled: null, customer: { sni_code: '41200' }, ...over,
+  });
+
+  it('räknar fakturerat per kundtyp, segment, kunder och orderstock per läge', async () => {
+    mockReportData.mockResolvedValueOnce({
+      quotes: [],
+      orders: [
+        order({}),
+        order({ customer_id: 'k2', client_name: 'Kund 2', customer: { sni_code: '68204' } }),
+        order({ status: 'invoiced', quote_type: 'private', customer_id: null, client_name: 'Anna', customer: null, rot_enabled: true, created_at: '2026-09-01T08:00:00Z', fortnox_invoiced_at: '2026-09-08T08:00:00Z' }),
+        // Avbruten: varken ordervärde, segment eller kund.
+        order({ status: 'cancelled', amount: 99_000, customer_id: 'k9', client_name: 'Kund 9' }),
+      ],
+      invoiceRounds: [],
+      calls: [],
+      sellers: [],
+    } as any);
+    const { status, json } = await body(salesUser);
+    expect(status).toBe(200);
+    const revenue = json.data.revenue;
+    expect(revenue.invoiced).toMatchObject({ total: 10_000, private: 10_000, privateShare: 100 });
+    expect(revenue.bookToBill).toBe(3);
+    expect(revenue.leadTime).toMatchObject({ count: 1, median: 7 });
+    expect(revenue.rot).toMatchObject({ privateOrders: 1, withRot: 1, share: 100 });
+    expect(revenue.segments.find((s: any) => s.segment === 'construction')).toMatchObject({ orderValue: 10_000, customers: 1 });
+    expect(revenue.segments.find((s: any) => s.segment === 'real_estate')).toMatchObject({ orderValue: 10_000 });
+    // k1 har två order sedan start (loaderns mock), k2 en och Anna ingen i räkningen.
+    expect(revenue.customers).toMatchObject({ customers: 3, recurring: 1 });
+    // Orderstockens mock: en planerad på 20 000 och en klar på 10 000.
+    expect(revenue.stockByStage.map((s: any) => [s.key, s.value])).toEqual([
+      ['draft', 0], ['scheduled', 20_000], ['in_progress', 0], ['partially_invoiced', 0], ['completed', 10_000],
+    ]);
+  });
+
+  it('book-to-bill för föregående period räknas på föregående periods rader', async () => {
+    mockReportData
+      .mockResolvedValueOnce({ quotes: [], orders: [order({ status: 'invoiced', created_at: '2026-09-01T08:00:00Z', fortnox_invoiced_at: '2026-09-08T08:00:00Z' })], invoiceRounds: [], calls: [], sellers: [] } as any)
+      .mockResolvedValueOnce({
+        quotes: [],
+        orders: [
+          order({ status: 'invoiced', created_at: '2026-08-05T08:00:00Z', fortnox_invoiced_at: '2026-08-10T08:00:00Z' }),
+          order({ created_at: '2026-08-06T08:00:00Z' }),
+        ],
+        invoiceRounds: [],
+        calls: [],
+        sellers: [],
+      } as any);
+    const { json } = await body(salesUser);
+    expect(json.data.revenue.bookToBill).toBe(1);
+    expect(json.data.revenue.bookToBillPrevious).toBe(2);
+  });
+
+  it('en trasig läsning av kundernas order tar bara bort "återkommande"', async () => {
+    mockCustomerOrders.mockRejectedValueOnce(new Error('nekad'));
+    const { status, json } = await body(salesUser);
+    expect(status).toBe(200);
+    expect(json.data.revenue.customers.recurring).toBeNull();
+    expect(json.data.revenue.stockByStage).not.toBeNull();
+    expect(json.data.overview.orderStock).not.toBeNull();
+  });
+
+  it('en trasig trendläsning tar bara bort fakturerat per månad', async () => {
+    mockTrendData.mockRejectedValueOnce(new Error('nekad'));
+    const { json } = await body(salesUser);
+    expect(json.data.revenue.invoicedByMonth).toBeNull();
+    expect(json.data.revenue.segments).toHaveLength(7);
+  });
+
+  it('fakturerat per månad läser trendens fönster, inte periodens', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      mockTrendData.mockResolvedValueOnce({
+        quotes: [],
+        orders: [order({ status: 'invoiced', quote_type: 'private', fortnox_invoiced_at: '2026-07-15T08:00:00Z', created_at: '2026-07-01T08:00:00Z' })],
+        invoiceRounds: [],
+      } as any);
+      const { json } = await body(salesUser);
+      const months = json.data.revenue.invoicedByMonth;
+      expect(months.map((m: any) => m.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+      expect(months.find((m: any) => m.period === '2026-07')).toMatchObject({ private: 10_000, business: 0, inPeriod: false });
+      expect(months.find((m: any) => m.period === '2026-09').inPeriod).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
