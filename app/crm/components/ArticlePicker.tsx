@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import Input from '../../../components/ui/Input';
+import { formatUnitPrice, displayUnit } from './lineItemTable';
 
 // Artikelväljaren på en artikelrad — söker i artikelcachen, visar "Senaste artiklar" vid tomt fält,
-// ★-favoriter (delade mellan säljare), och ett "Vald artikel"-kort med Byt/Rensa när raden har en.
+// ★-favoriter (delade mellan säljare), och den valda artikeln som en rad fakta med Byt/Rensa.
 //
 // Delad mellan offertformuläret och arbetsorderns artikeleditor (via LineItemRow). Tidigare hade
 // arbetsordern en egen, enklare sökruta som bara kunde LÄGGA TILL rader — en befintlig rads artikel
@@ -113,52 +114,51 @@ export default function ArticlePicker({ value, articleNumber, price, unit, note,
     return () => { cancelled = true; clearTimeout(timer); };
   }, [open, query]);
 
-  // Solid "selected article" card — makes a chosen article unmistakable (vs the old
-  // faded-placeholder look). "Byt" reopens the search; "Rensa" empties the row's article.
+  // Den valda artikeln som EN rad fakta med Byt/Rensa. Namnet står inte här: det står redan i
+  // tabellraden ovanför och i fältet "Benämning" under. Ett grönt kort med namnet en tredje gång var
+  // det som gjorde den utfällda raden rörig (mockupen 2026-10-07). "Byt artikel" öppnar sökningen,
+  // "Rensa" tömmer radens artikel.
   if ((value || locked) && !searching) {
-    const meta = [
-      articleNumber || 'Utan artikelnummer',
-      typeof price === 'number' ? `${price.toFixed(2)} kr` : null,
-      getArticleUnitName(unit) || null,
+    const unitName = displayUnit(getArticleUnitName(unit));
+    const perUnit = unitName ? `/${unitName}` : '';
+    const facts = [
+      articleNumber ? `Art.nr ${articleNumber}` : 'Utan artikelnummer',
+      typeof price === 'number' ? `Listpris ${formatUnitPrice(price)}${perUnit}` : null,
       // Inköpspriset som underlag till TG-märket på raden: procenten säger att marginalen är tunn,
       // kronorna säger hur mycket utrymme som faktiskt finns kvar att förhandla med.
-      typeof purchasePrice === 'number' ? `Inköp ${purchasePrice.toFixed(2)} kr` : null,
-    ].filter(Boolean).join(' · ');
+      typeof purchasePrice === 'number' ? `Inköp ${formatUnitPrice(purchasePrice)}${perUnit}` : null,
+    ].filter(Boolean).join('. ');
     return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5">
-        <div className="grid min-w-0 gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald artikel</span>
-          <span className="truncate text-sm font-semibold text-slate-900">{value || 'Utan artikel'}</span>
-          {meta ? <span className="truncate text-xs text-slate-500">{meta}</span> : null}
-          {/* Artikelns beskrivning ur registret — INTERN. Ett stöd för säljaren att se vad artikeln
-              faktiskt innehåller; den skickas aldrig med till Fortnox och syns inte på offerten.
-              Inte truncate: hela poängen är att kunna läsa texten. Tre rader räcker för de
-              beskrivningar som finns och hindrar en lång text från att svälla ut raden. */}
-          {/* text-xs/slate-500 är repots hjälptext-token, inte 11px/slate-400 som stod här först:
-              slate-400 på vitt ligger kring 3:1 i kontrast, under gränsen för läsbar brödtext.
-              Beskrivningen är dessutom den längsta texten i kortet och den enda man faktiskt läser
-              — meta-raden ovanför är siffror man skummar. Att göra den minst och ljusast var
-              bakvänt. */}
-          {note?.trim() ? (
-            <span className="line-clamp-3 text-xs leading-relaxed text-slate-500">{note.trim()}</span>
-          ) : null}
+      <div className="grid gap-1">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <p className="m-0 min-w-0 text-[13px] tabular-nums text-slate-600">{facts}</p>
+          {locked ? null : (
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
+                className="rounded-md px-2 py-1 text-[13px] font-semibold text-[color:var(--ek-accent)] transition hover:bg-[#e9f1eb]"
+              >
+                Byt artikel
+              </button>
+              <button
+                type="button"
+                onClick={onClear}
+                className="rounded-md px-2 py-1 text-[13px] font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-700"
+              >
+                Rensa
+              </button>
+            </div>
+          )}
         </div>
-        {locked ? null : <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => { setSearching(true); setQuery(''); setOpen(true); }}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition-colors hover:border-slate-300"
-          >
-            Byt
-          </button>
-          <button
-            type="button"
-            onClick={onClear}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-500 transition-colors hover:border-rose-300 hover:text-rose-600"
-          >
-            Rensa
-          </button>
-        </div>}
+        {/* Artikelns beskrivning ur registret — INTERN. Ett stöd för säljaren att se vad artikeln
+            faktiskt innehåller; den skickas aldrig med till Fortnox och syns inte på offerten.
+            Inte truncate: hela poängen är att kunna läsa texten. Tre rader räcker för de
+            beskrivningar som finns och hindrar en lång text från att svälla ut raden.
+            text-xs/slate-500, inte 11px/slate-400: slate-400 ligger kring 3:1 i kontrast. */}
+        {note?.trim() ? (
+          <p className="m-0 line-clamp-3 text-xs leading-relaxed text-slate-500">{note.trim()}</p>
+        ) : null}
       </div>
     );
   }
