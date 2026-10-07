@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { netAmount, type NetAmountRow } from './pricing';
-import { invoicedRevenue, uninvoicedAmount, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
+import { invoicedRevenue, sumUninvoiced, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
 
 // ── The CRM overview's read model ──
@@ -52,6 +52,19 @@ export const OPEN_WORK_ORDER_STATUSES = boardStatuses('draft', 'scheduled', 'act
 
 /** Sitting in the invoicing stage — the board's "Fakturera" chip, including mid-delfakturering. */
 export const TO_INVOICE_WORK_ORDER_STATUSES = boardStatuses('completed');
+
+/**
+ * Orderstocken: allt som varken är avbrutet eller färdigfakturerat — de två lagren ovan tillsammans.
+ * Delas med rapportens orderstock (reportKpisLoader), så att rapporten och översiktens "Öppna
+ * ordrar" + "Att fakturera" läser samma ordrar och alltid går att stämma av mot varandra.
+ */
+export const ORDER_STOCK_STATUSES: CrmWorkOrderStatus[] = [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES];
+
+/**
+ * Orderstockens kolumner. Rundorna inbäddade: en delfakturerad order står i lagret med det som
+ * återstår, inte hela värdet. `as const` så att klienten kan härleda radtypen ur strängen.
+ */
+export const ORDER_STOCK_SELECT = 'status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)' as const;
 
 // A plain PostgREST select answers with at most 1000 rows in this project. The queries below are
 // filtered to sets that stay far below it; the cap is the backstop, not the plan.
@@ -332,9 +345,8 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
   const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
 
   const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
-  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
-  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
-  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
+  // Orderlagren visar det som ännu inte fakturerats (sumUninvoiced). En delfakturerad order bär bara
+  // sin rest — det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
 
   const { weekTeam, weekByUser } = composeWeekActuals(rows, window);
 
@@ -511,9 +523,8 @@ export async function fetchCrmOverviewSummary(
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
-      // Rundorna inbäddade: en delfakturerad order står i lagret med det som återstår, inte hela värdet.
-      .select('status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)')
-      .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
+      .select(ORDER_STOCK_SELECT)
+      .in('status', ORDER_STOCK_STATUSES)
       .limit(ROW_CAP), truncated),
     // 'active' is the stored value the task domain maps to 'open'; 'done' and 'cancelled' are out.
     readRows<TaskDueRow>('open_tasks', supabase
