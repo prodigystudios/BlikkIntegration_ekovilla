@@ -200,13 +200,10 @@ const COL_NAME_W = COL_QTY_R - 14 - COL_NAME;
 
 // Säljarens egen text (offerttexten) står under sista raden och före summeringen. Vänsterkanten är
 // artikelnumrets och KUND-blockets, högerkanten SUMMA-kolumnens, så blocket följer tabellens linjer.
-// Rubriken har samma storlek och färg som KUND och LEVERANSADRESS, och avståndet till första raden
-// är leveransadressens.
+// Ingen rubrik: texten står för sig själv (William 2026-10-07).
 const TEXT_X = COL_ARTNR;
 const TEXT_W = COL_SUM_R - COL_ARTNR;
-const TEXT_LABEL = 'ÖVRIGT';
-const TEXT_LABEL_GAP = 7; // nästa rads baslinje → rubriken, alltså 22 pt under sista radlinjen
-const TEXT_FIRST_GAP = 12; // rubriken → första textraden
+const TEXT_TOP_GAP = 7; // nästa rads baslinje → första textraden, alltså 22 pt under sista radlinjen
 const TEXT_SIZE = 8;
 const TEXT_STEP = 11;
 
@@ -770,8 +767,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
   // ── Egen text ──
   // Under sista raden och före summeringen, och bryts över sidor som raderna. Golvet är radernas
   // plus ett textsteg: raderna mäter NÄSTA baslinje mot `rowFloor`, så texten får samma luft mot
-  // summeringen. Rubriken följer med första textraden till nästa sida hellre än att bli stående
-  // ensam längst ned.
+  // summeringen.
   const textLines = freeTextLines(input.freeText, fonts.regular, TEXT_SIZE, TEXT_W);
   if (textLines.length > 0) {
     const textFloor = rowFloor + TEXT_STEP;
@@ -780,14 +776,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
     // i stället för en sida per rad. Går inte att nå med dagens mått, men ett huvud som växer får inte
     // göra en offert till trettio sidor.
     let roomOnNewPage = true;
-    let labelY = y - TEXT_LABEL_GAP;
-    if (labelY - TEXT_FIRST_GAP < textFloor) {
-      ({ page, y: labelY } = newPage(false));
-      roomOnNewPage = labelY >= textFloor;
-    }
-    draw(page, TEXT_LABEL, TEXT_X, labelY, fonts.regular, SECTION_SIZE, MUTED);
-
-    let lineY = labelY - TEXT_FIRST_GAP;
+    let lineY = y - TEXT_TOP_GAP;
     for (const line of textLines) {
       if (lineY < textFloor && roomOnNewPage) {
         ({ page, y: lineY } = newPage(false));
