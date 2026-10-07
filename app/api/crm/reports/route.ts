@@ -5,11 +5,15 @@ import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   buildPeriodTotals,
   composeSalesReport,
+  fetchInvoicedValue,
   fetchReportData,
   monthsInRange,
   partitionOrders,
+  type ReportQuoteRow,
   type ReportRange,
 } from '@/lib/domains/crm/reports';
+import { buildReportOverview } from '@/lib/domains/crm/reportKpis';
+import { fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
@@ -19,7 +23,7 @@ import { buildTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
-import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
+import { previousRange, reportRange, today } from '@/app/crm/rapportering/reportRanges';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -146,6 +150,8 @@ export async function GET(req: Request) {
 
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
+    // Föregående periods offerter, för hit rate-jämförelsen. Samma läsning som huvudtalen.
+    let previousQuotes: { range: ReportRange; quotes: ReportQuoteRow[] } | null = null;
     if (comparisonRange) {
       try {
         // Bara huvudtalen för föregående period — INGEN efterkalkyl. Lönsamheten räknas på
@@ -153,6 +159,7 @@ export async function GET(req: Request) {
         // hade fördubblat svarstiden för ett jämförelsetal i ett chip.
         const previousData = await fetchReportData(admin, comparisonRange);
         previous = { range: comparisonRange, totals: buildPeriodTotals(previousData, comparisonRange) };
+        previousQuotes = { range: comparisonRange, quotes: previousData.quotes };
       } catch (e: any) {
         console.warn(`[Rapport] Jämförelseperioden kunde inte hämtas: ${e?.message || e}`);
       }
@@ -200,6 +207,43 @@ export async function GET(req: Request) {
       }
     }
 
+    // ── Översiktens nyckeltal ────────────────────────────────────────────────
+    //
+    // Orderstocken och de öppna offerterna är ÖGONBLICKSBILDER — de följer inte perioden. Veckotalet
+    // mäter stocken mot senaste HELA kalendermånadens fakturering, som läses för sig.
+    //
+    // ⚠️ VAR OCH EN FÅR FELA FÖR SIG, och felet blir null — aldrig en nolla. "Orderstock 0 kr" hade
+    // varit ett påstående om verksamheten, inte ett saknat värde. Hit rate räknas på periodens
+    // offerter, som redan är lästa, och kan inte utebli.
+    const now = new Date();
+    const basisRange = reportRange('prevMonth', now);
+    const [orderStockRows, basis, openQuoteRows] = await Promise.all([
+      fetchOrderStockRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] Orderstocken kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+      fetchInvoicedValue(admin, basisRange).then(
+        (invoiced) => ({ range: basisRange, invoiced }),
+        (e: any) => {
+          console.warn(`[Rapport] Förra månadens fakturering kunde inte läsas: ${e?.message || e}`);
+          return null;
+        },
+      ),
+      fetchOpenQuoteRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] De öppna offerterna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+    ]);
+    const overview = buildReportOverview({
+      quotes: data.quotes,
+      range,
+      today: today(now),
+      previous: previousQuotes,
+      orderStockRows,
+      basis,
+      openQuoteRows,
+    });
+
     const report = composeSalesReport(data, range, afterCalculations, {
       profitabilityUnavailable,
       goals,
@@ -207,6 +251,7 @@ export async function GET(req: Request) {
       production,
       planned,
       time,
+      overview,
     });
 
     return ok(report);

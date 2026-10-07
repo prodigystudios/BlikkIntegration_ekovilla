@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { netAmount, type NetAmountRow } from './pricing';
-import { invoicedRevenue, uninvoicedAmount, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
+import { invoicedRevenue, sumUninvoiced, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
 
 // ── The CRM overview's read model ──
@@ -332,9 +332,8 @@ export function composeCrmOverviewSummary(rows: CrmOverviewRows, window: CrmOver
   const toInvoiceOrders = rows.orderStocks.filter((order) => TO_INVOICE_WORK_ORDER_STATUSES.includes(order.status as CrmWorkOrderStatus));
 
   const sum = (list: NetAmountRow[]) => list.reduce((total, row) => total + netAmount(row), 0);
-  // Orderlagren visar det som ännu inte fakturerats. En delfakturerad order bär bara sin rest —
-  // det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
-  const sumUninvoiced = (list: OrderStockRow[]) => list.reduce((total, order) => total + uninvoicedAmount(order), 0);
+  // Orderlagren visar det som ännu inte fakturerats (sumUninvoiced). En delfakturerad order bär bara
+  // sin rest — det redan fakturerade syns i Fakturerat, och skulle annars räknas på båda ställena.
 
   const { weekTeam, weekByUser } = composeWeekActuals(rows, window);
 

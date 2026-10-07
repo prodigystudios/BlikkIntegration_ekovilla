@@ -20,8 +20,21 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
 vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: vi.fn(() => ({})) }));
 vi.mock('@/lib/domains/crm/reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/reports')>();
-  return { ...actual, fetchReportData: vi.fn(async () => ({ quotes: [], orders: [], invoiceRounds: [], calls: [], sellers: [] })) };
+  return {
+    ...actual,
+    fetchReportData: vi.fn(async () => ({ quotes: [], orders: [], invoiceRounds: [], calls: [], sellers: [] })),
+    fetchInvoicedValue: vi.fn(async () => 70_000),
+  };
 });
+vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
+  fetchOrderStockRows: vi.fn(async () => [
+    { status: 'scheduled', amount: 20_000, vat_percent: 0, invoice_rounds: [] },
+    { status: 'completed', amount: 10_000, vat_percent: 0, invoice_rounds: [] },
+  ]),
+  fetchOpenQuoteRows: vi.fn(async () => [
+    { status: 'draft', amount: 5_000, vat_percent: 0, valid_until: '2000-01-01', follow_up_date: null },
+  ]),
+}));
 vi.mock('@/lib/domains/planning/productionLoader', () => ({
   fetchProductionData: vi.fn(async () => ({ data: { reports: [], segments: [], trucks: [] }, error: null })),
 }));
@@ -45,11 +58,16 @@ vi.mock('@/lib/domains/time/reportLoader', () => ({
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
+import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchInvoicedValue } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
+import { reportRange } from '@/app/crm/rapportering/reportRanges';
 
 const mockGetUser = vi.mocked(getCurrentUser);
 const mockPermissions = vi.mocked(getEffectivePermissions);
 const mockTimeLoader = vi.mocked(fetchTimeReportData);
+const mockOrderStock = vi.mocked(fetchOrderStockRows);
+const mockInvoicedValue = vi.mocked(fetchInvoicedValue);
 
 const req = () => new Request('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
 
@@ -129,5 +147,43 @@ describe('GET /api/crm/reports — tiden får inte sänka rapporten', () => {
     // `unavailable` = kunde inte räknas. Skilt från null, som betyder "får inte visas".
     expect(json.data.time.unavailable).toBe(true);
     expect(json.data.salesOverTime).toBeDefined();
+  });
+});
+
+describe('GET /api/crm/reports — översiktens nyckeltal', () => {
+  it('skickar med orderstock, öppna offerter och hit rate', async () => {
+    const { status, json } = await body(salesUser);
+    expect(status).toBe(200);
+    expect(json.data.overview.orderStock).toMatchObject({ value: 30_000, count: 2, completed: { count: 1, value: 10_000 } });
+    expect(json.data.overview.openQuotes).toMatchObject({ count: 1, value: 5_000, expired: { count: 1, drafts: 1 } });
+    expect(json.data.overview.hitRate).toMatchObject({ quotes: 0, won: 0, percent: null });
+  });
+
+  it('mäter veckotalet mot FÖRRA HELA kalendermånaden, inte den valda perioden', async () => {
+    const { json } = await body(salesUser);
+    const basis = json.data.overview.orderStock.basis;
+    expect(mockInvoicedValue).toHaveBeenCalledWith(expect.anything(), basis.range);
+    // Förra hela månaden i svensk tid — samma snabbval som rapportsidans "Förra månaden". Den
+    // valda perioden i anropet är september; den syns inte här.
+    expect(basis.range).toEqual(reportRange('prevMonth'));
+    expect(basis.invoiced).toBe(70_000);
+  });
+
+  it('en trasig orderstock blir null och lämnar resten orört', async () => {
+    // "Orderstock 0 kr" hade varit ett påstående om verksamheten. null = kunde inte räknas.
+    mockOrderStock.mockRejectedValueOnce(new Error('nekad'));
+    const { status, json } = await body(salesUser);
+    expect(status).toBe(200);
+    expect(json.data.overview.orderStock).toBeNull();
+    expect(json.data.overview.openQuotes).not.toBeNull();
+    expect(json.data.periodSummary).toBeDefined();
+  });
+
+  it('en trasig faktureringsläsning tar bara bort veckotalet, inte stocken', async () => {
+    mockInvoicedValue.mockRejectedValueOnce(new Error('nekad'));
+    const { json } = await body(salesUser);
+    expect(json.data.overview.orderStock.value).toBe(30_000);
+    expect(json.data.overview.orderStock.weeks).toBeNull();
+    expect(json.data.overview.orderStock.basis).toBeNull();
   });
 });

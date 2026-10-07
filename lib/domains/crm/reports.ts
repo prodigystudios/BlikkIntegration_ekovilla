@@ -11,6 +11,8 @@ import {
 import { unavailableProduction, type Production } from '@/lib/domains/planning/production';
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
+import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
+import type { ReportOverview } from './reportKpis';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -433,6 +435,11 @@ export type SalesReport = {
    * sjukfrånvaro vid namn, vilket policyns egen kommentar säger att den finns för att hindra.
    */
   time: TimeReport | null;
+  /**
+   * Översiktens nyckeltal utöver huvudtalen: hit rate, orderstock och öppna offerter — se
+   * reportKpis.ts. null när rutten inte räknade dem (anroparen utelämnade dem).
+   */
+  overview: ReportOverview | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -460,6 +467,8 @@ export function composeSalesReport(
      * `null` betyder att anroparen saknar behörighet och sektionen ska utebli helt.
      */
     time?: TimeReport | null;
+    /** Översiktens nyckeltal, färdigräknade i rutten — de behöver dagens datum och egna läsningar. */
+    overview?: ReportOverview | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -469,6 +478,7 @@ export function composeSalesReport(
     production: opts?.production ?? unavailableProduction(months, range),
     planned: opts?.planned ?? unavailablePlanned(),
     time: opts?.time === undefined ? unavailableTimeReport(months) : opts.time,
+    overview: opts?.overview ?? null,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,
@@ -491,43 +501,114 @@ export function composeSalesReport(
 // `vat_percent` och `pricing_summary` hämtas för att varje belopp ska kunna redovisas ex moms —
 // se netAmount. Utan dem faller nettot tillbaka på en antagen momssats, vilket bara är en
 // nödutgång och inte den väg någon rad ska ta.
-export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
+//
+// ⚠️ VARJE LÄSNING ÄR SIDINDELAD. PostgREST kapar ett svar vid 1000 rader UTAN att fela, och
+// rapporten räknar på allt den får — en kapad läsning ger alltså inte ett ofullständigt svar utan
+// ett FEL svar som ser komplett ut. 440 offerter skapades mellan 29 juni och 7 oktober 2026, 235 av
+// dem i september, så "Senaste 12 mån" hade nått taket runt årsskiftet. `id` är sista (och enda)
+// sorteringen: den är unik, och utan en unik nyckel är det odefinierat vilka rader som hamnar på
+// vilken sida.
+
+/**
+ * readAllPages, med radtypen HÄRLEDD ur frågan i stället för angiven av anroparen.
+ *
+ * ⚠️ DET ÄR TYPVAKTEN SOM ÄR POÄNGEN. Klienten härleder radtypen ur select-strängen, och raderna
+ * tilldelas sina typer utan `as` — då fäller typkontrollen en select som tappat en obligatorisk
+ * kolumn. Det gäller framför allt partial_invoicing_started_at: utan den räknas varje
+ * slutfakturerad delfakturaorder dubbelt (se invoicedRevenue). Med `readAllPages<T>` direkt hade
+ * T skrivits för hand och vakten försvunnit.
+ */
+async function readEveryRow<Row>(
+  name: string,
+  page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: ReadError }>,
+): Promise<Row[]> {
+  const { rows, error } = await readAllPages<Row>(page);
+  if (error) throw new Error(`${name}: ${error.message}`);
+  return rows;
+}
+
+/**
+ * Ordrar skapade ELLER fakturerade i perioden. Superset: att filtrera på created_at ensamt tappade
+ * intäkten från varje order som fakturerades senare än perioden den vanns i — se partitionOrders,
+ * där raderna delas isär igen.
+ */
+function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<ReportOrderRow[]> {
   const toEnd = `${range.to}T23:59:59.999Z`;
-  const [quotesRes, ordersRes, roundsRes, callsRes, sellersRes] = await Promise.all([
-    admin.from('crm_quotes').select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name').gte('quote_date', range.from).lte('quote_date', range.to),
-    // Superset: created in range OR billed in range. Filtering on created_at alone dropped
-    // revenue from every order billed later than the period it was won in — see
-    // partitionOrders. The rows are split back apart there.
+  return readEveryRow('crm_work_orders', (from, to) =>
     admin.from('crm_work_orders')
       // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
       // INTE här — de behövs bara för de fakturerade ordrarna, och tolv månaders rader hade varit
       // en tung nyttolast att dra hem för att sedan kasta det mesta.
       .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name')
-      .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`),
-    // Delfakturarundorna i perioden, med sin order inbäddad: en runda i augusti hör ofta till en
-    // order som varken skapades eller slutfakturerades i augusti, och finns då inte bland ordrarna
-    // ovan. `amount` är redan ex moms — se invoicedRevenue.
+      .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+}
+
+/**
+ * Delfakturarundorna i perioden, med sin order inbäddad: en runda i augusti hör ofta till en order
+ * som varken skapades eller slutfakturerades i augusti, och finns då inte bland ordrarna ovan.
+ * `amount` är redan ex moms — se invoicedRevenue.
+ */
+function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Promise<InvoiceRoundRow[]> {
+  const toEnd = `${range.to}T23:59:59.999Z`;
+  return readEveryRow('crm_work_order_invoices', (from, to) =>
     admin.from('crm_work_order_invoices')
       .select('amount, created_at, work_order:crm_work_orders(status, assigned_to, client_name)')
       .gte('created_at', range.from)
-      .lte('created_at', toEnd),
-    admin.from('crm_calls').select('user_id, call_at').gte('call_at', range.from).lte('call_at', toEnd),
-    admin.from('profiles').select('id, full_name, role').in('role', ['sales', 'admin', 'konsult']),
+      .lte('created_at', toEnd)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+}
+
+export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
+  const toEnd = `${range.to}T23:59:59.999Z`;
+  // Utan `as`: radtyperna härleds ur select-strängarna — se readEveryRow.
+  const [quotes, orders, invoiceRounds, calls, sellers]: [
+    ReportQuoteRow[],
+    ReportOrderRow[],
+    InvoiceRoundRow[],
+    ReportCallRow[],
+    ReportSellerRow[],
+  ] = await Promise.all([
+    readEveryRow('crm_quotes', (from, to) =>
+      admin.from('crm_quotes')
+        .select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name')
+        .gte('quote_date', range.from)
+        .lte('quote_date', range.to)
+        .order('id', { ascending: true })
+        .range(from, to)),
+    readReportOrders(admin, range),
+    readReportInvoiceRounds(admin, range),
+    readEveryRow('crm_calls', (from, to) =>
+      admin.from('crm_calls')
+        .select('user_id, call_at')
+        .gte('call_at', range.from)
+        .lte('call_at', toEnd)
+        .order('id', { ascending: true })
+        .range(from, to)),
+    readEveryRow('profiles', (from, to) =>
+      admin.from('profiles')
+        .select('id, full_name, role')
+        .in('role', ['sales', 'admin', 'konsult'])
+        .order('id', { ascending: true })
+        .range(from, to)),
   ]);
 
-  const firstError = quotesRes.error || ordersRes.error || roundsRes.error || callsRes.error || sellersRes.error;
-  if (firstError) throw new Error(firstError.message);
+  return { quotes, orders, invoiceRounds, calls, sellers };
+}
 
-  // Utan `as`: klienten härleder radtypen ur select-strängen, så en select som tappar
-  // partial_invoicing_started_at fäller typkontrollen i stället för att dubbelräkna — se invoicedRevenue.
-  const orders: ReportOrderRow[] = ordersRes.data ?? [];
-  const invoiceRounds: InvoiceRoundRow[] = roundsRes.data ?? [];
-
-  return {
-    quotes: (quotesRes.data as ReportQuoteRow[]) || [],
-    orders,
-    invoiceRounds,
-    calls: (callsRes.data as ReportCallRow[]) || [],
-    sellers: (sellersRes.data as ReportSellerRow[]) || [],
-  };
+/**
+ * Fakturerat i perioden, räknat exakt som rapportens eget "Fakturerat": samma läsningar, samma
+ * partitionering. Används för orderstockens veckotal, som mäter mot en annan period än den valda.
+ * Läser bara ordrarna och rundorna — inte offerter, samtal och säljare som fetchReportData.
+ */
+export async function fetchInvoicedValue(admin: SupabaseClient, range: ReportRange): Promise<number> {
+  const [orders, invoiceRounds] = await Promise.all([
+    readReportOrders(admin, range),
+    readReportInvoiceRounds(admin, range),
+  ]);
+  return partitionOrders(orders, range, invoiceRounds).revenue.reduce((total, invoice) => total + invoice.amount, 0);
 }

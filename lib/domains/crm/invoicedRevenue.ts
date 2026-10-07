@@ -100,6 +100,14 @@ export function uninvoicedAmount(order: OrderWithRounds): number {
 }
 
 /**
+ * Det som återstår att fakturera på alla ordrarna tillsammans — orderstocken. Delas av översiktens
+ * orderlager och rapportens orderstock, så att de två inte kan räkna samma lager olika.
+ */
+export function sumUninvoiced(orders: OrderWithRounds[]): number {
+  return orders.reduce((total, order) => total + uninvoicedAmount(order), 0);
+}
+
+/**
  * Varje faktura bland raderna, i ETT svep eller per runda. Filtrerar inte på period — anroparen
  * gör det på `at` med sin egen fönsterregel, så rapportens och översiktens fönster förblir sina.
  * `orderInvoicedAt` är anroparens regel för när en order fakturerades i ett svep; null = räknas inte.
