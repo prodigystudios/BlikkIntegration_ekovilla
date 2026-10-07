@@ -63,6 +63,7 @@ import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { fetchInvoicedValue, fetchTrendData } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
+import { getSupabaseAdmin } from '@/lib/supabase/server';
 
 const mockGetUser = vi.mocked(getCurrentUser);
 const mockPermissions = vi.mocked(getEffectivePermissions);
@@ -240,5 +241,36 @@ describe('GET /api/crm/reports — standardperiod och trend', () => {
     expect(json.data.trend).toBeNull();
     expect(json.data.periodSummary).toBeDefined();
     expect(json.data.overview).not.toBeNull();
+  });
+});
+
+describe('GET /api/crm/reports — målet för fakturerat', () => {
+  // En klient som beter sig som PostgREST: den lämnar BARA ut de kolumner frågan ber om. Tappar
+  // ruttens målfråga invoiced_value_target får fakturerat inget mål — tyst, utan fel.
+  function goalsAdmin(rows: Array<Record<string, unknown>>) {
+    return {
+      from(table: string) {
+        let columns: string[] = [];
+        const chain: Record<string, unknown> = {};
+        chain.select = (cols: string) => { columns = cols.split(',').map((c) => c.trim()); return chain; };
+        chain.eq = () => chain;
+        chain.in = () => chain;
+        chain.then = (ok: (v: unknown) => unknown) => Promise.resolve(
+          table === 'crm_goals'
+            ? { data: rows.map((row) => Object.fromEntries(columns.map((c) => [c, row[c]]))), error: null }
+            : { data: null, error: { message: `oväntad tabell ${table}` } },
+        ).then(ok);
+        return chain;
+      },
+    };
+  }
+
+  it('läser invoiced_value_target och ger fakturerat en målstapel', async () => {
+    vi.mocked(getSupabaseAdmin).mockReturnValueOnce(goalsAdmin([
+      { period_start: '2026-09-01', calls_target: 10, quotes_target: 10, quote_value_target: 100, order_count_target: 1, order_value_target: 100, invoiced_value_target: 900_000 },
+    ]) as any);
+    const { json } = await body(salesUser);
+    const invoiced = json.data.periodSummary.metrics.find((m: any) => m.key === 'invoicedValue');
+    expect(invoiced.target).toBe(900_000);
   });
 });
