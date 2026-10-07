@@ -53,6 +53,19 @@ export const OPEN_WORK_ORDER_STATUSES = boardStatuses('draft', 'scheduled', 'act
 /** Sitting in the invoicing stage — the board's "Fakturera" chip, including mid-delfakturering. */
 export const TO_INVOICE_WORK_ORDER_STATUSES = boardStatuses('completed');
 
+/**
+ * Orderstocken: allt som varken är avbrutet eller färdigfakturerat — de två lagren ovan tillsammans.
+ * Delas med rapportens orderstock (reportKpisLoader), så att rapporten och översiktens "Öppna
+ * ordrar" + "Att fakturera" läser samma ordrar och alltid går att stämma av mot varandra.
+ */
+export const ORDER_STOCK_STATUSES: CrmWorkOrderStatus[] = [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES];
+
+/**
+ * Orderstockens kolumner. Rundorna inbäddade: en delfakturerad order står i lagret med det som
+ * återstår, inte hela värdet. `as const` så att klienten kan härleda radtypen ur strängen.
+ */
+export const ORDER_STOCK_SELECT = 'status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)' as const;
+
 // A plain PostgREST select answers with at most 1000 rows in this project. The queries below are
 // filtered to sets that stay far below it; the cap is the backstop, not the plan.
 const ROW_CAP = 1000;
@@ -510,9 +523,8 @@ export async function fetchCrmOverviewSummary(
       .limit(ROW_CAP), truncated),
     readRows<OrderStockRow>('order_stocks', supabase
       .from('crm_work_orders')
-      // Rundorna inbäddade: en delfakturerad order står i lagret med det som återstår, inte hela värdet.
-      .select('status, amount, vat_percent, pricing_summary, invoice_rounds:crm_work_order_invoices(amount)')
-      .in('status', [...OPEN_WORK_ORDER_STATUSES, ...TO_INVOICE_WORK_ORDER_STATUSES])
+      .select(ORDER_STOCK_SELECT)
+      .in('status', ORDER_STOCK_STATUSES)
       .limit(ROW_CAP), truncated),
     // 'active' is the stored value the task domain maps to 'open'; 'done' and 'cancelled' are out.
     readRows<TaskDueRow>('open_tasks', supabase

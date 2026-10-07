@@ -68,6 +68,39 @@ export async function GET(req: Request) {
     // Admin client: team-wide aggregated read model (profiles RLS only self-reads
     // with a session client — same rationale as the goals route).
     const admin = getSupabaseAdmin();
+
+    // ── Översiktens nyckeltal ────────────────────────────────────────────────
+    //
+    // Orderstocken och de öppna offerterna är ÖGONBLICKSBILDER — de följer inte perioden. Veckotalet
+    // mäter stocken mot senaste HELA kalendermånadens fakturering, som läses för sig.
+    //
+    // Läsningarna STARTAS HÄR och väntas in först när svaret sätts ihop: de beror inte på något
+    // annat i rutten, så deras rundresor ska inte läggas ovanpå resten av sidans.
+    //
+    // ⚠️ VAR OCH EN FÅR FELA FÖR SIG, och felet blir null — aldrig en nolla. "Orderstock 0 kr" hade
+    // varit ett påstående om verksamheten, inte ett saknat värde. Varje gren fångar sitt eget fel, så
+    // inget löfte kan bli ett ohanterat avslag om resten av rutten skulle kasta först. Hit rate räknas
+    // på periodens offerter, som läses nedan, och kan inte utebli.
+    const now = new Date();
+    const basisRange = reportRange('prevMonth', now);
+    const overviewReads = Promise.all([
+      fetchOrderStockRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] Orderstocken kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+      fetchInvoicedValue(admin, basisRange).then(
+        (invoiced) => ({ range: basisRange, invoiced }),
+        (e: any) => {
+          console.warn(`[Rapport] Förra månadens fakturering kunde inte läsas: ${e?.message || e}`);
+          return null;
+        },
+      ),
+      fetchOpenQuoteRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] De öppna offerterna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+    ]);
+
     const data = await fetchReportData(admin, range);
 
     // ── Referenspunkterna: målen och föregående period ───────────────────────
@@ -207,33 +240,7 @@ export async function GET(req: Request) {
       }
     }
 
-    // ── Översiktens nyckeltal ────────────────────────────────────────────────
-    //
-    // Orderstocken och de öppna offerterna är ÖGONBLICKSBILDER — de följer inte perioden. Veckotalet
-    // mäter stocken mot senaste HELA kalendermånadens fakturering, som läses för sig.
-    //
-    // ⚠️ VAR OCH EN FÅR FELA FÖR SIG, och felet blir null — aldrig en nolla. "Orderstock 0 kr" hade
-    // varit ett påstående om verksamheten, inte ett saknat värde. Hit rate räknas på periodens
-    // offerter, som redan är lästa, och kan inte utebli.
-    const now = new Date();
-    const basisRange = reportRange('prevMonth', now);
-    const [orderStockRows, basis, openQuoteRows] = await Promise.all([
-      fetchOrderStockRows(admin).catch((e: any) => {
-        console.warn(`[Rapport] Orderstocken kunde inte läsas: ${e?.message || e}`);
-        return null;
-      }),
-      fetchInvoicedValue(admin, basisRange).then(
-        (invoiced) => ({ range: basisRange, invoiced }),
-        (e: any) => {
-          console.warn(`[Rapport] Förra månadens fakturering kunde inte läsas: ${e?.message || e}`);
-          return null;
-        },
-      ),
-      fetchOpenQuoteRows(admin).catch((e: any) => {
-        console.warn(`[Rapport] De öppna offerterna kunde inte läsas: ${e?.message || e}`);
-        return null;
-      }),
-    ]);
+    const [orderStockRows, basis, openQuoteRows] = await overviewReads;
     const overview = buildReportOverview({
       quotes: data.quotes,
       range,

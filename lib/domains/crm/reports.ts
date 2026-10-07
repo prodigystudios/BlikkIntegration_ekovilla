@@ -414,8 +414,17 @@ export function buildPeriodTotals(data: ReportData, range: ReportRange): PeriodT
     quoteValue: sum(data.quotes),
     orders: orders.created.length,
     orderValue: sum(orders.created),
-    invoicedValue: orders.revenue.reduce((total, invoice) => total + invoice.amount, 0),
+    invoicedValue: sumInvoices(orders.revenue),
   };
+}
+
+/**
+ * Periodens fakturerade belopp: summan av fakturorna partitionOrders lagt i perioden. Delas av
+ * huvudtalet "Fakturerat" och orderstockens veckotal (fetchInvoicedValue), så att de två alltid
+ * räknar fakturerat på samma sätt.
+ */
+export function sumInvoices(revenue: InvoicedRevenue[]): number {
+  return revenue.reduce((total, invoice) => total + invoice.amount, 0);
 }
 
 export type SalesReport = {
@@ -518,7 +527,7 @@ export function composeSalesReport(
  * slutfakturerad delfakturaorder dubbelt (se invoicedRevenue). Med `readAllPages<T>` direkt hade
  * T skrivits för hand och vakten försvunnit.
  */
-async function readEveryRow<Row>(
+export async function readEveryRow<Row>(
   name: string,
   page: (from: number, to: number) => PromiseLike<{ data: Row[] | null; error: ReadError }>,
 ): Promise<Row[]> {
@@ -610,5 +619,5 @@ export async function fetchInvoicedValue(admin: SupabaseClient, range: ReportRan
     readReportOrders(admin, range),
     readReportInvoiceRounds(admin, range),
   ]);
-  return partitionOrders(orders, range, invoiceRounds).revenue.reduce((total, invoice) => total + invoice.amount, 0);
+  return sumInvoices(partitionOrders(orders, range, invoiceRounds).revenue);
 }

@@ -61,7 +61,6 @@ import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { fetchInvoicedValue } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
-import { reportRange } from '@/app/crm/rapportering/reportRanges';
 
 const mockGetUser = vi.mocked(getCurrentUser);
 const mockPermissions = vi.mocked(getEffectivePermissions);
@@ -160,17 +159,22 @@ describe('GET /api/crm/reports — översiktens nyckeltal', () => {
   });
 
   it('mäter veckotalet mot FÖRRA HELA kalendermånaden, inte den valda perioden', async () => {
-    // En period långt bakåt, så att den aldrig kan sammanfalla med förra månaden — med standard-
-    // anropets september hade testet varit grönt i oktober 2026 även om rutten mätt mot perioden.
-    mockGetUser.mockResolvedValue(salesUser as any);
-    const res = await GET(new Request('http://localhost/api/crm/reports?from=2025-01-01&to=2025-01-31'));
-    const json = await res.json();
-    const basis = json.data.overview.orderStock.basis;
-    expect(mockInvoicedValue).toHaveBeenCalledWith(expect.anything(), basis.range);
-    // Förra hela månaden i svensk tid — samma snabbval som rapportsidans "Förra månaden". Den
-    // valda perioden i anropet är september; den syns inte här.
-    expect(basis.range).toEqual(reportRange('prevMonth'));
-    expect(basis.invoiced).toBe(70_000);
+    // Klockan låst till 7 oktober 2026 (bara Date — anropen ska fortfarande lösas), och en vald period
+    // långt bakåt, så att de två aldrig kan sammanfalla: med standardanropets september hade testet
+    // varit grönt i oktober även om rutten mätt mot den valda perioden.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      mockGetUser.mockResolvedValue(salesUser as any);
+      const res = await GET(new Request('http://localhost/api/crm/reports?from=2025-01-01&to=2025-01-31'));
+      const json = await res.json();
+      const basis = json.data.overview.orderStock.basis;
+      expect(basis.range).toEqual({ from: '2026-09-01', to: '2026-09-30' });
+      expect(mockInvoicedValue).toHaveBeenCalledWith(expect.anything(), basis.range);
+      expect(basis.invoiced).toBe(70_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('en trasig orderstock blir null och lämnar resten orört', async () => {

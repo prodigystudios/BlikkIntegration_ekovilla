@@ -2,14 +2,13 @@ import { netAmount, type NetAmountRow } from './pricing';
 import { sumUninvoiced } from './invoicedRevenue';
 import {
   ACTIVE_QUOTE_STATUSES,
-  OPEN_WORK_ORDER_STATUSES,
-  TO_INVOICE_WORK_ORDER_STATUSES,
+  ORDER_STOCK_STATUSES,
   WAITING_QUOTE_STATUSES,
   type OrderStockRow,
 } from './overviewSummary';
 import type { CrmQuoteStatus } from './quotes';
 import type { CrmWorkOrderStatus } from './work-orders';
-import { addDaysISO } from '@/lib/domains/planning/timezone';
+import { addDaysISO, daysBetweenInclusiveISO } from '@/lib/domains/planning/timezone';
 import type { ReportRange } from './reports';
 
 // Rapportsidans nyckeltal utöver de sex huvudtalen: hit rate, orderstock och öppna offerter.
@@ -124,6 +123,9 @@ export function buildPeriodHitRate(input: {
 }): PeriodHitRate {
   const maturity = hitRateMaturity(input.range, input.today);
   const previous = input.previous ?? null;
+  // Jämförelseperioden slutar alltid före perioden (previousRange), så en mogen period har i praktiken
+  // en mogen föregångare. Kontrollen av båda står kvar som ett bälte: regeln är "ingen jämförelse om
+  // någon av de två är preliminär", och den ska hålla även för ett intervall som kommer någon annanstans ifrån.
   const comparable =
     previous != null && !maturity.preliminary && !hitRateMaturity(previous.range, input.today).preliminary;
   return {
@@ -135,15 +137,8 @@ export function buildPeriodHitRate(input: {
 
 // ── Orderstock (nu) ──────────────────────────────────────────────────────────
 
-/**
- * Order som varken är avbrutna eller helt fakturerade: ej planerad, planerad, pågår, klar och
- * delfakturerad. Samma två listor som översiktens "Öppna ordrar" och "Att fakturera", så att
- * rapportens orderstock och översiktens två lager alltid går att stämma av mot varandra.
- */
-export const ORDER_STOCK_STATUSES: readonly CrmWorkOrderStatus[] = [
-  ...OPEN_WORK_ORDER_STATUSES,
-  ...TO_INVOICE_WORK_ORDER_STATUSES,
-];
+// Orderstocken = order som varken är avbrutna eller helt fakturerade: ej planerad, planerad, pågår,
+// klar och delfakturerad. Statuslistan (ORDER_STOCK_STATUSES) delas med översiktens två orderlager.
 
 export type { OrderStockRow };
 
@@ -163,14 +158,6 @@ export type OrderStock = {
   completed: { count: number; value: number };
 };
 
-/** Kalenderdagar i intervallet, båda ändar inräknade. Strängarna är datum, aldrig tidpunkter. */
-function daysInclusive(range: ReportRange): number {
-  const from = Date.parse(`${range.from}T00:00:00Z`);
-  const to = Date.parse(`${range.to}T00:00:00Z`);
-  if (!Number.isFinite(from) || !Number.isFinite(to) || to < from) return 0;
-  return Math.round((to - from) / 86_400_000) + 1;
-}
-
 /**
  * Orderstocken i veckor: stocken ÷ (månadens fakturering ÷ (månadens dagar ÷ 7)).
  *
@@ -179,8 +166,8 @@ function daysInclusive(range: ReportRange): number {
  */
 export function orderStockWeeks(stockValue: number, basis: { range: ReportRange; invoiced: number } | null): number | null {
   if (!basis || !(basis.invoiced > 0)) return null;
-  const days = daysInclusive(basis.range);
-  if (days <= 0) return null;
+  const days = daysBetweenInclusiveISO(basis.range.from, basis.range.to);
+  if (!(days > 0)) return null;
   return stockValue / (basis.invoiced / (days / 7));
 }
 

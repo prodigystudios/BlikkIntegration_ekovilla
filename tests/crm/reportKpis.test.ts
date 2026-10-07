@@ -7,10 +7,10 @@ import {
   buildReportOverview,
   hitRateMaturity,
   orderStockWeeks,
-  ORDER_STOCK_STATUSES,
   type OpenQuoteRow,
   type OrderStockRow,
 } from '@/lib/domains/crm/reportKpis';
+import { ORDER_STOCK_STATUSES } from '@/lib/domains/crm/overviewSummary';
 
 // `vat_percent: 0` där inget annat sägs: beloppet är då sitt eget netto, och förväntningarna kan
 // handla om regeln som prövas. Nettot har egna fall nedan.
@@ -66,10 +66,12 @@ describe('hitRateMaturity', () => {
     expect(hitRateMaturity({ from: '2026-09-01', to: '2026-09-08' }, '2026-10-07').preliminary).toBe(true);
   });
 
-  it('räknar kalenderdagar över sommartidsväxlingen', () => {
-    // Klockan går tillbaka natten till 25 oktober 2026. Datumen är strängar och aritmetiken
-    // UTC-förankrad (addDaysISO), så ingen timme försvinner ur räkningen i någon zon.
-    expect(hitRateMaturity({ from: '2026-09-01', to: '2026-09-30' }, '2026-10-30').matureThrough).toBe('2026-09-30');
+  it('räknar kalenderdagar över vårens sommartidsväxling — 🕰️ ZONBEROENDE, biter bara i en DST-zon', () => {
+    // Klockan gick fram natten till 29 mars 2026, så dygnet då var 23 timmar. Trettio gånger 24 timmar
+    // bakåt från en LOKAL midnatt den 10 april landar kl. 23 den 10 mars — en dag för tidigt. Under
+    // TZ=UTC finns ingen växling och den naiva varianten ger rätt svar, så testet bevisar bara något
+    // när sviten körs i Europe/Stockholm (mutationsprövat där: naiv lokal ms-aritmetik → 2026-03-10).
+    expect(hitRateMaturity({ from: '2026-03-01', to: '2026-03-31' }, '2026-04-10').matureThrough).toBe('2026-03-11');
   });
 });
 
