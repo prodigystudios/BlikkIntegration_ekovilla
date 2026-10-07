@@ -26,10 +26,16 @@ export function displayUnit(unit: string): string {
   return u;
 }
 
-/** Enheten raden prissätts i: m³ för en kubikrad, annars artikelns enhet (st om den saknas). */
+/**
+ * Enheten raden prissätts i: m³ för en kubikrad, annars artikelns enhet (st om den saknas).
+ *
+ * En kubikartikel som prissätts per styck (arbetsorderns "Pris per st") räknas i STYCK, inte i m³ —
+ * annars stod "Antal 5 m³" och "kr/m³" bredvid knappen som säger "Pris per st".
+ */
 export function lineItemUnitLabel(row: LineItemTableFields): string {
   if ((row.pricing_mode ?? 'm3') === 'm3') return 'm³';
-  return displayUnit(row.article_unit_name ?? '') || 'st';
+  const unit = displayUnit(row.article_unit_name ?? '');
+  return !unit || unit === 'm³' ? 'st' : unit;
 }
 
 // Ett mått som det skrevs ("19,5"), som tal ("19,5") — eller inget alls när det saknas eller är noll.
@@ -56,15 +62,15 @@ export function lineItemSubline(row: LineItemTableFields): string {
  * Ett à-pris. Till skillnad från beloppen (formatCurrency, hela kronor) behåller det ören: 85,50 kr
  * avrundat till "86 kr" i à-priskolumnen hade inte gått att räkna radens belopp ur.
  */
+const WHOLE_KRONOR = new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', maximumFractionDigits: 0 });
+const WITH_ORE = new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export function formatUnitPrice(value: number): string {
   if (!Number.isFinite(value)) return '–';
-  const whole = Math.abs(value - Math.round(value)) < 0.005;
-  return new Intl.NumberFormat('sv-SE', {
-    style: 'currency',
-    currency: 'SEK',
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: whole ? 0 : 2,
-  }).format(value);
+  // Avrundat till ören FÖRST: avgörs "hela kronor" på det oavrundade talet blir 85,995 "86,00 kr"
+  // medan 85,996 blir "86 kr" — samma kolumn i två format.
+  const rounded = Math.round(value * 100) / 100;
+  return (Number.isInteger(rounded) ? WHOLE_KRONOR : WITH_ORE).format(rounded);
 }
 
 /** Rabatten som den står i kolumnen: "10 %", eller ett streck när raden saknar rabatt. */

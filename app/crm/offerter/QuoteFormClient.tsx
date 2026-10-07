@@ -2485,6 +2485,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 total={totals.total}
                 toPay={totals.toPay}
                 rotDeduction={totals.rotDeduction}
+                // Samma regel som buildQuotePayload och arbetsordern: företag på 0 % moms = byggmoms.
+                reverseCharge={!isPrivateQuote && vatPct === 0}
               />
             ) : null}
           </div>

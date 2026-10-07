@@ -24,6 +24,10 @@ describe('displayUnit', () => {
   it('en styckrad i m2 visar m² i mängdkolumnen', () => {
     expect(lineItemUnitLabel({ pricing_mode: 'item', article_unit_name: 'm2' })).toBe('m²');
   });
+
+  it('en kubikartikel som prissätts per styck räknas i st, inte i m³', () => {
+    expect(lineItemUnitLabel({ pricing_mode: 'item', article_unit_name: 'm3' })).toBe('st');
+  });
 });
 
 describe('lineItemSubline', () => {
@@ -48,6 +52,12 @@ describe('formatUnitPrice', () => {
     expect(plain(formatUnitPrice(690))).toBe('690 kr');
     expect(plain(formatUnitPrice(85.5))).toBe('85,50 kr');
     expect(plain(formatUnitPrice(2500))).toBe('2 500 kr');
+  });
+
+  it('avrundar till ören innan formatet väljs — 85,995 och 85,996 skrivs båda "86 kr"', () => {
+    expect(plain(formatUnitPrice(85.995))).toBe('86 kr');
+    expect(plain(formatUnitPrice(85.996))).toBe('86 kr');
+    expect(plain(formatUnitPrice(85.994))).toBe('85,99 kr');
   });
 });
 

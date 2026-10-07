@@ -53,10 +53,10 @@ export function LineItemTotals({
           {reverseCharge ? 'Omvänd skattskyldighet' : formatCurrency(vat, 'SEK')}
         </dd>
       </div>
-      {/* 🧨 Vid omvänd skattskyldighet är totalen DELSUMMAN, inte `total`. Arbetsordern avgör byggmomsen
-          ur den sparade prissättningen, medan `total` räknas på order-raden momssats — och den har
-          drivit iväg till 25 på byggmomsordrar. Då stod "Omvänd skattskyldighet" ovanför en total med
-          25 % moms i. Fortnox fakturerar 0 %, så det är delsumman som gäller. */}
+      {/* 🧨 Vid omvänd skattskyldighet är totalen DELSUMMAN. Arbetsordern räknar redan på 0 % när den
+          vet att det är byggmoms (WorkOrderArticles, pricingVat) — orderns momskolumn har drivit iväg
+          till 25 på byggmomsordrar, och då stod "Omvänd skattskyldighet" ovanför en total med moms i.
+          Regeln här är skyddet för nästa anropare som inte vet det. */}
       <div className="flex justify-between gap-6 border-t border-[#e6ede3] pt-2 font-semibold text-slate-900">
         <dt>{reverseCharge ? 'Totalt' : 'Totalt inkl. moms'}</dt>
         <dd className="m-0 tabular-nums">{formatCurrency(reverseCharge ? subtotal : total, 'SEK')}</dd>
@@ -121,12 +121,11 @@ export function GeneratedRotLaborRow({
             Skapas automatiskt på {documentLabel}. Utbruten ur raderna ovan, höjer inte summan.
           </span>
         </span>
-        <span className="hidden md:block" />
-        <span className="hidden md:block" />
-        <span className="hidden md:block" />
-        {marginColumn ? <span className="hidden md:block" /> : null}
-        <span className="text-right text-sm tabular-nums text-slate-600">varav {formatCurrency(amount, 'SEK')}</span>
-        {interactive ? <span className="hidden md:block" /> : null}
+        {/* Beloppet i Belopp-kolumnen räknat från slutet — sist, eller näst sist när tabellen har en
+            fäll ut-kolumn — så raden inte behöver tomma celler för varje kolumn däremellan. */}
+        <span className={cn('text-right text-sm tabular-nums text-slate-600', interactive ? 'md:col-start-[-3] md:col-end-[-2]' : 'md:col-start-[-2] md:col-end-[-1]')}>
+          varav {formatCurrency(amount, 'SEK')}
+        </span>
       </div>
     </div>
   );

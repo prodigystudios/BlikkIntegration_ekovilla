@@ -271,6 +271,9 @@ function TableCells({
   const unit = lineItemUnitLabel(row);
   const quantity = configured ? `${formatQuantity(metrics!.amount)} ${unit}` : '–';
   const unitPrice = configured ? formatUnitPrice(metrics!.unit) : '–';
+  // Telefonens rad saknar rabattkolumnen, så den visar à-priset EFTER rabatt — annars gick "mängd ×
+  // pris" inte ihop med beloppet bredvid.
+  const netUnitPrice = configured ? formatUnitPrice(metrics!.effectiveUnit) : '–';
   // Arbetsordern skickar en egen andra rad (mått, material, densitet); offerten får artikelnumret
   // och måtten volymen räknas ur.
   const subline = details ?? (lineItemSubline(row) || null);
@@ -289,9 +292,10 @@ function TableCells({
         {/* Radbryts, kapas inte: på arbetsordern är det här måtten och materialet man läser. */}
         {subline ? <span className="block text-xs leading-snug text-slate-500 [overflow-wrap:anywhere]">{subline}</span> : null}
       </span>
-      <span className="hidden text-right text-sm tabular-nums text-slate-700 md:block">{quantity}</span>
-      <span className="hidden text-right text-sm tabular-nums text-slate-700 md:block">{unitPrice}</span>
-      <span className="hidden text-right text-sm tabular-nums text-slate-500 md:block">{formatDiscount(row.discount_percent)}</span>
+      {/* En avskriven rad stryks i VARJE cell — ostruket hade mängden lästs som att den levereras. */}
+      <span className={cn('hidden text-right text-sm tabular-nums text-slate-700 md:block', strike)}>{quantity}</span>
+      <span className={cn('hidden text-right text-sm tabular-nums text-slate-700 md:block', strike)}>{unitPrice}</span>
+      <span className={cn('hidden text-right text-sm tabular-nums text-slate-500 md:block', strike)}>{formatDiscount(row.discount_percent)}</span>
       {marginColumn ? (
         <span className="hidden justify-end md:flex">
           {marginPercent == null ? <span className="text-xs text-slate-400">–</span> : <MarginBadge marginPercent={marginPercent} bare />}
@@ -302,7 +306,7 @@ function TableCells({
       </span>
       {chevron}
       {configured ? (
-        <span className="col-span-2 text-xs tabular-nums text-slate-500 md:hidden">{quantity} × {unitPrice}</span>
+        <span className={cn('col-span-2 text-xs tabular-nums text-slate-500 md:hidden', strike)}>{quantity} × {netUnitPrice}</span>
       ) : null}
     </>
   );
@@ -356,10 +360,10 @@ export function LineItemTableReadRow({
 }
 
 // Ett fält med enheten inne i rutan ("m²", "kr/m³"). Fältet självt är appens vanliga Input.
-function UnitInput({ unit, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
+function UnitInput({ unit, className, ...props }: React.ComponentProps<typeof Input> & { unit: string }) {
   return (
     <span className="relative block">
-      <Input {...props} className="pr-16 tabular-nums" />
+      <Input {...props} className={cn('pr-16 tabular-nums', className)} />
       <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">{unit}</span>
     </span>
   );

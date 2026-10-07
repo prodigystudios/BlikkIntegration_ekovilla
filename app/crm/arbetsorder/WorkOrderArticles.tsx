@@ -216,9 +216,13 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // Avskrivna rader räknas inte — varken i pengar eller i säckar. Ordervärdet ska visa det som
   // faktiskt levereras, annars stämmer inte CRM med fakturorna.
   const activeRows = useMemo(() => source.filter((r) => !r.written_off), [source]);
+  // 🧨 Byggmoms räknas på 0 %. Detaljsidan skickar `reverseCharge` ur den SPARADE prissättningen, och
+  // den gäller — orderns momskolumn har drivit iväg till 25 på byggmomsordrar. Räknat på kolumnen stod
+  // "Omvänd skattskyldighet" ovanför en total med 25 % moms i. Fortnox fakturerar 0 %.
+  const pricingVat = reverseCharge ? 0 : vatPercent;
   const totals = useMemo(
-    () => computePricing(activeRows as PricingLineItem[], vatPercent, { isPrivate, rot: rotDetails }),
-    [activeRows, vatPercent, isPrivate, rotDetails],
+    () => computePricing(activeRows as PricingLineItem[], pricingVat, { isPrivate, rot: rotDetails }),
+    [activeRows, pricingVat, isPrivate, rotDetails],
   );
   const configuredCount = useMemo(() => activeRows.filter((r) => isConfiguredLineItem(r)).length, [activeRows]);
   // Radens tal, material och säckar — EN gång per rad och rendering. Detaljraden, märkena, den
@@ -385,8 +389,7 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
       ) : null}
       <div className="flex items-center justify-between gap-3 border-t border-[#e0e8dc] pt-2">
         <span className="font-semibold text-slate-700">{totals.rotDeduction > 0 ? 'Att betala' : 'Total'}</span>
-        {/* Vid omvänd skattskyldighet är totalen delsumman — se LineItemTotals för varför `total` inte duger. */}
-        <span className="text-base font-bold text-slate-900">{formatCurrency(totals.rotDeduction > 0 ? totals.toPay : isReverseCharge ? totals.subtotal : totals.total, currencyCode)}</span>
+        <span className="text-base font-bold text-slate-900">{formatCurrency(totals.rotDeduction > 0 ? totals.toPay : totals.total, currencyCode)}</span>
       </div>
     </div>
   );
