@@ -204,13 +204,26 @@ describe('sniDigits och customerSegmentOf — kundsegment ur SNI-koden', () => {
     expect(sniDigits(null)).toBeNull();
   });
 
-  it('grupperar företagen på koden', () => {
+  it('grupperar företagen på koden — koderna ur prod 2026-10-07', () => {
     expect(customerSegmentOf(business('41200'))).toBe('construction');
     expect(customerSegmentOf(business('41.200'))).toBe('construction');
-    expect(customerSegmentOf(business('43910'))).toBe('construction');
-    expect(customerSegmentOf(business('68204'))).toBe('real_estate');
-    expect(customerSegmentOf(business('46730'))).toBe('builders_merchant');
-    expect(customerSegmentOf(business('16230'))).toBe('house_manufacturer');
+    expect(customerSegmentOf(business('43320'))).toBe('construction');
+    expect(customerSegmentOf(business('43911'))).toBe('construction');
+    expect(customerSegmentOf(business('68201'))).toBe('real_estate');
+    expect(customerSegmentOf(business('68203'))).toBe('real_estate');
+    expect(customerSegmentOf(business('46731'))).toBe('builders_merchant');
+    expect(customerSegmentOf(business('16231'))).toBe('house_manufacturer');
+  });
+
+  it('hustillverkare är bara 16.231 — dörrar och fönster under 16.23 är övriga', () => {
+    // SNI 2007: 16.232 dörrar av trä, 16.233 fönster av trä, 16.239 övriga byggnadssnickerier.
+    expect(customerSegmentOf(business('16232'))).toBe('other');
+    expect(customerSegmentOf(business('16233'))).toBe('other');
+    expect(customerSegmentOf(business('16239'))).toBe('other');
+  });
+
+  it('provisionshandel med byggmaterial (46.13) är inte bygghandel enligt specen', () => {
+    expect(customerSegmentOf(business('46130'))).toBe('other');
   });
 
   it('en annan kod är Övriga branscher, ingen kod är Bransch okänd', () => {

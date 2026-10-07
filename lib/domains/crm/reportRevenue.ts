@@ -210,14 +210,24 @@ export type CustomerSegment =
  * roll, så "41.200" och "41200" är samma kod. Först matchande rad vinner, så det längre prefixet står
  * före det kortare om de skulle överlappa.
  *
- * ⚠️ KODERNA ÄR SNI 2007 (spec 2026-10-07) MEN tic.io LEVERERAR SNI 2025 FÖRST (lib/domains/tic/mappers.ts).
- * Stäm av mot prod innan tabellen litas på — se CRM_REPORTING_PLAN.md, steg 4.
+ * Avstämd mot prod 2026-10-07 (Williams läsfråga): koderna är fem siffror utan punkt, med SNI 2007:s namn
+ * — 41200, 43320, 46731 "Partihandel med virke och andra byggmaterial", 68201, 16231. 38 företagskunder
+ * med order saknar kod.
+ *
+ * ⚠️ HUSTILLVERKARE ÄR 16.231, INTE 16.23. Specen sa 16.23, med uppmaningen att kontrollera det: i SNI 2007
+ * är 16.23 alla byggnadssnickerier — dörrar (16.232), fönster (16.233) och övriga (16.239) också. Bara
+ * 16.231 är "Tillverkning av monteringsfärdiga trähus".
+ *
+ * ⚠️ tic.io-mappningen sparar SNI 2025 FÖRST (lib/domains/tic/mappers.ts). Dagens data är 2007-koder, men
+ * en kund som slås upp när tic.io börjar leverera 2025-koder kan få en kod som har flyttat (byggmaterial-
+ * partihandeln ligger på en annan kod i 2025) och hamnar då under Övriga branscher. Växer "Övriga" med
+ * okända koder: stäm av tabellen igen.
  */
 export const SNI_SEGMENTS: Array<{ segment: Exclude<CustomerSegment, 'private' | 'other' | 'unknown'>; prefixes: string[] }> = [
   { segment: 'construction', prefixes: ['41', '43'] },
   { segment: 'real_estate', prefixes: ['68'] },
   { segment: 'builders_merchant', prefixes: ['4673'] },
-  { segment: 'house_manufacturer', prefixes: ['1623'] },
+  { segment: 'house_manufacturer', prefixes: ['16231'] },
 ];
 
 /** SNI-kodens siffror, eller null när koden saknas eller inte har några. */
