@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass } from '@/app/crm/lib/crmTokens';
+import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
 
 type CustomerType = 'business' | 'private';
 type CustomerStage = 'prospect' | 'customer' | 'fortnox_customer';
@@ -36,24 +37,6 @@ type StageFilter = 'alla' | CustomerStage;
 const filterMeta: Record<StageFilter, string> = {
   alla: 'Alla', prospect: 'Prospekt', customer: 'Kunder', fortnox_customer: 'Fortnox-kunder',
 };
-
-function getDisplayName(item: CustomerItem): string {
-  if (item.customer_type === 'business') return item.company_name || 'Okänt företag';
-  const parts = [item.first_name, item.last_name].filter(Boolean);
-  return parts.length > 0 ? parts.join(' ') : 'Okänd kund';
-}
-
-function getInitials(item: CustomerItem): string {
-  if (item.customer_type === 'business' && item.company_name) {
-    const words = item.company_name.trim().split(/\s+/);
-    return words.length >= 2
-      ? (words[0][0] + words[1][0]).toUpperCase()
-      : words[0].slice(0, 2).toUpperCase();
-  }
-  const f = item.first_name?.[0] ?? '';
-  const l = item.last_name?.[0] ?? '';
-  return (f + l).toUpperCase() || '?';
-}
 
 const PAGE_SIZE = 50;
 const EMPTY_COUNTS: Record<StageFilter, number> = { alla: 0, prospect: 0, customer: 0, fortnox_customer: 0 };
@@ -322,13 +305,13 @@ export default function CustomersClient() {
                 <div className="flex items-center gap-3 py-2.5">
                   {/* Initials circle */}
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">
-                    {getInitials(item)}
+                    {customerInitials(item)}
                   </div>
 
                   {/* Name + secondary info */}
                   <div className="min-w-0 flex-1">
                     <strong className="block truncate text-[13px] font-semibold text-slate-900">
-                      {getDisplayName(item)}
+                      {customerDisplayName(item)}
                     </strong>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-slate-400">
                       {item.organization_number && (
