@@ -9,6 +9,7 @@ import type { HitRateMonth } from '@/lib/domains/crm/reportKpis';
 import {
   COLOR_BAR,
   COLOR_BAR_STRIPE,
+  COLOR_PERIOD_BAND,
   formatCount,
   formatMonth,
   formatMonthLong,
@@ -23,9 +24,6 @@ import {
 //
 // Randig stapel = preliminär: månadens offerter är inte alla 30 dagar gamla, och talet stiger sannolikt
 // ännu. Ränderna är formen, inte färgen, som skiljer de två — de ska gå att se även i gråskala.
-
-// Samma band som trenden (SalesTrendChart), så "vald period" ser likadan ut i båda diagrammen.
-const PERIOD_BAND = '#e3ece0';
 
 type MonthDatum = HitRateMonth & { label: string };
 
@@ -100,7 +98,7 @@ export default function HitRateMonthChart({ months }: { months: HitRateMonth[] }
             <XAxis dataKey="label" tick={{ fontSize: 12, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#cfdcc9' }} />
             <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value) => `${value} %`} tick={{ fontSize: 12, fill: '#64748b' }} width={52} tickLine={false} axisLine={false} />
             {inPeriod.length > 0 ? (
-              <ReferenceArea x1={inPeriod[0].label} x2={inPeriod[inPeriod.length - 1].label} fill={PERIOD_BAND} fillOpacity={1} />
+              <ReferenceArea x1={inPeriod[0].label} x2={inPeriod[inPeriod.length - 1].label} fill={COLOR_PERIOD_BAND} fillOpacity={1} />
             ) : null}
             <Tooltip content={(props) => <HitRateTooltip active={props.active} payload={props.payload} />} cursor={{ fill: 'rgba(26,63,38,0.06)' }} />
             <Bar dataKey="percent" name="Hit rate" radius={[4, 4, 0, 0]} maxBarSize={28} isAnimationActive={false}>

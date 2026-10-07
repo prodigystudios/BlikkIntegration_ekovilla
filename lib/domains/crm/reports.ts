@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { netAmount, type NetAmountRow } from './pricing';
 import { isDeadWorkOrder } from './work-orders';
 import { invoicedAt, invoicedRevenue, type InvoicedRevenue, type InvoiceRoundRow } from './invoicedRevenue';
+import { buildHitRate, suggestsLateEntry } from './hitRate';
 import {
   buildPeriodSummary,
   type PeriodSummary,
@@ -173,20 +174,6 @@ export function buildSalesOverTime(
   }));
 }
 
-/**
- * Från vilken hit rate en säljares offerter troligen läggs in först när affären redan är klar — då
- * säger talet ingenting om hur säljaren säljer, och tabellen får en fotnot (spec 2026-10-07).
- */
-export const LATE_ENTRY_HIT_RATE_PERCENT = 95;
-
-/**
- * Ska säljarens hit rate få fotnoten? Jämför det AVRUNDADE talet, alltså det som står i tabellen:
- * 94,6 % visas som "95 %", och en 95 utan fotnot bredvid en 95 med hade sett ut som ett fel.
- */
-export function suggestsLateEntry(hitRate: number | null): boolean {
-  return hitRate != null && Math.round(hitRate) >= LATE_ENTRY_HIT_RATE_PERCENT;
-}
-
 export type SellerReportRow = {
   userId: string;
   userName: string;
@@ -197,8 +184,8 @@ export type SellerReportRow = {
   won: number;
   wonValue: number;
   /**
-   * Hit rate: vunna ÷ ALLA säljarens offerter i perioden, i procent — samma regel som rapportens
-   * (buildHitRate). null när säljaren saknar offerter i perioden; 0 % hade påstått att inget vanns.
+   * Hit rate: vunna ÷ ALLA säljarens offerter i perioden, i procent — räknad med rapportens egen
+   * buildHitRate. null när säljaren saknar offerter i perioden; 0 % hade påstått att inget vanns.
    */
   hitRate: number | null;
   /** Hit rate 95 % eller mer — fotnoten om att offerten troligen läggs in efter affären (suggestsLateEntry). */
@@ -220,6 +207,8 @@ export function buildPerSeller(
 ): SellerReportRow[] {
   const nameMap = new Map(sellers.map((s) => [s.id, s.full_name || 'Okänd användare']));
   const acc = new Map<string, SellerReportRow>();
+  // Säljarens offerter, för hit rate — samma regel och samma funktion som resten av rapporten.
+  const quotesBySeller = new Map<string, ReportQuoteRow[]>();
   const ensure = (id: string): SellerReportRow => {
     let row = acc.get(id);
     if (!row) {
@@ -237,10 +226,10 @@ export function buildPerSeller(
     const row = ensure(q.assigned_to);
     row.quotes += 1;
     row.quoteValue += netAmount(q);
-    if (q.status === 'won') {
-      row.won += 1;
-      row.wonValue += netAmount(q);
-    }
+    if (q.status === 'won') row.wonValue += netAmount(q);
+    const list = quotesBySeller.get(q.assigned_to);
+    if (list) list.push(q);
+    else quotesBySeller.set(q.assigned_to, [q]);
   }
   // A seller can show invoiced revenue this period from an order won in an earlier one —
   // that is the point of the split, not a bug.
@@ -256,7 +245,9 @@ export function buildPerSeller(
   }
 
   for (const row of acc.values()) {
-    row.hitRate = row.quotes > 0 ? (row.won / row.quotes) * 100 : null;
+    const rate = buildHitRate(quotesBySeller.get(row.userId) ?? []);
+    row.won = rate.won;
+    row.hitRate = rate.percent;
     row.lateEntry = suggestsLateEntry(row.hitRate);
   }
 

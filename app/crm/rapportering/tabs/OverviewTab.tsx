@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
-import Badge from '@/components/ui/Badge';
 import type { SalesReport } from '@/lib/domains/crm/reports';
 import type { PeriodMetricKey } from '@/lib/domains/crm/reportGoals';
 import { goalPercent, previousPercentChange } from '@/lib/domains/crm/reportGoals';
@@ -14,6 +13,7 @@ import {
   MetricComparison,
   MetricGoal,
   PERIOD_METRIC_LABELS,
+  PreliminaryNote,
   ScopeChip,
   SectionCard,
   Unavailable,
@@ -22,7 +22,6 @@ import {
   formatCurrency,
   formatMonthLong,
   formatPercent,
-  formatRangeLabel,
   comparisonSubtitle,
   goalSubtitle,
   goalsApply,
@@ -34,10 +33,6 @@ import SalesTrendChart from './SalesTrendChart';
 //
 // ⚠️ KORT MÄRKTA "NU" FÖLJER INTE PERIODEN. Orderstocken och de öppna offerterna är läget just nu, och
 // står på samma rad som periodens tal — utan märket hade de lästs som periodens.
-
-function dayLabel(day: string) {
-  return formatRangeLabel(day, day);
-}
 
 export default function OverviewTab({ report, periodLabel }: { report: SalesReport; periodLabel: string }) {
   const summary = report.periodSummary;
@@ -157,10 +152,7 @@ export default function OverviewTab({ report, periodLabel }: { report: SalesRepo
                   {hitRate.valuePercent != null ? ` · ${formatPercent(hitRate.valuePercent)} i kronor` : ''}
                 </KpiNote>
                 {hitRate.preliminary ? (
-                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-slate-600">
-                    <Badge variant="info" className="px-1.5 py-0.5 text-[11px]">Preliminärt</Badge>
-                    <span>offerter efter {dayLabel(hitRate.matureThrough)} är yngre än 30 dagar</span>
-                  </div>
+                  <PreliminaryNote matureThrough={hitRate.matureThrough} />
                 ) : hitRate.previous?.percent != null && hitRate.percent != null ? (
                   <HitRateComparison current={hitRate.percent} previous={hitRate.previous.percent} />
                 ) : (

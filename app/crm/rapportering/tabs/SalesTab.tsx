@@ -5,7 +5,6 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import { cn } from '@/lib/shared/cn';
-import Badge from '@/components/ui/Badge';
 import type { SalesReport } from '@/lib/domains/crm/reports';
 // Bara typer ur domänen: reportKpis.ts drar in serverkod, och en körtidsimport hade tagit med den i
 // klientpaketet. Allt som ska räknas räknas i rutten — fotnoten bär säljarraden själv (lateEntry).
@@ -22,6 +21,7 @@ import {
   MetricComparison,
   MetricGoal,
   MiniStat,
+  PreliminaryNote,
   ScopeChip,
   SectionCard,
   Unavailable,
@@ -30,8 +30,8 @@ import {
   formatCount,
   formatCurrency,
   formatMonthLong,
+  formatDay,
   formatPercent,
-  formatRangeLabel,
   comparisonSubtitle,
   goalSubtitle,
   goalsApply,
@@ -55,20 +55,6 @@ const AGE_LABELS: Record<QuoteAgeKey, string> = {
   '31-60': '31–60 dagar',
   'over-60': 'Över 60 dagar',
 };
-
-function dayLabel(day: string) {
-  return formatRangeLabel(day, day);
-}
-
-/** "Preliminärt — offerter efter 7 sep är yngre än 30 dagar", på samma sätt som Översiktens hit rate. */
-function PreliminaryNote({ matureThrough }: { matureThrough: string }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-slate-600">
-      <Badge variant="info" className="px-1.5 py-0.5 text-[11px]">Preliminärt</Badge>
-      <span>offerter efter {dayLabel(matureThrough)} är yngre än 30 dagar</span>
-    </div>
-  );
-}
 
 function TypicalOrderFigure({ label, typical }: { label: string; typical: TypicalOrder }) {
   return (
@@ -219,7 +205,8 @@ export default function SalesTab({ report, periodLabel }: { report: SalesReport;
                   // Tomt, inte 0: en månad utan offerter har ingen hit rate.
                   m.percent == null ? '' : Math.round(m.percent),
                   m.valuePercent == null ? '' : Math.round(m.valuePercent),
-                  m.preliminary ? 'ja' : 'nej',
+                  // Som på sidan: en månad utan offerter har inget tal att kalla preliminärt.
+                  m.quotes === 0 ? '' : m.preliminary ? 'ja' : 'nej',
                   m.partial ? `${m.partial.from} – ${m.partial.to}` : '',
                 ]),
               )} />
@@ -276,7 +263,7 @@ export default function SalesTab({ report, periodLabel }: { report: SalesReport;
                 </BarList>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <MiniStat value={`${formatCount(open.expired.count)} st`}>
-                    har passerat giltighetstiden, {formatCurrency(open.expired.value)}. Uppdatera status: vunnen, förlorad eller förnyad.
+                    har passerat giltighetstiden, {formatCurrency(open.expired.value)}.
                   </MiniStat>
                   <MiniStat value={`${formatCount(open.missingFollowUpDate.count)} st`}>
                     av {formatCount(open.missingFollowUpDate.of)} skickade eller markerade för uppföljning saknar uppföljningsdatum.
@@ -293,7 +280,7 @@ export default function SalesTab({ report, periodLabel }: { report: SalesReport;
         subtitle={[
           'Aktivitet och värde per säljare — ordervärde för det som skapades i perioden, fakturerat för det som fakturerades under den. Ex moms.',
           'Hit rate är säljarens vunna delat med alla säljarens offerter i perioden.',
-          hitRate?.preliminary ? `Preliminär: offerter efter ${dayLabel(hitRate.matureThrough)} är yngre än 30 dagar.` : '',
+          hitRate?.preliminary ? `Preliminär: offerter efter ${formatDay(hitRate.matureThrough)} är yngre än 30 dagar.` : '',
         ].filter(Boolean).join(' ')}
         action={<ExportButton onClick={() => downloadCsv(
           `per-saljare_${report.range.from}_${report.range.to}.csv`,

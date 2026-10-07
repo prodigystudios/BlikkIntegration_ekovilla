@@ -8,6 +8,7 @@ import { goalPercent } from '@/lib/domains/crm/reportGoals';
 import {
   COLOR_INVOICED,
   COLOR_ORDER,
+  COLOR_PERIOD_BAND,
   COLOR_QUOTE,
   formatCompact,
   formatCurrency,
@@ -37,9 +38,8 @@ type GoalKey = 'quoteGoal' | 'orderGoal' | 'invoicedGoal';
 
 type TrendDatum = TrendPoint & Record<GoalKey, number | null> & { label: string };
 
-// Samma värden som legendens bg-[#1f2937] och bg-[#e3ece0]; recharts behöver dem som värden.
+// Samma värde som legendens bg-[#1f2937]; recharts behöver det som värde.
 const GOAL_STROKE = '#1f2937';
-const PERIOD_BAND = '#e3ece0';
 // Samma mått för stapel och målstreck: de två x-axlarna lägger ut sina staplar var för sig, och
 // strecken hamnar bara rakt över sin stapel när båda grupperna har exakt samma mått. En MAXbredd, inte
 // en fast: tolv månader à tre staplar får inte plats på en telefon med 22 px var, och båda grupperna
@@ -162,7 +162,7 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
             <XAxis xAxisId="goal" dataKey="label" hide height={0} />
             <YAxis tickFormatter={formatCompact} tick={{ fontSize: 12, fill: '#64748b' }} width={52} tickLine={false} axisLine={false} />
             {inPeriod.length > 0 ? (
-              <ReferenceArea xAxisId="value" x1={inPeriod[0].label} x2={inPeriod[inPeriod.length - 1].label} fill={PERIOD_BAND} fillOpacity={1} />
+              <ReferenceArea xAxisId="value" x1={inPeriod[0].label} x2={inPeriod[inPeriod.length - 1].label} fill={COLOR_PERIOD_BAND} fillOpacity={1} />
             ) : null}
             <Tooltip
               content={(props) => <TrendTooltip active={props.active} payload={props.payload} goalsUnavailable={trend.goalsUnavailable} />}

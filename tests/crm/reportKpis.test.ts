@@ -20,7 +20,8 @@ import {
   type OpenQuoteRow,
   type OrderStockRow,
 } from '@/lib/domains/crm/reportKpis';
-import { buildPerSeller, suggestsLateEntry, type ReportOrderRow, type ReportQuoteRow } from '@/lib/domains/crm/reports';
+import { buildPerSeller, type ReportOrderRow, type ReportQuoteRow } from '@/lib/domains/crm/reports';
+import { suggestsLateEntry } from '@/lib/domains/crm/hitRate';
 import { ORDER_STOCK_STATUSES } from '@/lib/domains/crm/overviewSummary';
 import type { ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 

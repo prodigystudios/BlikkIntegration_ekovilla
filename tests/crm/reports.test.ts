@@ -86,8 +86,8 @@ describe('buildPerSeller', () => {
     const rows = buildPerSeller(quotes, split.created, split.revenue, calls, sellers);
     const anna = rows.find((r) => r.userId === 'u1')!;
     const bjorn = rows.find((r) => r.userId === 'u2')!;
-    expect(anna).toMatchObject({ userName: 'Anna', calls: 2, quotes: 2, quoteValue: 1500, wonValue: 1000, orders: 2, orderValue: 2500, invoicedValue: 2500 });
-    expect(bjorn).toMatchObject({ userName: 'Björn', calls: 1, quotes: 1, quoteValue: 2000, wonValue: 0, orders: 1, orderValue: 3000, invoicedValue: 0 });
+    expect(anna).toMatchObject({ userName: 'Anna', calls: 2, quotes: 2, quoteValue: 1500, won: 1, wonValue: 1000, hitRate: 50, orders: 2, orderValue: 2500, invoicedValue: 2500 });
+    expect(bjorn).toMatchObject({ userName: 'Björn', calls: 1, quotes: 1, quoteValue: 2000, won: 0, wonValue: 0, hitRate: 0, orders: 1, orderValue: 3000, invoicedValue: 0 });
   });
   it('sorts by order value descending', () => {
     const rows = buildPerSeller(quotes, split.created, split.revenue, calls, sellers);

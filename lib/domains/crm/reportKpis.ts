@@ -1,5 +1,6 @@
 import { netAmount, type NetAmountRow } from './pricing';
 import { sumUninvoiced } from './invoicedRevenue';
+import { buildHitRate, type HitRate, type HitRateQuoteRow } from './hitRate';
 import {
   ACTIVE_QUOTE_STATUSES,
   ORDER_STOCK_STATUSES,
@@ -35,7 +36,6 @@ import { monthBounds, sumGoalTargets, type ReportGoalRow } from './reportGoals';
 //     uppdatera status, aldrig en förlust,
 //   · hit rate har alla periodens offerter i nämnaren, oavsett status.
 
-const WON: CrmQuoteStatus = 'won';
 const DRAFT: CrmQuoteStatus = 'draft';
 const COMPLETED: CrmWorkOrderStatus = 'completed';
 
@@ -49,47 +49,11 @@ function sumNet(rows: NetAmountRow[]): number {
 }
 
 // ── Hit rate ─────────────────────────────────────────────────────────────────
+//
+// Regeln själv (buildHitRate) bor i hitRate.ts, så att säljartabellen i reports.ts kan räkna med samma
+// funktion utan att importera den här modulen, som i sin tur importerar reports.ts.
 
-export type HitRateQuoteRow = NetAmountRow & { status: string | null };
-
-export type HitRate = {
-  /** Alla offerter i underlaget, oavsett status — utkast, skickade, förlorade och utgångna. */
-  quotes: number;
-  /** Offerter med status Vunnen. */
-  won: number;
-  /** Vunna av antalet, i procent. null när underlaget saknar offerter. */
-  percent: number | null;
-  quoteValue: number;
-  wonValue: number;
-  /** Vunnet av offertvärdet (netto), i procent. null när offertvärdet är 0. */
-  valuePercent: number | null;
-};
-
-/**
- * Hit rate = vunna ÷ ALLA offerter, i antal och i kronor (netto).
- *
- * ⚠️ NÄMNAREN ÄR ALLA OFFERTER. Avfärdade varianter, prövade mot prod 2026-10-07:
- *   · "vunna av avgjorda" (vunna + förlorade) gav 95 %, eftersom nästan inga offerter markeras som
- *     förlorade — talet hade sagt ingenting,
- *   · "avgjort i perioden" blåses upp när antalet offerter växer,
- *   · en fast 30-dagarskohort blir tom för "Denna månad".
- *
- * Talet kan bli för lågt men aldrig för högt: 33 order har skapats utan koppling till en offert,
- * och hör en sådan till en öppen offert räknas den offerten inte som vunnen.
- */
-export function buildHitRate(quotes: HitRateQuoteRow[]): HitRate {
-  const won = quotes.filter((quote) => quote.status === WON);
-  const quoteValue = sumNet(quotes);
-  const wonValue = sumNet(won);
-  return {
-    quotes: quotes.length,
-    won: won.length,
-    percent: quotes.length > 0 ? (won.length / quotes.length) * 100 : null,
-    quoteValue,
-    wonValue,
-    valuePercent: quoteValue > 0 ? (wonValue / quoteValue) * 100 : null,
-  };
-}
+export { buildHitRate, type HitRate, type HitRateQuoteRow };
 
 /**
  * Hur gamla offerterna måste vara innan hit rate är slutlig. Mätt i prod 2026-10-07: 61 % av
