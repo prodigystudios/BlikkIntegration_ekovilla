@@ -1,5 +1,5 @@
 import { netAmount } from './pricing';
-import { uninvoicedAmount, type InvoicedRevenue } from './invoicedRevenue';
+import { sumUninvoiced, type InvoicedRevenue } from './invoicedRevenue';
 import type { CrmCustomerType } from './customers';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { ORDER_STOCK_STATUSES, type OrderStockRow } from './overviewSummary';
@@ -7,10 +7,12 @@ import { isoDayNumber, stockholmTodayISO } from '@/lib/domains/planning/timezone
 import {
   monthsInRange,
   partitionOrders,
+  sumInvoices,
   type ReportData,
   type ReportOrderRow,
   type ReportRange,
 } from './reports';
+import type { PeriodTotals } from './reportGoals';
 import { customerTypeOf, median, monthSpan, monthTouches } from './reportKpis';
 
 // Omsättningsflikens nyckeltal (spec 2026-10-07, 4.4): "Vad kommer in, vad ligger kvar?"
@@ -23,6 +25,10 @@ import { customerTypeOf, median, monthSpan, monthTouches } from './reportKpis';
 
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
+}
+
+function sumNet(orders: ReportOrderRow[]): number {
+  return sum(orders.map((order) => netAmount(order)));
 }
 
 function share(part: number, whole: number): number | null {
@@ -39,9 +45,9 @@ export type InvoicedByType = Record<CrmCustomerType, number> & {
 
 /** Kundtypen följer med fakturan från ordern (quote_type), också för en delfakturarunda. */
 export function invoicedByCustomerType(revenue: InvoicedRevenue[]): InvoicedByType {
-  const byType = (type: CrmCustomerType) => sum(revenue.filter((invoice) => customerTypeOf(invoice.quote_type) === type).map((invoice) => invoice.amount));
+  const byType = (type: CrmCustomerType) => sumInvoices(revenue.filter((invoice) => customerTypeOf(invoice.quote_type) === type));
   const privateValue = byType('private');
-  const total = sum(revenue.map((invoice) => invoice.amount));
+  const total = sumInvoices(revenue);
   return { total, private: privateValue, business: byType('business'), privateShare: share(privateValue, total) };
 }
 
@@ -84,6 +90,10 @@ export function orderLeadDays(order: Pick<ReportOrderRow, 'created_at' | 'fortno
  * Median från order till faktura, för order SLUTFAKTURERADE i perioden (partitionOrders().invoiced).
  * En delfakturerad order mäts till sista rundan — då är den färdigfakturerad. Order utan fakturadatum
  * (från innan kolumnen fanns) går inte att mäta och räknas inte.
+ *
+ * Känt och avsiktligt: VILKA order som hör till perioden avgörs av rapportens vanliga dygnsregel (samma
+ * som Fakturerat), medan dagarna RÄKNAS i svenska dygn som specen säger. Kring midnatt en månadsskiftesnatt
+ * kan en order alltså höra till en månad och mätas mot nästa dags datum — en dag hit eller dit i en median.
  */
 export function buildLeadTime(ordersInvoiced: ReportOrderRow[]): LeadTime {
   const days = ordersInvoiced.map(orderLeadDays).filter((value): value is number => value != null);
@@ -115,7 +125,7 @@ export function buildRotShare(ordersCreated: ReportOrderRow[]): RotShare {
     privateOrders: privateOrders.length,
     withRot: withRot.length,
     share: share(withRot.length, privateOrders.length),
-    value: sum(withRot.map((order) => netAmount(order))),
+    value: sumNet(withRot),
   };
 }
 
@@ -180,7 +190,7 @@ export function buildStockByStage(rows: OrderStockRow[]): StockStage[] {
   const stock = rows.filter((row) => ORDER_STOCK_STATUSES.includes(row.status as CrmWorkOrderStatus));
   return STOCK_STAGES.map((stage) => {
     const inStage = stock.filter((row) => stage.statuses.includes(row.status as CrmWorkOrderStatus));
-    return { key: stage.key, count: inStage.length, value: sum(inStage.map(uninvoicedAmount)) };
+    return { key: stage.key, count: inStage.length, value: sumUninvoiced(inStage) };
   });
 }
 
@@ -248,13 +258,21 @@ export type SegmentRow = { segment: CustomerSegment; orderValue: number; orders:
 // ── Kunder ───────────────────────────────────────────────────────────────────
 
 /**
- * Kunden bakom en order: kundkortet, och kundnamnet när ordern saknar kundkort (spec 2026-10-07). En
- * order utan båda räknas som en och samma okända kund, som i topplistan per kund.
+ * Kunden bakom en order: kundkortet, och kundnamnet när ordern saknar kundkort (spec 2026-10-07).
+ *
+ * ⚠️ null FÖR EN ORDER UTAN BÅDA — då vet vi inte vem kunden är. Den räknas som en egen kund och aldrig
+ * som återkommande: slogs de ihop till en "okänd kund" hade tre främlingars order sett ut som en
+ * återkommande storkund, både i antalet och i topp 5.
  */
-export function customerKey(order: { customer_id: string | null; client_name: string | null }): string {
+export function customerKey(order: { customer_id: string | null; client_name: string | null }): string | null {
   if (order.customer_id) return `id:${order.customer_id}`;
   const name = (order.client_name ?? '').trim();
-  return name ? `namn:${name}` : 'okänd';
+  return name ? `namn:${name}` : null;
+}
+
+/** Nyckeln per order i en lista, där en order utan känd kund blir en egen kund. */
+function keysPerOrder(orders: ReportOrderRow[]): string[] {
+  return orders.map((order, index) => customerKey(order) ?? `ordern:${index}`);
 }
 
 /** Ordervärde per segment, för order skapade i perioden. Alla segment står med, även tomma. */
@@ -263,9 +281,9 @@ export function buildSegments(ordersCreated: ReportOrderRow[]): SegmentRow[] {
     const orders = ordersCreated.filter((order) => customerSegmentOf(order) === segment);
     return {
       segment,
-      orderValue: sum(orders.map((order) => netAmount(order))),
+      orderValue: sumNet(orders),
       orders: orders.length,
-      customers: new Set(orders.map(customerKey)).size,
+      customers: new Set(keysPerOrder(orders)).size,
     };
   });
 }
@@ -274,8 +292,8 @@ export type CustomerConcentration = {
   /** Kunder med minst en order skapad i perioden. */
   customers: number;
   /**
-   * Varav återkommande: kunden har minst två order sedan start (Williams beslut 2026-10-07: räknat bland
-   * periodens kunder). ⚠️ null = KUNDE INTE RÄKNAS — räkningen sedan start gick inte att läsa.
+   * Varav återkommande: kunden har minst två order från start till periodens slut (Williams beslut
+   * 2026-10-07: räknat bland periodens kunder). ⚠️ null = KUNDE INTE RÄKNAS — räkningen gick inte att läsa.
    */
   recurring: number | null;
   /** De 5 och de 10 största kundernas andel av periodens ordervärde, i procent. null utan ordervärde. */
@@ -283,17 +301,23 @@ export type CustomerConcentration = {
   top10Share: number | null;
 };
 
-export type CustomerOrderRow = { status: string | null; customer_id: string | null; client_name: string | null };
+export type CustomerOrderRow = { status: string | null; created_at: string; customer_id: string | null; client_name: string | null };
 
 /**
- * Hur många order varje kund har sedan start. Avbrutna order räknas inte — filtreras här, inte bara i
- * läsningen, så att funktionen ger samma svar vilken läsning som än matar den.
+ * Hur många order varje kund har från start TILL OCH MED periodens sista dag. Avbrutna order räknas inte
+ * — filtreras här, inte bara i läsningen, så att funktionen ger samma svar vilken läsning som än matar den.
+ *
+ * ⚠️ TILL PERIODENS SLUT, inte till idag: en kund vars andra order kom i september var inte återkommande i
+ * januari, och januaris rapport ska inte ändras för att kunden beställde igen långt senare. Dygnet jämförs
+ * som i resten av rapporten (`created_at`s datumdel). Order utan känd kund räknas inte alls.
  */
-export function countOrdersPerCustomer(rows: CustomerOrderRow[]): Map<string, number> {
+export function countOrdersPerCustomer(rows: CustomerOrderRow[], through: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of rows) {
     if (isDeadWorkOrder(row.status)) continue;
+    if (String(row.created_at).slice(0, 10) > through) continue;
     const key = customerKey(row);
+    if (key == null) continue;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   return counts;
@@ -305,18 +329,18 @@ export function buildCustomerConcentration(
   ordersSinceStart: Map<string, number> | null,
 ): CustomerConcentration {
   const valueByCustomer = new Map<string, number>();
-  for (const order of ordersCreated) {
-    const key = customerKey(order);
-    valueByCustomer.set(key, (valueByCustomer.get(key) ?? 0) + netAmount(order));
-  }
+  const keys = keysPerOrder(ordersCreated);
+  ordersCreated.forEach((order, index) => {
+    valueByCustomer.set(keys[index], (valueByCustomer.get(keys[index]) ?? 0) + netAmount(order));
+  });
   const values = [...valueByCustomer.values()].sort((a, b) => b - a);
   const total = sum(values);
-  const keys = [...valueByCustomer.keys()];
+  const customers = [...valueByCustomer.keys()];
   return {
-    customers: keys.length,
-    // En kund med en order i perioden har minst en order sedan start; räkningen kan bara sakna en
-    // order som skapats efter att den lästes, och då gäller periodens egen order som golv.
-    recurring: ordersSinceStart ? keys.filter((key) => (ordersSinceStart.get(key) ?? 1) >= 2).length : null,
+    customers: customers.length,
+    // En kund utan känd identitet (`ordern:…`) finns inte i räkningen och blir aldrig återkommande. En
+    // känd kund har minst sin order i perioden; saknas den i räkningen (skapad efter läsningen) är 1 golvet.
+    recurring: ordersSinceStart ? customers.filter((key) => (ordersSinceStart.get(key) ?? 1) >= 2).length : null,
     top5Share: share(sum(values.slice(0, 5)), total),
     top10Share: share(sum(values.slice(0, 10)), total),
   };
@@ -350,14 +374,16 @@ export function buildReportRevenue(input: {
   orderStockRows: OrderStockRow[] | null;
   /** Order per kund sedan start. null = läsningen felade. */
   ordersSinceStart: Map<string, number> | null;
-  /** Föregående periods huvudtal (buildPeriodTotals). null = de gick inte att hämta. */
-  previousTotals?: { orderValue: number; invoicedValue: number } | null;
+  /**
+   * Periodens och föregående periods huvudtal (buildPeriodTotals) — book-to-bill räknas på dem, så att
+   * de två kvoterna mäts med samma funktion. `previous` null = den gick inte att hämta.
+   */
+  totals: Pick<PeriodTotals, 'orderValue' | 'invoicedValue'>;
+  previousTotals?: Pick<PeriodTotals, 'orderValue' | 'invoicedValue'> | null;
 }): ReportRevenue {
-  const invoiced = invoicedByCustomerType(input.period.revenue);
-  const orderValue = sum(input.period.created.map((order) => netAmount(order)));
   return {
-    invoiced,
-    bookToBill: bookToBill(orderValue, invoiced.total),
+    invoiced: invoicedByCustomerType(input.period.revenue),
+    bookToBill: bookToBill(input.totals.orderValue, input.totals.invoicedValue),
     bookToBillPrevious: input.previousTotals ? bookToBill(input.previousTotals.orderValue, input.previousTotals.invoicedValue) : null,
     leadTime: buildLeadTime(input.period.invoiced),
     rot: buildRotShare(input.period.created),

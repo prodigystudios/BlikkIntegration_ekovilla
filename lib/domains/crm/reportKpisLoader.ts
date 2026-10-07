@@ -41,13 +41,16 @@ export function fetchOpenQuoteRows(admin: SupabaseClient): Promise<OpenQuoteRow[
 
 /**
  * Varje order sedan start, med sin kund — "återkommande kunder" under Omsättning räknar hur många order
- * varje kund har. Bara de tre kolumnerna: tabellen läses i sin helhet och växer med verksamheten.
- * Avbrutna filtreras i countOrdersPerCustomer.
+ * varje kund har. Bara fyra kolumner: tabellen läses i sin helhet. Avbrutna och order efter periodens slut
+ * filtreras i countOrdersPerCustomer.
+ *
+ * Känt: läsningen växer med verksamheten, en sida per 1 000 order (prod 2026-10: drygt 250, ~150 i
+ * månaden). Blir den märkbar: räkna bara periodens kunder med en `.in()` i klumpar, eller en GROUP BY.
  */
 export function fetchCustomerOrderRows(admin: SupabaseClient): Promise<CustomerOrderRow[]> {
   return readEveryRow('kundernas order', (from, to) =>
     admin.from('crm_work_orders')
-      .select('status, customer_id, client_name')
+      .select('status, created_at, customer_id, client_name')
       .order('id', { ascending: true })
       .range(from, to),
   );

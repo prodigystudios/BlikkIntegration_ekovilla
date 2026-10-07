@@ -100,6 +100,30 @@ export function PreliminaryNote({ matureThrough }: { matureThrough: string }) {
   );
 }
 
+// ── Månadsdiagrammen (trenden, hit rate och fakturerat per månad) ──
+
+/** Legendens ruta för den valda perioden — samma band (COLOR_PERIOD_BAND) i alla tre diagrammen. */
+export function PeriodBandLegend() {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9] bg-[#e3ece0]" aria-hidden="true" />
+      Vald period
+    </span>
+  );
+}
+
+/** "* Delmånad, bara de här dagarna räknas: …" under ett månadsdiagram. Inget alls när ingen månad är delad. */
+export function PartialMonthsNote({ months, suffix }: { months: Array<{ period: string; partial: { from: string; to: string } | null }>; suffix?: string }) {
+  const partials = months.filter((month) => month.partial);
+  if (partials.length === 0) return null;
+  return (
+    <p className="m-0 text-[12px] text-slate-500">
+      * Delmånad, bara de här dagarna räknas: {partials.map((m) => `${formatMonth(m.period)} (${formatRangeLabel(m.partial!.from, m.partial!.to)})`).join(', ')}.
+      {suffix ? ` ${suffix}` : ''}
+    </p>
+  );
+}
+
 /** Ett litet tal med en förklarande rad, inuti ett kort. */
 export function MiniStat({ value, children }: { value: ReactNode; children: ReactNode }) {
   return (

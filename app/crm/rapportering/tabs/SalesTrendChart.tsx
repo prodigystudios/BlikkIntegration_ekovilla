@@ -15,6 +15,8 @@ import {
   formatMonth,
   formatMonthLong,
   formatRangeLabel,
+  PartialMonthsNote,
+  PeriodBandLegend,
 } from '../reportUi';
 
 // Offerter, orderingång och fakturerat per månad — de senaste tolv månaderna eller sedan start.
@@ -118,7 +120,6 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
     invoicedGoal: point.goals.invoicedValue,
   }));
   const inPeriod = data.filter((d) => d.inPeriod);
-  const partials = data.filter((d) => d.partial);
   const anyGoal = data.some((d) => SERIES.some((s) => d[s.goalKey] != null));
 
   return (
@@ -141,10 +142,7 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
           </span>
         ) : null}
         {inPeriod.length > 0 ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9] bg-[#e3ece0]" aria-hidden="true" />
-            Vald period
-          </span>
+          <PeriodBandLegend />
         ) : null}
       </div>
 
@@ -178,11 +176,7 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
         </ResponsiveContainer>
       </div>
 
-      {partials.length > 0 ? (
-        <p className="m-0 text-[12px] text-slate-500">
-          * Delmånad, bara de här dagarna räknas: {partials.map((d) => `${formatMonth(d.period)} (${formatRangeLabel(d.partial!.from, d.partial!.to)})`).join(', ')}. Inget mål jämförs på en delmånad.
-        </p>
-      ) : null}
+      <PartialMonthsNote months={data} suffix="Inget mål jämförs på en delmånad." />
 
       {/* Tabellen: bärnstensgult har låg kontrast mot kortet (2,06:1), så siffrorna måste kunna läsas
           utan diagrammet. Samma tal som staplarna, mål inom parentes. */}

@@ -15,6 +15,8 @@ import {
   formatMonthLong,
   formatPercent,
   formatRangeLabel,
+  PartialMonthsNote,
+  PeriodBandLegend,
 } from '../reportUi';
 
 // Hit rate per offertmånad — de senaste tolv månaderna eller sedan start, samma fönster som trenden.
@@ -57,7 +59,6 @@ export default function HitRateMonthChart({ months }: { months: HitRateMonth[] }
   const patternId = `hit-rate-preliminary-${useId().replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const data: MonthDatum[] = months.map((month) => ({ ...month, label: `${formatMonth(month.period)}${month.partial ? '*' : ''}` }));
   const inPeriod = data.filter((d) => d.inPeriod);
-  const partials = data.filter((d) => d.partial);
   const anyPreliminary = data.some((d) => d.preliminary && d.quotes > 0);
 
   return (
@@ -74,10 +75,7 @@ export default function HitRateMonthChart({ months }: { months: HitRateMonth[] }
           </span>
         ) : null}
         {inPeriod.length > 0 ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9] bg-[#e3ece0]" aria-hidden="true" />
-            Vald period
-          </span>
+          <PeriodBandLegend />
         ) : null}
       </div>
 
@@ -108,11 +106,7 @@ export default function HitRateMonthChart({ months }: { months: HitRateMonth[] }
         </ResponsiveContainer>
       </div>
 
-      {partials.length > 0 ? (
-        <p className="m-0 text-[12px] text-slate-500">
-          * Delmånad, bara de här dagarna räknas: {partials.map((d) => `${formatMonth(d.period)} (${formatRangeLabel(d.partial!.from, d.partial!.to)})`).join(', ')}.
-        </p>
-      ) : null}
+      <PartialMonthsNote months={data} />
 
       <details className="group">
         <summary className="cursor-pointer text-[12px] font-semibold text-slate-600 hover:text-slate-900">Visa som tabell</summary>

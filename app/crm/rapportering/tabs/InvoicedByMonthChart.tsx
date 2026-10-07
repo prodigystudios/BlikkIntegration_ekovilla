@@ -12,6 +12,8 @@ import {
   formatMonthLong,
   formatPercent,
   formatRangeLabel,
+  PartialMonthsNote,
+  PeriodBandLegend,
 } from '../reportUi';
 
 // Fakturerat per månad, staplat på företag och privat — de senaste tolv månaderna eller sedan start,
@@ -66,7 +68,6 @@ export default function InvoicedByMonthChart({ months }: { months: InvoicedMonth
     total: month.business + month.private,
   }));
   const inPeriod = data.filter((d) => d.inPeriod);
-  const partials = data.filter((d) => d.partial);
 
   return (
     <div className="grid gap-3">
@@ -80,10 +81,7 @@ export default function InvoicedByMonthChart({ months }: { months: InvoicedMonth
           Privat
         </span>
         {inPeriod.length > 0 ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9] bg-[#e3ece0]" aria-hidden="true" />
-            Vald period
-          </span>
+          <PeriodBandLegend />
         ) : null}
       </div>
 
@@ -109,11 +107,7 @@ export default function InvoicedByMonthChart({ months }: { months: InvoicedMonth
         </ResponsiveContainer>
       </div>
 
-      {partials.length > 0 ? (
-        <p className="m-0 text-[12px] text-slate-500">
-          * Delmånad, bara de här dagarna räknas: {partials.map((d) => `${formatMonth(d.period)} (${formatRangeLabel(d.partial!.from, d.partial!.to)})`).join(', ')}.
-        </p>
-      ) : null}
+      <PartialMonthsNote months={data} />
 
       <details className="group">
         <summary className="cursor-pointer text-[12px] font-semibold text-slate-600 hover:text-slate-900">Visa som tabell</summary>

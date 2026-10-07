@@ -111,7 +111,7 @@ export async function GET(req: Request) {
         return null;
       }),
       // Varje kunds order sedan start, för "återkommande kunder" under Omsättning.
-      fetchCustomerOrderRows(admin).then(countOrdersPerCustomer, (e: any) => {
+      fetchCustomerOrderRows(admin).then((rows) => countOrdersPerCustomer(rows, range.to), (e: any) => {
         console.warn(`[Rapport] Kundernas order kunde inte läsas: ${e?.message || e}`);
         return null;
       }),
@@ -331,6 +331,7 @@ export async function GET(req: Request) {
         trend: trendData ? { data: trendData, window: trendRange } : null,
         orderStockRows,
         ordersSinceStart,
+        totals: buildPeriodTotals(data, range),
         previousTotals: previous?.totals ?? null,
       });
     } catch (e: any) {

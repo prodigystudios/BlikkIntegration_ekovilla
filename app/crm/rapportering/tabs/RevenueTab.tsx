@@ -104,6 +104,17 @@ function MarginStat({ label, percent, amount, jobs, total, color }: {
   );
 }
 
+/**
+ * Texten under book-to-bill, på det AVRUNDADE talet — det som står på kortet. Annars kunde "1,00" stå
+ * bredvid "Mer fakturerades än som kom in".
+ */
+function bookToBillNote(ratio: number): string {
+  const shown = Math.round(ratio * 100) / 100;
+  if (shown > 1) return 'Mer kom in än som fakturerades';
+  if (shown < 1) return 'Mer fakturerades än som kom in';
+  return 'Lika mycket kom in som fakturerades';
+}
+
 export default function RevenueTab({ report, periodLabel }: { report: SalesReport; periodLabel: string }) {
   const summary = report.periodSummary;
   const invoiced = summary.metrics.find((m) => m.key === 'invoicedValue')!;
@@ -170,7 +181,7 @@ export default function RevenueTab({ report, periodLabel }: { report: SalesRepor
             ) : revenue.bookToBill == null ? (
               <KpiNote>Inget fakturerat i perioden, så ingen kvot</KpiNote>
             ) : (
-              <KpiNote>{revenue.bookToBill >= 1 ? 'Mer kom in än som fakturerades' : 'Mer fakturerades än som kom in'}</KpiNote>
+              <KpiNote>{bookToBillNote(revenue.bookToBill)}</KpiNote>
             )}
             {revenue?.bookToBillPrevious != null ? (
               <div className="text-[12px] text-slate-500">Föregående period {formatDecimal(revenue.bookToBillPrevious, 2)}</div>
@@ -289,7 +300,7 @@ export default function RevenueTab({ report, periodLabel }: { report: SalesRepor
                   <BarRow
                     key={segment.segment}
                     label={SEGMENT_LABELS[segment.segment]}
-                    sub={`${formatCount(segment.orders)} order · ${formatCount(segment.customers)} kunder`}
+                    sub={`${formatCount(segment.orders)} order · ${formatCount(segment.customers)} ${segment.customers === 1 ? 'kund' : 'kunder'}`}
                     share={segmentMax > 0 ? (segment.orderValue / segmentMax) * 100 : 0}
                     value={formatCurrency(segment.orderValue)}
                   />
@@ -313,7 +324,7 @@ export default function RevenueTab({ report, periodLabel }: { report: SalesRepor
                 <MiniStat value={revenue.customers.recurring == null ? '–' : formatCount(revenue.customers.recurring)}>
                   {revenue.customers.recurring == null
                     ? 'återkommande kunder kunde inte räknas'
-                    : 'av dem är återkommande — minst två order sedan start'}
+                    : 'av dem är återkommande: minst två order från start till periodens slut'}
                 </MiniStat>
                 <MiniStat value={formatPercent(revenue.customers.top5Share)}>av ordervärdet kommer från de 5 största</MiniStat>
                 <MiniStat value={formatPercent(revenue.customers.top10Share)}>från de 10 största</MiniStat>

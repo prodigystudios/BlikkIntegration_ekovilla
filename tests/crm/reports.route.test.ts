@@ -37,9 +37,11 @@ vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
   ]),
   fetchFirstActivityDay: vi.fn(async () => '2026-06-29'),
   fetchCustomerOrderRows: vi.fn(async () => [
-    { status: 'invoiced', customer_id: 'k1', client_name: 'Kund 1' },
-    { status: 'scheduled', customer_id: 'k1', client_name: 'Kund 1' },
-    { status: 'scheduled', customer_id: 'k2', client_name: 'Kund 2' },
+    { status: 'invoiced', created_at: '2026-08-10T08:00:00Z', customer_id: 'k1', client_name: 'Kund 1' },
+    { status: 'scheduled', created_at: '2026-09-10T08:00:00Z', customer_id: 'k1', client_name: 'Kund 1' },
+    { status: 'scheduled', created_at: '2026-09-10T08:00:00Z', customer_id: 'k2', client_name: 'Kund 2' },
+    // Efter periodens slut (september): gör inte k2 återkommande i september.
+    { status: 'scheduled', created_at: '2026-10-03T08:00:00Z', customer_id: 'k2', client_name: 'Kund 2' },
   ]),
 }));
 vi.mock('@/lib/domains/planning/productionLoader', () => ({

@@ -253,20 +253,34 @@ describe('buildSegments', () => {
 });
 
 describe('customerKey och countOrdersPerCustomer', () => {
-  it('kundkortet först, annars kundnamnet, annars en gemensam okänd kund', () => {
+  it('kundkortet först, annars kundnamnet — utan båda vet vi inte vem kunden är', () => {
     expect(customerKey({ customer_id: 'k1', client_name: 'Kund A' })).toBe('id:k1');
     expect(customerKey({ customer_id: null, client_name: '  Kund A ' })).toBe('namn:Kund A');
-    expect(customerKey({ customer_id: null, client_name: null })).toBe('okänd');
+    expect(customerKey({ customer_id: null, client_name: null })).toBeNull();
+    expect(customerKey({ customer_id: null, client_name: '  ' })).toBeNull();
   });
 
-  it('räknar inte avbrutna order', () => {
+  const row = (customer_id: string | null, client_name: string | null, status = 'invoiced', created_at = '2026-09-10T08:00:00Z') =>
+    ({ status, created_at, customer_id, client_name });
+
+  it('räknar inte avbrutna order, och inte order utan känd kund', () => {
     const counts = countOrdersPerCustomer([
-      { status: 'invoiced', customer_id: 'k1', client_name: null },
-      { status: 'cancelled', customer_id: 'k1', client_name: null },
-      { status: 'draft', customer_id: null, client_name: 'Anna' },
-    ]);
+      row('k1', null),
+      row('k1', null, 'cancelled'),
+      row(null, 'Anna', 'draft'),
+      row(null, null),
+      row(null, null),
+    ], '2026-09-30');
     expect(counts.get('id:k1')).toBe(1);
     expect(counts.get('namn:Anna')).toBe(1);
+    expect([...counts.keys()]).toHaveLength(2);
+  });
+
+  it('räknar order till och med periodens sista dag, inte till idag', () => {
+    // Kundens andra order kom i oktober: i september var kunden inte återkommande.
+    const rows = [row('k1', null, 'invoiced', '2026-09-10T08:00:00Z'), row('k1', null, 'scheduled', '2026-10-02T08:00:00Z')];
+    expect(countOrdersPerCustomer(rows, '2026-09-30').get('id:k1')).toBe(1);
+    expect(countOrdersPerCustomer(rows, '2026-10-02').get('id:k1')).toBe(2);
   });
 });
 
@@ -295,6 +309,14 @@ describe('buildCustomerConcentration — kunder', () => {
     expect(buildCustomerConcentration(orders, null).recurring).toBeNull();
   });
 
+  it('order utan känd kund är var sin kund och aldrig återkommande', () => {
+    const nameless = [1, 2, 3].map(() => order({ amount: 10_000, customer_id: null, client_name: null }));
+    const customers = buildCustomerConcentration(nameless, new Map());
+    expect(customers).toMatchObject({ customers: 3, recurring: 0 });
+    // Hade de slagits ihop hade "de 5 största" varit en enda kund med allt.
+    expect(buildSegments(nameless).find((s) => s.segment === 'unknown')?.customers).toBe(3);
+  });
+
   it('inga andelar utan ordervärde', () => {
     expect(buildCustomerConcentration([], new Map())).toEqual({ customers: 0, recurring: 0, top5Share: null, top10Share: null });
   });
@@ -312,22 +334,24 @@ describe('buildReportRevenue', () => {
     [],
   );
 
-  it('räknar periodens tal och book-to-bill på samma rader som rapporten', () => {
-    const revenue = buildReportRevenue({ period, range, trend: null, orderStockRows: null, ordersSinceStart: null });
+  const totals = { orderValue: 30_000, invoicedValue: 10_000 };
+
+  it('räknar periodens tal, och book-to-bill på periodens huvudtal', () => {
+    const revenue = buildReportRevenue({ period, range, trend: null, orderStockRows: null, ordersSinceStart: null, totals });
     expect(revenue.invoiced).toMatchObject({ total: 10_000, private: 10_000, privateShare: 100 });
     expect(revenue.bookToBill).toBe(3);
     expect(revenue.leadTime).toMatchObject({ count: 1, median: 41 });
   });
 
   it('book-to-bill för föregående period ur dess huvudtal — null när de inte gick att hämta', () => {
-    const base = { period, range, trend: null, orderStockRows: null, ordersSinceStart: null };
+    const base = { period, range, trend: null, orderStockRows: null, ordersSinceStart: null, totals };
     expect(buildReportRevenue({ ...base, previousTotals: { orderValue: 20_000, invoicedValue: 10_000 } }).bookToBillPrevious).toBe(2);
     expect(buildReportRevenue({ ...base, previousTotals: { orderValue: 20_000, invoicedValue: 0 } }).bookToBillPrevious).toBeNull();
     expect(buildReportRevenue({ ...base, previousTotals: null }).bookToBillPrevious).toBeNull();
   });
 
   it('en trasig läsning tar bara bort sin egen del — null, aldrig tomma serier', () => {
-    const revenue = buildReportRevenue({ period, range, trend: null, orderStockRows: null, ordersSinceStart: null });
+    const revenue = buildReportRevenue({ period, range, trend: null, orderStockRows: null, ordersSinceStart: null, totals });
     expect(revenue.invoicedByMonth).toBeNull();
     expect(revenue.stockByStage).toBeNull();
     expect(revenue.customers.recurring).toBeNull();
