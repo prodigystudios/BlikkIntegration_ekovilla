@@ -13,7 +13,14 @@ import {
   type ReportQuoteRow,
   type ReportRange,
 } from '@/lib/domains/crm/reports';
-import { buildReportOverview, buildSalesTrend, trendWindow, type SalesTrend } from '@/lib/domains/crm/reportKpis';
+import {
+  buildReportOverview,
+  buildReportSales,
+  buildSalesTrend,
+  trendWindow,
+  type ReportSales,
+  type SalesTrend,
+} from '@/lib/domains/crm/reportKpis';
 import { fetchFirstActivityDay, fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
@@ -228,7 +235,8 @@ export async function GET(req: Request) {
     // ⚠️ Lönsamheten får inte kunna sänka rapporten. Kalkylen vilar på två inställningstabeller och
     // artikelcachen; felar någon av dem ska säljsiffrorna fortfarande visas, och lönsamhetsdelen
     // stå tom. Det är skillnaden mellan en del av sidan som saknas och en sida som inte laddar.
-    const invoicedIds = partitionOrders(data.orders, range, data.invoiceRounds).invoiced
+    const periodOrders = partitionOrders(data.orders, range, data.invoiceRounds);
+    const invoicedIds = periodOrders.invoiced
       .map((order) => order.id)
       .filter((id): id is string => Boolean(id));
 
@@ -262,11 +270,12 @@ export async function GET(req: Request) {
       }
     }
 
+    const todayIso = today(now);
     const [orderStockRows, basis, openQuoteRows] = await overviewReads;
     const overview = buildReportOverview({
       quotes: data.quotes,
       range,
-      today: today(now),
+      today: todayIso,
       previous: previousQuotes,
       orderStockRows,
       basis,
@@ -274,14 +283,30 @@ export async function GET(req: Request) {
     });
 
     const trendData = reuseForTrend ? data : await trendDataRead;
-    const firstActivityDay = await firstActivityRead;
+    const trendRange = trendWindow(last12, await firstActivityRead);
     let trend: SalesTrend | null = null;
     if (trendData) {
       try {
-        trend = buildSalesTrend({ data: trendData, window: trendWindow(last12, firstActivityDay), selected: range, goals });
+        trend = buildSalesTrend({ data: trendData, window: trendRange, selected: range, goals });
       } catch (e: any) {
         console.warn(`[Rapport] Trenden kunde inte räknas: ${e?.message || e}`);
       }
+    }
+
+    // Försäljningsflikens nyckeltal. Hit rate per offertmånad läser trendens offerter i trendens
+    // fönster (Williams beslut 2026-10-07: samma tolv månader, vald period markerad) — felade trendens
+    // läsning blir bara den delen null. Resten räknas på periodens rader, som redan finns.
+    let sales: ReportSales | null = null;
+    try {
+      sales = buildReportSales({
+        quotes: data.quotes,
+        ordersCreated: periodOrders.created,
+        range,
+        today: todayIso,
+        trend: trendData ? { quotes: trendData.quotes, window: trendRange } : null,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Försäljningens nyckeltal kunde inte räknas: ${e?.message || e}`);
     }
 
     const report = composeSalesReport(data, range, afterCalculations, {
@@ -293,6 +318,7 @@ export async function GET(req: Request) {
       time,
       overview,
       trend,
+      sales,
     });
 
     return ok(report);

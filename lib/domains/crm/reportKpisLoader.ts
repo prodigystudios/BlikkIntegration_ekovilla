@@ -31,7 +31,7 @@ export function fetchOrderStockRows(admin: SupabaseClient): Promise<OrderStockRo
 export function fetchOpenQuoteRows(admin: SupabaseClient): Promise<OpenQuoteRow[]> {
   return readEveryRow('öppna offerter', (from, to) =>
     admin.from('crm_quotes')
-      .select('status, amount, vat_percent, pricing_summary, valid_until, follow_up_date')
+      .select('status, amount, vat_percent, pricing_summary, quote_date, valid_until, follow_up_date')
       .in('status', ACTIVE_QUOTE_STATUSES)
       .order('id', { ascending: true })
       .range(from, to),

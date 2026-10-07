@@ -61,7 +61,7 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
-import { fetchInvoicedValue, fetchTrendData } from '@/lib/domains/crm/reports';
+import { fetchInvoicedValue, fetchReportData, fetchTrendData } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -71,6 +71,7 @@ const mockTimeLoader = vi.mocked(fetchTimeReportData);
 const mockOrderStock = vi.mocked(fetchOrderStockRows);
 const mockInvoicedValue = vi.mocked(fetchInvoicedValue);
 const mockTrendData = vi.mocked(fetchTrendData);
+const mockReportData = vi.mocked(fetchReportData);
 const mockFirstActivity = vi.mocked(fetchFirstActivityDay);
 
 const req = () => new Request('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
@@ -307,5 +308,72 @@ describe('GET /api/crm/reports — trendens mål', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('GET /api/crm/reports — Försäljningens nyckeltal', () => {
+  const quote = (status: string, quote_date: string, quote_type = 'business') => ({
+    amount: 1000, vat_percent: 0, status, quote_date, assigned_to: null, customer_name: null, quote_type,
+  });
+  const order = (amount: number, quote_type: string, status = 'scheduled') => ({
+    amount, vat_percent: 0, status, created_at: '2026-09-10T08:00:00Z', fortnox_invoiced_at: null,
+    partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type,
+  });
+
+  async function atOctoberSeventh() {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      mockGetUser.mockResolvedValue(salesUser as any);
+      const res = await GET(req());
+      return { status: res.status, json: await res.json() };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('räknar per kundtyp och typisk order på PERIODENS rader, utan avbrutna order', async () => {
+    mockReportData.mockResolvedValueOnce({
+      quotes: [quote('won', '2026-09-03', 'private'), quote('sent', '2026-09-04', 'private'), quote('won', '2026-09-05')],
+      orders: [order(10_000, 'business'), order(30_000, 'business'), order(99_000, 'business', 'cancelled'), order(8_000, 'private')],
+      invoiceRounds: [],
+      calls: [],
+      sellers: [],
+    } as any);
+    const { json } = await atOctoberSeventh();
+    expect(json.data.sales.hitRateByCustomerType).toMatchObject({
+      preliminary: true,
+      private: { quotes: 2, won: 1, percent: 50 },
+      business: { quotes: 1, won: 1, percent: 100 },
+    });
+    expect(json.data.sales.typicalOrder.business).toEqual({ count: 2, median: 20_000, mean: 20_000 });
+    expect(json.data.sales.typicalOrder.private).toEqual({ count: 1, median: 8_000, mean: 8_000 });
+  });
+
+  it('hit rate per offertmånad läser TRENDENS offerter och fönster, inte periodens', async () => {
+    mockTrendData.mockResolvedValueOnce({
+      quotes: [quote('won', '2026-07-10'), quote('sent', '2026-07-11'), quote('won', '2026-09-20')],
+      orders: [],
+      invoiceRounds: [],
+    } as any);
+    const { json } = await atOctoberSeventh();
+    const months = json.data.sales.hitRateByMonth;
+    expect(months.map((m: any) => m.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+    expect(months.find((m: any) => m.period === '2026-07')).toMatchObject({ quotes: 2, won: 1, percent: 50, preliminary: false });
+    expect(months.find((m: any) => m.period === '2026-09')).toMatchObject({ quotes: 1, won: 1, preliminary: true, inPeriod: true });
+  });
+
+  it('en trasig trendläsning tar bara bort hit rate per månad', async () => {
+    mockTrendData.mockRejectedValueOnce(new Error('nekad'));
+    const { status, json } = await atOctoberSeventh();
+    expect(status).toBe(200);
+    expect(json.data.sales.hitRateByMonth).toBeNull();
+    expect(json.data.sales.hitRateByCustomerType).toBeDefined();
+    expect(json.data.sales.typicalOrder).toBeDefined();
+  });
+
+  it('tratten är borta ur svaret', async () => {
+    const { json } = await body(salesUser);
+    expect(json.data).not.toHaveProperty('funnel');
   });
 });

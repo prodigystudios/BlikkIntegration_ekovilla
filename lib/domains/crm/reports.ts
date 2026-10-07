@@ -12,7 +12,7 @@ import { unavailableProduction, type Production } from '@/lib/domains/planning/p
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
-import type { ReportOverview, SalesTrend } from './reportKpis';
+import type { ReportOverview, ReportSales, SalesTrend } from './reportKpis';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -27,6 +27,11 @@ export type ReportQuoteRow = NetAmountRow & {
   quote_date: string | null;
   assigned_to: string | null;
   customer_name: string | null;
+  /**
+   * 'private' eller 'business' (NOT NULL i schemat) — hit rate per kundtyp. Obligatorisk med flit:
+   * utan den i läsningen hade varje offert räknats som företag, utan att något felade.
+   */
+  quote_type: string;
 };
 
 export type ReportOrderRow = NetAmountRow & {
@@ -39,6 +44,8 @@ export type ReportOrderRow = NetAmountRow & {
   partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name: string | null;
+  /** 'private' eller 'business' (NOT NULL i schemat) — typisk order per kundtyp. Obligatorisk av samma skäl som på offerten. */
+  quote_type: string;
 };
 
 export type ReportCallRow = { user_id: string | null; call_at: string };
@@ -99,7 +106,7 @@ function withinRange(timestamp: string | null | undefined, range: ReportRange): 
 }
 
 export type PartitionedOrders = {
-  /** Orders created inside the range, minus the cancelled ones — the basis for order value and the conversion funnel. */
+  /** Orders created inside the range, minus the cancelled ones — the basis for order value and the typical order. */
   created: ReportOrderRow[];
   /**
    * Orders whose invoicing was COMPLETED inside the range, whenever they were created — the job
@@ -118,8 +125,8 @@ export function partitionOrders(
 ): PartitionedOrders {
   return {
     // Avbrutna order faller bort här och inte i varje aggregat: en order som aldrig blev av är
-    // ingen omsättning, och då ska den inte synas som ordervärde, som ett antal order eller som
-    // ett steg i tratten. Ett enda ställe att hålla rätt på i stället för fyra.
+    // ingen omsättning, och då ska den inte synas som ordervärde, som ett antal order eller i den
+    // typiska ordern. Ett enda ställe att hålla rätt på i stället för fyra.
     created: orders.filter((o) => !isDeadWorkOrder(o.status) && withinRange(o.created_at, range)),
     // Ingen motsvarande vakt behövs här: status kan inte vara både 'invoiced' och 'cancelled'.
     // En order som fakturerats och SEDAN avbrutits faller alltså ur fakturerat helt — rätt så
@@ -166,13 +173,36 @@ export function buildSalesOverTime(
   }));
 }
 
+/**
+ * Från vilken hit rate en säljares offerter troligen läggs in först när affären redan är klar — då
+ * säger talet ingenting om hur säljaren säljer, och tabellen får en fotnot (spec 2026-10-07).
+ */
+export const LATE_ENTRY_HIT_RATE_PERCENT = 95;
+
+/**
+ * Ska säljarens hit rate få fotnoten? Jämför det AVRUNDADE talet, alltså det som står i tabellen:
+ * 94,6 % visas som "95 %", och en 95 utan fotnot bredvid en 95 med hade sett ut som ett fel.
+ */
+export function suggestsLateEntry(hitRate: number | null): boolean {
+  return hitRate != null && Math.round(hitRate) >= LATE_ENTRY_HIT_RATE_PERCENT;
+}
+
 export type SellerReportRow = {
   userId: string;
   userName: string;
   calls: number;
   quotes: number;
   quoteValue: number;
+  /** Vunna av säljarens offerter i perioden — status Vunnen, som systemet sätter när ordern skapas. */
+  won: number;
   wonValue: number;
+  /**
+   * Hit rate: vunna ÷ ALLA säljarens offerter i perioden, i procent — samma regel som rapportens
+   * (buildHitRate). null när säljaren saknar offerter i perioden; 0 % hade påstått att inget vanns.
+   */
+  hitRate: number | null;
+  /** Hit rate 95 % eller mer — fotnoten om att offerten troligen läggs in efter affären (suggestsLateEntry). */
+  lateEntry: boolean;
   // Antal arbetsordrar SKAPADE i perioden — samma rader som orderValue summerar, så talet och
   // värdet bredvid varandra svarar på samma fråga. En order som fakturerades i perioden men
   // skapades tidigare räknas alltså inte här; den syns i invoicedValue, precis som avsett.
@@ -193,7 +223,7 @@ export function buildPerSeller(
   const ensure = (id: string): SellerReportRow => {
     let row = acc.get(id);
     if (!row) {
-      row = { userId: id, userName: nameMap.get(id) || 'Okänd användare', calls: 0, quotes: 0, quoteValue: 0, wonValue: 0, orders: 0, orderValue: 0, invoicedValue: 0 };
+      row = { userId: id, userName: nameMap.get(id) || 'Okänd användare', calls: 0, quotes: 0, quoteValue: 0, won: 0, wonValue: 0, hitRate: null, lateEntry: false, orders: 0, orderValue: 0, invoicedValue: 0 };
       acc.set(id, row);
     }
     return row;
@@ -207,7 +237,10 @@ export function buildPerSeller(
     const row = ensure(q.assigned_to);
     row.quotes += 1;
     row.quoteValue += netAmount(q);
-    if (q.status === 'won') row.wonValue += netAmount(q);
+    if (q.status === 'won') {
+      row.won += 1;
+      row.wonValue += netAmount(q);
+    }
   }
   // A seller can show invoiced revenue this period from an order won in an earlier one —
   // that is the point of the split, not a bug.
@@ -222,30 +255,12 @@ export function buildPerSeller(
     ensure(invoice.assigned_to).invoicedValue += invoice.amount;
   }
 
+  for (const row of acc.values()) {
+    row.hitRate = row.quotes > 0 ? (row.won / row.quotes) * 100 : null;
+    row.lateEntry = suggestsLateEntry(row.hitRate);
+  }
+
   return [...acc.values()].sort((a, b) => b.orderValue - a.orderValue || b.quoteValue - a.quoteValue || a.userName.localeCompare(b.userName, 'sv'));
-}
-
-export type FunnelStage = { count: number; value: number };
-export type SalesFunnel = { quotes: FunnelStage; won: FunnelStage; orders: FunnelStage; invoiced: FunnelStage };
-
-/**
- * A cohort view, deliberately: of what ENTERED in this period, how far did it get. The
- * invoiced stage therefore counts orders created in the range that have since been billed,
- * not everything billed during it — a stage fed from other periods would break the chain
- * and could push the last conversion above 100 %. That is why this figure can differ from
- * the invoiced revenue in the chart and the per-seller table; they answer different
- * questions, and the section subtitles say which.
- */
-export function buildFunnel(quotes: ReportQuoteRow[], ordersCreated: ReportOrderRow[]): SalesFunnel {
-  const won = quotes.filter((q) => q.status === 'won');
-  const invoiced = ordersCreated.filter((o) => o.status === 'invoiced');
-  const sum = (rows: NetAmountRow[]) => rows.reduce((t, r) => t + netAmount(r), 0);
-  return {
-    quotes: { count: quotes.length, value: sum(quotes) },
-    won: { count: won.length, value: sum(won) },
-    orders: { count: ordersCreated.length, value: sum(ordersCreated) },
-    invoiced: { count: invoiced.length, value: sum(invoiced) },
-  };
 }
 
 export type CustomerReportRow = { customer: string; orderValue: number; invoicedValue: number; orderCount: number };
@@ -454,9 +469,13 @@ export type SalesReport = {
    * följer INTE den valda perioden, som bara markeras i den. null = kunde inte räknas.
    */
   trend: SalesTrend | null;
+  /**
+   * Försäljningsflikens nyckeltal: hit rate per kundtyp och per offertmånad, och den typiska ordern —
+   * se reportKpis.ts. null = kunde inte räknas.
+   */
+  sales: ReportSales | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
-  funnel: SalesFunnel;
   perCustomer: CustomerReportRow[];
   profitability: Profitability;
 };
@@ -485,6 +504,8 @@ export function composeSalesReport(
     overview?: ReportOverview | null;
     /** Trenden, färdigräknad i rutten — den har sitt eget fönster och sina egna läsningar. */
     trend?: SalesTrend | null;
+    /** Försäljningsflikens nyckeltal, färdigräknade i rutten — hit rate behöver dagens datum. */
+    sales?: ReportSales | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -496,6 +517,7 @@ export function composeSalesReport(
     time: opts?.time === undefined ? unavailableTimeReport(months) : opts.time,
     overview: opts?.overview ?? null,
     trend: opts?.trend ?? null,
+    sales: opts?.sales ?? null,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,
@@ -505,7 +527,6 @@ export function composeSalesReport(
     }),
     salesOverTime: buildSalesOverTime(data.quotes, orders.created, orders.revenue, months),
     perSeller: buildPerSeller(data.quotes, orders.created, orders.revenue, data.calls, data.sellers),
-    funnel: buildFunnel(data.quotes, orders.created),
     perCustomer: buildPerCustomer(orders.created, orders.revenue),
     profitability: buildProfitability(orders.invoiced, afterCalculations, months, {
       unavailable: opts?.profitabilityUnavailable,
@@ -556,7 +577,7 @@ function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<Re
       // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
       // INTE här — de behövs bara för de fakturerade ordrarna, och tolv månaders rader hade varit
       // en tung nyttolast att dra hem för att sedan kasta det mesta.
-      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name')
+      .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name, quote_type')
       .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`)
       .order('id', { ascending: true })
       .range(from, to),
@@ -584,7 +605,7 @@ function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Pro
 function readReportQuotes(admin: SupabaseClient, range: ReportRange): Promise<ReportQuoteRow[]> {
   return readEveryRow('crm_quotes', (from, to) =>
     admin.from('crm_quotes')
-      .select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name')
+      .select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name, quote_type')
       .gte('quote_date', range.from)
       .lte('quote_date', range.to)
       .order('id', { ascending: true })
