@@ -409,6 +409,16 @@ describe('buildSalesTrend', () => {
     expect(trend.points.filter((p) => p.inPeriod).map((p) => p.period)).toEqual(['2026-09']);
   });
 
+  it('markerar varje månad perioden RÖR, även delvis — "Denna vecka" över ett månadsskifte', () => {
+    const straddling = buildSalesTrend({
+      window,
+      selected: { from: '2026-09-28', to: '2026-10-04' },
+      goals: null,
+      data: { quotes: [], orders: [], invoiceRounds: [] },
+    });
+    expect(straddling.points.filter((p) => p.inPeriod).map((p) => p.period)).toEqual(['2026-09', '2026-10']);
+  });
+
   it('ritar inga mål när målen inte gick att läsa', () => {
     const noGoals = buildSalesTrend({ window, selected: window, goals: null, data: { quotes: [], orders: [], invoiceRounds: [] } });
     expect(noGoals.points.every((p) => Object.values(p.goals).every((g) => g == null))).toBe(true);
