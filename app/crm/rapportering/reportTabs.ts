@@ -31,16 +31,9 @@ export const TAB_PARAM = 'flik';
  * ⚠️ TID BARA NÄR RUTTEN LÄMNAT UT TIDEN (`time !== null`, alltså `time.entry.read.all` — i dag bara
  * admin). Fliken uteblir helt för andra, i stället för att stå där och säga att något döljs: en yta
  * som skyltar med vad den gömmer inbjuder till att någon ber om nyckeln utan att veta varför den finns.
- *
- * Produkt & marknad saknar innehåll tills det steget byggs, och en tom flik i drift hade bara varit
- * ett löfte. Den visas när `withProduct` sätts.
  */
-export function visibleReportTabs(input: { hasTime: boolean; withProduct?: boolean }): ReportTab[] {
-  return REPORT_TABS.filter((tab) => {
-    if (tab.id === 'tid') return input.hasTime;
-    if (tab.id === 'produkt') return Boolean(input.withProduct);
-    return true;
-  });
+export function visibleReportTabs(input: { hasTime: boolean }): ReportTab[] {
+  return REPORT_TABS.filter((tab) => tab.id !== 'tid' || input.hasTime);
 }
 
 /**

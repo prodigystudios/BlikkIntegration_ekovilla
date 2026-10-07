@@ -22,6 +22,7 @@ import {
 import OverviewTab from './tabs/OverviewTab';
 import SalesTab from './tabs/SalesTab';
 import RevenueTab from './tabs/RevenueTab';
+import ProductTab from './tabs/ProductTab';
 import ProductionTab from './tabs/ProductionTab';
 import TimeTab from './tabs/TimeTab';
 
@@ -118,7 +119,7 @@ export default function ReportsClient() {
       <div className="grid gap-3">
         <div>
           <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
-          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, omsättning, produktion och tid för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
+          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, omsättning, produkt och marknad, produktion och tid för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
         </div>
         {/* Quick periods on the left as the everyday control, the manual dates on the
             right for the odd range that no preset covers. */}
@@ -192,6 +193,7 @@ export default function ReportsClient() {
           {activeTab === 'oversikt' ? <OverviewTab report={report} periodLabel={periodLabel} /> : null}
           {activeTab === 'forsaljning' ? <SalesTab report={report} periodLabel={periodLabel} /> : null}
           {activeTab === 'omsattning' ? <RevenueTab report={report} periodLabel={periodLabel} /> : null}
+          {activeTab === 'produkt' ? <ProductTab report={report} periodLabel={periodLabel} /> : null}
           {activeTab === 'produktion' ? <ProductionTab report={report} activeRangeKey={activeRangeKey} /> : null}
           {/* ⚠️ `time === null` = läsaren saknar `time.entry.read.all`; fliken finns då inte alls (se
               visibleReportTabs), så den här grenen nås inte heller via ?flik=tid. */}

@@ -371,8 +371,8 @@ describe('delfakturerade ordrar räknas per runda', () => {
   };
   const done = { status: 'invoiced', assigned_to: 'u1', client_name: 'Kund D', quote_type: 'business' };
   const rounds: ReportInvoiceRoundRow[] = [
-    { amount: 30_000, created_at: '2026-08-14T08:00:00Z', work_order: done },
-    { amount: '20000.00', created_at: '2026-09-12T08:00:00Z', work_order: done },
+    { amount: 30_000, created_at: '2026-08-14T08:00:00Z', work_order_id: null, work_order: done },
+    { amount: '20000.00', created_at: '2026-09-12T08:00:00Z', work_order_id: null, work_order: done },
   ];
   // Varje period hämtar bara sina egna rundor (fetchReportData filtrerar på created_at).
   const inRange = (range: { from: string; to: string }) => rounds.filter((r) => r.created_at.slice(0, 10) >= range.from && r.created_at.slice(0, 10) <= range.to);

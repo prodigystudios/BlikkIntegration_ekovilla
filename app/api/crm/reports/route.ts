@@ -28,6 +28,13 @@ import {
   fetchOrderStockRows,
 } from '@/lib/domains/crm/reportKpisLoader';
 import { buildReportRevenue, countOrdersPerCustomer, type ReportRevenue } from '@/lib/domains/crm/reportRevenue';
+import {
+  buildReportProduct,
+  scheduleOrderIds,
+  volumeOrderIds,
+  type ReportProduct,
+} from '@/lib/domains/crm/reportProduct';
+import { fetchDepots, fetchOrderLineItems, fetchOrderSegments } from '@/lib/domains/crm/reportProductLoader';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
@@ -338,6 +345,39 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Omsättningens nyckeltal kunde inte räknas: ${e?.message || e}`);
     }
 
+    // Produkt & marknad. Orderraderna läses för periodens och trendens skapade order (m³ per månad följer
+    // trendens fönster, som de andra månadsdiagrammen); schemat för orderna bakom periodens fakturor och
+    // orderstocken. De två läsningarna går samtidigt och felar var för sig: utan rader blir m³-delarna
+    // null, utan schema depådelen.
+    let product: ReportProduct | null = null;
+    try {
+      const trendOrders = trendData ? { orders: trendData.orders, window: trendRange } : null;
+      const [lineItems, schedule] = await Promise.all([
+        fetchOrderLineItems(admin, volumeOrderIds({ ordersCreated: periodOrders.created, trend: trendOrders })).catch((e: any) => {
+          console.warn(`[Rapport] Orderraderna kunde inte läsas: ${e?.message || e}`);
+          return null;
+        }),
+        Promise.all([
+          fetchOrderSegments(admin, scheduleOrderIds({ revenue: periodOrders.revenue, stockRows: orderStockRows })),
+          fetchDepots(admin),
+        ]).then(([segments, depots]) => ({ segments, depots }), (e: any) => {
+          console.warn(`[Rapport] Schemat kunde inte läsas: ${e?.message || e}`);
+          return null;
+        }),
+      ]);
+      product = buildReportProduct({
+        ordersCreated: periodOrders.created,
+        range,
+        lineItems,
+        trend: trendOrders,
+        revenue: periodOrders.revenue,
+        stockRows: orderStockRows,
+        schedule,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Produkt & marknad kunde inte räknas: ${e?.message || e}`);
+    }
+
     const report = composeSalesReport(data, range, afterCalculations, {
       profitabilityUnavailable,
       goals,
@@ -349,6 +389,7 @@ export async function GET(req: Request) {
       trend,
       sales,
       revenue,
+      product,
     });
 
     return ok(report);

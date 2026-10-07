@@ -19,10 +19,17 @@ import type { CustomerOrderRow } from './reportRevenue';
 // kolumn fäller typkontrollen. Utan `invoice_rounds` hade varje delfakturerad order räknats med hela
 // sitt värde — den redan fakturerade delen både i stocken och i Fakturerat.
 
-export function fetchOrderStockRows(admin: SupabaseClient): Promise<OrderStockRow[]> {
+/**
+ * Orderstockens rader MED orderns id — orderstocken per depå (Produkt & marknad) slår upp orderns schema
+ * på den. Översiktens egen läsning (overviewSummary.ts) behöver inte id:t och delar bara resten.
+ */
+export type ReportOrderStockRow = OrderStockRow & { id: string };
+const REPORT_ORDER_STOCK_SELECT = `id, ${ORDER_STOCK_SELECT}` as const;
+
+export function fetchOrderStockRows(admin: SupabaseClient): Promise<ReportOrderStockRow[]> {
   return readEveryRow('orderstock', (from, to) =>
     admin.from('crm_work_orders')
-      .select(ORDER_STOCK_SELECT)
+      .select(REPORT_ORDER_STOCK_SELECT)
       .in('status', ORDER_STOCK_STATUSES)
       .order('id', { ascending: true })
       .range(from, to),

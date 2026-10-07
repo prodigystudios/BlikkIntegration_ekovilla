@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { fetchInvoicedValue, fetchReportData } from '@/lib/domains/crm/reports';
 import { fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchDepots, fetchOrderLineItems, fetchOrderSegments } from '@/lib/domains/crm/reportProductLoader';
 
 // Rapportens läsvägar, till skillnad från de rena aggregaten i reports.test.ts och reportKpis.test.ts.
 //
@@ -122,5 +123,70 @@ describe('ögonblicksbildernas läsningar', () => {
   it('kastar när läsningen felar — rutten gör det till null, aldrig till en nolla', async () => {
     const { client } = makeClient({}, { failTable: 'crm_work_orders' });
     await expect(fetchOrderStockRows(client)).rejects.toThrow(/orderstock: nekad/);
+  });
+});
+
+describe('Produkt & marknads läsningar', () => {
+  // En klient som också respekterar `.in()`, som PostgREST: bara raderna vars kolumn finns i listan.
+  function inClient(tables: Record<string, Array<Record<string, unknown>>>, opts: { failTable?: string } = {}) {
+    const calls: Array<{ table: string; select: string; inColumn: string; inValues: unknown[]; orders: string[]; ranges: Array<[number, number]> }> = [];
+    const client = {
+      from(table: string) {
+        const call = { table, select: '', inColumn: '', inValues: [] as unknown[], orders: [] as string[], ranges: [] as Array<[number, number]> };
+        calls.push(call);
+        let from = 0;
+        let to = Number.MAX_SAFE_INTEGER;
+        const chain: Record<string, unknown> = {};
+        chain.select = (cols: string) => { call.select = cols; return chain; };
+        chain.in = (column: string, values: unknown[]) => { call.inColumn = column; call.inValues = values; return chain; };
+        chain.order = (column: string) => { call.orders.push(column); return chain; };
+        chain.range = (f: number, t: number) => { from = f; to = t; call.ranges.push([f, t]); return chain; };
+        chain.then = (ok: (v: unknown) => unknown, fail: (e: unknown) => unknown) => {
+          if (opts.failTable === table) return Promise.resolve({ data: null, error: { message: 'nekad' } }).then(ok, fail);
+          const rows = (tables[table] ?? []).filter((row) => !call.inColumn || call.inValues.includes(row[call.inColumn]));
+          return Promise.resolve({ data: rows.slice(from, Math.min(to + 1, from + CAP)), error: null }).then(ok, fail);
+        };
+        return chain;
+      },
+    };
+    return { client: client as never, calls };
+  }
+
+  it('orderraderna läses i klumpar om 100 id:n, varje klump sorterad och sidindelad', async () => {
+    const orders = Array.from({ length: 250 }, (_, i) => ({ id: `o${i}`, line_items: [{ m2: String(i) }] }));
+    const { client, calls } = inClient({ crm_work_orders: orders });
+    // Dubbletter i listan läses en gång.
+    const map = await fetchOrderLineItems(client, [...orders.map((o) => o.id), 'o0']);
+    expect(map.size).toBe(250);
+    expect(map.get('o249')).toEqual([{ m2: '249' }]);
+    expect(calls.map((c) => c.inValues.length)).toEqual([100, 100, 50]);
+    expect(calls.every((c) => c.inColumn === 'id' && c.orders.at(-1) === 'id' && c.ranges.length > 0)).toBe(true);
+  });
+
+  it('inga id:n: ingen fråga', async () => {
+    const { client, calls } = inClient({});
+    expect((await fetchOrderLineItems(client, [])).size).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('segmenten läses på orderns id, sidindelat förbi 1000-taket, med bilen utpekad', async () => {
+    const segments = Array.from({ length: 1_200 }, (_, i) => ({ id: `s${i}`, work_order_id: 'o1', start_day: '2026-09-07', end_day: '2026-09-07', truck: { depot_id: 'd' } }));
+    const { client, calls } = inClient({ ops_segments: [...segments, { id: 'annan', work_order_id: 'o2', start_day: '2026-09-07', end_day: '2026-09-07', truck: null }] });
+    expect(await fetchOrderSegments(client, ['o1'])).toHaveLength(1_200);
+    expect(calls[0].inColumn).toBe('work_order_id');
+    expect(calls.flatMap((c) => c.ranges)).toEqual([[0, 999], [1000, 1999]]);
+    expect(calls[0].select).toContain('truck:ops_trucks!ops_segments_truck_id_fkey(depot_id)');
+  });
+
+  it('depåerna läses alla, även inaktiva', async () => {
+    const { client, calls } = inClient({ ops_depots: [{ id: 'a', name: 'A', active: true }, { id: 'b', name: 'B', active: false }] });
+    expect(await fetchDepots(client)).toHaveLength(2);
+    expect(calls[0].inColumn).toBe('');
+  });
+
+  it('kastar när en läsning felar — rutten gör det till null, aldrig till nollor', async () => {
+    await expect(fetchOrderLineItems(inClient({}, { failTable: 'crm_work_orders' }).client, ['o1'])).rejects.toThrow(/orderrader: nekad/);
+    await expect(fetchOrderSegments(inClient({}, { failTable: 'ops_segments' }).client, ['o1'])).rejects.toThrow(/schemat: nekad/);
+    await expect(fetchDepots(inClient({}, { failTable: 'ops_depots' }).client)).rejects.toThrow(/depåerna: nekad/);
   });
 });

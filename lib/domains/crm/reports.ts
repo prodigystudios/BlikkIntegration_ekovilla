@@ -15,6 +15,7 @@ import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/repor
 import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
 import type { ReportOverview, ReportSales, SalesTrend } from './reportKpis';
 import type { ReportRevenue } from './reportRevenue';
+import type { ReportProduct } from './reportProduct';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -64,8 +65,13 @@ export type ReportOrderCustomer = { sni_code: string | null };
  * att något felade.
  */
 type ReportRoundOrder = { status: string | null; assigned_to: string | null; client_name: string | null; quote_type: string };
-export type ReportInvoiceRoundRow = Omit<InvoiceRoundRow, 'work_order'> & {
+export type ReportInvoiceRoundRow = Omit<InvoiceRoundRow, 'work_order' | 'work_order_id'> & {
   work_order: ReportRoundOrder | ReportRoundOrder[] | null;
+  /**
+   * Ordern rundan hör till — fakturerat per depå slår upp orderns schema på den. Obligatorisk av samma
+   * skäl som kundtypen: utan den i läsningen hade varje runda hamnat under "Ej planerad", utan att något felade.
+   */
+  work_order_id: string | null;
 };
 
 export type ReportCallRow = { user_id: string | null; call_at: string };
@@ -489,6 +495,11 @@ export type SalesReport = {
    * orderstock per läge, kundsegment och kunder — se reportRevenue.ts. null = kunde inte räknas.
    */
   revenue: ReportRevenue | null;
+  /**
+   * Produkt & marknad: sålda m³, kr/m³ per konstruktion och material, m³ per månad och fakturerat och
+   * orderstock per depå — se reportProduct.ts. null = kunde inte räknas.
+   */
+  product: ReportProduct | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   perCustomer: CustomerReportRow[];
@@ -523,6 +534,8 @@ export function composeSalesReport(
     sales?: ReportSales | null;
     /** Omsättningsflikens nyckeltal, färdigräknade i rutten — de har egna läsningar. */
     revenue?: ReportRevenue | null;
+    /** Produkt & marknad, färdigräknad i rutten — den läser orderraderna och schemat själv. */
+    product?: ReportProduct | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -536,6 +549,7 @@ export function composeSalesReport(
     trend: opts?.trend ?? null,
     sales: opts?.sales ?? null,
     revenue: opts?.revenue ?? null,
+    product: opts?.product ?? null,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,
@@ -615,7 +629,7 @@ function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Pro
   const toEnd = `${range.to}T23:59:59.999Z`;
   return readEveryRow('crm_work_order_invoices', (from, to) =>
     admin.from('crm_work_order_invoices')
-      .select('amount, created_at, work_order:crm_work_orders(status, assigned_to, client_name, quote_type)')
+      .select('amount, created_at, work_order_id, work_order:crm_work_orders(status, assigned_to, client_name, quote_type)')
       .gte('created_at', range.from)
       .lte('created_at', toEnd)
       .order('id', { ascending: true })
