@@ -44,6 +44,11 @@ vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
     { status: 'scheduled', created_at: '2026-10-03T08:00:00Z', customer_id: 'k2', client_name: 'Kund 2' },
   ]),
 }));
+vi.mock('@/lib/domains/crm/reportProductLoader', () => ({
+  fetchOrderLineItems: vi.fn(async () => new Map()),
+  fetchOrderSegments: vi.fn(async () => []),
+  fetchDepots: vi.fn(async () => [{ id: 'sv', name: 'Sandviken', active: true }]),
+}));
 vi.mock('@/lib/domains/planning/productionLoader', () => ({
   fetchProductionData: vi.fn(async () => ({ data: { reports: [], segments: [], trucks: [] }, error: null })),
 }));
@@ -69,6 +74,7 @@ import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { fetchCustomerOrderRows, fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { fetchInvoicedValue, fetchReportData, fetchTrendData } from '@/lib/domains/crm/reports';
+import { fetchDepots, fetchOrderLineItems, fetchOrderSegments } from '@/lib/domains/crm/reportProductLoader';
 import { GET } from '@/app/api/crm/reports/route';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -81,6 +87,9 @@ const mockTrendData = vi.mocked(fetchTrendData);
 const mockReportData = vi.mocked(fetchReportData);
 const mockFirstActivity = vi.mocked(fetchFirstActivityDay);
 const mockCustomerOrders = vi.mocked(fetchCustomerOrderRows);
+const mockLineItems = vi.mocked(fetchOrderLineItems);
+const mockSegments = vi.mocked(fetchOrderSegments);
+const mockDepots = vi.mocked(fetchDepots);
 
 const req = () => new Request('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
 
@@ -475,5 +484,132 @@ describe('GET /api/crm/reports — Omsättningens nyckeltal', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('GET /api/crm/reports — Produkt & marknad', () => {
+  const order = (id: string, over: Record<string, unknown> = {}) => ({
+    id, amount: 10_000, vat_percent: 0, status: 'scheduled', created_at: '2026-09-10T08:00:00Z', fortnox_invoiced_at: null,
+    partial_invoicing_started_at: null, assigned_to: null, client_name: 'Kund 1', quote_type: 'business',
+    customer_id: 'k1', rot_enabled: null, customer: null, ...over,
+  });
+  const m3Row = (m2: number, price: number, construction = 'vind') => ({
+    pricing_mode: 'm3', m2: String(m2), thickness_mm: '100', unit_price: String(price), article_name: 'Ekovilla lösull', construction,
+  });
+
+  async function atOctoberSeventh() {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      mockGetUser.mockResolvedValue(salesUser as any);
+      const res = await GET(req());
+      return { status: res.status, json: await res.json() };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('räknar m³ på periodens skapade order och m³ per månad på trendens, med en läsning av raderna', async () => {
+    mockReportData.mockResolvedValueOnce({
+      quotes: [],
+      orders: [
+        order('sep1'),
+        order('sep2', { created_at: '2026-09-20T08:00:00Z' }),
+        order('avbruten', { status: 'cancelled' }),
+        // Fakturerad i september men skapad i augusti: fakturerat, inte sålt i perioden.
+        order('aug', { status: 'invoiced', created_at: '2026-08-20T08:00:00Z', fortnox_invoiced_at: '2026-09-05T08:00:00Z' }),
+      ],
+      invoiceRounds: [],
+      calls: [],
+      sellers: [],
+    } as any);
+    mockTrendData.mockResolvedValueOnce({
+      quotes: [],
+      orders: [order('jul', { created_at: '2026-07-10T08:00:00Z' }), order('sep1')],
+      invoiceRounds: [],
+    } as any);
+    mockLineItems.mockResolvedValueOnce(new Map<string, unknown>([
+      ['sep1', [m3Row(100, 400)]],
+      ['sep2', [m3Row(200, 600, 'vagg')]],
+      ['avbruten', [m3Row(999, 999)]],
+      ['jul', [m3Row(50, 500)]],
+      // Skapad i augusti: hade den kommit med i periodens m³ hade rutten räknat på fel order.
+      ['aug', [m3Row(500, 500)]],
+    ]));
+    const { status, json } = await atOctoberSeventh();
+    expect(status).toBe(200);
+    // Läsningen tog periodens OCH trendens skapade order, en gång var — inte de avbrutna.
+    expect(mockLineItems).toHaveBeenCalledTimes(1);
+    expect([...(mockLineItems.mock.calls[0][1] as string[])].sort()).toEqual(['jul', 'sep1', 'sep2']);
+    const product = json.data.product;
+    expect(product.volume.total).toEqual({ m3: 30, value: 16_000, pricePerM3: 16_000 / 30, orders: 2 });
+    expect(product.volume.byConstruction.map((c: any) => c.construction)).toEqual(['vagg', 'vind']);
+    expect(product.volumeByMonth.map((m: any) => [m.period, m.m3])).toEqual([
+      ['2026-06', 0], ['2026-07', 5], ['2026-08', 0], ['2026-09', 10], ['2026-10', 0],
+    ]);
+  });
+
+  it('fakturerat per depå går ihop med Fakturerat, och schemat läses för fakturornas och stockens order', async () => {
+    mockReportData.mockResolvedValueOnce({
+      quotes: [],
+      orders: [order('o1', { status: 'invoiced', fortnox_invoiced_at: '2026-09-12T08:00:00Z' })],
+      invoiceRounds: [
+        { amount: 4_000, created_at: '2026-09-20T08:00:00Z', work_order_id: 'o2', work_order: { status: 'partially_invoiced', assigned_to: null, client_name: 'K', quote_type: 'business' } },
+      ],
+      calls: [],
+      sellers: [],
+    } as any);
+    mockOrderStock.mockResolvedValueOnce([
+      { id: 's1', status: 'scheduled', amount: 20_000, vat_percent: 0, invoice_rounds: [] },
+    ] as any);
+    mockSegments.mockResolvedValueOnce([
+      { work_order_id: 'o1', start_day: '2026-09-07', end_day: '2026-09-08', truck: { depot_id: 'sv' } },
+      { work_order_id: 's1', start_day: '2026-10-20', end_day: '2026-10-20', truck: { depot_id: null } },
+    ]);
+    const { json } = await body(salesUser);
+    expect([...(mockSegments.mock.calls[0][1] as string[])].sort()).toEqual(['o1', 'o2', 's1']);
+    const rows = json.data.product.depots;
+    expect(rows.map((r: any) => [r.kind, r.name, r.invoiced, r.stock])).toEqual([
+      ['depot', 'Sandviken', 10_000, 0],
+      ['no_depot', null, 0, 20_000],
+      ['unplanned', null, 4_000, 0],
+    ]);
+    const invoiced = json.data.periodSummary.metrics.find((m: any) => m.key === 'invoicedValue').actual;
+    expect(rows.reduce((t: number, r: any) => t + r.invoiced, 0)).toBe(invoiced);
+  });
+
+  it('trasiga orderrader tar bara m³-delarna — null, aldrig "0 m³"', async () => {
+    mockLineItems.mockRejectedValueOnce(new Error('nekad'));
+    const { status, json } = await body(salesUser);
+    expect(status).toBe(200);
+    expect(json.data.product.volume).toBeNull();
+    expect(json.data.product.volumeByMonth).toBeNull();
+    expect(json.data.product.depots).not.toBeNull();
+    expect(json.data.revenue).not.toBeNull();
+  });
+
+  it('ett trasigt schema eller depåregister tar bara depådelen', async () => {
+    mockSegments.mockRejectedValueOnce(new Error('nekad'));
+    let { json } = await body(salesUser);
+    expect(json.data.product.depots).toBeNull();
+    expect(json.data.product.volume).not.toBeNull();
+    mockDepots.mockRejectedValueOnce(new Error('nekad'));
+    ({ json } = await body(salesUser));
+    expect(json.data.product.depots).toBeNull();
+  });
+
+  it('en trasig orderstock tar bara depåernas orderstock, inte deras fakturerat', async () => {
+    mockOrderStock.mockRejectedValueOnce(new Error('nekad'));
+    const { json } = await body(salesUser);
+    const rows = json.data.product.depots;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r: any) => r.stock === null)).toBe(true);
+  });
+
+  it('en trasig trendläsning tar bara m³ per månad', async () => {
+    mockTrendData.mockRejectedValueOnce(new Error('nekad'));
+    const { json } = await atOctoberSeventh();
+    expect(json.data.product.volumeByMonth).toBeNull();
+    expect(json.data.product.volume).not.toBeNull();
   });
 });

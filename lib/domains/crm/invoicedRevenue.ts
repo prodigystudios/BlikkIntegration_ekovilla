@@ -24,6 +24,8 @@ import { isDeadWorkOrder } from './work-orders';
 // netAmount. En order som delfakturerats till fullo summerar därför till samma netto som i ett svep.
 
 export type InvoicedOrderRow = NetAmountRow & {
+  /** Orderns id — följer med fakturan (`work_order_id`). Rapporten läser den, översikten inte. */
+  id?: string | null;
   status: string | null;
   created_at: string;
   fortnox_invoiced_at: string | null;
@@ -53,6 +55,8 @@ type InvoiceRoundOrder = { status: string | null; assigned_to: string | null; cl
 export type InvoiceRoundRow = {
   amount: number | string | null;
   created_at: string;
+  /** Ordern rundan hör till — följer med fakturan. Rapporten läser den, översikten inte. */
+  work_order_id?: string | null;
   /**
    * Null när läsaren inte får se ordern — då räknas inte rundan heller. Som lista när klienten inte
    * vet att relationen är många-till-en; samma läsning som planeringens `work_order`-inbäddningar.
@@ -70,6 +74,11 @@ export type InvoicedRevenue = {
   client_name: string | null;
   /** Orderns kundtyp, när läsningen hämtade den — annars null. */
   quote_type: string | null;
+  /**
+   * Ordern fakturan hör till — fakturerat per depå under Produkt & marknad slår upp orderns schema på
+   * den. null när läsningen inte hämtade orderns id (översikten gör det inte).
+   */
+  work_order_id: string | null;
 };
 
 /**
@@ -131,6 +140,7 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
       quote_type: order.quote_type ?? null,
+      work_order_id: order.id ?? null,
     }];
   });
 
@@ -146,6 +156,7 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
       quote_type: order.quote_type ?? null,
+      work_order_id: round.work_order_id ?? null,
     }];
   });
 

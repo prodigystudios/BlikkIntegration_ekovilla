@@ -14,13 +14,13 @@ describe('visibleReportTabs', () => {
   });
 
   it('flikarna står i specens ordning', () => {
-    expect(visibleReportTabs({ hasTime: true, withProduct: true }).map((t) => t.id)).toEqual([
+    expect(visibleReportTabs({ hasTime: true }).map((t) => t.id)).toEqual([
       'oversikt', 'forsaljning', 'omsattning', 'produkt', 'produktion', 'tid',
     ]);
   });
 
-  it('Produkt & marknad döljs tills den har innehåll', () => {
-    expect(visibleReportTabs({ hasTime: true }).map((t) => t.id)).not.toContain('produkt');
+  it('Produkt & marknad syns för alla som ser rapporten', () => {
+    expect(visibleReportTabs({ hasTime: false }).map((t) => t.id)).toContain('produkt');
   });
 });
 

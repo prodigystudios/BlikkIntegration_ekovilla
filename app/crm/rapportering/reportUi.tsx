@@ -36,9 +36,11 @@ export const INSET_PANEL = 'rounded-xl border border-[#dde6d9] bg-[#f1f5ee]';
 // behöver värdena som värden, därför konstanter och inte variabler.
 export const COLOR_BAR = '#2f6b45';
 export const COLOR_BAR_STRIPE = '#b9d0bf';
-const BAR_TRACK = 'bg-[#dde6d9]';
-const BAR_FILL = 'bg-[#2f6b45]';
+export const BAR_TRACK = 'bg-[#dde6d9]';
+export const BAR_FILL = 'bg-[#2f6b45]';
 const BAR_FILL_STRIPED = 'bg-[repeating-linear-gradient(135deg,#2f6b45_0_4px,#b9d0bf_4px_7px)]';
+// Grått = en lucka i underlaget ("Saknas", "Övrigt/okänt") — samma grå som okänt material under Produktion.
+export const BAR_FILL_MUTED = 'bg-slate-400';
 
 /** Stapellistans skal — en `<ul>`, så att skärmläsare hör hur många rader den har. */
 export function BarList({ children }: { children: ReactNode }) {
@@ -56,6 +58,7 @@ export function BarRow({
   value,
   extra,
   striped = false,
+  muted = false,
 }: {
   label: ReactNode;
   sub?: ReactNode;
@@ -64,17 +67,19 @@ export function BarRow({
   extra?: ReactNode;
   /** Talet är preliminärt. */
   striped?: boolean;
+  /** Raden är en lucka i underlaget (t.ex. "Saknas"): grå, så den inte konkurrerar med de riktiga raderna. */
+  muted?: boolean;
 }) {
   return (
     <li className="grid grid-cols-[minmax(5.5rem,8.5rem)_minmax(0,1fr)_auto] items-center gap-3 text-[13px]">
-      <span className="min-w-0 leading-tight text-slate-700">
+      <span className={cn('min-w-0 leading-tight', muted ? 'text-slate-500' : 'text-slate-700')}>
         {label}
         {sub ? <span className="block text-[11px] text-slate-500">{sub}</span> : null}
       </span>
       <span className={cn('h-2.5 overflow-hidden rounded-full', BAR_TRACK)} aria-hidden="true">
         {share != null ? (
           <span
-            className={cn('block h-full rounded-full', striped ? BAR_FILL_STRIPED : BAR_FILL)}
+            className={cn('block h-full rounded-full', muted ? BAR_FILL_MUTED : striped ? BAR_FILL_STRIPED : BAR_FILL)}
             style={{ width: `${Math.max(0, Math.min(100, share))}%` }}
           />
         ) : null}
@@ -165,6 +170,10 @@ export function formatDay(day: string) {
 }
 export function formatCount(value: number) {
   return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value);
+}
+/** Kubikmeter i hela tal: "1 234 m³". */
+export function formatM3(value: number) {
+  return `${formatCount(Math.round(value))} m³`;
 }
 export function formatSigned(percent: number) {
   const rounded = Math.round(percent);

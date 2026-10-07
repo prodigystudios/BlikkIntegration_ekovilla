@@ -39,7 +39,7 @@ const order = (over: Partial<ReportOrderRow> = {}): ReportOrderRow => ({
 });
 
 const invoice = (amount: number, quote_type: string | null, at = '2026-09-15T08:00:00Z'): InvoicedRevenue => ({
-  amount, at, assigned_to: null, client_name: null, quote_type,
+  amount, at, assigned_to: null, client_name: null, quote_type, work_order_id: null,
 });
 
 describe('invoicedByCustomerType — fakturerat och andelen privat', () => {
@@ -54,7 +54,7 @@ describe('invoicedByCustomerType — fakturerat och andelen privat', () => {
 
   it('räknar en delfakturarunda med sin orders kundtyp', () => {
     const rounds: ReportInvoiceRoundRow[] = [
-      { amount: 4000, created_at: '2026-09-20T08:00:00Z', work_order: { status: 'partially_invoiced', assigned_to: null, client_name: 'P', quote_type: 'private' } },
+      { amount: 4000, created_at: '2026-09-20T08:00:00Z', work_order_id: null, work_order: { status: 'partially_invoiced', assigned_to: null, client_name: 'P', quote_type: 'private' } },
     ];
     const { revenue } = partitionOrders([], { from: '2026-09-01', to: '2026-09-30' }, rounds);
     expect(invoicedByCustomerType(revenue)).toMatchObject({ private: 4000, privateShare: 100 });
@@ -133,7 +133,7 @@ describe('buildInvoicedByMonth — fakturerat per månad, företag och privat', 
     order({ status: 'invoiced', amount: 9_000, fortnox_invoiced_at: '2026-06-20T08:00:00Z', created_at: '2026-06-10T08:00:00Z' }), // före fönstret
   ];
   const rounds: ReportInvoiceRoundRow[] = [
-    { amount: 3_000, created_at: '2026-10-02T08:00:00Z', work_order: { status: 'partially_invoiced', assigned_to: null, client_name: 'P', quote_type: 'private' } },
+    { amount: 3_000, created_at: '2026-10-02T08:00:00Z', work_order_id: null, work_order: { status: 'partially_invoiced', assigned_to: null, client_name: 'P', quote_type: 'private' } },
   ];
   const months = buildInvoicedByMonth({ data: { orders, invoiceRounds: rounds }, window, selected: september });
 
