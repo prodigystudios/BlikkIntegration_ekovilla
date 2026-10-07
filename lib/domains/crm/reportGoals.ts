@@ -18,6 +18,8 @@ export type ReportGoalRow = {
   quote_value_target: number | string | null;
   order_count_target: number | string | null;
   order_value_target: number | string | null;
+  /** Månadsbudget för fakturerat (sedan 2026-10-05). Äldre rader har 0, alltså inget mål. */
+  invoiced_value_target?: number | string | null;
 };
 
 export type PeriodMetricKey =
@@ -43,17 +45,28 @@ export const PERIOD_METRIC_KEYS: PeriodMetricKey[] = [
 /**
  * Vilket målfält som hör till vilket tal.
  *
- * `invoicedValue` saknas med flit: crm_goals har inget faktureringsmål, och att låta fakturerat
- * ärva ordervärdesmålet hade varit en uppfunnen affärsregel. Kortet visar då utfall och jämförelse
- * men ingen målstapel — vilket är sanningen.
+ * Fakturerat fick sitt eget mål 2026-10-05 (`invoiced_value_target`, redigeras under Inställningar →
+ * Mål och används redan av översiktens veckotavla). Före det saknades det här med flit — att låta
+ * fakturerat ärva ordervärdesmålet hade varit en uppfunnen affärsregel.
  */
-const GOAL_FIELD: Partial<Record<PeriodMetricKey, keyof Omit<ReportGoalRow, 'period_start'>>> = {
+const GOAL_FIELD: Record<PeriodMetricKey, keyof Omit<ReportGoalRow, 'period_start'>> = {
   calls: 'calls_target',
   quotes: 'quotes_target',
   quoteValue: 'quote_value_target',
   orders: 'order_count_target',
   orderValue: 'order_value_target',
+  invoicedValue: 'invoiced_value_target',
 };
+
+/** Ett måltal ur raden, eller 0 när fältet saknas. numeric kommer tillbaka som STRÄNG ur PostgREST. */
+function goalValue(row: ReportGoalRow, key: PeriodMetricKey): number {
+  return parseDecimal(row[GOAL_FIELD[key]] as string | number | null | undefined, 0);
+}
+
+/** Har månaden ett satt mål för talet — summerat över säljarna, större än noll? */
+function monthHasGoal(rows: ReportGoalRow[] | null | undefined, month: string, key: PeriodMetricKey): boolean {
+  return (rows ?? []).some((row) => String(row.period_start ?? '').slice(0, 7) === month && goalValue(row, key) > 0);
+}
 
 /**
  * Summerade mål för de angivna månaderna, över ALLA säljare.
@@ -74,9 +87,7 @@ export function sumGoalTargets(
     // period_start är 'YYYY-MM-01'; månadsnyckeln är de sju första tecknen.
     if (!wanted.has(String(row.period_start ?? '').slice(0, 7))) continue;
     for (const key of PERIOD_METRIC_KEYS) {
-      const field = GOAL_FIELD[key];
-      if (!field) continue;
-      const value = parseDecimal(row[field] as string | number | null | undefined, 0);
+      const value = goalValue(row, key);
       if (value > 0) totals[key] = (totals[key] ?? 0) + value;
     }
   }
@@ -163,14 +174,7 @@ export function buildPeriodSummary(input: {
   // Bara månader som faktiskt BÄR ett mål räknas som målmånader. Annars hade täckningsraden sagt
   // "mål för jan–dec" på en period där budgeten bara är satt för september.
   const goalMonths = input.months.filter((month) =>
-    (input.goals ?? []).some(
-      (row) =>
-        String(row.period_start ?? '').slice(0, 7) === month &&
-        PERIOD_METRIC_KEYS.some((key) => {
-          const field = GOAL_FIELD[key];
-          return field ? parseDecimal(row[field] as string | number | null | undefined, 0) > 0 : false;
-        }),
-    ),
+    PERIOD_METRIC_KEYS.some((key) => monthHasGoal(input.goals, month, key)),
   );
   const coverage = goalDayCoverage(goalMonths, input.range);
 
@@ -178,14 +182,21 @@ export function buildPeriodSummary(input: {
   // går andelen inte att räkna — se monthsWithoutGoal. Hellre ingen stapel än en som jämför
   // olika långa perioder.
   const monthsWithoutGoal = input.months.filter((month) => !goalMonths.includes(month));
-  const targetsApply = goalMonths.length > 0 && monthsWithoutGoal.length === 0;
+
+  // ⚠️ OCH REGELN GÄLLER PER TAL, inte bara per månad. Att en månad har NÅGOT mål räcker inte: fakturerat
+  // fick sin budget 2026-10-05 medan ordervärdet haft sin sedan juni, så en period över september och
+  // oktober hade ställt två månaders fakturering mot oktobers budget ensam — samma felläsning som
+  // monthsWithoutGoal stoppar, bara för ett tal i taget. Ett tal får sin stapel bara när VARJE månad i
+  // perioden har ett mål för just det talet.
+  const targetApplies = (key: PeriodMetricKey) =>
+    input.months.length > 0 && input.months.every((month) => monthHasGoal(input.goals, month, key));
 
   return {
     metrics: PERIOD_METRIC_KEYS.map((key) => ({
       key,
       actual: input.totals[key] ?? 0,
       previous: input.previous ? input.previous.totals[key] ?? 0 : null,
-      target: targetsApply ? targets[key] ?? null : null,
+      target: targetApplies(key) ? targets[key] ?? null : null,
     })),
     goalMonths,
     goalDaysCovered: coverage.covered,

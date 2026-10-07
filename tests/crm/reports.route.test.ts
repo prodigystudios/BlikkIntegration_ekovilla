@@ -24,6 +24,7 @@ vi.mock('@/lib/domains/crm/reports', async (importOriginal) => {
     ...actual,
     fetchReportData: vi.fn(async () => ({ quotes: [], orders: [], invoiceRounds: [], calls: [], sellers: [] })),
     fetchInvoicedValue: vi.fn(async () => 70_000),
+    fetchTrendData: vi.fn(async () => ({ quotes: [], orders: [], invoiceRounds: [] })),
   };
 });
 vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
@@ -34,6 +35,7 @@ vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
   fetchOpenQuoteRows: vi.fn(async () => [
     { status: 'draft', amount: 5_000, vat_percent: 0, valid_until: '2000-01-01', follow_up_date: null },
   ]),
+  fetchFirstActivityDay: vi.fn(async () => '2026-06-29'),
 }));
 vi.mock('@/lib/domains/planning/productionLoader', () => ({
   fetchProductionData: vi.fn(async () => ({ data: { reports: [], segments: [], trucks: [] }, error: null })),
@@ -58,8 +60,8 @@ vi.mock('@/lib/domains/time/reportLoader', () => ({
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
-import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
-import { fetchInvoicedValue } from '@/lib/domains/crm/reports';
+import { fetchFirstActivityDay, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchInvoicedValue, fetchTrendData } from '@/lib/domains/crm/reports';
 import { GET } from '@/app/api/crm/reports/route';
 
 const mockGetUser = vi.mocked(getCurrentUser);
@@ -67,6 +69,8 @@ const mockPermissions = vi.mocked(getEffectivePermissions);
 const mockTimeLoader = vi.mocked(fetchTimeReportData);
 const mockOrderStock = vi.mocked(fetchOrderStockRows);
 const mockInvoicedValue = vi.mocked(fetchInvoicedValue);
+const mockTrendData = vi.mocked(fetchTrendData);
+const mockFirstActivity = vi.mocked(fetchFirstActivityDay);
 
 const req = () => new Request('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
 
@@ -193,5 +197,48 @@ describe('GET /api/crm/reports — översiktens nyckeltal', () => {
     expect(json.data.overview.orderStock.value).toBe(30_000);
     expect(json.data.overview.orderStock.weeks).toBeNull();
     expect(json.data.overview.orderStock.basis).toBeNull();
+  });
+});
+
+describe('GET /api/crm/reports — standardperiod och trend', () => {
+  // Klockan låst till 7 oktober 2026 (bara Date — anropen ska fortfarande lösas).
+  async function atOctoberSeventh(url: string) {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      mockGetUser.mockResolvedValue(salesUser as any);
+      const res = await GET(new Request(url));
+      return { status: res.status, json: await res.json() };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('öppnar på DENNA MÅNAD när inget datum skickas (beslut 2026-10-07, tidigare 12 månader)', async () => {
+    const { json } = await atOctoberSeventh('http://localhost/api/crm/reports');
+    expect(json.data.range).toEqual({ from: '2026-10-01', to: '2026-10-07' });
+  });
+
+  it('trenden följer INTE perioden: tolv månader bakåt, men aldrig före första aktiviteten', async () => {
+    const { json } = await atOctoberSeventh('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
+    expect(json.data.trend.range).toEqual({ from: '2026-06-29', to: '2026-10-07' });
+    expect(mockTrendData).toHaveBeenCalledWith(expect.anything(), { from: '2026-06-29', to: '2026-10-07' });
+    expect(json.data.trend.points.map((p: any) => p.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+    expect(json.data.trend.points.filter((p: any) => p.inPeriod).map((p: any) => p.period)).toEqual(['2026-09']);
+  });
+
+  it('okänd första aktivitet ger tolv månader, inte ett fel', async () => {
+    mockFirstActivity.mockRejectedValueOnce(new Error('nekad'));
+    const { json } = await atOctoberSeventh('http://localhost/api/crm/reports');
+    expect(json.data.trend.range).toEqual({ from: '2025-11-01', to: '2026-10-07' });
+  });
+
+  it('en trasig trendläsning blir null och lämnar resten orört', async () => {
+    mockTrendData.mockRejectedValueOnce(new Error('nekad'));
+    const { status, json } = await atOctoberSeventh('http://localhost/api/crm/reports');
+    expect(status).toBe(200);
+    expect(json.data.trend).toBeNull();
+    expect(json.data.periodSummary).toBeDefined();
+    expect(json.data.overview).not.toBeNull();
   });
 });

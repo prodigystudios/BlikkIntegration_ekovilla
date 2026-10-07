@@ -7,13 +7,14 @@ import {
   composeSalesReport,
   fetchInvoicedValue,
   fetchReportData,
+  fetchTrendData,
   monthsInRange,
   partitionOrders,
   type ReportQuoteRow,
   type ReportRange,
 } from '@/lib/domains/crm/reports';
-import { buildReportOverview } from '@/lib/domains/crm/reportKpis';
-import { fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { buildReportOverview, buildSalesTrend, trendWindow, type SalesTrend } from '@/lib/domains/crm/reportKpis';
+import { fetchFirstActivityDay, fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
@@ -34,15 +35,12 @@ const querySchema = z.object({
   to: dateSchema.optional(),
 });
 
-// Default range: the last 12 months (inclusive of the current month).
-// Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet ett intervall som slutade i går, och den
-// 1:a i månaden flyttade dessutom hela tolvmånadersfönstret en månad bakåt.
-//
-// Samma funktion som rapportsidans egen snabbknapp "Senaste 12 mån" använder — den är ren, tar
-// ögonblicket som argument och är redan testad. En egen kopia av månadsaritmetiken här hade varit
-// husets tredje, och den enda som ingen prövar.
+// Standardperioden: denna månad (Williams beslut 2026-10-07 — tidigare de senaste tolv månaderna).
+// Samma snabbval som rapportsidans förval, så en sida som öppnas utan datum och en som skickar sitt
+// förval får samma svar. Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet annars ett intervall
+// som slutade i går, och den 1:a i månaden hade pekat ut förra månaden.
 function defaultRange(): ReportRange {
-  return reportRange('last12');
+  return reportRange('month');
 }
 
 export async function GET(req: Request) {
@@ -101,6 +99,24 @@ export async function GET(req: Request) {
       }),
     ]);
 
+    // Trenden: de senaste tolv månaderna eller sedan start, oavsett vald period. Startas här av samma
+    // skäl som ögonblicksbilderna. Felar första aktivitetsdagen börjar fönstret tolv månader bakåt i
+    // stället — tomma månader i början, men inget fel tal. Felar läsningen blir trenden null.
+    const last12 = reportRange('last12', now);
+    const trendReads = fetchFirstActivityDay(admin)
+      .catch((e: any) => {
+        console.warn(`[Rapport] Första aktiviteten kunde inte läsas: ${e?.message || e}`);
+        return null;
+      })
+      .then(async (firstDay) => {
+        const window = trendWindow(last12, firstDay);
+        return { window, data: await fetchTrendData(admin, window) };
+      })
+      .catch((e: any) => {
+        console.warn(`[Rapport] Trenden kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
+
     const data = await fetchReportData(admin, range);
 
     // ── Referenspunkterna: målen och föregående period ───────────────────────
@@ -113,13 +129,16 @@ export async function GET(req: Request) {
     // "förra perioden sålde vi ingenting", vilket är ett helt annat påstående än "vi vet inte".
     const months = monthsInRange(range.from, range.to);
 
+    // Målen läses för periodens månader OCH trendens tolv, i en fråga. Varje mottagare filtrerar själv
+    // fram sina månader (sumGoalTargets, monthHasGoal), så de extra raderna påverkar inte perioden.
+    const goalMonths = [...new Set([...months, ...monthsInRange(last12.from, last12.to)])];
     let goals: ReportGoalRow[] | null = null;
     try {
       const { data: goalRows, error } = await admin
         .from('crm_goals')
-        .select('period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target')
+        .select('period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, invoiced_value_target')
         .eq('period_type', 'month')
-        .in('period_start', months.map((month) => `${month}-01`));
+        .in('period_start', goalMonths.map((month) => `${month}-01`));
       if (error) throw new Error(error.message);
       goals = (goalRows as ReportGoalRow[]) || [];
     } catch (e: any) {
@@ -251,6 +270,16 @@ export async function GET(req: Request) {
       openQuoteRows,
     });
 
+    const trendInput = await trendReads;
+    let trend: SalesTrend | null = null;
+    if (trendInput) {
+      try {
+        trend = buildSalesTrend({ ...trendInput, selected: range, goals });
+      } catch (e: any) {
+        console.warn(`[Rapport] Trenden kunde inte räknas: ${e?.message || e}`);
+      }
+    }
+
     const report = composeSalesReport(data, range, afterCalculations, {
       profitabilityUnavailable,
       goals,
@@ -259,6 +288,7 @@ export async function GET(req: Request) {
       planned,
       time,
       overview,
+      trend,
     });
 
     return ok(report);

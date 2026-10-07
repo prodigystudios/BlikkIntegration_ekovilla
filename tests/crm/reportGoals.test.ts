@@ -101,9 +101,18 @@ describe('sumGoalTargets', () => {
     expect(result.calls).toBe(100);
   });
 
-  it('fakturerat får ALDRIG ett mål — crm_goals har inget faktureringsmål', () => {
-    const result = sumGoalTargets([goal('2026-09-01')], ['2026-09']);
-    expect(result.invoicedValue).toBeUndefined();
+  it('fakturerat läser sitt eget mål, invoiced_value_target — inte ordervärdets', () => {
+    const result = sumGoalTargets(
+      [goal('2026-09-01', { invoiced_value_target: '800000' }), goal('2026-09-01', { invoiced_value_target: 200000 })],
+      ['2026-09'],
+    );
+    expect(result.invoicedValue).toBe(1_000_000);
+  });
+
+  it('fakturerat utan budget (0 eller äldre rad utan kolumnen) har inget mål', () => {
+    // Prod 2026-10-07: invoiced_value_target är 0 i varje rad. 0 är "inget mål", aldrig "0 kr".
+    expect(sumGoalTargets([goal('2026-09-01', { invoiced_value_target: 0 })], ['2026-09']).invoicedValue).toBeUndefined();
+    expect(sumGoalTargets([goal('2026-09-01')], ['2026-09']).invoicedValue).toBeUndefined();
   });
 });
 
@@ -237,17 +246,46 @@ describe('buildPeriodSummary', () => {
     expect(summary.goalMonths).toEqual([]);
   });
 
-  it('fakturerat har jämförelse men aldrig mål', () => {
+  it('fakturerat får målstapel mot invoiced_value_target', () => {
+    const summary = buildPeriodSummary({
+      totals: totals({ invoicedValue: 900_000 }),
+      range,
+      months: ['2026-09'],
+      goals: [goal('2026-09-01', { invoiced_value_target: '1200000' })],
+      previous: { range: { from: '2026-08-10', to: '2026-08-31' }, totals: totals({ invoicedValue: 700_000 }) },
+    });
+    const invoiced = summary.metrics.find((m) => m.key === 'invoicedValue')!;
+    expect(invoiced.target).toBe(1_200_000);
+    expect(invoiced.previous).toBe(700_000);
+  });
+
+  it('fakturerat utan budget har jämförelse men inget mål, medan övriga tal har sina', () => {
     const summary = buildPeriodSummary({
       totals: totals({ invoicedValue: 900_000 }),
       range,
       months: ['2026-09'],
       goals: [goal('2026-09-01')],
-      previous: { range: { from: '2026-08-10', to: '2026-08-31' }, totals: totals({ invoicedValue: 700_000 }) },
+      previous: null,
     });
-    const invoiced = summary.metrics.find((m) => m.key === 'invoicedValue')!;
-    expect(invoiced.target).toBeNull();
-    expect(invoiced.previous).toBe(700_000);
+    expect(summary.metrics.find((m) => m.key === 'invoicedValue')!.target).toBeNull();
+    expect(summary.metrics.find((m) => m.key === 'orderValue')!.target).toBe(1_000_000);
+  });
+
+  it('🧨 ett tal får INGEN stapel när en av periodens månader saknar just dess mål', () => {
+    // Fakturerat fick sin budget i oktober medan ordervärdet haft sin sedan juni. En period över
+    // september och oktober hade annars ställt TVÅ månaders fakturering mot oktobers budget ensam —
+    // och båda månaderna "har budget", så månadsregeln (monthsWithoutGoal) fångar det inte.
+    const summary = buildPeriodSummary({
+      totals: totals({ invoicedValue: 2_000_000, orderValue: 3_000_000 }),
+      range: { from: '2026-09-15', to: '2026-10-15' },
+      months: ['2026-09', '2026-10'],
+      goals: [goal('2026-09-01'), goal('2026-10-01', { invoiced_value_target: 1_000_000 })],
+      previous: null,
+    });
+    expect(summary.monthsWithoutGoal).toEqual([]);
+    expect(summary.metrics.find((m) => m.key === 'invoicedValue')!.target).toBeNull();
+    // Ordervärdet har budget i båda månaderna och behåller sin stapel.
+    expect(summary.metrics.find((m) => m.key === 'orderValue')!.target).toBe(2_000_000);
   });
 });
 

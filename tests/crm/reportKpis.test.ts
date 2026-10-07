@@ -7,10 +7,13 @@ import {
   buildReportOverview,
   hitRateMaturity,
   orderStockWeeks,
+  buildSalesTrend,
+  trendWindow,
   type OpenQuoteRow,
   type OrderStockRow,
 } from '@/lib/domains/crm/reportKpis';
 import { ORDER_STOCK_STATUSES } from '@/lib/domains/crm/overviewSummary';
+import type { ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 
 // `vat_percent: 0` där inget annat sägs: beloppet är då sitt eget netto, och förväntningarna kan
 // handla om regeln som prövas. Nettot har egna fall nedan.
@@ -310,5 +313,104 @@ describe('buildReportOverview', () => {
     const overview = buildReportOverview({ ...base, orderStockRows: [], openQuoteRows: [] });
     expect(overview.orderStock?.value).toBe(0);
     expect(overview.openQuotes?.count).toBe(0);
+  });
+});
+
+// ── Trenden ──────────────────────────────────────────────────────────────────
+
+
+describe('trendWindow', () => {
+  const last12 = { from: '2025-11-01', to: '2026-10-07' };
+
+  it('börjar vid första aktiviteten så länge CRM:et är yngre än tolv månader', () => {
+    // Utan gränsen hade sju tomma månader (nov–maj) stått före juni 2026.
+    expect(trendWindow(last12, '2026-06-29')).toEqual({ from: '2026-06-29', to: '2026-10-07' });
+  });
+
+  it('blir aldrig längre än tolv månader', () => {
+    expect(trendWindow(last12, '2024-03-15')).toEqual(last12);
+  });
+
+  it('faller tillbaka på tolv månader när första aktiviteten är okänd', () => {
+    expect(trendWindow(last12, null)).toEqual(last12);
+  });
+});
+
+describe('buildSalesTrend', () => {
+  const goalRow = (period_start: string, over: Partial<ReportGoalRow> = {}): ReportGoalRow => ({
+    period_start,
+    calls_target: 0,
+    quotes_target: 0,
+    quote_value_target: 1000,
+    order_count_target: 0,
+    order_value_target: 500,
+    invoiced_value_target: 0,
+    ...over,
+  });
+  const quoteRow = (quote_date: string, amount: number) =>
+    ({ amount, vat_percent: 0, status: 'sent', quote_date, assigned_to: null, customer_name: null });
+  const orderRow = (created_at: string, amount: number, over: Record<string, unknown> = {}) =>
+    ({ amount, vat_percent: 0, status: 'scheduled', created_at, fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, ...over });
+
+  const window = { from: '2026-06-29', to: '2026-10-07' };
+  const trend = buildSalesTrend({
+    window,
+    selected: { from: '2026-09-01', to: '2026-09-30' },
+    goals: [goalRow('2026-06-01'), goalRow('2026-08-01'), goalRow('2026-09-01'), goalRow('2026-10-01', { invoiced_value_target: 700 })],
+    data: {
+      quotes: [quoteRow('2026-06-29', 100), quoteRow('2026-09-10', 300), quoteRow('2026-06-15', 9999)],
+      orders: [
+        orderRow('2026-08-05T09:00:00Z', 200),
+        orderRow('2026-07-01T09:00:00Z', 400, { status: 'invoiced', fortnox_invoiced_at: '2026-09-20T09:00:00Z' }),
+        orderRow('2026-09-02T09:00:00Z', 5000, { status: 'cancelled' }),
+      ],
+      invoiceRounds: [],
+    },
+  });
+  const point = (period: string) => trend.points.find((p) => p.period === period)!;
+
+  it('en punkt per månad i fönstret', () => {
+    expect(trend.points.map((p) => p.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+    expect(trend.range).toEqual(window);
+  });
+
+  it('räknar som rapporten: ordervärde på skapandedagen, fakturerat på fakturadagen, avbrutna bort', () => {
+    expect(point('2026-08').orderValue).toBe(200);
+    expect(point('2026-07').orderValue).toBe(400);
+    expect(point('2026-09').invoicedValue).toBe(400);
+    expect(point('2026-09').orderValue).toBe(0);
+    expect(point('2026-09').quoteValue).toBe(300);
+  });
+
+  it('räknar inte offerter före fönstret, även i fönstrets första månad', () => {
+    // 15 juni ligger i juni men före första aktivitetsdagen 29 juni.
+    expect(point('2026-06').quoteValue).toBe(100);
+  });
+
+  it('märker delmånaderna — den första (CRM:et startade 29 juni) och den pågående', () => {
+    expect(point('2026-06').partial).toEqual({ from: '2026-06-29', to: '2026-06-30' });
+    expect(point('2026-10').partial).toEqual({ from: '2026-10-01', to: '2026-10-07' });
+    expect(point('2026-08').partial).toBeNull();
+  });
+
+  it('🧨 visar målet bara på HELA månader — aldrig på en delmånad, budget eller ej', () => {
+    // Juni och oktober har budget, men bara 2 respektive 7 dagars utfall. Ställda mot hela månadens
+    // mål hade de sett ut att ligga långt efter.
+    expect(point('2026-06').goals).toEqual({ quoteValue: null, orderValue: null, invoicedValue: null });
+    expect(point('2026-10').goals).toEqual({ quoteValue: null, orderValue: null, invoicedValue: null });
+    expect(point('2026-08').goals).toEqual({ quoteValue: 1000, orderValue: 500, invoicedValue: null });
+  });
+
+  it('en hel månad utan budget har inga mål', () => {
+    expect(point('2026-07').goals).toEqual({ quoteValue: null, orderValue: null, invoicedValue: null });
+  });
+
+  it('markerar månaderna i den valda perioden', () => {
+    expect(trend.points.filter((p) => p.inPeriod).map((p) => p.period)).toEqual(['2026-09']);
+  });
+
+  it('ritar inga mål när målen inte gick att läsa', () => {
+    const noGoals = buildSalesTrend({ window, selected: window, goals: null, data: { quotes: [], orders: [], invoiceRounds: [] } });
+    expect(noGoals.points.every((p) => Object.values(p.goals).every((g) => g == null))).toBe(true);
   });
 });
