@@ -256,7 +256,10 @@ const fieldHint = 'm-0 text-xs leading-snug text-slate-500';
 // ─── CustomerSearchPicker ─────────────────────────────────────────────────────
 
 // Kundkortets uppgifter visas här, inte som fält: adressen och telefonen går inte att ändra i
-// offerten (kortet vinner, se project_crm_snapshot_vs_card) — man ändrar dem på kundkortet.
+// offerten — man ändrar dem på kundkortet. De visas LEVANDE ur kortet, inte ur offertens snapshot:
+// för en kopplad kund är det kortet arbetsordern löser adressen ur (ingen egen arbetsadress → kortet),
+// och Fortnox-offerten bär Fortnox-kundens egen adress. Snapshotens kopia används bara när en
+// okopplad kund ska skapas i Fortnox.
 function CustomerSearchPicker({
   selectedCustomer,
   onSelect,
@@ -301,7 +304,8 @@ function CustomerSearchPicker({
     // Besöksadressen, inte fakturaadressen: det är den offerten och arbetsordern använder
     // (customerDraftFields). Etiketten är kundkortets egen.
     const address = [visit?.street, [visit?.postal_code, visit?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-    const phone = selectedCustomer.phone || selectedCustomer.mobile;
+    // Kundens egen telefon (som på kundkortet), inte kontaktpersonens — den står under Er referens.
+    const phone = selectedCustomer.phone?.trim() || selectedCustomer.mobile?.trim() || '';
     // Personnumret står aldrig här — orten räcker för att känna igen en privatkund.
     const subline = selectedCustomer.customer_type === 'business'
       ? [selectedCustomer.organization_number, visit?.city].filter(Boolean).join(', ')
@@ -409,18 +413,11 @@ function CustomerSearchPicker({
                   </p>
                 )}
               </div>
-              {/* Always reachable – two customers can share a name, so "create new" must
-                  never hide behind a match. */}
-              <button
-                type="button"
-                onMouseDown={onCreateNew}
-                className="flex w-full items-center justify-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-              >
-                <span className="text-base leading-none">+</span> Skapa ny kund
-              </button>
             </div>
           ) : null}
         </div>
+        {/* Alltid synlig bredvid fältet — två kunder kan heta likadant, så "skapa ny" får aldrig
+            gömma sig bakom en träff i listan. */}
         <button
           type="button"
           onClick={onCreateNew}

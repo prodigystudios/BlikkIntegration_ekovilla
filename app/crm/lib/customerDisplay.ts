@@ -9,19 +9,26 @@ export type CustomerNameFields = {
 };
 
 export function customerDisplayName(item: CustomerNameFields): string {
-  if (item.customer_type === 'business') return item.company_name || 'Okänt företag';
-  const parts = [item.first_name, item.last_name].filter(Boolean);
+  if (item.customer_type === 'business') return item.company_name?.trim() || 'Okänt företag';
+  const parts = [item.first_name?.trim(), item.last_name?.trim()].filter(Boolean);
   return parts.length > 0 ? parts.join(' ') : 'Okänd kund';
 }
 
+// Första TECKNET, inte första UTF-16-enheten: ett "Å" inklistrat som A + ring, eller en emoji först i
+// namnet, hade annars gett ett halvt tecken i rutan.
+function firstChar(word: string | null | undefined): string {
+  return Array.from((word ?? '').trim().normalize('NFC'))[0] ?? '';
+}
+
+// Initialerna följer SAMMA namn som står bredvid dem: ett företag utan företagsnamn heter "Okänt
+// företag" och får "?", inte initialer ur ett för- och efternamn som inte syns.
 export function customerInitials(item: CustomerNameFields): string {
-  if (item.customer_type === 'business' && item.company_name) {
-    const words = item.company_name.trim().split(/\s+/);
-    return words.length >= 2
-      ? (words[0][0] + words[1][0]).toUpperCase()
-      : words[0].slice(0, 2).toUpperCase();
+  if (item.customer_type === 'business') {
+    const words = (item.company_name ?? '').trim().normalize('NFC').split(/\s+/).filter(Boolean);
+    if (words.length === 0) return '?';
+    return (words.length >= 2
+      ? firstChar(words[0]) + firstChar(words[1])
+      : Array.from(words[0]).slice(0, 2).join('')).toUpperCase();
   }
-  const f = item.first_name?.[0] ?? '';
-  const l = item.last_name?.[0] ?? '';
-  return (f + l).toUpperCase() || '?';
+  return (firstChar(item.first_name) + firstChar(item.last_name)).toUpperCase() || '?';
 }
