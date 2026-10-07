@@ -4,7 +4,7 @@ import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
 import { cn } from '@/lib/shared/cn';
 import { parseDecimal } from '@/lib/shared/number';
-import { splitRowLabor, marginTier, MARGIN_THRESHOLDS, type MarginTier } from '@/lib/domains/crm/pricing';
+import { splitRowLabor, marginTier, marginPercentForDisplay, MARGIN_THRESHOLDS, type MarginTier } from '@/lib/domains/crm/pricing';
 import { ROT_HOUSE_WORK_TYPES, ROT_HOUSE_WORK_LABELS } from '@/lib/domains/fortnox/types';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
 import ArticlePicker, { type ArticleLite } from './ArticlePicker';
@@ -84,10 +84,13 @@ export function MarginBadge({ marginPercent, className }: { marginPercent: numbe
     watch: 'border-amber-200 bg-amber-50 text-amber-700',
     bad: 'border-rose-200 bg-rose-50 text-rose-700',
   };
+  // Avrundad mot färgens sida om gränsen — 24,96 % fick annars ett rött "25.0 %". Samma tal som
+  // offertens TG-mätare, se marginPercentForDisplay.
+  const shown = marginPercentForDisplay(marginPercent).toFixed(1).replace('.', ',');
   const titles: Record<Exclude<MarginTier, 'unknown'>, string> = {
-    good: `Täckningsgrad ${marginPercent.toFixed(1)} % – över ${MARGIN_THRESHOLDS.good} %`,
-    watch: `Täckningsgrad ${marginPercent.toFixed(1)} % – grönt kräver över ${MARGIN_THRESHOLDS.good} %, se över priset`,
-    bad: `Täckningsgrad ${marginPercent.toFixed(1)} % – under ${MARGIN_THRESHOLDS.watch} %, offerten kräver godkännande`,
+    good: `Täckningsgrad ${shown} % – över ${MARGIN_THRESHOLDS.good} %`,
+    watch: `Täckningsgrad ${shown} % – grönt kräver över ${MARGIN_THRESHOLDS.good} %, se över priset`,
+    bad: `Täckningsgrad ${shown} % – under ${MARGIN_THRESHOLDS.watch} %, offerten kräver godkännande`,
   };
 
   return (
@@ -101,7 +104,7 @@ export function MarginBadge({ marginPercent, className }: { marginPercent: numbe
         className,
       )}
     >
-      TG {marginPercent.toFixed(1)} %
+      TG {shown} %
     </span>
   );
 }

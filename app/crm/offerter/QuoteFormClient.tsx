@@ -12,11 +12,11 @@ import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLine
 import { constructionLabel, inferConstructionFromArticle, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import {
   rowMarginPercent, marginTier, marginPercentForDisplay, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
-  type MarginRow,
+  type MarginRow, type MarginTier,
 } from '@/lib/domains/crm/pricing';
 import { calculatePreCalculation, marginCostBasis } from '@/lib/domains/crm/preCalculation';
 import { getArticleUnitName } from '@/app/crm/components/ArticlePicker';
-import LineItemRow, { MarginBadge } from '@/app/crm/components/LineItemRow';
+import LineItemRow from '@/app/crm/components/LineItemRow';
 import { LineItemTotalsBar, GeneratedRotLaborRow } from '@/app/crm/components/LineItemSummary';
 import { useCalcSettings } from './useCalcSettings';
 import { crm } from '@/app/crm/lib/crmTokens';
@@ -220,6 +220,8 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     const unpriced = effectiveRows.filter((item) => item.isConfigured && isUnpricedLineItem(item));
     if (unpriced.length) {
       const rader = unpriced.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      // ⚠️ "Rad N"/"Rader N, M" i början av texten är vad checklistan känner igen raden på
+      // (issueTargetId) — ändras början slutar punkten leda till radkortet.
       // "Skriv 0 om raden ingår" står med FÖR ATT det är ett riktigt fall, inte ett kryphål: en
       // fraktrad som ingår i priset är en medveten nolla. Utan den meningen läser säljaren spärren
       // som att gratisrader inte går att göra längre, och bygger en omväg (fullpris + 100 % rabatt)
@@ -238,6 +240,7 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
     const over = effectiveRows.filter((r) => r.isConfigured && !r.is_rot_work && r.rotLaborLeavesNoMaterial);
     if (over.length) {
       const rader = over.map((r) => effectiveRows.indexOf(r) + 1).join(', ');
+      // ⚠️ Samma början som prisspärren ovan — issueTargetId läser den.
       issues.push(
         `${over.length === 1 ? 'Rad' : 'Rader'} ${rader}: arbetskostnaden äter hela A-priset — inget material blir kvar`,
       );
@@ -491,8 +494,7 @@ function SwitchTrack({ checked, onChange }: { checked: boolean; onChange: (next:
 // luft omkring sig. TG över skalan nålas mot högerkanten, en förlust mot vänsterkanten.
 const MARGIN_GAUGE_MAX = 60;
 
-function MarginGauge({ marginPercent }: { marginPercent: number }) {
-  const tier = marginTier(marginPercent);
+function MarginGauge({ marginPercent, tier }: { marginPercent: number; tier: MarginTier }) {
   const at = (value: number) => `${(Math.min(Math.max(value, 0), MARGIN_GAUGE_MAX) / MARGIN_GAUGE_MAX) * 100}%`;
   const valueClass = tier === 'good' ? 'text-emerald-700' : tier === 'watch' ? 'text-amber-700' : 'text-rose-700';
   const needleClass = tier === 'good' ? 'bg-emerald-800' : tier === 'watch' ? 'bg-amber-800' : 'bg-rose-800';
@@ -1376,7 +1378,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const issueFieldIds: Record<string, string> = {
     'Kund måste anges': 'section-kund',
     'Företagsnamn krävs': 'section-kund',
-    'Personnummer krävs för ROT': 'section-kund',
     'Er referens krävs': 'field-contact-name',
     'Offertnamn saknas': 'field-project-name',
     'Lägg till minst en rad': 'section-rader',
@@ -1393,8 +1394,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     return issueFieldIds[issue] ?? (/^Rad(er)? \d/.test(issue) ? 'section-rader' : null);
   }
 
+  // Ett fält centreras; ett helt kort (section-*) visas från sin topp — centrerat hamnade början
+  // av ett långt radkort utanför skärmen.
   function scrollToField(fieldId: string) {
-    document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: fieldId.startsWith('section-') ? 'start' : 'center' });
   }
 
   function handleBack() {
@@ -1836,14 +1839,18 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           </svg>
           {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : 'Offerter'}
         </button>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className={cn(crm.badge, quoteStatusMeta[draft.status].className)}>{quoteStatusMeta[draft.status].label}</span>
-          {/* Offertnumret står här i stället för i ett avstängt fält — det går inte att ändra, och
-              ett grått fält mitt i formuläret såg ut som något man borde fylla i. */}
-          {isEditing && loadedQuote?.quote_number ? (
-            <span className="text-xs font-medium tabular-nums text-slate-600">Offertnr {loadedQuote.quote_number}</span>
-          ) : null}
-        </div>
+        {/* Den SPARADE statusen, inte rullgardinens: ändrar man till Vunnen utan att spara ska
+            sidhuvudet inte redan påstå att offerten är vunnen. Offertnumret står här i stället för i
+            ett avstängt fält — det går inte att ändra, och ett grått fält mitt i formuläret såg ut
+            som något man borde fylla i. */}
+        {isEditing && loadedQuote ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn(crm.badge, quoteStatusMeta[loadedQuote.status].className)}>{quoteStatusMeta[loadedQuote.status].label}</span>
+            {loadedQuote.quote_number ? (
+              <span className="text-xs font-medium tabular-nums text-slate-600">Offertnr {loadedQuote.quote_number}</span>
+            ) : null}
+          </div>
+        ) : null}
         <div>
           <h1 className={cn('m-0', crm.pageTitle)}>
             {isEditing ? (draft.project_name || 'Redigera offert') : (isCopy ? 'Kopiera offert' : 'Ny offert')}
@@ -2573,7 +2580,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             <p className="m-0 mt-1 text-2xl font-bold leading-tight tracking-tight tabular-nums text-slate-900">
               {headlineAmount != null && Number.isFinite(headlineAmount)
                 ? formatCurrency(headlineAmount, 'SEK')
-                : <span className="text-slate-300">{formatCurrency(0, 'SEK')}</span>}
+                : <span className="text-slate-400">—</span>}
             </p>
             {headlineAmount != null && Number.isFinite(headlineAmount) && summaryVat != null && summaryTotal != null ? (
               <p className="m-0 mt-0.5 text-[13px] tabular-nums text-slate-600">
@@ -2605,7 +2612,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     som huvudposten. Visas bara när minst en rad går att bedöma. */}
                 {quoteMarginResult.marginPercent != null ? (
                   <>
-                    <MarginGauge marginPercent={quoteMarginResult.marginPercent} />
+                    <MarginGauge marginPercent={quoteMarginResult.marginPercent} tier={quoteMarginTier} />
                     {quoteMarginResult.unpricedRows > 0 ? (
                       // Utan den här upplysningen ser TG:n ut att gälla hela offerten, och en
                       // grön siffra kan dölja att halva beloppet aldrig bedömdes.
