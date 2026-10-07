@@ -203,6 +203,10 @@ export const crm = {
   // Use `cardInner` for detail/form cards that have their own internal padding.
   card: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
   cardInner: 'rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-3.5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]',
+  // En grupperad yta INUTI ett kort (en lista med reglage, en utfälld rad, en statusrad). En ton
+  // MÖRKARE än kortet, aldrig vitare: en vit panel blir den ljusaste ytan på sidan och drar
+  // blicken från det som ska läsas (William 2026-10-07, offertformuläret). Fälten får vara vita.
+  sunken: 'border border-[#dde6d9] bg-[#f1f5ee]',
 
   // Badge base — combine with a stage/status color class:
   //   cn(crm.badge, customerStageClass[item.customer_stage])

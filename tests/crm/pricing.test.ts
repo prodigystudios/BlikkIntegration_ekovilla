@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   lineItemRowTotal, computePricing, resolveQuoteVatBreakdown, quoteAmountDisplay,
-  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemRotLabor, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, marginPercentForDisplay, quoteMargin, splitRowLabor, lineItemRotLabor, MARGIN_THRESHOLDS,
   netAmount,
 } from '@/lib/domains/crm/pricing';
 
@@ -265,6 +265,31 @@ describe('marginTier', () => {
     expect(marginTier(45, { good: 40, watch: 30 })).toBe('good');
     expect(marginTier(35, { good: 40, watch: 30 })).toBe('watch');
     expect(marginTier(25, { good: 40, watch: 30 })).toBe('bad');
+  });
+});
+
+describe('marginPercentForDisplay', () => {
+  // Siffran står bredvid färgen (offertens TG-mätare). Vanlig avrundning lät den påstå exakt den
+  // gräns den låg på fel sida om: rött "25,0 %" och grönt "40,0 %".
+  it('flyttar siffran in på färgens sida när avrundningen hade landat på gränsen', () => {
+    expect(marginTier(24.96)).toBe('bad');
+    expect(marginPercentForDisplay(24.96).toFixed(1)).toBe('24.9');
+    expect(marginTier(40.04)).toBe('good');
+    expect(marginPercentForDisplay(40.04).toFixed(1)).toBe('40.1');
+  });
+
+  it('rör inte värden som redan hamnar rätt — 39,96 % får bli "40,0" eftersom 40,0 är gult', () => {
+    expect(marginPercentForDisplay(39.96).toFixed(1)).toBe('40.0');
+    expect(marginTier(39.96)).toBe('watch');
+    expect(marginPercentForDisplay(25).toFixed(1)).toBe('25.0');
+    expect(marginPercentForDisplay(40).toFixed(1)).toBe('40.0');
+    expect(marginPercentForDisplay(24.94).toFixed(1)).toBe('24.9');
+    expect(marginPercentForDisplay(45.46).toFixed(1)).toBe('45.5');
+    expect(marginPercentForDisplay(-5).toFixed(1)).toBe('-5.0');
+  });
+
+  it('följer egna trösklar', () => {
+    expect(marginPercentForDisplay(29.97, { good: 40, watch: 30 }).toFixed(1)).toBe('29.9');
   });
 });
 

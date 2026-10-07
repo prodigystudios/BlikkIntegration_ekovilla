@@ -389,6 +389,25 @@ export function marginTier(
 }
 
 /**
+ * TG med en decimal, avrundad så att siffran hamnar på SAMMA sida om gränserna som färgen.
+ *
+ * Vanlig avrundning gör 24,96 % till "25,0 %" i rött och 40,04 % till "40,0 %" i grönt: siffran
+ * påstår då exakt den gräns den ligger på fel sida om, och säljaren läser rött på en offert som
+ * står på gränsen. Bara de två fallen flyttas, ett tiondels steg in på färgens sida — 39,96 % blir
+ * fortfarande "40,0 %", för 40,0 är gult.
+ */
+export function marginPercentForDisplay(
+  marginPercent: number,
+  thresholds: { good: number; watch: number } = MARGIN_THRESHOLDS,
+): number {
+  const rounded = Math.round(marginPercent * 10) / 10;
+  const tier = marginTier(marginPercent, thresholds);
+  if (tier === 'bad' && rounded >= thresholds.watch) return thresholds.watch - 0.1;
+  if (tier === 'good' && rounded <= thresholds.good) return thresholds.good + 0.1;
+  return rounded;
+}
+
+/**
  * Offertens samlade TG över de rader som går att räkna på.
  *
  * Summerar intäkt och kostnad var för sig i stället för att medelvärdesbilda radernas procent — ett
