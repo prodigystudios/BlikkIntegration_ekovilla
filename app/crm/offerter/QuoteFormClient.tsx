@@ -11,7 +11,7 @@ import { parseDecimal } from '@/lib/shared/number';
 import { lineItemQuantity, isBlankLineItem, isUnpricedLineItem, isConfiguredLineItem, pricingModeFromUnit } from '@/lib/domains/crm/lineItems';
 import { constructionLabel, inferConstructionFromArticle, type ConstructionSlug } from '@/lib/domains/crm/constructions';
 import {
-  rowMarginPercent, marginTier, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
+  rowMarginPercent, marginTier, marginPercentForDisplay, quoteMargin, splitRowLabor, lineItemUnitPrice, MARGIN_THRESHOLDS,
   type MarginRow,
 } from '@/lib/domains/crm/pricing';
 import { calculatePreCalculation, marginCostBasis } from '@/lib/domains/crm/preCalculation';
@@ -396,36 +396,131 @@ function Field({
   );
 }
 
-// ─── Section header (numbered circle + title + optional action) ────────────────
+// Förklaringen under ett fält. slate-500, inte 400: 400 ger 2,46:1 mot kortet (se crm.sectionTitle).
+const fieldHint = 'm-0 text-xs leading-snug text-slate-500';
 
-function SectionHeader({
-  step,
+// ─── Section card (rubrik + en rad förklaring + hårlinje) ─────────────────────
+
+// Ett kort per sektion. Rubriken och en rad om vad sektionen är till för skiljer dem åt — inte
+// numrerade cirklar (sektionerna är ingen ordningsföljd man måste gå igenom) och inte lådor i lådor.
+// `internal` är det nedtonade kortet för det som aldrig når kunden: ingen skugga, en ton mörkare än
+// sidans kort, och ett lås framför rubriken.
+function FormSection({
+  id,
   title,
+  description,
   action,
-  muted,
+  internal,
   className,
+  children,
 }: {
-  step: React.ReactNode;
+  id: string;
   title: string;
+  description?: React.ReactNode;
   action?: React.ReactNode;
-  muted?: boolean;
+  internal?: boolean;
   className?: string;
+  children: React.ReactNode;
 }) {
   return (
-    <div className={cn('mb-6 flex items-center gap-3', action ? 'justify-between' : '', className)}>
-      <div className="flex items-center gap-3">
-        <span
-          className={cn(
-            'flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold',
-            muted ? 'bg-slate-200 text-slate-600' : 'text-white',
-          )}
-          style={muted ? undefined : { backgroundColor: 'var(--crm-primary)' }}
-        >
-          {step}
-        </span>
-        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+    <section
+      id={id}
+      aria-labelledby={`${id}-title`}
+      className={cn(
+        'min-w-0 scroll-mt-6',
+        internal ? 'rounded-2xl border border-[#d8e2d4] bg-[#edf2ea]' : crm.card,
+        className,
+      )}
+    >
+      <div
+        className={cn(
+          'flex flex-wrap items-start justify-between gap-3 border-b px-5 py-4 sm:px-6',
+          internal ? 'border-[#dae3d6]' : 'border-[#e6ede3]',
+        )}
+      >
+        <div className="flex min-w-0 items-start gap-3">
+          {internal ? (
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true" className="mt-px shrink-0 text-slate-500">
+              <rect x="4" y="8.5" width="12" height="8.5" rx="1.75" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M6.75 8.5V6.25a3.25 3.25 0 0 1 6.5 0V8.5" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          ) : null}
+          <div className="min-w-0">
+            <h2 id={`${id}-title`} className={cn('m-0', crm.cardTitle)}>{title}</h2>
+            {description ? <p className="m-0 mt-0.5 text-[13px] text-slate-600">{description}</p> : null}
+          </div>
+        </div>
+        {action ?? null}
       </div>
-      {action ?? null}
+      <div className="grid gap-5 px-5 py-5 sm:px-6">{children}</div>
+    </section>
+  );
+}
+
+// ─── Reglage (switch) ─────────────────────────────────────────────────────────
+
+// En äkta kryssruta med role="switch" under en ritad bana: tangentbordet, klick på den omslutande
+// <label> och skärmläsaren följer med gratis. Ska ligga INUTI en <label> som bär texten.
+function SwitchTrack({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <span className="relative inline-flex shrink-0">
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden="true"
+        className={cn(
+          'relative h-5 w-9 rounded-full bg-slate-300 transition-colors motion-reduce:transition-none',
+          'peer-checked:bg-[color:var(--ek-accent)]',
+          'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--ek-accent)]',
+          "after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(15,23,42,0.25)] after:transition-transform after:content-[''] motion-reduce:after:transition-none",
+          'peer-checked:after:translate-x-4',
+        )}
+      />
+    </span>
+  );
+}
+
+// ─── Täckningsgraden som mätare ───────────────────────────────────────────────
+
+// Skalan slutar på 60 %: där ligger offerterna, och 25/40 hamnar så att båda gränserna syns med
+// luft omkring sig. TG över skalan nålas mot högerkanten, en förlust mot vänsterkanten.
+const MARGIN_GAUGE_MAX = 60;
+
+function MarginGauge({ marginPercent }: { marginPercent: number }) {
+  const tier = marginTier(marginPercent);
+  const at = (value: number) => `${(Math.min(Math.max(value, 0), MARGIN_GAUGE_MAX) / MARGIN_GAUGE_MAX) * 100}%`;
+  const valueClass = tier === 'good' ? 'text-emerald-700' : tier === 'watch' ? 'text-amber-700' : 'text-rose-700';
+  const needleClass = tier === 'good' ? 'bg-emerald-800' : tier === 'watch' ? 'bg-amber-800' : 'bg-rose-800';
+  return (
+    <div className="grid gap-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[13px] font-medium text-slate-700">Täckningsgrad</span>
+        <span className={cn('text-[15px] font-bold tabular-nums', valueClass)}>
+          {marginPercentForDisplay(marginPercent).toFixed(1).replace('.', ',')} %
+        </span>
+      </div>
+      {/* Siffran ovanför bär värdet för skärmläsaren — mätaren är en bild av samma sak. */}
+      <div className="relative pt-1" aria-hidden="true">
+        {/* Bredderna och nålens läge är uträknad geometri, därav style. */}
+        <div className="flex h-2 overflow-hidden rounded-full">
+          <span className="bg-rose-200" style={{ width: at(MARGIN_THRESHOLDS.watch) }} />
+          <span className="bg-amber-200" style={{ width: `calc(${at(MARGIN_THRESHOLDS.good)} - ${at(MARGIN_THRESHOLDS.watch)})` }} />
+          <span className="flex-1 bg-emerald-200" />
+        </div>
+        <span
+          className={cn('absolute top-0 h-4 w-[3px] -translate-x-1/2 rounded-full ring-2 ring-[#f9fbf7]', needleClass)}
+          style={{ left: at(marginPercent) }}
+        />
+        <div className="relative mt-1.5 h-4 text-[11px] tabular-nums text-slate-500">
+          <span className="absolute -translate-x-1/2" style={{ left: at(MARGIN_THRESHOLDS.watch) }}>{MARGIN_THRESHOLDS.watch} %</span>
+          <span className="absolute -translate-x-1/2" style={{ left: at(MARGIN_THRESHOLDS.good) }}>{MARGIN_THRESHOLDS.good} %</span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1286,16 +1381,20 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     'Offertnamn saknas': 'field-project-name',
     'Lägg till minst en rad': 'section-rader',
     'Ofullständiga rader — mängd och pris krävs': 'section-rader',
-    // Prisspärren och ROT-spärren namnger raden i meddelandet och kan därför inte nycklas här —
-    // texten är olika varje gång. De scrollar inte, precis som ROT-spärren aldrig har gjort.
+    'Prospektkälla kräver valt prospekt': 'section-kund',
+    'Fortnox-kund behöver kundreferens': 'section-kund',
+    // ROT-reglaget visas bara för privatkund, så det är kundtypen man ska till.
+    'ROT är bara tillåtet för privatkund': 'section-kund',
   };
+
+  // Pris- och ROT-spärren namnger raderna i texten ("Rad 2: …", "Rader 1, 3: …") och kan inte nycklas
+  // ovan — texten är olika varje gång. De går till radkortet, så varje punkt i checklistan leder någonstans.
+  function issueTargetId(issue: string): string | null {
+    return issueFieldIds[issue] ?? (/^Rad(er)? \d/.test(issue) ? 'section-rader' : null);
+  }
 
   function scrollToField(fieldId: string) {
     document.getElementById(fieldId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
-  function scrollToSection(id: string) {
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   function handleBack() {
@@ -1388,7 +1487,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // an incomplete quote — surface the first issue and scroll to its field.
     if (issues.length > 0) {
       toast.error(issues[0]);
-      const firstFieldId = issueFieldIds[issues[0]];
+      const firstFieldId = issueTargetId(issues[0]);
       if (firstFieldId) scrollToField(firstFieldId);
       return;
     }
@@ -1689,9 +1788,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // passerade då hela valideringen utan att någon kontroll tittade på den.
   const hasAnyLineItemInput = draft.items.some((item) => isConfiguredLineItem(item));
 
-  const sidebarDisplayName = draft.quote_type === 'business'
-    ? (draft.company_name || draft.customer_name)
-    : draft.customer_name;
   // Unified amount breakdown for the summary UI — mirrors the save payload's pricing_summary
   // exactly. The offer is always built from article rows (no manual amount field), so the figures
   // come from `totals`; before any row is configured they're null and the summary shows "—".
@@ -1712,30 +1808,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const headlineLabel = isPrivateQuote ? 'Total inkl. moms' : 'Belopp ex moms';
   const headlineAmount = isPrivateQuote ? summaryTotal : summarySubtotal;
 
-  // Single source of truth for the visible sections (in order). Drives both the
-  // section header numbers and the sidebar nav so they can never drift apart.
-  // `done: undefined` marks an internal section with no completion requirement.
   // Vilket val i giltighetstids-rullgardinen datumen motsvarar (null = eget datum). Härlett, inte
   // lagrat — se matchedValidityPreset i quoteSerializers.
   const validityPreset = matchedValidityPreset(draft.quote_date, draft.valid_until);
-
-
-  const sections: { id: string; label: string; done?: boolean }[] = [
-    { id: 'section-kund', label: 'Kund', done: Boolean(draft.quote_type === 'business' ? (draft.company_name || draft.customer_name) : draft.customer_name) },
-    { id: 'section-offert', label: 'Offert', done: Boolean(draft.project_name.trim()) },
-    { id: 'section-rader', label: 'Produkter & priser', done: hasAnyLineItemInput },
-    // ROT-sektionen har inget eget krav för att offerten ska gå att spara: varken personnummer
-    // eller fastighetsbeteckning efterfrågas förrän arbetsordern skapas. `done: undefined` håller
-    // den utanför förloppsräknaren i stället för att visa den som evigt ofullständig.
-    ...(draft.quote_type === 'private' && draft.rot_enabled
-      ? [{ id: 'section-rot', label: 'ROT-avdrag' }]
-      : []),
-    { id: 'section-handoff', label: 'Intern handoff' },
-    ...(isEditing && loadedQuote ? [{ id: 'section-arbetsorder', label: 'Arbetsorder' }] : []),
-  ];
-  const requiredSections = sections.filter((s) => s.done !== undefined);
-  const doneSteps = requiredSections.filter((s) => s.done).length;
-  const stepOf = (id: string) => sections.findIndex((s) => s.id === id) + 1;
 
   // Slås upp mot draften i stället för att lägga undan hela raden i state: raden kan redigeras
   // medan dialogen står öppen (den täcker inte formuläret på desktop), och en kopia hade då kunnat
@@ -1745,33 +1820,45 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     : null;
 
   return (
-    <div className="grid gap-6 pb-20 lg:pb-0">
+    // Bredden tas om hand här: på en bred skärm drogs fälten förr ut över hela ytan. 1680 px ger två
+    // kort sida vid sida plus högerspalten, och resten av ytan står tom i stället för i fälten.
+    <div className="mx-auto grid w-full max-w-[1680px] gap-6 pb-20 lg:pb-0">
 
-      {/* ── Header (matches the customer page) ── */}
-      <div>
+      {/* ── Sidhuvud ── */}
+      <header className="grid gap-2">
         <button
           type="button"
           onClick={handleBack}
-          className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800"
+          className="inline-flex w-fit items-center gap-1.5 px-0 py-1 text-sm text-slate-600 transition hover:text-slate-900"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : 'Offerter'}
         </button>
-        <h1 className={crm.pageTitle}>
-          {isEditing ? (draft.project_name || 'Redigera offert') : (isCopy ? 'Kopiera offert' : 'Ny offert')}
-        </h1>
-        <p className={cn('mt-0.5', crm.pageSubtitle)}>
-          {isEditing
-            ? 'Uppdatera offertens uppgifter och status.'
-            : isCopy
-              // Säger uttryckligen att originalet står kvar. Ett färdigfyllt formulär läser annars
-              // som en redigering, och då vågar man inte ändra något.
-              ? `Uppgifterna är hämtade från ${copySourceName ? `”${copySourceName}”` : 'den valda offerten'}. Ändra det som skiljer och spara – originalet rörs inte, och kopian får ett eget offertnummer.`
-              : 'Fyll i uppgifterna nedan för att skapa en ny offert.'}
-        </p>
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={cn(crm.badge, quoteStatusMeta[draft.status].className)}>{quoteStatusMeta[draft.status].label}</span>
+          {/* Offertnumret står här i stället för i ett avstängt fält — det går inte att ändra, och
+              ett grått fält mitt i formuläret såg ut som något man borde fylla i. */}
+          {isEditing && loadedQuote?.quote_number ? (
+            <span className="text-xs font-medium tabular-nums text-slate-600">Offertnr {loadedQuote.quote_number}</span>
+          ) : null}
+        </div>
+        <div>
+          <h1 className={cn('m-0', crm.pageTitle)}>
+            {isEditing ? (draft.project_name || 'Redigera offert') : (isCopy ? 'Kopiera offert' : 'Ny offert')}
+          </h1>
+          <p className={cn('m-0 mt-0.5', crm.pageSubtitle)}>
+            {isEditing
+              ? 'Uppdatera offertens uppgifter och status.'
+              : isCopy
+                // Säger uttryckligen att originalet står kvar. Ett färdigfyllt formulär läser annars
+                // som en redigering, och då vågar man inte ändra något.
+                ? `Uppgifterna är hämtade från ${copySourceName ? `”${copySourceName}”` : 'den valda offerten'}. Ändra det som skiljer och spara – originalet rörs inte, och kopian får ett eget offertnummer.`
+                : 'Välj kund, fyll i offertuppgifterna och lägg till rader.'}
+          </p>
+        </div>
+      </header>
 
       {/* ── Resume unsaved draft ── */}
       {recoverableDraft ? (
@@ -1804,38 +1891,44 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         </div>
       ) : null}
 
-      {/* ── Two-column layout ── */}
-      <div className="grid gap-5 lg:grid-cols-[1fr_304px] lg:items-start">
+      {/* ── Formuläret + högerspalten ── */}
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_304px] xl:grid-cols-[minmax(0,1fr)_340px]">
 
-        {/* ── Left: form sections (each its own card) ── */}
-        <div className="grid gap-5">
+        {/* ── Vänster: ett kort per sektion ── */}
+        <div className="grid min-w-0 gap-5">
 
-          {/* ── Section 1: Kund ── */}
-          <div id="section-kund" className={cn('scroll-mt-6', crm.cardInner)}>
-            <SectionHeader
-              step={stepOf('section-kund')}
-              title="Kund"
-              action={
-                <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
-                  {(['business', 'private'] as const).map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
-                      className={cn(
-                        'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
-                        draft.quote_type === type
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700',
-                      )}
-                    >
-                      {type === 'business' ? 'Företag' : 'Privat'}
-                    </button>
-                  ))}
-                </div>
-              }
-            />
+          {/* Kund och Offertuppgifter sida vid sida när BÅDA får minst 36rem, annars staplade. Det är
+              spaltens bredd som avgör och inte fönstrets: sidomenyn är 224 eller 68 px beroende på om
+              den är utfälld, så en brytpunkt på fönstret hade slagit fel i det ena läget.
+              min(36rem,100%) så kolumnen aldrig blir bredare än en smal skärm. */}
+          <div className="grid grid-cols-[repeat(auto-fit,minmax(min(36rem,100%),1fr))] gap-5">
 
+          {/* ── Kund ── */}
+          <FormSection
+            id="section-kund"
+            title="Kund"
+            description="Uppgifterna hämtas från kundkortet."
+            action={
+              <div className="inline-flex rounded-lg border border-[#dce4d8] bg-[#eef3ec] p-0.5" role="group" aria-label="Kundtyp">
+                {(['business', 'private'] as const).map((type) => (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={draft.quote_type === type}
+                    onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
+                    className={cn(
+                      'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
+                      draft.quote_type === type
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900',
+                    )}
+                  >
+                    {type === 'business' ? 'Företag' : 'Privat'}
+                  </button>
+                ))}
+              </div>
+            }
+          >
             <div className="grid gap-4">
             <CustomerSearchPicker
               selectedCustomer={selectedCustomer}
@@ -1989,120 +2082,125 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 </div>
               ) : null}
             </div>
-          </div>
-          </div>
-
-          {/* ── Section 2: Offert ── */}
-          <div id="section-offert" className={cn('scroll-mt-6', crm.cardInner)}>
-            <SectionHeader step={stepOf('section-offert')} title="Offert" />
-
-          {isEditing && loadedQuote?.quote_number ? (
-            <div className="mb-4">
-              <Field label="Offertnummer">
-                <Input value={loadedQuote.quote_number} disabled className="text-slate-400" />
-              </Field>
             </div>
-          ) : null}
+          </FormSection>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <Field fieldId="field-project-name" label="Offertnamn / projekt" className="md:col-span-2" error={fieldErrors.project_name}>
-              <Input value={draft.project_name} onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))} placeholder="Ex. Takisolering villa Norrköping" />
-            </Field>
-            {/* `plain` — fältet bär numera en KNAPP ("Ny kontaktperson"), och en omslutande
-                <label> vidarebefordrar klick till sin kontroll. Se Field: composite widgets får
-                ett <div> och en egen aria-label på inmatningen i stället. */}
-            <Field fieldId="field-contact-name" label="Er referens (kontaktperson) *" plain className="md:col-span-2" error={fieldErrors.contact_name}>
-              {/* Contact picker — for a customer with several contacts, choose which one is
-                  responsible for this offer/order. Fills name/phone/email from the chosen
-                  contact; the free-text field below still allows a manual override. */}
-              {selectedCustomer && selectedCustomer.contacts.length > 0 ? (
-                <Select
-                  className="mb-2"
-                  aria-label="Välj kontaktperson"
-                  value={selectedCustomer.contacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
-                  onChange={(e) => {
-                    const c = selectedCustomer.contacts.find((x) => x.id === e.target.value);
-                    if (!c) return;
-                    // Fält för fält mot kundkortet (delad regel) — en kontaktrad utan telefon
-                    // eller e-post ska ärva kortets, inte tömma fälten. Privatkundens
-                    // automatiska rad bär bara namnet, så råa c.phone/c.email raderade numret.
-                    const resolved = resolveCrmContact(selectedCustomer, c);
-                    setDraft((d) => ({ ...d, contact_name: resolved.name, phone: resolved.phone, email: resolved.email }));
-                  }}
-                >
-                  <option value="">Skriv manuellt…</option>
-                  {selectedCustomer.contacts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}{c.role ? ` (${c.role})` : ''}{c.is_primary ? ' – primär' : ''}
-                    </option>
-                  ))}
-                </Select>
-              ) : null}
+          {/* ── Offertuppgifter ── */}
+          <FormSection
+            id="section-offert"
+            title="Offertuppgifter"
+            description="Namn, referenser och villkor."
+          >
+            <Field fieldId="field-project-name" label="Offertnamn *" error={fieldErrors.project_name}>
               <Input
-                value={draft.contact_name}
-                onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
-                placeholder="Ex. Birgitta Ling"
-                aria-label="Er referens (kontaktperson)"
+                value={draft.project_name}
+                onChange={(e) => setDraft((d) => ({ ...d, project_name: e.target.value }))}
+                placeholder="T.ex. Takisolering villa Norrköping"
+                className="text-[15px] font-medium"
               />
-              {/* Saknas personen på kundkortet — en ny platschef, en ny inköpare — ska man kunna
-                  lägga till hen här. Vägen förut var en resa till kundkortet mitt i skrivandet:
-                  utkastet stashas visserligen, men det är en omväg ingen ska behöva ta. */}
-              {selectedCustomer ? (
-                <button
-                  type="button"
-                  onClick={() => setContactFormOpen(true)}
-                  className="mt-1.5 inline-flex w-fit items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                  Ny kontaktperson
-                </button>
-              ) : null}
-              <p className="mt-1 text-[11px] leading-snug text-slate-400">
-                Obligatoriskt. Personen hos kunden som offerten gäller. Förifylls från kundkortet men kan ändras per offert – visas som ”Er referens” på Fortnox-offerten och följer med till order och faktura.
-              </p>
             </Field>
-            {draft.quote_type === 'business' ? (
-              <Field label="Märkning" className="md:col-span-2">
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              {/* Er referens bär en KNAPP ("Ny kontaktperson") i etikettraden, så den byggs utan
+                  Field: en omslutande <label> vidarebefordrar klick till sin kontroll. */}
+              <div id="field-contact-name" className="grid content-start gap-1.5">
+                <div className="flex min-h-6 items-center justify-between gap-2">
+                  <label htmlFor="quote-contact-name" className="w-auto text-xs font-semibold text-slate-600">Er referens *</label>
+                  {/* Saknas personen på kundkortet — en ny platschef, en ny inköpare — ska man kunna
+                      lägga till hen här. Vägen förut var en resa till kundkortet mitt i skrivandet:
+                      utkastet stashas visserligen, men det är en omväg ingen ska behöva ta. */}
+                  {selectedCustomer ? (
+                    <button
+                      type="button"
+                      onClick={() => setContactFormOpen(true)}
+                      className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs font-semibold text-[color:var(--ek-accent)] transition hover:bg-[#e9f1eb]"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                      Ny kontaktperson
+                    </button>
+                  ) : null}
+                </div>
+                {/* Contact picker — for a customer with several contacts, choose which one is
+                    responsible for this offer/order. Fills name/phone/email from the chosen
+                    contact; the free-text field below still allows a manual override. */}
+                {selectedCustomer && selectedCustomer.contacts.length > 0 ? (
+                  <Select
+                    aria-label="Välj kontaktperson"
+                    value={selectedCustomer.contacts.find((c) => c.name === draft.contact_name)?.id ?? ''}
+                    onChange={(e) => {
+                      const c = selectedCustomer.contacts.find((x) => x.id === e.target.value);
+                      if (!c) return;
+                      // Fält för fält mot kundkortet (delad regel) — en kontaktrad utan telefon
+                      // eller e-post ska ärva kortets, inte tömma fälten. Privatkundens
+                      // automatiska rad bär bara namnet, så råa c.phone/c.email raderade numret.
+                      const resolved = resolveCrmContact(selectedCustomer, c);
+                      setDraft((d) => ({ ...d, contact_name: resolved.name, phone: resolved.phone, email: resolved.email }));
+                    }}
+                  >
+                    <option value="">Skriv manuellt…</option>
+                    {selectedCustomer.contacts.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}{c.role ? ` (${c.role})` : ''}{c.is_primary ? ' – primär' : ''}
+                      </option>
+                    ))}
+                  </Select>
+                ) : null}
                 <Input
-                  value={draft.label}
-                  onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
-                  placeholder="Ex. projekt-/beställningsnr hos kunden"
+                  id="quote-contact-name"
+                  value={draft.contact_name}
+                  onChange={(e) => setDraft((d) => ({ ...d, contact_name: e.target.value }))}
+                  placeholder="T.ex. Birgitta Ling"
                 />
-                <p className="mt-1 text-[11px] leading-snug text-slate-400">
-                  Valfri. Visas som ”Ert referensnummer” på Fortnox-offerten och följer med till order och faktura. (Motsvarar fastighetsbeteckningen för privat ROT-kund – samma fält.)
+                {fieldErrors.contact_name ? (
+                  <p className="m-0 text-xs font-medium text-rose-600">{fieldErrors.contact_name}</p>
+                ) : null}
+                <p className={fieldHint}>
+                  Personen hos kunden som offerten gäller. Står som Er referens i Fortnox och följer med till order och faktura.
                 </p>
-              </Field>
-            ) : null}
-            {/* ROT toggle — only relevant for private customers. Lives here with the offer settings
-                (private counterpart to the business-only "Märkning" above); enabling it reveals the
-                ROT-avdrag section and the per-row "Varav arbetskostnad" field. */}
-            {draft.quote_type === 'private' ? (
-              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-4 py-3 md:col-span-2">
-                <span className="grid gap-0.5">
-                  <span className="text-sm font-medium text-slate-700">ROT-avdrag</span>
-                  <span className="text-[11px] leading-snug text-slate-400">Slå på för ROT-uppgifter och för att bryta ut arbetskostnad på raderna.</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={draft.rot_enabled}
-                  onChange={(e) => setDraft((d) => ({ ...d, rot_enabled: e.target.checked }))}
-                  className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                />
-              </label>
-            ) : null}
-            <Field label="Beskrivning" className="md:col-span-2">
-              <Textarea value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} rows={3} placeholder="Kort om omfattning eller vad som offereras" />
-            </Field>
-            {/* Moms + de två datumen på EN rad. Sex kolumner i stället för tre jämna: momsfältet
-                rymmer "25" och behöver inte en tredjedel av bredden, medan "Giltig till" bär två
-                kontroller (giltighetstid + datum) och behöver halva. */}
-            <div className="grid gap-4 sm:grid-cols-6 md:col-span-2">
-              <Field label="Moms %" className="sm:col-span-1">
-                <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
-              </Field>
-              <Field label="Offertdatum" plain className="sm:col-span-2">
+              </div>
+
+              {/* Etikettraden är lika hög som Er referens, där knappen gör den högre — annars
+                  hamnar fälten bredvid varandra på olika höjd. */}
+              {draft.quote_type === 'business' ? (
+                <div className="grid content-start gap-1.5">
+                  <div className="flex min-h-6 items-center">
+                    <label htmlFor="quote-label" className="w-auto text-xs font-semibold text-slate-600">Märkning</label>
+                  </div>
+                  <Input
+                    id="quote-label"
+                    value={draft.label}
+                    onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
+                    placeholder="Kundens projekt- eller beställningsnr"
+                  />
+                  <p className={fieldHint}>
+                    Valfri. Står som Ert referensnummer i Fortnox och följer med till order och faktura.
+                  </p>
+                </div>
+              ) : (
+                // ROT-reglaget står på Märkningens plats för privatkund. Påslaget visar det
+                // ROT-kortet och fältet "Varav arbetskostnad" på raderna.
+                <div className="grid content-start gap-1.5">
+                  <div className="flex min-h-6 items-center">
+                    <span className="text-xs font-semibold text-slate-600">ROT-avdrag</span>
+                  </div>
+                  <label className={cn('flex min-h-11 cursor-pointer select-none items-center justify-between gap-3 rounded-lg px-3', crm.sunken)}>
+                    <span className="text-sm text-slate-700">Offerten gäller ROT-arbete</span>
+                    <SwitchTrack checked={draft.rot_enabled} onChange={(on) => setDraft((d) => ({ ...d, rot_enabled: on }))} />
+                  </label>
+                  <p className={fieldHint}>Visar ROT-uppgifterna och låter dig bryta ut arbetskostnad på raderna.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Datumen och momsen på EN rad när kortet är brett nog: momsen rymmer "25" och behöver
+                ingen tredjedel, medan "Giltig till" bär två kontroller. flex-wrap och inte ett rutnät
+                med brytpunkter: kortets bredd beror på sidomenyn och på om korten står bredvid
+                varandra, och raden ska bryta efter sin EGEN bredd. Blir det trångt faller momsen
+                ned först, och behåller sin smala bredd. */}
+            <div className="flex flex-wrap gap-5">
+              <Field label="Offertdatum" plain className="min-w-0 flex-[1_1_10rem]">
                 {/* Ändras offertdatumet flyttas "Giltig till" med och BEHÅLLER giltighetstiden —
                     väljer man 15 dagar ska det förbli 15 dagar, inte ett datum som blir fel så fort
                     offertdatumet justeras. Ett datum som inte motsvarar något val i rullgardinen
@@ -2122,7 +2220,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   })}
                 />
               </Field>
-              <Field label="Giltig till" plain className="sm:col-span-3">
+              <Field label="Giltig till" plain className="min-w-0 flex-[1.5_1_19rem]">
                 {/* Rullgardinen är den snabba vägen: giltighetstiden är nästan alltid ett jämnt
                     antal dagar, och då ska ingen behöva räkna fram ett datum i kalendern. Valet
                     HÄRLEDS ur datumen (matchedValidityPreset) i stället för att lagras — ett eget
@@ -2150,9 +2248,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   <DatePicker value={draft.valid_until} onChange={(v) => setDraft((d) => ({ ...d, valid_until: v }))} aria-label="Giltig till" />
                 </div>
               </Field>
-              {/* Byggmoms-notisen står på egen rad under fälten, inte inuti momsfältet. Momskolumnen
-                  är en sjättedel bred nu, och där hade texten radbrutits till en smal remsa som
-                  drog upp höjden på hela raden. */}
+              <Field label="Moms %" className="min-w-0 flex-[0_0_6.5rem]">
+                <Input value={draft.vat_percent} onChange={(e) => setDraft((d) => ({ ...d, vat_percent: e.target.value }))} inputMode="decimal" placeholder="25" />
+              </Field>
+              {/* Byggmoms-notisen står på egen rad under fälten, inte inuti momsfältet — där hade
+                  texten radbrutits till en smal remsa som drog upp höjden på hela raden. */}
               {/* ⚠️ The notice must reflect the OFFER, not just the customer card. It used to state
                   "moms sätts till 0 %" purely from the card, so an offer sitting at 25 % — a quote
                   written before the customer got reverse charge, or one where the refresh could not
@@ -2161,11 +2261,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   is what actually reaches Fortnox. */}
               {selectedCustomer?.reverse_vat ? (
                 parseDecimal(draft.vat_percent) === 0 ? (
-                  <p className="text-[11px] leading-snug text-amber-700 sm:col-span-6">
+                  <p className="m-0 basis-full text-xs leading-snug text-amber-700">
                     Kunden har <strong>omvänd skattskyldighet</strong> – moms sätts till 0 %. Köparen redovisar momsen själv.
                   </p>
                 ) : (
-                  <p className="text-[11px] leading-snug text-rose-700 sm:col-span-6">
+                  <p className="m-0 basis-full text-xs leading-snug text-rose-700">
                     Kunden har <strong>omvänd skattskyldighet</strong>, men den här offerten står på{' '}
                     {draft.vat_percent} % moms.{' '}
                     <button
@@ -2179,25 +2279,33 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 )
               ) : null}
             </div>
-          </div>
 
-          {!isEditing ? (
-            <label className="mt-4 flex items-start gap-3">
-              <input
-                type="checkbox"
-                checked={draft.create_follow_up_task}
-                onChange={(e) => setDraft((d) => ({ ...d, create_follow_up_task: e.target.checked }))}
-                className="mt-0.5 h-4 w-4 rounded border-slate-300"
+            {/* Beskrivningen skickas inte till Fortnox (Remarks skickas inte alls, se offers.ts), och
+                det ska synas här — annars skriver säljaren den till kunden. */}
+            <div className="grid gap-1.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <label htmlFor="quote-description" className="w-auto text-xs font-semibold text-slate-600">Beskrivning</label>
+                <span className="text-xs text-slate-500">Intern, kommer inte med till Fortnox</span>
+              </div>
+              <Textarea
+                id="quote-description"
+                value={draft.description}
+                onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
+                rows={2}
+                placeholder="Kort om omfattningen eller vad som offereras"
               />
-              <span className="text-sm text-slate-500">Skapa uppföljningsuppgift automatiskt om ett uppföljningsdatum anges</span>
-            </label>
-          ) : null}
+            </div>
+          </FormSection>
           </div>
 
-          {/* ── Section 3: Rader ── */}
-          <div id="section-rader" className={cn('scroll-mt-6', crm.cardInner)}>
-            <SectionHeader step={stepOf('section-rader')} title="Produkter & priser" />
-
+          {/* ── Produkter och priser ── */}
+          <FormSection
+            id="section-rader"
+            title="Produkter och priser"
+            description="Offerten byggs av artikelrader. Dra i handtaget för att ändra ordningen."
+          >
+          {/* Ett omslag, så kortets avstånd mellan barnen inte läggs ovanpå radlistans egna. */}
+          <div>
           {/* Totals bar */}
           {hasAnyLineItemInput ? (
             <LineItemTotalsBar
@@ -2212,8 +2320,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               isPrivate={isPrivateQuote}
             />
           ) : (
-            <p className="mb-6 text-sm text-slate-400">
-              Grundbelopp används om inga rader läggs till. Lägg till rader för att bygga offertens summering.
+            <p className="m-0 mb-4 text-sm text-slate-600">
+              Inga rader än. Lägg till en rad och välj artikel.
             </p>
           )}
 
@@ -2313,21 +2421,27 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             + Lägg till rad
           </button>
           </div>
+          </FormSection>
 
-          {/* ── Section 4: ROT (toggled on via the sidebar) ── */}
+          {/* ── ROT-avdrag (slås på med reglaget i Offertuppgifter) ── */}
           {draft.quote_type === 'private' && draft.rot_enabled ? (
-            <div id="section-rot" className={cn('scroll-mt-6', crm.cardInner)}>
-              <SectionHeader step={stepOf('section-rot')} title="ROT-avdrag" />
+            // Procenten och maxavdraget ger beloppet som begärs i Fortnox skattereduktionspost
+            // (taxReductions.ts) — aldrig mer än Fortnox egen uträkning på en ny offert. Det är
+            // Skatteverket som till slut beslutar, därav "preliminärt".
+            <FormSection
+              id="section-rot"
+              title="ROT-avdrag"
+              description="Preliminärt. Fortnox och Skatteverket räknar ut det slutliga avdraget vid fakturering."
+            >
               {/* The ROT applicant is the selected customer – shown read-only, not entered. */}
-              <div className={cn('mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border px-4 py-3',
-                draft.personal_number.trim() ? 'border-slate-200 bg-slate-50/60' : 'border-amber-200 bg-amber-50')}>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">ROT-sökande (kund)</p>
-                  <p className="truncate text-sm font-medium text-slate-800">
-                    {draft.customer_name.trim() || <span className="text-slate-400">Ingen kund vald</span>}
-                    {draft.personal_number.trim() ? <span className="font-normal text-slate-500"> · {draft.personal_number}</span> : null}
-                  </p>
-                </div>
+              <div className={cn('flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg px-3.5 py-2.5',
+                draft.personal_number.trim() ? crm.sunken : 'border border-amber-200 bg-amber-50')}>
+                <p className="m-0 min-w-0 text-sm text-slate-800">
+                  {draft.customer_name.trim()
+                    ? <><span className="font-semibold">{draft.customer_name.trim()}</span> söker avdraget</>
+                    : <span className="text-slate-500">Ingen kund vald</span>}
+                  {draft.personal_number.trim() ? <span className="tabular-nums text-slate-600"> ({draft.personal_number})</span> : null}
+                </p>
                 {/* Upplysning, inte spärr. Offerten går att skicka utan numret — kunden vill
                     sällan lämna ut det innan hen tackat ja — och Fortnox räknar ut och visar
                     skattereduktionen på offerten ändå (uppmätt: 4 875 kr på en offert vars
@@ -2335,12 +2449,15 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     knytas till en person, vilket krävs först vid fakturering. Därför efterfrågas
                     det när arbetsordern skapas. */}
                 {!draft.personal_number.trim() ? (
-                  <span className="text-xs font-medium text-amber-700">Personnummer saknas – behövs inte för offerten, men efterfrågas när arbetsordern skapas.</span>
+                  <span className="text-[13px] text-amber-800">Personnummer saknas. Behövs inte för offerten, men efterfrågas när arbetsordern skapas.</span>
                 ) : null}
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field fieldId="field-rot-property" label="Fastighetsbeteckning" className="md:col-span-2" error={fieldErrors.rot_property_designation}>
-                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: fixPropertyDesignationTyping(e.target.value) }))} placeholder="Ex. Haggården 6:3" />
+              <div className="grid gap-5 sm:grid-cols-2 2xl:grid-cols-4">
+                <Field fieldId="field-rot-property" label="Fastighetsbeteckning" error={fieldErrors.rot_property_designation}>
+                  <Input value={draft.rot_property_designation} onChange={(e) => setDraft((d) => ({ ...d, rot_property_designation: fixPropertyDesignationTyping(e.target.value) }))} placeholder="T.ex. Haggården 6:3" />
+                </Field>
+                <Field label="BRF org.nr">
+                  <Input value={draft.rot_brf_org_number} onChange={(e) => setDraft((d) => ({ ...d, rot_brf_org_number: e.target.value }))} placeholder="Om bostadsrätt" />
                 </Field>
                 <Field label="Skattereduktion %">
                   <Input value={draft.rot_percent} onChange={(e) => setDraft((d) => ({ ...d, rot_percent: e.target.value }))} inputMode="decimal" placeholder="30" />
@@ -2348,65 +2465,63 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 <Field label="Max. avdrag">
                   <Input value={draft.rot_max_deduction} onChange={(e) => setDraft((d) => ({ ...d, rot_max_deduction: e.target.value }))} inputMode="decimal" placeholder="50000" />
                 </Field>
-                <Field label="BRF org.nr" className="md:col-span-2">
-                  <Input value={draft.rot_brf_org_number} onChange={(e) => setDraft((d) => ({ ...d, rot_brf_org_number: e.target.value }))} placeholder="Om bostadsrätt" />
-                </Field>
               </div>
-              {/* Procenten och maxavdraget ger beloppet som begärs i Fortnox skattereduktionspost
-                  (taxReductions.ts) — aldrig mer än Fortnox egen uträkning på en ny offert. Det
-                  är Skatteverket som till slut beslutar, därav "preliminär". */}
-              <p className="text-xs text-slate-500">
-                Skattereduktionen ovan är preliminär. Det slutliga ROT-avdraget beräknas av Fortnox/Skatteverket vid fakturering.
-              </p>
-            </div>
+            </FormSection>
           ) : null}
 
-          {/* ── Section 5: Intern handoff ── */}
-          <div id="section-handoff" className={cn('scroll-mt-6', crm.cardInner)}>
-            <SectionHeader step={stepOf('section-handoff')} title="Intern handoff" muted />
-            <div className="grid gap-4 md:grid-cols-2">
+          {/* ── Internt ── */}
+          {/* Allt här blir arbetsorderns (buildInternalHandoff + notes), inget går till kunden. */}
+          <FormSection
+            id="section-handoff"
+            internal
+            title="Internt"
+            description="Syns inte för kunden. Följer med till arbetsordern när offerten vinns."
+          >
+            <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Önskat installationsdatum" plain>
                 <DatePicker value={draft.desired_installation_date} onChange={(v) => setDraft((d) => ({ ...d, desired_installation_date: v }))} placeholder="Inget datum satt" aria-label="Önskat installationsdatum" />
               </Field>
-              <Field label="Arbetets scope">
-                <Input value={draft.work_scope} onChange={(e) => setDraft((d) => ({ ...d, work_scope: e.target.value }))} placeholder="Kort operativt scope" />
-              </Field>
-              <div className="grid gap-1.5 md:col-span-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-slate-600">Arbetsbeskrivning</span>
-                  <button
-                    type="button"
-                    onClick={addMeasurementsToHandoff}
-                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-800"
-                  >
-                    Hämta mått från rader
-                  </button>
-                </div>
-                <Textarea value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={3} placeholder="Arbetsbeskrivning för installatör / arbetsorder" />
-                {/* Utan den här raden fryser blocket tyst: säljaren ändrar en tjocklek, ser
-                    beskrivningen stå kvar på gamla mått, och den siffran följer med till
-                    arbetsordern där knappen inte finns. Låsningen måste synas. */}
-                {measurementBlockLocked ? (
-                  <p className="text-[11px] leading-snug text-amber-700">
-                    Måtten uppdateras inte längre automatiskt — du har ändrat i måttblocket. Klicka ”Hämta mått från rader” för att hämta om dem från raderna.
-                  </p>
-                ) : (
-                  <p className="text-[11px] leading-snug text-slate-400">
-                    Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Antals- och meterrader du kryssat i hamnar under ÖVRIGT. Text du skriver själv står kvar under dem.
-                  </p>
-                )}
-              </div>
-              <Field label="Interna anteckningar" className="md:col-span-2">
-                <Textarea value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} rows={4} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
+              <Field label="Arbetets omfattning">
+                <Input value={draft.work_scope} onChange={(e) => setDraft((d) => ({ ...d, work_scope: e.target.value }))} placeholder="Kort beskrivning av jobbet" />
               </Field>
             </div>
-          </div>
+            <div className="grid gap-1.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="quote-handoff-notes" className="w-auto text-xs font-semibold text-slate-600">Arbetsbeskrivning</label>
+                <button
+                  type="button"
+                  onClick={addMeasurementsToHandoff}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[#d3ddcf] bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 transition hover:border-slate-400"
+                >
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v2.6h-2.6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Hämta mått från raderna
+                </button>
+              </div>
+              <Textarea id="quote-handoff-notes" value={draft.handoff_notes} onChange={(e) => setDraft((d) => ({ ...d, handoff_notes: e.target.value }))} rows={7} placeholder="Det montören behöver veta" />
+              {/* Utan den här raden fryser blocket tyst: säljaren ändrar en tjocklek, ser
+                  beskrivningen stå kvar på gamla mått, och den siffran följer med till
+                  arbetsordern där knappen inte finns. Låsningen måste synas. */}
+              {measurementBlockLocked ? (
+                <p className="m-0 text-xs leading-snug text-amber-700">
+                  Måtten uppdateras inte längre automatiskt — du har ändrat i måttblocket. Klicka ”Hämta mått från raderna” för att hämta om dem.
+                </p>
+              ) : (
+                <p className={fieldHint}>
+                  Måtten från artikelraderna fylls i automatiskt och hålls uppdaterade. Antals- och meterrader du kryssat i hamnar under ÖVRIGT. Text du skriver själv står kvar under dem.
+                </p>
+              )}
+            </div>
+            <Field label="Anteckningar">
+              <Textarea value={draft.notes} onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))} rows={3} placeholder="Det här ska vi komma ihåg inför uppföljningen" />
+            </Field>
+          </FormSection>
 
-          {/* ── Section 6: Arbetsorder (edit mode) ── */}
+          {/* ── Arbetsorder (vid redigering) ── */}
           {isEditing && loadedQuote ? (
-            <div id="section-arbetsorder" className={cn('scroll-mt-6', crm.cardInner)}>
-              <SectionHeader step={stepOf('section-arbetsorder')} title="Arbetsorder" muted className="mb-4" />
-              <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-100 bg-slate-50 px-5 py-4">
+            <FormSection id="section-arbetsorder" title="Arbetsorder" description="Skapas när offerten är vunnen.">
+              <div className={cn('flex flex-wrap items-center justify-between gap-4 rounded-xl px-4 py-3.5', crm.sunken)}>
                 <span className="text-sm text-slate-700">
                   {loadedQuote.work_order_number
                     ? `Arbetsorder ${loadedQuote.work_order_number} är skapad.`
@@ -2432,7 +2547,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               </div>
               {!hasWorkOrder && draft.status === 'won' && readiness ? (
                 <WorkOrderReadinessNotice
-                  className="mt-3"
                   blockers={readiness.blockers}
                   warnings={readiness.warnings}
                   onOpenCustomerCard={
@@ -2442,333 +2556,186 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   rechecking={rechecking}
                 />
               ) : null}
-            </div>
+            </FormSection>
           ) : null}
 
         </div>{/* end left column */}
 
-        {/* ── Right: sticky sidebar ── */}
-        <aside className="self-start lg:sticky lg:top-6">
+        {/* ── Högerspalten: summa → checklista + spara → status ──
+            Spara står högt, så den inte hamnar under skärmkanten på en laptop. Sektionslistan som
+            stod här förut är borta: checklistan säger vad som saknas och hoppar dit (William
+            2026-10-07). */}
+        <aside className="grid min-w-0 gap-4 self-start lg:sticky lg:top-6">
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-
-            {/* Section nav — desktop only. A jump list is redundant on mobile (you
-                just scroll) and, kept always-open, it ate most of the small viewport. */}
-            <nav className="hidden lg:block">
-              <div className="mb-2.5 flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Sektioner</span>
-                <span className="text-[11px] font-medium text-slate-400">{doneSteps}/{requiredSections.length} klara</span>
-              </div>
-              <div className="grid gap-1">
-                {sections.map((section, i) => (
-                  <button
-                    key={section.id}
-                    type="button"
-                    onClick={() => scrollToSection(section.id)}
-                    className="group flex w-full items-center gap-2.5 rounded-lg border border-slate-100 bg-white px-2.5 py-2 text-left text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
-                  >
-                    <span
-                      className={cn(
-                        'flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold',
-                        section.done === true
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-600'
-                          : section.done === false
-                            ? 'border-slate-200 text-slate-400'
-                            : 'border-transparent bg-slate-100 text-slate-400',
-                      )}
-                    >
-                      {section.done === true ? '✓' : i + 1}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{section.label}</span>
-                    <svg
-                      className="shrink-0 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500"
-                      width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
-                    >
-                      <path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                ))}
-              </div>
-            </nav>
-
-            {/* Divider — hidden on mobile together with the section nav above */}
-            <div className="my-5 hidden border-t border-slate-100 lg:block" />
-
-            {/* Summary: projekt + kund + total */}
-            <div className="grid gap-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="grid gap-0.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Projekt</span>
-                  <p className="truncate text-sm font-semibold leading-5 text-slate-900">
-                    {draft.project_name || <span className="text-slate-300">—</span>}
-                  </p>
+          {/* Summa */}
+          <section aria-label="Summering" className={cn(crm.card, 'px-5 py-5')}>
+            <p className="m-0 text-[13px] font-medium text-slate-600">{headlineLabel}</p>
+            <p className="m-0 mt-1 text-2xl font-bold leading-tight tracking-tight tabular-nums text-slate-900">
+              {headlineAmount != null && Number.isFinite(headlineAmount)
+                ? formatCurrency(headlineAmount, 'SEK')
+                : <span className="text-slate-300">{formatCurrency(0, 'SEK')}</span>}
+            </p>
+            {headlineAmount != null && Number.isFinite(headlineAmount) && summaryVat != null && summaryTotal != null ? (
+              <p className="m-0 mt-0.5 text-[13px] tabular-nums text-slate-600">
+                {isPrivateQuote
+                  ? `Varav moms (${vatPct} %) ${formatCurrency(summaryVat, 'SEK')}`
+                  : `Inkl. moms ${formatCurrency(summaryTotal, 'SEK')} (moms ${vatPct} %)`}
+              </p>
+            ) : null}
+            {/* ROT dras aldrig av från huvudsiffran (se headlineLabel) — kundens nettopris står
+                under, tydligt märkt. */}
+            {hasAnyLineItemInput && totals.rotDeduction > 0 ? (
+              <dl className="m-0 mt-2 grid gap-0.5 text-[13px] tabular-nums">
+                <div className="flex justify-between gap-3 font-medium text-emerald-700">
+                  <dt>Avgår ROT-avdrag</dt>
+                  <dd className="m-0">−{formatCurrency(totals.rotDeduction, 'SEK')}</dd>
                 </div>
-                <div className="grid gap-0.5">
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">Kund</span>
-                  <p className="truncate text-sm text-slate-700">
-                    {sidebarDisplayName || <span className="text-slate-300">—</span>}
-                  </p>
+                <div className="flex justify-between gap-3 text-slate-600">
+                  <dt>Kunden betalar efter ROT</dt>
+                  <dd className="m-0">{formatCurrency(totals.toPay, 'SEK')}</dd>
                 </div>
-              </div>
+              </dl>
+            ) : null}
 
-              {/* Summering — full breakdown (delsumma → moms → total → ROT → att betala) */}
-              <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3.5">
-                {hasAnyLineItemInput && totals.subtotal > 0 ? (
-                  <div className="grid gap-1.5">
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Delsumma</span>
-                      <span className="tabular-nums">{formatCurrency(totals.subtotal, 'SEK')}</span>
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Moms ({vatPct} %)</span>
-                      <span className="tabular-nums">{formatCurrency(totals.vat, 'SEK')}</span>
-                    </div>
-                    <div className="mt-1 flex items-end justify-between border-t border-slate-200/70 pt-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                        {headlineLabel}
-                      </span>
-                      <span className="text-2xl font-bold tracking-tight text-slate-950 tabular-nums">
-                        {formatCurrency(headlineAmount ?? totals.total, 'SEK')}
-                      </span>
-                    </div>
-                    {totals.rotDeduction > 0 ? (
-                      <>
-                        <div className="flex items-center justify-between text-xs font-medium text-emerald-700">
-                          <span>Avgår ROT</span>
-                          <span className="tabular-nums">−{formatCurrency(totals.rotDeduction, 'SEK')}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-xs text-slate-500">
-                          <span>Kund betalar efter ROT-avdrag</span>
-                          <span className="tabular-nums">{formatCurrency(totals.toPay, 'SEK')}</span>
-                        </div>
-                      </>
-                    ) : null}
-
-                    {/* Offertens samlade täckningsgrad. Viktad på belopp — se quoteMargin; ett
-                        ovägt snitt av radernas procent hade låtit en småpostrad väga lika tungt
-                        som huvudposten. Visas bara när minst en rad går att bedöma.
-
-                        Ingen ram — raderna ovanför separeras med luft, så den här gör likadant. */}
-                    {quoteMarginResult.marginPercent != null ? (
-                      <div className="mt-2.5 grid gap-1">
-                        <div className="flex items-center justify-between text-xs">
-                          <span className="text-slate-500">Täckningsgrad</span>
-                          <MarginBadge marginPercent={quoteMarginResult.marginPercent} />
-                        </div>
-                        {quoteMarginResult.unpricedRows > 0 ? (
-                          // Utan den här upplysningen ser TG:n ut att gälla hela offerten, och en
-                          // grön siffra kan dölja att halva beloppet aldrig bedömdes.
-                          <p className="m-0 text-[11px] leading-snug text-slate-400">
-                            {/* "går inte att kostnadsbedöma" och inte "saknar inköpspris": sedan
-                                lösullen räknas via säckar kan orsaken också vara att densiteten
-                                saknas, och då är det den man ska fylla i — inte ett pris. */}
-                            {quoteMarginResult.unpricedRows} {quoteMarginResult.unpricedRows === 1 ? 'rad' : 'rader'} går
-                            inte att kostnadsbedöma ({formatCurrency(quoteMarginResult.unpricedRevenue, 'SEK')}) och ingår
-                            inte i siffran.
-                          </p>
-                        ) : null}
-                        {quoteMarginTier === 'bad' ? (
-                          <p className="m-0 rounded-md border border-solid border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] font-medium leading-snug text-rose-700">
-                            Täckningsgraden är under {MARGIN_THRESHOLDS.watch} %. Offerten behöver godkännas av säljchef innan den skickas.
-                          </p>
-                        ) : quoteMarginTier === 'watch' ? (
-                          <p className="m-0 text-[11px] leading-snug text-amber-700">
-                            Grönt kräver över {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {/* ─── Uppskattad lönsamhet ─────────────────────────────
-                        TB1 och TB2 räknade som på arbetsordern, fast på planerat underlag: säckarna
-                        raden själv räknar fram och en arbetstid ur produktivitetstabellen.
-
-                        ⚠️ Visas bara när det finns något att visa. Ett block som alltid står där
-                        med två streck lär säljaren att hoppa över det, och då syns det inte heller
-                        den dagen talen finns.
-
-                        ⚠️ Inga trösklar och ingen färg utom på förlust — samma hållning som på
-                        arbetsordern. Offertens 25/40 gäller TG ovanför och inte de här talen. */}
-                    {preCalc && preCalc.revenue > 0 ? (
-                      <div className="mt-2.5 grid gap-1 border-t border-slate-100 pt-2.5">
-                        {/* ⚠️ FYRA UPPGIFTER FICK INTE PLATS PÅ EN RAD. Namnet, timmarna, kronorna
-                            och procenten låg i två textnoder i en smal sidokolumn, och radbrytningen
-                            föll mitt i enheterna: "Uppskattat TB2 · 0,9" / "h" och "5 762 kr · 43,7"
-                            / "%". Ett tal vars enhet hamnat på nästa rad är inte bara fult — det är
-                            oläsbart, för siffran och det den mäter hör ihop.
-
-                            Nu bär raden BARA namnet och talen, och varje tal är en egen odelbar
-                            enhet: bryts kolumnen faller procenten ned som helhet i stället för att
-                            kapas. Timmarna är en förutsättning, inte en del av talets namn, och står
-                            därför på egen rad under. */}
-                        <div className="flex items-baseline justify-between gap-2 text-xs">
-                          <span className="text-slate-500">Uppskattat TB2</span>
-                          {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
-                              offert utan intäkt har inget att räkna procenten mot — och ett `!`
-                              här hade blivit en krasch mitt i formuläret. */}
-                          <span className="flex flex-wrap items-baseline justify-end gap-x-1.5 text-right">
-                            <span className={cn('whitespace-nowrap font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
-                              {preCalc.tb2 == null ? '–' : formatCurrency(preCalc.tb2, 'SEK')}
-                            </span>
-                            {preCalc.tb2 != null && preCalc.tg2 != null ? (
-                              <span className="whitespace-nowrap tabular-nums text-slate-500">
-                                {preCalc.tg2.toFixed(1).replace('.', ',')} %
-                              </span>
-                            ) : null}
-                          </span>
-                        </div>
-                        {preCalc.teamHours != null ? (
-                          <p className="m-0 text-[11px] leading-snug text-slate-400">
-                            Uppskattad arbetstid {preCalc.teamHours.toFixed(1).replace('.', ',')} h
-                          </p>
-                        ) : null}
-                        {/* Luckorna säger VAD som fattas — "produktivitet saknas för Vind ×
-                            EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte.
-
-                            ⚠️ Men be aldrig någon fylla i en tabell som inte finns. Saknas
-                            migreringen byts radernas uppmaning mot orsaken. */}
-                        {calcSettings?.productivityAvailable === false ? (
-                          <p className="m-0 text-[11px] leading-snug text-slate-400">
-                            Produktivitetstabellen är inte uppsatt än, så arbetstiden går inte att uppskatta.
-                          </p>
-                        ) : null}
-                        {preCalc.gaps
-                          .filter((gap) => gap.kind !== 'missing_rate' || calcSettings?.productivityAvailable !== false)
-                          // `unpriced_rows` säger samma sak som raden under täckningsgraden — men
-                          // BARA när den raden faktiskt ritas. Utan villkoret försvann beskedet
-                          // helt på en offert där täckningsgraden inte gick att räkna alls, och en
-                          // omdöpt lösullsrad kunde falla ur uppskattningen utan ett ord.
-                          .filter((gap) => gap.kind !== 'unpriced_rows'
-                            || !(quoteMarginResult.marginPercent != null && quoteMarginResult.unpricedRows > 0))
-                          .map((gap) => (
-                            <p key={gap.kind} className="m-0 text-[11px] leading-snug text-slate-400">
-                              {gap.message}
-                            </p>
-                          ))}
-                      </div>
-                    ) : null}
-                  </div>
-                ) : (
+            {hasAnyLineItemInput && totals.subtotal > 0
+              && (quoteMarginResult.marginPercent != null || (preCalc != null && preCalc.revenue > 0)) ? (
+              <div className="mt-5 grid gap-2 border-t border-[#e6ede3] pt-4">
+                {/* Offertens samlade täckningsgrad. Viktad på belopp — se quoteMargin; ett
+                    ovägt snitt av radernas procent hade låtit en småpostrad väga lika tungt
+                    som huvudposten. Visas bara när minst en rad går att bedöma. */}
+                {quoteMarginResult.marginPercent != null ? (
                   <>
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{headlineLabel}</span>
-                    <p className="mt-1 text-2xl font-bold tracking-tight text-slate-950">
-                      {headlineAmount != null && Number.isFinite(headlineAmount)
-                        ? formatCurrency(headlineAmount, 'SEK')
-                        : <span className="text-xl text-slate-300">—</span>}
-                    </p>
-                    {headlineAmount != null && Number.isFinite(headlineAmount) && summaryVat != null && summaryTotal != null ? (
-                      <p className="mt-1 text-[11px] text-slate-400">
-                        {isPrivateQuote
-                          ? `Varav moms (${vatPct} %) ${formatCurrency(summaryVat, 'SEK')}`
-                          : `Inkl. moms ${formatCurrency(summaryTotal, 'SEK')} (moms ${vatPct} %)`}
+                    <MarginGauge marginPercent={quoteMarginResult.marginPercent} />
+                    {quoteMarginResult.unpricedRows > 0 ? (
+                      // Utan den här upplysningen ser TG:n ut att gälla hela offerten, och en
+                      // grön siffra kan dölja att halva beloppet aldrig bedömdes.
+                      <p className={fieldHint}>
+                        {/* "går inte att kostnadsbedöma" och inte "saknar inköpspris": sedan
+                            lösullen räknas via säckar kan orsaken också vara att densiteten
+                            saknas, och då är det den man ska fylla i — inte ett pris. */}
+                        {quoteMarginResult.unpricedRows} {quoteMarginResult.unpricedRows === 1 ? 'rad' : 'rader'} går
+                        inte att kostnadsbedöma ({formatCurrency(quoteMarginResult.unpricedRevenue, 'SEK')}) och ingår
+                        inte i siffran.
+                      </p>
+                    ) : null}
+                    {quoteMarginTier === 'bad' ? (
+                      <p className="m-0 rounded-md border border-solid border-rose-200 bg-rose-50 px-2 py-1.5 text-xs font-medium leading-snug text-rose-700">
+                        Täckningsgraden är under {MARGIN_THRESHOLDS.watch} %. Offerten behöver godkännas av säljchef innan den skickas.
+                      </p>
+                    ) : quoteMarginTier === 'watch' ? (
+                      <p className="m-0 text-xs leading-snug text-amber-700">
+                        Grönt kräver över {MARGIN_THRESHOLDS.good} % — se över priset innan du skickar.
                       </p>
                     ) : null}
                   </>
-                )}
+                ) : null}
+
+                {/* ─── Uppskattad lönsamhet ─────────────────────────────
+                    TB1 och TB2 räknade som på arbetsordern, fast på planerat underlag: säckarna
+                    raden själv räknar fram och en arbetstid ur produktivitetstabellen.
+
+                    ⚠️ Visas bara när det finns något att visa. Ett block som alltid står där
+                    med två streck lär säljaren att hoppa över det, och då syns det inte heller
+                    den dagen talen finns.
+
+                    ⚠️ Inga trösklar och ingen färg utom på förlust — samma hållning som på
+                    arbetsordern. Offertens 25/40 gäller TG ovanför och inte de här talen. */}
+                {preCalc && preCalc.revenue > 0 ? (
+                  <div className="mt-1 grid gap-1">
+                    {/* ⚠️ Raden bär BARA namnet och talen, och varje tal är en egen odelbar enhet:
+                        bryts kolumnen faller procenten ned som helhet i stället för att kapas mitt
+                        i enheten ("5 762 kr · 43,7" / "%"). Timmarna står på egen rad under. */}
+                    <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                      <span className="text-slate-700">Uppskattat TB2</span>
+                      {/* ⚠️ Procenten prövas för sig. TB kan finnas medan TG är null — en
+                          offert utan intäkt har inget att räkna procenten mot — och ett `!`
+                          här hade blivit en krasch mitt i formuläret. */}
+                      <span className="flex flex-wrap items-baseline justify-end gap-x-1.5 text-right">
+                        <span className={cn('whitespace-nowrap font-semibold tabular-nums', preCalc.tb2 != null && preCalc.tb2 < 0 ? 'text-rose-700' : 'text-slate-900')}>
+                          {preCalc.tb2 == null ? '–' : formatCurrency(preCalc.tb2, 'SEK')}
+                        </span>
+                        {preCalc.tb2 != null && preCalc.tg2 != null ? (
+                          <span className="whitespace-nowrap tabular-nums text-slate-500">
+                            {preCalc.tg2.toFixed(1).replace('.', ',')} %
+                          </span>
+                        ) : null}
+                      </span>
+                    </div>
+                    {preCalc.teamHours != null ? (
+                      <p className={fieldHint}>
+                        Uppskattad arbetstid {preCalc.teamHours.toFixed(1).replace('.', ',')} h
+                      </p>
+                    ) : null}
+                    {/* Luckorna säger VAD som fattas — "produktivitet saknas för Vind ×
+                        EKOVILLA" är åtgärdbart, "kan inte räknas" är det inte.
+
+                        ⚠️ Men be aldrig någon fylla i en tabell som inte finns. Saknas
+                        migreringen byts radernas uppmaning mot orsaken. */}
+                    {calcSettings?.productivityAvailable === false ? (
+                      <p className={fieldHint}>
+                        Produktivitetstabellen är inte uppsatt än, så arbetstiden går inte att uppskatta.
+                      </p>
+                    ) : null}
+                    {preCalc.gaps
+                      .filter((gap) => gap.kind !== 'missing_rate' || calcSettings?.productivityAvailable !== false)
+                      // `unpriced_rows` säger samma sak som raden under täckningsgraden — men
+                      // BARA när den raden faktiskt ritas. Utan villkoret försvann beskedet
+                      // helt på en offert där täckningsgraden inte gick att räkna alls, och en
+                      // omdöpt lösullsrad kunde falla ur uppskattningen utan ett ord.
+                      .filter((gap) => gap.kind !== 'unpriced_rows'
+                        || !(quoteMarginResult.marginPercent != null && quoteMarginResult.unpricedRows > 0))
+                      .map((gap) => (
+                        <p key={gap.kind} className={fieldHint}>
+                          {gap.message}
+                        </p>
+                      ))}
+                  </div>
+                ) : null}
               </div>
-            </div>
+            ) : null}
+          </section>
 
-            {/* Divider */}
-            <div className="my-5 border-t border-slate-100" />
-
-            {/* Settings: status + follow-up + ROT */}
-            <div className="grid gap-4">
-              <Field label="Status">
-                <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
-                  {Object.entries(quoteStatusMeta).map(([value, meta]) => (
-                    <option key={value} value={value}>{meta.label}</option>
-                  ))}
-                </Select>
-              </Field>
-
-              <Field label="Följ upp senast" plain>
-                <DatePicker value={draft.follow_up_date} onChange={(v) => setDraft((d) => ({ ...d, follow_up_date: v }))} placeholder="Inget datum" aria-label="Följ upp senast" />
-              </Field>
-
-              {/* Ansvarig säljare. Läsvy för alla, väljare bara för administratörer — se
-                  authorizeQuoteAssignee för varför spärren också måste sitta i rutten.
-                  Fältet visas ÄVEN utan bytesrätt: vem som äger offerten avgör vem som får
-                  redigera den, och den som just fått "du kan bara redigera offerter du är
-                  ansvarig för" ska kunna se vem hen ska fråga. */}
-              {canReassign ? (
-                <Field label="Ansvarig säljare">
-                  <Select
-                    value={draft.assigned_to}
-                    onChange={(e) => setDraft((d) => ({ ...d, assigned_to: e.target.value }))}
-                  >
-                    {!isEditing ? <option value="">Jag själv</option> : null}
-                    {/* Offertens nuvarande ansvariga kan saknas i katalogen — hen har slutat
-                        eller bytt roll (listan är sales/admin). Utan den här raden har
-                        rullgardinen inget alternativ som matchar värdet, och webbläsaren
-                        visar då det FÖRSTA i listan: fel namn, utan att något ändrats. */}
-                    {draft.assigned_to && sellersLoaded && !sellers.some((seller) => seller.id === draft.assigned_to) ? (
-                      <option value={draft.assigned_to}>Nuvarande ansvarig (inte längre säljare)</option>
-                    ) : null}
-                    {/* Medan katalogen är på väg finns inga alternativ alls. Ett värdebärande
-                        alternativ håller rullgardinen på rätt rad i stället för att låta
-                        webbläsaren falla till det första namnet som dyker upp. */}
-                    {draft.assigned_to && !sellersLoaded ? (
-                      <option value={draft.assigned_to}>Laddar…</option>
-                    ) : null}
-                    {sellers.map((seller) => (
-                      <option key={seller.id} value={seller.id}>{seller.full_name || seller.id}</option>
-                    ))}
-                  </Select>
-                  <p className="mt-1.5 text-xs text-slate-500">
-                    Säljaren offerten tillhör. Blir kundansvarig när offerten vinns, och står som
-                    Vår referens på offerten i Fortnox.
-                  </p>
-                </Field>
-              ) : draft.assigned_to && sellersLoaded ? (
-                <Field label="Ansvarig säljare" plain>
-                  <p className="text-sm text-slate-700">
-                    {sellers.find((seller) => seller.id === draft.assigned_to)?.full_name || 'Okänd säljare'}
-                  </p>
-                </Field>
-              ) : null}
-            </div>
-
-            {/* Divider */}
-            <div className="my-5 border-t border-slate-100" />
-
-            {/* Validation status */}
+          {/* Checklista + spara. EN lista i stället för förra sektionslistan och "N att åtgärda":
+              den säger vad som fattas och varje punkt hoppar dit. */}
+          <section aria-label="Spara offerten" className={cn(crm.card, 'px-5 py-5')}>
             {isReady ? (
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-3 text-sm font-semibold text-emerald-800">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Redo att spara
-              </div>
-            ) : (
-              <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3">
-                <div className="mb-2 flex items-center gap-2 text-amber-900">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="shrink-0">
-                    <path d="M8 1.8 15 14H1L8 1.8Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
-                    <path d="M8 6.2v3.4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    <circle cx="8" cy="11.8" r="0.85" fill="currentColor" />
+              <p className="m-0 mb-4 flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100">
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  <span className="text-xs font-bold uppercase tracking-[0.08em]">{issues.length} att åtgärda</span>
-                </div>
-                <div className="grid gap-0.5">
+                </span>
+                Allt som krävs är ifyllt
+              </p>
+            ) : (
+              <div className="mb-4">
+                <p className="m-0 mb-1.5 text-[13px] font-semibold text-slate-800">Kvar innan du kan spara</p>
+                <ul className="m-0 grid list-none gap-0.5 p-0">
                   {issues.map((issue) => {
-                    const targetId = issueFieldIds[issue];
-                    return (
-                      <button
-                        key={issue}
-                        type="button"
-                        onClick={() => targetId && scrollToField(targetId)}
-                        className={cn(
-                          'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-medium text-amber-900 transition',
-                          targetId ? 'cursor-pointer hover:bg-amber-100' : 'cursor-default',
-                        )}
-                      >
-                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                    const targetId = issueTargetId(issue);
+                    const content = (
+                      <>
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden="true" />
                         <span className="min-w-0 flex-1">{issue}</span>
-                        {targetId ? <span className="shrink-0 text-[11px] text-amber-500">↑</span> : null}
-                      </button>
+                      </>
+                    );
+                    return (
+                      <li key={issue}>
+                        {targetId ? (
+                          <button
+                            type="button"
+                            onClick={() => scrollToField(targetId)}
+                            className="flex w-full items-start gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] text-slate-700 transition hover:bg-amber-50 hover:text-slate-900"
+                          >
+                            {content}
+                          </button>
+                        ) : (
+                          <span className="flex items-start gap-2.5 px-2 py-1.5 text-[13px] text-slate-700">{content}</span>
+                        )}
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               </div>
             )}
 
@@ -2776,29 +2743,99 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               type="button"
               onClick={saveQuote}
               disabled={submitting || !isReady}
-              className={crm.saveButton}
+              className={cn(crm.saveButton, 'h-10')}
             >
               {submitting ? 'Sparar…' : isEditing ? 'Spara offert' : 'Skapa offert'}
             </button>
             <button
               type="button"
               onClick={handleBack}
-              className="mt-2.5 w-full text-center text-sm text-slate-400 transition-colors hover:text-slate-700"
+              className="mt-2 w-full rounded-lg px-0 py-1.5 text-center text-sm text-slate-600 transition-colors hover:text-slate-900"
             >
               Avbryt
             </button>
+          </section>
 
-          </div>
+          {/* Status och uppföljning */}
+          <section aria-label="Status och uppföljning" className={cn(crm.card, 'grid gap-4 px-5 py-5')}>
+            <Field label="Status">
+              <Select value={draft.status} onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value as QuoteItem['status'] }))}>
+                {Object.entries(quoteStatusMeta).map(([value, meta]) => (
+                  <option key={value} value={value}>{meta.label}</option>
+                ))}
+              </Select>
+            </Field>
+
+            <div className="grid gap-2">
+              <Field label="Följ upp senast" plain>
+                <DatePicker value={draft.follow_up_date} onChange={(v) => setDraft((d) => ({ ...d, follow_up_date: v }))} placeholder="Inget datum" aria-label="Följ upp senast" />
+              </Field>
+              {/* Står vid datumet den gäller. Uppgiften skapas bara när offerten skapas, och den
+                  hamnar hos den som sparar — ingen user_id skickas, se buildFollowUpTaskPayload. */}
+              {!isEditing ? (
+                <label className="flex w-auto cursor-pointer items-start gap-2 text-[13px] text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={draft.create_follow_up_task}
+                    onChange={(e) => setDraft((d) => ({ ...d, create_follow_up_task: e.target.checked }))}
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
+                  />
+                  Skapa en uppgift till mig på datumet
+                </label>
+              ) : null}
+            </div>
+
+            {/* Ansvarig säljare. Läsvy för alla, väljare bara för administratörer — se
+                authorizeQuoteAssignee för varför spärren också måste sitta i rutten.
+                Fältet visas ÄVEN utan bytesrätt: vem som äger offerten avgör vem som får
+                redigera den, och den som just fått "du kan bara redigera offerter du är
+                ansvarig för" ska kunna se vem hen ska fråga. */}
+            {canReassign ? (
+              <Field label="Ansvarig säljare">
+                <Select
+                  value={draft.assigned_to}
+                  onChange={(e) => setDraft((d) => ({ ...d, assigned_to: e.target.value }))}
+                >
+                  {!isEditing ? <option value="">Jag själv</option> : null}
+                  {/* Offertens nuvarande ansvariga kan saknas i katalogen — hen har slutat
+                      eller bytt roll (listan är sales/admin). Utan den här raden har
+                      rullgardinen inget alternativ som matchar värdet, och webbläsaren
+                      visar då det FÖRSTA i listan: fel namn, utan att något ändrats. */}
+                  {draft.assigned_to && sellersLoaded && !sellers.some((seller) => seller.id === draft.assigned_to) ? (
+                    <option value={draft.assigned_to}>Nuvarande ansvarig (inte längre säljare)</option>
+                  ) : null}
+                  {/* Medan katalogen är på väg finns inga alternativ alls. Ett värdebärande
+                      alternativ håller rullgardinen på rätt rad i stället för att låta
+                      webbläsaren falla till det första namnet som dyker upp. */}
+                  {draft.assigned_to && !sellersLoaded ? (
+                    <option value={draft.assigned_to}>Laddar…</option>
+                  ) : null}
+                  {sellers.map((seller) => (
+                    <option key={seller.id} value={seller.id}>{seller.full_name || seller.id}</option>
+                  ))}
+                </Select>
+                <p className={fieldHint}>
+                  Står som Vår referens i Fortnox och blir kundansvarig när offerten vinns.
+                </p>
+              </Field>
+            ) : draft.assigned_to && sellersLoaded ? (
+              <Field label="Ansvarig säljare" plain>
+                <p className="m-0 text-sm text-slate-700">
+                  {sellers.find((seller) => seller.id === draft.assigned_to)?.full_name || 'Okänd säljare'}
+                </p>
+              </Field>
+            ) : null}
+          </section>
 
         </aside>
 
         </div>{/* end two-column grid */}
 
       {/* ── Mobile sticky action bar (sidebar handles this on lg+) ── */}
-      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur lg:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-30 flex items-center gap-3 border-t border-[#dce4d8] bg-white/95 px-4 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-3 backdrop-blur lg:hidden">
         <div className="min-w-0">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">{headlineLabel}</p>
-          <p className="truncate text-base font-bold text-slate-950">
+          <p className="m-0 text-xs text-slate-600">{headlineLabel}</p>
+          <p className="m-0 truncate text-base font-bold tabular-nums text-slate-950">
             {headlineAmount != null && Number.isFinite(headlineAmount) ? formatCurrency(headlineAmount, 'SEK') : '—'}
           </p>
         </div>
