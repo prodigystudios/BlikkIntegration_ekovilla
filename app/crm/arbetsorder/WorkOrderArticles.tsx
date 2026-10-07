@@ -10,8 +10,10 @@ import { invoicedFloorIssues, invoicedLineIds, type InvoicedRound } from '@/lib/
 import { inferMaterialFromArticle, materialRenameEffect, sacksFor } from '@/lib/domains/crm/materials';
 import { normalizeDecimalInput, parseDecimal } from '@/lib/shared/number';
 import { formatCurrency, formatQuantity } from '@/app/crm/lib/format';
-import LineItemRow, { LineItemReadRow, type LineItemRowItem, type LineItemRowMetrics } from '@/app/crm/components/LineItemRow';
-import { GeneratedRotLaborRow, LineItemTotalsBar } from '@/app/crm/components/LineItemSummary';
+import LineItemRow, {
+  LineItemReadRow, LineItemTableHeader, LineItemTableReadRow, type LineItemRowItem, type LineItemRowMetrics,
+} from '@/app/crm/components/LineItemRow';
+import { GeneratedRotLaborRow, LineItemTotals } from '@/app/crm/components/LineItemSummary';
 import { getArticleUnitName, type ArticleLite } from '@/app/crm/components/ArticlePicker';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 
@@ -130,12 +132,14 @@ function rowBadges(item: ArticleLineItem, sacks: number, invoiced: boolean) {
 }
 
 // ─── Artiklar (läs- + redigeringsläge) ─────────────────────────────────────────
-// Raderna är offertens egen radkomponent (LineItemRow) — hopfällda i en lista, en utfälld i taget,
-// artikeln vald I raden med Byt/Rensa och favoriter. Arbetsordern lägger till det offerten saknar:
+// Raderna är offertens egen radkomponent (LineItemRow) — en tabell, en utfälld rad i taget, artikeln
+// vald I raden med Byt/Rensa och favoriter. Ingen TG-kolumn: ordern visar aldrig TG. Arbetsordern lägger till det offerten saknar:
 // säckar och mått i översikten, prisläget m³/st, avskrivning och varningen när en omdöpning slår
 // sönder materialet. Två anropsplatser:
-//   • WorkOrderDetailClient — `embedded`, avsnitt inne i Ekonomi-kortet, redigerbar.
-//   • WorkOrderInstallerClient — fristående kort + summeringskolumn, `canEdit={false}`.
+//   • WorkOrderDetailClient — `embedded`, avsnitt inne i Ekonomi-kortet, redigerbar. Tabellen.
+//   • WorkOrderInstallerClient — fristående kort + summeringskolumn, `canEdit={false}`. LISTAN
+//     (LineItemReadRow): fältvyn är en telefon, montören behöver mått och säckar, inte à-pris och
+//     rabatt i kolumner (William 2026-10-07).
 //     ⚠️ Den ytan ligger UTANFÖR `.crm-shell`, så `--crm-*` är odefinierade där.
 type Props = {
   items: ArticleLineItem[];
@@ -155,9 +159,9 @@ type Props = {
    * order var fakturerad, för varje installatör som öppnade den.
    */
   lockedReason?: string;
-  // Inbäddat läge: listan ligger inne i ett annat kort (arbetsorderns Ekonomi-kort) och ritar
-  // därför varken egen kortyta eller egen sidokolumn — summeringen står överst, som i offerten.
-  // Fristående anrop (fältvyn) behåller sin summeringskolumn.
+  // Inbäddat läge: tabellen ligger inne i ett annat kort (arbetsorderns Ekonomi-kort) och ritar
+  // därför varken egen kortyta eller egen sidokolumn — summeringen står under raderna, som i offerten.
+  // Fristående anrop (fältvyn) behåller listan och sin summeringskolumn.
   embedded?: boolean;
   // Omvänd skattskyldighet (byggmoms): momsraden läses då som ett eget faktum, inte som
   // "Moms 0 kr". Utelämnas den härleds den ur den beräknade momssatsen — se isReverseCharge.
@@ -212,9 +216,13 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
   // Avskrivna rader räknas inte — varken i pengar eller i säckar. Ordervärdet ska visa det som
   // faktiskt levereras, annars stämmer inte CRM med fakturorna.
   const activeRows = useMemo(() => source.filter((r) => !r.written_off), [source]);
+  // 🧨 Byggmoms räknas på 0 %. Detaljsidan skickar `reverseCharge` ur den SPARADE prissättningen, och
+  // den gäller — orderns momskolumn har drivit iväg till 25 på byggmomsordrar. Räknat på kolumnen stod
+  // "Omvänd skattskyldighet" ovanför en total med 25 % moms i. Fortnox fakturerar 0 %.
+  const pricingVat = reverseCharge ? 0 : vatPercent;
   const totals = useMemo(
-    () => computePricing(activeRows as PricingLineItem[], vatPercent, { isPrivate, rot: rotDetails }),
-    [activeRows, vatPercent, isPrivate, rotDetails],
+    () => computePricing(activeRows as PricingLineItem[], pricingVat, { isPrivate, rot: rotDetails }),
+    [activeRows, pricingVat, isPrivate, rotDetails],
   );
   const configuredCount = useMemo(() => activeRows.filter((r) => isConfiguredLineItem(r)).length, [activeRows]);
   // Radens tal, material och säckar — EN gång per rad och rendering. Detaljraden, märkena, den
@@ -401,32 +409,35 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
           ) : null}
         </div>
 
-        {/* Summeringen ÖVERST, som i offerten — och i båda lägena, så att siffrorna står på samma
-            ställe när man går in i redigeringen och ser dem ändras. */}
-        {embedded && configuredCount > 0 ? (
-          <LineItemTotalsBar
-            className="mb-0"
-            subtotal={totals.subtotal}
-            vat={totals.vat}
-            vatPercent={totals.vatPercent}
-            total={totals.total}
-            toPay={totals.toPay}
-            rowCount={configuredCount}
-            carvedLabor={totals.carvedLabor}
-            rotDeduction={totals.rotDeduction}
-            isPrivate={isPrivate}
-            reverseCharge={isReverseCharge}
-          />
-        ) : null}
-
         {source.length === 0 ? (
           <div className="rounded-xl border border-dashed border-[#cfdcc9] bg-[#f1f5ee] px-4 py-6 text-sm text-slate-500">
             {editing ? 'Inga artiklar — lägg till en rad nedan.' : 'Inga artiklar.'}
           </div>
         ) : null}
 
-        {/* ── Läsläge: samma hopfällda rader som editorn, utan fäll ut och ta bort ── */}
-        {!editing && items.length > 0 ? (
+        {/* ── Läsläge, kontorets vy: samma tabell som redigeringen, utan fäll ut ── */}
+        {!editing && embedded && items.length > 0 ? (
+          <div>
+            <LineItemTableHeader interactive={false} />
+            {items.map((item, index) => {
+              const info = rowInfo.get(item.id);
+              return (
+                <LineItemTableReadRow
+                  key={item.id}
+                  row={item as LineItemRowItem}
+                  index={index}
+                  metrics={info?.metrics}
+                  details={info?.details}
+                  badges={rowBadges(item, info?.sacks ?? 0, invoicedIds.has(item.id))}
+                  struck={!!item.written_off}
+                />
+              );
+            })}
+          </div>
+        ) : null}
+
+        {/* ── Läsläge, fältvyn: listan, som förut ── */}
+        {!editing && !embedded && items.length > 0 ? (
           <div className="grid gap-2">
             {items.map((item, index) => {
               const info = rowInfo.get(item.id);
@@ -447,7 +458,8 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
 
         {/* ── Redigeringsläge ── */}
         {editing && rows.length > 0 ? (
-          <div className="grid gap-2">
+          <div className="grid gap-0.5">
+            <LineItemTableHeader />
             {rows.map((row, index) => {
               const mode = row.pricing_mode === 'item' ? 'item' : 'm3';
               const info = rowInfo.get(row.id);
@@ -512,24 +524,18 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
                   )}
                   details={info?.details}
                   badges={rowBadges(row, sacks, invoiced)}
-                  totalAside={(
-                    <>
-                      {mode === 'm3' ? (
-                        <span className="text-xs font-normal tabular-nums text-slate-500">{formatQuantity(lineItemQuantity(row as PricingLineItem))} m³</span>
-                      ) : null}
-                      {sacks > 0 && !row.written_off ? (
-                        <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span>
-                      ) : null}
-                    </>
-                  )}
+                  // Volymen står i redigerarens Volym-ruta — här bara säckarna den ger.
+                  totalAside={sacks > 0 && !row.written_off ? (
+                    <span className={cn(pill, 'border-emerald-200 bg-emerald-50 text-emerald-700')}>{sacks} säck</span>
+                  ) : null}
                   // Avskriven = såld men aldrig utförd. Räknas bort ur summan och skickas inte till
                   // Fortnox, men raden ligger kvar så skillnaden mot offerten går att förklara. En rad
                   // som aldrig fakturerats kan lika gärna tas bort helt.
                   // En fakturerad rad kan inte skrivas av — pengarna är redan krävda. Men en avskrivning
                   // som redan är SPARAD får hävas: servern nekar bara en ny (validateLineItemEdit).
                   extraFlags={(
-                    <label className="inline-flex w-auto items-center gap-2 text-xs text-slate-500">
-                      <input type="checkbox" checked={!!row.written_off} disabled={invoiced && !savedWrittenOff} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-3.5 w-3.5 accent-slate-500" />
+                    <label className="inline-flex w-auto items-center gap-2 text-[13px] text-slate-700">
+                      <input type="checkbox" checked={!!row.written_off} disabled={invoiced && !savedWrittenOff} onChange={(e) => updateRow(row.id, { written_off: e.target.checked })} className="h-4 w-4 accent-slate-500" />
                       Avskriven (utförs ej)
                     </label>
                   )}
@@ -552,20 +558,42 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
         {/* Den genererade arbetskostnadsraden — sist, som på Fortnox-ordern. Se GeneratedRotLaborRow.
             Bara på kontorets vy: i fältvyn är den ett Fortnox-begrepp utan betydelse för jobbet. */}
         {embedded && totals.carvedLabor > 0 ? (
-          <GeneratedRotLaborRow position={source.length + 1} amount={totals.carvedLabor} documentLabel="Fortnox-ordern" />
+          <GeneratedRotLaborRow position={source.length + 1} amount={totals.carvedLabor} documentLabel="Fortnox-ordern" interactive={editing} />
+        ) : null}
+
+        {/* Lägg till rad till vänster, summeringen till höger — under raderna, som på offerten. I båda
+            lägena, så att siffrorna står på samma ställe när man går in i redigeringen. */}
+        {editing || (embedded && configuredCount > 0) ? (
+          <div className="flex flex-wrap items-start justify-between gap-4 pt-1">
+            {editing ? (
+              <button
+                type="button"
+                onClick={addRow}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d3ddcf] bg-white px-3.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+                Lägg till rad
+              </button>
+            ) : null}
+            {embedded && configuredCount > 0 ? (
+              <LineItemTotals
+                className="sm:ml-auto"
+                subtotal={totals.subtotal}
+                vat={totals.vat}
+                vatPercent={totals.vatPercent}
+                total={totals.total}
+                toPay={totals.toPay}
+                rotDeduction={totals.rotDeduction}
+                reverseCharge={isReverseCharge}
+              />
+            ) : null}
+          </div>
         ) : null}
 
         {editing ? (
           <>
-            <div>
-              <button
-                type="button"
-                onClick={addRow}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                + Lägg till rad
-              </button>
-            </div>
 
             {warnings.length ? (
               <div className="grid gap-1 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5">

@@ -2,23 +2,28 @@
 
 import { cn } from '@/lib/shared/cn';
 import { formatCurrency } from '@/app/crm/lib/format';
+import { ROW_OUTER, INNER_BASE, innerColumns } from './lineItemTable';
 import { ROT_LABOR_ARTICLE_NUMBER, ROT_LABOR_DESCRIPTION } from '@/lib/domains/fortnox/types';
 
-// Summeringen ovanför artikelraderna och den genererade ROT-arbetsraden under dem. Delade mellan
+// Summeringen under artikelraderna och den genererade ROT-arbetsraden sist bland dem. Delade mellan
 // offertformuläret och arbetsorderns artikeleditor, så de två läses likadant — se LineItemRow.
 
-const eyebrow = 'text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400';
-
-export function LineItemTotalsBar({
+/**
+ * Summeringen under raderna, som på en offert: delsumma, moms, totalt — och, med ROT, avdraget och
+ * vad kunden betalar. Den stod förut som en remsa ovanför raderna; nu står summan där man läser
+ * färdigt raderna (mockupen 2026-10-07), på offerten och arbetsordern lika.
+ *
+ * Totalen är ALLTID bruttot — det Fortnox visar som dokumentets summa. ROT-avdraget dras aldrig av
+ * från den: det regleras mellan kunden och Skatteverket. Vad kunden betalar står som en egen, tydligt
+ * märkt rad under.
+ */
+export function LineItemTotals({
   subtotal,
   vat,
   vatPercent,
   total,
   toPay,
-  rowCount,
-  carvedLabor,
   rotDeduction,
-  isPrivate,
   reverseCharge = false,
   className,
 }: {
@@ -27,77 +32,48 @@ export function LineItemTotalsBar({
   vatPercent: number;
   total: number;
   toPay: number;
-  /** Antal ifyllda (debiterbara) rader. */
-  rowCount: number;
-  carvedLabor: number;
   rotDeduction: number;
-  isPrivate: boolean;
   /**
    * Omvänd skattskyldighet (byggmoms): momsen står som ett eget faktum i stället för "0 kr", och
-   * "Inkl. moms" utelämnas — beloppet vore detsamma. Arbetsordern skickar det ur den sparade
-   * prissättningen; offerten visar sin 0-procentsmoms som förut.
+   * totalen heter bara Totalt och är delsumman. Arbetsordern skickar det ur den
+   * sparade prissättningen; offerten visar sin 0-procentsmoms som förut.
    */
   reverseCharge?: boolean;
   className?: string;
 }) {
-  // VAT display convention (agreed with finance): private leads with the price INCL moms;
-  // business leads with the EX-moms figure, the moms shown in the breakdown.
-  //
-  // The headline is ALWAYS the gross value — the figure Fortnox shows as the document total. A ROT
-  // deduction is NOT subtracted from the headline: ROT is settled between the customer and
-  // Skatteverket, so the company's value is still the gross. The customer's net-after-ROT (`toPay`)
-  // is shown as a clearly-labelled secondary line, never as the headline.
-  const headlineLabel = isPrivate ? 'Total inkl. moms' : 'Belopp ex moms';
-  const headlineAmount = isPrivate ? total : subtotal;
-
   return (
-    // flex-wrap: på arbetsordern ligger raden i en smalare spalt än i offertformuläret, och sex
-    // värden plus "Omvänd skattskyldighet" rymdes inte på en rad. Får den plats ser den ut som förut.
-    <div className={cn('mb-6 flex flex-wrap items-center gap-x-8 gap-y-3 rounded-xl bg-slate-50 px-5 py-4', className)}>
-      <div className="grid gap-0.5">
-        <span className={eyebrow}>Delsumma</span>
-        <span className="text-sm font-semibold text-slate-900">{formatCurrency(subtotal, 'SEK')}</span>
+    <dl className={cn('m-0 grid w-full max-w-[22rem] gap-1.5 text-sm', className)}>
+      <div className="flex justify-between gap-6 text-slate-600">
+        <dt>Delsumma</dt>
+        <dd className="m-0 tabular-nums">{formatCurrency(subtotal, 'SEK')}</dd>
       </div>
-      {reverseCharge ? (
-        <div className="grid gap-0.5">
-          <span className={eyebrow}>Moms</span>
-          <span className="text-sm font-semibold text-amber-700">Omvänd skattskyldighet</span>
-        </div>
-      ) : (
-        <div className="grid gap-0.5">
-          <span className={eyebrow}>Moms ({vatPercent} %)</span>
-          <span className="text-sm font-semibold text-slate-900">{formatCurrency(vat, 'SEK')}</span>
-        </div>
-      )}
-      <div className="grid gap-0.5">
-        <span className={eyebrow}>Rader</span>
-        <span className="text-sm font-semibold text-slate-900">{rowCount} st</span>
+      <div className="flex justify-between gap-6 text-slate-600">
+        <dt>Moms{reverseCharge ? '' : ` ${vatPercent} %`}</dt>
+        <dd className={cn('m-0 tabular-nums', reverseCharge && 'font-medium text-amber-700')}>
+          {reverseCharge ? 'Omvänd skattskyldighet' : formatCurrency(vat, 'SEK')}
+        </dd>
       </div>
-      {/* Labour carved out of the material rows (each row's "Varav arbetskostnad"), which is
-          summed into one "Arbetskostnad ROT" row (art. 10058) on the Fortnox document. Shown here
-          with the other line totals so all prices sit in one place. */}
-      {carvedLabor > 0 ? (
-        <div className="grid gap-0.5">
-          <span className={eyebrow}>Arbetskostnad ROT</span>
-          <span className="text-sm font-semibold text-emerald-700">{formatCurrency(carvedLabor, 'SEK')}</span>
-        </div>
-      ) : null}
+      {/* 🧨 Vid omvänd skattskyldighet är totalen DELSUMMAN. Arbetsordern räknar redan på 0 % när den
+          vet att det är byggmoms (WorkOrderArticles, pricingVat) — orderns momskolumn har drivit iväg
+          till 25 på byggmomsordrar, och då stod "Omvänd skattskyldighet" ovanför en total med moms i.
+          Regeln här är skyddet för nästa anropare som inte vet det. */}
+      <div className="flex justify-between gap-6 border-t border-[#e6ede3] pt-2 font-semibold text-slate-900">
+        <dt>{reverseCharge ? 'Totalt' : 'Totalt inkl. moms'}</dt>
+        <dd className="m-0 tabular-nums">{formatCurrency(reverseCharge ? subtotal : total, 'SEK')}</dd>
+      </div>
       {rotDeduction > 0 ? (
-        <div className="grid gap-0.5">
-          <span className={eyebrow}>Avgår ROT</span>
-          <span className="text-sm font-semibold text-emerald-700">−{formatCurrency(rotDeduction, 'SEK')}</span>
-        </div>
+        <>
+          <div className="flex justify-between gap-6 font-medium text-emerald-700">
+            <dt>Avgår ROT-avdrag</dt>
+            <dd className="m-0 tabular-nums">−{formatCurrency(rotDeduction, 'SEK')}</dd>
+          </div>
+          <div className="flex justify-between gap-6 text-slate-600">
+            <dt>Kunden betalar efter ROT</dt>
+            <dd className="m-0 tabular-nums">{formatCurrency(toPay, 'SEK')}</dd>
+          </div>
+        </>
       ) : null}
-      <div className="ml-auto grid gap-0.5 text-right">
-        <span className={eyebrow}>{headlineLabel}</span>
-        <span className="text-base font-bold text-slate-950">{formatCurrency(headlineAmount, 'SEK')}</span>
-        {isPrivate && rotDeduction > 0 ? (
-          <span className="text-[11px] text-slate-400">Kund betalar efter ROT {formatCurrency(toPay, 'SEK')}</span>
-        ) : !isPrivate && !reverseCharge ? (
-          <span className="text-[11px] text-slate-400">Inkl. moms {formatCurrency(total, 'SEK')}</span>
-        ) : null}
-      </div>
-    </div>
+    </dl>
   );
 }
 
@@ -121,28 +97,36 @@ export function GeneratedRotLaborRow({
   position,
   amount,
   documentLabel = 'Fortnox-offerten',
+  marginColumn = false,
+  interactive = true,
 }: {
   /** Radnumret den får — efter de riktiga raderna. */
   position: number;
   amount: number;
   /** Var raden skapas, för texten: "Fortnox-offerten" eller "Fortnox-ordern". */
   documentLabel?: string;
+  /** Samma som tabellens (TG-kolumn, fäll ut-kolumn), så beloppet står i Belopp-kolumnen. */
+  marginColumn?: boolean;
+  interactive?: boolean;
 }) {
   return (
-    <div className="mt-2 flex items-center gap-2 rounded-xl border border-dashed border-emerald-200 bg-emerald-50/40 px-3.5 py-2.5">
-      <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-600/60">{position}</span>
-      <div className="min-w-0 flex-1">
-        <p className="m-0 truncate text-sm font-medium text-emerald-900">
-          {ROT_LABOR_DESCRIPTION} <span className="font-normal text-emerald-700/70">({ROT_LABOR_ARTICLE_NUMBER})</span>
-        </p>
-        <p className="m-0 text-[11px] leading-snug text-emerald-700/70">
-          Skapas automatiskt på {documentLabel}. Beloppet är redan utbrutet ur raderna ovan.
-        </p>
+    <div className={cn(ROW_OUTER, 'mt-1 rounded-lg bg-[#f1f6ef]')}>
+      <span className="text-center text-xs font-semibold tabular-nums text-slate-400">{position}</span>
+      <div className={cn(INNER_BASE, innerColumns(marginColumn, interactive), 'py-2.5')}>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-slate-700">
+            {ROT_LABOR_DESCRIPTION} <span className="font-normal text-slate-500">({ROT_LABOR_ARTICLE_NUMBER})</span>
+          </span>
+          <span className="block text-xs leading-snug text-slate-500">
+            Skapas automatiskt på {documentLabel}. Utbruten ur raderna ovan, höjer inte summan.
+          </span>
+        </span>
+        {/* Beloppet i Belopp-kolumnen räknat från slutet — sist, eller näst sist när tabellen har en
+            fäll ut-kolumn — så raden inte behöver tomma celler för varje kolumn däremellan. */}
+        <span className={cn('text-right text-sm tabular-nums text-slate-600', interactive ? 'md:col-start-[-3] md:col-end-[-2]' : 'md:col-start-[-2] md:col-end-[-1]')}>
+          varav {formatCurrency(amount, 'SEK')}
+        </span>
       </div>
-      <span className="shrink-0 text-right text-sm font-semibold tabular-nums text-emerald-900">
-        <span className="mr-1 text-[11px] font-normal text-emerald-700/70">Varav</span>
-        {formatCurrency(amount, 'SEK')}
-      </span>
     </div>
   );
 }

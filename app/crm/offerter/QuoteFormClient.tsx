@@ -16,8 +16,8 @@ import {
 } from '@/lib/domains/crm/pricing';
 import { calculatePreCalculation, marginCostBasis } from '@/lib/domains/crm/preCalculation';
 import { getArticleUnitName } from '@/app/crm/components/ArticlePicker';
-import LineItemRow from '@/app/crm/components/LineItemRow';
-import { LineItemTotalsBar, GeneratedRotLaborRow } from '@/app/crm/components/LineItemSummary';
+import LineItemRow, { LineItemTableHeader } from '@/app/crm/components/LineItemRow';
+import { LineItemTotals, GeneratedRotLaborRow } from '@/app/crm/components/LineItemSummary';
 import { useCalcSettings } from './useCalcSettings';
 import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
@@ -481,6 +481,7 @@ function FormSection({
   action,
   internal,
   className,
+  bodyClassName,
   children,
 }: {
   id: string;
@@ -489,6 +490,8 @@ function FormSection({
   action?: React.ReactNode;
   internal?: boolean;
   className?: string;
+  /** Kortets innehållsyta, om den ska avvika (radtabellen vill ha kortets hela bredd). */
+  bodyClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -521,7 +524,7 @@ function FormSection({
         </div>
         {action ?? null}
       </div>
-      <div className="grid gap-5 px-5 py-5 sm:px-6">{children}</div>
+      <div className={cn('grid gap-5 px-5 py-5 sm:px-6', bodyClassName)}>{children}</div>
     </section>
   );
 }
@@ -1853,7 +1856,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // aktiv — servern spärrar ändå, och en knapp som är död för att ett bakgrundsanrop failade är
   // värre än ett tydligt fel efter klicket.
   const workOrderBlocked = (readiness?.blockers.length ?? 0) > 0;
-  const configuredRows = effectiveRows.filter((r) => r.isConfigured);
   // SAMMA definition som radkontrollerna (isConfigured). Stod den här på egen hand kunde en rad
   // räknas som "en rad finns" men falla ur varje per-rad-kontroll — en rad med bara blanksteg
   // passerade då hela valideringen utan att någon kontroll tittade på den.
@@ -2357,35 +2359,19 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           </div>
 
           {/* ── Produkter och priser ── */}
+          {/* Raderna som en tabell (# · Artikel · Mängd · À-pris · Rabatt · TG · Belopp). Ett klick fäller ut
+              raden till en redigerare på plats; summeringen står under raderna, som på en offert. */}
           <FormSection
             id="section-rader"
             title="Produkter och priser"
-            description="Offerten byggs av artikelrader. Dra i handtaget för att ändra ordningen."
+            description="Klicka på en rad för att ändra den. Dra i handtaget vid numret för att flytta den."
+            bodyClassName="gap-0 px-2 pb-3 pt-1 sm:px-3"
           >
-          {/* Ett omslag, så kortets avstånd mellan barnen inte läggs ovanpå radlistans egna. */}
-          <div>
-          {/* Totals bar */}
-          {hasAnyLineItemInput ? (
-            <LineItemTotalsBar
-              subtotal={totals.subtotal}
-              vat={totals.vat}
-              vatPercent={vatPct}
-              total={totals.total}
-              toPay={totals.toPay}
-              rowCount={configuredRows.length}
-              carvedLabor={totals.carvedLabor}
-              rotDeduction={totals.rotDeduction}
-              isPrivate={isPrivateQuote}
-            />
-          ) : (
-            <p className="m-0 mb-4 text-sm text-slate-600">
-              Inga rader än. Lägg till en rad och välj artikel.
-            </p>
-          )}
+          {draft.items.length > 0 ? <LineItemTableHeader marginColumn /> : null}
 
           <DndContext sensors={itemSensors} collisionDetection={closestCenter} onDragEnd={handleItemsDragEnd}>
           <SortableContext items={draft.items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
-          <div className="grid gap-2">
+          <div className="grid gap-0.5">
             {draft.items.map((row, index) => (
               <SortableLineItem key={row.id} id={row.id}>
                 {(dragHandle) => (
@@ -2395,6 +2381,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 dragHandle={dragHandle}
                 metrics={effectiveRows.find((r) => r.id === row.id)}
                 rotEnabled={draft.rot_enabled}
+                marginColumn
                 marginPercent={rowMarginPercent(marginRows[index])}
                 // ⚠️ ARTIKELNS pris, inte marginalunderlagets. Sedan lösull kostnadssätts per SÄCK
                 // hade "Inköp 92,40 kr" stått bredvid ett m³-pris på 700 och lästs som 87 %
@@ -2463,21 +2450,45 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               Visas bara när något faktiskt bryts ut. Rader med "ROT-arbete" ikryssad går INTE hit —
               de blir egna husarbete-rader med sin egen artikel, precis som i pushen. */}
           {rotActive && totals.carvedLabor > 0 ? (
-            <GeneratedRotLaborRow position={draft.items.length + 1} amount={totals.carvedLabor} />
+            <GeneratedRotLaborRow position={draft.items.length + 1} amount={totals.carvedLabor} marginColumn />
           ) : null}
 
-          <button
-            type="button"
-            onClick={() => {
-              // Accordion: open the new row as the only expanded one (collapses the rest).
-              const newItem = createEmptyLineItem();
-              setDraft((d) => ({ ...d, items: [...d.items, newItem] }));
-              setExpandedRowId(newItem.id);
-            }}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            + Lägg till rad
-          </button>
+          {draft.items.length === 0 ? (
+            <div className="mx-1 mt-3 rounded-xl border border-dashed border-[#c9d6c5] px-5 py-8 text-center">
+              <p className="m-0 text-sm font-semibold text-slate-800">Inga rader än</p>
+              <p className="m-0 mt-1 text-[13px] text-slate-600">Lägg till en rad och sök fram artikeln, till exempel Ekovilla lösull.</p>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-start justify-between gap-4 px-1 pt-3 sm:px-3">
+            <button
+              type="button"
+              onClick={() => {
+                // Accordion: open the new row as the only expanded one (collapses the rest).
+                const newItem = createEmptyLineItem();
+                setDraft((d) => ({ ...d, items: [...d.items, newItem] }));
+                setExpandedRowId(newItem.id);
+              }}
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#d3ddcf] bg-white px-3.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              Lägg till rad
+            </button>
+            {hasAnyLineItemInput ? (
+              <LineItemTotals
+                className="sm:ml-auto"
+                subtotal={totals.subtotal}
+                vat={totals.vat}
+                vatPercent={vatPct}
+                total={totals.total}
+                toPay={totals.toPay}
+                rotDeduction={totals.rotDeduction}
+                // Samma regel som buildQuotePayload och arbetsordern: företag på 0 % moms = byggmoms.
+                reverseCharge={!isPrivateQuote && vatPct === 0}
+              />
+            ) : null}
           </div>
           </FormSection>
 
