@@ -1,19 +1,23 @@
 import { netAmount, type NetAmountRow } from './pricing';
 import { sumUninvoiced } from './invoicedRevenue';
+import { buildHitRate, type HitRate, type HitRateQuoteRow } from './hitRate';
 import {
   ACTIVE_QUOTE_STATUSES,
   ORDER_STOCK_STATUSES,
   WAITING_QUOTE_STATUSES,
   type OrderStockRow,
 } from './overviewSummary';
+import type { CrmCustomerType } from './customers';
 import type { CrmQuoteStatus } from './quotes';
 import type { CrmWorkOrderStatus } from './work-orders';
-import { addDaysISO, daysBetweenInclusiveISO } from '@/lib/domains/planning/timezone';
+import { addDaysISO, daysBetweenInclusiveISO, isoDayNumber } from '@/lib/domains/planning/timezone';
 import {
   buildSalesOverTime,
   monthsInRange,
   partitionOrders,
   type ReportData,
+  type ReportOrderRow,
+  type ReportQuoteRow,
   type ReportRange,
 } from './reports';
 import { monthBounds, sumGoalTargets, type ReportGoalRow } from './reportGoals';
@@ -32,7 +36,6 @@ import { monthBounds, sumGoalTargets, type ReportGoalRow } from './reportGoals';
 //     uppdatera status, aldrig en förlust,
 //   · hit rate har alla periodens offerter i nämnaren, oavsett status.
 
-const WON: CrmQuoteStatus = 'won';
 const DRAFT: CrmQuoteStatus = 'draft';
 const COMPLETED: CrmWorkOrderStatus = 'completed';
 
@@ -46,47 +49,11 @@ function sumNet(rows: NetAmountRow[]): number {
 }
 
 // ── Hit rate ─────────────────────────────────────────────────────────────────
+//
+// Regeln själv (buildHitRate) bor i hitRate.ts, så att säljartabellen i reports.ts kan räkna med samma
+// funktion utan att importera den här modulen, som i sin tur importerar reports.ts.
 
-export type HitRateQuoteRow = NetAmountRow & { status: string | null };
-
-export type HitRate = {
-  /** Alla offerter i underlaget, oavsett status — utkast, skickade, förlorade och utgångna. */
-  quotes: number;
-  /** Offerter med status Vunnen. */
-  won: number;
-  /** Vunna av antalet, i procent. null när underlaget saknar offerter. */
-  percent: number | null;
-  quoteValue: number;
-  wonValue: number;
-  /** Vunnet av offertvärdet (netto), i procent. null när offertvärdet är 0. */
-  valuePercent: number | null;
-};
-
-/**
- * Hit rate = vunna ÷ ALLA offerter, i antal och i kronor (netto).
- *
- * ⚠️ NÄMNAREN ÄR ALLA OFFERTER. Avfärdade varianter, prövade mot prod 2026-10-07:
- *   · "vunna av avgjorda" (vunna + förlorade) gav 95 %, eftersom nästan inga offerter markeras som
- *     förlorade — talet hade sagt ingenting,
- *   · "avgjort i perioden" blåses upp när antalet offerter växer,
- *   · en fast 30-dagarskohort blir tom för "Denna månad".
- *
- * Talet kan bli för lågt men aldrig för högt: 33 order har skapats utan koppling till en offert,
- * och hör en sådan till en öppen offert räknas den offerten inte som vunnen.
- */
-export function buildHitRate(quotes: HitRateQuoteRow[]): HitRate {
-  const won = quotes.filter((quote) => quote.status === WON);
-  const quoteValue = sumNet(quotes);
-  const wonValue = sumNet(won);
-  return {
-    quotes: quotes.length,
-    won: won.length,
-    percent: quotes.length > 0 ? (won.length / quotes.length) * 100 : null,
-    quoteValue,
-    wonValue,
-    valuePercent: quoteValue > 0 ? (wonValue / quoteValue) * 100 : null,
-  };
-}
+export { buildHitRate, type HitRate, type HitRateQuoteRow };
 
 /**
  * Hur gamla offerterna måste vara innan hit rate är slutlig. Mätt i prod 2026-10-07: 61 % av
@@ -200,6 +167,8 @@ export function buildOrderStock(
 
 export type OpenQuoteRow = NetAmountRow & {
   status: string | null;
+  /** Offertdatumet (NOT NULL i schemat) — åldern i "Öppna offerter efter ålder". */
+  quote_date: string;
   valid_until: string | null;
   follow_up_date: string | null;
 };
@@ -225,7 +194,48 @@ export type OpenQuotes = CountAndValue & {
   missingFollowUpDate: { count: number; of: number };
   /** Öppna offerter vars uppföljningsdatum har passerat. */
   overdueFollowUps: CountAndValue;
+  /** De öppna offerterna efter ålder, i QUOTE_AGE_BUCKETS ordning — Försäljning. */
+  byAge: QuoteAgeBucket[];
 };
+
+/**
+ * Åldersgrupperna för de öppna offerterna: dagar sedan offertdatumet, i den ordningen. `maxDays` är
+ * gruppens sista dag; den sista gruppen saknar tak. Utkasten räknas in, som överallt.
+ */
+export const QUOTE_AGE_BUCKETS = [
+  { key: '0-14', minDays: 0, maxDays: 14 },
+  { key: '15-30', minDays: 15, maxDays: 30 },
+  { key: '31-60', minDays: 31, maxDays: 60 },
+  { key: 'over-60', minDays: 61, maxDays: null },
+] as const;
+
+export type QuoteAgeKey = (typeof QUOTE_AGE_BUCKETS)[number]['key'];
+
+export type QuoteAgeBucket = CountAndValue & { key: QuoteAgeKey; minDays: number; maxDays: number | null };
+
+/**
+ * Hur många dagar sedan offertdatumet, räknat i svenska kalenderdagar — dagens offert är 0 dagar.
+ * Ett offertdatum i framtiden räknas som 0: offerten är ny, inte negativt gammal. null bara för ett
+ * datum som inte går att läsa, vilket schemat inte släpper in (quote_date är NOT NULL).
+ */
+export function quoteAgeDays(quoteDate: string, today: string): number | null {
+  const start = isoDayNumber(dayOf(quoteDate));
+  const end = isoDayNumber(today);
+  if (start == null || end == null) return null;
+  return Math.max(0, end - start);
+}
+
+export function buildQuoteAge(rows: OpenQuoteRow[], today: string): QuoteAgeBucket[] {
+  const buckets: QuoteAgeBucket[] = QUOTE_AGE_BUCKETS.map((bucket) => ({ ...bucket, count: 0, value: 0 }));
+  for (const row of rows) {
+    const age = quoteAgeDays(row.quote_date, today);
+    if (age == null) continue;
+    const bucket = buckets.find((b) => b.maxDays == null || age <= b.maxDays)!;
+    bucket.count += 1;
+    bucket.value += netAmount(row);
+  }
+  return buckets;
+}
 
 function countAndValue(rows: NetAmountRow[]): CountAndValue {
   return { count: rows.length, value: sumNet(rows) };
@@ -263,6 +273,7 @@ export function buildOpenQuotes(rows: OpenQuoteRow[], today: string): OpenQuotes
       const followUp = dayOf(row.follow_up_date);
       return followUp != null && followUp < today;
     })),
+    byAge: buildQuoteAge(open, today),
   };
 }
 
@@ -348,6 +359,24 @@ export function trendWindow(last12: ReportRange, firstActivityDay: string | null
   return { from: from > last12.to ? last12.to : from, to: last12.to };
 }
 
+/**
+ * Månadens dagar inom fönstret. `partial` är satt när fönstret skär månaden — den pågår, eller CRM:et
+ * startade mitt i den — och är då de dagar som räknas. Delas av trenden och hit rate per månad, så
+ * att de två alltid märker samma månader som delmånader.
+ */
+function monthSpan(period: string, window: ReportRange): { from: string; to: string; partial: ReportRange | null } {
+  const month = monthBounds(period);
+  const from = month.from > window.from ? month.from : window.from;
+  const to = month.to < window.to ? month.to : window.to;
+  return { from, to, partial: from !== month.from || to !== month.to ? { from, to } : null };
+}
+
+/** Ligger månaden helt eller delvis i den valda perioden? */
+function monthTouches(period: string, selected: ReportRange): boolean {
+  const month = monthBounds(period);
+  return month.from <= selected.to && month.to >= selected.from;
+}
+
 export function buildSalesTrend(input: {
   data: Pick<ReportData, 'quotes' | 'orders' | 'invoiceRounds'>;
   window: ReportRange;
@@ -369,10 +398,7 @@ export function buildSalesTrend(input: {
     range: input.window,
     goalsUnavailable: input.goals == null,
     points: series.map((point) => {
-      const month = monthBounds(point.period);
-      const from = month.from > input.window.from ? month.from : input.window.from;
-      const to = month.to < input.window.to ? month.to : input.window.to;
-      const partial = from !== month.from || to !== month.to ? { from, to } : null;
+      const { partial } = monthSpan(point.period, input.window);
       const targets = partial || !input.goals ? {} : sumGoalTargets(input.goals, [point.period]);
       return {
         period: point.period,
@@ -385,8 +411,150 @@ export function buildSalesTrend(input: {
           invoicedValue: targets.invoicedValue ?? null,
         },
         partial,
-        inPeriod: month.from <= input.selected.to && month.to >= input.selected.from,
+        inPeriod: monthTouches(point.period, input.selected),
       };
     }),
+  };
+}
+
+// ── Försäljning ──────────────────────────────────────────────────────────────
+//
+// Försäljningsflikens nyckeltal (spec 2026-10-07, 4.3). Hit rate följer samma regel överallt —
+// buildHitRate, vunna ÷ ALLA offerter — och drar inga slutsatser av statusar säljaren sätter.
+
+export type CustomerTypeHitRate = Record<CrmCustomerType, HitRate> & {
+  /** Periodens mognad, samma som Hit rate-kortets: preliminär när perioden slutar inom 30 dagar. */
+  preliminary: boolean;
+  matureThrough: string;
+};
+
+/**
+ * Kundtypen ur quote_type: 'private' är privat, allt annat företag — samma läsning som resten av CRM:et
+ * (work-orders.ts, workOrderReadiness.ts). Schemat släpper bara in 'private' och 'business'.
+ */
+export function customerTypeOf(quoteType: string | null | undefined): CrmCustomerType {
+  return quoteType === 'private' ? 'private' : 'business';
+}
+
+/** Periodens hit rate per kundtyp. Följer perioden, och är preliminär när perioden är det. */
+export function buildCustomerTypeHitRate(
+  quotes: Array<HitRateQuoteRow & Pick<ReportQuoteRow, 'quote_type'>>,
+  range: ReportRange,
+  today: string,
+): CustomerTypeHitRate {
+  return {
+    business: buildHitRate(quotes.filter((quote) => customerTypeOf(quote.quote_type) === 'business')),
+    private: buildHitRate(quotes.filter((quote) => customerTypeOf(quote.quote_type) === 'private')),
+    ...hitRateMaturity(range, today),
+  };
+}
+
+export type HitRateMonth = HitRate & {
+  /** 'YYYY-MM' — offertmånaden: offerterna räknas på sitt offertdatum. */
+  period: string;
+  /** Månadens offerter är inte alla 30 dagar gamla än — talet stiger sannolikt. */
+  preliminary: boolean;
+  /** Dagarna som räknas när månaden inte är hel. null = hel månad. */
+  partial: ReportRange | null;
+  /** Ligger månaden helt eller delvis i den valda perioden? */
+  inPeriod: boolean;
+};
+
+/**
+ * Hit rate per offertmånad i trendens fönster — de senaste tolv månaderna eller sedan start.
+ *
+ * ⚠️ FÖLJER INTE PERIODEN (Williams beslut 2026-10-07, samma som trenden): sidan öppnar på "Denna
+ * månad", och en månadsserie över den valda perioden hade varit en enda stapel som bara upprepar
+ * Hit rate-kortet. Den valda perioden markeras i stället.
+ *
+ * Varje månad har sin egen mognad: en månad vars sista räknade dag ligger inom 30 dagar är preliminär.
+ */
+export function buildHitRateByMonth(input: {
+  quotes: Array<HitRateQuoteRow & Pick<ReportQuoteRow, 'quote_date'>>;
+  window: ReportRange;
+  selected: ReportRange;
+  today: string;
+}): HitRateMonth[] {
+  const byMonth = new Map<string, HitRateQuoteRow[]>();
+  for (const quote of input.quotes) {
+    const day = dayOf(quote.quote_date);
+    // Utanför fönstret räknas inte, även i fönstrets första månad — samma regel som trenden.
+    if (day == null || day < input.window.from || day > input.window.to) continue;
+    const period = day.slice(0, 7);
+    const list = byMonth.get(period);
+    if (list) list.push(quote);
+    else byMonth.set(period, [quote]);
+  }
+  return monthsInRange(input.window.from, input.window.to).map((period) => {
+    const span = monthSpan(period, input.window);
+    return {
+      period,
+      ...buildHitRate(byMonth.get(period) ?? []),
+      preliminary: hitRateMaturity({ from: span.from, to: span.to }, input.today).preliminary,
+      partial: span.partial,
+      inPeriod: monthTouches(period, input.selected),
+    };
+  });
+}
+
+export type TypicalOrder = {
+  count: number;
+  /** Medianen av ordervärdet, netto — hälften av ordrarna är större. null utan order. */
+  median: number | null;
+  /** Snittet, netto. Dras upp av några stora jobb, därför bara i undertexten. null utan order. */
+  mean: number | null;
+};
+
+/** Median, och för ett jämnt antal medelvärdet av de två mittersta. null för en tom lista. */
+export function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function typicalOrder(rows: NetAmountRow[]): TypicalOrder {
+  const values = rows.map((row) => netAmount(row));
+  return {
+    count: values.length,
+    median: median(values),
+    mean: values.length > 0 ? values.reduce((total, value) => total + value, 0) / values.length : null,
+  };
+}
+
+/**
+ * Typisk order per kundtyp: median och snitt av ordervärdet på order SKAPADE i perioden — samma order
+ * som Orderingång, så avbrutna är redan borta (partitionOrders). Anroparen skickar in dem.
+ */
+export function buildTypicalOrder(ordersCreated: Array<NetAmountRow & Pick<ReportOrderRow, 'quote_type'>>): Record<CrmCustomerType, TypicalOrder> {
+  return {
+    business: typicalOrder(ordersCreated.filter((order) => customerTypeOf(order.quote_type) === 'business')),
+    private: typicalOrder(ordersCreated.filter((order) => customerTypeOf(order.quote_type) === 'private')),
+  };
+}
+
+export type ReportSales = {
+  hitRateByCustomerType: CustomerTypeHitRate;
+  /** Trendens fönster. ⚠️ null = KUNDE INTE RÄKNAS (trendens läsning felade), aldrig "inga offerter". */
+  hitRateByMonth: HitRateMonth[] | null;
+  typicalOrder: Record<CrmCustomerType, TypicalOrder>;
+};
+
+export function buildReportSales(input: {
+  /** Periodens offerter. */
+  quotes: ReportQuoteRow[];
+  /** Order skapade i perioden, utan avbrutna — partitionOrders(...).created. */
+  ordersCreated: ReportOrderRow[];
+  range: ReportRange;
+  today: string;
+  /** Trendens offerter och fönster. null = trendens läsning felade. */
+  trend: { quotes: ReportQuoteRow[]; window: ReportRange } | null;
+}): ReportSales {
+  return {
+    hitRateByCustomerType: buildCustomerTypeHitRate(input.quotes, input.range, input.today),
+    hitRateByMonth: input.trend
+      ? buildHitRateByMonth({ quotes: input.trend.quotes, window: input.trend.window, selected: input.range, today: input.today })
+      : null,
+    typicalOrder: buildTypicalOrder(input.ordersCreated),
   };
 }

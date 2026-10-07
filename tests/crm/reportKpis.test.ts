@@ -1,17 +1,27 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildCustomerTypeHitRate,
   buildHitRate,
+  buildHitRateByMonth,
   buildOpenQuotes,
   buildOrderStock,
   buildPeriodHitRate,
+  buildQuoteAge,
   buildReportOverview,
+  buildReportSales,
+  buildTypicalOrder,
+  customerTypeOf,
   hitRateMaturity,
+  median,
   orderStockWeeks,
+  quoteAgeDays,
   buildSalesTrend,
   trendWindow,
   type OpenQuoteRow,
   type OrderStockRow,
 } from '@/lib/domains/crm/reportKpis';
+import { buildPerSeller, type ReportOrderRow, type ReportQuoteRow } from '@/lib/domains/crm/reports';
+import { suggestsLateEntry } from '@/lib/domains/crm/hitRate';
 import { ORDER_STOCK_STATUSES } from '@/lib/domains/crm/overviewSummary';
 import type { ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 
@@ -214,7 +224,8 @@ const open = (
   amount: number,
   valid_until: string | null,
   follow_up_date: string | null = null,
-): OpenQuoteRow => ({ status, amount, vat_percent: 0, valid_until, follow_up_date });
+  quote_date = '2026-10-01',
+): OpenQuoteRow => ({ status, amount, vat_percent: 0, quote_date, valid_until, follow_up_date });
 
 describe('buildOpenQuotes', () => {
   it('räknar utkast, skickade och uppföljningar — oavsett giltighetstid', () => {
@@ -348,9 +359,9 @@ describe('buildSalesTrend', () => {
     ...over,
   });
   const quoteRow = (quote_date: string, amount: number) =>
-    ({ amount, vat_percent: 0, status: 'sent', quote_date, assigned_to: null, customer_name: null });
+    ({ amount, vat_percent: 0, status: 'sent', quote_date, assigned_to: null, customer_name: null, quote_type: 'business' });
   const orderRow = (created_at: string, amount: number, over: Record<string, unknown> = {}) =>
-    ({ amount, vat_percent: 0, status: 'scheduled', created_at, fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, ...over });
+    ({ amount, vat_percent: 0, status: 'scheduled', created_at, fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', ...over });
 
   const window = { from: '2026-06-29', to: '2026-10-07' };
   const trend = buildSalesTrend({
@@ -425,5 +436,282 @@ describe('buildSalesTrend', () => {
     // ... och säger att de inte gick att läsa, så gränssnittet inte påstår att budget saknas.
     expect(noGoals.goalsUnavailable).toBe(true);
     expect(trend.goalsUnavailable).toBe(false);
+  });
+});
+
+// ── Försäljning ──────────────────────────────────────────────────────────────
+
+describe('suggestsLateEntry — fotnoten vid hit rate 95 % eller mer', () => {
+  it('jämför det AVRUNDADE talet, alltså det som står i tabellen', () => {
+    // 94,6 % visas som "95 %". Utan avrundningen hade en 95 stått utan fotnot bredvid en 95 med.
+    expect(suggestsLateEntry(94.6)).toBe(true);
+    expect(suggestsLateEntry(94.4)).toBe(false);
+    expect(suggestsLateEntry(95)).toBe(true);
+    expect(suggestsLateEntry(100)).toBe(true);
+  });
+
+  it('ingen fotnot utan hit rate', () => {
+    expect(suggestsLateEntry(null)).toBe(false);
+  });
+});
+
+describe('buildPerSeller — hit rate per säljare', () => {
+  const sellerQuote = (assigned_to: string, status: string): ReportQuoteRow => ({
+    amount: 1000, vat_percent: 0, status, quote_date: '2026-08-10', assigned_to, customer_name: null, quote_type: 'business',
+  });
+  const sellerOrder: ReportOrderRow = {
+    amount: 5000, vat_percent: 0, status: 'scheduled', created_at: '2026-08-12T08:00:00Z', fortnox_invoiced_at: null,
+    partial_invoicing_started_at: null, assigned_to: 'u3', client_name: null, quote_type: 'business',
+  };
+
+  it('vunna ÷ ALLA säljarens offerter — utkast, förlorade och skickade i nämnaren', () => {
+    const rows = buildPerSeller(
+      [sellerQuote('u1', 'won'), sellerQuote('u1', 'draft'), sellerQuote('u1', 'lost'), sellerQuote('u1', 'sent')],
+      [], [], [], [{ id: 'u1', full_name: 'Anna' }],
+    );
+    expect(rows[0]).toMatchObject({ quotes: 4, won: 1, hitRate: 25, lateEntry: false });
+  });
+
+  it('säljarraden bär fotnoten själv — vyn räknar ingenting', () => {
+    const rows = buildPerSeller(
+      [...Array.from({ length: 19 }, () => sellerQuote('u1', 'won')), sellerQuote('u1', 'sent')],
+      [], [], [], [{ id: 'u1', full_name: 'Anna' }],
+    );
+    expect(rows[0]).toMatchObject({ hitRate: 95, lateEntry: true });
+  });
+
+  it('null — inte 0 % — för en säljare utan offerter i perioden', () => {
+    // Säljaren syns i tabellen för sin order. 0 % hade påstått att hen inte vann något.
+    const rows = buildPerSeller([], [sellerOrder], [], [], [{ id: 'u3', full_name: 'Cecilia' }]);
+    expect(rows[0]).toMatchObject({ quotes: 0, won: 0, hitRate: null, lateEntry: false, orders: 1 });
+  });
+});
+
+describe('quoteAgeDays', () => {
+  it('räknar kalenderdagar sedan offertdatumet — dagens offert är 0 dagar', () => {
+    expect(quoteAgeDays(TODAY, TODAY)).toBe(0);
+    expect(quoteAgeDays('2026-09-23', TODAY)).toBe(14);
+    expect(quoteAgeDays('2026-09-22', TODAY)).toBe(15);
+  });
+
+  it('ett offertdatum i framtiden är nytt, inte negativt gammalt', () => {
+    expect(quoteAgeDays('2026-10-20', TODAY)).toBe(0);
+  });
+
+  it('räknar hela dygn över höstens sommartidsväxling', () => {
+    // Klockan går tillbaka natten till 25 oktober 2026. Datumen räknas som dygnsnummer, aldrig som
+    // millisekunder delat med 86 400 000 — då hade ett 25-timmarsdygn gett en decimal.
+    expect(quoteAgeDays('2026-10-20', '2026-11-03')).toBe(14);
+  });
+});
+
+describe('buildQuoteAge — öppna offerter efter ålder', () => {
+  const aged = (quote_date: string, amount = 100, status = 'sent') => open(status, amount, null, null, quote_date);
+
+  it('lägger gränsdagarna i rätt grupp: 14 | 15, 30 | 31, 60 | 61', () => {
+    const buckets = buildQuoteAge(
+      [
+        aged('2026-09-23'), // 14
+        aged('2026-09-22'), // 15
+        aged('2026-09-07'), // 30
+        aged('2026-09-06'), // 31
+        aged('2026-08-08'), // 60
+        aged('2026-08-07'), // 61
+      ],
+      TODAY,
+    );
+    expect(buckets.map((b) => [b.key, b.count])).toEqual([
+      ['0-14', 1],
+      ['15-30', 2],
+      ['31-60', 2],
+      ['over-60', 1],
+    ]);
+  });
+
+  it('summerar netto, och grupperna går jämnt upp mot de öppna offerternas totalsumma', () => {
+    const quotes = buildOpenQuotes(
+      [aged('2026-10-01', 1250, 'draft'), aged('2026-07-01', 1000, 'sent'), aged('2026-07-01', 99_999, 'won')].map((row, i) =>
+        i === 0 ? { ...row, vat_percent: 25 } : row,
+      ),
+      TODAY,
+    );
+    expect(quotes.byAge.find((b) => b.key === '0-14')).toMatchObject({ count: 1, value: 1000 });
+    expect(quotes.byAge.find((b) => b.key === 'over-60')).toMatchObject({ count: 1, value: 1000 });
+    // Den vunna är inte öppen och hör inte hemma i någon grupp.
+    expect(quotes.byAge.reduce((t, b) => t + b.count, 0)).toBe(quotes.count);
+    expect(quotes.byAge.reduce((t, b) => t + b.value, 0)).toBe(quotes.value);
+  });
+
+  it('räknar utkasten med, som överallt', () => {
+    const buckets = buildQuoteAge([aged('2026-10-06', 100, 'draft')], TODAY);
+    expect(buckets[0].count).toBe(1);
+  });
+
+  it('har alltid alla fyra grupperna, även tomma', () => {
+    expect(buildQuoteAge([], TODAY).map((b) => [b.key, b.count, b.value])).toEqual([
+      ['0-14', 0, 0],
+      ['15-30', 0, 0],
+      ['31-60', 0, 0],
+      ['over-60', 0, 0],
+    ]);
+  });
+});
+
+describe('customerTypeOf', () => {
+  it("'private' är privat, allt annat företag — samma läsning som resten av CRM:et", () => {
+    expect(customerTypeOf('private')).toBe('private');
+    expect(customerTypeOf('business')).toBe('business');
+    expect(customerTypeOf(null)).toBe('business');
+  });
+});
+
+const typed = (status: string, quote_type: string, amount = 1000): ReportQuoteRow => ({
+  amount, vat_percent: 0, status, quote_date: '2026-08-10', assigned_to: null, customer_name: null, quote_type,
+});
+
+describe('buildCustomerTypeHitRate', () => {
+  it('delar periodens offerter på kundtyp, med alla offerter i varje nämnare', () => {
+    const rate = buildCustomerTypeHitRate(
+      [typed('won', 'business'), typed('draft', 'business'), typed('won', 'private'), typed('lost', 'private'), typed('sent', 'private')],
+      { from: '2026-08-01', to: '2026-08-31' },
+      TODAY,
+    );
+    expect(rate.business).toMatchObject({ quotes: 2, won: 1, percent: 50 });
+    expect(rate.private).toMatchObject({ quotes: 3, won: 1 });
+    expect(rate.private.percent).toBeCloseTo(33.33, 1);
+  });
+
+  it('är preliminär när perioden är det — samma mognad som Hit rate-kortet', () => {
+    expect(buildCustomerTypeHitRate([], { from: '2026-09-01', to: '2026-09-30' }, TODAY)).toMatchObject({
+      preliminary: true,
+      matureThrough: '2026-09-07',
+    });
+    expect(buildCustomerTypeHitRate([], { from: '2026-08-01', to: '2026-08-31' }, TODAY).preliminary).toBe(false);
+  });
+
+  it('en kundtyp utan offerter ger null, inte 0 %', () => {
+    const rate = buildCustomerTypeHitRate([typed('won', 'business')], { from: '2026-08-01', to: '2026-08-31' }, TODAY);
+    expect(rate.private.percent).toBeNull();
+  });
+});
+
+describe('buildHitRateByMonth', () => {
+  const dated = (status: string, quote_date: string): ReportQuoteRow => ({ ...typed(status, 'business'), quote_date });
+  const window = { from: '2026-06-29', to: TODAY };
+  const september = { from: '2026-09-01', to: '2026-09-30' };
+  const months = buildHitRateByMonth({
+    quotes: [
+      dated('won', '2026-06-28'), // före fönstret
+      dated('won', '2026-06-30'),
+      dated('won', '2026-08-03'),
+      dated('sent', '2026-08-20'),
+      dated('draft', '2026-08-31'),
+      dated('won', '2026-09-15'),
+      dated('sent', '2026-10-02'),
+    ],
+    window,
+    selected: september,
+    today: TODAY,
+  });
+
+  it('en punkt per offertmånad i fönstret, oavsett vald period', () => {
+    expect(months.map((m) => m.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+  });
+
+  it('räknar på offertdatumet, med alla månadens offerter i nämnaren', () => {
+    expect(months.find((m) => m.period === '2026-08')).toMatchObject({ quotes: 3, won: 1 });
+    expect(months.find((m) => m.period === '2026-10')).toMatchObject({ quotes: 1, won: 0, percent: 0 });
+  });
+
+  it('räknar inte offerter före fönstret, även i fönstrets första månad', () => {
+    expect(months.find((m) => m.period === '2026-06')).toMatchObject({ quotes: 1, won: 1 });
+  });
+
+  it('en tom månad har ingen hit rate — null, inte 0 %', () => {
+    expect(months.find((m) => m.period === '2026-07')).toMatchObject({ quotes: 0, percent: null });
+  });
+
+  it('varje månad har sin egen mognad: augusti slutgiltig, september och oktober preliminära', () => {
+    // Den 7 oktober: offerter efter 7 september är yngre än 30 dagar.
+    expect(months.map((m) => [m.period, m.preliminary])).toEqual([
+      ['2026-06', false],
+      ['2026-07', false],
+      ['2026-08', false],
+      ['2026-09', true],
+      ['2026-10', true],
+    ]);
+  });
+
+  it('en månad vars sista dag är EXAKT 30 dagar gammal är mogen', () => {
+    const [august] = buildHitRateByMonth({ quotes: [], window: { from: '2026-08-01', to: '2026-08-31' }, selected: september, today: '2026-09-30' });
+    expect(august.preliminary).toBe(false);
+    const [late] = buildHitRateByMonth({ quotes: [], window: { from: '2026-08-01', to: '2026-08-31' }, selected: september, today: '2026-09-29' });
+    expect(late.preliminary).toBe(true);
+  });
+
+  it('märker delmånaderna — den första (CRM:et startade 29 juni) och den pågående', () => {
+    expect(months.filter((m) => m.partial).map((m) => [m.period, m.partial])).toEqual([
+      ['2026-06', { from: '2026-06-29', to: '2026-06-30' }],
+      ['2026-10', { from: '2026-10-01', to: TODAY }],
+    ]);
+  });
+
+  it('markerar månaderna i den valda perioden', () => {
+    expect(months.filter((m) => m.inPeriod).map((m) => m.period)).toEqual(['2026-09']);
+  });
+});
+
+describe('median', () => {
+  it('mittvärdet för ett udda antal, oavsett ordning', () => {
+    expect(median([30, 10, 20])).toBe(20);
+  });
+  it('medelvärdet av de två mittersta för ett jämnt antal', () => {
+    expect(median([40, 10, 30, 20])).toBe(25);
+  });
+  it('null för en tom lista', () => {
+    expect(median([])).toBeNull();
+  });
+});
+
+describe('buildTypicalOrder', () => {
+  const order = (amount: number, quote_type: string, vat_percent = 0): ReportOrderRow => ({
+    amount, vat_percent, status: 'scheduled', created_at: '2026-08-12T08:00:00Z', fortnox_invoiced_at: null,
+    partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type,
+  });
+
+  it('median och snitt per kundtyp — snittet dras upp av ett stort jobb, medianen inte', () => {
+    const typical = buildTypicalOrder([order(10_000, 'business'), order(20_000, 'business'), order(300_000, 'business'), order(5_000, 'private')]);
+    expect(typical.business).toEqual({ count: 3, median: 20_000, mean: 110_000 });
+    expect(typical.private).toEqual({ count: 1, median: 5_000, mean: 5_000 });
+  });
+
+  it('räknar netto — en privatorder med 25 % moms jämförs utan momsen', () => {
+    expect(buildTypicalOrder([order(12_500, 'private', 25)]).private.median).toBe(10_000);
+  });
+
+  it('en kundtyp utan order ger null, inte 0 kr', () => {
+    expect(buildTypicalOrder([order(1000, 'business')]).private).toEqual({ count: 0, median: null, mean: null });
+  });
+});
+
+describe('buildReportSales', () => {
+  const input = {
+    quotes: [typed('won', 'business')],
+    ordersCreated: [],
+    range: { from: '2026-08-01', to: '2026-08-31' },
+    today: TODAY,
+  };
+
+  it('hit rate per månad ur trendens offerter och fönster', () => {
+    const sales = buildReportSales({ ...input, trend: { quotes: [typed('won', 'private')], window: { from: '2026-08-01', to: '2026-08-31' } } });
+    expect(sales.hitRateByMonth).toHaveLength(1);
+    expect(sales.hitRateByMonth?.[0]).toMatchObject({ period: '2026-08', quotes: 1, won: 1, inPeriod: true });
+  });
+
+  it('en trasig trendläsning tar bara bort hit rate per månad — null, aldrig en tom serie', () => {
+    const sales = buildReportSales({ ...input, trend: null });
+    expect(sales.hitRateByMonth).toBeNull();
+    expect(sales.hitRateByCustomerType.business).toMatchObject({ quotes: 1, won: 1 });
+    expect(sales.typicalOrder.business.count).toBe(0);
   });
 });

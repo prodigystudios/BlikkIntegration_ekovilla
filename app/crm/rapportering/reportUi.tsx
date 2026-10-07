@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
+import Badge from '@/components/ui/Badge';
 // Procentreglerna importeras i stället för att skrivas om här: båda har ett null-fall som är lätt
 // att tappa (mål 0 ger inte 0 %, föregående 0 ger inte +100 %), och de är enhetstestade i
 // tests/crm/reportGoals.test.ts. En egen kopia i vyn hade varit den enda ingen prövar.
@@ -21,10 +22,93 @@ import {
 export const COLOR_QUOTE = '#0d9488'; // teal — offertvärde
 export const COLOR_ORDER = '#f59e0b'; // amber — ordervärde
 export const COLOR_INVOICED = '#8b5cf6'; // violet — fakturerat
+// "Vald period" i diagrammen som inte följer periodväljaren (trenden, hit rate per månad) — samma band
+// i båda, och samma färg som legendernas bg-[#e3ece0].
+export const COLOR_PERIOD_BAND = '#e3ece0';
 
 // Ytor INUTI ett kort: en salvieton strax mörkare än kortet (#f9fbf7), aldrig vitt — en vit panel blir
 // den ljusaste ytan på sidan och drar blicken (Williams ord, 2026-10-07).
 export const INSET_PANEL = 'rounded-xl border border-[#dde6d9] bg-[#f1f5ee]';
+
+// ── Fördelningar (stapellistor) ──
+// En enda grön för fördelningarnas staplar (--ek-accent): färgen bär ingen serie här, bara längden gör.
+// Ränderna betyder PRELIMINÄRT — ett tal som ännu stiger — och används till ingenting annat. recharts
+// behöver värdena som värden, därför konstanter och inte variabler.
+export const COLOR_BAR = '#2f6b45';
+export const COLOR_BAR_STRIPE = '#b9d0bf';
+const BAR_TRACK = 'bg-[#dde6d9]';
+const BAR_FILL = 'bg-[#2f6b45]';
+const BAR_FILL_STRIPED = 'bg-[repeating-linear-gradient(135deg,#2f6b45_0_4px,#b9d0bf_4px_7px)]';
+
+/** Stapellistans skal — en `<ul>`, så att skärmläsare hör hur många rader den har. */
+export function BarList({ children }: { children: ReactNode }) {
+  return <ul className="m-0 grid list-none gap-3 p-0">{children}</ul>;
+}
+
+/**
+ * En rad i en stapellista: etiketten till vänster, stapeln i mitten, talet till höger. `share` är
+ * stapelns längd i procent av spåret; null ritar ett tomt spår (inget att räkna på — inte 0).
+ */
+export function BarRow({
+  label,
+  sub,
+  share,
+  value,
+  extra,
+  striped = false,
+}: {
+  label: ReactNode;
+  sub?: ReactNode;
+  share: number | null;
+  value: ReactNode;
+  extra?: ReactNode;
+  /** Talet är preliminärt. */
+  striped?: boolean;
+}) {
+  return (
+    <li className="grid grid-cols-[minmax(5.5rem,8.5rem)_minmax(0,1fr)_auto] items-center gap-3 text-[13px]">
+      <span className="min-w-0 leading-tight text-slate-700">
+        {label}
+        {sub ? <span className="block text-[11px] text-slate-500">{sub}</span> : null}
+      </span>
+      <span className={cn('h-2.5 overflow-hidden rounded-full', BAR_TRACK)} aria-hidden="true">
+        {share != null ? (
+          <span
+            className={cn('block h-full rounded-full', striped ? BAR_FILL_STRIPED : BAR_FILL)}
+            style={{ width: `${Math.max(0, Math.min(100, share))}%` }}
+          />
+        ) : null}
+      </span>
+      <span className="whitespace-nowrap text-right font-semibold tabular-nums text-slate-800">
+        {value}
+        {extra ? <span className="ml-1.5 font-normal text-slate-500">{extra}</span> : null}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * "Preliminärt — offerter efter 7 sep. är yngre än 30 dagar". Hit rate är preliminär tills periodens
+ * offerter är 30 dagar gamla; samma notis överallt där en hit rate står.
+ */
+export function PreliminaryNote({ matureThrough }: { matureThrough: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] text-slate-600">
+      <Badge variant="info" className="px-1.5 py-0.5 text-[11px]">Preliminärt</Badge>
+      <span>offerter efter {formatDay(matureThrough)} är yngre än 30 dagar</span>
+    </div>
+  );
+}
+
+/** Ett litet tal med en förklarande rad, inuti ett kort. */
+export function MiniStat({ value, children }: { value: ReactNode; children: ReactNode }) {
+  return (
+    <div className={cn(INSET_PANEL, 'grid content-start gap-0.5 px-3 py-2.5')}>
+      <span className="text-lg font-bold tabular-nums text-slate-900">{value}</span>
+      <span className="text-[12px] leading-snug text-slate-600">{children}</span>
+    </div>
+  );
+}
 
 // ── Formatting ──
 const sekFormatter = new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', maximumFractionDigits: 0 });
@@ -51,9 +135,9 @@ export function formatRangeLabel(from: string, to: string) {
   const end = fmt.format(new Date(`${to}T00:00:00Z`));
   return start === end ? start : `${start} – ${end}`;
 }
-export function percent(part: number, whole: number) {
-  if (whole <= 0) return '–';
-  return `${Math.round((part / whole) * 100)} %`;
+/** En enskild dag: "7 sep." */
+export function formatDay(day: string) {
+  return formatRangeLabel(day, day);
 }
 export function formatCount(value: number) {
   return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value);
@@ -90,7 +174,7 @@ export function downloadCsv(filename: string, header: string[], rows: Array<Arra
 
 export function ExportButton({ onClick }: { onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="inline-flex h-8 items-center justify-center rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300">
+    <button type="button" onClick={onClick} className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300">
       Exportera CSV
     </button>
   );
