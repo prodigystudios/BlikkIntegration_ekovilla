@@ -9,6 +9,7 @@ import {
   COLOR_PERIOD_BAND,
   formatCount,
   formatCurrency,
+  formatM3,
   formatMonth,
   formatMonthLong,
   formatRangeLabel,
@@ -25,10 +26,6 @@ import {
 // samma diagram hade gjort det omöjligt att läsa någon av dem.
 
 type MonthDatum = VolumeMonth & { label: string };
-
-function formatM3(value: number) {
-  return `${formatCount(Math.round(value))} m³`;
-}
 
 function VolumeTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload?: unknown }> }) {
   const datum = active ? (payload?.[0]?.payload as MonthDatum | undefined) : undefined;

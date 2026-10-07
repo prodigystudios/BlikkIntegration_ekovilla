@@ -146,6 +146,38 @@ export async function GET(req: Request) {
       });
 
     const data = await fetchReportData(admin, range);
+    // Periodens order, partitionerade — delas av lönsamheten, nyckeltalen och Produkt & marknad.
+    const periodOrders = partitionOrders(data.orders, range, data.invoiceRounds);
+
+    // ── Produkt & marknads läsningar ─────────────────────────────────────────
+    //
+    // STARTAS HÄR och väntas in först när svaret sätts ihop, samma skäl som ögonblicksbilderna:
+    // orderraderna är rapportens tyngsta läsning (tolv månaders order), och de ska gå medan målen,
+    // produktionen, tiden, jämförelseperioden och lönsamheten räknas — inte efter dem. Raderna läses för
+    // periodens och trendens skapade order (m³ per månad följer trendens fönster, som de andra
+    // månadsdiagrammen), schemat för orderna bakom periodens fakturor och orderstocken.
+    //
+    // ⚠️ VARJE GREN FÅNGAR SITT EGET FEL och blir null — utan rader blir m³-delarna null, utan schema
+    // depådelen — så inget löfte kan bli ett ohanterat avslag om resten av rutten skulle kasta först.
+    const productTrendRead = (async () => {
+      const rows = reuseForTrend ? data : await trendDataRead;
+      return rows ? { orders: rows.orders, window: trendWindow(last12, await firstActivityRead) } : null;
+    })();
+    const productLineItemsRead = productTrendRead
+      .then((trend) => fetchOrderLineItems(admin, volumeOrderIds({ ordersCreated: periodOrders.created, trend })))
+      .catch((e: any) => {
+        console.warn(`[Rapport] Orderraderna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
+    const productScheduleRead = overviewReads
+      .then(([stockRows]) => Promise.all([
+        fetchOrderSegments(admin, scheduleOrderIds({ revenue: periodOrders.revenue, stockRows })),
+        fetchDepots(admin),
+      ]))
+      .then(([segments, depots]) => ({ segments, depots }), (e: any) => {
+        console.warn(`[Rapport] Schemat kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
 
     // ── Referenspunkterna: målen och föregående period ───────────────────────
     //
@@ -253,7 +285,6 @@ export async function GET(req: Request) {
     // ⚠️ Lönsamheten får inte kunna sänka rapporten. Kalkylen vilar på två inställningstabeller och
     // artikelcachen; felar någon av dem ska säljsiffrorna fortfarande visas, och lönsamhetsdelen
     // stå tom. Det är skillnaden mellan en del av sidan som saknas och en sida som inte laddar.
-    const periodOrders = partitionOrders(data.orders, range, data.invoiceRounds);
     const invoicedIds = periodOrders.invoiced
       .map((order) => order.id)
       .filter((id): id is string => Boolean(id));
@@ -345,26 +376,10 @@ export async function GET(req: Request) {
       console.warn(`[Rapport] Omsättningens nyckeltal kunde inte räknas: ${e?.message || e}`);
     }
 
-    // Produkt & marknad. Orderraderna läses för periodens och trendens skapade order (m³ per månad följer
-    // trendens fönster, som de andra månadsdiagrammen); schemat för orderna bakom periodens fakturor och
-    // orderstocken. De två läsningarna går samtidigt och felar var för sig: utan rader blir m³-delarna
-    // null, utan schema depådelen.
+    // Produkt & marknad, på läsningarna som startades efter periodens rader.
     let product: ReportProduct | null = null;
     try {
-      const trendOrders = trendData ? { orders: trendData.orders, window: trendRange } : null;
-      const [lineItems, schedule] = await Promise.all([
-        fetchOrderLineItems(admin, volumeOrderIds({ ordersCreated: periodOrders.created, trend: trendOrders })).catch((e: any) => {
-          console.warn(`[Rapport] Orderraderna kunde inte läsas: ${e?.message || e}`);
-          return null;
-        }),
-        Promise.all([
-          fetchOrderSegments(admin, scheduleOrderIds({ revenue: periodOrders.revenue, stockRows: orderStockRows })),
-          fetchDepots(admin),
-        ]).then(([segments, depots]) => ({ segments, depots }), (e: any) => {
-          console.warn(`[Rapport] Schemat kunde inte läsas: ${e?.message || e}`);
-          return null;
-        }),
-      ]);
+      const [trendOrders, lineItems, schedule] = await Promise.all([productTrendRead, productLineItemsRead, productScheduleRead]);
       product = buildReportProduct({
         ordersCreated: periodOrders.created,
         range,

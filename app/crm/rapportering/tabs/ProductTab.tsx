@@ -7,6 +7,9 @@ import type { SalesReport } from '@/lib/domains/crm/reports';
 import type { DepotRow } from '@/lib/domains/crm/reportProduct';
 import { constructionLabel } from '@/lib/domains/crm/constructions';
 import {
+  BAR_FILL,
+  BAR_FILL_MUTED,
+  BAR_TRACK,
   BarList,
   BarRow,
   EmptyChart,
@@ -19,6 +22,7 @@ import {
   downloadCsv,
   formatCount,
   formatCurrency,
+  formatM3,
   formatMonthLong,
   formatPercent,
 } from '../reportUi';
@@ -26,10 +30,6 @@ import VolumeByMonthChart from './VolumeByMonthChart';
 
 // Produkt & marknad: "Vad säljer vi, och var?" (spec 2026-10-07, 4.5). Sålda m³ och kr/m³, per
 // konstruktion och per material, m³ per månad — och fakturerat och orderstock per depå.
-
-function formatM3(value: number) {
-  return `${formatCount(Math.round(value))} m³`;
-}
 
 function formatPrice(value: number | null) {
   return value == null ? '–' : `${formatCurrency(value)}/m³`;
@@ -59,10 +59,10 @@ function DepotBar({ share, value, orders, muted }: { share: number | null; value
   return (
     // Talets kolumn har fast bredd, så att spåren blir lika långa på alla rader och staplarna går att jämföra.
     <div className="grid grid-cols-[minmax(3rem,1fr)_8.75rem] items-center gap-3">
-      <span className="h-2.5 overflow-hidden rounded-full bg-[#dde6d9]" aria-hidden="true">
+      <span className={cn('h-2.5 overflow-hidden rounded-full', BAR_TRACK)} aria-hidden="true">
         {share != null ? (
           <span
-            className={cn('block h-full rounded-full', muted ? 'bg-slate-400' : 'bg-[#2f6b45]')}
+            className={cn('block h-full rounded-full', muted ? BAR_FILL_MUTED : BAR_FILL)}
             style={{ width: `${Math.max(0, Math.min(100, share))}%` }}
           />
         ) : null}

@@ -176,6 +176,10 @@ export type VolumeMonth = {
  * ⚠️ FÖLJER INTE PERIODEN, som de tre andra månadsdiagrammen (Williams beslut 2026-10-07 för trenden,
  * hit rate och fakturerat per månad — annars blir "Denna månad" en enda stapel). Den valda perioden
  * markeras. Order partitioneras som i trenden: skapade i fönstret, avbrutna bort.
+ *
+ * Månaden är created_at:s datumdel, samma regel som orderingången i trenden (partitionOrders,
+ * buildSalesOverTime) — så att m³ och ordervärde per månad alltid talar om samma order. En order skapad
+ * strax efter midnatt den 1:a svensk tid hamnar alltså i föregående månad, i båda diagrammen.
  */
 export function buildVolumeByMonth(input: {
   orders: ReportOrderRow[];
@@ -227,7 +231,8 @@ export type OrderDepot = { depotId: string | null };
  * Varje planerad orders depå: order → segment → bil → depå.
  *
  * En order på flera depåer räknas till den med FLEST SEGMENTDAGAR — arbetsdagar, som planeringen räknar
- * bokade dagar (workingDaysInRange: helger och röda dagar räknas inte). Vid lika avgör, i tur och ordning:
+ * bokade dagar (workingDaysInRange: helger och röda dagar räknas inte), men minst en per segment. Vid
+ * lika avgör, i tur och ordning:
  * den depå orderns första segment började på, sedan en riktig depå före "Bil utan depå", sedan depåns id
  * — en stabil ordning, så samma schema ger alltid samma svar.
  */
@@ -242,7 +247,9 @@ export function orderDepots(segments: ProductSegmentRow[]): Map<string, OrderDep
     byOrder.set(segment.work_order_id, candidates);
     const key = depotId ?? '';
     const candidate = candidates.get(key) ?? { depotId, days: 0, firstStart: segment.start_day };
-    candidate.days += workingDaysInRange({ from: segment.start_day, to: segment.end_day }).length;
+    // Minst en dag per segment: ett pass på en helg eller röd dag är också arbete på den bilen, och en
+    // kandidat på noll dagar hade annars bara kunnat vinna på startdagen.
+    candidate.days += Math.max(1, workingDaysInRange({ from: segment.start_day, to: segment.end_day }).length);
     if (segment.start_day < candidate.firstStart) candidate.firstStart = segment.start_day;
     candidates.set(key, candidate);
   }
@@ -284,6 +291,9 @@ export type ProductStockRow = OrderWithRounds & { id?: string | null; status: st
  * ⚠️ FAKTURERAT OCH ORDERSTOCK, INTE ORDERVÄRDE (spec 2026-10-07): nya order är oftast inte planerade
  * än — 49 order för 1,93 Mkr i orderstocken saknade planering — så ordervärdet hade hamnat under "Ej
  * planerad" i stället för i en depå.
+ *
+ * ⚠️ PER ORDER, INTE PER ETAPP: en order med en etapp på schemat och en oplanerad hamnar med hela sin
+ * orderstock på den planerade etappens depå (specen fördelar order, inte etapper).
  *
  * Summan av raderna är periodens Fakturerat respektive Översiktens orderstock. Alla aktiva depåer står
  * med, också utan något i perioden; en inaktiv depå, "Bil utan depå" och "Ej planerad" bara när de har

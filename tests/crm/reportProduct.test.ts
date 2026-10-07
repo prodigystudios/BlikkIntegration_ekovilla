@@ -238,10 +238,20 @@ describe('orderDepots — orderns depå ur schemat', () => {
     expect(map.get('o')).toEqual({ depotId: 'a' });
   });
 
-  it('dagarna är arbetsdagar: en helg väger ingenting', () => {
-    // Lör–sön på a (0 arbetsdagar) mot en måndag på b.
-    const map = orderDepots([segment('o', '2026-10-03', '2026-10-04', 'a'), segment('o', '2026-10-05', '2026-10-05', 'b')]);
+  it('dagarna är arbetsdagar: helgen mitt i ett segment räknas inte', () => {
+    // a: fre 2 okt – mån 5 okt = 2 arbetsdagar (4 kalenderdagar). b: tis–tors = 3.
+    const map = orderDepots([segment('o', '2026-10-02', '2026-10-05', 'a'), segment('o', '2026-10-06', '2026-10-08', 'b')]);
     expect(map.get('o')).toEqual({ depotId: 'b' });
+  });
+
+  it('ett segment på en helg väger ändå en dag', () => {
+    // a: lördag och söndag, var för sig (2). b: en måndag (1).
+    const map = orderDepots([
+      segment('o', '2026-10-05', '2026-10-05', 'b'),
+      segment('o', '2026-10-03', '2026-10-03', 'a'),
+      segment('o', '2026-10-04', '2026-10-04', 'a'),
+    ]);
+    expect(map.get('o')).toEqual({ depotId: 'a' });
   });
 
   it('vid lika: depån där orderns första segment började', () => {

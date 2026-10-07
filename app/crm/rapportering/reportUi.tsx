@@ -36,11 +36,11 @@ export const INSET_PANEL = 'rounded-xl border border-[#dde6d9] bg-[#f1f5ee]';
 // behöver värdena som värden, därför konstanter och inte variabler.
 export const COLOR_BAR = '#2f6b45';
 export const COLOR_BAR_STRIPE = '#b9d0bf';
-const BAR_TRACK = 'bg-[#dde6d9]';
-const BAR_FILL = 'bg-[#2f6b45]';
+export const BAR_TRACK = 'bg-[#dde6d9]';
+export const BAR_FILL = 'bg-[#2f6b45]';
 const BAR_FILL_STRIPED = 'bg-[repeating-linear-gradient(135deg,#2f6b45_0_4px,#b9d0bf_4px_7px)]';
 // Grått = en lucka i underlaget ("Saknas", "Övrigt/okänt") — samma grå som okänt material under Produktion.
-const BAR_FILL_MUTED = 'bg-slate-400';
+export const BAR_FILL_MUTED = 'bg-slate-400';
 
 /** Stapellistans skal — en `<ul>`, så att skärmläsare hör hur många rader den har. */
 export function BarList({ children }: { children: ReactNode }) {
@@ -170,6 +170,10 @@ export function formatDay(day: string) {
 }
 export function formatCount(value: number) {
   return new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value);
+}
+/** Kubikmeter i hela tal: "1 234 m³". */
+export function formatM3(value: number) {
+  return `${formatCount(Math.round(value))} m³`;
 }
 export function formatSigned(percent: number) {
   const rounded = Math.round(percent);
