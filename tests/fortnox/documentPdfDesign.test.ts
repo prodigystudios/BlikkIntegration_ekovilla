@@ -47,6 +47,8 @@ import {
   groupHeight,
   groupDocumentRows,
   renderOfferPdfDesign,
+  renderDocumentPdfDesign,
+  offerVariant,
   loadDesignFonts,
   loadDesignLogo,
 } from '@/lib/domains/fortnox/documentPdfDesign';
@@ -866,6 +868,7 @@ describe('renderOfferPdfDesign', () => {
   it('lämnar ALDRIG rubriken ensam längst ned, och texten går aldrig in i summeringen', async () => {
     // Antalet rader avgör var texten börjar. Radsteget (23 pt) är kortare än glappet där rubriken
     // ryms men inte första textraden (30 pt), så något av antalen landar alltid i det glappet.
+    let labelMovedAlone = false;
     for (let count = 10; count <= 24; count++) {
       const rows = Array.from({ length: count }, (_, i) => article(`300${i}`, `Rad ${i + 1}`, 1, 'st', 100, 0));
       const bytes = await renderWithText({ ...STANDARD, OfferRows: rows }, OFFER_TEXT);
@@ -877,6 +880,8 @@ describe('renderOfferPdfDesign', () => {
         const textLines = items.filter((item) => item.str.startsWith('Priset') || item.str.startsWith('Arbetet utförs'));
         if (label) {
           expect(textLines.some((line) => line.y < label.y), `${count} rader, sida ${p}`).toBe(true);
+          // Rubriken på en sida utan tabell = den flyttades med texten. Det är grenen testet finns för.
+          if (!items.some((item) => item.str === 'ARTIKEL NUMMER')) labelMovedAlone = true;
         }
         const summary = items.find((item) => item.str === 'Summa exkl. moms');
         if (summary) {
@@ -884,6 +889,26 @@ describe('renderOfferPdfDesign', () => {
         }
       }
     }
+    // Utan den här raden kan testet bli tomt: ändras måtten så att inget antal landar i glappet
+    // prövas grenen aldrig, och allt är ändå grönt.
+    expect(labelMovedAlone).toBe(true);
+  });
+
+  it('ger ALDRIG en sida per textrad när huvudet trycker ned starten under golvet', async () => {
+    // Går inte att nå med dagens mått, men ett huvud som växer (här femtio sökande) får inte göra
+    // en text på tio rader till tio sidor. Utan rader, så att det är textens sidbrytning som prövas:
+    // radernas `drawnOnPage` stoppar bara en oändlig loop, inte en sida per rad.
+    const bytes = await renderDocumentPdfDesign({
+      variant: offerVariant(ROT),
+      header: ROT,
+      rows: [],
+      company: COMPANY,
+      rotApplicants: Array.from({ length: 50 }, (_, i) => ({ name: `Sökande ${i + 1}` })),
+      freeText: Array.from({ length: 10 }, (_, i) => `Villkor ${i + 1}`).join('\n'),
+      logo: null,
+      fonts: await loadDesignFonts(),
+    });
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBeLessThanOrEqual(2);
   });
 
   // Skriver ut mallarna att jämföra mot Figma-exporten. Körs bara när sökvägen är satt:

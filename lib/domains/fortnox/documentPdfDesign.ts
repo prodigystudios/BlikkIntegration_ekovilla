@@ -730,7 +730,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
     drawFooter(page, fonts, company);
     // En sida som bara bär fortsättningen av den egna texten får ingen kolumnrubrik, eftersom inga
     // rader står under den. Texten börjar där rubriken annars hade stått.
-    if (!withTableHead) return { page, y: Math.min(TABLE_HEAD_Y, headTop - TABLE_HEAD_GAP) };
+    if (!withTableHead) return { page, y: tableHeadY(headTop) };
     return { page, y: drawTableHead(page, fonts, headTop, variant, showDiscount) };
   };
 
@@ -775,16 +775,23 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
   const textLines = freeTextLines(input.freeText, fonts.regular, TEXT_SIZE, TEXT_W);
   if (textLines.length > 0) {
     const textFloor = rowFloor + TEXT_STEP;
+    // Sidbryt bara när en ny sida ger plats. Alla sidor har samma huvud, så börjar en
+    // fortsättningssida redan under golvet gör varje följande det också, och då skrivs resten på den
+    // i stället för en sida per rad. Går inte att nå med dagens mått, men ett huvud som växer får inte
+    // göra en offert till trettio sidor.
+    let roomOnNewPage = true;
     let labelY = y - TEXT_LABEL_GAP;
     if (labelY - TEXT_FIRST_GAP < textFloor) {
       ({ page, y: labelY } = newPage(false));
+      roomOnNewPage = labelY >= textFloor;
     }
     draw(page, TEXT_LABEL, TEXT_X, labelY, fonts.regular, SECTION_SIZE, MUTED);
 
     let lineY = labelY - TEXT_FIRST_GAP;
     for (const line of textLines) {
-      if (lineY < textFloor) {
+      if (lineY < textFloor && roomOnNewPage) {
         ({ page, y: lineY } = newPage(false));
+        roomOnNewPage = lineY >= textFloor;
         // En styckesluft som hamnar överst på en ny sida hade bara flyttat ned texten.
         if (!line) continue;
       }
@@ -964,6 +971,14 @@ function drawPageChrome(
 }
 
 /**
+ * Kolumnrubrikens baslinje under huvudets block. Den egna textens fortsättningssidor börjar på samma
+ * höjd, så de två får aldrig räkna var för sig.
+ */
+function tableHeadY(blocksBottom: number): number {
+  return Math.min(TABLE_HEAD_Y, blocksBottom - TABLE_HEAD_GAP);
+}
+
+/**
  * Tabellens kolumnrubrik. Returnerar första radens baslinje.
  *
  * `showDiscount` avgörs EN gång för hela dokumentet, inte per sida — annars hade en rabatt som råkar
@@ -977,7 +992,7 @@ function drawTableHead(
   variant: DocumentVariant,
   showDiscount: boolean,
 ): number {
-  const y = Math.min(TABLE_HEAD_Y, blocksBottom - TABLE_HEAD_GAP);
+  const y = tableHeadY(blocksBottom);
   draw(page, 'ARTIKEL NUMMER', COL_ARTNR, y, fonts.regular, 7, GREEN_TABLE);
   draw(page, 'BENÄMNING', COL_NAME, y, fonts.regular, 7, GREEN_TABLE);
   drawRight(page, 'ANTAL', COL_QTY_R, y, fonts.regular, 7, GREEN_TABLE);

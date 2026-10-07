@@ -734,6 +734,17 @@ export async function getFortnoxOfferPdf(
     return { bytes, contentType: 'application/pdf', offerNumber, projectName };
   }
 
+  // Texten på offerten finns bara i CRM och ritas bara av den egna formgivningen ovan. Fortnox mall
+  // (`?mall=fortnox`, OFFER_PDF_MODE 'off') och kopian av den (OFFER_PDF_LAYOUT 'fortnox-kopia')
+  // saknar den. Dokumentet går ändå ut, för det här är nödutgångarna, men det ska synas i loggen
+  // att kunden fick en offert utan säljarens text.
+  if (quote.offerText?.trim()) {
+    console.warn(
+      `[offert-pdf] offert ${offerNumber}: texten på offerten kommer inte med ` +
+      `(läge ${mode}, layout ${layout}). Bara den egna formgivningen ritar den.`,
+    );
+  }
+
   // Offerten kan renderas LOKALT i stället för av Fortnox utskriftsmall — idag bara ROT, där
   // Fortnox mall utelämnar skattereduktionen, på sikt alla när den egna formgivningen är klar.
   // Se lib/domains/fortnox/offerPdf.ts för läget (`OFFER_PDF_MODE`) och varför.
