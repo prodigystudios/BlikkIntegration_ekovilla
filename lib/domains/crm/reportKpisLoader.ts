@@ -37,3 +37,21 @@ export function fetchOpenQuoteRows(admin: SupabaseClient): Promise<OpenQuoteRow[
       .range(from, to),
   );
 }
+
+/**
+ * Dagen då CRM:et fick sin första offert eller order — där trenden börjar så länge CRM:et är yngre än
+ * tolv månader (se trendWindow). Två rader, inga sidor: det är bara den tidigaste av varje som behövs.
+ * null när tabellerna är tomma. `created_at` jämförs på sin UTC-dag, samma regel som rapportens fönster.
+ */
+export async function fetchFirstActivityDay(admin: SupabaseClient): Promise<string | null> {
+  const [quote, order] = await Promise.all([
+    admin.from('crm_quotes').select('quote_date').order('quote_date', { ascending: true }).limit(1),
+    admin.from('crm_work_orders').select('created_at').order('created_at', { ascending: true }).limit(1),
+  ]);
+  if (quote.error) throw new Error(`första offerten: ${quote.error.message}`);
+  if (order.error) throw new Error(`första ordern: ${order.error.message}`);
+  const days = [quote.data?.[0]?.quote_date, order.data?.[0]?.created_at]
+    .filter((value): value is string => Boolean(value))
+    .map((value) => String(value).slice(0, 10));
+  return days.length > 0 ? days.reduce((first, day) => (day < first ? day : first)) : null;
+}

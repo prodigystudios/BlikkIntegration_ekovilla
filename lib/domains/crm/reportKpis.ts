@@ -9,7 +9,14 @@ import {
 import type { CrmQuoteStatus } from './quotes';
 import type { CrmWorkOrderStatus } from './work-orders';
 import { addDaysISO, daysBetweenInclusiveISO } from '@/lib/domains/planning/timezone';
-import type { ReportRange } from './reports';
+import {
+  buildSalesOverTime,
+  monthsInRange,
+  partitionOrders,
+  type ReportData,
+  type ReportRange,
+} from './reports';
+import { monthBounds, sumGoalTargets, type ReportGoalRow } from './reportGoals';
 
 // Rapportsidans nyckeltal utöver de sex huvudtalen: hit rate, orderstock och öppna offerter.
 // Modulen är ren — inga anrop, ingen klocka. Dagens datum kommer in som argument (svensk dag), och
@@ -289,5 +296,97 @@ export function buildReportOverview(input: {
     quoteDrafts: input.quotes.filter((quote) => quote.status === DRAFT).length,
     orderStock: input.orderStockRows ? buildOrderStock(input.orderStockRows, input.basis) : null,
     openQuotes: input.openQuoteRows ? buildOpenQuotes(input.openQuoteRows, input.today) : null,
+  };
+}
+
+// ── Trenden ──────────────────────────────────────────────────────────────────
+//
+// Offerter, orderingång och fakturerat per månad. ⚠️ FÖLJER INTE PERIODEN (Williams beslut 2026-10-07):
+// sidan öppnar på "Denna månad", och ett diagram som följde perioden hade då varit en enda stapel. I
+// stället visas alltid de senaste tolv månaderna — eller sedan start, så länge CRM:et är yngre än så —
+// med den valda perioden markerad.
+
+export type TrendSeriesKey = 'quoteValue' | 'orderValue' | 'invoicedValue';
+
+export const TREND_SERIES_KEYS: TrendSeriesKey[] = ['quoteValue', 'orderValue', 'invoicedValue'];
+
+export type TrendPoint = Record<TrendSeriesKey, number> & {
+  /** 'YYYY-MM'. */
+  period: string;
+  /**
+   * Månadens mål per serie, summerat över säljarna.
+   *
+   * ⚠️ null PÅ EN DELMÅNAD, även när budget finns. En pågående månad har bara några dagars utfall,
+   * och ställd mot hela månadens budget ser den ut att ligga långt efter varje gång någon tittar —
+   * samma felläsning som målstapelns "ingen proratering" spärrar. Målet visas bara på hela månader.
+   */
+  goals: Record<TrendSeriesKey, number | null>;
+  /** Dagarna som räknas när månaden inte är hel — den pågår, eller CRM:et startade mitt i den. null = hel månad. */
+  partial: ReportRange | null;
+  /** Ligger månaden helt eller delvis i den valda perioden? */
+  inPeriod: boolean;
+};
+
+export type SalesTrend = {
+  /** Fönstret som visas: från tolv månader bakåt (eller första aktiviteten) till idag. */
+  range: ReportRange;
+  points: TrendPoint[];
+  /**
+   * Målen gick inte att läsa. ⚠️ Skilt från "ingen budget satt": utan flaggan hade ett läsfel visats
+   * som ett påstående om budgeten ("Ingen budget satt för månaden") på varje hel månad.
+   */
+  goalsUnavailable: boolean;
+};
+
+/**
+ * Trendens fönster: de senaste tolv månaderna (`last12`, som snabbvalet "Senaste 12 mån"), men aldrig
+ * före första aktiviteten i CRM:et. Utan den gränsen hade ett halvår av tomma staplar stått före
+ * juni 2026, och den första månaden hade inte gått att känna igen som en delmånad.
+ */
+export function trendWindow(last12: ReportRange, firstActivityDay: string | null): ReportRange {
+  const from = firstActivityDay && firstActivityDay > last12.from ? firstActivityDay : last12.from;
+  return { from: from > last12.to ? last12.to : from, to: last12.to };
+}
+
+export function buildSalesTrend(input: {
+  data: Pick<ReportData, 'quotes' | 'orders' | 'invoiceRounds'>;
+  window: ReportRange;
+  selected: ReportRange;
+  /** Målraderna för fönstrets månader. null = de gick inte att läsa; då ritas inga mål. */
+  goals: ReportGoalRow[] | null;
+}): SalesTrend {
+  const months = monthsInRange(input.window.from, input.window.to);
+  // Samma partitionering och samma månadsserie som rapporten: ordervärde på skapandedagen,
+  // fakturerat per faktura på fakturadagen, avbrutna order bort.
+  const orders = partitionOrders(input.data.orders, input.window, input.data.invoiceRounds);
+  const quotes = input.data.quotes.filter((quote) => {
+    const day = quote.quote_date ? String(quote.quote_date).slice(0, 10) : null;
+    return day != null && day >= input.window.from && day <= input.window.to;
+  });
+  const series = buildSalesOverTime(quotes, orders.created, orders.revenue, months);
+
+  return {
+    range: input.window,
+    goalsUnavailable: input.goals == null,
+    points: series.map((point) => {
+      const month = monthBounds(point.period);
+      const from = month.from > input.window.from ? month.from : input.window.from;
+      const to = month.to < input.window.to ? month.to : input.window.to;
+      const partial = from !== month.from || to !== month.to ? { from, to } : null;
+      const targets = partial || !input.goals ? {} : sumGoalTargets(input.goals, [point.period]);
+      return {
+        period: point.period,
+        quoteValue: point.quoteValue,
+        orderValue: point.orderValue,
+        invoicedValue: point.invoicedValue,
+        goals: {
+          quoteValue: targets.quoteValue ?? null,
+          orderValue: targets.orderValue ?? null,
+          invoicedValue: targets.invoicedValue ?? null,
+        },
+        partial,
+        inPeriod: month.from <= input.selected.to && month.to >= input.selected.from,
+      };
+    }),
   };
 }

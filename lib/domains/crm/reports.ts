@@ -12,7 +12,7 @@ import { unavailableProduction, type Production } from '@/lib/domains/planning/p
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
-import type { ReportOverview } from './reportKpis';
+import type { ReportOverview, SalesTrend } from './reportKpis';
 
 // Sales reporting domain. The pure aggregation helpers (build*) take plain rows and
 // return report-ready shapes so they can be unit-tested in isolation; fetchReportData
@@ -449,6 +449,11 @@ export type SalesReport = {
    * reportKpis.ts. null när rutten inte räknade dem (anroparen utelämnade dem).
    */
   overview: ReportOverview | null;
+  /**
+   * Offerter, orderingång och fakturerat per månad, de senaste tolv månaderna (eller sedan start) —
+   * följer INTE den valda perioden, som bara markeras i den. null = kunde inte räknas.
+   */
+  trend: SalesTrend | null;
   salesOverTime: SalesOverTimePoint[];
   perSeller: SellerReportRow[];
   funnel: SalesFunnel;
@@ -478,6 +483,8 @@ export function composeSalesReport(
     time?: TimeReport | null;
     /** Översiktens nyckeltal, färdigräknade i rutten — de behöver dagens datum och egna läsningar. */
     overview?: ReportOverview | null;
+    /** Trenden, färdigräknad i rutten — den har sitt eget fönster och sina egna läsningar. */
+    trend?: SalesTrend | null;
   },
 ): SalesReport {
   const months = monthsInRange(range.from, range.to);
@@ -488,6 +495,7 @@ export function composeSalesReport(
     planned: opts?.planned ?? unavailablePlanned(),
     time: opts?.time === undefined ? unavailableTimeReport(months) : opts.time,
     overview: opts?.overview ?? null,
+    trend: opts?.trend ?? null,
     periodSummary: buildPeriodSummary({
       totals: buildPeriodTotals(data, range),
       range,
@@ -572,6 +580,18 @@ function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Pro
   );
 }
 
+/** Offerter med offertdatum i perioden. `quote_date` är ett datum utan tidszon. */
+function readReportQuotes(admin: SupabaseClient, range: ReportRange): Promise<ReportQuoteRow[]> {
+  return readEveryRow('crm_quotes', (from, to) =>
+    admin.from('crm_quotes')
+      .select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name')
+      .gte('quote_date', range.from)
+      .lte('quote_date', range.to)
+      .order('id', { ascending: true })
+      .range(from, to),
+  );
+}
+
 export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
   const toEnd = `${range.to}T23:59:59.999Z`;
   // Utan `as`: radtyperna härleds ur select-strängarna — se readEveryRow.
@@ -582,13 +602,7 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
     ReportCallRow[],
     ReportSellerRow[],
   ] = await Promise.all([
-    readEveryRow('crm_quotes', (from, to) =>
-      admin.from('crm_quotes')
-        .select('amount, vat_percent, pricing_summary, status, quote_date, assigned_to, customer_name')
-        .gte('quote_date', range.from)
-        .lte('quote_date', range.to)
-        .order('id', { ascending: true })
-        .range(from, to)),
+    readReportQuotes(admin, range),
     readReportOrders(admin, range),
     readReportInvoiceRounds(admin, range),
     readEveryRow('crm_calls', (from, to) =>
@@ -607,6 +621,22 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
   ]);
 
   return { quotes, orders, invoiceRounds, calls, sellers };
+}
+
+/**
+ * Underlaget för trenden: offerter, order och delfakturarundor i fönstret — samma läsningar som
+ * rapporten, men utan samtal och säljare som trenden inte visar.
+ */
+export async function fetchTrendData(
+  admin: SupabaseClient,
+  range: ReportRange,
+): Promise<Pick<ReportData, 'quotes' | 'orders' | 'invoiceRounds'>> {
+  const [quotes, orders, invoiceRounds] = await Promise.all([
+    readReportQuotes(admin, range),
+    readReportOrders(admin, range),
+    readReportInvoiceRounds(admin, range),
+  ]);
+  return { quotes, orders, invoiceRounds };
 }
 
 /**
