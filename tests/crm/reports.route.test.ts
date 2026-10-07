@@ -160,7 +160,11 @@ describe('GET /api/crm/reports — översiktens nyckeltal', () => {
   });
 
   it('mäter veckotalet mot FÖRRA HELA kalendermånaden, inte den valda perioden', async () => {
-    const { json } = await body(salesUser);
+    // En period långt bakåt, så att den aldrig kan sammanfalla med förra månaden — med standard-
+    // anropets september hade testet varit grönt i oktober 2026 även om rutten mätt mot perioden.
+    mockGetUser.mockResolvedValue(salesUser as any);
+    const res = await GET(new Request('http://localhost/api/crm/reports?from=2025-01-01&to=2025-01-31'));
+    const json = await res.json();
     const basis = json.data.overview.orderStock.basis;
     expect(mockInvoicedValue).toHaveBeenCalledWith(expect.anything(), basis.range);
     // Förra hela månaden i svensk tid — samma snabbval som rapportsidans "Förra månaden". Den
