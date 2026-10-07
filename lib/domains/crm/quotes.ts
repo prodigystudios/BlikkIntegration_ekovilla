@@ -18,6 +18,7 @@ export const crmQuoteSelect = `
   internal_handoff,
   project_name,
   description,
+  offer_text,
   amount,
   currency_code,
   vat_percent,
@@ -124,6 +125,8 @@ type CreateCrmQuoteInput = {
   internal_handoff: InternalHandoff;
   project_name: string;
   description: string | null;
+  // Egen text på offertens PDF. Går inte till Fortnox, se offerText.ts.
+  offer_text: string | null;
   amount: number;
   currency_code: string;
   vat_percent: number;

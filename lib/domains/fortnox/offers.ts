@@ -630,13 +630,15 @@ type QuoteForPdf = {
   quoteType: string | null;
   customerId: string | null;
   personalNumber: string | null;
+  /** Egen text på offerten (`crm_quotes.offer_text`). Bara CRM har den, Fortnox får den aldrig. */
+  offerText: string | null;
 };
 
 async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('crm_quotes')
-    .select('fortnox_offer_number, rot_details, project_name, quote_type, customer_id, customer_snapshot')
+    .select('fortnox_offer_number, rot_details, project_name, quote_type, customer_id, customer_snapshot, offer_text')
     .eq('id', quoteId)
     .maybeSingle();
 
@@ -648,6 +650,7 @@ async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
     quote_type?: string | null;
     customer_id?: string | null;
     customer_snapshot?: { personal_number?: string | null } | null;
+    offer_text?: string | null;
   } | null;
 
   const offerNumber = row?.fortnox_offer_number;
@@ -661,6 +664,7 @@ async function requireOfferNumber(quoteId: string): Promise<QuoteForPdf> {
     quoteType: row?.quote_type ?? null,
     customerId: row?.customer_id ?? null,
     personalNumber: row?.customer_snapshot?.personal_number ?? null,
+    offerText: row?.offer_text ?? null,
   };
 }
 
@@ -716,6 +720,9 @@ export async function getFortnoxOfferPdf(
       rotDetails: quote.rotDetails,
       cardPersonalNumber,
       snapshotPersonalNumber: quote.personalNumber,
+      // Säljarens egen text, läst ur CRM vid varje utskrift. Den finns inte i Fortnox (se
+      // lib/domains/crm/offerText.ts), så Fortnox mall bakom `?mall=fortnox` saknar den.
+      freeText: quote.offerText,
     });
 
     const termsKind = resolveTermsKind({

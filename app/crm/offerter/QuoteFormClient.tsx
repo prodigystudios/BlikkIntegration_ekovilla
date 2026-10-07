@@ -58,6 +58,7 @@ import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadine
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
 import { resolveCrmContact } from '@/lib/domains/crm/contacts';
 import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
+import { OFFER_TEXT_MAX_LENGTH } from '@/lib/domains/crm/offerText';
 import {
   buildMeasurementLines,
   hasMeasurementBlock,
@@ -1539,6 +1540,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       internal_handoff: buildInternalHandoff(draft),
       project_name: draft.project_name,
       description: draft.description,
+      offer_text: draft.offer_text,
       amount: amountNumber,
       vat_percent: vatPercentNumber,
       valid_until: draft.valid_until || null,
@@ -2490,6 +2492,37 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               />
             ) : null}
           </div>
+          </FormSection>
+
+          {/* ── Text på offerten ── */}
+          {/* Det enda fritextfältet som når KUNDEN. Skrivs ut på offertens PDF under raderna
+              (documentPdfDesign → freeText) och skickas inte till Fortnox, se lib/domains/crm/offerText.ts.
+              Kortet står direkt under raderna för att det är där texten hamnar på dokumentet. */}
+          <FormSection
+            id="section-offerttext"
+            title="Text på offerten"
+            description="Skrivs ut på offerten under artikelraderna. Syns för kunden."
+          >
+            <div className="grid gap-1.5">
+              <Textarea
+                id="quote-offer-text"
+                aria-label="Text på offerten"
+                value={draft.offer_text}
+                onChange={(e) => setDraft((d) => ({ ...d, offer_text: e.target.value }))}
+                rows={3}
+                autoGrow
+                maxLength={OFFER_TEXT_MAX_LENGTH}
+                placeholder="T.ex. förutsättningar för priset, vad som ingår eller när arbetet kan utföras"
+              />
+              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                <p className={fieldHint}>Valfri. Står bara på offerten, inte på orderbekräftelsen eller fakturan.</p>
+                {/* Räknaren syns först när taket närmar sig. Fältet tar inte emot mer än schemat, så
+                    säljaren får aldrig ett serverfel för en text som gick att skriva. */}
+                {draft.offer_text.length > OFFER_TEXT_MAX_LENGTH - 200 ? (
+                  <span className="text-xs tabular-nums text-slate-500">{draft.offer_text.length} / {OFFER_TEXT_MAX_LENGTH}</span>
+                ) : null}
+              </div>
+            </div>
           </FormSection>
 
           {/* ── ROT-avdrag (slås på med reglaget i Offertuppgifter) ── */}

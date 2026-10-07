@@ -54,6 +54,7 @@ import {
 } from '@/lib/domains/crm/quotes';
 import { listCrmSellers } from '@/lib/domains/crm/customers';
 import { createCrmQuoteSchema, listCrmQuotesQuerySchema } from '@/app/api/crm/quotes/_lib';
+import { OFFER_TEXT_MAX_LENGTH } from '@/lib/domains/crm/offerText';
 
 const { GET: collectionGET, POST } = await import('@/app/api/crm/quotes/route');
 const { GET: itemGET, PATCH } = await import('@/app/api/crm/quotes/[id]/route');
@@ -830,5 +831,52 @@ describe('include_in_description på offertraden', () => {
     const parsed = withRows({});
     expect(parsed.success).toBe(true);
     if (parsed.success) expect(parsed.data.line_items[0].include_in_description).toBe(false);
+  });
+});
+
+describe('offer_text — egen text på offerten', () => {
+  it('överlever Zod-valideringen — annars försvinner texten tyst vid varje sparning', () => {
+    const text = 'Priset förutsätter fri framkomlighet till vinden.\n\nArbetet utförs vecka 44.';
+    const parsed = createCrmQuoteSchema.safeParse({ ...validQuoteBase, offer_text: text });
+    expect(parsed.success).toBe(true);
+    // Styckena står kvar: bara början och slutet trimmas.
+    if (parsed.success) expect(parsed.data.offer_text).toBe(text);
+  });
+
+  it('en tom eller blank text blir null', () => {
+    for (const offer_text of ['', '   ', '\n\n', null]) {
+      const parsed = createCrmQuoteSchema.safeParse({ ...validQuoteBase, offer_text });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) expect(parsed.data.offer_text).toBeNull();
+    }
+  });
+
+  it('avvisar text över taket — samma tak som formulärets fält', () => {
+    expect(createCrmQuoteSchema.safeParse({ ...validQuoteBase, offer_text: 'x'.repeat(OFFER_TEXT_MAX_LENGTH) }).success).toBe(true);
+    expect(createCrmQuoteSchema.safeParse({ ...validQuoteBase, offer_text: 'x'.repeat(OFFER_TEXT_MAX_LENGTH + 1) }).success).toBe(false);
+  });
+
+  it('en PATCH utan fältet skriver inte kolumnen — statusbytet i listan nollar inte texten', async () => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockUpdate.mockResolvedValue({ data: { id: 'q1' }, error: null } as any);
+
+    await PATCH(
+      req('/api/crm/quotes/q1', { method: 'PATCH', body: JSON.stringify({ ...validQuoteBase, status: 'sent' }) }),
+      { params: { id: 'q1' } },
+    );
+
+    expect(mockUpdate.mock.calls[0][2]).not.toHaveProperty('offer_text');
+  });
+
+  it('en PATCH med fältet skriver det', async () => {
+    mockGetUser.mockResolvedValue(salesUser);
+    mockUpdate.mockResolvedValue({ data: { id: 'q1' }, error: null } as any);
+
+    await PATCH(
+      req('/api/crm/quotes/q1', { method: 'PATCH', body: JSON.stringify({ ...validQuoteBase, status: 'sent', offer_text: 'Gäller vecka 44' }) }),
+      { params: { id: 'q1' } },
+    );
+
+    expect(mockUpdate.mock.calls[0][2]).toHaveProperty('offer_text', 'Gäller vecka 44');
   });
 });
