@@ -198,6 +198,8 @@ export type QuoteItem = {
   } | null;
   project_name: string;
   description: string | null;
+  // Egen text på offertens PDF (lib/domains/crm/offerText.ts). Valfri: ett svar från före kolumnen bär den inte.
+  offer_text?: string | null;
   amount: number | string;
   currency_code: string;
   vat_percent: number | string | null;
@@ -246,6 +248,8 @@ export type QuoteDraft = {
   items: QuoteLineItem[];
   project_name: string;
   description: string;
+  // Egen text som skrivs ut på offerten under raderna. Når kunden, till skillnad från `description`.
+  offer_text: string;
   vat_percent: string;
   valid_until: string;
   rot_enabled: boolean;
@@ -353,6 +357,7 @@ export const BLANK_DRAFT: QuoteDraft = {
   items: [],
   project_name: '',
   description: '',
+  offer_text: '',
   vat_percent: '25',
   valid_until: '',
   rot_enabled: false,
@@ -420,6 +425,7 @@ export function draftFromQuote(item: QuoteItem): QuoteDraft {
       : [createEmptyLineItem()],
     project_name: item.project_name,
     description: item.description || '',
+    offer_text: item.offer_text || '',
     vat_percent: String(item.vat_percent ?? 25),
     valid_until: item.valid_until || '',
     rot_enabled: Boolean(item.rot_details?.enabled),
@@ -458,6 +464,7 @@ export const COPY_NAME_PREFIX = 'Kopia av ';
  *     mått (se adoptExistingMeasurementBlock).
  *   • kundens Fortnox-koppling (`customer_source`). Nollställs den tror kopian att kunden är
  *     lokal och lägger upp en dubblett i Fortnox när ordern skapas.
+ *   • texten på offerten (`offer_text`). Den beskriver jobbet och villkoren, inte dokumentet.
  *
  * Nollställs:
  *   • datumen — kopian är skriven IDAG, med husets vanliga giltighetstid räknad därifrån.

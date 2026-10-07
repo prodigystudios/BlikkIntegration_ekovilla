@@ -3,6 +3,7 @@ import { CONSTRUCTION_VALUES_WITH_EMPTY } from '@/lib/domains/crm/constructions'
 import { ROT_HOUSE_WORK_TYPES } from '@/lib/domains/fortnox/types';
 import { normalizePropertyDesignation } from '@/lib/domains/crm/propertyDesignation';
 import { parseStatusFilterParam, QUOTE_STATUS_FILTER_OPTIONS } from '@/lib/domains/crm/listStatusFilter';
+import { OFFER_TEXT_MAX_LENGTH } from '@/lib/domains/crm/offerText';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { listCrmSellers } from '@/lib/domains/crm/customers';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -181,6 +182,13 @@ export const createCrmQuoteSchema = z.object({
   customer_name: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
   project_name: z.string().trim().min(1, 'Offertnamn krävs'),
   description: z.preprocess((value) => normalizeOptionalText(value), z.string().nullable()).optional().default(null),
+  // Egen text på offerten, skrivs ut på offertens PDF under raderna (se lib/domains/crm/offerText.ts).
+  // MÅSTE stå i schemat, annars strippar Zod fältet tyst vid varje sparning. Samma fälla som
+  // is_rot_work, written_off och article_note gick i.
+  offer_text: z.preprocess(
+    (value) => normalizeOptionalText(value),
+    z.string().max(OFFER_TEXT_MAX_LENGTH, `Texten på offerten får vara högst ${OFFER_TEXT_MAX_LENGTH} tecken`).nullable(),
+  ).optional().default(null),
   quote_type: quoteTypeSchema.optional().default('business'),
   customer_source: customerSourceSchema.optional().default({}),
   customer_snapshot: customerSnapshotSchema.optional().default({}),

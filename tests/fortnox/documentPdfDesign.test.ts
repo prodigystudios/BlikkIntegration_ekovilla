@@ -24,9 +24,20 @@ async function extractPageText(bytes: Uint8Array, pageNumber: number): Promise<s
     .filter(Boolean);
 }
 
+/** Textbitarna på en sida med sina koordinater — så blockens ordning uppifrån och ned kan prövas. */
+async function extractPageItems(bytes: Uint8Array, pageNumber: number): Promise<Array<{ str: string; y: number }>> {
+  const doc = await getDocument({ data: new Uint8Array(bytes) }).promise;
+  const content = await (await doc.getPage(pageNumber)).getTextContent();
+  return content.items
+    .map((item) => item as { str?: string; transform?: number[] })
+    .map((item) => ({ str: (item.str ?? '').trim(), y: item.transform?.[5] ?? 0 }))
+    .filter((item) => item.str);
+}
+
 import {
   buildSummaryBlock,
   cleanText,
+  freeTextLines,
   deliveryAddressLines,
   extractRotPropertyNote,
   formatDiscount,
@@ -36,6 +47,8 @@ import {
   groupHeight,
   groupDocumentRows,
   renderOfferPdfDesign,
+  renderDocumentPdfDesign,
+  offerVariant,
   loadDesignFonts,
   loadDesignLogo,
 } from '@/lib/domains/fortnox/documentPdfDesign';
@@ -520,6 +533,40 @@ describe('wrapLines', () => {
   });
 });
 
+describe('freeTextLines', () => {
+  const font = async () => {
+    const doc = await PDFDocument.create();
+    doc.registerFontkit(fontkit);
+    return doc.embedFont((await loadDesignFonts()).regular);
+  };
+
+  it('BEVARAR en tom rad mellan stycken — annars flyter villkoren ihop till ett', async () => {
+    const lines = freeTextLines('Första stycket.\n\nAndra stycket.', await font(), 8, 400);
+    expect(lines).toEqual(['Första stycket.', '', 'Andra stycket.']);
+  });
+
+  it('slår ihop flera tomma rader och tar bort dem först och sist', async () => {
+    const lines = freeTextLines('\n\n  \nEtt\n\n\n\nTvå\n \n', await font(), 8, 400);
+    expect(lines).toEqual(['Ett', '', 'Två']);
+  });
+
+  it('en enkel radbrytning blir en ny rad utan luft', async () => {
+    expect(freeTextLines('Ett\nTvå', await font(), 8, 400)).toEqual(['Ett', 'Två']);
+  });
+
+  it('bryter ett långt stycke inom bredden', async () => {
+    const f = await font();
+    const lines = freeTextLines('ord '.repeat(80), f, 8, 200);
+    expect(lines.length).toBeGreaterThan(1);
+    for (const line of lines) expect(f.widthOfTextAtSize(line, 8)).toBeLessThanOrEqual(200);
+  });
+
+  it('ger inga rader för tom eller saknad text — då ritas inget block', async () => {
+    const f = await font();
+    for (const text of [null, undefined, '', '   ', '\n\n']) expect(freeTextLines(text, f, 8, 400)).toEqual([]);
+  });
+});
+
 describe('cleanText', () => {
   // Open Sans är inbäddad, så tecknen nedan behöver INTE längre vikas till ASCII som `pdfSafe` gör.
   it('behåller minustecken, upphöjda siffror och svenska tecken', () => {
@@ -752,6 +799,112 @@ describe('renderOfferPdfDesign', () => {
     expect(Buffer.from(bytes.slice(0, 5)).toString('latin1')).toBe('%PDF-');
   });
 
+  // ── Egen text på offerten (crm_quotes.offer_text) ──
+  const OFFER_TEXT = 'Priset förutsätter fri framkomlighet till vinden.\n\nArbetet utförs vecka 44 om inget annat avtalas.';
+
+  const renderWithText = async (offer: FortnoxOfferResponse, freeText: string | null) =>
+    renderOfferPdfDesign({
+      offer,
+      company: COMPANY,
+      freeText,
+      logo: await loadDesignLogo(),
+      fonts: await loadDesignFonts(),
+    });
+
+  it('skriver den egna texten under raderna och ovanför summeringen, utan rubrik', async () => {
+    const items = await extractPageItems(await renderWithText(STANDARD, OFFER_TEXT), 1);
+    const y = (str: string) => {
+      const found = items.find((item) => item.str === str);
+      expect(found, str).toBeDefined();
+      return found!.y;
+    };
+
+    const lastRow = y('Etableringskostnad');
+    const first = y('Priset förutsätter fri framkomlighet till vinden.');
+    const second = y('Arbetet utförs vecka 44 om inget annat avtalas.');
+    const summary = y('Summa exkl. moms');
+
+    // 22 pt under sista radlinjen: radens baslinje → linjen 8 pt, linjen → texten 22 pt.
+    expect(lastRow - first).toBeCloseTo(30, 5);
+    // Styckesluften: en tom rad mellan styckena, alltså två textsteg.
+    expect(first - second).toBeCloseTo(22, 5);
+    expect(second).toBeGreaterThan(summary);
+    // Texten står för sig själv. Rubriken ÖVRIGT togs bort (William 2026-10-07).
+    expect(items.some((item) => item.str === 'ÖVRIGT')).toBe(false);
+  });
+
+  it('ritar ingenting när texten är tom — sidan blir densamma som utan text', async () => {
+    const without = await extractPageText(await renderWithText(STANDARD, null), 1);
+    for (const freeText of ['', '  \n  ']) {
+      expect(await extractPageText(await renderWithText(STANDARD, freeText), 1)).toEqual(without);
+    }
+  });
+
+  it('bryter lång text till nästa sida — utan kolumnrubrik där, och med summeringen sist', async () => {
+    const long = Array.from({ length: 70 }, (_, i) => `Villkor ${i + 1}: arbetet förutsätter att vinden är tömd.`).join('\n');
+    const bytes = await renderWithText(STANDARD, long);
+    const pageCount = (await PDFDocument.load(bytes)).getPageCount();
+    expect(pageCount).toBeGreaterThan(1);
+
+    const pages = await Promise.all(Array.from({ length: pageCount }, (_, i) => extractPageText(bytes, i + 1)));
+    expect(pages[0]).toContain('ARTIKEL NUMMER');
+    expect(pages[0]).toContain('Villkor 1: arbetet förutsätter att vinden är tömd.');
+    for (const [i, page] of pages.entries()) {
+      const last = i === pageCount - 1;
+      // Summeringen står bara sist, som utan text.
+      expect(page.includes('Summa exkl. moms'), `sida ${i + 1}`).toBe(last);
+      // En fortsättningssida bär ingen tabell, alltså heller ingen kolumnrubrik.
+      if (i > 0) expect(page, `sida ${i + 1}`).not.toContain('ARTIKEL NUMMER');
+    }
+
+    // Varje rad kommer med, exakt en gång.
+    const all = pages.flat().filter((line) => line.startsWith('Villkor '));
+    expect(all).toHaveLength(70);
+    expect(new Set(all).size).toBe(70);
+  });
+
+  it('texten går aldrig in i summeringen — den flyttar till nästa sida när den inte ryms', async () => {
+    // Antalet rader avgör var texten börjar. Radsteget (23 pt) är kortare än en textrad plus golvets
+    // marginal, så något av antalen landar alltid där första textraden inte ryms.
+    let movedToNewPage = false;
+    for (let count = 10; count <= 24; count++) {
+      const rows = Array.from({ length: count }, (_, i) => article(`300${i}`, `Rad ${i + 1}`, 1, 'st', 100, 0));
+      const bytes = await renderWithText({ ...STANDARD, OfferRows: rows }, OFFER_TEXT);
+      const pages = (await PDFDocument.load(bytes)).getPageCount();
+
+      for (let p = 1; p <= pages; p++) {
+        const items = await extractPageItems(bytes, p);
+        const textLines = items.filter((item) => item.str.startsWith('Priset') || item.str.startsWith('Arbetet utförs'));
+        // Text på en sida utan tabell = den flyttades. Det är grenen testet finns för.
+        if (textLines.length > 0 && !items.some((item) => item.str === 'ARTIKEL NUMMER')) movedToNewPage = true;
+        const summary = items.find((item) => item.str === 'Summa exkl. moms');
+        if (summary) {
+          for (const line of textLines) expect(line.y, `${count} rader, sida ${p}`).toBeGreaterThan(summary.y + 20);
+        }
+      }
+    }
+    // Utan den här raden kan testet bli tomt: ändras måtten så att inget antal tvingar fram en
+    // sidbrytning prövas grenen aldrig, och allt är ändå grönt.
+    expect(movedToNewPage).toBe(true);
+  });
+
+  it('ger ALDRIG en sida per textrad när huvudet trycker ned starten under golvet', async () => {
+    // Går inte att nå med dagens mått, men ett huvud som växer (här femtio sökande) får inte göra
+    // en text på tio rader till tio sidor. Utan rader, så att det är textens sidbrytning som prövas:
+    // radernas `drawnOnPage` stoppar bara en oändlig loop, inte en sida per rad.
+    const bytes = await renderDocumentPdfDesign({
+      variant: offerVariant(ROT),
+      header: ROT,
+      rows: [],
+      company: COMPANY,
+      rotApplicants: Array.from({ length: 50 }, (_, i) => ({ name: `Sökande ${i + 1}` })),
+      freeText: Array.from({ length: 10 }, (_, i) => `Villkor ${i + 1}`).join('\n'),
+      logo: null,
+      fonts: await loadDesignFonts(),
+    });
+    expect((await PDFDocument.load(bytes)).getPageCount()).toBeLessThanOrEqual(2);
+  });
+
   // Skriver ut mallarna att jämföra mot Figma-exporten. Körs bara när sökvägen är satt:
   //   OFFER_PDF_PREVIEW_DIR=/tmp/offert npm test -- offerPdfDesign
   //
@@ -792,8 +945,9 @@ describe('renderOfferPdfDesign', () => {
       ['offert-standard.pdf', await render(STANDARD, 'SE556948642501')],
       ['offert-rot.pdf', await render(ROT)],
       ['offert-flersidig.pdf', await render({ ...STANDARD, OfferRows: many }, 'SE556948642501')],
+      ['offert-text.pdf', await renderWithText(STANDARD, OFFER_TEXT)],
     ];
     for (const [name, bytes] of files) await writeFile(path.join(dir, name), bytes);
-    expect(files).toHaveLength(3);
+    expect(files).toHaveLength(4);
   });
 });

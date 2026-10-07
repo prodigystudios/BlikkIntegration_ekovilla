@@ -198,6 +198,15 @@ const COL_DISCOUNT_R = 497;
 const COL_SUM_R = 543;
 const COL_NAME_W = COL_QTY_R - 14 - COL_NAME;
 
+// Säljarens egen text (offerttexten) står under sista raden och före summeringen. Vänsterkanten är
+// artikelnumrets och KUND-blockets, högerkanten SUMMA-kolumnens, så blocket följer tabellens linjer.
+// Ingen rubrik: texten står för sig själv (William 2026-10-07).
+const TEXT_X = COL_ARTNR;
+const TEXT_W = COL_SUM_R - COL_ARTNR;
+const TEXT_TOP_GAP = 7; // nästa rads baslinje → första textraden, alltså 22 pt under sista radlinjen
+const TEXT_SIZE = 8;
+const TEXT_STEP = 11;
+
 // Summeringen är BOTTENANKRAD: den gröna rutan står stilla och raderna staplas uppåt, så foten
 // aldrig flyttar sig mellan en offert med och utan moms.
 const SUM_BOX_X0 = 297;
@@ -233,6 +242,27 @@ export const LATE_INTEREST = '8%';
 // Re-exporterade här: de ~20 anropen och testerna pekar fortfarande hit, och modulen är den som
 // definierar hur ett Ekovilla-dokument bryter text.
 export { cleanText, wrapLines } from '@/lib/pdf/text';
+
+/**
+ * Den egna textens rader, brutna till blockets bredd.
+ *
+ * Till skillnad från `wrapLines` BEVARAS en tom rad mellan stycken. Säljaren skriver villkor och
+ * förutsättningar i stycken, och utan luften flyter de ihop till ett. Flera tomma rader i följd blir
+ * en, och tomma rader först och sist tas bort: de hade bara flyttat ned blocket eller lämnat ett hål
+ * ovanför summeringen. Tom text ger inga rader, och då ritas inget block.
+ */
+export function freeTextLines(text: string | null | undefined, font: PDFFont, size: number, maxWidth: number): string[] {
+  const lines: string[] = [];
+  for (const paragraph of cleanText(text).split('\n')) {
+    if (!paragraph.trim()) {
+      if (lines.length > 0 && lines[lines.length - 1] !== '') lines.push('');
+      continue;
+    }
+    lines.push(...wrapLines(paragraph, font, size, maxWidth));
+  }
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+  return lines;
+}
 
 // ── Radgruppering ────────────────────────────────────────────────────────────
 
@@ -545,6 +575,12 @@ type SharedPdfDesignInput = {
    * `/taxreductions` inte duger.
    */
   rotApplicants?: RotApplicant[];
+  /**
+   * Säljarens egen text, ritad under raderna och före summeringen. Bara offerten skickar den
+   * (`crm_quotes.offer_text`, se lib/domains/crm/offerText.ts). Den finns inte i Fortnox, så
+   * anroparen hämtar den ur CRM. Tom eller saknad text ger inget block alls.
+   */
+  freeText?: string | null;
   logo?: Uint8Array | null;
   fonts?: { regular: Uint8Array; bold: Uint8Array } | null;
 };
@@ -680,7 +716,7 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
   const showDiscount = variant.showPrices && rows.some((row) => formatDiscount(row) !== '');
   const pages: PDFPage[] = [];
 
-  const newPage = (): { page: PDFPage; y: number } => {
+  const newPage = (withTableHead = true): { page: PDFPage; y: number } => {
     const page = doc.addPage([PAGE_W, PAGE_H]);
     pages.push(page);
     // Sidorna är identiska: hela huvudet upprepas, inte bara en förkortad topp (William 2026-09-03).
@@ -689,6 +725,9 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
     // när som på priset. Ritades den bara sist saknade sida ett både företagsuppgifter och
     // avgränsande linje, medan ytan ändå reserverades.
     drawFooter(page, fonts, company);
+    // En sida som bara bär fortsättningen av den egna texten får ingen kolumnrubrik, eftersom inga
+    // rader står under den. Texten börjar där rubriken annars hade stått.
+    if (!withTableHead) return { page, y: tableHeadY(headTop) };
     return { page, y: drawTableHead(page, fonts, headTop, variant, showDiscount) };
   };
 
@@ -723,6 +762,31 @@ export async function renderDocumentPdfDesign(input: DocumentPdfDesignInput): Pr
     }
     y = drawRowGroup(page, fonts, group, nameLines, noteLines, y, variant.showPrices);
     drawnOnPage++;
+  }
+
+  // ── Egen text ──
+  // Under sista raden och före summeringen, och bryts över sidor som raderna. Golvet är radernas
+  // plus ett textsteg: raderna mäter NÄSTA baslinje mot `rowFloor`, så texten får samma luft mot
+  // summeringen.
+  const textLines = freeTextLines(input.freeText, fonts.regular, TEXT_SIZE, TEXT_W);
+  if (textLines.length > 0) {
+    const textFloor = rowFloor + TEXT_STEP;
+    // Sidbryt bara när en ny sida ger plats. Alla sidor har samma huvud, så börjar en
+    // fortsättningssida redan under golvet gör varje följande det också, och då skrivs resten på den
+    // i stället för en sida per rad. Går inte att nå med dagens mått, men ett huvud som växer får inte
+    // göra en offert till trettio sidor.
+    let roomOnNewPage = true;
+    let lineY = y - TEXT_TOP_GAP;
+    for (const line of textLines) {
+      if (lineY < textFloor && roomOnNewPage) {
+        ({ page, y: lineY } = newPage(false));
+        roomOnNewPage = lineY >= textFloor;
+        // En styckesluft som hamnar överst på en ny sida hade bara flyttat ned texten.
+        if (!line) continue;
+      }
+      if (line) draw(page, line, TEXT_X, lineY, fonts.regular, TEXT_SIZE, MUTED);
+      lineY -= TEXT_STEP;
+    }
   }
 
   if (summary) {
@@ -896,6 +960,14 @@ function drawPageChrome(
 }
 
 /**
+ * Kolumnrubrikens baslinje under huvudets block. Den egna textens fortsättningssidor börjar på samma
+ * höjd, så de två får aldrig räkna var för sig.
+ */
+function tableHeadY(blocksBottom: number): number {
+  return Math.min(TABLE_HEAD_Y, blocksBottom - TABLE_HEAD_GAP);
+}
+
+/**
  * Tabellens kolumnrubrik. Returnerar första radens baslinje.
  *
  * `showDiscount` avgörs EN gång för hela dokumentet, inte per sida — annars hade en rabatt som råkar
@@ -909,7 +981,7 @@ function drawTableHead(
   variant: DocumentVariant,
   showDiscount: boolean,
 ): number {
-  const y = Math.min(TABLE_HEAD_Y, blocksBottom - TABLE_HEAD_GAP);
+  const y = tableHeadY(blocksBottom);
   draw(page, 'ARTIKEL NUMMER', COL_ARTNR, y, fonts.regular, 7, GREEN_TABLE);
   draw(page, 'BENÄMNING', COL_NAME, y, fonts.regular, 7, GREEN_TABLE);
   drawRight(page, 'ANTAL', COL_QTY_R, y, fonts.regular, 7, GREEN_TABLE);

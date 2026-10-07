@@ -121,6 +121,7 @@ function sourceQuote(overrides: Partial<QuoteItem> = {}): QuoteItem {
     },
     project_name: 'Vindsisolering Lindberg',
     description: 'Isolering av vind enligt ritning.',
+    offer_text: 'Priset förutsätter fri framkomlighet till vinden.\n\nArbetet utförs vecka 44.',
     amount: 100000,
     currency_code: 'SEK',
     vat_percent: 25,
@@ -155,6 +156,14 @@ describe('draftFromQuote', () => {
     expect(draft.end_contact_name).toBe('Per Ek');
     expect(draft.label).toBe('Projekt 4412');
     expect(draft.customer_id).toBe('bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb');
+  });
+
+  it('fyller texten på offerten, och en offert utan text får ett tomt fält', () => {
+    expect(draftFromQuote(sourceQuote()).offer_text).toBe('Priset förutsätter fri framkomlighet till vinden.\n\nArbetet utförs vecka 44.');
+    // Null i databasen, och ett svar från före kolumnen: fältet ska vara kontrollerat, aldrig undefined.
+    expect(draftFromQuote(sourceQuote({ offer_text: null })).offer_text).toBe('');
+    const { offer_text: _, ...withoutColumn } = sourceQuote();
+    expect(draftFromQuote(withoutColumn as QuoteItem).offer_text).toBe('');
   });
 
   it('normaliserar A-priset ur artikelpriset när raden saknar eget', () => {
@@ -314,6 +323,12 @@ describe('copyDraftFromQuote', () => {
     }
   });
 
+  it('texten på offerten följer med — den beskriver jobbet, inte dokumentet', () => {
+    const copy = copyDraftFromQuote(sourceQuote(), AFTER_MIDNIGHT_CEST);
+
+    expect(copy.offer_text).toBe(draftFromQuote(sourceQuote()).offer_text);
+  });
+
   it('kundens Fortnox-koppling följer med', () => {
     const copy = copyDraftFromQuote(sourceQuote(), AFTER_MIDNIGHT_CEST);
 
@@ -357,6 +372,7 @@ describe('copyDraftFromQuote', () => {
       internal_handoff: buildInternalHandoff(copy),
       project_name: copy.project_name,
       description: copy.description,
+      offer_text: copy.offer_text,
       amount: 100000,
       vat_percent: 25,
       valid_until: copy.valid_until || null,
@@ -382,5 +398,6 @@ describe('copyDraftFromQuote', () => {
     expect(parsed.data.line_items[1].include_in_description).toBe(true);
     expect(parsed.data.customer_snapshot.label).toBe('Projekt 4412');
     expect(parsed.data.customer_snapshot.delivery_address).toBe('Skogsvägen 12');
+    expect(parsed.data.offer_text).toBe('Priset förutsätter fri framkomlighet till vinden.\n\nArbetet utförs vecka 44.');
   });
 });
