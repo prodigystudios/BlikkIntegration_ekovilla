@@ -68,27 +68,27 @@ function MarginStat({ label, percent, amount, jobs, total, color }: {
 export default function RevenueTab({ report }: { report: SalesReport }) {
   // En period inom en kalendermånad blir en enda månadspunkt; den namnges då efter perioden.
   const singlePoint = report.profitability.overTime.length === 1;
-// Samma etikettregel som försäljningsserien, så de två kurvorna går att läsa mot varandra.
-const marginChartData = useMemo(
-  () => (report?.profitability.overTime || []).map((p) => ({
-    ...p,
-    label: report && report.profitability.overTime.length === 1
-      ? formatRangeLabel(report.range.from, report.range.to)
-      : formatMonth(p.period),
-  })),
-  [report],
-);
-// Both series, same as the per-seller chart: a customer billed this period on an older
-// order has no order value, and plotting order value alone would draw it as a labelled
-// empty bar.
-const customerChartData = useMemo(
-  () => (report?.perCustomer || []).slice(0, 8).map((c) => ({
-    name: c.customer,
-    Ordervärde: c.orderValue,
-    Fakturerat: c.invoicedValue,
-  })),
-  [report],
-);
+  // Samma etikettregel som sidans övriga månadsserier, så kurvorna går att läsa mot varandra.
+  const marginChartData = useMemo(
+    () => (report?.profitability.overTime || []).map((p) => ({
+      ...p,
+      label: singlePoint
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    })),
+    [report, singlePoint],
+  );
+  // Both series, same as the per-seller chart: a customer billed this period on an older
+  // order has no order value, and plotting order value alone would draw it as a labelled
+  // empty bar.
+  const customerChartData = useMemo(
+    () => (report?.perCustomer || []).slice(0, 8).map((c) => ({
+      name: c.customer,
+      Ordervärde: c.orderValue,
+      Fakturerat: c.invoicedValue,
+    })),
+    [report],
+  );
 
   return (
     <div className="grid grid-cols-1 gap-6">

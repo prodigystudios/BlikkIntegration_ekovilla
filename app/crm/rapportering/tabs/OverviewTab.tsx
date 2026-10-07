@@ -23,6 +23,7 @@ import {
   formatMonthLong,
   formatPercent,
   formatRangeLabel,
+  comparisonSubtitle,
   goalSubtitle,
   goalsApply,
 } from '../reportUi';
@@ -84,9 +85,7 @@ export default function OverviewTab({ report, periodLabel }: { report: SalesRepo
       <SectionCard
         title="Nyckeltal"
         subtitle={[
-          summary.previousRange
-            ? `Jämfört med lika lång period dessförinnan (${formatRangeLabel(summary.previousRange.from, summary.previousRange.to)}).`
-            : 'Ingen jämförelseperiod kunde räknas fram.',
+          comparisonSubtitle(summary),
           goalSubtitle(summary),
           'Kort märkta Nu visar läget just nu och följer inte perioden.',
         ].join(' ')}

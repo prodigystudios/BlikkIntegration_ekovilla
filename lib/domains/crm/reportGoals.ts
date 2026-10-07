@@ -95,6 +95,17 @@ export function sumGoalTargets(
 }
 
 /**
+ * Första och sista dagen i en månad 'YYYY-MM'. UTC-förankrat: dag 0 i nästa månad är den sista i den
+ * här, vilket hanterar både skottår och december. Den enda kopian — trenden och flikarnas etiketter
+ * räknar sina månadsgränser härifrån.
+ */
+export function monthBounds(month: string): { from: string; to: string } {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const last = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
+}
+
+/**
  * Hur stor del av målmånaderna perioden faktiskt täcker, i dagar.
  *
  * ⚠️ MÅLET PRORATERAS ALDRIG. Budgeten är satt per hel månad, och att skala ner den till "22/30 av
@@ -114,9 +125,9 @@ export function goalDayCoverage(
   for (const month of months) {
     const [year, monthNumber] = month.split('-').map(Number);
     if (!year || !monthNumber) continue;
-    const first = Date.UTC(year, monthNumber - 1, 1);
-    // Dag 0 i nästa månad är den sista i den här — hanterar både skottår och december.
-    const last = Date.UTC(year, monthNumber, 0);
+    const bounds = monthBounds(month);
+    const first = Date.parse(`${bounds.from}T00:00:00Z`);
+    const last = Date.parse(`${bounds.to}T00:00:00Z`);
     total += Math.round((last - first) / 86_400_000) + 1;
 
     const from = Math.max(first, Date.parse(`${range.from}T00:00:00Z`));
@@ -138,6 +149,14 @@ export type PeriodMetric = {
   previous: number | null;
   /** Summerat månadsmål. null när inget mål är satt — se sumGoalTargets. */
   target: number | null;
+  /**
+   * Hur många av periodens månader som har ett mål för just det här talet: alla, en del eller inga.
+   *
+   * ⚠️ FINNS FÖR ATT "INGET MÅL SATT" INTE SKA LJUGA. `target` är null både när ingen budget alls finns
+   * och när den bara finns för en del av månaderna (se metricGoalCoverage i buildPeriodSummary). Det andra fallet ska säga att
+   * budget saknas för en del av perioden — annars fyller den som läser i en budget som redan finns.
+   */
+  goalCoverage: 'all' | 'partial' | 'none';
 };
 
 export type PeriodSummary = {
@@ -188,16 +207,23 @@ export function buildPeriodSummary(input: {
   // oktober hade ställt två månaders fakturering mot oktobers budget ensam — samma felläsning som
   // monthsWithoutGoal stoppar, bara för ett tal i taget. Ett tal får sin stapel bara när VARJE månad i
   // perioden har ett mål för just det talet.
-  const targetApplies = (key: PeriodMetricKey) =>
-    input.months.length > 0 && input.months.every((month) => monthHasGoal(input.goals, month, key));
+  const metricGoalCoverage = (key: PeriodMetricKey): PeriodMetric['goalCoverage'] => {
+    const withGoal = input.months.filter((month) => monthHasGoal(input.goals, month, key)).length;
+    if (withGoal === 0) return 'none';
+    return withGoal === input.months.length ? 'all' : 'partial';
+  };
 
   return {
-    metrics: PERIOD_METRIC_KEYS.map((key) => ({
-      key,
-      actual: input.totals[key] ?? 0,
-      previous: input.previous ? input.previous.totals[key] ?? 0 : null,
-      target: targetApplies(key) ? targets[key] ?? null : null,
-    })),
+    metrics: PERIOD_METRIC_KEYS.map((key) => {
+      const goalCoverage = metricGoalCoverage(key);
+      return {
+        key,
+        actual: input.totals[key] ?? 0,
+        previous: input.previous ? input.previous.totals[key] ?? 0 : null,
+        target: goalCoverage === 'all' ? targets[key] ?? null : null,
+        goalCoverage,
+      };
+    }),
     goalMonths,
     goalDaysCovered: coverage.covered,
     goalDaysTotal: coverage.total,
@@ -214,7 +240,7 @@ export function buildPeriodSummary(input: {
  * Inget tak: 140 % av målet ska synas som 140 %, inte klippas till 100. Stapeln klipps i
  * gränssnittet, talet gör det inte.
  */
-export function goalPercent(metric: PeriodMetric): number | null {
+export function goalPercent(metric: Partial<PeriodMetric> & Pick<PeriodMetric, 'actual' | 'target'>): number | null {
   if (metric.target == null || metric.target <= 0) return null;
   return (metric.actual / metric.target) * 100;
 }
@@ -226,7 +252,7 @@ export function goalPercent(metric: PeriodMetric): number | null {
  * men det är inte heller "+100 %", vilket är vad en slarvig fallback hade skrivit. Att gå från 0
  * till 5 offerter är en nyhet, inte en procentuell ökning, och gränssnittet säger det med ord.
  */
-export function previousPercentChange(metric: PeriodMetric): number | null {
+export function previousPercentChange(metric: Partial<PeriodMetric> & Pick<PeriodMetric, 'actual' | 'previous'>): number | null {
   if (metric.previous == null || metric.previous <= 0) return null;
   return ((metric.actual - metric.previous) / metric.previous) * 100;
 }

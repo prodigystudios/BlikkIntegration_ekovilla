@@ -67,76 +67,76 @@ function PeriodEndsTodayNote({ activeRangeKey, rangeTo }: { activeRangeKey: Repo
 }
 
 export default function ProductionTab({ report, activeRangeKey }: { report: SalesReport; activeRangeKey: ReportRangeKey | null }) {
-// Samma etikettregel som försäljningsserien, så månaderna går att läsa mot varandra.
-// Planerat och utfall delar månadsaxel (båda byggs ur `months` på servern), så de kan ställas
-// i samma punkt utan att någon rad behöver matchas ihop.
-const productionMonthData = useMemo(() => {
-  if (!report) return [];
-  const plannedByMonth = new Map(report.planned.byMonth.map((p) => [p.period, p.sacks]));
-  // ⚠️ null, INTE 0, när det planerade inte gick att läsa. Recharts hoppar över null och ritar
-  // ingen stapel; en nolla hade ritat en tom stapel som läses som "inget var planerat".
-  const plannedUnknown = report.planned.unavailable;
-  return report.production.byMonth.map((p) => ({
-    ...p,
-    planned: plannedUnknown ? null : plannedByMonth.get(p.period) ?? 0,
-    label: report.production.byMonth.length === 1
-      ? formatRangeLabel(report.range.from, report.range.to)
-      : formatMonth(p.period),
-  }));
-}, [report]);
+  // Samma etikettregel som försäljningsserien, så månaderna går att läsa mot varandra.
+  // Planerat och utfall delar månadsaxel (båda byggs ur `months` på servern), så de kan ställas
+  // i samma punkt utan att någon rad behöver matchas ihop.
+  const productionMonthData = useMemo(() => {
+    if (!report) return [];
+    const plannedByMonth = new Map(report.planned.byMonth.map((p) => [p.period, p.sacks]));
+    // ⚠️ null, INTE 0, när det planerade inte gick att läsa. Recharts hoppar över null och ritar
+    // ingen stapel; en nolla hade ritat en tom stapel som läses som "inget var planerat".
+    const plannedUnknown = report.planned.unavailable;
+    return report.production.byMonth.map((p) => ({
+      ...p,
+      planned: plannedUnknown ? null : plannedByMonth.get(p.period) ?? 0,
+      label: report.production.byMonth.length === 1
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    }));
+  }, [report]);
 
-// Materialen slås ihop på nyckeln, inte på ordningen: listorna sorteras var för sig och ett
-// material kan finnas i den ena men inte i den andra (planerat men inte blåst, eller tvärtom).
-const productionMaterialData = useMemo(() => {
-  if (!report) return [];
-  const keys: Array<string | null> = [];
-  const push = (material: string | null) => { if (!keys.some((k) => k === material)) keys.push(material); };
-  for (const row of report.production.byMaterial) push(row.material);
-  for (const row of report.planned.byMaterial) push(row.material);
-  return keys
-    .map((material) => ({
-      material,
-      label: materialLabel(material),
-      sacks: report.production.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
-      planned: report.planned.unavailable
-        ? null
-        : report.planned.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
-    }))
-    // Okänt sist, precis som i de två källistorna.
-    .sort((a, b) => {
-      if ((a.material === null) !== (b.material === null)) return a.material === null ? 1 : -1;
-      return (b.sacks + (b.planned ?? 0)) - (a.sacks + (a.planned ?? 0));
-    });
-}, [report]);
+  // Materialen slås ihop på nyckeln, inte på ordningen: listorna sorteras var för sig och ett
+  // material kan finnas i den ena men inte i den andra (planerat men inte blåst, eller tvärtom).
+  const productionMaterialData = useMemo(() => {
+    if (!report) return [];
+    const keys: Array<string | null> = [];
+    const push = (material: string | null) => { if (!keys.some((k) => k === material)) keys.push(material); };
+    for (const row of report.production.byMaterial) push(row.material);
+    for (const row of report.planned.byMaterial) push(row.material);
+    return keys
+      .map((material) => ({
+        material,
+        label: materialLabel(material),
+        sacks: report.production.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
+        planned: report.planned.unavailable
+          ? null
+          : report.planned.byMaterial.find((r) => r.material === material)?.sacks ?? 0,
+      }))
+      // Okänt sist, precis som i de två källistorna.
+      .sort((a, b) => {
+        if ((a.material === null) !== (b.material === null)) return a.material === null ? 1 : -1;
+        return (b.sacks + (b.planned ?? 0)) - (a.sacks + (a.planned ?? 0));
+      });
+  }, [report]);
 
-// Bilraderna: utfallet som grund, planerat inflätat. En bil som var PLANERAD men inte
-// rapporterade något måste också med — annars försvinner just de rader man vill titta på.
-const productionTruckRows = useMemo(() => {
-  if (!report) return [];
-  const plannedByTruck = new Map(report.planned.byTruck.map((t) => [t.truck_id, t]));
-  // ⚠️ null = "gick inte att läsa", 0 = "inget planerat". Tabellen, exporten och diagrammen
-  // måste skilja dem åt precis som brickorna ovan gör — annars läses en trasig läsning som att
-  // ingenting var inplanerat, vilket är ett påstående om verksamheten.
-  const unknown = report.planned.unavailable;
-  const rows = report.production.byTruck.map((truck) => ({
-    ...truck,
-    plannedSacks: unknown ? null : plannedByTruck.get(truck.truck_id)?.sacks ?? 0,
-    plannedRevenue: unknown ? null : plannedByTruck.get(truck.truck_id)?.revenue ?? 0,
-  }));
-  for (const planned of report.planned.byTruck) {
-    if (rows.some((r) => r.truck_id === planned.truck_id)) continue;
-    rows.push({
-      truck_id: planned.truck_id,
-      truck_name: planned.truck_name,
-      sacks: 0,
-      bookedDays: 0,
-      utilization: report.production.workingDays > 0 ? 0 : null,
-      plannedSacks: planned.sacks as number | null,
-      plannedRevenue: planned.revenue as number | null,
-    });
-  }
-  return rows;
-}, [report]);
+  // Bilraderna: utfallet som grund, planerat inflätat. En bil som var PLANERAD men inte
+  // rapporterade något måste också med — annars försvinner just de rader man vill titta på.
+  const productionTruckRows = useMemo(() => {
+    if (!report) return [];
+    const plannedByTruck = new Map(report.planned.byTruck.map((t) => [t.truck_id, t]));
+    // ⚠️ null = "gick inte att läsa", 0 = "inget planerat". Tabellen, exporten och diagrammen
+    // måste skilja dem åt precis som brickorna ovan gör — annars läses en trasig läsning som att
+    // ingenting var inplanerat, vilket är ett påstående om verksamheten.
+    const unknown = report.planned.unavailable;
+    const rows = report.production.byTruck.map((truck) => ({
+      ...truck,
+      plannedSacks: unknown ? null : plannedByTruck.get(truck.truck_id)?.sacks ?? 0,
+      plannedRevenue: unknown ? null : plannedByTruck.get(truck.truck_id)?.revenue ?? 0,
+    }));
+    for (const planned of report.planned.byTruck) {
+      if (rows.some((r) => r.truck_id === planned.truck_id)) continue;
+      rows.push({
+        truck_id: planned.truck_id,
+        truck_name: planned.truck_name,
+        sacks: 0,
+        bookedDays: 0,
+        utilization: report.production.workingDays > 0 ? 0 : null,
+        plannedSacks: planned.sacks as number | null,
+        plannedRevenue: planned.revenue as number | null,
+      });
+    }
+    return rows;
+  }, [report]);
 
   return (
     <div className="grid grid-cols-1 gap-6">

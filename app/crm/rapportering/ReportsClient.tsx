@@ -110,6 +110,7 @@ export default function ReportsClient() {
   const tabs = useMemo(() => visibleReportTabs({ hasTime: report?.time != null }), [report]);
   const activeTab = resolveReportTab(requestedTab, tabs);
   const periodLabel = report ? periodChipLabel(report.range, Number(today().slice(0, 4))) : '';
+  const panelShown = !loading && report != null;
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -161,9 +162,9 @@ export default function ReportsClient() {
             <TabsTrigger
               key={tab.id}
               id={`report-tab-${tab.id}`}
-              // Bara aktiv flik har sin panel i DOM — aria-controls på inaktiva flikar vore dinglande
-              // referenser (samma regel som AdminTabsClient).
-              aria-controls={activeTab === tab.id ? `report-tabpanel-${tab.id}` : undefined}
+              // Bara aktiv flik har sin panel i DOM, och bara när rapporten är laddad — aria-controls
+              // utan panel vore en dinglande referens (samma regel som AdminTabsClient).
+              aria-controls={activeTab === tab.id && panelShown ? `report-tabpanel-${tab.id}` : undefined}
               active={activeTab === tab.id}
               variant="card"
               onClick={() => selectTab(tab.id)}

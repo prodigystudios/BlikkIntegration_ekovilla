@@ -21,7 +21,7 @@ import {
   formatCompact,
   formatCount,
   formatCurrency,
-  formatRangeLabel,
+  comparisonSubtitle,
   goalSubtitle,
   goalsApply,
   percent,
@@ -30,44 +30,44 @@ import {
 // Försäljning: "Hur säljer vi?" Per säljare och konverteringen flyttade hit oförändrade (spec
 // 2026-10-07). Försäljningens egna nyckeltal och hit rate kommer i nästa steg, då tratten tas bort.
 //
-// Samtal och antal offerter stod i "Perioden i korthet", som Översikten ersätter. De står här med sina
-// mål så att ingenting försvinner — samtalen hör hemma under Försäljning och inte bland Översiktens
-// kort (beslut 4, 2026-10-07: för få loggas än för att vara ett huvudtal).
+// Samtal, antal offerter och antal order stod i "Perioden i korthet", som Översikten ersätter. De står
+// här med sin jämförelse och sina mål så att ingenting försvinner — Översikten visar bara antalen i
+// undertexterna. Samtalen hör hemma här och inte bland Översiktens kort (beslut 4, 2026-10-07: för få
+// loggas än för att vara ett huvudtal).
 
 export default function SalesTab({ report, periodLabel }: { report: SalesReport; periodLabel: string }) {
   const summary = report.periodSummary;
   const calls = summary.metrics.find((m) => m.key === 'calls')!;
   const quotes = summary.metrics.find((m) => m.key === 'quotes')!;
+  const orders = summary.metrics.find((m) => m.key === 'orders')!;
   const goalProps = { apply: goalsApply(summary), daysCovered: summary.goalDaysCovered, daysTotal: summary.goalDaysTotal };
 
-const sellerChartData = useMemo(
-  () => (report?.perSeller || []).slice(0, 12).map((s) => ({ name: s.userName, Ordervärde: s.orderValue, Offertvärde: s.quoteValue })),
-  [report],
-);
-const funnelStages = useMemo(() => {
-  if (!report) return [];
-  const f = report.funnel;
-  return [
-    { key: 'quotes', label: 'Offerter', count: f.quotes.count, value: f.quotes.value, color: COLOR_QUOTE, conv: null as string | null },
-    { key: 'won', label: 'Vunna offerter', count: f.won.count, value: f.won.value, color: '#10b981', conv: percent(f.won.count, f.quotes.count) },
-    { key: 'orders', label: 'Arbetsorder', count: f.orders.count, value: f.orders.value, color: COLOR_ORDER, conv: percent(f.orders.count, f.won.count) },
-    { key: 'invoiced', label: 'Fakturerat', count: f.invoiced.count, value: f.invoiced.value, color: COLOR_INVOICED, conv: percent(f.invoiced.count, f.orders.count) },
-  ];
-}, [report]);
-const funnelMaxValue = useMemo(() => Math.max(1, ...funnelStages.map((s) => s.value)), [funnelStages]);
+  const sellerChartData = useMemo(
+    () => (report?.perSeller || []).slice(0, 12).map((s) => ({ name: s.userName, Ordervärde: s.orderValue, Offertvärde: s.quoteValue })),
+    [report],
+  );
+  const funnelStages = useMemo(() => {
+    if (!report) return [];
+    const f = report.funnel;
+    return [
+      { key: 'quotes', label: 'Offerter', count: f.quotes.count, value: f.quotes.value, color: COLOR_QUOTE, conv: null as string | null },
+      { key: 'won', label: 'Vunna offerter', count: f.won.count, value: f.won.value, color: '#10b981', conv: percent(f.won.count, f.quotes.count) },
+      { key: 'orders', label: 'Arbetsorder', count: f.orders.count, value: f.orders.value, color: COLOR_ORDER, conv: percent(f.orders.count, f.won.count) },
+      { key: 'invoiced', label: 'Fakturerat', count: f.invoiced.count, value: f.invoiced.value, color: COLOR_INVOICED, conv: percent(f.invoiced.count, f.orders.count) },
+    ];
+  }, [report]);
+  const funnelMaxValue = useMemo(() => Math.max(1, ...funnelStages.map((s) => s.value)), [funnelStages]);
 
   return (
     <div className="grid grid-cols-1 gap-6">
       <SectionCard
         title="Aktivitet"
         subtitle={[
-          summary.previousRange
-            ? `Jämfört med lika lång period dessförinnan (${formatRangeLabel(summary.previousRange.from, summary.previousRange.to)}).`
-            : 'Ingen jämförelseperiod kunde räknas fram.',
+          comparisonSubtitle(summary),
           goalSubtitle(summary),
         ].join(' ')}
       >
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <KpiCard
           label="Offerter"
           scope={<ScopeChip>{periodLabel}</ScopeChip>}
@@ -77,6 +77,15 @@ const funnelMaxValue = useMemo(() => Math.max(1, ...funnelStages.map((s) => s.va
           {report.overview ? <KpiNote>varav {formatCount(report.overview.quoteDrafts)} utkast</KpiNote> : null}
           <MetricComparison metric={quotes} />
           <MetricGoal metric={quotes} {...goalProps} />
+        </KpiCard>
+        <KpiCard
+          label="Order"
+          scope={<ScopeChip>{periodLabel}</ScopeChip>}
+          value={`${formatCount(orders.actual)} st`}
+          definition="Order skapade i perioden. Avbrutna order räknas inte."
+        >
+          <MetricComparison metric={orders} />
+          <MetricGoal metric={orders} {...goalProps} />
         </KpiCard>
         <KpiCard
           label="Samtal"

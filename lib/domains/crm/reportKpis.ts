@@ -16,7 +16,7 @@ import {
   type ReportData,
   type ReportRange,
 } from './reports';
-import { sumGoalTargets, type ReportGoalRow } from './reportGoals';
+import { monthBounds, sumGoalTargets, type ReportGoalRow } from './reportGoals';
 
 // Rapportsidans nyckeltal utöver de sex huvudtalen: hit rate, orderstock och öppna offerter.
 // Modulen är ren — inga anrop, ingen klocka. Dagens datum kommer in som argument (svensk dag), och
@@ -331,14 +331,12 @@ export type SalesTrend = {
   /** Fönstret som visas: från tolv månader bakåt (eller första aktiviteten) till idag. */
   range: ReportRange;
   points: TrendPoint[];
+  /**
+   * Målen gick inte att läsa. ⚠️ Skilt från "ingen budget satt": utan flaggan hade ett läsfel visats
+   * som ett påstående om budgeten ("Ingen budget satt för månaden") på varje hel månad.
+   */
+  goalsUnavailable: boolean;
 };
-
-/** Första och sista dagen i en månad 'YYYY-MM', UTC-förankrat. */
-function monthBounds(month: string): ReportRange {
-  const [year, monthNumber] = month.split('-').map(Number);
-  const last = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-  return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, '0')}` };
-}
 
 /**
  * Trendens fönster: de senaste tolv månaderna (`last12`, som snabbvalet "Senaste 12 mån"), men aldrig
@@ -369,6 +367,7 @@ export function buildSalesTrend(input: {
 
   return {
     range: input.window,
+    goalsUnavailable: input.goals == null,
     points: series.map((point) => {
       const month = monthBounds(point.period);
       const from = month.from > input.window.from ? month.from : input.window.from;

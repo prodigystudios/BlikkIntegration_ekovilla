@@ -223,9 +223,17 @@ describe('GET /api/crm/reports — standardperiod och trend', () => {
   it('trenden följer INTE perioden: tolv månader bakåt, men aldrig före första aktiviteten', async () => {
     const { json } = await atOctoberSeventh('http://localhost/api/crm/reports?from=2026-09-01&to=2026-09-30');
     expect(json.data.trend.range).toEqual({ from: '2026-06-29', to: '2026-10-07' });
-    expect(mockTrendData).toHaveBeenCalledWith(expect.anything(), { from: '2026-06-29', to: '2026-10-07' });
+    // Läsningen tar hela tolvmånadersfönstret, parallellt med första aktivitetsdagen; fönstret kortas
+    // av i beräkningen.
+    expect(mockTrendData).toHaveBeenCalledWith(expect.anything(), { from: '2025-11-01', to: '2026-10-07' });
     expect(json.data.trend.points.map((p: any) => p.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
     expect(json.data.trend.points.filter((p: any) => p.inPeriod).map((p: any) => p.period)).toEqual(['2026-09']);
+  });
+
+  it('"Senaste 12 mån" återanvänder periodens rader i stället för att läsa trenden en gång till', async () => {
+    const { json } = await atOctoberSeventh('http://localhost/api/crm/reports?from=2025-11-01&to=2026-10-07');
+    expect(mockTrendData).not.toHaveBeenCalled();
+    expect(json.data.trend.range).toEqual({ from: '2026-06-29', to: '2026-10-07' });
   });
 
   it('okänd första aktivitet ger tolv månader, inte ett fel', async () => {
@@ -244,27 +252,34 @@ describe('GET /api/crm/reports — standardperiod och trend', () => {
   });
 });
 
-describe('GET /api/crm/reports — målet för fakturerat', () => {
-  // En klient som beter sig som PostgREST: den lämnar BARA ut de kolumner frågan ber om. Tappar
-  // ruttens målfråga invoiced_value_target får fakturerat inget mål — tyst, utan fel.
-  function goalsAdmin(rows: Array<Record<string, unknown>>) {
-    return {
-      from(table: string) {
-        let columns: string[] = [];
-        const chain: Record<string, unknown> = {};
-        chain.select = (cols: string) => { columns = cols.split(',').map((c) => c.trim()); return chain; };
-        chain.eq = () => chain;
-        chain.in = () => chain;
-        chain.then = (ok: (v: unknown) => unknown) => Promise.resolve(
-          table === 'crm_goals'
-            ? { data: rows.map((row) => Object.fromEntries(columns.map((c) => [c, row[c]]))), error: null }
-            : { data: null, error: { message: `oväntad tabell ${table}` } },
-        ).then(ok);
-        return chain;
-      },
-    };
-  }
+// En klient som beter sig som PostgREST: den lämnar BARA ut de kolumner frågan ber om. Tappar
+// ruttens målfråga invoiced_value_target får fakturerat inget mål — tyst, utan fel.
+function goalsAdmin(rows: Array<Record<string, unknown>>) {
+  return {
+    from(table: string) {
+      let columns: string[] = [];
+      let periodStarts: string[] | null = null;
+      const chain: Record<string, unknown> = {};
+      chain.select = (cols: string) => { columns = cols.split(',').map((c) => c.trim()); return chain; };
+      chain.eq = () => chain;
+      // Filtret respekteras, som i PostgREST: en fråga på för få månader får för få rader.
+      chain.in = (column: string, values: string[]) => { if (column === 'period_start') periodStarts = values; return chain; };
+      chain.then = (ok: (v: unknown) => unknown) => Promise.resolve(
+        table === 'crm_goals'
+          ? {
+            data: rows
+              .filter((row) => periodStarts == null || periodStarts.includes(String(row.period_start)))
+              .map((row) => Object.fromEntries(columns.map((c) => [c, row[c]]))),
+            error: null,
+          }
+          : { data: null, error: { message: `oväntad tabell ${table}` } },
+      ).then(ok);
+      return chain;
+    },
+  };
+}
 
+describe('GET /api/crm/reports — målet för fakturerat', () => {
   it('läser invoiced_value_target och ger fakturerat en målstapel', async () => {
     vi.mocked(getSupabaseAdmin).mockReturnValueOnce(goalsAdmin([
       { period_start: '2026-09-01', calls_target: 10, quotes_target: 10, quote_value_target: 100, order_count_target: 1, order_value_target: 100, invoiced_value_target: 900_000 },
@@ -272,5 +287,25 @@ describe('GET /api/crm/reports — målet för fakturerat', () => {
     const { json } = await body(salesUser);
     const invoiced = json.data.periodSummary.metrics.find((m: any) => m.key === 'invoicedValue');
     expect(invoiced.target).toBe(900_000);
+  });
+});
+
+describe('GET /api/crm/reports — trendens mål', () => {
+  it('läser målen för trendens tolv månader, inte bara den valda periodens', async () => {
+    // Förvalet är denna månad (oktober). Utan trendens månader i målfrågan hade augusti — en hel månad
+    // med budget — stått utan målstreck i diagrammet, och inget test hade märkt det.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-07T10:00:00Z'));
+    try {
+      const goalsRow = { calls_target: 0, quotes_target: 0, quote_value_target: 500_000, order_count_target: 0, order_value_target: 0, invoiced_value_target: 0 };
+      vi.mocked(getSupabaseAdmin).mockReturnValueOnce(goalsAdmin([{ period_start: '2026-08-01', ...goalsRow }]) as any);
+      mockGetUser.mockResolvedValue(salesUser as any);
+      const res = await GET(new Request('http://localhost/api/crm/reports'));
+      const json = await res.json();
+      const august = json.data.trend.points.find((p: any) => p.period === '2026-08');
+      expect(august.goals.quoteValue).toBe(500_000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -58,15 +58,15 @@ function share(part: number, whole: number): number | null {
 const MISSING_LABEL = 'Uppgift saknas';
 
 export default function TimeTab({ report }: { report: SalesReport }) {
-const timeMonthData = useMemo(
-  () => (report?.time?.byMonth || []).map((p) => ({
-    ...p,
-    label: report?.time && report.time.byMonth.length === 1
-      ? formatRangeLabel(report.range.from, report.range.to)
-      : formatMonth(p.period),
-  })),
-  [report],
-);
+  const timeMonthData = useMemo(
+    () => (report?.time?.byMonth || []).map((p) => ({
+      ...p,
+      label: report?.time && report.time.byMonth.length === 1
+        ? formatRangeLabel(report.range.from, report.range.to)
+        : formatMonth(p.period),
+    })),
+    [report],
+  );
 
   return (
     <div className="grid grid-cols-1 gap-6">

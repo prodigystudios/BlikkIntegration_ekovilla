@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceArea,
 } from 'recharts';
 import type { SalesTrend, TrendPoint, TrendSeriesKey } from '@/lib/domains/crm/reportKpis';
+import { goalPercent } from '@/lib/domains/crm/reportGoals';
 import {
   COLOR_INVOICED,
   COLOR_ORDER,
@@ -24,16 +25,19 @@ import {
 // månad har några dagars utfall, och ställd mot hela månadens mål hade den sett ut att ligga efter
 // varje gång någon tittade (se TrendPoint.goals).
 
-const SERIES: Array<{ key: TrendSeriesKey; goalKey: GoalKey; label: string; color: string }> = [
-  { key: 'quoteValue', goalKey: 'quoteGoal', label: 'Offerter', color: COLOR_QUOTE },
-  { key: 'orderValue', goalKey: 'orderGoal', label: 'Orderingång', color: COLOR_ORDER },
-  { key: 'invoicedValue', goalKey: 'invoicedGoal', label: 'Fakturerat', color: COLOR_INVOICED },
+// `swatch` är legendens och tipsets färgruta som Tailwind-klass — samma färg som `color`, som recharts
+// behöver som värde. Klassen skrivs ut i klartext, annars hittar Tailwind den inte.
+const SERIES: Array<{ key: TrendSeriesKey; goalKey: GoalKey; label: string; color: string; swatch: string }> = [
+  { key: 'quoteValue', goalKey: 'quoteGoal', label: 'Offerter', color: COLOR_QUOTE, swatch: 'bg-[#0d9488]' },
+  { key: 'orderValue', goalKey: 'orderGoal', label: 'Orderingång', color: COLOR_ORDER, swatch: 'bg-[#f59e0b]' },
+  { key: 'invoicedValue', goalKey: 'invoicedGoal', label: 'Fakturerat', color: COLOR_INVOICED, swatch: 'bg-[#8b5cf6]' },
 ];
 
 type GoalKey = 'quoteGoal' | 'orderGoal' | 'invoicedGoal';
 
 type TrendDatum = TrendPoint & Record<GoalKey, number | null> & { label: string };
 
+// Samma värden som legendens bg-[#1f2937] och bg-[#e3ece0]; recharts behöver dem som värden.
 const GOAL_STROKE = '#1f2937';
 const PERIOD_BAND = '#e3ece0';
 // Samma mått för stapel och målstreck: de två x-axlarna lägger ut sina staplar var för sig, och
@@ -53,15 +57,32 @@ function GoalTick(props: { x?: number; y?: number; width?: number; value?: unkno
   return <line x1={x - 3} x2={x + width + 3} y1={y} y2={y} stroke={GOAL_STROKE} strokeWidth={2} strokeLinecap="round" />;
 }
 
+/** Andel av målet — samma enhetstestade regel som korten (goalPercent), aldrig en egen kopia. */
 function goalShare(value: number, goal: number | null): string | null {
-  if (goal == null || goal <= 0) return null;
-  return `${Math.round((value / goal) * 100)} % av målet`;
+  const share = goalPercent({ actual: value, target: goal });
+  return share == null ? null : `${Math.round(share)} % av målet`;
 }
 
-function TrendTooltip({ active, payload }: { active?: boolean; payload?: ReadonlyArray<{ payload?: unknown }> }) {
+function TrendTooltip({
+  active,
+  payload,
+  goalsUnavailable,
+}: {
+  active?: boolean;
+  payload?: ReadonlyArray<{ payload?: unknown }>;
+  goalsUnavailable: boolean;
+}) {
   const datum = active ? (payload?.[0]?.payload as TrendDatum | undefined) : undefined;
   if (!datum) return null;
   const hasGoal = SERIES.some((s) => datum[s.goalKey] != null);
+  // ⚠️ Tre besked, inte två: ett läsfel får inte se ut som att budget saknas.
+  const footnote = datum.partial
+    ? 'Delmånad — inget mål jämförs.'
+    : goalsUnavailable
+      ? 'Målen kunde inte läsas.'
+      : hasGoal
+        ? null
+        : 'Ingen budget satt för månaden.';
   return (
     <div className="grid min-w-[220px] gap-1 rounded-xl border border-[#dde6d9] bg-[#f9fbf7] px-3 py-2 text-[12px] text-slate-600 shadow-[0_10px_24px_rgba(20,44,27,0.14)]">
       <b className="font-semibold text-slate-900">
@@ -73,7 +94,7 @@ function TrendTooltip({ active, payload }: { active?: boolean; payload?: Readonl
         return (
           <div key={series.key} className="flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: series.color }} aria-hidden="true" />
+              <span className={`h-2.5 w-2.5 rounded-sm ${series.swatch}`} aria-hidden="true" />
               {series.label}
             </span>
             <span className="tabular-nums font-semibold text-slate-900">
@@ -83,9 +104,7 @@ function TrendTooltip({ active, payload }: { active?: boolean; payload?: Readonl
           </div>
         );
       })}
-      <span className="text-slate-500">
-        {datum.partial ? 'Delmånad — inget mål jämförs.' : hasGoal ? null : 'Ingen budget satt för månaden.'}
-      </span>
+      {footnote ? <span className="text-slate-500">{footnote}</span> : null}
     </div>
   );
 }
@@ -109,19 +128,21 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[12px] text-slate-600">
         {SERIES.map((series) => (
           <span key={series.key} className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: series.color }} aria-hidden="true" />
+            <span className={`h-2.5 w-2.5 rounded-sm ${series.swatch}`} aria-hidden="true" />
             {series.label}
           </span>
         ))}
-        {anyGoal ? (
+        {trend.goalsUnavailable ? (
+          <span className="text-amber-800">Målen kunde inte läsas</span>
+        ) : anyGoal ? (
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-0.5 w-3.5 rounded-full" style={{ backgroundColor: GOAL_STROKE }} aria-hidden="true" />
+            <span className="h-0.5 w-3.5 rounded-full bg-[#1f2937]" aria-hidden="true" />
             Mål
           </span>
         ) : null}
         {inPeriod.length > 0 ? (
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9]" style={{ backgroundColor: PERIOD_BAND }} aria-hidden="true" />
+            <span className="h-2.5 w-3.5 rounded-sm border border-[#cfdcc9] bg-[#e3ece0]" aria-hidden="true" />
             Vald period
           </span>
         ) : null}
@@ -143,7 +164,10 @@ export default function SalesTrendChart({ trend }: { trend: SalesTrend }) {
             {inPeriod.length > 0 ? (
               <ReferenceArea xAxisId="value" x1={inPeriod[0].label} x2={inPeriod[inPeriod.length - 1].label} fill={PERIOD_BAND} fillOpacity={1} />
             ) : null}
-            <Tooltip content={(props) => <TrendTooltip active={props.active} payload={props.payload} />} cursor={{ fill: 'rgba(26,63,38,0.06)' }} />
+            <Tooltip
+              content={(props) => <TrendTooltip active={props.active} payload={props.payload} goalsUnavailable={trend.goalsUnavailable} />}
+              cursor={{ fill: 'rgba(26,63,38,0.06)' }}
+            />
             {SERIES.map((series) => (
               <Bar key={series.key} xAxisId="value" dataKey={series.key} name={series.label} fill={series.color} radius={[4, 4, 0, 0]} maxBarSize={MAX_BAR_SIZE} isAnimationActive={false} />
             ))}

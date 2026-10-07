@@ -100,19 +100,22 @@ export async function GET(req: Request) {
     ]);
 
     // Trenden: de senaste tolv månaderna eller sedan start, oavsett vald period. Startas här av samma
-    // skäl som ögonblicksbilderna. Felar första aktivitetsdagen börjar fönstret tolv månader bakåt i
-    // stället — tomma månader i början, men inget fel tal. Felar läsningen blir trenden null.
+    // skäl som ögonblicksbilderna. Raderna läses för hela tolvmånadersfönstret parallellt med första
+    // aktivitetsdagen, och fönstret kortas av först i beräkningen (trendWindow) — så väntar ingen av
+    // läsningarna på den andra. Täcker den valda perioden redan de tolv månaderna ("Senaste 12 mån")
+    // återanvänds periodens rader i stället för att läsas en gång till.
+    //
+    // Felar första aktivitetsdagen börjar fönstret tolv månader bakåt — tomma månader i början, men
+    // inget fel tal. Felar läsningen blir trenden null.
     const last12 = reportRange('last12', now);
-    const trendReads = fetchFirstActivityDay(admin)
-      .catch((e: any) => {
-        console.warn(`[Rapport] Första aktiviteten kunde inte läsas: ${e?.message || e}`);
-        return null;
-      })
-      .then(async (firstDay) => {
-        const window = trendWindow(last12, firstDay);
-        return { window, data: await fetchTrendData(admin, window) };
-      })
-      .catch((e: any) => {
+    const reuseForTrend = range.from <= last12.from && range.to >= last12.to;
+    const firstActivityRead = fetchFirstActivityDay(admin).catch((e: any) => {
+      console.warn(`[Rapport] Första aktiviteten kunde inte läsas: ${e?.message || e}`);
+      return null;
+    });
+    const trendDataRead = reuseForTrend
+      ? null
+      : fetchTrendData(admin, last12).catch((e: any) => {
         console.warn(`[Rapport] Trenden kunde inte läsas: ${e?.message || e}`);
         return null;
       });
@@ -270,11 +273,12 @@ export async function GET(req: Request) {
       openQuoteRows,
     });
 
-    const trendInput = await trendReads;
+    const trendData = reuseForTrend ? data : await trendDataRead;
+    const firstActivityDay = await firstActivityRead;
     let trend: SalesTrend | null = null;
-    if (trendInput) {
+    if (trendData) {
       try {
-        trend = buildSalesTrend({ ...trendInput, selected: range, goals });
+        trend = buildSalesTrend({ data: trendData, window: trendWindow(last12, firstActivityDay), selected: range, goals });
       } catch (e: any) {
         console.warn(`[Rapport] Trenden kunde inte räknas: ${e?.message || e}`);
       }

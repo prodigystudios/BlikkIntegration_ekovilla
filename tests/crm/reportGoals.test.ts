@@ -287,6 +287,24 @@ describe('buildPeriodSummary', () => {
     // Ordervärdet har budget i båda månaderna och behåller sin stapel.
     expect(summary.metrics.find((m) => m.key === 'orderValue')!.target).toBe(2_000_000);
   });
+
+  it('säger VARFÖR stapeln saknas: budget för en del av månaderna är inte "inget mål satt"', () => {
+    // Utan skillnaden stod "Inget mål satt" på fakturerat, och den som läste det fyllde i en budget
+    // som redan fanns för oktober.
+    const summary = buildPeriodSummary({
+      totals: totals(),
+      range: { from: '2026-09-15', to: '2026-10-15' },
+      months: ['2026-09', '2026-10'],
+      goals: [goal('2026-09-01'), goal('2026-10-01', { invoiced_value_target: 1_000_000 })],
+      previous: null,
+    });
+    const coverage = (key: string) => summary.metrics.find((m) => m.key === key)!.goalCoverage;
+    expect(coverage('invoicedValue')).toBe('partial');
+    expect(coverage('orderValue')).toBe('all');
+
+    const noInvoicedBudget = buildPeriodSummary({ totals: totals(), range, months: ['2026-09'], goals: [goal('2026-09-01')], previous: null });
+    expect(noInvoicedBudget.metrics.find((m) => m.key === 'invoicedValue')!.goalCoverage).toBe('none');
+  });
 });
 
 describe('goalPercent', () => {

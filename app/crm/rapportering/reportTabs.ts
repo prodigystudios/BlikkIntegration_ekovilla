@@ -1,3 +1,5 @@
+import { monthBounds } from '@/lib/domains/crm/reportGoals';
+
 // Rapportsidans flikar. Ren modul — ingen React, ingen klocka — så att reglerna för vilka flikar som
 // syns och vad ?flik= får peka på kan prövas utan en webbläsare.
 //
@@ -57,10 +59,6 @@ function parts(day: string): { year: number; month: number; date: number } {
   return { year, month, date };
 }
 
-function lastDayOfMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
 /**
  * Periodens etikett på ett kort: "sep", "1–7 okt", "29 sep–5 okt", "jan–okt 2026".
  *
@@ -76,7 +74,7 @@ export function periodChipLabel(range: { from: string; to: string }, currentYear
   const month = (m: number) => MONTHS_SHORT[m - 1] ?? '';
 
   const sameMonth = from.year === to.year && from.month === to.month;
-  const wholeMonths = from.date === 1 && to.date === lastDayOfMonth(to.year, to.month);
+  const wholeMonths = from.date === 1 && range.to === monthBounds(range.to.slice(0, 7)).to;
 
   if (sameMonth && wholeMonths) return `${month(from.month)}${year(from.year)}`;
   if (sameMonth) {

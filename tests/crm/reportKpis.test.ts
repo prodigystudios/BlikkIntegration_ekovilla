@@ -422,5 +422,8 @@ describe('buildSalesTrend', () => {
   it('ritar inga mål när målen inte gick att läsa', () => {
     const noGoals = buildSalesTrend({ window, selected: window, goals: null, data: { quotes: [], orders: [], invoiceRounds: [] } });
     expect(noGoals.points.every((p) => Object.values(p.goals).every((g) => g == null))).toBe(true);
+    // ... och säger att de inte gick att läsa, så gränssnittet inte påstår att budget saknas.
+    expect(noGoals.goalsUnavailable).toBe(true);
+    expect(trend.goalsUnavailable).toBe(false);
   });
 });

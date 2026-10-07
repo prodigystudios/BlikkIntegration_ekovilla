@@ -30,10 +30,12 @@ export const INSET_PANEL = 'rounded-xl border border-[#dde6d9] bg-[#f1f5ee]';
 const sekFormatter = new Intl.NumberFormat('sv-SE', { style: 'currency', currency: 'SEK', maximumFractionDigits: 0 });
 export function formatCurrency(value: number) { return sekFormatter.format(Number.isFinite(value) ? value : 0); }
 export function formatCompact(value: number) { return new Intl.NumberFormat('sv-SE', { notation: 'compact', maximumFractionDigits: 1 }).format(value); }
+// ⚠️ timeZone UTC: datumet är UTC-midnatt den 1:a. Utan den läste en webbläsare väster om Greenwich
+// av den 30:e månaden innan, och oktobers stapel hette "sep".
 export function formatMonth(period: string) {
   const [y, m] = period.split('-').map(Number);
   if (!y || !m) return period;
-  return new Intl.DateTimeFormat('sv-SE', { month: 'short', year: '2-digit' }).format(new Date(Date.UTC(y, m - 1, 1)));
+  return new Intl.DateTimeFormat('sv-SE', { month: 'short', year: '2-digit', timeZone: 'UTC' }).format(new Date(Date.UTC(y, m - 1, 1)));
 }
 /** "september 2026" — tooltipens rubrik. */
 export function formatMonthLong(period: string) {
@@ -192,6 +194,11 @@ export function MetricComparison({ metric }: { metric: PeriodMetric }) {
  * en saknad uppgift. ⚠️ `apply` false betyder att HELA sidan avstår från måluppfyllnad, och varför
  * står i underrubriken. Då tiger kortet: "Inget mål satt" på varje kort hade motsagt en underrubrik
  * som just förklarat att budgeten finns men bara för en del av månaderna.
+ *
+ * Utan stapel säger raden VARFÖR, och aldrig emot sig själv:
+ *   budget för en del av månaderna -> "Budget saknas för en del av periodens månader"
+ *   ingen budget, men ett antalsmål -> bara antalsmålet ("Mål 16 order"), inte "Inget mål satt · mål 16"
+ *   ingen budget alls               -> "Inget mål satt"
  */
 export function MetricGoal({
   metric,
@@ -210,7 +217,12 @@ export function MetricGoal({
   const attainment = goalPercent(metric);
   if (!apply) return null;
   if (metric.target == null || attainment == null) {
-    return <div className="text-[12px] text-slate-500">Inget mål satt{extra ? ` · ${extra}` : ''}</div>;
+    const reason = metric.goalCoverage === 'partial'
+      ? `Budget saknas för en del av periodens månader${extra ? ` · ${extra}` : ''}`
+      : extra
+        ? extra.charAt(0).toUpperCase() + extra.slice(1)
+        : 'Inget mål satt';
+    return <div className="text-[12px] text-slate-500">{reason}</div>;
   }
   return (
     <div className="grid gap-1">
@@ -219,7 +231,7 @@ export function MetricGoal({
             140 %, och en stapel som växer förbi sin ram spräcker kortet. */}
         <div
           className="h-1.5 rounded-full"
-          style={{ width: `${Math.max(2, Math.min(100, attainment))}%`, backgroundColor: 'var(--crm-primary)' }}
+          style={{ width: `${Math.max(2, Math.min(100, attainment))}%`, backgroundColor: 'var(--ek-green)' }}
         />
       </div>
       {/* ⚠️ TÄCKNINGEN STÅR BREDVID TALET. Budgeten är satt per hel månad; en period som bara är två
@@ -239,6 +251,13 @@ function goalMonthsLabel(months: string[]): string {
   if (months.length === 0) return '';
   if (months.length === 1) return formatMonth(months[0]);
   return `${formatMonth(months[0])} – ${formatMonth(months[months.length - 1])} · ${months.length} månader`;
+}
+
+/** Underrubrikens jämförelsemening: vilken period talen ställs mot, eller att ingen kunde räknas. */
+export function comparisonSubtitle(summary: PeriodSummary): string {
+  return summary.previousRange
+    ? `Jämfört med lika lång period dessförinnan (${formatRangeLabel(summary.previousRange.from, summary.previousRange.to)}).`
+    : 'Ingen jämförelseperiod kunde räknas fram.';
 }
 
 /**
@@ -270,7 +289,7 @@ export function Definition({ label, children }: { label: string; children: React
     <details className="group relative shrink-0">
       <summary
         aria-label={`Vad betyder ${label}?`}
-        className="grid h-5 w-5 cursor-pointer list-none place-items-center rounded-full border border-[#cfdcc9] bg-[#f9fbf7] text-[11px] font-bold italic text-slate-500 transition hover:border-[color:var(--crm-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent-ring)] group-open:border-[color:var(--crm-primary)] group-open:bg-[color:var(--crm-primary)] group-open:text-white [&::-webkit-details-marker]:hidden"
+        className="grid h-5 w-5 cursor-pointer list-none place-items-center rounded-full border border-[#cfdcc9] bg-[#f9fbf7] text-[11px] font-bold italic text-slate-500 transition hover:border-[color:var(--ek-accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent-ring)] group-open:border-[color:var(--ek-accent)] group-open:bg-[color:var(--ek-accent)] group-open:text-white [&::-webkit-details-marker]:hidden"
       >
         i
       </summary>
