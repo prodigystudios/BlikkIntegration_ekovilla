@@ -52,6 +52,7 @@ import {
   type QuoteLineItem,
 } from './quoteSerializers';
 import { quoteLabel } from '@/app/crm/lib/quoteDisplay';
+import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
 import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 import type { WorkOrderReadinessIssue } from '@/lib/domains/crm/workOrderReadiness';
 import WorkOrderReadinessNotice from '@/app/crm/components/WorkOrderReadinessNotice';
@@ -249,18 +250,25 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   return issues;
 }
 
+// Förklaringen under ett fält. slate-500, inte 400: 400 ger 2,46:1 mot kortet (se crm.sectionTitle).
+const fieldHint = 'm-0 text-xs leading-snug text-slate-500';
+
 // ─── CustomerSearchPicker ─────────────────────────────────────────────────────
 
+// Kundkortets uppgifter visas här, inte som fält: adressen och telefonen går inte att ändra i
+// offerten (kortet vinner, se project_crm_snapshot_vs_card) — man ändrar dem på kundkortet.
 function CustomerSearchPicker({
   selectedCustomer,
   onSelect,
   onClear,
   onCreateNew,
+  onOpenCard,
 }: {
   selectedCustomer: CrmCustomerLite | null;
   onSelect: (customer: CrmCustomerLite) => void;
   onClear: () => void;
   onCreateNew: () => void;
+  onOpenCard: () => void;
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -289,78 +297,142 @@ function CustomerSearchPicker({
   }, [query, open]);
 
   if (selectedCustomer) {
-    const displayName = selectedCustomer.customer_type === 'business'
-      ? (selectedCustomer.company_name || 'Kund')
-      : `${selectedCustomer.first_name || ''} ${selectedCustomer.last_name || ''}`.trim();
+    const visit = selectedCustomer.visit_address;
+    // Besöksadressen, inte fakturaadressen: det är den offerten och arbetsordern använder
+    // (customerDraftFields). Etiketten är kundkortets egen.
+    const address = [visit?.street, [visit?.postal_code, visit?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    const phone = selectedCustomer.phone || selectedCustomer.mobile;
+    // Personnumret står aldrig här — orten räcker för att känna igen en privatkund.
+    const subline = selectedCustomer.customer_type === 'business'
+      ? [selectedCustomer.organization_number, visit?.city].filter(Boolean).join(', ')
+      : visit?.city || '';
     return (
-      <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-        <div className="grid gap-0.5">
-          <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-600">Vald kund</span>
-          <span className="text-sm font-semibold text-slate-900">{displayName}</span>
-          {selectedCustomer.visit_address?.city ? <span className="text-xs text-slate-500">{selectedCustomer.visit_address.city}</span> : null}
-          {selectedCustomer.fortnox_customer_id ? <span className="text-[11px] font-medium text-sky-700">Synkad med Fortnox</span> : null}
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-start gap-3.5">
+          <span aria-hidden="true" className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ek-accent-soft)] text-sm font-bold text-[color:var(--ek-accent)]">
+            {customerInitials(selectedCustomer)}
+          </span>
+          {/* Minst 12rem till namnet: på en smal skärm bryter länkarna ned på egen rad i stället
+              för att trycka ihop namnet under sig. */}
+          <div className="min-w-0 flex-[1_1_12rem]">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[15px] font-semibold text-slate-900">{customerDisplayName(selectedCustomer)}</span>
+              {selectedCustomer.fortnox_customer_id ? (
+                <span className={cn(crm.badge, 'border-sky-200 bg-sky-50 text-sky-700')} title="Synkad med Fortnox">Fortnox</span>
+              ) : null}
+            </div>
+            {subline ? <p className="m-0 mt-0.5 text-[13px] text-slate-600">{subline}</p> : null}
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={onOpenCard}
+              className="rounded-md px-2 py-1 text-[13px] font-semibold text-[color:var(--ek-accent)] transition hover:bg-[#e9f1eb]"
+            >
+              Öppna kundkort
+            </button>
+            <button
+              type="button"
+              onClick={onClear}
+              className="rounded-md px-2 py-1 text-[13px] font-semibold text-slate-600 transition hover:bg-[#e9f1eb] hover:text-slate-900"
+            >
+              Byt kund
+            </button>
+          </div>
         </div>
-        <button type="button" onClick={onClear} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:border-slate-300 transition-colors">
-          Byt kund
-        </button>
+        {address || phone ? (
+          <dl className="m-0 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            {address ? (
+              <div className="min-w-0">
+                <dt className="text-xs text-slate-500">Besöksadress</dt>
+                <dd className="m-0 text-sm text-slate-800">{address}</dd>
+              </div>
+            ) : null}
+            {phone ? (
+              <div className="min-w-0">
+                <dt className="text-xs text-slate-500">Telefon</dt>
+                <dd className="m-0 text-sm tabular-nums text-slate-800">{phone}</dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
       </div>
     );
   }
 
   return (
-    <div className="relative">
-      <Input
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="Sök eller välj kund (namn, org.nr)…"
-      />
-      {loading ? <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Söker…</span> : null}
-      {open ? (
-        <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
-          <div className="max-h-72 overflow-y-auto">
-            {results.length > 0 ? results.map((customer) => {
-              const name = customer.customer_type === 'business'
-                ? (customer.company_name || 'Okänt företag')
-                : `${customer.first_name || ''} ${customer.last_name || ''}`.trim() || 'Okänd kund';
-              // Shared rule — the row showed no phone at all for card-only customers.
-              const contact = resolveCrmContact(customer);
-              return (
-                <button
-                  key={customer.id}
-                  type="button"
-                  onMouseDown={() => { onSelect(customer); setQuery(''); setOpen(false); }}
-                  className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-slate-900">{name}</span>
-                    {customer.fortnox_customer_id ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span> : null}
-                  </div>
-                  <span className="text-xs text-slate-400">
-                    {[customer.organization_number, customer.visit_address?.city, contact.phone].filter(Boolean).join(' · ')}
-                  </span>
-                </button>
-              );
-            }) : (
-              <p className="px-4 py-3 text-sm text-slate-500">
-                {loading ? 'Söker…' : query.trim()
-                  ? <>Ingen kund hittades för <strong>{query}</strong></>
-                  : 'Inga kunder i registret ännu'}
-              </p>
-            )}
-          </div>
-          {/* Always reachable – two customers can share a name, so "create new" must
-              never hide behind a match. */}
-          <button
-            type="button"
-            onMouseDown={onCreateNew}
-            className="flex w-full items-center justify-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
-          >
-            <span className="text-base leading-none">+</span> Skapa ny kund
-          </button>
+    <div className="grid gap-2">
+      <div className="flex flex-wrap gap-2">
+        <div className="relative min-w-[14rem] flex-1">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+            <circle cx="7" cy="7" r="4.75" stroke="currentColor" strokeWidth="1.5" />
+            <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setOpen(true)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
+            placeholder="Namn eller org.nr"
+            aria-label="Sök kund"
+            className="pl-9"
+          />
+          {loading ? <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500">Söker…</span> : null}
+          {open ? (
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-[0_16px_32px_rgba(15,23,42,0.10)]">
+              <div className="max-h-72 overflow-y-auto">
+                {results.length > 0 ? results.map((customer) => {
+                  const name = customerDisplayName(customer);
+                  // Shared rule — the row showed no phone at all for card-only customers.
+                  const contact = resolveCrmContact(customer);
+                  return (
+                    <button
+                      key={customer.id}
+                      type="button"
+                      onMouseDown={() => { onSelect(customer); setQuery(''); setOpen(false); }}
+                      className="flex w-full flex-col items-start gap-0.5 border-b border-slate-100 px-4 py-3 text-left transition last:border-b-0 hover:bg-slate-50"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-slate-900">{name}</span>
+                        {customer.fortnox_customer_id ? <span className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Fortnox</span> : null}
+                      </div>
+                      <span className="text-xs text-slate-400">
+                        {[customer.organization_number, customer.visit_address?.city, contact.phone].filter(Boolean).join(' · ')}
+                      </span>
+                    </button>
+                  );
+                }) : (
+                  <p className="px-4 py-3 text-sm text-slate-500">
+                    {loading ? 'Söker…' : query.trim()
+                      ? <>Ingen kund hittades för <strong>{query}</strong></>
+                      : 'Inga kunder i registret ännu'}
+                  </p>
+                )}
+              </div>
+              {/* Always reachable – two customers can share a name, so "create new" must
+                  never hide behind a match. */}
+              <button
+                type="button"
+                onMouseDown={onCreateNew}
+                className="flex w-full items-center justify-start gap-2 border-t border-slate-100 bg-slate-50/60 px-4 py-3 text-left text-sm font-semibold text-slate-900 transition hover:bg-slate-100"
+              >
+                <span className="text-base leading-none">+</span> Skapa ny kund
+              </button>
+            </div>
+          ) : null}
         </div>
-      ) : null}
+        <button
+          type="button"
+          onClick={onCreateNew}
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-[#d3ddcf] bg-white px-3.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          Ny kund
+        </button>
+      </div>
+      <p className={fieldHint}>Klicka i fältet för att se de senast ändrade kunderna.</p>
     </div>
   );
 }
@@ -398,9 +470,6 @@ function Field({
     </div>
   );
 }
-
-// Förklaringen under ett fält. slate-500, inte 400: 400 ger 2,46:1 mot kortet (se crm.sectionTitle).
-const fieldHint = 'm-0 text-xs leading-snug text-slate-500';
 
 // ─── Section card (rubrik + en rad förklaring + hårlinje) ─────────────────────
 
@@ -462,6 +531,17 @@ function FormSection({
 
 // ─── Reglage (switch) ─────────────────────────────────────────────────────────
 
+// 🧨 En vanlig sträng, INTE cn(): tailwind-merge läser `outline` (stilen) och `outline-2` (bredden) som
+// samma grupp och slänger `peer-focus-visible:outline` — då får fokusringen färg och bredd men stilen
+// `none`, och tangentbordsfokus syns inte alls. Klasserna är statiska, så ingen sammanslagning behövs.
+const SWITCH_TRACK = [
+  'relative h-5 w-9 rounded-full bg-slate-300 transition-colors motion-reduce:transition-none',
+  'peer-checked:bg-[color:var(--ek-accent)]',
+  'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--ek-accent)]',
+  "after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(15,23,42,0.25)] after:transition-transform after:content-[''] motion-reduce:after:transition-none",
+  'peer-checked:after:translate-x-4',
+].join(' ');
+
 // En äkta kryssruta med role="switch" under en ritad bana: tangentbordet, klick på den omslutande
 // <label> och skärmläsaren följer med gratis. Ska ligga INUTI en <label> som bär texten.
 function SwitchTrack({ checked, onChange }: { checked: boolean; onChange: (next: boolean) => void }) {
@@ -474,16 +554,7 @@ function SwitchTrack({ checked, onChange }: { checked: boolean; onChange: (next:
         onChange={(e) => onChange(e.target.checked)}
         className="peer sr-only"
       />
-      <span
-        aria-hidden="true"
-        className={cn(
-          'relative h-5 w-9 rounded-full bg-slate-300 transition-colors motion-reduce:transition-none',
-          'peer-checked:bg-[color:var(--ek-accent)]',
-          'peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[color:var(--ek-accent)]',
-          "after:absolute after:left-0.5 after:top-0.5 after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-[0_1px_2px_rgba(15,23,42,0.25)] after:transition-transform after:content-[''] motion-reduce:after:transition-none",
-          'peer-checked:after:translate-x-4',
-        )}
-      />
+      <span aria-hidden="true" className={SWITCH_TRACK} />
     </span>
   );
 }
@@ -1936,7 +2007,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               </div>
             }
           >
-            <div className="grid gap-4">
             <CustomerSearchPicker
               selectedCustomer={selectedCustomer}
               onSelect={applySelectedCustomer}
@@ -1954,141 +2024,125 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                 }));
               }}
               onCreateNew={() => goToCustomerPage('/crm/kunder/ny')}
+              onOpenCard={() => { if (selectedCustomer) goToCustomerPage(`/crm/kunder/${selectedCustomer.id}`); }}
             />
 
-            {selectedCustomer ? (
-              <button
-                type="button"
-                onClick={() => goToCustomerPage(`/crm/kunder/${selectedCustomer.id}`)}
-                className="w-fit text-xs font-medium text-slate-400 transition-colors hover:text-slate-700"
-              >
-                Öppna kundkort →
-              </button>
-            ) : (
-              <p className="text-xs text-slate-400">Sök fram en befintlig kund eller skapa en ny. Kunduppgifterna hämtas från kundkortet.</p>
-            )}
-
-            {/* Arbetsadress — explicit toggle istället för tyst autoifyllning, så en
-                avvikande jobbplats (t.ex. företagskund vars kortadress är kontoret) inte
-                glöms bort. Av = arbetsorder/Fortnox använder kundadressen. */}
-            <div className="grid gap-3">
-              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                <span className="grid min-w-0 gap-0.5">
-                  <span className="text-sm font-medium text-slate-700">Annan arbetsadress än kundens</span>
-                  <span className="text-[11px] text-slate-400">Jobbet utförs på en annan plats än kundadressen</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={customWorkAddress}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setCustomWorkAddress(on);
-                    // Turning off → clear (snapshot uses the customer address). Turning on →
-                    // leave the fields empty so the seller must enter the actual job site.
-                    if (!on) setDraft((d) => ({ ...d, delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
-                  }}
-                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                />
-              </label>
-
-              {customWorkAddress ? (
-                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
-                  <p className={crm.sectionTitle}>Arbetsadress (där jobbet utförs)</p>
-                  <Field label="Gatuadress">
-                    <AddressAutocompleteInput
-                      value={draft.delivery_address}
-                      onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
-                      onSelect={(s) => setDraft((d) => ({
-                        ...d,
-                        delivery_address: s.street || d.delivery_address,
-                        delivery_postal_code: s.postal_code || d.delivery_postal_code,
-                        delivery_city: s.city || d.delivery_city,
-                      }))}
-                      placeholder="Sök adress, t.ex. Industrivägen 4 Södertälje"
+            {/* Arbetsplatsen: två reglage i EN lista, som fäller ut sina fält. Explicita reglage i
+                stället för tyst autoifyllning, så en avvikande jobbplats (t.ex. en företagskund vars
+                kortadress är kontoret) inte glöms bort. Av = arbetsorder och Fortnox använder
+                kundadressen respektive ordergivaren. */}
+            <div className="grid gap-2">
+              <span className="text-xs font-semibold text-slate-600">Arbetsplatsen</span>
+              <div className={cn('divide-y divide-[#dde6d9] rounded-xl', crm.sunken)}>
+                <div className="grid gap-3 px-4 py-3">
+                  <label className="flex cursor-pointer select-none items-center justify-between gap-4">
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="text-sm font-medium text-slate-800">Annan arbetsadress</span>
+                      <span className={fieldHint}>Jobbet görs inte på kundens adress.</span>
+                    </span>
+                    <SwitchTrack
+                      checked={customWorkAddress}
+                      onChange={(on) => {
+                        setCustomWorkAddress(on);
+                        // Turning off → clear (snapshot uses the customer address). Turning on →
+                        // leave the fields empty so the seller must enter the actual job site.
+                        if (!on) setDraft((d) => ({ ...d, delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
+                      }}
                     />
-                  </Field>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Postnummer">
-                      <Input
-                        value={draft.delivery_postal_code}
-                        onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
-                        placeholder="152 42"
-                      />
-                    </Field>
-                    <Field label="Ort">
-                      <Input
-                        value={draft.delivery_city}
-                        onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}
-                        placeholder="Södertälje"
-                      />
-                    </Field>
-                  </div>
-                  <p className="text-[11px] leading-snug text-slate-400">
-                    Blir arbetsorderns adress och Fortnox leveransadress. Kundadressen ligger kvar som fakturaadress.
-                  </p>
+                  </label>
+                  {customWorkAddress ? (
+                    <div className="grid gap-3 pb-1">
+                      <Field label="Gatuadress">
+                        <AddressAutocompleteInput
+                          value={draft.delivery_address}
+                          onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
+                          onSelect={(s) => setDraft((d) => ({
+                            ...d,
+                            delivery_address: s.street || d.delivery_address,
+                            delivery_postal_code: s.postal_code || d.delivery_postal_code,
+                            delivery_city: s.city || d.delivery_city,
+                          }))}
+                          placeholder="Sök adress, t.ex. Industrivägen 4 Södertälje"
+                        />
+                      </Field>
+                      <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
+                        <Field label="Postnummer">
+                          <Input
+                            value={draft.delivery_postal_code}
+                            onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
+                            placeholder="152 42"
+                          />
+                        </Field>
+                        <Field label="Ort">
+                          <Input
+                            value={draft.delivery_city}
+                            onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}
+                            placeholder="Södertälje"
+                          />
+                        </Field>
+                      </div>
+                      <p className={fieldHint}>
+                        Blir arbetsorderns adress och leveransadress i Fortnox. Kundadressen står kvar som fakturaadress.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
 
-            {/* Separat kontaktperson på arbetsplatsen (slutkund) — t.ex. en byggare beställer
-                jobbet men arbetet utförs åt en annan person som inte ligger på kundkortet.
-                Speglar arbetsadress-toggeln. Ordergivaren stannar som "Er referens". */}
-            <div className="grid gap-3">
-              <label className="flex cursor-pointer select-none items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2.5">
-                <span className="grid min-w-0 gap-0.5">
-                  <span className="text-sm font-medium text-slate-700">Annan kontaktperson på arbetsplatsen</span>
-                  <span className="text-[11px] text-slate-400">Slutkund utanför kundkortet (jobbet utförs åt någon annan än ordergivaren)</span>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={customEndContact}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setCustomEndContact(on);
-                    if (!on) setDraft((d) => ({ ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' }));
-                  }}
-                  className="h-4 w-4 shrink-0 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                />
-              </label>
-
-              {customEndContact ? (
-                <div className="grid gap-3 rounded-xl border border-[#e0e8dc] bg-white/60 p-3">
-                  <p className={crm.sectionTitle}>Kontaktperson på arbetsplatsen</p>
-                  <Field label="Namn">
-                    <Input
-                      value={draft.end_contact_name}
-                      onChange={(e) => setDraft((d) => ({ ...d, end_contact_name: e.target.value }))}
-                      placeholder="T.ex. fastighetsägaren"
+                {/* Separat kontaktperson på arbetsplatsen (slutkund) — t.ex. en byggare beställer
+                    jobbet men arbetet utförs åt en annan person som inte ligger på kundkortet.
+                    Ordergivaren stannar som "Er referens". */}
+                <div className="grid gap-3 px-4 py-3">
+                  <label className="flex cursor-pointer select-none items-center justify-between gap-4">
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className="text-sm font-medium text-slate-800">Kontaktperson på plats</span>
+                      <span className={fieldHint}>Någon annan än beställaren tar emot montörerna.</span>
+                    </span>
+                    <SwitchTrack
+                      checked={customEndContact}
+                      onChange={(on) => {
+                        setCustomEndContact(on);
+                        if (!on) setDraft((d) => ({ ...d, end_contact_name: '', end_contact_phone: '', end_contact_email: '' }));
+                      }}
                     />
-                  </Field>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Telefon">
-                      <Input
-                        value={draft.end_contact_phone}
-                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_phone: e.target.value }))}
-                        placeholder="070-123 45 67"
-                        inputMode="tel"
-                      />
-                    </Field>
-                    <Field label="E-post">
-                      <Input
-                        value={draft.end_contact_email}
-                        onChange={(e) => setDraft((d) => ({ ...d, end_contact_email: e.target.value }))}
-                        placeholder="namn@exempel.se"
-                        type="email"
-                      />
-                    </Field>
-                  </div>
-                  {/* ⚠️ Texten lovade en gång "notering på Fortnox-dokumenten". Det stämmer inte
-                      längre: buildEndContactNote är borttagen och Remarks skickas inte alls, så
-                      slutkunden är helt CRM-intern. Ett löfte om vad kunden ser på sitt dokument får
-                      inte stå kvar när det inte gäller. */}
-                  <p className="text-[11px] leading-snug text-slate-400">
-                    Visas för installatören på arbetsordern och blir förifylld mottagare av orderbekräftelsen. Går att ändra på arbetsordern. Skickas inte till Fortnox — ordergivaren står kvar som Er referens.
-                  </p>
+                  </label>
+                  {customEndContact ? (
+                    <div className="grid gap-3 pb-1">
+                      <Field label="Namn">
+                        <Input
+                          value={draft.end_contact_name}
+                          onChange={(e) => setDraft((d) => ({ ...d, end_contact_name: e.target.value }))}
+                          placeholder="T.ex. fastighetsägaren"
+                        />
+                      </Field>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <Field label="Telefon">
+                          <Input
+                            value={draft.end_contact_phone}
+                            onChange={(e) => setDraft((d) => ({ ...d, end_contact_phone: e.target.value }))}
+                            placeholder="070-123 45 67"
+                            inputMode="tel"
+                          />
+                        </Field>
+                        <Field label="E-post">
+                          <Input
+                            value={draft.end_contact_email}
+                            onChange={(e) => setDraft((d) => ({ ...d, end_contact_email: e.target.value }))}
+                            placeholder="namn@exempel.se"
+                            type="email"
+                          />
+                        </Field>
+                      </div>
+                      {/* ⚠️ Texten lovade en gång "notering på Fortnox-dokumenten". Det stämmer inte
+                          längre: buildEndContactNote är borttagen och Remarks skickas inte alls, så
+                          slutkunden är helt CRM-intern. Ett löfte om vad kunden ser på sitt dokument får
+                          inte stå kvar när det inte gäller. */}
+                      <p className={fieldHint}>
+                        Visas för montören på arbetsordern och blir förifylld mottagare av orderbekräftelsen (går att ändra där). Skickas inte till Fortnox — ordergivaren står kvar som Er referens.
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
+              </div>
             </div>
           </FormSection>
 
