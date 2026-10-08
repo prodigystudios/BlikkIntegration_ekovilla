@@ -24,6 +24,8 @@ import { isDeadWorkOrder } from './work-orders';
 // netAmount. En order som delfakturerats till fullo summerar därför till samma netto som i ett svep.
 
 export type InvoicedOrderRow = NetAmountRow & {
+  /** Orderns id — följer med fakturan (`work_order_id`). Rapporten läser den, översikten inte. */
+  id?: string | null;
   status: string | null;
   created_at: string;
   fortnox_invoiced_at: string | null;
@@ -43,14 +45,18 @@ export type InvoicedOrderRow = NetAmountRow & {
   partial_invoicing_started_at: string | null;
   assigned_to: string | null;
   client_name?: string | null;
+  /** 'private' eller 'business' — förs vidare till fakturan. Rapporten läser den, översikten inte. */
+  quote_type?: string | null;
 };
 
-type InvoiceRoundOrder = { status: string | null; assigned_to: string | null; client_name?: string | null };
+type InvoiceRoundOrder = { status: string | null; assigned_to: string | null; client_name?: string | null; quote_type?: string | null };
 
 /** En delfakturarunda, med sin order inbäddad (`work_order:crm_work_orders(...)`). */
 export type InvoiceRoundRow = {
   amount: number | string | null;
   created_at: string;
+  /** Ordern rundan hör till — följer med fakturan. Rapporten läser den, översikten inte. */
+  work_order_id?: string | null;
   /**
    * Null när läsaren inte får se ordern — då räknas inte rundan heller. Som lista när klienten inte
    * vet att relationen är många-till-en; samma läsning som planeringens `work_order`-inbäddningar.
@@ -66,6 +72,13 @@ export type InvoicedRevenue = {
   at: string;
   assigned_to: string | null;
   client_name: string | null;
+  /** Orderns kundtyp, när läsningen hämtade den — annars null. */
+  quote_type: string | null;
+  /**
+   * Ordern fakturan hör till — fakturerat per depå under Produkt & marknad slår upp orderns schema på
+   * den. null när läsningen inte hämtade orderns id (översikten gör det inte).
+   */
+  work_order_id: string | null;
 };
 
 /**
@@ -100,6 +113,14 @@ export function uninvoicedAmount(order: OrderWithRounds): number {
 }
 
 /**
+ * Det som återstår att fakturera på alla ordrarna tillsammans — orderstocken. Delas av översiktens
+ * orderlager och rapportens orderstock, så att de två inte kan räkna samma lager olika.
+ */
+export function sumUninvoiced(orders: OrderWithRounds[]): number {
+  return orders.reduce((total, order) => total + uninvoicedAmount(order), 0);
+}
+
+/**
  * Varje faktura bland raderna, i ETT svep eller per runda. Filtrerar inte på period — anroparen
  * gör det på `at` med sin egen fönsterregel, så rapportens och översiktens fönster förblir sina.
  * `orderInvoicedAt` är anroparens regel för när en order fakturerades i ett svep; null = räknas inte.
@@ -118,6 +139,8 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       at,
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
+      quote_type: order.quote_type ?? null,
+      work_order_id: order.id ?? null,
     }];
   });
 
@@ -132,6 +155,8 @@ export function invoicedRevenue<Order extends InvoicedOrderRow>(
       at: round.created_at,
       assigned_to: order.assigned_to,
       client_name: order.client_name ?? null,
+      quote_type: order.quote_type ?? null,
+      work_order_id: round.work_order_id ?? null,
     }];
   });
 

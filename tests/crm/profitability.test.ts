@@ -15,6 +15,10 @@ const order = (id: string, invoicedDay: string): ReportOrderRow => ({
   fortnox_invoiced_at: `${invoicedDay}T08:00:00Z`, partial_invoicing_started_at: null,
   assigned_to: null,
   client_name: null,
+  quote_type: 'business',
+  customer_id: null,
+  rot_enabled: null,
+  customer: null,
 });
 
 const calc = (revenue: number | null, tb1: number | null, tb2: number | null) => ({ revenue, tb1, tb2 });

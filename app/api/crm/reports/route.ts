@@ -5,11 +5,36 @@ import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import {
   buildPeriodTotals,
   composeSalesReport,
+  fetchInvoicedValue,
   fetchReportData,
+  fetchTrendData,
   monthsInRange,
   partitionOrders,
+  type ReportQuoteRow,
   type ReportRange,
 } from '@/lib/domains/crm/reports';
+import {
+  buildReportOverview,
+  buildReportSales,
+  buildSalesTrend,
+  trendWindow,
+  type ReportSales,
+  type SalesTrend,
+} from '@/lib/domains/crm/reportKpis';
+import {
+  fetchCustomerOrderRows,
+  fetchFirstActivityDay,
+  fetchOpenQuoteRows,
+  fetchOrderStockRows,
+} from '@/lib/domains/crm/reportKpisLoader';
+import { buildReportRevenue, countOrdersPerCustomer, type ReportRevenue } from '@/lib/domains/crm/reportRevenue';
+import {
+  buildReportProduct,
+  scheduleOrderIds,
+  volumeOrderIds,
+  type ReportProduct,
+} from '@/lib/domains/crm/reportProduct';
+import { fetchDepots, fetchOrderLineItems, fetchOrderSegments } from '@/lib/domains/crm/reportProductLoader';
 import type { PeriodTotals, ReportGoalRow } from '@/lib/domains/crm/reportGoals';
 import { buildProduction, type Production } from '@/lib/domains/planning/production';
 import { fetchProductionData } from '@/lib/domains/planning/productionLoader';
@@ -19,7 +44,7 @@ import { buildTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { fetchTimeReportData } from '@/lib/domains/time/reportLoader';
 import { computeAfterCalculations, type AfterCalculationOrderRow } from '@/lib/domains/crm/afterCalculationLoader';
 import type { AfterCalculation } from '@/lib/domains/crm/afterCalculation';
-import { previousRange, reportRange } from '@/app/crm/rapportering/reportRanges';
+import { previousRange, reportRange, today } from '@/app/crm/rapportering/reportRanges';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,15 +55,12 @@ const querySchema = z.object({
   to: dateSchema.optional(),
 });
 
-// Default range: the last 12 months (inclusive of the current month).
-// Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet ett intervall som slutade i går, och den
-// 1:a i månaden flyttade dessutom hela tolvmånadersfönstret en månad bakåt.
-//
-// Samma funktion som rapportsidans egen snabbknapp "Senaste 12 mån" använder — den är ren, tar
-// ögonblicket som argument och är redan testad. En egen kopia av månadsaritmetiken här hade varit
-// husets tredje, och den enda som ingen prövar.
+// Standardperioden: denna månad (Williams beslut 2026-10-07 — tidigare de senaste tolv månaderna).
+// Samma snabbval som rapportsidans förval, så en sida som öppnas utan datum och en som skickar sitt
+// förval får samma svar. Ankrat i svensk dag: strax efter midnatt gav UTC-dygnet annars ett intervall
+// som slutade i går, och den 1:a i månaden hade pekat ut förra månaden.
 function defaultRange(): ReportRange {
-  return reportRange('last12');
+  return reportRange('month');
 }
 
 export async function GET(req: Request) {
@@ -64,7 +86,98 @@ export async function GET(req: Request) {
     // Admin client: team-wide aggregated read model (profiles RLS only self-reads
     // with a session client — same rationale as the goals route).
     const admin = getSupabaseAdmin();
+
+    // ── Översiktens nyckeltal ────────────────────────────────────────────────
+    //
+    // Orderstocken och de öppna offerterna är ÖGONBLICKSBILDER — de följer inte perioden. Veckotalet
+    // mäter stocken mot senaste HELA kalendermånadens fakturering, som läses för sig.
+    //
+    // Läsningarna STARTAS HÄR och väntas in först när svaret sätts ihop: de beror inte på något
+    // annat i rutten, så deras rundresor ska inte läggas ovanpå resten av sidans.
+    //
+    // ⚠️ VAR OCH EN FÅR FELA FÖR SIG, och felet blir null — aldrig en nolla. "Orderstock 0 kr" hade
+    // varit ett påstående om verksamheten, inte ett saknat värde. Varje gren fångar sitt eget fel, så
+    // inget löfte kan bli ett ohanterat avslag om resten av rutten skulle kasta först. Hit rate räknas
+    // på periodens offerter, som läses nedan, och kan inte utebli.
+    const now = new Date();
+    const basisRange = reportRange('prevMonth', now);
+    const overviewReads = Promise.all([
+      fetchOrderStockRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] Orderstocken kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+      fetchInvoicedValue(admin, basisRange).then(
+        (invoiced) => ({ range: basisRange, invoiced }),
+        (e: any) => {
+          console.warn(`[Rapport] Förra månadens fakturering kunde inte läsas: ${e?.message || e}`);
+          return null;
+        },
+      ),
+      fetchOpenQuoteRows(admin).catch((e: any) => {
+        console.warn(`[Rapport] De öppna offerterna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+      // Varje kunds order sedan start, för "återkommande kunder" under Omsättning.
+      fetchCustomerOrderRows(admin).then((rows) => countOrdersPerCustomer(rows, range.to), (e: any) => {
+        console.warn(`[Rapport] Kundernas order kunde inte läsas: ${e?.message || e}`);
+        return null;
+      }),
+    ]);
+
+    // Trenden: de senaste tolv månaderna eller sedan start, oavsett vald period. Startas här av samma
+    // skäl som ögonblicksbilderna. Raderna läses för hela tolvmånadersfönstret parallellt med första
+    // aktivitetsdagen, och fönstret kortas av först i beräkningen (trendWindow) — så väntar ingen av
+    // läsningarna på den andra. Täcker den valda perioden redan de tolv månaderna ("Senaste 12 mån")
+    // återanvänds periodens rader i stället för att läsas en gång till.
+    //
+    // Felar första aktivitetsdagen börjar fönstret tolv månader bakåt — tomma månader i början, men
+    // inget fel tal. Felar läsningen blir trenden null.
+    const last12 = reportRange('last12', now);
+    const reuseForTrend = range.from <= last12.from && range.to >= last12.to;
+    const firstActivityRead = fetchFirstActivityDay(admin).catch((e: any) => {
+      console.warn(`[Rapport] Första aktiviteten kunde inte läsas: ${e?.message || e}`);
+      return null;
+    });
+    const trendDataRead = reuseForTrend
+      ? null
+      : fetchTrendData(admin, last12).catch((e: any) => {
+        console.warn(`[Rapport] Trenden kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
+
     const data = await fetchReportData(admin, range);
+    // Periodens order, partitionerade — delas av lönsamheten, nyckeltalen och Produkt & marknad.
+    const periodOrders = partitionOrders(data.orders, range, data.invoiceRounds);
+
+    // ── Produkt & marknads läsningar ─────────────────────────────────────────
+    //
+    // STARTAS HÄR och väntas in först när svaret sätts ihop, samma skäl som ögonblicksbilderna:
+    // orderraderna är rapportens tyngsta läsning (tolv månaders order), och de ska gå medan målen,
+    // produktionen, tiden, jämförelseperioden och lönsamheten räknas — inte efter dem. Raderna läses för
+    // periodens och trendens skapade order (m³ per månad följer trendens fönster, som de andra
+    // månadsdiagrammen), schemat för orderna bakom periodens fakturor och orderstocken.
+    //
+    // ⚠️ VARJE GREN FÅNGAR SITT EGET FEL och blir null — utan rader blir m³-delarna null, utan schema
+    // depådelen — så inget löfte kan bli ett ohanterat avslag om resten av rutten skulle kasta först.
+    const productTrendRead = (async () => {
+      const rows = reuseForTrend ? data : await trendDataRead;
+      return rows ? { orders: rows.orders, window: trendWindow(last12, await firstActivityRead) } : null;
+    })();
+    const productLineItemsRead = productTrendRead
+      .then((trend) => fetchOrderLineItems(admin, volumeOrderIds({ ordersCreated: periodOrders.created, trend })))
+      .catch((e: any) => {
+        console.warn(`[Rapport] Orderraderna kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
+    const productScheduleRead = overviewReads
+      .then(([stockRows]) => Promise.all([
+        fetchOrderSegments(admin, scheduleOrderIds({ revenue: periodOrders.revenue, stockRows })),
+        fetchDepots(admin),
+      ]))
+      .then(([segments, depots]) => ({ segments, depots }), (e: any) => {
+        console.warn(`[Rapport] Schemat kunde inte läsas: ${e?.message || e}`);
+        return null;
+      });
 
     // ── Referenspunkterna: målen och föregående period ───────────────────────
     //
@@ -76,13 +189,16 @@ export async function GET(req: Request) {
     // "förra perioden sålde vi ingenting", vilket är ett helt annat påstående än "vi vet inte".
     const months = monthsInRange(range.from, range.to);
 
+    // Målen läses för periodens månader OCH trendens tolv, i en fråga. Varje mottagare filtrerar själv
+    // fram sina månader (sumGoalTargets, monthHasGoal), så de extra raderna påverkar inte perioden.
+    const goalMonths = [...new Set([...months, ...monthsInRange(last12.from, last12.to)])];
     let goals: ReportGoalRow[] | null = null;
     try {
       const { data: goalRows, error } = await admin
         .from('crm_goals')
-        .select('period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target')
+        .select('period_start, calls_target, quotes_target, quote_value_target, order_count_target, order_value_target, invoiced_value_target')
         .eq('period_type', 'month')
-        .in('period_start', months.map((month) => `${month}-01`));
+        .in('period_start', goalMonths.map((month) => `${month}-01`));
       if (error) throw new Error(error.message);
       goals = (goalRows as ReportGoalRow[]) || [];
     } catch (e: any) {
@@ -146,6 +262,8 @@ export async function GET(req: Request) {
 
     const comparisonRange = previousRange(range);
     let previous: { range: ReportRange; totals: PeriodTotals } | null = null;
+    // Föregående periods offerter, för hit rate-jämförelsen. Samma läsning som huvudtalen.
+    let previousQuotes: { range: ReportRange; quotes: ReportQuoteRow[] } | null = null;
     if (comparisonRange) {
       try {
         // Bara huvudtalen för föregående period — INGEN efterkalkyl. Lönsamheten räknas på
@@ -153,6 +271,7 @@ export async function GET(req: Request) {
         // hade fördubblat svarstiden för ett jämförelsetal i ett chip.
         const previousData = await fetchReportData(admin, comparisonRange);
         previous = { range: comparisonRange, totals: buildPeriodTotals(previousData, comparisonRange) };
+        previousQuotes = { range: comparisonRange, quotes: previousData.quotes };
       } catch (e: any) {
         console.warn(`[Rapport] Jämförelseperioden kunde inte hämtas: ${e?.message || e}`);
       }
@@ -166,7 +285,7 @@ export async function GET(req: Request) {
     // ⚠️ Lönsamheten får inte kunna sänka rapporten. Kalkylen vilar på två inställningstabeller och
     // artikelcachen; felar någon av dem ska säljsiffrorna fortfarande visas, och lönsamhetsdelen
     // stå tom. Det är skillnaden mellan en del av sidan som saknas och en sida som inte laddar.
-    const invoicedIds = partitionOrders(data.orders, range, data.invoiceRounds).invoiced
+    const invoicedIds = periodOrders.invoiced
       .map((order) => order.id)
       .filter((id): id is string => Boolean(id));
 
@@ -200,6 +319,80 @@ export async function GET(req: Request) {
       }
     }
 
+    const todayIso = today(now);
+    const [orderStockRows, basis, openQuoteRows, ordersSinceStart] = await overviewReads;
+    const overview = buildReportOverview({
+      quotes: data.quotes,
+      range,
+      today: todayIso,
+      previous: previousQuotes,
+      orderStockRows,
+      basis,
+      openQuoteRows,
+    });
+
+    const trendData = reuseForTrend ? data : await trendDataRead;
+    const trendRange = trendWindow(last12, await firstActivityRead);
+    let trend: SalesTrend | null = null;
+    if (trendData) {
+      try {
+        trend = buildSalesTrend({ data: trendData, window: trendRange, selected: range, goals });
+      } catch (e: any) {
+        console.warn(`[Rapport] Trenden kunde inte räknas: ${e?.message || e}`);
+      }
+    }
+
+    // Försäljningsflikens nyckeltal. Hit rate per offertmånad läser trendens offerter i trendens
+    // fönster (Williams beslut 2026-10-07: samma tolv månader, vald period markerad) — felade trendens
+    // läsning blir bara den delen null. Resten räknas på periodens rader, som redan finns.
+    let sales: ReportSales | null = null;
+    try {
+      sales = buildReportSales({
+        quotes: data.quotes,
+        ordersCreated: periodOrders.created,
+        range,
+        today: todayIso,
+        trend: trendData ? { quotes: trendData.quotes, window: trendRange } : null,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Försäljningens nyckeltal kunde inte räknas: ${e?.message || e}`);
+    }
+
+    // Omsättningsflikens nyckeltal. Fakturerat per månad läser trendens rader i trendens fönster
+    // (Williams beslut 2026-10-07); orderstocken per läge är ögonblicksbildens rader. Felar någon av de
+    // läsningarna blir bara den delen null.
+    let revenue: ReportRevenue | null = null;
+    try {
+      revenue = buildReportRevenue({
+        period: periodOrders,
+        range,
+        trend: trendData ? { data: trendData, window: trendRange } : null,
+        orderStockRows,
+        ordersSinceStart,
+        totals: buildPeriodTotals(data, range),
+        previousTotals: previous?.totals ?? null,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Omsättningens nyckeltal kunde inte räknas: ${e?.message || e}`);
+    }
+
+    // Produkt & marknad, på läsningarna som startades efter periodens rader.
+    let product: ReportProduct | null = null;
+    try {
+      const [trendOrders, lineItems, schedule] = await Promise.all([productTrendRead, productLineItemsRead, productScheduleRead]);
+      product = buildReportProduct({
+        ordersCreated: periodOrders.created,
+        range,
+        lineItems,
+        trend: trendOrders,
+        revenue: periodOrders.revenue,
+        stockRows: orderStockRows,
+        schedule,
+      });
+    } catch (e: any) {
+      console.warn(`[Rapport] Produkt & marknad kunde inte räknas: ${e?.message || e}`);
+    }
+
     const report = composeSalesReport(data, range, afterCalculations, {
       profitabilityUnavailable,
       goals,
@@ -207,6 +400,11 @@ export async function GET(req: Request) {
       production,
       planned,
       time,
+      overview,
+      trend,
+      sales,
+      revenue,
+      product,
     });
 
     return ok(report);
