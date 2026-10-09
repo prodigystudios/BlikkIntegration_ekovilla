@@ -47,7 +47,8 @@ type Row = { Price?: number; Quantity?: number; OrderedQuantity?: number; VAT?: 
 
 /** Som Fortnox lagrar raden: en husarbetsrad bär en typ. */
 const stored = (r: Row): Row => ({ ...r, HouseWork: r.HouseWork ?? false, HouseWorkType: r.HouseWorkType ?? (r.HouseWork ? 'CONSTRUCTION' : null) });
-type Doc = { reductionType: string; rows: Row[] };
+// Kundnumret följer POST och PUT. Pushen läser det för att se om offerten bytt kund (offerCustomerSwapFields).
+type Doc = { reductionType: string; rows: Row[]; customerNumber?: string };
 type Post = {
   Id: number; ReferenceDocumentType: DocType; ReferenceNumber: string; CustomerName: string;
   SocialSecurityNumber: string; AskedAmount: number; PropertyDesignation?: string | null;
@@ -90,11 +91,15 @@ class FakeFortnox {
     const reduction = doc.reductionType === 'rot'
       ? (posts.length ? posts.reduce((s, p) => s + p.AskedAmount, 0) : this.ceiling(doc))
       : null;
-    return { DocumentNumber: n, TaxReductionType: doc.reductionType, BasisTaxReduction: this.basis(doc), TaxReduction: reduction };
+    return {
+      DocumentNumber: n, CustomerNumber: doc.customerNumber, TaxReductionType: doc.reductionType,
+      BasisTaxReduction: this.basis(doc), TaxReduction: reduction,
+    };
   }
 
-  seedDoc(type: 'OFFER' | 'ORDER', n: string, rows: Row[], reductionType = 'rot') {
-    this.docs.set(this.key(type, n), { reductionType, rows: rows.map(stored) });
+  // Kund 22 — samma som testernas offerter, så pushen ser inget kundbyte.
+  seedDoc(type: 'OFFER' | 'ORDER', n: string, rows: Row[], reductionType = 'rot', customerNumber = '22') {
+    this.docs.set(this.key(type, n), { reductionType, rows: rows.map(stored), customerNumber });
   }
   seedPost(post: Omit<Post, 'Id'>): Post {
     const created = { ...post, Id: this.nextPostId++ };
@@ -120,6 +125,11 @@ class FakeFortnox {
       if (!post) throw fortnoxError(404, 2000519, 'Kan inte hitta skattereduktionen.');
       return { TaxReduction: { ...post } };
     }
+    const docPath = /^\/(offers|orders)\/(\d+)$/.exec(path);
+    if (docPath && this.docs.has(this.key(docPath[1] === 'offers' ? 'OFFER' : 'ORDER', docPath[2]))) {
+      const type = docPath[1] === 'offers' ? 'OFFER' : 'ORDER';
+      return type === 'OFFER' ? { Offer: this.docView(type, docPath[2]) } : { Order: this.docView(type, docPath[2]) };
+    }
     throw new Error(`fake: okänd GET ${path}`);
   }
 
@@ -129,7 +139,7 @@ class FakeFortnox {
       const n = String(this.nextDocNumber[type]++);
       const payload = type === 'OFFER' ? body.Offer : body.Order;
       const rows: Row[] = (payload.OfferRows ?? payload.OrderRows).map(stored);
-      this.docs.set(this.key(type, n), { reductionType: payload.TaxReductionType ?? 'none', rows });
+      this.docs.set(this.key(type, n), { reductionType: payload.TaxReductionType ?? 'none', rows, customerNumber: payload.CustomerNumber });
       return type === 'OFFER' ? { Offer: this.docView(type, n) } : { Order: this.docView(type, n) };
     }
     if (path === '/taxreductions') {
@@ -150,6 +160,7 @@ class FakeFortnox {
       const n = String(this.nextDocNumber.ORDER++);
       this.docs.set(this.key('ORDER', n), {
         reductionType: offer.reductionType,
+        customerNumber: offer.customerNumber,
         rows: offer.rows.map((r) => ({ ...r, OrderedQuantity: r.Quantity, Quantity: undefined })),
       });
       for (const p of this.postsFor('OFFER', createOrder[1])) {
@@ -173,7 +184,7 @@ class FakeFortnox {
             HouseWorkType: 'HouseWorkType' in r ? r.HouseWorkType : (doc.rows[i]?.HouseWorkType ?? null),
           }))
         : doc.rows;
-      const next: Doc = { reductionType: payload.TaxReductionType ?? doc.reductionType, rows };
+      const next: Doc = { reductionType: payload.TaxReductionType ?? doc.reductionType, rows, customerNumber: payload.CustomerNumber ?? doc.customerNumber };
       if (next.reductionType === 'none' && rows.some((r) => r.HouseWork)) {
         throw fortnoxError(400, 2004001, 'Skattereduktionstyp får inte vara none om det finns rader med husarbete.');
       }

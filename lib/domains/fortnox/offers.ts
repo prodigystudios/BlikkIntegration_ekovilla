@@ -11,6 +11,7 @@ import type {
 } from './offerPdf';
 import { FORTNOX_TEXT_ROW, appendFortnoxTextNote, fortnoxRowText, assertLineItemsArePriced, buildRotPropertyNote, claimFortnoxPush, fortnoxTextRowFields, resolveCustomerPersonalNumber, resolveOurReference, resolveReverseVat, rotLaborRow, rotRowHouseWork, withExplicitRotHouseWork, rowRotLaborCarveout, splitRotMaterialRow, withFortnoxSalesAccount } from './helpers';
 import { buildFortnoxCustomerPayload, createFortnoxCustomer, splitSwedishName, buildFortnoxAddress, type FortnoxCustomerSource } from './customers';
+import type { FortnoxCustomer } from './types';
 import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget } from './taxReductions';
 
 type QuoteLineItem = {
@@ -256,6 +257,89 @@ async function resolveFortnoxCustomerNumber(quote: QuoteRow): Promise<string | n
   }
 
   return null;
+}
+
+// Kundkortet ur `GET /customers/{n}`: FortnoxCustomer plus fälten bara detaljsvaret bär.
+export type FortnoxCustomerCard = Partial<FortnoxCustomer> & {
+  Country?: string | null;
+  EmailOffer?: string | null;
+  EmailOfferCC?: string | null;
+  EmailOfferBCC?: string | null;
+  YourReference?: string | null;
+  OurReference?: string | null;
+  DeliveryName?: string | null;
+  DeliveryAddress2?: string | null;
+  DeliveryCountry?: string | null;
+};
+
+/**
+ * Offertens kunddel ur kundkortet — det Fortnox själv kopierar in när en offert SKAPAS, och sedan
+ * aldrig mer. Skickas bara när offerten byter kund (se offerCustomerSwapFields).
+ *
+ * 🧪 MÄTT I TESTBOLAGET 2026-10-09 (offert 65–75): en PUT med nytt `CustomerNumber` byter numret
+ * och dokumentets momstyp (omvänd-texten på fakturan följer med åt båda hållen), men namn, adress,
+ * org.nr, telefon, e-post och betalningsvillkor står kvar från den GAMLA kunden — och `createorder`
+ * för dem vidare till ordern och fakturan.
+ *
+ * Tomt på kortet blir `null`: `null` rensar fältet, `''` lämnar det gamla värdet kvar (mätt).
+ * 🧨 Undantaget är `OrganisationNumber` — `null` nekas (2005095) och `''` rensar inte, så ett tomt
+ * nummer skickas som ett blanksteg. Annars stod den förra kundens personnummer kvar på dokumentet.
+ * Blanksteget går igenom `createorder` och `createinvoice` (mätt, order 105/faktura 45).
+ *
+ * Prislista, valuta och språk skickas inte: raderna bär sina egna priser, och ett byte där kunde
+ * räkna om dem. Org.nr skickas som kortet har det — Fortnox godtar vad som helst på en offert
+ * (mätt: "11111", tiosiffrigt, "abc"), och ordern får ändå bara ett giltigt (documentOrganisationNumber).
+ *
+ * `ownJobSite`: offerten har en egen arbetsadress. Då är hela leveransblocket offertens — kortets
+ * leveransnamn, postnummer eller ort under offertens gata hade gett en adress som inte finns.
+ */
+export function offerCustomerFieldsFromCard(card: FortnoxCustomerCard, { ownJobSite = false } = {}) {
+  const value = (v: string | null | undefined) => (typeof v === 'string' && v.trim() !== '' ? v : null);
+  const delivery = (v: string | null | undefined) => (ownJobSite ? null : value(v));
+  const name = value(card.Name);
+  return {
+    ...(name ? { CustomerName: name } : {}),
+    Address1: value(card.Address1),
+    Address2: value(card.Address2),
+    ZipCode: value(card.ZipCode),
+    City: value(card.City),
+    Country: value(card.Country),
+    OrganisationNumber: value(card.OrganisationNumber) ?? ' ',
+    Phone1: value(card.Phone1),
+    Phone2: value(card.Phone2),
+    EmailInformation: {
+      EmailAddressTo: value(card.EmailOffer) ?? value(card.Email),
+      EmailAddressCC: value(card.EmailOfferCC),
+      EmailAddressBCC: value(card.EmailOfferBCC),
+    },
+    TermsOfPayment: value(card.TermsOfPayment),
+    YourReference: value(card.YourReference),
+    OurReference: value(card.OurReference),
+    DeliveryName: delivery(card.DeliveryName),
+    DeliveryAddress1: delivery(card.DeliveryAddress1),
+    DeliveryAddress2: delivery(card.DeliveryAddress2),
+    DeliveryZipCode: delivery(card.DeliveryZipCode),
+    DeliveryCity: delivery(card.DeliveryCity),
+    DeliveryCountry: delivery(card.DeliveryCountry),
+  };
+}
+
+// Har offerten bytt kund sedan den skapades i Fortnox? Då behövs den nya kundens kunddel i PUT:en —
+// annars bär offerten nytt kundnummer men den gamla kundens namn och adress. Kostar en GET per
+// omsynk; vi sparar inte vilket kundnummer Fortnox-offerten har, och `customer_source` säger bara
+// vad den SKA ha. Ett fel här kastar: hellre en offert stämplad 'failed' än en som tyst bär fel kund.
+// Ett svar utan kundnummer, eller ett kort utan namn, kastar också — ett halvt byte (gammalt namn
+// över nya uppgifter) eller en överskriven kunddel på en offert som aldrig bytt kund är värre.
+async function offerCustomerSwapFields(offerNumber: string, customerNumber: string, ownJobSite: boolean) {
+  const current = await fortnoxGet<{ Offer?: { CustomerNumber?: string | number | null } }>(`/offers/${offerNumber}`);
+  const currentNumber = current.Offer?.CustomerNumber;
+  if (currentNumber == null || String(currentNumber) === '') {
+    throw new Error(`Fortnox-offert ${offerNumber} svarade utan kundnummer`);
+  }
+  if (String(currentNumber) === String(customerNumber)) return null;
+  const card = await fortnoxGet<{ Customer?: FortnoxCustomerCard }>(`/customers/${encodeURIComponent(customerNumber)}`);
+  if (!card.Customer?.Name?.trim()) throw new Error(`Fortnox-kund ${customerNumber} hittades inte eller saknar namn`);
+  return offerCustomerFieldsFromCard(card.Customer, { ownJobSite });
 }
 
 // Maps a quote's customer snapshot to the shared FortnoxCustomerSource shape so the
@@ -553,16 +637,21 @@ export async function pushQuoteToFortnox(quoteId: string): Promise<PushOfferResu
     type WrittenOffer = { DocumentNumber?: string; TaxReductionType?: string | null; TaxReduction?: number | null; BasisTaxReduction?: number | null };
 
     if (existingOfferNumber) {
+      // Bytt kund i CRM: den nya kundens kunddel ur kortet, under det vi själva skickar — som när
+      // Fortnox skapar en offert och fyller det vi utelämnar ur kortet. Se offerCustomerFieldsFromCard.
+      const customerSwap = await offerCustomerSwapFields(existingOfferNumber, fortnoxCustomerNumber, !!deliveryAddress);
+      const offerForPut = customerSwap ? { ...customerSwap, ...offerBody.Offer } : offerBody.Offer;
+
       // Update the existing Fortnox offer instead of creating a duplicate. Skrivningen går genom
       // posten: ett minskat avdrag måste ner i den FÖRST, annars nekas hela offerten (2003227) — och
-      // med ROT avslaget kan bara `none` få bort den. Första försöket är ändå exakt `offerBody`.
+      // med ROT avslaget kan bara `none` få bort den. Första försöket är ändå exakt `offerForPut`.
       const written = await writeDocumentKeepingTaxReduction<WrittenOffer>(
         'OFFER', existingOfferNumber, taxReduction,
         async (reductionType) => (await fortnoxPut<{ Offer?: WrittenOffer }>(
           `/offers/${existingOfferNumber}`,
           reductionType === 'none'
-            ? { Offer: { ...offerBody.Offer, TaxReductionType: 'none', OfferRows: withoutHouseWork(offerRows) } }
-            : reductionType ? { Offer: { ...offerBody.Offer, TaxReductionType: reductionType } } : offerBody,
+            ? { Offer: { ...offerForPut, TaxReductionType: 'none', OfferRows: withoutHouseWork(offerRows) } }
+            : reductionType ? { Offer: { ...offerForPut, TaxReductionType: reductionType } } : { Offer: offerForPut },
         ))?.Offer,
       );
       offerNumber = written?.DocumentNumber ?? existingOfferNumber;
