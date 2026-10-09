@@ -206,6 +206,29 @@ function target(value: number | string | null | undefined): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/**
+ * Varje säljare som exporten behöver ett namn på: de som har offerter, order eller fakturor i perioden och
+ * de som har mål. Rapportens egen säljarläsning tar bara de nuvarande säljrollerna — här ska också den som
+ * slutat eller bytt roll stå med sitt namn, inte som "Okänd användare".
+ */
+export function sellerIdsOf(data: Pick<ReportData, 'quotes' | 'orders' | 'invoiceRounds'>, goals: OwnerGoalRow[] | null): string[] {
+  const ids = new Set<string>();
+  for (const quote of data.quotes) if (quote.assigned_to) ids.add(quote.assigned_to);
+  for (const order of data.orders) if (order.assigned_to) ids.add(order.assigned_to);
+  for (const round of data.invoiceRounds) {
+    const order = Array.isArray(round.work_order) ? round.work_order[0] : round.work_order;
+    if (order?.assigned_to) ids.add(order.assigned_to);
+  }
+  for (const goal of goals ?? []) if (goal.user_id) ids.add(goal.user_id);
+  return [...ids].sort();
+}
+
+/** Målradens budget, eller null när raden inte sätter någon (bara nollor). */
+function goalBudget(goal: OwnerGoalRow): OwnerBudget | null {
+  const budget = { quoteValue: target(goal.quote_value_target), orderValue: target(goal.order_value_target), invoicedValue: target(goal.invoiced_value_target) };
+  return budget.quoteValue == null && budget.orderValue == null && budget.invoicedValue == null ? null : budget;
+}
+
 export function buildOwnerReport(input: {
   data: Pick<ReportData, 'quotes' | 'orders' | 'invoiceRounds' | 'sellers'>;
   range: ReportRange;
@@ -223,13 +246,24 @@ export function buildOwnerReport(input: {
 
   // Veckor före den första aktiviteten utelämnas: CRM:et startade mitt i året (v. 27 2026), och 26
   // tomma kolumner hade bara skjutit siffrorna utanför skärmen. Den pågående veckan står alltid kvar.
-  let first = weekMetrics.findIndex((week) => hasActivity(week.total));
+  // Aktivitet hos NÅGON säljare räcker — en kreditering som tar ut en annan säljares faktura samma vecka
+  // gör helheten 0, men säljarnas celler är det inte, och deras årssumma räknar med veckan.
+  let first = weekMetrics.findIndex((week) => [...week.bySeller.values()].some(hasActivity));
   if (first < 0) first = allWeeks.length - 1;
   const weeks = allWeeks.slice(first);
   const perWeek = weekMetrics.slice(first);
   const shown: ReportRange = { from: weeks[0]?.from ?? range.from, to: range.to };
 
-  const months = ownerMonths(shown, today);
+  // Budgetfliken börjar vid den första månaden med aktivitet ELLER budget: en budget satt före den första
+  // ordern hade annars försvunnit utan ett ord.
+  const firstBudgetDay = (input.goals ?? [])
+    .filter((goal) => goalBudget(goal) != null)
+    .map((goal) => String(goal.period_start).slice(0, 10))
+    // Bara mål vars MÅNAD ligger i perioden; en månad som börjar före periodens första dag klipps till den.
+    .filter((day) => day.slice(0, 7) >= range.from.slice(0, 7) && day <= range.to)
+    .map((day) => (day < range.from ? range.from : day))
+    .sort()[0];
+  const months = ownerMonths({ from: firstBudgetDay && firstBudgetDay < shown.from ? firstBudgetDay : shown.from, to: range.to }, today);
   const perMonth = months.map((month) => metricsBySeller(data, month));
   const whole = metricsBySeller(data, range);
 
@@ -240,8 +274,8 @@ export function buildOwnerReport(input: {
   for (const goal of input.goals ?? []) {
     const index = monthIndex.get(String(goal.period_start).slice(0, 7));
     if (index == null) continue;
-    const budget = { quoteValue: target(goal.quote_value_target), orderValue: target(goal.order_value_target), invoicedValue: target(goal.invoiced_value_target) };
-    if (budget.quoteValue == null && budget.orderValue == null && budget.invoicedValue == null) continue;
+    const budget = goalBudget(goal);
+    if (!budget) continue;
     let list = budgets.get(goal.user_id);
     if (!list) budgets.set(goal.user_id, (list = months.map(() => ({ quoteValue: null, orderValue: null, invoicedValue: null }))));
     list[index] = budget;

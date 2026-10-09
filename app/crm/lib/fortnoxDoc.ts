@@ -6,6 +6,8 @@
 // `useDocumentEmail`. Fortnox's own send endpoints were removed (2026-07-27) because they
 // picked the recipient themselves.
 
+import { downloadFile } from './downloadFile';
+
 // Open a Fortnox PDF (GET endpoint returning application/pdf) in a new tab.
 //
 // Fliken navigeras till RUTTEN, inte till en blob-URL. En blob-URL bär inget filnamn, så
@@ -25,25 +27,5 @@ export async function downloadFortnoxPdf(
   filename: string,
   onError: (message: string) => void,
 ): Promise<boolean> {
-  try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      onError(json?.error || 'Kunde inte hämta PDF:en');
-      return false;
-    }
-    const blob = await res.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    return true;
-  } catch {
-    onError('Kunde inte hämta PDF:en');
-    return false;
-  }
+  return downloadFile(url, { filename, errorMessage: 'Kunde inte hämta PDF:en', onError });
 }

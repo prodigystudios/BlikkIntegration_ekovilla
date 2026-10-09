@@ -1,19 +1,11 @@
 "use client";
 
 import { useState } from 'react';
+import { downloadFile } from '@/app/crm/lib/downloadFile';
 
 // Excel-exporten till ägarna: året hittills per säljare och vecka, budget mot utfall och orderstocken.
 // Följer INTE periodväljaren — filen är alltid året hittills (Williams beslut 2026-10-09), och knappen
 // säger det, så ingen tror att den exporterar den period som står vald.
-//
-// Hämtas med fetch i stället för en vanlig länk: ett fel ska bli ett meddelande här, inte en nedladdad
-// JSON-fil eller en tom sida.
-
-function filenameFrom(disposition: string | null): string {
-  const match = disposition?.match(/filename="([^"]+)"/);
-  return match?.[1] || 'Forsaljningsrapport.xlsx';
-}
-
 export default function OwnerExportButton() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -21,25 +13,12 @@ export default function OwnerExportButton() {
   const download = async () => {
     setBusy(true);
     setError(null);
-    try {
-      const res = await fetch('/api/crm/reports/export', { cache: 'no-store' });
-      if (!res.ok) {
-        const json = await res.json().catch(() => ({}));
-        setError(json?.error || 'Kunde inte skapa Excel-filen.');
-        return;
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filenameFrom(res.headers.get('Content-Disposition'));
-      link.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      setError('Kunde inte skapa Excel-filen.');
-    } finally {
-      setBusy(false);
-    }
+    await downloadFile('/api/crm/reports/export', {
+      fallbackName: 'Forsaljningsrapport.xlsx',
+      errorMessage: 'Kunde inte skapa Excel-filen.',
+      onError: setError,
+    });
+    setBusy(false);
   };
 
   return (

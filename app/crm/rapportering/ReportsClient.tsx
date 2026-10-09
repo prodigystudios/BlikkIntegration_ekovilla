@@ -119,7 +119,8 @@ export default function ReportsClient() {
       {/* Header */}
       <div className="grid gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
+          {/* min-w: på en smal skärm går knappen ner på egen rad i stället för att pressa texten till en spalt. */}
+          <div className="min-w-[18rem] flex-1">
             <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
             <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, omsättning, produkt och marknad, produktion och tid för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
           </div>

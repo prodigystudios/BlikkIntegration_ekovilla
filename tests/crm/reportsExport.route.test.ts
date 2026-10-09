@@ -15,12 +15,10 @@ vi.mock('@/lib/domains/crm/reports', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/crm/reports')>();
   return {
     ...actual,
-    fetchReportData: vi.fn(async () => ({
+    fetchTrendData: vi.fn(async () => ({
       quotes: [{ amount: 10_000, vat_percent: 0, status: 'won', quote_date: '2026-09-02', assigned_to: 'u1', customer_name: 'Kund', quote_type: 'business' }],
       orders: [],
       invoiceRounds: [],
-      calls: [],
-      sellers: [{ id: 'u1', full_name: 'Anna Andersson' }],
     })),
     fetchInvoicedValue: vi.fn(async () => 70_000),
   };
@@ -29,19 +27,21 @@ vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
   fetchOrderStockRows: vi.fn(async () => [{ status: 'scheduled', amount: 20_000, vat_percent: 0, invoice_rounds: [] }]),
 }));
 vi.mock('@/lib/domains/crm/reportOwnerExportLoader', () => ({
-  fetchSellerGoals: vi.fn(async () => [{ user_id: 'u1', period_start: '2026-09-01', quote_value_target: 50_000, order_value_target: 40_000, invoiced_value_target: 30_000 }]),
+  fetchSellerGoals: vi.fn(async () => [{ user_id: 'u9', period_start: '2026-09-01', quote_value_target: 50_000, order_value_target: 40_000, invoiced_value_target: 30_000 }]),
+  fetchProfileNames: vi.fn(async () => [{ id: 'u1', full_name: 'Anna Andersson' }, { id: 'u9', full_name: 'Gustav Slutat' }]),
 }));
 
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
-import { fetchReportData } from '@/lib/domains/crm/reports';
-import { fetchSellerGoals } from '@/lib/domains/crm/reportOwnerExportLoader';
+import { fetchTrendData } from '@/lib/domains/crm/reports';
+import { fetchProfileNames, fetchSellerGoals } from '@/lib/domains/crm/reportOwnerExportLoader';
 import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { GET, fetchCache } from '@/app/api/crm/reports/export/route';
 
 const mockGetUser = vi.mocked(getCurrentUser);
 const mockPermissions = vi.mocked(getEffectivePermissions);
-const mockReportData = vi.mocked(fetchReportData);
+const mockReportData = vi.mocked(fetchTrendData);
+const mockNames = vi.mocked(fetchProfileNames);
 const mockGoals = vi.mocked(fetchSellerGoals);
 const mockStock = vi.mocked(fetchOrderStockRows);
 
@@ -81,7 +81,7 @@ describe('GET /api/crm/reports/export', () => {
     const res = await GET();
     expect(res.status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="Forsaljningsrapport-2026-v41.xlsx"');
+    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="Forsaljningsrapport-2026-10-09.xlsx"');
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     const workbook = await workbookOf(res);
     expect(workbook.worksheets.map((s) => s.name)).toEqual(['Sammanfattning', 'Per vecka', 'Budget mot utfall']);
@@ -95,8 +95,30 @@ describe('GET /api/crm/reports/export', () => {
 
   it('nyårsnatten: kl. 00.30 svensk tid är det redan det nya året, fast UTC säger 31 december', async () => {
     vi.setSystemTime(new Date('2026-12-31T23:30:00Z'));
-    await GET();
+    const res = await GET();
     expect(mockReportData).toHaveBeenCalledWith(expect.anything(), { from: '2027-01-01', to: '2027-01-01' });
+    // Och filen heter efter den svenska dagen.
+    expect(res.headers.get('Content-Disposition')).toBe('attachment; filename="Forsaljningsrapport-2027-01-01.xlsx"');
+  });
+
+  it('namnen läses för alla med siffror eller mål, oavsett roll — den som slutat står med sitt namn', async () => {
+    const res = await GET();
+    expect(mockNames).toHaveBeenCalledWith(expect.anything(), ['u1', 'u9']);
+    const sheet = (await workbookOf(res)).getWorksheet('Sammanfattning')!;
+    const names: string[] = [];
+    sheet.eachRow((row) => names.push(String(row.getCell(1).value ?? '')));
+    expect(names).toContain('Gustav Slutat');
+    expect(names).not.toContain('Okänd användare');
+  });
+
+  it('namnen kunde inte läsas: filen kommer ändå, siffrorna under Okänd användare', async () => {
+    mockNames.mockRejectedValueOnce(new Error('profiles: nere'));
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const sheet = (await workbookOf(res)).getWorksheet('Sammanfattning')!;
+    const names: string[] = [];
+    sheet.eachRow((row) => names.push(String(row.getCell(1).value ?? '')));
+    expect(names).toContain('Okänd användare');
   });
 
   it('målen kunde inte läsas: filen kommer ändå, och budgetfliken säger varför den är tom', async () => {

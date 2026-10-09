@@ -179,7 +179,7 @@ describe('etiketter', () => {
     expect(shortSpan('2026-01-01', '2026-01-01')).toBe('1 jan');
   });
 
-  it('filnamnet bär år och vecka, i ASCII', () => {
-    expect(ownerReportFilename(report)).toBe('Forsaljningsrapport-2026-v41.xlsx');
+  it('filnamnet bär dagens datum, i ASCII — veckan hör runt nyår till grannåret', () => {
+    expect(ownerReportFilename(report)).toBe('Forsaljningsrapport-2026-10-09.xlsx');
   });
 });

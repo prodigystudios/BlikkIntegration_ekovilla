@@ -54,10 +54,14 @@ export function shortSpan(from: string, to: string): string {
     : `${a.day} ${MONTHS_SHORT[a.month - 1]}–${b.day} ${MONTHS_SHORT[b.month - 1]}`;
 }
 
-/** Filnamnet: "Forsaljningsrapport-2026-v41.xlsx". ASCII, så att det överlever varje mejlklient. */
-export function ownerReportFilename(report: Pick<OwnerReport, 'year' | 'weeks'>): string {
-  const last = report.weeks.at(-1);
-  return `Forsaljningsrapport-${report.year}${last ? `-v${last.week}` : ''}.xlsx`;
+/**
+ * Filnamnet: "Forsaljningsrapport-2026-10-09.xlsx". ASCII, så att det överlever varje mejlklient.
+ *
+ * Datumet, inte veckan: runt nyår hör veckan till grannåret (30 dec 2025 ligger i v. 1 2026), och
+ * "2025-v1" hade krockat med årets riktiga vecka 1. Datumet sorterar dessutom veckofilerna rätt.
+ */
+export function ownerReportFilename(report: Pick<OwnerReport, 'today'>): string {
+  return `Forsaljningsrapport-${report.today}.xlsx`;
 }
 
 // ── Cellhjälpare ─────────────────────────────────────────────────────────────

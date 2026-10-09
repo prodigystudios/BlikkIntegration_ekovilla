@@ -4,6 +4,7 @@ import {
   metricsBySeller,
   ownerMonths,
   ownerWeeks,
+  sellerIdsOf,
   UNASSIGNED_NAME,
   type OwnerGoalRow,
   type OwnerMetrics,
@@ -156,8 +157,8 @@ const goals: OwnerGoalRow[] = [
   { user_id: 'u2', period_start: '2026-09-01', quote_value_target: 0, order_value_target: 0, invoiced_value_target: 0 },
   // Bara nollor och ingen aktivitet: står inte med alls.
   { user_id: 'u4', period_start: '2026-09-01', quote_value_target: '0.00', order_value_target: 0, invoiced_value_target: null },
-  // Före första veckan med aktivitet: utanför arket.
-  { user_id: 'u1', period_start: '2026-05-01', quote_value_target: 1, order_value_target: 1, invoiced_value_target: 1 },
+  // Förra året: utanför arket. (En budget tidigare i ÅRET tas med — se gränsfallen längst ned.)
+  { user_id: 'u1', period_start: '2025-12-01', quote_value_target: 1, order_value_target: 1, invoiced_value_target: 1 },
 ];
 const stockRows: OrderStockRow[] = [
   { status: 'draft', amount: 10_000, vat_percent: 0, invoice_rounds: [] },
@@ -192,7 +193,7 @@ describe('buildOwnerReport', () => {
     expect(osten.total).toEqual({ quotes: 0, quoteValue: 0, won: 0, wonValue: 0, orders: 0, orderValue: 0, invoicedValue: 0 });
   });
 
-  it('budget: 0 = ingen budget, strängar läses som tal, månader utanför arket faller bort', () => {
+  it('budget: 0 = ingen budget, strängar läses som tal, förra årets mål faller bort', () => {
     const anna = report.sellers[0].budget!;
     expect(anna).toEqual([
       { quoteValue: 300_000, orderValue: 200_000, invoicedValue: null },
@@ -234,5 +235,43 @@ describe('buildOwnerReport', () => {
     expect(empty.weeks).toHaveLength(1);
     expect(empty.weeks[0]).toMatchObject({ week: 41, current: true });
     expect(empty.sellers).toEqual([]);
+  });
+});
+
+describe('buildOwnerReport — gränsfallen från granskningen', () => {
+  it('budgetfliken börjar vid en budget satt före den första aktiviteten', () => {
+    const early = buildOwnerReport({
+      data, range: YEAR, today: TODAY, orderStockRows: [], basis: null,
+      goals: [{ user_id: 'u1', period_start: '2026-06-01', quote_value_target: 0, order_value_target: 100_000, invoiced_value_target: null }],
+    });
+    expect(early.weeks[0].week).toBe(33); // veckorna börjar fortfarande vid aktiviteten
+    expect(early.months.map((m) => m.period)).toEqual(['2026-06', '2026-07', '2026-08', '2026-09', '2026-10']);
+    expect(early.sellers[0].budget![0].orderValue).toBe(100_000);
+    // Månadernas utfall summerar fortfarande till helheten.
+    expect(add(early.totals.months)).toEqual(early.totals.total);
+  });
+
+  it('en vecka där en kreditering tar ut en annan säljares faktura står kvar', () => {
+    // Före den första "riktiga" aktiviteten: Annas runda +5 000 och Björns kredit −5 000 samma vecka.
+    const credit = (assigned_to: string, amount: number): ReportInvoiceRoundRow => ({
+      amount, created_at: '2026-07-01T08:00:00Z', work_order_id: null,
+      work_order: { status: 'partially_invoiced', assigned_to, client_name: 'Kund', quote_type: 'business' },
+    });
+    const report = buildOwnerReport({
+      data: { ...data, invoiceRounds: [...rounds, credit('u1', 5_000), credit('u2', -5_000)] },
+      range: YEAR, today: TODAY, goals: [], orderStockRows: [], basis: null,
+    });
+    expect(report.weeks[0]).toMatchObject({ week: 27, from: '2026-06-29' });
+    for (const seller of report.sellers) expect(add(seller.weeks)).toEqual(seller.total);
+  });
+
+  it('sellerIdsOf: alla med offerter, order, fakturarundor eller mål', () => {
+    const ids = sellerIdsOf(
+      { quotes: [quote({ assigned_to: 'q' })], orders: [order({ assigned_to: 'o' }), order({ assigned_to: null })], invoiceRounds: [
+        { amount: 1, created_at: '2026-09-01T00:00:00Z', work_order_id: null, work_order: [{ status: 'invoiced', assigned_to: 'r', client_name: null, quote_type: 'business' }] },
+      ] },
+      [{ user_id: 'g', period_start: '2026-09-01', quote_value_target: 1, order_value_target: 1 }],
+    );
+    expect(ids).toEqual(['g', 'o', 'q', 'r']);
   });
 });

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { readEveryRow } from './reports';
+import { readEveryRow, type ReportSellerRow } from './reports';
 import type { OwnerGoalRow } from './reportOwnerExport';
 
 /**
@@ -19,4 +19,20 @@ export function fetchSellerGoals(admin: SupabaseClient, months: string[]): Promi
       .order('id', { ascending: true })
       .range(from, to),
   );
+}
+
+/**
+ * Namnen på säljarna i exporten, oavsett roll — se sellerIdsOf. Läses i klumpar: `.in()` blir en
+ * query-sträng, och ett helt års säljare får inte riskera ett 414.
+ */
+export async function fetchProfileNames(admin: SupabaseClient, ids: string[]): Promise<ReportSellerRow[]> {
+  const CHUNK = 100;
+  const rows: ReportSellerRow[] = [];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const chunk = ids.slice(i, i + CHUNK);
+    const { data, error } = await admin.from('profiles').select('id, full_name').in('id', chunk);
+    if (error) throw new Error(`profiles: ${error.message}`);
+    rows.push(...((data || []) as ReportSellerRow[]));
+  }
+  return rows;
 }
