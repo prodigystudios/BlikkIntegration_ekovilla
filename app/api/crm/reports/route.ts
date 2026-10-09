@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { overviewDaySchema } from '@/app/api/crm/overview/_dates';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { ok, routeError, validationError, requireCrmUser } from '@/app/api/crm/_shared';
 import { can, getEffectivePermissions } from '@/lib/auth/permissions';
@@ -49,7 +50,9 @@ import { previousRange, reportRange, today } from '@/app/crm/rapportering/report
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Ogiltigt datum (ÅÅÅÅ-MM-DD)');
+// Riktiga datum, inte bara formen (översiktens schema): 2026-02-30 hade gått in i databasfiltren och
+// gett ett 500 (stockholmDayStartISO vägrar en dag som inte finns) i stället för ett 400.
+const dateSchema = overviewDaySchema;
 const querySchema = z.object({
   from: dateSchema.optional(),
   to: dateSchema.optional(),

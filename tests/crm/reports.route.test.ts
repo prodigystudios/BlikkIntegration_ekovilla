@@ -105,6 +105,16 @@ async function body(user: unknown) {
   return { status: res.status, json: await res.json() };
 }
 
+describe('GET /api/crm/reports — datumen', () => {
+  it('en dag som inte finns är ett 400, inte ett 500', async () => {
+    for (const q of ['from=2026-02-30&to=2026-03-31', 'from=2026-02-01&to=2026-02-30', 'from=2026-13-01&to=2026-12-31']) {
+      const res = await GET(new Request(`http://localhost/api/crm/reports?${q}`));
+      expect(res.status, q).toBe(400);
+    }
+    expect(mockReportData).not.toHaveBeenCalled();
+  });
+});
+
 describe('GET /api/crm/reports — tidsdelens grind', () => {
   it('admin ser tiden', async () => {
     const { status, json } = await body(adminUser);

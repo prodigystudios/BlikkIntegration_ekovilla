@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { daysBetweenInclusiveISO, isoDayNumber } from '@/lib/domains/planning/timezone';
+import { daysBetweenInclusiveISO, isoDayNumber, stockholmDayOf, stockholmDayStartISO } from '@/lib/domains/planning/timezone';
 
 // 🕰️ ZONBEROENDE TESTFIL. Flera av påståendena nedan är TOMMA under `TZ=UTC` — där finns ingen
 // sommartid att räkna fel på, så en naiv implementation beter sig identiskt. `vitest.config.ts`
@@ -67,5 +67,65 @@ describe('daysBetweenInclusiveISO', () => {
     for (let i = 1; i < days.length; i++) {
       expect(daysBetweenInclusiveISO(days[i - 1], days[i])).toBe(2);
     }
+  });
+});
+
+// Svensk tid överallt (William 2026-10-09). Skydden skrivs med EXAKTA ögonblick, så de biter i varje
+// runtime-zon — även under TZ=UTC, där ett datumbaserat test hade varit tomt.
+describe('stockholmDayOf — svensk dag för en tidsstämpel', () => {
+  it('kl. 00.30 svensk tid är redan nästa dag, fast UTC-delen säger gårdagen', () => {
+    expect(stockholmDayOf('2026-08-16T22:30:00Z')).toBe('2026-08-17'); // sommartid, +2
+    expect(stockholmDayOf('2026-01-31T23:30:00+00:00')).toBe('2026-02-01'); // vintertid, +1, och ny månad
+    expect(stockholmDayOf('2026-12-31T23:30:00Z')).toBe('2027-01-01'); // nyårsnatten
+  });
+  it('mitt på dagen samma dag som UTC', () => {
+    expect(stockholmDayOf('2026-08-17T10:00:00Z')).toBe('2026-08-17');
+  });
+  it('kl. 23.59 svensk tid är fortfarande samma dag', () => {
+    expect(stockholmDayOf('2026-08-17T21:59:00Z')).toBe('2026-08-17');
+    expect(stockholmDayOf('2026-02-01T22:59:00Z')).toBe('2026-02-01');
+  });
+  it('ett rent datum (date-kolumn) är sin egen dag — så samma funktion duger för båda sorterna', () => {
+    // Ett datum utan klockslag tolkas som UTC-midnatt, alltså kl. 01/02 samma dag i Sverige.
+    expect(stockholmDayOf('2026-08-17')).toBe('2026-08-17');
+    expect(stockholmDayOf('2026-01-01')).toBe('2026-01-01');
+    expect(stockholmDayOf('2026-10-25')).toBe('2026-10-25');
+  });
+  it('samma svar andra gången (cachen ändrar inget)', () => {
+    expect(stockholmDayOf('2026-08-16T22:30:00Z')).toBe('2026-08-17');
+    expect(stockholmDayOf('2026-08-16T22:30:00Z')).toBe('2026-08-17');
+  });
+  it('null för saknat eller oläsligt värde', () => {
+    expect(stockholmDayOf(null)).toBeNull();
+    expect(stockholmDayOf('')).toBeNull();
+    expect(stockholmDayOf('inte ett datum')).toBeNull();
+  });
+});
+
+describe('stockholmDayStartISO — svensk midnatt som UTC-ögonblick', () => {
+  it('sommartid: midnatt är kl. 22 UTC dagen före; vintertid kl. 23', () => {
+    expect(stockholmDayStartISO('2026-08-01')).toBe('2026-07-31T22:00:00.000Z');
+    expect(stockholmDayStartISO('2026-01-15')).toBe('2026-01-14T23:00:00.000Z');
+  });
+  it('vårens växling (29 mars 2026, kl. 02 → 03): midnatt före växlingen är vintertid, dagen efter sommartid', () => {
+    expect(stockholmDayStartISO('2026-03-29')).toBe('2026-03-28T23:00:00.000Z');
+    expect(stockholmDayStartISO('2026-03-30')).toBe('2026-03-29T22:00:00.000Z');
+  });
+  it('höstens växling (25 oktober 2026, kl. 03 → 02): midnatt före växlingen är sommartid, dagen efter vintertid', () => {
+    expect(stockholmDayStartISO('2026-10-25')).toBe('2026-10-24T22:00:00.000Z');
+    expect(stockholmDayStartISO('2026-10-26')).toBe('2026-10-25T23:00:00.000Z');
+  });
+  it('går ihop med stockholmDayOf: gränsen hör till dagen, en millisekund före till dagen innan', () => {
+    for (const day of ['2026-03-29', '2026-03-30', '2026-08-01', '2026-10-25', '2026-10-26', '2027-01-01']) {
+      const start = stockholmDayStartISO(day);
+      expect(stockholmDayOf(start)).toBe(day);
+      expect(stockholmDayOf(new Date(Date.parse(start) - 1).toISOString())).not.toBe(day);
+    }
+  });
+  it('kastar på ett ogiltigt datum i stället för att ge ett påhittat filter', () => {
+    expect(() => stockholmDayStartISO('2026-13-45x')).toThrow();
+    // Rätt form men ingen sådan dag: får inte rulla över till mars.
+    expect(() => stockholmDayStartISO('2026-02-30')).toThrow();
+    expect(() => stockholmDayStartISO('2026-13-01')).toThrow();
   });
 });

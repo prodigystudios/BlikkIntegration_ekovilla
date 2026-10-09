@@ -229,7 +229,8 @@ describe('fetchWeeklyScoreboard — frågorna', () => {
     // Måndagen 28 sep: dagen ligger i september, men veckan hör till oktober.
     await fetchWeeklyScoreboard(client, { ...WINDOW, today: '2026-09-28' });
 
-    expect(calls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', '2026-09-28'] });
+    // Svensk midnatt måndag 28 sep (sommartid) = 22.00 UTC söndagen.
+    expect(calls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', '2026-09-27T22:00:00.000Z'] });
     expect(calls).toContainEqual({ table: 'crm_goals', method: 'eq', args: ['period_type', 'month'] });
     expect(calls).toContainEqual({ table: 'crm_goals', method: 'eq', args: ['period_start', '2026-10-01'] });
   });
@@ -240,14 +241,18 @@ describe('fetchWeeklyScoreboard — frågorna', () => {
     const { client, calls } = fakeClient({});
     await fetchWeeklyScoreboard(client, WINDOW);
 
-    for (const [table, column] of [['crm_quotes', 'quote_date'], ['crm_work_order_invoices', 'created_at'], ['crm_calls', 'call_at']]) {
-      expect(calls).toContainEqual({ table, method: 'gte', args: [column, '2026-09-28'] });
-      expect(calls).toContainEqual({ table, method: 'lt', args: [column, '2026-10-05'] });
+    // Offertdatumet är en dag och filtreras på dagarna. Tidsstämplarna från svensk midnatt måndag till
+    // svensk midnatt nästa måndag (William 2026-10-09: svensk tid överallt) — en bar dag hade betytt UTC.
+    expect(calls).toContainEqual({ table: 'crm_quotes', method: 'gte', args: ['quote_date', '2026-09-28'] });
+    expect(calls).toContainEqual({ table: 'crm_quotes', method: 'lt', args: ['quote_date', '2026-10-05'] });
+    for (const [table, column] of [['crm_work_order_invoices', 'created_at'], ['crm_calls', 'call_at']]) {
+      expect(calls).toContainEqual({ table, method: 'gte', args: [column, '2026-09-27T22:00:00.000Z'] });
+      expect(calls).toContainEqual({ table, method: 'lt', args: [column, '2026-10-04T22:00:00.000Z'] });
     }
     expect(calls).toContainEqual({
       table: 'crm_work_orders',
       method: 'or',
-      args: ['and(created_at.gte.2026-09-28,created_at.lt.2026-10-05),and(fortnox_invoiced_at.gte.2026-09-28,fortnox_invoiced_at.lt.2026-10-05)'],
+      args: ['and(created_at.gte.2026-09-27T22:00:00.000Z,created_at.lt.2026-10-04T22:00:00.000Z),and(fortnox_invoiced_at.gte.2026-09-27T22:00:00.000Z,fortnox_invoiced_at.lt.2026-10-04T22:00:00.000Z)'],
     });
   });
 

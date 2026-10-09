@@ -10,8 +10,8 @@ export const runtime = 'nodejs';
 // Riktiga datum, inte bara formen — se overviewDaySchema.
 const dateSchema = overviewDaySchema;
 
-// The overview asks for eight days at most (today plus the rolling seven). The margin is for a
-// reader whose calendar day differs from the server's, not for arbitrary history.
+// The overview asks for eight days at most (today plus the rolling seven). The margin is slack, not
+// a licence for arbitrary history.
 const MAX_WINDOW_DAYS = 31;
 
 function daysBetween(fromDay: string, toDay: string) {
@@ -27,11 +27,10 @@ const querySchema = z.object({
   week_end: dateSchema,
 });
 
-// The window comes from the client, the way the reports route takes its range. The reader's own
-// clock is the one that decides what "this week" and "the last 7 days" mean, and the server runs on
-// UTC — computing the boundaries here would quietly move them for anyone whose calendar day differs
-// from the server's. Passing them in also keeps the figures identical to what the page showed when
-// it did this arithmetic in the browser.
+// The window comes from the client, the way the reports route takes its range. The client computes
+// it with getCrmOverviewWindow, which counts in SWEDISH days whatever the reader's or the server's zone
+// (William 2026-10-09: svensk tid överallt), so every reader sees the same week. Passing it in keeps the
+// week switcher a client concern.
 export async function GET(req: Request) {
   try {
     // Same gate as the rest of the CRM reads: every seller may see the team's figures.

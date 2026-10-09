@@ -156,6 +156,13 @@ describe('buildInvoicedByMonth — fakturerat per månad, företag och privat', 
     expect(months.filter((m) => m.partial).map((m) => m.period)).toEqual(['2026-06', '2026-10']);
     expect(months.filter((m) => m.inPeriod).map((m) => m.period)).toEqual(['2026-09']);
   });
+
+  it('en faktura kl. 00.30 svensk tid den 1 september hör till september, fast UTC säger 31 augusti', () => {
+    const night = [order({ status: 'invoiced', amount: 7_000, fortnox_invoiced_at: '2026-08-31T22:30:00Z', created_at: '2026-08-20T08:00:00Z' })];
+    const byMonth = buildInvoicedByMonth({ data: { orders: night, invoiceRounds: [] }, window, selected: september });
+    expect(byMonth.find((m) => m.period === '2026-08')?.business).toBe(0);
+    expect(byMonth.find((m) => m.period === '2026-09')?.business).toBe(7_000);
+  });
 });
 
 describe('buildStockByStage — orderstock efter läge', () => {
@@ -294,6 +301,12 @@ describe('customerKey och countOrdersPerCustomer', () => {
     const rows = [row('k1', null, 'invoiced', '2026-09-10T08:00:00Z'), row('k1', null, 'scheduled', '2026-10-02T08:00:00Z')];
     expect(countOrdersPerCustomer(rows, '2026-09-30').get('id:k1')).toBe(1);
     expect(countOrdersPerCustomer(rows, '2026-10-02').get('id:k1')).toBe(2);
+  });
+
+  it('en order kl. 00.30 svensk tid den 1 oktober räknas inte till september, fast UTC säger 30 september', () => {
+    const rows = [row('k1', null, 'invoiced', '2026-09-10T08:00:00Z'), row('k1', null, 'scheduled', '2026-09-30T22:30:00Z')];
+    expect(countOrdersPerCustomer(rows, '2026-09-30').get('id:k1')).toBe(1);
+    expect(countOrdersPerCustomer(rows, '2026-10-01').get('id:k1')).toBe(2);
   });
 });
 

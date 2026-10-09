@@ -3,6 +3,7 @@ import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from 
 import { netAmount, type NetAmountRow } from './pricing';
 import { invoicedRevenue, sumUninvoiced, type InvoiceRoundRow, type OrderWithRounds } from './invoicedRevenue';
 import { QUOTE_FILTER_STATUSES, type CrmQuoteStatus } from './quotes';
+import { stockholmDayOf, stockholmDayStartISO } from '@/lib/domains/planning/timezone';
 
 // ── The CRM overview's read model ──
 //
@@ -239,12 +240,12 @@ export type CrmOverviewRows = {
 // privatkundsorder som om de vore samma sorts kronor. Veckomålen mättes dessutom mot ett brutto,
 // så en säljare med privatkunder nådde sitt mål 25 % för lätt.
 
-// Day-resolution comparison, the same rule reports.ts uses: take the date part and compare as a
-// string. For a `date` column that is exact. For a timestamptz the day is the UTC one, so a row
-// written between 00:00 and 02:00 Swedish time counts towards the previous day — measured to be
-// empty in this data (the crews work 07–16) and deliberately not chased, see reports.ts.
+// Dagen ett värde hör till, i SVENSK tid — samma regel som rapporteringen (reports.ts). En tidsstämpel
+// (call_at, created_at, fakturans ögonblick, due_at) blir den svenska dag den faller på; en `date`-kolumn
+// (quote_date) är sin egen dag. UTC-dygnet lade en order loggad måndag 00.30 i förra veckan
+// (William 2026-10-09: svensk tid överallt — det tidigare "medvetet inte jagat" är överkört).
 function dayOf(value: string | null | undefined): string | null {
-  return value ? String(value).slice(0, 10) : null;
+  return stockholmDayOf(value);
 }
 
 function inWindow(value: string | null | undefined, from: string, toExclusive?: string): boolean {
@@ -423,7 +424,7 @@ async function readCount(name: string, query: CountableQuery): Promise<number> {
 
 // The calls' upper bound only when the caller gives one — see `calls` on fetchWeekActualRows.
 function callsBefore<Q extends { lt(column: string, value: string): Q }>(query: Q, to: string | null): Q {
-  return to ? query.lt('call_at', to) : query;
+  return to ? query.lt('call_at', stockholmDayStartISO(to)) : query;
 }
 
 /**
@@ -449,6 +450,11 @@ export async function fetchWeekActualRows(
   truncated: string[],
 ): Promise<CrmWeekActualRows> {
   const { weekStart, weekEnd } = week;
+  // Veckans gränser som ÖGONBLICK för timestamptz-kolumnerna: svensk midnatt måndag till svensk midnatt
+  // nästa måndag. En bar dag i filtret hade betytt UTC-midnatt (kl. 02 svensk sommartid). quote_date är
+  // ett datum och filtreras på dagarna som de är.
+  const weekStartAt = stockholmDayStartISO(weekStart);
+  const weekEndAt = stockholmDayStartISO(weekEnd);
   const [quoteWindow, orderWindow, invoiceRoundWindow, callWindow] = await Promise.all([
     // Only the week is read: every quote figure is either a stock (the summary's quote_stocks) or
     // measured against the weekly target. `since` would fetch days nothing reads.
@@ -464,20 +470,20 @@ export async function fetchWeekActualRows(
       .from('crm_work_orders')
       .select('status, amount, vat_percent, pricing_summary, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to')
       // Both bounds inside each branch: created IN the week, or invoiced IN it.
-      .or(`and(created_at.gte.${weekStart},created_at.lt.${weekEnd}),and(fortnox_invoiced_at.gte.${weekStart},fortnox_invoiced_at.lt.${weekEnd})`)
+      .or(`and(created_at.gte.${weekStartAt},created_at.lt.${weekEndAt}),and(fortnox_invoiced_at.gte.${weekStartAt},fortnox_invoiced_at.lt.${weekEndAt})`)
       .limit(ROW_CAP), truncated),
     // Veckans delfakturarundor. Ordern bakom en runda är oftast skapad långt före veckan och inte
     // slutfakturerad i den, så den finns inte i order_window — därför inbäddad här.
     readRows<InvoiceRoundRow>('invoice_round_window', client
       .from('crm_work_order_invoices')
       .select('amount, created_at, work_order:crm_work_orders(status, assigned_to)')
-      .gte('created_at', weekStart)
-      .lt('created_at', weekEnd)
+      .gte('created_at', weekStartAt)
+      .lt('created_at', weekEndAt)
       .limit(ROW_CAP), truncated),
     readRows<CallWindowRow>('call_window', callsBefore(client
       .from('crm_calls')
       .select('user_id, call_at, outcome, prospect_id')
-      .gte('call_at', calls.from), calls.to)
+      .gte('call_at', stockholmDayStartISO(calls.from)), calls.to)
       .limit(ROW_CAP), truncated),
   ]);
   return { quoteWindow, orderWindow, invoiceRoundWindow, callWindow };

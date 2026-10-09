@@ -220,14 +220,24 @@ describe('partitionOrders', () => {
     expect(partitionOrders([odd], RANGE_JAN, []).invoiced).toEqual([]);
   });
 
-  it('includes both ends of the range inclusively', () => {
+  it('includes both ends of the range inclusively — in SWEDISH days', () => {
+    // 1 januari 00.00 svensk tid = 31 dec 23.00 UTC; 31 januari 23.59 svensk tid = 22.59 UTC.
     const edges: ReportOrderRow[] = [
-      { vat_percent: 0, amount: 1, status: 'invoiced', created_at: '2026-01-01T00:00:00Z', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null },
-      { vat_percent: 0, amount: 2, status: 'invoiced', created_at: '2026-01-31T23:59:00Z', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null },
+      { vat_percent: 0, amount: 1, status: 'invoiced', created_at: '2025-12-31T23:00:00Z', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null },
+      { vat_percent: 0, amount: 2, status: 'invoiced', created_at: '2026-01-31T22:59:00Z', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null },
     ];
     const result = partitionOrders(edges, RANGE_JAN, []);
     expect(result.created).toHaveLength(2);
     expect(result.invoiced).toHaveLength(2);
+  });
+
+  it('en order skapad 00.30 svensk tid den 1 februari hör till februari, fast UTC-datumet är 31 januari', () => {
+    // William 2026-10-09: svensk tid överallt. UTC-dygnet lade den i januari.
+    const night: ReportOrderRow = { vat_percent: 0, amount: 5, status: 'scheduled', created_at: '2026-01-31T23:30:00Z', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: null, client_name: null, quote_type: 'business', customer_id: null, rot_enabled: null, customer: null };
+    expect(partitionOrders([night], RANGE_JAN, []).created).toHaveLength(0);
+    expect(partitionOrders([night], { from: '2026-02-01', to: '2026-02-28' }, []).created).toHaveLength(1);
+    // Och månadsserien lägger den i februari.
+    expect(buildSalesOverTime([], [night], [], ['2026-01', '2026-02']).map((p) => p.orderValue)).toEqual([0, 5]);
   });
 
   it('drops an order that falls outside the range on both dates', () => {

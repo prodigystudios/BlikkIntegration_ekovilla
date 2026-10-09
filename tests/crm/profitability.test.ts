@@ -24,6 +24,12 @@ const order = (id: string, invoicedDay: string): ReportOrderRow => ({
 const calc = (revenue: number | null, tb1: number | null, tb2: number | null) => ({ revenue, tb1, tb2 });
 
 describe('buildProfitability', () => {
+  it('ett jobb fakturerat kl. 00.30 svensk tid den 1 september hör till september, fast UTC säger 31 augusti', () => {
+    const night: ReportOrderRow = { ...order('a', '2026-08-31'), fortnox_invoiced_at: '2026-08-31T22:30:00Z' };
+    const result = buildProfitability([night], new Map([['a', calc(100_000, 40_000, null)]]), ['2026-08', '2026-09']);
+    expect(result.overTime.map((p) => [p.period, p.tg1])).toEqual([['2026-08', null], ['2026-09', 40]]);
+  });
+
   it('summerar intäkt och TB var för sig — inte ett snitt av procenttalen', () => {
     // 500 000 kr med 10 % och 5 000 kr med 90 %. Ett ovägt snitt hade gett 50 %; det vägda
     // svaret är (50 000 + 4 500) / 505 000 = 10,79 %.

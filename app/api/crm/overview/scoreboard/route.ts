@@ -25,8 +25,8 @@ function daysBetween(fromDay: string, toDay: string) {
   return Math.round((to - from) / 86_400_000);
 }
 
-// Lagets veckotavla: veckans utfall per säljare mot veckomålen. Veckan kommer från läsarens klocka,
-// av samma skäl som /api/crm/overview tar sitt fönster från klienten — servern går på UTC.
+// Lagets veckotavla: veckans utfall per säljare mot veckomålen. Veckan kommer från klienten, som
+// /api/crm/overview:s fönster — räknad i svenska dagar (getCrmOverviewWindow), oavsett läsarens zon.
 export async function GET(req: Request) {
   try {
     // Samma grind som rapporteringen: varje CRM-användare får se lagets siffror per säljare.

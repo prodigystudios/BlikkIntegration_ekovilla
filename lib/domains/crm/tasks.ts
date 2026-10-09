@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveDocumentReferenceContact, type CrmContactSource } from './contacts';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 export const crmTaskSelect = `
   id,
@@ -107,7 +108,9 @@ export function mapCrmTaskRow(row: RawCrmTaskRow) {
     details: row.body,
     status: row.status === 'done' ? 'done' : row.status === 'cancelled' ? 'cancelled' : 'open',
     priority: getTaskPriority((metadata as Record<string, unknown>).priority),
-    due_date: row.due_at ? String(row.due_at).slice(0, 10) : null,
+    // Svensk dag, som översiktens räknare (overviewSummary): CRM skriver due_at kl. 12 UTC, men en rad
+    // skriven på annat sätt får inte visa en annan dag här än där.
+    due_date: stockholmDayOf(row.due_at),
     remind_at: row.remind_at,
     source,
     completed_at: row.completed_at,

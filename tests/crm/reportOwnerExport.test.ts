@@ -238,6 +238,18 @@ describe('buildOwnerReport', () => {
   });
 });
 
+describe('buildOwnerReport — svensk vecka', () => {
+  it('en order kl. 00.30 svensk tid måndag hör till den veckan, fast UTC säger söndag', () => {
+    // Måndag 17 augusti 00.30 svensk tid = söndag 16 augusti 22.30 UTC.
+    const night = buildOwnerReport({
+      data: { ...data, quotes: [], invoiceRounds: [], orders: [order({ id: 'n', created_at: '2026-08-16T22:30:00Z', amount: 9_000 })] },
+      range: YEAR, today: TODAY, goals: [], orderStockRows: [], basis: null,
+    });
+    expect(night.weeks[0]).toMatchObject({ week: 34, from: '2026-08-17' });
+    expect(night.totals.weeks[0].orderValue).toBe(9_000);
+  });
+});
+
 describe('buildOwnerReport — gränsfallen från granskningen', () => {
   it('budgetfliken börjar vid en budget satt före den första aktiviteten', () => {
     const early = buildOwnerReport({

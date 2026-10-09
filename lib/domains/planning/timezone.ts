@@ -49,6 +49,72 @@ export function stockholmTodayISO(now: Date = new Date()): string {
 }
 
 /**
+ * Den svenska kalenderdagen ett ÖGONBLICK faller på (en timestamptz som `created_at`), ÅÅÅÅ-MM-DD.
+ * null när värdet saknas eller inte går att läsa.
+ *
+ * ⚠️ ALDRIG `slice(0, 10)` PÅ EN TIDSSTÄMPEL. Databasen och Vercel kör UTC, så den delen är UTC-dygnet:
+ * en order skapad kl. 00.30 svensk tid den 1:a räknades till förra månaden. William 2026-10-09: svensk
+ * tid överallt. Kolumner av typen `date` (quote_date, work_date, period_start …) är redan svenska dagar
+ * och läses som de är.
+ */
+export function stockholmDayOf(timestamp: string | null | undefined): string | null {
+  if (!timestamp) return null;
+  const cached = dayOfCache.get(timestamp);
+  if (cached !== undefined) return cached;
+  const at = new Date(timestamp);
+  const day = Number.isNaN(at.getTime()) ? null : stockholmTodayISO(at);
+  // Rapporten och exporten delar samma rader i vecka för vecka och månad för månad, så varje tidsstämpel
+  // frågas om dussintals gånger. Svaret beror bara på strängen; taket håller minnet litet i en varm lambda.
+  if (dayOfCache.size >= DAY_OF_CACHE_MAX) dayOfCache.clear();
+  dayOfCache.set(timestamp, day);
+  return day;
+}
+
+const DAY_OF_CACHE_MAX = 50_000;
+const dayOfCache = new Map<string, string | null>();
+
+const offsetParts = new Intl.DateTimeFormat('en-US', {
+  timeZone: PLANNING_TIME_ZONE,
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
+
+/** Svensk tid minus UTC i millisekunder vid ögonblicket `at`: 7 200 000 på sommaren, 3 600 000 på vintern. */
+function stockholmOffsetMs(at: number): number {
+  const p = offsetParts.formatToParts(new Date(at));
+  const get = (type: string) => Number(p.find((x) => x.type === type)?.value);
+  const wall = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
+  return wall - Math.floor(at / 1000) * 1000;
+}
+
+/**
+ * Ögonblicket (UTC, ISO) då den svenska dagen `day` börjar — dagsgränsen i ett databasfilter mot en
+ * timestamptz-kolumn. `.gte('created_at', '2026-08-01')` betyder UTC-midnatt, alltså kl. 02 svensk
+ * sommartid; `.gte('created_at', stockholmDayStartISO('2026-08-01'))` betyder svensk midnatt.
+ *
+ * Övre gräns: början av DAGEN EFTER, exklusivt (`.lt(col, stockholmDayStartISO(addDaysISO(to, 1)))`) —
+ * inte `T23:59:59.999Z`, som var UTC-dygnets slut.
+ *
+ * En korrigering räcker: sommartiden växlar kl. 01 UTC, aldrig i närheten av svensk midnatt.
+ */
+export function stockholmDayStartISO(day: string): string {
+  const m = ISO_DATE_RE.exec(day.trim());
+  const utcMidnight = m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
+  // Formen räcker inte: Date.UTC rullar 2026-02-30 till 2 mars utan att klaga, och ett filter mot en
+  // period ingen bett om är värre än ett fel. Dagen måste finnas.
+  if (!m || Number.isNaN(utcMidnight) || new Date(utcMidnight).toISOString().slice(0, 10) !== `${m[1]}-${m[2]}-${m[3]}`) {
+    throw new Error(`stockholmDayStartISO: ogiltigt datum "${day}"`);
+  }
+  const guess = utcMidnight - stockholmOffsetMs(utcMidnight);
+  return new Date(utcMidnight - stockholmOffsetMs(guess)).toISOString();
+}
+
+/**
  * Flytta ett ISO-datum n kalenderdagar, som ISO-sträng. Oberoende av runtimens zon.
  *
  * ⚠️ UTC-FÖRANKRAD, OCH DET ÄR HELA POÄNGEN. Den naiva varianten — lägg n * 86 400 000 ms på en

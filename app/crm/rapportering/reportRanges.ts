@@ -8,9 +8,9 @@
 // mismatch on the date inputs, and a `defaultFrom` a whole month off on the 1st.
 // Pinning the zone makes both sides agree AND makes "today" mean today in Sweden.
 //
-// (lib/domains/crm/goals.ts has its own week/month helpers for the leaderboard. Those
-// read browser-local fields, which is fine for client-only code but not here. The two
-// only disagree between 00:00 and 02:00; unifying them is a separate change.)
+// (lib/domains/crm/goals.ts has its own week/month helpers for the overview and the budgets. Since
+// 2026-10-09 they are Stockholm-anchored too, through lib/domains/planning/timezone.ts, so the two agree
+// on every day; they are separate implementations of the same rule, not two rules.)
 
 const REPORT_TIME_ZONE = 'Europe/Stockholm';
 

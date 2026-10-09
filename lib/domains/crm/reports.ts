@@ -13,6 +13,7 @@ import { unavailableProduction, type Production } from '@/lib/domains/planning/p
 import { unavailablePlanned, type PlannedPeriod } from '@/lib/domains/planning/plannedPeriod';
 import { unavailableTimeReport, type TimeReport } from '@/lib/domains/time/report';
 import { readAllPages, type ReadError } from '@/lib/domains/planning/pagedRead';
+import { addDaysISO, stockholmDayOf, stockholmDayStartISO } from '@/lib/domains/planning/timezone';
 import type { ReportOverview, ReportSales, SalesTrend } from './reportKpis';
 import type { ReportRevenue } from './reportRevenue';
 import type { ReportProduct } from './reportProduct';
@@ -89,10 +90,21 @@ export type ReportData = {
 // ── Helpers ──
 // Ingen rå beloppsläsare här med flit: varje krontal i rapporten går genom netAmount, och en
 // lokal num() hade varit en öppen dörr tillbaka till bruttot.
-function monthKey(date: string | null | undefined): string | null {
-  if (!date) return null;
-  const key = String(date).slice(0, 7);
-  return /^\d{4}-\d{2}$/.test(key) ? key : null;
+/**
+ * Månaden ett värde hör till, i svensk tid: den svenska dagens månad. Samma funktion för en tidsstämpel
+ * (created_at, fakturans ögonblick) och en `date`-kolumn (quote_date) — ett rent datum är sin egen dag i
+ * stockholmDayOf, så ingen anropare behöver välja rätt variant per kolumn.
+ */
+function monthKey(value: string | null | undefined): string | null {
+  return stockholmDayOf(value)?.slice(0, 7) ?? null;
+}
+
+/**
+ * Periodens gränser som ÖGONBLICK, för filter mot timestamptz-kolumner: från svensk midnatt första dagen
+ * till svensk midnatt dagen efter sista (exklusivt). En bar dag i filtret hade betytt UTC-midnatt.
+ */
+function instantBounds(range: ReportRange): { from: string; toExclusive: string } {
+  return { from: stockholmDayStartISO(range.from), toExclusive: stockholmDayStartISO(addDaysISO(range.to, 1)) };
 }
 
 // Inclusive list of YYYY-MM between from and to (capped to avoid runaway ranges).
@@ -124,11 +136,14 @@ export function monthsInRange(from: string, to: string): string[] {
 
 export { invoicedAt };
 
-/** Inclusive day comparison against the range, matching how the fetch filters. */
+/**
+ * Inclusive day comparison against the range, matching how the fetch filters. The day is the SWEDISH day
+ * the timestamp falls on (stockholmDayOf) — the UTC date put an order created 00:30 Swedish time on the
+ * 1st into the previous month.
+ */
 function withinRange(timestamp: string | null | undefined, range: ReportRange): boolean {
-  if (!timestamp) return false;
-  const day = String(timestamp).slice(0, 10);
-  return day >= range.from && day <= range.to;
+  const day = stockholmDayOf(timestamp);
+  return day != null && day >= range.from && day <= range.to;
 }
 
 export type PartitionedOrders = {
@@ -603,7 +618,8 @@ export async function readEveryRow<Row>(
  * där raderna delas isär igen.
  */
 function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<ReportOrderRow[]> {
-  const toEnd = `${range.to}T23:59:59.999Z`;
+  // Svenska dagsgränser (instantBounds) — partitionOrders delar sedan raderna på samma svenska dag.
+  const { from: start, toExclusive: end } = instantBounds(range);
   return readEveryRow('crm_work_orders', (from, to) =>
     admin.from('crm_work_orders')
       // `id` bär lönsamhetsdelen: efterkalkylen slås upp per order. Radernas `line_items` hämtas
@@ -614,7 +630,7 @@ function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<Re
       // mot crm_customers — customer_id och prospect_id — och utan utpekningen vägrar PostgREST
       // inbäddningen ("more than one relationship"), vilket fäller hela rapporten.
       .select('id, amount, vat_percent, pricing_summary, status, created_at, fortnox_invoiced_at, partial_invoicing_started_at, assigned_to, client_name, quote_type, customer_id, rot_enabled:rot_details->enabled, customer:crm_customers!crm_work_orders_customer_id_fkey(sni_code)')
-      .or(`and(created_at.gte.${range.from},created_at.lte.${toEnd}),and(fortnox_invoiced_at.gte.${range.from},fortnox_invoiced_at.lte.${toEnd})`)
+      .or(`and(created_at.gte.${start},created_at.lt.${end}),and(fortnox_invoiced_at.gte.${start},fortnox_invoiced_at.lt.${end})`)
       .order('id', { ascending: true })
       .range(from, to),
   );
@@ -626,12 +642,12 @@ function readReportOrders(admin: SupabaseClient, range: ReportRange): Promise<Re
  * `amount` är redan ex moms — se invoicedRevenue.
  */
 function readReportInvoiceRounds(admin: SupabaseClient, range: ReportRange): Promise<ReportInvoiceRoundRow[]> {
-  const toEnd = `${range.to}T23:59:59.999Z`;
+  const { from: start, toExclusive: end } = instantBounds(range);
   return readEveryRow('crm_work_order_invoices', (from, to) =>
     admin.from('crm_work_order_invoices')
       .select('amount, created_at, work_order_id, work_order:crm_work_orders(status, assigned_to, client_name, quote_type)')
-      .gte('created_at', range.from)
-      .lte('created_at', toEnd)
+      .gte('created_at', start)
+      .lt('created_at', end)
       .order('id', { ascending: true })
       .range(from, to),
   );
@@ -650,7 +666,7 @@ function readReportQuotes(admin: SupabaseClient, range: ReportRange): Promise<Re
 }
 
 export async function fetchReportData(admin: SupabaseClient, range: ReportRange): Promise<ReportData> {
-  const toEnd = `${range.to}T23:59:59.999Z`;
+  const { from: start, toExclusive: end } = instantBounds(range);
   // Utan `as`: radtyperna härleds ur select-strängarna — se readEveryRow.
   const [quotes, orders, invoiceRounds, calls, sellers]: [
     ReportQuoteRow[],
@@ -665,8 +681,8 @@ export async function fetchReportData(admin: SupabaseClient, range: ReportRange)
     readEveryRow('crm_calls', (from, to) =>
       admin.from('crm_calls')
         .select('user_id, call_at')
-        .gte('call_at', range.from)
-        .lte('call_at', toEnd)
+        .gte('call_at', start)
+        .lt('call_at', end)
         .order('id', { ascending: true })
         .range(from, to)),
     readEveryRow('profiles', (from, to) =>
