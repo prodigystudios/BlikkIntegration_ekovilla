@@ -46,6 +46,8 @@ export async function middleware(req: NextRequest) {
   const isNotificationsCleanupApi = pathname === '/api/notifications/cleanup';
   // Portalens cron (fas 4b): grinden är CRON_SECRET i routen, som för de två ovan. Exakt sökväg, inte ett prefix.
   const isResellerPortalCronApi = pathname === '/api/reseller-portal/cron';
+  // Orderstockens ögonblicksbild (varje timme): grinden är CRON_SECRET i routen. Exakt sökväg.
+  const isOrderStockSnapshotApi = pathname === '/api/crm/reports/order-stock-snapshot';
   const isTwilioSmsStatusApi = pathname === '/api/twilio/sms-status';
   // Återförsäljarportalens anrop har ingen session: varje route under prefixet prövar själv portalens signatur
   // (verifyPortalRequest i app/api/portal/_shared.ts), och tests/portal/routeGuards.test.ts vaktar att ingen route där
@@ -57,6 +59,7 @@ export async function middleware(req: NextRequest) {
   if (isReminderDispatchApi) return NextResponse.next();
   if (isNotificationsCleanupApi) return NextResponse.next();
   if (isResellerPortalCronApi) return NextResponse.next();
+  if (isOrderStockSnapshotApi) return NextResponse.next();
   if (isTwilioSmsStatusApi) return NextResponse.next();
   if (isResellerPortalApi) return NextResponse.next();
 

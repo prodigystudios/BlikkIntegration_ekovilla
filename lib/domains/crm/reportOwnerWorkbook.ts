@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import type { OwnerBudget, OwnerMetrics, OwnerReport, OwnerSeller } from './reportOwnerExport';
 import { UNASSIGNED_NAME } from './reportOwnerExport';
 import type { StockStageKey } from './reportRevenue';
+import type { WeekStock } from './orderStockHistory';
 
 // Ägarnas veckorapport som Excel-arbetsbok. Modellen räknas i reportOwnerExport.ts; här ritas den.
 //
@@ -303,11 +304,67 @@ const SELLER_ROWS: MetricRow[] = [
   { label: 'Fakturerat', fmt: FMT_KR, get: (m) => m.invoicedValue },
 ];
 
+const STOCK_STAGE_ORDER: StockStageKey[] = ['draft', 'scheduled', 'in_progress', 'partially_invoiced', 'completed'];
+/** Rubriken, lägena, Totalt och Antal order. */
+const STOCK_ROWS = STOCK_STAGE_ORDER.length + 3;
+
+/**
+ * Orderstocken vid veckans slut: ett läge per rad, Totalt (summan av lägena som formel) och Antal order.
+ * En vecka räknad i efterhand har bara totalen — kursiv och grå, utan formel, eftersom lägena saknas.
+ * Årskolumnen lämnas tom: en orderstock är ett läge, och veckornas lägen går inte att lägga ihop.
+ */
+function writeStockBlock(
+  sheet: ExcelJS.Worksheet,
+  stockWeeks: Array<WeekStock | null> | null,
+  weeks: Array<{ to: string }>,
+  at: { start: number; firstCol: number; totalCol: number },
+) {
+  // Rubriken på en egen rad: bredvid ett lägesnamn i kolumn B hade den klippts vid kolumn A:s kant.
+  const firstStage = at.start + 1;
+  const totalRow = firstStage + STOCK_STAGE_ORDER.length;
+  const countRow = totalRow + 1;
+  sheet.getCell(at.start, 1).value = stockWeeks ? 'Orderstock vid veckans slut' : 'Orderstock vid veckans slut — kunde inte läsas';
+  STOCK_STAGE_ORDER.forEach((key, i) => { sheet.getCell(firstStage + i, 2).value = STAGE_LABELS[key]; });
+  sheet.getCell(totalRow, 2).value = 'Totalt';
+  sheet.getCell(countRow, 2).value = 'Antal order';
+
+  (stockWeeks ?? []).forEach((week, index) => {
+    const c = at.firstCol + index;
+    if (!week) return;
+    if (week.stages) {
+      STOCK_STAGE_ORDER.forEach((key, i) => {
+        sheet.getCell(firstStage + i, c).value = week.stages?.find((stage) => stage.key === key)?.value ?? 0;
+      });
+      formula(sheet.getCell(totalRow, c), `SUM(${ref(firstStage, c)}:${ref(totalRow - 1, c)})`, week.value);
+      // Veckans senaste bild är inte från söndagen: jobbet sparade inget senare den veckan. Läget står kvar, men
+      // med datumet, så att ingen läser fredagens stock som veckans slut.
+      if (week.kind === 'snapshot' && week.day !== weeks[index]?.to) {
+        sheet.getCell(totalRow, c).note = `Läget den ${longDate(week.day)} — inget sparades senare den veckan.`;
+      }
+    } else {
+      sheet.getCell(totalRow, c).value = week.value;
+    }
+    sheet.getCell(countRow, c).value = week.count;
+  });
+
+  for (let row = at.start; row <= countRow; row++) {
+    for (let column = 1; column <= at.totalCol; column++) {
+      const cell = sheet.getCell(row, column);
+      const week = column >= at.firstCol && column < at.totalCol ? stockWeeks?.[column - at.firstCol] : null;
+      const reconstructed = week?.kind === 'reconstructed';
+      font(cell, { bold: (column === 1 && row === at.start) || row === totalRow, italic: reconstructed, color: reconstructed ? { argb: MUTED } : undefined });
+      if (column >= at.firstCol) cell.numFmt = row === countRow ? FMT_COUNT : FMT_KR;
+      bottomBorder(cell, row === countRow ? 'medium' : 'thin', row === countRow ? GREEN : BORDER);
+    }
+  }
+}
+
 function buildWeekly(workbook: ExcelJS.Workbook, report: OwnerReport) {
-  const sheet = addSheet(workbook, 'Per vecka', { xSplit: 2, ySplit: 6 });
+  const sheet = addSheet(workbook, 'Per vecka', { xSplit: 2, ySplit: 7 });
   title(sheet, `Per vecka ${report.year}`, [
     'Offerter på offertdatum, order på skapandedag, fakturerat på fakturadag. Belopp exklusive moms.',
     'Kursiv hit rate = preliminär (veckans offerter är yngre än 30 dagar). * = veckan pågår.',
+    'Orderstock = det som återstår att fakturera vid veckans slut (den pågående veckan: nu). Kursivt = beräknat i efterhand — bara totalen, med orderns nuvarande värde, och avbrutna order räknas inte.',
   ]);
 
   const weeks = report.weeks;
@@ -316,23 +373,25 @@ function buildWeekly(workbook: ExcelJS.Workbook, report: OwnerReport) {
   const totalCol = lastWeekCol + 1;
 
   // Rubrikerna: veckonummer och datum.
-  headerCell(sheet.getCell(5, 1), 'Säljare', 'left');
-  headerCell(sheet.getCell(5, 2), '', 'left');
-  headerCell(sheet.getCell(6, 1), '', 'left');
+  headerCell(sheet.getCell(6, 1), 'Säljare', 'left');
   headerCell(sheet.getCell(6, 2), '', 'left');
+  headerCell(sheet.getCell(7, 1), '', 'left');
+  headerCell(sheet.getCell(7, 2), '', 'left');
   weeks.forEach((week, index) => {
-    headerCell(sheet.getCell(5, firstCol + index), `v. ${week.week}${week.current ? '*' : ''}`);
-    headerCell(sheet.getCell(6, firstCol + index), shortSpan(week.from, week.to));
-    font(sheet.getCell(6, firstCol + index), { size: 8, color: { argb: WHITE } });
+    headerCell(sheet.getCell(6, firstCol + index), `v. ${week.week}${week.current ? '*' : ''}`);
+    headerCell(sheet.getCell(7, firstCol + index), shortSpan(week.from, week.to));
+    font(sheet.getCell(7, firstCol + index), { size: 8, color: { argb: WHITE } });
   });
-  headerCell(sheet.getCell(5, totalCol), 'Totalt');
-  headerCell(sheet.getCell(6, totalCol), 'året');
-  font(sheet.getCell(6, totalCol), { size: 8, color: { argb: WHITE } });
+  headerCell(sheet.getCell(6, totalCol), 'Totalt');
+  headerCell(sheet.getCell(7, totalCol), 'året');
+  font(sheet.getCell(7, totalCol), { size: 8, color: { argb: WHITE } });
 
-  // Hela företaget först: det ägarna läser först. Summorna pekar på säljarblocken nedanför.
+  // Hela företaget först: det ägarna läser först. Summorna pekar på säljarblocken nedanför. Sedan
+  // orderstocken vid veckans slut, sedan säljarna.
   const companyRows = 10;
-  const companyStart = 7;
-  const sellerStart = companyStart + companyRows + 1;
+  const companyStart = 8;
+  const stockStart = companyStart + companyRows + 1;
+  const sellerStart = stockStart + STOCK_ROWS + 1;
   const sellerRow = (sellerIndex: number, metricIndex: number) => sellerStart + sellerIndex * SELLER_ROWS.length + metricIndex;
   const sumOfSellers = (metricIndex: number, column: number) =>
     report.sellers.length
@@ -371,6 +430,8 @@ function buildWeekly(workbook: ExcelJS.Workbook, report: OwnerReport) {
     }
   });
   for (let column = 1; column <= totalCol; column++) bottomBorder(sheet.getCell(r(companyRows - 1), column), 'medium', GREEN);
+
+  writeStockBlock(sheet, report.stockWeeks, weeks, { start: stockStart, firstCol, totalCol });
 
   report.sellers.forEach((seller, s) => {
     SELLER_ROWS.forEach((line, metricIndex) => {

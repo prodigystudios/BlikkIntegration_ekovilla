@@ -1,0 +1,45 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { buildStockSnapshot } from '@/lib/domains/crm/orderStockHistory';
+import { upsertStockSnapshot } from '@/lib/domains/crm/orderStockHistoryLoader';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { checkPortalCronAuth } from '@/lib/domains/portal/cronAuth';
+
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+// Ingen session läses här, så Next 14 hade annars kunnat svara jobbet med en cachad orderstock (se
+// project_next14_get_route_fetch_cache). Vaktas av testet.
+export const fetchCache = 'force-no-store';
+
+// Orderstockens ögonblicksbild (William 2026-10-09). Körs varje timme via vercel.json; Vercel skickar
+// `Authorization: Bearer <CRON_SECRET>`. Skriver om DAGENS rad (svensk dag), så dagens sista körning blir dagens
+// läge och veckans sista dag veckans. Vitlistad i middleware.ts — grinden är hemligheten här, jämförd i konstant
+// tid med samma hjälpare som portalens cron; utan CRON_SECRET är routen avstängd (503), aldrig öppen.
+async function run(req: NextRequest) {
+  const auth = checkPortalCronAuth(req.headers.get('authorization'), process.env.CRON_SECRET);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.status === 503 ? 'cron_not_configured' : 'unauthorized' }, { status: auth.status });
+  }
+  const admin = getOptionalSupabaseAdmin();
+  if (!admin) {
+    return NextResponse.json({ ok: false, error: 'service_role_missing' }, { status: 500 });
+  }
+  try {
+    const now = new Date();
+    const snapshot = buildStockSnapshot(await fetchOrderStockRows(admin), stockholmTodayISO(now));
+    await upsertStockSnapshot(admin, snapshot, now);
+    return NextResponse.json({ ok: true, data: { day: snapshot.day, totalCount: snapshot.totalCount, totalValue: snapshot.totalValue } });
+  } catch (e: any) {
+    console.error(`[Orderstock] Ögonblicksbilden kunde inte sparas: ${e?.message || e}`);
+    return NextResponse.json({ ok: false, error: e?.message || 'snapshot_failed' }, { status: 500 });
+  }
+}
+
+export async function GET(req: NextRequest) {
+  return run(req);
+}
+
+export async function POST(req: NextRequest) {
+  return run(req);
+}
