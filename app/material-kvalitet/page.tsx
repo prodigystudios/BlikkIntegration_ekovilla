@@ -12,6 +12,7 @@ import {
   type AggBucket,
   type SampleRow,
 } from './aggregate';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 function downloadCsv(filename: string, lines: string[]) {
   // Prepend a UTF-8 BOM so Excel renders Swedish characters (åäö) correctly.
@@ -213,7 +214,7 @@ export default function MaterialKvalitetPage() {
                 <tbody>
                   {(group === 'batch' && batches.length > 0 ? filtered.filter((r) => (r.batch_number || '—') === batches[activeIndex]?.key) : filtered).map((r) => (
                     <tr key={r.id} className="border-t border-[#eef2ec]">
-                      <Td>{(r.created_at || '').slice(0, 10)}</Td>
+                      <Td>{stockholmDayOf(r.created_at) ?? ''}</Td>
                       <Td>{r.installation_date || '—'}</Td>
                       <Td>{r.batch_number || '—'}</Td>
                       <Td>{r.material_used || '—'}</Td>
