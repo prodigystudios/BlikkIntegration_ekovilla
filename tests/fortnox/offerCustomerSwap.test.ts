@@ -88,6 +88,16 @@ describe('offerCustomerFieldsFromCard', () => {
     expect(offerCustomerFieldsFromCard({ Name: '' })).not.toHaveProperty('CustomerName');
   });
 
+  // Gata från offerten och ort från kortet = en adress som inte finns. Hela blocket är offertens.
+  it('med egen arbetsadress på offerten rensas kortets hela leveransblock', () => {
+    const card = { ...cardB, DeliveryName: 'Lagret', DeliveryAddress1: 'Lagervägen 1', DeliveryZipCode: '15160', DeliveryCity: 'Södertälje' };
+    expect(offerCustomerFieldsFromCard(card, { ownJobSite: true })).toMatchObject({
+      DeliveryName: null, DeliveryAddress1: null, DeliveryAddress2: null, DeliveryZipCode: null, DeliveryCity: null, DeliveryCountry: null,
+    });
+    // Utan egen arbetsadress: kortets, som när Fortnox skapar offerten (mätt, offert 77).
+    expect(offerCustomerFieldsFromCard(card)).toMatchObject({ DeliveryName: 'Lagret', DeliveryAddress1: 'Lagervägen 1', DeliveryCity: 'Södertälje' });
+  });
+
   // Raderna bär egna priser — ett prislistebyte kunde räkna om dem.
   it('skickar varken prislista, valuta eller språk', () => {
     const fields = offerCustomerFieldsFromCard({ ...cardB, PriceList: '160', Currency: 'EUR' } as never);
@@ -133,10 +143,10 @@ describe('pushQuoteToFortnox — kundbyte på en befintlig offert', () => {
     vi.mocked(getSupabaseAdmin).mockReturnValue({ from: vi.fn(() => chain) } as unknown as ReturnType<typeof getSupabaseAdmin>);
   }
 
-  function mockFortnox(offerCustomerNumber: string) {
+  function mockFortnox(offerCustomerNumber: string | null, card: Record<string, unknown> = cardB) {
     vi.mocked(fortnoxGet).mockImplementation(async (path: string) => {
       if (path === '/offers/66') return { Offer: { CustomerNumber: offerCustomerNumber } } as never;
-      if (path === '/customers/2') return { Customer: cardB } as never;
+      if (path === '/customers/2') return { Customer: card } as never;
       throw new Error(`oväntat anrop ${path}`);
     });
     vi.mocked(fortnoxPut).mockResolvedValue({ Offer: { DocumentNumber: '66' } } as never);
@@ -174,7 +184,7 @@ describe('pushQuoteToFortnox — kundbyte på en befintlig offert', () => {
   // Kortet fyller bara det vi INTE skickar — som när Fortnox skapar en offert. Arbetsadressen och
   // Er referens är offertens egna val och får aldrig skrivas över av kortets standardvärden.
   it('bytt kund: offertens egna fält vinner över kortets', async () => {
-    mockFortnox('1');
+    mockFortnox('1', { ...cardB, DeliveryName: 'Lagret', DeliveryAddress1: 'Lagervägen 1', DeliveryZipCode: '15160', DeliveryCity: 'Södertälje' });
 
     await pushQuoteToFortnox('quote-1');
 
@@ -183,10 +193,23 @@ describe('pushQuoteToFortnox — kundbyte på en befintlig offert', () => {
       DeliveryAddress1: 'Arbetsvägen 7',
       DeliveryZipCode: '15200',
       DeliveryCity: 'Strängnäs',
-      // Ingen egen motsvarighet på offerten → kortets (tomma) värde, så förra kundens rensas.
+      // Offerten har egen arbetsadress → kortets leveransnamn får inte hamna ovanpå den.
       DeliveryName: null,
       DeliveryAddress2: null,
     });
+  });
+
+  // Postnummer och ort saknas på offertens arbetsadress: rensas, lånas aldrig ur kortet.
+  it('bytt kund: arbetsadress utan postnummer får inte kortets postnummer och ort', async () => {
+    quoteRow.customer_snapshot = { ...quoteRow.customer_snapshot, delivery_postal_code: '', delivery_city: '' };
+    mockFortnox('1', { ...cardB, DeliveryAddress1: 'Lagervägen 1', DeliveryZipCode: '15160', DeliveryCity: 'Södertälje' });
+    try {
+      await pushQuoteToFortnox('quote-1');
+    } finally {
+      quoteRow.customer_snapshot = { ...quoteRow.customer_snapshot, delivery_postal_code: '15200', delivery_city: 'Strängnäs' };
+    }
+
+    expect(offerPutBody()).toMatchObject({ DeliveryAddress1: 'Arbetsvägen 7', DeliveryZipCode: null, DeliveryCity: null });
   });
 
   // Samma kund: inget får skrivas över — kunduppgifter rättade för hand i Fortnox står kvar.
@@ -214,6 +237,23 @@ describe('pushQuoteToFortnox — kundbyte på en befintlig offert', () => {
     await pushQuoteToFortnox('quote-1');
 
     expect(offerPutBody()).not.toHaveProperty('CustomerName');
+  });
+
+  // Ett svar utan kundnummer får inte läsas som ett byte — då skrevs kunddelen över på en offert
+  // som aldrig bytt kund, även det som rättats för hand i Fortnox.
+  it('ett svar utan kundnummer kastar i stället för att skriva över', async () => {
+    mockFortnox(null);
+
+    await expect(pushQuoteToFortnox('quote-1')).rejects.toThrow('utan kundnummer');
+    expect(fortnoxPut).not.toHaveBeenCalled();
+  });
+
+  // Ett halvt byte — gammalt namn över den nya kundens uppgifter — är värre än inget.
+  it('ett kort utan namn kastar i stället för att göra ett halvt byte', async () => {
+    mockFortnox('1', { ...cardB, Name: '' });
+
+    await expect(pushQuoteToFortnox('quote-1')).rejects.toThrow('saknar namn');
+    expect(fortnoxPut).not.toHaveBeenCalled();
   });
 
   // Hellre 'failed' än en offert som tyst bär fel kund.
