@@ -2,6 +2,7 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { NextRequest, NextResponse } from 'next/server';
 import { isWebPushConfigured, sendWebPush } from '@/lib/webPush';
 import { getOptionalSupabaseAdmin } from '@/lib/supabase/server';
+import { formatPushWhen } from '@/lib/domains/notifications/pushWhen';
 
 export const dynamic = 'force-dynamic';
 
@@ -62,20 +63,6 @@ function buildPushBody(item: DueNote) {
   }
   const details = [item.title.trim(), truncatePushText(item.body, 96)].filter(Boolean);
   return details.join(' • ');
-}
-
-function formatPushWhen(value: string | null) {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-
-  const now = new Date();
-  const isSameDay = date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate();
-  const clock = `kl ${date.toLocaleTimeString('sv-SE', { hour: '2-digit', minute: '2-digit' })}`;
-  if (isSameDay) return `idag ${clock}`;
-  return `${date.toLocaleDateString('sv-SE', { day: 'numeric', month: 'short' })} ${clock}`;
 }
 
 function truncatePushText(value: string | null, maxLength: number) {

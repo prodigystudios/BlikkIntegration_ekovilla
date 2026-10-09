@@ -12,6 +12,7 @@ import {
   type WorkOrderFileCategory,
   type WorkOrderFileView,
 } from '@/lib/domains/crm/workOrderFiles/types';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 // Filfliken. Monteras av BÅDE kontorsvyn (/crm/arbetsorder) och fältvyn (/arbetsorder), därför
 // helt presentational: data och callbacks in som props, inga egna fetch-anrop, inga toasts.
@@ -252,7 +253,8 @@ export default function WorkOrderFilesTab({
                     <div className="flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400">
                       <span className="min-w-0 truncate">{file.created_by_name}</span>
                       <span aria-hidden>·</span>
-                      <span className="whitespace-nowrap">{formatDate(file.created_at)}</span>
+                      {/* formatDate tar en DAG; created_at är en tidsstämpel och gav alltid "–". Den svenska dagen. */}
+                      <span className="whitespace-nowrap">{formatDate(stockholmDayOf(file.created_at))}</span>
                       {formatBytes(file.size_bytes) ? (
                         <>
                           <span aria-hidden>·</span>
