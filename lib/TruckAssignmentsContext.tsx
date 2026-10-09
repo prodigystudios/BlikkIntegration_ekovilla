@@ -2,6 +2,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { TruckAssignment, normalizeAssignments, resolveCrewForDay, ResolvedCrew, getAssignmentsWindowStart, getAssignmentsWindowEnd } from './truckAssignments';
 import { useCan } from './UserProfileContext';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 export type TruckAssignmentsState = {
   assignments: TruckAssignment[];
@@ -22,7 +23,8 @@ export function TruckAssignmentsProvider({ children, from, to }: { children: Rea
   // anrop och en 403 per sidladdning. Konsumenterna är gamla /plannering och /admin/trucks/assignments.
   const canRead = useCan('planning.schedule.read');
 
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  // Svensk dag, inte UTC-dygnet (som var gårdagen 00–02).
+  const todayISO = useMemo(() => stockholmTodayISO(), []);
   const defaultFrom = useMemo(() => from ?? getAssignmentsWindowStart(todayISO, 60), [from, todayISO]);
   const defaultTo = useMemo(() => to ?? getAssignmentsWindowEnd(todayISO, 180), [to, todayISO]);
 

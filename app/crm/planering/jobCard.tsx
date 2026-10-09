@@ -18,6 +18,7 @@ import { addDaysISO, daysBetweenInclusive } from './planningDates';
 import type { OrderInfo } from '@/lib/domains/planning/order';
 import type { JobMargin } from './useJobMargins';
 import { isMarginLoss } from '@/lib/domains/crm/preCalculation';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 // Status label + colors for a job, reusing the CRM work-order tokens so the planning board reads
 // identically to the rest of the CRM.
@@ -347,8 +348,9 @@ export function ConfirmationBadge({ confirmation }: { confirmation: Confirmation
   const failed = sms?.tone === 'fail';
   const channels = [email_sent_at ? 'Mejl' : null, sms_sent_at ? 'SMS' : null].filter(Boolean).join(' + ');
   const title = [
-    email_sent_at && `Mejl ${email_sent_at.slice(0, 10)}${email_to ? ` → ${email_to}` : ''}`,
-    sms_sent_at && `SMS ${sms_sent_at.slice(0, 10)}${sms_to ? ` → ${sms_to}` : ''}${sms ? ` (${sms.label})` : ''}`,
+    // Svensk dag för när det skickades — UTC-datumet var gårdagen för ett utskick 00–02.
+    email_sent_at && `Mejl ${stockholmDayOf(email_sent_at) ?? ''}${email_to ? ` → ${email_to}` : ''}`,
+    sms_sent_at && `SMS ${stockholmDayOf(sms_sent_at) ?? ''}${sms_to ? ` → ${sms_to}` : ''}${sms ? ` (${sms.label})` : ''}`,
   ]
     .filter(Boolean)
     .join(' · ');

@@ -1,6 +1,7 @@
 "use client";
 
 import { crm } from '../../lib/crmTokens';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 type QuickAccessFolder = {
   id: string;
@@ -80,7 +81,8 @@ export default function DocumentsQuickAccessFolders({
                     Öppna mapp
                   </span>
                   <span className="inline-flex items-center rounded-full border border-[#e0e8dc] bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-500">
-                    Skapad {folder.created_at.slice(0, 10)}
+                    {/* Svensk dag: UTC-datumet var gårdagen för en mapp skapad 00–02. */}
+                    Skapad {stockholmDayOf(folder.created_at) ?? '–'}
                   </span>
                 </div>
               </button>
