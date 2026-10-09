@@ -26,6 +26,11 @@ vi.mock('@/lib/domains/crm/reports', async (importOriginal) => {
 vi.mock('@/lib/domains/crm/reportKpisLoader', () => ({
   fetchOrderStockRows: vi.fn(async () => [{ status: 'scheduled', amount: 20_000, vat_percent: 0, invoice_rounds: [] }]),
 }));
+vi.mock('@/lib/domains/crm/orderStockHistoryLoader', () => ({
+  fetchStockSnapshots: vi.fn(async () => []),
+  fetchFirstSnapshotDay: vi.fn(async () => null),
+  fetchReconstructOrders: vi.fn(async () => []),
+}));
 vi.mock('@/lib/domains/crm/reportOwnerExportLoader', () => ({
   fetchSellerGoals: vi.fn(async () => [{ user_id: 'u9', period_start: '2026-09-01', quote_value_target: 50_000, order_value_target: 40_000, invoiced_value_target: 30_000 }]),
   fetchProfileNames: vi.fn(async () => [{ id: 'u1', full_name: 'Anna Andersson' }, { id: 'u9', full_name: 'Gustav Slutat' }]),
@@ -36,6 +41,7 @@ import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { fetchTrendData } from '@/lib/domains/crm/reports';
 import { fetchProfileNames, fetchSellerGoals } from '@/lib/domains/crm/reportOwnerExportLoader';
 import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchReconstructOrders, fetchStockSnapshots } from '@/lib/domains/crm/orderStockHistoryLoader';
 import { GET, fetchCache } from '@/app/api/crm/reports/export/route';
 
 const mockGetUser = vi.mocked(getCurrentUser);
@@ -137,6 +143,21 @@ describe('GET /api/crm/reports/export', () => {
     const texts: string[] = [];
     sheet.eachRow((row) => texts.push(String(row.getCell(1).value ?? '')));
     expect(texts).toContain('Orderstocken kunde inte läsas när filen skapades.');
+  });
+
+  it('orderstockens historik: efterhandsräkningen läses från 10 augusti till igår när ingen bild finns', async () => {
+    await GET();
+    expect(vi.mocked(fetchReconstructOrders)).toHaveBeenCalledWith(expect.anything(), { from: '2026-08-10', to: '2026-10-08' });
+  });
+
+  it('orderstockens historik kunde inte läsas: filen kommer ändå, och blocket säger det', async () => {
+    vi.mocked(fetchStockSnapshots).mockRejectedValueOnce(new Error('nere'));
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const sheet = (await workbookOf(res)).getWorksheet('Per vecka')!;
+    const texts: string[] = [];
+    sheet.eachRow((row) => texts.push(String(row.getCell(1).value ?? '')));
+    expect(texts).toContain('Orderstock vid veckans slut — kunde inte läsas');
   });
 
   it('försäljningssiffrorna kunde inte läsas: 500, ingen halv fil', async () => {

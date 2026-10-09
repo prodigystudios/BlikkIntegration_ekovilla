@@ -109,17 +109,17 @@ describe('arbetsboken', () => {
 
   it('Per vecka: hela företaget först, med summor som pekar på säljarblocken', () => {
     const sheet = workbook.getWorksheet('Per vecka')!;
-    expect(sheet.getCell(5, 3).value).toBe('v. 36'); // 31 aug–6 sep: första veckan med aktivitet
-    expect(sheet.getCell(6, 3).value).toBe('31 aug–6 sep');
+    expect(sheet.getCell(6, 3).value).toBe('v. 36'); // 31 aug–6 sep: första veckan med aktivitet
+    expect(sheet.getCell(7, 3).value).toBe('31 aug–6 sep');
     const last = report.weeks.length + 2;
-    expect(sheet.getCell(5, last).value).toBe('v. 41*');
-    expect(sheet.getCell(5, last + 1).value).toBe('Totalt');
+    expect(sheet.getCell(6, last).value).toBe('v. 41*');
+    expect(sheet.getCell(6, last + 1).value).toBe('Totalt');
 
-    expect(sheet.getCell(7, 1).value).toBe('Hela företaget');
-    const anna = findRow(sheet, 1, 'Anna Andersson', 8);
-    const bjorn = findRow(sheet, 1, 'Björn Berg', 8);
-    const none = findRow(sheet, 1, 'Utan säljare', 8);
-    expect(formulaOf(sheet.getCell(7, 3))).toBe(`C${anna}+C${bjorn}+C${none}`);
+    expect(sheet.getCell(8, 1).value).toBe('Hela företaget');
+    const anna = findRow(sheet, 1, 'Anna Andersson', 9);
+    const bjorn = findRow(sheet, 1, 'Björn Berg', 9);
+    const none = findRow(sheet, 1, 'Utan säljare', 9);
+    expect(formulaOf(sheet.getCell(8, 3))).toBe(`C${anna}+C${bjorn}+C${none}`);
     // Säljarens totalkolumn summerar raden.
     expect(formulaOf(sheet.getCell(anna, last + 1))).toBe(`SUM(C${anna}:${sheet.getColumn(last).letter}${anna})`);
   });
@@ -167,7 +167,65 @@ describe('arbetsboken', () => {
     const back = new ExcelJS.Workbook();
     await back.xlsx.load(buffer as unknown as ArrayBuffer);
     expect(back.worksheets.map((s) => s.name)).toEqual(['Sammanfattning', 'Per vecka', 'Budget mot utfall']);
-    expect(back.getWorksheet('Per vecka')!.views[0]).toMatchObject({ state: 'frozen', xSplit: 2, ySplit: 6 });
+    expect(back.getWorksheet('Per vecka')!.views[0]).toMatchObject({ state: 'frozen', xSplit: 2, ySplit: 7 });
+  });
+});
+
+describe('Per vecka — orderstocken vid veckans slut', () => {
+  const stockReport = buildOwnerReport({
+    data,
+    range: { from: '2026-01-01', to: '2026-10-09' },
+    today: '2026-10-09',
+    goals,
+    orderStockRows: [{ status: 'scheduled', amount: 30_000, vat_percent: 0, invoice_rounds: [] }],
+    basis: null,
+    stockHistory: {
+      snapshots: [{ day: '2026-09-27', totalCount: 2, totalValue: 50_000, stages: [{ key: 'draft', count: 1, value: 20_000 }, { key: 'scheduled', count: 1, value: 30_000 }] }],
+      firstSnapshotDay: '2026-09-27',
+      reconstructOrders: [{ amount: 12_000, vat_percent: 0, status: 'scheduled', created_at: '2026-08-31T09:00:00Z', fortnox_invoiced_at: null, invoice_rounds: [] }],
+    },
+  });
+  const sheet = buildOwnerWorkbook(stockReport).getWorksheet('Per vecka')!;
+  const start = findRow(sheet, 1, 'Orderstock vid veckans slut', 8);
+  const total = findRow(sheet, 2, 'Totalt', start);
+  const count = findRow(sheet, 2, 'Antal order', start);
+  const col = (week: number) => 3 + stockReport.weeks.findIndex((w) => w.week === week);
+
+  it('står mellan hela företaget och säljarna, med lägena, Totalt och Antal order', () => {
+    expect(start).toBeLessThan(findRow(sheet, 1, 'Anna Andersson', 9));
+    expect([0, 1, 2, 3, 4].map((i) => sheet.getCell(start + i, 2).value)).toEqual(['Ej planerad', 'Planerad', 'Pågår', 'Delfakturerad (det som återstår)', 'Klar att fakturera']);
+  });
+
+  it('en vecka före den första bilden: bara totalen, kursiv och grå, utan formel', () => {
+    const c = col(36); // 31 aug–6 sep, före bilden den 27 sep
+    expect(sheet.getCell(total, c).value).toBe(12_000);
+    expect(sheet.getCell(start, c).value).toBeNull();
+    expect(sheet.getCell(total, c).font?.italic).toBe(true);
+    expect(sheet.getCell(count, c).value).toBe(1);
+  });
+
+  it('en vecka med en bild: lägena och Totalt som summaformel', () => {
+    const c = col(39); // 21–27 sep
+    expect(sheet.getCell(start, c).value).toBe(20_000);
+    expect(sheet.getCell(start + 1, c).value).toBe(30_000);
+    expect(formulaOf(sheet.getCell(total, c))).toBe(`SUM(${sheet.getColumn(c).letter}${start}:${sheet.getColumn(c).letter}${total - 1})`);
+    expect(resultOf(sheet.getCell(total, c))).toBe(50_000);
+    expect(sheet.getCell(total, c).font?.italic).toBe(false);
+  });
+
+  it('den pågående veckan: läget nu', () => {
+    const c = col(41);
+    expect(resultOf(sheet.getCell(total, c))).toBe(30_000);
+  });
+
+  it('en lucka efter den första bilden står tom, och årskolumnen är tom', () => {
+    expect(sheet.getCell(total, col(40)).value).toBeNull();
+    expect(sheet.getCell(total, 3 + stockReport.weeks.length).value).toBeNull();
+  });
+
+  it('utan historik säger blocket att den inte kunde läsas', () => {
+    const plain = buildOwnerWorkbook(report).getWorksheet('Per vecka')!;
+    expect(findRow(plain, 1, 'Orderstock vid veckans slut — kunde inte läsas', 8)).toBeGreaterThan(8);
   });
 });
 

@@ -12,6 +12,10 @@
     {
       "path": "/api/reseller-portal/cron",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/crm/reports/order-stock-snapshot",
+      "schedule": "55 * * * *"
     }
   ]
 }

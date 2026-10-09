@@ -11,6 +11,7 @@ import {
   type ReportRange,
 } from './reports';
 import type { OrderStockRow } from './overviewSummary';
+import { buildStockSnapshot, stockByWeek, type ReconstructOrderRow, type StockSnapshot, type WeekStock } from './orderStockHistory';
 import { isoWeeksTouching } from '@/lib/domains/planning/workOrderCrew';
 import { isoWeek } from '@/lib/domains/planning/insights';
 
@@ -98,6 +99,11 @@ export type OwnerReport = {
   budgetUnavailable: boolean;
   /** Läget när filen skapades. null = kunde inte läsas. */
   orderStock: OwnerOrderStock | null;
+  /**
+   * Orderstocken vid varje veckas slut, i samma ordning som `weeks` — se stockByWeek. En vecka utan värde är
+   * null. Hela listan null = historiken kunde inte läsas.
+   */
+  stockWeeks: Array<WeekStock | null> | null;
 };
 
 /** En målrad som exporten läser den: per säljare och månad. Numeric kommer som sträng från PostgREST. */
@@ -239,6 +245,11 @@ export function buildOwnerReport(input: {
   orderStockRows: OrderStockRow[] | null;
   /** Senaste hela månadens fakturering, för orderstockens veckotal. null = kunde inte läsas. */
   basis: { range: ReportRange; invoiced: number } | null;
+  /**
+   * Orderstocken över tid: ögonblicksbilderna i perioden, den första bildens dag (någonsin) och orderna för
+   * efterhandsräkningen (null = behövdes inte). Utelämnad eller null = kunde inte läsas.
+   */
+  stockHistory?: { snapshots: StockSnapshot[]; firstSnapshotDay: string | null; reconstructOrders: ReconstructOrderRow[] | null } | null;
 }): OwnerReport {
   const { data, range, today } = input;
   const allWeeks = ownerWeeks(range, today);
@@ -309,6 +320,18 @@ export function buildOwnerReport(input: {
     };
   }
 
+  // Orderstocken per vecka: den pågående veckan är läget nu, samma ögonblicksbild som Sammanfattningens tabell.
+  const stockWeeks = input.stockHistory && input.orderStockRows
+    ? stockByWeek({
+      weeks,
+      today,
+      snapshots: input.stockHistory.snapshots,
+      firstSnapshotDay: input.stockHistory.firstSnapshotDay,
+      now: buildStockSnapshot(input.orderStockRows, today),
+      reconstructOrders: input.stockHistory.reconstructOrders,
+    })
+    : null;
+
   return {
     year: Number(range.from.slice(0, 4)),
     range,
@@ -320,5 +343,6 @@ export function buildOwnerReport(input: {
     totalPreliminary: hitRateMaturity(range, today).preliminary,
     budgetUnavailable: input.goals == null,
     orderStock,
+    stockWeeks,
   };
 }

@@ -4,6 +4,8 @@ import { fetchInvoicedValue, fetchTrendData, monthsInRange } from '@/lib/domains
 import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { buildOwnerReport, sellerIdsOf } from '@/lib/domains/crm/reportOwnerExport';
 import { fetchProfileNames, fetchSellerGoals } from '@/lib/domains/crm/reportOwnerExportLoader';
+import { reconstructWindow } from '@/lib/domains/crm/orderStockHistory';
+import { fetchFirstSnapshotDay, fetchReconstructOrders, fetchStockSnapshots } from '@/lib/domains/crm/orderStockHistoryLoader';
 import { ownerReportFilename, writeOwnerWorkbook } from '@/lib/domains/crm/reportOwnerWorkbook';
 import { reportRange, today } from '@/app/crm/rapportering/reportRanges';
 
@@ -62,7 +64,19 @@ export async function GET() {
       return [];
     });
 
-    const report = buildOwnerReport({ data: { ...rows, sellers }, range, today: todayIso, goals, orderStockRows, basis });
+    // Orderstocken per vecka: ögonblicksbilderna, och före den första bilden en efterhandsräkning (bara när någon
+    // vecka behöver den). Får fela för sig, som budgeten: blocket säger då att det inte kunde läsas.
+    const stockHistory = await (async () => {
+      const [snapshots, firstSnapshotDay] = await Promise.all([fetchStockSnapshots(admin, range), fetchFirstSnapshotDay(admin)]);
+      const window = reconstructWindow({ range, today: todayIso, firstSnapshot: firstSnapshotDay });
+      const reconstructOrders = window ? await fetchReconstructOrders(admin, window) : null;
+      return { snapshots, firstSnapshotDay, reconstructOrders };
+    })().catch((e: any) => {
+      console.warn(`[Ägarrapport] Orderstockens historik kunde inte läsas: ${e?.message || e}`);
+      return null;
+    });
+
+    const report = buildOwnerReport({ data: { ...rows, sellers }, range, today: todayIso, goals, orderStockRows, basis, stockHistory });
     const file = await writeOwnerWorkbook(report, now);
     const filename = ownerReportFilename(report);
 
