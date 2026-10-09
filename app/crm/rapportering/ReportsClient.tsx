@@ -25,6 +25,7 @@ import RevenueTab from './tabs/RevenueTab';
 import ProductTab from './tabs/ProductTab';
 import ProductionTab from './tabs/ProductionTab';
 import TimeTab from './tabs/TimeTab';
+import OwnerExportButton from './OwnerExportButton';
 
 // Rapportsidan: en sida i flikar, där varje flik svarar på en fråga (spec 2026-10-07). Skalet här
 // äger periodväljaren, laddningen och flikvalet; varje flik bor i ./tabs/.
@@ -117,9 +118,12 @@ export default function ReportsClient() {
     <div className="grid grid-cols-1 gap-6">
       {/* Header */}
       <div className="grid gap-3">
-        <div>
-          <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
-          <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, omsättning, produkt och marknad, produktion och tid för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <h1 className={cn('m-0', crm.pageTitle)}>Rapportering</h1>
+            <p className={cn('m-0 mt-1', crm.pageSubtitle)}>Försäljning, omsättning, produkt och marknad, produktion och tid för vald period. Alla belopp är exklusive moms, och avbrutna order räknas inte.</p>
+          </div>
+          <OwnerExportButton />
         </div>
         {/* Quick periods on the left as the everyday control, the manual dates on the
             right for the odd range that no preset covers. */}
