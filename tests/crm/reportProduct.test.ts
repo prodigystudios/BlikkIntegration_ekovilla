@@ -173,6 +173,19 @@ describe('buildProductVolume — periodens sålda m³', () => {
   });
 });
 
+describe('buildVolumeByMonth — svensk dag', () => {
+  it('en order kl. 00.30 svensk tid den 1 september räknas i september, fast UTC säger 31 augusti', () => {
+    const lineItems = new Map<string, unknown>([['natt', [m3Row(100, 100, 400)]]]);
+    const months = buildVolumeByMonth({
+      orders: [order('natt', { created_at: '2026-08-31T22:30:00Z' })],
+      lineItems,
+      window: { from: '2026-08-01', to: '2026-09-30' },
+      selected: { from: '2026-09-01', to: '2026-09-30' },
+    });
+    expect(months.map((m) => [m.period, m.m3])).toEqual([['2026-08', 0], ['2026-09', 10]]);
+  });
+});
+
 describe('buildVolumeByMonth — sålda m³ i trendens fönster', () => {
   const window = { from: '2026-06-29', to: '2026-10-07' };
   const selected = { from: '2026-09-01', to: '2026-09-30' };

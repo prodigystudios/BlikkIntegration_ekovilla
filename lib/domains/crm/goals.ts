@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { addDaysISO, mondayOfISO, stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
 /**
  * Namnet på veckotavlan när målets användare saknar ett i profilen. Här och inte i
@@ -106,33 +106,26 @@ export function getCurrentMonthStartDate(now: Date = new Date()) {
 }
 
 /**
- * The window the CRM overview asks the server to count inside, built from the READER's clock: the
- * route runs on UTC, so deciding "this week" there would move the boundary for anyone whose
- * calendar day differs from the server's. Lives here, next to getCurrentWeekStartDate, so the
- * actuals and the weekly budget can never disagree about which week it is — and so the arithmetic
- * is reachable from a test, which it was not inside the client component.
+ * Fönstret CRM-översikten ber servern räkna inuti: idag, sju dagar bakåt och veckan (måndag–måndag,
+ * exklusivt). SVENSKA dagar, oavsett vems klocka som räknar (William 2026-10-09: svensk tid överallt) —
+ * tidigare tog fönstret läsarens webbläsarzon, så en säljare på resa såg en annan vecka än kollegorna.
+ * Bor bredvid getCurrentWeekStartDate, som räknar veckobudgetens nyckel på samma svenska dag, så att
+ * utfallet och veckomålet aldrig kan vara oense om vilken vecka det är.
  *
- * `now` is injectable for exactly that reason; production passes nothing.
+ * UTC-förankrad dagsaritmetik (addDaysISO, mondayOfISO): en vecka över en sommartidsväxling är sju
+ * kalenderdagar, inte 167 eller 169 timmar. `now` går att skicka in för testerna.
  */
 export function getCrmOverviewWindow(now: Date = new Date()) {
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const weekStart = new Date(today);
-  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
-  // Noon anchors: adding days to a midnight Date can land on 23:00 the previous day across a DST
-  // shift, which would move the boundary by a day.
-  const noon = (date: Date, offsetDays: number) => {
-    const shifted = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
-    shifted.setDate(shifted.getDate() + offsetDays);
-    return shifted;
-  };
+  const today = stockholmTodayISO(now);
+  const weekStart = mondayOfISO(today) ?? today;
   return {
-    today: formatLocalDateOnly(today),
+    today,
     /** Inclusive first day of the rolling 7-day window. */
-    since: formatLocalDateOnly(noon(today, -7)),
+    since: addDaysISO(today, -7),
     /** Inclusive Monday of the current week. */
-    weekStart: formatLocalDateOnly(weekStart),
+    weekStart,
     /** Exclusive Monday after the current week. */
-    weekEnd: formatLocalDateOnly(noon(weekStart, 7)),
+    weekEnd: addDaysISO(weekStart, 7),
   };
 }
 

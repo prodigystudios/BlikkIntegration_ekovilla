@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { fetchInvoicedValue, fetchReportData } from '@/lib/domains/crm/reports';
-import { fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
+import { fetchFirstActivityDay, fetchOpenQuoteRows, fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { fetchDepots, fetchOrderLineItems, fetchOrderSegments } from '@/lib/domains/crm/reportProductLoader';
 
 // Rapportens läsvägar, till skillnad från de rena aggregaten i reports.test.ts och reportKpis.test.ts.
@@ -24,11 +24,12 @@ function makeClient(tables: Record<string, unknown[]>, opts: { failTable?: strin
       let to = Number.MAX_SAFE_INTEGER;
       const chain: Record<string, unknown> = {};
       chain.select = () => chain;
-      for (const m of ['in', 'eq', 'gte', 'lte', 'or']) {
+      for (const m of ['in', 'eq', 'gte', 'lte', 'lt', 'or']) {
         chain[m] = (column: string, value: unknown) => { call.filters.push(`${m}:${column}:${JSON.stringify(value)}`); return chain; };
       }
       chain.order = (column: string) => { call.orders.push(column); return chain; };
       chain.range = (f: number, t: number) => { from = f; to = t; call.ranges.push([f, t]); return chain; };
+      chain.limit = (n: number) => { to = n - 1; return chain; };
       chain.then = (ok: (v: unknown) => unknown, fail: (e: unknown) => unknown) => {
         if (opts.failTable === table && from >= (opts.failFrom ?? 0)) {
           return Promise.resolve({ data: null, error: { message: 'nekad' } }).then(ok, fail);
@@ -48,6 +49,43 @@ const RANGE = { from: '2026-01-01', to: '2026-12-31' };
 
 const quotes = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ id: `q${i}`, amount: 100, vat_percent: 0, status: 'sent', quote_date: '2026-05-01', assigned_to: null, customer_name: null }));
+
+describe('fetchReportData — svenska dagsgränser', () => {
+  // William 2026-10-09: svensk tid överallt. En bar dag i ett filter mot en timestamptz betyder
+  // UTC-midnatt — kl. 01 svensk vintertid — så en order skapad 00.30 den 1 januari föll utanför året.
+  it('tidsstämplarna filtreras från svensk midnatt till svensk midnatt dagen efter (exklusivt); offertdatumet på dagarna', async () => {
+    const { client, calls } = makeClient({});
+    await fetchReportData(client, RANGE);
+    const filters = (table: string) => calls.filter((c) => c.table === table).flatMap((c) => c.filters);
+    // 1 januari 00.00 svensk vintertid = 31 december 23.00 UTC; 1 januari 2027 likaså.
+    expect(filters('crm_calls')).toEqual(expect.arrayContaining(['gte:call_at:"2025-12-31T23:00:00.000Z"', 'lt:call_at:"2026-12-31T23:00:00.000Z"']));
+    expect(filters('crm_work_order_invoices')).toEqual(expect.arrayContaining(['gte:created_at:"2025-12-31T23:00:00.000Z"', 'lt:created_at:"2026-12-31T23:00:00.000Z"']));
+    const orderOr = filters('crm_work_orders').find((f) => f.startsWith('or:'))!;
+    expect(orderOr).toContain('created_at.gte.2025-12-31T23:00:00.000Z,created_at.lt.2026-12-31T23:00:00.000Z');
+    expect(orderOr).toContain('fortnox_invoiced_at.gte.2025-12-31T23:00:00.000Z,fortnox_invoiced_at.lt.2026-12-31T23:00:00.000Z');
+    expect(filters('crm_quotes')).toEqual(expect.arrayContaining(['gte:quote_date:"2026-01-01"', 'lte:quote_date:"2026-12-31"']));
+    // Ingen UTC-dygnsgräns kvar någonstans.
+    expect(calls.flatMap((c) => c.filters).some((f) => f.includes('T23:59:59'))).toBe(false);
+  });
+
+  it('sommartid: augusti börjar kl. 22 UTC den 31 juli', async () => {
+    const { client, calls } = makeClient({});
+    await fetchReportData(client, { from: '2026-08-01', to: '2026-08-31' });
+    expect(calls.filter((c) => c.table === 'crm_calls').flatMap((c) => c.filters))
+      .toEqual(expect.arrayContaining(['gte:call_at:"2026-07-31T22:00:00.000Z"', 'lt:call_at:"2026-08-31T22:00:00.000Z"']));
+  });
+});
+
+describe('fetchFirstActivityDay — trendens första dag', () => {
+  it('den första ordern kl. 00.30 svensk tid den 29 juni är den 29:e, fast UTC säger 28:e', async () => {
+    const { client } = makeClient({ crm_quotes: [{ quote_date: '2026-07-02' }], crm_work_orders: [{ created_at: '2026-06-28T22:30:00Z' }] });
+    expect(await fetchFirstActivityDay(client)).toBe('2026-06-29');
+  });
+  it('offertdatumet är redan en dag och vinner när det är tidigast', async () => {
+    const { client } = makeClient({ crm_quotes: [{ quote_date: '2026-06-20' }], crm_work_orders: [{ created_at: '2026-06-28T22:30:00Z' }] });
+    expect(await fetchFirstActivityDay(client)).toBe('2026-06-20');
+  });
+});
 
 describe('fetchReportData — sidindelad', () => {
   it('läser ALLA rader förbi 1000-taket', async () => {

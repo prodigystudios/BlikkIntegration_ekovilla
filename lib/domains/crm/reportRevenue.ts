@@ -3,7 +3,7 @@ import { sumUninvoiced, type InvoicedRevenue } from './invoicedRevenue';
 import type { CrmCustomerType } from './customers';
 import { BOARD_FILTER_STATUSES, isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { ORDER_STOCK_STATUSES, type OrderStockRow } from './overviewSummary';
-import { isoDayNumber, stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { isoDayNumber, stockholmDayOf } from '@/lib/domains/planning/timezone';
 import {
   monthsInRange,
   partitionOrders,
@@ -74,8 +74,7 @@ export type LeadTime = {
  * står med föregående dag i UTC, och ledtiden hade då blivit en dag för lång.
  */
 function swedishDay(timestamp: string): number | null {
-  const at = new Date(timestamp);
-  return Number.isNaN(at.getTime()) ? null : isoDayNumber(stockholmTodayISO(at));
+  return isoDayNumber(stockholmDayOf(timestamp));
 }
 
 /** Dagar från created_at till fortnox_invoiced_at, i svenska kalenderdagar. null när fakturadatum saknas. */
@@ -152,7 +151,8 @@ export function buildInvoicedByMonth(input: {
 }): InvoicedMonth[] {
   const revenue = partitionOrders(input.data.orders, input.window, input.data.invoiceRounds).revenue;
   return monthsInRange(input.window.from, input.window.to).map((period) => {
-    const inMonth = revenue.filter((invoice) => String(invoice.at).slice(0, 7) === period);
+    // Fakturans SVENSKA dag avgör månaden — samma dag som partitionOrders lade den i perioden på.
+    const inMonth = revenue.filter((invoice) => stockholmDayOf(invoice.at)?.slice(0, 7) === period);
     const split = invoicedByCustomerType(inMonth);
     return {
       period,
@@ -318,14 +318,15 @@ export type CustomerOrderRow = { status: string | null; created_at: string; cust
  * — filtreras här, inte bara i läsningen, så att funktionen ger samma svar vilken läsning som än matar den.
  *
  * ⚠️ TILL PERIODENS SLUT, inte till idag: en kund vars andra order kom i september var inte återkommande i
- * januari, och januaris rapport ska inte ändras för att kunden beställde igen långt senare. Dygnet jämförs
- * som i resten av rapporten (`created_at`s datumdel). Order utan känd kund räknas inte alls.
+ * januari, och januaris rapport ska inte ändras för att kunden beställde igen långt senare. Dygnet är den
+ * svenska dagen, som i resten av rapporten (stockholmDayOf). Order utan känd kund räknas inte alls.
  */
 export function countOrdersPerCustomer(rows: CustomerOrderRow[], through: string): Map<string, number> {
   const counts = new Map<string, number>();
   for (const row of rows) {
     if (isDeadWorkOrder(row.status)) continue;
-    if (String(row.created_at).slice(0, 10) > through) continue;
+    const day = stockholmDayOf(row.created_at);
+    if (day == null || day > through) continue;
     const key = customerKey(row);
     if (key == null) continue;
     counts.set(key, (counts.get(key) ?? 0) + 1);

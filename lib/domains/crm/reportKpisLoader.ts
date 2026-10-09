@@ -3,6 +3,7 @@ import { ACTIVE_QUOTE_STATUSES, ORDER_STOCK_SELECT, ORDER_STOCK_STATUSES } from 
 import { readEveryRow } from './reports';
 import type { OpenQuoteRow, OrderStockRow } from './reportKpis';
 import type { CustomerOrderRow } from './reportRevenue';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 // Läsningarna bakom rapportens ögonblicksbilder — orderstocken och de öppna offerterna. Båda följer
 // INTE periodväljaren: de svarar på "hur ser det ut just nu".
@@ -66,7 +67,8 @@ export function fetchCustomerOrderRows(admin: SupabaseClient): Promise<CustomerO
 /**
  * Dagen då CRM:et fick sin första offert eller order — där trenden börjar så länge CRM:et är yngre än
  * tolv månader (se trendWindow). Två rader, inga sidor: det är bara den tidigaste av varje som behövs.
- * null när tabellerna är tomma. `created_at` jämförs på sin UTC-dag, samma regel som rapportens fönster.
+ * null när tabellerna är tomma. Orderns `created_at` jämförs på sin svenska dag, samma regel som rapportens
+ * fönster; offertdatumet är redan en dag.
  */
 export async function fetchFirstActivityDay(admin: SupabaseClient): Promise<string | null> {
   const [quote, order] = await Promise.all([
@@ -75,8 +77,7 @@ export async function fetchFirstActivityDay(admin: SupabaseClient): Promise<stri
   ]);
   if (quote.error) throw new Error(`första offerten: ${quote.error.message}`);
   if (order.error) throw new Error(`första ordern: ${order.error.message}`);
-  const days = [quote.data?.[0]?.quote_date, order.data?.[0]?.created_at]
-    .filter((value): value is string => Boolean(value))
-    .map((value) => String(value).slice(0, 10));
+  const days = [quote.data?.[0]?.quote_date?.slice(0, 10), stockholmDayOf(order.data?.[0]?.created_at)]
+    .filter((value): value is string => Boolean(value));
   return days.length > 0 ? days.reduce((first, day) => (day < first ? day : first)) : null;
 }

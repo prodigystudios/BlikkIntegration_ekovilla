@@ -8,6 +8,7 @@ import { isDeadWorkOrder, type CrmWorkOrderStatus } from './work-orders';
 import { monthsInRange, partitionOrders, type ReportOrderRow, type ReportRange } from './reports';
 import { monthSpan, monthTouches } from './reportKpis';
 import { workingDaysInRange } from '@/lib/domains/planning/production';
+import { stockholmDayOf } from '@/lib/domains/planning/timezone';
 
 // Produkt & marknad (spec 2026-10-07, 4.5): "Vad säljer vi, och var?"
 //
@@ -177,9 +178,8 @@ export type VolumeMonth = {
  * hit rate och fakturerat per månad — annars blir "Denna månad" en enda stapel). Den valda perioden
  * markeras. Order partitioneras som i trenden: skapade i fönstret, avbrutna bort.
  *
- * Månaden är created_at:s datumdel, samma regel som orderingången i trenden (partitionOrders,
- * buildSalesOverTime) — så att m³ och ordervärde per månad alltid talar om samma order. En order skapad
- * strax efter midnatt den 1:a svensk tid hamnar alltså i föregående månad, i båda diagrammen.
+ * Månaden är created_at:s SVENSKA dag, samma regel som orderingången i trenden (partitionOrders,
+ * buildSalesOverTime) — så att m³ och ordervärde per månad alltid talar om samma order.
  */
 export function buildVolumeByMonth(input: {
   orders: ReportOrderRow[];
@@ -189,7 +189,7 @@ export function buildVolumeByMonth(input: {
 }): VolumeMonth[] {
   const created = partitionOrders(input.orders, input.window, []).created;
   return monthsInRange(input.window.from, input.window.to).map((period) => {
-    const stat = volumeStat(orderLines(created.filter((order) => String(order.created_at).slice(0, 7) === period), input.lineItems));
+    const stat = volumeStat(orderLines(created.filter((order) => stockholmDayOf(order.created_at)?.slice(0, 7) === period), input.lineItems));
     return {
       period,
       m3: stat.m3,

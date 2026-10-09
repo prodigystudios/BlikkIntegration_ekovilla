@@ -33,28 +33,39 @@ describe('formatLocalDateOnly', () => {
 // ---------------------------------------------------------------------------
 // getCrmOverviewWindow — fönstret CRM-översikten ber servern räkna inuti
 //
-// Låg tidigare i CrmOverview.tsx ("use client") och gick därför inte att testa alls, vilket är
-// precis den kod man minst vill ha otestad: kalenderaritmetik med DST-fällor. Kör den här filen
-// under BÅDE TZ=UTC och TZ=Europe/Stockholm — en förankring som bara håller i den ena är fel.
+// SVENSKA dagar oavsett runtime-zon (William 2026-10-09). Ögonblicken nedan skrivs i UTC med exakt
+// klockslag, så skydden biter i varje zon — ett `new Date(2026, 7, 17, …)` hade betytt olika ögonblick
+// under TZ=UTC och TZ=Europe/Stockholm, och testet hade prövat olika saker i olika zoner.
 // ---------------------------------------------------------------------------
 
 import { getCrmOverviewWindow } from '@/lib/domains/crm/goals';
 
 describe('getCrmOverviewWindow', () => {
   it('en måndag är veckans start samma dag, och slutet nästa måndag', () => {
-    // 2026-08-17 är en måndag.
-    const w = getCrmOverviewWindow(new Date(2026, 7, 17, 9, 30));
+    // 2026-08-17 är en måndag; 07:30 UTC = 09:30 svensk tid.
+    const w = getCrmOverviewWindow(new Date('2026-08-17T07:30:00Z'));
     expect(w).toEqual({ today: '2026-08-17', since: '2026-08-10', weekStart: '2026-08-17', weekEnd: '2026-08-24' });
   });
 
-  it('en söndag hör till veckan som började föregående måndag', () => {
-    // 2026-08-23 är en söndag — ISO-veckan, inte den amerikanska.
-    const w = getCrmOverviewWindow(new Date(2026, 7, 23, 23, 59));
+  it('en söndag kl. 23.59 svensk tid hör till veckan som började föregående måndag', () => {
+    const w = getCrmOverviewWindow(new Date('2026-08-23T21:59:00Z'));
     expect(w).toEqual({ today: '2026-08-23', since: '2026-08-16', weekStart: '2026-08-17', weekEnd: '2026-08-24' });
   });
 
+  it('måndag kl. 00.15 svensk tid är den nya veckan, fast UTC fortfarande säger söndag', () => {
+    const w = getCrmOverviewWindow(new Date('2026-08-16T22:15:00Z'));
+    expect(w).toEqual({ today: '2026-08-17', since: '2026-08-10', weekStart: '2026-08-17', weekEnd: '2026-08-24' });
+  });
+
+  it('en läsare i en annan zon får den svenska dagen, inte sin egen', () => {
+    // 23.30 söndag i New York (EDT, −4) är måndag 05.30 i Sverige.
+    const w = getCrmOverviewWindow(new Date('2026-08-16T23:30:00-04:00'));
+    expect(w.today).toBe('2026-08-17');
+    expect(w.weekStart).toBe('2026-08-17');
+  });
+
   it('fönstret är sju dagar bakåt och håller över ett månadsskifte', () => {
-    const w = getCrmOverviewWindow(new Date(2026, 8, 3, 12));
+    const w = getCrmOverviewWindow(new Date('2026-09-03T10:00:00Z'));
     expect(w.today).toBe('2026-09-03');
     expect(w.since).toBe('2026-08-27');
   });
@@ -62,19 +73,14 @@ describe('getCrmOverviewWindow', () => {
   it('vintertid: sommartidens slut flyttar inte gränserna', () => {
     // Sverige ställer om natten till söndag 2026-10-25. Onsdagen efter ska landa på veckan som
     // började måndagen den 26:e, och `since` sju dagar bak trots att dygnet däremellan var 25 timmar.
-    const w = getCrmOverviewWindow(new Date(2026, 9, 28, 8));
+    const w = getCrmOverviewWindow(new Date('2026-10-28T07:00:00Z'));
     expect(w).toEqual({ today: '2026-10-28', since: '2026-10-21', weekStart: '2026-10-26', weekEnd: '2026-11-02' });
   });
 
   it('sommartid: omställningen in i sommartid flyttar inte heller gränserna', () => {
     // 2026-03-29 ställer klockan fram. Måndagen den 30:e ska ge weekEnd 2026-04-06 (23-timmarsdygn
-    // i intervallet), och en midnatt-baserad addering hade kunnat landa en dag fel.
-    const w = getCrmOverviewWindow(new Date(2026, 2, 30, 7));
+    // i intervallet).
+    const w = getCrmOverviewWindow(new Date('2026-03-30T05:00:00Z'));
     expect(w).toEqual({ today: '2026-03-30', since: '2026-03-23', weekStart: '2026-03-30', weekEnd: '2026-04-06' });
-  });
-
-  it('runt midnatt tar den dagen läsaren har, inte serverns', () => {
-    const w = getCrmOverviewWindow(new Date(2026, 7, 17, 0, 15));
-    expect(w.today).toBe('2026-08-17');
   });
 });

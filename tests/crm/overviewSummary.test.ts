@@ -151,16 +151,18 @@ describe('composeCrmOverviewSummary — fakturerat bucketas på fakturadatumet',
     expect(summary.weekTeam.invoicedValue).toBe(0);
   });
 
-  it('veckans start är inklusive och dess slut exklusive', () => {
+  it('veckans start är inklusive och dess slut exklusive — i SVENSK tid', () => {
+    // William 2026-10-09: svensk tid överallt. Klockslagen nedan är UTC; sommartid är +2.
     const summary = composeCrmOverviewSummary(rows({
       orderWindow: [
-        { vat_percent: 0, status: 'draft', amount: 1_000, created_at: '2026-08-17T23:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // måndag — inne
-        { vat_percent: 0, status: 'draft', amount: 2_000, created_at: '2026-08-16T23:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // söndagen före — ute
-        { vat_percent: 0, status: 'draft', amount: 4_000, created_at: '2026-08-24T00:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // nästa måndag — ute
+        { vat_percent: 0, status: 'draft', amount: 1_000, created_at: '2026-08-16T22:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // måndag 00.30 svensk tid — inne (UTC sa söndag)
+        { vat_percent: 0, status: 'draft', amount: 2_000, created_at: '2026-08-16T21:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // söndag 23.30 svensk tid — ute
+        { vat_percent: 0, status: 'draft', amount: 4_000, created_at: '2026-08-23T22:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // nästa måndag 00.30 — ute (UTC sa söndag, inne)
+        { vat_percent: 0, status: 'draft', amount: 8_000, created_at: '2026-08-23T21:30:00+00:00', fortnox_invoiced_at: null, partial_invoicing_started_at: null, assigned_to: ANNA }, // söndag 23.30 svensk tid — inne
       ],
     }), WINDOW);
 
-    expect(summary.weekTeam.orderValue).toBe(1_000);
+    expect(summary.weekTeam.orderValue).toBe(9_000);
   });
 });
 
@@ -397,8 +399,8 @@ describe('composeCrmOverviewSummary — delfakturering räknas per runda', () =>
   it('håller en runda utanför veckan utanför', () => {
     const summary = composeCrmOverviewSummary(rows({
       invoiceRoundWindow: [
-        { amount: 1_000, created_at: '2026-08-16T23:30:00+00:00', work_order: partial }, // söndagen före
-        { amount: 2_000, created_at: '2026-08-24T00:30:00+00:00', work_order: partial }, // nästa måndag
+        { amount: 1_000, created_at: '2026-08-16T21:30:00+00:00', work_order: partial }, // söndagen före, 23.30 svensk tid
+        { amount: 2_000, created_at: '2026-08-23T22:30:00+00:00', work_order: partial }, // nästa måndag, 00.30 svensk tid
       ],
     }), WINDOW);
 
@@ -510,7 +512,8 @@ describe('fetchCrmOverviewSummary — frågorna', () => {
     const { client, calls } = recordingClient();
     await fetchCrmOverviewSummary(client, WINDOW, 'user-1');
     const windowCalls = calls.filter((call) => call.table === 'crm_calls' && call.method === 'gte');
-    expect(windowCalls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', WINDOW.since] });
+    // Från svensk midnatt den 10 augusti (sommartid) = 22.00 UTC den 9:e.
+    expect(windowCalls).toContainEqual({ table: 'crm_calls', method: 'gte', args: ['call_at', '2026-08-09T22:00:00.000Z'] });
     expect(calls.filter((call) => call.table === 'crm_calls' && call.method === 'lt')).toEqual([]);
   });
 
