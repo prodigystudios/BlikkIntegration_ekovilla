@@ -85,6 +85,16 @@ describe('stockholmDayOf — svensk dag för en tidsstämpel', () => {
     expect(stockholmDayOf('2026-08-17T21:59:00Z')).toBe('2026-08-17');
     expect(stockholmDayOf('2026-02-01T22:59:00Z')).toBe('2026-02-01');
   });
+  it('ett rent datum (date-kolumn) är sin egen dag — så samma funktion duger för båda sorterna', () => {
+    // Ett datum utan klockslag tolkas som UTC-midnatt, alltså kl. 01/02 samma dag i Sverige.
+    expect(stockholmDayOf('2026-08-17')).toBe('2026-08-17');
+    expect(stockholmDayOf('2026-01-01')).toBe('2026-01-01');
+    expect(stockholmDayOf('2026-10-25')).toBe('2026-10-25');
+  });
+  it('samma svar andra gången (cachen ändrar inget)', () => {
+    expect(stockholmDayOf('2026-08-16T22:30:00Z')).toBe('2026-08-17');
+    expect(stockholmDayOf('2026-08-16T22:30:00Z')).toBe('2026-08-17');
+  });
   it('null för saknat eller oläsligt värde', () => {
     expect(stockholmDayOf(null)).toBeNull();
     expect(stockholmDayOf('')).toBeNull();
@@ -114,5 +124,8 @@ describe('stockholmDayStartISO — svensk midnatt som UTC-ögonblick', () => {
   });
   it('kastar på ett ogiltigt datum i stället för att ge ett påhittat filter', () => {
     expect(() => stockholmDayStartISO('2026-13-45x')).toThrow();
+    // Rätt form men ingen sådan dag: får inte rulla över till mars.
+    expect(() => stockholmDayStartISO('2026-02-30')).toThrow();
+    expect(() => stockholmDayStartISO('2026-13-01')).toThrow();
   });
 });

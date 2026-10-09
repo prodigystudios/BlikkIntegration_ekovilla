@@ -80,13 +80,6 @@ export function mapCrmGoalRows(rows: CrmGoalRow[] | null | undefined) {
   return (rows || []).map(mapCrmGoalRow);
 }
 
-export function formatLocalDateOnly(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 // 🧨 Båda nycklarna är SVENSKA dagar. De läses på servern (app/crm/installningar/page.tsx och
 // api/crm/goals), och servern kör UTC: strax efter midnatt den 1:a pekade månadsnyckeln på FÖRRA
 // månaden, och ett sparat mål hade då skrivit över den månadens budget med den nyas siffror.

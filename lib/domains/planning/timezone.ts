@@ -59,9 +59,19 @@ export function stockholmTodayISO(now: Date = new Date()): string {
  */
 export function stockholmDayOf(timestamp: string | null | undefined): string | null {
   if (!timestamp) return null;
+  const cached = dayOfCache.get(timestamp);
+  if (cached !== undefined) return cached;
   const at = new Date(timestamp);
-  return Number.isNaN(at.getTime()) ? null : stockholmTodayISO(at);
+  const day = Number.isNaN(at.getTime()) ? null : stockholmTodayISO(at);
+  // Rapporten och exporten delar samma rader i vecka för vecka och månad för månad, så varje tidsstämpel
+  // frågas om dussintals gånger. Svaret beror bara på strängen; taket håller minnet litet i en varm lambda.
+  if (dayOfCache.size >= DAY_OF_CACHE_MAX) dayOfCache.clear();
+  dayOfCache.set(timestamp, day);
+  return day;
 }
+
+const DAY_OF_CACHE_MAX = 50_000;
+const dayOfCache = new Map<string, string | null>();
 
 const offsetParts = new Intl.DateTimeFormat('en-US', {
   timeZone: PLANNING_TIME_ZONE,
@@ -94,8 +104,12 @@ function stockholmOffsetMs(at: number): number {
  */
 export function stockholmDayStartISO(day: string): string {
   const m = ISO_DATE_RE.exec(day.trim());
-  if (!m) throw new Error(`stockholmDayStartISO: ogiltigt datum "${day}"`);
-  const utcMidnight = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const utcMidnight = m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : NaN;
+  // Formen räcker inte: Date.UTC rullar 2026-02-30 till 2 mars utan att klaga, och ett filter mot en
+  // period ingen bett om är värre än ett fel. Dagen måste finnas.
+  if (!m || Number.isNaN(utcMidnight) || new Date(utcMidnight).toISOString().slice(0, 10) !== `${m[1]}-${m[2]}-${m[3]}`) {
+    throw new Error(`stockholmDayStartISO: ogiltigt datum "${day}"`);
+  }
   const guess = utcMidnight - stockholmOffsetMs(utcMidnight);
   return new Date(utcMidnight - stockholmOffsetMs(guess)).toISOString();
 }

@@ -69,6 +69,20 @@ describe('mapCrmTaskRow — delegated', () => {
   });
 });
 
+describe('mapCrmTaskRow — förfallodagen är den svenska dagen', () => {
+  // William 2026-10-09: svensk tid överallt. CRM skriver due_at kl. 12 UTC, men en rad skriven på annat
+  // sätt ska visa samma dag i listan som översiktens räknare (overviewSummary) räknar den på.
+  it('kl. 12 UTC är samma dag', () => {
+    expect(mapCrmTaskRow(rawTask({ due_at: '2026-10-09T12:00:00.000Z' })).due_date).toBe('2026-10-09');
+  });
+  it('kl. 23 UTC är redan nästa dag i Sverige', () => {
+    expect(mapCrmTaskRow(rawTask({ due_at: '2026-10-09T23:00:00.000Z' })).due_date).toBe('2026-10-10');
+  });
+  it('ingen förfallotid, ingen dag', () => {
+    expect(mapCrmTaskRow(rawTask({ due_at: null })).due_date).toBeNull();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // authorizeTaskOwner
 // ---------------------------------------------------------------------------

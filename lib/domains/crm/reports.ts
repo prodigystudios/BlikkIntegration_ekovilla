@@ -90,16 +90,13 @@ export type ReportData = {
 // ── Helpers ──
 // Ingen rå beloppsläsare här med flit: varje krontal i rapporten går genom netAmount, och en
 // lokal num() hade varit en öppen dörr tillbaka till bruttot.
-/** Månaden för en `date`-kolumn (quote_date) — redan en svensk dag, läses som den är. */
-function monthKey(date: string | null | undefined): string | null {
-  if (!date) return null;
-  const key = String(date).slice(0, 7);
-  return /^\d{4}-\d{2}$/.test(key) ? key : null;
-}
-
-/** Månaden för en TIDSSTÄMPEL (created_at, fakturans ögonblick) — den svenska dagens månad, aldrig UTC-dygnets. */
-function instantMonthKey(timestamp: string | null | undefined): string | null {
-  return stockholmDayOf(timestamp)?.slice(0, 7) ?? null;
+/**
+ * Månaden ett värde hör till, i svensk tid: den svenska dagens månad. Samma funktion för en tidsstämpel
+ * (created_at, fakturans ögonblick) och en `date`-kolumn (quote_date) — ett rent datum är sin egen dag i
+ * stockholmDayOf, så ingen anropare behöver välja rätt variant per kolumn.
+ */
+function monthKey(value: string | null | undefined): string | null {
+  return stockholmDayOf(value)?.slice(0, 7) ?? null;
 }
 
 /**
@@ -199,13 +196,13 @@ export function buildSalesOverTime(
     if (key) quoteByMonth.set(key, (quoteByMonth.get(key) || 0) + netAmount(q));
   }
   for (const o of ordersCreated) {
-    const key = instantMonthKey(o.created_at);
+    const key = monthKey(o.created_at);
     if (key) orderByMonth.set(key, (orderByMonth.get(key) || 0) + netAmount(o));
   }
   // Invoiced revenue belongs to the month it was INVOICED, not when the order was created — and
   // for a delfakturerad order, to the month of each round.
   for (const invoice of invoiced) {
-    const key = instantMonthKey(invoice.at);
+    const key = monthKey(invoice.at);
     if (key) invoicedByMonth.set(key, (invoicedByMonth.get(key) || 0) + invoice.amount);
   }
 
@@ -401,7 +398,7 @@ export function buildProfitability(
   for (const order of ordersInvoiced) {
     const calc = order.id ? afterCalculations.get(order.id) : undefined;
     if (!calc || calc.revenue == null) continue;
-    const key = instantMonthKey(invoicedAt(order));
+    const key = monthKey(invoicedAt(order));
     const bucket = key ? byMonth.get(key) ?? empty() : null;
     if (key && bucket) byMonth.set(key, bucket);
 

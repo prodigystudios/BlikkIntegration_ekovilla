@@ -240,16 +240,12 @@ export type CrmOverviewRows = {
 // privatkundsorder som om de vore samma sorts kronor. Veckomålen mättes dessutom mot ett brutto,
 // så en säljare med privatkunder nådde sitt mål 25 % för lätt.
 
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
-
-// Dagen ett värde hör till, i SVENSK tid — samma regel som rapporteringen (reports.ts). En `date`-kolumn
-// (quote_date) är redan en svensk dag; en tidsstämpel (call_at, created_at, fakturans ögonblick, due_at)
-// blir den svenska dag den faller på. UTC-dygnet lade en order loggad måndag 00.30 i förra veckan
+// Dagen ett värde hör till, i SVENSK tid — samma regel som rapporteringen (reports.ts). En tidsstämpel
+// (call_at, created_at, fakturans ögonblick, due_at) blir den svenska dag den faller på; en `date`-kolumn
+// (quote_date) är sin egen dag. UTC-dygnet lade en order loggad måndag 00.30 i förra veckan
 // (William 2026-10-09: svensk tid överallt — det tidigare "medvetet inte jagat" är överkört).
 function dayOf(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const text = String(value);
-  return DATE_ONLY.test(text) ? text : stockholmDayOf(text);
+  return stockholmDayOf(value);
 }
 
 function inWindow(value: string | null | undefined, from: string, toExclusive?: string): boolean {
