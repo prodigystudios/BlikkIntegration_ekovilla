@@ -4,6 +4,7 @@ import { fetchOrderStockRows } from '@/lib/domains/crm/reportKpisLoader';
 import { buildStockSnapshot } from '@/lib/domains/crm/orderStockHistory';
 import { upsertStockSnapshot } from '@/lib/domains/crm/orderStockHistoryLoader';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import { checkPortalCronAuth } from '@/lib/domains/portal/cronAuth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -13,17 +14,12 @@ export const fetchCache = 'force-no-store';
 
 // Orderstockens ögonblicksbild (William 2026-10-09). Körs varje timme via vercel.json; Vercel skickar
 // `Authorization: Bearer <CRON_SECRET>`. Skriver om DAGENS rad (svensk dag), så dagens sista körning blir dagens
-// läge och veckans sista dag veckans. Vitlistad i middleware.ts — grinden är hemligheten här.
-function isAuthorizedCron(req: NextRequest): boolean {
-  const cronSecret = (process.env.CRON_SECRET || '').trim();
-  const authHeader = String(req.headers.get('authorization') || '').trim();
-  const bearer = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
-  return Boolean(cronSecret) && bearer === cronSecret;
-}
-
+// läge och veckans sista dag veckans. Vitlistad i middleware.ts — grinden är hemligheten här, jämförd i konstant
+// tid med samma hjälpare som portalens cron; utan CRON_SECRET är routen avstängd (503), aldrig öppen.
 async function run(req: NextRequest) {
-  if (!isAuthorizedCron(req)) {
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
+  const auth = checkPortalCronAuth(req.headers.get('authorization'), process.env.CRON_SECRET);
+  if (!auth.ok) {
+    return NextResponse.json({ ok: false, error: auth.status === 503 ? 'cron_not_configured' : 'unauthorized' }, { status: auth.status });
   }
   const admin = getOptionalSupabaseAdmin();
   if (!admin) {

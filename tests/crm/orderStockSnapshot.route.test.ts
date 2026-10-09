@@ -34,9 +34,11 @@ describe('/api/crm/reports/order-stock-snapshot', () => {
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 
-  it('utan CRON_SECRET i miljön släpps ingen in — inte ens med en tom bearer', async () => {
+  it('utan CRON_SECRET i miljön är routen avstängd (503) — inte ens en tom bearer släpps in', async () => {
     vi.stubEnv('CRON_SECRET', '');
-    expect((await GET(req('Bearer '))).status).toBe(401);
+    expect((await GET(req('Bearer '))).status).toBe(503);
+    expect((await GET(req())).status).toBe(503);
+    expect(mockUpsert).not.toHaveBeenCalled();
   });
 
   it('skriver dagens rad, på den SVENSKA dagen', async () => {

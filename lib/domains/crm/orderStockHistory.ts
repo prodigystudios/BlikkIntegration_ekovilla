@@ -15,7 +15,8 @@ import { addDaysISO, stockholmDayOf } from '@/lib/domains/planning/timezone';
 //     till och med dagen, minus det som var slutfakturerat då, med delfakturarundorna dragna på sina datum.
 //     Per läge går inte — när ordern blev planerad eller pågående sparas inte. Avbrutna order räknas inte alls,
 //     eftersom vi inte vet när de avbröts; en vecka där en senare avbruten order fortfarande låg i stocken blir
-//     därför något för låg. Tabellen märker de veckorna "beräknad i efterhand".
+//     därför något för låg. Och varje order räknas med sitt NUVARANDE värde: ett tillägg i september syns också
+//     i augusti. Tabellen märker de veckorna "beräknad i efterhand".
 
 /**
  * Första dagen orderstocken räknas fram i efterhand. William 2026-10-09: "vi började använda systemet ca
@@ -34,7 +35,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function buildStockSnapshot(rows: OrderStockRow[], day: string): StockSnapshot {
   const stages = buildStockByStage(rows).map((stage) => ({ ...stage, value: round2(stage.value) }));
   const stock = buildOrderStock(rows, null);
-  return { day, stages, totalCount: stock.count, totalValue: round2(stock.value) };
+  // Totalen är summan av de AVRUNDADE lägena — då är den exakt vad Excel räknar fram ur raderna, och vad
+  // tabellen lovar (total_value = summan av stages). Lägena täcker precis orderstockens statusar.
+  return { day, stages, totalCount: stock.count, totalValue: round2(stages.reduce((sum, stage) => sum + stage.value, 0)) };
 }
 
 /** En order som efterhandsräkningen läser den: med rundornas datum, inte bara beloppen. */

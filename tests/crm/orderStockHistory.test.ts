@@ -87,6 +87,17 @@ describe('buildStockSnapshot', () => {
     expect(snapshot.stages.reduce((sum, s) => sum + s.count, 0)).toBe(3);
     expect(snapshot.stages.find((s) => s.key === 'partially_invoiced')?.value).toBe(4_000);
   });
+
+  it('totalen är exakt summan av de avrundade lägena — det Excel räknar fram ur raderna', () => {
+    // Tre lägen på x,005 kr: avrundade var för sig blir de inte samma sak som den avrundade summan.
+    const snapshot = buildStockSnapshot([
+      { status: 'draft', amount: 100.125, vat_percent: 0, invoice_rounds: [] },
+      { status: 'scheduled', amount: 200.125, vat_percent: 0, invoice_rounds: [] },
+      { status: 'in_progress', amount: 300.125, vat_percent: 0, invoice_rounds: [] },
+    ], '2026-10-09');
+    const stageSum = Math.round(snapshot.stages.reduce((sum, s) => sum + s.value, 0) * 100) / 100;
+    expect(snapshot.totalValue).toBe(stageSum);
+  });
 });
 
 const snap = (day: string, value: number): StockSnapshot => ({ day, totalCount: 1, totalValue: value, stages: [{ key: 'scheduled', count: 1, value }] });

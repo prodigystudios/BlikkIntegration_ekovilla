@@ -193,24 +193,40 @@ describe('Per vecka — orderstocken vid veckans slut', () => {
 
   it('står mellan hela företaget och säljarna, med lägena, Totalt och Antal order', () => {
     expect(start).toBeLessThan(findRow(sheet, 1, 'Anna Andersson', 9));
-    expect([0, 1, 2, 3, 4].map((i) => sheet.getCell(start + i, 2).value)).toEqual(['Ej planerad', 'Planerad', 'Pågår', 'Delfakturerad (det som återstår)', 'Klar att fakturera']);
+    // Rubriken på en egen rad, lägena raden under.
+    expect(sheet.getCell(start, 2).value).toBeNull();
+    expect([1, 2, 3, 4, 5].map((i) => sheet.getCell(start + i, 2).value)).toEqual(['Ej planerad', 'Planerad', 'Pågår', 'Delfakturerad (det som återstår)', 'Klar att fakturera']);
   });
 
   it('en vecka före den första bilden: bara totalen, kursiv och grå, utan formel', () => {
     const c = col(36); // 31 aug–6 sep, före bilden den 27 sep
     expect(sheet.getCell(total, c).value).toBe(12_000);
-    expect(sheet.getCell(start, c).value).toBeNull();
+    expect(sheet.getCell(start + 1, c).value).toBeNull();
     expect(sheet.getCell(total, c).font?.italic).toBe(true);
     expect(sheet.getCell(count, c).value).toBe(1);
   });
 
   it('en vecka med en bild: lägena och Totalt som summaformel', () => {
     const c = col(39); // 21–27 sep
-    expect(sheet.getCell(start, c).value).toBe(20_000);
-    expect(sheet.getCell(start + 1, c).value).toBe(30_000);
-    expect(formulaOf(sheet.getCell(total, c))).toBe(`SUM(${sheet.getColumn(c).letter}${start}:${sheet.getColumn(c).letter}${total - 1})`);
+    expect(sheet.getCell(start + 1, c).value).toBe(20_000);
+    expect(sheet.getCell(start + 2, c).value).toBe(30_000);
+    expect(formulaOf(sheet.getCell(total, c))).toBe(`SUM(${sheet.getColumn(c).letter}${start + 1}:${sheet.getColumn(c).letter}${total - 1})`);
     expect(resultOf(sheet.getCell(total, c))).toBe(50_000);
     expect(sheet.getCell(total, c).font?.italic).toBe(false);
+    // Bilden är från söndagen den 27:e = veckans sista dag: ingen not.
+    expect(sheet.getCell(total, c).note).toBeUndefined();
+  });
+
+  it('en vecka vars senaste bild inte är från söndagen får en not med datumet', () => {
+    const friday = buildOwnerReport({
+      data, range: { from: '2026-01-01', to: '2026-10-09' }, today: '2026-10-09', goals, basis: null,
+      orderStockRows: [{ status: 'scheduled', amount: 30_000, vat_percent: 0, invoice_rounds: [] }],
+      stockHistory: { snapshots: [{ day: '2026-09-25', totalCount: 1, totalValue: 5_000, stages: [{ key: 'draft', count: 1, value: 5_000 }] }], firstSnapshotDay: '2026-09-25', reconstructOrders: null },
+    });
+    const s = buildOwnerWorkbook(friday).getWorksheet('Per vecka')!;
+    const t = findRow(s, 2, 'Totalt', findRow(s, 1, 'Orderstock vid veckans slut', 8));
+    const c = 3 + friday.weeks.findIndex((w) => w.week === 39);
+    expect(String(s.getCell(t, c).note)).toContain('25 september 2026');
   });
 
   it('den pågående veckan: läget nu', () => {

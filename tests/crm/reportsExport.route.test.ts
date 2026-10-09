@@ -150,6 +150,17 @@ describe('GET /api/crm/reports/export', () => {
     expect(vi.mocked(fetchReconstructOrders)).toHaveBeenCalledWith(expect.anything(), { from: '2026-08-10', to: '2026-10-08' });
   });
 
+  it('bara efterhandsläsningen felar: bilderna och läget nu står kvar, blocket säger inte "kunde inte läsas"', async () => {
+    vi.mocked(fetchReconstructOrders).mockRejectedValueOnce(new Error('nere'));
+    const res = await GET();
+    expect(res.status).toBe(200);
+    const sheet = (await workbookOf(res)).getWorksheet('Per vecka')!;
+    const texts: string[] = [];
+    sheet.eachRow((row) => texts.push(String(row.getCell(1).value ?? '')));
+    expect(texts).toContain('Orderstock vid veckans slut');
+    expect(texts).not.toContain('Orderstock vid veckans slut — kunde inte läsas');
+  });
+
   it('orderstockens historik kunde inte läsas: filen kommer ändå, och blocket säger det', async () => {
     vi.mocked(fetchStockSnapshots).mockRejectedValueOnce(new Error('nere'));
     const res = await GET();

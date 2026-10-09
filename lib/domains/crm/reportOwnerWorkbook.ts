@@ -305,19 +305,26 @@ const SELLER_ROWS: MetricRow[] = [
 ];
 
 const STOCK_STAGE_ORDER: StockStageKey[] = ['draft', 'scheduled', 'in_progress', 'partially_invoiced', 'completed'];
-/** Lägena, Totalt och Antal order. */
-const STOCK_ROWS = STOCK_STAGE_ORDER.length + 2;
+/** Rubriken, lägena, Totalt och Antal order. */
+const STOCK_ROWS = STOCK_STAGE_ORDER.length + 3;
 
 /**
  * Orderstocken vid veckans slut: ett läge per rad, Totalt (summan av lägena som formel) och Antal order.
  * En vecka räknad i efterhand har bara totalen — kursiv och grå, utan formel, eftersom lägena saknas.
  * Årskolumnen lämnas tom: en orderstock är ett läge, och veckornas lägen går inte att lägga ihop.
  */
-function writeStockBlock(sheet: ExcelJS.Worksheet, stockWeeks: Array<WeekStock | null> | null, at: { start: number; firstCol: number; totalCol: number }) {
-  const totalRow = at.start + STOCK_STAGE_ORDER.length;
+function writeStockBlock(
+  sheet: ExcelJS.Worksheet,
+  stockWeeks: Array<WeekStock | null> | null,
+  weeks: Array<{ to: string }>,
+  at: { start: number; firstCol: number; totalCol: number },
+) {
+  // Rubriken på en egen rad: bredvid ett lägesnamn i kolumn B hade den klippts vid kolumn A:s kant.
+  const firstStage = at.start + 1;
+  const totalRow = firstStage + STOCK_STAGE_ORDER.length;
   const countRow = totalRow + 1;
   sheet.getCell(at.start, 1).value = stockWeeks ? 'Orderstock vid veckans slut' : 'Orderstock vid veckans slut — kunde inte läsas';
-  STOCK_STAGE_ORDER.forEach((key, i) => { sheet.getCell(at.start + i, 2).value = STAGE_LABELS[key]; });
+  STOCK_STAGE_ORDER.forEach((key, i) => { sheet.getCell(firstStage + i, 2).value = STAGE_LABELS[key]; });
   sheet.getCell(totalRow, 2).value = 'Totalt';
   sheet.getCell(countRow, 2).value = 'Antal order';
 
@@ -326,9 +333,14 @@ function writeStockBlock(sheet: ExcelJS.Worksheet, stockWeeks: Array<WeekStock |
     if (!week) return;
     if (week.stages) {
       STOCK_STAGE_ORDER.forEach((key, i) => {
-        sheet.getCell(at.start + i, c).value = week.stages?.find((stage) => stage.key === key)?.value ?? 0;
+        sheet.getCell(firstStage + i, c).value = week.stages?.find((stage) => stage.key === key)?.value ?? 0;
       });
-      formula(sheet.getCell(totalRow, c), `SUM(${ref(at.start, c)}:${ref(totalRow - 1, c)})`, week.value);
+      formula(sheet.getCell(totalRow, c), `SUM(${ref(firstStage, c)}:${ref(totalRow - 1, c)})`, week.value);
+      // Veckans senaste bild är inte från söndagen: jobbet sparade inget senare den veckan. Läget står kvar, men
+      // med datumet, så att ingen läser fredagens stock som veckans slut.
+      if (week.kind === 'snapshot' && week.day !== weeks[index]?.to) {
+        sheet.getCell(totalRow, c).note = `Läget den ${longDate(week.day)} — inget sparades senare den veckan.`;
+      }
     } else {
       sheet.getCell(totalRow, c).value = week.value;
     }
@@ -352,7 +364,7 @@ function buildWeekly(workbook: ExcelJS.Workbook, report: OwnerReport) {
   title(sheet, `Per vecka ${report.year}`, [
     'Offerter på offertdatum, order på skapandedag, fakturerat på fakturadag. Belopp exklusive moms.',
     'Kursiv hit rate = preliminär (veckans offerter är yngre än 30 dagar). * = veckan pågår.',
-    'Orderstock = det som återstår att fakturera vid veckans slut (den pågående veckan: nu). Kursivt = beräknat i efterhand — bara totalen, och avbrutna order räknas inte.',
+    'Orderstock = det som återstår att fakturera vid veckans slut (den pågående veckan: nu). Kursivt = beräknat i efterhand — bara totalen, med orderns nuvarande värde, och avbrutna order räknas inte.',
   ]);
 
   const weeks = report.weeks;
@@ -419,7 +431,7 @@ function buildWeekly(workbook: ExcelJS.Workbook, report: OwnerReport) {
   });
   for (let column = 1; column <= totalCol; column++) bottomBorder(sheet.getCell(r(companyRows - 1), column), 'medium', GREEN);
 
-  writeStockBlock(sheet, report.stockWeeks, { start: stockStart, firstCol, totalCol });
+  writeStockBlock(sheet, report.stockWeeks, weeks, { start: stockStart, firstCol, totalCol });
 
   report.sellers.forEach((seller, s) => {
     SELLER_ROWS.forEach((line, metricIndex) => {
