@@ -126,16 +126,27 @@ describe('GET /api/admin/time/entries — inmatning', () => {
     expect(mockEntries).not.toHaveBeenCalled();
   });
 
-  it('hämtar hela månaden för den efterfrågade personen', async () => {
+  it('hämtar hela månaden för den efterfrågade personen — tidraderna för hela kantveckorna', async () => {
     await GET(req(URL_OK));
-    const range = { from: '2026-08-01', to: '2026-08-31' };
-    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), range, { userId: ANNA });
-    expect(mockCompensations).toHaveBeenCalledWith(expect.anything(), range, { userId: ANNA });
+    // Augusti 2026 börjar en lördag och slutar en måndag: veckosummorna behöver 27 juli–6 september.
+    // Ersättningarna har inga veckor och stannar i månaden.
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-07-27', to: '2026-09-06' }, { userId: ANNA });
+    expect(mockCompensations).toHaveBeenCalledWith(expect.anything(), { from: '2026-08-01', to: '2026-08-31' }, { userId: ANNA });
   });
 
   it('räknar februari rätt — sista dagen härleds, den antas inte', async () => {
     await GET(req(`/api/admin/time/entries?period=2026-02&user_id=${ANNA}`));
-    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-02-01', to: '2026-02-28' }, { userId: ANNA });
+    // 1 februari 2026 är en söndag, 28:e en lördag.
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-01-26', to: '2026-03-01' }, { userId: ANNA });
+    expect(mockCompensations).toHaveBeenCalledWith(expect.anything(), { from: '2026-02-01', to: '2026-02-28' }, { userId: ANNA });
+  });
+
+  it('grannmånadens rader räknas i veckosumman, aldrig som dagrader', async () => {
+    mockEntries.mockResolvedValue({ data: [shiftRow, { ...shiftRow, id: 'e0', work_date: '2026-07-31' }], error: null } as any);
+    const json = await (await GET(req(URL_OK))).json();
+    expect(json.data.rows.map((row: { date: string }) => row.date)).toEqual(['2026-08-14']);
+    expect(json.data.workMinutes).toBe(540);
+    expect(json.data.weeks.map((w: { week: number; total: { workMinutes: number } }) => [w.week, w.total.workMinutes])).toEqual([[33, 540]]);
   });
 });
 

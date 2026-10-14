@@ -30,6 +30,18 @@ async function extractPageText(bytes: Uint8Array, pageNumber: number): Promise<s
     .filter(Boolean);
 }
 
+/** Samma som extractPageText men med baslinjen — för att pröva VAR något står, inte bara att det står. */
+async function extractPageItems(bytes: Uint8Array, pageNumber: number): Promise<Array<{ str: string; y: number }>> {
+  const doc = await getDocument({ data: new Uint8Array(bytes) }).promise;
+  const content = await (await doc.getPage(pageNumber)).getTextContent();
+  return content.items
+    .map((item) => {
+      const it = item as { str?: string; transform?: number[] };
+      return { str: (it.str ?? '').trim(), y: it.transform?.[5] ?? 0 };
+    })
+    .filter((it) => it.str);
+}
+
 async function pageCount(bytes: Uint8Array): Promise<number> {
   return (await getDocument({ data: new Uint8Array(bytes) }).promise).numPages;
 }
@@ -313,7 +325,9 @@ describe('renderPayrollPdf', () => {
     const items = Array.from({ length: 4 }, (_, i) => compensation({ id: `c${i}`, note: `Post ${i}` }));
     let sawOwnPage = false;
 
-    for (const rowCount of [38, 40, 42, 44, 46]) {
+    // Brett med flit: veckoraderna (2026-10-14) flyttade brytpunkten ett halvdussin rader, och ett
+    // smalt intervall hade då slutat träffa fallet.
+    for (let rowCount = 28; rowCount <= 48; rowCount += 2) {
       const rows = Array.from({ length: rowCount }, (_, i) =>
         shift({ workDate: `2026-08-${String((i % 28) + 1).padStart(2, '0')}` }));
       const bytes = await render([person(rows, items)]);
@@ -402,4 +416,63 @@ describe('renderPayrollPdf', () => {
     const text = (await extractPageText(await render([person([shift({ label: null })])]), 1)).join(' ');
     expect(text).toContain('Arbetsorder');
   });
+
+  // Veckosummorna (ekonomi 2026-10-14): övertiden räknas per vecka, och byrån drog linjer i
+  // utskriften och summerade veckorna för hand.
+  it('summerar varje vecka efter dess sista dag', async () => {
+    const text = await extractPageText(
+      await render([person([shift({ workDate: '2026-08-03' }), shift({ workDate: '2026-08-05' }), shift({ workDate: '2026-08-10' })])]),
+      1,
+    );
+    const at = (str: string) => {
+      const index = text.indexOf(str);
+      expect(index, str).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    expect(at('mån 3 aug')).toBeLessThan(at('ons 5 aug'));
+    expect(at('ons 5 aug')).toBeLessThan(at('Vecka 32 · 3–9 aug'));
+    expect(text[at('Vecka 32 · 3–9 aug') + 2]).toBe('18,00 h'); // rast, sedan arbetat
+    expect(at('Vecka 32 · 3–9 aug')).toBeLessThan(at('mån 10 aug'));
+    expect(at('mån 10 aug')).toBeLessThan(at('Vecka 33 · 10–16 aug'));
+    expect(at('Vecka 33 · 10–16 aug')).toBeLessThan(at('Totalt'));
+  });
+
+  it('kantveckan: hela veckan, och månadens del på raden under — månadens summor rörs inte', async () => {
+    // Augusti 2026 börjar en lördag: v. 31 = 27 juli–2 augusti. Torsdagen i juli räknas i veckan,
+    // aldrig som en dagrad i augustis underlag.
+    const text = await extractPageText(await render([person([shift({ workDate: '2026-07-30' }), shift({ workDate: '2026-08-01' })])]), 1);
+    const week = text.indexOf('Vecka 31 · 27 jul–2 aug');
+    expect(week).toBeGreaterThanOrEqual(0);
+    expect(text.slice(week, week + 8)).toEqual(['Vecka 31 · 27 jul–2 aug', '2,00 h', '18,00 h', '—', 'varav 1–2 aug', '1,00 h', '9,00 h', '—']);
+    expect(text.join(' ')).not.toContain('tor 30 jul');
+    expect(text[text.indexOf('Totalt') + 2]).toBe('9,00 h');
+  });
+
+  it('veckoraden står aldrig ensam överst på en sida, och aldrig nere i foten', async () => {
+    // Samma regel som totalraden: en sida som börjar med "Vecka 33" och inte en enda av veckans dagar
+    // läser som en vecka utan rader. Och en veckorad som inte fått sin plats prövad ritas rakt ned i
+    // foten (pdf-lib klipper ingenting). Svept, eftersom var brytningen hamnar beror på måttkonstanterna.
+    const isDay = (str: string) => /^(mån|tis|ons|tor|fre|lör|sön) \d/.test(str);
+    let sawLastDayCarriedOver = false;
+    for (let rowCount = 34; rowCount <= 56; rowCount += 1) {
+      const rows = Array.from({ length: rowCount }, (_, i) => shift({ workDate: `2026-08-${String((i % 31) + 1).padStart(2, '0')}` }));
+      const bytes = await render([person(rows)]);
+      const pages = await pageCount(bytes);
+      for (let n = 1; n <= pages; n++) {
+        for (const item of await extractPageItems(bytes, n)) {
+          // BODY_BOTTOM i payrollPdf.ts: under den börjar foten.
+          if (/^(Vecka |varav )/.test(item.str)) expect(item.y, `"${item.str}" i foten, sida ${n} vid ${rowCount} rader`).toBeGreaterThanOrEqual(80);
+        }
+        if (n === 1) continue;
+        const text = await extractPageText(bytes, n);
+        const body = text.slice(text.indexOf('ANTECKNING') + 1);
+        expect(body[0]?.startsWith('Vecka '), `sida ${n} vid ${rowCount} rader börjar med en veckorad`).toBe(false);
+        // Vaktar svepet: brytningen måste någon gång ha fallit före en veckas SISTA dag, så att dagen
+        // följde med veckoraden över — det är fallet reservationen finns för.
+        const firstWeek = body.findIndex((str) => str.startsWith('Vecka '));
+        if (firstWeek > 0 && body.slice(0, firstWeek).filter(isDay).length === 1) sawLastDayCarriedOver = true;
+      }
+    }
+    expect(sawLastDayCarriedOver).toBe(true);
+  }, 60_000);
 });

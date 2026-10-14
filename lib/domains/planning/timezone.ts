@@ -205,3 +205,18 @@ export function mondayOfISO(iso: string): string | null {
   const day = isoDayNumber(iso);
   return day === null ? null : isoFromDayNumber(mondayDayNumber(day));
 }
+
+/**
+ * ISO-veckonumret för ett ISO-datum — måndag till söndag, vecka 1 är den som innehåller årets
+ * första torsdag (svensk kalender). Ren UTC-aritmetik: inga lokala fält, ingen sommartid.
+ *
+ * Flyttad hit från planning/insights.ts (som återexporterar den) när attestvyns veckosummor blev
+ * en andra användare i webbläsaren.
+ */
+export function isoWeek(iso: string): number {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3); // Thursday of this week
+  const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  firstThu.setUTCDate(firstThu.getUTCDate() - ((firstThu.getUTCDay() + 6) % 7) + 3);
+  return 1 + Math.round((d.getTime() - firstThu.getTime()) / (7 * 86_400_000));
+}

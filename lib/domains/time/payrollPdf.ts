@@ -15,7 +15,16 @@ import {
   type CompensationItem,
 } from './compensations';
 import { minutesToHours } from './hours';
-import { breakWasDeducted, reasonOrJobLabel, type DayRow, type PersonPeriodSummary } from './summary';
+import {
+  breakWasDeducted,
+  formatDaySpan,
+  inPeriodSpan,
+  reasonOrJobLabel,
+  rowsByWeek,
+  type DayRow,
+  type PersonPeriodSummary,
+  type WeekSummary,
+} from './summary';
 
 // Månadens timmar som PDF — en anställd per avsnitt, utskriven ur attesten (/ekonomi).
 //
@@ -120,6 +129,13 @@ const LINE_STEP = 9.5;
 const ROW_GAP = 3.5;
 /** Totalraden — baslinje plus den tjockare linjen över den. */
 const TOTALS_HEIGHT = LINE_STEP + 10;
+/** Luft ovanför och under veckoradens band, så det inte nuddar dagraderna runt det. */
+const WEEK_PAD = 2;
+
+/** Veckoraden: en rad, två när veckan går över månadsskiftet ("varav 1–4 okt"). */
+function weekRowHeight(week: WeekSummary): number {
+  return WEEK_PAD + (week.crossesPeriod ? 2 : 1) * LINE_STEP + ROW_GAP + WEEK_PAD;
+}
 
 const LABEL_SIZE = 6;
 const FOOTER_RULE_Y = 62;
@@ -372,20 +388,36 @@ function renderPerson(
     draw(flow.page, `${name} har inte rapporterat något den här månaden.`, M_LEFT, flow.y, fonts.regular, 8, MUTED);
   }
 
-  for (const [index, row] of summary.rows.entries()) {
-    const reason = cellLines(reasonOrJobLabel(row), fonts.regular, COLUMNS.reason.w);
-    const note = cellLines(row.note, fonts.regular, COLUMNS.note.w);
-    const lines = Math.max(1, reason.length, note.length);
-    const height = lines * LINE_STEP + ROW_GAP;
-    // ⚠️ SISTA RADEN BÄR MED SIG TOTALRADEN in i platsprövningen.
-    //
-    // Totalraden är inte ett eget block utan tabellens sista rad, och den får aldrig bli ensam på
-    // en sida: en sida med kolumnrubriker, ordet "Totalt" och inte en enda dag läser som en
-    // DELSUMMA för just den sidan — och en delsumma är precis vad månadssumman inte är. Prövas de
-    // var för sig ryms den sista dagen men inte summan, och då är brytningen redan gjord.
-    flow.ensure(height + (index === summary.rows.length - 1 ? TOTALS_HEIGHT : 0));
-    drawDayRow(flow.page, fonts, row, flow.y, reason, note);
-    flow.y -= height;
+  // Vecka för vecka, med veckans summa efter dess sista dag (ekonomi 2026-10-14 — övertiden räknas
+  // per vecka). Summorna kommer ur summarizePerson, som allt annat här.
+  const groups = rowsByWeek(summary);
+  for (const [groupIndex, group] of groups.entries()) {
+    for (const [index, row] of group.rows.entries()) {
+      const reason = cellLines(reasonOrJobLabel(row), fonts.regular, COLUMNS.reason.w);
+      const note = cellLines(row.note, fonts.regular, COLUMNS.note.w);
+      const lines = Math.max(1, reason.length, note.length);
+      const height = lines * LINE_STEP + ROW_GAP;
+      // ⚠️ VECKANS SISTA DAG BÄR MED SIG VECKORADEN, OCH TABELLENS SISTA DAG TOTALRADEN, in i
+      // platsprövningen.
+      //
+      // Ingen av dem får bli ensam överst på en sida. En sida som börjar med "Vecka 41" och inte en
+      // enda av veckans dagar läser som en vecka utan rader; en sida med kolumnrubriker, ordet
+      // "Totalt" och ingen dag läser som en DELSUMMA för just den sidan — och en delsumma är precis
+      // vad månadssumman inte är. Prövas de var för sig ryms dagen men inte summan, och då är
+      // brytningen redan gjord.
+      const lastInWeek = index === group.rows.length - 1;
+      const lastInTable = lastInWeek && groupIndex === groups.length - 1;
+      flow.ensure(
+        height + (lastInWeek && group.week ? weekRowHeight(group.week) : 0) + (lastInTable ? TOTALS_HEIGHT : 0),
+      );
+      drawDayRow(flow.page, fonts, row, flow.y, reason, note);
+      flow.y -= height;
+    }
+    if (group.week) {
+      // Ingen ensure: platsen reserverades ihop med veckans sista dag ovan.
+      drawWeekRow(flow.page, fonts, group.week, ctx.range, flow.y);
+      flow.y -= weekRowHeight(group.week);
+    }
   }
 
   if (summary.rows.length > 0) {
@@ -512,6 +544,45 @@ function drawTableHead(page: PDFPage, fonts: Fonts, y: number, ruleY: number) {
   draw(page, 'ORSAK / JOBB', COLUMNS.reason.x, y, fonts.bold, LABEL_SIZE, GREEN_TABLE);
   draw(page, 'ANTECKNING', COLUMNS.note.x, y, fonts.bold, LABEL_SIZE, GREEN_TABLE);
   drawRule(page, ruleY);
+}
+
+/**
+ * Veckans summa — ett salviafärgat band efter veckans sista dag, med en linje under som skiljer
+ * veckorna åt.
+ *
+ * En vecka som går över ett månadsskifte visar HELA veckan på första raden, även grannmånadens dagar
+ * (Williams beslut 2026-10-14), och månadens del på den andra: "varav 1–4 okt".
+ */
+function drawWeekRow(page: PDFPage, fonts: Fonts, week: WeekSummary, range: { from: string; to: string }, top: number) {
+  const y = top - WEEK_PAD;
+  const lines = week.crossesPeriod ? 2 : 1;
+  const bandTop = y + ROW_SIZE;
+  const bandBottom = y - (lines - 1) * LINE_STEP - ROW_GAP;
+  page.drawRectangle({ x: M_LEFT, y: bandBottom, width: M_RIGHT - M_LEFT, height: bandTop - bandBottom, color: BOX });
+  drawRule(page, bandBottom, MUTED, 0.6);
+
+  const hours = (minutes: number) => (minutes > 0 ? `${formatHours(minutes)} h` : '—');
+  const numbers = (totals: WeekSummary['total'], lineY: number, font: PDFFont, ink: RGB) => {
+    drawRight(page, hours(totals.breakMinutes), COLUMNS.break.x + COLUMNS.break.w, lineY, font, ROW_SIZE, MUTED);
+    drawRight(page, hours(totals.workMinutes), COLUMNS.work.x + COLUMNS.work.w, lineY, font, ROW_SIZE, ink);
+    drawRight(
+      page,
+      hours(totals.absenceMinutes),
+      COLUMNS.absence.x + COLUMNS.absence.w,
+      lineY,
+      font,
+      ROW_SIZE,
+      totals.absenceMinutes > 0 ? WARN : MUTED,
+    );
+  };
+
+  draw(page, `Vecka ${week.week} · ${formatDaySpan(week.from, week.to)}`, COLUMNS.date.x, y, fonts.bold, ROW_SIZE, INK);
+  numbers(week.total, y, fonts.bold, INK);
+  if (week.crossesPeriod) {
+    const partY = y - LINE_STEP;
+    draw(page, `varav ${inPeriodSpan(week, range)}`, COLUMNS.date.x, partY, fonts.regular, ROW_SIZE, MUTED);
+    numbers(week.inPeriod, partY, fonts.regular, MUTED);
+  }
 }
 
 function drawDayRow(page: PDFPage, fonts: Fonts, row: DayRow, y: number, reason: string[], note: string[]) {

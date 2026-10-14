@@ -27,7 +27,15 @@ import {
   type TimePeriodStatus,
 } from '@/lib/domains/time/approvals';
 import { reminderReasonFor, remindableUsers, smsReachSentence } from '@/lib/domains/time/reminders';
-import { breakWasDeducted, reasonOrJobLabel, type PersonPeriodSummary } from '@/lib/domains/time/summary';
+import {
+  breakWasDeducted,
+  formatDaySpan,
+  inPeriodSpan,
+  reasonOrJobLabel,
+  rowsByWeek,
+  type PersonPeriodSummary,
+  type WeekSummary,
+} from '@/lib/domains/time/summary';
 import {
   auditActionLabel,
   auditWorkDate,
@@ -1356,14 +1364,23 @@ function PersonDays({
               </tr>
             </thead>
             <tbody>
-              {summary.rows.map((day, index) => (
-                <DayRowCells
-                  key={day.entryId || `${day.date}-${index}`}
-                  day={day}
-                  canCorrect={canCorrect}
-                  onEdit={onEdit}
-                  onDelete={onDelete}
-                />
+              {/* Vecka för vecka, med veckans summa efter dess sista dag — övertiden räknas per
+                  vecka. rowsByWeek tappar aldrig en dagrad: saknas veckorna står raderna ändå. */}
+              {rowsByWeek(summary).map((group, groupIndex) => (
+                <React.Fragment key={group.week?.from ?? 'utan-vecka'}>
+                  {group.rows.map((day, index) => (
+                    <DayRowCells
+                      key={day.entryId || `${day.date}-${groupIndex}-${index}`}
+                      day={day}
+                      canCorrect={canCorrect}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                    />
+                  ))}
+                  {group.week ? (
+                    <WeekTotalRow week={group.week} range={{ from: summary.from, to: summary.to }} canCorrect={canCorrect} />
+                  ) : null}
+                </React.Fragment>
               ))}
             </tbody>
             <tfoot>
@@ -1475,6 +1492,50 @@ function PersonDays({
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Veckans summa, efter veckans sista dag. Ekonomi bad om den 2026-10-14: övertiden räknas per vecka,
+ * och de drog linjer mellan veckorna och räknade dem för hand.
+ *
+ * En vecka som går över ett månadsskifte visar HELA veckan, även grannmånadens dagar (Williams
+ * beslut), med månadens del på raden under — "varav 1–4 okt". Talen kommer ur summarizePerson
+ * (WeekSummary); här räknas ingenting, så skärmen och löneunderlagets PDF kan inte säga olika.
+ */
+function WeekTotalRow({
+  week, range, canCorrect,
+}: {
+  week: WeekSummary;
+  range: { from: string; to: string };
+  canCorrect: boolean;
+}) {
+  const hours = (minutes: number) => (minutes > 0 ? `${formatHours(minutes)} h` : '—');
+  const part = (minutes: number) =>
+    week.crossesPeriod ? <span className="block text-xs font-normal text-slate-500">{hours(minutes)}</span> : null;
+  return (
+    <tr className="border-x-0 border-b-2 border-t border-b-slate-300 border-t-slate-200 bg-[#f1f5ee] align-top">
+      <td className="whitespace-nowrap px-2 py-1.5" colSpan={2}>
+        <span className="font-semibold text-slate-900">Vecka {week.week}</span>
+        <span className="text-slate-500"> · {formatDaySpan(week.from, week.to)}</span>
+        {week.crossesPeriod ? (
+          <span className="block text-xs text-slate-500">varav {inPeriodSpan(week, range)}</span>
+        ) : null}
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+        {hours(week.total.breakMinutes)}
+        {part(week.inPeriod.breakMinutes)}
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right font-semibold tabular-nums text-slate-900">
+        {hours(week.total.workMinutes)}
+        {part(week.inPeriod.workMinutes)}
+      </td>
+      <td className="whitespace-nowrap px-2 py-1.5 text-right tabular-nums text-slate-600">
+        {hours(week.total.absenceMinutes)}
+        {part(week.inPeriod.absenceMinutes)}
+      </td>
+      <td colSpan={canCorrect ? 3 : 2} />
+    </tr>
   );
 }
 

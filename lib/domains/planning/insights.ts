@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { mapWorkOrderJob, scopeForSegment, type WorkOrderJobRow } from './display';
 import { expandWorkOrderToBacklogItems, SCHEDULABLE_WORK_ORDER_STATUSES } from './backlog';
 import { isDeadWorkOrder } from '@/lib/domains/crm/work-orders';
-import { mondayOfISO } from './timezone';
+import { isoWeek, mondayOfISO } from './timezone';
 import { listScopeSpans } from './schedule';
 import { chunkIds, readAllPages } from './pagedRead';
 import { scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue } from './weekValue';
@@ -46,14 +46,9 @@ function addDaysISO(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-// Pure: ISO week number for an ISO date (for the chart label "v.NN").
-export function isoWeek(iso: string): number {
-  const d = new Date(`${iso}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7) + 3); // Thursday of this week
-  const firstThu = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
-  firstThu.setUTCDate(firstThu.getUTCDate() - ((firstThu.getUTCDay() + 6) % 7) + 3);
-  return 1 + Math.round((d.getTime() - firstThu.getTime()) / (7 * 86_400_000));
-}
+// ISO-veckonumret bor i ./timezone (ren modul, inga importer) så att attestvyn i webbläsaren kan
+// använda det utan att dra in planeringens laddare. Återexporteras för befintliga anropare.
+export { isoWeek };
 
 export type InsightJob = {
   weekStart: string;
