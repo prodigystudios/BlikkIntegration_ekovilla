@@ -4,6 +4,18 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { z } from 'zod';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import {
+  EGENKONTROLL_CHECKS,
+  EGENKONTROLL_CLOSED_STAGE_COLUMNS,
+  EGENKONTROLL_COMMENT_FIELD,
+  EGENKONTROLL_MATERIAL_FIELD,
+  EGENKONTROLL_OPEN_STAGE_COLUMNS,
+  EGENKONTROLL_PROJECT_FIELDS,
+  EGENKONTROLL_SECTIONS,
+  EGENKONTROLL_SIGNATURE_FIELDS,
+  type EgenkontrollClosedStageKey,
+  type EgenkontrollOpenStageKey,
+} from '@/lib/domains/egenkontroll/template';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -66,6 +78,29 @@ const BRAND = {
   footerBadgePath: path.join(process.cwd(), 'public', 'brand', 'Behöriglösull-logga-blue.png'),
   faviconPath: path.join(process.cwd(), 'public', 'favicon-from-ico.png'),
 } as const;
+
+// Etapptabellernas geometri, per kolumnnyckel. Rubrikerna och ordningen kommer ur
+// lib/domains/egenkontroll/template.ts; en ny kolumn där stoppar typkontrollen tills den fått en bredd här.
+const OPEN_STAGE_GEOMETRY: Record<EgenkontrollOpenStageKey, Pick<TableColumn, 'width' | 'align'>> = {
+  etapp: { width: 94 },
+  ytaM2: { width: 46, align: 'right' },
+  bestalldTjocklek: { width: 68, align: 'right' },
+  sattningsprocent: { width: 54, align: 'right' },
+  installeradTjocklek: { width: 62, align: 'right' },
+  antalSack: { width: 50, align: 'right' },
+  installeradDensitet: { width: 68, align: 'right' },
+  lambdavarde: { width: 56, align: 'right' },
+};
+
+const CLOSED_STAGE_GEOMETRY: Record<EgenkontrollClosedStageKey, Pick<TableColumn, 'width' | 'align'>> = {
+  etapp: { width: 110 },
+  ytaM2: { width: 48, align: 'right' },
+  bestalldTjocklek: { width: 68, align: 'right' },
+  uppmatTjocklek: { width: 68, align: 'right' },
+  antalSackKgPerSack: { width: 50, align: 'right' },
+  installeradDensitet: { width: 70, align: 'right' },
+  lambdavarde: { width: 58, align: 'right' },
+};
 
 const PAGE_WIDTH = 595.28;
 const PAGE_HEIGHT = 841.89;
@@ -590,73 +625,52 @@ export async function POST(req: NextRequest): Promise<Response> {
       return comment || 'Ej markerad';
     };
 
-    const controlRows = [
-      { label: 'Takfotsventilation', value: renderCheck(checks?.takfotsventilation) },
-      { label: 'Snickerier', value: renderCheck(checks?.snickerier) },
-      { label: 'Tätskikt', value: renderCheck(checks?.tatskikt) },
-      { label: 'Genomförningar', value: renderCheck(checks?.genomforningar) },
-      { label: 'Grovstädning', value: renderCheck(checks?.grovstadning) },
-      { label: 'Märkskylt', value: renderCheck(checks?.markskylt) },
-    ].filter((row): row is { label: string; value: string } => Boolean(row.value));
+    // Blankettens etiketter bor i lib/domains/egenkontroll/template.ts — KMA-planens bilaga 6 visar
+    // samma blankett tom, och en etikett som byts här ska bytas där också.
+    const controlRows = EGENKONTROLL_CHECKS.map(({ key, label }): { label: string; value: string | null } => ({ label, value: renderCheck(checks?.[key]) }))
+      .filter((row): row is SectionRow => Boolean(row.value));
 
     createPage();
     drawPageHeading('Egenkontroll');
 
     drawTwoColumnCard(
-      'Projekt',
+      EGENKONTROLL_SECTIONS.project,
       [
-        { label: 'Kund / beställare', value: sanitizePdfText(clientName || '-') },
-        { label: 'Adress', value: [streetAddress, [postalCode, city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '-' },
-        { label: 'Installationsdatum', value: sanitizePdfText(installationDate || '-') },
+        { label: EGENKONTROLL_PROJECT_FIELDS.client, value: sanitizePdfText(clientName || '-') },
+        { label: EGENKONTROLL_PROJECT_FIELDS.address, value: [streetAddress, [postalCode, city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || '-' },
+        { label: EGENKONTROLL_PROJECT_FIELDS.installationDate, value: sanitizePdfText(installationDate || '-') },
       ],
       [
-        { label: 'Ansvarig installatör', value: sanitizePdfText(installerName || '-') },
-        { label: 'Vårt ordernummer', value: sanitizePdfText(orderId || '-') },
-        { label: 'Projektnummer', value: sanitizePdfText(projectNumber || '-') },
+        { label: EGENKONTROLL_PROJECT_FIELDS.installer, value: sanitizePdfText(installerName || '-') },
+        { label: EGENKONTROLL_PROJECT_FIELDS.orderId, value: sanitizePdfText(orderId || '-') },
+        { label: EGENKONTROLL_PROJECT_FIELDS.projectNumber, value: sanitizePdfText(projectNumber || '-') },
       ]
     );
 
-    drawSingleColumnCard('Material', [
-      { label: 'Använt material', value: sanitizePdfText(materialUsed || '-') },
+    drawSingleColumnCard(EGENKONTROLL_SECTIONS.material, [
+      { label: EGENKONTROLL_MATERIAL_FIELD, value: sanitizePdfText(materialUsed || '-') },
     ]);
 
     if (controlRows.length) {
-      drawAdaptiveCard('Kontroller', controlRows);
+      drawAdaptiveCard(EGENKONTROLL_SECTIONS.checks, controlRows);
     }
 
-    drawSingleColumnCard('Övriga kommentarer', [
-      { label: 'Kommentar', value: sanitizePdfText(checks?.ovrigaKommentarer?.comment || '-') },
+    drawSingleColumnCard(EGENKONTROLL_SECTIONS.comments, [
+      { label: EGENKONTROLL_COMMENT_FIELD, value: sanitizePdfText(checks?.ovrigaKommentarer?.comment || '-') },
     ]);
 
     createPage();
 
     drawTableSection(
-      'Etapper (öppet)',
-      [
-        { key: 'etapp', label: 'Etapp', width: 94 },
-        { key: 'ytaM2', label: 'Yta m2', width: 46, align: 'right' },
-        { key: 'bestalldTjocklek', label: 'Beställd tjocklek', width: 68, align: 'right' },
-        { key: 'sattningsprocent', label: 'Sättningsprocent %', width: 54, align: 'right' },
-        { key: 'installeradTjocklek', label: 'Installerad tjocklek', width: 62, align: 'right' },
-        { key: 'antalSack', label: 'Antal säck', width: 50, align: 'right' },
-        { key: 'installeradDensitet', label: 'Installerad densitet', width: 68, align: 'right' },
-        { key: 'lambdavarde', label: 'Lambdavärde', width: 56, align: 'right' },
-      ],
+      EGENKONTROLL_SECTIONS.openStages,
+      EGENKONTROLL_OPEN_STAGE_COLUMNS.map((column) => ({ ...column, ...OPEN_STAGE_GEOMETRY[column.key] })),
       (etapperOpen || []).filter((row: any) => Object.values(row || {}).some((value: any) => String(value ?? '').trim() !== '')),
       'Inga öppna etapper registrerade'
     );
 
     drawTableSection(
-      'Etapper (slutet)',
-      [
-        { key: 'etapp', label: 'Etapp', width: 110 },
-        { key: 'ytaM2', label: 'Yta m2', width: 48, align: 'right' },
-        { key: 'bestalldTjocklek', label: 'Beställd tjocklek', width: 68, align: 'right' },
-        { key: 'uppmatTjocklek', label: 'Uppmätt tjocklek', width: 68, align: 'right' },
-        { key: 'antalSackKgPerSack', label: 'Antal säck', width: 50, align: 'right' },
-        { key: 'installeradDensitet', label: 'Installerad densitet', width: 70, align: 'right' },
-        { key: 'lambdavarde', label: 'Lambdavärde', width: 58, align: 'right' },
-      ],
+      EGENKONTROLL_SECTIONS.closedStages,
+      EGENKONTROLL_CLOSED_STAGE_COLUMNS.map((column) => ({ ...column, ...CLOSED_STAGE_GEOMETRY[column.key] })),
       (etapperClosed || []).filter((row: any) => Object.values(row || {}).some((value: any) => String(value ?? '').trim() !== '')),
       'Inga slutna etapper registrerade'
     );
@@ -696,15 +710,15 @@ export async function POST(req: NextRequest): Promise<Response> {
     })();
 
     const signatureHeight = 182;
-    const { top: signatureTop } = drawCardShell('Signatur', signatureHeight);
+    const { top: signatureTop } = drawCardShell(EGENKONTROLL_SECTIONS.signature, signatureHeight);
     const labelX = PAGE_MARGIN + 14;
     const lineX = PAGE_MARGIN + 154;
     const lineWidth = contentWidth - 168;
     const lineColor = rgb(accent.r, accent.g, accent.b);
     const signatureRows = [
-      { label: 'Datum och ort', value: sanitizePdfText(signatureDateCity || '-') },
-      { label: 'Underskrift', value: '' },
-      { label: 'Namnförtydligande', value: sanitizePdfText(String(installerName || '').toUpperCase() || '-') },
+      { label: EGENKONTROLL_SIGNATURE_FIELDS.dateCity, value: sanitizePdfText(signatureDateCity || '-') },
+      { label: EGENKONTROLL_SIGNATURE_FIELDS.signature, value: '' },
+      { label: EGENKONTROLL_SIGNATURE_FIELDS.nameClarification, value: sanitizePdfText(String(installerName || '').toUpperCase() || '-') },
     ];
 
     let signatureCursorY = signatureTop - 58;

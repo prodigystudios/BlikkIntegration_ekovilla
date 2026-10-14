@@ -22,6 +22,7 @@ import {
 } from '@/lib/domains/egenkontroll/projectSource';
 import { finalSackEntriesFromEtappRows } from '@/lib/domains/egenkontroll/sackReport';
 import { egenkontrollFileName } from '@/lib/domains/egenkontroll/filename';
+import { EGENKONTROLL_MAX_STAGE_ROWS } from '@/lib/domains/egenkontroll/template';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -35,7 +36,7 @@ type PagedList<T> = {
   items: T[];
 };
 
-const MAX_ETAPP_ROWS = 6;
+const MAX_ETAPP_ROWS = EGENKONTROLL_MAX_STAGE_ROWS;
 
 export default function EgenkontrollPage() {
   // Supabase client (used to persist actual_bags_used to planning_project_meta)
