@@ -285,13 +285,16 @@ export function rowsByWeek(
   return orphans.length > 0 ? [...placed, { week: null, rows: orphans }] : placed;
 }
 
-const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+/** Månadernas förkortningar — tid-domänens enda tabell; löneunderlagets datum läser samma. */
+export const MONTHS_SHORT = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
 /**
- * '2026-09-28'..'2026-10-04' → '28 sep–4 okt'; inom en månad '5–11 okt'.
+ * '2026-09-28'..'2026-10-04' → '28 sep–4 okt'; inom en månad '5–11 okt'; en dag '31 aug'.
  *
  * Ur strängen och inte ur Intl — samma skäl som löneunderlagets datum (payrollPdf.formatEntryDate):
- * ICU-data skiljer mellan körmiljöer, och skärmen och utskriften ska skriva veckan likadant.
+ * ICU-data skiljer mellan körmiljöer, och skärmen och utskriften ska skriva veckan likadant. Samma
+ * form som ägarexportens shortSpan (crm/reportOwnerWorkbook.ts), som inte går att importera hit: den
+ * modulen drar in exceljs, och attestvyn läser den här i webbläsaren.
  */
 export function formatDaySpan(from: string, to: string): string {
   const parts = (iso: string) => {
@@ -301,6 +304,9 @@ export function formatDaySpan(from: string, to: string): string {
   const a = parts(from);
   const b = parts(to);
   if (!a || !b) return `${from}–${to}`;
+  // En månad som slutar en måndag (augusti 2026) eller börjar en söndag (november 2026) har bara en
+  // dag av kantveckan — "31–31 aug" läser som ett skrivfel.
+  if (from === to) return `${a.day} ${a.month}`;
   return a.month === b.month ? `${a.day}–${b.day} ${b.month}` : `${a.day} ${a.month}–${b.day} ${b.month}`;
 }
 

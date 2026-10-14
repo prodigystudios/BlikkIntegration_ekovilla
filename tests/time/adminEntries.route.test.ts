@@ -142,11 +142,17 @@ describe('GET /api/admin/time/entries — inmatning', () => {
   });
 
   it('grannmånadens rader räknas i veckosumman, aldrig som dagrader', async () => {
-    mockEntries.mockResolvedValue({ data: [shiftRow, { ...shiftRow, id: 'e0', work_date: '2026-07-31' }], error: null } as any);
+    // V. 31 = 27 juli–2 augusti: fredagen i juli och lördagen i augusti är samma vecka.
+    mockEntries.mockResolvedValue({
+      data: [{ ...shiftRow, id: 'e0', work_date: '2026-07-31' }, { ...shiftRow, id: 'e1', work_date: '2026-08-01' }],
+      error: null,
+    } as any);
     const json = await (await GET(req(URL_OK))).json();
-    expect(json.data.rows.map((row: { date: string }) => row.date)).toEqual(['2026-08-14']);
+    expect(json.data.rows.map((row: { date: string }) => row.date)).toEqual(['2026-08-01']);
     expect(json.data.workMinutes).toBe(540);
-    expect(json.data.weeks.map((w: { week: number; total: { workMinutes: number } }) => [w.week, w.total.workMinutes])).toEqual([[33, 540]]);
+    expect(json.data.weeks).toEqual([
+      expect.objectContaining({ week: 31, crossesPeriod: true, total: expect.objectContaining({ workMinutes: 1080 }), inPeriod: expect.objectContaining({ workMinutes: 540 }) }),
+    ]);
   });
 });
 

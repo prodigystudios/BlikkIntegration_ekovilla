@@ -19,6 +19,7 @@ import {
   breakWasDeducted,
   formatDaySpan,
   inPeriodSpan,
+  MONTHS_SHORT,
   reasonOrJobLabel,
   rowsByWeek,
   type DayRow,
@@ -188,7 +189,6 @@ export function formatAmount(value: number | string | null | undefined): string 
 }
 
 const WEEKDAYS = ['sön', 'mån', 'tis', 'ons', 'tor', 'fre', 'lör'];
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
 
 /**
  * '2026-08-14' → 'fre 14 aug'.
@@ -205,7 +205,7 @@ export function formatEntryDate(iso: string): string {
   const month = Number(match[2]);
   const day = Number(match[3]);
   const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
-  return `${weekday} ${day} ${MONTHS[month - 1] ?? match[2]}`;
+  return `${weekday} ${day} ${MONTHS_SHORT[month - 1] ?? match[2]}`;
 }
 
 /**
@@ -414,8 +414,10 @@ function renderPerson(
       flow.y -= height;
     }
     if (group.week) {
-      // Ingen ensure: platsen reserverades ihop med veckans sista dag ovan.
-      drawWeekRow(flow.page, fonts, group.week, ctx.range, flow.y);
+      // Ingen ensure: platsen reserverades ihop med veckans sista dag ovan. Den sista veckan får
+      // ingen egen linje under sig — totalradens tjockare linje står där, och två linjer 3,5 pt isär
+      // läser som ett tryckfel.
+      drawWeekRow(flow.page, fonts, group.week, ctx.range, flow.y, groupIndex < groups.length - 1);
       flow.y -= weekRowHeight(group.week);
     }
   }
@@ -553,13 +555,20 @@ function drawTableHead(page: PDFPage, fonts: Fonts, y: number, ruleY: number) {
  * En vecka som går över ett månadsskifte visar HELA veckan på första raden, även grannmånadens dagar
  * (Williams beslut 2026-10-14), och månadens del på den andra: "varav 1–4 okt".
  */
-function drawWeekRow(page: PDFPage, fonts: Fonts, week: WeekSummary, range: { from: string; to: string }, top: number) {
+function drawWeekRow(
+  page: PDFPage,
+  fonts: Fonts,
+  week: WeekSummary,
+  range: { from: string; to: string },
+  top: number,
+  ruleBelow: boolean,
+) {
   const y = top - WEEK_PAD;
   const lines = week.crossesPeriod ? 2 : 1;
   const bandTop = y + ROW_SIZE;
   const bandBottom = y - (lines - 1) * LINE_STEP - ROW_GAP;
   page.drawRectangle({ x: M_LEFT, y: bandBottom, width: M_RIGHT - M_LEFT, height: bandTop - bandBottom, color: BOX });
-  drawRule(page, bandBottom, MUTED, 0.6);
+  if (ruleBelow) drawRule(page, bandBottom, MUTED, 0.6);
 
   const hours = (minutes: number) => (minutes > 0 ? `${formatHours(minutes)} h` : '—');
   const numbers = (totals: WeekSummary['total'], lineY: number, font: PDFFont, ink: RGB) => {

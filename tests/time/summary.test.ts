@@ -356,8 +356,10 @@ describe('veckorna', () => {
     expect(january.weeks[0]).toMatchObject({ week: 1, from: '2025-12-29', total: { workMinutes: 960 }, inPeriod: { workMinutes: 480 } });
   });
 
-  it('veckan över sommartidens slut (25 oktober 2026) är sju dagar som alla andra', () => {
-    // Datumen är strängar och stegas i UTC (addDaysISO) — en vecka på 169 timmar finns inte här.
+  it('veckogränserna runt 25 oktober 2026 — söndagen hör till veckan före', () => {
+    // INGET SOMMARTIDSSKYDD, och det ska inte läsas som ett: veckorna räknas ur datumsträngar och
+    // dygnsnummer (mondayOfISO, addDaysISO) — det finns ingen klocka som kan ställas om. Testet låser
+    // bara var veckan bryts, söndag→måndag, den helg klockan ställs tillbaka.
     const summary = summarizePerson([day('2026-10-19'), day('2026-10-25'), day('2026-10-26')], OCTOBER, ANNA);
     expect(summary.weeks.map((w) => [w.week, w.from, w.to, w.total.workMinutes])).toEqual([
       [43, '2026-10-19', '2026-10-25', 960],
@@ -394,6 +396,13 @@ describe('formatDaySpan', () => {
     expect(formatDaySpan('2026-10-05', '2026-10-11')).toBe('5–11 okt');
     expect(formatDaySpan('2026-09-28', '2026-10-04')).toBe('28 sep–4 okt');
     expect(formatDaySpan('2026-12-28', '2027-01-03')).toBe('28 dec–3 jan');
+  });
+
+  it('en enda dag skrivs som en dag, inte som "31–31 aug"', () => {
+    expect(formatDaySpan('2026-08-31', '2026-08-31')).toBe('31 aug');
+    // Augusti 2026 slutar en måndag, november börjar en söndag.
+    expect(inPeriodSpan({ from: '2026-08-31', to: '2026-09-06' }, { from: '2026-08-01', to: '2026-08-31' })).toBe('31 aug');
+    expect(inPeriodSpan({ from: '2026-10-26', to: '2026-11-01' }, { from: '2026-11-01', to: '2026-11-30' })).toBe('1 nov');
   });
 
   it('månadens del av en kantvecka', () => {
