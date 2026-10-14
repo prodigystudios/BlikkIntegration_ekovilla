@@ -45,7 +45,8 @@ export const EGENKONTROLL_CHECKS = [
   { key: 'takfotsventilation', label: 'Takfotsventilation' },
   { key: 'snickerier', label: 'Snickerier' },
   { key: 'tatskikt', label: 'Tätskikt' },
-  { key: 'genomforningar', label: 'Genomförningar' },
+  // Nyckeln är felstavad sedan länge och får stå: sparade utkast och PDF-anropet bär den.
+  { key: 'genomforningar', label: 'Genomföringar' },
   { key: 'grovstadning', label: 'Grovstädning' },
   { key: 'markskylt', label: 'Märkskylt' },
 ] as const;
