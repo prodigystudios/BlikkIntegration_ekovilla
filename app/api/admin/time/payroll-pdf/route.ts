@@ -12,7 +12,7 @@ import {
 import { listCompensations, type CompensationItem } from '@/lib/domains/time/compensations';
 import { listTimeEntries, toSummarizableEntry, type TimeEntryRow } from '@/lib/domains/time/entries';
 import { payrollFilename, renderPayrollPdf, type PayrollPerson } from '@/lib/domains/time/payrollPdf';
-import { summarizePerson } from '@/lib/domains/time/summary';
+import { summarizePerson, weekAlignedRange } from '@/lib/domains/time/summary';
 import { can, getEffectivePermissions, requirePermission, routeError, validationError } from '@/app/api/time/_lib';
 
 // GET /api/admin/time/payroll-pdf?period=YYYY-MM[&user_id=…|&user_ids=…,…]
@@ -182,9 +182,10 @@ export async function GET(req: Request) {
     // En enda person hämtas skopat; hela listan hämtas i ETT svep. Ett anrop per person hade blivit
     // femtio rundturer för en tjugomannastyrka, och attestlistan är redan ett sådant anrop i taget.
     const only = chosen.length === 1 ? chosen[0] : undefined;
+    // Tidraderna för hela kantveckorna (veckosummorna, se WeekSummary); ersättningarna är månadens.
     const [entries, compensations] = await Promise.all([
       readAllPages<TimeEntryRow>((from, to) =>
-        listTimeEntries(supabase, range, { userId: only, slice: { from, to } }) as unknown as PromiseLike<PageResult<TimeEntryRow>>),
+        listTimeEntries(supabase, weekAlignedRange(range), { userId: only, slice: { from, to } }) as unknown as PromiseLike<PageResult<TimeEntryRow>>),
       readAllPages<CompensationItem>((from, to) =>
         listCompensations(supabase, range, { userId: only, slice: { from, to } }) as unknown as PromiseLike<PageResult<CompensationItem>>),
     ]);

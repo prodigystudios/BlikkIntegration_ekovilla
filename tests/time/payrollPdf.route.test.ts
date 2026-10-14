@@ -192,8 +192,10 @@ describe('GET /api/admin/time/payroll-pdf — urvalet', () => {
     const people = mockRender.mock.calls[0][0].people;
     expect(people).toHaveLength(1);
     expect(people[0].name).toBe('Anna Andersson');
-    // Skopad hämtning: en person behöver inte hela personalens månad.
-    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-08-01', to: '2026-08-31' }, expect.objectContaining({ userId: ANNA }));
+    // Skopad hämtning: en person behöver inte hela personalens månad. Tidraderna för hela
+    // kantveckorna (veckosummorna), ersättningarna för månaden.
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-07-27', to: '2026-09-06' }, expect.objectContaining({ userId: ANNA }));
+    expect(mockCompensations).toHaveBeenCalledWith(expect.anything(), { from: '2026-08-01', to: '2026-08-31' }, expect.objectContaining({ userId: ANNA }));
   });
 
   it('följer ordningen i user_ids — listan på skärmen är sorterad', async () => {
@@ -269,7 +271,8 @@ describe('GET /api/admin/time/payroll-pdf — underlaget', () => {
 
   it('räknar februari rätt — sista dagen härleds, den antas inte', async () => {
     await GET(req('/api/admin/time/payroll-pdf?period=2026-02'));
-    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-02-01', to: '2026-02-28' }, expect.anything());
+    expect(mockEntries).toHaveBeenCalledWith(expect.anything(), { from: '2026-01-26', to: '2026-03-01' }, expect.anything());
+    expect(mockCompensations).toHaveBeenCalledWith(expect.anything(), { from: '2026-02-01', to: '2026-02-28' }, expect.anything());
   });
 
   it('svarar med PDF och ett filnamn webbläsaren kan spara', async () => {

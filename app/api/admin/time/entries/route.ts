@@ -3,7 +3,7 @@ import { periodRange, periodStartOf } from '@/lib/domains/time/approvals';
 import { listCompensations } from '@/lib/domains/time/compensations';
 import { auditInRange, listTimeEntryAudit, type TimeEntryAuditRow } from '@/lib/domains/time/audit';
 import { listTimeEntries, toSummarizableEntry, type TimeEntryRow } from '@/lib/domains/time/entries';
-import { summarizePerson } from '@/lib/domains/time/summary';
+import { summarizePerson, weekAlignedRange } from '@/lib/domains/time/summary';
 import { ok, personPeriodQuerySchema, requirePermission, routeError, validationError } from '@/app/api/time/_lib';
 
 // GET /api/admin/time/entries?period=YYYY-MM&user_id=<uuid> — en persons månad, dag för dag.
@@ -47,7 +47,9 @@ export async function GET(req: Request) {
     // Sessionsklient, inte getSupabaseAdmin(): read.all-grenen i RLS är redan svaret på "får den
     // här personen se andras tid", och service-role hade öppnat hela databasen för att slippa den.
     const [entries, compensations, audit] = await Promise.all([
-      listTimeEntries(supabase, range, { userId }),
+      // Tidraderna för HELA kantveckorna: veckosumman räknar en vecka som går över månadsskiftet hel
+      // (se WeekSummary). Dagraderna och månadens summor filtrerar summarizePerson till perioden.
+      listTimeEntries(supabase, weekAlignedRange(range), { userId }),
       listCompensations(supabase, range, { userId }),
       // Loggen följer med samma hämtning: den hör till granskningen av månaden, och en egen
       // rundtur per utfälld person hade gjort dagvyn segare utan att ge något.

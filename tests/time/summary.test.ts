@@ -1,5 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { breakWasDeducted, buildDayRows, reasonOrJobLabel, summarizePerson, type SummarizableEntry } from '@/lib/domains/time/summary';
+import {
+  breakWasDeducted,
+  buildDayRows,
+  formatDaySpan,
+  inPeriodSpan,
+  reasonOrJobLabel,
+  rowsByWeek,
+  summarizePerson,
+  weekAlignedRange,
+  type SummarizableEntry,
+} from '@/lib/domains/time/summary';
 
 // Underlaget byrån bad om: en rad per pass med datum, klockslag, arbetade timmar, frånvarotimmar
 // med orsak och anteckning — plus månadssumma för arbetad tid och frånvaro.
@@ -262,5 +272,142 @@ describe('reasonOrJobLabel', () => {
   // Frånvaro utan orsak är det ENDA fallet där tankstrecket är sant: raden pekar inte på något jobb.
   it('lämnar tankstrecket kvar åt frånvaro utan orsak', () => {
     expect(reasonOrJobLabel({ kind: 'absence', absenceReasons: [], label: null })).toBe('—');
+  });
+});
+
+// Veckosummorna (ekonomi 2026-10-14): övertiden räknas per vecka, och byrån drog linjer och räknade
+// veckorna för hand. En vecka som går över ett månadsskifte summeras HELA — även grannmånadens dagar
+// (Williams beslut) — med månadens del bredvid.
+describe('veckorna', () => {
+  const OCTOBER = { from: '2026-10-01', to: '2026-10-31' };
+  // Oktober 2026 börjar en torsdag: v. 40 = 28 sep–4 okt, v. 44 = 26 okt–1 nov.
+  const day = (workDate: string, over: Partial<SummarizableEntry> = {}) =>
+    entry({ workDate, startTime: '07:00', endTime: '16:00', breakMinutes: 60, ...over }); // 8 h
+
+  it('hämtas för hela kantveckorna', () => {
+    expect(weekAlignedRange(OCTOBER)).toEqual({ from: '2026-09-28', to: '2026-11-01' });
+    // En månad som börjar en måndag och slutar en söndag behöver inget mer.
+    expect(weekAlignedRange({ from: '2026-06-01', to: '2026-06-30' })).toEqual({ from: '2026-06-01', to: '2026-07-05' });
+  });
+
+  it('kantveckan summeras hela, med månadens del bredvid — dagraderna stannar i månaden', () => {
+    const summary = summarizePerson(
+      [day('2026-09-28'), day('2026-09-29'), day('2026-09-30'), day('2026-10-01'), day('2026-10-02')],
+      OCTOBER,
+      ANNA,
+    );
+    expect(summary.rows.map((row) => row.date)).toEqual(['2026-10-01', '2026-10-02']);
+    expect(summary.workMinutes).toBe(960);
+    expect(summary.weeks).toHaveLength(1);
+    expect(summary.weeks[0]).toMatchObject({
+      week: 40,
+      from: '2026-09-28',
+      to: '2026-10-04',
+      crossesPeriod: true,
+      total: { workMinutes: 2400, breakMinutes: 300 },
+      inPeriod: { workMinutes: 960, breakMinutes: 120 },
+    });
+  });
+
+  it('en hel vecka i månaden: total och månadens del är samma', () => {
+    const summary = summarizePerson([day('2026-10-05'), day('2026-10-09', { kind: 'absence', startTime: null, endTime: null, minutesWorked: 480 })], OCTOBER, ANNA);
+    expect(summary.weeks).toEqual([
+      {
+        week: 41,
+        from: '2026-10-05',
+        to: '2026-10-11',
+        crossesPeriod: false,
+        total: { workMinutes: 480, absenceMinutes: 480, breakMinutes: 60 },
+        inPeriod: { workMinutes: 480, absenceMinutes: 480, breakMinutes: 60 },
+      },
+    ]);
+  });
+
+  it('månadens delar summerar till månadens totalrad', () => {
+    const entries = [
+      day('2026-09-30'), day('2026-10-01'), day('2026-10-07'), day('2026-10-14', { endTime: '18:30' }),
+      day('2026-10-21', { kind: 'absence', startTime: null, endTime: null, minutesWorked: 240 }),
+      day('2026-10-30'), day('2026-11-01'),
+    ];
+    const summary = summarizePerson(entries, OCTOBER, ANNA);
+    const sum = (key: 'workMinutes' | 'absenceMinutes' | 'breakMinutes') => summary.weeks.reduce((acc, w) => acc + w.inPeriod[key], 0);
+    expect(sum('workMinutes')).toBe(summary.workMinutes);
+    expect(sum('absenceMinutes')).toBe(summary.absenceMinutes);
+    expect(sum('breakMinutes')).toBe(summary.breakMinutes);
+    expect(summary.weeks.map((w) => w.week)).toEqual([40, 41, 42, 43, 44]);
+    // Sista veckan bär grannmånadens söndag.
+    expect(summary.weeks.at(-1)).toMatchObject({ crossesPeriod: true, total: { workMinutes: 960 }, inPeriod: { workMinutes: 480 } });
+  });
+
+  it('bara veckor med en dagrad i perioden — grannmånadens tid ensam ger ingen vecka', () => {
+    const summary = summarizePerson([day('2026-09-29'), day('2026-10-06')], OCTOBER, ANNA);
+    expect(summary.weeks.map((w) => w.week)).toEqual([41]);
+  });
+
+  it('räknar bara personens egna rader', () => {
+    const summary = summarizePerson([day('2026-10-01'), day('2026-09-30', { userId: BJORN })], OCTOBER, ANNA);
+    expect(summary.weeks[0].total.workMinutes).toBe(480);
+  });
+
+  it('veckonumren över årsskiftet: v. 53 i december 2026, v. 1 börjar 29 december 2025', () => {
+    const december = summarizePerson([day('2026-12-31'), day('2027-01-02')], { from: '2026-12-01', to: '2026-12-31' }, ANNA);
+    expect(december.weeks[0]).toMatchObject({ week: 53, from: '2026-12-28', to: '2027-01-03', total: { workMinutes: 960 } });
+    const january = summarizePerson([day('2025-12-30'), day('2026-01-02')], { from: '2026-01-01', to: '2026-01-31' }, ANNA);
+    expect(january.weeks[0]).toMatchObject({ week: 1, from: '2025-12-29', total: { workMinutes: 960 }, inPeriod: { workMinutes: 480 } });
+  });
+
+  it('veckogränserna runt 25 oktober 2026 — söndagen hör till veckan före', () => {
+    // INGET SOMMARTIDSSKYDD, och det ska inte läsas som ett: veckorna räknas ur datumsträngar och
+    // dygnsnummer (mondayOfISO, addDaysISO) — det finns ingen klocka som kan ställas om. Testet låser
+    // bara var veckan bryts, söndag→måndag, den helg klockan ställs tillbaka.
+    const summary = summarizePerson([day('2026-10-19'), day('2026-10-25'), day('2026-10-26')], OCTOBER, ANNA);
+    expect(summary.weeks.map((w) => [w.week, w.from, w.to, w.total.workMinutes])).toEqual([
+      [43, '2026-10-19', '2026-10-25', 960],
+      [44, '2026-10-26', '2026-11-01', 480],
+    ]);
+  });
+});
+
+describe('rowsByWeek', () => {
+  const OCTOBER = { from: '2026-10-01', to: '2026-10-31' };
+  const day = (workDate: string) => entry({ workDate, startTime: '07:00', endTime: '16:00' });
+
+  it('varje dagrad i exakt en vecka, i ordning', () => {
+    const summary = summarizePerson([day('2026-10-01'), day('2026-10-02'), day('2026-10-05'), day('2026-10-12')], OCTOBER, ANNA);
+    const groups = rowsByWeek(summary);
+    expect(groups.map((g) => [g.week?.week, g.rows.map((r) => r.date)])).toEqual([
+      [40, ['2026-10-01', '2026-10-02']],
+      [41, ['2026-10-05']],
+      [42, ['2026-10-12']],
+    ]);
+  });
+
+  // Ett svar utan veckor (en server som ännu inte driftsatts när sidan laddats om) får aldrig tappa
+  // en dagrad — de samlas i en grupp utan vecka.
+  it('rader utan vecka försvinner inte', () => {
+    const summary = summarizePerson([day('2026-10-01'), day('2026-10-05')], OCTOBER, ANNA);
+    expect(rowsByWeek({ rows: summary.rows })).toEqual([{ week: null, rows: summary.rows }]);
+    expect(rowsByWeek({ rows: summary.rows, weeks: summary.weeks.slice(1) }).flatMap((g) => g.rows)).toHaveLength(2);
+  });
+});
+
+describe('formatDaySpan', () => {
+  it('skriver månaden en gång inom en månad, två gånger över ett skifte', () => {
+    expect(formatDaySpan('2026-10-05', '2026-10-11')).toBe('5–11 okt');
+    expect(formatDaySpan('2026-09-28', '2026-10-04')).toBe('28 sep–4 okt');
+    expect(formatDaySpan('2026-12-28', '2027-01-03')).toBe('28 dec–3 jan');
+  });
+
+  it('en enda dag skrivs som en dag, inte som "31–31 aug"', () => {
+    expect(formatDaySpan('2026-08-31', '2026-08-31')).toBe('31 aug');
+    // Augusti 2026 slutar en måndag, november börjar en söndag.
+    expect(inPeriodSpan({ from: '2026-08-31', to: '2026-09-06' }, { from: '2026-08-01', to: '2026-08-31' })).toBe('31 aug');
+    expect(inPeriodSpan({ from: '2026-10-26', to: '2026-11-01' }, { from: '2026-11-01', to: '2026-11-30' })).toBe('1 nov');
+  });
+
+  it('månadens del av en kantvecka', () => {
+    const range = { from: '2026-10-01', to: '2026-10-31' };
+    expect(inPeriodSpan({ from: '2026-09-28', to: '2026-10-04' }, range)).toBe('1–4 okt');
+    expect(inPeriodSpan({ from: '2026-10-26', to: '2026-11-01' }, range)).toBe('26–31 okt');
   });
 });
