@@ -3,9 +3,9 @@ import type { KmaSelfCheckKey } from './types';
 // KMA-planens fasta innehåll — Isoleringslandslagets mallar, transkriberade ur Word.
 //
 // KÄLLAN är paketet "KMA till Willy" (2026-09-24): KMA_Isoleringslandslaget AB-Ekovilla se AB.docx
-// plus bilaga 1–5, 7 och 8. Bilaga 6 (egenkontrollmallen) saknades i paketet och byggs efter
-// Ekovillas 6_Egenkontrollmall.docx ur AstraZeneca-planen (Williams beslut 2026-09-24). Filerna
-// ligger utanför repot med flit — de bär kunddata.
+// plus bilaga 1–5, 7 och 8. Filerna ligger utanför repot med flit — de bär kunddata. Bilaga 6
+// (egenkontrollmallen) saknades i paketet: den är appens egen egenkontroll, tom (Williams beslut
+// 2026-10-14 — den byggdes först efter en äldre Word-mall, 6_Egenkontrollmall.docx).
 //
 // ENTREPRENÖREN ÄR ALLTID ISOLERINGSLANDSLAGET AB (Williams beslut 2026-09-24), inte Ekovilla som
 // resten av appen känner. Det enda Ekovilla-namnet i dokumentet är bolagsraden i foten, som i mallen.
@@ -277,17 +277,9 @@ export const KMA_A5_RESPONSIBILITY = [
   'VD - ansvarar för att samordna, prioritera och följa upp det samlade arbetet.',
 ];
 
-// ── Bilaga 6 — Egenkontrollmall (efter Ekovillas 6_Egenkontrollmall.docx) ────
-
-export const KMA_A6_CHECKLIST = ['Luftspalt', 'Snickerier', 'Tätskikt', 'Genomföringar', 'Grovstädning', 'Märkskylt', 'Övrig kommentar'];
-/** Hör till cellulosa — och markeras med en asterisk på "Luftspalt" bara när den står med. */
-export const KMA_A6_VENTILATION_NOTE =
-  '*Ett vindsbjälklag kan utföras helt utan takfotsventilation vid användandet av cellulosaisolering och gavelventiler. ' +
-  '(Rek. Ventilationsarea: 0,1-0,2m2/100m2 vindsyta).';
-/** Hör bara till Ekovilla — produktbladets egen mening. */
-export const KMA_A6_EKOVILLA_NOTE =
-  'Ekovilla tillverkas i Finland av förnyelsebar FSC-certifierad råvara och produktionen drivs av grön el. Klimatsmartare än så blir det inte…';
-export const KMA_A6_THANKS = 'Vi tackar för Ert förtroende och intygar härmed ovanstående uppgifter,';
+// ── Bilaga 6 — Egenkontrollmall ──────────────────────────────────────────────
+//
+// Inga texter här: bilagan är egenkontrollens egen blankett (lib/domains/egenkontroll/template.ts).
 
 // ── Bilaga 8 — Signaturlista ─────────────────────────────────────────────────
 

@@ -3,6 +3,13 @@ import { describe, it, expect } from 'vitest';
 import { buildKmaDocument, type KmaDocumentContext } from '@/lib/domains/crm/kmaPlans/document';
 import { kmaFormSchema, parseStoredKmaDocument, parseStoredKmaInput } from '@/lib/domains/crm/kmaPlans/schemas';
 import type { KmaBlock, KmaDocument } from '@/lib/domains/crm/kmaPlans/types';
+import {
+  EGENKONTROLL_CHECKS,
+  EGENKONTROLL_CLOSED_STAGE_COLUMNS,
+  EGENKONTROLL_MAX_STAGE_ROWS,
+  EGENKONTROLL_OPEN_STAGE_COLUMNS,
+  EGENKONTROLL_SECTIONS,
+} from '@/lib/domains/egenkontroll/template';
 
 import { kmaForm } from './helpers/kmaFixtures';
 
@@ -121,22 +128,74 @@ describe('buildKmaDocument — materialet', () => {
     expect(main).toContain('tidningspapper');
     expect(main).not.toContain('Knauf');
   });
+});
 
-  it('bilaga 6: asterisk och takfotsnot bara vid cellulosa, λ bara vid ett material', () => {
-    const ekovilla = section(buildKmaDocument(kmaForm(), CTX), 'a6').blocks;
-    expect(textOf(ekovilla)).toContain('Luftspalt*');
-    expect(textOf(ekovilla)).toContain('takfotsventilation');
-    expect(tables(ekovilla)[1].rows[0].at(-1)).toBe('0,038');
+describe('buildKmaDocument — bilaga 6 är egenkontrollen, tom', () => {
+  // Bilagan byggdes först efter en äldre Word-mall och visade en egenkontroll som inte används
+  // (Luftspalt, produktcertifikat, platschefens signatur). Nu är den egenkontrollens egen blankett,
+  // på två sidor som egenkontrollen: etapperna och signaturen börjar på en egen.
+  const a6 = (doc: KmaDocument) => [...section(doc, 'a6').blocks, ...section(doc, 'a6-etapper').blocks];
 
-    const form = kmaForm();
-    form.project.materials = ['KNAUF SUPAFIL', 'EKOVILLA'];
-    const both = section(buildKmaDocument(form, CTX), 'a6').blocks;
-    expect(tables(both)[1].rows[0].at(-1)).toBe('');
+  it('etapperna och signaturen börjar på ny sida, båda etapptabellerna på samma', () => {
+    const etapper = section(buildKmaDocument(kmaForm(), CTX), 'a6-etapper');
+    expect(etapper.newPage).toBe(true);
+    // Sidan som fylls i och skrivs under ska gå att känna igen även lös.
+    expect(etapper.blocks[0]).toEqual({ t: 'h1', text: 'Bilaga 6 – Egenkontrollmall (forts.)' });
+    expect(etapper.blocks.flatMap((b) => (b.t === 'h2' ? [b.text] : []))).toEqual(['Etapper (öppet)', 'Etapper (slutet)', 'Signatur']);
+  });
 
-    form.project.materials = ['KNAUF SUPAFIL'];
-    const knauf = textOf(section(buildKmaDocument(form, CTX), 'a6').blocks);
-    expect(knauf).not.toContain('Luftspalt*');
-    expect(knauf).not.toContain('takfotsventilation');
+  it('samma kort, fält, kontroller och kolumner som egenkontrollens PDF', () => {
+    const blocks = a6(buildKmaDocument(kmaForm(), CTX));
+    const h2 = blocks.flatMap((b) => (b.t === 'h2' ? [b.text] : []));
+    expect(h2).toEqual(['Projekt', 'Material', 'Kontroller', 'Övriga kommentarer', 'Etapper (öppet)', 'Etapper (slutet)', 'Signatur']);
+    expect(h2).toEqual(Object.values(EGENKONTROLL_SECTIONS));
+
+    const labels = blocks.flatMap((b) => (b.t === 'fields' ? b.rows.map(([label]) => label) : []));
+    expect(labels).toEqual([
+      'Kund / beställare',
+      'Adress',
+      'Installationsdatum',
+      'Ansvarig installatör',
+      'Vårt ordernummer',
+      'Projektnummer',
+      'Använt material',
+      'Datum och ort',
+      'Underskrift',
+      'Namnförtydligande',
+    ]);
+
+    const [checks, comments, open, closed] = tables(blocks);
+    expect(checks.rows.map(([label]) => label)).toEqual(EGENKONTROLL_CHECKS.map((c) => c.label));
+    expect(checks.rows[0][0]).toBe('Takfotsventilation');
+    expect(comments.columns.map((c) => c.head)).toEqual(['Kommentar']);
+    expect(open.columns.map((c) => c.head)).toEqual(EGENKONTROLL_OPEN_STAGE_COLUMNS.map((c) => c.label));
+    expect(closed.columns.map((c) => c.head)).toEqual(EGENKONTROLL_CLOSED_STAGE_COLUMNS.map((c) => c.label));
+
+    const text = textOf(blocks);
+    for (const old of ['Luftspalt', 'Produktcertifikat', 'Isolerentreprenör', 'Platschef', 'Vi tackar']) expect(text).not.toContain(old);
+  });
+
+  it('inget förifylls: varje fält och varje ruta att skriva i är tom', () => {
+    const blocks = a6(buildKmaDocument(kmaForm(), CTX));
+    for (const block of blocks) if (block.t === 'fields') for (const [, value] of block.rows) expect(value).toBe('');
+
+    const [checks, comments, open, closed] = tables(blocks);
+    expect(checks.rows.flatMap((row) => row.slice(1)).every((cell) => cell === '')).toBe(true);
+    expect(comments.rows).toEqual([['']]);
+    // Lika många rader som formuläret tar — mallen ska rymma det appen släpper igenom.
+    for (const stage of [open, closed]) {
+      expect(stage.rows).toEqual([]);
+      expect(stage.minRows).toBe(EGENKONTROLL_MAX_STAGE_ROWS);
+    }
+  });
+
+  it('bilagan är densamma vilken order det än gäller', () => {
+    const other = kmaForm();
+    other.project.customerName = 'Annan Kund AB';
+    other.project.projectNumber = '9999';
+    other.project.properties = ['Annanvägen 2'];
+    other.project.materials = ['KNAUF SUPAFIL', 'EKOVILLA'];
+    expect(a6(buildKmaDocument(other, CTX))).toEqual(a6(buildKmaDocument(kmaForm(), CTX)));
   });
 });
 
@@ -198,7 +257,8 @@ describe('buildKmaDocument — projektets uppgifter', () => {
 
   it('huvuddokument plus åtta bilagor, varje bilaga på ny sida', () => {
     const doc = buildKmaDocument(kmaForm(), CTX);
-    expect(doc.sections.map((s) => s.key)).toEqual(['main', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8']);
+    // Bilaga 6 är två avsnitt — egenkontrollens två sidor.
+    expect(doc.sections.map((s) => s.key)).toEqual(['main', 'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a6-etapper', 'a7', 'a8']);
     expect(doc.sections[0].newPage).toBe(false);
     expect(doc.sections.slice(1).every((s) => s.newPage)).toBe(true);
   });

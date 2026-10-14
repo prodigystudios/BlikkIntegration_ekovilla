@@ -4,12 +4,9 @@ import { MATERIALS, MATERIAL_SHORTS } from '@/lib/domains/crm/materials';
 import {
   KMA_MATERIAL_INFO,
   kmaEnvironmentSentences,
-  kmaHasCellulose,
-  kmaLambda,
   kmaMaterialHandlingLines,
   kmaMaterialPhrase,
   kmaMaterialsFromLineItems,
-  kmaSelfCheckProducts,
 } from '@/lib/domains/crm/kmaPlans/materials';
 
 // Materialet i KMA-planen är ett PÅSTÅENDE till beställaren: vilket certifikat isoleringen har och
@@ -113,28 +110,5 @@ describe('kmaEnvironmentSentences', () => {
 
   it('båda när ordern har båda', () => {
     expect(kmaEnvironmentSentences(['EKOVILLA', 'KNAUF SUPAFIL'])).toHaveLength(2);
-  });
-});
-
-describe('bilaga 6 — material', () => {
-  it('Ekovillas ETA-formulering och FSC-mening står bara på Ekovilla', () => {
-    const [ekovilla] = kmaSelfCheckProducts(['EKOVILLA']);
-    expect(ekovilla.text).toContain('öppna och slutna konstruktioner');
-    expect(ekovilla.text).toContain('FSC');
-    const [knauf] = kmaSelfCheckProducts(['KNAUF SUPAFIL']);
-    expect(knauf.text).toBe('Produktcertifikat: B0709EPCR');
-  });
-
-  it('takfotsnoten hör till cellulosa', () => {
-    expect(kmaHasCellulose(['EKOVILLA'])).toBe(true);
-    expect(kmaHasCellulose(['ISOCELL/ISECO'])).toBe(true);
-    expect(kmaHasCellulose(['KNAUF SUPAFIL'])).toBe(false);
-  });
-
-  it('λ med komma vid exakt ett material, annars tomt', () => {
-    expect(kmaLambda(['EKOVILLA'])).toBe('0,038');
-    expect(kmaLambda(['PAROC'])).toBe('0,041');
-    expect(kmaLambda(['EKOVILLA', 'KNAUF SUPAFIL'])).toBe('');
-    expect(kmaLambda([])).toBe('');
   });
 });

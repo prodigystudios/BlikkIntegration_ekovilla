@@ -22,6 +22,7 @@ import {
 } from '@/lib/domains/egenkontroll/projectSource';
 import { finalSackEntriesFromEtappRows } from '@/lib/domains/egenkontroll/sackReport';
 import { egenkontrollFileName } from '@/lib/domains/egenkontroll/filename';
+import { EGENKONTROLL_MAX_STAGE_ROWS } from '@/lib/domains/egenkontroll/template';
 
 // Reconstructed Egenkontroll form (migrated from historical root page)
 // NOTE: Consider refactoring into smaller components later for maintainability.
@@ -35,7 +36,7 @@ type PagedList<T> = {
   items: T[];
 };
 
-const MAX_ETAPP_ROWS = 6;
+const MAX_ETAPP_ROWS = EGENKONTROLL_MAX_STAGE_ROWS;
 
 export default function EgenkontrollPage() {
   // Supabase client (used to persist actual_bags_used to planning_project_meta)
@@ -82,7 +83,7 @@ export default function EgenkontrollPage() {
   const [waterproofingComment, setWaterproofingComment] = useState('');
 
   // New Kontroller fields
-  const [genomforningarOk, setGenomforningarOk] = useState(false); // Genomförningar OK?
+  const [genomforningarOk, setGenomforningarOk] = useState(false); // Genomföringar OK?
   const [genomforningarComment, setGenomforningarComment] = useState('');
   const [grovstadningOk, setGrovstadningOk] = useState(false); // Grovstädning OK?
   const [grovstadningComment, setGrovstadningComment] = useState('');
@@ -800,7 +801,7 @@ export default function EgenkontrollPage() {
             <ControlCard label="Takfotsventilation" checked={eavesVentOk} onChange={setEavesVentOk} comment={eavesVentComment} onCommentChange={setEavesVentComment} placeholder="Kommentar om takfotsventilation" />
             <ControlCard label="Snickerier" checked={carpentryOk} onChange={setCarpentryOk} comment={carpentryComment} onCommentChange={setCarpentryComment} placeholder="Kommentar om snickerier" />
             <ControlCard label="Tätskikt" checked={waterproofingOk} onChange={setWaterproofingOk} comment={waterproofingComment} onCommentChange={setWaterproofingComment} placeholder="Kommentar om tätskikt" />
-            <ControlCard label="Genomförningar" checked={genomforningarOk} onChange={setGenomforningarOk} comment={genomforningarComment} onCommentChange={setGenomforningarComment} placeholder="Kommentar om genomförningar" />
+            <ControlCard label="Genomföringar" checked={genomforningarOk} onChange={setGenomforningarOk} comment={genomforningarComment} onCommentChange={setGenomforningarComment} placeholder="Kommentar om genomföringar" />
             <ControlCard label="Grovstädning" checked={grovstadningOk} onChange={setGrovstadningOk} comment={grovstadningComment} onCommentChange={setGrovstadningComment} placeholder="Kommentar om grovstädning" />
             <ControlCard label="Märkskylt" checked={markskyltOk} onChange={setMarkskyltOk} comment={markskyltComment} onCommentChange={setMarkskyltComment} placeholder="Kommentar om märkskylt" />
           </div>

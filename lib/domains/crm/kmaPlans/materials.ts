@@ -1,8 +1,8 @@
 import { isBlownInsulationRow } from '@/lib/domains/crm/afterCalculationLoader';
-import { MATERIALS, MATERIAL_SHORTS, inferMaterialFromArticle } from '@/lib/domains/crm/materials';
+import { MATERIAL_SHORTS, inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
 import { KMA_MATERIAL_INFO, type KmaMaterialKind } from './materialInfo';
-import { KMA_A6_EKOVILLA_NOTE, KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAUF } from './template';
+import { KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAUF } from './template';
 
 // Materialet i KMA-planen: vilken sorts isolering, vilket certifikat, och vilka meningar som
 // därmed får stå i dokumentet.
@@ -13,7 +13,7 @@ import { KMA_A6_EKOVILLA_NOTE, KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAU
 // ett test (tests/crm/kmaMaterials.test.ts) kräver att varje nummer här står i sin MATERIALS-nyckel,
 // så en omdöpt artikel i materialtabellen fångas i stället för att glida isär tyst.
 
-// Materialfakta (kind, varumärke, produkt, certifikat) bor i materialInfo.ts — ren data som även
+// Materialfakta (kind, varumärke, certifikat) bor i materialInfo.ts — ren data som även
 // dialogen i webbläsaren läser. Återexporteras här för domänens egna anropare.
 export { KMA_MATERIAL_INFO, type KmaMaterialInfo, type KmaMaterialKind } from './materialInfo';
 
@@ -80,34 +80,4 @@ export function kmaEnvironmentSentences(materials: readonly string[]): string[] 
   if (list.some((m) => KMA_MATERIAL_INFO[m].kind === 'cellulosa')) sentences.push(KMA_ENV_SENTENCE_CELLULOSE);
   if (list.includes('KNAUF SUPAFIL')) sentences.push(KMA_ENV_SENTENCE_KNAUF);
   return sentences;
-}
-
-/** Bilaga 6: produktnamn och certifikattext per material. */
-export function kmaSelfCheckProducts(materials: readonly string[]): Array<{ product: string; text: string }> {
-  return normalizeKmaMaterials(materials).map((m) => {
-    const info = KMA_MATERIAL_INFO[m];
-    // "för installation i öppna och slutna konstruktioner" är Ekovillas ETA-formulering — den
-    // skrivs inte på andra material, där vi inte vet vad certifikatet omfattar.
-    const text =
-      m === 'EKOVILLA'
-        ? `Produktcertifikat: ${info.certificate} för installation i öppna och slutna konstruktioner. ${KMA_A6_EKOVILLA_NOTE}`
-        : `Produktcertifikat: ${info.certificate}`;
-    return { product: info.product, text };
-  });
-}
-
-/** Bilaga 6: takfotsnoten hör till cellulosa. */
-export function kmaHasCellulose(materials: readonly string[]): boolean {
-  return normalizeKmaMaterials(materials).some((m) => KMA_MATERIAL_INFO[m].kind === 'cellulosa');
-}
-
-/**
- * Bilaga 6: λ-värdet, med komma, när ordern har EXAKT ett material. Med flera vet blanketten inte
- * vilken etapp som blåses med vad — då lämnas rutan åt installatören.
- */
-export function kmaLambda(materials: readonly string[]): string {
-  const list = normalizeKmaMaterials(materials);
-  if (list.length !== 1) return '';
-  const entry = Object.values(MATERIALS).find((m) => m.short === list[0]);
-  return entry ? entry.lambda.replace('.', ',') : '';
 }
