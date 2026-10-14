@@ -1,11 +1,18 @@
 import {
-  kmaEnvironmentSentences,
-  kmaHasCellulose,
-  kmaLambda,
-  kmaMaterialHandlingLines,
-  kmaMaterialPhrase,
-  kmaSelfCheckProducts,
-} from './materials';
+  EGENKONTROLL_CHECKS,
+  EGENKONTROLL_CLOSED_STAGE_COLUMNS,
+  EGENKONTROLL_COMMENT_FIELD,
+  EGENKONTROLL_MATERIAL_FIELD,
+  EGENKONTROLL_MAX_STAGE_ROWS,
+  EGENKONTROLL_OPEN_STAGE_COLUMNS,
+  EGENKONTROLL_PROJECT_FIELDS,
+  EGENKONTROLL_SECTIONS,
+  EGENKONTROLL_SIGNATURE_FIELDS,
+  type EgenkontrollClosedStageKey,
+  type EgenkontrollOpenStageKey,
+} from '@/lib/domains/egenkontroll/template';
+
+import { kmaEnvironmentSentences, kmaMaterialHandlingLines, kmaMaterialPhrase } from './materials';
 import {
   KMA_A1_ACTION_PLAN,
   KMA_A1_RESIDUALS,
@@ -28,9 +35,6 @@ import {
   KMA_A5_INVESTIGATION,
   KMA_A5_POLICY,
   KMA_A5_RESPONSIBILITY,
-  KMA_A6_CHECKLIST,
-  KMA_A6_THANKS,
-  KMA_A6_VENTILATION_NOTE,
   KMA_A8_CONFIRM,
   KMA_A8_ONGOING_ROWS,
   KMA_A8_SIGNATURE,
@@ -271,93 +275,92 @@ function appendix1(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
   };
 }
 
-function appendix6(form: KmaFormValues): KmaSection {
-  const { project } = form;
-  const cellulose = kmaHasCellulose(project.materials);
-  const lambda = kmaLambda(project.materials);
-  const blank = (columns: number) => Array.from({ length: columns }, () => '');
-  const withLambda = (columns: number) => [...blank(columns - 1), lambda];
+// Bilaga 6 är egenkontrollen vi använder — samma kort, fält, kontroller och kolumner som
+// egenkontrollens PDF, ur samma källa (lib/domains/egenkontroll/template.ts) — tom, som mall att
+// skriva i. Inget förifylls (Williams beslut 2026-10-14).
+//
+// TVÅ AVSNITT, som egenkontrollens två sidor: projekt, material och kontroller på den första,
+// etapperna och signaturen på den andra. Utan brytningen hamnade de två etapptabellerna på var sin
+// sida — och en tabell som inte ryms delas efter en rad. Andra sidan bär bilagans rubrik: det är den
+// som fylls i och skrivs under, och den ska gå att känna igen även lös.
+//
+// Bredderna är bilagans egna: KMA-sidan har ett annat typsnitt än egenkontrollens PDF. De slås upp
+// per kolumnnyckel, så en ny kolumn i egenkontrollen stoppar typkontrollen tills den fått en bredd
+// här — i stället för att bilagan tyst halkar efter igen.
+const A6_OPEN_WIDTHS: Record<EgenkontrollOpenStageKey, number> = {
+  etapp: 1.2,
+  ytaM2: 0.8,
+  bestalldTjocklek: 1.1,
+  sattningsprocent: 1.5,
+  installeradTjocklek: 1.15,
+  antalSack: 0.95,
+  installeradDensitet: 1.15,
+  lambdavarde: 1.2,
+};
 
-  return {
-    key: 'a6',
-    newPage: true,
-    blocks: [
-      { t: 'h1', text: appendixHeading(6) },
-      {
-        t: 'fields',
-        form: true,
-        rows: [
-          ['Utförandedatum', ''],
-          ['Isolerentreprenör', KMA_COMPANY.name],
-          ['Ansvarig installatör', ''],
-          ['Beställare', project.customerName],
-          ['Objekt', project.properties.join(', ')],
-        ],
-      },
-      { t: 'h2', text: 'EGENKONTROLL' },
-      ...kmaSelfCheckProducts(project.materials).flatMap((entry): KmaBlock[] => [
-        { t: 'h3', text: entry.product },
-        { t: 'p', text: entry.text },
-      ]),
-      {
-        t: 'table',
-        columns: [
-          { head: 'Checklista', width: 3 },
-          { head: 'OK', width: 1 },
-          { head: 'Kommentar', width: 5 },
-        ],
-        // Asterisken hör ihop med takfotsnoten och står bara när noten gör det.
-        rows: KMA_A6_CHECKLIST.map((item) => [item === 'Luftspalt' && cellulose ? 'Luftspalt*' : item, '', '']),
-        rowMinHeight: 16,
-      },
-      ...(cellulose ? [{ t: 'p', text: KMA_A6_VENTILATION_NOTE } as KmaBlock] : []),
-      {
-        t: 'table',
-        columns: [
-          { head: 'Etapp (öppet)', width: 1.4 },
-          { head: 'Yta m²', width: 1 },
-          { head: 'Beställd tjocklek ex. sättningspåslag', width: 1.3 },
-          // Uttrycklig brytning efter bindestrecket: kolumnen är för smal för ordet, och utan den
-          // delades det mitt i ("Sättningspås / lag").
-          { head: 'Sättnings-\npåslag %', width: 1.1 },
-          { head: 'Installerad tjocklek inkl. sättningspåslag', width: 1.3 },
-          { head: 'Installerad densitet kg/m³', width: 1.2 },
-          { head: 'Antal säck', width: 0.9 },
-          { head: 'Lambda-\nvärde W/m²K', width: 1.1 },
-        ],
-        rows: [withLambda(8), withLambda(8)],
-        rowMinHeight: 18,
-      },
-      {
-        t: 'table',
-        columns: [
-          { head: 'Etapp (slutet)', width: 1.4 },
-          { head: 'Yta m²', width: 1 },
-          { head: 'Beställd tjocklek', width: 1.2 },
-          { head: 'Uppmätt tjocklek', width: 1.2 },
-          { head: 'Installerad densitet kg/m³', width: 1.2 },
-          { head: 'Antal säck', width: 0.9 },
-          { head: 'Lambdavärde W/m²K', width: 1.1 },
-        ],
-        rows: [withLambda(7), withLambda(7)],
-        rowMinHeight: 18,
-      },
-      { t: 'p', text: KMA_A6_THANKS },
-      {
-        t: 'table',
-        columns: [
-          { head: '', width: 2 },
-          { head: 'Installatör', width: 3 },
-          { head: 'Platschef/Beställare', width: 3 },
-        ],
-        rows: [
-          ['Namnteckning:', '', ''],
-          ['Namnförtydligande:', '', ''],
-        ],
-        rowMinHeight: 24,
-      },
-    ],
-  };
+const A6_CLOSED_WIDTHS: Record<EgenkontrollClosedStageKey, number> = {
+  etapp: 1.4,
+  ytaM2: 0.9,
+  bestalldTjocklek: 1.2,
+  uppmatTjocklek: 1.2,
+  antalSackKgPerSack: 0.9,
+  installeradDensitet: 1.2,
+  lambdavarde: 1.1,
+};
+
+function appendix6(): KmaSection[] {
+  const blankFields = (labels: readonly string[]): KmaBlock => ({
+    t: 'fields',
+    form: true,
+    rows: labels.map((label): [string, string] => [label, '']),
+  });
+  const stageTable = <K extends string>(columns: ReadonlyArray<{ key: K; label: string }>, widths: Record<K, number>): KmaBlock => ({
+    t: 'table',
+    columns: columns.map((column) => ({ head: column.label, width: widths[column.key] })),
+    rows: [],
+    minRows: EGENKONTROLL_MAX_STAGE_ROWS,
+    rowMinHeight: 18,
+  });
+
+  return [
+    {
+      key: 'a6',
+      newPage: true,
+      blocks: [
+        { t: 'h1', text: appendixHeading(6) },
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.project },
+        blankFields(Object.values(EGENKONTROLL_PROJECT_FIELDS)),
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.material },
+        blankFields([EGENKONTROLL_MATERIAL_FIELD]),
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.checks },
+        {
+          t: 'table',
+          columns: [
+            { head: 'Kontroll', width: 3 },
+            { head: 'OK', width: 1 },
+            { head: 'Kommentar', width: 5 },
+          ],
+          rows: EGENKONTROLL_CHECKS.map((check) => [check.label, '', '']),
+          rowMinHeight: 16,
+        },
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.comments },
+        { t: 'table', columns: [{ head: EGENKONTROLL_COMMENT_FIELD, width: 1 }], rows: [['']], rowMinHeight: 48 },
+      ],
+    },
+    {
+      key: 'a6-etapper',
+      newPage: true,
+      blocks: [
+        { t: 'h1', text: `${appendixHeading(6)} (forts.)` },
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.openStages },
+        stageTable(EGENKONTROLL_OPEN_STAGE_COLUMNS, A6_OPEN_WIDTHS),
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.closedStages },
+        stageTable(EGENKONTROLL_CLOSED_STAGE_COLUMNS, A6_CLOSED_WIDTHS),
+        { t: 'h2', text: EGENKONTROLL_SECTIONS.signature },
+        blankFields(Object.values(EGENKONTROLL_SIGNATURE_FIELDS)),
+      ],
+    },
+  ];
 }
 
 function appendix8(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
@@ -457,7 +460,7 @@ export function buildKmaDocument(form: KmaFormValues, ctx: KmaDocumentContext): 
         { t: 'p', text: KMA_A5_RESPONSIBILITY.join('\n') },
       ],
     },
-    appendix6(form),
+    ...appendix6(),
     {
       key: 'a7',
       newPage: true,

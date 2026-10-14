@@ -107,14 +107,18 @@ describe('renderKmaPdf', () => {
         });
         const { doc, pages } = await render(form);
         const headings = headingsOf(doc);
+        // Ett avsnitt med newPage börjar ALLTID överst — dess första rubrik där bevisar inget brytfall.
+        const sectionStarts = new Set(
+          doc.sections.filter((s) => s.newPage).flatMap((s) => (s.blocks[0] && 'text' in s.blocks[0] ? [s.blocks[0].text] : [])),
+        );
         for (const [index, page] of pages.entries()) {
           // Ingen brödtext ned i fotens zon: en rad som ritats utan platsprövning hamnar där.
           for (const item of body(page)) expect(item.y, `"${item.str}" under brödtextens nederkant`).toBeGreaterThanOrEqual(80);
           const items = texts(body(page));
           expect(headings.has(items[items.length - 1]), `sida ${index + 1} slutar med en rubrik (${risks} risker, ${contacts} kontakter)`).toBe(false);
           // Brytfallet måste ha inträffat i svepet, annars prövar testet ingenting: en rubrik
-          // (inte en bilagerubrik, som alltid står överst) som hamnat först på en sida.
-          if (index > 0 && headings.has(items[0]) && !items[0].startsWith('Bilaga ')) sawHeadingPushedToNextPage = true;
+          // (inte ett avsnitts början, som alltid står överst) som hamnat först på en sida.
+          if (index > 0 && headings.has(items[0]) && !sectionStarts.has(items[0])) sawHeadingPushedToNextPage = true;
         }
       }
     }
