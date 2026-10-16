@@ -1,6 +1,7 @@
 import { createSessionClient } from '@/lib/supabase/session';
 import { moveSegment, removeSegment, getSegmentRef, readWorkOrderStatus } from '@/lib/domains/planning/schedule';
 import { logActivity, describeSegmentPatch } from '@/lib/domains/planning/activity';
+import { countSackReportsOnSegment } from '@/lib/domains/planning/reports';
 import { ok, routeError, validationError, invalidUuidParam, requirePermission, moveSegmentSchema } from '../../_lib';
 
 type RouteContext = {
@@ -72,8 +73,24 @@ export async function DELETE(_req: Request, context: RouteContext) {
     const supabase = createSessionClient();
     // Read the job reference before the row is gone, so the audit line names the unscheduled job.
     const { workOrderId, ref } = await getSegmentRef(supabase, context.params.id);
+    // Och kortets säckrapporter: går borttagningen igenom har databasen flyttat dem till orderns andra kort
+    // (ops_segments_keep_sack_reports, 20261016105146), och säckarna dras då från en annan bils depå. Det ska synas i
+    // loggen och på tavlan, inte ske tyst. null = gick inte att läsa; borttagningen går ändå.
+    const sackReports = await countSackReportsOnSegment(supabase, context.params.id);
     const { error } = await removeSegment(supabase, context.params.id);
-    if (error) return routeError(500, 'planning_segment_delete_failed', error.message);
+    if (error) {
+      // Kortet bär säckrapporter och är orderns enda kort: triggern nekar. Inget annat på kortet är en restrict-
+      // referens. Undantaget är en kapplöpning där orderns andra kort tas bort i samma stund (flyttens FK-kontroll
+      // faller); då stämmer beskedet efter en omladdning. Se migreringens SAMTIDIGHET.
+      if ((error as { code?: string }).code === '23503') {
+        return routeError(
+          409,
+          'segment_has_sack_reports',
+          'Kortet har säckrapporter och är orderns enda kort på schemat. Flytta eller pausa det i stället — tas det bort försvinner säckarna.',
+        );
+      }
+      return routeError(500, 'planning_segment_delete_failed', error.message);
+    }
 
     await logActivity(supabase, gate.currentUser, {
       action: 'segment.delete',
@@ -81,7 +98,10 @@ export async function DELETE(_req: Request, context: RouteContext) {
       entityId: context.params.id,
       segmentId: context.params.id,
       workOrderId,
-      summary: `Tog bort ${ref} från kalendern`,
+      summary: sackReports
+        ? `Tog bort ${ref} från kalendern. ${sackReports === 1 ? 'Säckrapporten' : `${sackReports} säckrapporter`} flyttades till orderns andra kort.`
+        : `Tog bort ${ref} från kalendern`,
+      ...(sackReports ? { details: { moved_sack_reports: sackReports } } : {}),
     });
 
     // Var det ordens sista kort har triggern satt tillbaka Planerad → Ej planerad. Bara databasen vet
@@ -89,7 +109,7 @@ export async function DELETE(_req: Request, context: RouteContext) {
     // null = gick inte att läsa; klienten läser då om backloggen.
     const workOrderStatus = await readWorkOrderStatus(supabase, workOrderId);
 
-    return ok({ ok: true, work_order_status: workOrderStatus });
+    return ok({ ok: true, work_order_status: workOrderStatus, moved_sack_reports: sackReports ?? 0 });
   } catch (e: any) {
     return routeError(500, 'planning_segment_delete_unexpected', e?.message || 'Failed to remove segment');
   }
