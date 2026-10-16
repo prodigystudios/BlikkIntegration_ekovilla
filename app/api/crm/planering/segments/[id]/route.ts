@@ -73,7 +73,19 @@ export async function DELETE(_req: Request, context: RouteContext) {
     // Read the job reference before the row is gone, so the audit line names the unscheduled job.
     const { workOrderId, ref } = await getSegmentRef(supabase, context.params.id);
     const { error } = await removeSegment(supabase, context.params.id);
-    if (error) return routeError(500, 'planning_segment_delete_failed', error.message);
+    if (error) {
+      // Kortet bär säckrapporter och är orderns enda kort (triggern ops_segments_keep_sack_reports, 20261016105146).
+      // Har ordern fler kort flyttas rapporterna dit i stället och borttagningen går igenom. Inget annat på kortet
+      // är en restrict-referens, så 23503 kan bara komma därifrån.
+      if ((error as { code?: string }).code === '23503') {
+        return routeError(
+          409,
+          'segment_has_sack_reports',
+          'Kortet har säckrapporter och är orderns enda kort på schemat. Flytta eller pausa det i stället — tas det bort försvinner säckarna.',
+        );
+      }
+      return routeError(500, 'planning_segment_delete_failed', error.message);
+    }
 
     await logActivity(supabase, gate.currentUser, {
       action: 'segment.delete',
