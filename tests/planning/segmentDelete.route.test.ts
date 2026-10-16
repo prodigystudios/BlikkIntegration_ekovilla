@@ -23,6 +23,10 @@ vi.mock('@/lib/domains/planning/schedule', async (importOriginal) => {
     readWorkOrderStatus: vi.fn(),
   };
 });
+vi.mock('@/lib/domains/planning/reports', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/planning/reports')>();
+  return { ...actual, countSackReportsOnSegment: vi.fn() };
+});
 vi.mock('@/lib/domains/planning/activity', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/domains/planning/activity')>();
   return { ...actual, logActivity: vi.fn() };
@@ -37,6 +41,7 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
 import { removeSegment, getSegmentRef, readWorkOrderStatus } from '@/lib/domains/planning/schedule';
 import { logActivity } from '@/lib/domains/planning/activity';
+import { countSackReportsOnSegment } from '@/lib/domains/planning/reports';
 import { DELETE } from '@/app/api/crm/planering/segments/[id]/route';
 
 const SEGMENT_ID = '7afccfe9-7767-42d1-b5b5-39829bae0481';
@@ -49,6 +54,7 @@ beforeEach(() => {
   (getEffectivePermissions as any).mockResolvedValue(effectivePermissionsForRole(adminUser.role));
   (getSegmentRef as any).mockResolvedValue({ workOrderId: 'wo-1', ref: '#272' });
   (readWorkOrderStatus as any).mockResolvedValue('scheduled');
+  (countSackReportsOnSegment as any).mockResolvedValue(0);
 });
 
 describe('avplaneringen: triggerns nej', () => {
@@ -77,8 +83,53 @@ describe('avplaneringen: triggerns nej', () => {
     (removeSegment as any).mockResolvedValue({ error: null });
     const res = await del();
     expect(res.status).toBe(200);
-    expect((await res.json()).data.work_order_status).toBe('scheduled');
+    const body = await res.json();
+    expect(body.data.work_order_status).toBe('scheduled');
+    expect(body.data.moved_sack_reports).toBe(0);
     expect(logActivity).toHaveBeenCalledTimes(1);
-    expect((logActivity as any).mock.calls[0][2]).toMatchObject({ action: 'segment.delete', segmentId: SEGMENT_ID });
+    const entry = (logActivity as any).mock.calls[0][2];
+    expect(entry).toMatchObject({ action: 'segment.delete', segmentId: SEGMENT_ID, summary: 'Tog bort #272 från kalendern' });
+    expect(entry.details).toBeUndefined();
+  });
+});
+
+describe('avplaneringen: flyttade säckrapporter syns', () => {
+  // Har kortet rapporter och borttagningen går igenom har databasen flyttat dem till orderns andra kort, och säckarna
+  // dras då från en annan bils depå. Det får inte ske tyst.
+  it('räknar kortets rapporter FÖRE borttagningen — efteråt sitter de på ett annat kort', async () => {
+    const order: string[] = [];
+    (countSackReportsOnSegment as any).mockImplementation(async () => { order.push('count'); return 2; });
+    (removeSegment as any).mockImplementation(async () => { order.push('remove'); return { error: null }; });
+    await del();
+    expect(order).toEqual(['count', 'remove']);
+    expect((countSackReportsOnSegment as any).mock.calls[0]).toEqual([{ __client: 'session' }, SEGMENT_ID]);
+  });
+
+  it('skriver antalet i loggraden och i svaret', async () => {
+    (countSackReportsOnSegment as any).mockResolvedValue(2);
+    (removeSegment as any).mockResolvedValue({ error: null });
+    const res = await del();
+    expect((await res.json()).data.moved_sack_reports).toBe(2);
+    const entry = (logActivity as any).mock.calls[0][2];
+    expect(entry.summary).toBe('Tog bort #272 från kalendern. 2 säckrapporter flyttades till orderns andra kort.');
+    expect(entry.details).toEqual({ moved_sack_reports: 2 });
+  });
+
+  it('en rapport får singular', async () => {
+    (countSackReportsOnSegment as any).mockResolvedValue(1);
+    (removeSegment as any).mockResolvedValue({ error: null });
+    await del();
+    expect((logActivity as any).mock.calls[0][2].summary).toBe(
+      'Tog bort #272 från kalendern. Säckrapporten flyttades till orderns andra kort.',
+    );
+  });
+
+  it('gick räkningen inte att läsa tas kortet ändå bort, utan påstående om flytt', async () => {
+    (countSackReportsOnSegment as any).mockResolvedValue(null);
+    (removeSegment as any).mockResolvedValue({ error: null });
+    const res = await del();
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.moved_sack_reports).toBe(0);
+    expect((logActivity as any).mock.calls[0][2].summary).toBe('Tog bort #272 från kalendern');
   });
 });

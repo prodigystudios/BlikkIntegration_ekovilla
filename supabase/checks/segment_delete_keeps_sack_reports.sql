@@ -77,6 +77,9 @@ declare
   service_keep constant uuid := 'b5b00000-0000-4000-8000-0000000000f1';
   service_gone constant uuid := 'b5b00000-0000-4000-8000-0000000000f2';
   r_service constant uuid := 'b5b00000-0000-4000-8000-0000000001f1';
+  -- 8. ett kort utan order med en rapport på sig
+  orphan constant uuid := 'b5b00000-0000-4000-8000-0000000000e3';
+  r_orphan constant uuid := 'b5b00000-0000-4000-8000-0000000001e3';
   truck1 uuid;
   truck2 uuid;
   n integer;
@@ -215,10 +218,28 @@ begin
   if exists (select 1 from public.ops_segments where id = last_seg) then raise exception '7. kortet finns kvar'; end if;
   if exists (select 1 from public.ops_segment_reports where id = r_last) then raise exception '7. rapporten finns kvar'; end if;
 
-  raise notice 'säckrapporterna: kontrollerna 1–7 gick igenom';
+  -- 8. Ett kort UTAN order med en rapport på sig (ingen väg i appen skapar det, men det får inte släppas till kaskaden):
+  -- nekas. `w.id = null` är aldrig sant, så en ordervakt utan villkor hade sett det som en raderad order.
+  insert into public.ops_segments (id, work_order_id, placeholder_title, truck_id, start_day, end_day, created_by)
+  values (orphan, null, 'Provplatshållare med rapport', truck1, '2026-10-14', '2026-10-14', admin_id);
+  insert into public.ops_segment_reports
+    (id, segment_id, work_order_id, report_day, sacks_blown, kind, created_by, created_by_name)
+  values (r_orphan, orphan, wo_dup, '2026-10-14', 18, 'partial', admin_id, 'Prov');
+  perform pg_temp.as_seller();
+  set local role authenticated;
+  caught := false;
+  begin
+    delete from public.ops_segments where id = orphan;
+  exception when foreign_key_violation then caught := true;
+  end;
+  reset role;
+  if not caught then raise exception '8. ett kort utan order kunde tas bort med en rapport på sig'; end if;
+  perform pg_temp.expect_segment(r_orphan, orphan, '8. rapporten på kortet utan order');
+
+  raise notice 'säckrapporterna: kontrollerna 1–8 gick igenom';
 end $$;
 
--- 8. Ordern raderas och kaskaden når KORTET innan den når rapporterna. Vilken av de två kaskaderna Postgres kör först
+-- 9. Ordern raderas och kaskaden når KORTET innan den når rapporterna. Vilken av de två kaskaderna Postgres kör först
 -- följer av i vilken ordning främmande nycklarna skapades, och det är inte samma i alla databaser. Här tas
 -- rapporternas egen kaskad på work_order_id bort (inom transaktionen, rullas tillbaka), så kortets borttagning är den
 -- enda vägen: triggern måste se att ordern är borta och släppa igenom, annars nekas raderingen av hela ordern.
@@ -235,7 +256,7 @@ declare
 begin
   select t.id into truck from public.ops_trucks t order by t.name limit 1;
   insert into public.crm_work_orders (id, order_number, project_name, client_name, quote_type, created_by, assigned_to)
-  values (wo, 'AO-CHECK-SACK-8', 'Provorder 8', 'Provkund', 'business', admin_id, admin_id);
+  values (wo, 'AO-CHECK-SACK-9', 'Provorder 9', 'Provkund', 'business', admin_id, admin_id);
   insert into public.ops_segments (id, work_order_id, truck_id, start_day, end_day, created_by)
   values (seg, wo, truck, '2026-10-14', '2026-10-14', admin_id);
   insert into public.ops_segment_reports
@@ -247,11 +268,11 @@ begin
   delete from public.crm_work_orders where id = wo;
   get diagnostics n = row_count;
   reset role;
-  if n <> 1 then raise exception '8. ordern gick inte att radera (% rader)', n; end if;
-  if exists (select 1 from public.ops_segments where id = seg) then raise exception '8. kortet finns kvar'; end if;
-  if exists (select 1 from public.ops_segment_reports where id = rep) then raise exception '8. rapporten finns kvar'; end if;
+  if n <> 1 then raise exception '9. ordern gick inte att radera (% rader)', n; end if;
+  if exists (select 1 from public.ops_segments where id = seg) then raise exception '9. kortet finns kvar'; end if;
+  if exists (select 1 from public.ops_segment_reports where id = rep) then raise exception '9. rapporten finns kvar'; end if;
 
-  raise notice 'säckrapporterna: kontroll 8 gick igenom';
+  raise notice 'säckrapporterna: kontroll 9 gick igenom';
 end $$;
 
 rollback;

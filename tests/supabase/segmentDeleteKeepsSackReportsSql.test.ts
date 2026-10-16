@@ -55,7 +55,11 @@ describe('säckrapporterna överlever att ett kort tas bort (SQL)', () => {
 
   it('släpper igenom när ordern själv raderas, och prövar det före nejet', () => {
     const body = fn?.body ?? '';
-    const orderGone = body.indexOf('if not exists (select 1 from public.crm_work_orders w where w.id = old.work_order_id) then return old;');
+    // `is not null` först: ett kort utan order har ingen order som "försvunnit" (w.id = null är aldrig sant), och
+    // utan villkoret hade dess rapporter släppts till kaskaden i stället för att nekas.
+    const orderGone = body.indexOf(
+      'if old.work_order_id is not null and not exists (select 1 from public.crm_work_orders w where w.id = old.work_order_id) then return old;',
+    );
     expect(orderGone).toBeGreaterThanOrEqual(0);
     expect(orderGone).toBeLessThan(body.indexOf('raise exception'));
   });

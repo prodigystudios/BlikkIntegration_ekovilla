@@ -8,7 +8,7 @@
 -- rapporterna). Rapporterna hör till arbetsordern; kortet avgör bara vilken bil, och därmed depå, säckarna dras från.
 --
 -- REGELN
---   * Kortet har inga rapporter, eller är en platshållare: ingenting ändras.
+--   * Kortet har inga rapporter (alltid fallet för en platshållare): ingenting ändras.
 --   * Ordern har ett annat kort: rapporterna flyttas dit, var och en till det kort resolveSegmentForDay hade valt för
 --     rapportdagen bland de kort som blir kvar. Avstånd 0 = kortet täcker dagen; sedan tidigast start, sedan id. Samma
 --     ordning som i TypeScript, så en rapport hamnar där den hade hamnat om dubbletten aldrig funnits.
@@ -16,6 +16,12 @@
 --     Planeringens DELETE-rutt svarar 409 och tavlan visar texten. Kortet kan flyttas eller pausas i stället.
 --   * Ordern själv raderas (on delete cascade från crm_work_orders): släpps igenom som förut. Ordern syns då inte längre
 --     i triggern, och rapporterna går med ordern via sin egen kaskad på work_order_id.
+--   * Målet väljs bland ALLA orderns kort, pausade och andra etappers inräknade, precis som resolveSegmentForDay gör när
+--     rapporten skrivs. Regeln står alltså två gånger, här och i TypeScript; sackLedger.ts pekar hit.
+--
+-- SYNLIGT, INTE TYST
+-- Flyttas rapporterna byter säckarna bil och därmed depå. DELETE-rutten räknar dem före borttagningen och skriver
+-- antalet i aktivitetsloggen och i svaret, och tavlan säger det i sin toast.
 --
 -- VARFÖR I DATABASEN
 -- Varje väg som tar bort ett kort får regeln, också service-rollen och framtida rutter. Samma form som
@@ -29,7 +35,9 @@
 -- Två kort på samma order som tas bort i samma stund: flytten pekar om rapporterna till det andra kortet, och
 -- FK-kontrollen måste låsa det kortet — som den andra borttagningen redan håller. Postgres avbryter då den ena
 -- (deadlock, eller foreign_key_violation om den andra hann bli klar). Den som avbryts har inte tagit bort något, och
--- rapporterna ligger kvar på ett kort som finns. Inget eget orderlås behövs för att ingenting ska försvinna.
+-- rapporterna ligger kvar på ett kort som finns. Inget eget orderlås behövs för att ingenting ska försvinna. I det
+-- andra fallet visar tavlan beskedet om orderns enda kort, vilket då stämmer först efter en omladdning; känt och
+-- ofarligt.
 --
 -- ÅTKOMST
 -- Inga nya tabeller eller kolumner, inga nya grants. Triggerfunktionen får ingen EXECUTE (den prövas bara när triggern
@@ -51,20 +59,23 @@ as $$
 declare
   n integer;
 begin
-  -- En platshållare (utan order) har aldrig rapporter och släpps igenom här.
-  select count(*) into n from public.ops_segment_reports r where r.segment_id = old.id;
-  if n = 0 then
+  -- Inga rapporter (det vanliga, och alltid för en platshållare): ingenting att rädda.
+  if not exists (select 1 from public.ops_segment_reports r where r.segment_id = old.id) then
     return old;
   end if;
 
   -- Ordern raderas: kaskaden från crm_work_orders går efter att orderraden tagits bort, så den syns inte här.
-  if not exists (select 1 from public.crm_work_orders w where w.id = old.work_order_id) then
+  -- Bara när kortet HAR en order. Ett kort utan order med rapporter på sig ska nekas nedan, inte släppas till
+  -- kaskaden (`w.id = null` är aldrig sant, så utan villkoret hade det sett ut som en raderad order).
+  if old.work_order_id is not null
+     and not exists (select 1 from public.crm_work_orders w where w.id = old.work_order_id) then
     return old;
   end if;
 
   if not exists (
     select 1 from public.ops_segments s where s.work_order_id = old.work_order_id and s.id <> old.id
   ) then
+    select count(*) into n from public.ops_segment_reports r where r.segment_id = old.id;
     raise exception using
       errcode = 'foreign_key_violation',
       message = format('Kortet har säckrapporter (%s st) och är orderns enda kort på schemat', n),
