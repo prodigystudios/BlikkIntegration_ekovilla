@@ -190,6 +190,12 @@ const isoToDayNumber = isoDayNumber;
  * från. Valet här är det TIDIGASTE segmentet (sedan id), samma deterministiska ordning som
  * derivePlannedDemandSegments använder för planerad efterfrågan — så planerat och förbrukat attribueras
  * åtminstone likadant. Ett riktigt svar kräver att rapporten bär bilen, vilket den inte gör i dag.
+ *
+ * ⚠️ REGELN STÅR ÄVEN I SQL. Tas ett kort bort flyttar triggern ops_segments_keep_sack_reports
+ * (supabase/migrations/20261016105146_segment_delete_keeps_sack_reports.sql) dess rapporter till det kort
+ * den här funktionen hade valt bland de kort som blir kvar: avstånd, tidigast start, id. Ändras ordningen
+ * här måste en ny migrering ändra den där, annars hamnar en skriven och en flyttad rapport på olika kort.
+ * tests/supabase/segmentDeleteKeepsSackReportsSql.test.ts låser båda.
  */
 export function resolveSegmentForDay(
   segments: ResolvableSegment[],

@@ -723,7 +723,14 @@ export default function PlanningClient({
         refresh();
         return;
       }
-      toast.success('Jobbet avplanerat');
+      // Hade kortet säckrapporter har databasen flyttat dem till orderns andra kort, och säckarna dras nu från den
+      // bilens depå. Säg det, i stället för att låta flytten ske tyst.
+      const movedReports = Number(j.data?.moved_sack_reports) || 0;
+      toast.success(
+        movedReports > 0
+          ? 'Jobbet avplanerat. Säckrapporterna flyttades till orderns andra kort.'
+          : 'Jobbet avplanerat',
+      );
       // Var det ordens sista kort har databasen satt tillbaka Planerad → Ej planerad. Det går inte att
       // avgöra här (tavlan har bara den synliga perioden laddad), så routen svarar med statusen. Gick
       // den inte att läsa läses backloggen om i stället för att gissa.

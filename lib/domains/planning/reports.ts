@@ -144,6 +144,22 @@ export async function listSackReports(supabase: SupabaseClient, workOrderId: str
     .order('created_at', { ascending: false });
 }
 
+/**
+ * Hur många rapportrader som sitter på ett kort. null = gick inte att läsa.
+ *
+ * Avplaneringen frågar FÖRE borttagningen: har ordern ett annat kort flyttar databasen raderna dit
+ * (ops_segments_keep_sack_reports), och säckarna byter då bil och depå. Talet gör flytten synlig i
+ * aktivitetsloggen och på tavlan i stället för tyst. Sessionsklienten: den som får ta bort kort
+ * (planning.schedule.write) läser rapporterna via planning.schedule.read.
+ */
+export async function countSackReportsOnSegment(supabase: SupabaseClient, segmentId: string): Promise<number | null> {
+  const { count, error } = await supabase
+    .from('ops_segment_reports')
+    .select('id', { count: 'exact', head: true })
+    .eq('segment_id', segmentId);
+  return error ? null : count ?? 0;
+}
+
 export type NewSackReport = {
   segment_id: string;
   work_order_id: string;
