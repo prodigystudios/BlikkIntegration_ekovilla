@@ -26,15 +26,10 @@ import {
   KMA_A4_CONTENTS,
   KMA_A4_INTRO,
   KMA_A4_OUTRO,
-  KMA_A5_ACTION_PLAN,
-  KMA_A5_ACTION_PLAN_TEXT,
-  KMA_A5_GOALS_EXAMPLES,
-  KMA_A5_GOALS_EXAMPLES_INTRO,
-  KMA_A5_GOALS_MOTTO,
-  KMA_A5_GOALS_TEXT,
-  KMA_A5_INVESTIGATION,
+  KMA_A5_META,
   KMA_A5_POLICY,
-  KMA_A5_RESPONSIBILITY,
+  KMA_A5_SIGNED,
+  KMA_A5_TAGLINE,
   KMA_A8_CONFIRM,
   KMA_A8_ONGOING_ROWS,
   KMA_A8_SIGNATURE,
@@ -43,18 +38,25 @@ import {
   KMA_APPENDICES,
   KMA_CEO_CONTACT,
   KMA_COMPANY,
+  KMA_DEVIATION_ESCALATION,
   KMA_EMERGENCY,
   KMA_ENV_ACTIONS,
   KMA_ENV_ASPECTS,
+  KMA_ENV_COMMITMENTS,
   KMA_ENV_GOALS,
   KMA_ENV_POLICY,
   KMA_FOLLOW_UP_FINAL,
   KMA_FOLLOW_UP_START,
   KMA_FOOTER,
+  KMA_MATERIAL_APPROVAL_RULES,
+  KMA_POLICY_RESPONSIBILITY,
   KMA_PPE,
   KMA_PURPOSE,
+  KMA_QUALITY_GOALS,
+  KMA_QUALITY_MEASURES,
   KMA_QUALITY_POLICY,
   KMA_RISKS,
+  KMA_SELF_CHECK_NOTE,
   KMA_SELF_CHECK_POINTS,
   KMA_SITE_RULES,
   KMA_STANDARDS,
@@ -145,14 +147,19 @@ function mainSection(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
         ['Kvalitetsansvarig', organisation.quality.name],
       ],
     },
+    { t: 'p', text: KMA_POLICY_RESPONSIBILITY },
     { t: 'h2', text: 'Kontaktlista' },
     { t: 'table', columns: CONTACT_COLUMNS, rows: contactRows(form) },
 
     { t: 'h1', text: '3. Kvalitetsplan' },
     { t: 'h2', text: 'Kvalitetspolicy' },
     { t: 'p', text: KMA_QUALITY_POLICY },
+    { t: 'h2', text: 'Så säkrar vi kvaliteten' },
+    { t: 'list', items: [...KMA_QUALITY_MEASURES] },
+    { t: 'h2', text: 'Kvalitetsmål' },
+    { t: 'list', items: [...KMA_QUALITY_GOALS] },
     { t: 'h2', text: 'Materialhantering' },
-    { t: 'list', items: [...kmaMaterialHandlingLines(project.materials), KMA_STORAGE_RULE] },
+    { t: 'list', items: [...kmaMaterialHandlingLines(project.materials), ...KMA_MATERIAL_APPROVAL_RULES, KMA_STORAGE_RULE] },
     { t: 'h2', text: 'Egenkontroller (se även Bilaga 6 – Egenkontrollmall)' },
     {
       t: 'table',
@@ -163,12 +170,15 @@ function mainSection(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
       ],
       rows: KMA_SELF_CHECK_POINTS.map((point) => [point.point, point.frequency, form.selfCheckResponsible[point.key]]),
     },
+    { t: 'p', text: KMA_SELF_CHECK_NOTE },
     { t: 'h2', text: 'Avvikelsehantering' },
-    { t: 'p', text: `Alla avvikelser rapporteras till ${organisation.deviationRecipient}.` },
+    { t: 'p', text: `Alla avvikelser rapporteras till ${organisation.deviationRecipient}. ${KMA_DEVIATION_ESCALATION}` },
 
     { t: 'h1', text: '4. Miljöplan' },
     { t: 'h2', text: 'Miljöpolicy' },
     { t: 'p', text: [KMA_ENV_POLICY, ...kmaEnvironmentSentences(project.materials)].join(' ') },
+    { t: 'h2', text: 'Våra åtaganden' },
+    { t: 'list', items: [...KMA_ENV_COMMITMENTS] },
     { t: 'h2', text: 'Betydande miljöaspekter' },
     { t: 'list', items: [...KMA_ENV_ASPECTS] },
     { t: 'h2', text: 'Miljömål' },
@@ -363,6 +373,34 @@ function appendix6(): KmaSection[] {
   ];
 }
 
+// Bilaga 5 är Ekovilla Sveriges kvalitets- och miljöpolicy, ordagrant (template.ts). Policyns egna
+// avsnittsrubriker blir h2, dess underrubriker (3.1 …) h3.
+function appendix5(): KmaSection {
+  const blocks: KmaBlock[] = [
+    { t: 'h1', text: appendixHeading(5) },
+    { t: 'p', text: KMA_A5_TAGLINE },
+    { t: 'fields', rows: KMA_A5_META.map(([label, value]): [string, string] => [label, value]) },
+  ];
+  for (const part of KMA_A5_POLICY) {
+    if ('h2' in part) blocks.push({ t: 'h2', text: part.h2 });
+    else if ('h3' in part) blocks.push({ t: 'h3', text: part.h3 });
+    else if ('p' in part) blocks.push({ t: 'p', text: part.p });
+    else if ('list' in part) blocks.push({ t: 'list', items: [...part.list] });
+    else
+      blocks.push({
+        t: 'table',
+        columns: [
+          { head: 'Uppgift', width: 1 },
+          { head: 'Fakta i registret', width: 1.6 },
+        ],
+        rows: part.table.map(([label, value]) => [label, value]),
+      });
+  }
+  blocks.push({ t: 'h2', text: 'Underskrift' });
+  blocks.push({ t: 'fields', rows: KMA_A5_SIGNED.map(([label, value]): [string, string] => [label, value]) });
+  return { key: 'a5', newPage: true, blocks };
+}
+
 function appendix8(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
   const { project } = form;
   const signerRows = (rows: KmaFormValues['signers']['ongoing']) => rows.map((s) => [s.name, '', s.role, ctx.issuedOn]);
@@ -439,27 +477,7 @@ export function buildKmaDocument(form: KmaFormValues, ctx: KmaDocumentContext): 
         ...KMA_A4_OUTRO.map((text): KmaBlock => ({ t: 'p', text })),
       ],
     },
-    {
-      key: 'a5',
-      newPage: true,
-      blocks: [
-        { t: 'h1', text: appendixHeading(5) },
-        { t: 'h2', text: 'Miljöutredning' },
-        { t: 'p', text: KMA_A5_INVESTIGATION },
-        { t: 'h2', text: 'Miljöpolicy' },
-        ...KMA_A5_POLICY.map((text): KmaBlock => ({ t: 'p', text })),
-        { t: 'h2', text: 'Miljömål' },
-        { t: 'p', text: KMA_A5_GOALS_MOTTO },
-        { t: 'p', text: KMA_A5_GOALS_TEXT },
-        { t: 'p', text: KMA_A5_GOALS_EXAMPLES_INTRO },
-        { t: 'list', items: [...KMA_A5_GOALS_EXAMPLES] },
-        { t: 'h2', text: 'Handlingsplan' },
-        { t: 'p', text: KMA_A5_ACTION_PLAN_TEXT },
-        { t: 'list', items: [...KMA_A5_ACTION_PLAN] },
-        { t: 'h2', text: 'Ansvar för miljö' },
-        { t: 'p', text: KMA_A5_RESPONSIBILITY.join('\n') },
-      ],
-    },
+    appendix5(),
     ...appendix6(),
     {
       key: 'a7',

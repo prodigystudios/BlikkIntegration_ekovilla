@@ -73,7 +73,9 @@ describe('buildKmaDocument — bolaget', () => {
     const doc = buildKmaDocument(kmaForm(), CTX);
     expect(JSON.stringify(doc)).not.toContain('Ekovilla se AB');
     const appendixTable = tables(section(doc, 'main').blocks).find((t) => t.columns[0].head === 'Bilaga');
-    for (const row of appendixTable!.rows.slice(1, 5)) expect(row[1]).toMatch(/– Isoleringslandslaget AB$/);
+    for (const row of appendixTable!.rows.slice(1, 4)) expect(row[1]).toMatch(/– Isoleringslandslaget AB$/);
+    // Bilaga 5 är koncernens policy, inte Isoleringslandslagets egen.
+    expect(appendixTable!.rows[4][1]).toBe('Kvalitets- och miljöpolicy – Ekovilla Sverige');
   });
 
   it('foten bär bolagsraden ur mallen', () => {
@@ -84,9 +86,9 @@ describe('buildKmaDocument — bolaget', () => {
 });
 
 describe('buildKmaDocument — version och revision', () => {
-  it('"Version 2.0" är mallens och står fast; revisionen står bredvid', () => {
+  it('"Version 2.1" är mallens och står fast; revisionen står bredvid', () => {
     const main = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
-    expect(fieldValue(main, 'Version')).toBe('2.0');
+    expect(fieldValue(main, 'Version')).toBe('2.1');
     expect(fieldValue(main, 'Revision')).toBe('1');
   });
 
@@ -127,6 +129,52 @@ describe('buildKmaDocument — materialet', () => {
     expect(main).toContain('vid tilläggsisolering med cellulosaisolering (lösull).');
     expect(main).toContain('tidningspapper');
     expect(main).not.toContain('Knauf');
+  });
+});
+
+describe('buildKmaDocument — Ekovilla Sveriges kvalitets- och miljöpolicy', () => {
+  // VD:s policy (fastställd 2 februari 2026) ersatte gamla bilaga 5, som kallade glasull från Knauf
+  // för vår huvudprodukt och lovade en WWF-gåva VD inte står bakom.
+  it('bilaga 5 är policyn, med VD:s datum och underskrift', () => {
+    const a5 = section(buildKmaDocument(kmaForm(), CTX), 'a5').blocks;
+    expect(a5[0]).toEqual({ t: 'h1', text: 'Bilaga 5 – Kvalitets- och miljöpolicy – Ekovilla Sverige' });
+    expect(fieldValue(a5, 'Fastställd')).toBe('2 februari 2026');
+    expect(fieldValue(a5, 'Ort och datum')).toBe('Sandviken den 2 februari 2026');
+    const h2 = a5.flatMap((b) => (b.t === 'h2' ? [b.text] : []));
+    expect(h2.slice(0, 8).map((h) => h.split('.')[0])).toEqual(['1', '2', '3', '4', '5', '6', '7', '8']);
+    expect(textOf(a5)).toContain('RIV-2024-PROJ-75');
+  });
+
+  it('gamla miljöledningstexten är borta överallt — ingen Knauf-huvudprodukt, ingen WWF', () => {
+    for (const materials of [['EKOVILLA'], ['KNAUF SUPAFIL']]) {
+      const form = kmaForm();
+      form.project.materials = materials;
+      const json = JSON.stringify(buildKmaDocument(form, CTX));
+      for (const old of ['huvudprodukt', 'WWF', '10 % av vår vinst', 'Miljöledningssystem', 'ger inget spill']) expect(json).not.toContain(old);
+    }
+  });
+
+  it('huvuddokumentet bär policyns åtaganden: regelverk, ansvar, kvalitetsmål, BAS-U', () => {
+    const main = textOf(section(buildKmaDocument(kmaForm(), CTX), 'main').blocks);
+    for (const expected of [
+      'AFS 2023:13',
+      'AB 04, ABT 06 eller ABU 07 enligt avtal',
+      'Entreprenadchef ansvarar',
+      'Kvalitetsmål',
+      'minst 95 % leveranssäkerhet',
+      'ID06 Kompetensdatabas',
+      'BAS-U',
+      'säkerhetsdatablad',
+      'fossilfria drivmedel',
+    ])
+      expect(main).toContain(expected);
+  });
+
+  it('Ekovillas EPD- och λ-mening bara när ordern har EKOVILLA', () => {
+    const knauf = kmaForm();
+    knauf.project.materials = ['KNAUF SUPAFIL'];
+    expect(textOf(section(buildKmaDocument(kmaForm(), CTX), 'main').blocks)).toContain('0,038 W/mK');
+    expect(textOf(section(buildKmaDocument(knauf, CTX), 'main').blocks)).not.toContain('0,038 W/mK');
   });
 });
 
