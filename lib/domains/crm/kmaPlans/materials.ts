@@ -2,7 +2,7 @@ import { isBlownInsulationRow } from '@/lib/domains/crm/afterCalculationLoader';
 import { MATERIAL_SHORTS, inferMaterialFromArticle } from '@/lib/domains/crm/materials';
 
 import { KMA_MATERIAL_INFO, type KmaMaterialKind } from './materialInfo';
-import { KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_KNAUF } from './template';
+import { KMA_ENV_SENTENCE_CELLULOSE, KMA_ENV_SENTENCE_EKOVILLA, KMA_ENV_SENTENCE_KNAUF } from './template';
 
 // Materialet i KMA-planen: vilken sorts isolering, vilket certifikat, och vilka meningar som
 // därmed får stå i dokumentet.
@@ -71,13 +71,15 @@ export function kmaMaterialHandlingLines(materials: readonly string[]): string[]
 
 /**
  * §4 Miljöpolicy: bara de meningar som stämmer för orderns material. Cellulosameningen gäller all
- * cellulosa (återvunnet tidningspapper), Knaufmeningen bara Knauf. För trä- och stenull finns ingen
+ * cellulosa (återvunnet tidningspapper), Ekovillameningen (EPD, BVB, λ — ur VD:s policy 4.2) bara
+ * EKOVILLA, Knaufmeningen bara Knauf. För trä- och stenull finns ingen
  * mening i bolagets texter — då står bara inledningen, hellre än en påhittad formulering.
  */
 export function kmaEnvironmentSentences(materials: readonly string[]): string[] {
   const list = normalizeKmaMaterials(materials);
   const sentences: string[] = [];
   if (list.some((m) => KMA_MATERIAL_INFO[m].kind === 'cellulosa')) sentences.push(KMA_ENV_SENTENCE_CELLULOSE);
+  if (list.includes('EKOVILLA')) sentences.push(KMA_ENV_SENTENCE_EKOVILLA);
   if (list.includes('KNAUF SUPAFIL')) sentences.push(KMA_ENV_SENTENCE_KNAUF);
   return sentences;
 }

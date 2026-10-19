@@ -108,7 +108,18 @@ describe('kmaEnvironmentSentences', () => {
     expect(kmaEnvironmentSentences(['HUNTON NATIVO'])).toEqual([]);
   });
 
-  it('båda när ordern har båda', () => {
-    expect(kmaEnvironmentSentences(['EKOVILLA', 'KNAUF SUPAFIL'])).toHaveLength(2);
+  it('Ekovillas EPD-mening bara vid EKOVILLA — inte vid annan cellulosa', () => {
+    expect(kmaEnvironmentSentences(['EKOVILLA']).join(' ')).toContain('EPD');
+    expect(kmaEnvironmentSentences(['ISOCELL/ISECO']).join(' ')).not.toContain('EKOVILLA');
+  });
+
+  it('Knaufmeningen är saklig — ingen värdering som krockar med policyn i bilaga 5', () => {
+    const knauf = kmaEnvironmentSentences(['KNAUF SUPAFIL']).join(' ');
+    expect(knauf).toContain('upp till 80 % återvunnet glas');
+    expect(knauf).not.toMatch(/miljöanpass|miljövänlig|mest/);
+  });
+
+  it('alla tre när ordern har både Ekovilla och Knauf', () => {
+    expect(kmaEnvironmentSentences(['EKOVILLA', 'KNAUF SUPAFIL'])).toHaveLength(3);
   });
 });
