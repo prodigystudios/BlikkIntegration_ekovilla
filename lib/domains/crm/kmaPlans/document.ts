@@ -172,7 +172,11 @@ function mainSection(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
     },
     { t: 'p', text: KMA_SELF_CHECK_NOTE },
     { t: 'h2', text: 'Avvikelsehantering' },
-    { t: 'p', text: `Alla avvikelser rapporteras till ${organisation.deviationRecipient}. ${KMA_DEVIATION_ESCALATION}` },
+    // Mottagaren är fritext ur dialogen; en egen slutpunkt hade gett ".." mitt i stycket.
+    {
+      t: 'p',
+      text: `Alla avvikelser rapporteras till ${organisation.deviationRecipient.replace(/[.\s]+$/, '')}. ${KMA_DEVIATION_ESCALATION}`,
+    },
 
     { t: 'h1', text: '4. Miljöplan' },
     { t: 'h2', text: 'Miljöpolicy' },

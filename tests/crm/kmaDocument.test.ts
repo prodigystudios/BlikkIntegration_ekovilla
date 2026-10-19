@@ -69,9 +69,13 @@ describe('buildKmaDocument — bolaget', () => {
     expect(fieldValue(section(doc, 'main').blocks, 'Företag')).toBe('Isoleringslandslaget AB 559022-5800');
   });
 
-  it('"Ekovilla se AB" står ingenstans — mallens bilagetabell sa det för bilaga 2–4', () => {
+  it('"Ekovilla se AB" står ingenstans utom i policyn — mallens bilagetabell sa det för bilaga 2–4', () => {
     const doc = buildKmaDocument(kmaForm(), CTX);
-    expect(JSON.stringify(doc)).not.toContain('Ekovilla se AB');
+    // Skiftlägesokänsligt: bilaga 5 (VD:s policy, ordagrann) räknar upp "EKOVILLA se AB" bland koncernens
+    // bolag, och med en skiftlägeskänslig jämförelse hade vakten varit grön av en slump. Policyn undantas;
+    // resten av planen får aldrig nämna bolaget.
+    expect(JSON.stringify(section(doc, 'a5'))).toMatch(/ekovilla se ab/i);
+    expect(JSON.stringify({ ...doc, sections: doc.sections.filter((s) => s.key !== 'a5') })).not.toMatch(/ekovilla se ab/i);
     const appendixTable = tables(section(doc, 'main').blocks).find((t) => t.columns[0].head === 'Bilaga');
     for (const row of appendixTable!.rows.slice(1, 4)) expect(row[1]).toMatch(/– Isoleringslandslaget AB$/);
     // Bilaga 5 är koncernens policy, inte Isoleringslandslagets egen.
@@ -129,6 +133,16 @@ describe('buildKmaDocument — materialet', () => {
     expect(main).toContain('vid tilläggsisolering med cellulosaisolering (lösull).');
     expect(main).toContain('tidningspapper');
     expect(main).not.toContain('Knauf');
+  });
+});
+
+describe('buildKmaDocument — avvikelsemottagaren', () => {
+  it('en mottagare som redan slutar med punkt ger ingen dubbelpunkt mitt i stycket', () => {
+    const form = kmaForm();
+    form.organisation.deviationRecipient = 'Projektledare Anna Svensson.';
+    const main = textOf(section(buildKmaDocument(form, CTX), 'main').blocks);
+    expect(main).toContain('Alla avvikelser rapporteras till Projektledare Anna Svensson. Avvikelser från');
+    expect(main).not.toContain('..');
   });
 });
 
