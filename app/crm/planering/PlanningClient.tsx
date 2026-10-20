@@ -7,6 +7,7 @@ import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
+import { restorePlanningPeriod, serializePlanningPeriod } from './planningPeriod';
 import { formatDayRange } from '@/app/crm/lib/format';
 import type { BacklogPlacement, OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
@@ -64,6 +65,9 @@ const API = '/api/crm/planering';
 //
 // `prefsLoaded` finns för den andra sorten och FÅR INTE tas bort så länge någon nyckel här styr
 // vad som hämtas. Lägger du till en sådan nyckel gäller samma grind.
+//
+// Den tredje sortens inställning bor INTE här: perioden (vy, vecka, månad, PERIOD_SESSION_KEY) sparas i
+// FLIKEN, inte för alltid, och styr också intervallet — den läses i samma effekt, bakom samma grind.
 const PREF_KEYS = {
   showWeekend: 'crm-planning-show-weekend',
   stackWeeks: 'crm-planning-stack-weeks',
@@ -71,6 +75,10 @@ const PREF_KEYS = {
   salesFilter: 'crm-planning-sales-filter',
   backlogFilter: 'crm-planning-backlog-filter',
 } as const;
+
+// Vy och period över ett sidbyte — in på en order och tillbaka (William 2026-10-20). sessionStorage, som
+// order- och offertlistans filter: en ny flik börjar på denna vecka. Se planningPeriod.ts.
+const PERIOD_SESSION_KEY = 'crm-planning-period';
 
 // ⚠️ `localStorage` KASTAR i privat läge och när kakor är blockerade — den är inte bara tom. Ett
 // blockerat lager ska betyda att standardvärdena står, aldrig att tavlan inte renderar.
@@ -87,6 +95,22 @@ function writePref(key: string, value: string | null) {
     else localStorage.setItem(key, value);
   } catch {
     /* ignorera — inställningen gäller sessionen ut, den överlever bara inte */
+  }
+}
+// Samma skydd för fliklagret (sessionStorage kastar på samma sätt).
+function readSessionPref(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeSessionPref(key: string, value: string | null) {
+  try {
+    if (value === null) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, value);
+  } catch {
+    /* ignorera — perioden gäller sidan ut, den överlever bara inte ett sidbyte */
   }
 }
 
@@ -450,8 +474,22 @@ export default function PlanningClient({
       setBacklogFilter(storedBacklog);
     }
 
+    // Perioden från förra besöket i fliken — före grinden, så att första hämtningen gäller rätt vecka.
+    const period = restorePlanningPeriod(readSessionPref(PERIOD_SESSION_KEY), todayAnchor);
+    setView(period.view);
+    setWeekOffset(period.weekOffset);
+    setMonthOffset(period.monthOffset);
+
     setPrefsLoaded(true);
-  }, []);
+  }, [todayAnchor]);
+
+  // Perioden skrivs när den ändras — aldrig före inläsningen ovan, som annars hade skrivit förvalet över
+  // det sparade. Förvalet (denna vecka) tar bort nyckeln (serializePlanningPeriod).
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    writeSessionPref(PERIOD_SESSION_KEY, serializePlanningPeriod({ view, weekOffset, monthOffset }, todayAnchor));
+  }, [prefsLoaded, view, weekOffset, monthOffset, todayAnchor]);
+
   const toggleWeekend = useCallback(() => {
     setShowWeekend((v) => {
       const next = !v;
