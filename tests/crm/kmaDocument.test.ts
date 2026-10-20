@@ -107,9 +107,9 @@ describe('buildKmaDocument — bolaget', () => {
 });
 
 describe('buildKmaDocument — version och revision', () => {
-  it('"Version 2.1" är mallens och står fast; revisionen står bredvid', () => {
+  it('"Version 2.2" är mallens och står fast; revisionen står bredvid', () => {
     const main = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
-    expect(fieldValue(main, 'Version')).toBe('2.1');
+    expect(fieldValue(main, 'Version')).toBe('2.2');
     expect(fieldValue(main, 'Revision')).toBe('1');
   });
 

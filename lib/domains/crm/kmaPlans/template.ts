@@ -33,6 +33,10 @@ import type { KmaSelfCheckKey } from './types';
 //   * Datumet skrivs "2 februari 2026", aldrig ÅÅÅÅ-MM-DD: dokumentet får bara bära planens egna
 //     datum i den formen (tests/crm/kmaDocument.test.ts, "inget utskriftsdatum").
 //
+// 2026-10-20 (Williams beslut, mallversion 2.2) — första sidans faktatabell, ingen av raderna står i Word-mallen:
+//   * "Företag" bär båda bolagen med org.nr (KMA_COMPANIES), inte bara entreprenören.
+//   * Ny rad "Betalningsplan: 25:e varje månad" (KMA_PAYMENT_PLAN), under Projektnummer.
+//
 // ⚠️ Ett ändrat värde här påverkar bara NYA planer. Varje sparad revision bär sitt eget dokument
 // (crm_work_order_kma_plans.document) och renderas ur det, aldrig ur den här filen.
 
@@ -53,8 +57,11 @@ export const KMA_COMPANIES = [KMA_COMPANY, { name: 'EKOVILLA se AB', orgNumber: 
  */
 export const KMA_PAYMENT_PLAN = '25:e varje månad';
 
-/** Mallens version, som i Word-mallen. Planens egen revision visas separat (Williams beslut). */
-export const KMA_TEMPLATE_VERSION = '2.1';
+/**
+ * Mallens version, som i Word-mallen. Planens egen revision visas separat (Williams beslut). Höjs när
+ * mallens innehåll ändras: 2.1 = policyn (2026-10-19), 2.2 = Företag + Betalningsplan (2026-10-20).
+ */
+export const KMA_TEMPLATE_VERSION = '2.2';
 
 export const KMA_FOOTER = 'Ekovilla AB / Isoleringslandslaget AB - 020-44 66 40 - Info@ekovilla.se';
 
