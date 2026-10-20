@@ -37,6 +37,7 @@ import {
   KMA_A8_VERIFYING_ROWS,
   KMA_APPENDICES,
   KMA_CEO_CONTACT,
+  KMA_COMPANIES,
   KMA_COMPANY,
   KMA_DEVIATION_ESCALATION,
   KMA_EMERGENCY,
@@ -116,7 +117,7 @@ function mainSection(form: KmaFormValues, ctx: KmaDocumentContext): KmaSection {
     {
       t: 'fields',
       rows: [
-        ['Företag', `${KMA_COMPANY.name} ${KMA_COMPANY.orgNumber}`],
+        ['Företag', KMA_COMPANIES.map((company) => `${company.name} ${company.orgNumber}`).join('\n')],
         ['Projektnamn', project.projectName],
         ['Kund', project.customerName],
         ['Projektnummer', project.projectNumber],

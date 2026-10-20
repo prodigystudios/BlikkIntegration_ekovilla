@@ -8,7 +8,8 @@ import type { KmaSelfCheckKey } from './types';
 // 2026-10-14 — den byggdes först efter en äldre Word-mall, 6_Egenkontrollmall.docx).
 //
 // ENTREPRENÖREN ÄR ALLTID ISOLERINGSLANDSLAGET AB (Williams beslut 2026-09-24), inte Ekovilla som
-// resten av appen känner. Det enda Ekovilla-namnet i dokumentet är bolagsraden i foten, som i mallen.
+// resten av appen känner. Planens texter namnger den (KMA_COMPANY). Raden "Företag" överst bär sedan
+// 2026-10-20 båda bolagen med org.nr (KMA_COMPANIES, Williams beslut), och foten Ekovilla, som i mallen.
 //
 // ⚠️ TEXTERNA ÄR ORDAGRANNA utom rättningarna nedan. Ändra dem inte för att något "låter bättre" —
 // dokumentet går till beställare, och bolaget äger formuleringarna. Rättningarna, listade i PR:en
@@ -36,6 +37,15 @@ import type { KmaSelfCheckKey } from './types';
 // (crm_work_order_kma_plans.document) och renderas ur det, aldrig ur den här filen.
 
 export const KMA_COMPANY = { name: 'Isoleringslandslaget AB', orgNumber: '559022-5800' } as const;
+
+/**
+ * Bolagen på planens rad "Företag", ett per rad: entreprenören och Ekovilla, båda med org.nr (William
+ * 2026-10-20). Bara den raden — planens övriga texter namnger entreprenören som förut.
+ *
+ * Stavningen "EKOVILLA se AB" är bolagets egen, som i bilaga 5 (VD:s policy) — Williams val framför
+ * "Ekovilla SE AB", så att samma PDF inte stavar bolaget på två sätt.
+ */
+export const KMA_COMPANIES = [KMA_COMPANY, { name: 'EKOVILLA se AB', orgNumber: '559341-9673' }] as const;
 
 /** Mallens version, som i Word-mallen. Planens egen revision visas separat (Williams beslut). */
 export const KMA_TEMPLATE_VERSION = '2.1';
