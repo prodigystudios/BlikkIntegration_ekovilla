@@ -139,3 +139,34 @@ describe('createPartialInvoice — avbruten medan claimen togs', () => {
     expect(workOrders.update.mock.calls.at(-1)?.[0]).toEqual({ fortnox_invoice_sync_status: 'not_synced' });
   });
 });
+
+// Kundbytet (crm/workOrderCustomerSwap.ts): pushen efter bytet misslyckades, så Fortnox-ordern bär den
+// gamla kunden. Delfakturan tar kunden ur Fortnox-orderns huvud — den hade gått till fel kund.
+describe('createPartialInvoice — ordern har bytt kund', () => {
+  function installRow(row: Record<string, unknown>) {
+    const workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
+    workOrders.single = vi.fn().mockResolvedValue({ data: row, error: null });
+    const invoices = makeChain({ data: [], error: null });
+    vi.mocked(getSupabaseAdmin).mockReturnValue({
+      from: vi.fn((table: string) => (table === 'crm_work_order_invoices' ? invoices : workOrders)),
+    } as unknown as ReturnType<typeof getSupabaseAdmin>);
+  }
+  const swapped = { ...workOrderRow, fortnox_order_number: '131', customer_snapshot: { reverse_vat: false, fortnox_customer_number: '2' } };
+
+  it('vägrar fakturera när Fortnox-ordern fortfarande bär den gamla kunden', async () => {
+    installRow(swapped);
+    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { CustomerNumber: 55 } } as never);
+
+    await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
+      .rejects.toThrow(/bytt kund.*Synka om/s);
+    expect(fortnoxPost).not.toHaveBeenCalled();
+  });
+
+  it('fakturerar när Fortnox-ordern bär den nya kunden', async () => {
+    installRow(swapped);
+    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { CustomerNumber: 2 } } as never);
+
+    await createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1');
+    expect(vi.mocked(fortnoxPost).mock.calls[0][1]).toMatchObject({ Invoice: { CustomerNumber: '2' } });
+  });
+});

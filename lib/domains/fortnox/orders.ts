@@ -599,6 +599,22 @@ async function orderCustomerSwapFields(
 }
 
 /**
+ * Är Fortnox-ordern stängd i Fortnox — fakturerad (även för hand, utan att CRM vet det) eller
+ * makulerad? Läses av kundbytet innan något skrivs: en stängd order nekar PUT:en, och bytet hade
+ * stått kvar i CRM medan Fortnox-ordern och fakturan bar den gamla kunden för alltid.
+ *
+ * ⚠️ En ofakturerad order har `InvoiceReference: "0"` — strängen noll, inte null (mätt 2026-09-29).
+ */
+export async function readFortnoxOrderClosed(orderNumber: string): Promise<{ invoiced: boolean; cancelled: boolean }> {
+  const res = await fortnoxGet<{ Order?: { InvoiceReference?: string | number | null; Cancelled?: boolean | null } }>(`/orders/${orderNumber}`);
+  const reference = res.Order?.InvoiceReference;
+  return {
+    invoiced: reference != null && String(reference) !== '' && String(reference) !== '0',
+    cancelled: res.Order?.Cancelled === true,
+  };
+}
+
+/**
  * 🧨 VAKTEN MOT EN SPARNING SOM LANDADE MITT I PUSHEN.
  *
  * Skapandet bygger orderhuvudet ur en rad som lästes innan Fortnox ens svarat. Mellan den
@@ -740,8 +756,11 @@ async function resyncHeaderIfSnapshotChangedDuringPush(
   // ROT bär en RADHALVA, och artiklarna ÄR raderna — båda kräver den fulla pushen. Se rutan ovan.
   // Textraden likaså: titeln står BARA där (buildOrderProjectNote), och märkningen står där utöver
   // huvudet — en header-PUT hade "reparerat" dem utan att röra raden. Samma regel som PATCH-rutten.
+  // Ett kundbyte (crm/workOrderCustomerSwap.ts) likaså: skattereduktionsposten bär sökanden och
+  // följer bara radvägen — en header-PUT hade bytt kunden men lämnat posten på den förra sökanden.
   const rowsDiffer = !same(subset(fresh.rot_details, ROT_DOCUMENT_KEYS), subset(atBuild.rot_details, ROT_DOCUMENT_KEYS))
     || !same(fresh.line_items, atBuild.line_items)
+    || (fresh.customer_snapshot?.fortnox_customer_number ?? null) !== (atBuild.customer_snapshot?.fortnox_customer_number ?? null)
     || workOrderDocumentNoteChanged(atBuild, {
       project_name: fresh.project_name,
       label: (fresh.customer_snapshot as { label?: string | null } | null)?.label ?? null,
@@ -989,9 +1008,14 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       // ARBETSORDERNS kund först, offertens som reserv. De är samma kund tills ordern byter kund
       // (crm/workOrderCustomerSwap.ts) — och då står offerten kvar på den gamla, med flit. Reserven
       // bär en äldre offert vars kund bara finns som `customer_source` (kortet saknar Fortnox-numret).
+      //
+      // 🧨 Reserven bara när offerten har ORDERNS kund. Efter ett byte till ett kort utan Fortnox-
+      // nummer hade den annars skapat Fortnox-ordern på den GAMLA kunden — och utan förväntat nummer
+      // i snapshoten hade ingen push någonsin bytt tillbaka. Då hellre felet nedan: det syns.
+      const quoteHasOrdersCustomer = !workOrder.customer_id || linkedQuote?.customer_id === workOrder.customer_id;
       const customerNumber =
         (workOrder.customer_id ? await resolveFortnoxCustomerNumberById(workOrder.customer_id, supabase) : null) ??
-        (await resolveCustomerNumberFromQuote(linkedQuote, supabase));
+        (quoteHasOrdersCustomer ? await resolveCustomerNumberFromQuote(linkedQuote, supabase) : null);
       if (!customerNumber) {
         throw new Error(
           'Ingen Fortnox-kundkoppling hittades. Kunden måste vara synkad till Fortnox.',

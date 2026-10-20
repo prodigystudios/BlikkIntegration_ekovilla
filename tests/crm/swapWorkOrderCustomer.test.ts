@@ -15,6 +15,7 @@ import { memoryAdmin } from '../portal/helpers/memoryAdmin';
 const WO = '22222222-2222-4222-8222-222222222222';
 const OLD = '11111111-1111-4111-8111-111111111111';
 const NEW = '33333333-3333-4333-8333-333333333333';
+const SELLER = '55555555-5555-4555-8555-555555555555';
 
 const newCard = {
   id: NEW,
@@ -36,6 +37,7 @@ const newCard = {
 const order = {
   id: WO,
   status: 'scheduled',
+  assigned_to: SELLER,
   quote_id: 'quote-1',
   customer_id: OLD,
   prospect_id: null,
@@ -62,6 +64,8 @@ function setup(options: {
   savedMeanwhile?: boolean;
   push?: SwapWorkOrderCustomerDeps['push'];
   createFortnoxCustomer?: SwapWorkOrderCustomerDeps['createFortnoxCustomer'];
+  readFortnoxOrderClosed?: SwapWorkOrderCustomerDeps['readFortnoxOrderClosed'];
+  actor?: { userId: string; isCrmAdmin: boolean };
 } = {}) {
   const row = { ...order, ...options.order };
   const session = memoryAdmin(
@@ -85,9 +89,11 @@ function setup(options: {
   const deps: SwapWorkOrderCustomerDeps = {
     push: options.push ?? vi.fn(async () => ({ fortnox_order_number: '109' })),
     createFortnoxCustomer: options.createFortnoxCustomer ?? vi.fn(async () => ({ fortnoxCustomerNumber: '23' })),
+    readFortnoxOrderClosed: options.readFortnoxOrderClosed ?? vi.fn(async () => ({ invoiced: false, cancelled: false })),
   };
+  const actor = options.actor ?? { userId: SELLER, isCrmAdmin: false };
   const swap = (workAddress: 'keep' | 'customer' = 'customer', customerId = NEW) =>
-    swapWorkOrderCustomer(session.admin, admin.admin, { workOrderId: WO, customerId, workAddress }, deps);
+    swapWorkOrderCustomer(session.admin, admin.admin, { workOrderId: WO, customerId, workAddress, actor }, deps);
   return { session, admin, deps, swap, saved: () => session.tables.crm_work_orders[0] };
 }
 
@@ -181,6 +187,35 @@ describe('swapWorkOrderCustomer', () => {
       unchanged(t);
     });
 
+    // Behörigheten prövas FÖRE allt som rör Fortnox: att lägga upp en kund där är en sidoeffekt.
+    it('varken ansvarig eller admin: nej innan något händer i Fortnox', async () => {
+      const t = setup({ actor: { userId: 'någon-annan', isCrmAdmin: false }, card: { fortnox_customer_id: null } });
+      expect(await t.swap()).toEqual({ kind: 'forbidden' });
+      expect(t.deps.createFortnoxCustomer).not.toHaveBeenCalled();
+      expect(t.deps.readFortnoxOrderClosed).not.toHaveBeenCalled();
+      unchanged(t);
+    });
+
+    it('fakturerad direkt i Fortnox, utan att CRM vet det', async () => {
+      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => ({ invoiced: true, cancelled: false })), card: { fortnox_customer_id: null } });
+      expect(await t.swap()).toMatchObject({ kind: 'blocked', reason: 'invoiced' });
+      expect(t.deps.createFortnoxCustomer).not.toHaveBeenCalled();
+      unchanged(t);
+    });
+
+    it('makulerad i Fortnox', async () => {
+      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => ({ invoiced: false, cancelled: true })) });
+      expect(await t.swap()).toMatchObject({ kind: 'blocked', reason: 'fortnox_cancelled' });
+      unchanged(t);
+    });
+
+    // Ett byte som Fortnox sedan nekar hade delat systemen; hellre inget byte.
+    it('Fortnox-orderns läge går inte att läsa', async () => {
+      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => { throw new FortnoxApiError(503, 'Fortnox nere'); }) });
+      expect(await t.swap()).toMatchObject({ kind: 'fortnox_unavailable' });
+      unchanged(t);
+    });
+
     it('sessionen får inte ändra ordern', async () => {
       const t = setup({ canUpdate: false });
       expect(await t.swap()).toEqual({ kind: 'forbidden' });
@@ -220,6 +255,24 @@ describe('swapWorkOrderCustomer', () => {
       await t.swap();
       expect(t.deps.createFortnoxCustomer).not.toHaveBeenCalled();
     });
+  });
+
+  it('en admin som inte är ansvarig får byta', async () => {
+    const t = setup({ actor: { userId: 'admin-1', isCrmAdmin: true } });
+    expect(await t.swap()).toMatchObject({ kind: 'swapped' });
+  });
+
+  it('en order som inte finns i Fortnox läses inte där', async () => {
+    const t = setup({ order: { fortnox_order_number: null } });
+    await t.swap();
+    expect(t.deps.readFortnoxOrderClosed).not.toHaveBeenCalled();
+  });
+
+  // Samma besked som Fortnox-rutten: en tömd referens kan ingen omsynk uttrycka.
+  it('en tömning som synken inte kan uttrycka: rätta i Fortnox, inte Synka om', async () => {
+    const t = setup({ push: vi.fn(async () => ({ fortnox_order_number: '109', mirrorFailed: true, mirrorNeedsManualFix: true })) });
+    const result = await t.swap();
+    expect(result.kind === 'swapped' && result.fortnoxError).toMatch(/direkt i Fortnox/);
   });
 
   // Kunden är bytt i CRM ändå; "Synka om" byter den i Fortnox.

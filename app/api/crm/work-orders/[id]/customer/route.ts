@@ -4,6 +4,7 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { getCrmWorkOrder } from '@/lib/domains/crm/work-orders';
 import { workOrderReadinessErrorCode } from '@/lib/domains/crm/workOrderReadiness';
 import { swapWorkOrderCustomer } from '@/lib/domains/crm/swapWorkOrderCustomer';
+import { can, getEffectivePermissions } from '@/lib/auth/permissions';
 import { invalidUuidParam, ok, requirePermission, routeError, validationError } from '../../../_shared';
 
 type RouteContext = { params: { id: string } };
@@ -29,6 +30,7 @@ const bodySchema = z.object({
 //   409 crm_work_order_incomplete …           kortet saknar något (details.blockers)
 //   409 work_order_customer_changed           ordern sparades av någon annan under tiden; ingenting sparat
 //   502 work_order_customer_fortnox_customer  den nya kunden kunde inte läggas upp i Fortnox; ingenting sparat
+//   502 work_order_customer_fortnox_unavailable  Fortnox-orderns läge gick inte att läsa; ingenting sparat
 export async function POST(req: Request, context: RouteContext) {
   try {
     const gate = await requirePermission('crm.workorder.write');
@@ -42,10 +44,12 @@ export async function POST(req: Request, context: RouteContext) {
 
     const session = createSessionClient();
     const workOrderId = context.params.id;
+    const permissions = await getEffectivePermissions();
     const result = await swapWorkOrderCustomer(session, getSupabaseAdmin(), {
       workOrderId,
       customerId: parsed.data.customer_id,
       workAddress: parsed.data.work_address,
+      actor: { userId: gate.currentUser.id, isCrmAdmin: can(permissions, 'crm.admin') },
     });
 
     switch (result.kind) {
@@ -61,6 +65,8 @@ export async function POST(req: Request, context: RouteContext) {
         });
       case 'fortnox_customer_failed':
         return routeError(502, 'work_order_customer_fortnox_customer', result.message);
+      case 'fortnox_unavailable':
+        return routeError(502, 'work_order_customer_fortnox_unavailable', result.message);
       case 'forbidden':
         return routeError(403, 'work_order_customer_forbidden', 'Bara den som har ordern, eller en admin, kan byta kund.');
       case 'changed':

@@ -15,7 +15,7 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut } from '@/lib/domains/fortnox/client';
-import { orderCustomerFieldsFromCard, pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
+import { orderCustomerFieldsFromCard, pushWorkOrderToFortnox, readFortnoxOrderClosed, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 // Testbolagets kund 2, som den såg ut i mätningen.
 const cardB = {
@@ -99,6 +99,8 @@ const workOrderRow = {
 const cards: Record<string, Record<string, unknown>> = {
   'cust-new': { fortnox_customer_id: '2', customer_type: 'business', organization_number: '556103-4249', personal_number: null },
   'cust-old': { fortnox_customer_id: '7', customer_type: 'business', organization_number: '434567-0032', personal_number: null },
+  // En ny kund som inte finns i Fortnox än.
+  'cust-nofnx': { fortnox_customer_id: null, customer_type: 'business', organization_number: '556103-4249', personal_number: null },
 };
 
 function mockDatabase(opts: { row?: Record<string, unknown>; offerNumber?: string | null } = {}) {
@@ -264,5 +266,50 @@ describe('Fortnox-ordern byter kund', () => {
     const [path, body] = vi.mocked(fortnoxPost).mock.calls[0];
     expect(path).toBe('/orders');
     expect((body as { Order: Record<string, unknown> }).Order.CustomerNumber).toBe('2');
+  });
+});
+
+describe('skapandevägen efter ett byte', () => {
+  // 🧨 Reserven till offertens kund hade skapat Fortnox-ordern på den GAMLA kunden, och utan förväntat
+  // nummer i snapshoten hade ingen push bytt tillbaka.
+  it('ny kund utan Fortnox-nummer: ingen reserv till offertens (gamla) kund', async () => {
+    mockDatabase({
+      row: { fortnox_order_number: null, customer_id: 'cust-nofnx', customer_snapshot: { reverse_vat: false } },
+      offerNumber: null,
+    });
+    mockFortnoxOrderCustomer('7');
+
+    await expect(pushWorkOrderToFortnox('wo-1')).rejects.toThrow(/Ingen Fortnox-kundkoppling/);
+    expect(fortnoxPost).not.toHaveBeenCalled();
+  });
+
+  // En äldre order utan kund på raden bär sin kund på offerten — den vägen står kvar.
+  it('order utan kund: offertens kund som förut', async () => {
+    mockDatabase({ row: { fortnox_order_number: null, customer_id: null, customer_snapshot: { reverse_vat: false } }, offerNumber: null });
+    mockFortnoxOrderCustomer('7');
+
+    await pushWorkOrderToFortnox('wo-1');
+
+    expect((vi.mocked(fortnoxPost).mock.calls[0][1] as { Order: Record<string, unknown> }).Order.CustomerNumber).toBe('7');
+  });
+});
+
+describe('readFortnoxOrderClosed', () => {
+  const answer = (order: Record<string, unknown>) => vi.mocked(fortnoxGet).mockResolvedValue({ Order: order } as never);
+
+  // En ofakturerad order har strängen "0", inte null (mätt 2026-09-29).
+  it('"0" är ingen faktura', async () => {
+    answer({ InvoiceReference: '0', Cancelled: false });
+    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: false, cancelled: false });
+  });
+
+  it('ett fakturanummer, även fakturerat direkt i Fortnox', async () => {
+    answer({ InvoiceReference: 48, Cancelled: false });
+    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: true, cancelled: false });
+  });
+
+  it('makulerad', async () => {
+    answer({ InvoiceReference: '0', Cancelled: true });
+    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: false, cancelled: true });
   });
 });

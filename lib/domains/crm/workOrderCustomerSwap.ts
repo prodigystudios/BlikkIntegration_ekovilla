@@ -17,6 +17,7 @@
 
 import { getCrmCustomerDisplayName } from './customers';
 import { evaluateWorkOrderReadiness, joinSwedish, type WorkOrderReadinessIssue } from './workOrderReadiness';
+import { isFortnoxOrderClosed, workOrderInvoicingStarted } from './workOrderSyncFields';
 import { JOB_CUSTOMER_SELECT, portalCustomerIdentity, type JobCustomerCard } from '@/lib/domains/portal/jobIntake';
 
 /** Det nya kundkortet. Samma kolumner som portalens koppling, plus momsen och Fortnox-numret. */
@@ -30,6 +31,7 @@ export const SWAP_CUSTOMER_SELECT = `${JOB_CUSTOMER_SELECT}, reverse_vat, fortno
 export type SwappableWorkOrder = {
   id: string;
   status: string | null;
+  assigned_to: string | null;
   quote_id: string | null;
   customer_id: string | null;
   prospect_id: string | null;
@@ -44,17 +46,40 @@ export type SwappableWorkOrder = {
 };
 
 export const SWAPPABLE_WORK_ORDER_SELECT =
-  'id, status, quote_id, customer_id, prospect_id, quote_type, customer_snapshot, work_address, rot_details, line_items, internal_handoff, fortnox_order_number, fortnox_invoice_number, partial_invoicing_started_at, updated_at';
+  'id, status, assigned_to, quote_id, customer_id, prospect_id, quote_type, customer_snapshot, work_address, rot_details, line_items, internal_handoff, fortnox_order_number, fortnox_invoice_number, partial_invoicing_started_at, updated_at';
 
-export type CustomerSwapBlock = 'same_customer' | 'cancelled' | 'invoiced' | 'portal' | 'customer_type' | 'reverse_vat';
+export type CustomerSwapBlock = 'same_customer' | 'cancelled' | 'invoiced' | 'fortnox_cancelled' | 'portal' | 'customer_type' | 'reverse_vat';
 
 export type CustomerSwapContext = {
-  /** Har faktureringen börjat, en del eller allt? Avgörs av anroparen (workOrderInvoicingStarted + helfakturerad). */
+  /** Har faktureringen börjat, en del eller allt? Se customerSwapInvoicingStarted. */
   invoiced: boolean;
+  /** Fortnox-ordern är makulerad i Fortnox, fast CRM-ordern inte är avbruten. */
+  fortnoxCancelled?: boolean;
   isPortalJob: boolean;
-  /** Orderns moms just nu: snapshotens flagga, annars det nuvarande kortets — samma val som resolveReverseVat. */
+  /** Orderns moms just nu. Se orderReverseVat. */
   currentReverseVat: boolean;
 };
+
+/**
+ * Har faktureringen börjat, en del eller allt? Delfakturering (workOrderInvoicingStarted, som räknar
+ * rundorna) eller en helfakturerad order (isFortnoxOrderClosed). Dialogen ser inte rundorna och
+ * skickar 0 — servern räknar dem.
+ */
+export function customerSwapInvoicingStarted(
+  order: { status?: string | null; partial_invoicing_started_at?: string | null; fortnox_invoice_number?: string | null },
+  invoiceRoundCount: number,
+): boolean {
+  return workOrderInvoicingStarted(order, invoiceRoundCount) || isFortnoxOrderClosed(order);
+}
+
+/**
+ * Orderns moms just nu: snapshotens flagga är auktoritativ, annars det nuvarande kundkortets — samma
+ * val som Fortnox-pushen gör (resolveReverseVat). Delad av servern och dialogen, så de aldrig avgör
+ * olika om ett byte är tillåtet.
+ */
+export function orderReverseVat(snapshotFlag: unknown, currentCardReverseVat: boolean | null | undefined): boolean {
+  return typeof snapshotFlag === 'boolean' ? snapshotFlag : currentCardReverseVat === true;
+}
 
 /** Varför kunden inte får bytas, eller null när den får det. Ordningen är den som säger mest först. */
 export function customerSwapBlock(
@@ -65,6 +90,7 @@ export function customerSwapBlock(
   if (order.customer_id === card.id) return 'same_customer';
   if (order.status === 'cancelled') return 'cancelled';
   if (ctx.invoiced) return 'invoiced';
+  if (ctx.fortnoxCancelled) return 'fortnox_cancelled';
   if (ctx.isPortalJob) return 'portal';
   if (order.quote_type !== card.customer_type) return 'customer_type';
   // Bara för företag: omvänd skattskyldighet gäller aldrig en privatperson.
@@ -87,6 +113,8 @@ export function customerSwapBlockMessage(
       return 'Ordern är avbruten. Kunden byts inte på en avbruten order.';
     case 'invoiced':
       return 'Faktureringen av ordern har börjat, och fakturan har gått till den nuvarande kunden. Kreditera fakturan i Fortnox och lägg ordern på rätt kund på nytt.';
+    case 'fortnox_cancelled':
+      return 'Fortnox-ordern är makulerad i Fortnox. Kunden byts inte på en makulerad order.';
     case 'portal':
       return 'Ordern kom från partnerportalen, och dess kund följer butikens kundnummer. Den byts inte här.';
     case 'customer_type':
@@ -188,7 +216,10 @@ export function buildWorkOrderCustomerSwapUpdate(
       delivery_address: separateSite ? site.street_address : null,
       delivery_postal_code: separateSite ? site.postal_code : null,
       delivery_city: separateSite ? site.city : null,
-      reverse_vat: card.reverse_vat === true,
+      // Bara ett företag kan ha omvänd skattskyldighet. Ett privatkort med flaggan satt (importerat ur
+      // Fortnox, eller bytt från företag) hade annars gjort en ROT-order till omvänd moms — och slagit
+      // av ROT i nästa push. Spärren prövar inte flaggan för privatkunder, så den måste inte heller följa med.
+      reverse_vat: card.customer_type === 'business' && card.reverse_vat === true,
       fortnox_customer_number: opts.fortnoxCustomerNumber,
     },
     work_address: { ...(order.work_address ?? {}), ...site },

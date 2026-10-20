@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -16,8 +16,10 @@ import {
   customerSite,
   customerSwapBlock,
   customerSwapBlockMessage,
+  customerSwapInvoicingStarted,
   customerSwapReadinessBlockers,
   defaultWorkAddressChoice,
+  orderReverseVat,
   type SwapCustomerCard,
   type SwappableWorkOrder,
   type WorkAddressChoice,
@@ -27,23 +29,12 @@ import {
 // så att dialogen säger samma sak som servern innan något skickas: spärren, arbetsplatsens förval och
 // det kortet saknar. Servern prövar ändå allt igen — den kan veta mer (fakturarundor, portaljobb).
 
-export type CustomerSwapOrder = {
-  id: string;
+/** Orderraden som servern läser (SwappableWorkOrder), plus det dialogen visar och spärrar på. */
+export type CustomerSwapOrder = Omit<SwappableWorkOrder, 'prospect_id' | 'status'> & {
   status: string;
-  quote_id: string | null;
-  customer_id: string | null;
   client_name: string;
-  quote_type: 'private' | 'business';
-  customer_snapshot: Record<string, unknown> | null;
-  work_address: Record<string, unknown> | null;
-  rot_details: Record<string, unknown> | null;
-  line_items: Array<Record<string, unknown>> | null;
-  internal_handoff: Record<string, unknown> | null;
-  vat_percent: number | string;
-  fortnox_order_number: string | null;
   fortnox_invoice_number: string | null;
   partial_invoicing_started_at: string | null;
-  updated_at: string;
 };
 
 const typeLabel = (type: 'private' | 'business') => (type === 'private' ? 'Privatkund' : 'Företag');
@@ -51,34 +42,29 @@ const typeLabel = (type: 'private' | 'business') => (type === 'private' ? 'Priva
 const formatSite = (site: { street_address: string | null; postal_code: string | null; city: string | null }) =>
   [site.street_address, [site.postal_code, site.city].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 
-/** Orderns moms just nu, så långt klienten ser den: snapshotens flagga, annars en företagsorder på 0 %. */
-function orderReverseVat(order: CustomerSwapOrder): boolean {
-  const flag = order.customer_snapshot?.reverse_vat;
-  if (typeof flag === 'boolean') return flag;
-  return order.quote_type === 'business' && Number(order.vat_percent) === 0;
-}
-
-/** Faktureringen har börjat — samma tecken som servern läser ur raden (rundorna ser bara servern). */
-const invoicingStarted = (order: CustomerSwapOrder) =>
-  order.status === 'invoiced' || order.status === 'partially_invoiced'
-  || Boolean(order.partial_invoicing_started_at) || Boolean(order.fortnox_invoice_number);
-
 function asSwappable(order: CustomerSwapOrder): SwappableWorkOrder {
   return { ...order, prospect_id: null };
 }
 
 export default function WorkOrderCustomerSwapDialog({
   workOrder,
+  currentCardReverseVat,
   onClose,
   onSwapped,
 }: {
   workOrder: CustomerSwapOrder;
+  /** Det nuvarande kundkortets momsflagga — serverns reserv när snapshoten saknar flaggan (orderReverseVat). */
+  currentCardReverseVat: boolean | null;
   onClose: () => void;
   /** Bytet är gjort. `item` är ordern som servern läste om, eller null när den inte gick att läsa. */
   onSwapped: (result: { item: unknown | null; customerName: string; fortnoxError: string | null }) => void;
 }) {
-  const reverseVat = orderReverseVat(workOrder);
-  const orderBlock = workOrder.status === 'cancelled' ? 'cancelled' as const : invoicingStarted(workOrder) ? 'invoiced' as const : null;
+  const reverseVat = orderReverseVat(workOrder.customer_snapshot?.reverse_vat, currentCardReverseVat);
+  // Rundorna ser bara servern (0 här); den prövar dem ändå.
+  const orderBlock = workOrder.status === 'cancelled' ? 'cancelled' as const : customerSwapInvoicingStarted(workOrder, 0) ? 'invoiced' as const : null;
+  // Varje val och varje rensning får ett nytt nummer. Ett kortsvar för ett äldre val kastas — annars
+  // hade ett långsamt svar för kund A kunnat landa efter valet av B, och Byt kund skickat A.
+  const pickSeq = useRef(0);
 
   const [customerId, setCustomerId] = useState('');
   const [customerLabel, setCustomerLabel] = useState('');
@@ -90,6 +76,7 @@ export default function WorkOrderCustomerSwapDialog({
   const [error, setError] = useState<string | null>(null);
 
   async function pickCustomer(id: string, label: string) {
+    const seq = ++pickSeq.current;
     setCustomerId(id);
     setCustomerLabel(label);
     setCard(null);
@@ -99,16 +86,19 @@ export default function WorkOrderCustomerSwapDialog({
     try {
       const res = await fetch(`/api/crm/customers/${id}`, { cache: 'no-store' });
       const json = await res.json().catch(() => ({}));
+      if (seq !== pickSeq.current) return;
       if (!res.ok || !json?.ok || !json?.data?.item) { setError(json?.error || 'Kundkortet gick inte att läsa.'); return; }
       setCard(json.data.item as SwapCustomerCard);
     } catch {
-      setError('Kundkortet gick inte att läsa.');
+      if (seq === pickSeq.current) setError('Kundkortet gick inte att läsa.');
     } finally {
-      setLoadingCard(false);
+      if (seq === pickSeq.current) setLoadingCard(false);
     }
   }
 
   function clearCustomer() {
+    pickSeq.current += 1;
+    setLoadingCard(false);
     setCustomerId('');
     setCustomerLabel('');
     setCard(null);
@@ -267,6 +257,11 @@ export default function WorkOrderCustomerSwapDialog({
                       : `Kundkontakt och Er referens töms: kortet har ingen kontaktperson.${contact?.phone ? ` Kortets telefon ${contact.phone} följer med.` : ''}`}
                   </li>
                   {workOrder.rot_details?.enabled === true ? <li>{`ROT-sökande blir ${newName}.`}</li> : null}
+                  {/* Beteckningen följer jobbet, inte kunden, och står kvar. Kom ordern från fel kund är
+                      fastigheten ofta också fel — och avdraget söks för den som står här. */}
+                  {workOrder.rot_details?.enabled === true && typeof workOrder.rot_details?.property_designation === 'string' && workOrder.rot_details.property_designation.trim() ? (
+                    <li>{`Fastighetsbeteckningen ${workOrder.rot_details.property_designation.trim()} står kvar. Gäller den inte den nya kunden, rätta den under Redigera efter bytet.`}</li>
+                  ) : null}
                   <li>Märkning och kontakt på plats står kvar.</li>
                   {workOrder.fortnox_order_number ? <li>{`Fortnox-order ${workOrder.fortnox_order_number} byter kund i samma steg.`}</li> : null}
                 </ul>

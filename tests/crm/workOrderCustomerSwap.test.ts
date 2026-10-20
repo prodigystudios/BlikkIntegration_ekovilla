@@ -5,7 +5,9 @@ import {
   customerSwapBlock,
   customerSwapBlockMessage,
   customerSwapReadinessBlockers,
+  customerSwapInvoicingStarted,
   defaultWorkAddressChoice,
+  orderReverseVat,
   type SwapCustomerCard,
   type SwappableWorkOrder,
 } from '@/lib/domains/crm/workOrderCustomerSwap';
@@ -16,6 +18,7 @@ import {
 const privateOrder: SwappableWorkOrder = {
   id: 'wo-1',
   status: 'scheduled',
+  assigned_to: 'seller-1',
   quote_id: 'quote-1',
   customer_id: 'cust-old',
   prospect_id: null,
@@ -79,6 +82,10 @@ describe('customerSwapBlock', () => {
   // Fakturan har gått till den nuvarande kunden — en del eller allt.
   it('faktureringen har börjat', () => {
     expect(customerSwapBlock(privateOrder, perSeppa, { ...ctx, invoiced: true })).toBe('invoiced');
+  });
+
+  it('Fortnox-ordern makulerad i Fortnox', () => {
+    expect(customerSwapBlock(privateOrder, perSeppa, { ...ctx, fortnoxCancelled: true })).toBe('fortnox_cancelled');
   });
 
   it('portalorder', () => {
@@ -259,5 +266,29 @@ describe('customerSwapReadinessBlockers', () => {
   it('ROT-fastigheten och annat som inte rör kunden spärrar inte', () => {
     const order = { ...privateOrder, rot_details: { ...privateOrder.rot_details, property_designation: null } };
     expect(blockersFor(perSeppa, 'customer', order)).toEqual([]);
+  });
+});
+
+describe('delade regler för servern och dialogen', () => {
+  it('customerSwapInvoicingStarted: delfakturering, rundor eller helfakturerad', () => {
+    expect(customerSwapInvoicingStarted({ status: 'scheduled' }, 0)).toBe(false);
+    expect(customerSwapInvoicingStarted({ status: 'partially_invoiced' }, 0)).toBe(true);
+    expect(customerSwapInvoicingStarted({ status: 'in_progress', partial_invoicing_started_at: '2026-10-01' }, 0)).toBe(true);
+    expect(customerSwapInvoicingStarted({ status: 'in_progress' }, 1)).toBe(true);
+    expect(customerSwapInvoicingStarted({ status: 'invoiced' }, 0)).toBe(true);
+    expect(customerSwapInvoicingStarted({ status: 'completed', fortnox_invoice_number: '48' }, 0)).toBe(true);
+  });
+
+  it('orderReverseVat: snapshotens flagga först, annars kortets', () => {
+    expect(orderReverseVat(true, false)).toBe(true);
+    expect(orderReverseVat(false, true)).toBe(false);
+    expect(orderReverseVat(null, true)).toBe(true);
+    expect(orderReverseVat(undefined, null)).toBe(false);
+  });
+
+  // Ett privatkort med momsflaggan satt hade annars gjort ROT-ordern till omvänd moms (och slagit av ROT).
+  it('momsflaggan skrivs bara för företag', () => {
+    const update = buildWorkOrderCustomerSwapUpdate(privateOrder, { ...perSeppa, reverse_vat: true }, { workAddress: 'customer', fallbackRot: null, fortnoxCustomerNumber: '4' });
+    expect((update.customer_snapshot as Record<string, unknown>).reverse_vat).toBe(false);
   });
 });

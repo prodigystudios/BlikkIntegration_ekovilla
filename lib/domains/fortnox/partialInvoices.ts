@@ -318,7 +318,8 @@ type WorkOrderRow = {
   customer_id: string | null;
   // `label_cleared` = minnet av att märkningen tömts men ännu inte rensats i Fortnox. Läses av
   // partialInvoiceReferenceField så en återtagen märkning inte speglas ut på en ny faktura.
-  customer_snapshot: { reverse_vat?: boolean | null; label_cleared?: boolean | null } | null;
+  // `fortnox_customer_number` = kunden ordern bytt till (crm/workOrderCustomerSwap.ts). Se spärren i createPartialInvoice.
+  customer_snapshot: { reverse_vat?: boolean | null; label_cleared?: boolean | null; fortnox_customer_number?: string | null } | null;
   line_items: PartialInvoiceLineItem[] | null;
   partial_invoicing_started_at: string | null;
   fortnox_order_number: string | null;
@@ -579,6 +580,17 @@ export async function createPartialInvoice(
     const order = await fortnoxGet<{ Order?: FortnoxOrderHeader }>(`/orders/${orderNumber}`);
     const header = order.Order ?? {};
     if (header.CustomerNumber == null) throw new Error('Fortnox-ordern saknar kundkoppling');
+    // 🧨 Ordern har bytt kund, men Fortnox-ordern bär fortfarande den förra: pushen efter bytet
+    // misslyckades. Delfakturan tar kunden ur Fortnox-orderns huvud, så den hade gått till den GAMLA
+    // kunden — och eftersom bytet bara får ske före första fakturan hade nästa omsynk sedan flyttat
+    // ordern efter att faktureringen börjat. Den här vägen kräver inte 'synced', så spärren står här.
+    const swappedTo = workOrder.customer_snapshot?.fortnox_customer_number?.trim();
+    if (swappedTo && String(header.CustomerNumber) !== swappedTo) {
+      throw new PartialInvoiceError(
+        'Arbetsordern har bytt kund, men Fortnox-ordern bär fortfarande den gamla kunden. Synka om '
+        + 'arbetsordern innan du delfakturerar — annars går fakturan till fel kund.',
+      );
+    }
 
     // "Ert referensnummer" och ROT-notraden är två halvor av EN regel och avgörs därför ihop —
     // se partialInvoiceRotPropertyNote. Referensnumret speglas ur ordern, notraden rättar sig

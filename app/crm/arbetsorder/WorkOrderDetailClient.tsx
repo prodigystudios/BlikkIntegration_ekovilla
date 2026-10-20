@@ -385,7 +385,9 @@ export default function WorkOrderDetailClient({
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
-  const customerInfo = useCustomerContact(workOrderId, workOrder?.customer_id);
+  // Räknas upp efter Byt kund — se useCustomerContact.
+  const [contactRefresh, setContactRefresh] = useState(0);
+  const customerInfo = useCustomerContact(workOrderId, contactRefresh);
 
   // The linked customer's contacts, for the "change responsible contact" picker (in case the
   // contact changed between offer→order). Empty for standalone orders with no linked customer.
@@ -395,7 +397,8 @@ export default function WorkOrderDetailClient({
   // customer_type följer med: det avgör om kortets e-post får lånas ut åt en kontaktrad utan egen
   // (`resolveCrmContact`). Utan fältet lånas den ut som förut — och väljaren nedan hade skrivit in
   // bolagets adress under den anställdes namn, vilket är precis det vi slutade göra.
-  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null } | null>(null);
+  // reverse_vat: dialogen Byt kund avgör orderns moms som servern — snapshotens flagga, annars kortets.
+  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null; reverse_vat: boolean | null } | null>(null);
   useEffect(() => {
     const cid = workOrder?.customer_id;
     if (!cid) { setCustomerContacts([]); setCustomerCard(null); return; }
@@ -406,7 +409,7 @@ export default function WorkOrderDetailClient({
         if (!active) return;
         const item = json?.ok ? json.data?.item : null;
         setCustomerContacts(Array.isArray(item?.contacts) ? item.contacts : []);
-        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
+        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null, reverse_vat: item.reverse_vat ?? null } : null);
       })
       .catch(() => { if (active) { setCustomerContacts([]); setCustomerCard(null); } });
     return () => { active = false; };
@@ -2274,9 +2277,11 @@ export default function WorkOrderDetailClient({
       {customerSwapOpen ? (
         <WorkOrderCustomerSwapDialog
           workOrder={workOrder}
+          currentCardReverseVat={customerCard?.reverse_vat ?? null}
           onClose={() => setCustomerSwapOpen(false)}
           onSwapped={({ item, customerName, fortnoxError }) => {
             setCustomerSwapOpen(false);
+            setContactRefresh((n) => n + 1);
             if (item) applyWorkOrder(item as WorkOrderItem);
             else {
               // Rutten kunde inte läsa om ordern efter bytet (bytet är ändå gjort): hämta den här.
