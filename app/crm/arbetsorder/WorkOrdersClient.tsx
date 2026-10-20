@@ -6,7 +6,7 @@ import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import { crm, syncStatusLabel, workOrderStatusLabel, workOrderStatusClass, type SyncStatus } from '@/app/crm/lib/crmTokens';
 import { formatDayRangeParts, formatCurrency, isWorkOrderOverdue, documentRef } from '@/app/crm/lib/format';
-import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import StatusFilter from '@/app/crm/components/StatusFilter';
 import {
@@ -16,7 +16,8 @@ import {
   statusFilterParam,
   type WorkOrderStatusFilterOption,
 } from '@/lib/domains/crm/listStatusFilter';
-import { restoreListFilters, serializeListFilters, type ListFilters } from '@/lib/domains/crm/listFilterMemory';
+import type { ListFilterRules } from '@/lib/domains/crm/listFilterMemory';
+import { useListFilterMemory } from '@/app/crm/components/useListFilterMemory';
 import { RowAssignee } from '@/app/crm/components/RowAssignee';
 import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import CrmModal from '@/app/crm/components/CrmModal';
@@ -70,25 +71,6 @@ const WORK_ORDER_SORTS: ReadonlyArray<{ value: WorkOrderSort; label: string }> =
 ];
 const WORK_ORDER_SORT_VALUES = WORK_ORDER_SORTS.map((option) => option.value);
 const DEFAULT_WORK_ORDER_SORT: WorkOrderSort = 'created_desc';
-
-// Filtren sitter kvar i fliken när man öppnar en order och går tillbaka — reglerna i
-// listFilterMemory.ts. ⚠️ sessionStorage KASTAR i privat läge och med blockerade kakor, den är inte
-// bara tom. Ett blockerat lager ska betyda att startvalet står, aldrig att listan inte renderar.
-function readFilterMemory(key: string): string | null {
-  try {
-    return sessionStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-function writeFilterMemory(key: string, value: string | null) {
-  try {
-    if (value === null) sessionStorage.removeItem(key);
-    else sessionStorage.setItem(key, value);
-  } catch {
-    /* ignorera — filtren gäller sidan ut, de överlever bara inte ett sidbyte */
-  }
-}
 
 // Status filtering and pagination are server-side (see lib/domains/crm/work-orders.ts). The list
 // fetches one page per status selection and accumulates via "Visa fler".
@@ -220,64 +202,38 @@ export default function WorkOrdersClient({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  // Startar på allt utom Avslutad och Avbruten (listStatusFilter.ts). Ett ändrat val sitter kvar i
-  // fliken, se filterMemoryKey nedan.
-  const [statusFilter, setStatusFilter] = useState<WorkOrderStatusFilterOption[]>(() => [...DEFAULT_WORK_ORDER_STATUS_FILTER]);
-  // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
-  const statusParam = statusFilterParam(statusFilter, WORK_ORDER_STATUS_FILTER_OPTIONS);
-  const [sort, setSort] = useState<WorkOrderSort>(DEFAULT_WORK_ORDER_SORT);
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  // Startar på den inloggades egna ordrar — samma val som offertlistan och säljtavlan.
-  // 🧨 `assigned_to` på en order är SÄLJAREN (ärvd från offerten), inte den som planerar. En
-  // planerare utan egna ordrar möter alltså en tom tavla tills filtret rensas — därför bär tomma
-  // läget en knapp som gör just det.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId, { canBeAssignee }));
-  const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
-
   // Sök, status, sortering och ansvarig överlever ett sidbyte i samma flik (William, 2026-10-20):
   // förut nollades de varje gång man gått in på en order och tillbaka. Nyckeln bär ytan — ekonomins
   // lista (/ekonomi/arbetsorder) delar komponenten men har ett annat startval och inget "Mina" — och
   // den inloggade, så att någon som loggar in i samma flik inte ärver förra användarens urval.
-  const filterMemoryKey = `crm-list-filters:${basePath}:${currentUserId ?? ''}`;
-  const filterDefaults = useMemo<ListFilters<WorkOrderStatusFilterOption, WorkOrderSort>>(() => ({
-    search: '',
-    statuses: [...DEFAULT_WORK_ORDER_STATUS_FILTER],
-    sort: DEFAULT_WORK_ORDER_SORT,
-    assignee: defaultAssigneeFilter(currentUserId, { canBeAssignee }),
-  }), [currentUserId, canBeAssignee]);
-  // Spärrar första hämtningen tills det sparade valet är inläst. Utan den hade listan hämtats två
-  // gånger vid varje återkomst — en gång på startvalet, sedan på det sparade — och "Laddar…" står ändå
-  // där tills första svaret kommit, så väntan på en rendering syns inte.
-  //
-  // Bär NYCKELN, inte bara ja/nej: byts nyckeln medan listan står (en annan inloggad efter en
-  // uppdatering) är filtren i state fortfarande den förra nyckelns, och de får varken skrivas under
-  // den nya eller hämtas förrän den nya är inläst.
-  const [restoredKey, setRestoredKey] = useState<string | null>(null);
-  const filtersRestored = restoredKey === filterMemoryKey;
-
-  // Läses i en effekt, aldrig i en state-initierare: sidan server-renderas, och sessionStorage finns
-  // inte där — servern och klienten hade ritat olika filter, en hydreringskrock.
-  useEffect(() => {
-    const restored = restoreListFilters(readFilterMemory(filterMemoryKey), {
-      statusOptions: WORK_ORDER_STATUS_FILTER_OPTIONS,
-      sortOptions: WORK_ORDER_SORT_VALUES,
-      defaults: filterDefaults,
-      // Samma villkor som menyns showMine nedan.
-      allowMine: canBeAssignee,
-    });
-    setSearch(restored.search);
-    setStatusFilter(restored.statuses);
-    setSort(restored.sort);
-    setAssigneeFilter(restored.assignee);
-    setRestoredKey(filterMemoryKey);
-  }, [filterMemoryKey, filterDefaults, canBeAssignee]);
-
-  useEffect(() => {
-    // Inte före inläsningen: då hade startvalet skrivits över det sparade innan det hunnit läsas.
-    if (!filtersRestored) return;
-    writeFilterMemory(filterMemoryKey, serializeListFilters({ search, statuses: statusFilter, sort, assignee: assigneeFilter }, filterDefaults));
-  }, [filtersRestored, filterMemoryKey, filterDefaults, search, statusFilter, sort, assigneeFilter]);
+  const filterRules: ListFilterRules<WorkOrderStatusFilterOption, WorkOrderSort> = {
+    statusOptions: WORK_ORDER_STATUS_FILTER_OPTIONS,
+    sortOptions: WORK_ORDER_SORT_VALUES,
+    defaults: {
+      search: '',
+      // Allt utom Avslutad och Avbruten (listStatusFilter.ts).
+      statuses: [...DEFAULT_WORK_ORDER_STATUS_FILTER],
+      sort: DEFAULT_WORK_ORDER_SORT,
+      // Den inloggades egna ordrar — samma val som offertlistan och säljtavlan.
+      // 🧨 `assigned_to` på en order är SÄLJAREN (ärvd från offerten), inte den som planerar. En
+      // planerare utan egna ordrar möter alltså en tom tavla tills filtret rensas — därför bär tomma
+      // läget en knapp som gör just det.
+      assignee: defaultAssigneeFilter(currentUserId, { canBeAssignee }),
+    },
+    // Samma villkor som menyns showMine nedan.
+    allowMine: canBeAssignee,
+  };
+  const {
+    search, setSearch,
+    statuses: statusFilter, setStatuses: setStatusFilter,
+    sort, setSort,
+    assignee: assigneeFilter, setAssignee: setAssigneeFilter,
+    restored: filtersRestored,
+  } = useListFilterMemory(`crm-list-filters:${basePath}:${currentUserId ?? ''}`, filterRules);
+  // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
+  const statusParam = statusFilterParam(statusFilter, WORK_ORDER_STATUS_FILTER_OPTIONS);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   // 'mine' → id före frågan, så status, ansvarig och räknare alla avgörs server-side (listan kan
   // överstiga PostgREST:s radtak). Regeln delas med offertlistan.
