@@ -40,10 +40,12 @@ export const KMA_COMPANY = { name: 'Isoleringslandslaget AB', orgNumber: '559022
 
 /**
  * Bolagen på planens rad "Företag", ett per rad: entreprenören och Ekovilla, båda med org.nr (William
- * 2026-10-20: "isoleringslandslaget och Ekovilla SE AB"). Bara den raden — planens övriga texter
- * namnger entreprenören som förut.
+ * 2026-10-20). Bara den raden — planens övriga texter namnger entreprenören som förut.
+ *
+ * Stavningen "EKOVILLA se AB" är bolagets egen, som i bilaga 5 (VD:s policy) — Williams val framför
+ * "Ekovilla SE AB", så att samma PDF inte stavar bolaget på två sätt.
  */
-export const KMA_COMPANIES = [KMA_COMPANY, { name: 'Ekovilla SE AB', orgNumber: '559341-9673' }] as const;
+export const KMA_COMPANIES = [KMA_COMPANY, { name: 'EKOVILLA se AB', orgNumber: '559341-9673' }] as const;
 
 /** Mallens version, som i Word-mallen. Planens egen revision visas separat (Williams beslut). */
 export const KMA_TEMPLATE_VERSION = '2.1';

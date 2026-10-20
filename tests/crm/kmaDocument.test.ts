@@ -64,10 +64,16 @@ const fieldValue = (blocks: KmaBlock[], label: string) => {
 const tables = (blocks: KmaBlock[]) => blocks.filter((b): b is Extract<KmaBlock, { t: 'table' }> => b.t === 'table');
 
 describe('buildKmaDocument — bolaget', () => {
-  it('entreprenören är alltid Isoleringslandslaget AB 559022-5800', () => {
+  it('raden Företag bär entreprenören först och Ekovilla under, båda med org.nr', () => {
     const doc = buildKmaDocument(kmaForm(), CTX);
-    // Båda bolagen med org.nr, ett per rad (William 2026-10-20).
-    expect(fieldValue(section(doc, 'main').blocks, 'Företag')).toBe('Isoleringslandslaget AB 559022-5800\nEkovilla SE AB 559341-9673');
+    // William 2026-10-20. Skiftlägeskänsligt med flit: stavningen är bolagets egen, som i bilaga 5.
+    expect(fieldValue(section(doc, 'main').blocks, 'Företag')).toBe('Isoleringslandslaget AB 559022-5800\nEKOVILLA se AB 559341-9673');
+  });
+
+  it('entreprenören i planens texter är alltid Isoleringslandslaget AB', () => {
+    const blocks = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
+    const intro = blocks.find((b): b is Extract<KmaBlock, { t: 'p' }> => b.t === 'p' && /^Denna KMA-plan beskriver hur/.test(b.text));
+    expect(intro?.text).toMatch(/^Denna KMA-plan beskriver hur Isoleringslandslaget AB arbetar/);
   });
 
   it('"Ekovilla se AB" står bara på raden Företag och i policyn — mallens bilagetabell sa det för bilaga 2–4', () => {
@@ -78,7 +84,6 @@ describe('buildKmaDocument — bolaget', () => {
     expect(JSON.stringify(section(doc, 'a5'))).toMatch(/ekovilla se ab/i);
     const outsidePolicy = JSON.stringify({ ...doc, sections: doc.sections.filter((s) => s.key !== 'a5') });
     expect(outsidePolicy.match(/ekovilla se ab/gi)).toHaveLength(1);
-    expect(fieldValue(section(doc, 'main').blocks, 'Företag')).toMatch(/Ekovilla SE AB/);
     const appendixTable = tables(section(doc, 'main').blocks).find((t) => t.columns[0].head === 'Bilaga');
     for (const row of appendixTable!.rows.slice(1, 4)) expect(row[1]).toMatch(/– Isoleringslandslaget AB$/);
     // Bilaga 5 är koncernens policy, inte Isoleringslandslagets egen.
