@@ -1,4 +1,4 @@
-// CRM-listans filter över ett sidbyte: sökning, statusval, sortering och ansvarig sitter kvar när man
+// CRM-listornas filter över ett sidbyte: sökning, statusval, sortering och ansvarig sitter kvar när man
 // öppnar en rad och går tillbaka (William, 2026-10-20). Förut nollades de vid varje montering och fick
 // ställas in igen för varje order man tittade på.
 //
@@ -6,8 +6,9 @@
 // besök i en ny flik börjar alltså på startvalet som förut; det är rundresan in i en rad och tillbaka
 // som ska minnas. Sökningen följer med med flit: texten syns alltid i rutan, så den döljer inget.
 //
-// Ren modul: vad som sparas och hur ett sparat värde läses tillbaka. Lagringen själv sköts av klienten.
-// Typerna är generiska eftersom offertlistan har samma fyra filter.
+// Ren modul: vad som sparas och hur ett sparat värde läses tillbaka. Lagringen och ordningen mot
+// listans hämtning bor i app/crm/components/useListFilterMemory.ts. Generisk: order- och
+// offertlistan har samma fyra filter med olika statusar och sorteringar.
 
 import { isStatusFilterChanged } from './listStatusFilter';
 import { MINE, type AssigneeFilterValue } from './assigneeFilter';

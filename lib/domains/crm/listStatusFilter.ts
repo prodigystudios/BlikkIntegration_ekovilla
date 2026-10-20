@@ -4,8 +4,8 @@
 // reglerna går att pröva utan JSX.
 //
 // Startvalet visar "allt utom det avslutade": på ordrarna allt utom Avslutad och Avbruten, på
-// offerterna allt utom Förlorad (en vunnen offert syns, Williams val). Orderlistan minns ett ändrat
-// val i fliken över ett sidbyte (listFilterMemory.ts); en ny flik, och offertlistan, börjar om här.
+// offerterna allt utom Förlorad (en vunnen offert syns, Williams val). Båda listorna minns ett ändrat
+// val i fliken över ett sidbyte (listFilterMemory.ts); en ny flik börjar om här.
 
 // Bara typer — de raderas vid kompileringen, så modulen drar inte in domänfilerna i klientbundlen.
 import type { CrmQuoteStatus } from './quotes';
