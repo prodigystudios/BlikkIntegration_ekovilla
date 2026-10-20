@@ -48,6 +48,7 @@ import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
+import WorkOrderCustomerSwapDialog from './WorkOrderCustomerSwapDialog';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -374,6 +375,8 @@ export default function WorkOrderDetailClient({
   // Order-confirmation e-mail (own mail client, with recipient resolution).
   const documentEmail = useDocumentEmail();
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
+  // "Byt kund" (WorkOrderCustomerSwapDialog). Se knappen i sidhuvudet för när den visas.
+  const [customerSwapOpen, setCustomerSwapOpen] = useState(false);
   // Speglar offertformulärets toggle: en slutkund på plats är undantaget, inte normalfallet, och
   // tre alltid synliga fält hade läst som att de förväntas fyllas i. Seedas ur ordern i
   // applyWorkOrder — så Avbryt återställer även den, inte bara fälten.
@@ -382,7 +385,7 @@ export default function WorkOrderDetailClient({
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
-  const customerInfo = useCustomerContact(workOrderId);
+  const customerInfo = useCustomerContact(workOrderId, workOrder?.customer_id);
 
   // The linked customer's contacts, for the "change responsible contact" picker (in case the
   // contact changed between offer→order). Empty for standalone orders with no linked customer.
@@ -1150,6 +1153,20 @@ export default function WorkOrderDetailClient({
                 >
                   Öppna kundkort →
                 </a>
+              ) : null}
+              {/* Byt kund (William, 2026-10-20). Inte på en portalorder — dess kund följer butikens
+                  kundnummer — och inte på en avbruten eller helfakturerad order, där den aldrig
+                  går. En DELfakturerad order får knappen: dialogen säger varför bytet nekas, och
+                  det är där frågan uppstår. Inte heller under redigering: utkastet bär den gamla
+                  kundens kontakt och adress, och nästa Spara hade skrivit tillbaka dem. */}
+              {canEdit && !portalJob && !editingOverview && workOrder.status !== 'cancelled' && workOrder.status !== 'invoiced' ? (
+                <button
+                  type="button"
+                  onClick={() => setCustomerSwapOpen(true)}
+                  className="p-0 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                >
+                  Byt kund
+                </button>
               ) : null}
             </div>
           </div>
@@ -2251,6 +2268,26 @@ export default function WorkOrderDetailClient({
           busy={creatingInvoice}
           onConfirm={() => void createInvoice()}
           onCancel={() => setConfirmInvoiceOpen(false)}
+        />
+      ) : null}
+
+      {customerSwapOpen ? (
+        <WorkOrderCustomerSwapDialog
+          workOrder={workOrder}
+          onClose={() => setCustomerSwapOpen(false)}
+          onSwapped={({ item, customerName, fortnoxError }) => {
+            setCustomerSwapOpen(false);
+            if (item) applyWorkOrder(item as WorkOrderItem);
+            else {
+              // Rutten kunde inte läsa om ordern efter bytet (bytet är ändå gjort): hämta den här.
+              void fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' })
+                .then((r) => r.json().catch(() => ({})))
+                .then((json) => { if (json?.ok && json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem); })
+                .catch(() => {});
+            }
+            toast.success(`Kunden bytt till ${customerName}`);
+            if (fortnoxError) toast.error(fortnoxError);
+          }}
         />
       ) : null}
 
