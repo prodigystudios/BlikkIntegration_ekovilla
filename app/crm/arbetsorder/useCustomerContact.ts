@@ -24,7 +24,11 @@ export type CustomerContact = {
 // record. The endpoint answers only for an order the reader can see under their own RLS (crew policy
 // or crm.workorder.read); otherwise `null`, same as an order without a contact. Shared by editor +
 // installer view.
-export function useCustomerContact(workOrderId: string | null | undefined): CustomerContact | null {
+//
+// `refreshKey`: räknas upp när orderns kund byts (Byt kund), så att kontakten hämtas om — annars stod den
+// gamla kundens e-post kvar under den nya kundens namn tills sidan laddades om. En räknare och inte
+// kundens id: id:t är okänt tills ordern laddats, och hade gett två hämtningar vid varje sidladdning.
+export function useCustomerContact(workOrderId: string | null | undefined, refreshKey = 0): CustomerContact | null {
   const [contact, setContact] = useState<CustomerContact | null>(null);
 
   useEffect(() => {
@@ -35,7 +39,7 @@ export function useCustomerContact(workOrderId: string | null | undefined): Cust
       .then((json) => { if (active) setContact(json?.ok ? (json.data?.contact ?? null) : null); })
       .catch(() => { if (active) setContact(null); });
     return () => { active = false; };
-  }, [workOrderId]);
+  }, [workOrderId, refreshKey]);
 
   return contact;
 }

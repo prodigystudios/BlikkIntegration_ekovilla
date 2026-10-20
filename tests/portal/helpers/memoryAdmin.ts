@@ -13,6 +13,7 @@
  * `rpc` svarar med testets `rpc`-funktion; anropet står i `calls` som tabellen `rpc:<namn>` med argumenten som värden.
  *
  * `like` följer SQL: `%` är vad som helst, `_` ett tecken.
+ * `select(kolumner, { count: 'exact', head })` svarar också med `count`, antalet träffar före limit; med `head` utan rader.
  * `storage` är en lagring i minnet (`files`, nyckeln `<bucket>/<sökväg>`): `upload` skriver aldrig över (som
  * `upsert: false`) och svarar då som Supabase ("already exists", 409); `download` svarar med en Blob, eller "Object not
  * found" (404). Anropen står i `calls` som tabellen `storage:<bucket>` (op `insert` för upload, `select` för download),
@@ -117,7 +118,7 @@ export function memoryAdmin(
     return null;
   }
 
-  function execute(call: Call, returning: boolean, single: boolean): { data: unknown; error: DbError | null } {
+  function execute(call: Call, returning: boolean, single: boolean): { data: unknown; error: DbError | null; count?: number } {
     calls.push(call);
     options.beforeExecute?.(call, tables);
     const failure = failures.find((f) => f.times > 0 && f.match(call));
@@ -144,9 +145,11 @@ export function memoryAdmin(
           return 0;
         });
       }
+      const total = rows.length;
       if (call.offset !== undefined) rows = rows.slice(call.offset);
       if (call.limit !== undefined) rows = rows.slice(0, call.limit);
-      return out(rows);
+      if (!call.options?.count) return out(rows);
+      return { ...out(rows), ...(call.options.head ? { data: null } : {}), count: total };
     }
 
     if (call.op === 'insert' || call.op === 'upsert') {
@@ -192,7 +195,11 @@ export function memoryAdmin(
     const call: Call = { table: tableName, op: 'select', filters: [] };
     let returning = false;
     const chain = {
-      select: () => ((returning = true), chain),
+      select: (_columns?: string, options?: { count?: string; head?: boolean }) => {
+        returning = true;
+        if (options?.count) call.options = { ...call.options, count: options.count, head: options.head ?? false };
+        return chain;
+      },
       insert: (values: unknown) => ((call.op = 'insert'), (call.values = values), chain),
       upsert: (values: unknown, options?: Record<string, unknown>) => ((call.op = 'upsert'), (call.values = values), (call.options = options), chain),
       update: (values: unknown) => ((call.op = 'update'), (call.values = values), chain),

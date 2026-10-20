@@ -17,6 +17,20 @@
 export const MIRRORED_WORK_ADDRESS_KEYS = ['street_address', 'postal_code', 'city'] as const;
 
 /**
+ * Har faktureringen av arbetsordern börjat? Tre tecken, vart och ett räcker: statusen, `partial_invoicing_started_at`
+ * och fakturarundorna. Statusen räcker inte ensam — en delfakturerad order kan sättas tillbaka till Pågående. Kolumnen
+ * räcker inte heller — createPartialInvoice skriver den EFTER rundan, så en misslyckad skrivning lämnar rundor utan
+ * kolumn (saveWorkOrderLineItems prövar samma par). Avgör att en delfakturerad order inte kan avbrytas (William
+ * 2026-10-02, lib/domains/fortnox/workOrderCancel.ts).
+ */
+export function workOrderInvoicingStarted(
+  order: { status?: string | null; partial_invoicing_started_at?: string | null },
+  invoiceRoundCount: number,
+): boolean {
+  return order.status === 'partially_invoiced' || Boolean(order.partial_invoicing_started_at) || invoiceRoundCount > 0;
+}
+
+/**
  * De fält i `customer_snapshot` som når orderhuvudet.
  *
  * 🧨 KOLUMNEN BÄR MYCKET MER. Telefon, e-post, slutkundens kontaktuppgifter, org.nr och personnummer

@@ -48,6 +48,7 @@ import { openFortnoxPdf } from '@/app/crm/lib/fortnoxDoc';
 import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
+import WorkOrderCustomerSwapDialog from './WorkOrderCustomerSwapDialog';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -374,6 +375,8 @@ export default function WorkOrderDetailClient({
   // Order-confirmation e-mail (own mail client, with recipient resolution).
   const documentEmail = useDocumentEmail();
   const [editingOverview, setEditingOverview] = useState(false); // overview fields locked until unlocked
+  // "Byt kund" (WorkOrderCustomerSwapDialog). Se knappen i sidhuvudet för när den visas.
+  const [customerSwapOpen, setCustomerSwapOpen] = useState(false);
   // Speglar offertformulärets toggle: en slutkund på plats är undantaget, inte normalfallet, och
   // tre alltid synliga fält hade läst som att de förväntas fyllas i. Seedas ur ordern i
   // applyWorkOrder — så Avbryt återställer även den, inte bara fälten.
@@ -382,7 +385,9 @@ export default function WorkOrderDetailClient({
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
-  const customerInfo = useCustomerContact(workOrderId);
+  // Räknas upp efter Byt kund — se useCustomerContact.
+  const [contactRefresh, setContactRefresh] = useState(0);
+  const customerInfo = useCustomerContact(workOrderId, contactRefresh);
 
   // The linked customer's contacts, for the "change responsible contact" picker (in case the
   // contact changed between offer→order). Empty for standalone orders with no linked customer.
@@ -392,7 +397,8 @@ export default function WorkOrderDetailClient({
   // customer_type följer med: det avgör om kortets e-post får lånas ut åt en kontaktrad utan egen
   // (`resolveCrmContact`). Utan fältet lånas den ut som förut — och väljaren nedan hade skrivit in
   // bolagets adress under den anställdes namn, vilket är precis det vi slutade göra.
-  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null } | null>(null);
+  // reverse_vat: dialogen Byt kund avgör orderns moms som servern — snapshotens flagga, annars kortets.
+  const [customerCard, setCustomerCard] = useState<{ customer_type: 'business' | 'private' | null; email: string | null; phone: string | null; mobile: string | null; reverse_vat: boolean | null } | null>(null);
   useEffect(() => {
     const cid = workOrder?.customer_id;
     if (!cid) { setCustomerContacts([]); setCustomerCard(null); return; }
@@ -403,7 +409,7 @@ export default function WorkOrderDetailClient({
         if (!active) return;
         const item = json?.ok ? json.data?.item : null;
         setCustomerContacts(Array.isArray(item?.contacts) ? item.contacts : []);
-        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null } : null);
+        setCustomerCard(item ? { customer_type: item.customer_type ?? null, email: item.email ?? null, phone: item.phone ?? null, mobile: item.mobile ?? null, reverse_vat: item.reverse_vat ?? null } : null);
       })
       .catch(() => { if (active) { setCustomerContacts([]); setCustomerCard(null); } });
     return () => { active = false; };
@@ -1151,6 +1157,20 @@ export default function WorkOrderDetailClient({
                   Öppna kundkort →
                 </a>
               ) : null}
+              {/* Byt kund (William, 2026-10-20). Inte på en portalorder — dess kund följer butikens
+                  kundnummer — och inte på en avbruten eller helfakturerad order, där den aldrig
+                  går. En DELfakturerad order får knappen: dialogen säger varför bytet nekas, och
+                  det är där frågan uppstår. Inte heller under redigering: utkastet bär den gamla
+                  kundens kontakt och adress, och nästa Spara hade skrivit tillbaka dem. */}
+              {canEdit && !portalJob && !editingOverview && workOrder.status !== 'cancelled' && workOrder.status !== 'invoiced' ? (
+                <button
+                  type="button"
+                  onClick={() => setCustomerSwapOpen(true)}
+                  className="p-0 font-medium text-emerald-700 transition hover:text-emerald-800 hover:underline"
+                >
+                  Byt kund
+                </button>
+              ) : null}
             </div>
           </div>
           {/* Under redigering äger den klistrade raden längst upp Spara/Avbryt — se kommentaren
@@ -1253,7 +1273,11 @@ export default function WorkOrderDetailClient({
               <WorkOrderPortalCustomerCard
                 workOrderId={workOrder.id}
                 storeName={portalJob.storeName}
-                onLinked={(item) => applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview })}
+                onLinked={(item) => {
+                  applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview });
+                  // Ordern fick en kund — kontaktkortet hämtas om, som efter Byt kund.
+                  setContactRefresh((n) => n + 1);
+                }}
               />
             ) : null}
 
@@ -2251,6 +2275,28 @@ export default function WorkOrderDetailClient({
           busy={creatingInvoice}
           onConfirm={() => void createInvoice()}
           onCancel={() => setConfirmInvoiceOpen(false)}
+        />
+      ) : null}
+
+      {customerSwapOpen ? (
+        <WorkOrderCustomerSwapDialog
+          workOrder={workOrder}
+          currentCardReverseVat={customerCard?.reverse_vat ?? null}
+          onClose={() => setCustomerSwapOpen(false)}
+          onSwapped={({ item, customerName, fortnoxError }) => {
+            setCustomerSwapOpen(false);
+            setContactRefresh((n) => n + 1);
+            if (item) applyWorkOrder(item as WorkOrderItem);
+            else {
+              // Rutten kunde inte läsa om ordern efter bytet (bytet är ändå gjort): hämta den här.
+              void fetch(`/api/crm/work-orders/${workOrderId}`, { cache: 'no-store' })
+                .then((r) => r.json().catch(() => ({})))
+                .then((json) => { if (json?.ok && json.data?.item) applyWorkOrder(json.data.item as WorkOrderItem); })
+                .catch(() => {});
+            }
+            toast.success(`Kunden bytt till ${customerName}`);
+            if (fortnoxError) toast.error(fortnoxError);
+          }}
         />
       ) : null}
 

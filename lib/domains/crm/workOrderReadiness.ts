@@ -238,7 +238,7 @@ const ADDRESS_PART_LABELS: Array<[keyof AddressParts, string]> = [
   ['city', 'ort'],
 ];
 
-function joinSwedish(parts: string[]): string {
+export function joinSwedish(parts: string[]): string {
   if (parts.length <= 1) return parts.join('');
   return parts.slice(0, -1).join(', ') + ' och ' + parts[parts.length - 1];
 }

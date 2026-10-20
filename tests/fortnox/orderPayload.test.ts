@@ -21,7 +21,7 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 });
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { fortnoxPost, fortnoxPut, WorkOrderCancelledError } from '@/lib/domains/fortnox/client';
+import { fortnoxGet, fortnoxPost, fortnoxPut, WorkOrderCancelledError } from '@/lib/domains/fortnox/client';
 import { pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 const WORK_ORDER_ID = 'wo-1';
@@ -337,6 +337,40 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
     expect(fortnoxPut).toHaveBeenCalled();
     // Header-synken skickar `{ Order: header }` UTAN rader. Den fulla pushen bär dem.
     expect(puttedOrder()).toHaveProperty('OrderRows');
+  });
+
+  // 🧨 KUNDBYTET likaså (crm/workOrderCustomerSwap.ts): skattereduktionsposten bär sökanden och följer
+  // bara radvägen. En header-PUT hade bytt kunden men lämnat posten på den förra sökanden — och
+  // stämplat 'synced', så faktureringen hade släppts igenom med fel sökande.
+  it('går den FULLA pushen när kunden byttes medan pushen pågick', async () => {
+    // Fortnox-ordern bär fortfarande den gamla kunden (7): reparationen ska byta den, med raderna.
+    vi.mocked(fortnoxGet).mockImplementation(async (path: string) => {
+      if (path === '/orders/131') return { Order: { CustomerNumber: '7' } } as never;
+      if (path === '/customers/2') return { Customer: { Name: 'Johansons Bygg AB' } } as never;
+      throw new Error(`oväntat GET ${path}`);
+    });
+    installSupabaseMock({
+      beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
+      afterClaim: baseRow,
+      afterPush: {
+        ...baseRow,
+        fortnox_order_number: '131',
+        status: 'in_progress',
+        fortnox_invoice_number: null,
+        customer_snapshot: { ...baseRow.customer_snapshot, fortnox_customer_number: '2' },
+      },
+    });
+
+    try {
+      await pushWorkOrderToFortnox(WORK_ORDER_ID);
+
+      expect(fortnoxPut).toHaveBeenCalled();
+      expect(puttedOrder()).toHaveProperty('OrderRows');
+      expect(puttedOrder()).toMatchObject({ CustomerNumber: '2', CustomerName: 'Johansons Bygg AB' });
+    } finally {
+      // clearAllMocks nollställer inte implementationen — utan det här läcker den till senare tester.
+      vi.mocked(fortnoxGet).mockReset();
+    }
   });
 
   // 🧨 ARTIKLARNA. Artikelvägen (updateWorkOrderInFortnox) CLAIMAR INTE, och create sparar
