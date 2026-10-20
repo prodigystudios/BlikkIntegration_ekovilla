@@ -1,9 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import { restoreListFilters, serializeListFilters, type ListFilters, type ListFilterRules } from '@/lib/domains/crm/listFilterMemory';
-import { DEFAULT_WORK_ORDER_STATUS_FILTER, WORK_ORDER_STATUS_FILTER_OPTIONS, type WorkOrderStatusFilterOption } from '@/lib/domains/crm/listStatusFilter';
+import {
+  DEFAULT_QUOTE_STATUS_FILTER,
+  DEFAULT_WORK_ORDER_STATUS_FILTER,
+  QUOTE_STATUS_FILTER_OPTIONS,
+  WORK_ORDER_STATUS_FILTER_OPTIONS,
+  type QuoteStatusFilterOption,
+  type WorkOrderStatusFilterOption,
+} from '@/lib/domains/crm/listStatusFilter';
 import { MINE } from '@/lib/domains/crm/assigneeFilter';
 
-// Orderlistans filter sitter kvar i fliken när man går in på en order och tillbaka (William, 2026-10-20).
+// Order- och offertlistans filter sitter kvar i fliken när man går in på en rad och tillbaka
+// (William, 2026-10-20). Det mesta prövas mot orderlistans regler; offertlistans egna statusar och
+// sortering har ett eget block längst ner.
 
 type Sort = 'created_desc' | 'planned_asc';
 
@@ -114,5 +123,37 @@ describe('restoreListFilters', () => {
   it('varje fält läses för sig — ett trasigt fält tar inte med sig de andra', () => {
     const restored = restoreListFilters(JSON.stringify({ search: 'Lind', sort: 'okänd', statuses: ['invoiced'] }), rules);
     expect(restored).toEqual({ ...defaults, search: 'Lind', statuses: ['invoiced'] });
+  });
+});
+
+describe('offertlistans regler', () => {
+  type QuoteSort = 'created_desc' | 'follow_up_asc';
+  const quoteDefaults: ListFilters<QuoteStatusFilterOption, QuoteSort> = {
+    search: '',
+    statuses: [...DEFAULT_QUOTE_STATUS_FILTER],
+    sort: 'created_desc',
+    assignee: [MINE],
+  };
+  const quoteRules: ListFilterRules<QuoteStatusFilterOption, QuoteSort> = {
+    statusOptions: QUOTE_STATUS_FILTER_OPTIONS,
+    sortOptions: ['created_desc', 'follow_up_asc'],
+    defaults: quoteDefaults,
+    allowMine: true,
+  };
+
+  it('Förlorad, Följ upp först och Mina överlever en rundresa', () => {
+    const chosen: ListFilters<QuoteStatusFilterOption, QuoteSort> = { search: 'Lind', statuses: ['lost'], sort: 'follow_up_asc', assignee: [MINE, SELLER_1] };
+    expect(restoreListFilters(serializeListFilters(chosen, quoteDefaults), quoteRules)).toEqual(chosen);
+  });
+
+  it('alla statusar ikryssade (Förlorad med) sparas och läses tillbaka', () => {
+    const all = { ...quoteDefaults, statuses: [...QUOTE_STATUS_FILTER_OPTIONS] };
+    expect(restoreListFilters(serializeListFilters(all, quoteDefaults), quoteRules).statuses).toEqual([...QUOTE_STATUS_FILTER_OPTIONS]);
+  });
+
+  it('orderlistans statusar och sortering godtas inte i offertlistan', () => {
+    const restored = restoreListFilters(JSON.stringify({ statuses: ['invoiced'], sort: 'planned_asc' }), quoteRules);
+    expect(restored.statuses).toEqual(quoteDefaults.statuses);
+    expect(restored.sort).toBe('created_desc');
   });
 });

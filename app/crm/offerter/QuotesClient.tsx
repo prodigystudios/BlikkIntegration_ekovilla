@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
-import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeFilterValue, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
+import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
 import SortFilter from '@/app/crm/components/SortFilter';
 import StatusFilter from '@/app/crm/components/StatusFilter';
 import { RowAssignee } from '@/app/crm/components/RowAssignee';
@@ -17,6 +17,8 @@ import {
   statusFilterParam,
   type QuoteStatusFilterOption,
 } from '@/lib/domains/crm/listStatusFilter';
+import type { ListFilterRules } from '@/lib/domains/crm/listFilterMemory';
+import { useListFilterMemory } from '@/app/crm/components/useListFilterMemory';
 import { crm, quoteStatusMeta } from '@/app/crm/lib/crmTokens';
 import { quoteCustomerName, isQuoteOverdue } from '@/app/crm/lib/quoteDisplay';
 import QuoteDetailPanel from '@/app/crm/components/QuoteDetailPanel';
@@ -76,6 +78,8 @@ const quoteSortMeta: Record<QuoteSort, { label: string }> = {
   created_desc: { label: 'Senast skapad' },
   follow_up_asc: { label: 'Följ upp först' },
 };
+const QUOTE_SORT_VALUES = Object.keys(quoteSortMeta) as QuoteSort[];
+const DEFAULT_QUOTE_SORT: QuoteSort = 'created_desc';
 
 // The list pages the same way the order board does: one page per status selection, accumulated
 // with "Visa fler". Filtering, counting and ordering all happen server-side — the row cap cuts
@@ -136,15 +140,33 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  // Startar på allt utom Förlorad (listStatusFilter.ts) och börjar om vid varje besök.
-  const [statusFilter, setStatusFilter] = useState<QuoteStatusFilterOption[]>(() => [...DEFAULT_QUOTE_STATUS_FILTER]);
+  // Sök, status, sortering och ansvarig överlever ett sidbyte i samma flik (William, 2026-10-20) —
+  // samma minne som orderlistan. En rad öppnas i panelen på plats, så det är panelens vägar ut
+  // (Redigera, kundkortet, Kopiera) som lämnar listan; de kommer tillbaka hit via returnTo.
+  const filterRules = useMemo<ListFilterRules<QuoteStatusFilterOption, QuoteSort>>(() => ({
+    statusOptions: QUOTE_STATUS_FILTER_OPTIONS,
+    sortOptions: QUOTE_SORT_VALUES,
+    defaults: {
+      search: '',
+      // Allt utom Förlorad (listStatusFilter.ts).
+      statuses: [...DEFAULT_QUOTE_STATUS_FILTER],
+      sort: DEFAULT_QUOTE_SORT,
+      // Den inloggades egna offerter — samma val som orderlistan och säljtavlan.
+      assignee: defaultAssigneeFilter(currentUserId),
+    },
+    // Menyn visar alltid "Mina" här (AssigneeFilter utan showMine).
+    allowMine: true,
+  }), [currentUserId]);
+  const {
+    search, setSearch,
+    statuses: statusFilter, setStatuses: setStatusFilter,
+    sort, setSort,
+    assignee: assigneeFilter, setAssignee: setAssigneeFilter,
+    restored: filtersRestored,
+  } = useListFilterMemory('/crm/offerter', currentUserId, filterRules);
   // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
   const statusParam = statusFilterParam(statusFilter, QUOTE_STATUS_FILTER_OPTIONS);
-  const [sort, setSort] = useState<QuoteSort>('created_desc');
   const [filtersOpen, setFiltersOpen] = useState(false);
-  // Startar på den inloggades egna offerter — samma val som orderlistan och säljtavlan.
-  const [assigneeFilter, setAssigneeFilter] = useState<AssigneeFilterValue>(() => defaultAssigneeFilter(currentUserId));
   const [assignees, setAssignees] = useState<AssigneeOption[]>([]);
 
   // 'mine' löses upp till ett riktigt id före frågan — filtret är server-side, så webbläsaren får
@@ -257,8 +279,10 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   }, [presetProspectId, shouldOpenCreate]);
 
   // Load the first page. Search, status, sort and assignee are all server-side, so every one of them
-  // starts a fresh page rather than re-filtering what happens to be in the browser.
+  // starts a fresh page rather than re-filtering what happens to be in the browser. Väntar på det
+  // ihågkomna filtret (useListFilterMemory), annars hämtas listan två gånger vid varje återkomst.
   useEffect(() => {
+    if (!filtersRestored) return;
     let active = true;
     listScopeRef.current = listScope;
     const wantCounts = countedScope.current !== countScope;
@@ -278,7 +302,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     void load();
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetProspectId, search, statusParam, sort, assigneeParam, reloadKey]);
+  }, [filtersRestored, presetProspectId, search, statusParam, sort, assigneeParam, reloadKey]);
 
   // Deep-link: open a specific quote's detail panel when arriving with ?quote_id= (e.g. from a
   // customer's related list). Handled once the matching quote is loaded so a manual close isn't
@@ -308,9 +332,13 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     setHasHandledQuotePreset(true);
   }, [presetQuoteId, hasHandledQuotePreset, loading, quotes, linkedQuote]);
 
-  // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
+  // Count of active filters (status + sort + assignee) — shown as a badge on the mobile toggle.
   // Statusen räknas när den avviker från startvalet — startvalet i sig är inget val användaren gjort.
-  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_QUOTE_STATUS_FILTER) ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  // Sorteringen räknas sedan valet sitter kvar i fliken: på telefon ligger den bakom knappen, och en
+  // sparad ordning hade annars inte synts någonstans.
+  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_QUOTE_STATUS_FILTER) ? 1 : 0)
+    + (sort !== DEFAULT_QUOTE_SORT ? 1 : 0)
+    + (assigneeFilter.length > 0 ? 1 : 0);
   const narrowedByStatus = statusParam !== null;
   const hasMore = quotes.length < total;
 
@@ -501,7 +529,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
             <SortFilter
               value={sort}
               onChange={setSort}
-              options={(Object.keys(quoteSortMeta) as QuoteSort[]).map((value) => ({ value, label: quoteSortMeta[value].label }))}
+              options={QUOTE_SORT_VALUES.map((value) => ({ value, label: quoteSortMeta[value].label }))}
               label="Sortera offerter"
               // 190 px som de andra två och som orderlistans sortering.
               className="w-full sm:w-[190px]"
