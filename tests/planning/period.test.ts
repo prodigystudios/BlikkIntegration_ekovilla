@@ -1,21 +1,35 @@
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import { DEFAULT_PLANNING_PERIOD, restorePlanningPeriod, serializePlanningPeriod } from '@/app/crm/planering/planningPeriod';
 import { parseISO } from '@/app/crm/planering/planningDates';
 
 // Planeringens vy och period över ett sidbyte (William 2026-10-20): in på en order och tillbaka ska
-// tavlan stå kvar på samma vecka. Sparas som ABSOLUTA datum, aldrig som förskjutningen.
+// tavlan stå kvar på samma vecka — samma dag. Sparas som absoluta datum, med dagen den sparades.
+//
+// ⚠️ TIDSZONEN SÄTTS HÄR. CI kör TZ=UTC, där varje vecka är exakt 168 timmar och ett sommartidsskydd
+// prövar ingenting (CLAUDE.md). Node läser om process.env.TZ vid nästa Date-anrop, så datumen nedan
+// byggs i Stockholms zon oavsett var testet körs — alltså byggs de INNE i testerna, inte på modulnivå.
+const originalTz = process.env.TZ;
+beforeAll(() => { process.env.TZ = 'Europe/Stockholm'; });
+afterAll(() => { process.env.TZ = originalTz; });
 
-const tuesday = parseISO('2026-10-20'); // vecka 43, måndag 2026-10-19
+const tuesday = () => parseISO('2026-10-20'); // vecka 43, måndag 2026-10-19
 
 describe('serializePlanningPeriod', () => {
   it('förvalet (denna vecka) sparas inte — nyckeln ska tas bort', () => {
-    expect(serializePlanningPeriod(DEFAULT_PLANNING_PERIOD, tuesday)).toBeNull();
+    expect(serializePlanningPeriod(DEFAULT_PLANNING_PERIOD, tuesday())).toBeNull();
   });
 
-  it('veckan sparas som sin måndag, månaden som år-månad', () => {
-    expect(JSON.parse(serializePlanningPeriod({ view: 'week', weekOffset: 2, monthOffset: 0 }, tuesday)!)).toEqual({ week: '2026-11-02' });
-    expect(JSON.parse(serializePlanningPeriod({ view: 'month', weekOffset: 0, monthOffset: 3 }, tuesday)!)).toEqual({ view: 'month', month: '2027-01' });
-    expect(JSON.parse(serializePlanningPeriod({ view: 'week', weekOffset: -1, monthOffset: 0 }, tuesday)!)).toEqual({ week: '2026-10-12' });
+  it('veckan sparas som sin måndag, månaden som år-månad, med dagen den sparades', () => {
+    expect(JSON.parse(serializePlanningPeriod({ view: 'week', weekOffset: 2, monthOffset: 0 }, tuesday())!))
+      .toEqual({ week: '2026-11-02', savedOn: '2026-10-20' });
+    expect(JSON.parse(serializePlanningPeriod({ view: 'month', weekOffset: 0, monthOffset: 3 }, tuesday())!))
+      .toEqual({ view: 'month', month: '2027-01', savedOn: '2026-10-20' });
+  });
+
+  // Tavlan hämtar sin period även bakom Insikter — en återkomst dit hade kostat hämtningar i onödan.
+  it('Insikter sparas inte som vy', () => {
+    expect(serializePlanningPeriod({ view: 'insights', weekOffset: 0, monthOffset: 0 }, tuesday())).toBeNull();
+    expect(JSON.parse(serializePlanningPeriod({ view: 'insights', weekOffset: 1, monthOffset: 0 }, tuesday())!)).not.toHaveProperty('view');
   });
 });
 
@@ -23,44 +37,46 @@ describe('restorePlanningPeriod', () => {
   it('en rundresa samma dag ger samma period', () => {
     for (const period of [
       { view: 'week' as const, weekOffset: 3, monthOffset: 0 },
+      { view: 'week' as const, weekOffset: -1, monthOffset: 0 },
       { view: 'month' as const, weekOffset: 0, monthOffset: -2 },
-      { view: 'insights' as const, weekOffset: 0, monthOffset: 0 },
     ]) {
-      expect(restorePlanningPeriod(serializePlanningPeriod(period, tuesday), tuesday)).toEqual(period);
+      expect(restorePlanningPeriod(serializePlanningPeriod(period, tuesday()), tuesday())).toEqual(period);
     }
   });
 
-  // 🧨 Kärnan: en sparad förskjutning hade pekat på en annan vecka nästa vecka.
-  it('läst en annan dag pekar den på SAMMA vecka och månad', () => {
-    const stored = serializePlanningPeriod({ view: 'week', weekOffset: 2, monthOffset: 3 }, tuesday);
-    const nextWeek = parseISO('2026-10-27');
-    expect(restorePlanningPeriod(stored, nextWeek)).toMatchObject({ weekOffset: 1 });
-    const nextMonth = parseISO('2026-11-03');
-    expect(restorePlanningPeriod(stored, nextMonth)).toMatchObject({ weekOffset: 0, monthOffset: 2 });
+  // Williams val: en flik som stått öppen över helgen ska öppna på denna vecka, inte på fredagens.
+  it('sparad en annan dag gäller inte — förvalet', () => {
+    const stored = serializePlanningPeriod({ view: 'month', weekOffset: 2, monthOffset: 3 }, tuesday());
+    expect(restorePlanningPeriod(stored, parseISO('2026-10-21'))).toEqual(DEFAULT_PLANNING_PERIOD);
+    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-11-02' }), tuesday())).toEqual(DEFAULT_PLANNING_PERIOD);
   });
 
-  // Över sommartidsväxlingen 2026-10-25 (zonberoende: biter bara i en zon med sommartid, t.ex.
-  // Europe/Stockholm — weeksBetweenMondays själv är prövad med explicita timspann i dates.test.ts).
+  // Över sommartidsväxlingen 2026-10-25 (höst) och 2026-03-29 (vår), i Stockholms zon (se överst). En
+  // ren millisekunddivision hade gett 2,006 respektive 0,994 veckor.
   it('över en sommartidsväxling blir det hela veckor', () => {
-    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-11-02' }), tuesday).weekOffset).toBe(2);
-    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-03-30' }), parseISO('2026-03-24')).weekOffset).toBe(1);
+    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-11-02', savedOn: '2026-10-20' }), tuesday()).weekOffset).toBe(2);
+    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-03-30', savedOn: '2026-03-24' }), parseISO('2026-03-24')).weekOffset).toBe(1);
   });
 
   it('en sparad dag som inte är en måndag läses som sin veckas måndag', () => {
-    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-11-05' }), tuesday).weekOffset).toBe(2);
+    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-11-05', savedOn: '2026-10-20' }), tuesday()).weekOffset).toBe(2);
   });
 
   it('inget sparat, trasig JSON eller fel form ger förvalet', () => {
     for (const raw of [null, '', '{', '"text"', '42', 'null']) {
-      expect(restorePlanningPeriod(raw, tuesday)).toEqual(DEFAULT_PLANNING_PERIOD);
+      expect(restorePlanningPeriod(raw, tuesday())).toEqual(DEFAULT_PLANNING_PERIOD);
     }
   });
 
   it('ett ogiltigt fält ger förvalet för just det fältet', () => {
-    expect(restorePlanningPeriod(JSON.stringify({ view: 'kalender', week: '2026-11-02' }), tuesday)).toEqual({ view: 'week', weekOffset: 2, monthOffset: 0 });
+    const at = (value: Record<string, unknown>) => restorePlanningPeriod(JSON.stringify({ ...value, savedOn: '2026-10-20' }), tuesday());
+    expect(at({ view: 'kalender', week: '2026-11-02' })).toEqual({ view: 'week', weekOffset: 2, monthOffset: 0 });
+    expect(at({ view: 'insights' }).view).toBe('week');
     // parseISO hade rullat 31 februari till mars.
-    expect(restorePlanningPeriod(JSON.stringify({ week: '2026-02-31' }), tuesday).weekOffset).toBe(0);
-    expect(restorePlanningPeriod(JSON.stringify({ week: 20261102 }), tuesday).weekOffset).toBe(0);
-    expect(restorePlanningPeriod(JSON.stringify({ view: 'month', month: '2026-13' }), tuesday)).toEqual({ view: 'month', weekOffset: 0, monthOffset: 0 });
+    expect(at({ week: '2026-02-31' }).weekOffset).toBe(0);
+    expect(at({ week: 20261102 }).weekOffset).toBe(0);
+    expect(at({ view: 'month', month: '2026-13' })).toEqual({ view: 'month', weekOffset: 0, monthOffset: 0 });
+    // Date läser år 0–99 som 1900-tal: rubriken och intervallet hade pekat på olika år.
+    expect(at({ view: 'month', month: '0050-01' }).monthOffset).toBe(0);
   });
 });

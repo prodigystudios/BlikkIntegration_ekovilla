@@ -10,10 +10,16 @@
 // som förskjutningar från i dag, och en sparad förskjutning hade pekat på en annan vecka när den lästes
 // tillbaka en annan dag. Samma regel som startsidans arbetsschema (DashboardSchedule, #97).
 //
-// Och den som står på förvalet sparas INTE: denna vecka ska räknas om, inte låsas fast. En flik som
-// stått öppen över en söndagsnatt hade annars öppnat på förra veckan.
+// Och den som står på förvalet sparas INTE: denna vecka ska räknas om, inte låsas fast.
+//
+// 🧨 BARA SAMMA DAG (Williams val 2026-10-20). Perioden bär dagen den sparades och gäller inte en annan
+// dag — en flik som stått öppen över helgen öppnar då på denna vecka, inte på fredagens. Annars hade en
+// planerare kunnat lägga jobb i fel vecka för att tavlan öppnade på en gammal.
+//
+// Insikter sparas inte som vy: tavlan hämtar sin period även bakom den, och en återkomst dit hade
+// kostat sju hämtningar för en tavla som inte visas. Vecka och månad är det som bläddras.
 
-import { addDays, fmtISO, parseISO, startOfWeek, weeksBetweenMondays } from './planningDates';
+import { addDays, fmtISO, monthOffsetFor, parseISO, startOfWeek, weekOffsetFor } from './planningDates';
 
 export const PLANNING_VIEWS = ['week', 'month', 'insights'] as const;
 export type PlanningView = (typeof PLANNING_VIEWS)[number];
@@ -21,6 +27,9 @@ export type PlanningView = (typeof PLANNING_VIEWS)[number];
 export type PlanningPeriod = { view: PlanningView; weekOffset: number; monthOffset: number };
 
 export const DEFAULT_PLANNING_PERIOD: PlanningPeriod = { view: 'week', weekOffset: 0, monthOffset: 0 };
+
+/** Vyerna som minns. Se huvudet om Insikter. */
+const REMEMBERED_VIEWS: readonly PlanningView[] = ['week', 'month'];
 
 const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 
@@ -30,10 +39,10 @@ const monthKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).pad
  */
 export function serializePlanningPeriod(period: PlanningPeriod, today: Date): string | null {
   const stored: { view?: PlanningView; week?: string; month?: string } = {};
-  if (period.view !== DEFAULT_PLANNING_PERIOD.view) stored.view = period.view;
+  if (period.view !== DEFAULT_PLANNING_PERIOD.view && REMEMBERED_VIEWS.includes(period.view)) stored.view = period.view;
   if (period.weekOffset !== 0) stored.week = fmtISO(addDays(startOfWeek(today), period.weekOffset * 7));
   if (period.monthOffset !== 0) stored.month = monthKey(new Date(today.getFullYear(), today.getMonth() + period.monthOffset, 1));
-  return Object.keys(stored).length > 0 ? JSON.stringify(stored) : null;
+  return Object.keys(stored).length > 0 ? JSON.stringify({ ...stored, savedOn: fmtISO(today) }) : null;
 }
 
 /** Ett ISO-datum som faktiskt finns (parseISO rullar annars '2026-02-31' till mars). */
@@ -44,11 +53,12 @@ function validDay(value: unknown): Date | null {
 }
 
 /**
- * Läs tillbaka mot dagens datum. Allt som inte går att läsa ger förvalet för just det fältet.
+ * Läs tillbaka mot dagens datum. Sparad en annan dag → förvalet (huvudet). Allt annat som inte går att
+ * läsa ger förvalet för just det fältet.
  *
- * Veckan räknas om till en förskjutning med weeksBetweenMondays, som räknar dygn och avrundar — en ren
- * millisekunddivision hade blivit 0,994 eller 1,006 över en sommartidsväxling. En sparad dag som inte
- * är en måndag läses som sin veckas måndag.
+ * Veckan räknas om till en förskjutning med weekOffsetFor (weeksBetweenMondays, som räknar dygn och
+ * avrundar) — en ren millisekunddivision hade blivit 0,994 eller 1,006 över en sommartidsväxling. En
+ * sparad dag som inte är en måndag läses som sin veckas måndag.
  */
 export function restorePlanningPeriod(raw: string | null, today: Date): PlanningPeriod {
   const period: PlanningPeriod = { ...DEFAULT_PLANNING_PERIOD };
@@ -61,15 +71,19 @@ export function restorePlanningPeriod(raw: string | null, today: Date): Planning
   }
   if (typeof stored !== 'object' || stored === null) return period;
   const value = stored as Record<string, unknown>;
+  if (value.savedOn !== fmtISO(today)) return period;
 
-  if ((PLANNING_VIEWS as readonly unknown[]).includes(value.view)) period.view = value.view as PlanningView;
+  if ((REMEMBERED_VIEWS as readonly unknown[]).includes(value.view)) period.view = value.view as PlanningView;
 
   const week = validDay(value.week);
-  if (week) period.weekOffset = weeksBetweenMondays(startOfWeek(today), startOfWeek(week));
+  if (week) period.weekOffset = weekOffsetFor(today, week);
 
+  // Samma rundgång som veckan: Date läser år 0–99 som 1900-tal, så ett trasigt '0050-01' hade gett en
+  // rubrik och ett intervall som pekar på olika år.
   if (typeof value.month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(value.month)) {
     const [year, month] = value.month.split('-').map(Number);
-    period.monthOffset = (year - today.getFullYear()) * 12 + (month - 1 - today.getMonth());
+    const first = new Date(year, month - 1, 1);
+    if (first.getFullYear() === year) period.monthOffset = monthOffsetFor(today, first);
   }
   return period;
 }
