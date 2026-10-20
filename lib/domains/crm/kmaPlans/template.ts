@@ -47,6 +47,12 @@ export const KMA_COMPANY = { name: 'Isoleringslandslaget AB', orgNumber: '559022
  */
 export const KMA_COMPANIES = [KMA_COMPANY, { name: 'EKOVILLA se AB', orgNumber: '559341-9673' }] as const;
 
+/**
+ * Betalningsplanen, på planens första sida under Projektnummer (William 2026-10-20: "Betalningsplan- 25e
+ * varje månad"). Samma för varje plan; blir den per projekt hör den hemma i formuläret i stället.
+ */
+export const KMA_PAYMENT_PLAN = '25:e varje månad';
+
 /** Mallens version, som i Word-mallen. Planens egen revision visas separat (Williams beslut). */
 export const KMA_TEMPLATE_VERSION = '2.1';
 
