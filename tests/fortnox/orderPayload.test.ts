@@ -343,7 +343,12 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
   // bara radvägen. En header-PUT hade bytt kunden men lämnat posten på den förra sökanden — och
   // stämplat 'synced', så faktureringen hade släppts igenom med fel sökande.
   it('går den FULLA pushen när kunden byttes medan pushen pågick', async () => {
-    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { CustomerNumber: '2' } } as never);
+    // Fortnox-ordern bär fortfarande den gamla kunden (7): reparationen ska byta den, med raderna.
+    vi.mocked(fortnoxGet).mockImplementation(async (path: string) => {
+      if (path === '/orders/131') return { Order: { CustomerNumber: '7' } } as never;
+      if (path === '/customers/2') return { Customer: { Name: 'Johansons Bygg AB' } } as never;
+      throw new Error(`oväntat GET ${path}`);
+    });
     installSupabaseMock({
       beforeClaim: { id: WORK_ORDER_ID, fortnox_order_number: null },
       afterClaim: baseRow,
@@ -356,10 +361,16 @@ describe('pushWorkOrderToFortnox — orderhuvudet vid create', () => {
       },
     });
 
-    await pushWorkOrderToFortnox(WORK_ORDER_ID);
+    try {
+      await pushWorkOrderToFortnox(WORK_ORDER_ID);
 
-    expect(fortnoxPut).toHaveBeenCalled();
-    expect(puttedOrder()).toHaveProperty('OrderRows');
+      expect(fortnoxPut).toHaveBeenCalled();
+      expect(puttedOrder()).toHaveProperty('OrderRows');
+      expect(puttedOrder()).toMatchObject({ CustomerNumber: '2', CustomerName: 'Johansons Bygg AB' });
+    } finally {
+      // clearAllMocks nollställer inte implementationen — utan det här läcker den till senare tester.
+      vi.mocked(fortnoxGet).mockReset();
+    }
   });
 
   // 🧨 ARTIKLARNA. Artikelvägen (updateWorkOrderInFortnox) CLAIMAR INTE, och create sparar

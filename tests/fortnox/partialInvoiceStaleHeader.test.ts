@@ -143,9 +143,14 @@ describe('createPartialInvoice — avbruten medan claimen togs', () => {
 // Kundbytet (crm/workOrderCustomerSwap.ts): pushen efter bytet misslyckades, så Fortnox-ordern bär den
 // gamla kunden. Delfakturan tar kunden ur Fortnox-orderns huvud — den hade gått till fel kund.
 describe('createPartialInvoice — ordern har bytt kund', () => {
-  function installRow(row: Record<string, unknown>) {
+  const tables: { workOrders?: ReturnType<typeof makeChain> } = {};
+  // `fresh` = vad läsningen efter claimen ser, när den skiljer sig från första läsningen.
+  function installRow(row: Record<string, unknown>, fresh?: Record<string, unknown>) {
     const workOrders = makeChain({ data: [{ id: WORK_ORDER_ID }], error: null });
-    workOrders.single = vi.fn().mockResolvedValue({ data: row, error: null });
+    workOrders.single = vi.fn()
+      .mockResolvedValueOnce({ data: row, error: null })
+      .mockResolvedValue({ data: fresh ?? row, error: null });
+    tables.workOrders = workOrders;
     const invoices = makeChain({ data: [], error: null });
     vi.mocked(getSupabaseAdmin).mockReturnValue({
       from: vi.fn((table: string) => (table === 'crm_work_order_invoices' ? invoices : workOrders)),
@@ -159,6 +164,19 @@ describe('createPartialInvoice — ordern har bytt kund', () => {
 
     await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
       .rejects.toThrow(/bytt kund.*Synka om/s);
+    expect(fortnoxPost).not.toHaveBeenCalled();
+    // Ingenting skickades: fakturasynken stämplas inte 'failed'.
+    const updates = vi.mocked(tables.workOrders!.update as (v: unknown) => unknown).mock.calls.map(([v]) => v);
+    expect(updates).not.toContainEqual(expect.objectContaining({ fortnox_invoice_sync_status: 'failed' }));
+  });
+
+  // Bytet landade mellan första läsningen och claimen: bara läsningen efter claimen ser det.
+  it('ser ett byte som landade mellan läsningen och claimen', async () => {
+    installRow({ ...swapped, customer_snapshot: { reverse_vat: false } }, swapped);
+    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { CustomerNumber: 55 } } as never);
+
+    await expect(createPartialInvoice(WORK_ORDER_ID, [{ line_id: LINE_ID, quantity: 4 }], 'user-1'))
+      .rejects.toThrow(/bytt kund/);
     expect(fortnoxPost).not.toHaveBeenCalled();
   });
 

@@ -523,9 +523,14 @@ export async function createPartialInvoice(
   // hade annars fått en riktig faktura utställd och Delfakturerad skriven över Avbruten. Avbrytandet håller samma claim
   // medan det sparar (fortnox/workOrderCancel.ts), så den här läsningen ser 'cancelled' om det hann före.
   let cancelledMeanwhile = false;
+  // Kundbytet-spärren nedan: ett nej där har inte rört Fortnox, och ska inte stämpla 'failed'.
+  let swappedCustomerUnsynced = false;
   try {
+    // Snapshoten läses om här också: ett kundbyte som landade mellan första läsningen och claimen syns
+    // annars inte för kundbytet-spärren nedan (crm/workOrderCustomerSwap.ts nekar byten när claimen står).
     const { data: fresh, error: freshError } = await supabase
-      .from('crm_work_orders').select('status').eq('id', workOrderId).single<{ status: string | null }>();
+      .from('crm_work_orders').select('status, customer_snapshot').eq('id', workOrderId)
+      .single<{ status: string | null; customer_snapshot: WorkOrderRow['customer_snapshot'] }>();
     if (freshError || !fresh) throw new Error(`Arbetsorder ${workOrderId} hittades inte`);
     if (fresh.status === 'cancelled') {
       cancelledMeanwhile = true;
@@ -584,8 +589,9 @@ export async function createPartialInvoice(
     // misslyckades. Delfakturan tar kunden ur Fortnox-orderns huvud, så den hade gått till den GAMLA
     // kunden — och eftersom bytet bara får ske före första fakturan hade nästa omsynk sedan flyttat
     // ordern efter att faktureringen börjat. Den här vägen kräver inte 'synced', så spärren står här.
-    const swappedTo = workOrder.customer_snapshot?.fortnox_customer_number?.trim();
+    const swappedTo = (fresh.customer_snapshot ?? workOrder.customer_snapshot)?.fortnox_customer_number?.trim();
     if (swappedTo && String(header.CustomerNumber) !== swappedTo) {
+      swappedCustomerUnsynced = true;
       throw new PartialInvoiceError(
         'Arbetsordern har bytt kund, men Fortnox-ordern bär fortfarande den gamla kunden. Synka om '
         + 'arbetsordern innan du delfakturerar — annars går fakturan till fel kund.',
@@ -726,7 +732,7 @@ export async function createPartialInvoice(
     // klickar direkt efter är just de som stoppas. Det fulla skyddet är att boka rundan före anropet.
     if (e instanceof FortnoxInvoiceNotRecordedError && !e.roundRecorded) throw e;
     // Ett avbrytande som hann före är inget misslyckande: ingenting skickades, och ingenting ska skickas.
-    const syncStatus = e instanceof FortnoxNotConnectedError || cancelledMeanwhile ? 'not_synced' : 'failed';
+    const syncStatus = e instanceof FortnoxNotConnectedError || cancelledMeanwhile || swappedCustomerUnsynced ? 'not_synced' : 'failed';
     await supabase
       .from('crm_work_orders')
       .update({ fortnox_invoice_sync_status: syncStatus })

@@ -599,22 +599,6 @@ async function orderCustomerSwapFields(
 }
 
 /**
- * Är Fortnox-ordern stängd i Fortnox — fakturerad (även för hand, utan att CRM vet det) eller
- * makulerad? Läses av kundbytet innan något skrivs: en stängd order nekar PUT:en, och bytet hade
- * stått kvar i CRM medan Fortnox-ordern och fakturan bar den gamla kunden för alltid.
- *
- * ⚠️ En ofakturerad order har `InvoiceReference: "0"` — strängen noll, inte null (mätt 2026-09-29).
- */
-export async function readFortnoxOrderClosed(orderNumber: string): Promise<{ invoiced: boolean; cancelled: boolean }> {
-  const res = await fortnoxGet<{ Order?: { InvoiceReference?: string | number | null; Cancelled?: boolean | null } }>(`/orders/${orderNumber}`);
-  const reference = res.Order?.InvoiceReference;
-  return {
-    invoiced: reference != null && String(reference) !== '' && String(reference) !== '0',
-    cancelled: res.Order?.Cancelled === true,
-  };
-}
-
-/**
  * 🧨 VAKTEN MOT EN SPARNING SOM LANDADE MITT I PUSHEN.
  *
  * Skapandet bygger orderhuvudet ur en rad som lästes innan Fortnox ens svarat. Mellan den

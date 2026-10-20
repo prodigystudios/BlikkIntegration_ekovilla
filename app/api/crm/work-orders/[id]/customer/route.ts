@@ -18,14 +18,16 @@ const bodySchema = z.object({
 // Byt kund på arbetsordern — och på Fortnox-ordern när den finns. Reglerna i
 // lib/domains/crm/workOrderCustomerSwap.ts (Williams beslut 2026-10-20).
 //
-// crm.workorder.write, och sedan RLS på arbetsordern: bara den som har ordern, eller en admin, får ändra den.
+// crm.workorder.write, och sedan samma regel som RLS på arbetsordern — den som har ordern, eller en admin —
+// prövad FÖRST i domänen (mayUpdateWorkOrder), innan något händer i Fortnox. RLS är sista ordet på skrivningen.
 //
 //   200 { item, in_fortnox, fortnox_error }   bytt; fortnox_error när Fortnox-ordern inte kunde byta kund
 //                                             (kunden är ändå bytt på ordern — "Synka om" tar Fortnox)
 //   403 work_order_customer_forbidden         varken ansvarig för ordern eller admin
 //   404 crm_work_order_not_found              ingen arbetsorder som du ser
 //   404 crm_customer_not_found                kundkortet finns inte
-//   409 work_order_customer_<skäl>            bytet nekas (same_customer, cancelled, invoiced, portal,
+//   409 work_order_customer_<skäl>            bytet nekas (same_customer, cancelled, invoiced — också fakturerad
+//                                             direkt i Fortnox —, fortnox_cancelled, in_progress, portal,
 //                                             customer_type, reverse_vat) — meddelandet säger varför
 //   409 crm_work_order_incomplete …           kortet saknar något (details.blockers)
 //   409 work_order_customer_changed           ordern sparades av någon annan under tiden; ingenting sparat

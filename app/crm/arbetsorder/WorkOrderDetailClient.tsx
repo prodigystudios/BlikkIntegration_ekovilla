@@ -1273,7 +1273,11 @@ export default function WorkOrderDetailClient({
               <WorkOrderPortalCustomerCard
                 workOrderId={workOrder.id}
                 storeName={portalJob.storeName}
-                onLinked={(item) => applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview })}
+                onLinked={(item) => {
+                  applyWorkOrder(item as WorkOrderItem, { keepDraft: editingOverview });
+                  // Ordern fick en kund — kontaktkortet hämtas om, som efter Byt kund.
+                  setContactRefresh((n) => n + 1);
+                }}
               />
             ) : null}
 

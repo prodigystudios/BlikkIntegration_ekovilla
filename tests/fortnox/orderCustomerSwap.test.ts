@@ -15,7 +15,7 @@ vi.mock('@/lib/domains/fortnox/client', async (importOriginal) => {
 
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { fortnoxGet, fortnoxPost, fortnoxPut } from '@/lib/domains/fortnox/client';
-import { orderCustomerFieldsFromCard, pushWorkOrderToFortnox, readFortnoxOrderClosed, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
+import { orderCustomerFieldsFromCard, pushWorkOrderToFortnox, syncWorkOrderHeaderToFortnox, updateWorkOrderInFortnox } from '@/lib/domains/fortnox/orders';
 
 // Testbolagets kund 2, som den såg ut i mätningen.
 const cardB = {
@@ -294,22 +294,3 @@ describe('skapandevägen efter ett byte', () => {
   });
 });
 
-describe('readFortnoxOrderClosed', () => {
-  const answer = (order: Record<string, unknown>) => vi.mocked(fortnoxGet).mockResolvedValue({ Order: order } as never);
-
-  // En ofakturerad order har strängen "0", inte null (mätt 2026-09-29).
-  it('"0" är ingen faktura', async () => {
-    answer({ InvoiceReference: '0', Cancelled: false });
-    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: false, cancelled: false });
-  });
-
-  it('ett fakturanummer, även fakturerat direkt i Fortnox', async () => {
-    answer({ InvoiceReference: 48, Cancelled: false });
-    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: true, cancelled: false });
-  });
-
-  it('makulerad', async () => {
-    answer({ InvoiceReference: '0', Cancelled: true });
-    expect(await readFortnoxOrderClosed('20')).toEqual({ invoiced: false, cancelled: true });
-  });
-});

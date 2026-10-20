@@ -138,7 +138,7 @@ describe('arbetsplatsen', () => {
 
 describe('buildWorkOrderCustomerSwapUpdate', () => {
   const build = (order = privateOrder, card = perSeppa, workAddress: 'keep' | 'customer' = 'customer', fallbackRot: Record<string, unknown> | null = null) =>
-    buildWorkOrderCustomerSwapUpdate(order, card, { workAddress, fallbackRot, fortnoxCustomerNumber: '4' });
+    buildWorkOrderCustomerSwapUpdate(order, card, { workAddress, fallbackRot, fortnoxCustomerNumber: '4', currentReverseVat: false });
 
   it('kunden, namnet och det förväntade Fortnox-numret', () => {
     const update = build();
@@ -232,7 +232,7 @@ describe('buildWorkOrderCustomerSwapUpdate', () => {
 
 describe('customerSwapReadinessBlockers', () => {
   const blockersFor = (card: SwapCustomerCard, workAddress: 'keep' | 'customer' = 'customer', order = privateOrder) => {
-    const update = buildWorkOrderCustomerSwapUpdate(order, card, { workAddress, fallbackRot: null, fortnoxCustomerNumber: '4' });
+    const update = buildWorkOrderCustomerSwapUpdate(order, card, { workAddress, fallbackRot: null, fortnoxCustomerNumber: '4', currentReverseVat: false });
     return customerSwapReadinessBlockers(order, card, update, workAddress).map((b) => b.field);
   };
 
@@ -286,9 +286,17 @@ describe('delade regler för servern och dialogen', () => {
     expect(orderReverseVat(undefined, null)).toBe(false);
   });
 
-  // Ett privatkort med momsflaggan satt hade annars gjort ROT-ordern till omvänd moms (och slagit av ROT).
-  it('momsflaggan skrivs bara för företag', () => {
-    const update = buildWorkOrderCustomerSwapUpdate(privateOrder, { ...perSeppa, reverse_vat: true }, { workAddress: 'customer', fallbackRot: null, fortnoxCustomerNumber: '4' });
-    expect((update.customer_snapshot as Record<string, unknown>).reverse_vat).toBe(false);
+  // Momsen rörs inte: ett privatkort med flaggan satt hade annars slagit av ROT, och en privatorder med
+  // flaggan satt hade bytt momsregim medan priserna stod kvar på 0 %.
+  it('momsen skrivs ut som ordern har den, inte som det nya kortet säger', () => {
+    const opts = { workAddress: 'customer' as const, fallbackRot: null, fortnoxCustomerNumber: '4' };
+    const flagged = buildWorkOrderCustomerSwapUpdate(privateOrder, { ...perSeppa, reverse_vat: true }, { ...opts, currentReverseVat: false });
+    expect((flagged.customer_snapshot as Record<string, unknown>).reverse_vat).toBe(false);
+    const reverseOrder = buildWorkOrderCustomerSwapUpdate(privateOrder, perSeppa, { ...opts, currentReverseVat: true });
+    expect((reverseOrder.customer_snapshot as Record<string, unknown>).reverse_vat).toBe(true);
+  });
+
+  it('en push eller fakturering som pågår spärrar', () => {
+    expect(customerSwapBlock(privateOrder, perSeppa, { ...ctx, inProgress: true })).toBe('in_progress');
   });
 });

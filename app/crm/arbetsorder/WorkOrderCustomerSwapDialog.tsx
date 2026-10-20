@@ -60,6 +60,10 @@ export default function WorkOrderCustomerSwapDialog({
   onSwapped: (result: { item: unknown | null; customerName: string; fortnoxError: string | null }) => void;
 }) {
   const reverseVat = orderReverseVat(workOrder.customer_snapshot?.reverse_vat, currentCardReverseVat);
+  // Vet dialogen orderns moms? Inte när snapshoten saknar flaggan och kortet inte gått att läsa (än).
+  // Då spärrar den inte på momsen — gissningen "vanlig moms" hade kunnat låsa ett byte servern
+  // godtar. Servern prövar momsen ändå.
+  const reverseVatKnown = typeof workOrder.customer_snapshot?.reverse_vat === 'boolean' || currentCardReverseVat !== null;
   // Rundorna ser bara servern (0 här); den prövar dem ändå.
   const orderBlock = workOrder.status === 'cancelled' ? 'cancelled' as const : customerSwapInvoicingStarted(workOrder, 0) ? 'invoiced' as const : null;
   // Varje val och varje rensning får ett nytt nummer. Ett kortsvar för ett äldre val kastas — annars
@@ -107,9 +111,10 @@ export default function WorkOrderCustomerSwapDialog({
   }
 
   const swappable = asSwappable(workOrder);
-  const block = card ? customerSwapBlock(swappable, card, { invoiced: false, isPortalJob: false, currentReverseVat: reverseVat }) : null;
+  const rawBlock = card ? customerSwapBlock(swappable, card, { invoiced: false, isPortalJob: false, currentReverseVat: reverseVat }) : null;
+  const block = rawBlock === 'reverse_vat' && !reverseVatKnown ? null : rawBlock;
   const preview = card && !block
-    ? buildWorkOrderCustomerSwapUpdate(swappable, card, { workAddress, fallbackRot: null, fortnoxCustomerNumber: card.fortnox_customer_id })
+    ? buildWorkOrderCustomerSwapUpdate(swappable, card, { workAddress, fallbackRot: null, fortnoxCustomerNumber: card.fortnox_customer_id, currentReverseVat: reverseVat })
     : null;
   const blockers = serverBlockers ?? (card && preview ? customerSwapReadinessBlockers(swappable, card, preview, workAddress) : []);
   const newName = card ? getCrmCustomerDisplayName(card) : '';

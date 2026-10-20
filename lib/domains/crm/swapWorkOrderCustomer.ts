@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { FortnoxNotConnectedError, FortnoxPushInProgressError, friendlyFortnoxMessage } from '@/lib/domains/fortnox/client';
 import { createFortnoxCustomer } from '@/lib/domains/fortnox/customers';
-import { readFortnoxOrderClosed, updateWorkOrderInFortnox, type PushOrderResult } from '@/lib/domains/fortnox/orders';
+import { updateWorkOrderInFortnox, type PushOrderResult } from '@/lib/domains/fortnox/orders';
+import { readFortnoxOrderState, type FortnoxOrderState } from '@/lib/domains/fortnox/orderCancel';
 import { mayUpdateWorkOrder } from '@/lib/domains/fortnox/workOrderCancel';
 import { countWorkOrderInvoiceRounds } from './work-orders';
 import type { WorkOrderReadinessIssue } from './workOrderReadiness';
@@ -31,7 +32,7 @@ import {
  *                  portaljobbet, det gamla kortets moms och offertens ROT-uppgifter. Ett RLS-tomt svar där
  *                  hade sett ut som "inga fakturor" eller "ingen ROT" och släppt igenom fel byte.
  *
- * Ordningen: behörighet → pröva (även Fortnox-orderns eget läge) → se till att den nya kunden finns i
+ * Ordningen: behörighet → Fortnox-orderns eget läge → spärrarna → kortets fynd → se till att den nya kunden finns i
  * Fortnox → skriv ordern → pusha. Behörigheten prövas FÖRST, med samma regel som RLS-policyn
  * (mayUpdateWorkOrder): att lägga upp en kund i Fortnox är en sidoeffekt som inte ska kunna utlösas av
  * någon som sedan nekas av databasen. RLS står ändå kvar som sista ord på själva skrivningen. CRM leder:
@@ -58,7 +59,7 @@ export type SwapWorkOrderCustomerResult =
 export type SwapWorkOrderCustomerDeps = {
   push: (workOrderId: string) => Promise<PushOrderResult>;
   createFortnoxCustomer: (customerId: string) => Promise<{ fortnoxCustomerNumber: string }>;
-  readFortnoxOrderClosed: (orderNumber: string) => Promise<{ invoiced: boolean; cancelled: boolean }>;
+  readFortnoxOrderState: (orderNumber: string) => Promise<FortnoxOrderState>;
 };
 
 type OrderRow = SwappableWorkOrder & {
@@ -70,7 +71,7 @@ export async function swapWorkOrderCustomer(
   session: SupabaseClient,
   admin: SupabaseClient,
   input: { workOrderId: string; customerId: string; workAddress: WorkAddressChoice; actor: { userId: string; isCrmAdmin: boolean } },
-  deps: SwapWorkOrderCustomerDeps = { push: updateWorkOrderInFortnox, createFortnoxCustomer, readFortnoxOrderClosed },
+  deps: SwapWorkOrderCustomerDeps = { push: updateWorkOrderInFortnox, createFortnoxCustomer, readFortnoxOrderState },
 ): Promise<SwapWorkOrderCustomerResult> {
   const orderRead = await session.from('crm_work_orders').select(SWAPPABLE_WORK_ORDER_SELECT).eq('id', input.workOrderId).maybeSingle();
   if (orderRead.error) throw new Error(`Arbetsordern gick inte att läsa: ${orderRead.error.message}`);
@@ -99,10 +100,26 @@ export async function swapWorkOrderCustomer(
     if (read.error) throw new Error(`Ordern gick inte att pröva: ${read.error.message}`);
   }
 
+  // Fortnox-orderns eget läge: en order som fakturerats eller makulerats direkt i Fortnox vet CRM inget
+  // om. Bytet hade då stått kvar här medan Fortnox nekade PUT:en — och kunden på fakturan hade aldrig
+  // gått att rätta. Läses FÖRE kortets fynd: ett byte som aldrig kan gå ska inte först be om ett ifyllt
+  // kundkort. Läsfel → inget byte, av samma skäl.
+  let fortnoxState: FortnoxOrderState | null = null;
+  if (order.fortnox_order_number) {
+    try {
+      fortnoxState = await deps.readFortnoxOrderState(order.fortnox_order_number);
+    } catch (e) {
+      console.error('[kundbyte] Fortnox-ordern gick inte att läsa', { workOrderId: order.id, error: e instanceof Error ? e.message : String(e) });
+      return { kind: 'fortnox_unavailable', message: `Fortnox-ordern gick inte att läsa, och kunden byttes inte. ${friendlyFortnoxMessage(e)}` };
+    }
+  }
+
   const currentReverseVat = orderReverseVat(
     order.customer_snapshot?.reverse_vat, (oldCard.data as { reverse_vat?: boolean | null } | null)?.reverse_vat);
   const block = customerSwapBlock(order, card, {
-    invoiced: customerSwapInvoicingStarted(order, rounds.count ?? 0),
+    invoiced: customerSwapInvoicingStarted(order, rounds.count ?? 0) || Boolean(fortnoxState?.invoiceNumber),
+    fortnoxCancelled: fortnoxState?.cancelled === true,
+    inProgress: order.fortnox_order_sync_status === 'pending' || order.fortnox_invoice_sync_status === 'pending',
     isPortalJob: Boolean(portalJob.data),
     currentReverseVat,
   });
@@ -115,26 +132,11 @@ export async function swapWorkOrderCustomer(
     workAddress: input.workAddress,
     fallbackRot: quoteRow?.rot_details ?? null,
     fortnoxCustomerNumber: card.fortnox_customer_id,
+    currentReverseVat,
   });
   const blockers = customerSwapReadinessBlockers(order, card, draft, input.workAddress);
   if (blockers.length > 0) return { kind: 'incomplete', blockers };
 
-  // Fortnox-orderns eget läge: en order som fakturerats eller makulerats direkt i Fortnox vet CRM inget
-  // om. Bytet hade då stått kvar här medan Fortnox nekade PUT:en — och kunden på fakturan hade aldrig
-  // gått att rätta. Läsfel → inget byte: samma skäl.
-  if (order.fortnox_order_number) {
-    let closed: { invoiced: boolean; cancelled: boolean };
-    try {
-      closed = await deps.readFortnoxOrderClosed(order.fortnox_order_number);
-    } catch (e) {
-      console.error('[kundbyte] Fortnox-ordern gick inte att läsa', { workOrderId: order.id, error: e instanceof Error ? e.message : String(e) });
-      return { kind: 'fortnox_unavailable', message: `Fortnox-ordern gick inte att läsa, och kunden byttes inte. ${friendlyFortnoxMessage(e)}` };
-    }
-    const fortnoxBlock = closed.invoiced ? 'invoiced' as const : closed.cancelled ? 'fortnox_cancelled' as const : null;
-    if (fortnoxBlock) {
-      return { kind: 'blocked', reason: fortnoxBlock, message: customerSwapBlockMessage(fortnoxBlock, { quote_type: order.quote_type, reverseVat: currentReverseVat }) };
-    }
-  }
 
   // Fortnox behöver den nya kunden när ordern finns där — eller kommer att skapas ur en Fortnox-offert,
   // som bär den GAMLA kunden (createorder kopierar offertens). I båda fallen är det numret här som

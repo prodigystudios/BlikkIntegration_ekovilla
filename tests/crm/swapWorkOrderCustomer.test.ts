@@ -64,7 +64,7 @@ function setup(options: {
   savedMeanwhile?: boolean;
   push?: SwapWorkOrderCustomerDeps['push'];
   createFortnoxCustomer?: SwapWorkOrderCustomerDeps['createFortnoxCustomer'];
-  readFortnoxOrderClosed?: SwapWorkOrderCustomerDeps['readFortnoxOrderClosed'];
+  readFortnoxOrderState?: SwapWorkOrderCustomerDeps['readFortnoxOrderState'];
   actor?: { userId: string; isCrmAdmin: boolean };
 } = {}) {
   const row = { ...order, ...options.order };
@@ -89,7 +89,7 @@ function setup(options: {
   const deps: SwapWorkOrderCustomerDeps = {
     push: options.push ?? vi.fn(async () => ({ fortnox_order_number: '109' })),
     createFortnoxCustomer: options.createFortnoxCustomer ?? vi.fn(async () => ({ fortnoxCustomerNumber: '23' })),
-    readFortnoxOrderClosed: options.readFortnoxOrderClosed ?? vi.fn(async () => ({ invoiced: false, cancelled: false })),
+    readFortnoxOrderState: options.readFortnoxOrderState ?? vi.fn(async () => ({ cancelled: false, invoiceNumber: null })),
   };
   const actor = options.actor ?? { userId: SELLER, isCrmAdmin: false };
   const swap = (workAddress: 'keep' | 'customer' = 'customer', customerId = NEW) =>
@@ -192,26 +192,41 @@ describe('swapWorkOrderCustomer', () => {
       const t = setup({ actor: { userId: 'någon-annan', isCrmAdmin: false }, card: { fortnox_customer_id: null } });
       expect(await t.swap()).toEqual({ kind: 'forbidden' });
       expect(t.deps.createFortnoxCustomer).not.toHaveBeenCalled();
-      expect(t.deps.readFortnoxOrderClosed).not.toHaveBeenCalled();
+      expect(t.deps.readFortnoxOrderState).not.toHaveBeenCalled();
       unchanged(t);
     });
 
     it('fakturerad direkt i Fortnox, utan att CRM vet det', async () => {
-      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => ({ invoiced: true, cancelled: false })), card: { fortnox_customer_id: null } });
+      const t = setup({ readFortnoxOrderState: vi.fn(async () => ({ cancelled: false, invoiceNumber: '49' })), card: { fortnox_customer_id: null } });
       expect(await t.swap()).toMatchObject({ kind: 'blocked', reason: 'invoiced' });
       expect(t.deps.createFortnoxCustomer).not.toHaveBeenCalled();
       unchanged(t);
     });
 
+    // Ett byte som aldrig kan gå ska inte först be om ett ifyllt kundkort.
+    it('fakturerad i Fortnox går före kortets fynd', async () => {
+      const t = setup({ readFortnoxOrderState: vi.fn(async () => ({ cancelled: false, invoiceNumber: '49' })), card: { personal_number: null } });
+      expect(await t.swap()).toMatchObject({ kind: 'blocked', reason: 'invoiced' });
+    });
+
+    // En push eller fakturering som pågår hade kunnat bygga dokumentet ur den gamla kunden efter bytet.
+    it('en push eller fakturering pågår', async () => {
+      const push = setup({ order: { fortnox_order_sync_status: 'pending' } });
+      expect(await push.swap()).toMatchObject({ kind: 'blocked', reason: 'in_progress' });
+      unchanged(push);
+      const invoice = setup({ order: { fortnox_invoice_sync_status: 'pending' } });
+      expect(await invoice.swap()).toMatchObject({ kind: 'blocked', reason: 'in_progress' });
+    });
+
     it('makulerad i Fortnox', async () => {
-      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => ({ invoiced: false, cancelled: true })) });
+      const t = setup({ readFortnoxOrderState: vi.fn(async () => ({ cancelled: true, invoiceNumber: null })) });
       expect(await t.swap()).toMatchObject({ kind: 'blocked', reason: 'fortnox_cancelled' });
       unchanged(t);
     });
 
     // Ett byte som Fortnox sedan nekar hade delat systemen; hellre inget byte.
     it('Fortnox-orderns läge går inte att läsa', async () => {
-      const t = setup({ readFortnoxOrderClosed: vi.fn(async () => { throw new FortnoxApiError(503, 'Fortnox nere'); }) });
+      const t = setup({ readFortnoxOrderState: vi.fn(async () => { throw new FortnoxApiError(503, 'Fortnox nere'); }) });
       expect(await t.swap()).toMatchObject({ kind: 'fortnox_unavailable' });
       unchanged(t);
     });
@@ -265,7 +280,7 @@ describe('swapWorkOrderCustomer', () => {
   it('en order som inte finns i Fortnox läses inte där', async () => {
     const t = setup({ order: { fortnox_order_number: null } });
     await t.swap();
-    expect(t.deps.readFortnoxOrderClosed).not.toHaveBeenCalled();
+    expect(t.deps.readFortnoxOrderState).not.toHaveBeenCalled();
   });
 
   // Samma besked som Fortnox-rutten: en tömd referens kan ingen omsynk uttrycka.
