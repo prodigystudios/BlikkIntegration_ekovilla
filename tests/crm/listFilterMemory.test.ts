@@ -6,6 +6,9 @@ import { MINE } from '@/lib/domains/crm/assigneeFilter';
 // Orderlistans filter sitter kvar i fliken när man går in på en order och tillbaka (William, 2026-10-20).
 
 type Sort = 'created_desc' | 'planned_asc';
+
+const SELLER_1 = '6f1c2a3b-4d5e-4f60-8a71-92b3c4d5e6f7';
+const SELLER_2 = '0a9b8c7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d';
 type Filters = ListFilters<WorkOrderStatusFilterOption, Sort>;
 
 const defaults: Filters = {
@@ -38,14 +41,14 @@ describe('serializeListFilters', () => {
       ...defaults,
       statuses: [...DEFAULT_WORK_ORDER_STATUS_FILTER].reverse(),
     }, defaults)).toBeNull();
-    const twoSellers: Filters = { ...defaults, assignee: ['u1', 'u2'] };
-    expect(serializeListFilters({ ...twoSellers, assignee: ['u2', 'u1'] }, twoSellers)).toBeNull();
+    const twoSellers: Filters = { ...defaults, assignee: [SELLER_1, SELLER_2] };
+    expect(serializeListFilters({ ...twoSellers, assignee: [SELLER_2, SELLER_1] }, twoSellers)).toBeNull();
   });
 });
 
 describe('restoreListFilters', () => {
   it('en rundresa ger tillbaka exakt det som var valt', () => {
-    const chosen: Filters = { search: 'Lindberg', statuses: ['invoiced'], sort: 'planned_asc', assignee: ['u1', 'u2'] };
+    const chosen: Filters = { search: 'Lindberg', statuses: ['invoiced'], sort: 'planned_asc', assignee: [SELLER_1, SELLER_2] };
     expect(roundTrip(chosen)).toEqual(chosen);
   });
 
@@ -88,14 +91,24 @@ describe('restoreListFilters', () => {
   });
 
   it('ett trasigt ansvarigval ger startvalet', () => {
-    expect(restoreListFilters(JSON.stringify({ assignee: 'u1' }), rules).assignee).toEqual([MINE]);
-    expect(restoreListFilters(JSON.stringify({ assignee: ['u1', 7] }), rules).assignee).toEqual([MINE]);
+    expect(restoreListFilters(JSON.stringify({ assignee: SELLER_1 }), rules).assignee).toEqual([MINE]);
+    expect(restoreListFilters(JSON.stringify({ assignee: [SELLER_1, 7] }), rules).assignee).toEqual([MINE]);
     expect(restoreListFilters(JSON.stringify({ assignee: [''] }), rules).assignee).toEqual([MINE]);
+  });
+
+  it('bara "Mina" och användar-id:n godtas — annat ger 500 från rutten vid varje återkomst', () => {
+    expect(restoreListFilters(JSON.stringify({ assignee: ['x'] }), rules).assignee).toEqual([MINE]);
+    expect(restoreListFilters(JSON.stringify({ assignee: [SELLER_1, 'x'] }), rules).assignee).toEqual([MINE]);
+    expect(restoreListFilters(JSON.stringify({ assignee: [MINE, SELLER_1] }), rules).assignee).toEqual([MINE, SELLER_1]);
+  });
+
+  it('dubbletter slås ihop — knappen hade annars sagt "2 valda" om en säljare', () => {
+    expect(restoreListFilters(JSON.stringify({ assignee: [SELLER_1, SELLER_1] }), rules).assignee).toEqual([SELLER_1]);
   });
 
   it('"Mina" följer inte med dit menyn saknar valet', () => {
     const noMine = { ...rules, defaults: { ...defaults, assignee: [] }, allowMine: false };
-    expect(restoreListFilters(JSON.stringify({ assignee: [MINE, 'u1'] }), noMine).assignee).toEqual(['u1']);
+    expect(restoreListFilters(JSON.stringify({ assignee: [MINE, SELLER_1] }), noMine).assignee).toEqual([SELLER_1]);
   });
 
   it('varje fält läses för sig — ett trasigt fält tar inte med sig de andra', () => {

@@ -249,7 +249,12 @@ export default function WorkOrdersClient({
   // Spärrar första hämtningen tills det sparade valet är inläst. Utan den hade listan hämtats två
   // gånger vid varje återkomst — en gång på startvalet, sedan på det sparade — och "Laddar…" står ändå
   // där tills första svaret kommit, så väntan på en rendering syns inte.
-  const [filtersRestored, setFiltersRestored] = useState(false);
+  //
+  // Bär NYCKELN, inte bara ja/nej: byts nyckeln medan listan står (en annan inloggad efter en
+  // uppdatering) är filtren i state fortfarande den förra nyckelns, och de får varken skrivas under
+  // den nya eller hämtas förrän den nya är inläst.
+  const [restoredKey, setRestoredKey] = useState<string | null>(null);
+  const filtersRestored = restoredKey === filterMemoryKey;
 
   // Läses i en effekt, aldrig i en state-initierare: sidan server-renderas, och sessionStorage finns
   // inte där — servern och klienten hade ritat olika filter, en hydreringskrock.
@@ -258,14 +263,15 @@ export default function WorkOrdersClient({
       statusOptions: WORK_ORDER_STATUS_FILTER_OPTIONS,
       sortOptions: WORK_ORDER_SORT_VALUES,
       defaults: filterDefaults,
-      allowMine: canBeAssignee && currentUserId != null,
+      // Samma villkor som menyns showMine nedan.
+      allowMine: canBeAssignee,
     });
     setSearch(restored.search);
     setStatusFilter(restored.statuses);
     setSort(restored.sort);
     setAssigneeFilter(restored.assignee);
-    setFiltersRestored(true);
-  }, [filterMemoryKey, filterDefaults, canBeAssignee, currentUserId]);
+    setRestoredKey(filterMemoryKey);
+  }, [filterMemoryKey, filterDefaults, canBeAssignee]);
 
   useEffect(() => {
     // Inte före inläsningen: då hade startvalet skrivits över det sparade innan det hunnit läsas.
@@ -462,9 +468,13 @@ export default function WorkOrdersClient({
     return map;
   }, [assignees]);
 
-  // Count of active filters (status + assignee) — shown as a badge on the mobile toggle.
+  // Count of active filters (status + sort + assignee) — shown as a badge on the mobile toggle.
   // Statusen räknas när den avviker från startvalet — startvalet i sig är inget val användaren gjort.
-  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_WORK_ORDER_STATUS_FILTER) ? 1 : 0) + (assigneeFilter.length > 0 ? 1 : 0);
+  // Sorteringen räknas sedan valet sitter kvar i fliken: på telefon ligger den bakom knappen, och en
+  // sparad ordning hade annars inte synts någonstans.
+  const activeFilterCount = (isStatusFilterChanged(statusFilter, DEFAULT_WORK_ORDER_STATUS_FILTER) ? 1 : 0)
+    + (sort !== DEFAULT_WORK_ORDER_SORT ? 1 : 0)
+    + (assigneeFilter.length > 0 ? 1 : 0);
   const narrowedByStatus = statusParam !== null;
 
   // Radens adress — ekonomiytan har sin egen detaljvy under sin egen basePath.

@@ -31,6 +31,10 @@ export type ListFilterRules<Status extends string, Sort extends string> = {
   allowMine: boolean;
 };
 
+// Ett användar-id. Rutten prövar inte formen — ett annat värde i `?assignee=` når Postgres som ett
+// ogiltigt uuid och ger 500, inte noll rader — så ett sparat värde måste prövas här.
+const USER_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function sameMembers(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((entry) => b.includes(entry));
 }
@@ -95,12 +99,15 @@ export function restoreListFilters<Status extends string, Sort extends string>(
 
   if ((rules.sortOptions as readonly unknown[]).includes(value.sort)) fresh.sort = value.sort as Sort;
 
+  // 🧨 Bara "Mina" och användar-id:n. Något annat hade gett ett 500 från rutten vid varje återkomst
+  // i fliken, och felrutan döljer tomlägets "Visa alla ansvariga" — vägen ut hade bara varit Rensa.
   const assignee = value.assignee;
-  if (Array.isArray(assignee) && assignee.every((entry): entry is string => typeof entry === 'string' && entry !== '')) {
+  if (Array.isArray(assignee) && assignee.every((entry) => entry === MINE || (typeof entry === 'string' && USER_ID_RE.test(entry)))) {
     // En säljare som slutat matchar inga rader, men hen syns i knappen ("1 vald") och tomläget
     // erbjuder "Visa alla ansvariga" — inte en tyst gallring. "Mina" däremot syns inte där menyn
     // saknar valet, så det får inte följa med dit.
-    fresh.assignee = rules.allowMine ? assignee : assignee.filter((entry) => entry !== MINE);
+    const unique = [...new Set(assignee as string[])];
+    fresh.assignee = rules.allowMine ? unique : unique.filter((entry) => entry !== MINE);
   }
 
   return fresh;
