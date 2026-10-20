@@ -66,13 +66,15 @@ beforeEach(() => {
 
 describe('en order som inte är synkad', () => {
   it('"0" är ingen faktura: ordern stämplas inte fakturerad, och beskedet säger synka om', async () => {
-    mockOrder({ fortnox_order_sync_status: 'failed' });
-    vi.mocked(fortnoxGet).mockResolvedValue({ Order: { InvoiceReference: '0' } } as never);
+    for (const none of ['0', 0]) {
+      mockOrder({ fortnox_order_sync_status: 'failed' });
+      vi.mocked(fortnoxGet).mockResolvedValue({ Order: { InvoiceReference: none } } as never);
 
-    await expect(createInvoiceFromWorkOrder(WORK_ORDER_ID)).rejects.toThrow(/[Ss]ynka om/);
-    expect(invoicedUpdate()).toBeUndefined();
-    expect(updates).not.toContainEqual(expect.objectContaining({ fortnox_invoice_number: '0' }));
-    expect(fortnoxPut).not.toHaveBeenCalled();
+      await expect(createInvoiceFromWorkOrder(WORK_ORDER_ID)).rejects.toThrow(/[Ss]ynka om/);
+      expect(invoicedUpdate()).toBeUndefined();
+      expect(updates).not.toContainEqual(expect.objectContaining({ fortnox_invoice_number: '0' }));
+      expect(fortnoxPut).not.toHaveBeenCalled();
+    }
   });
 
   // Återhämtningen står kvar: en faktura som skapades men vars nummer föll bort hittas.
@@ -86,19 +88,27 @@ describe('en order som inte är synkad', () => {
 });
 
 describe('createinvoice', () => {
-  // createinvoice svarar med ORDERN, inte fakturan (mätt 2026-09-29) — numret läses ur InvoiceReference.
-  it('numret läses ur ordern efter createinvoice', async () => {
+  // createinvoice svarar med ORDERN, inte fakturan (mätt 2026-09-29) — numret står i dess InvoiceReference.
+  it('numret läses ur createinvoice-svaret, utan en extra läsning', async () => {
     mockOrder({});
-    vi.mocked(fortnoxPut).mockResolvedValue({ Order: { DocumentNumber: 131 } } as never);
+    vi.mocked(fortnoxPut).mockResolvedValue({ Order: { DocumentNumber: 131, InvoiceReference: 50 } } as never);
+
+    expect(await createInvoiceFromWorkOrder(WORK_ORDER_ID)).toEqual({ fortnox_invoice_number: '50' });
+    expect(invoicedUpdate()).toMatchObject({ fortnox_invoice_number: '50', status: 'invoiced' });
+    expect(fortnoxGet).not.toHaveBeenCalled();
+  });
+
+  it('svaret bär "0": ordern frågas', async () => {
+    mockOrder({});
+    vi.mocked(fortnoxPut).mockResolvedValue({ Order: { DocumentNumber: 131, InvoiceReference: '0' } } as never);
     vi.mocked(fortnoxGet).mockResolvedValue({ Order: { InvoiceReference: '50' } } as never);
 
     expect(await createInvoiceFromWorkOrder(WORK_ORDER_ID)).toEqual({ fortnox_invoice_number: '50' });
-    expect(invoicedUpdate()).toMatchObject({ fortnox_invoice_number: '50' });
   });
 
-  it('"0" efter createinvoice är inget fakturanummer', async () => {
+  it('"0" i både svaret och ordern är inget fakturanummer', async () => {
     mockOrder({});
-    vi.mocked(fortnoxPut).mockResolvedValue({ Order: { DocumentNumber: 131 } } as never);
+    vi.mocked(fortnoxPut).mockResolvedValue({ Order: { DocumentNumber: 131, InvoiceReference: '0' } } as never);
     vi.mocked(fortnoxGet).mockResolvedValue({ Order: { InvoiceReference: '0' } } as never);
 
     await expect(createInvoiceFromWorkOrder(WORK_ORDER_ID)).rejects.toThrow(/inget fakturanummer/);
@@ -121,5 +131,6 @@ describe('createinvoice', () => {
     vi.mocked(fortnoxGet).mockResolvedValue({ Order: { InvoiceReference: '51' } } as never);
 
     expect(await createInvoiceFromWorkOrder(WORK_ORDER_ID)).toEqual({ fortnox_invoice_number: '51' });
+    expect(invoicedUpdate()).toMatchObject({ fortnox_invoice_number: '51', status: 'invoiced', fortnox_invoice_sync_status: 'synced' });
   });
 });
