@@ -155,6 +155,11 @@ export default function WorkOrderCustomerSwapDialog({
       onClose={onClose}
       ariaLabel="Byt kund"
       maxWidth="sm:max-w-[560px]"
+      // Medan kunden väljs är innehållet bara från–till-rutan, och kroppen rullar (overflow-y-auto):
+      // väljarens lista (upp till 16rem under fältet) klipptes då och fick scrollas fram. Kroppen får
+      // plats för hela listan så länge den kan öppnas. Valt kort eller spärrbesked styr höjden själva.
+      // Telefonen behöver det inte — där fyller dialogen redan hela skärmen.
+      bodyClassName={!orderBlock && !card ? 'sm:min-h-[28rem]' : undefined}
       header={
         <>
           <h2 className="text-lg font-bold text-slate-900">Byt kund</h2>
