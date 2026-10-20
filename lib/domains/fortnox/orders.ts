@@ -15,6 +15,7 @@ import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { PricingLineItem } from '@/lib/domains/crm/pricing';
 import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget, type WrittenDocument } from './taxReductions';
 import { offerCustomerFieldsFromCard, type FortnoxCustomerCard } from './offers';
+import { fortnoxInvoiceReference, readFortnoxOrderState } from './orderCancel';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -1103,15 +1104,18 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
 // ⚠️ UNDANTAGET är att Fortnox inte är anslutet. Det är inget svar på frågan utan ett annat problem,
 // och rutterna översätter just den klassen till ett eget besked ("koppla Fortnox"). Svaldes den här
 // skulle en säljare med utgången token få rådet att synka om — vilket faller på exakt samma sak.
+//
+// 🧨 En OFAKTURERAD order svarar `InvoiceReference: "0"` — strängen noll, inte null (mätt 2026-09-29).
+// Ett sanningsvärdestest läste den som faktura nummer 0: "Fakturera allt" på en order som inte var
+// synkad stämplade den då 'invoiced' med fakturanumret "0" — ingen faktura fanns, ordern såg klar ut
+// och gick inte att synka om. fortnoxInvoiceReference (orderCancel.ts) är den delade tolkningen.
 async function fetchInvoiceReference(orderNumber: string): Promise<string | null> {
-  const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(
-    `/orders/${orderNumber}`,
-  ).catch((e) => {
-    if (e instanceof FortnoxNotConnectedError) throw e;
-    return null;
-  });
-  const existing = order?.Order?.InvoiceReference;
-  return existing ? String(existing) : null;
+  return readFortnoxOrderState(orderNumber)
+    .then((state) => state.invoiceNumber)
+    .catch((e) => {
+      if (e instanceof FortnoxNotConnectedError) throw e;
+      return null;
+    });
 }
 
 // Create a DRAFT invoice in Fortnox from the work order's Fortnox order
@@ -1201,12 +1205,16 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
       orderNumber = pushed.fortnox_order_number;
     }
 
-    let invoiceNumber = '';
+    let invoiceNumber: string | null = null;
     try {
-      const response = await fortnoxPut<{ Invoice?: { DocumentNumber?: string | number } }>(
-        `/orders/${orderNumber}/createinvoice`,
-      );
-      if (response.Invoice?.DocumentNumber != null) invoiceNumber = String(response.Invoice.DocumentNumber);
+      // 🧨 Svaret är ORDERN med InvoiceReference satt, inte fakturan (uppmätt 2026-09-29) — samma
+      // läsning som butiksbeställningarnas Fakturera (createFortnoxInvoiceFromOrder). "0" är ingen faktura.
+      const response = await fortnoxPut<{
+        Order?: { InvoiceReference?: string | number | null };
+        Invoice?: { DocumentNumber?: string | number | null };
+      }>(`/orders/${orderNumber}/createinvoice`);
+      invoiceNumber = fortnoxInvoiceReference(response.Order?.InvoiceReference)
+        ?? fortnoxInvoiceReference(response.Invoice?.DocumentNumber);
     } catch (createErr) {
       // createinvoice fails if the order was already (fully) invoiced. Recover the existing
       // invoice via the order's InvoiceReference; if there's none, the failure is real.
@@ -1215,12 +1223,10 @@ export async function createInvoiceFromWorkOrder(workOrderId: string): Promise<C
       invoiceNumber = existing;
     }
 
-    // Response without a number but no error — resolve from the order's InvoiceReference.
+    // Svaret bar inget nummer men inget fel heller — fråga ordern. ("0" = ingen faktura.)
     if (!invoiceNumber) {
-      const order = await fortnoxGet<{ Order?: { InvoiceReference?: number | string | null } }>(`/orders/${orderNumber}`);
-      const existing = order.Order?.InvoiceReference;
-      if (!existing) throw new Error('Fortnox returnerade inget fakturanummer');
-      invoiceNumber = String(existing);
+      invoiceNumber = (await readFortnoxOrderState(orderNumber)).invoiceNumber;
+      if (!invoiceNumber) throw new Error('Fortnox returnerade inget fakturanummer');
     }
 
     await supabase
