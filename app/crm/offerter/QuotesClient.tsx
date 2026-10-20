@@ -143,7 +143,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   // Sök, status, sortering och ansvarig överlever ett sidbyte i samma flik (William, 2026-10-20) —
   // samma minne som orderlistan. En rad öppnas i panelen på plats, så det är panelens vägar ut
   // (Redigera, kundkortet, Kopiera) som lämnar listan; de kommer tillbaka hit via returnTo.
-  const filterRules: ListFilterRules<QuoteStatusFilterOption, QuoteSort> = {
+  const filterRules = useMemo<ListFilterRules<QuoteStatusFilterOption, QuoteSort>>(() => ({
     statusOptions: QUOTE_STATUS_FILTER_OPTIONS,
     sortOptions: QUOTE_SORT_VALUES,
     defaults: {
@@ -156,14 +156,14 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     },
     // Menyn visar alltid "Mina" här (AssigneeFilter utan showMine).
     allowMine: true,
-  };
+  }), [currentUserId]);
   const {
     search, setSearch,
     statuses: statusFilter, setStatuses: setStatusFilter,
     sort, setSort,
     assignee: assigneeFilter, setAssignee: setAssigneeFilter,
     restored: filtersRestored,
-  } = useListFilterMemory(`crm-list-filters:/crm/offerter:${currentUserId ?? ''}`, filterRules);
+  } = useListFilterMemory('/crm/offerter', currentUserId, filterRules);
   // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
   const statusParam = statusFilterParam(statusFilter, QUOTE_STATUS_FILTER_OPTIONS);
   const [filtersOpen, setFiltersOpen] = useState(false);

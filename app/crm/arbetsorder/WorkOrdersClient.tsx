@@ -206,7 +206,7 @@ export default function WorkOrdersClient({
   // förut nollades de varje gång man gått in på en order och tillbaka. Nyckeln bär ytan — ekonomins
   // lista (/ekonomi/arbetsorder) delar komponenten men har ett annat startval och inget "Mina" — och
   // den inloggade, så att någon som loggar in i samma flik inte ärver förra användarens urval.
-  const filterRules: ListFilterRules<WorkOrderStatusFilterOption, WorkOrderSort> = {
+  const filterRules = useMemo<ListFilterRules<WorkOrderStatusFilterOption, WorkOrderSort>>(() => ({
     statusOptions: WORK_ORDER_STATUS_FILTER_OPTIONS,
     sortOptions: WORK_ORDER_SORT_VALUES,
     defaults: {
@@ -222,14 +222,14 @@ export default function WorkOrdersClient({
     },
     // Samma villkor som menyns showMine nedan.
     allowMine: canBeAssignee,
-  };
+  }), [currentUserId, canBeAssignee]);
   const {
     search, setSearch,
     statuses: statusFilter, setStatuses: setStatusFilter,
     sort, setSort,
     assignee: assigneeFilter, setAssignee: setAssigneeFilter,
     restored: filtersRestored,
-  } = useListFilterMemory(`crm-list-filters:${basePath}:${currentUserId ?? ''}`, filterRules);
+  } = useListFilterMemory(basePath, currentUserId, filterRules);
   // null = allt ikryssat (ingen parameter), '' = inget ikryssat (inga rader).
   const statusParam = statusFilterParam(statusFilter, WORK_ORDER_STATUS_FILTER_OPTIONS);
   const [filtersOpen, setFiltersOpen] = useState(false);
