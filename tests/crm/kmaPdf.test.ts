@@ -69,6 +69,14 @@ describe('renderKmaPdf', () => {
     expect(starts[0]).toBe('KMA-PLAN');
   });
 
+  // Första sidans faktatabell (William 2026-10-20): båda bolagen och betalningsplanen ritas — inte bara finns i modellen.
+  it('första sidan bär båda bolagen och betalningsplanen', async () => {
+    const first = texts(body((await render(kmaForm())).pages[0]));
+    for (const line of ['Isoleringslandslaget AB 559022-5800', 'EKOVILLA se AB 559341-9673', 'Betalningsplan', '25:e varje månad']) {
+      expect(first, line).toContain(line);
+    }
+  });
+
   it('bilaga 8:s namnteckningsrad står på SISTA sidan', async () => {
     const { pages } = await render(kmaForm());
     const last = texts(body(pages[pages.length - 1]));

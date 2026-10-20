@@ -70,6 +70,15 @@ describe('buildKmaDocument — bolaget', () => {
     expect(fieldValue(section(doc, 'main').blocks, 'Företag')).toBe('Isoleringslandslaget AB 559022-5800\nEKOVILLA se AB 559341-9673');
   });
 
+  // William 2026-10-20: "Betalningsplan- 25e varje månad", överst bland projektets fakta.
+  it('betalningsplanen står under Projektnummer', () => {
+    const blocks = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
+    expect(fieldValue(blocks, 'Betalningsplan')).toBe('25:e varje månad');
+    const head = blocks.find((b): b is Extract<KmaBlock, { t: 'fields' }> => b.t === 'fields');
+    const labels = head!.rows.map(([label]) => label);
+    expect(labels.indexOf('Betalningsplan')).toBe(labels.indexOf('Projektnummer') + 1);
+  });
+
   it('entreprenören i planens texter är alltid Isoleringslandslaget AB', () => {
     const blocks = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
     const intro = blocks.find((b): b is Extract<KmaBlock, { t: 'p' }> => b.t === 'p' && /^Denna KMA-plan beskriver hur/.test(b.text));
@@ -98,9 +107,9 @@ describe('buildKmaDocument — bolaget', () => {
 });
 
 describe('buildKmaDocument — version och revision', () => {
-  it('"Version 2.1" är mallens och står fast; revisionen står bredvid', () => {
+  it('"Version 2.2" är mallens och står fast; revisionen står bredvid', () => {
     const main = section(buildKmaDocument(kmaForm(), CTX), 'main').blocks;
-    expect(fieldValue(main, 'Version')).toBe('2.1');
+    expect(fieldValue(main, 'Version')).toBe('2.2');
     expect(fieldValue(main, 'Revision')).toBe('1');
   });
 
