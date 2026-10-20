@@ -37,6 +37,9 @@ export const MIRRORED_SNAPSHOT_KEYS = [
   'delivery_address',
   'delivery_postal_code',
   'delivery_city',
+  // Kundbytet (crm/workOrderCustomerSwap.ts). Landar det mitt i en annan push har den pushen skickat
+  // den gamla kundens huvud; efterkontrollen ska då skicka om, och omsynken byter kunden i Fortnox.
+  'fortnox_customer_number',
 ] as const;
 
 /**

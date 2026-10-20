@@ -265,6 +265,9 @@ export type FortnoxCustomerCard = Partial<FortnoxCustomer> & {
   EmailOffer?: string | null;
   EmailOfferCC?: string | null;
   EmailOfferBCC?: string | null;
+  EmailOrder?: string | null;
+  EmailOrderCC?: string | null;
+  EmailOrderBCC?: string | null;
   YourReference?: string | null;
   OurReference?: string | null;
   DeliveryName?: string | null;

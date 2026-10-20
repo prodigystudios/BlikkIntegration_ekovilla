@@ -14,6 +14,7 @@ import type { FortnoxOrderResponse } from './orderPdfDesign';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { PricingLineItem } from '@/lib/domains/crm/pricing';
 import { resolveTaxReductionApplicant, rotAskedAmount, syncTaxReductionAfterDocumentWrite, withoutHouseWork, writeDocumentKeepingTaxReduction, type TaxReductionTarget, type WrittenDocument } from './taxReductions';
+import { offerCustomerFieldsFromCard, type FortnoxCustomerCard } from './offers';
 
 // The point-in-time customer data carried on both the quote and the work order. Named once
 // because the header builder below has to read the same shape off either of them.
@@ -37,6 +38,10 @@ type CustomerSnapshot = {
   // Bara för skattereduktionsposten: namnet är reserv bakom ROT-sektionens, numret bakom kundkortets.
   customer_name?: string | null;
   personal_number?: string | null;
+  // Fortnox-kundnumret ordern SKA ha. Skrivs bara när arbetsordern bytt kund
+  // (crm/workOrderCustomerSwap.ts); finns det jämför pushen med Fortnox-orderns och skickar den nya
+  // kundens kunddel när de skiljer sig. Se orderCustomerSwapFields.
+  fortnox_customer_number?: string | null;
 };
 
 // The work order's OWN address column — what the order detail page edits, and (since
@@ -539,6 +544,61 @@ async function resolveFortnoxCustomerNumberById(
 }
 
 /**
+ * Orderns kunddel ur kundkortet — det Fortnox själv kopierar in när en order SKAPAS, och sedan
+ * aldrig mer. Skickas bara när ordern byter kund (se orderCustomerSwapFields).
+ *
+ * 🧪 MÄTT I TESTBOLAGET 2026-10-20 (ordrar 106–109, fakturor 46–48, alla makulerade): samma
+ * beteende som offerten (offerCustomerFieldsFromCard). En PUT med bara nytt `CustomerNumber` byter
+ * numret men lämnar namn, adress, org.nr, telefon, e-post och leveransadress från den GAMLA kunden;
+ * med kortets kunddel i samma PUT följer allt med, och `createinvoice` för den nya kunden vidare.
+ * En skattereduktionspost står kvar med den förra sökanden tills den PUT:as — det gör
+ * syncTaxReductionAfterDocumentWrite efter dokumentet, med CRM:s sökande.
+ *
+ * Samma fält och samma tomregler som offerten, utom e-posten: ordern får kortets ORDERadresser, och
+ * den allmänna när ordern saknas — det är vad Fortnox själv valde på en ny order (mätt, kund 7).
+ */
+export function orderCustomerFieldsFromCard(card: FortnoxCustomerCard, { ownJobSite = false } = {}) {
+  const value = (v: string | null | undefined) => (typeof v === 'string' && v.trim() !== '' ? v : null);
+  return {
+    ...offerCustomerFieldsFromCard(card, { ownJobSite }),
+    EmailInformation: {
+      EmailAddressTo: value(card.EmailOrder) ?? value(card.Email),
+      EmailAddressCC: value(card.EmailOrderCC),
+      EmailAddressBCC: value(card.EmailOrderBCC),
+    },
+  };
+}
+
+/**
+ * Har arbetsordern bytt kund sedan Fortnox-ordern fick sin? Då behövs CustomerNumber och den nya
+ * kundens kunddel i PUT:en — annars bär ordern nytt nummer under den gamla kundens namn och adress,
+ * eller (värre, utan numret) gammal kund med den nya kundens personnummer, som buildOrderHeader
+ * skickar ur CRM-kortet.
+ *
+ * Bara när kundbytet skrivit ett förväntat nummer (`customer_snapshot.fortnox_customer_number`).
+ * En order som aldrig bytt kund kostar alltså inget extra anrop och kan inte byta kund i Fortnox av
+ * sig själv. Ett fel här kastar: hellre en order stämplad 'failed' än en som tyst bär fel kund —
+ * och ett svar utan kundnummer, eller ett kort utan namn, kastar också (samma regel som offerten).
+ */
+async function orderCustomerSwapFields(
+  orderNumber: string,
+  expectedCustomerNumber: string | null | undefined,
+  ownJobSite: boolean,
+): Promise<(ReturnType<typeof orderCustomerFieldsFromCard> & { CustomerNumber: string }) | null> {
+  const expected = expectedCustomerNumber?.trim();
+  if (!expected) return null;
+  const current = await fortnoxGet<{ Order?: { CustomerNumber?: string | number | null } }>(`/orders/${orderNumber}`);
+  const currentNumber = current.Order?.CustomerNumber;
+  if (currentNumber == null || String(currentNumber) === '') {
+    throw new Error(`Fortnox-order ${orderNumber} svarade utan kundnummer`);
+  }
+  if (String(currentNumber) === expected) return null;
+  const card = await fortnoxGet<{ Customer?: FortnoxCustomerCard }>(`/customers/${encodeURIComponent(expected)}`);
+  if (!card.Customer?.Name?.trim()) throw new Error(`Fortnox-kund ${expected} hittades inte eller saknar namn`);
+  return { ...orderCustomerFieldsFromCard(card.Customer, { ownJobSite }), CustomerNumber: expected };
+}
+
+/**
  * 🧨 VAKTEN MOT EN SPARNING SOM LANDADE MITT I PUSHEN.
  *
  * Skapandet bygger orderhuvudet ur en rad som lästes innan Fortnox ens svarat. Mellan den
@@ -926,11 +986,12 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       await putOrderHeaderAndRows(supabase, workOrder, fortnoxOrderNumber, linkedQuote);
     } else {
       // No Fortnox offer exists – create a standalone order with full reference data.
-      // Resolve the customer from the linked quote, or — for a truly standalone order
-      // (no quote) — from the work order's own customer.
+      // ARBETSORDERNS kund först, offertens som reserv. De är samma kund tills ordern byter kund
+      // (crm/workOrderCustomerSwap.ts) — och då står offerten kvar på den gamla, med flit. Reserven
+      // bär en äldre offert vars kund bara finns som `customer_source` (kortet saknar Fortnox-numret).
       const customerNumber =
-        (await resolveCustomerNumberFromQuote(linkedQuote, supabase)) ??
-        (workOrder.customer_id ? await resolveFortnoxCustomerNumberById(workOrder.customer_id, supabase) : null);
+        (workOrder.customer_id ? await resolveFortnoxCustomerNumberById(workOrder.customer_id, supabase) : null) ??
+        (await resolveCustomerNumberFromQuote(linkedQuote, supabase));
       if (!customerNumber) {
         throw new Error(
           'Ingen Fortnox-kundkoppling hittades. Kunden måste vara synkad till Fortnox.',
@@ -942,7 +1003,7 @@ export async function pushWorkOrderToFortnox(workOrderId: string): Promise<PushO
       const reverseVat = await resolveReverseVat(
         supabase,
         workOrder.customer_snapshot?.reverse_vat ?? linkedQuote?.customer_snapshot?.reverse_vat,
-        linkedQuote?.customer_id ?? workOrder.customer_id,
+        workOrder.customer_id ?? linkedQuote?.customer_id,
       );
       const rotEnabled = resolveOrderRotDetails(workOrder, linkedQuote)?.enabled === true && !reverseVat;
       // ⛔ INGEN rensning här. Dokumentet skapas i det här anropet — det finns ingenting att rensa,
@@ -1246,6 +1307,13 @@ async function putOrderHeaderAndRows(
     allowReferenceClear: true,
   });
   const orderRows = buildOrderRows(workOrder.line_items, vatPercent, rotEnabled, reverseVat, documentNote);
+  // Bytt kund: den nya kundens kunddel UNDER orderns egna fält (Er referens, leveransadress, org.nr)
+  // — som när Fortnox skapar en order och fyller det vi utelämnar ur kortet. Efter `createorder` bär
+  // ordern dessutom OFFERTENS kund, och offerten står kvar på den gamla vid ett byte. Posten följer
+  // efter PUT:en, med CRM:s (nya) sökande.
+  const customerSwap = await orderCustomerSwapFields(
+    orderNumber, workOrder.customer_snapshot?.fortnox_customer_number, 'DeliveryAddress1' in header);
+  const orderHeader = customerSwap ? { ...customerSwap, ...header } : header;
 
   // 🧨 RAD-PUT:EN GÅR GENOM SKATTEREDUKTIONSPOSTEN. Har ordern en post — och efter `createorder` har
   // den offertens kopia — nekas hela PUT:en (2003227) så fort arbetet blivit mindre än postens belopp.
@@ -1258,8 +1326,8 @@ async function putOrderHeaderAndRows(
     async (reductionType) => (await fortnoxPut<{ Order?: WrittenDocument }>(
       `/orders/${orderNumber}`,
       reductionType === 'none'
-        ? { Order: { ...header, OrderRows: withoutHouseWork(orderRows), TaxReductionType: 'none' } }
-        : { Order: { ...header, OrderRows: orderRows, ...(reductionType ? { TaxReductionType: reductionType } : {}) } },
+        ? { Order: { ...orderHeader, OrderRows: withoutHouseWork(orderRows), TaxReductionType: 'none' } }
+        : { Order: { ...orderHeader, OrderRows: orderRows, ...(reductionType ? { TaxReductionType: reductionType } : {}) } },
     ))?.Order,
   );
 
@@ -1439,13 +1507,20 @@ export async function syncWorkOrderHeaderToFortnox(workOrderId: string): Promise
       allowReferenceClear: true,
     });
     const clearedReference = 'YourOrderNumber' in header && header.YourOrderNumber === null;
+    // Bytt kund: samma kunddel som radvägen. Annars hade en kontaktändring efter ett kundbyte vars
+    // fulla push misslyckats skickat den NYA kundens org.nr/personnummer (buildOrderHeader) till en
+    // Fortnox-order som fortfarande bär den gamla kunden. Posten (ROT-sökanden) följer först med
+    // "Synka om" — den här vägen skickar inga rader och stämplar aldrig 'synced'.
+    const customerSwap = await orderCustomerSwapFields(
+      workOrder.fortnox_order_number, workOrder.customer_snapshot?.fortnox_customer_number, 'DeliveryAddress1' in header);
+    const orderHeader = customerSwap ? { ...customerSwap, ...header } : header;
 
     // An empty header would be a PUT that says nothing — skip the round trip. null, not a result:
     // nothing was sent, so the caller must not report a completed sync (and must not re-read the
     // row expecting a fresh timestamp).
-    if (Object.keys(header).length === 0) return null;
+    if (Object.keys(orderHeader).length === 0) return null;
 
-    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: header });
+    await fortnoxPut(`/orders/${workOrder.fortnox_order_number}`, { Order: orderHeader });
 
     // ⚠️ MINNET SLÄCKS FÖRST NÄR PUT:EN GÅTT IGENOM, och det är hela skälet till att det finns.
     //
