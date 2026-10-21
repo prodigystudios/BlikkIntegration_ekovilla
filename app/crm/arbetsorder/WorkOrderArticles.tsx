@@ -172,9 +172,14 @@ type Props = {
    */
   invoiceRounds?: InvoicedRound[];
   onSave: (items: ArticleLineItem[]) => Promise<boolean>;
+  /**
+   * Har redigeraren osparade rader? Arbetsordern frågar med den innan sidan lämnas (useLeaveGuard)
+   * och innan ett flikbyte avmonterar redigeraren. Rapporterar false när den avmonteras.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 };
 
-export default function WorkOrderArticles({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, lockedReason, embedded = false, reverseCharge, invoiceRounds, onSave }: Props) {
+export default function WorkOrderArticles({ items, currencyCode, vatPercent, quoteType, rotDetails, saving, fortnoxConnected, canEdit = true, lockedReason, embedded = false, reverseCharge, invoiceRounds, onSave, onDirtyChange }: Props) {
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState<ArticleLineItem[]>(items);
   // Dragspel som i offerten: EN utfälld rad i taget, ägd här så att en ny rad fäller ihop de andra.
@@ -201,6 +206,10 @@ export default function WorkOrderArticles({ items, currencyCode, vatPercent, quo
     () => JSON.stringify(rows.filter((r) => !isBlankLineItem(r))) !== JSON.stringify(items.filter((r) => !isBlankLineItem(r))),
     [rows, items],
   );
+  // `editing &&`: utanför redigeringen speglar raderna `items` först efter effekten ovan, så `dirty`
+  // kan vara sant en rendering i taget efter en omladdning utan att något är osparat.
+  useEffect(() => { onDirtyChange?.(editing && dirty); }, [editing, dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   // Mot de SPARADE raderna, som servern: det är den utställda fakturan som låser, inte utkastet.
   const invoicedIds = useMemo(() => invoicedLineIds(items, invoiceRounds), [items, invoiceRounds]);
   // Sparade avskrivningar — en sådan får hävas även på en fakturerad rad (se Avskriven-rutan).
