@@ -1,12 +1,13 @@
 'use client';
 import { getBrowserClient } from '@/lib/supabase/browser';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/shared/cn';
 import { useToast } from '@/lib/Toast';
 import { crm, workOrderStatusAccent } from '@/app/crm/lib/crmTokens';
 import { withReturnTo } from '@/app/crm/lib/returnTo';
+import { PLANNING_VIEWS, restorePlanningPeriod, serializePlanningPeriod, type PlanningView } from './planningPeriod';
 import { formatDayRange } from '@/app/crm/lib/format';
 import type { BacklogPlacement, OpsSegment, OpsTruck, SchedulableWorkOrder } from '@/lib/domains/planning/types';
 import { matchesJobSearch, type JobDisplay } from '@/lib/domains/planning/display';
@@ -22,7 +23,8 @@ import { DEFAULT_JOB_TYPES, type JobType, type JobTypeRow } from '@/lib/domains/
 import { revenueAnchorSegments, scopeKey, segmentWeekValues, type ScopeSpan, type ScopeValue, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import {
   addDays, addDaysISO, buildMonthWeeks, buildWeekDays, daysBetweenInclusive, fmtISO, isoWeek,
-  parseISO, planPlacementJump, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear, weeksBetweenMondays,
+  monthOffsetFor, parseISO, planPlacementJump, sectionStart, shortDayISO, startOfWeek, stockholmToday, stockholmTodayISO, swedishMonthYear,
+  weekOffsetFor, weeksBetweenMondays,
 } from './planningDates';
 import Backlog from './Backlog';
 import BoardSectionNav from './BoardSectionNav';
@@ -43,7 +45,7 @@ import PlaceholderModal, { type PlaceholderInput } from './PlaceholderModal';
 import ReceiveDeliveryModal from './ReceiveDeliveryModal';
 import InsightsView from './InsightsView';
 
-type View = 'week' | 'month' | 'insights';
+type View = PlanningView;
 type DragData =
   | { kind: 'backlog'; id: string }
   | { kind: 'segment'; id: string; start: string; end: string; truckId: string };
@@ -64,6 +66,9 @@ const API = '/api/crm/planering';
 //
 // `prefsLoaded` finns för den andra sorten och FÅR INTE tas bort så länge någon nyckel här styr
 // vad som hämtas. Lägger du till en sådan nyckel gäller samma grind.
+//
+// Den tredje sortens inställning bor INTE här: perioden (vy, vecka, månad, PERIOD_SESSION_KEY) sparas i
+// FLIKEN, inte för alltid, och styr också intervallet — den läses i samma effekt, bakom samma grind.
 const PREF_KEYS = {
   showWeekend: 'crm-planning-show-weekend',
   stackWeeks: 'crm-planning-stack-weeks',
@@ -72,19 +77,25 @@ const PREF_KEYS = {
   backlogFilter: 'crm-planning-backlog-filter',
 } as const;
 
-// ⚠️ `localStorage` KASTAR i privat läge och när kakor är blockerade — den är inte bara tom. Ett
-// blockerat lager ska betyda att standardvärdena står, aldrig att tavlan inte renderar.
-function readPref(key: string): string | null {
+// Vy och period över ett sidbyte — in på en order och tillbaka (William 2026-10-20). sessionStorage, som
+// order- och offertlistans filter: en ny flik börjar på denna vecka. Se planningPeriod.ts.
+const PERIOD_SESSION_KEY = 'crm-planning-period';
+
+// ⚠️ `localStorage` och `sessionStorage` KASTAR i privat läge och när kakor är blockerade — de är inte
+// bara tomma. Ett blockerat lager ska betyda att standardvärdena står, aldrig att tavlan inte renderar.
+// `session` = fliklagret, för perioden (PERIOD_SESSION_KEY); allt annat bor i localStorage.
+const prefStore = (store: 'local' | 'session') => (store === 'session' ? sessionStorage : localStorage);
+function readPref(key: string, store: 'local' | 'session' = 'local'): string | null {
   try {
-    return localStorage.getItem(key);
+    return prefStore(store).getItem(key);
   } catch {
     return null;
   }
 }
-function writePref(key: string, value: string | null) {
+function writePref(key: string, value: string | null, store: 'local' | 'session' = 'local') {
   try {
-    if (value === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, value);
+    if (value === null) prefStore(store).removeItem(key);
+    else prefStore(store).setItem(key, value);
   } catch {
     /* ignorera — inställningen gäller sessionen ut, den överlever bara inte */
   }
@@ -421,7 +432,13 @@ export default function PlanningClient({
   // ran the board fetched TWICE on every visit — once for the single week the server rendered, then
   // again for the month — and the two answers raced. Waiting one render costs nothing visible (the
   // skeleton is already up) and means only the correct range is ever asked for.
-  useEffect(() => {
+  //
+  // A LAYOUT effect: it still runs after hydration (no markup disagreement), but before paint. The
+  // toolbar (week label, view buttons) is drawn before the gate, so with the period remembered
+  // (planningPeriod.ts) a passive effect leaves room for one frame of this week before the remembered
+  // one. Locally that frame never showed — React happened to flush before paint — so this is a
+  // guarantee, not a measured fix. Same choice as the order and offer lists (useListFilterMemory).
+  useLayoutEffect(() => {
     setShowWeekend(readPref(PREF_KEYS.showWeekend) === '1');
     setStackWeeks(readPref(PREF_KEYS.stackWeeks) === '1');
 
@@ -450,8 +467,26 @@ export default function PlanningClient({
       setBacklogFilter(storedBacklog);
     }
 
+    // Perioden från förra besöket i fliken — före grinden, så att första hämtningen gäller rätt vecka.
+    const period = restorePlanningPeriod(readPref(PERIOD_SESSION_KEY, 'session'), todayAnchor);
+    setView(period.view);
+    setWeekOffset(period.weekOffset);
+    setMonthOffset(period.monthOffset);
+
     setPrefsLoaded(true);
+    // Bara vid monteringen. todayAnchor är fast för monteringen (useMemo utan beroenden), och som
+    // beroende hade en ny identitet läst om ALLA inställningar och skrivit gamla förskjutningar mot ett
+    // nytt ankare i samma commit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Perioden skrivs när den ändras — aldrig före inläsningen ovan, som annars hade skrivit förvalet över
+  // det sparade. Förvalet (denna vecka) tar bort nyckeln (serializePlanningPeriod).
+  useEffect(() => {
+    if (!prefsLoaded) return;
+    writePref(PERIOD_SESSION_KEY, serializePlanningPeriod({ view, weekOffset, monthOffset }, todayAnchor), 'session');
+  }, [prefsLoaded, view, weekOffset, monthOffset, todayAnchor]);
+
   const toggleWeekend = useCallback(() => {
     setShowWeekend((v) => {
       const next = !v;
@@ -1142,8 +1177,8 @@ export default function PlanningClient({
         const target = parseISO(plan.goTo);
         // Veckor räknas i dygn och avrundas (weeksBetweenMondays) — en ren ms-division hade gett
         // 0,994 eller 1,006 över en sommartidsväxling.
-        if (view === 'week') setWeekOffset(weeksBetweenMondays(startOfWeek(todayAnchor), startOfWeek(target)));
-        else setMonthOffset((target.getFullYear() - todayAnchor.getFullYear()) * 12 + target.getMonth() - todayAnchor.getMonth());
+        if (view === 'week') setWeekOffset(weekOffsetFor(todayAnchor, target));
+        else setMonthOffset(monthOffsetFor(todayAnchor, target));
       }
       setFocus({ id: p.segment_id, start: p.start_day, end: p.end_day, found: false });
     },
@@ -1362,7 +1397,7 @@ export default function PlanningClient({
         </div>
 
         <div className="inline-flex rounded-xl border border-[#e0e8dc] bg-white p-0.5">
-          {(['week', 'month', 'insights'] as View[]).map((v) => (
+          {PLANNING_VIEWS.map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}

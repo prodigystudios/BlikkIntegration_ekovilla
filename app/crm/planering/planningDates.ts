@@ -93,6 +93,19 @@ export function weeksBetweenMondays(from: Date, to: Date): number {
   return Math.round((to.getTime() - from.getTime()) / 86_400_000) / 7;
 }
 
+/**
+ * Tavlans veckoförskjutning (från dagens måndag) till `target`s vecka. Delas av "Visa på tavlan" och
+ * periodminnet (planningPeriod.ts), så de två aldrig räknar olika. Över weeksBetweenMondays: tål sommartid.
+ */
+export function weekOffsetFor(today: Date, target: Date): number {
+  return weeksBetweenMondays(startOfWeek(today), startOfWeek(target));
+}
+
+/** Tavlans månadsförskjutning (från dagens månad) till `target`s månad. Samma två användare som ovan. */
+export function monthOffsetFor(today: Date, target: Date): number {
+  return (target.getFullYear() - today.getFullYear()) * 12 + target.getMonth() - today.getMonth();
+}
+
 // Where the board's bottom pager lands from `weekMonday`, stepping one section in `dir`.
 //
 // Forward is the next month's stack start. Sections tile, so that Monday is exactly the one after
