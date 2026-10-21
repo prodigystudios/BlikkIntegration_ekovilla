@@ -64,10 +64,15 @@ export default function FortnoxIntegrationBlock({
     }
   }
 
+  // Ett kortpass i taget. Två loopar hade hämtat samma kort dubbelt så fort som Fortnox tillåter, och 429:orna hade
+  // lämnat korten i kön. Knapparna spärras också, men en ref håller även mellan två klick innan staten hunnit renderas.
+  const cardPassRunning = useRef(false);
+
   // Kundlistan bär bara tio fält; omvänd moms, betalningsvillkor, prislista m.m. finns på kundkortet. Synken köar nya och
   // i Fortnox ändrade kunder, och kortpasset startar direkt efteråt — annars stod de köade fälten kvar tills någon
-  // mindes att trycka på nästa knapp.
+  // mindes att trycka på nästa knapp. Synkraden står som pågående tills kortpasset är klart.
   async function runCustomerSync() {
+    if (cardPassRunning.current) return;
     setCustomerSync({ label: '', state: 'loading', message: null });
     try {
       const res = await fetch('/api/fortnox/customers/sync', { method: 'POST' });
@@ -77,12 +82,12 @@ export default function FortnoxIntegrationBlock({
         return;
       }
       const d = json.data as { created: number; updated: number; pendingCards: number };
-      setCustomerSync({
-        label: '',
-        state: 'success',
-        message: `${d.created} nya, ${d.updated} uppdaterade kunder. ${d.pendingCards} kundkort att hämta.`,
-      });
-      if (d.pendingCards > 0) await runVerifyTypes();
+      const summary = `${d.created} nya, ${d.updated} uppdaterade kunder.`;
+      if (d.pendingCards > 0) {
+        setCustomerSync({ label: '', state: 'loading', message: `${summary} Hämtar ${d.pendingCards} kundkort nedan...` });
+        await runVerifyTypes();
+      }
+      setCustomerSync({ label: '', state: 'success', message: summary });
     } catch {
       setCustomerSync({ label: '', state: 'error', message: 'Nätverksfel' });
     }
@@ -91,10 +96,13 @@ export default function FortnoxIntegrationBlock({
   // Reads the Fortnox card of every queued customer (type, reverse VAT, terms of
   // payment, price list …). The endpoint processes one throttled batch per call and
   // returns how many remain, so we loop until the queue is empty, accumulating
-  // progress as we go.
+  // progress as we go. A batch where every card failed made no progress – the same
+  // cards would come back first in the next one – so the loop stops there.
   async function runVerifyTypes() {
+    if (cardPassRunning.current) return;
+    cardPassRunning.current = true;
     setVerifySync({ label: '', state: 'loading', message: 'Hämtar kundkort...' });
-    let processed = 0;
+    let fetched = 0;
     let corrected = 0;
     try {
       for (let guard = 0; guard < 1000; guard++) {
@@ -104,26 +112,36 @@ export default function FortnoxIntegrationBlock({
           setVerifySync({ label: '', state: 'error', message: json.error || 'Okänt fel' });
           return;
         }
-        const d = json.data as { processed: number; corrected: number; remaining: number };
-        processed += d.processed;
+        const d = json.data as { processed: number; corrected: number; remaining: number; failed: number };
+        fetched += d.processed - d.failed;
         corrected += d.corrected;
+        if (d.processed > 0 && d.failed === d.processed) {
+          setVerifySync({
+            label: '',
+            state: 'error',
+            message: `${fetched} kundkort hämtade, men ${d.failed} gick inte att hämta och ${d.remaining} står kvar. Kör igen senare.`,
+          });
+          return;
+        }
         if (d.processed === 0 || d.remaining === 0) {
           setVerifySync({
             label: '',
             state: 'success',
-            message: `Klart – ${processed} kundkort hämtade, ${corrected} kunder omklassade. ${d.remaining} kvar.`,
+            message: `Klart – ${fetched} kundkort hämtade, ${corrected} kunder omklassade. ${d.remaining} kvar.`,
           });
           return;
         }
         setVerifySync({
           label: '',
           state: 'loading',
-          message: `${processed} kundkort hämtade, ${corrected} omklassade, ${d.remaining} kvar...`,
+          message: `${fetched} kundkort hämtade, ${corrected} omklassade, ${d.remaining} kvar...`,
         });
       }
-      setVerifySync({ label: '', state: 'success', message: `Pausat efter ${processed} kundkort – kör igen för resten.` });
+      setVerifySync({ label: '', state: 'success', message: `Pausat efter ${fetched} kundkort – kör igen för resten.` });
     } catch {
       setVerifySync({ label: '', state: 'error', message: 'Nätverksfel' });
+    } finally {
+      cardPassRunning.current = false;
     }
   }
 
@@ -244,6 +262,7 @@ export default function FortnoxIntegrationBlock({
             state={customerSync.state}
             message={customerSync.message}
             onSync={runCustomerSync}
+            disabled={verifySync.state === 'loading'}
           />
 
           {/* Kortpasset: allt kundlistan saknar, och den bekräftade kundtypen */}
@@ -253,6 +272,7 @@ export default function FortnoxIntegrationBlock({
             state={verifySync.state}
             message={verifySync.message}
             onSync={runVerifyTypes}
+            disabled={customerSync.state === 'loading'}
           />
 
           {/* Kundansvarig från Blikk (backfill, endast företagskunder) */}
@@ -320,12 +340,15 @@ function SyncRow({
   state,
   message,
   onSync,
+  disabled = false,
 }: {
   label: string;
   description: string;
   state: SyncState;
   message: string | null;
   onSync: () => void;
+  // Spärrad av ett annat steg som pågår (kundsynken och kortpasset får inte köras samtidigt).
+  disabled?: boolean;
 }) {
   const [elapsed, setElapsed] = useState(0);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -351,7 +374,7 @@ function SyncRow({
         </div>
         <button
           onClick={onSync}
-          disabled={state === 'loading'}
+          disabled={state === 'loading' || disabled}
           className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
         >
           {state === 'loading' ? `Synkar... ${elapsed}s` : 'Synka'}

@@ -11,7 +11,6 @@ export async function POST() {
       created: result.created,
       updated: result.updated,
       pages: result.pages,
-      queued: result.queued,
       pendingCards: result.pendingCards,
     });
   } catch (e: any) {

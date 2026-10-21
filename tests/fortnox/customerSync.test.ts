@@ -29,6 +29,7 @@ function builder(op: Op) {
     eq: (column: string, value: unknown) => { op.filters.push(['eq', column, value]); return chain; },
     in: (column: string, value: unknown) => { op.filters.push(['in', column, value]); return chain; },
     not: (column: string, _operator: string, value: unknown) => { op.filters.push(['not', column, value]); return chain; },
+    neq: (column: string, value: unknown) => { op.filters.push(['neq', column, value]); return chain; },
     order: () => chain,
     limit: () => chain,
     maybeSingle: () => chain,
@@ -72,22 +73,28 @@ const CARD_ONLY_COLUMNS = ['reverse_vat', 'payment_terms', 'price_list', 'discou
   'mobile', 'visit_address', 'delivery_address'];
 
 const customerUpdates = () => ops.filter((op) => op.kind === 'update' && op.table === 'crm_customers');
-const customerUpdate = (nr: string) => customerUpdates().find((op) => op.filters.some(([, col, v]) => col === 'fortnox_customer_id' && v === nr));
+// Listans skrivning per kund (matchad på kundnummer) — skild från köandet, som är en egen uppdatering av bara flaggan.
+const listUpdate = (nr: string) => customerUpdates().find((op) =>
+  op.filters.some(([kind, col, v]) => kind === 'eq' && col === 'fortnox_customer_id' && v === nr));
+const queueOps = () => customerUpdates().filter((op) =>
+  Object.keys(op.payload).length === 1 && op.payload.customer_type_verified === false);
 const inserts = () => ops.filter((op) => op.kind === 'insert');
 const savedSyncTimes = () => ops.filter((op) => op.kind === 'update' && op.table === 'fortnox_integrations');
 
-type Existing = { id: string; fortnox_customer_id: string; customer_type: string };
+type Existing = { id: string; fortnox_customer_id: string; customer_type: string; sync_status: string };
 
 /**
  * En databas för massynken. `syncedAt` är förra synkens tidpunkt (null = okänd, 'error' = går inte att läsa);
  * `listed` är Fortnox lista och `changed` de kundnummer listan filtrerad på lastmodified svarar med.
  */
-function arrange({ syncedAt, existing, listed, changed = [], failUpdateFor = [] }: {
+function arrange({ syncedAt, existing, listed, changed = [], failUpdateFor = [], failQueue = false, failExistingRead = false }: {
   syncedAt: string | null | 'error';
   existing: Existing[];
-  listed: object[];
+  listed: Array<{ CustomerNumber: string } & Record<string, unknown>>;
   changed?: string[];
   failUpdateFor?: string[];
+  failQueue?: boolean;
+  failExistingRead?: boolean;
 }) {
   answerSelect = (op) => {
     if (op.table === 'fortnox_integrations') {
@@ -96,22 +103,24 @@ function arrange({ syncedAt, existing, listed, changed = [], failUpdateFor = [] 
         : { data: { customers_synced_at: syncedAt }, error: null };
     }
     if (op.options?.count) return { count: 7, error: null };
-    return { data: existing, error: null };
+    return failExistingRead ? { data: null, error: { message: 'timeout' } } : { data: existing, error: null };
   };
   answerWrite = (op) => {
-    const nr = op.filters.find(([, col]) => col === 'fortnox_customer_id')?.[2];
+    if (failQueue && queueOps().includes(op)) return { error: { message: 'boom' } };
+    const nr = op.filters.find(([kind, col]) => kind === 'eq' && col === 'fortnox_customer_id')?.[2];
     return failUpdateFor.includes(nr as string) ? { error: { message: 'boom' } } : { error: null };
   };
+  // Listan filtrerad på lastmodified svarar med de ändrade kundnumren — även en kund som inte står i `listed`.
   fortnoxGet.mockImplementation(async (_path: string, params?: Record<string, string>) =>
     params?.lastmodified
-      ? { Customers: listed.filter((c: any) => changed.includes(c.CustomerNumber)), MetaInformation: { '@TotalPages': 1 } }
+      ? { Customers: changed.map((nr) => ({ CustomerNumber: nr })), MetaInformation: { '@TotalPages': 1 } }
       : { Customers: listed, MetaInformation: { '@TotalPages': 1 } });
 }
 
 const KNOWN_SYNC = '2026-10-20T10:00:00.000Z';
-const BOTH = [
-  { id: 'u18', fortnox_customer_id: '18', customer_type: 'business' },
-  { id: 'u20', fortnox_customer_id: '20', customer_type: 'business' },
+const BOTH: Existing[] = [
+  { id: 'u18', fortnox_customer_id: '18', customer_type: 'business', sync_status: 'synced' },
+  { id: 'u20', fortnox_customer_id: '20', customer_type: 'business', sync_status: 'synced' },
 ];
 
 beforeEach(() => {
@@ -125,41 +134,61 @@ beforeEach(() => {
 describe('syncFortnoxCustomers', () => {
   // 🧨 Före 2026-10-21 skrev omsynken reverse_vat=false och null på varje kortfält för samtliga kunder, eftersom
   // listan saknar fälten. Kortpasset rättade nya kunder — men besökte aldrig en redan verifierad kund igen.
-  it('rör inga kortfält på en kund vi redan har, och köar den inte när Fortnox inte ändrat den', async () => {
-    arrange({ syncedAt: KNOWN_SYNC, existing: [BOTH[1]], listed: [LISTED_20] });
+  it('skriver bara listans fält på en kund vi redan har', async () => {
+    arrange({ syncedAt: null, existing: [BOTH[1]], listed: [LISTED_20] });
 
     await syncFortnoxCustomers('admin-1');
 
-    const update = customerUpdate('20')!;
+    const update = listUpdate('20')!;
     for (const column of [...CARD_ONLY_COLUMNS, 'customer_type_verified']) {
       expect(update.payload, column).not.toHaveProperty(column);
     }
     expect(update.payload.phone).toBe('0812345233');
   });
 
+  // lastmodified täcker listans fält också: en oförändrad kund har inget nytt, och en omskrivning hade bara kunnat
+  // skriva över lokala ändringar.
+  it('rör inte en kund Fortnox inte ändrat sedan förra synken', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: [] });
+
+    await syncFortnoxCustomers('admin-1');
+
+    expect(customerUpdates()).toHaveLength(0);
+    expect(savedSyncTimes()).toHaveLength(1);
+  });
+
   it('köar en ny kund för kortpasset, som fyller kortfälten', async () => {
     arrange({ syncedAt: KNOWN_SYNC, existing: [], listed: [LISTED_20] });
 
-    const result = await syncFortnoxCustomers('admin-1');
+    await syncFortnoxCustomers('admin-1');
 
     expect(inserts()).toHaveLength(1);
     const [row] = inserts()[0].payload;
     expect(row.customer_type_verified).toBe(false);
     expect(row).not.toHaveProperty('reverse_vat');
-    expect(result.queued).toBe(1);
   });
 
   // Utan det här når en ändring av omvänd moms eller betalningsvillkor i Fortnox aldrig en kund vi redan har.
-  it('köar bara de kunder Fortnox ändrat sedan förra synken', async () => {
+  it('köar och skriver om bara de kunder Fortnox ändrat sedan förra synken', async () => {
     arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'] });
 
     const result = await syncFortnoxCustomers('admin-1');
 
-    expect(customerUpdate('20')!.payload.customer_type_verified).toBe(false);
-    expect(customerUpdate('18')!.payload).not.toHaveProperty('customer_type_verified');
-    for (const column of CARD_ONLY_COLUMNS) expect(customerUpdate('20')!.payload, column).not.toHaveProperty(column);
-    expect(result.queued).toBe(1);
+    expect(queueOps()).toHaveLength(1);
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['20']]);
+    expect(listUpdate('20')).toBeDefined();
+    expect(listUpdate('18')).toBeUndefined();
     expect(result.pendingCards).toBe(7);
+  });
+
+  // Kön byggs ur Fortnox besked om ändrade kunder, inte ur listans sidor: raderas en kund under synken förskjuts
+  // sidorna, och kunden vid sidbrytningen hade annars hoppats över medan tidpunkten flyttades fram.
+  it('köar en ändrad kund även när den inte syntes i listans sidor', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18], changed: ['20'] });
+
+    await syncFortnoxCustomers('admin-1');
+
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['20']]);
   });
 
   // Fortnox läser `lastmodified` som svensk tid. 10:00 UTC − två timmars marginal = 08:00 UTC = 10:00 svensk sommartid.
@@ -172,15 +201,16 @@ describe('syncFortnoxCustomers', () => {
   });
 
   // Första körningen efter rättelsen: tidpunkten finns inte, och alla 1 658 kunders kort behöver läsas om.
-  it('köar alla kunder när förra synken är okänd — det är reparationen', async () => {
+  it('köar och skriver om alla kunder när förra synken är okänd — det är reparationen', async () => {
     arrange({ syncedAt: null, existing: BOTH, listed: [LISTED_18, LISTED_20] });
 
-    const result = await syncFortnoxCustomers('admin-1');
+    await syncFortnoxCustomers('admin-1');
 
-    expect(customerUpdate('18')!.payload.customer_type_verified).toBe(false);
-    expect(customerUpdate('20')!.payload.customer_type_verified).toBe(false);
+    expect(queueOps()).toHaveLength(1);
+    expect(queueOps()[0].filters).toContainEqual(['not', 'fortnox_customer_id', null]);
+    expect(listUpdate('18')).toBeDefined();
+    expect(listUpdate('20')).toBeDefined();
     expect(fortnoxGet).not.toHaveBeenCalledWith('/customers', expect.objectContaining({ lastmodified: expect.anything() }));
-    expect(result.queued).toBe(2);
   });
 
   // Koden före migreringen: kolumnen finns inte. Att köa alla kostar bara tid; att krascha hade stoppat synken.
@@ -189,8 +219,19 @@ describe('syncFortnoxCustomers', () => {
 
     await syncFortnoxCustomers('admin-1');
 
-    expect(customerUpdate('18')!.payload.customer_type_verified).toBe(false);
-    expect(customerUpdate('20')!.payload.customer_type_verified).toBe(false);
+    expect(queueOps()[0].filters).toContainEqual(['not', 'fortnox_customer_id', null]);
+  });
+
+  // 🧨 En rad vars senaste push misslyckades bär ändringar Fortnox inte har. Första körningen köar alla — utan skyddet
+  // hade kortpasset skrivit Fortnox gamla värden över ändringen och satt raden som synkad.
+  it('rör inte en kund vars senaste push till Fortnox misslyckades', async () => {
+    arrange({ syncedAt: null, existing: [BOTH[0], { ...BOTH[1], sync_status: 'failed' }], listed: [LISTED_18, LISTED_20] });
+
+    await syncFortnoxCustomers('admin-1');
+
+    expect(listUpdate('20')).toBeUndefined();
+    expect(listUpdate('18')).toBeDefined();
+    expect(queueOps()[0].filters).toContainEqual(['neq', 'sync_status', 'failed']);
   });
 
   // Starttiden, inte sluttiden: en kund som ändras medan synken pågår ska med nästa gång.
@@ -217,22 +258,32 @@ describe('syncFortnoxCustomers', () => {
     expect(saved.payload.customers_synced_at).toBe('2026-10-21T12:00:00.000Z');
   });
 
-  // Sparades tidpunkten ändå hade nästa synk börjat efter ändringen, och kunden hade aldrig köats.
-  it('sparar inte tidpunkten när en köad kund inte gick att uppdatera', async () => {
-    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'], failUpdateFor: ['20'] });
+  // Sparades tidpunkten ändå hade nästa synk börjat efter ändringarna, och kunderna hade aldrig köats.
+  it('sparar inte tidpunkten när kön inte gick att skriva', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'], failQueue: true });
 
-    const result = await syncFortnoxCustomers('admin-1');
+    await syncFortnoxCustomers('admin-1');
 
+    expect(queueOps()).toHaveLength(1);
     expect(savedSyncTimes()).toHaveLength(0);
-    expect(result.queued).toBe(0);
   });
 
-  it('sparar tidpunkten när bara en oköad kunds uppdatering misslyckas', async () => {
-    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'], failUpdateFor: ['18'] });
+  // Kortet bär listans fält också, så en köad kund vars listfält inte gick att skriva blir hel ändå.
+  it('sparar tidpunkten när bara en kunds listfält inte gick att skriva', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'], failUpdateFor: ['20'] });
 
     await syncFortnoxCustomers('admin-1');
 
     expect(savedSyncTimes()).toHaveLength(1);
+  });
+
+  // Ett läsfel hade gjort varje kund till "ny": insertkrockar, ingen uppdatering — och tidpunkten framflyttad.
+  it('avbryter utan att flytta tidpunkten när våra kunder inte går att läsa', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: BOTH, listed: [LISTED_18, LISTED_20], changed: ['20'], failExistingRead: true });
+
+    await expect(syncFortnoxCustomers('admin-1')).rejects.toThrow('Kunderna gick inte att läsa');
+    expect(inserts()).toHaveLength(0);
+    expect(savedSyncTimes()).toHaveLength(0);
   });
 
   // En köad kund är overifierad tills kortet lästs. Gissade omsynken typen igen då, hade ett personnummer som
@@ -240,14 +291,14 @@ describe('syncFortnoxCustomers', () => {
   it('behåller typen på en kund vi redan har, även medan den väntar på kortet', async () => {
     arrange({
       syncedAt: null,
-      existing: [{ id: 'u20', fortnox_customer_id: '20', customer_type: 'business' }],
+      existing: [BOTH[1]],
       listed: [{ ...LISTED_20, OrganisationNumber: '19121212-1212' }],
     });
 
     await syncFortnoxCustomers('admin-1');
 
-    expect(customerUpdate('20')!.payload.customer_type).toBe('business');
-    expect(customerUpdate('20')!.payload.company_name).toBe('Testa Inbjudan');
+    expect(listUpdate('20')!.payload.customer_type).toBe('business');
+    expect(listUpdate('20')!.payload.company_name).toBe('Testa Inbjudan');
   });
 });
 
@@ -272,5 +323,29 @@ describe('verifyCustomerTypesBatch (kortpasset)', () => {
     // 🧨 Kortet svarar "" för de flesta kunders momsnummer. Skrevs tomheten hade kortpasset nollat varje nummer vi
     // härlett ur org.numret — och efter rättelsen ska passet köras över alla kunder.
     expect(update.payload).not.toHaveProperty('vat_number');
+  });
+
+  it('hoppar över en kund vars senaste push misslyckades, både i omgången och i det som står kvar', async () => {
+    answerSelect = (op) => op.options?.count ? { count: 0, error: null } : { data: [], error: null };
+
+    await verifyCustomerTypesBatch();
+
+    const selects = ops.filter((op) => op.kind === 'select' && op.table === 'crm_customers');
+    expect(selects).toHaveLength(2);
+    for (const select of selects) expect(select.filters).toContainEqual(['neq', 'sync_status', 'failed']);
+  });
+
+  // Ett kort som inte går att hämta står kvar först i kön. Utan räkningen loopade inställningssidan på samma kort.
+  it('räknar ett kort som inte gick att hämta, och kodar kundnumret i adressen', async () => {
+    answerSelect = (op) => op.options?.count
+      ? { count: 1, error: null }
+      : { data: [{ id: 'u1', fortnox_customer_id: 'A B', customer_type: 'business' }], error: null };
+    fortnoxGet.mockRejectedValueOnce(new Error('Fortnox GET /customers/A%20B (404)'));
+
+    const result = await verifyCustomerTypesBatch();
+
+    expect(fortnoxGet).toHaveBeenCalledWith('/customers/A%20B');
+    expect(result).toMatchObject({ processed: 1, failed: 1, remaining: 1 });
+    expect(customerUpdates()).toHaveLength(0);
   });
 });

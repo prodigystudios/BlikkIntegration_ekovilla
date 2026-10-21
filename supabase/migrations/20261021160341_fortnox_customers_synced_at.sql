@@ -8,10 +8,11 @@
 --
 -- Listan kan filtreras på `lastmodified`. Den här kolumnen är tidpunkten att filtrera från:
 --
---   customers_synced_at   när den senaste massynken STARTADE, sparad först när den gått klart utan att någon köad rad
---                         misslyckats. Null = okänt — då köas alla kunder, vilket också är vad första körningen efter
---                         2026-10-21 ska göra: reparera de fält som de gamla omsynkarna nollat. Raden försvinner när
---                         Fortnox kopplas från, och tidpunkten med den; nästa synk köar då alla igen.
+--   customers_synced_at   när den senaste massynken STARTADE, sparad först när den gått klart och kön gått att skriva.
+--                         Null = okänt — då köas alla kunder, vilket också är vad första körningen efter 2026-10-21 ska
+--                         göra: reparera de fält som de gamla omsynkarna nollat. Raden tas bort när Fortnox kopplas från,
+--                         och tidpunkten med den. En omkoppling UTAN frånkoppling (OAuth-upserten på samma rad) behåller
+--                         den — rätt för samma bolag; byts bolaget, koppla från först.
 --
 -- ÅTKOMST
 -- Oförändrad. Bara servern (service_role) läser och skriver raden; den har grant på hela tabellen, och det gäller den nya

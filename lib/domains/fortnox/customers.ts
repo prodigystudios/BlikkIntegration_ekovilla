@@ -27,23 +27,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const stockholmMinuteParts = new Intl.DateTimeFormat('sv-SE', {
+  timeZone: 'Europe/Stockholm',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
 /**
  * Fortnox `lastmodified` för kundlistan: tidpunkten i SVENSK tid, "YYYY-MM-DD HH:MM". Uppmätt mot testbolaget
  * 2026-10-21: en kund ändrad 11:37 svensk tid (09:37 UTC) kom med för "11:36" men inte för "11:38", och appens
  * `+`-kodade mellanslag tolkas som `%20`. Zonen är explicit — processen kör i UTC på Vercel.
  */
 export function fortnoxLastModifiedParam(at: Date): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('sv-SE', {
-      timeZone: 'Europe/Stockholm',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(at).map((part) => [part.type, part.value]),
-  );
+  const parts = Object.fromEntries(stockholmMinuteParts.formatToParts(at).map((part) => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
@@ -95,8 +95,6 @@ export type CustomerSyncResult = {
   created: number;
   updated: number;
   pages: number;
-  // Kunder som den här synken köade för kortpasset (nya + ändrade i Fortnox).
-  queued: number;
   // Alla som väntar på kortpasset efteråt, även köade av en tidigare synk.
   pendingCards: number;
 };
@@ -309,13 +307,46 @@ async function listFortnoxCustomerNumbersChangedSince(since: Date): Promise<Set<
   return numbers;
 }
 
+// En kund vars senaste push till Fortnox misslyckades (`sync_status = 'failed'`) bär ändringar Fortnox inte har. Varken
+// omsynken eller kortpasset skriver över den — det hade tyst kastat ändringen och dolt att den aldrig nådde fram. Den
+// läses igen när pushen lyckas: pushen ändrar kunden i Fortnox, och nästa synk köar den.
+const PUSH_FAILED = 'failed';
+
 async function countPendingCards(supabase: SupabaseAdmin): Promise<number> {
   const { count } = await supabase
     .from('crm_customers')
     .select('id', { count: 'exact', head: true })
     .eq('customer_type_verified', false)
-    .not('fortnox_customer_id', 'is', null);
+    .not('fortnox_customer_id', 'is', null)
+    .neq('sync_status', PUSH_FAILED);
   return count ?? 0;
+}
+
+const QUEUE_CHUNK_SIZE = 500;
+
+// Köar kunder för kortpasset: de Fortnox ändrat (`changed`), eller alla när förra synken är okänd (null). Byggs ur
+// Fortnox besked och inte ur listans sidor, så att en kund som hamnar mellan två sidor (någon raderas under synken)
+// köas ändå. Returnerar false om kön inte gick att skriva — då får tidpunkten inte flyttas fram.
+async function queueCustomersForCards(supabase: SupabaseAdmin, changed: Set<string> | null): Promise<boolean> {
+  const numbers = changed === null ? null : [...changed];
+  const chunks: Array<string[] | null> = [];
+  if (numbers === null) chunks.push(null);
+  else for (let i = 0; i < numbers.length; i += QUEUE_CHUNK_SIZE) chunks.push(numbers.slice(i, i + QUEUE_CHUNK_SIZE));
+
+  for (const chunk of chunks) {
+    const queue = supabase
+      .from('crm_customers')
+      .update({ customer_type_verified: false })
+      .neq('sync_status', PUSH_FAILED);
+    const { error } = chunk === null
+      ? await queue.not('fortnox_customer_id', 'is', null)
+      : await queue.in('fortnox_customer_id', chunk);
+    if (error) {
+      console.warn(`[Fortnox sync] Kunderna gick inte att köa för kundkorten (${error.message}) → tidpunkten flyttas inte fram`);
+      return false;
+    }
+  }
+  return true;
 }
 
 // Fetch all customers from Fortnox and upsert into crm_customers.
@@ -335,16 +366,16 @@ async function countPendingCards(supabase: SupabaseAdmin): Promise<number> {
 // (`lastmodified`). With no known previous sync – the first run, or after Fortnox was
 // disconnected – every customer is queued, which is also what repairs the card fields
 // the pre-2026-10-21 re-syncs wiped.
+//
+// Only changed customers are rewritten from the list: `lastmodified` covers the list
+// fields too, so an unchanged customer has nothing new – rewriting it would only
+// overwrite local edits.
 export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<CustomerSyncResult> {
   const supabase = getSupabaseAdmin();
   let page = 1;
   let totalPages = 1;
   let totalCreated = 0;
   let totalUpdated = 0;
-  let totalQueued = 0;
-  // A queued customer whose UPDATE failed was not queued. Saving the timestamp would then lose
-  // its change for good, so the next sync must look back from the previous timestamp again.
-  let queueFailed = false;
   const now = new Date().toISOString();
 
   // Read before the list: a customer changed in Fortnox while this sync runs is picked up next time.
@@ -364,15 +395,21 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
 
     if (listCustomers.length > 0) {
       const ids = listCustomers.map((c) => c.CustomerNumber);
-      const { data: existing } = await supabase
+      const { data: existing, error: existingError } = await supabase
         .from('crm_customers')
-        .select('id, fortnox_customer_id, customer_type')
+        .select('id, fortnox_customer_id, customer_type, sync_status')
         .in('fortnox_customer_id', ids);
+      // Ett läsfel hade gjort varje kund på sidan till "ny": insertkrockar, inga uppdateringar — och tidpunkten hade
+      // flyttats fram förbi deras ändringar. Avbryt hellre; nästa synk börjar från förra tidpunkten.
+      if (existingError) throw new Error(`Kunderna gick inte att läsa: ${existingError.message}`);
 
       const existingById = new Map((existing ?? []).map((r) => [r.fortnox_customer_id, r]));
 
       const toCreate = listCustomers.filter((c) => !existingById.has(c.CustomerNumber));
-      const toUpdate = listCustomers.filter((c) => existingById.has(c.CustomerNumber));
+      const toUpdate = listCustomers.filter((c) => {
+        const prev = existingById.get(c.CustomerNumber);
+        return !!prev && prev.sync_status !== PUSH_FAILED && (changed === null || changed.has(c.CustomerNumber));
+      });
 
       // Create new rows. Heuristic Type (the list has no VAT number to fall back on),
       // unverified until the card pass runs – which also fills the card-only fields.
@@ -384,31 +421,25 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
           created_by: triggeredByUserId,
           created_at: now,
         }));
-        const inserted = await insertCustomersResilient(supabase, rows);
-        totalCreated += inserted;
-        totalQueued += inserted;
+        totalCreated += await insertCustomersResilient(supabase, rows);
       }
 
       // Update existing rows. An upsert would clobber assigned_to/created_by
       // ownership, so we UPDATE per customer (matched on unique fortnox_customer_id).
       // An existing row keeps its Type: the card pass owns it. Guessing again here
       // would regress a verified Type the moment the row is queued (unverified) and
-      // re-synced before the card pass has run.
+      // re-synced before the card pass has run. A failed list write is only logged:
+      // the row is queued below, and the card carries every list field as well.
       if (toUpdate.length > 0) {
         await runInBatches(toUpdate, DB_CONCURRENCY, async (c) => {
           const prev = existingById.get(c.CustomerNumber)!;
           const type: 'business' | 'private' = prev.customer_type === 'business' ? 'business' : 'private';
-          const queue = changed === null || changed.has(c.CustomerNumber);
-          const row = buildFortnoxListCustomerRow(c, type, now);
           const { error } = await supabase
             .from('crm_customers')
-            .update(queue ? { ...row, customer_type_verified: false } : row)
+            .update(buildFortnoxListCustomerRow(c, type, now))
             .eq('fortnox_customer_id', c.CustomerNumber);
           if (error) {
             console.warn(`[Fortnox sync] Kunde inte uppdatera kund ${c.CustomerNumber} (${error.message})`);
-            if (queue) queueFailed = true;
-          } else if (queue) {
-            totalQueued++;
           }
           return null;
         });
@@ -419,13 +450,12 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
     page++;
   } while (page <= totalPages);
 
-  if (!queueFailed) await saveCustomersSyncedAt(supabase, now);
+  if (await queueCustomersForCards(supabase, changed)) await saveCustomersSyncedAt(supabase, now);
 
   return {
     created: totalCreated,
     updated: totalUpdated,
     pages: totalPages,
-    queued: totalQueued,
     pendingCards: await countPendingCards(supabase),
   };
 }
@@ -434,6 +464,9 @@ export type VerifyTypesResult = {
   processed: number;
   corrected: number;
   remaining: number;
+  // Kort som inte gick att hämta eller skriva. De står kvar i kön; är alla i omgången sådana gör en ny omgång inget
+  // framsteg (t.ex. en kund raderad i Fortnox), och den som loopar ska sluta.
+  failed: number;
 };
 
 // Confirm customer_type for rows imported via heuristic (customer_type_verified=false)
@@ -451,6 +484,7 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
     .select('id, fortnox_customer_id, customer_type')
     .eq('customer_type_verified', false)
     .not('fortnox_customer_id', 'is', null)
+    .neq('sync_status', PUSH_FAILED)
     .order('fortnox_customer_id', { ascending: true })
     .limit(limit);
 
@@ -458,10 +492,11 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
 
   const rows = pending ?? [];
   let corrected = 0;
+  let failed = 0;
 
   for (const row of rows) {
     try {
-      const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${row.fortnox_customer_id}`);
+      const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${encodeURIComponent(row.fortnox_customer_id)}`);
       const c = detail.Customer;
       const realType: 'business' | 'private' = c.Type === 'COMPANY' ? 'business' : 'private';
 
@@ -472,16 +507,18 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
 
       if (updErr) {
         console.warn(`[Fortnox verify] Kunde inte uppdatera kund ${row.fortnox_customer_id} (${updErr.message})`);
+        failed++;
         continue;
       }
       if (realType !== row.customer_type) corrected++;
     } catch (err) {
       console.warn(`[Fortnox verify] Kunde inte hämta kund ${row.fortnox_customer_id} (${(err as Error)?.message ?? err})`);
+      failed++;
     }
     await sleep(VERIFY_SPACING_MS);
   }
 
-  return { processed: rows.length, corrected, remaining: await countPendingCards(supabase) };
+  return { processed: rows.length, corrected, remaining: await countPendingCards(supabase), failed };
 }
 
 /**
