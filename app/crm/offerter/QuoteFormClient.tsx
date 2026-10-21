@@ -44,6 +44,9 @@ import {
   draftFromQuote,
   copyDraftFromQuote,
   getDefaultDraftCustomerSource,
+  defaultCustomWorkAddress,
+  nextCustomWorkAddress,
+  workAddressIssue,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
   type CustomerDerivedValues,
@@ -182,7 +185,7 @@ function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['cust
   return { kind: 'local', sync_intent: 'on_work_order', fortnox_customer_id: '', fortnox_customer_name: '' };
 }
 
-function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
+function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[], customWorkAddress: boolean) {
   const issues: string[] = [];
   const effectiveCustomerName = getEffectiveCustomerName(draft);
   // SAMMA definition som radkontrollerna (isConfigured). Stod den här på egen hand kunde en rad
@@ -201,6 +204,9 @@ function getValidationIssues(draft: QuoteDraft, effectiveRows: EffectiveRow[]) {
   // offer and carries through offer → order → invoice. Enforced here so no quote leaves
   // without it.
   if (!draft.contact_name.trim()) issues.push('Er referens krävs');
+  // Reglaget på = adressen ska fyllas i, för båda kundtyperna. Se workAddressIssue.
+  const workAddress = workAddressIssue(customWorkAddress, draft);
+  if (workAddress) issues.push(workAddress);
   if (draft.quote_type === 'business' && draft.rot_enabled) issues.push('ROT är bara tillåtet för privatkund');
   // Fastighetsbeteckning is NOT required on the quote — it's only mandatory once the offer becomes a
   // work order (customer-approved), so it's enforced at order creation, not here (the gate lives in
@@ -739,9 +745,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const draftRef = useRef<QuoteDraft>(initialDraft);
   // Whether the job is performed at a different address than the customer's. Off → the
   // order inherits the customer address; on → the work-address fields are shown and must
-  // be filled. A deliberate toggle (vs silent prefill) so a wrong company address can't
-  // slip through unnoticed.
-  const [customWorkAddress, setCustomWorkAddress] = useState(false);
+  // be filled (the save is blocked until they are). A deliberate toggle (vs silent prefill) so a
+  // wrong company address can't slip through unnoticed — and ON from the start for a business
+  // customer, whose card address is usually the office (see defaultCustomWorkAddress).
+  //
+  // Not part of the draft, so it rides along in the stash on its own (persistDraft). An edit or a
+  // copy starts off and is set from the loaded quote below.
+  const [customWorkAddress, setCustomWorkAddress] = useState(
+    () => !sourceQuoteId && defaultCustomWorkAddress(initialDraft.quote_type, initialDraft),
+  );
+  // The toggle saved with the stash the resume banner is offering (undefined in an older stash).
+  const recoverableWorkAddressRef = useRef<boolean | undefined>(undefined);
   // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
   const [customEndContact, setCustomEndContact] = useState(false);
   // Säljarkatalogen bakom ansvarig-väljaren. Hämtas även utan bytesrätt: läsvyn visar namnet,
@@ -836,8 +850,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       // appliedCustomer rides along so a return from the customer card can tell which fields the
       // seller has changed since. Absent in stashes written before this existed — readers treat a
       // missing snapshot as "don't merge" rather than guessing.
+      //
+      // customWorkAddress likaså: reglaget är inte en del av draften, och ett företags reglage som
+      // stod på med tomma fält hade annars kommit tillbaka avslaget — spärren förbi med en sväng
+      // till kundkortet. Ett avslaget reglage (BRF:en) kommer på samma sätt tillbaka avslaget.
       localStorage.setItem(draftStorageKey, JSON.stringify({
         version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft, appliedCustomer: appliedCustomerRef.current,
+        customWorkAddress,
       }));
     } catch { /* localStorage unavailable — ignore */ }
   }
@@ -853,11 +872,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // fetchCustomerLite. Without it a resumed draft looks like no customer was ever picked: no chip,
   // no contact dropdown, no reverse-VAT hint. Deliberately fire-and-forget: the draft is already
   // applied synchronously above, and a failed lookup only costs the chip.
-  function applyRestoredDraft(restored: QuoteDraft, opts?: { skipCustomerLookup?: boolean }) {
+  function applyRestoredDraft(restored: QuoteDraft, opts?: { skipCustomerLookup?: boolean; customWorkAddress?: boolean }) {
     // Backfill any fields absent from an older-shaped stash (e.g. saved before `labor_cost` existed)
     // from the initial draft / an empty line item, so every field/Input stays controlled.
     const items = (restored.items ?? []).map((line) => ({ ...createEmptyLineItem(), ...line }));
-    setDraft({
+    const next: QuoteDraft = {
       ...initialDraft,
       ...restored,
       items: items.length ? items : [createEmptyLineItem()],
@@ -865,10 +884,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       // sträng — i redigeringsläget finns inget tomt alternativ, så rullgardinen hade fallit
       // till det första namnet i listan och visat fel ansvarig på en offert man inte rört.
       assigned_to: restored.assigned_to || loadedQuote?.assigned_to || '',
-    });
+    };
+    setDraft(next);
     // Måttblocket i den återställda texten är redan insatt — annars lägger automatiken en dubblett.
     adoptExistingMeasurementBlock(items, restored.handoff_notes ?? '');
-    setCustomWorkAddress(Boolean(restored.delivery_address));
+    // Reglaget som det stod när stashen skrevs (persistDraft). En stash från före det fältet får
+    // förvalet — aldrig avslaget för ett företag, då hade spärren gått att gå runt.
+    setCustomWorkAddress(opts?.customWorkAddress ?? defaultCustomWorkAddress(next.quote_type, next));
     setCustomEndContact(Boolean(
       restored.end_contact_name || restored.end_contact_phone || restored.end_contact_email,
     ));
@@ -947,8 +969,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Remember what the card gave, so a later return can tell "still the card's value" from
     // "the seller changed this". Persisted with the draft — see persistDraft.
     appliedCustomerRef.current = fields;
-    // All three fields, not just the street — see refreshFromCustomerCard for why.
-    setCustomWorkAddress(Boolean(fields.delivery_address || fields.delivery_postal_code || fields.delivery_city));
+    // On for a business customer; otherwise only when the card gives a work address to show — all
+    // three fields, not just the street (see refreshFromCustomerCard for why).
+    const quoteType = fields.quote_type === 'private' ? 'private' : 'business';
+    setCustomWorkAddress(defaultCustomWorkAddress(quoteType, fields));
     setDraft((current) => ({
       ...current,
       ...fields,
@@ -981,7 +1005,13 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // Keyed on ALL three work-address fields, not just the street: a card whose delivery address
     // differs only in postal code/city would otherwise leave the toggle off, hiding fields that do
     // hold values — and buildCustomerSnapshot, which anchors on the street, would then drop them.
-    setCustomWorkAddress(Boolean(merged.delivery_address || merged.delivery_postal_code || merged.delivery_city));
+    //
+    // Without values the seller's own choice stands (restored with the stash), unless the card
+    // changed the customer type — then that type's default. Re-deriving from the values alone
+    // turned a business toggle that was on with empty fields OFF, and the save gate with it.
+    const fromType = draftRef.current.quote_type;
+    const toType = merged.quote_type === 'private' ? 'private' : 'business';
+    setCustomWorkAddress((on) => nextCustomWorkAddress(on, fromType, toType, merged));
     setDraft((current) => ({
       ...current,
       ...merged,
@@ -1141,7 +1171,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           restoredDraft = envelope.draft as QuoteDraft;
           restoredApplied = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
           // The branch below fetches this same customer to run the merge — don't fetch it twice.
-          applyRestoredDraft(restoredDraft, { skipCustomerLookup: Boolean(createdCustomerId) });
+          applyRestoredDraft(restoredDraft, {
+            skipCustomerLookup: Boolean(createdCustomerId),
+            customWorkAddress: typeof envelope.customWorkAddress === 'boolean' ? envelope.customWorkAddress : undefined,
+          });
           if (restoredApplied) appliedCustomerRef.current = restoredApplied;
         }
       }
@@ -1209,6 +1242,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       // refresh with nothing to compare against, so a later trip to the card couldn't tell an
       // untouched field from an edited one and refused to update either.
       appliedCustomerRef.current = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
+      recoverableWorkAddressRef.current = typeof envelope.customWorkAddress === 'boolean' ? envelope.customWorkAddress : undefined;
       setRecoverableDraft(envelope.draft as QuoteDraft);
     } catch { clearPersistedDraft(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1228,8 +1262,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     if (loading || submitting || recoverableDraft || !isDirty) return;
     const timer = setTimeout(persistDraft, DRAFT_AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(timer);
+  // customWorkAddress: reglaget ligger i stashen (persistDraft) men inte i draftJson.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftJson, loading, submitting, recoverableDraft]);
+  }, [draftJson, loading, submitting, recoverableDraft, customWorkAddress]);
 
   // Browser "leave site?" guard on unsaved work. Also flushes the latest draft to storage first, so
   // closing the tab mid-debounce still preserves everything (the resume banner catches it next time).
@@ -1243,7 +1278,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftJson, submitting, recoverableDraft]);
+  }, [draftJson, submitting, recoverableDraft, customWorkAddress]);
 
   // Intercept in-app link navigation (sidebar/header/any <Link>) while there are unsaved changes.
   // The App Router has no built-in navigation guard, so we catch the anchor click in the capture
@@ -1425,7 +1460,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     setDraft((d) => ({ ...d, handoff_notes: next }));
   }
 
-  const issues = useMemo(() => getValidationIssues(draft, effectiveRows), [draft, effectiveRows]);
+  const issues = useMemo(() => getValidationIssues(draft, effectiveRows, customWorkAddress), [draft, effectiveRows, customWorkAddress]);
   const isReady = issues.length === 0;
 
   const fieldErrors = useMemo(() => {
@@ -1441,10 +1476,16 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       errs.company_name = 'Företagsnamn krävs';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
+    // Samma villkor som workAddressIssue, per fält.
+    if (customWorkAddress) {
+      if (!draft.delivery_address.trim()) errs.delivery_address = 'Gatuadress krävs';
+      if (!draft.delivery_postal_code.trim()) errs.delivery_postal_code = 'Postnummer krävs';
+      if (!draft.delivery_city.trim()) errs.delivery_city = 'Ort krävs';
+    }
     // Personnummer och fastighetsbeteckning krävs båda vid orderskapandet, inte på offerten —
     // inga fältfel här.
     return errs;
-  }, [submitAttempted, draft, effectiveRows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [submitAttempted, draft, effectiveRows, customWorkAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Map validation issues to field IDs for scroll-to
   const issueFieldIds: Record<string, string> = {
@@ -1462,7 +1503,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
 
   // Pris- och ROT-spärren namnger raderna i texten ("Rad 2: …", "Rader 1, 3: …") och kan inte nycklas
   // ovan — texten är olika varje gång. De går till radkortet, så varje punkt i checklistan leder någonstans.
+  // Arbetsadressens spärr namnger på samma sätt delarna som saknas (workAddressIssue) och går till fälten.
   function issueTargetId(issue: string): string | null {
+    if (issue.startsWith('Arbetsadressen saknar')) return 'field-work-address';
     return issueFieldIds[issue] ?? (/^Rad(er)? \d/.test(issue) ? 'section-rader' : null);
   }
 
@@ -1954,7 +1997,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => { applyRestoredDraft(recoverableDraft); setRecoverableDraft(null); }}
+              onClick={() => {
+                applyRestoredDraft(recoverableDraft, { customWorkAddress: recoverableWorkAddressRef.current });
+                setRecoverableDraft(null);
+              }}
               className="rounded-lg bg-amber-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-amber-700"
             >
               Återuppta
@@ -1994,7 +2040,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     key={type}
                     type="button"
                     aria-pressed={draft.quote_type === type}
-                    onClick={() => setDraft((d) => ({ ...d, quote_type: type }))}
+                    onClick={() => {
+                      // Företag slår på "Annan arbetsadress", Privat slår av den om fälten är tomma.
+                      setCustomWorkAddress((on) => nextCustomWorkAddress(on, draft.quote_type, type, draft));
+                      setDraft((d) => ({ ...d, quote_type: type }));
+                    }}
                     className={cn(
                       'rounded-md px-3.5 py-1.5 text-sm font-medium transition-all',
                       draft.quote_type === type
@@ -2014,7 +2064,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               onClear={() => {
                 customerLookupRef.current += 1; // clearing outranks any lookup still in flight
                 setSelectedCustomer(null);
-                setCustomWorkAddress(false);
+                // Förvalet för kundtypen, med fälten tömda nedan: på för företag.
+                setCustomWorkAddress(defaultCustomWorkAddress(draft.quote_type, { delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
                 setDraft((current) => ({
                   ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
@@ -2031,11 +2082,12 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             {/* Arbetsplatsen: två reglage i EN lista, som fäller ut sina fält. Explicita reglage i
                 stället för tyst autoifyllning, så en avvikande jobbplats (t.ex. en företagskund vars
                 kortadress är kontoret) inte glöms bort. Av = arbetsorder och Fortnox använder
-                kundadressen respektive ordergivaren. */}
+                kundadressen respektive ordergivaren. Arbetsadressen står på från start för företag
+                och spärrar sparningen tills den är ifylld (workAddressIssue). */}
             <div className="grid gap-2">
               <span className="text-xs font-semibold text-slate-600">Arbetsplatsen</span>
               <div className={cn('divide-y divide-[#dde6d9] rounded-xl', crm.sunken)}>
-                <div className="grid gap-3 px-4 py-3">
+                <div className="grid gap-3 px-4 py-3" id="field-work-address">
                   <label className="flex cursor-pointer select-none items-center justify-between gap-4">
                     <span className="grid min-w-0 gap-0.5">
                       <span className="text-sm font-medium text-slate-800">Annan arbetsadress</span>
@@ -2053,7 +2105,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   </label>
                   {customWorkAddress ? (
                     <div className="grid gap-3 pb-1">
-                      <Field label="Gatuadress">
+                      <Field label="Gatuadress" error={fieldErrors.delivery_address}>
                         <AddressAutocompleteInput
                           value={draft.delivery_address}
                           onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
@@ -2067,14 +2119,14 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                         />
                       </Field>
                       <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
-                        <Field label="Postnummer">
+                        <Field label="Postnummer" error={fieldErrors.delivery_postal_code}>
                           <Input
                             value={draft.delivery_postal_code}
                             onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
                             placeholder="152 42"
                           />
                         </Field>
-                        <Field label="Ort">
+                        <Field label="Ort" error={fieldErrors.delivery_city}>
                           <Input
                             value={draft.delivery_city}
                             onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}

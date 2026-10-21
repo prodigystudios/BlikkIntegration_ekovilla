@@ -8,6 +8,7 @@
 import { parseDecimal } from '@/lib/shared/number';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import type { ConstructionSlug } from '@/lib/domains/crm/constructions';
+import { joinSwedish } from '@/lib/domains/crm/workOrderReadiness';
 
 // ── Giltighetstid ────────────────────────────────────────────────────────────
 //
@@ -603,6 +604,66 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
     // customer. A boolean is authoritative.
     reverse_vat: opts?.reverseVat ?? null,
   };
+}
+
+// ─── Arbetsadressen ──────────────────────────────────────────────────────────
+//
+// Reglaget "Annan arbetsadress" i offertformuläret (William 2026-10-21). PÅ FRÅN START FÖR FÖRETAG:
+// ett företags kortadress är oftast kontoret, och en glömd arbetsadress skickar montörerna dit. Det
+// går att stänga av — av betyder "jobbet görs på kundens adress", t.ex. en BRF. Står reglaget på, för
+// vilken kundtyp som helst, sparas offerten inte förrän gata, postnummer och ort är ifyllda: samma tre
+// delar som arbetsorderns spärr kräver (workOrderReadiness), så en offert som passerar här fälls inte
+// för adressen när den blir en order.
+//
+// Reglaget är formulärets eget läge, inte en del av offerten. En sparad offert öppnas som den sparades
+// (på = snapshoten bär en egen arbetsadress); förvalet nedan gäller när kunden väljs eller typen byts.
+// Spärren bor därför bara i formuläret — rutten ser inte reglaget, och buildCustomerSnapshot sparar
+// en arbetsadress som är lika med kundadressen som ingen alls.
+
+type QuoteWorkAddressFields = Pick<QuoteCustomerFields, 'delivery_address' | 'delivery_postal_code' | 'delivery_city'>;
+
+const WORK_ADDRESS_PARTS: Array<[keyof QuoteWorkAddressFields, string]> = [
+  ['delivery_address', 'gatuadress'],
+  ['delivery_postal_code', 'postnummer'],
+  ['delivery_city', 'ort'],
+];
+
+/** Något av arbetsadressens fält bär text. Fält med innehåll göms aldrig bakom ett avslaget reglage. */
+export function hasWorkAddressInput(d: QuoteWorkAddressFields): boolean {
+  return WORK_ADDRESS_PARTS.some(([key]) => Boolean(d[key].trim()));
+}
+
+/** Reglaget när kunden väljs eller väljs bort: på för företag, annars bara när det finns en adress att visa. */
+export function defaultCustomWorkAddress(quoteType: QuoteCustomerFields['quote_type'], d: QuoteWorkAddressFields): boolean {
+  return quoteType === 'business' || hasWorkAddressInput(d);
+}
+
+/**
+ * Reglaget när kundtypen kan ha bytts — knapparna Företag/Privat, eller kundkortet vid en återkomst.
+ * Byts typen gäller den nya typens förval. Annars står säljarens eget val kvar: ett avslaget reglage
+ * på en BRF slås inte på igen av en sväng förbi kundkortet.
+ */
+export function nextCustomWorkAddress(
+  current: boolean,
+  fromType: QuoteCustomerFields['quote_type'],
+  toType: QuoteCustomerFields['quote_type'],
+  d: QuoteWorkAddressFields,
+): boolean {
+  if (hasWorkAddressInput(d)) return true;
+  return fromType === toType ? current : toType === 'business';
+}
+
+/**
+ * Spärren: står reglaget på ska alla tre delarna vara ifyllda. `null` = inget att anmärka.
+ *
+ * ⚠️ "Arbetsadressen saknar" i början av texten är vad formulärets checklista känner igen punkten på
+ * (issueTargetId i QuoteFormClient) — ändras början slutar punkten leda till fälten.
+ */
+export function workAddressIssue(enabled: boolean, d: QuoteWorkAddressFields): string | null {
+  if (!enabled) return null;
+  const missing = WORK_ADDRESS_PARTS.filter(([key]) => !d[key].trim()).map(([, label]) => label);
+  if (missing.length === 0) return null;
+  return `Arbetsadressen saknar ${joinSwedish(missing)} — fyll i den, eller stäng av Annan arbetsadress om jobbet görs på kundens adress`;
 }
 
 export type QuoteRotFields = {
