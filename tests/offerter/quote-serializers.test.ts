@@ -12,6 +12,10 @@ import {
   matchedValidityPreset,
   OFFER_VALIDITY_DAYS,
   OFFER_VALIDITY_PRESETS,
+  defaultCustomWorkAddress,
+  hasWorkAddressInput,
+  nextCustomWorkAddress,
+  workAddressIssue,
   type QuoteCustomerFields,
   type QuoteRotFields,
   type QuoteHandoffFields,
@@ -391,5 +395,84 @@ describe('pickCustomerDerived', () => {
     const picked = pickCustomerDerived(draftLike);
     expect(Object.keys(picked)).not.toContain('project_name');
     expect(picked.contact_name).toBe('Anna');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Arbetsadressen (William 2026-10-21): på från start för företag, och på = måste fyllas i.
+// ---------------------------------------------------------------------------
+
+const noWorkAddress = { delivery_address: '', delivery_postal_code: '', delivery_city: '' };
+const fullWorkAddress = { delivery_address: 'Bygget 7', delivery_postal_code: '152 42', delivery_city: 'Södertälje' };
+
+describe('hasWorkAddressInput', () => {
+  it('vilket fält som helst räknas, blanksteg gör det inte', () => {
+    expect(hasWorkAddressInput(noWorkAddress)).toBe(false);
+    expect(hasWorkAddressInput({ ...noWorkAddress, delivery_address: '   ' })).toBe(false);
+    expect(hasWorkAddressInput({ ...noWorkAddress, delivery_city: 'Södertälje' })).toBe(true);
+  });
+});
+
+describe('defaultCustomWorkAddress', () => {
+  // Ett företags kortadress är oftast kontoret — en glömd arbetsadress skickar montörerna dit.
+  it('på för företag även utan adress', () => {
+    expect(defaultCustomWorkAddress('business', noWorkAddress)).toBe(true);
+  });
+
+  it('privat: bara när det finns en adress att visa', () => {
+    expect(defaultCustomWorkAddress('private', noWorkAddress)).toBe(false);
+    expect(defaultCustomWorkAddress('private', { ...noWorkAddress, delivery_postal_code: '152 42' })).toBe(true);
+  });
+});
+
+describe('nextCustomWorkAddress', () => {
+  const at = (quoteType: 'business' | 'private', address = noWorkAddress) => ({ quoteType, address });
+
+  it('byte till företag slår på, byte till privat slår av när fälten är tomma', () => {
+    expect(nextCustomWorkAddress(false, at('private'), at('business'))).toBe(true);
+    expect(nextCustomWorkAddress(true, at('business'), at('private'))).toBe(false);
+  });
+
+  it('fält med innehåll göms aldrig, oavsett byte', () => {
+    expect(nextCustomWorkAddress(true, at('business', fullWorkAddress), at('private', fullWorkAddress))).toBe(true);
+    expect(nextCustomWorkAddress(false, at('business', fullWorkAddress), at('business', fullWorkAddress))).toBe(true);
+  });
+
+  // 🧨 Ett avslaget reglage på en BRF ska inte slås på av en sväng förbi kundkortet, och ett påslaget
+  // med tomma fält ska inte slås av — då hade spärren gått att gå runt.
+  it('samma typ, inga fält: säljarens eget val står kvar', () => {
+    expect(nextCustomWorkAddress(false, at('business'), at('business'))).toBe(false);
+    expect(nextCustomWorkAddress(true, at('business'), at('business'))).toBe(true);
+    expect(nextCustomWorkAddress(true, at('private'), at('private'))).toBe(true);
+    expect(nextCustomWorkAddress(false, at('private'), at('private'))).toBe(false);
+  });
+
+  // Kundkortet tog bort sin leveransadress (fälten var orörda och töms av sammanslagningen): då gäller
+  // förvalet, inte ett reglage som står kvar på med tomma fält för en privatkund.
+  it('kortet tömde adressen: förvalet för typen', () => {
+    expect(nextCustomWorkAddress(true, at('private', fullWorkAddress), at('private'))).toBe(false);
+    expect(nextCustomWorkAddress(true, at('business', fullWorkAddress), at('business'))).toBe(true);
+  });
+});
+
+describe('workAddressIssue', () => {
+  it('avslaget reglage: inget att anmärka, även utan adress', () => {
+    expect(workAddressIssue(false, noWorkAddress)).toBeNull();
+  });
+
+  it('påslaget och komplett: inget att anmärka', () => {
+    expect(workAddressIssue(true, fullWorkAddress)).toBeNull();
+  });
+
+  // Samma tre delar som arbetsorderns spärr — en offert som passerar här fälls inte för adressen sen.
+  it('påslaget: varje del som saknas namnges, i fältens ordning', () => {
+    expect(workAddressIssue(true, noWorkAddress)).toMatch(/^Arbetsadressen saknar gatuadress, postnummer och ort — /);
+    expect(workAddressIssue(true, { ...fullWorkAddress, delivery_city: '' })).toMatch(/^Arbetsadressen saknar ort — /);
+    expect(workAddressIssue(true, { ...fullWorkAddress, delivery_postal_code: '  ' })).toMatch(/^Arbetsadressen saknar postnummer — /);
+  });
+
+  // ⚠️ Checklistan i formuläret leder punkten till fälten på just den här början (issueTargetId).
+  it('texten börjar alltid med "Arbetsadressen saknar"', () => {
+    expect(workAddressIssue(true, { ...noWorkAddress, delivery_address: 'Bygget 7' })?.startsWith('Arbetsadressen saknar')).toBe(true);
   });
 });
