@@ -14,6 +14,11 @@ import AppStatusBanners from './AppStatusBanners';
 // carries the sidebar/theme CSS variables app-wide.
 const CHROMELESS_PREFIXES = ['/auth', '/arbetsorder'];
 
+// Innehållsytans padding, och bannerns motvikt så att den ligger kant i kant med ytan. Samma mått — ändras det ena
+// ändras det andra.
+const MAIN_PADDING = 'px-4 py-4 lg:px-6 lg:py-6';
+const BANNER_BLEED = '-mx-4 -mt-4 mb-4 lg:-mx-6 lg:-mt-6';
+
 function isChromelessPath(pathname: string) {
   return CHROMELESS_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
@@ -37,7 +42,7 @@ export default function AppShell({
   if (isChromelessPath(pathname)) {
     return (
       <>
-        {signedIn ? <AppStatusBanners placement="bare" /> : null}
+        {signedIn ? <AppStatusBanners /> : null}
         {children}
       </>
     );
@@ -47,10 +52,10 @@ export default function AppShell({
     <div className="crm-shell flex flex-col lg:flex-row" style={{ height: '100dvh' }}>
       <AppSidebar role={role} userName={fullName} userInitial={userInitial} />
       <main
-        className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-4 lg:px-6 lg:py-6"
+        className={`min-h-0 min-w-0 flex-1 overflow-auto ${MAIN_PADDING}`}
         style={{ backgroundColor: 'var(--crm-content-bg)' }}
       >
-        {signedIn ? <AppStatusBanners placement="shell" /> : null}
+        {signedIn ? <AppStatusBanners className={BANNER_BLEED} /> : null}
         {children}
       </main>
     </div>

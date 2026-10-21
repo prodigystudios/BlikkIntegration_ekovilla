@@ -10,7 +10,7 @@ import {
   toSystemNoticeView,
 } from '@/lib/domains/systemNotices/notices';
 import { createSystemNoticeSchema, updateSystemNoticeSchema } from '@/lib/domains/systemNotices/schemas';
-import { SYSTEM_NOTICE_AREAS, SYSTEM_NOTICE_KINDS, type SystemNoticeRow } from '@/lib/domains/systemNotices/types';
+import { SYSTEM_NOTICE_AREAS, SYSTEM_NOTICE_KINDS, type SystemNoticeRow, type SystemNoticeView } from '@/lib/domains/systemNotices/types';
 
 function row(overrides: Partial<SystemNoticeRow> = {}): SystemNoticeRow {
   return {
@@ -75,12 +75,25 @@ describe('sortSystemNoticesForDisplay', () => {
 });
 
 describe('systemNoticeDismissKey', () => {
-  // "Stängbar tills det ändras": en redigering ger en ny nyckel, och då syns meddelandet igen.
-  it('byts när meddelandet ändras', () => {
-    const before = systemNoticeDismissKey({ id: 'n1', updated_at: '2026-10-21T10:00:00.000Z' });
-    const after = systemNoticeDismissKey({ id: 'n1', updated_at: '2026-10-21T10:05:00.000Z' });
-    expect(before).not.toBe(after);
-    expect(systemNoticeDismissKey({ id: 'n1', updated_at: '2026-10-21T10:00:00.000Z' })).toBe(before);
+  const base = toSystemNoticeView(row());
+  const key = systemNoticeDismissKey(base);
+
+  // "Stängbar tills det ändras": nytt innehåll ger en ny nyckel, och då syns meddelandet igen.
+  it('byts när sort, text eller områden ändras', () => {
+    expect(systemNoticeDismissKey({ ...base, message: 'Uppdateringen tar längre tid.' })).not.toBe(key);
+    expect(systemNoticeDismissKey({ ...base, kind: 'disruption' })).not.toBe(key);
+    expect(systemNoticeDismissKey({ ...base, areas: ['quotes', 'crm'] })).not.toBe(key);
+  });
+
+  // En sparning utan ändrat innehåll — en flyttad sluttid, eller "Spara" utan att röra något — ska inte ta tillbaka
+  // bannern för alla som stängt den.
+  it('står still när bara sluttiden eller tidsstämpeln ändras', () => {
+    const moved: SystemNoticeView = { ...base, ends_at: '2026-10-21T18:00:00.000Z', updated_at: '2026-10-21T11:00:00.000Z' };
+    expect(systemNoticeDismissKey(moved)).toBe(key);
+  });
+
+  it('skiljer två meddelanden med samma innehåll åt', () => {
+    expect(systemNoticeDismissKey({ ...base, id: 'n2' })).not.toBe(key);
   });
 });
 

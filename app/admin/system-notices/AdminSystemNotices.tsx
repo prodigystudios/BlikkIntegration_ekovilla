@@ -59,13 +59,17 @@ async function send(url: string, method: 'POST' | 'PATCH' | 'DELETE', payload?: 
   return body.data;
 }
 
-function payloadFrom(values: FormValues) {
-  return {
+// `initial` = värdena formuläret öppnades med (vid ändring). Sluttiden skickas bara när admin ändrat den: fältet visar
+// den avrundad till minuten, och att skicka tillbaka den hade flyttat den upp till en minut — eller fått en sparning av
+// bara texten avvisad som "passerad" när sluttiden låg inom samma minut.
+function payloadFrom(values: FormValues, initial?: FormValues) {
+  const payload: Record<string, unknown> = {
     kind: values.kind,
     message: values.message.trim(),
     affected_areas: values.areas,
-    ends_at: fromLocalInputValue(values.endsAtLocal),
   };
+  if (!initial || values.endsAtLocal !== initial.endsAtLocal) payload.ends_at = fromLocalInputValue(values.endsAtLocal);
+  return payload;
 }
 
 export default function AdminSystemNotices() {
@@ -84,8 +88,8 @@ export default function AdminSystemNotices() {
       setNotices((body.data.notices || []) as SystemNoticeView[]);
       setNow(new Date());
     } catch (e) {
+      // Listan behålls: en tom "Inget meddelande visas" bredvid felet hade fått admin att tro att inget är påslaget.
       setError((e as Error).message);
-      setNotices([]);
     } finally {
       setLoading(false);
     }
@@ -102,7 +106,7 @@ export default function AdminSystemNotices() {
         <h2 className="m-0 text-lg font-bold text-slate-900">Driftmeddelanden</h2>
         <p className="m-0 text-sm text-slate-600">
           Visas överst i appen för alla inloggade, även montörerna i fältvyn, inom en minut. Var och en kan dölja det
-          för sig själv; ändrar du texten visas det igen.
+          för sig själv; ändrar du sort, text eller vad det påverkar visas det igen.
         </p>
       </div>
 
@@ -280,7 +284,7 @@ function NoticeForm({
       <div className="grid gap-1.5">
         <span className={crm.label}>Så här ser det ut</span>
         <div className="overflow-hidden rounded-lg border border-[#e0e8dc]">
-          <SystemNoticeStrip notice={preview} now={new Date()} />
+          <SystemNoticeStrip notice={preview} now={new Date()} announce={false} />
         </div>
       </div>
 
@@ -324,16 +328,17 @@ function ActiveNotice({ notice, now, onChanged }: { notice: SystemNoticeView; no
   };
 
   if (editing) {
+    const initial: FormValues = { kind: notice.kind, message: notice.message, areas: notice.areas, endsAtLocal: toLocalInputValue(notice.ends_at) };
     return (
       <div className={cn(crm.cardInner, 'grid gap-3')}>
         <span className={crm.label}>Ändra meddelandet</span>
         <NoticeForm
-          initial={{ kind: notice.kind, message: notice.message, areas: notice.areas, endsAtLocal: toLocalInputValue(notice.ends_at) }}
+          initial={initial}
           submitLabel="Spara ändringen"
           busyLabel="Sparar…"
           onCancel={() => setEditing(false)}
           onSubmit={async (values) => {
-            await send(`/api/admin/system-notices/${notice.id}`, 'PATCH', payloadFrom(values));
+            await send(`/api/admin/system-notices/${notice.id}`, 'PATCH', payloadFrom(values, initial));
             setEditing(false);
             await onChanged();
           }}
@@ -345,7 +350,7 @@ function ActiveNotice({ notice, now, onChanged }: { notice: SystemNoticeView; no
   return (
     <div className="grid gap-2 rounded-lg border border-[#e0e8dc] bg-[#f9fbf7] p-2">
       <div className="overflow-hidden rounded-md border border-[#e0e8dc]">
-        <SystemNoticeStrip notice={notice} now={now} />
+        <SystemNoticeStrip notice={notice} now={now} announce={false} />
       </div>
       <p className="m-0 px-1 text-[12px] text-slate-500">
         Påslaget av {notice.created_by_name} {new Date(notice.starts_at).toLocaleString('sv-SE', { dateStyle: 'medium', timeStyle: 'short' })}

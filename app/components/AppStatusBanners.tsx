@@ -72,15 +72,18 @@ export function SystemNoticeStrip({
   notice,
   now,
   onDismiss,
+  announce = true,
 }: {
   notice: SystemNoticeView;
   now: Date;
   onDismiss?: () => void;
+  // false = ingen live-region. Admin-flikens förhandsvisning ändras vid varje tangenttryck och hade lästs upp varje gång.
+  announce?: boolean;
 }) {
   const style = KIND_STYLE[notice.kind];
   return (
     <div
-      role={notice.kind === 'disruption' ? 'alert' : 'status'}
+      role={announce ? (notice.kind === 'disruption' ? 'alert' : 'status') : undefined}
       className={cn('relative flex items-start gap-2 border-b py-2 pl-4 pr-1 text-slate-800', style.strip)}
     >
       <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', style.rail)} />
@@ -127,12 +130,14 @@ export function SystemNoticeStrip({
 }
 
 /**
- * `shell` = första elementet i app-skalets innehållsyta, kant i kant med den (de negativa marginalerna tar ut <main>:s
- * padding). `bare` = sidor utan skal (fältvyn), överst. Rullar med sidan i båda fallen, med flit: sticky räknar `top`
- * från innehållsytan innanför paddingen och lade bannern över sidans rubrik, och två meddelanden tog en tredjedel av en
- * mobilskärm hela tiden. Den som läst stänger det.
+ * `className` kommer från app-skalet, som äger måtten (se BANNER_BLEED i AppShell.tsx). Rullar med sidan, med flit:
+ * sticky räknar `top` från innehållsytan innanför paddingen och lade bannern över sidans rubrik, och två meddelanden
+ * tog en tredjedel av en mobilskärm hela tiden. Den som läst stänger det.
+ *
+ * Bannern dyker upp efter första hämtningen och skjuter då sidan nedåt. Det sker bara när ett meddelande är på, och
+ * att hämta det i rotlayouten hade kostat en databasfråga per sidvisning för alla, varje dag.
  */
-export default function AppStatusBanners({ placement }: { placement: 'shell' | 'bare' }) {
+export default function AppStatusBanners({ className }: { className?: string }) {
   const [notices, setNotices] = useState<SystemNoticeView[]>([]);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [now, setNow] = useState(() => new Date());
@@ -188,7 +193,7 @@ export default function AppStatusBanners({ placement }: { placement: 'shell' | '
   };
 
   return (
-    <div className={cn('grid', placement === 'shell' && '-mx-4 -mt-4 mb-4 lg:-mx-6 lg:-mt-6')}>
+    <div className={cn('grid', className)}>
       {visible.map((notice) => (
         <SystemNoticeStrip key={notice.id} notice={notice} now={now} onDismiss={() => dismiss(notice)} />
       ))}

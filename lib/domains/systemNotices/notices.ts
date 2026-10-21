@@ -45,10 +45,15 @@ export function sortSystemNoticesForDisplay(notices: SystemNoticeView[]): System
     KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || new Date(b.starts_at).getTime() - new Date(a.starts_at).getTime());
 }
 
-// "Stängbar tills det ändras": det som stängs är just den här versionen av meddelandet. En ny text ger en ny nyckel,
-// och då syns det igen.
-export function systemNoticeDismissKey(notice: Pick<SystemNoticeView, 'id' | 'updated_at'>): string {
-  return `${notice.id}:${notice.updated_at}`;
+// "Stängbar tills det ändras": det som stängs är just det här INNEHÅLLET — sort, text och vad det påverkar. Ändras
+// något av det syns meddelandet igen. Inte updated_at: varje sparning (även en flyttad sluttid eller en sparning utan
+// ändring) hade då tagit tillbaka bannern för alla som stängt den.
+export function systemNoticeDismissKey(notice: Pick<SystemNoticeView, 'id' | 'kind' | 'message' | 'areas'>): string {
+  const content = `${notice.kind}|${notice.areas.join(',')}|${notice.message}`;
+  // djb2 — kort nyckel i localStorage, inget säkerhetsbehov.
+  let hash = 5381;
+  for (let i = 0; i < content.length; i++) hash = ((hash << 5) + hash + content.charCodeAt(i)) | 0;
+  return `${notice.id}:${(hash >>> 0).toString(36)}`;
 }
 
 const stockholmDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Stockholm', year: 'numeric', month: '2-digit', day: '2-digit' });
