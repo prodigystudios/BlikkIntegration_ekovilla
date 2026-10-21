@@ -3,6 +3,7 @@ import {
   buildFortnoxCustomerPayload,
   fortnoxCustomerFieldsChanged,
   buildFortnoxCustomerUpdateRow,
+  buildFortnoxListCustomerRow,
   splitSwedishName,
   buildFortnoxAddress,
   inferCustomerType,
@@ -264,5 +265,99 @@ describe('buildFortnoxCustomerUpdateRow', () => {
     expect(row.email).toBe('ny@acme.se');
     expect(row.company_name).toBe('Acme AB');
     expect(row.organization_number).toBe('556000-0001');
+  });
+
+  // Kortet är den enda källan till fälten listan saknar — det är därför kortpasset finns.
+  it('läser omvänd moms, betalningsvillkor, prislista och fakturamejl ur kortet', () => {
+    const row = buildFortnoxCustomerUpdateRow(
+      fortnoxCustomer({ VATType: 'SEREVERSEDVAT', TermsOfPayment: '30', PriceList: '160', EmailInvoice: 'faktura@acme.se', Phone1: '08-1' }),
+      'business', true, 'nu',
+    );
+    expect(row.reverse_vat).toBe(true);
+    expect(row.payment_terms).toBe('30');
+    expect(row.price_list).toBe('160');
+    expect(row.invoice_email).toBe('faktura@acme.se');
+    expect(row.phone).toBe('08-1');
+    expect(buildFortnoxCustomerUpdateRow(fortnoxCustomer({ VATType: 'SEVAT' }), 'business', true, 'nu').reverse_vat).toBe(false);
+  });
+
+  // Kortet svarar "" för tomma fält; formuläret sparar tomt som null. "" hade sett ut som en ändring.
+  it('sparar kortets tomma strängar som null', () => {
+    const row = buildFortnoxCustomerUpdateRow(
+      fortnoxCustomer({ TermsOfPayment: '', EmailInvoice: '', PriceList: ' ', Phone1: '' }),
+      'business', true, 'nu',
+    );
+    expect(row.payment_terms).toBeNull();
+    expect(row.invoice_email).toBeNull();
+    expect(row.price_list).toBeNull();
+    expect(row.phone).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFortnoxListCustomerRow — massynkens rad ur Fortnox kundlista. Listan har
+// bara tio fält (uppmätt mot testbolaget 2026-10-21); allt annat är kortets.
+// ---------------------------------------------------------------------------
+
+describe('buildFortnoxListCustomerRow', () => {
+  // Listsvaret för testbolagets kund 20 (utan @url, e-posten utbytt), vars KORT har omvänd moms och prislista 160.
+  const listed = {
+    CustomerNumber: '20',
+    Name: 'Testa Inbjudan',
+    OrganisationNumber: '556000-0001',
+    Email: 'kund@example.test',
+    Phone: '0812345233',
+    Address1: 'testbutiksvägen 14',
+    Address2: null,
+    ZipCode: '15123',
+    City: 'södertest',
+  };
+
+  const CARD_ONLY_COLUMNS = [
+    'reverse_vat', 'payment_terms', 'price_list', 'discount', 'vat_number', 'invoice_email',
+    'mobile', 'visit_address', 'delivery_address', 'customer_type_verified',
+  ];
+
+  // 🧨 Före 2026-10-21 lästes listan som ett kort: varje omsynk skrev reverse_vat=false och null på
+  // alla kortfält för samtliga kunder. En utelämnad kolumn rör inte det vi har; en null skriver över.
+  it('utelämnar varje kolumn som bara kortet bär', () => {
+    const row = buildFortnoxListCustomerRow(listed, 'business', 'nu');
+    for (const column of CARD_ONLY_COLUMNS) expect(row, column).not.toHaveProperty(column);
+  });
+
+  it('läser telefonen ur listans Phone (kortets Phone1 finns inte i listan)', () => {
+    expect(buildFortnoxListCustomerRow(listed, 'business', 'nu').phone).toBe('0812345233');
+  });
+
+  it('skriver det listan har: namn, org.nr, e-post och fakturaadress', () => {
+    const row = buildFortnoxListCustomerRow(listed, 'business', 'nu');
+    expect(row.company_name).toBe('Testa Inbjudan');
+    expect(row.organization_number).toBe('556000-0001');
+    expect(row.email).toBe('kund@example.test');
+    expect(row.invoice_address).toEqual({ street: 'testbutiksvägen 14', postal_code: '15123', city: 'södertest' });
+    expect(row.fortnox_customer_id).toBe('20');
+  });
+
+  it('lägger nummer och namn i privatkolumnerna för en privatkund', () => {
+    const row = buildFortnoxListCustomerRow({ ...listed, Name: 'Tolvan Tolvansson', OrganisationNumber: '19121212-1212' }, 'private', 'nu');
+    expect(row.first_name).toBe('Tolvan');
+    expect(row.last_name).toBe('Tolvansson');
+    expect(row.personal_number).toBe('19121212-1212');
+    expect(row.organization_number).toBeNull();
+    expect(row.company_name).toBeNull();
+  });
+
+  it('sparar listans tomma strängar som null', () => {
+    const row = buildFortnoxListCustomerRow({ ...listed, Email: '', Phone: ' ', Address1: '', ZipCode: '', City: '' }, 'business', 'nu');
+    expect(row.email).toBeNull();
+    expect(row.phone).toBeNull();
+    expect(row.invoice_address).toBeNull();
+  });
+
+  // Formuläret sparar trimmat och tomt som null — samma värde härifrån, annars ser fortnoxCustomerFieldsChanged en ändring.
+  it('trimmar värden och tömmer tomma adressdelar som formuläret gör', () => {
+    const row = buildFortnoxListCustomerRow({ ...listed, Email: ' kund@example.test ', Address1: ' ', ZipCode: '', City: 'Stockholm' }, 'business', 'nu');
+    expect(row.email).toBe('kund@example.test');
+    expect(row.invoice_address).toEqual({ street: null, postal_code: null, city: 'Stockholm' });
   });
 });

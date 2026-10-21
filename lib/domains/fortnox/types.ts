@@ -151,7 +151,8 @@ export const ROT_HOUSE_WORK_LABELS: Record<RotHouseWorkType, string> = {
   OTHERCOSTS: 'Övrigt',
 };
 
-// Customer from Fortnox /3/customers
+// Kundkortet: Fortnox GET /3/customers/{CustomerNumber}. Bara kortet bär de flesta fälten — se
+// FortnoxCustomerListItem för vad listan har.
 export type FortnoxCustomer = {
   CustomerNumber: string;
   Name: string;
@@ -183,8 +184,28 @@ export type FortnoxCustomer = {
   VATType: 'SEVAT' | 'SEREVERSEDVAT' | string | null;
 };
 
+/**
+ * En rad i Fortnox kundlista (GET /3/customers). Uppmätt mot testbolaget 2026-10-21: listan har de här tio fälten och
+ * INGET annat (`@url` utelämnad), även om Fortnox egen OpenAPI-spec (`fortnox_Kf_CustomerListItem`) påstår 65.
+ *
+ * 🧨 Omvänd moms (`VATType`), betalningsvillkor, prislista, momsnummer, fakturamejl, `Phone1/2`, besöks- och
+ * leveransadress, rabatt och `Type` finns BARA på kortet (FortnoxCustomer). När listan lästes som ett kort skrev varje
+ * omsynk `reverse_vat=false` och null över alla de fälten. Telefonen heter `Phone` här, `Phone1` på kortet.
+ */
+export type FortnoxCustomerListItem = {
+  CustomerNumber: string;
+  Name: string;
+  OrganisationNumber: string | null;
+  Email: string | null;
+  Phone: string | null;
+  Address1: string | null;
+  Address2: string | null;
+  ZipCode: string | null;
+  City: string | null;
+};
+
 export type FortnoxCustomerListResponse = {
-  Customers: FortnoxCustomer[];
+  Customers: FortnoxCustomerListItem[];
   MetaInformation: {
     '@TotalResources': number;
     '@TotalPages': number;
