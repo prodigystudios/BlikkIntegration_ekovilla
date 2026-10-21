@@ -2,6 +2,7 @@ import { createSessionClient } from '@/lib/supabase/session';
 import { ok, routeError } from '@/lib/api/responses';
 import { listActiveSystemNotices } from '@/lib/domains/systemNotices/queries';
 import { sortSystemNoticesForDisplay, toSystemNoticeView } from '@/lib/domains/systemNotices/notices';
+import { APP_BUILD_ID } from '@/lib/domains/systemNotices/appVersion';
 import type { SystemNoticeRow } from '@/lib/domains/systemNotices/types';
 
 export const runtime = 'nodejs';
@@ -20,7 +21,8 @@ export async function GET() {
     if (error) return routeError(500, 'app_status_failed', error.message);
 
     const notices = sortSystemNoticesForDisplay(((data ?? []) as SystemNoticeRow[]).map(toSystemNoticeView));
-    return ok({ notices });
+    // Den här driftsättningens version. En flik vars kod har en annan visar "Appen har uppdaterats".
+    return ok({ notices, build: APP_BUILD_ID });
   } catch (e: any) {
     return routeError(500, 'app_status_unexpected', e?.message || 'Failed to read app status');
   }

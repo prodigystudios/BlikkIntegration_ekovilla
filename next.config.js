@@ -2,6 +2,21 @@
 const nextConfig = {
   reactStrictMode: true,
 
+  // Byggets version, för bannern "Appen har uppdaterats – ladda om" (app/components/AppStatusBanners.tsx).
+  //
+  // ⚠️ Bakas in vid BYGGET, i klientens OCH serverns kod (`env` ersätts överallt). Det är hela poängen: /api/app-status
+  // rapporterar då exakt det värde som också står i sin egen driftsättnings klientkod, och en flik med äldre kod ser
+  // skillnaden. En runtime-läsning på servern hade kunnat få en annan källa än bygget (en systemvariabel som finns vid
+  // körning men inte vid bygge) — då hade varje flik sett "ny version" hela tiden.
+  //
+  // Driftsättningens id först; commit-sha om det saknas vid bygget (en ombyggnad av samma commit ger då ingen banner —
+  // samma kod, så rätt). APP_BUILD_ID SIST, bara för att prova bannern lokalt: låg den först och råkade stå kvar i
+  // Vercels miljö hade varje driftsättning fått samma värde och bannern aldrig visats igen. Lokalt är den annars tom,
+  // och tom = ingen banner.
+  env: {
+    NEXT_PUBLIC_APP_BUILD_ID: process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_GIT_COMMIT_SHA || process.env.APP_BUILD_ID || '',
+  },
+
   // PDF-routen läser typsnitt, logotyp och bilagor från public/ VID KÖRNING.
   //
   // ⚠️ **Spåraren löser ett `path.join` med enbart literaler — inte en väg byggd genom en variabel.**
