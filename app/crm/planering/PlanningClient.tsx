@@ -433,10 +433,11 @@ export default function PlanningClient({
   // again for the month — and the two answers raced. Waiting one render costs nothing visible (the
   // skeleton is already up) and means only the correct range is ever asked for.
   //
-  // A LAYOUT effect: it still runs after hydration (no markup disagreement), but before paint. Since
-  // the period is remembered (planningPeriod.ts), a return from an order would otherwise paint one
-  // frame of this week and the default view before jumping to the remembered one — the flash the
-  // order and offer lists measured and fixed the same way (useListFilterMemory).
+  // A LAYOUT effect: it still runs after hydration (no markup disagreement), but before paint. The
+  // toolbar (week label, view buttons) is drawn before the gate, so with the period remembered
+  // (planningPeriod.ts) a passive effect leaves room for one frame of this week before the remembered
+  // one. Locally that frame never showed — React happened to flush before paint — so this is a
+  // guarantee, not a measured fix. Same choice as the order and offer lists (useListFilterMemory).
   useLayoutEffect(() => {
     setShowWeekend(readPref(PREF_KEYS.showWeekend) === '1');
     setStackWeeks(readPref(PREF_KEYS.stackWeeks) === '1');

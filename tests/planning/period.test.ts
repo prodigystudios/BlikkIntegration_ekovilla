@@ -10,7 +10,11 @@ import { parseISO } from '@/app/crm/planering/planningDates';
 // byggs i Stockholms zon oavsett var testet körs — alltså byggs de INNE i testerna, inte på modulnivå.
 const originalTz = process.env.TZ;
 beforeAll(() => { process.env.TZ = 'Europe/Stockholm'; });
-afterAll(() => { process.env.TZ = originalTz; });
+afterAll(() => {
+  // `process.env.TZ = undefined` hade satt strängen 'undefined', inte tagit bort variabeln.
+  if (originalTz === undefined) delete process.env.TZ;
+  else process.env.TZ = originalTz;
+});
 
 const tuesday = () => parseISO('2026-10-20'); // vecka 43, måndag 2026-10-19
 
