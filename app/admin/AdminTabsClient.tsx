@@ -25,8 +25,9 @@ const AdminTimeApprovals = dynamic(() => import('../ekonomi/TimeApprovals'), { s
 const AdminSupportTickets = dynamic(() => import('./support/AdminSupportTickets'), { ssr: false, loading: tabLoading });
 const AdminChangelog = dynamic(() => import('./changelog/AdminChangelog'), { ssr: false, loading: tabLoading });
 const AdminInfoSections = dynamic(() => import('./info/AdminInfoSections'), { ssr: false, loading: tabLoading });
+const AdminSystemNotices = dynamic(() => import('./system-notices/AdminSystemNotices'), { ssr: false, loading: tabLoading });
 
-type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news'|'arenden'|'changelog'|'info';
+type AdminTab = 'users'|'permissions'|'contacts'|'depots'|'blikk'|'tid'|'attest'|'news'|'arenden'|'changelog'|'drift'|'info';
 
 const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'users', label: 'Användare', summary: 'Konton, roller och taggar' },
@@ -39,6 +40,7 @@ const tabs: Array<{ id: AdminTab; label: string; summary: string }> = [
   { id: 'news', label: 'Nyheter', summary: 'Skapa och publicera dashboardnyheter' },
   { id: 'arenden', label: 'Ärenden', summary: 'Buggar och önskemål som rapporterats i appen' },
   { id: 'changelog', label: 'Changelog', summary: 'Vad som fixats och tillkommit — visas i CRM' },
+  { id: 'drift', label: 'Driftmeddelanden', summary: 'Bannern överst i appen: uppdateringar, underhåll och störningar' },
   { id: 'info', label: 'Dokument & information', summary: 'Avsnitt, flikar, text och bilder på informationssidan' },
 ];
 
@@ -107,6 +109,7 @@ export default function AdminTabsClient() {
         {tab==='news' && <AdminNews />}
         {tab==='arenden' && <AdminSupportTickets />}
         {tab==='changelog' && <AdminChangelog />}
+        {tab==='drift' && <AdminSystemNotices />}
         {tab==='info' && <AdminInfoSections />}
       </section>
     </PageShell>
