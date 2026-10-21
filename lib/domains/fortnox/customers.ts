@@ -3,6 +3,7 @@ import { fortnoxGet, fortnoxPost, fortnoxPut } from './client';
 import type {
   FortnoxCustomerListResponse,
   FortnoxCustomer,
+  FortnoxCustomerListItem,
   FortnoxTermsOfPaymentListResponse,
   FortnoxPriceListResponse,
 } from './types';
@@ -84,44 +85,40 @@ export function buildFortnoxAddress(
   return { street: street ?? null, postal_code: postalCode ?? null, city: city ?? null };
 }
 
-// Maps a Fortnox customer onto a crm_customers row. `resolvedType` is decided by
-// the caller (heuristic on import, Fortnox's authoritative Type on verification),
-// and `verified` records which of those it is. Guards the identity constraint: a
+// Tom sträng och blanksteg betyder "inget värde", samma konvention som kundformuläret (`trim() || null`). Kortet
+// svarar "" för tomma fält (TermsOfPayment, EmailInvoice, VATNumber …); sparat rakt av hade "" mött formulärets null
+// och fortnoxCustomerFieldsChanged sett en ändring som inte finns.
+function blankToNull(value: string | null | undefined): string | null {
+  return value && value.trim() ? value : null;
+}
+
+// Namn och org.nr/personnummer — samma två fält i listan och på kortet. Guards the identity constraint: a
 // single-word/empty Fortnox Name must never produce an all-null-identity row.
-function mapFortnoxCustomerToRow(
-  c: FortnoxCustomer,
+function fortnoxIdentityColumns(
+  c: Pick<FortnoxCustomerListItem, 'CustomerNumber' | 'Name' | 'OrganisationNumber'>,
   resolvedType: 'business' | 'private',
-  verified: boolean,
-  now: string,
 ) {
   const isCompany = resolvedType === 'business';
   const name = splitSwedishName(c.Name);
   // Fortnox always has a Name, but stay defensive: fall back to a stable label so
   // company_name / first_name can never both be null (constraint violation).
   const fallbackName = (c.Name ?? '').trim() || `Fortnox-kund ${c.CustomerNumber}`;
+  const orgOrPersonalNumber = blankToNull(c.OrganisationNumber);
   return {
     customer_type: resolvedType,
-    customer_type_verified: verified,
-    customer_stage: 'fortnox_customer' as const,
     company_name: isCompany ? fallbackName : null,
     first_name: isCompany ? null : (name.first ?? fallbackName),
     last_name: isCompany ? null : name.last,
     // OrganisationNumber holds a company's org.nr or a private person's personnummer.
-    organization_number: isCompany ? (c.OrganisationNumber ?? null) : null,
-    personal_number: isCompany ? null : (c.OrganisationNumber ?? null),
-    email: c.Email ?? null,
-    phone: c.Phone1 ?? null,
-    mobile: c.Mobile ?? c.Phone2 ?? null,
-    visit_address: buildFortnoxAddress(c.VisitingAddress, c.VisitingZipCode, c.VisitingCity),
-    delivery_address: buildFortnoxAddress(c.DeliveryAddress1, c.DeliveryZipCode, c.DeliveryCity),
-    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
-    invoice_email: c.EmailInvoice ?? null,
-    payment_terms: c.TermsOfPayment ?? null,
-    price_list: c.PriceList ?? null,
-    discount: c.InvoiceDiscount ?? null,
-    vat_number: c.VATNumber ?? null,
-    reverse_vat: c.VATType === 'SEREVERSEDVAT',
-    fortnox_customer_id: c.CustomerNumber,
+    organization_number: isCompany ? orgOrPersonalNumber : null,
+    personal_number: isCompany ? null : orgOrPersonalNumber,
+  };
+}
+
+function fortnoxImportMetadata(customerNumber: string, now: string) {
+  return {
+    customer_stage: 'fortnox_customer' as const,
+    fortnox_customer_id: customerNumber,
     sync_status: 'synced' as const,
     last_synced_at: now,
     status: 'active' as const,
@@ -131,13 +128,63 @@ function mapFortnoxCustomerToRow(
 }
 
 /**
- * Raden som skrivs vid en OMSYNK av en kund vi redan har. Skiljer sig från insert-raden på en
- * enda punkt: ett tomt momsnummer från Fortnox utelämnas i stället för att skrivas som null.
+ * Raden ur Fortnox kundlista: BARA kolumnerna listan bär (FortnoxCustomerListItem). Används av massynken, både för nya
+ * kunder och för omsynken av dem vi redan har.
+ *
+ * 🧨 Omvänd moms, betalningsvillkor, prislista, rabatt, momsnummer, fakturamejl, mobil, besöks- och leveransadress
+ * finns bara på kortet och skrivs bara av kortpasset (verifyCustomerTypesBatch). Att de UTELÄMNAS här är hela poängen:
+ * en utelämnad kolumn rör inte det vi har, en null skriver över den. Före 2026-10-21 lästes listan som ett kort, och
+ * varje omsynk satte `reverse_vat=false` och null på alla de fälten för samtliga kunder.
+ */
+export function buildFortnoxListCustomerRow(
+  c: FortnoxCustomerListItem,
+  resolvedType: 'business' | 'private',
+  now: string,
+) {
+  return {
+    ...fortnoxIdentityColumns(c, resolvedType),
+    email: blankToNull(c.Email),
+    // Listan kallar fältet Phone; det är kortets Phone1.
+    phone: blankToNull(c.Phone),
+    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
+    ...fortnoxImportMetadata(c.CustomerNumber, now),
+  };
+}
+
+// Maps a Fortnox customer CARD (GET /customers/{nr}) onto a crm_customers row. `resolvedType` is Fortnox's
+// authoritative Type, and `verified` records that it is.
+function mapFortnoxCustomerToRow(
+  c: FortnoxCustomer,
+  resolvedType: 'business' | 'private',
+  verified: boolean,
+  now: string,
+) {
+  return {
+    ...fortnoxIdentityColumns(c, resolvedType),
+    customer_type_verified: verified,
+    email: blankToNull(c.Email),
+    phone: blankToNull(c.Phone1),
+    mobile: blankToNull(c.Mobile) ?? blankToNull(c.Phone2),
+    visit_address: buildFortnoxAddress(c.VisitingAddress, c.VisitingZipCode, c.VisitingCity),
+    delivery_address: buildFortnoxAddress(c.DeliveryAddress1, c.DeliveryZipCode, c.DeliveryCity),
+    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
+    invoice_email: blankToNull(c.EmailInvoice),
+    payment_terms: blankToNull(c.TermsOfPayment),
+    price_list: blankToNull(c.PriceList),
+    discount: c.InvoiceDiscount ?? null,
+    vat_number: blankToNull(c.VATNumber),
+    reverse_vat: c.VATType === 'SEREVERSEDVAT',
+    ...fortnoxImportMetadata(c.CustomerNumber, now),
+  };
+}
+
+/**
+ * Raden kortpasset skriver för en kund vi redan har. Skiljer sig från `mapFortnoxCustomerToRow` på en enda punkt: ett
+ * tomt momsnummer från Fortnox utelämnas i stället för att skrivas som null.
  *
  * 🧨 Momsnumret härleds numera på VÅR sida ur org.numret (SE + tio siffror + 01, se
- * lib/domains/crm/orgNumber.ts) — och Fortnox saknar det för de allra flesta kunder.
- * `mapFortnoxCustomerToRow` skriver `vat_number: c.VATNumber ?? null` rakt av, så en helt
- * rutinmässig omsynk hade nollställt varje härlett nummer igen och tyst rullat tillbaka hela
+ * lib/domains/crm/orgNumber.ts) — och Fortnox saknar det för de allra flesta kunder. Ett kortpass
+ * som skrev tomheten rakt av hade nollställt varje härlett nummer igen och tyst rullat tillbaka hela
  * backfillen i 20260902_crm_customers_backfill_vat_number.sql (587 länkade rader).
  *
  * ⚖️ Har Fortnox ett värde vinner det fortfarande — Fortnox äger fältet. Det är bara TOMHETEN
@@ -150,7 +197,7 @@ export function buildFortnoxCustomerUpdateRow(
   now: string,
 ): Record<string, unknown> {
   const row: Record<string, unknown> = mapFortnoxCustomerToRow(c, resolvedType, verified, now);
-  if (!c.VATNumber || !c.VATNumber.trim()) delete row.vat_number;
+  if (row.vat_number === null) delete row.vat_number;
   return row;
 }
 
@@ -180,12 +227,14 @@ async function insertCustomersResilient(
 // Fetch all customers from Fortnox and upsert into crm_customers.
 // Matches on fortnox_customer_id (unique) to update existing rows.
 //
-// The list endpoint does NOT return Type, so company-vs-private is decided by
-// inferCustomerType() heuristic and the row is marked customer_type_verified=false.
+// The list endpoint returns only ten fields (FortnoxCustomerListItem) – no Type, so
+// company-vs-private is decided by inferCustomerType() heuristic and a new row is marked
+// customer_type_verified=false, and none of the card-only fields, so those are never
+// written here (buildFortnoxListCustomerRow).
 // We deliberately do NOT fetch each customer individually here – that fan-out
 // (one GET per customer) blew past Fortnox's rate limit on real-size registers
 // (thousands of customers → mass 429s → every row mis-classified as private).
-// verifyCustomerTypesBatch() confirms Type afterwards, throttled.
+// verifyCustomerTypesBatch() reads the cards afterwards, throttled.
 export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<CustomerSyncResult> {
   const supabase = getSupabaseAdmin();
   let page = 1;
@@ -217,10 +266,12 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
       const toCreate = listCustomers.filter((c) => !existingById.has(c.CustomerNumber));
       const toUpdate = listCustomers.filter((c) => existingById.has(c.CustomerNumber));
 
-      // Create new rows. Heuristic Type, unverified until the verification pass runs.
+      // Create new rows. Heuristic Type (the list has no VAT number to fall back on),
+      // unverified until the card pass runs – which also fills the card-only fields.
       if (toCreate.length > 0) {
         const rows = toCreate.map((c) => ({
-          ...mapFortnoxCustomerToRow(c, inferCustomerType(c.OrganisationNumber, c.VATNumber), false, now),
+          ...buildFortnoxListCustomerRow(c, inferCustomerType(c.OrganisationNumber, null), now),
+          customer_type_verified: false,
           assigned_to: triggeredByUserId,
           created_by: triggeredByUserId,
           created_at: now,
@@ -238,10 +289,10 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
           const verified = prev.customer_type_verified === true;
           const type: 'business' | 'private' = verified
             ? (prev.customer_type === 'business' ? 'business' : 'private')
-            : inferCustomerType(c.OrganisationNumber, c.VATNumber);
+            : inferCustomerType(c.OrganisationNumber, null);
           const { error } = await supabase
             .from('crm_customers')
-            .update(buildFortnoxCustomerUpdateRow(c, type, verified, now))
+            .update(buildFortnoxListCustomerRow(c, type, now))
             .eq('fortnox_customer_id', c.CustomerNumber);
           if (error) {
             console.warn(`[Fortnox sync] Kunde inte uppdatera kund ${c.CustomerNumber} (${error.message})`);
@@ -265,9 +316,11 @@ export type VerifyTypesResult = {
 };
 
 // Confirm customer_type for rows imported via heuristic (customer_type_verified=false)
-// by fetching each customer's authoritative Type from Fortnox, throttled to stay
-// under the rate limit. Resumable: processes one batch per call and reports how
-// many still remain, so a UI/cron can loop until remaining === 0.
+// by fetching each customer's card from Fortnox, throttled to stay under the rate
+// limit. The card is also the only source of the fields the list lacks (reverse VAT,
+// terms of payment, price list …), so this pass is what fills them.
+// Resumable: processes one batch per call and reports how many still remain, so a
+// UI/cron can loop until remaining === 0.
 export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promise<VerifyTypesResult> {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
@@ -293,7 +346,7 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
 
       const { error: updErr } = await supabase
         .from('crm_customers')
-        .update(mapFortnoxCustomerToRow(c, realType, true, now))
+        .update(buildFortnoxCustomerUpdateRow(c, realType, true, now))
         .eq('id', row.id);
 
       if (updErr) {
@@ -318,8 +371,8 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
 
 /**
  * Kundkortets prislista i Fortnox (`PriceList`), läst direkt ur kortet. Portalens egna prislistor (återförsäljarportalen,
- * 10b) läser den här och inte `crm_customers.price_list`: massynken skriver kolumnen ur Fortnox lista över kunder, och
- * att det svaret har fältet är inte bekräftat. Ett tomt fält ger null.
+ * 10b) läser den här och inte `crm_customers.price_list`: Fortnox lista över kunder saknar fältet (uppmätt 2026-10-21),
+ * så kolumnen fylls bara av kortpasset och är så färsk som det senast körda passet. Ett tomt fält ger null.
  */
 export async function getFortnoxCustomerPriceList(customerNumber: string): Promise<string | null> {
   const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${encodeURIComponent(customerNumber)}`);
@@ -327,7 +380,7 @@ export async function getFortnoxCustomerPriceList(customerNumber: string): Promi
 }
 
 // Search Fortnox customers live (for use in quote form, etc.)
-export async function searchFortnoxCustomersLive(query: string): Promise<FortnoxCustomer[]> {
+export async function searchFortnoxCustomersLive(query: string): Promise<FortnoxCustomerListItem[]> {
   const response = await fortnoxGet<FortnoxCustomerListResponse>('/customers', {
     filter: 'active',
     search: query,
