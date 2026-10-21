@@ -58,6 +58,10 @@ export function useLeaveGuard({
   const onLeaveRef = useRef(onLeave);
   // Satt när användaren valt att lämna. Därefter ska varken beforeunload fråga (en bakåt till en
   // annan origin är en riktig sidavlastning) eller vakten laddas om på vägen ut.
+  //
+  // ⚠️ Släpps aldrig: sidan förutsätts avmonteras av navigeringen. En navigering som omdirigeras
+  // tillbaka till samma formulär lämnar det oskyddat tills det laddas om — känt, inte lagat.
+  // Nedladdningar (`/api/…`) räknas därför inte som att lämna, se leaveHrefFromClick.
   const leavingRef = useRef(false);
   const guardRef = useRef<BackGuard | null>(null);
   function guard(): BackGuard {
@@ -159,11 +163,16 @@ export function useLeaveGuard({
       leavingRef.current = true;
       onLeaveRef.current?.();
       if (pending.kind === 'back') {
-        guard().leaveBack(fallbackHref);
+        const fallback = guard().leaveBack(fallbackHref);
+        if (fallback) router.replace(fallback);
         return;
       }
       leaveTo(pending.href);
     },
-    cancel: () => setPending(null),
+    cancel: () => {
+      // Efter ett stoppat bakåt ligger vakten inte längre — klicket här lägger den igen. Se stay().
+      if (pending?.kind === 'back' && guardingRef.current && !leavingRef.current) guard().stay();
+      setPending(null);
+    },
   };
 }

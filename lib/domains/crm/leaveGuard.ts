@@ -33,8 +33,9 @@ export type LeaveClick = {
  * inte är vårt att stoppa.
  *
  * Släpps igenom: klick med modifierare eller annan musknapp (ny flik — sidan står kvar), länkar som
- * öppnar i ny flik eller laddar ner, rena #-länkar, och en annan origin (den lämnar appen helt och
- * fångas av webbläsarens egen beforeunload-ruta). Samma sökväg räknas inte heller som att lämna.
+ * öppnar i ny flik eller laddar ner, rena #-länkar, API-adresser, och en annan origin (den lämnar
+ * appen helt och fångas av webbläsarens egen beforeunload-ruta). Samma sökväg räknas inte heller
+ * som att lämna.
  */
 export function leaveHrefFromClick(click: LeaveClick, currentHref: string): string | null {
   if (click.defaultPrevented || click.button !== 0) return null;
@@ -51,6 +52,9 @@ export function leaveHrefFromClick(click: LeaveClick, currentHref: string): stri
     return null;
   }
   if (url.origin !== current.origin || url.pathname === current.pathname) return null;
+  // En API-adress är aldrig en sida: "Ladda ner" under Filer är en vanlig länk till
+  // /api/…?download=1, utan download-attribut. Sidan står kvar, och ingenting går förlorat.
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return null;
   return url.pathname + url.search;
 }
 
@@ -119,6 +123,10 @@ export function createBackGuard(history: HistoryPort) {
   let savedScroll: ScrollRestoration | null = null;
   // Sidans egen state, undanlagd medan sidans steg bär null.
   let pageState: unknown = null;
+  // Bakåt stoppades: vi står på sidans steg och tvillingen ligger kvar som enda steg framåt.
+  let twinAhead = false;
+  // arm() kom medan ett steg ned var på väg — laddas när steget landat, inte mitt i det.
+  let rearm = false;
 
   function holdScroll() {
     if (savedScroll !== null) return;
@@ -148,31 +156,42 @@ export function createBackGuard(history: HistoryPort) {
     history.back();
   }
 
+  /** Något är osparat: lägg tvillingsteget om det inte redan ligger. */
+  function arm() {
+    if (armed) return;
+    // Ett steg ned är på väg (t.ex. Spara som misslyckades direkt efter att vakten släppt). Laddas
+    // nu hade null-staten hamnat på tvillingen och sidans steg behållit sin — se onPopState.
+    if (expected) {
+      rearm = true;
+      return;
+    }
+    // Ett steg utan state är inte Next:s — en kvarlämning från en vakt som aldrig fick ta bort sig
+    // (omladdning mitt i en redigering). En tvilling av det hade Next inte känt igen, och Next
+    // laddar om hela sidan vid bakåt till ett sådant. Då ingen bakåtvakt; länkarna och
+    // webbläsarens egen ruta skyddar ändå.
+    const state = history.state();
+    if (state == null) return;
+    pageState = state;
+    twinAhead = false;
+    holdScroll();
+    history.replaceState(null);
+    pushTwin();
+  }
+
   return {
     get armed() {
       return armed;
     },
 
     /** Något är osparat: lägg tvillingsteget om det inte redan ligger. */
-    arm() {
-      if (armed) return;
-      // Ett steg utan state är inte Next:s — en kvarlämning från en vakt som aldrig fick ta bort sig
-      // (omladdning mitt i en redigering). En tvilling av det hade Next inte känt igen, och Next
-      // laddar om hela sidan vid bakåt till ett sådant. Då ingen bakåtvakt; länkarna och
-      // webbläsarens egen ruta skyddar ändå.
-      const state = history.state();
-      if (state == null) return;
-      pageState = state;
-      holdScroll();
-      history.replaceState(null);
-      pushTwin();
-    },
+    arm,
 
     /**
      * Inget osparat längre (sparat, avbrutet, återställt): ta bort tvillingen. Annars hade nästa
      * bakåt bara landat på samma sida och sett ut att inte göra något.
      */
     disarm() {
+      rearm = false;
       if (!armed) return;
       stepDown({ kind: 'disarm' });
     },
@@ -192,25 +211,41 @@ export function createBackGuard(history: HistoryPort) {
     },
 
     /**
-     * Lämna bakåt, efter att frågan bekräftats. Vi står på ett nytt tvillingsteg (lagt när bakåt
-     * stoppades), så förra sidan ligger två steg bort — tagna ett i taget, så att sidans steg hinner
-     * få tillbaka sin state på vägen. Annars hade ett framåt senare landat på ett steg Next inte
-     * känner igen: adressen hade bytts men sidan stått kvar.
+     * "Stanna kvar" efter ett stoppat bakåt: lägg tvillingen igen.
      *
-     * Finns inget bakom sidan (fliken öppnades direkt på den, och bakåtpilen gick bara att trycka på
-     * för att vi lagt dit tvillingen) ersätts sidans steg med `fallbackHref` i stället.
+     * 🧨 HÄR, OCH INTE I POPSTATE. Chrome hoppar över historiksteg vid bakåtknappen när steget efter
+     * dem lades utan att användaren rört sidan sedan senaste navigeringen ("history manipulation
+     * intervention") — och att landa på sidans steg ÄR en navigering. En tvilling lagd direkt i
+     * popstate hade alltså kunnat göra sidans steg överhoppningsbart, och då hade varje senare bakåt
+     * gått förbi vakten. Klicket på "Stanna kvar" är en riktig interaktion. Priset: ett andra bakåt
+     * medan frågan står öppen lämnar sidan — det första frågade.
      */
-    leaveBack(fallbackHref: string) {
-      if (!armed) {
-        // Ingen tvilling att gå ned från (vakten släppte medan frågan stod öppen): ett vanligt bakåt.
-        // Utan vakten här hade återställningen skrivit sidans state på FÖRRA sidans steg.
-        releaseScroll();
-        history.back();
-        return;
+    stay() {
+      twinAhead = false;
+      arm();
+    },
+
+    /**
+     * "Lämna utan att spara" efter ett stoppat bakåt. Returnerar ett reservmål att ersätta sidan med
+     * när inget finns bakom den — fliken öppnades direkt på sidan, och bakåtpilen gick bara att trycka
+     * på för att vi lagt dit tvillingen — annars null.
+     */
+    leaveBack(fallbackHref: string): string | null {
+      if (armed) {
+        // Utanför det vanliga flödet (onPopState släpper vakten när bakåt stoppas), men korrekt ändå:
+        // ned till sidans steg först, så att det får tillbaka sin state på vägen — annars hade ett
+        // framåt senare landat på ett steg Next inte känner igen.
+        stepDown({ kind: 'leave' });
+        return null;
       }
-      // ⚠️ length räknar även steg framåt, men vi har just lagt ett steg — det kapar allt framåt.
-      // Två steg är alltså exakt sidan och dess tvilling, och inget bakom dem.
-      stepDown(history.length() <= 2 ? { kind: 'href', href: fallbackHref, replace: true } : { kind: 'leave' });
+      releaseScroll();
+      // ⚠️ length räknar även steg framåt. Tvillingen ligger kvar som enda steg framåt (pushen kapade
+      // allt efter den), så steg bakom sidan = length − tvillingen − sidan själv.
+      const behind = history.length() - (twinAhead ? 1 : 0) - 1;
+      twinAhead = false;
+      if (behind < 1) return fallbackHref;
+      history.back();
+      return null;
     },
 
     /** `guarding`: är något osparat just nu? Läses vid händelsen, inte när vakten skapades. */
@@ -219,6 +254,11 @@ export function createBackGuard(history: HistoryPort) {
       expected = null;
       if (exp?.kind === 'disarm') {
         restorePage();
+        if (rearm && guarding) {
+          rearm = false;
+          arm();
+        }
+        rearm = false;
         return { kind: 'none' };
       }
       if (exp?.kind === 'href') {
@@ -233,16 +273,16 @@ export function createBackGuard(history: HistoryPort) {
       }
       if (exp?.kind === 'gone') return { kind: 'none' };
       if (!armed) return { kind: 'none' };
-      // Användaren tryckte bakåt och står nu på sidans eget steg, under tvillingen.
+      // Användaren tryckte bakåt och står nu på sidans eget steg, under tvillingen. Sidans steg får
+      // tillbaka sin state direkt: frågan kan sluta med att användaren lämnar med ett andra bakåt.
       armed = false;
+      restorePage();
       if (!guarding) {
         // Inget kvar att skydda: fullfölj bakåtklicket, som annars hade sett dött ut.
-        restorePage();
         history.back();
         return { kind: 'none' };
       }
-      // Lägg tvillingen igen DIREKT, före frågan — då fångas också ett andra bakåt medan den står öppen.
-      pushTwin();
+      twinAhead = true;
       return { kind: 'blocked' };
     },
 

@@ -56,6 +56,11 @@ describe('leaveHrefFromClick', () => {
     expect(leaveHrefFromClick(click({}, { href: 'https://www.fortnox.se/', rawHref: 'https://www.fortnox.se/' }), PAGE)).toBeNull();
   });
 
+  it('en API-adress är aldrig en sida — "Ladda ner" under Filer är en sådan länk', () => {
+    const href = 'https://app.ekovilla.se/api/crm/work-orders/abc/files/f1?redirect=1&download=1';
+    expect(leaveHrefFromClick(click({}, { href, rawHref: '/api/crm/work-orders/abc/files/f1?redirect=1&download=1' }), PAGE)).toBeNull();
+  });
+
   it('samma sökväg är inte att lämna sidan', () => {
     expect(leaveHrefFromClick(click({}, { href: `${PAGE}?flik=filer`, rawHref: '?flik=filer' }), PAGE)).toBeNull();
   });
@@ -139,6 +144,16 @@ function setup(urls = [LIST_URL, PAGE_URL]) {
 }
 
 describe('createBackGuard — bakåtpilen', () => {
+  /** Laddad vakt, ett stoppat bakåt — där frågan står öppen. */
+  function blocked(urls?: string[]) {
+    const t = setup(urls);
+    t.setGuarding(true);
+    t.guard.arm();
+    t.history.userBack();
+    expect(t.settle()).toEqual([{ kind: 'blocked' }]);
+    return t;
+  }
+
   it('laddar ETT tvillingsteg med sidans egen adress och state, hur många gånger den än laddas', () => {
     const t = setup();
     t.guard.arm();
@@ -150,49 +165,47 @@ describe('createBackGuard — bakåtpilen', () => {
     expect(t.guard.armed).toBe(true);
   });
 
-  it('bakåt med något osparat stoppas: sidan står kvar, frågan ska visas, och Next märker inget', () => {
-    const t = setup();
-    t.setGuarding(true);
-    t.guard.arm();
+  it('bakåt med något osparat stoppas: sidan står kvar, Next märker inget, och sidans steg är Next:s igen', () => {
+    const t = blocked();
+    expect(t.history.url).toBe(PAGE_URL);
+    expect(t.history.nextRestores).toEqual([]);
+    expect(t.history.entries[1].state).toEqual(nextState(PAGE_URL));
+    // Ingen ny tvilling förrän "Stanna kvar" — se stay().
+    expect(t.guard.armed).toBe(false);
+  });
+
+  it('"Stanna kvar" lägger tvillingen igen, och nästa bakåt stoppas också', () => {
+    const t = blocked();
+    t.guard.stay();
+    expect(t.guard.armed).toBe(true);
+    // Den gamla tvillingen framåt är kapad, inte staplad.
+    expect(t.history.entries.map((e) => e.url)).toEqual([LIST_URL, PAGE_URL, PAGE_URL]);
+    expect(t.history.entries[1].state).toBeNull();
     t.history.userBack();
     expect(t.settle()).toEqual([{ kind: 'blocked' }]);
     expect(t.history.url).toBe(PAGE_URL);
     expect(t.history.nextRestores).toEqual([]);
   });
 
-  it('ett andra bakåt medan frågan står öppen stoppas också — tvillingen läggs igen direkt', () => {
-    const t = setup();
-    t.setGuarding(true);
-    t.guard.arm();
+  it('ett andra bakåt medan frågan står öppen lämnar sidan — till en sida Next känner igen', () => {
+    const t = blocked();
     t.history.userBack();
     t.settle();
-    t.history.userBack();
-    expect(t.settle()).toEqual([{ kind: 'blocked' }]);
-    expect(t.history.url).toBe(PAGE_URL);
-    // Kapat framåt, inte staplat: sidan och en tvilling, som från början.
-    expect(t.history.entries).toHaveLength(3);
-    expect(t.history.nextRestores).toEqual([]);
+    expect(t.history.url).toBe(LIST_URL);
+    expect(t.allRecognised()).toBe(true);
   });
 
-  it('"Lämna utan att spara" efter bakåt når förra sidan, och sidans steg är Next:s igen på vägen', () => {
-    const t = setup();
-    t.setGuarding(true);
-    t.guard.arm();
-    t.history.userBack();
-    t.settle();
-    t.guard.leaveBack(LIST_URL);
-    expect(t.settle()).toEqual([{ kind: 'none' }, { kind: 'none' }]);
+  it('"Lämna utan att spara" efter bakåt når förra sidan', () => {
+    const t = blocked();
+    expect(t.guard.leaveBack(LIST_URL)).toBeNull();
+    expect(t.settle()).toEqual([{ kind: 'none' }]);
     expect(t.history.url).toBe(LIST_URL);
     expect(t.history.nextRestores).toEqual([LIST_URL]);
     expect(t.allRecognised()).toBe(true);
   });
 
   it('framåt efter att ha lämnat bakåt landar på en sida Next känner igen', () => {
-    const t = setup();
-    t.setGuarding(true);
-    t.guard.arm();
-    t.history.userBack();
-    t.settle();
+    const t = blocked();
     t.guard.leaveBack(LIST_URL);
     t.settle();
     t.history.userForward();
@@ -201,15 +214,30 @@ describe('createBackGuard — bakåtpilen', () => {
     expect(t.history.nextRestores).toEqual([LIST_URL, PAGE_URL]);
   });
 
-  it('fliken öppnades direkt på sidan: sidans steg ersätts med reservmålet', () => {
-    const t = setup([PAGE_URL]);
+  it('fliken öppnades direkt på sidan: reservmålet i stället, och ingen förflyttning', () => {
+    const t = blocked([PAGE_URL]);
+    expect(t.guard.leaveBack(LIST_URL)).toBe(LIST_URL);
+    expect(t.settle()).toEqual([]);
+    expect(t.history.index).toBe(0);
+    expect(t.allRecognised()).toBe(true);
+  });
+
+  it('"Lämna" efter bakåt utan tvilling framåt: ett vanligt bakåt, och förra sidans state lämnas orörd', () => {
+    const t = setup();
+    expect(t.guard.leaveBack(LIST_URL)).toBeNull();
+    t.settle();
+    expect(t.history.url).toBe(LIST_URL);
+    expect(t.history.entries[0].state).toEqual(nextState(LIST_URL));
+  });
+
+  it('"Lämna" bakåt med laddad vakt: ned till sidans steg först, sedan förra sidan', () => {
+    const t = setup();
     t.setGuarding(true);
     t.guard.arm();
-    t.history.userBack();
-    t.settle();
-    t.guard.leaveBack(LIST_URL);
-    expect(t.settle()).toEqual([{ kind: 'navigate', href: LIST_URL, replace: true }]);
-    expect(t.history.index).toBe(0);
+    expect(t.guard.leaveBack(LIST_URL)).toBeNull();
+    expect(t.settle()).toEqual([{ kind: 'none' }, { kind: 'none' }]);
+    expect(t.history.url).toBe(LIST_URL);
+    expect(t.history.nextRestores).toEqual([LIST_URL]);
     expect(t.allRecognised()).toBe(true);
   });
 
@@ -237,20 +265,36 @@ describe('createBackGuard — bakåtpilen', () => {
     expect(t.history.entries[1].state).toEqual({ __NA: true, tree: 'nyare' });
   });
 
+  it('laddas medan avväpningen är på väg: väntar in steget och laddas sedan på sidans steg', () => {
+    const t = setup();
+    t.setGuarding(true);
+    t.guard.arm();
+    t.guard.disarm(); // Spara börjar…
+    t.guard.arm(); // …och misslyckas innan webbläsaren hunnit ta steget
+    expect(t.settle()).toEqual([{ kind: 'none' }]);
+    expect(t.guard.armed).toBe(true);
+    expect(t.history.entries.map((e) => e.url)).toEqual([LIST_URL, PAGE_URL, PAGE_URL]);
+    expect(t.history.entries[1].state).toBeNull();
+    expect(t.history.entries[2].state).toEqual(nextState(PAGE_URL));
+    expect(t.history.nextRestores).toEqual([]);
+  });
+
+  it('den uppskjutna laddningen glöms om inget längre är osparat när steget landar', () => {
+    const t = setup();
+    t.guard.arm();
+    t.guard.disarm();
+    t.guard.arm();
+    t.settle(); // guarding false
+    expect(t.guard.armed).toBe(false);
+    expect(t.allRecognised()).toBe(true);
+  });
+
   it('laddas inte på ett steg utan state — en tvilling av det hade Next laddat om sidan för', () => {
     const t = setup();
     t.history.entries[1].state = null;
     t.guard.arm();
     expect(t.guard.armed).toBe(false);
     expect(t.history.entries).toHaveLength(2);
-  });
-
-  it('"Lämna" efter bakåt utan laddad vakt: ett vanligt bakåt, och förra sidans state lämnas orörd', () => {
-    const t = setup();
-    t.guard.leaveBack(LIST_URL);
-    t.settle();
-    expect(t.history.url).toBe(LIST_URL);
-    expect(t.history.entries[0].state).toEqual(nextState(LIST_URL));
   });
 
   it('avväpna utan laddad vakt rör inte historiken', () => {
