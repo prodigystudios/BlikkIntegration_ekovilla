@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import type { ReactNode } from 'react';
 import type { UserRole } from '@/lib/roles';
 import AppSidebar from './AppSidebar';
+import AppStatusBanners from './AppStatusBanners';
 
 // Single app shell for all authenticated pages. A few routes render bare, with no
 // chrome: the public auth pages, and the installer
@@ -29,9 +30,17 @@ export default function AppShell({
   children: ReactNode;
 }) {
   const pathname = usePathname() || '/';
+  // Driftmeddelandena gäller alla inloggade — även montörerna i fältvyn, som saknar skal. Utan roll är ingen inloggad
+  // (inloggningssidorna), och då finns inget att hämta.
+  const signedIn = role !== null;
 
   if (isChromelessPath(pathname)) {
-    return <>{children}</>;
+    return (
+      <>
+        {signedIn ? <AppStatusBanners placement="bare" /> : null}
+        {children}
+      </>
+    );
   }
 
   return (
@@ -41,6 +50,7 @@ export default function AppShell({
         className="min-h-0 min-w-0 flex-1 overflow-auto px-4 py-4 lg:px-6 lg:py-6"
         style={{ backgroundColor: 'var(--crm-content-bg)' }}
       >
+        {signedIn ? <AppStatusBanners placement="shell" /> : null}
         {children}
       </main>
     </div>
