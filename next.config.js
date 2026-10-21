@@ -9,9 +9,12 @@ const nextConfig = {
   // skillnaden. En runtime-läsning på servern hade kunnat få en annan källa än bygget (en systemvariabel som finns vid
   // körning men inte vid bygge) — då hade varje flik sett "ny version" hela tiden.
   //
-  // Lokalt är den tom (ingen Vercel-variabel), och tom = ingen banner. APP_BUILD_ID sätts bara för att prova bannern.
+  // Driftsättningens id först; commit-sha om det saknas vid bygget (en ombyggnad av samma commit ger då ingen banner —
+  // samma kod, så rätt). APP_BUILD_ID SIST, bara för att prova bannern lokalt: låg den först och råkade stå kvar i
+  // Vercels miljö hade varje driftsättning fått samma värde och bannern aldrig visats igen. Lokalt är den annars tom,
+  // och tom = ingen banner.
   env: {
-    NEXT_PUBLIC_APP_BUILD_ID: process.env.APP_BUILD_ID || process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_GIT_COMMIT_SHA || '',
+    NEXT_PUBLIC_APP_BUILD_ID: process.env.VERCEL_DEPLOYMENT_ID || process.env.VERCEL_GIT_COMMIT_SHA || process.env.APP_BUILD_ID || '',
   },
 
   // PDF-routen läser typsnitt, logotyp och bilagor från public/ VID KÖRNING.

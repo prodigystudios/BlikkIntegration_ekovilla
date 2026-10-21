@@ -30,6 +30,14 @@ describe('versionen bakas in vid bygget', () => {
     expect(config).toMatch(/env:\s*\{[^}]*NEXT_PUBLIC_APP_BUILD_ID:/);
   });
 
+  // Provvariabeln sist: låg den först och råkade stå kvar i Vercels miljö hade varje driftsättning fått samma värde,
+  // och bannern hade aldrig visats igen — utan att något märktes.
+  it('driftsättningens id går före provvariabeln APP_BUILD_ID', () => {
+    const line = readFileSync('next.config.js', 'utf8').match(/NEXT_PUBLIC_APP_BUILD_ID:([^\n]+)/)![1];
+    const order = [...line.matchAll(/process\.env\.([A-Z_]+)/g)].map((m) => m[1]);
+    expect(order).toEqual(['VERCEL_DEPLOYMENT_ID', 'VERCEL_GIT_COMMIT_SHA', 'APP_BUILD_ID']);
+  });
+
   it('appVersion läser bara den inbakade variabeln', () => {
     const source = readFileSync('lib/domains/systemNotices/appVersion.ts', 'utf8');
     const reads = [...source.matchAll(/process\.env\.([A-Z_]+)/g)].map((m) => m[1]);
