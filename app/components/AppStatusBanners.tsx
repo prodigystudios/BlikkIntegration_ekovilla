@@ -8,6 +8,7 @@ import {
   systemNoticeDismissKey,
 } from '@/lib/domains/systemNotices/notices';
 import { systemNoticeAreaLabel, type SystemNoticeKind, type SystemNoticeView } from '@/lib/domains/systemNotices/types';
+import { APP_BUILD_ID, isOtherAppVersionLive } from '@/lib/domains/systemNotices/appVersion';
 
 // Bannern överst i appen: driftmeddelanden som admin slår på (Admin → Driftmeddelanden). Syns för alla inloggade, även
 // montörerna i fältvyn. Hämtas var minut medan fliken syns, och direkt när den syns igen — så ett meddelande som slås
@@ -133,6 +134,42 @@ export function SystemNoticeStrip({
   );
 }
 
+// "Appen har uppdaterats": servern kör en annan version än flikens kod. Lugn som informationen — det är inget fel, bara
+// ett erbjudande. Omladdningen frågar först om sidan har osparade ändringar (useLeaveGuard lyssnar på beforeunload).
+export function AppUpdatedStrip({ onReload, onLater }: { onReload: () => void; onLater: () => void }) {
+  const style = KIND_STYLE.info;
+  return (
+    <div role="status" className={cn('relative flex items-start gap-2 border-b py-2 pl-4 pr-1 text-slate-800', style.strip)}>
+      <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', style.rail)} />
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 py-1">
+        <p className="m-0 min-w-0 flex-1 basis-64 text-[13px] leading-snug">
+          <span className="mr-2 inline-flex items-center gap-1.5 font-semibold">
+            <span aria-hidden className={cn('inline-block h-2 w-2 shrink-0 rounded-full', style.dot)} />
+            Appen har uppdaterats
+          </span>
+          <span>Spara det du håller på med och ladda om sidan för att få den senaste versionen.</span>
+        </p>
+        <button
+          type="button"
+          onClick={onReload}
+          className="inline-flex h-9 shrink-0 items-center rounded-lg bg-[color:var(--ek-green)] px-3 text-[13px] font-semibold text-white transition hover:bg-[color:var(--ek-green-strong)] focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)] focus-visible:ring-offset-2"
+        >
+          Ladda om
+        </button>
+      </div>
+      <button
+        type="button"
+        onClick={onLater}
+        aria-label="Påminn mig senare"
+        title="Döljs tills nästa uppdatering"
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-lg leading-none text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
 /**
  * `className` kommer från app-skalet, som äger måtten (se BANNER_BLEED i AppShell.tsx). Rullar med sidan, med flit:
  * sticky räknar `top` från innehållsytan innanför paddingen och lade bannern över sidans rubrik, och två meddelanden
@@ -145,6 +182,10 @@ export default function AppStatusBanners({ className }: { className?: string }) 
   const [notices, setNotices] = useState<SystemNoticeView[]>([]);
   const [dismissed, setDismissed] = useState<string[]>([]);
   const [now, setNow] = useState(() => new Date());
+  // Serverns version och den som "Senare" gällde. Bara i minnet: en omladdning ger ändå den nya koden, och skalet ligger
+  // kvar över klientnavigeringar, så "Senare" håller tills nästa driftsättning.
+  const [liveBuild, setLiveBuild] = useState<string | null>(null);
+  const [postponedBuild, setPostponedBuild] = useState<string | null>(null);
 
   useEffect(() => {
     setDismissed(readDismissed());
@@ -167,6 +208,7 @@ export default function AppStatusBanners({ className }: { className?: string }) 
         const body = await res.json().catch(() => null);
         if (cancelled || !body?.ok) return;
         setNotices((body.data?.notices ?? []) as SystemNoticeView[]);
+        setLiveBuild(typeof body.data?.build === 'string' ? body.data.build : null);
       } catch {
         // Nätfel eller avbrutet: nästa tick försöker igen.
       }
@@ -189,7 +231,8 @@ export default function AppStatusBanners({ className }: { className?: string }) 
   }, []);
 
   const visible = notices.filter((n) => isSystemNoticeActive(n, now) && !dismissed.includes(systemNoticeDismissKey(n)));
-  if (visible.length === 0) return null;
+  const showUpdate = isOtherAppVersionLive(APP_BUILD_ID, liveBuild) && postponedBuild !== liveBuild;
+  if (visible.length === 0 && !showUpdate) return null;
 
   const dismiss = (notice: SystemNoticeView) => {
     const key = systemNoticeDismissKey(notice);
@@ -203,6 +246,9 @@ export default function AppStatusBanners({ className }: { className?: string }) 
       {visible.map((notice) => (
         <SystemNoticeStrip key={notice.id} notice={notice} now={now} onDismiss={() => dismiss(notice)} />
       ))}
+      {showUpdate ? (
+        <AppUpdatedStrip onReload={() => window.location.reload()} onLater={() => setPostponedBuild(liveBuild)} />
+      ) : null}
     </div>
   );
 }
