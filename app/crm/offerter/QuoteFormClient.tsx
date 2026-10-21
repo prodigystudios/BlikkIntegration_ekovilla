@@ -23,6 +23,8 @@ import { crm } from '@/app/crm/lib/crmTokens';
 import AddressAutocompleteInput from '@/app/crm/components/AddressAutocompleteInput';
 import CrmModal from '@/app/crm/components/CrmModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
+import UnsavedChangesDialog from '@/app/crm/components/UnsavedChangesDialog';
+import { useLeaveGuard } from '@/app/crm/components/useLeaveGuard';
 import ContactFormModal from '@/app/crm/components/ContactFormModal';
 import type { CrmContactItem } from '@/app/crm/lib/contactForm';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
@@ -685,10 +687,6 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // and the offer becomes an order (the route rejects with 409). Prompt → re-save the quote →
   // retry the conversion.
   const [rotPropertyPromptOpen, setRotPropertyPromptOpen] = useState(false);
-  // Custom "leave with unsaved changes?" confirm for in-app navigation (the browser's own
-  // beforeunload text can't be customised, so we show our own dialog where we can). Holds the
-  // intended destination so the same dialog serves the back button AND intercepted link clicks.
-  const [pendingLeaveHref, setPendingLeaveHref] = useState<string | null>(null);
   // Vad som saknas innan offerten kan bli en arbetsorder. Hämtas från servern i stället för att
   // räknas ut här: adress, telefon och org.nr bor på kundkortet och finns inte i formulärets draft,
   // och en andra uppsättning regler i klienten hade förr eller senare sagt emot spärren.
@@ -846,10 +844,11 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     : (copyFromId ? `/crm/offerter/ny?fran=${encodeURIComponent(copyFromId)}` : '/crm/offerter/ny');
   const offerSelfUrl = returnToParam ? withReturnTo(offerSelfPath, returnToParam) : offerSelfPath;
 
-  // Stash the draft and leave to a customer page; we return via returnTo.
+  // Stash the draft and leave to a customer page; we return via returnTo. Genom vakten utan att
+  // fråga: resan är avsiktlig, men vaktens historiksteg ska bort först (useLeaveGuard.navigate).
   function goToCustomerPage(path: string) {
     persistDraft();
-    router.push(`${path}?returnTo=${encodeURIComponent(offerSelfUrl)}`);
+    leaveGuard.navigate(`${path}?returnTo=${encodeURIComponent(offerSelfUrl)}`);
   }
 
   function persistDraft() {
@@ -1279,48 +1278,19 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftJson, loading, submitting, recoverableDraft, customWorkAddress]);
 
-  // Browser "leave site?" guard on unsaved work. Also flushes the latest draft to storage first, so
-  // closing the tab mid-debounce still preserves everything (the resume banner catches it next time).
-  useEffect(() => {
-    if (!isDirty || submitting || recoverableDraft) return;
-    const handler = (e: BeforeUnloadEvent) => {
-      persistDraft();
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftJson, submitting, recoverableDraft, customWorkAddress]);
-
-  // Intercept in-app link navigation (sidebar/header/any <Link>) while there are unsaved changes.
-  // The App Router has no built-in navigation guard, so we catch the anchor click in the capture
-  // phase — before Next's Link handler runs — cancel it, and route the intent through our confirm
-  // dialog instead. Programmatic navigations (e.g. the customer round-trip) aren't anchor clicks and
-  // are intentional, so they pass through untouched. The browser back/forward buttons (popstate)
-  // can't be intercepted cleanly here; autosave + the resume banner cover that case.
-  useEffect(() => {
-    if (!isDirty || submitting || recoverableDraft || pendingLeaveHref) return;
-    function onClick(e: MouseEvent) {
-      // Let modified / non-primary clicks (new tab, middle-click) and already-handled events be.
-      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      const anchor = (e.target as HTMLElement | null)?.closest?.('a');
-      if (!anchor || anchor.target === '_blank' || anchor.hasAttribute('download')) return;
-      const rawHref = anchor.getAttribute('href');
-      if (!rawHref || rawHref.startsWith('#')) return;
-      let url: URL;
-      try { url = new URL(anchor.href, window.location.href); } catch { return; }
-      // Cross-origin leaves the app entirely → beforeunload handles it. Same-path (or hash-only) is
-      // not really leaving the form → ignore.
-      if (url.origin !== window.location.origin || url.pathname === window.location.pathname) return;
-      e.preventDefault();
-      e.stopPropagation();
-      setPendingLeaveHref(url.pathname + url.search);
-    }
-    document.addEventListener('click', onClick, true); // capture phase → runs before Next's Link
-    return () => document.removeEventListener('click', onClick, true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftJson, submitting, recoverableDraft, pendingLeaveHref]);
+  // Stoppet innan osparat arbete lämnas: länkar, Tillbaka, webbläsarens bakåtpil och — med
+  // webbläsarens egen ruta — att stänga fliken. Se useLeaveGuard. onLeave lägger undan utkastet
+  // först, så det som skrivits går att återuppta även när man väljer att lämna.
+  //
+  // ⚠️ captureBack: efter kundkortsresan rensar formuläret sina returparametrar med router.replace
+  // (se återställningseffekten ovan). Bakåtvakten laddas först när adressen är rensad — annars hade
+  // dess historiksteg legat kvar på den gamla adressen. Se createBackGuard.
+  const leaveGuard = useLeaveGuard({
+    active: isDirty && !submitting && !recoverableDraft,
+    captureBack: !searchParams.get('created_customer_id') && !searchParams.get('restore_quote'),
+    fallbackHref: backTo,
+    onLeave: persistDraft,
+  });
 
   const effectiveRows = useMemo<EffectiveRow[]>(() => {
     return draft.items.map((item) => {
@@ -1525,18 +1495,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   function handleBack() {
     // Going back is a possible accident too. With unsaved work, show our own informative confirm
     // (the native beforeunload text isn't customisable); with nothing to keep, just leave.
-    if (isDirty) { setPendingLeaveHref(backTo); return; }
+    if (isDirty) { leaveGuard.ask(backTo); return; }
     clearPersistedDraft();
     router.push(backTo);
-  }
-
-  // Confirmed leaving with unsaved changes: flush the draft so it's recoverable, then navigate to
-  // whatever destination triggered the dialog (back button or an intercepted link).
-  function confirmLeave() {
-    const href = pendingLeaveHref ?? backTo;
-    persistDraft();
-    setPendingLeaveHref(null);
-    router.push(href);
   }
 
   async function createFollowUpTask(quote: QuoteItem) {
@@ -1697,7 +1658,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       }
       const workOrder = json?.data?.workOrder as { id?: string; order_number?: string } | undefined;
       toast.success(workOrder?.order_number ? `Arbetsorder skapad: ${workOrder.order_number}` : 'Arbetsorder skapad');
-      if (workOrder?.id) router.push(`/crm/arbetsorder?work_order_id=${workOrder.id}`);
+      if (workOrder?.id) leaveGuard.navigate(`/crm/arbetsorder?work_order_id=${workOrder.id}`);
     } catch { toast.error('Kunde inte skapa arbetsorder'); } finally { setCreatingWorkOrder(false); }
   }
 
@@ -3012,44 +2973,15 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         </button>
       </div>
 
-      {/* Personnummer-prompt vid order från privatkund utan personnr */}
-      {pendingLeaveHref ? (
-        <CrmModal
-          onClose={() => setPendingLeaveHref(null)}
-          ariaLabel="Osparad offert"
-          maxWidth="sm:max-w-[460px]"
-          header={
-            <>
-              <h2 className="text-lg font-bold text-slate-900">Du har en osparad offert</h2>
-              <p className="m-0 mt-0.5 text-sm text-slate-500">Vill du verkligen lämna sidan?</p>
-            </>
-          }
-          footer={
-            <>
-              <button
-                type="button"
-                onClick={() => setPendingLeaveHref(null)}
-                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
-              >
-                Stanna kvar
-              </button>
-              <button
-                type="button"
-                onClick={confirmLeave}
-                className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-rose-300 hover:text-rose-600 sm:ml-auto sm:flex-none sm:px-5"
-              >
-                Lämna sidan
-              </button>
-            </>
-          }
-        >
-          <p className="text-sm leading-relaxed text-slate-600">
-            Din påbörjade offert har inte sparats som en färdig offert. Ändringarna sparas automatiskt som ett
-            utkast, så du kan återuppta dem nästa gång du öppnar offertsidan.
-          </p>
-        </CrmModal>
+      {leaveGuard.pending ? (
+        <UnsavedChangesDialog
+          message="Offerten är inte sparad. Det du fyllt i ligger kvar som ett utkast, och du kan återuppta det nästa gång du öppnar offertformuläret."
+          onConfirm={leaveGuard.confirm}
+          onCancel={leaveGuard.cancel}
+        />
       ) : null}
 
+      {/* Personnummer-prompt vid order från privatkund utan personnr */}
       {pnPromptOpen ? (
         <CrmModal
           onClose={() => setPnPromptOpen(false)}
