@@ -55,11 +55,7 @@ export default function FortnoxIntegrationBlock({
       const json = await res.json();
       if (res.ok && json.ok) {
         const d = json.data;
-        const msg =
-          endpoint.includes('articles')
-            ? `${d.synced} artiklar synkade (${d.pages} sidor)`
-            : `${d.created} nya, ${d.updated} uppdaterade kunder`;
-        setter({ label: '', state: 'success', message: msg });
+        setter({ label: '', state: 'success', message: `${d.synced} artiklar synkade (${d.pages} sidor)` });
       } else {
         setter({ label: '', state: 'error', message: json.error || 'Okänt fel' });
       }
@@ -68,11 +64,36 @@ export default function FortnoxIntegrationBlock({
     }
   }
 
-  // Confirms heuristic-classified customer types against Fortnox. The endpoint
-  // processes one throttled batch per call and returns how many remain, so we
-  // loop until the queue is empty, accumulating progress as we go.
+  // Kundlistan bär bara tio fält; omvänd moms, betalningsvillkor, prislista m.m. finns på kundkortet. Synken köar nya och
+  // i Fortnox ändrade kunder, och kortpasset startar direkt efteråt — annars stod de köade fälten kvar tills någon
+  // mindes att trycka på nästa knapp.
+  async function runCustomerSync() {
+    setCustomerSync({ label: '', state: 'loading', message: null });
+    try {
+      const res = await fetch('/api/fortnox/customers/sync', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.ok) {
+        setCustomerSync({ label: '', state: 'error', message: json.error || 'Okänt fel' });
+        return;
+      }
+      const d = json.data as { created: number; updated: number; pendingCards: number };
+      setCustomerSync({
+        label: '',
+        state: 'success',
+        message: `${d.created} nya, ${d.updated} uppdaterade kunder. ${d.pendingCards} kundkort att hämta.`,
+      });
+      if (d.pendingCards > 0) await runVerifyTypes();
+    } catch {
+      setCustomerSync({ label: '', state: 'error', message: 'Nätverksfel' });
+    }
+  }
+
+  // Reads the Fortnox card of every queued customer (type, reverse VAT, terms of
+  // payment, price list …). The endpoint processes one throttled batch per call and
+  // returns how many remain, so we loop until the queue is empty, accumulating
+  // progress as we go.
   async function runVerifyTypes() {
-    setVerifySync({ label: '', state: 'loading', message: 'Startar verifiering...' });
+    setVerifySync({ label: '', state: 'loading', message: 'Hämtar kundkort...' });
     let processed = 0;
     let corrected = 0;
     try {
@@ -90,17 +111,17 @@ export default function FortnoxIntegrationBlock({
           setVerifySync({
             label: '',
             state: 'success',
-            message: `Klart – ${processed} kunder verifierade, ${corrected} omklassade. ${d.remaining} kvar.`,
+            message: `Klart – ${processed} kundkort hämtade, ${corrected} kunder omklassade. ${d.remaining} kvar.`,
           });
           return;
         }
         setVerifySync({
           label: '',
           state: 'loading',
-          message: `${processed} verifierade, ${corrected} omklassade, ${d.remaining} kvar...`,
+          message: `${processed} kundkort hämtade, ${corrected} omklassade, ${d.remaining} kvar...`,
         });
       }
-      setVerifySync({ label: '', state: 'success', message: `Pausat efter ${processed} kunder – kör igen för resten.` });
+      setVerifySync({ label: '', state: 'success', message: `Pausat efter ${processed} kundkort – kör igen för resten.` });
     } catch {
       setVerifySync({ label: '', state: 'error', message: 'Nätverksfel' });
     }
@@ -219,16 +240,16 @@ export default function FortnoxIntegrationBlock({
           {/* Customer sync */}
           <SyncRow
             label="Synka kunder från Fortnox"
-            description="Importerar Fortnox-kunder som Fortnox-kunder i CRM:et. Kundtyp sätts preliminärt och bekräftas i steget nedan."
+            description="Läser Fortnox kundlista (namn, org.nr, e-post, telefon, fakturaadress) och köar nya och ändrade kunder för kundkorten nedan, som hämtas direkt efteråt."
             state={customerSync.state}
             message={customerSync.message}
-            onSync={() => runSync('/api/fortnox/customers/sync', setCustomerSync)}
+            onSync={runCustomerSync}
           />
 
-          {/* Customer type verification (confirms heuristic classification) */}
+          {/* Kortpasset: allt kundlistan saknar, och den bekräftade kundtypen */}
           <SyncRow
-            label="Verifiera kundtyper"
-            description="Bekräftar företag/privat mot Fortnox för importerade kunder. Körs i bakgrunden, kan ta en stund vid många kunder."
+            label="Hämta kundkort"
+            description="Läser kundkortet i Fortnox för köade kunder: kundtyp, omvänd moms, betalningsvillkor, prislista, fakturamejl och adresser. Kan ta en kvart vid många kunder – håll sidan öppen. Avbryts det fortsätter nästa körning där det slutade."
             state={verifySync.state}
             message={verifySync.message}
             onSync={runVerifyTypes}
