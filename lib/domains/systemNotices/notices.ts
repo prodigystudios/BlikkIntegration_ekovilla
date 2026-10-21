@@ -29,12 +29,15 @@ export function toSystemNoticeView(row: SystemNoticeRow): SystemNoticeView {
   };
 }
 
-// Samma regel som RLS-policyn app_system_notices_select: påslaget och inte avslutat. Bannern prövar den själv också,
-// så att ett meddelande vars sluttid passerar försvinner utan att vänta på nästa hämtning.
-export function isSystemNoticeActive(notice: Pick<SystemNoticeView, 'starts_at' | 'ends_at'>, now: Date): boolean {
-  const t = now.getTime();
-  if (new Date(notice.starts_at).getTime() > t) return false;
-  return notice.ends_at === null || new Date(notice.ends_at).getTime() > t;
+// Aktivt = inte avslutat. Bannern prövar det själv också, så att ett meddelande vars sluttid passerar försvinner utan
+// att vänta på nästa hämtning.
+//
+// 🧨 starts_at jämförs INTE här. Det finns ingen schemaläggning, så den är alltid när meddelandet slogs på — satt av
+// databasens now(). Mot webbläsarens eller appserverns klocka hade ett nyss påslaget meddelande varit osynligt tills
+// klockorna gått i fas (lokalt ligger databasen några tiondels sekund före; provet läste direkt efter påslaget och
+// fick ingenting). RLS-policyn jämför starts_at med samma klocka som satte den, och där får den stå kvar.
+export function isSystemNoticeActive(notice: Pick<SystemNoticeView, 'ends_at'>, now: Date): boolean {
+  return notice.ends_at === null || new Date(notice.ends_at).getTime() > now.getTime();
 }
 
 // Det allvarligaste överst; inom samma sort det senast påslagna.

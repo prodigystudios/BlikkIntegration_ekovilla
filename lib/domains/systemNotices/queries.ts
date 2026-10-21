@@ -9,12 +9,12 @@ export const systemNoticeSelect = 'id, kind, message, affected_areas, starts_at,
 export const ACTIVE_NOTICES_CAP = 50;
 
 // Det som är aktivt just nu. RLS släpper bara igenom aktiva rader till andra än admin — men admin ser allt, så filtret
-// här är det som gör svaret till "det bannern ska visa" oavsett vem som frågar.
+// här är det som gör svaret till "det bannern ska visa" oavsett vem som frågar. Bara sluttiden: starts_at sätts av
+// databasens klocka och jämförs inte med appens (se isSystemNoticeActive).
 export function listActiveSystemNotices(supabase: SupabaseClient, now: string) {
   return supabase
     .from('app_system_notices')
     .select(systemNoticeSelect)
-    .lte('starts_at', now)
     .or(`ends_at.is.null,ends_at.gt.${now}`)
     .order('starts_at', { ascending: false })
     .limit(ACTIVE_NOTICES_CAP);

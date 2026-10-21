@@ -48,10 +48,14 @@ describe('isSystemNoticeActive', () => {
   const at = (iso: string) => new Date(iso);
   const notice = (starts_at: string, ends_at: string | null) => ({ starts_at, ends_at });
 
-  it('är aktivt från påslaget tills det slås av', () => {
-    expect(isSystemNoticeActive(notice('2026-10-21T10:00:00Z', null), at('2026-10-21T09:59:59Z'))).toBe(false);
-    expect(isSystemNoticeActive(notice('2026-10-21T10:00:00Z', null), at('2026-10-21T10:00:00Z'))).toBe(true);
+  it('är aktivt tills det slås av', () => {
     expect(isSystemNoticeActive(notice('2026-10-21T10:00:00Z', null), at('2027-01-01T00:00:00Z'))).toBe(true);
+  });
+
+  // 🧨 starts_at sätts av databasens klocka. Ligger webbläsarens (eller appserverns) klocka efter, hade en jämförelse
+  // gömt ett nyss påslaget meddelande — det hände i provet mot den lokala databasen, 0,3 s isär.
+  it('syns direkt även när läsarens klocka ligger efter databasens', () => {
+    expect(isSystemNoticeActive(notice('2026-10-21T10:00:00.300Z', null), at('2026-10-21T10:00:00Z'))).toBe(true);
   });
 
   // Samma gräns som RLS-policyn (`ends_at > now()`): i sluttidens ögonblick är det slut.
