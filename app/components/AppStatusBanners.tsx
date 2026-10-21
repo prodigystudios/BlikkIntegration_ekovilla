@@ -14,6 +14,10 @@ import { systemNoticeAreaLabel, type SystemNoticeKind, type SystemNoticeView } f
 // på når de flesta inom en minut, utan att sidan laddas om.
 const POLL_MS = 60_000;
 
+// Admin-fliken skickar den här efter varje ändring, så att den som slog på meddelandet ser det direkt i sin egen flik
+// i stället för vid nästa minut. Alla andra får det vid sin nästa hämtning.
+export const APP_STATUS_REFRESH_EVENT = 'app-status:refresh';
+
 // Stängda meddelanden, per webbläsare. Nyckeln bär meddelandets version (systemNoticeDismissKey), så en ändrad text
 // visas igen. Taket håller listan liten; de äldsta faller bort först.
 const DISMISSED_STORAGE_KEY = 'systemNotices.dismissed';
@@ -174,11 +178,13 @@ export default function AppStatusBanners({ className }: { className?: string }) 
       if (document.visibilityState === 'visible') load();
     };
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener(APP_STATUS_REFRESH_EVENT, load);
     return () => {
       cancelled = true;
       controller?.abort();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener(APP_STATUS_REFRESH_EVENT, load);
     };
   }, []);
 

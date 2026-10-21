@@ -7,7 +7,7 @@ import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import Input from '../../../components/ui/Input';
 import { ADMIN_CHECKBOX, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX } from '../components/adminUi';
-import { SystemNoticeStrip } from '../../components/AppStatusBanners';
+import { APP_STATUS_REFRESH_EVENT, SystemNoticeStrip } from '../../components/AppStatusBanners';
 import { isSystemNoticeActive } from '../../../lib/domains/systemNotices/notices';
 import {
   SYSTEM_NOTICE_AREAS,
@@ -56,6 +56,8 @@ async function send(url: string, method: 'POST' | 'PATCH' | 'DELETE', payload?: 
   });
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.ok) throw new Error(body?.error || `Fel (${res.status})`);
+  // Bannern överst i den här fliken hämtar på nytt direkt; andra flikar och användare får det inom en minut.
+  window.dispatchEvent(new Event(APP_STATUS_REFRESH_EVENT));
   return body.data;
 }
 
