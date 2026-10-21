@@ -49,6 +49,9 @@ import type { PortalJobBadge } from '@/lib/domains/portal/jobBadge';
 import useDocumentEmail from '@/app/crm/components/useDocumentEmail';
 import { fixPropertyDesignationTyping } from '@/lib/domains/crm/propertyDesignation';
 import WorkOrderCustomerSwapDialog from './WorkOrderCustomerSwapDialog';
+import { workOrderDraftChanged, workOrderDraftFrom, workOrderHasEndContact, type WorkOrderDraft } from './workOrderDraft';
+import { useLeaveGuard } from '@/app/crm/components/useLeaveGuard';
+import UnsavedChangesDialog from '@/app/crm/components/UnsavedChangesDialog';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -139,38 +142,6 @@ type WorkOrderItem = {
   partial_invoicing_started_at: string | null;
   created_at: string;
   updated_at: string;
-};
-
-type WorkOrderDraft = {
-  // Orderns titel. Blir textraden `Projekt: X` på Fortnox-ordern — se workOrderDocumentNoteChanged.
-  project_name: string;
-  status: WorkOrderStatus;
-  assigned_to: string;
-  desired_installation_date: string;
-  street_address: string;
-  postal_code: string;
-  city: string;
-  contact_name: string;
-  contact_phone: string;
-  contact_email: string;
-  // Slutkunden på plats — en ANNAN person än kundens kontakt, fångad utanför kundkortet.
-  // Vinner över kundkontakten i det installatörerna ser (getWorkOrderCustomerContact).
-  end_contact_name: string;
-  end_contact_phone: string;
-  end_contact_email: string;
-  your_reference: string;
-  // Märkning → Fortnox YourOrderNumber. Bara företagskund, som i offerten.
-  label: string;
-  // ROT-uppgifterna. Arbetsordern ÄGER dem — offerten är låst när ordern finns, och ordern är
-  // sanningen om vad vi fakturerar (resolveOrderRotDetails).
-  rot_enabled: boolean;
-  rot_property_designation: string;
-  rot_percent: string;
-  rot_max_deduction: string;
-  rot_brf_org_number: string;
-  work_scope: string;
-  handoff_notes: string;
-  notes: string;
 };
 
 type AssignableUser = { id: string; full_name: string | null; role?: string | null };
@@ -384,6 +355,24 @@ export default function WorkOrderDetailClient({
   const [activeTab, setActiveTab] = useState<WorkOrderTab>('overview');
   const [draft, setDraft] = useState<WorkOrderDraft | null>(null);
 
+  // Osparat, för stoppet innan sidan lämnas. Två redigerare med var sitt utkast: översiktens här,
+  // och artiklarnas inne i WorkOrderArticles, som rapporterar upp sitt.
+  const [articlesDirty, setArticlesDirty] = useState(false);
+  // Fliken som väntar på svar. Artikelredigeraren ligger i Översikt-fliken, och ett flikbyte
+  // avmonterar den — raderna försvinner, inte bara ur sikte. Översiktens utkast överlever bytet.
+  const [pendingTab, setPendingTab] = useState<WorkOrderTab | null>(null);
+  const overviewDirty = useMemo(
+    () => editingOverview && workOrder !== null && draft !== null && workOrderDraftChanged(draft, endContactOpen, workOrder),
+    [editingOverview, workOrder, draft, endContactOpen],
+  );
+  const unsaved = canEdit && (overviewDirty || articlesDirty);
+  const leaveGuard = useLeaveGuard({ active: unsaved, fallbackHref: backTo });
+
+  function selectTab(next: WorkOrderTab) {
+    if (next !== activeTab && articlesDirty) { setPendingTab(next); return; }
+    setActiveTab(next);
+  }
+
   const [assignees, setAssignees] = useState<AssignableUser[]>([]);
   // Räknas upp efter Byt kund — se useCustomerContact.
   const [contactRefresh, setContactRefresh] = useState(0);
@@ -505,40 +494,8 @@ export default function WorkOrderDetailClient({
       setDraft((d) => (d ? { ...d, status: item.status } : d));
       return;
     }
-    setDraft({
-      project_name: item.project_name || '',
-      status: item.status,
-      assigned_to: item.assigned_to || '',
-      desired_installation_date: item.desired_installation_date || '',
-      street_address: item.work_address?.street_address || '',
-      postal_code: item.work_address?.postal_code || '',
-      city: item.work_address?.city || '',
-      contact_name: item.customer_snapshot?.contact_name || '',
-      contact_phone: item.customer_snapshot?.phone || '',
-      contact_email: item.customer_snapshot?.email || '',
-      end_contact_name: item.customer_snapshot?.end_contact_name || '',
-      end_contact_phone: item.customer_snapshot?.end_contact_phone || '',
-      end_contact_email: item.customer_snapshot?.end_contact_email || '',
-      // Ordrar skapade innan Er referens blev ett eget fält har den kvar i contact_name — visa den
-      // därifrån, annars ser fältet tomt ut fast Fortnox har ett värde.
-      your_reference: item.customer_snapshot?.your_reference ?? item.customer_snapshot?.contact_name ?? '',
-      label: item.customer_snapshot?.label || '',
-      rot_enabled: item.rot_details?.enabled === true,
-      rot_property_designation: item.rot_details?.property_designation || '',
-      // Tomt fält när värdet saknas, ALDRIG en påhittad default. En ruta som visar "30" på en order
-      // vars rot_details aldrig burit någon procent påstår ett värde vi inte har.
-      rot_percent: item.rot_details?.rot_percent != null ? String(item.rot_details.rot_percent) : '',
-      rot_max_deduction: item.rot_details?.max_deduction != null ? String(item.rot_details.max_deduction) : '',
-      rot_brf_org_number: item.rot_details?.brf_org_number || '',
-      work_scope: item.internal_handoff?.work_scope || '',
-      handoff_notes: item.internal_handoff?.handoff_notes || '',
-      notes: item.notes || '',
-    });
-    setEndContactOpen(Boolean(
-      item.customer_snapshot?.end_contact_name
-      || item.customer_snapshot?.end_contact_phone
-      || item.customer_snapshot?.end_contact_email,
-    ));
+    setDraft(workOrderDraftFrom(item));
+    setEndContactOpen(workOrderHasEndContact(item));
   }
 
   const totalLoggedHours = useMemo(
@@ -1081,6 +1038,11 @@ export default function WorkOrderDetailClient({
             ) : null}
           </p>
           <div className="flex items-center gap-2">
+            {/* Samma bricka som artikelredigerarens, intill Spara: raden står kvar under hela
+                redigeringen, och det är bara brickan som säger att det finns något att förlora. */}
+            {overviewDirty ? (
+              <span className={cn(crm.badge, 'border-amber-200 bg-amber-50 text-amber-700')}>Osparade ändringar</span>
+            ) : null}
             <button type="button" onClick={cancelOverview} disabled={saving} className={crm.ghostButton}>Avbryt</button>
             <button type="button" onClick={saveWorkOrder} disabled={saving} className={cn(crm.saveButton, 'h-8 w-auto px-5')}>
               {saving ? 'Sparar…' : 'Spara'}
@@ -1091,7 +1053,7 @@ export default function WorkOrderDetailClient({
 
       {/* Header */}
       <div>
-        <button type="button" onClick={() => router.push(backTo)} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
+        <button type="button" onClick={() => (unsaved ? leaveGuard.ask(backTo) : router.push(backTo))} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800">
           <BackArrow /> {backLabel}
         </button>
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1247,7 +1209,7 @@ export default function WorkOrderDetailClient({
           <button
             key={value}
             type="button"
-            onClick={() => setActiveTab(value)}
+            onClick={() => selectTab(value)}
             className={cn(
               'rounded-full border px-3.5 py-1.5 text-sm font-semibold transition',
               activeTab === value ? 'text-white' : 'border-[#e0e8dc] bg-[#f9fbf7] text-slate-600 hover:border-[#cfdcc9]',
@@ -1653,6 +1615,7 @@ export default function WorkOrderDetailClient({
                 // Avskrivning finns kvar även när editorn är låst — det är hela poängen. Utom på en
                 // färdigfakturerad order, där det inte finns något kvar att skriva av.
                 onSave={saveArticles}
+                onDirtyChange={setArticlesDirty}
               />
 
               {/* ─── Efterkalkyl ───────────────────────────────────────────
@@ -2297,6 +2260,23 @@ export default function WorkOrderDetailClient({
             toast.success(`Kunden bytt till ${customerName}`);
             if (fortnoxError) toast.error(fortnoxError);
           }}
+        />
+      ) : null}
+
+      {leaveGuard.pending ? (
+        <UnsavedChangesDialog
+          message="Det du ändrat på arbetsordern är inte sparat. Lämnar du sidan nu försvinner ändringarna."
+          onConfirm={leaveGuard.confirm}
+          onCancel={leaveGuard.cancel}
+        />
+      ) : null}
+
+      {pendingTab ? (
+        <UnsavedChangesDialog
+          message="Artikelraderna du ändrat är inte sparade. Byter du flik nu försvinner ändringarna."
+          confirmLabel="Byt flik utan att spara"
+          onConfirm={() => { setActiveTab(pendingTab); setPendingTab(null); }}
+          onCancel={() => setPendingTab(null)}
         />
       ) : null}
 
