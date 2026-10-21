@@ -85,11 +85,16 @@ export function buildFortnoxAddress(
   return { street: street ?? null, postal_code: postalCode ?? null, city: city ?? null };
 }
 
-// Tom sträng och blanksteg betyder "inget värde", samma konvention som kundformuläret (`trim() || null`). Kortet
+// Samma konvention som kundformuläret (`trim() || null`): tom sträng och blanksteg betyder "inget värde". Kortet
 // svarar "" för tomma fält (TermsOfPayment, EmailInvoice, VATNumber …); sparat rakt av hade "" mött formulärets null
 // och fortnoxCustomerFieldsChanged sett en ändring som inte finns.
 function blankToNull(value: string | null | undefined): string | null {
-  return value && value.trim() ? value : null;
+  return value?.trim() || null;
+}
+
+// En adress ur Fortnox med samma regel per del. buildFortnoxAddress själv lämnas orörd — offertflödet använder den också.
+function fortnoxAddress(street: string | null | undefined, postalCode: string | null | undefined, city: string | null | undefined) {
+  return buildFortnoxAddress(blankToNull(street), blankToNull(postalCode), blankToNull(city));
 }
 
 // Namn och org.nr/personnummer — samma två fält i listan och på kortet. Guards the identity constraint: a
@@ -146,7 +151,7 @@ export function buildFortnoxListCustomerRow(
     email: blankToNull(c.Email),
     // Listan kallar fältet Phone; det är kortets Phone1.
     phone: blankToNull(c.Phone),
-    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
+    invoice_address: fortnoxAddress(c.Address1, c.ZipCode, c.City),
     ...fortnoxImportMetadata(c.CustomerNumber, now),
   };
 }
@@ -165,9 +170,9 @@ function mapFortnoxCustomerToRow(
     email: blankToNull(c.Email),
     phone: blankToNull(c.Phone1),
     mobile: blankToNull(c.Mobile) ?? blankToNull(c.Phone2),
-    visit_address: buildFortnoxAddress(c.VisitingAddress, c.VisitingZipCode, c.VisitingCity),
-    delivery_address: buildFortnoxAddress(c.DeliveryAddress1, c.DeliveryZipCode, c.DeliveryCity),
-    invoice_address: buildFortnoxAddress(c.Address1, c.ZipCode, c.City),
+    visit_address: fortnoxAddress(c.VisitingAddress, c.VisitingZipCode, c.VisitingCity),
+    delivery_address: fortnoxAddress(c.DeliveryAddress1, c.DeliveryZipCode, c.DeliveryCity),
+    invoice_address: fortnoxAddress(c.Address1, c.ZipCode, c.City),
     invoice_email: blankToNull(c.EmailInvoice),
     payment_terms: blankToNull(c.TermsOfPayment),
     price_list: blankToNull(c.PriceList),
@@ -376,7 +381,7 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
  */
 export async function getFortnoxCustomerPriceList(customerNumber: string): Promise<string | null> {
   const detail = await fortnoxGet<FortnoxCustomerDetailResponse>(`/customers/${encodeURIComponent(customerNumber)}`);
-  return detail.Customer?.PriceList?.trim() || null;
+  return blankToNull(detail.Customer?.PriceList);
 }
 
 // Search Fortnox customers live (for use in quote form, etc.)

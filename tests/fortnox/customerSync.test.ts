@@ -65,6 +65,8 @@ const inserts = () => ops.filter((op) => op.kind === 'insert');
 beforeEach(() => {
   ops = [];
   fortnoxGet.mockReset();
+  // Varje test ställer upp sina egna svar; ett glömt svar ska fallera, inte ärva förra testets.
+  answerSelect = () => { throw new Error('answerSelect inte uppställt för testet'); };
 });
 
 describe('syncFortnoxCustomers', () => {

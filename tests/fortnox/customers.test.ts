@@ -353,4 +353,11 @@ describe('buildFortnoxListCustomerRow', () => {
     expect(row.phone).toBeNull();
     expect(row.invoice_address).toBeNull();
   });
+
+  // Formuläret sparar trimmat och tomt som null — samma värde härifrån, annars ser fortnoxCustomerFieldsChanged en ändring.
+  it('trimmar värden och tömmer tomma adressdelar som formuläret gör', () => {
+    const row = buildFortnoxListCustomerRow({ ...listed, Email: ' kund@example.test ', Address1: ' ', ZipCode: '', City: 'Stockholm' }, 'business', 'nu');
+    expect(row.email).toBe('kund@example.test');
+    expect(row.invoice_address).toEqual({ street: null, postal_code: null, city: 'Stockholm' });
+  });
 });
