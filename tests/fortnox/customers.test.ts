@@ -4,6 +4,8 @@ import {
   fortnoxCustomerFieldsChanged,
   buildFortnoxCustomerUpdateRow,
   buildFortnoxListCustomerRow,
+  fortnoxLastModifiedParam,
+  customersChangedSince,
   splitSwedishName,
   buildFortnoxAddress,
   inferCustomerType,
@@ -359,5 +361,43 @@ describe('buildFortnoxListCustomerRow', () => {
     const row = buildFortnoxListCustomerRow({ ...listed, Email: ' kund@example.test ', Address1: ' ', ZipCode: '', City: 'Stockholm' }, 'business', 'nu');
     expect(row.email).toBe('kund@example.test');
     expect(row.invoice_address).toEqual({ street: null, postal_code: null, city: 'Stockholm' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fortnoxLastModifiedParam / customersChangedSince — från när synken köar kunder
+// som ändrats i Fortnox. Fortnox läser lastmodified som SVENSK tid (uppmätt).
+// ---------------------------------------------------------------------------
+
+// ⚠️ Explicita UTC-ögonblick. Under TZ=Europe/Stockholm hade en formatering utan explicit zon gett samma strängar — det
+// är CI (UTC) som fäller den mutationen. Mutationsprövat under TZ=UTC.
+describe('fortnoxLastModifiedParam', () => {
+  it('skriver ögonblicket i svensk sommartid (det uppmätta fallet: 09:37 UTC = 11:37)', () => {
+    expect(fortnoxLastModifiedParam(new Date('2026-10-20T09:37:00Z'))).toBe('2026-10-20 11:37');
+  });
+
+  it('skriver vintertid, och midnatt som 00 med datumet efter', () => {
+    expect(fortnoxLastModifiedParam(new Date('2026-01-15T23:30:00Z'))).toBe('2026-01-16 00:30');
+  });
+
+  // Timmen 02:00–03:00 går två gånger när sommartiden slutar: två ögonblick, en sträng. Fortnox kan inte skilja dem åt
+  // — det är en av anledningarna till marginalen i customersChangedSince.
+  it('ger samma sträng för båda varven av timmen som upprepas när sommartiden slutar', () => {
+    expect(fortnoxLastModifiedParam(new Date('2026-10-25T00:30:00Z'))).toBe('2026-10-25 02:30');
+    expect(fortnoxLastModifiedParam(new Date('2026-10-25T01:30:00Z'))).toBe('2026-10-25 02:30');
+  });
+});
+
+describe('customersChangedSince', () => {
+  it('är null — köa alla — när förra synken är okänd', () => {
+    expect(customersChangedSince(null)).toBeNull();
+    expect(customersChangedSince(undefined)).toBeNull();
+    expect(customersChangedSince('')).toBeNull();
+    expect(customersChangedSince('inte ett datum')).toBeNull();
+  });
+
+  it('ligger två timmar före förra synken', () => {
+    const lastSync = '2026-10-20T10:00:00.000Z';
+    expect(new Date(lastSync).getTime() - customersChangedSince(lastSync)!.getTime()).toBe(2 * 60 * 60 * 1000);
   });
 });

@@ -7,7 +7,12 @@ export async function POST() {
     if (admin.response) return admin.response;
 
     const result = await syncFortnoxCustomers(admin.currentUser!.id);
-    return ok({ created: result.created, updated: result.updated, pages: result.pages });
+    return ok({
+      created: result.created,
+      updated: result.updated,
+      pages: result.pages,
+      pendingCards: result.pendingCards,
+    });
   } catch (e: any) {
     return routeError(500, 'fortnox_customers_sync_failed', e?.message || 'Kundsynk misslyckades');
   }
