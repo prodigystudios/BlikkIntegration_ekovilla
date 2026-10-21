@@ -612,11 +612,12 @@ export function buildCustomerSnapshot(d: QuoteCustomerFields, opts?: { reverseVa
 // ett företags kortadress är oftast kontoret, och en glömd arbetsadress skickar montörerna dit. Det
 // går att stänga av — av betyder "jobbet görs på kundens adress", t.ex. en BRF. Står reglaget på, för
 // vilken kundtyp som helst, sparas offerten inte förrän gata, postnummer och ort är ifyllda: samma tre
-// delar som arbetsorderns spärr kräver (workOrderReadiness), så en offert som passerar här fälls inte
-// för adressen när den blir en order.
+// delar som arbetsorderns spärr kräver av en egen arbetsadress (workOrderReadiness). Men skrivs samma
+// adress som kundens sparas den som ingen (buildCustomerSnapshot), och då prövar ordern kundkortet.
 //
 // Reglaget är formulärets eget läge, inte en del av offerten. En sparad offert öppnas som den sparades
-// (på = snapshoten bär en egen arbetsadress); förvalet nedan gäller när kunden väljs eller typen byts.
+// (på = snapshoten bär någon del av en egen arbetsadress); förvalet nedan gäller när kunden väljs
+// eller typen byts.
 // Spärren bor därför bara i formuläret — rutten ser inte reglaget, och buildCustomerSnapshot sparar
 // en arbetsadress som är lika med kundadressen som ingen alls.
 
@@ -638,19 +639,23 @@ export function defaultCustomWorkAddress(quoteType: QuoteCustomerFields['quote_t
   return quoteType === 'business' || hasWorkAddressInput(d);
 }
 
+type WorkAddressState = { quoteType: QuoteCustomerFields['quote_type']; address: QuoteWorkAddressFields };
+
 /**
- * Reglaget när kundtypen kan ha bytts — knapparna Företag/Privat, eller kundkortet vid en återkomst.
- * Byts typen gäller den nya typens förval. Annars står säljarens eget val kvar: ett avslaget reglage
- * på en BRF slås inte på igen av en sväng förbi kundkortet.
+ * Reglaget när kundtypen eller adressen ändrats utan att säljaren rört reglaget — knapparna
+ * Företag/Privat, eller kundkortet vid en återkomst. `from` är läget före, `to` efter.
+ *
+ * - Fält med innehåll håller det på.
+ * - Byttes typen, eller tömdes adressen (kortet tog bort sin leveransadress), gäller förvalet.
+ * - Annars står säljarens eget val kvar: ett avslaget reglage på en BRF slås inte på igen av en sväng
+ *   förbi kundkortet, och ett påslaget med tomma fält slås inte av — då hade spärren gått att gå runt.
  */
-export function nextCustomWorkAddress(
-  current: boolean,
-  fromType: QuoteCustomerFields['quote_type'],
-  toType: QuoteCustomerFields['quote_type'],
-  d: QuoteWorkAddressFields,
-): boolean {
-  if (hasWorkAddressInput(d)) return true;
-  return fromType === toType ? current : toType === 'business';
+export function nextCustomWorkAddress(current: boolean, from: WorkAddressState, to: WorkAddressState): boolean {
+  if (hasWorkAddressInput(to.address)) return true;
+  if (from.quoteType !== to.quoteType || hasWorkAddressInput(from.address)) {
+    return defaultCustomWorkAddress(to.quoteType, to.address);
+  }
+  return current;
 }
 
 /**

@@ -45,6 +45,7 @@ import {
   copyDraftFromQuote,
   getDefaultDraftCustomerSource,
   defaultCustomWorkAddress,
+  hasWorkAddressInput,
   nextCustomWorkAddress,
   workAddressIssue,
   OFFER_VALIDITY_DAYS,
@@ -171,6 +172,12 @@ async function fetchCustomerLite(id: string): Promise<CrmCustomerLite | null> {
   } catch {
     return null;
   }
+}
+
+// "Annan arbetsadress" as the stash recorded it (persistDraft): a boolean, or undefined for a stash
+// written before the field existed.
+function stashedCustomWorkAddress(envelope: { customWorkAddress?: unknown } | null | undefined): boolean | undefined {
+  return typeof envelope?.customWorkAddress === 'boolean' ? envelope.customWorkAddress : undefined;
 }
 
 function buildCustomerSource(customer: CrmCustomerLite | null): QuoteDraft['customer_source'] {
@@ -853,7 +860,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       //
       // customWorkAddress likaså: reglaget är inte en del av draften, och ett företags reglage som
       // stod på med tomma fält hade annars kommit tillbaka avslaget — spärren förbi med en sväng
-      // till kundkortet. Ett avslaget reglage (BRF:en) kommer på samma sätt tillbaka avslaget.
+      // till kundkortet. Ett avslaget reglage (BRF:en) kommer på samma sätt tillbaka avslaget från
+      // SAMMA kund. Skapades en ny kund under svängen gäller den nya kundens förval
+      // (applySelectedCustomer), som när vilken kund som helst väljs.
       localStorage.setItem(draftStorageKey, JSON.stringify({
         version: 1, savedAt: Date.now(), quoteId: quoteId ?? null, draft, appliedCustomer: appliedCustomerRef.current,
         customWorkAddress,
@@ -971,14 +980,15 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     appliedCustomerRef.current = fields;
     // On for a business customer; otherwise only when the card gives a work address to show — all
     // three fields, not just the street (see refreshFromCustomerCard for why).
+    //
+    // The merge machinery compares plain strings; re-narrow the one field that is a union. Written
+    // as a check rather than a cast so an unexpected value can't slip through as a type.
     const quoteType = fields.quote_type === 'private' ? 'private' : 'business';
     setCustomWorkAddress(defaultCustomWorkAddress(quoteType, fields));
     setDraft((current) => ({
       ...current,
       ...fields,
-      // The merge machinery compares plain strings; re-narrow the one field that is a union.
-      // Written as a check rather than a cast so an unexpected value can't slip through as a type.
-      quote_type: fields.quote_type === 'private' ? 'private' : 'business',
+      quote_type: quoteType,
       customer_id: customer.id,
       customer_source: buildCustomerSource(customer),
     }));
@@ -1007,15 +1017,16 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // hold values — and buildCustomerSnapshot, which anchors on the street, would then drop them.
     //
     // Without values the seller's own choice stands (restored with the stash), unless the card
-    // changed the customer type — then that type's default. Re-deriving from the values alone
-    // turned a business toggle that was on with empty fields OFF, and the save gate with it.
-    const fromType = draftRef.current.quote_type;
-    const toType = merged.quote_type === 'private' ? 'private' : 'business';
-    setCustomWorkAddress((on) => nextCustomWorkAddress(on, fromType, toType, merged));
+    // changed the customer type or emptied the address — then the default (nextCustomWorkAddress).
+    // Re-deriving from the values alone turned a business toggle that was on with empty fields OFF,
+    // and the save gate with it.
+    const from = { quoteType: draftRef.current.quote_type, address: draftRef.current };
+    const quoteType = merged.quote_type === 'private' ? 'private' : 'business';
+    setCustomWorkAddress((on) => nextCustomWorkAddress(on, from, { quoteType, address: merged }));
     setDraft((current) => ({
       ...current,
       ...merged,
-      quote_type: merged.quote_type === 'private' ? 'private' : 'business',
+      quote_type: quoteType,
       // Identity metadata always follows the card — the seller never edits these.
       customer_id: customer.id,
       customer_source: buildCustomerSource(customer),
@@ -1101,7 +1112,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
         // against it, so editing an untouched loaded offer isn't flagged dirty. Detsamma för en
         // kopia: den är "orörd" tills säljaren ändrar något i den.
         baselineRef.current = JSON.stringify(seededDraft);
-        setCustomWorkAddress(Boolean(item.customer_snapshot?.delivery_address));
+        // Som den sparades: på när snapshoten bär någon del av en egen arbetsadress (alla tre fälten,
+        // som vid kundvalet — ett fält med innehåll göms aldrig). Inget förval för företag här.
+        setCustomWorkAddress(hasWorkAddressInput(seededDraft));
         setCustomEndContact(Boolean(
           item.customer_snapshot?.end_contact_name || item.customer_snapshot?.end_contact_phone || item.customer_snapshot?.end_contact_email,
         ));
@@ -1173,7 +1186,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           // The branch below fetches this same customer to run the merge — don't fetch it twice.
           applyRestoredDraft(restoredDraft, {
             skipCustomerLookup: Boolean(createdCustomerId),
-            customWorkAddress: typeof envelope.customWorkAddress === 'boolean' ? envelope.customWorkAddress : undefined,
+            customWorkAddress: stashedCustomWorkAddress(envelope),
           });
           if (restoredApplied) appliedCustomerRef.current = restoredApplied;
         }
@@ -1242,7 +1255,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       // refresh with nothing to compare against, so a later trip to the card couldn't tell an
       // untouched field from an edited one and refused to update either.
       appliedCustomerRef.current = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
-      recoverableWorkAddressRef.current = typeof envelope.customWorkAddress === 'boolean' ? envelope.customWorkAddress : undefined;
+      recoverableWorkAddressRef.current = stashedCustomWorkAddress(envelope);
       setRecoverableDraft(envelope.draft as QuoteDraft);
     } catch { clearPersistedDraft(); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1476,16 +1489,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       errs.company_name = 'Företagsnamn krävs';
     }
     if (!draft.contact_name.trim()) errs.contact_name = 'Er referens krävs';
-    // Samma villkor som workAddressIssue, per fält.
-    if (customWorkAddress) {
-      if (!draft.delivery_address.trim()) errs.delivery_address = 'Gatuadress krävs';
-      if (!draft.delivery_postal_code.trim()) errs.delivery_postal_code = 'Postnummer krävs';
-      if (!draft.delivery_city.trim()) errs.delivery_city = 'Ort krävs';
-    }
     // Personnummer och fastighetsbeteckning krävs båda vid orderskapandet, inte på offerten —
     // inga fältfel här.
     return errs;
-  }, [submitAttempted, draft, effectiveRows, customWorkAddress]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [submitAttempted, draft, effectiveRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Map validation issues to field IDs for scroll-to
   const issueFieldIds: Record<string, string> = {
@@ -2042,7 +2049,9 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                     aria-pressed={draft.quote_type === type}
                     onClick={() => {
                       // Företag slår på "Annan arbetsadress", Privat slår av den om fälten är tomma.
-                      setCustomWorkAddress((on) => nextCustomWorkAddress(on, draft.quote_type, type, draft));
+                      setCustomWorkAddress((on) => nextCustomWorkAddress(
+                        on, { quoteType: draft.quote_type, address: draft }, { quoteType: type, address: draft },
+                      ));
                       setDraft((d) => ({ ...d, quote_type: type }));
                     }}
                     className={cn(
@@ -2064,8 +2073,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
               onClear={() => {
                 customerLookupRef.current += 1; // clearing outranks any lookup still in flight
                 setSelectedCustomer(null);
-                // Förvalet för kundtypen, med fälten tömda nedan: på för företag.
-                setCustomWorkAddress(defaultCustomWorkAddress(draft.quote_type, { delivery_address: '', delivery_postal_code: '', delivery_city: '' }));
+                // Förvalet med fälten tömda nedan (defaultCustomWorkAddress): på för företag.
+                setCustomWorkAddress(draft.quote_type === 'business');
                 setDraft((current) => ({
                   ...current, customer_id: null,
                   customer_source: buildCustomerSource(null),
@@ -2105,7 +2114,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                   </label>
                   {customWorkAddress ? (
                     <div className="grid gap-3 pb-1">
-                      <Field label="Gatuadress" error={fieldErrors.delivery_address}>
+                      <Field label="Gatuadress">
                         <AddressAutocompleteInput
                           value={draft.delivery_address}
                           onChange={(street) => setDraft((d) => ({ ...d, delivery_address: street }))}
@@ -2119,14 +2128,14 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
                         />
                       </Field>
                       <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3">
-                        <Field label="Postnummer" error={fieldErrors.delivery_postal_code}>
+                        <Field label="Postnummer">
                           <Input
                             value={draft.delivery_postal_code}
                             onChange={(e) => setDraft((d) => ({ ...d, delivery_postal_code: e.target.value }))}
                             placeholder="152 42"
                           />
                         </Field>
-                        <Field label="Ort" error={fieldErrors.delivery_city}>
+                        <Field label="Ort">
                           <Input
                             value={draft.delivery_city}
                             onChange={(e) => setDraft((d) => ({ ...d, delivery_city: e.target.value }))}

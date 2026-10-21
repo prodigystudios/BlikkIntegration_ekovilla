@@ -426,23 +426,32 @@ describe('defaultCustomWorkAddress', () => {
 });
 
 describe('nextCustomWorkAddress', () => {
+  const at = (quoteType: 'business' | 'private', address = noWorkAddress) => ({ quoteType, address });
+
   it('byte till företag slår på, byte till privat slår av när fälten är tomma', () => {
-    expect(nextCustomWorkAddress(false, 'private', 'business', noWorkAddress)).toBe(true);
-    expect(nextCustomWorkAddress(true, 'business', 'private', noWorkAddress)).toBe(false);
+    expect(nextCustomWorkAddress(false, at('private'), at('business'))).toBe(true);
+    expect(nextCustomWorkAddress(true, at('business'), at('private'))).toBe(false);
   });
 
   it('fält med innehåll göms aldrig, oavsett byte', () => {
-    expect(nextCustomWorkAddress(true, 'business', 'private', fullWorkAddress)).toBe(true);
-    expect(nextCustomWorkAddress(false, 'business', 'business', fullWorkAddress)).toBe(true);
+    expect(nextCustomWorkAddress(true, at('business', fullWorkAddress), at('private', fullWorkAddress))).toBe(true);
+    expect(nextCustomWorkAddress(false, at('business', fullWorkAddress), at('business', fullWorkAddress))).toBe(true);
   });
 
   // 🧨 Ett avslaget reglage på en BRF ska inte slås på av en sväng förbi kundkortet, och ett påslaget
   // med tomma fält ska inte slås av — då hade spärren gått att gå runt.
-  it('samma typ: säljarens eget val står kvar', () => {
-    expect(nextCustomWorkAddress(false, 'business', 'business', noWorkAddress)).toBe(false);
-    expect(nextCustomWorkAddress(true, 'business', 'business', noWorkAddress)).toBe(true);
-    expect(nextCustomWorkAddress(true, 'private', 'private', noWorkAddress)).toBe(true);
-    expect(nextCustomWorkAddress(false, 'private', 'private', noWorkAddress)).toBe(false);
+  it('samma typ, inga fält: säljarens eget val står kvar', () => {
+    expect(nextCustomWorkAddress(false, at('business'), at('business'))).toBe(false);
+    expect(nextCustomWorkAddress(true, at('business'), at('business'))).toBe(true);
+    expect(nextCustomWorkAddress(true, at('private'), at('private'))).toBe(true);
+    expect(nextCustomWorkAddress(false, at('private'), at('private'))).toBe(false);
+  });
+
+  // Kundkortet tog bort sin leveransadress (fälten var orörda och töms av sammanslagningen): då gäller
+  // förvalet, inte ett reglage som står kvar på med tomma fält för en privatkund.
+  it('kortet tömde adressen: förvalet för typen', () => {
+    expect(nextCustomWorkAddress(true, at('private', fullWorkAddress), at('private'))).toBe(false);
+    expect(nextCustomWorkAddress(true, at('business', fullWorkAddress), at('business'))).toBe(true);
   });
 });
 
