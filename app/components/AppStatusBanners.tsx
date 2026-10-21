@@ -127,8 +127,10 @@ export function SystemNoticeStrip({
 }
 
 /**
- * `shell` = första elementet i app-skalets innehållsyta, sticky och kant i kant med den (de negativa marginalerna tar ut
- * <main>:s padding). `bare` = sidor utan skal (fältvyn), statiskt överst — fältvyn har egna sticky-rader.
+ * `shell` = första elementet i app-skalets innehållsyta, kant i kant med den (de negativa marginalerna tar ut <main>:s
+ * padding). `bare` = sidor utan skal (fältvyn), överst. Rullar med sidan i båda fallen, med flit: sticky räknar `top`
+ * från innehållsytan innanför paddingen och lade bannern över sidans rubrik, och två meddelanden tog en tredjedel av en
+ * mobilskärm hela tiden. Den som läst stänger det.
  */
 export default function AppStatusBanners({ placement }: { placement: 'shell' | 'bare' }) {
   const [notices, setNotices] = useState<SystemNoticeView[]>([]);
@@ -186,12 +188,7 @@ export default function AppStatusBanners({ placement }: { placement: 'shell' | '
   };
 
   return (
-    <div
-      className={cn(
-        'grid',
-        placement === 'shell' ? 'sticky top-0 z-30 -mx-4 -mt-4 mb-4 lg:-mx-6 lg:-mt-6' : 'relative z-30',
-      )}
-    >
+    <div className={cn('grid', placement === 'shell' && '-mx-4 -mt-4 mb-4 lg:-mx-6 lg:-mt-6')}>
       {visible.map((notice) => (
         <SystemNoticeStrip key={notice.id} notice={notice} now={now} onDismiss={() => dismiss(notice)} />
       ))}

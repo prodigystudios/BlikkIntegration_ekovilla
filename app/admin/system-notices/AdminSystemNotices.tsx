@@ -6,7 +6,7 @@ import { crm } from '../../crm/lib/crmTokens';
 import Select from '../../../components/ui/Select';
 import Textarea from '../../../components/ui/Textarea';
 import Input from '../../../components/ui/Input';
-import { ADMIN_CHECKBOX, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX, ADMIN_LABEL } from '../components/adminUi';
+import { ADMIN_CHECKBOX, ADMIN_EMPTY_BOX, ADMIN_ERROR_BOX } from '../components/adminUi';
 import { SystemNoticeStrip } from '../../components/AppStatusBanners';
 import { isSystemNoticeActive } from '../../../lib/domains/systemNotices/notices';
 import {
@@ -248,8 +248,8 @@ function NoticeForm({
       </div>
 
       <fieldset className="m-0 grid gap-1.5 border-0 p-0">
-        <legend className={cn(ADMIN_LABEL, 'mb-1.5 p-0')}>Påverkar</legend>
-        <div className="flex flex-wrap gap-x-4 gap-y-2">
+        <legend className={cn(crm.label, 'mb-1.5 p-0')}>Påverkar</legend>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-4">
           {SYSTEM_NOTICE_AREAS.map((area) => (
             <label key={area} className="inline-flex items-center gap-2 text-sm text-slate-700">
               <input
