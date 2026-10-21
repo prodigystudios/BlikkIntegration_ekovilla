@@ -64,15 +64,18 @@ export default function FortnoxIntegrationBlock({
     }
   }
 
-  // Ett kortpass i taget. Två loopar hade hämtat samma kort dubbelt så fort som Fortnox tillåter, och 429:orna hade
-  // lämnat korten i kön. Knapparna spärras också, men en ref håller även mellan två klick innan staten hunnit renderas.
+  // Kundsynken och kortpasset körs inte samtidigt, och inget av dem två gånger. Två kortpass hade hämtat samma kort
+  // dubbelt så fort som Fortnox tillåter (429:orna lämnar korten i kön), två synkar hade bläddrat listan parallellt.
+  // Knapparna spärras också, men refarna håller även för ett dubbelklick innan staten hunnit renderas.
+  const customerSyncRunning = useRef(false);
   const cardPassRunning = useRef(false);
 
   // Kundlistan bär bara tio fält; omvänd moms, betalningsvillkor, prislista m.m. finns på kundkortet. Synken köar nya och
   // i Fortnox ändrade kunder, och kortpasset startar direkt efteråt — annars stod de köade fälten kvar tills någon
-  // mindes att trycka på nästa knapp. Synkraden står som pågående tills kortpasset är klart.
+  // mindes att trycka på nästa knapp. Synkraden står som pågående tills kortpasset är klart, och visar om det inte blev det.
   async function runCustomerSync() {
-    if (cardPassRunning.current) return;
+    if (customerSyncRunning.current || cardPassRunning.current) return;
+    customerSyncRunning.current = true;
     setCustomerSync({ label: '', state: 'loading', message: null });
     try {
       const res = await fetch('/api/fortnox/customers/sync', { method: 'POST' });
@@ -83,53 +86,65 @@ export default function FortnoxIntegrationBlock({
       }
       const d = json.data as { created: number; updated: number; pendingCards: number };
       const summary = `${d.created} nya, ${d.updated} uppdaterade kunder.`;
-      if (d.pendingCards > 0) {
-        setCustomerSync({ label: '', state: 'loading', message: `${summary} Hämtar ${d.pendingCards} kundkort nedan...` });
-        await runVerifyTypes();
+      if (d.pendingCards === 0) {
+        setCustomerSync({ label: '', state: 'success', message: summary });
+        return;
       }
-      setCustomerSync({ label: '', state: 'success', message: summary });
+      setCustomerSync({ label: '', state: 'loading', message: `${summary} Hämtar ${d.pendingCards} kundkort nedan...` });
+      const cardsDone = await runCardPass();
+      setCustomerSync(cardsDone
+        ? { label: '', state: 'success', message: summary }
+        : { label: '', state: 'error', message: `${summary} Kundkorten blev inte klara – se steget nedan.` });
     } catch {
       setCustomerSync({ label: '', state: 'error', message: 'Nätverksfel' });
+    } finally {
+      customerSyncRunning.current = false;
     }
   }
 
   // Reads the Fortnox card of every queued customer (type, reverse VAT, terms of
   // payment, price list …). The endpoint processes one throttled batch per call and
-  // returns how many remain, so we loop until the queue is empty, accumulating
-  // progress as we go. A batch where every card failed made no progress – the same
-  // cards would come back first in the next one – so the loop stops there.
-  async function runVerifyTypes() {
-    if (cardPassRunning.current) return;
+  // returns how many remain, so we loop, accumulating progress as we go. Each batch
+  // starts after the previous one's last customer number: a card that fails stays
+  // queued but is not retried first in every batch, so the run always moves forward.
+  // The run ends at the end of the queue; failed cards are retried by the next run.
+  // Returns whether the queue is empty.
+  async function runCardPass(): Promise<boolean> {
+    if (cardPassRunning.current) return false;
     cardPassRunning.current = true;
     setVerifySync({ label: '', state: 'loading', message: 'Hämtar kundkort...' });
     let fetched = 0;
     let corrected = 0;
+    let failed = 0;
+    let after: string | null = null;
     try {
       for (let guard = 0; guard < 1000; guard++) {
-        const res = await fetch('/api/fortnox/customers/verify-types', { method: 'POST' });
+        const res = await fetch('/api/fortnox/customers/verify-types', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ after }),
+        });
         const json = await res.json();
         if (!res.ok || !json.ok) {
           setVerifySync({ label: '', state: 'error', message: json.error || 'Okänt fel' });
-          return;
+          return false;
         }
-        const d = json.data as { processed: number; corrected: number; remaining: number; failed: number };
+        const d = json.data as { processed: number; corrected: number; remaining: number; failed: number; last: string | null };
         fetched += d.processed - d.failed;
         corrected += d.corrected;
-        if (d.processed > 0 && d.failed === d.processed) {
+        failed += d.failed;
+        after = d.last;
+        if (d.processed === 0 || d.remaining === 0) {
+          if (d.remaining === 0) {
+            setVerifySync({ label: '', state: 'success', message: `Klart – ${fetched} kundkort hämtade, ${corrected} kunder omklassade.` });
+            return true;
+          }
           setVerifySync({
             label: '',
             state: 'error',
-            message: `${fetched} kundkort hämtade, men ${d.failed} gick inte att hämta och ${d.remaining} står kvar. Kör igen senare.`,
+            message: `${fetched} kundkort hämtade, ${failed} gick inte att hämta. ${d.remaining} står kvar – kör igen senare.`,
           });
-          return;
-        }
-        if (d.processed === 0 || d.remaining === 0) {
-          setVerifySync({
-            label: '',
-            state: 'success',
-            message: `Klart – ${fetched} kundkort hämtade, ${corrected} kunder omklassade. ${d.remaining} kvar.`,
-          });
-          return;
+          return false;
         }
         setVerifySync({
           label: '',
@@ -138,11 +153,19 @@ export default function FortnoxIntegrationBlock({
         });
       }
       setVerifySync({ label: '', state: 'success', message: `Pausat efter ${fetched} kundkort – kör igen för resten.` });
+      return false;
     } catch {
       setVerifySync({ label: '', state: 'error', message: 'Nätverksfel' });
+      return false;
     } finally {
       cardPassRunning.current = false;
     }
+  }
+
+  // Knappen "Hämta kundkort" — inte medan en kundsynk pågår, som startar passet själv.
+  async function runCardPassFromButton() {
+    if (customerSyncRunning.current) return;
+    await runCardPass();
   }
 
   // Backfill av kundansvarig från Blikk. Endpointen bearbetar en Blikk-listsida per anrop
@@ -271,7 +294,7 @@ export default function FortnoxIntegrationBlock({
             description="Läser kundkortet i Fortnox för köade kunder: kundtyp, omvänd moms, betalningsvillkor, prislista, fakturamejl och adresser. Kan ta en kvart vid många kunder – håll sidan öppen. Avbryts det fortsätter nästa körning där det slutade."
             state={verifySync.state}
             message={verifySync.message}
-            onSync={runVerifyTypes}
+            onSync={runCardPassFromButton}
             disabled={customerSync.state === 'loading'}
           />
 

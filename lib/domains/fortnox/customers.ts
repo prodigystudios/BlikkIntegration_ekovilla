@@ -324,23 +324,14 @@ async function countPendingCards(supabase: SupabaseAdmin): Promise<number> {
 
 const QUEUE_CHUNK_SIZE = 500;
 
-// Köar kunder för kortpasset: de Fortnox ändrat (`changed`), eller alla när förra synken är okänd (null). Byggs ur
-// Fortnox besked och inte ur listans sidor, så att en kund som hamnar mellan två sidor (någon raderas under synken)
-// köas ändå. Returnerar false om kön inte gick att skriva — då får tidpunkten inte flyttas fram.
-async function queueCustomersForCards(supabase: SupabaseAdmin, changed: Set<string> | null): Promise<boolean> {
-  const numbers = changed === null ? null : [...changed];
-  const chunks: Array<string[] | null> = [];
-  if (numbers === null) chunks.push(null);
-  else for (let i = 0; i < numbers.length; i += QUEUE_CHUNK_SIZE) chunks.push(numbers.slice(i, i + QUEUE_CHUNK_SIZE));
-
-  for (const chunk of chunks) {
-    const queue = supabase
+// Köar kundnumren för kortpasset. Returnerar false om kön inte gick att skriva — då får tidpunkten inte flyttas fram.
+async function queueCustomersForCards(supabase: SupabaseAdmin, numbers: string[]): Promise<boolean> {
+  for (let i = 0; i < numbers.length; i += QUEUE_CHUNK_SIZE) {
+    const { error } = await supabase
       .from('crm_customers')
       .update({ customer_type_verified: false })
-      .neq('sync_status', PUSH_FAILED);
-    const { error } = chunk === null
-      ? await queue.not('fortnox_customer_id', 'is', null)
-      : await queue.in('fortnox_customer_id', chunk);
+      .neq('sync_status', PUSH_FAILED)
+      .in('fortnox_customer_id', numbers.slice(i, i + QUEUE_CHUNK_SIZE));
     if (error) {
       console.warn(`[Fortnox sync] Kunderna gick inte att köa för kundkorten (${error.message}) → tidpunkten flyttas inte fram`);
       return false;
@@ -381,6 +372,10 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
   // Read before the list: a customer changed in Fortnox while this sync runs is picked up next time.
   const changedSince = customersChangedSince(await readCustomersSyncedAt(supabase));
   const changed = changedSince ? await listFortnoxCustomerNumbersChangedSince(changedSince) : null;
+  // Vad som köas för kortpasset. Med känd tidpunkt: Fortnox besked om ändrade kunder, inte listans sidor — en kund vid
+  // en sidbrytning som förskjuts (någon raderas under synken) köas ändå. Utan: de kunder vi har som FINNS i listan. En
+  // kund raderad i Fortnox men kvar hos oss hade gett 404 i varje kortpass och aldrig lämnat kön.
+  const toQueue: string[] = changed === null ? [] : [...changed];
 
   do {
     const response = await fortnoxGet<FortnoxCustomerListResponse>('/customers', {
@@ -410,6 +405,7 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
         const prev = existingById.get(c.CustomerNumber);
         return !!prev && prev.sync_status !== PUSH_FAILED && (changed === null || changed.has(c.CustomerNumber));
       });
+      if (changed === null) toQueue.push(...toUpdate.map((c) => c.CustomerNumber));
 
       // Create new rows. Heuristic Type (the list has no VAT number to fall back on),
       // unverified until the card pass runs – which also fills the card-only fields.
@@ -440,17 +436,18 @@ export async function syncFortnoxCustomers(triggeredByUserId: string): Promise<C
             .eq('fortnox_customer_id', c.CustomerNumber);
           if (error) {
             console.warn(`[Fortnox sync] Kunde inte uppdatera kund ${c.CustomerNumber} (${error.message})`);
+          } else {
+            totalUpdated++;
           }
           return null;
         });
-        totalUpdated += toUpdate.length;
       }
     }
 
     page++;
   } while (page <= totalPages);
 
-  if (await queueCustomersForCards(supabase, changed)) await saveCustomersSyncedAt(supabase, now);
+  if (await queueCustomersForCards(supabase, toQueue)) await saveCustomersSyncedAt(supabase, now);
 
   return {
     created: totalCreated,
@@ -464,9 +461,10 @@ export type VerifyTypesResult = {
   processed: number;
   corrected: number;
   remaining: number;
-  // Kort som inte gick att hämta eller skriva. De står kvar i kön; är alla i omgången sådana gör en ny omgång inget
-  // framsteg (t.ex. en kund raderad i Fortnox), och den som loopar ska sluta.
+  // Kort som inte gick att hämta eller skriva. De står kvar i kön till nästa körning.
   failed: number;
+  // Markören till nästa omgång i samma körning: sista kundnumret i den här. Null när omgången var tom.
+  last: string | null;
 };
 
 // Confirm customer_type for rows imported via heuristic (customer_type_verified=false)
@@ -475,16 +473,26 @@ export type VerifyTypesResult = {
 // terms of payment, price list …), so this pass is what fills them.
 // Resumable: processes one batch per call and reports how many still remain, so a
 // UI/cron can loop until remaining === 0.
-export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promise<VerifyTypesResult> {
+//
+// `after` is the cursor within one run: the batch starts after that customer number.
+// A card that fails stays queued, and without the cursor it would come first again in
+// the next batch — 50 permanently failing cards (customers deleted in Fortnox) would
+// starve the rest of the queue. A new run (after = null) retries them.
+export async function verifyCustomerTypesBatch(
+  after: string | null = null,
+  limit = VERIFY_BATCH_SIZE,
+): Promise<VerifyTypesResult> {
   const supabase = getSupabaseAdmin();
   const now = new Date().toISOString();
 
-  const { data: pending, error } = await supabase
+  let query = supabase
     .from('crm_customers')
     .select('id, fortnox_customer_id, customer_type')
     .eq('customer_type_verified', false)
     .not('fortnox_customer_id', 'is', null)
-    .neq('sync_status', PUSH_FAILED)
+    .neq('sync_status', PUSH_FAILED);
+  if (after) query = query.gt('fortnox_customer_id', after);
+  const { data: pending, error } = await query
     .order('fortnox_customer_id', { ascending: true })
     .limit(limit);
 
@@ -518,7 +526,13 @@ export async function verifyCustomerTypesBatch(limit = VERIFY_BATCH_SIZE): Promi
     await sleep(VERIFY_SPACING_MS);
   }
 
-  return { processed: rows.length, corrected, remaining: await countPendingCards(supabase), failed };
+  return {
+    processed: rows.length,
+    corrected,
+    remaining: await countPendingCards(supabase),
+    failed,
+    last: rows.length > 0 ? rows[rows.length - 1].fortnox_customer_id : null,
+  };
 }
 
 /**

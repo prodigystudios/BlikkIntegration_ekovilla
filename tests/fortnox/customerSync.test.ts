@@ -30,6 +30,7 @@ function builder(op: Op) {
     in: (column: string, value: unknown) => { op.filters.push(['in', column, value]); return chain; },
     not: (column: string, _operator: string, value: unknown) => { op.filters.push(['not', column, value]); return chain; },
     neq: (column: string, value: unknown) => { op.filters.push(['neq', column, value]); return chain; },
+    gt: (column: string, value: unknown) => { op.filters.push(['gt', column, value]); return chain; },
     order: () => chain,
     limit: () => chain,
     maybeSingle: () => chain,
@@ -207,7 +208,7 @@ describe('syncFortnoxCustomers', () => {
     await syncFortnoxCustomers('admin-1');
 
     expect(queueOps()).toHaveLength(1);
-    expect(queueOps()[0].filters).toContainEqual(['not', 'fortnox_customer_id', null]);
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['18', '20']]);
     expect(listUpdate('18')).toBeDefined();
     expect(listUpdate('20')).toBeDefined();
     expect(fortnoxGet).not.toHaveBeenCalledWith('/customers', expect.objectContaining({ lastmodified: expect.anything() }));
@@ -219,7 +220,17 @@ describe('syncFortnoxCustomers', () => {
 
     await syncFortnoxCustomers('admin-1');
 
-    expect(queueOps()[0].filters).toContainEqual(['not', 'fortnox_customer_id', null]);
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['18', '20']]);
+  });
+
+  // En kund raderad i Fortnox men kvar hos oss har inget kort: 404 i varje kortpass. Köad hade den aldrig lämnat kön,
+  // och varje synk hade startat ett kortpass som slutar med fel.
+  it('köar inte en kund som finns hos oss men inte längre i Fortnox lista', async () => {
+    arrange({ syncedAt: null, existing: BOTH, listed: [LISTED_18] });
+
+    await syncFortnoxCustomers('admin-1');
+
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['18']]);
   });
 
   // 🧨 En rad vars senaste push misslyckades bär ändringar Fortnox inte har. Första körningen köar alla — utan skyddet
@@ -231,6 +242,17 @@ describe('syncFortnoxCustomers', () => {
 
     expect(listUpdate('20')).toBeUndefined();
     expect(listUpdate('18')).toBeDefined();
+    expect(queueOps()[0].filters).toContainEqual(['in', 'fortnox_customer_id', ['18']]);
+    expect(queueOps()[0].filters).toContainEqual(['neq', 'sync_status', 'failed']);
+  });
+
+  // Med känd tidpunkt kommer kön ur Fortnox besked, och där kan en kund med misslyckad push stå med.
+  it('köar inte en ändrad kund vars senaste push misslyckades', async () => {
+    arrange({ syncedAt: KNOWN_SYNC, existing: [BOTH[0], { ...BOTH[1], sync_status: 'failed' }], listed: [LISTED_18, LISTED_20], changed: ['20'] });
+
+    await syncFortnoxCustomers('admin-1');
+
+    expect(listUpdate('20')).toBeUndefined();
     expect(queueOps()[0].filters).toContainEqual(['neq', 'sync_status', 'failed']);
   });
 
@@ -275,6 +297,14 @@ describe('syncFortnoxCustomers', () => {
     await syncFortnoxCustomers('admin-1');
 
     expect(savedSyncTimes()).toHaveLength(1);
+  });
+
+  it('räknar bara de uppdateringar som gick igenom', async () => {
+    arrange({ syncedAt: null, existing: BOTH, listed: [LISTED_18, LISTED_20], failUpdateFor: ['20'] });
+
+    const result = await syncFortnoxCustomers('admin-1');
+
+    expect(result.updated).toBe(1);
   });
 
   // Ett läsfel hade gjort varje kund till "ny": insertkrockar, ingen uppdatering — och tidpunkten framflyttad.
@@ -347,5 +377,30 @@ describe('verifyCustomerTypesBatch (kortpasset)', () => {
     expect(fortnoxGet).toHaveBeenCalledWith('/customers/A%20B');
     expect(result).toMatchObject({ processed: 1, failed: 1, remaining: 1 });
     expect(customerUpdates()).toHaveLength(0);
+  });
+
+  // Ett kort som inte går att hämta står kvar i kön. Utan markören hade det kommit först i varje omgång — 50 sådana
+  // (kunder raderade i Fortnox) hade stoppat resten av kön.
+  it('börjar efter förra omgångens sista kundnummer och lämnar nästa markör', async () => {
+    answerSelect = (op) => op.options?.count
+      ? { count: 3, error: null }
+      : { data: [{ id: 'u20', fortnox_customer_id: '20', customer_type: 'business' }], error: null };
+    fortnoxGet.mockResolvedValueOnce({ Customer: CARD_20 });
+
+    const result = await verifyCustomerTypesBatch('19');
+
+    const [select] = ops.filter((op) => op.kind === 'select' && op.table === 'crm_customers' && !op.options?.count);
+    expect(select.filters).toContainEqual(['gt', 'fortnox_customer_id', '19']);
+    expect(result.last).toBe('20');
+  });
+
+  it('börjar från början av kön utan markör', async () => {
+    answerSelect = (op) => op.options?.count ? { count: 0, error: null } : { data: [], error: null };
+
+    const result = await verifyCustomerTypesBatch();
+
+    const [select] = ops.filter((op) => op.kind === 'select' && op.table === 'crm_customers' && !op.options?.count);
+    expect(select.filters.some(([kind]) => kind === 'gt')).toBe(false);
+    expect(result.last).toBeNull();
   });
 });
