@@ -9,6 +9,7 @@ import {
   scheduleDayLabel,
   scheduleRowRef,
   scheduleStopMeta,
+  stopCallLine,
   workdayPosition,
   workOrderHref,
 } from '@/lib/domains/planning/scheduleStops';
@@ -285,6 +286,34 @@ describe('projectRepeatsAddress', () => {
     expect(projectRepeatsAddress('Strandgatan 9 – vind', 'Strandgatan 9, 814 30, Skutskär')).toBe(false);
     expect(projectRepeatsAddress('Villa tak', 'Testvägen 32, 13232, Söderbärke')).toBe(false);
     expect(projectRepeatsAddress('', 'Testvägen 32')).toBe(false);
+  });
+});
+
+describe('stopCallLine', () => {
+  const contact = (over: Partial<Parameters<typeof stopCallLine>[0]> = {}) =>
+    ({ contactName: 'Björn', phone: '08-222', isOnSiteContact: false, phoneFromCustomer: false, ...over });
+
+  it('ringer orderns kontaktperson vid namn', () => {
+    expect(stopCallLine(contact(), 'Acme AB')).toEqual({ label: 'Ring Björn', note: null });
+  });
+
+  it('säger att kontakten på plats är någon annan än kunden', () => {
+    expect(stopCallLine(contact({ contactName: 'Ulla', isOnSiteContact: true }), 'Acme AB')).toEqual({ label: 'Ring Ulla (på plats)', note: null });
+  });
+
+  it('säger vems numret är när kontakten på plats har lånat kundens', () => {
+    expect(stopCallLine(contact({ contactName: 'Ulla', isOnSiteContact: true, phoneFromCustomer: true }), 'Acme AB').note)
+      .toBe('Numret går till kundens kontakt – kontakten på plats har inget eget.');
+  });
+
+  it('fyller aldrig i kundens namn för en namnlös kontakt på plats', () => {
+    // Byggarens bolagsnamn över fastighetsägarens nummer hade varit en påhittad identitet.
+    expect(stopCallLine(contact({ contactName: null, isOnSiteContact: true }), 'Bygg AB').label).toBe('Ring kontakten på plats');
+  });
+
+  it('låter kunden vara personen när ordern saknar kontaktnamn', () => {
+    expect(stopCallLine(contact({ contactName: null }), 'Anna Andersson').label).toBe('Ring Anna Andersson');
+    expect(stopCallLine(contact({ contactName: '  ' }), null).label).toBe('Ring kunden');
   });
 });
 

@@ -179,6 +179,36 @@ export function scheduleStopMeta(
   return parts;
 }
 
+export type StopCallContact = {
+  contactName: string | null;
+  phone: string;
+  isOnSiteContact: boolean;
+  phoneFromCustomer: boolean;
+};
+
+/**
+ * Kortets "Ring"-rad för orderns kontakt (getWorkOrderCallContacts — samma person som fältvyn visar).
+ *
+ * ⚠️ VEM SOM NÅS MÅSTE STÅ PÅ RADEN. Kontakten på plats är en ANNAN person än kundens kontakt — en
+ * byggare beställer, fastighetsägaren står på plats — och fältvyn byter därför rubrik mellan
+ * "Kontakt på plats" och "Kundkontakt". Här bär etiketten samma skillnad.
+ *
+ * Kundnamnet fyller bara i för kundens EGEN kontakt (där är kunden den personen när ingen kontakt
+ * fångats). För en namnlös kontakt på plats hade det varit en påhittad identitet — byggarens
+ * bolagsnamn över fastighetsägarens nummer. Ett lånat nummer säger vems det är, som i fältvyn.
+ */
+export function stopCallLine(contact: StopCallContact, customer: string | null | undefined): { label: string; note: string | null } {
+  const name = contact.contactName?.trim() || null;
+  if (contact.isOnSiteContact) {
+    return {
+      label: name ? `Ring ${name} (på plats)` : 'Ring kontakten på plats',
+      note: contact.phoneFromCustomer ? 'Numret går till kundens kontakt – kontakten på plats har inget eget.' : null,
+    };
+  }
+  const fallback = (customer || '').trim() || null;
+  return { label: name || fallback ? `Ring ${name || fallback}` : 'Ring kunden', note: null };
+}
+
 /** Vägbeskrivningen. Samma URL-mönster som den äldre detaljmodalens "Öppna i Kartor". */
 export function mapsSearchHref(address: string): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;

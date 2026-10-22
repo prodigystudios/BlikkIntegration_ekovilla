@@ -11,7 +11,7 @@ import ScheduleStopCard from './schedule/ScheduleStopCard';
 import ScheduleTruckGroup from './schedule/ScheduleTruckGroup';
 import { getMaterialTheme } from './schedule/materialTheme';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
-import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup } from '@/lib/domains/planning/scheduleStops';
+import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup, type StopCallContact } from '@/lib/domains/planning/scheduleStops';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -400,6 +400,35 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       } catch {}
     })();
   }, [items, supabase]);
+
+  // Vem man ringer om varje CRM-jobb — orderns kontaktperson, samma som fältvyn visar. EN begäran för
+  // veckans alla ordrar (rutten prövar varje order mot läsarens egen RLS), inte en per kort.
+  //
+  // Ett fel kostar bara "Ring"-raden: kortet fungerar utan den och fältvyn har kontakten. Men det
+  // loggas, så att en trasig rutt inte blir ett tyst bortfall ingen ser.
+  const [callContacts, setCallContacts] = useState<Record<string, StopCallContact>>({});
+  useEffect(() => {
+    const ids = Array.from(new Set((items.filter(isCrmItem).map(it => it.work_order_id) as Array<unknown>)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)));
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/crm/work-orders/customer-contacts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ work_order_ids: ids }),
+        });
+        const json = await res.json().catch(() => null);
+        if (cancelled) return;
+        if (!res.ok || !json?.ok) { console.warn('[dashboard schedule] failed to load call contacts', res.status); return; }
+        setCallContacts((json.data?.contacts ?? {}) as Record<string, StopCallContact>);
+      } catch (e) {
+        console.warn('[dashboard schedule] failed to load call contacts', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [items]);
 
   // Realtime updates for segment reports
   useEffect(() => {
@@ -819,6 +848,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                         headingLevel={weekView ? 5 : 4}
                         reported={reported}
                         crewNames={crewNames}
+                        callContact={isCrmItem(it) && it.work_order_id ? callContacts[it.work_order_id] ?? null : null}
                         clipKey={cardKey}
                         expanded={expanded}
                         expandable={expandable}
