@@ -83,8 +83,9 @@ describe('groupScheduleStops', () => {
   });
 
   it('räknar en bil med bara blanksteg i namnet som utan lastbil', () => {
-    const blank = crm({ segment_id: 'seg-blank', truck: '  ' });
-    expect(route([blank])[0].trucks).toEqual([{ truck: null, stops: ['seg-blank=-/1'] }]);
+    // En gammal rad, för den kommer orörd ur feeden — crmJobToScheduleItem trimmar redan bilen till null.
+    const blank = legacy({ truck: '  ', order_number: 'blank' });
+    expect(route([blank])[0].trucks).toEqual([{ truck: null, stops: ['legacy:blank=-/1'] }]);
   });
 
   it('räknar platshållaren som ett stopp, som planeringstavlan gör', () => {
