@@ -2,6 +2,7 @@
 // komponenten (tests/crm/customerCard.test.ts).
 
 import type { TicCreditReport } from '@/lib/domains/tic/types';
+import { netAmount } from '@/lib/domains/crm/pricing';
 
 export type CustomerType = 'business' | 'private';
 export type CustomerStage = 'prospect' | 'customer' | 'fortnox_customer';
@@ -60,10 +61,39 @@ export type Customer = {
   contacts: CustomerContact[];
 };
 
+// Bara fälten kortet använder — routerna skickar hela raderna (crmQuoteSelect, crmWorkOrderSelect).
 export type RelatedQuote = {
-  id: string; quote_number: string | null; project_name: string; amount: number; currency_code: string; status: string; quote_date: string;
+  id: string;
+  quote_number: string | null;
+  fortnox_offer_number: string | null;
+  project_name: string;
+  amount: number | string;
+  currency_code: string;
+  vat_percent: number | string | null;
+  pricing_summary: { subtotal?: number; vat?: number; total?: number } | null;
+  status: string;
+  quote_date: string;
+  assigned_to: string | null;
+  customer_snapshot: {
+    street_address?: string | null; city?: string | null;
+    delivery_address?: string | null; delivery_city?: string | null;
+  } | null;
 };
-export type RelatedWorkOrder = { id: string; order_number: string; project_name: string; status: string; desired_installation_date: string | null };
+export type RelatedWorkOrder = {
+  id: string;
+  order_number: string;
+  fortnox_order_number: string | null;
+  project_name: string;
+  status: string;
+  desired_installation_date: string | null;
+  planned_start_day: string | null;
+  planned_end_day: string | null;
+  work_address: { street_address?: string | null; city?: string | null } | null;
+  quote_id: string | null;
+  assigned_to: string | null;
+  assignee: { id: string; full_name: string | null } | null;
+  partial_invoicing_started_at?: string | null;
+};
 export type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
 export type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
 
@@ -168,3 +198,72 @@ export function hasCompanyInfo(c: Customer): boolean {
 
 /** Sektionerna i redigeringsläget som "Ändra" kan hoppa till. Id:t är `redigera-<sektion>`. */
 export type CustomerEditSection = 'grundinfo' | 'kontakt' | 'adresser' | 'fakturering';
+
+/**
+ * Var offertens jobb ligger: arbetsadressen när offerten har en egen, annars kundens adress i
+ * offertens ögonblicksbild. Gata och ort, eller null.
+ */
+export function quotePlace(q: Pick<RelatedQuote, 'customer_snapshot'>): string | null {
+  const s = q.customer_snapshot;
+  if (!s) return null;
+  const parts = s.delivery_address?.trim()
+    ? [s.delivery_address, s.delivery_city]
+    : [s.street_address, s.city];
+  return parts.map((p) => p?.trim()).filter(Boolean).join(', ') || null;
+}
+
+/** Orderns arbetsadress som "gata, ort", eller null. */
+export function workOrderPlace(wo: Pick<RelatedWorkOrder, 'work_address'>): string | null {
+  const a = wo.work_address;
+  return [a?.street_address, a?.city].map((p) => p?.trim()).filter(Boolean).join(', ') || null;
+}
+
+export const QUOTE_STATUS_FILTERS = [
+  { id: 'alla', label: 'Alla', statuses: null },
+  { id: 'utkast', label: 'Utkast', statuses: ['draft'] },
+  { id: 'skickade', label: 'Skickade', statuses: ['sent'] },
+  { id: 'folj-upp', label: 'Följ upp', statuses: ['follow_up'] },
+  { id: 'vunna', label: 'Vunna', statuses: ['won'] },
+  { id: 'forlorade', label: 'Förlorade', statuses: ['lost'] },
+] as const;
+export type QuoteStatusFilter = (typeof QUOTE_STATUS_FILTERS)[number]['id'];
+
+/** Sök på nummer, benämning och plats; status enligt filtret. */
+export function filterQuotes(quotes: RelatedQuote[], search: string, filter: QuoteStatusFilter): RelatedQuote[] {
+  const statuses = QUOTE_STATUS_FILTERS.find((f) => f.id === filter)?.statuses ?? null;
+  const q = search.trim().toLowerCase();
+  return quotes.filter((quote) => {
+    if (statuses && !(statuses as readonly string[]).includes(quote.status)) return false;
+    if (!q) return true;
+    return [quote.quote_number, quote.fortnox_offer_number, quote.project_name, quotePlace(quote)]
+      .some((v) => v?.toLowerCase().includes(q));
+  });
+}
+
+/** Sök på nummer, benämning och adress. */
+export function filterWorkOrders(orders: RelatedWorkOrder[], search: string): RelatedWorkOrder[] {
+  const q = search.trim().toLowerCase();
+  if (!q) return orders;
+  return orders.filter((wo) => [wo.order_number, wo.fortnox_order_number, wo.project_name, workOrderPlace(wo)]
+    .some((v) => v?.toLowerCase().includes(q)));
+}
+
+/**
+ * Summorna under offerttabellen, EX MOMS och i KRONOR. `amount` är brutto (subtotal + moms), och en
+ * summa av brutto blandar byggmoms (0 %) med privatkundens 25 % — samma fel som rapporteringen hade.
+ * `netAmount` är enda vägen till ett netto (den vaktar också mot en tom pricing_summary).
+ * Öppna = utkast, skickade och följ upp. En offert i annan valuta räknas inte in — euro och kronor
+ * går inte att lägga ihop — men `otherCurrency` säger att den finns.
+ */
+export function quoteSums(quotes: RelatedQuote[]): { won: number; open: number; otherCurrency: boolean } {
+  let won = 0;
+  let open = 0;
+  let otherCurrency = false;
+  for (const q of quotes) {
+    if (q.currency_code && q.currency_code !== 'SEK') { otherCurrency = true; continue; }
+    const net = netAmount(q);
+    if (q.status === 'won') won += net;
+    else if (q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up') open += net;
+  }
+  return { won, open, otherCurrency };
+}

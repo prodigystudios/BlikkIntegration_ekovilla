@@ -22,6 +22,8 @@ export default async function KundProfilPage({ params }: { params: Promise<{ id:
         fortnoxConnected={fortnoxStatus.connected}
         portalPartnerEnabled={portalPartnerEnabled}
         canDeleteCustomer={Boolean(perms && can(perms, 'crm.admin'))}
+        canCreateQuote={Boolean(perms && can(perms, 'crm.offer.write'))}
+        canCreateWorkOrder={Boolean(perms && can(perms, 'crm.workorder.write'))}
       />
     </Suspense>
   );

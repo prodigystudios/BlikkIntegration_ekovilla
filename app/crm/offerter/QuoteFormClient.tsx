@@ -652,6 +652,24 @@ function SortableLineItem({ id, children }: { id: string; children: (dragHandle:
 // "resume unsaved draft" banner. A full day so a long detour (or coming back the next morning after
 // closing the tab) still restores the work rather than silently discarding it.
 const DRAFT_RECOVERY_TTL_MS = 24 * 60 * 60 * 1000;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Städar bort utgångna utkast med en nyckel PER KÄLLA (kopior, kundkortsförval). `:new` och `:edit:`
+ * skrivs över eller rensas av sitt eget formulär; de här ligger annars kvar för varje källa man en
+ * gång lämnat osparad. Bara det som redan är för gammalt för återuppta-bannern tas bort.
+ */
+function sweepExpiredSourceDrafts() {
+  try {
+    const now = Date.now();
+    for (const key of Object.keys(localStorage)) {
+      if (!key.startsWith('crm:quote-draft:copy:') && !key.startsWith('crm:quote-draft:customer:')) continue;
+      let savedAt: unknown = null;
+      try { savedAt = JSON.parse(localStorage.getItem(key) || 'null')?.savedAt; } catch { /* trasig = utgången */ }
+      if (typeof savedAt !== 'number' || now - savedAt >= DRAFT_RECOVERY_TTL_MS) localStorage.removeItem(key);
+    }
+  } catch { /* lagringen otillgänglig */ }
+}
 // Debounce before an edited draft is written to localStorage (a keystroke shouldn't hit storage).
 const DRAFT_AUTOSAVE_DEBOUNCE_MS = 800;
 
@@ -675,8 +693,25 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   const isCopy = Boolean(copyFromId);
   // Vilken offert formuläret hämtar sitt innehåll ur, oavsett vad som sedan görs med det.
   const sourceQuoteId = quoteId || copyFromId;
+  // Ny offert från kundkortet (`?customer_id=`): kundblocket förifylls som när säljaren väljer kunden
+  // i väljaren. Bara i skapa-läget och aldrig som kopia — där kommer kunden ur källoffertern.
+  //
+  // ⚠️ Två värden med flit. `customerIdParam` styr utkastets nyckel och returadressen och gäller
+  // HELA tiden formuläret står på kundens adress. `presetCustomerId` styr hämtningen och är tom under
+  // kundkortsresans retur (`created_customer_id`/`restore_quote`): där äger återställningen nedan
+  // draften, och ett förval ovanpå hade skrivit över det säljaren hunnit göra.
+  // Bara ett uuid godtas: värdet hamnar i en API-sökväg och i en lagringsnyckel, och en adress är
+  // användarstyrd.
+  const rawCustomerIdParam = !sourceQuoteId ? (searchParams.get('customer_id') || '') : '';
+  const customerIdParam = UUID_PATTERN.test(rawCustomerIdParam) ? rawCustomerIdParam : '';
+  const presetCustomerId = customerIdParam
+    && !searchParams.get('created_customer_id') && !searchParams.get('restore_quote') && !searchParams.get('prospect_id')
+    ? customerIdParam
+    : '';
 
-  const [loading, setLoading] = useState(Boolean(sourceQuoteId));
+  // Laddar också medan kunden till ett förval hämtas: formuläret, autosparet, lämna-vakten och
+  // återuppta-bannern väntar alla på `loading`, precis som när en offert hämtas.
+  const [loading, setLoading] = useState(Boolean(sourceQuoteId) || Boolean(presetCustomerId));
   const [submitting, setSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [creatingWorkOrder, setCreatingWorkOrder] = useState(false);
@@ -761,6 +796,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   );
   // The toggle saved with the stash the resume banner is offering (undefined in an older stash).
   const recoverableWorkAddressRef = useRef<boolean | undefined>(undefined);
+  // Stashens referens för kundkortssammanslagningen, tills säljaren väljer Återuppta.
+  const recoverableAppliedRef = useRef<CustomerDerivedValues | null>(null);
   // Separate on-site contact (slutkund) outside the customer card, mirrors the work-address toggle.
   const [customEndContact, setCustomEndContact] = useState(false);
   // Säljarkatalogen bakom ansvarig-väljaren. Hämtas även utan bytesrätt: läsvyn visar namnet,
@@ -829,9 +866,17 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // 🧨 Kopian har en EGEN nyckel per källoffert, den delar inte `:new`. Gjorde den det kunde ett
   // orelaterat, osparat nytt utkast ligga kvar i lådan och erbjudas av återuppta-bannern ovanpå en
   // nyss öppnad kopia — alltså fel kunds offert över den man just bad om.
-  const draftStorageKey = quoteId
-    ? `crm:quote-draft:edit:${quoteId}`
-    : (copyFromId ? `crm:quote-draft:copy:${copyFromId}` : 'crm:quote-draft:new');
+  // Samma skäl för en offert som startats från ett kundkort: egen nyckel per kund, annars hade ett
+  // osparat utkast till en annan kund erbjudits ovanpå den kund man just valde.
+  //
+  // EN beräkning av skapa-lägets källa styr både nyckeln och returadressen nedan: glider de isär
+  // kommer kundkortsresan tillbaka till en adress vars nyckel inte är stashens.
+  const createScope = copyFromId
+    ? { key: `copy:${copyFromId}`, query: `fran=${encodeURIComponent(copyFromId)}` }
+    : customerIdParam
+      ? { key: `customer:${customerIdParam}`, query: `customer_id=${encodeURIComponent(customerIdParam)}` }
+      : { key: 'new', query: '' };
+  const draftStorageKey = quoteId ? `crm:quote-draft:edit:${quoteId}` : `crm:quote-draft:${createScope.key}`;
   // This offer's own URL — used as returnTo when leaving to create/edit a customer.
   // Kundkortsresan kommer tillbaka hit, så returnTo måste följa med i adressen — annars är det
   // borta när säljaren väl sparar, och tavlan tappas efter en sväng förbi kunden.
@@ -839,9 +884,10 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // ⚠️ `?fran=` MÅSTE följa med för en kopia. Utan den kommer resan tillbaka till ett tomt
   // `/crm/offerter/ny`, där både källan och — eftersom nyckeln hänger på `fran` — stashen med
   // säljarens ändringar är oåtkomliga.
+  // Detsamma för `?customer_id=`: utan den kommer resan tillbaka till fel utkastnyckel.
   const offerSelfPath = isEditing
     ? `/crm/offerter/${quoteId}/redigera`
-    : (copyFromId ? `/crm/offerter/ny?fran=${encodeURIComponent(copyFromId)}` : '/crm/offerter/ny');
+    : `/crm/offerter/ny${createScope.query ? `?${createScope.query}` : ''}`;
   const offerSelfUrl = returnToParam ? withReturnTo(offerSelfPath, returnToParam) : offerSelfPath;
 
   // Stash the draft and leave to a customer page; we return via returnTo. Genom vakten utan att
@@ -970,7 +1016,8 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     };
   }
 
-  function applySelectedCustomer(customer: CrmCustomerLite) {
+  // Returnerar det som lades på draften, så att kundkortets förval kan räkna in samma sak i baslinjen.
+  function applySelectedCustomer(customer: CrmCustomerLite): Partial<QuoteDraft> {
     customerLookupRef.current += 1; // a deliberate pick outranks any lookup still in flight
     setSelectedCustomer(customer);
     const fields = customerDraftFields(customer);
@@ -984,13 +1031,14 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
     // as a check rather than a cast so an unexpected value can't slip through as a type.
     const quoteType = fields.quote_type === 'private' ? 'private' : 'business';
     setCustomWorkAddress(defaultCustomWorkAddress(quoteType, fields));
-    setDraft((current) => ({
-      ...current,
+    const patch: Partial<QuoteDraft> = {
       ...fields,
       quote_type: quoteType,
       customer_id: customer.id,
       customer_source: buildCustomerSource(customer),
-    }));
+    };
+    setDraft((current) => ({ ...current, ...patch }));
+    return patch;
   }
 
   /**
@@ -1152,6 +1200,32 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ny offert från kundkortet: välj kunden, och räkna in förvalet i baslinjen SYNKRONT — samma sak som
+  // offertladdningen gör. Ett orört formulär med förvald kund är inget osparat arbete; sattes baslinjen
+  // först efteråt hade renderingen emellan räknat formuläret som ändrat, och autosparet och
+  // lämna-vakten hade slagit till på ett formulär ingen rört. Formuläret visas inte medan `loading`
+  // står, så draften är fortfarande startdraften här (draftRef).
+  useEffect(() => {
+    sweepExpiredSourceDrafts();
+    if (!presetCustomerId) return;
+    let active = true;
+    fetchCustomerLite(presetCustomerId).then((customer) => {
+      if (!active) return;
+      // Ett fel i förvalet får aldrig lämna formuläret i laddläget: då hade säljaren stått framför
+      // en evig skelettvy. Utan kund är det bara ett vanligt nytt formulär.
+      try {
+        if (!customer) throw new Error('customer_not_found');
+        const patch = applySelectedCustomer(customer);
+        baselineRef.current = JSON.stringify({ ...draftRef.current, ...patch });
+      } catch {
+        toast.error('Kunde inte hämta kunden – välj den i fältet Kund');
+      }
+      setLoading(false);
+    });
+    return () => { active = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Returning from "create new customer": restore the stashed draft and auto-select
   // the newly created customer. Runs once, after any edit-mode load has finished.
   useEffect(() => {
@@ -1250,10 +1324,20 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
       // Only offer it when it actually differs from the clean baseline — otherwise there's nothing
       // to recover and a stale/no-op stash is just cleared.
       if (!fresh || JSON.stringify(envelope.draft) === baselineRef.current) { clearPersistedDraft(); return; }
+      // Ett förval från ett kundkort erbjuder bara ett utkast för SAMMA kund. Bytte säljaren kund i
+      // väljaren innan hen lämnade ligger utkastet under den första kundens nyckel — det är en annan
+      // kunds offert och ska inte läggas ovanpå den här. Det ligger kvar tills det går ut.
+      const stashCustomer = (envelope.draft as QuoteDraft).customer_id;
+      if (customerIdParam && stashCustomer && stashCustomer !== customerIdParam) return;
       // Carry the merge reference over with the draft. Resuming without it left the customer-card
       // refresh with nothing to compare against, so a later trip to the card couldn't tell an
       // untouched field from an edited one and refused to update either.
-      appliedCustomerRef.current = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
+      //
+      // ⚠️ Följer med först när säljaren väljer Återuppta, som arbetsadressen. Sattes den redan här
+      // stod stashens referens kvar efter "Börja om" (eller när säljaren började skriva) — och med ett
+      // kundförval i draften jämförde nästa kundkortsresa mot fel värden, så kortets ändringar
+      // slutade nå offerten.
+      recoverableAppliedRef.current = (envelope.appliedCustomer as CustomerDerivedValues | null) ?? null;
       recoverableWorkAddressRef.current = stashedCustomWorkAddress(envelope);
       setRecoverableDraft(envelope.draft as QuoteDraft);
     } catch { clearPersistedDraft(); }
@@ -1920,7 +2004,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : 'Offerter'}
+          {backTo.startsWith('/crm/saljtavla') ? 'Säljtavlan' : backTo.startsWith('/crm/kunder/') ? 'Kundkortet' : 'Offerter'}
         </button>
         {/* Den SPARADE statusen, inte rullgardinens: ändrar man till Vunnen utan att spara ska
             sidhuvudet inte redan påstå att offerten är vunnen. Offertnumret står här i stället för i
@@ -1966,6 +2050,7 @@ export default function QuoteFormClient({ quoteId, canReassign = false }: { quot
             <button
               type="button"
               onClick={() => {
+                appliedCustomerRef.current = recoverableAppliedRef.current;
                 applyRestoredDraft(recoverableDraft, { customWorkAddress: recoverableWorkAddressRef.current });
                 setRecoverableDraft(null);
               }}
