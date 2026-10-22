@@ -11,7 +11,8 @@ import ScheduleStopCard from './schedule/ScheduleStopCard';
 import ScheduleTruckGroup from './schedule/ScheduleTruckGroup';
 import { getMaterialTheme } from './schedule/materialTheme';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
-import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup, type StopCallContact } from '@/lib/domains/planning/scheduleStops';
+import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, nextOpenStopIndex, NO_STOP_FACTS, scheduleDayLabel, scheduleFactKey, workOrderHref, type ScheduleTruckGroup as TruckGroup, type StopCallContact, type StopFacts } from '@/lib/domains/planning/scheduleStops';
+import type { ScheduleFact } from '@/lib/domains/planning/scheduleFacts';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -75,6 +76,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   const supabase = getBrowserClient();
   const [weekOffset, setWeekOffset] = useState(0);
   const [items, setItems] = useState<any[]>([]);
+  // CRM-jobbens säckar, material, rapporterat, team och klart-läge, per placering och dag — se
+  // /api/crm/planering/my-jobs/facts. Nyckel: scheduleFactKey(segment_id, job_day).
+  const [crmFacts, setCrmFacts] = useState<Record<string, ScheduleFact>>({});
   const [loading, setLoading] = useState(false);
   const [segmentSortIndexMap, setSegmentSortIndexMap] = useState<Record<string, number | null>>({});
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -289,11 +293,27 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       try {
         // Two planning worlds during the cutover. allSettled, not all: one source failing must not
         // blank the other — an installer's week is a week either way.
-        const [legacy, crm] = await Promise.allSettled([
+        //
+        // CRM-jobbens fakta hämtas I SAMMA VÄNDA, så korten ritas en gång med allt och inte hoppar till
+        // när säckarna och teamet kommer in. Ett fel där kostar bara fakta: korten fungerar utan dem.
+        const [legacy, crm, facts] = await Promise.allSettled([
           supabase.rpc('get_my_jobs', { start_date: range.startISO, end_date: range.endISO }),
           supabase.rpc('get_my_crm_jobs', { start_date: range.startISO, end_date: range.endISO }),
+          fetch('/api/crm/planering/my-jobs/facts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ start_date: range.startISO, end_date: range.endISO }),
+          }).then(async (res) => ({ ok: res.ok, status: res.status, json: await res.json().catch(() => null) })),
         ]);
         if (cancelled) return;
+
+        if (facts.status === 'fulfilled' && facts.value.ok && facts.value.json?.ok) {
+          if (facts.value.json.data?.incomplete) console.warn('[dashboard schedule] facts incomplete: crew could not be read');
+          setCrmFacts((facts.value.json.data?.facts ?? {}) as Record<string, ScheduleFact>);
+        } else {
+          console.warn('[dashboard schedule] failed to load facts', facts.status === 'fulfilled' ? facts.value.status : facts.reason);
+          setCrmFacts({});
+        }
 
         const unwrap = (r: PromiseSettledResult<{ data: unknown; error: unknown }>, label: string) => {
           if (r.status !== 'fulfilled') { console.warn(`[dashboard schedule] ${label} rejected`, r.reason); return []; }
@@ -677,6 +697,18 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   );
   const daySubClass = (active: boolean) => cn('text-xs tabular-nums', active ? 'text-[#cfe3d5]' : 'text-slate-500');
 
+  // Kortets fakta i en form för båda källorna. CRM-jobben ur facts-rutten; de gamla Blikk-raderna ur
+  // planning_*-tabellerna som förut (säckarna ur raden, rapporterat och extra team per segment).
+  const stopFacts = (it: any): StopFacts => {
+    if (isCrmItem(it)) return (it.segment_id && it.job_day && crmFacts[scheduleFactKey(it.segment_id, it.job_day)]) || NO_STOP_FACTS;
+    return {
+      ...NO_STOP_FACTS,
+      plannedSacks: typeof it.bag_count === 'number' ? it.bag_count : null,
+      reported: it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0,
+      crew: Array.from(new Set((segmentCrewMap[it.segment_id] || []).map(m => (m.name || '').trim()).filter(Boolean))),
+    };
+  };
+
   // Bilens underrad. Hela veckan har redan dagen i dagrubriken ovanför, så där står bara stoppen.
   const truckSubtitle = (group: TruckGroup<unknown>, day: string) => {
     const n = group.stops.length;
@@ -823,7 +855,11 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           {days.map(({ day, trucks }) => (
             <div key={day} className={cn('grid', compact ? 'gap-4' : 'gap-5')}>
               {weekView && <h3 className="m-0 text-base font-bold text-slate-900">{scheduleDayLabel(day)}</h3>}
-              {trucks.map((group) => (
+              {trucks.map((group) => {
+                // Bilens nästa stopp, en gång per bil — det första som inte är klart. Bara på en rutt:
+                // jobben utan lastbil har ingen ordning och ingen fylld siffra.
+                const nextIndex = group.truck == null ? -1 : nextOpenStopIndex(group.stops, (s) => stopFacts(s.row).done);
+                return (
                 <ScheduleTruckGroup
                   key={group.truck ?? ''}
                   truck={group.truck}
@@ -833,11 +869,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                 >
                   {group.stops.map(({ row: it, stop, of }, i) => {
                     const cardKey = `${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`;
+                    const facts = stopFacts(it);
                     const isPlaceholder = isSchedulePlaceholder(it);
                     const expanded = isPlaceholder && expandedKeys.has(cardKey);
                     const expandable = isPlaceholder && (expanded || clippedKeys.has(cardKey));
-                    const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
-                    const crewNames = Array.from(new Set((segmentCrewMap[it.segment_id] || []).map(m => (m.name || '').trim()).filter(Boolean)));
                     return (
                       <ScheduleStopCard
                         key={cardKey}
@@ -847,8 +882,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                         last={i === group.stops.length - 1}
                         compact={compact}
                         headingLevel={weekView ? 5 : 4}
-                        reported={reported}
-                        crewNames={crewNames}
+                        facts={facts}
+                        next={i === nextIndex}
                         callContact={isCrmItem(it) && it.work_order_id ? callContacts[it.work_order_id] ?? null : null}
                         clipKey={cardKey}
                         expanded={expanded}
@@ -860,7 +895,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     );
                   })}
                 </ScheduleTruckGroup>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>

@@ -5,6 +5,8 @@ import {
   groupScheduleStops,
   isSchedulePlaceholder,
   mapsSearchHref,
+  nextOpenStopIndex,
+  reportedProgress,
   projectRepeatsAddress,
   scheduleDayLabel,
   scheduleRowRef,
@@ -320,6 +322,47 @@ describe('stopCallLine', () => {
     // Telefonfälten är fritext. "ring växeln" hade blivit `tel:` — en länk som inte ringer någon.
     expect(stopCallLine(contact({ phone: 'ring växeln' }), 'Acme AB')).toBeNull();
     expect(stopCallLine(contact({ phone: '+46 70-123' }), 'Acme AB')).not.toBeNull();
+  });
+});
+
+describe('nextOpenStopIndex', () => {
+  it('pekar på det första stoppet som inte är klart', () => {
+    expect(nextOpenStopIndex([true, false, false], (done) => done)).toBe(1);
+    expect(nextOpenStopIndex([false, true], (done) => done)).toBe(0);
+  });
+
+  it('har inget nästa stopp när alla är klara', () => {
+    expect(nextOpenStopIndex([true, true], (done) => done)).toBe(-1);
+  });
+});
+
+describe('reportedProgress', () => {
+  const base = { plannedSacks: 120, orderSacks: null, staged: false, reported: 45 };
+
+  it('jämför med placeringens säckar på ett vanligt jobb', () => {
+    expect(reportedProgress(base, false)).toEqual({ label: 'Rapporterat', of: 120, percent: 37.5 });
+  });
+
+  it('säger hela jobbet på ett flerdagarsjobb', () => {
+    expect(reportedProgress(base, true)?.label).toBe('Rapporterat hela jobbet');
+  });
+
+  it('jämför med HELA ORDERNS säckar på en uppdelad order, aldrig med etappens', () => {
+    // Säckboken är per arbetsorder: 45 är orderns, så "45 av 120" (etappens) hade ljugit.
+    expect(reportedProgress({ ...base, orderSacks: 300, staged: true }, true)).toEqual({ label: 'Rapporterat hela ordern', of: 300, percent: 15 });
+  });
+
+  it('ritar ingen mätare utan nämnare', () => {
+    expect(reportedProgress({ ...base, plannedSacks: null }, false)).toEqual({ label: 'Rapporterat', of: null, percent: null });
+    expect(reportedProgress({ ...base, staged: true, orderSacks: null }, false)?.percent).toBeNull();
+  });
+
+  it('slår i taket vid överrapportering', () => {
+    expect(reportedProgress({ ...base, reported: 150 }, false)?.percent).toBe(100);
+  });
+
+  it('har ingen rad när inget är rapporterat', () => {
+    expect(reportedProgress({ ...base, reported: 0 }, false)).toBeNull();
   });
 });
 

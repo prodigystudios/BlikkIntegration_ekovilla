@@ -135,11 +135,38 @@ export async function listWorkOrderCrew(
   const segments = ((rawSegments ?? []) as CrewSegment[]).filter((s) => !s.on_hold);
   if (segments.length === 0) return { data: [], error: null };
 
+  const sources = await loadCrewSources(supabase, segments);
+  if (sources.error) return { data: [], error: sources.error };
+  if (!sources.data) return { data: [], error: null };
+
+  return { data: resolveWorkOrderCrew({ segments, ...sources.data }), error: null };
+}
+
+export type CrewSources = {
+  segmentCrew: Map<string, CrewMember[]>;
+  weekly: TruckCrewMember[];
+  defaults: DefaultCrewMember[];
+};
+
+/**
+ * De tre tabellerna resolveWorkOrderCrew löser besättningen ur, lästa för placeringarnas veckor.
+ *
+ * Delas av KMA-planens förslag (listWorkOrderCrew, hela jobbet) och startsidans arbetsschema
+ * (scheduleFacts.ts, en placering per DAG). Båda måste läsa likadant — samma bilar, samma veckor,
+ * samma fel — annars svarar de olika om samma bil samma vecka.
+ *
+ * `data: null` när placeringarnas datum inte går att läsa: det finns ingen vecka att fråga om.
+ */
+export async function loadCrewSources(
+  supabase: SupabaseClient,
+  segments: CrewSegment[],
+): Promise<{ data: CrewSources | null; error: { message: string } | null }> {
+  if (segments.length === 0) return { data: null, error: null };
   const truckIds = [...new Set(segments.map((s) => s.truck_id))];
   const from = mondayOfISO(segments.reduce((min, s) => (s.start_day < min ? s.start_day : min), segments[0].start_day));
   const lastDay = segments.reduce((max, s) => (s.end_day > max ? s.end_day : max), segments[0].end_day);
   const lastMonday = mondayOfISO(lastDay);
-  if (!from || !lastMonday) return { data: [], error: null };
+  if (!from || !lastMonday) return { data: null, error: null };
   const to = addDaysISO(lastMonday, 6);
 
   // Veckoraderna läses per BIL, inte för alla bilar som listTruckCrew gör: ett etappjobb kan ligga
@@ -154,10 +181,7 @@ export async function listWorkOrderCrew(
     supabase
       .from('ops_segment_crew')
       .select('id, segment_id, member_id, member_name')
-      .in(
-        'segment_id',
-        segments.map((s) => s.id),
-      )
+      .in('segment_id', [...new Set(segments.map((s) => s.id))])
       .order('id', { ascending: true }),
     supabase
       .from('ops_truck_crew')
@@ -168,9 +192,9 @@ export async function listWorkOrderCrew(
       .order('id', { ascending: true }),
     listAllDefaultCrew(supabase),
   ]);
-  if (segmentCrewRows.error) return { data: [], error: segmentCrewRows.error };
-  if (weekly.error) return { data: [], error: weekly.error };
-  if (defaults.error) return { data: [], error: defaults.error };
+  if (segmentCrewRows.error) return { data: null, error: segmentCrewRows.error };
+  if (weekly.error) return { data: null, error: weekly.error };
+  if (defaults.error) return { data: null, error: defaults.error };
 
   const segmentCrew = new Map<string, CrewMember[]>();
   for (const row of (segmentCrewRows.data ?? []) as Array<CrewMember & { segment_id: string }>) {
@@ -179,13 +203,5 @@ export async function listWorkOrderCrew(
     segmentCrew.set(row.segment_id, list);
   }
 
-  return {
-    data: resolveWorkOrderCrew({
-      segments,
-      segmentCrew,
-      weekly: (weekly.data ?? []) as TruckCrewMember[],
-      defaults: defaults.data,
-    }),
-    error: null,
-  };
+  return { data: { segmentCrew, weekly: (weekly.data ?? []) as TruckCrewMember[], defaults: defaults.data }, error: null };
 }
