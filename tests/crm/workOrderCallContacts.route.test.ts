@@ -45,7 +45,8 @@ import { getCurrentUser } from '@/lib/auth/route';
 import { getWorkOrderCallContacts } from '@/lib/domains/crm/work-orders';
 import { POST } from '@/app/api/crm/work-orders/customer-contacts/route';
 
-const MINE = '11111111-2222-4333-8444-555555555555';
+// Med BOKSTÄVER: ett uuid av bara siffror gör toUpperCase() till en no-op, och gemenertestet prövar då ingenting.
+const MINE = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
 const OTHER = '99999999-2222-4333-8444-555555555555';
 const CONTACT = { contactName: 'Björn', phone: '08-222', isOnSiteContact: false, phoneFromCustomer: false };
 
@@ -91,6 +92,7 @@ describe('POST /api/crm/work-orders/customer-contacts', () => {
   });
 
   it('jämför id:n i gemener, som databasen svarar med dem', async () => {
+    expect(MINE.toUpperCase()).not.toBe(MINE);
     const json = await (await call({ work_order_ids: [MINE.toUpperCase()] })).json();
     expect(json.data.contacts).toEqual({ [MINE]: CONTACT });
   });
