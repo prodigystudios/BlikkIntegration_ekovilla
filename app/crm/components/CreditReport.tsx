@@ -57,9 +57,15 @@ export function creditRiskLabel(report: TicCreditReport): string {
   return report.risk_description || riskClassMeta(report.risk_class).label;
 }
 
+/** Riskprognosen som procent ("12,5 %"), eller null när tic.io inte skickat någon prognos. */
+export function creditForecastPercent(report: TicCreditReport): string | null {
+  return report.risk_forecast != null ? formatPercent(report.risk_forecast) : null;
+}
+
 /** "Riskprognos (sannolikhet): 12,5 %", eller null när tic.io inte skickat någon prognos. */
 export function creditForecastText(report: TicCreditReport): string | null {
-  return report.risk_forecast != null ? `Riskprognos (sannolikhet): ${formatPercent(report.risk_forecast)}` : null;
+  const percent = creditForecastPercent(report);
+  return percent ? `Riskprognos (sannolikhet): ${percent}` : null;
 }
 
 /**

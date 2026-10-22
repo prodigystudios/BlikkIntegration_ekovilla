@@ -435,21 +435,27 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
       if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte skapa kund'); return; }
 
       const item = json?.data?.item as { id: string; fortnox_customer_id?: string } | undefined;
+      // Kundkortet säger själv "Kunden är skapad" (bannern, `?skapad=1`) — där vore en grön toast
+      // samma besked två gånger. Toasten står kvar när resan går tillbaka till offerten, och
+      // Fortnox-felet visas alltid: bannern vet inte att pushen föll.
+      const toCard = Boolean(item?.id) && !returnTo;
       if (json?.data?.fortnox_error) {
         toast.error(`Kund skapad men Fortnox-push misslyckades: ${json.data.fortnox_error}`);
-      } else if (createInFortnox && item?.fortnox_customer_id) {
+      } else if (!toCard && createInFortnox && item?.fortnox_customer_id) {
         toast.success(`Kund skapad och synkad med Fortnox (#${item.fortnox_customer_id})`);
-      } else {
+      } else if (!toCard) {
         toast.success('Kund skapad');
       }
 
       // When sent here from the offer form, return there with the new customer id
       // so it can be auto-selected. Otherwise go to the new customer's detail page.
-      if (returnTo && item?.id) {
+      if (toCard) {
+        router.push(`/crm/kunder/${item?.id}?skapad=1`);
+      } else if (returnTo && item?.id) {
         const sep = returnTo.includes('?') ? '&' : '?';
         router.push(`${returnTo}${sep}created_customer_id=${item.id}`);
       } else {
-        router.push(item?.id ? `/crm/kunder/${item.id}` : '/crm/kunder');
+        router.push('/crm/kunder');
       }
     } catch {
       toast.error('Fel vid skapande av kund');
