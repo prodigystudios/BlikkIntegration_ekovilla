@@ -14,7 +14,7 @@ import { crewInitials, crewColor, type CrewMember, type AssignablePerson } from 
 import { describeSmsStatus, type ConfirmationSummary } from '@/lib/domains/planning/confirmations';
 import { resolveJobTypeFrom, type JobType } from '@/lib/domains/planning/jobTypes';
 import type { OpsSegment } from '@/lib/domains/planning/types';
-import { addDaysISO, daysBetweenInclusive } from './planningDates';
+import { addDaysISO, daysBetweenInclusive, shortDayISO, weekdayShortISO } from './planningDates';
 import type { OrderInfo } from '@/lib/domains/planning/order';
 import type { JobMargin } from './useJobMargins';
 import { isMarginLoss } from '@/lib/domains/crm/preCalculation';
@@ -569,6 +569,9 @@ export function JobRef({ job, className }: { job: Pick<JobDisplay, 'ref' | 'is_f
   );
 }
 
+// 'tor' -> 'Tor'. Veckodagarna står gemena i WEEKDAYS_SHORT; som etikett först på en rad ska de ha versal.
+const capitalized = (w: string) => w.charAt(0).toUpperCase() + w.slice(1);
+
 // Per-segment actions behind a kebab. Portalled to <body> so it escapes the card's overflow-hidden /
 // transform clipping; closes on outside click, scroll, or resize. Two-column layout to stay compact.
 export function SegmentMenu({
@@ -587,7 +590,9 @@ export function SegmentMenu({
   onAddCrew,
   onRemoveCrew,
   onCopyToTruck,
-  order,
+  orders,
+  showOrderDay,
+  onMove,
 }: {
   status: string;
   jobType: string | null;
@@ -604,7 +609,11 @@ export function SegmentMenu({
   onAddCrew: (person: AssignablePerson) => void;
   onRemoveCrew: (memberId: string) => void;
   onCopyToTruck: () => void;
-  order?: { index: number; total: number; onMove: (dir: 'up' | 'down') => void };
+  /** Kortets position på varje dag det delar med ett annat jobb. Tom = ingen ordning att välja. */
+  orders: OrderInfo[];
+  /** Sant på ett flerdagarskort: raderna måste säga vilken dag de gäller. */
+  showOrderDay: boolean;
+  onMove: (day: string, dir: 'up' | 'down') => void;
 }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -742,29 +751,39 @@ export function SegmentMenu({
 
                 {/* Ordning + Längd + Besättning */}
                 <div className="border-l border-[#eef3eb] pl-3">
-                  {order && order.total > 1 && (
+                  {orders.length > 0 && (
                     <div className="mb-3">
                       <p className="mb-1 px-0.5 text-[9px] font-bold uppercase tracking-[0.07em] text-slate-400">Ordning på dagen</p>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          disabled={order.index === 0}
-                          onClick={() => order.onMove('up')}
-                          title="Tidigare"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
-                        </button>
-                        <span className="min-w-[42px] text-center text-[11px] font-bold tabular-nums text-slate-500">{order.index + 1} / {order.total}</span>
-                        <button
-                          type="button"
-                          disabled={order.index === order.total - 1}
-                          onClick={() => order.onMove('down')}
-                          title="Senare"
-                          className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
-                        </button>
+                      <p className="mb-1.5 px-0.5 text-[10px] leading-snug text-slate-500">Vilket jobb bilen gör först.</p>
+                      {/* En rad per dag kortet delar med ett annat jobb. Ett flerdagarsjobb har en
+                          plats per dag — tvåa på onsdagen kan vara etta på torsdagen. */}
+                      <div className="space-y-1">
+                        {orders.map((o) => (
+                          <div key={o.day} className="flex items-center gap-1">
+                            {showOrderDay && (
+                              <span title={shortDayISO(o.day)} className="w-7 text-[10px] font-bold text-slate-500">{capitalized(weekdayShortISO(o.day))}</span>
+                            )}
+                            <button
+                              type="button"
+                              disabled={o.index === 0}
+                              onClick={() => onMove(o.day, 'up')}
+                              title="Tidigare"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M18 15l-6-6-6 6" /></svg>
+                            </button>
+                            <span className="min-w-[42px] text-center text-[11px] font-bold tabular-nums text-slate-600">{o.index + 1} av {o.total}</span>
+                            <button
+                              type="button"
+                              disabled={o.index === o.total - 1}
+                              onClick={() => onMove(o.day, 'down')}
+                              title="Senare"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-50 p-0 text-slate-600 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -884,6 +903,52 @@ export function SegmentMenu({
 }
 
 
+/**
+ * Kortets plats bland bilens jobb samma dag: "Jobb 1 av 2", med prickar som visar platsen i kön.
+ *
+ * ⚠️ ORD, INTE BARA EN SIFFRA. Märket var en grå "1" (på flerdagarskort "tor 1") i rubrikraden, och
+ * säljarna läste det som ingenting (William 2026-10-22). Orden säger vad det är; prickarna gör att
+ * man ser platsen utan att läsa. Egen rad överst: i rubrikraden fick orden inte plats bredvid
+ * ordernummer, status och meny på ett 132 px brett kort.
+ *
+ * Visas bara när bilen har minst två jobb den dagen (sharedDayOrders lämnar ensamma dagar).
+ */
+function DayOrderLine({ orders, showDay }: { orders: OrderInfo[]; showDay: boolean }) {
+  if (orders.length === 0) return null;
+  return (
+    <div className="mb-1 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+      {orders.map((o) => {
+        const label = `jobb ${o.index + 1} av ${o.total}`;
+        return (
+          <span
+            key={o.day}
+            title={`Bilen gör det här som jobb ${o.index + 1} av ${o.total} ${showDay ? `på ${shortDayISO(o.day)}` : 'den dagen'}. Ändra ordningen i menyn under Ordning på dagen.`}
+            className="inline-flex items-center gap-1.5 text-[9.5px] font-bold tabular-nums text-[color:var(--ek-green)]"
+          >
+            {/* Fler än fem prickar läses inte längre som en plats, bara som ett mönster. */}
+            {o.total <= 5 && (
+              <span aria-hidden="true" className="inline-flex items-center gap-[3px]">
+                {Array.from({ length: o.total }, (_, i) => (
+                  <span
+                    key={i}
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      // Tom prick = ring i varumärkesgrönt, genomskinlig. En vit prick med ljus kant
+                      // försvann mot bilens tonade kortbakgrund.
+                      i === o.index ? 'bg-[color:var(--ek-green)]' : 'border border-solid border-[color:var(--ek-accent)] bg-transparent opacity-60',
+                    )}
+                  />
+                ))}
+              </span>
+            )}
+            {showDay ? `${capitalized(weekdayShortISO(o.day))}: ${label}` : capitalized(label)}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 // The per-segment mutation handlers (each takes the segment), shared by both board views.
 export type SegmentActions = {
   onSetStatus: (seg: OpsSegment, status: string) => void;
@@ -893,7 +958,7 @@ export type SegmentActions = {
   onResize: (seg: OpsSegment, startDay: string, endDay: string) => void;
   onAddCrew: (seg: OpsSegment, person: AssignablePerson) => void;
   onRemoveCrew: (seg: OpsSegment, memberId: string) => void;
-  onReorder: (seg: OpsSegment, direction: 'up' | 'down') => void;
+  onReorder: (seg: OpsSegment, day: string, direction: 'up' | 'down') => void;
   onCopyToTruck: (seg: OpsSegment) => void;
   // Öppna platshållaren för redigering (titel, kund, bil, datum, synlighet, arbetsbeskrivning).
   // Bara platshållare — ett riktigt jobb redigeras på arbetsordern.
@@ -914,7 +979,8 @@ export function SegmentCardBody({
   actions,
   truckColor,
   truckName,
-  order,
+  orders = [],
+  showOrderDay = false,
   margin,
   showRevenue = false,
 }: {
@@ -925,7 +991,13 @@ export function SegmentCardBody({
   actions: SegmentActions;
   truckColor?: string;
   truckName?: string;
-  order?: OrderInfo;
+  /**
+   * Kortets plats på varje dag det delar bil med ett annat jobb (sharedDayOrders). Tom = jobbet är
+   * ensamt alla sina dagar, och då visas varken märke eller väljare.
+   */
+  orders?: OrderInfo[];
+  /** Flerdagarskort på veckotavlan: märket och väljaren säger vilken dag de gäller ("tor 1"). */
+  showOrderDay?: boolean;
   /** Odefinierad = inte hämtad än, eller behörighet saknas. Märket uteblir då helt. */
   margin?: JobMargin;
   /** Kortet är jobbets första i den här vyn — avgör om omsättningen skrivs ut. Se RevenueChip. */
@@ -937,22 +1009,17 @@ export function SegmentCardBody({
       <span className={cn('absolute inset-y-0 left-0 w-1', statusMeta(job?.status ?? '').rail)} />
       {job ? (
         <>
+          <DayOrderLine orders={orders} showDay={showOrderDay} />
           <div className="flex items-center gap-2">
             {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
-            {order && order.total > 1 && (
-              <span
-                title={`Ordning ${order.index + 1} av ${order.total} på dagen`}
-                className="inline-flex h-4 min-w-[16px] shrink-0 items-center justify-center rounded-full bg-slate-100 px-1 text-[9px] font-bold tabular-nums text-slate-500"
-              >
-                {order.index + 1}
-              </span>
-            )}
             <JobRef job={job} />
             <StatusPill status={job.status} className="ml-auto" />
             {canWrite && (
               <span className="relative z-20 inline-flex">
               <SegmentMenu
-                order={order && order.total > 1 ? { index: order.index, total: order.total, onMove: (dir) => actions.onReorder(seg, dir) } : undefined}
+                orders={orders}
+                showOrderDay={showOrderDay}
+                onMove={(day, dir) => actions.onReorder(seg, day, dir)}
                 status={job.status}
                 jobType={seg.job_type}
                 jobTypes={jobTypes}
@@ -1046,6 +1113,9 @@ export function SegmentCardBody({
         </>
       ) : seg.placeholder_title ? (
         <>
+          {/* Platshållaren räknas i bilens ordning, så den måste visa sin plats — annars står det
+              "Jobb 2 av 2" på ett kort och ingen etta någonstans. Flyttas från det riktiga jobbets meny. */}
+          <DayOrderLine orders={orders} showDay={showOrderDay} />
           <div className="flex items-center gap-2">
             {truckColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: truckColor }} />}
             <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-dashed border-slate-300 bg-slate-50 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-slate-500">

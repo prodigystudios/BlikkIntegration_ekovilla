@@ -17,7 +17,7 @@ import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { weekTotals, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import { CrewEditor, CrewAvatars, FOCUSED_CARD, SegmentCardBody, type SegmentActions } from './jobCard';
 import type { JobMargin } from './useJobMargins';
-import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
+import { compareBoardOrder, sharedDayOrders, type DayOrderLookup } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
 import DeliveryStripCell from './DeliveryStripCell';
 
@@ -62,6 +62,8 @@ type WeekBoardProps = {
   margins: Record<string, JobMargin>;
   /** Segment som får skriva ut omsättningen — ett per scope. Se revenueAnchorSegments. */
   revenueAnchors: Set<string>;
+  /** Ordningen per bil och dag, byggd på ALLA segment — inte de sökningen lämnar synliga. */
+  dayOrder: DayOrderLookup;
   dayNotes: DayNote[];
   onAddNote: (dayISO: string, body: string) => void;
   onRemoveNote: (id: string) => void;
@@ -110,7 +112,7 @@ function dayIndexFromX(e: React.MouseEvent | React.DragEvent, count: number): nu
 export default function WeekBoard({
   weekDays, showWeekend, trucks, allTrucksHidden, segments, weekSlices, todayISO, canWrite, placing, people, jobTypes,
   onCellClick, onCellDrop, onSegDragStart, onSegClick, focusedSegmentId, actions,
-  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins, revenueAnchors,
+  dayNotes, onAddNote, onRemoveNote, deliveries, expectedDeliveries, canReceiveDelivery, onReceiveDelivery, truckCrew, defaultCrew, onAddTruckCrew, onRemoveTruckCrew, onCopyTruckCrew, onForkWeek, onRestoreWeek, margins, revenueAnchors, dayOrder,
 }: WeekBoardProps) {
   // The visible day columns: all seven, or weekdays only when weekends are hidden.
   const days = showWeekend ? weekDays : weekDays.filter((d) => !d.isWeekend);
@@ -264,7 +266,14 @@ export default function WeekBoard({
           trucks.map((truck, ti) => {
             // Sorted, not just filtered: rendering in raw array order let an unrelated UPDATE
             // reshuffle two jobs that share a day. DOM order is the vertical order inside a day
-            // column, so this comparator IS the "which job is done first" the badge shows.
+            // column, so for jobs starting the same day this IS the "which job is done first" the
+            // badge shows.
+            //
+            // ⚠️ START DAY FIRST, so a multi-day card can stay on one row. A card spans its days and
+            // can't sit higher on Thursday than on Wednesday; packing by run order instead would
+            // leave holes and push Wednesday's jobs out of THEIR order. So when a planner puts a
+            // Thursday job ahead of the one continuing from Wednesday, the cards don't swap rows —
+            // the day badges ("tor 1", "tor 2") carry the order. Decided 2026-10-22.
             const laneSegs = segments
               .filter((s) => s.truck_id === truck.id && s.end_day >= weekStart && s.start_day <= weekEnd)
               .sort((a, b) => a.start_day.localeCompare(b.start_day) || compareBoardOrder(a, b));
@@ -472,7 +481,10 @@ export default function WeekBoard({
                             jobTypes={jobTypes}
                             people={people}
                             actions={actions}
-                            order={orderInfo(segments, seg)}
+                            // Platsen per synlig dag kortet täcker — ett flerdagarskort kan vara tvåa
+                            // på onsdagen och etta på torsdagen, så det får säga vilken dag det gäller.
+                            orders={sharedDayOrders(dayOrder, seg, days.slice(span.s, span.e + 1).map((d) => d.iso))}
+                            showOrderDay={span.e > span.s}
                             margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
                             // Ett kort per scope (revenueAnchors), och bara veckan det BÖRJAR: ett
                             // jobb över ett veckoskifte ritas som ett kort i varje vecka.

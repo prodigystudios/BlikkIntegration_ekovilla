@@ -6,7 +6,7 @@ import type { OpsSegment, OpsTruck } from '@/lib/domains/planning/types';
 import type { MonthWeek } from './planningDates';
 import { FOCUSED_CARD, SegmentCardBody, type SegmentActions } from './jobCard';
 import type { JobMargin } from './useJobMargins';
-import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
+import { compareBoardOrder, sharedDayOrders, type DayOrderLookup } from '@/lib/domains/planning/order';
 import type { JobType } from '@/lib/domains/planning/jobTypes';
 import type { AssignablePerson } from '@/lib/domains/planning/crew';
 import { groupNotesByDay, type DayNote } from '@/lib/domains/planning/dayNotes';
@@ -36,6 +36,8 @@ type MonthGridProps = {
   margins: Record<string, JobMargin>;
   /** Segment som får skriva ut omsättningen — ett per scope. Se revenueAnchorSegments. */
   revenueAnchors: Set<string>;
+  /** Ordningen per bil och dag, byggd på ALLA segment — inte de sökningen lämnar synliga. */
+  dayOrder: DayOrderLookup;
 };
 
 const WEEKDAYS = ['mån', 'tis', 'ons', 'tor', 'fre', 'lör', 'sön'];
@@ -58,6 +60,7 @@ export default function MonthGrid({
   dayNotes,
   margins,
   revenueAnchors,
+  dayOrder,
 }: MonthGridProps) {
   const truckColor = new Map(trucks.map((t) => [t.id, t.color || '#94a3b8']));
   const truckName = new Map(trucks.map((t) => [t.id, t.name]));
@@ -93,12 +96,14 @@ export default function MonthGrid({
                 // Grouped by truck first (that's what makes a dense month scannable), but within a
                 // truck the run order has to be the one the badge shows — sort_index was missing
                 // here, so a card badged "2/2" could sit above the one badged "1/2".
+                // ⚠️ No start_day key ahead of compareBoardOrder: the badge counts every job covering
+                // the day, so a job placed first on Thursday has to sit above the one continuing from
+                // Wednesday. compareBoardOrder already puts the continuing job first on a tie.
                 const daySegs = segments
                   .filter((s) => s.start_day <= cell.iso && s.end_day >= cell.iso)
                   .sort(
                     (a, b) =>
                       (truckOrder.get(a.truck_id) ?? 999) - (truckOrder.get(b.truck_id) ?? 999) ||
-                      a.start_day.localeCompare(b.start_day) ||
                       compareBoardOrder(a, b),
                   );
                 const cellNotes = notesByDay.get(cell.iso) ?? [];
@@ -184,7 +189,8 @@ export default function MonthGrid({
                           actions={actions}
                           truckColor={truckColor.get(seg.truck_id) || '#94a3b8'}
                           truckName={truckName.get(seg.truck_id) ?? ''}
-                          order={orderInfo(segments, seg)}
+                          // Kortet står i en dagcell, så det är den dagens plats och ingen annans.
+                          orders={sharedDayOrders(dayOrder, seg, [cell.iso])}
                           margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
                           // Ett kort per scope (revenueAnchors) OCH bara dess första dagcell:
                           // filtret ovan ritar ett kort i varje dag jobbet täcker, så ett

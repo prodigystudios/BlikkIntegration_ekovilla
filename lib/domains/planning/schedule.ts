@@ -6,6 +6,7 @@ import { listCrewBySegment } from './crew';
 import { confirmationsByWorkOrder, EMPTY_CONFIRMATION } from './confirmations';
 import { chunkIds, readAllPages } from './pagedRead';
 import { scopeKey, type ScopeSpan } from './weekValue';
+import { nextSortIndexOnDay } from './order';
 import type { OpsSegment } from './types';
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -98,7 +99,8 @@ export async function listSegments(
     .order('sort_index', { ascending: true })
     // Final tiebreak. sort_index defaults to 0 on every row, so without this the rows that share a
     // day come back in whatever order the executor produced — and it produces a different one after
-    // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
+    // any UPDATE to the table. A stable response, NOT the board order: the boards sort with
+    // compareBoardOrder (sort_index first), which differs for a job continuing across days.
     .order('id', { ascending: true });
 
   if (error) return { data: [], scopeSpans: [], error };
@@ -217,6 +219,10 @@ export type PlaceSegmentInput = {
  * badge still counted 1, 2, 3 (it renders a position, not a stored value), which made the board look
  * like it had an order it had never actually recorded.
  *
+ * "Already booked there" is every job COVERING the day, not only those starting on it — a job
+ * continuing from yesterday is on the day too, and the newcomer queues behind it. The rule itself is
+ * nextSortIndexOnDay (order.ts, unit-tested); this only reads the rows.
+ *
  * Two planners placing on the same truck+day in the same instant can both read the same max and land
  * on the same index. That is fine: compareBoardOrder still gives a stable total order, and the
  * up/down arrows renumber the group cleanly. Not worth a lock.
@@ -224,14 +230,11 @@ export type PlaceSegmentInput = {
 async function nextSortIndex(supabase: SupabaseClient, truckId: string, startDay: string): Promise<number> {
   const { data } = await supabase
     .from('ops_segments')
-    .select('sort_index')
+    .select('id, truck_id, start_day, end_day, sort_index')
     .eq('truck_id', truckId)
-    .eq('start_day', startDay)
-    .order('sort_index', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const highest = (data as { sort_index: number } | null)?.sort_index;
-  return typeof highest === 'number' ? highest + 1 : 0;
+    .lte('start_day', startDay)
+    .gte('end_day', startDay);
+  return nextSortIndexOnDay((data ?? []) as Parameters<typeof nextSortIndexOnDay>[0], truckId, startDay);
 }
 
 // created_by must equal the caller (RLS insert policy checks created_by = auth.uid()).
