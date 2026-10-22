@@ -5,12 +5,17 @@ import { postalCodeWarning } from '@/lib/domains/crm/postalCode';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
 import Select from '../../../components/ui/Select';
+import { TabsList, TabsTrigger } from '../../../components/ui/Tabs';
 import FortnoxCodeSelect from './FortnoxCodeSelect';
 import CollapsibleCardSection from './CollapsibleCardSection';
 import PortalPartnerCard from './PortalPartnerCard';
+import CustomerOverview from './CustomerOverview';
+import { CallsTab, ContactsTab, QuotesTab, TasksTab, WorkOrdersTab } from './CustomerRelatedTabs';
+import { cardLinkButton, Chip, CountBadge, DefinitionList, Field, Muted, SideCard } from './CustomerCardUi';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
-import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
+import { crm, customerStageLabel, syncStatusLabel } from '@/app/crm/lib/crmTokens';
+import { formatDateTime } from '@/app/crm/lib/format';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import {
   changedCustomerEditFields,
@@ -18,135 +23,37 @@ import {
   customerEditDiscountIssue,
   type CustomerEditDraft,
 } from './customerEditPatch';
+import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
+import {
+  formatSek,
+  resolveCustomerTab,
+  tabCountLabel,
+  type Customer,
+  type CustomerContact,
+  type CustomerEditSection,
+  type CustomerTab,
+  type RelatedCall,
+  type RelatedQuote,
+  type RelatedTask,
+  type RelatedWorkOrder,
+} from './customerCard';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
   PERSONAL_NUMBER_ERROR,
   PERSONAL_NUMBER_OPTIONAL_HINT,
 } from '@/lib/domains/crm/personalNumber';
-import { riskTypeLabel } from '@/lib/domains/tic/mappers';
-import type { TicCreditReport } from '@/lib/domains/tic/types';
-import { PhoneLink, EmailLink, AddressLink } from '@/app/crm/components/ContactLinks';
-import { CreditReportSummary } from '@/app/crm/components/CreditReport';
+import { creditForecastPercent, creditRemarkLines, creditRiskLabel, creditScoreMeta, riskClassMeta } from '@/app/crm/components/CreditReport';
 import ContactFormModal from '@/app/crm/components/ContactFormModal';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { applyContactToList } from '@/app/crm/lib/contactForm';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type CustomerType = 'business' | 'private';
-type CustomerStage = 'prospect' | 'customer' | 'fortnox_customer';
-type CustomerStatus = 'active' | 'inactive' | 'churned';
-type CustomerAddress = { street: string | null; postal_code: string | null; city: string | null } | null;
-
-type CustomerContact = {
-  id: string; name: string; role: string | null; phone: string | null; email: string | null; is_primary: boolean;
-};
-
-type RiskIndicator = { type: string; subtype?: string; notes?: string; score?: number | null };
-
-type Customer = {
-  id: string;
-  customer_type: CustomerType;
-  customer_stage: CustomerStage;
-  status: CustomerStatus;
-  company_name: string | null;
-  organization_number: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  personal_number: string | null;
-  email: string | null;
-  phone: string | null;
-  mobile: string | null;
-  visit_address: CustomerAddress;
-  delivery_address: CustomerAddress;
-  invoice_address: CustomerAddress;
-  invoice_email: string | null;
-  payment_terms: string | null;
-  price_list: string | null;
-  discount: number | null;
-  vat_number: string | null;
-  reverse_vat: boolean;
-  annual_revenue: number | null;
-  number_of_employees: number | null;
-  legal_entity_type: string | null;
-  sni_code: string | null;
-  sni_name: string | null;
-  operating_profit: number | null;
-  profit_after_financial_items: number | null;
-  total_assets: number | null;
-  operating_margin: number | null;
-  equity_ratio: number | null;
-  financial_year: number | null;
-  risk_indicators: RiskIndicator[] | null;
-  tic_company_id: number | null;
-  credit_report: TicCreditReport | null;
-  credit_report_fetched_at: string | null;
-  fortnox_customer_id: string | null;
-  sync_status: 'not_synced' | 'pending' | 'synced' | 'failed';
-  account_manager_id: string | null;
-  created_at: string;
-  updated_at: string;
-  contacts: CustomerContact[];
-};
-
 type Seller = { id: string; full_name: string | null; role: string };
 
-type RelatedQuote = { id: string; project_name: string; amount: number; currency_code: string; status: string; quote_date: string };
-type RelatedWorkOrder = { id: string; order_number: string; project_name: string; status: string; desired_installation_date: string | null };
-type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
-type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const quoteStatusLabel: Record<string, string> = {
-  draft: 'Utkast', sent: 'Skickad', follow_up: 'Följ upp', won: 'Vunnen', lost: 'Förlorad',
-};
-
-const callOutcomeLabel: Record<string, string> = {
-  no_answer: 'Inget svar', follow_up: 'Följ upp', positive: 'Positiv', negative: 'Negativ',
-};
-
-const taskStatusLabel: Record<string, string> = {
-  open: 'Öppen', done: 'Klar', cancelled: 'Avbruten',
-};
-
-function getDisplayName(c: Customer): string {
-  if (c.customer_type === 'business') return c.company_name || 'Okänt företag';
-  return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Okänd kund';
-}
-
-function formatAddress(addr: CustomerAddress): string {
-  if (!addr) return '–';
-  const parts = [addr.street, addr.postal_code, addr.city].filter(Boolean);
-  return parts.length > 0 ? parts.join(', ') : '–';
-}
-
-function formatDate(v: string | null | undefined) {
-  if (!v) return '–';
-  const d = new Date(`${v}T12:00:00`);
-  return Number.isNaN(d.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium' }).format(d);
-}
-
-function formatDateTime(v: string | null | undefined) {
-  if (!v) return '–';
-  const d = new Date(v);
-  return Number.isNaN(d.getTime()) ? '–' : new Intl.DateTimeFormat('sv-SE', { dateStyle: 'medium', timeStyle: 'short' }).format(d);
-}
-
-function formatCurrency(value: number, code: string) {
-  return new Intl.NumberFormat('sv-SE', { style: 'currency', currency: code || 'SEK', maximumFractionDigits: 0 }).format(value);
-}
-
-function formatSek(value: number | null | undefined): string | null {
-  if (value == null) return null;
-  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 0 }).format(value)} kr`;
-}
-
-function formatPercent(value: number | null | undefined): string | null {
-  if (value == null) return null;
-  return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 }).format(value)} %`;
-}
+// Taken för samtals- och uppgiftslistan. Routerna har ingen räkning, så fliken säger "200+" när
+// taket nås (tabCountLabel) i stället för ett tal som ser exakt ut men inte är det.
+const CALLS_LIMIT = 200;
+const TASKS_LIMIT = 200;
 
 // ─── Small UI helpers ─────────────────────────────────────────────────────────
 
@@ -166,28 +73,9 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <p className={crm.label}>{children}</p>;
 }
 
-function InfoField({ label, value }: { label: string; value?: React.ReactNode }) {
+function Card({ children, className, id }: { children: React.ReactNode; className?: string; id?: string }) {
   return (
-    <div>
-      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{label}</p>
-      <p className="mt-0.5 text-sm text-slate-700">{value || '–'}</p>
-    </div>
-  );
-}
-
-// Address value with the customer card's empty-state: falls back to a plain dash when
-// no address parts are set, otherwise renders the shared tap-to-navigate AddressLink.
-function AddressValue({ addr }: { addr: CustomerAddress }) {
-  const text = formatAddress(addr);
-  if (!addr || text === '–') {
-    return <p className="text-sm leading-relaxed text-slate-700">–</p>;
-  }
-  return <AddressLink value={text} className="text-sm" />;
-}
-
-function Card({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={cn(crm.cardInner, className)}>
+    <div id={id} className={cn(crm.cardInner, className)}>
       {children}
     </div>
   );
@@ -217,7 +105,7 @@ function AddressEditColumn({
         <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" />
         <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" />
       </div>
-      {/* Samma varning som i nykundsformuläret — se AddressColumn där. Fortnox tar bara siffror i
+      {/* Samma varning som i nykundsformuläret — se ZipWarning där. Fortnox tar bara siffror i
           ZipCode, och felet syns annars först som ett 400 flera steg senare. */}
       {zipWarning ? (
         <p className="text-[11px] leading-snug text-amber-700">{zipWarning}</p>
@@ -227,6 +115,16 @@ function AddressEditColumn({
       ) : null}
     </div>
   );
+}
+
+// Kundstatusen i rubriken. En Fortnox-kund bär synkstatusen i samma märke ("Fortnox-kund · synkad")
+// — två märken för samma koppling lästes som två saker.
+function stageChip(c: Customer): { text: string; dot: string } {
+  if (c.customer_stage === 'fortnox_customer') {
+    const dot = { synced: 'bg-emerald-600', pending: 'bg-amber-500', failed: 'bg-rose-600', not_synced: 'bg-slate-400' }[c.sync_status];
+    return { text: `${customerStageLabel.fortnox_customer} · ${syncStatusLabel[c.sync_status].toLowerCase()}`, dot };
+  }
+  return { text: customerStageLabel[c.customer_stage], dot: c.customer_stage === 'prospect' ? 'bg-sky-500' : 'bg-emerald-600' };
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
@@ -282,11 +180,21 @@ export default function CustomerDetailClient({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Fliken bor i adressen (`?tab=`) så att den går att länka till och står kvar efter omladdning
+  // och bakåt från en offert. Samma mönster som AdminTabsClient: replaceState, så att flikbyten
+  // inte fyller historiken och övriga parametrar (returnTo) står kvar.
+  const [tab, setTabState] = useState<CustomerTab>(() => resolveCustomerTab(searchParams.get('tab')));
+  // "Kunden är skapad" — bara direkt efter registreringen (`?skapad=1`). Parametern tas bort ur
+  // adressen direkt, så att en omladdning inte visar bannern igen.
+  const [createdBanner, setCreatedBanner] = useState(() => searchParams.get('skapad') === '1');
+
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editDraft, setEditDraft] = useState<CustomerEditDraft | null>(null);
   // Utkastet som editorn öppnades med, serialiserat — sparningen skickar bara det som ändrats sedan dess.
   const editBaseRef = useRef<Record<string, unknown> | null>(null);
+  // Sektionen "Ändra" bad om. Läses när redigeringsläget har renderats och sektionen finns i DOM:en.
+  const pendingEditScrollRef = useRef<CustomerEditSection | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -305,10 +213,34 @@ export default function CustomerDetailClient({
   const [savingManager, setSavingManager] = useState(false);
 
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
+  const [quotesTotal, setQuotesTotal] = useState<number | null>(null);
   const [workOrders, setWorkOrders] = useState<RelatedWorkOrder[]>([]);
+  const [workOrdersTotal, setWorkOrdersTotal] = useState<number | null>(null);
   const [calls, setCalls] = useState<RelatedCall[]>([]);
   const [tasks, setTasks] = useState<RelatedTask[]>([]);
-  const [relatedLoading, setRelatedLoading] = useState(false);
+  // Börjar som true: flikarnas antal och listor ska visa "laddar", inte "inga", innan första hämtningen.
+  const [relatedLoading, setRelatedLoading] = useState(true);
+
+  function setTab(next: CustomerTab) {
+    setTabState(next);
+    const url = new URL(window.location.href);
+    if (next === 'oversikt') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', next);
+    window.history.replaceState({}, '', url.toString());
+  }
+
+  // Fliken följer adressen även när sidan står kvar monterad (en länk till samma kort med annan
+  // `?tab=`). setTab skriver adressen själv, så det här blir ett no-op för kortets egna flikbyten.
+  useEffect(() => {
+    setTabState(resolveCustomerTab(searchParams.get('tab')));
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get('skapad') !== '1') return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('skapad');
+    window.history.replaceState({}, '', url.toString());
+  }, [searchParams]);
 
   useEffect(() => {
     let active = true;
@@ -348,28 +280,50 @@ export default function CustomerDetailClient({
       setRelatedLoading(true);
       try {
         const [quoteRes, woRes, callRes, taskRes] = await Promise.all([
-          fetch(`/api/crm/quotes?customer_id=${customerId}`, { cache: 'no-store' }),
+          // `created_desc`: routens standard sorterar på STATUS, och då var "Senaste offerter" de två
+          // första utkasten i stället för de två nyaste.
+          fetch(`/api/crm/quotes?customer_id=${customerId}&sort=created_desc`, { cache: 'no-store' }),
           fetch(`/api/crm/work-orders?customer_id=${customerId}`, { cache: 'no-store' }),
-          fetch(`/api/crm/calls?customer_id=${customerId}`, { cache: 'no-store' }),
-          fetch(`/api/crm/tasks?customer_id=${customerId}`, { cache: 'no-store' }),
+          fetch(`/api/crm/calls?customer_id=${customerId}&limit=${CALLS_LIMIT}`, { cache: 'no-store' }),
+          fetch(`/api/crm/tasks?customer_id=${customerId}&limit=${TASKS_LIMIT}`, { cache: 'no-store' }),
         ]);
         const [quoteJson, woJson, callJson, taskJson] = await Promise.all([
           quoteRes.json().catch(() => ({})), woRes.json().catch(() => ({})),
           callRes.json().catch(() => ({})), taskRes.json().catch(() => ({})),
         ]);
         if (!active) return;
-        setQuotes(quoteRes.ok && quoteJson.ok ? quoteJson.data?.items || [] : []);
-        setWorkOrders(woRes.ok && woJson.ok ? woJson.data?.items || [] : []);
+        const quotesOk = quoteRes.ok && quoteJson.ok;
+        const workOrdersOk = woRes.ok && woJson.ok;
+        setQuotes(quotesOk ? quoteJson.data?.items || [] : []);
+        setQuotesTotal(quotesOk && typeof quoteJson.data?.total === 'number' ? quoteJson.data.total : null);
+        setWorkOrders(workOrdersOk ? woJson.data?.items || [] : []);
+        setWorkOrdersTotal(workOrdersOk && typeof woJson.data?.total === 'number' ? woJson.data.total : null);
         setCalls(callRes.ok && callJson.ok ? callJson.data?.items || [] : []);
         setTasks(taskRes.ok && taskJson.ok ? taskJson.data?.items || [] : []);
-      } catch { if (active) { setQuotes([]); setWorkOrders([]); setCalls([]); setTasks([]); } }
+      } catch {
+        if (active) { setQuotes([]); setQuotesTotal(null); setWorkOrders([]); setWorkOrdersTotal(null); setCalls([]); setTasks([]); }
+      }
       finally { if (active) setRelatedLoading(false); }
     }
     load();
     return () => { active = false; };
   }, [customer, customerId]);
 
-  function startEditing() {
+  // "Ändra" på ett kort: hoppa till samma sektion i redigeringsläget och sätt fokus i första fältet.
+  useEffect(() => {
+    if (!editing) return;
+    const section = pendingEditScrollRef.current;
+    pendingEditScrollRef.current = null;
+    if (!section) return;
+    const el = document.getElementById(`redigera-${section}`);
+    if (!el) return;
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    // Första fältet som går att skriva i: Fortnox-väljarna är spärrade medan registret laddas.
+    el.querySelector<HTMLElement>('input:not(:disabled), button[role="combobox"]:not(:disabled)')?.focus({ preventScroll: true });
+  }, [editing]);
+
+  function startEditing(section?: CustomerEditSection) {
     if (!customer) return;
     const draft: CustomerEditDraft = {
       customer_type: customer.customer_type,
@@ -410,6 +364,7 @@ export default function CustomerDetailClient({
     };
     setEditDraft(draft);
     editBaseRef.current = customerEditBody(draft);
+    pendingEditScrollRef.current = section ?? null;
     setEditing(true);
   }
 
@@ -591,18 +546,24 @@ export default function CustomerDetailClient({
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 gap-6">
-        <div className="h-7 w-32 animate-pulse rounded-lg bg-[#dfe6da]" />
-        <div className="h-10 w-72 animate-pulse rounded-xl bg-[#dfe6da]" />
-        <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+      <div className="grid grid-cols-1 gap-5">
+        <div className="h-5 w-28 animate-pulse rounded-lg bg-[#dfe6da]" />
+        <div className="flex items-center gap-4">
+          <div className="h-14 w-14 animate-pulse rounded-[14px] bg-[#dfe6da]" />
+          <div className="grid gap-2">
+            <div className="h-8 w-72 animate-pulse rounded-xl bg-[#dfe6da]" />
+            <div className="h-6 w-56 animate-pulse rounded-full bg-[#dfe6da]" />
+          </div>
+        </div>
+        <div className="h-11 animate-pulse rounded-lg bg-[#dfe6da]" />
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
           <div className="grid gap-5">
             <div className="h-40 animate-pulse rounded-2xl bg-[#dfe6da]" />
-            <div className="h-24 animate-pulse rounded-2xl bg-[#dfe6da]" />
-            <div className="h-32 animate-pulse rounded-2xl bg-[#dfe6da]" />
+            <div className="h-40 animate-pulse rounded-2xl bg-[#dfe6da]" />
           </div>
-          <div className="grid gap-4">
+          <div className="grid content-start gap-4">
+            <div className="h-36 animate-pulse rounded-2xl bg-[#dfe6da]" />
             <div className="h-28 animate-pulse rounded-2xl bg-[#dfe6da]" />
-            <div className="h-24 animate-pulse rounded-2xl bg-[#dfe6da]" />
           </div>
         </div>
       </div>
@@ -612,7 +573,7 @@ export default function CustomerDetailClient({
   if (error || !customer) {
     return (
       <div className="grid gap-4">
-        <button type="button" onClick={() => router.push(backTo)} className="inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
+        <button type="button" onClick={() => router.push(backTo)} className="inline-flex w-fit items-center gap-1.5 px-0 py-1 text-sm text-slate-600 transition hover:text-slate-900">
           <BackArrow /> {backLabel}
         </button>
         <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">{error || 'Kunden hittades inte.'}</div>
@@ -620,168 +581,49 @@ export default function CustomerDetailClient({
     );
   }
 
-  const displayName = getDisplayName(customer);
+  const displayName = customerDisplayName(customer);
   const isB2B = customer.customer_type === 'business';
-  const hasCompanyInfo = Boolean(
-    customer.legal_entity_type || customer.sni_code || customer.sni_name ||
-    customer.annual_revenue != null || customer.number_of_employees != null ||
-    customer.operating_profit != null || customer.profit_after_financial_items != null ||
-    customer.total_assets != null || customer.operating_margin != null ||
-    customer.equity_ratio != null || customer.financial_year != null ||
-    (customer.risk_indicators && customer.risk_indicators.length > 0)
-  );
+  const report = customer.credit_report;
+  const stage = stageChip(customer);
+  const deleteBlocked = Boolean(customer.fortnox_customer_id) && !fortnoxConnected;
+  const creator = customer.created_by ? sellers.find((s) => s.id === customer.created_by) : null;
+  const openTasks = tasks.filter((t) => t.status === 'open').length;
 
-  // ─── Sidebar (shared between read + edit views) ────────────────────────────
+  // ─── Sidebar cards ─────────────────────────────────────────────────────────
 
-  // Metadata bär kundansvarig-väljaren, som sparar direkt (utanför Spara-knappen) och därför
-  // gäller i BÅDA lägena. Egen variabel, så att redigeringsläget kan visa den utan att släpa
-  // med de kopplade posterna nedanför.
-  const metadataCard = (
-    <Card>
-      <SectionTitle>Metadata</SectionTitle>
-      <div className="grid gap-3">
-        <div className="grid gap-1">
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Kundansvarig</p>
-          <Select
-            value={customer.account_manager_id || ''}
-            onChange={(e) => saveAccountManager(e.target.value)}
-            disabled={savingManager}
-          >
-            <option value="">— Ingen —</option>
-            {/* Behåll nuvarande värde valbart även om säljaren fallit ur listan (t.ex. slutat). */}
-            {customer.account_manager_id && !sellers.some((s) => s.id === customer.account_manager_id) ? (
-              <option value={customer.account_manager_id}>Okänd säljare</option>
-            ) : null}
-            {sellers.map((s) => (
-              <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
-            ))}
-          </Select>
-        </div>
-        <InfoField label="Skapad" value={formatDateTime(customer.created_at)} />
-        <InfoField label="Senast ändrad" value={formatDateTime(customer.updated_at)} />
-        {customer.fortnox_customer_id ? (
-          <InfoField label="Fortnox kund-ID" value={`#${customer.fortnox_customer_id}`} />
+  // Detaljer bär kundansvarig-väljaren, som sparar direkt (utanför Spara-knappen) och därför gäller i
+  // BÅDA lägena. Egen variabel, så att redigeringsläget kan visa den utan resten av sidokolumnen.
+  const detailsCard = (
+    <SideCard title="Detaljer">
+      <label htmlFor="kund-ansvarig" className="mb-1.5 block text-[13px] text-slate-600">Kundansvarig</label>
+      <Select
+        id="kund-ansvarig"
+        value={customer.account_manager_id || ''}
+        onChange={(e) => saveAccountManager(e.target.value)}
+        disabled={savingManager}
+      >
+        <option value="">— Ingen —</option>
+        {/* Behåll nuvarande värde valbart även om säljaren fallit ur listan (t.ex. slutat). */}
+        {customer.account_manager_id && !sellers.some((s) => s.id === customer.account_manager_id) ? (
+          <option value={customer.account_manager_id}>Okänd säljare</option>
         ) : null}
+        {sellers.map((s) => (
+          <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
+        ))}
+      </Select>
+      <div className="mt-4">
+        <DefinitionList compact>
+          <Field label="Fortnox kund-ID">
+            {customer.fortnox_customer_id ? `#${customer.fortnox_customer_id}` : <Muted>Inte i Fortnox</Muted>}
+          </Field>
+          <Field label="Skapad">
+            {formatDateTime(customer.created_at)}
+            {creator?.full_name ? <span className="font-normal text-slate-600"> av {creator.full_name}</span> : null}
+          </Field>
+          <Field label="Senast ändrad">{formatDateTime(customer.updated_at)}</Field>
+        </DefinitionList>
       </div>
-    </Card>
-  );
-
-  // Metadata + kopplade poster. Bara LÄSVYN visar de kopplade posterna: under redigering går
-  // inget av dem att agera på, och fyra färgkodade kort bredvid formuläret drar blicken från
-  // fälten man faktiskt kom för att ändra.
-  const historySidebar = (
-    <div className="grid gap-4">
-      {metadataCard}
-
-      {/* Offerter */}
-      <div className="rounded-2xl border border-amber-100 bg-gradient-to-b from-[#f9fbf7] to-amber-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-amber-600">Offerter</p>
-          <a href="/crm/offerter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Offerter →</a>
-        </div>
-        {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
-        ) : quotes.length === 0 ? (
-          <p className="text-xs text-slate-400">Inga kopplade.</p>
-        ) : (
-          <div className="grid gap-1.5">
-            {quotes.map((quote) => (
-              <a key={quote.id} href={`/crm/offerter?quote_id=${quote.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-amber-200 hover:bg-amber-50/50">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm text-slate-800">{quote.project_name}</span>
-                  <span className="shrink-0 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
-                    {quoteStatusLabel[quote.status] || quote.status}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-xs text-slate-400">{formatCurrency(quote.amount, quote.currency_code)} · {formatDate(quote.quote_date)}</p>
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Arbetsorder */}
-      <Card>
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Arbetsorder</p>
-          <a href="/crm/arbetsorder" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Arbetsorder →</a>
-        </div>
-        {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
-        ) : workOrders.length === 0 ? (
-          <p className="text-xs text-slate-400">Inga kopplade.</p>
-        ) : (
-          <div className="grid gap-1.5">
-            {workOrders.map((wo) => (
-              <a key={wo.id} href={`/crm/arbetsorder/${wo.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-slate-300 hover:bg-slate-50">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm text-slate-800">{wo.project_name}</span>
-                  <span className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                    {(workOrderStatusLabel as Record<string, string>)[wo.status] || wo.status}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-xs text-slate-400">#{wo.order_number}{wo.desired_installation_date ? ` · ${formatDate(wo.desired_installation_date)}` : ''}</p>
-              </a>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* Samtal */}
-      <div className="rounded-2xl border border-sky-100 bg-gradient-to-b from-[#f9fbf7] to-sky-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-sky-600">Samtal</p>
-          <a href="/crm/samtal" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Samtal →</a>
-        </div>
-        {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
-        ) : calls.length === 0 ? (
-          <p className="text-xs text-slate-400">Inga kopplade.</p>
-        ) : (
-          <div className="grid gap-1.5">
-            {calls.map((call) => (
-              <a key={call.id} href={`/crm/samtal?call_id=${call.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-sky-200 hover:bg-sky-50/50">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="min-w-0 truncate text-sm text-slate-800">{call.summary || call.contact_name || 'Samtal'}</span>
-                  <span className="shrink-0 rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
-                    {callOutcomeLabel[call.outcome] || call.outcome}
-                  </span>
-                </div>
-                <p className="mt-0.5 text-xs text-slate-400">{formatDateTime(call.call_at)}</p>
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Uppgifter */}
-      <div className="rounded-2xl border border-rose-100 bg-gradient-to-b from-[#f9fbf7] to-rose-50/40 p-5 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-rose-500">Uppgifter</p>
-          <a href="/crm/uppgifter" className="text-xs font-semibold text-slate-400 hover:text-slate-600 transition">Uppgifter →</a>
-        </div>
-        {relatedLoading ? (
-          <div className="h-8 animate-pulse rounded-lg bg-[#dfe6da]" />
-        ) : tasks.length === 0 ? (
-          <p className="text-xs text-slate-400">Inga kopplade.</p>
-        ) : (
-          <div className="grid gap-1.5">
-            {tasks.map((task) => (
-              <a key={task.id} href={`/crm/uppgifter?task_id=${task.id}`} className="block rounded-xl border border-slate-100 bg-white px-3 py-2 transition hover:border-rose-200 hover:bg-rose-50/50">
-                <div className="flex items-center justify-between gap-2">
-                  <span className={cn('min-w-0 truncate text-sm', task.status === 'done' ? 'text-slate-400 line-through' : 'text-slate-800')}>{task.title}</span>
-                  <span className="shrink-0 rounded-full border border-rose-200 bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                    {taskStatusLabel[task.status] || task.status}
-                  </span>
-                </div>
-                {task.due_date ? <p className="mt-0.5 text-xs text-slate-400">Förfaller {formatDate(task.due_date)}</p> : null}
-              </a>
-            ))}
-          </div>
-        )}
-      </div>
-
-    </div>
+    </SideCard>
   );
 
   // ─── Edit mode ─────────────────────────────────────────────────────────────
@@ -802,7 +644,7 @@ export default function CustomerDetailClient({
 
             {/* Grundinfo + Kontakt */}
             <div className="grid gap-5 lg:grid-cols-2">
-              <Card>
+              <Card id="redigera-grundinfo">
                 <SectionTitle>Grundinfo</SectionTitle>
                 <div className="grid gap-3">
                   {isB2B ? (
@@ -853,7 +695,7 @@ export default function CustomerDetailClient({
                 </div>
               </Card>
 
-              <Card>
+              <Card id="redigera-kontakt">
                 <SectionTitle>Kontakt</SectionTitle>
                 <div className="grid gap-3">
                   <div>
@@ -868,7 +710,7 @@ export default function CustomerDetailClient({
                     <FieldLabel>Mobil</FieldLabel>
                     <Input value={editDraft.mobile} onChange={(e) => setField('mobile', e.target.value)} placeholder="070-123 456 78" />
                   </div>
-                  {/* Kundansvarig redigeras via inline-väljaren i Metadata (sparas direkt, gäller
+                  {/* Kundansvarig redigeras via inline-väljaren i Detaljer (sparas direkt, gäller
                       i både läs- och redigeringsläget) — inte här, för att inte "Spara ändringar"
                       ska skriva över ett direktsatt värde med ett inaktuellt utkast. */}
                 </div>
@@ -876,7 +718,7 @@ export default function CustomerDetailClient({
             </div>
 
             {/* Adresser */}
-            <Card>
+            <Card id="redigera-adresser">
               <SectionTitle>Adresser</SectionTitle>
               <div className="grid gap-5 lg:grid-cols-3">
                 <AddressEditColumn label="Besöksadress"
@@ -897,7 +739,7 @@ export default function CustomerDetailClient({
             </Card>
 
             {/* Fakturainst */}
-            <Card>
+            <Card id="redigera-fakturering">
               <SectionTitle>Fakturainställningar</SectionTitle>
               <div className="grid gap-4">
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -951,11 +793,11 @@ export default function CustomerDetailClient({
 
           </div>
 
-          {/* Höger kolumn: spara + metadata.
+          {/* Höger kolumn: spara + detaljer.
               🧨 `lg:sticky` satt här redan förut men gjorde INGENTING: historikkorten låg i
               samma kolumn och gjorde den högre än fönstret, och en sticky box som är högre än
               sin viewport fastnar aldrig — den scrollar bort med sidan. Spara försvann alltså
-              redan vid Fakturainställningar, mitt i formuläret. Med bara spara + metadata kvar
+              redan vid Fakturainställningar, mitt i formuläret. Med bara spara + detaljer kvar
               är kolumnen kortare än fönstret och knappen följer med hela vägen ner. */}
           <div className="grid gap-4 lg:sticky lg:top-6">
             <Card>
@@ -968,7 +810,7 @@ export default function CustomerDetailClient({
                 </button>
               </div>
             </Card>
-            {metadataCard}
+            {detailsCard}
           </div>
         </div>
       </div>
@@ -977,329 +819,265 @@ export default function CustomerDetailClient({
 
   // ─── Read view ─────────────────────────────────────────────────────────────
 
-  return (
-    <div className="grid gap-6 pb-10">
+  const tabDefs: { id: CustomerTab; label: string; count: React.ReactNode }[] = [
+    { id: 'oversikt', label: 'Översikt', count: null },
+    { id: 'offerter', label: 'Offerter', count: relatedLoading ? null : tabCountLabel(quotes.length, Infinity, quotesTotal) },
+    { id: 'arbetsorder', label: 'Arbetsorder', count: relatedLoading ? null : tabCountLabel(workOrders.length, Infinity, workOrdersTotal) },
+    { id: 'samtal', label: 'Samtal', count: relatedLoading ? null : tabCountLabel(calls.length, CALLS_LIMIT) },
+    {
+      id: 'uppgifter',
+      label: 'Uppgifter',
+      count: relatedLoading ? null : (
+        <>{tasks.length >= TASKS_LIMIT ? `${openTasks}+` : openTasks}<span className="sr-only"> öppna</span></>
+      ),
+    },
+    { id: 'kontakter', label: 'Kontaktpersoner', count: String(contacts.length) },
+  ];
 
-      {/* Header */}
-      <div>
-        <button type="button" onClick={() => router.push(backTo)} className="mb-2 inline-flex w-fit items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition">
-          <BackArrow /> {backLabel}
-        </button>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="grid gap-1.5 min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', customerStageClass[customer.customer_stage])}>
-                {customerStageLabel[customer.customer_stage]}
-              </span>
-              {customer.customer_stage === 'fortnox_customer' ? (
-                <span className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', syncStatusClass[customer.sync_status])}>
-                  {syncStatusLabel[customer.sync_status]}
-                </span>
-              ) : null}
-              <span className="text-xs text-slate-400">{isB2B ? 'Företag' : 'Privat'}</span>
-            </div>
-            <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">{displayName}</h1>
-            {customer.organization_number ? <p className="m-0 text-sm text-slate-500">Org-nr: {customer.organization_number}</p> : null}
-            {customer.personal_number ? <p className="m-0 text-sm text-slate-500">Personnr: {customer.personal_number}</p> : null}
-          </div>
-          <button type="button" onClick={startEditing} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-slate-300">
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden><path d="M10 2l2 2-7 7H3v-2l7-7z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            Redigera
+  const nextStepClass = 'flex min-h-[52px] w-full items-center justify-start gap-3 rounded-xl border border-[#e0e8dc] bg-white px-3.5 py-0 text-left text-sm font-medium text-slate-900 transition hover:border-[color:var(--ek-accent-soft-border)] hover:bg-[#f9fbf7]';
+
+  return (
+    <div className="grid grid-cols-1 gap-5 pb-10">
+
+      {createdBanner ? (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl bg-[color:var(--ek-green)] px-4 py-3 text-sm text-white">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0">
+            <path d="M5 12l5 5 9-10" />
+          </svg>
+          <span className="flex-[1_1_260px]">
+            <strong className="font-semibold">Kunden är skapad</strong>
+            {customer.fortnox_customer_id ? ` och synkad till Fortnox som kund-ID ${customer.fortnox_customer_id}.` : '.'}
+          </span>
+          <button
+            type="button"
+            aria-label="Stäng"
+            onClick={() => setCreatedBanner(false)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-lg p-0 text-white transition hover:bg-white/10"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M6 6l12 12M18 6L6 18" /></svg>
           </button>
         </div>
-      </div>
+      ) : null}
 
-      {/* Body: main + sidebar */}
-      <div className="grid gap-5 lg:grid-cols-[1fr_360px] lg:items-start">
-
-        {/* Left: customer info */}
-        <div className="grid gap-5">
-
-          {/* Kontakt + Adresser */}
-          <Card>
-            <SectionTitle>Kontakt &amp; Adresser</SectionTitle>
-            <div className="grid gap-5">
-
-              {/* Kontakt row */}
-              {(customer.email || customer.phone || customer.mobile) ? (
-                <div className="grid gap-3 sm:grid-cols-3">
-                  {customer.email ? <InfoField label="E-post" value={<EmailLink value={customer.email} />} /> : null}
-                  {customer.phone ? <InfoField label="Telefon" value={<PhoneLink value={customer.phone} />} /> : null}
-                  {customer.mobile ? <InfoField label="Mobil" value={<PhoneLink value={customer.mobile} />} /> : null}
-                </div>
-              ) : (
-                <p className="text-sm text-slate-400">Ingen kontaktinformation registrerad.</p>
-              )}
-
-              {/* Divider */}
-              <div className="h-px bg-slate-100" />
-
-              {/* 3-col addresses. Gruppnivån (`groupTitle`), inte fältetiketten: en adress är
-                  flera värden — och samma stil som i redigeringsläget, så blocket ser likadant
-                  ut i båda lägena. Kontaktraden ovanför är enskilda fält och behåller därför
-                  sin fältetikett. */}
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="grid content-start gap-1">
-                  <p className={crm.groupTitle}>Besöksadress</p>
-                  <AddressValue addr={customer.visit_address} />
-                </div>
-                <div className="grid content-start gap-1">
-                  <p className={crm.groupTitle}>Leveransadress</p>
-                  <AddressValue addr={customer.delivery_address} />
-                </div>
-                <div className="grid content-start gap-1">
-                  <p className={crm.groupTitle}>Fakturaadress</p>
-                  <AddressValue addr={customer.invoice_address} />
-                  {customer.invoice_email ? <EmailLink value={customer.invoice_email} className="mt-1 text-xs" /> : null}
-                </div>
+      {/* Header */}
+      <div className="grid gap-1.5">
+        <button type="button" onClick={() => router.push(backTo)} className="inline-flex w-fit items-center gap-1.5 px-0 py-1 text-[13px] text-slate-600 transition hover:text-slate-900">
+          <BackArrow /> {backLabel}
+        </button>
+        <header className="flex flex-wrap items-start justify-between gap-5">
+          <div className="flex min-w-0 items-center gap-4">
+            <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[14px] bg-[color:var(--ek-green)] text-xl font-bold text-white" aria-hidden>
+              {customerInitials(customer)}
+            </span>
+            <div className="min-w-0">
+              <h1 className="m-0 text-[28px] font-bold leading-tight tracking-tight text-slate-900 [overflow-wrap:anywhere]">{displayName}</h1>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Chip>{isB2B ? 'Företag' : 'Privatperson'}</Chip>
+                {isB2B && customer.organization_number ? <Chip>{customer.organization_number}</Chip> : null}
+                {!isB2B && customer.personal_number ? <Chip>{customer.personal_number}</Chip> : null}
+                <Chip>
+                  <span className={cn('h-[7px] w-[7px] rounded-full', stage.dot)} aria-hidden />
+                  {stage.text}
+                </Chip>
+                {report ? (
+                  <Chip className="bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)]">
+                    Kreditbetyg {report.credit_score != null ? `${report.credit_score}/100` : '–'} · {creditRiskLabel(report)}
+                  </Chip>
+                ) : null}
               </div>
             </div>
-          </Card>
+          </div>
+          <button
+            type="button"
+            onClick={() => startEditing()}
+            className="inline-flex h-[42px] items-center gap-2 rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3] hover:text-slate-900"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+            </svg>
+            Redigera
+          </button>
+        </header>
+      </div>
 
-          {/* Fakturainst (conditional) */}
-          {(customer.payment_terms || customer.price_list || customer.discount != null || customer.vat_number || customer.reverse_vat) ? (
-            <Card>
-              <SectionTitle>Fakturainställningar</SectionTitle>
-              <div className="grid gap-4">
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                  {customer.payment_terms ? <InfoField label="Betalningsvillkor" value={customer.payment_terms} /> : null}
-                  {customer.price_list ? <InfoField label="Prislista" value={customer.price_list} /> : null}
-                  {customer.discount != null ? <InfoField label="Rabatt" value={`${customer.discount}%`} /> : null}
-                  {customer.vat_number ? <InfoField label="Momsreg-nr" value={customer.vat_number} /> : null}
-                </div>
-                {customer.reverse_vat ? (
-                  <span className="inline-flex w-fit rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-                    Omvänd skattskyldighet
-                  </span>
-                ) : null}
-              </div>
-            </Card>
+      <TabsList aria-label="Kundflikar" className="gap-x-6 gap-y-1 border-b border-[#d0d8ce]">
+        {tabDefs.map((t) => (
+          <TabsTrigger
+            key={t.id}
+            id={`kund-tab-${t.id}`}
+            // Bara aktiv flik har sin panel i DOM — aria-controls på inaktiva flikar vore dinglande referenser.
+            aria-controls={tab === t.id ? `kund-tabpanel-${t.id}` : undefined}
+            variant="underline"
+            active={tab === t.id}
+            onClick={() => setTab(t.id)}
+          >
+            {t.label}
+            {t.count != null ? <CountBadge>{t.count}</CountBadge> : null}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+
+      {/* Body: main + sidebar. Sidokolumnen är INTE sticky: den är högre än fönstret, och en sticky
+          kolumn som är det fastnar aldrig (se fällan vid redigeringslägets spara-kolumn ovan). */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
+
+        <div role="tabpanel" id={`kund-tabpanel-${tab}`} aria-labelledby={`kund-tab-${tab}`} className="min-w-0">
+          {tab === 'oversikt' ? (
+            <CustomerOverview
+              customer={customer}
+              quotes={quotes}
+              quotesLoading={relatedLoading}
+              onEdit={startEditing}
+              onShowQuotes={() => setTab('offerter')}
+              enriching={enriching}
+              onFetchCompanyData={fetchCompanyData}
+            />
+          ) : null}
+          {tab === 'offerter' ? <QuotesTab quotes={quotes} total={quotesTotal} loading={relatedLoading} /> : null}
+          {tab === 'arbetsorder' ? <WorkOrdersTab workOrders={workOrders} total={workOrdersTotal} loading={relatedLoading} /> : null}
+          {tab === 'samtal' ? <CallsTab calls={calls} loading={relatedLoading} /> : null}
+          {tab === 'uppgifter' ? <TasksTab tasks={tasks} loading={relatedLoading} /> : null}
+          {tab === 'kontakter' ? (
+            <ContactsTab
+              contacts={contacts}
+              onAdd={() => setContactFormTarget({ contact: null })}
+              onEdit={(contact) => setContactFormTarget({ contact })}
+              onDelete={(contact) => deleteContact(contact.id)}
+            />
+          ) : null}
+        </div>
+
+        <aside className="grid content-start gap-4">
+          {fortnoxConnected && !customer.fortnox_customer_id ? (
+            <SideCard title="Fortnox">
+              <p className="m-0 mb-3 text-[13px] leading-relaxed text-slate-600">Kunden finns inte i Fortnox ännu. Skapa den för att kunna fakturera.</p>
+              <button
+                type="button"
+                onClick={pushToFortnox}
+                disabled={pushingFortnox}
+                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-800 transition hover:border-[#c8d4c3]"
+              >
+                {pushingFortnox ? 'Skapar…' : 'Skapa i Fortnox'}
+              </button>
+            </SideCard>
           ) : null}
 
-          {/* Företagsinformation (företag, från tic.io-uppslaget) */}
+          <SideCard title="Nästa steg">
+            <div className="grid gap-2">
+              <button type="button" className={nextStepClass} onClick={() => setContactFormTarget({ contact: null })}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-[color:var(--ek-green)]">
+                  <circle cx="12" cy="8" r="4" /><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6" />
+                </svg>
+                Lägg till kontaktperson
+              </button>
+              <button type="button" className={nextStepClass} onClick={() => setTab('uppgifter')}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-[color:var(--ek-green)]">
+                  <path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" />
+                </svg>
+                Skapa uppgift
+              </button>
+              <button type="button" className={nextStepClass} onClick={() => setTab('samtal')}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-[color:var(--ek-green)]">
+                  <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
+                </svg>
+                Logga samtal
+              </button>
+            </div>
+          </SideCard>
+
+          {/* Kreditupplysning (företag, tic.io /risks). Hämtas bara med knapp och sparas som snapshot —
+              ingen tic.io-debitering per sidvisning, och kvoten är begränsad. */}
           {isB2B ? (
-            <Card>
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <SectionTitle>
-                  Företagsinformation
-                  {customer.financial_year != null ? (
-                    <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">räkenskapsår {customer.financial_year}</span>
-                  ) : null}
-                </SectionTitle>
-                <button
-                  type="button"
-                  onClick={fetchCompanyData}
-                  disabled={enriching || !customer.organization_number}
-                  className={cn(crm.ghostButton, 'shrink-0 disabled:opacity-50')}
-                  title={!customer.organization_number ? 'Kräver organisationsnummer' : undefined}
-                >
-                  {enriching ? 'Hämtar…' : hasCompanyInfo ? 'Uppdatera' : 'Hämta företagsdata'}
-                </button>
-              </div>
-              {!hasCompanyInfo ? (
-                <p className="text-sm text-slate-500">
-                  {customer.organization_number
-                    ? 'Hämta bransch, bolagsform, ekonomi och risk från tic.io.'
-                    : 'Lägg till ett organisationsnummer för att kunna hämta företagsdata.'}
-                </p>
-              ) : (
-              <div className="grid gap-5">
-
-                {/* Bransch & bolagsform */}
-                {(customer.legal_entity_type || customer.sni_code || customer.sni_name) ? (
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    {customer.legal_entity_type ? <InfoField label="Bolagsform" value={customer.legal_entity_type} /> : null}
-                    {customer.sni_code ? <InfoField label="SNI-kod" value={customer.sni_code} /> : null}
-                    {customer.sni_name ? <InfoField label="Bransch" value={customer.sni_name} /> : null}
-                  </div>
-                ) : null}
-
-                {/* Ekonomi & nyckeltal */}
-                {(customer.annual_revenue != null || customer.number_of_employees != null ||
-                  customer.operating_profit != null || customer.profit_after_financial_items != null ||
-                  customer.total_assets != null || customer.operating_margin != null ||
-                  customer.equity_ratio != null) ? (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {customer.annual_revenue != null ? <InfoField label="Omsättning" value={formatSek(customer.annual_revenue)} /> : null}
-                    {customer.number_of_employees != null ? <InfoField label="Antal anställda" value={String(customer.number_of_employees)} /> : null}
-                    {customer.operating_profit != null ? <InfoField label="Rörelseresultat" value={formatSek(customer.operating_profit)} /> : null}
-                    {customer.profit_after_financial_items != null ? <InfoField label="Resultat e. fin. poster" value={formatSek(customer.profit_after_financial_items)} /> : null}
-                    {customer.total_assets != null ? <InfoField label="Totala tillgångar" value={formatSek(customer.total_assets)} /> : null}
-                    {customer.operating_margin != null ? <InfoField label="Rörelsemarginal" value={formatPercent(customer.operating_margin)} /> : null}
-                    {customer.equity_ratio != null ? <InfoField label="Soliditet" value={formatPercent(customer.equity_ratio)} /> : null}
-                  </div>
-                ) : null}
-
-                {/* Riskindikatorer */}
-                {customer.risk_indicators && customer.risk_indicators.length > 0 ? (
-                  <div className="grid gap-2">
-                    <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">Riskindikatorer</p>
-                    <ul className="grid gap-1.5">
-                      {customer.risk_indicators.map((r, i) => (
-                        <li key={`${r.type}-${i}`} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                          <span className="mt-0.5 shrink-0">⚠</span>
-                          <span>
-                            <span className="font-semibold">{riskTypeLabel(r.type)}</span>
-                            {r.notes ? <span className="text-amber-700"> – {r.notes}</span> : null}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-
-              </div>
-              )}
-            </Card>
-          ) : null}
-
-          {/* Kreditupplysning (företag, tic.io /risks — manuellt hämtad) */}
-          {isB2B ? (
-            <Card>
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <SectionTitle>
-                  Kreditupplysning
-                  {customer.credit_report_fetched_at ? (
-                    <span className="ml-2 text-xs font-normal normal-case tracking-normal text-slate-400">
-                      hämtad {formatDateTime(customer.credit_report_fetched_at)}
+            <SideCard title="Kreditupplysning">
+              {report ? (
+                <>
+                  <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                    <span className={cn('text-[28px] font-bold leading-none tabular-nums', creditScoreMeta(report.credit_score).text)}>
+                      {report.credit_score ?? '–'}
                     </span>
-                  ) : null}
-                </SectionTitle>
-                {customer.credit_report ? (
-                  <button
-                    type="button"
-                    onClick={fetchCreditReport}
-                    disabled={fetchingCredit}
-                    className={cn(crm.ghostButton, 'shrink-0')}
-                  >
+                    {report.credit_score != null ? <span className="text-sm text-slate-500">/100</span> : null}
+                    <span className={cn(crm.badge, riskClassMeta(report.risk_class).badge)}>{creditRiskLabel(report)}</span>
+                  </div>
+                  <div className="mt-3.5">
+                    <DefinitionList compact>
+                      <Field label="Anmärkningar">
+                        {creditRemarkLines(report).length === 0 ? 'Inga registrerade' : (
+                          <ul className="m-0 grid list-none gap-1 p-0 font-normal">
+                            {creditRemarkLines(report).map((line) => (
+                              <li key={line.label}><span className="font-semibold">{line.label}:</span> {line.value}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </Field>
+                      {creditForecastPercent(report) ? <Field label="Riskprognos">{creditForecastPercent(report)}</Field> : null}
+                      <Field label="Omsättning">{formatSek(customer.annual_revenue) ?? <Muted>Ej angivet</Muted>}</Field>
+                      <Field label="Anställda">{customer.number_of_employees ?? <Muted>Ej angivet</Muted>}</Field>
+                      {customer.credit_report_fetched_at ? (
+                        <Field label="Hämtad">{formatDateTime(customer.credit_report_fetched_at)} via tic.io</Field>
+                      ) : null}
+                    </DefinitionList>
+                  </div>
+                  <p className="m-0 mt-3 text-[11px] text-slate-500">Källa: tic.io · kan skilja från andra kreditbyråer</p>
+                  <button type="button" onClick={fetchCreditReport} disabled={fetchingCredit} className={cn(cardLinkButton, 'mt-2.5')}>
                     {fetchingCredit ? 'Hämtar…' : 'Uppdatera'}
                   </button>
-                ) : null}
-              </div>
-
-              {customer.credit_report ? (
-                <CreditReportSummary report={customer.credit_report} />
+                </>
               ) : (
-                <div className="grid gap-3 py-2">
-                  <p className="text-sm text-slate-500">
+                <div className="grid gap-3">
+                  <p className="m-0 text-[13px] leading-relaxed text-slate-600">
                     {customer.organization_number
-                      ? 'Hämta kreditbetyg, riskklass och eventuella betalningsanmärkningar från tic.io.'
+                      ? 'Kreditbetyg, riskklass och betalningsanmärkningar från tic.io.'
                       : 'Lägg till ett organisationsnummer för att kunna hämta en kreditupplysning.'}
                   </p>
                   <button
                     type="button"
                     onClick={fetchCreditReport}
                     disabled={fetchingCredit || !customer.organization_number}
-                    className={cn(crm.primaryButton, 'w-fit disabled:opacity-50')}
-                    style={{ backgroundColor: 'var(--crm-primary)' }}
+                    className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-800 transition hover:border-[#c8d4c3]"
                   >
                     {fetchingCredit ? 'Hämtar…' : 'Hämta kreditupplysning'}
                   </button>
                 </div>
               )}
-            </Card>
+            </SideCard>
           ) : null}
 
-          {/* Kontaktpersoner */}
-          <Card>
-            <div className="flex items-center justify-between gap-3 mb-4">
-              <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">Kontaktpersoner</p>
-              <button
-                type="button"
-                onClick={() => setContactFormTarget({ contact: null })}
-                className="inline-flex h-7 items-center justify-center rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300"
-              >
-                + Lägg till
-              </button>
-            </div>
-
-            {contacts.length === 0 ? (
-              <p className="text-sm text-slate-400">Inga kontaktpersoner registrerade.</p>
-            ) : (
-              <div className="grid gap-2">
-                {contacts.map((contact) => (
-                  <div key={contact.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50/50 px-3 py-2.5">
-                    <div className="grid gap-0.5 min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-sm font-semibold text-slate-900">{contact.name}</span>
-                        {contact.is_primary ? (
-                          <span className="rounded-full border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Primär</span>
-                        ) : null}
-                        {contact.role ? <span className="text-xs text-slate-500">{contact.role}</span> : null}
-                      </div>
-                      <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-                        {contact.phone ? <PhoneLink value={contact.phone} /> : null}
-                        {contact.email ? <EmailLink value={contact.email} /> : null}
-                      </div>
-                    </div>
-                    {/* Redigera fanns inte förut trots att PATCH-rutten alltid gjort det: en
-                        felstavad mejladress måste tas bort och skrivas in på nytt. */}
-                    <div className="flex shrink-0 items-center gap-3">
-                      <button type="button" onClick={() => setContactFormTarget({ contact })} className="text-xs font-semibold text-slate-400 transition hover:text-slate-700">
-                        Redigera
-                      </button>
-                      <button type="button" onClick={() => deleteContact(contact.id)} className="text-xs text-slate-400 transition hover:text-rose-500">
-                        Ta bort
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
-
-        </div>
-
-        {/* Right sidebar */}
-        <div className="grid gap-4 lg:sticky lg:top-6">
-          {fortnoxConnected && !customer.fortnox_customer_id ? (
-            <div className="rounded-2xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white p-5">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-500">Fortnox</p>
-              <p className="mb-3 text-xs text-slate-500 leading-relaxed">Den här kunden finns inte i Fortnox ännu. Skapa den för att kunna fakturera.</p>
-              <button
-                type="button"
-                onClick={pushToFortnox}
-                disabled={pushingFortnox}
-                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-violet-600 bg-gradient-to-b from-violet-500 to-violet-600 text-sm font-semibold text-white shadow-[0_4px_12px_rgba(139,92,246,0.28)] transition hover:brightness-[0.97] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {pushingFortnox ? 'Skapar…' : 'Skapa i Fortnox'}
-              </button>
-            </div>
-          ) : null}
           {portalPartnerEnabled && isB2B ? (
             <PortalPartnerCard
               customerId={customer.id}
               cardVersion={`${customer.updated_at}|${customer.fortnox_customer_id ?? ''}|${customer.customer_type}`}
             />
           ) : null}
-          {historySidebar}
+
+          {detailsCard}
+
           {canDeleteCustomer ? (
-            <div className="rounded-2xl border border-rose-200 bg-white p-5">
-              <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-rose-600">Ta bort kund</p>
-              <p className="mb-3 text-xs leading-relaxed text-slate-500">
-                {/* Utan koppling vore ett klick genom en oåterkallelig bekräftelse dömt att få nej (409). */}
-                {customer.fortnox_customer_id && !fortnoxConnected
-                  ? 'Kunden finns i Fortnox, och Fortnox är inte kopplat. Den kan tas bort när kopplingen är tillbaka.'
-                  : customer.fortnox_customer_id
-                    ? 'Kunden tas bort här och i Fortnox. Det går inte att ångra.'
-                    : 'Kunden tas bort. Det går inte att ångra.'}
-              </p>
+            <div className="grid gap-2">
               <button
                 type="button"
                 onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
-                disabled={deleting || (Boolean(customer.fortnox_customer_id) && !fortnoxConnected)}
-                className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-rose-200 bg-white text-sm font-semibold text-rose-700 transition hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                // Utan koppling vore ett klick genom en oåterkallelig bekräftelse dömt att få nej (409).
+                disabled={deleting || deleteBlocked}
+                className="inline-flex min-h-10 w-fit items-center gap-2 rounded-lg px-1 py-0 text-[13px] font-semibold text-[#a3212b] transition hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
               >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" />
+                </svg>
                 Ta bort kund
               </button>
+              {deleteBlocked ? (
+                <p className="m-0 px-1 text-xs leading-relaxed text-slate-600">
+                  Kunden finns i Fortnox, och Fortnox är inte kopplat. Den kan tas bort när kopplingen är tillbaka.
+                </p>
+              ) : null}
               {deleteError ? (
-                <p role="alert" className="m-0 mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800">
+                <p role="alert" className="m-0 rounded-xl bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800">
                   {deleteError}
                 </p>
               ) : null}
             </div>
           ) : null}
-        </div>
+        </aside>
       </div>
 
       {confirmDelete ? (
