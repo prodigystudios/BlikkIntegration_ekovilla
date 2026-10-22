@@ -7,7 +7,7 @@ import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import Badge from '../ui/Badge';
 import DashboardCardHeader from './DashboardCardHeader';
-import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { compareScheduleItems, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -747,6 +747,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     const ta = (a.truck || '').toString();
                     const tb = (b.truck || '').toString();
                     if (ta !== tb) return ta.localeCompare(tb, 'sv');
+                    // CRM-jobb i planeringstavlans ordning — planerarens "Ordning på dagen". Resten
+                    // nedan är de gamla Blikk-radernas ordning och gäller bara dem.
+                    if (isCrmItem(a) && isCrmItem(b)) return compareScheduleItems(a, b);
                     const sa = getSortIndex(a);
                     const sb = getSortIndex(b);
                     if (sa != null && sb != null && sa !== sb) return sa - sb;

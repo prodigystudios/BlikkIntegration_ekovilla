@@ -1,4 +1,5 @@
 import { workOrderRef, resolveJobAddress } from './display';
+import { compareBoardOrder } from './order';
 
 // Field cutover fas 1c — one feed, two worlds.
 //
@@ -47,6 +48,9 @@ export type CrmJobRow = {
   // Platshållarens egen rubrik + vad som ska göras. Bara satta när work_order_id är null.
   placeholder_title: string | null;
   work_description: string | null;
+  // Planerarens ordning på dagen (ops_segments.sort_index). Bara jämförbar med andra placeringar på
+  // samma bil samma dag — se compareScheduleItems.
+  sort_index: number | null;
 };
 
 export type MyJob = {
@@ -181,6 +185,8 @@ export type ScheduleItem = {
   work_order_id: string | null;
   // Vad som ska göras. Bara platshållare bär den; ett riktigt jobb har sin arbetsorder.
   work_description: string | null;
+  // Planerarens ordning på dagen. null = feeden saknade den (en databas före migreringen).
+  sort_index: number | null;
 };
 
 export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
@@ -201,8 +207,30 @@ export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
     source: 'crm',
     work_order_id: str(row.work_order_id),
     work_description: str(row.work_description),
+    sort_index: typeof row.sort_index === 'number' ? row.sort_index : null,
   };
 }
+
+/**
+ * Två CRM-jobb på samma bil samma dag, i den ordning planeringstavlan visar dem.
+ *
+ * ⚠️ SAMMA JÄMFÖRELSE SOM TAVLAN, inte en egen. Startsidan sorterade CRM-jobben på ordernumret, så
+ * planerarens "Ordning på dagen" nådde aldrig dem som kör jobben — kortets "1/2" var ordernumrets
+ * ordning. compareBoardOrder är sort_index → startdag → id: ett jobb som fortsätter från igår står
+ * först tills planeraren säger annat. Bilen jämförs av anroparen.
+ */
+export function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
+  return compareBoardOrder(boardOrderable(a), boardOrderable(b));
+}
+
+const boardOrderable = (it: ScheduleItem) => ({
+  id: it.segment_id,
+  truck_id: it.truck ?? '',
+  start_day: it.start_day ?? '',
+  end_day: it.end_day ?? '',
+  // Saknas talet (en feed före migreringen) blir alla lika, och startdagen avgör.
+  sort_index: it.sort_index ?? 0,
+});
 
 // Merge both feeds into one chronological list.
 //

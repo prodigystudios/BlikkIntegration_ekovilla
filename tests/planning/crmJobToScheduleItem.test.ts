@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { compareScheduleItems, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
 
 // The dashboard week schedule renders the legacy get_my_jobs row shape. A CRM job is adapted into
 // that shape so it goes through the same card markup — these tests pin the field names the card
@@ -23,6 +23,7 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   customer_address: {},
   placeholder_title: null,
   work_description: null,
+  sort_index: 0,
   ...over,
 });
 
@@ -57,6 +58,7 @@ describe('crmJobToScheduleItem', () => {
       source: 'crm',
       work_order_id: 'wo-1',
       work_description: null,
+      sort_index: 0,
     });
   });
 
@@ -104,5 +106,37 @@ describe('crmJobToScheduleItem', () => {
 
   it('bär arbetsbeskrivningen vidare till kortet', () => {
     expect(crmJobToScheduleItem(placeholder()).work_description).toBe('Filterbyte och smörjning.');
+  });
+});
+
+// ── Ordningen på dagen ───────────────────────────────────────────────────────
+// Planeraren väljer vilket jobb som görs först när flera ligger på samma bil samma dag. Startsidan
+// sorterade CRM-jobben på ORDERNUMRET, så valet nådde aldrig dem som kör jobben (2026-10-22).
+describe('compareScheduleItems', () => {
+  const day = (over: Partial<CrmJobRow>) => crmJobToScheduleItem(crm({ job_day: '2026-10-22', ...over }));
+  const order = (...items: ReturnType<typeof day>[]) => [...items].sort(compareScheduleItems).map((it) => it.segment_id);
+
+  it('följer planerarens ordning, inte ordernumret', () => {
+    // Ordernumren pekar åt andra hållet: på ordernumret hade #100 stått först.
+    const first = day({ segment_id: 'seg-b', fortnox_order_number: '200', start_day: '2026-10-22', end_day: '2026-10-22', sort_index: 0 });
+    const second = day({ segment_id: 'seg-a', fortnox_order_number: '100', start_day: '2026-10-22', end_day: '2026-10-22', sort_index: 1 });
+    expect(order(second, first)).toEqual(['seg-b', 'seg-a']);
+  });
+
+  it('ställer jobbet som fortsätter från igår först när ordningen är lika', () => {
+    const continuing = day({ segment_id: 'seg-z', fortnox_order_number: '900', start_day: '2026-10-21', end_day: '2026-10-22', sort_index: 4 });
+    const starting = day({ segment_id: 'seg-a', fortnox_order_number: '100', start_day: '2026-10-22', end_day: '2026-10-22', sort_index: 4 });
+    expect(order(starting, continuing)).toEqual(['seg-z', 'seg-a']);
+  });
+
+  it('låter startdagen avgöra när feeden saknar talet', () => {
+    const continuing = day({ segment_id: 'seg-z', start_day: '2026-10-21', end_day: '2026-10-22', sort_index: null });
+    const starting = day({ segment_id: 'seg-a', start_day: '2026-10-22', end_day: '2026-10-22', sort_index: null });
+    expect(order(starting, continuing)).toEqual(['seg-z', 'seg-a']);
+  });
+
+  it('bär talet från feeden och lämnar null när det saknas', () => {
+    expect(crmJobToScheduleItem(crm({ sort_index: 3 })).sort_index).toBe(3);
+    expect(crmJobToScheduleItem(crm({ sort_index: null })).sort_index).toBeNull();
   });
 });

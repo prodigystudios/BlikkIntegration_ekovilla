@@ -33,6 +33,7 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   customer_address: { street_address: 'Kontoret 9', postal_code: '111 22', city: 'Stockholm' },
   placeholder_title: null,
   work_description: null,
+  sort_index: 0,
   ...over,
 });
 
