@@ -422,6 +422,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
         const json = await res.json().catch(() => null);
         if (cancelled) return;
         if (!res.ok || !json?.ok) { console.warn('[dashboard schedule] failed to load call contacts', res.status); return; }
+        if (json.data?.incomplete) console.warn('[dashboard schedule] call contacts incomplete: customer cards could not be read');
         setCallContacts((json.data?.contacts ?? {}) as Record<string, StopCallContact>);
       } catch (e) {
         console.warn('[dashboard schedule] failed to load call contacts', e);

@@ -302,18 +302,24 @@ describe('stopCallLine', () => {
   });
 
   it('säger vems numret är när kontakten på plats har lånat kundens', () => {
-    expect(stopCallLine(contact({ contactName: 'Ulla', isOnSiteContact: true, phoneFromCustomer: true }), 'Acme AB').note)
+    expect(stopCallLine(contact({ contactName: 'Ulla', isOnSiteContact: true, phoneFromCustomer: true }), 'Acme AB')?.note)
       .toBe('Numret går till kundens kontakt – kontakten på plats har inget eget.');
   });
 
   it('fyller aldrig i kundens namn för en namnlös kontakt på plats', () => {
     // Byggarens bolagsnamn över fastighetsägarens nummer hade varit en påhittad identitet.
-    expect(stopCallLine(contact({ contactName: null, isOnSiteContact: true }), 'Bygg AB').label).toBe('Ring kontakten på plats');
+    expect(stopCallLine(contact({ contactName: null, isOnSiteContact: true }), 'Bygg AB')?.label).toBe('Ring kontakten på plats');
   });
 
   it('låter kunden vara personen när ordern saknar kontaktnamn', () => {
-    expect(stopCallLine(contact({ contactName: null }), 'Anna Andersson').label).toBe('Ring Anna Andersson');
-    expect(stopCallLine(contact({ contactName: '  ' }), null).label).toBe('Ring kunden');
+    expect(stopCallLine(contact({ contactName: null }), 'Anna Andersson')?.label).toBe('Ring Anna Andersson');
+    expect(stopCallLine(contact({ contactName: '  ' }), null)?.label).toBe('Ring kunden');
+  });
+
+  it('erbjuder ingen Ring-länk för ett nummer utan siffror', () => {
+    // Telefonfälten är fritext. "ring växeln" hade blivit `tel:` — en länk som inte ringer någon.
+    expect(stopCallLine(contact({ phone: 'ring växeln' }), 'Acme AB')).toBeNull();
+    expect(stopCallLine(contact({ phone: '+46 70-123' }), 'Acme AB')).not.toBeNull();
   });
 });
 

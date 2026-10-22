@@ -1,6 +1,7 @@
 import { compareScheduleRows, type ScheduleRow } from './myJobs';
 import { workingDaysInRange } from './production';
 import { isoDayNumber } from './timezone';
+import type { WorkOrderCallContact } from '@/lib/domains/crm/work-orders';
 
 // Startsidans arbetsschema som en RUTT: dag → lastbil → stopp.
 //
@@ -179,12 +180,8 @@ export function scheduleStopMeta(
   return parts;
 }
 
-export type StopCallContact = {
-  contactName: string | null;
-  phone: string;
-  isOnSiteContact: boolean;
-  phoneFromCustomer: boolean;
-};
+// Samma typ som routen svarar med — inte en kopia som kan glida isär från den.
+export type StopCallContact = WorkOrderCallContact;
 
 /**
  * Kortets "Ring"-rad för orderns kontakt (getWorkOrderCallContacts — samma person som fältvyn visar).
@@ -196,8 +193,12 @@ export type StopCallContact = {
  * Kundnamnet fyller bara i för kundens EGEN kontakt (där är kunden den personen när ingen kontakt
  * fångats). För en namnlös kontakt på plats hade det varit en påhittad identitet — byggarens
  * bolagsnamn över fastighetsägarens nummer. Ett lånat nummer säger vems det är, som i fältvyn.
+ *
+ * null när numret inte går att ringa: telefonfälten är fritext, och "ring växeln" blir `tel:` utan
+ * siffror — en Ring-länk som inte ringer någonstans.
  */
-export function stopCallLine(contact: StopCallContact, customer: string | null | undefined): { label: string; note: string | null } {
+export function stopCallLine(contact: StopCallContact, customer: string | null | undefined): { label: string; note: string | null } | null {
+  if (!/\d/.test(contact.phone || '')) return null;
   const name = contact.contactName?.trim() || null;
   if (contact.isOnSiteContact) {
     return {

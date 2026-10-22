@@ -115,7 +115,15 @@ describe('POST /api/crm/work-orders/customer-contacts', () => {
     (getWorkOrderCallContacts as any).mockResolvedValue({ data: { [MINE]: CONTACT }, error: { message: 'kundkort' } });
     const res = await call({ work_order_ids: [MINE] });
     expect(res.status).toBe(200);
-    expect((await res.json()).data.contacts).toEqual({ [MINE]: CONTACT });
+    const json = await res.json();
+    expect(json.data.contacts).toEqual({ [MINE]: CONTACT });
+    // …men säger att listan är ofullständig, så att klienten inte tar bortfallet för "ingen kontakt".
+    expect(json.data.incomplete).toBe(true);
+  });
+
+  it('ett fullständigt svar flaggar inget', async () => {
+    const json = await (await call({ work_order_ids: [MINE] })).json();
+    expect(json.data.incomplete).toBeUndefined();
   });
 
   it('kunde ordrarna inte läsas är det 500', async () => {

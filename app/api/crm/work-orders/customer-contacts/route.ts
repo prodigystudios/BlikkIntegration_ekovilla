@@ -50,8 +50,12 @@ export async function POST(req: Request) {
     const { data, error } = await getWorkOrderCallContacts(getSupabaseAdmin(), visible);
     if (!data) return routeError(500, 'crm_work_order_contacts_failed', error?.message || 'Failed to load contacts');
     // Kundkortet gick inte att läsa: slutkunderna på plats svarar ändå, resten uteblir. Kortet visar
-    // då ingen "Ring"-länk för dem, och fältvyn har kontakten.
-    if (error) console.warn('[work-orders/customer-contacts] kundkorten kunde inte läsas', error.message);
+    // då ingen "Ring"-länk för dem, och fältvyn har kontakten. `incomplete` säger det till klienten —
+    // utan flaggan går "ingen kontakt" och "uppslaget föll" inte att skilja åt där.
+    if (error) {
+      console.warn('[work-orders/customer-contacts] kundkorten kunde inte läsas', error.message);
+      return ok({ contacts: data, incomplete: true });
+    }
 
     return ok({ contacts: data });
   } catch (e: any) {
