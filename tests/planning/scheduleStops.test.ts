@@ -3,10 +3,12 @@ import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJ
 import {
   countScheduleRowsOnDay,
   groupScheduleStops,
+  isSchedulePlaceholder,
   mapsSearchHref,
   projectRepeatsAddress,
   scheduleDayLabel,
   scheduleRowRef,
+  scheduleStopMeta,
   workdayPosition,
   workOrderHref,
 } from '@/lib/domains/planning/scheduleStops';
@@ -88,6 +90,13 @@ describe('groupScheduleStops', () => {
     expect(route([blank])[0].trucks).toEqual([{ truck: null, stops: ['legacy:blank=-/1'] }]);
   });
 
+  it('lägger samma bil med och utan blanksteg på slutet i EN rutt', () => {
+    // Den gamla raden kommer otrimmad ur feeden, CRM-raden trimmad.
+    const old = legacy({ truck: 'Bil 1 ', order_number: 'gammal' });
+    const job = crm({ segment_id: 'seg-a', truck: 'Bil 1' });
+    expect(route([old, job])[0].trucks).toEqual([{ truck: 'Bil 1', stops: ['legacy:gammal=1/2', 'seg-a=2/2'] }]);
+  });
+
   it('räknar platshållaren som ett stopp, som planeringstavlan gör', () => {
     const job = crm({ segment_id: 'seg-job', sort_index: 0 });
     const service = crm({ segment_id: 'seg-service', work_order_id: null, placeholder_title: 'Service', project_name: null, sort_index: 1 });
@@ -137,6 +146,17 @@ describe('groupScheduleStops', () => {
   });
 });
 
+describe('isSchedulePlaceholder', () => {
+  it('är en CRM-placering utan arbetsorder', () => {
+    expect(isSchedulePlaceholder(crm({ work_order_id: null }))).toBe(true);
+    expect(isSchedulePlaceholder(crm())).toBe(false);
+  });
+
+  it('gäller aldrig en gammal rad, som saknar arbetsorder men har sin detaljmodal', () => {
+    expect(isSchedulePlaceholder({ work_order_id: null })).toBe(false);
+  });
+});
+
 describe('workOrderHref', () => {
   it('leder ett CRM-jobb till fältvyn, scopat till placeringen', () => {
     expect(workOrderHref(crm({ segment_id: 'seg 1', work_order_id: 'wo-1' }))).toBe('/arbetsorder/wo-1?segment=seg%201');
@@ -168,6 +188,35 @@ describe('scheduleRowRef', () => {
   it('har ingen referens för en platshållare', () => {
     expect(scheduleRowRef(crm({ work_order_id: null, order_number: null }))).toBeNull();
     expect(scheduleRowRef({ order_number: '  ' })).toBeNull();
+  });
+});
+
+describe('scheduleStopMeta', () => {
+  const service = crm({ work_order_id: null, order_number: null, customer: null, placeholder_title: 'Service' });
+
+  it('skriver platsen och referensen när bilen har flera jobb', () => {
+    expect(scheduleStopMeta(crm({ fortnox_order_number: '77' }), 2, 3)).toEqual(['Stopp 2 av 3', '#77']);
+  });
+
+  it('skriver ingen plats för ett ensamt jobb, som tavlan', () => {
+    expect(scheduleStopMeta(crm({ order_number: 'AO-1' }), 1, 1)).toEqual(['AO-1']);
+    expect(scheduleStopMeta(crm({ order_number: 'AO-1' }), null, 2)).toEqual(['AO-1']);
+  });
+
+  it('kallar en ensam platshållare utan kund för en intern heldag', () => {
+    expect(scheduleStopMeta(service, 1, 1)).toEqual(['Heldag', 'Intern']);
+  });
+
+  it('numrerar en platshållare som delar dag, utan referens', () => {
+    expect(scheduleStopMeta(service, 3, 3)).toEqual(['Stopp 3 av 3', 'Intern']);
+  });
+
+  it('kallar inte en platshållare med kund för intern', () => {
+    expect(scheduleStopMeta(crm({ work_order_id: null, order_number: null, customer: 'Bygg AB' }), 1, 1)).toEqual(['Heldag']);
+  });
+
+  it("skriver en gammal rads nummer med '#'", () => {
+    expect(scheduleStopMeta(legacy({ order_number: '812' }), 1, 2)).toEqual(['Stopp 1 av 2', '#812']);
   });
 });
 

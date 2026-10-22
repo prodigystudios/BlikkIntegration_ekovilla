@@ -1,7 +1,7 @@
 "use client";
 import type { MouseEvent, ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
-import { mapsSearchHref, projectRepeatsAddress, scheduleRowRef, workdayPosition, workOrderHref } from '@/lib/domains/planning/scheduleStops';
+import { isSchedulePlaceholder, mapsSearchHref, projectRepeatsAddress, scheduleStopMeta, workdayPosition, workOrderHref } from '@/lib/domains/planning/scheduleStops';
 import { materialPill } from './materialTheme';
 
 // Ett stopp på bilens dag i startsidans arbetsschema.
@@ -65,25 +65,18 @@ export default function ScheduleStopCard({
   // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy — alltså ingenting att
   // öppna. Den fälls i stället ut på plats, men bara när något är kapat (se clippedKeys): annars ska
   // kortet inte SE ut som en knapp, för pekaren lovar en handling som inte finns.
-  const isPlaceholder = isCrm && !row.work_order_id;
+  const isPlaceholder = isSchedulePlaceholder(row);
   const opens = !isPlaceholder;
   const href = workOrderHref(row);
   const sharesDay = stop != null && of >= 2;
 
   const address = (row.address || '').trim() || null;
   const heading = address || row.project_name || row.customer || 'Jobb utan namn';
-  const ref = isPlaceholder ? null : scheduleRowRef(row);
   const workday = workdayPosition(row.job_day, row.start_day, row.end_day);
   const multiDay = !!row.start_day && !!row.end_day && row.start_day !== row.end_day;
   const material = isPlaceholder ? null : materialPill(row.job_type);
 
-  // "Stopp 1 av 2" bara när bilen har fler än ett jobb den dagen, som planeringstavlans "Jobb 1 av 2"
-  // (sharedDayOrders lämnar ensamma dagar). Ensam är platshållaren en heldag.
-  const meta: string[] = [];
-  if (sharesDay) meta.push(`Stopp ${stop} av ${of}`);
-  else if (isPlaceholder) meta.push('Heldag');
-  if (isPlaceholder) meta.push('Intern');
-  else if (ref) meta.push(ref);
+  const meta = scheduleStopMeta(row, stop, of);
 
   const subParts: ReactNode[] = [];
   if (row.customer && row.customer !== heading) subParts.push(row.customer);
@@ -116,8 +109,11 @@ export default function ScheduleStopCard({
     const hit = (e.target as Element).closest('a, button');
     if (hit && e.currentTarget.contains(hit)) return;
     // Slutet på en textmarkering är också ett klick. Den som markerar adressen för att kopiera den ska
-    // inte hamna i arbetsordern, eller få kortet ihopfällt under sig.
-    if (window.getSelection()?.toString()) return;
+    // inte hamna i arbetsordern, eller få kortet ihopfällt under sig. Bara en markering I DET HÄR
+    // kortet: en kvarglömd markering någon annanstans (en lång tryckning på telefonen) hade annars
+    // gjort varje kort på sidan dött tills den togs bort.
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed && selection.anchorNode && e.currentTarget.contains(selection.anchorNode)) return;
     if (opens) onOpen();
     else if (expandable) onToggleExpanded();
   };
@@ -222,18 +218,21 @@ export default function ScheduleStopCard({
         )}
       </div>
 
-      {/* Planerarens arbetsbeskrivning. Finns bara på publicerade platshållare (service av maskiner,
-          interna dagar) — där är den det enda som säger vad dagen går ut på, och kortet leder inte
-          till någon arbetsorder där den annars hade stått. Klippt till två rader tills kortet fälls
-          ut; utfällt behåller den raderna den skrevs med, som på /mina-jobb. Hela texten låg förut
-          bara i `title`, som en telefon inte visar. */}
-      {isPlaceholder && row.work_description && (
+      {/* Planerarens arbetsbeskrivning. En platshållare bär sin egen (service av maskiner, interna
+          dagar) och en etapp ärver sin (placeSegment kopierar den: "bara vinden, inte snedtaket"),
+          så den visas på båda sorterna — som på det gamla kortet.
+
+          Bara platshållaren fälls ut. För den är texten det enda som säger vad dagen går ut på, och
+          kortet leder inte till någon arbetsorder där den annars hade stått; utfälld behåller den
+          raderna den skrevs med, som på /mina-jobb. Ett riktigt jobb öppnar arbetsordern, där hela
+          texten står, så dess kort klipps bara (två rader, hela texten i `title`). */}
+      {row.work_description && (
         <div className="grid justify-items-start gap-1">
           {/* Rutan och klippningen på VARSITT element: line-clamp klipper vid paddingkanten, så med
               paddingen på samma element syntes överkanten av en tredje rad under de två. */}
           <div className="w-full rounded-xl bg-[#f4f7f2] px-3.5 py-3">
             <div
-              data-clip-key={clipKey}
+              data-clip-key={isPlaceholder ? clipKey : undefined}
               title={expanded ? undefined : row.work_description}
               className={cn(
                 'text-sm leading-normal text-slate-700',

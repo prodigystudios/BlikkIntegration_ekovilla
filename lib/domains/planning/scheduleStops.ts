@@ -80,8 +80,11 @@ function groupTrucks<T extends ScheduleRow>(rows: T[], legacySortIndex: LegacySo
   const byTruck = new Map<string, T[]>();
   const loose: T[] = [];
   for (const row of sorted) {
-    const truck = (row.truck || '').toString();
-    if (!truck.trim()) { loose.push(row); continue; }
+    // Trimmad: CRM-raden kommer trimmad ur crmJobToScheduleItem, den gamla raden som den står i
+    // databasen. Samma bil med och utan ett blanksteg på slutet hade annars blivit två rubriker med
+    // var sitt "Stopp 1".
+    const truck = (row.truck || '').toString().trim();
+    if (!truck) { loose.push(row); continue; }
     const list = byTruck.get(truck);
     if (list) list.push(row);
     else byTruck.set(truck, [row]);
@@ -92,6 +95,16 @@ function groupTrucks<T extends ScheduleRow>(rows: T[], legacySortIndex: LegacySo
   }));
   if (loose.length) groups.push({ truck: null, stops: loose.map((row) => ({ row, stop: null, of: loose.length })) });
   return groups;
+}
+
+/**
+ * En publicerad platshållare: en CRM-placering utan arbetsorder (service av maskiner, interna dagar).
+ * Den har ingenting att öppna — ingen fältvy och ingen Blikk-detaljvy — och kortet fälls i stället ut.
+ *
+ * En regel, ett ställe: schemat avgör utfällningen och kortet sitt utseende på samma fråga.
+ */
+export function isSchedulePlaceholder(row: { source?: string; work_order_id?: string | null }): boolean {
+  return row.source === 'crm' && !row.work_order_id;
 }
 
 /**
@@ -137,6 +150,33 @@ export function projectRepeatsAddress(projectName: string, address: string): boo
   if (!street) return false;
   const full = norm(address);
   return full === street || full.startsWith(`${street} `);
+}
+
+/**
+ * Metaradens delar: ['Stopp 1 av 2', '#5418'], ['Heldag', 'Intern'] …
+ *
+ * "Stopp X av Y" bara när bilen har fler än ett jobb den dagen, som planeringstavlans "Jobb 1 av 2"
+ * (sharedDayOrders lämnar ensamma dagar). Ensam är platshållaren en heldag.
+ *
+ * "Intern" bara när platshållaren saknar kund. Den kan bära en (placeholder_customer — service hos en
+ * kund), och då hade etiketten motsagt kundnamnet på raden under. En platshållare har ingen referens.
+ */
+export function scheduleStopMeta(
+  row: { source?: string; work_order_id?: string | null; order_number?: string | number | null; customer?: string | null },
+  stop: number | null,
+  of: number,
+): string[] {
+  const placeholder = isSchedulePlaceholder(row);
+  const parts: string[] = [];
+  if (stop != null && of >= 2) parts.push(`Stopp ${stop} av ${of}`);
+  else if (placeholder) parts.push('Heldag');
+  if (placeholder) {
+    if (!(row.customer || '').trim()) parts.push('Intern');
+  } else {
+    const ref = scheduleRowRef(row);
+    if (ref) parts.push(ref);
+  }
+  return parts;
 }
 
 /** Vägbeskrivningen. Samma URL-mönster som den äldre detaljmodalens "Öppna i Kartor". */

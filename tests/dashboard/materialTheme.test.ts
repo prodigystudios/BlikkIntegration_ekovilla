@@ -14,6 +14,8 @@ describe('materialPill', () => {
     expect(materialPill('leverans').label).toBe('Leverans');
     // En typ admin lagt till efteråt finns inte i standardlistan och kommer som sin nyckel.
     expect(materialPill('takarbete').label).toBe('Takarbete');
+    // Nyckeln är en slug (slugifyJobType) — bindestrecken ska inte synas på kortet.
+    expect(materialPill('takarbete-vind').label).toBe('Takarbete vind');
   });
 
   it('säger i klartext när materialet saknas', () => {

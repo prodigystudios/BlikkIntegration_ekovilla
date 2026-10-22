@@ -11,7 +11,7 @@ import ScheduleStopCard from './schedule/ScheduleStopCard';
 import ScheduleTruckGroup from './schedule/ScheduleTruckGroup';
 import { getMaterialTheme } from './schedule/materialTheme';
 import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
-import { countScheduleRowsOnDay, groupScheduleStops, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup } from '@/lib/domains/planning/scheduleStops';
+import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup } from '@/lib/domains/planning/scheduleStops';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -803,7 +803,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                 >
                   {group.stops.map(({ row: it, stop, of }, i) => {
                     const cardKey = `${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`;
-                    const isPlaceholder = isCrmItem(it) && !it.work_order_id;
+                    const isPlaceholder = isSchedulePlaceholder(it);
                     const expanded = isPlaceholder && expandedKeys.has(cardKey);
                     const expandable = isPlaceholder && (expanded || clippedKeys.has(cardKey));
                     const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;

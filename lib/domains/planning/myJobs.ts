@@ -194,7 +194,7 @@ export type ScheduleItem = {
   // en "Öppna arbetsorder"-länk — båda MÅSTE grindas på det här fältet, annars får besättningen en
   // knapp som inte gör något.
   work_order_id: string | null;
-  // Vad som ska göras. Bara platshållare bär den; ett riktigt jobb har sin arbetsorder.
+  // Vad som ska göras. En platshållare bär sin egen; en etapps placering ärver etappens (placeSegment).
   work_description: string | null;
   // Planerarens ordning på dagen. null = feeden saknade den (en databas före migreringen).
   sort_index: number | null;
@@ -263,8 +263,11 @@ export function compareScheduleRows(
   b: ScheduleRow,
   legacySortIndex: (row: LegacyScheduleRow) => number | null,
 ): number {
-  const ta = (a.truck || '').toString();
-  const tb = (b.truck || '').toString();
+  // Trimmad, som grupperingen i scheduleStops: den gamla feeden ger bilnamnet som det står i databasen,
+  // CRM-raden kommer trimmad. Otrimmat sorterades 'Bil 1' före 'Bil 1 ' och de gamla raderna hamnade
+  // efter CRM-jobben på samma bil.
+  const ta = (a.truck || '').toString().trim();
+  const tb = (b.truck || '').toString().trim();
   if (ta !== tb) return ta.localeCompare(tb, 'sv');
   if (a.source === 'crm' || b.source === 'crm') {
     if (a.source !== 'crm') return -1;

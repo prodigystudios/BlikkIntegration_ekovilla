@@ -42,8 +42,13 @@ export function materialPill(jobType?: string | null): MaterialPill {
   const theme = getMaterialTheme(jobType);
   if (theme.label === 'Ekovilla') return { ...PILL_CLASSES.ekovilla, label: theme.label };
   if (theme.label === 'Vitull') return { ...PILL_CLASSES.vitull, label: theme.label };
-  // Okända nycklar (en typ som admin lagt till eller tagit bort) kommer tillbaka som sin råa nyckel.
+  // Okända nycklar (en typ som admin lagt till eller tagit bort) kommer tillbaka som sin råa nyckel,
+  // en slug ('takarbete-vind'). Bindestrecken blir mellanslag; å/ä/ö som slugen tog bort går inte att
+  // få tillbaka. Startsidan läser inte admins lista (ops_job_types) — planeringstavlan gör det.
   const type = resolveJobTypeFrom(DEFAULT_JOB_TYPES, jobType);
-  if (type) return { ...PILL_CLASSES.neutral, label: type.label.charAt(0).toUpperCase() + type.label.slice(1) };
+  if (type) {
+    const label = type.label.replace(/[-_]+/g, ' ').trim();
+    return { ...PILL_CLASSES.neutral, label: label.charAt(0).toUpperCase() + label.slice(1) };
+  }
   return { ...PILL_CLASSES.neutral, label: 'Material ej angivet' };
 }
