@@ -48,6 +48,7 @@ describe('crmJobToScheduleItem', () => {
       project_id: null,
       project_name: 'Vindsisolering',
       customer: 'Villa Ek',
+      address: null,
       order_number: '#5418',
       start_day: '2026-08-11',
       end_day: '2026-08-12',
@@ -83,6 +84,32 @@ describe('crmJobToScheduleItem', () => {
 
   it('falls back to the segment start when the expanded day is missing', () => {
     expect(crmJobToScheduleItem(crm({ job_day: null })).job_day).toBe('2026-08-11');
+  });
+
+  // ── Adressen (kortets rubrik) ─────────────────────────────────────────────
+  // Samma upplösning som /mina-jobb: en separat arbetsadress vinner, annars kundens.
+  it('rubriksätter med arbetsadressen när ordern har en egen', () => {
+    const row = crm({
+      work_address: { street_address: 'Strandgatan 9', postal_code: '814 94', city: 'Skutskär' },
+      customer_address: { street_address: 'Kundvägen 1', postal_code: '111 11', city: 'Stockholm' },
+    });
+    expect(crmJobToScheduleItem(row).address).toBe('Strandgatan 9, 814 94, Skutskär');
+  });
+
+  it('faller tillbaka på kundens adress, med leveransadressen först', () => {
+    expect(crmJobToScheduleItem(crm({
+      customer_address: { street_address: 'Kundvägen 1', postal_code: '111 11', city: 'Stockholm' },
+    })).address).toBe('Kundvägen 1, 111 11, Stockholm');
+    expect(crmJobToScheduleItem(crm({
+      customer_address: { delivery_address: 'Lagergatan 2', delivery_city: 'Uppsala', street_address: 'Kundvägen 1' },
+    })).address).toBe('Lagergatan 2, Uppsala');
+  });
+
+  it('ger platshållaren ingen adress — feeden skickar bara nullfält för den', () => {
+    // get_my_crm_jobs bygger customer_address med jsonb_build_object även utan order, så objektet
+    // finns men alla värden är null. Kortet ska då rubriksättas med titeln, inte med en tom adress.
+    const nulls = { delivery_address: null, delivery_postal_code: null, delivery_city: null, street_address: null, postal_code: null, city: null };
+    expect(crmJobToScheduleItem(placeholder({ work_address: null, customer_address: nulls })).address).toBeNull();
   });
 
   // ── Publicerade platshållare ──────────────────────────────────────────────
