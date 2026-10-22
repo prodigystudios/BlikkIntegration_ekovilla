@@ -33,7 +33,7 @@ import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
-import { dayGroup, reorderWithinGroup } from '@/lib/domains/planning/order';
+import { reorderOnDay } from '@/lib/domains/planning/order';
 import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
 import { withPlacementAdded, withPlacementMoved, withPlacementRemoved } from '@/lib/domains/planning/backlogPlacements';
 import ConfirmModal from './ConfirmModal';
@@ -1355,11 +1355,12 @@ export default function PlanningClient({
   const placing = canWrite && !!selectedKey;
   const selected = backlog.find((b) => b.key === selectedKey) ?? null;
 
-  // Reorder jobs that share a truck on the same day (sort_index) — nudges one earlier/later and
-  // PATCHes the affected segments, then refreshes.
+  // Reorder jobs that share a truck on `day` (sort_index) — nudges one earlier/later and PATCHes the
+  // affected segments, then refreshes. The day matters: a job spanning several days has a position
+  // on each of them.
   const reorderSegment = useCallback(
-    async (seg: OpsSegment, direction: 'up' | 'down') => {
-      const changes = reorderWithinGroup(dayGroup(segments, seg), seg.id, direction);
+    async (seg: OpsSegment, day: string, direction: 'up' | 'down') => {
+      const changes = reorderOnDay(segments, seg.id, day, direction);
       if (!changes.length) return;
       // Optimistic: apply the new sort_index locally before the PATCHes land.
       const order = new Map(changes.map((c) => [c.id, c.sort_index]));

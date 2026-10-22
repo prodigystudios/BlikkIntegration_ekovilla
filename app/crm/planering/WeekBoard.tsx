@@ -17,7 +17,7 @@ import { swedishHoliday } from '@/lib/domains/planning/holidays';
 import { weekTotals, type WeekSlice } from '@/lib/domains/planning/weekValue';
 import { CrewEditor, CrewAvatars, FOCUSED_CARD, SegmentCardBody, type SegmentActions } from './jobCard';
 import type { JobMargin } from './useJobMargins';
-import { compareBoardOrder, orderInfo } from '@/lib/domains/planning/order';
+import { compareBoardOrder, sharedDayOrders } from '@/lib/domains/planning/order';
 import DayNotesCell from './DayNotesCell';
 import DeliveryStripCell from './DeliveryStripCell';
 
@@ -472,7 +472,10 @@ export default function WeekBoard({
                             jobTypes={jobTypes}
                             people={people}
                             actions={actions}
-                            order={orderInfo(segments, seg)}
+                            // Platsen per synlig dag kortet täcker — ett flerdagarskort kan vara tvåa
+                            // på onsdagen och etta på torsdagen, så det får säga vilken dag det gäller.
+                            orders={sharedDayOrders(segments, seg, days.slice(span.s, span.e + 1).map((d) => d.iso))}
+                            showOrderDay={span.e > span.s}
                             margin={seg.work_order_id ? margins[seg.work_order_id] : undefined}
                             // Ett kort per scope (revenueAnchors), och bara veckan det BÖRJAR: ett
                             // jobb över ett veckoskifte ritas som ett kort i varje vecka.

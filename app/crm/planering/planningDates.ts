@@ -44,9 +44,14 @@ export function addDaysISO(iso: string, n: number): string {
  * WEEKDAYS_SHORT är måndagsindexerad (0 = mån) medan getUTCDay är söndagsindexerad (0 = sön).
  */
 export function shortDayISO(iso: string): string {
+  const [, m, d] = iso.split('-').map(Number);
+  return `${weekdayShortISO(iso)} ${d}/${m}`;
+}
+
+// '2026-09-24' -> 'tor'. Samma förankring och samma namn som shortDayISO ovan.
+export function weekdayShortISO(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
-  const weekday = WEEKDAYS_SHORT[(new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7];
-  return `${weekday} ${d}/${m}`;
+  return WEEKDAYS_SHORT[(new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7];
 }
 
 // Dagspann mellan två ISO-datum, inklusive båda ändarna (samma dag = 1).
