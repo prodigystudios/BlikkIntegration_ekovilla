@@ -121,6 +121,7 @@ export default function QuoteDetailPanel({
   workOrderFortnoxNumber,
   returnTo,
   onClose,
+  onLeave,
   onQuoteChanged,
   documentEmail,
   currentUserId,
@@ -138,6 +139,12 @@ export default function QuoteDetailPanel({
    */
   returnTo: string;
   onClose: () => void;
+  /**
+   * Panelen lämnas för ett annat formulär (Kopiera, Redigera), som själv navigerar dit. Utelämnad =
+   * onClose. Finns för konsumenter vars onClose också navigerar (offertlistans djuplänk tillbaka till
+   * kundkortet) — annars hade två navigeringar tävlat om samma klick.
+   */
+  onLeave?: () => void;
   /** What changed, for the consumer to apply against its own current state. */
   onQuoteChanged: (patch: QuoteDetailPatch) => void;
   /**
@@ -419,7 +426,7 @@ export default function QuoteDetailPanel({
             {canWrite ? (
               <button
                 type="button"
-                onClick={() => { onClose(); router.push(withReturnTo(`/crm/offerter/ny?fran=${quote.id}`, returnTo)); }}
+                onClick={() => { (onLeave ?? onClose)(); router.push(withReturnTo(`/crm/offerter/ny?fran=${quote.id}`, returnTo)); }}
                 className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:ml-auto sm:flex-none sm:px-5"
               >
                 Kopiera
@@ -428,7 +435,7 @@ export default function QuoteDetailPanel({
             {!offerLocked ? (
               <button
                 type="button"
-                onClick={() => { onClose(); router.push(withReturnTo(`/crm/offerter/${quote.id}/redigera`, returnTo)); }}
+                onClick={() => { (onLeave ?? onClose)(); router.push(withReturnTo(`/crm/offerter/${quote.id}/redigera`, returnTo)); }}
                 className="flex-1 rounded-xl py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-95 sm:flex-none sm:px-5"
                 style={{ backgroundColor: 'var(--crm-primary)' }}
               >

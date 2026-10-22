@@ -261,7 +261,7 @@ export default function WorkOrderDetailClient({
   // landade planeraren i orderlistan i stället för på tavlan hen kom ifrån.
   const searchParams = useSearchParams();
   const backTo = safeReturnTo(searchParams.get('returnTo')) ?? homePath;
-  const backLabel = backTo.startsWith('/crm/planering') ? 'Planering' : homeLabel;
+  const backLabel = backTo.startsWith('/crm/planering') ? 'Planering' : backTo.startsWith('/crm/kunder/') ? 'Kundkortet' : homeLabel;
   // Får den som tittar ändra något? Läses av varje skrivingång nedan, och skickas vidare till
   // underkomponenterna som `canEdit`. Uttryckt som EN variabel med flit: `!readOnly` utspridd på
   // femton ställen är femton tillfällen att glömma ett.
