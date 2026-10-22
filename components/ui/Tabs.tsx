@@ -40,7 +40,8 @@ export function TabsList({ className, ...props }: TabsListProps) {
 
 type TabsTriggerProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   active?: boolean;
-  variant?: 'card' | 'pill';
+  /** `underline`: flikrad på en linje (kundkortet). Lägg en `border-b` på TabsList — fliken ligger `-mb-px` över den. */
+  variant?: 'card' | 'pill' | 'underline';
   children: ReactNode;
 };
 
@@ -89,6 +90,10 @@ export function TabsTrigger({ className, active = false, variant = 'pill', child
         variant === 'card' && !active && 'border-[#e0e8dc] bg-white hover:border-[color:var(--ek-accent-soft-border)] hover:bg-[#f9fbf7]',
         variant === 'pill' && active && 'border-[color:var(--ek-accent-soft-border)] bg-[color:var(--ek-accent-soft)] text-[color:var(--ek-accent)] shadow-[0_8px_20px_rgba(20,44,27,0.08)] hover:border-[color:var(--ek-accent)]',
         variant === 'pill' && !active && 'border-[#e0e8dc] bg-white text-slate-700 hover:border-[color:var(--ek-accent-soft-border)] hover:bg-[#f9fbf7]',
+        // Ingen ram runt om, bara understrykningen. `px-1 py-0` mot den globala knapp-paddingen.
+        variant === 'underline' && '-mb-px inline-flex min-h-11 items-center gap-2 rounded-none border-0 border-b-2 bg-transparent px-1 py-0 text-sm',
+        variant === 'underline' && active && 'border-[color:var(--ek-green)] font-semibold text-slate-900',
+        variant === 'underline' && !active && 'border-transparent font-medium text-slate-600 hover:text-slate-900',
         className,
       )}
       {...props}

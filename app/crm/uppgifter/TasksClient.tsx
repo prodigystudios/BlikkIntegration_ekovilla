@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useDeepLinkReturn } from '@/app/crm/lib/useDeepLinkReturn';
 import Input from '../../../components/ui/Input';
 import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
@@ -139,12 +140,16 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
   // (e.g. from a customer's related list). Handled once the task is loaded.
   const presetTaskId = searchParams.get('task_id') || '';
   const [hasHandledTaskPreset, setHasHandledTaskPreset] = useState(false);
+  // Djuplänken från kundkortet bär en returväg. Då är formuläret hela besöket: stängs eller sparas
+  // det går man tillbaka dit länken kom ifrån. Aktiveras först när djuplänkens formulär öppnas.
+  const deepLink = useDeepLinkReturn();
   useEffect(() => { setHasHandledTaskPreset(false); }, [presetTaskId]);
   useEffect(() => {
     if (!presetTaskId || hasHandledTaskPreset || loading) return;
     const task = tasks.find((t) => t.id === presetTaskId);
     if (!task) return;
     openEditModal(task);
+    deepLink.arm(searchParams.get('returnTo'));
     setHasHandledTaskPreset(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetTaskId, hasHandledTaskPreset, loading, tasks]);
@@ -483,7 +488,11 @@ export default function TasksClient({ canDelegate = false }: { canDelegate?: boo
         <TaskFormModal
           task={formTarget.task}
           canDelegate={canDelegate}
-          onClose={() => setFormTarget(null)}
+          // Modalen anropar onClose även efter sparning, så returvägen behövs bara här.
+          onClose={() => {
+            setFormTarget(null);
+            deepLink.leave();
+          }}
           onSaved={applySavedTask}
         />
       ) : null}

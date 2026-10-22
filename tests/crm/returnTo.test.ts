@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { safeReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
+import { safeReturnTo, withoutNestedReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
 
 // `returnTo` kommer från URL:en och är alltså användarstyrt. Spärren är det enda som står mellan
 // en detaljvys tillbaka-knapp och en öppen vidarebefordran ut ur appen.
@@ -60,5 +60,27 @@ describe('withReturnTo', () => {
     const url = withReturnTo('/crm/offerter/1/redigera', original);
     const parsed = new URLSearchParams(url.split('?')[1]).get('returnTo');
     expect(safeReturnTo(parsed)).toBe(original);
+  });
+});
+
+describe('withoutNestedReturnTo', () => {
+  it('tar bort adressens egen returväg och behåller resten', () => {
+    expect(withoutNestedReturnTo('/crm/offerter?quote_id=q1&returnTo=%2Fcrm%2Fkunder%2Fc1'))
+      .toBe('/crm/offerter?quote_id=q1');
+    expect(withoutNestedReturnTo('/crm/kunder/c1?returnTo=%2Fcrm%2Fofferter')).toBe('/crm/kunder/c1');
+  });
+
+  it('rör inte en adress utan returväg', () => {
+    expect(withoutNestedReturnTo('/crm/kunder/c1?tab=offerter')).toBe('/crm/kunder/c1?tab=offerter');
+    expect(withoutNestedReturnTo('/crm/arbetsorder/1')).toBe('/crm/arbetsorder/1');
+  });
+
+  it('kedjan växer inte: varv efter varv blir adressen lika lång', () => {
+    let card = '/crm/kunder/c1?tab=offerter';
+    for (let i = 0; i < 5; i += 1) {
+      const panel = withReturnTo('/crm/offerter?quote_id=q1', withoutNestedReturnTo(card));
+      card = withReturnTo('/crm/kunder/c1?tab=offerter', withoutNestedReturnTo(panel));
+    }
+    expect(card).toBe('/crm/kunder/c1?tab=offerter&returnTo=%2Fcrm%2Fofferter%3Fquote_id%3Dq1');
   });
 });

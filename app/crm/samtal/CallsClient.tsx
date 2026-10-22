@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useDeepLinkReturn } from '@/app/crm/lib/useDeepLinkReturn';
 import Input from '../../../components/ui/Input';
 import MetricCard from '../components/MetricCard';
 import CrmModal from '../components/CrmModal';
@@ -194,12 +195,20 @@ export default function CallsClient() {
   // (e.g. from a customer's related list). Handled once the call is loaded.
   const presetCallId = searchParams.get('call_id') || '';
   const [hasHandledCallPreset, setHasHandledCallPreset] = useState(false);
+  // Djuplänken från kundkortet bär en returväg. Då är formuläret hela besöket: stängs eller sparas
+  // det går man tillbaka dit länken kom ifrån. Aktiveras först när djuplänkens formulär öppnas.
+  const deepLink = useDeepLinkReturn();
+  function closeLogModal() {
+    setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery('');
+    deepLink.leave();
+  }
   useEffect(() => { setHasHandledCallPreset(false); }, [presetCallId]);
   useEffect(() => {
     if (!presetCallId || hasHandledCallPreset || loading) return;
     const call = calls.find((c) => c.id === presetCallId);
     if (!call) return;
     openEditCallModal(call);
+    deepLink.arm(searchParams.get('returnTo'));
     setHasHandledCallPreset(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetCallId, hasHandledCallPreset, loading, calls]);
@@ -379,11 +388,9 @@ export default function CallsClient() {
           : [item, ...current].slice(0, 50)
         );
       }
-      setLogOpen(false);
-      setEditingCallId(null);
-      setDraft(initialDraft);
-      setSelectedEntity(null);
       toast.success(isEditing ? 'Samtal uppdaterat' : 'Samtal loggat');
+      // Samma stängning som Avbryt — återställningen och returvägen på ett ställe.
+      closeLogModal();
     } catch {
       toast.error(editingCallId ? 'Fel vid uppdatering av samtal' : 'Fel vid loggning av samtal');
     } finally {
@@ -605,7 +612,7 @@ export default function CallsClient() {
 
       {logOpen ? (
         <CrmModal
-          onClose={() => { setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery(''); }}
+          onClose={closeLogModal}
           ariaLabel="Logga samtal"
           maxWidth="sm:max-w-[760px]"
           header={
@@ -622,7 +629,7 @@ export default function CallsClient() {
             <>
               <button
                 type="button"
-                onClick={() => { setLogOpen(false); setEditingCallId(null); setDraft(initialDraft); setSelectedEntity(null); setEntityQuery(''); }}
+                onClick={closeLogModal}
                 className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
               >
                 Avbryt

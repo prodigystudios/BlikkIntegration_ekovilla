@@ -17,12 +17,15 @@ export default function FortnoxCodeSelect({
   endpoint,
   emptyLabel,
   placeholder,
+  id,
 }: {
   value: string;
   onChange: (v: string) => void;
   endpoint: string;
   emptyLabel: string;
   placeholder: string;
+  /** Kopplar en `<label htmlFor>` till kontrollen, oavsett vilken av de tre som renderas. */
+  id?: string;
 }) {
   const [status, setStatus] = useState<Status>('loading');
   const [options, setOptions] = useState<CodeOption[]>([]);
@@ -51,12 +54,12 @@ export default function FortnoxCodeSelect({
 
   // Fortnox not connected / empty register / load failed → free text, no guessing forced.
   if (status === 'unavailable') {
-    return <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />;
+    return <Input id={id} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />;
   }
 
   if (status === 'loading') {
     return (
-      <Select disabled>
+      <Select id={id} disabled>
         <option>Laddar…</option>
       </Select>
     );
@@ -67,7 +70,7 @@ export default function FortnoxCodeSelect({
   const hasCurrent = value === '' || options.some((o) => o.code === value);
 
   return (
-    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{emptyLabel}</option>
       {options.map((o) => (
         <option key={o.code} value={o.code}>

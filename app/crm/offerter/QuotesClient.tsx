@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { withoutNestedReturnTo, withReturnTo } from '@/app/crm/lib/returnTo';
+import { useDeepLinkReturn } from '@/app/crm/lib/useDeepLinkReturn';
 import Input from '../../../components/ui/Input';
 import { cn } from '@/lib/shared/cn';
 import AssigneeFilter, { assigneeQueryParam, defaultAssigneeFilter, type AssigneeOption } from '@/app/crm/components/AssigneeFilter';
@@ -178,6 +180,9 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
 
   const presetProspectId = searchParams.get('prospect_id') || '';
   const presetQuoteId = searchParams.get('quote_id') || '';
+  // Djuplänken bär ibland en returväg (kundkortets offertlista). Då är panelen hela besöket: att
+  // stänga den leder tillbaka dit länken kom ifrån. Aktiveras först när djuplänkens panel öppnas.
+  const deepLink = useDeepLinkReturn();
   const shouldOpenCreate = searchParams.get('new') === '1';
 
   // What the status counts are computed over. They don't depend on the status selection (every
@@ -329,6 +334,7 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
     if (!quotes.some((q) => q.id === presetQuoteId) && linkedQuote?.id !== presetQuoteId) return;
     setDetailQuoteId(presetQuoteId);
     setDetailPanelOpen(true);
+    deepLink.arm(searchParams.get('returnTo'));
     setHasHandledQuotePreset(true);
   }, [presetQuoteId, hasHandledQuotePreset, loading, quotes, linkedQuote]);
 
@@ -375,6 +381,8 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
   }, []);
 
   function openQuote(id: string) {
+    // En rad användaren själv öppnar i listan stängs i listan.
+    deepLink.disarm();
     setDetailQuoteId(id);
     setDetailPanelOpen(true);
   }
@@ -609,7 +617,11 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
           key={detailQuote.id}
           quote={detailQuote}
           workOrderFortnoxNumber={detailQuote.work_order_id ? (workOrderFortnoxById.get(detailQuote.work_order_id) ?? null) : null}
-          returnTo={`/crm/offerter?quote_id=${detailQuote.id}`}
+          // Panelens egna vägar ut (Redigera, kundkortet, Kopiera) kommer tillbaka hit — och med
+          // djuplänkens returväg kvar, så att panelen sedan kan stängas tillbaka dit.
+          returnTo={deepLink.current()
+            ? withReturnTo(`/crm/offerter?quote_id=${detailQuote.id}`, withoutNestedReturnTo(deepLink.current() as string))
+            : `/crm/offerter?quote_id=${detailQuote.id}`}
           onOpenQuote={(next) => {
             // Raden kommer komplett från lådan, så den kan öppnas direkt. `linkedQuote` är samma
             // spår som djuplänken använder för en offert utanför den laddade sidan — den läggs
@@ -622,7 +634,15 @@ export default function QuotesClient({ currentUserId, canWrite, canDelegate, can
           canWrite={canWrite}
           canDelegate={canDelegate}
           canEditContacts={canEditContacts}
-          onClose={() => setDetailPanelOpen(false)}
+          onClose={() => {
+            setDetailPanelOpen(false);
+            deepLink.leave();
+          }}
+          // Kopiera/Redigera navigerar själva — returvägen följer med i deras returnTo ovan.
+          onLeave={() => {
+            setDetailPanelOpen(false);
+            deepLink.disarm();
+          }}
           onQuoteChanged={(patch) => {
             setQuotes((current) => current.map((q) => (q.id === patch.id ? { ...q, ...patch } : q)));
             // Keep the open panel alive across a reload that may drop its row from the page: hold
