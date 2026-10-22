@@ -12,6 +12,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import { changedCustomerEditFields } from './customerEditPatch';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
@@ -163,6 +164,42 @@ function buildAddress(street: string, postalCode: string, city: string) {
   return { street: street || null, postal_code: postalCode || null, city: city || null };
 }
 
+// Utkastet som PATCH-fält. Sparningen skickar bara de som skiljer sig från utkastet editorn öppnades med
+// (changedCustomerEditFields).
+function customerEditBody(draft: EditDraft): Record<string, unknown> {
+  return {
+    customer_type: draft.customer_type,
+    company_name: draft.company_name.trim() || null,
+    organization_number: draft.organization_number.trim() || null,
+    first_name: draft.first_name.trim() || null,
+    last_name: draft.last_name.trim() || null,
+    personal_number: draft.personal_number.trim() || null,
+    email: draft.email.trim() || null,
+    phone: draft.phone.trim() || null,
+    mobile: draft.mobile.trim() || null,
+    visit_address: buildAddress(draft.visit_street, draft.visit_postal_code, draft.visit_city),
+    delivery_address: buildAddress(draft.delivery_street, draft.delivery_postal_code, draft.delivery_city),
+    invoice_address: buildAddress(draft.invoice_street, draft.invoice_postal_code, draft.invoice_city),
+    invoice_email: draft.invoice_email.trim() || null,
+    payment_terms: draft.payment_terms.trim() || null,
+    price_list: draft.price_list.trim() || null,
+    discount: draft.discount.trim() ? Number(draft.discount) : null,
+    vat_number: draft.vat_number.trim() || null,
+    reverse_vat: draft.reverse_vat,
+    annual_revenue: draft.annual_revenue.trim() ? Number(draft.annual_revenue) : null,
+    number_of_employees: draft.number_of_employees.trim() ? Number(draft.number_of_employees) : null,
+    legal_entity_type: draft.legal_entity_type.trim() || null,
+    sni_code: draft.sni_code.trim() || null,
+    sni_name: draft.sni_name.trim() || null,
+    operating_profit: draft.operating_profit.trim() ? Number(draft.operating_profit) : null,
+    profit_after_financial_items: draft.profit_after_financial_items.trim() ? Number(draft.profit_after_financial_items) : null,
+    total_assets: draft.total_assets.trim() ? Number(draft.total_assets) : null,
+    operating_margin: draft.operating_margin.trim() ? Number(draft.operating_margin) : null,
+    equity_ratio: draft.equity_ratio.trim() ? Number(draft.equity_ratio) : null,
+    financial_year: draft.financial_year.trim() ? Number(draft.financial_year) : null,
+  };
+}
+
 // ─── Small UI helpers ─────────────────────────────────────────────────────────
 
 function BackArrow() {
@@ -300,6 +337,8 @@ export default function CustomerDetailClient({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  // Utkastet som editorn öppnades med — sparningen skickar bara det som ändrats sedan dess.
+  const [editBase, setEditBase] = useState<EditDraft | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -384,7 +423,7 @@ export default function CustomerDetailClient({
 
   function startEditing() {
     if (!customer) return;
-    setEditDraft({
+    const draft: EditDraft = {
       customer_type: customer.customer_type,
       company_name: customer.company_name || '',
       organization_number: customer.organization_number || '',
@@ -420,7 +459,9 @@ export default function CustomerDetailClient({
       operating_margin: customer.operating_margin != null ? String(customer.operating_margin) : '',
       equity_ratio: customer.equity_ratio != null ? String(customer.equity_ratio) : '',
       financial_year: customer.financial_year != null ? String(customer.financial_year) : '',
-    });
+    };
+    setEditDraft(draft);
+    setEditBase(draft);
     setEditing(true);
   }
 
@@ -452,39 +493,14 @@ export default function CustomerDetailClient({
     if (editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)) {
       toast.error(PERSONAL_NUMBER_ERROR); return;
     }
+    const body = changedCustomerEditFields(customerEditBody(editDraft), editBase ? customerEditBody(editBase) : {});
+    if (Object.keys(body).length === 0) {
+      setEditing(false);
+      toast.success('Kund uppdaterad');
+      return;
+    }
     setSaving(true);
     try {
-      const body: Record<string, unknown> = {
-        customer_type: editDraft.customer_type,
-        company_name: editDraft.company_name.trim() || null,
-        organization_number: editDraft.organization_number.trim() || null,
-        first_name: editDraft.first_name.trim() || null,
-        last_name: editDraft.last_name.trim() || null,
-        personal_number: editDraft.personal_number.trim() || null,
-        email: editDraft.email.trim() || null,
-        phone: editDraft.phone.trim() || null,
-        mobile: editDraft.mobile.trim() || null,
-        visit_address: buildAddress(editDraft.visit_street, editDraft.visit_postal_code, editDraft.visit_city),
-        delivery_address: buildAddress(editDraft.delivery_street, editDraft.delivery_postal_code, editDraft.delivery_city),
-        invoice_address: buildAddress(editDraft.invoice_street, editDraft.invoice_postal_code, editDraft.invoice_city),
-        invoice_email: editDraft.invoice_email.trim() || null,
-        payment_terms: editDraft.payment_terms.trim() || null,
-        price_list: editDraft.price_list.trim() || null,
-        discount: editDraft.discount.trim() ? Number(editDraft.discount) : null,
-        vat_number: editDraft.vat_number.trim() || null,
-        reverse_vat: editDraft.reverse_vat,
-        annual_revenue: editDraft.annual_revenue.trim() ? Number(editDraft.annual_revenue) : null,
-        number_of_employees: editDraft.number_of_employees.trim() ? Number(editDraft.number_of_employees) : null,
-        legal_entity_type: editDraft.legal_entity_type.trim() || null,
-        sni_code: editDraft.sni_code.trim() || null,
-        sni_name: editDraft.sni_name.trim() || null,
-        operating_profit: editDraft.operating_profit.trim() ? Number(editDraft.operating_profit) : null,
-        profit_after_financial_items: editDraft.profit_after_financial_items.trim() ? Number(editDraft.profit_after_financial_items) : null,
-        total_assets: editDraft.total_assets.trim() ? Number(editDraft.total_assets) : null,
-        operating_margin: editDraft.operating_margin.trim() ? Number(editDraft.operating_margin) : null,
-        equity_ratio: editDraft.equity_ratio.trim() ? Number(editDraft.equity_ratio) : null,
-        financial_year: editDraft.financial_year.trim() ? Number(editDraft.financial_year) : null,
-      };
       const res = await fetch(`/api/crm/customers/${customer.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
