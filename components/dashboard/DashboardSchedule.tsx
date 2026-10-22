@@ -7,7 +7,11 @@ import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import Badge from '../ui/Badge';
 import DashboardCardHeader from './DashboardCardHeader';
-import { compareScheduleRows, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import ScheduleStopCard from './schedule/ScheduleStopCard';
+import ScheduleTruckGroup from './schedule/ScheduleTruckGroup';
+import { getMaterialTheme } from './schedule/materialTheme';
+import { crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { countScheduleRowsOnDay, groupScheduleStops, isSchedulePlaceholder, mapsSearchHref, scheduleDayLabel, workOrderHref, type ScheduleTruckGroup as TruckGroup } from '@/lib/domains/planning/scheduleStops';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -154,13 +158,10 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     // uppslag mot planning_*-tabellerna med ett CRM-uuid, och ett Blikk-projekt sökt på
     // ordernummer. En platshållare har inget att öppna, och då är rätt svar att inte öppna något.
     if (isCrmItem(it)) {
-      // ⚠️ PLACERINGEN MÅSTE MED. Fältvyn är per arbetsorder och kan inte veta vilken etapp man kom
-      // ifrån utan den — utan ?segment= får en besättning som bara ska göra etapp 1 hela ordern i
-      // handen. Saknas segmentet visas helheten, precis som förut.
-      if (it.work_order_id) {
-        const seg = it.segment_id ? `?segment=${encodeURIComponent(String(it.segment_id))}` : '';
-        window.location.href = `/arbetsorder/${it.work_order_id}${seg}`;
-      }
+      // ⚠️ PLACERINGEN MÅSTE MED (?segment=, etapperna) — workOrderHref bär den, och samma länk står
+      // på kortets "Öppna arbetsorder". null på en platshållare: då navigerar ingenting.
+      const href = workOrderHref(it);
+      if (href) window.location.href = href;
       return;
     }
     setDetailOpen(true);
@@ -560,32 +561,30 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     await supabase.from('planning_segment_reports').delete().eq('id', id);
   }, [supabase]);
 
-  const grouped = useMemo(() => {
-    // If a specific Mon..Fri day is selected, show only jobs that include that date (start..end inclusive)
-    if (dayIdx != null) {
-      const selISO = range.days[dayIdx];
-      const arr = items.filter((it) => (it.job_day as string) === selISO);
-      return arr.length ? [{ day: selISO, arr }] : [];
-    }
-    // Otherwise group by job_day (per-day rows)
-    const map = new Map<string, any[]>();
-    for (const it of items) {
-      const k = (it.job_day as string) || (it.start_day as string) || 'okänd';
-      if (!map.has(k)) map.set(k, []);
-      map.get(k)!.push(it);
-    }
-    return Array.from(map.entries()).sort(([a],[b]) => a.localeCompare(b, 'sv')).map(([day, arr]) => ({ day, arr }));
-  }, [items, dayIdx, range.days]);
+  // Dag → lastbil → stopp. En vald dag visar bara den dagens utbredda rader; "Hela veckan" en grupp
+  // per dag. Ordningen inom en bil är planeringstavlans — se groupScheduleStops.
+  const days = useMemo(() => {
+    // De gamla Blikk-radernas ordning hämtas separat ur planning_segments (segmentSortIndexMap).
+    const getSortIndex = (x: any): number | null => {
+      const v = (x.sort_index ?? x.sortIndex);
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+      const sid = (x.segment_id || x.segmentId || '') as string;
+      if (sid && sid in segmentSortIndexMap) return segmentSortIndexMap[sid];
+      return null;
+    };
+    return groupScheduleStops(items, getSortIndex, dayIdx != null ? range.days[dayIdx] : null);
+  }, [items, dayIdx, range.days, segmentSortIndexMap]);
+  const weekView = dayIdx == null;
 
   // Platshållarnas utfällning. En publicerad platshållare har ingen arbetsorder att öppna, och
-  // beskrivningen är ofta allt som säger vad dagen går ut på. Kapad efter två rader (rubriken efter
-  // en) fick entreprenaden aldrig se resten: hela texten låg bara i `title`, som en telefon inte
-  // visar. Kortet fälls därför ut på plats — samma text som /mina-jobb redan visar okapad.
+  // beskrivningen är ofta allt som säger vad dagen går ut på. Kapad efter två rader fick
+  // entreprenaden aldrig se resten: hela texten låg bara i `title`, som en telefon inte visar.
+  // Kortet fälls därför ut på plats — samma text som /mina-jobb redan visar okapad.
   //
-  // Bara ett kort där något FAKTISKT är kapat får pilen och blir tryckbart. Ett kort som lovar mer
-  // och sedan inte visar något nytt är samma tomma löfte som en "Öppna"-knapp utan order bakom.
-  // Rubriken och beskrivningen bär därför `data-clip-key` och mäts när listan renderas om och när
-  // någon av dem ändrar storlek.
+  // Bara ett kort där något FAKTISKT är kapat får "Visa hela texten" och blir tryckbart. Ett kort som
+  // lovar mer och sedan inte visar något nytt är samma tomma löfte som en "Öppna"-knapp utan order
+  // bakom. Beskrivningen bär därför `data-clip-key` (ScheduleStopCard) och mäts när listan renderas
+  // om och när den ändrar storlek. Rubriken bryts på flera rader sedan omgörningen och kapas aldrig.
   //
   // ⚠️ Ett UTFÄLLT kort mäts inte, det behåller sitt senaste svar. Utfällt är det aldrig kapat, och
   // ett nytt mått hade tagit bort pilen. Då försvann knappen i samma ögonblick som kortet fälldes
@@ -632,22 +631,55 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
     observer.observe(root);
     targets.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
-  }, [grouped, loading, compact, expandedKeys]);
+  }, [days, loading, compact, expandedKeys]);
 
-  // Visual theme based on job type/material
-  const getMaterialTheme = useCallback((jobType?: string) => {
-    const jt = (jobType || '').toLowerCase();
-    if (jt.startsWith('eko')) return { accent: '#16a34a', badgeBg: '#dcfce7', badgeFg: '#166534', label: 'Ekovilla' };
-    if (jt.startsWith('vit')) return { accent: '#0284c7', badgeBg: '#e0f2fe', badgeFg: '#075985', label: 'Vitull' };
-    return { accent: '#64748b', badgeBg: '#f1f5f9', badgeFg: '#334155', label: null as string | null };
-  }, []);
-
-  const visibleJobCount = grouped.reduce((sum, group) => sum + group.arr.length, 0);
+  const visibleJobCount = days.reduce((sum, group) => sum + group.count, 0);
+  // Knapparnas räknare. Samma urval som dagen visar (countScheduleRowsOnDay), så knappen aldrig säger
+  // "2 jobb" om en dag som visar ett.
+  const dayCounts = useMemo(() => range.days.slice(0, 5).map((d) => countScheduleRowsOnDay(items, d)), [items, range.days]);
+  // Svensk dag: "idag" på knappen och "Idag" i bilens rubrik ska inte flytta sig i en telefon i fel zon.
+  const todayISO = stockholmTodayISO();
   const dayButtonClass = (active: boolean) => cn(
-    'w-full justify-center rounded-lg border border-solid px-1 py-1.5 text-xs transition',
+    'relative flex h-14 w-full flex-col items-center justify-center gap-0.5 rounded-xl border px-1 py-0 transition',
     active
-      ? 'border-transparent font-bold text-white shadow-sm [background:var(--crm-primary)]'
-      : 'border-[#d9e2d4] bg-white font-medium text-slate-600 hover:border-slate-400 hover:text-slate-900',
+      ? 'border-[#1a3f26] bg-[#1a3f26] text-white'
+      : 'border-[#e0e8dc] bg-white text-slate-600 hover:border-[#c6dccd] hover:text-slate-900',
+  );
+  const daySubClass = (active: boolean) => cn('text-xs tabular-nums', active ? 'text-[#cfe3d5]' : 'text-slate-500');
+
+  // Bilens underrad. Hela veckan har redan dagen i dagrubriken ovanför, så där står bara stoppen.
+  const truckSubtitle = (group: TruckGroup<unknown>, day: string) => {
+    const n = group.stops.length;
+    if (group.truck == null) return `${n} jobb`;
+    const stops = n === 1 ? '1 stopp' : compact ? `${n} stopp` : `${n} stopp i ordning`;
+    if (weekView) return stops;
+    const when = compact ? (day === todayISO ? 'Idag' : scheduleDayLabel(day, 'short')) : scheduleDayLabel(day);
+    return `${when} · ${stops}`;
+  };
+
+  const weekNav = (
+    <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setWeekOffset(prev => prev - 1)}
+        aria-label="Föregående vecka"
+        className="h-11 w-11 shrink-0 rounded-xl border border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
+      >
+        <ChevronIcon direction="left" />
+      </button>
+      <div className={cn('text-center', compact ? 'min-w-0 flex-1' : 'min-w-[150px]')}>
+        <div className="text-[15px] font-semibold text-slate-900">Vecka {range.weekNumber}</div>
+        <div className="text-[13px] tabular-nums text-slate-600">{weekRangeLabel(range.startISO, range.endISO)}</div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setWeekOffset(prev => prev + 1)}
+        aria-label="Nästa vecka"
+        className="h-11 w-11 shrink-0 rounded-xl border border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
+      >
+        <ChevronIcon direction="right" />
+      </button>
+    </div>
   );
 
   // ⚠️ INGEN EGEN KORTRAM HÄR. ClientDashboard renderar redan <section className={cardClass}> runt
@@ -663,31 +695,12 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
       <DashboardCardHeader
         title="Arbetsschema"
         meta={<Badge variant="accent">{visibleJobCount} jobb</Badge>}
+        action={compact ? undefined : weekNav}
       />
 
-      {/* Veckoväljaren, samma form som /tid: pilar i kanterna, veckan och datumen i mitten. */}
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => setWeekOffset(prev => prev - 1)}
-          aria-label="Föregående vecka"
-          className="h-10 w-10 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
-        >
-          ←
-        </button>
-        <div className="min-w-0 flex-1 text-center">
-          <div className="text-sm font-semibold text-slate-900">Vecka {range.weekNumber}</div>
-          <div className="text-xs tabular-nums text-slate-500">{weekRangeLabel(range.startISO, range.endISO)}</div>
-        </div>
-        <button
-          type="button"
-          onClick={() => setWeekOffset(prev => prev + 1)}
-          aria-label="Nästa vecka"
-          className="h-10 w-10 shrink-0 rounded-xl border border-solid border-[#d9e2d4] bg-white p-0 text-slate-600 transition hover:border-slate-400"
-        >
-          →
-        </button>
-      </div>
+      {/* Veckoväljaren, samma form som /tid: pilar i kanterna, veckan och datumen i mitten. På datorn
+          står den i rubrikraden, på mobilen på en egen rad. */}
+      {compact && weekNav}
 
       {/* Ersätter etiketten "Denna vecka / Förra veckan": en knapp som tar dig tillbaka säger samma
           sak och gör något åt det, och den syns bara när du faktiskt är bortbläddrad. */}
@@ -695,243 +708,128 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
         <button
           type="button"
           onClick={() => setWeekOffset(0)}
-          className="justify-self-center rounded-lg py-1.5 text-sm font-semibold text-slate-600 underline underline-offset-2"
+          className={cn('rounded-lg py-1.5 text-sm font-semibold text-slate-600 underline underline-offset-2', compact ? 'justify-self-center' : 'justify-self-end')}
         >
           Gå till denna vecka
         </button>
       ) : null}
 
-      {/* Mån–fre plus "Alla". Rubriken "Visa dag" och den upprepade dagetiketten bredvid den är
-          borta — knapparna heter redan Mån…Fre, och den intryckta knappen är svaret. */}
-      <div className="grid grid-cols-6 gap-1.5">
-        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => (
-          <button
-            key={label}
-            type="button"
-            onClick={() => setDayIdx(idx)}
-            aria-pressed={dayIdx === idx}
-            className={dayButtonClass(dayIdx === idx)}
-            title={range.days[idx]}
-          >{label}</button>
-        ))}
+      {/* Mån–fre plus "Hela veckan". Knapparna bär dag, datum och antal jobb, så man ser vilka dagar
+          som har något utan att trycka på dem. Antalen visas först när veckan är hämtad — en nolla
+          medan den laddar hade varit fel. Rubriken "Visa dag" är borta: den intryckta knappen är svaret. */}
+      <div className={cn('grid grid-cols-6', compact ? 'gap-1.5' : 'gap-2')}>
+        {['Mån','Tis','Ons','Tor','Fre'].map((label, idx) => {
+          const iso = range.days[idx];
+          const active = dayIdx === idx;
+          const isToday = iso === todayISO;
+          const count = dayCounts[idx];
+          const date = Number(iso.slice(8, 10));
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setDayIdx(idx)}
+              aria-pressed={active}
+              aria-current={isToday ? 'date' : undefined}
+              aria-label={`${scheduleDayLabel(iso)}${isToday ? ', idag' : ''}${loading ? '' : `, ${count} jobb`}`}
+              className={dayButtonClass(active)}
+            >
+              {compact ? (
+                <>
+                  <span className={cn('text-xs font-semibold', active ? 'text-[#cfe3d5]' : 'text-slate-600')}>{label}</span>
+                  <span className={cn('text-[15px] tabular-nums', active ? 'font-bold' : 'font-semibold text-slate-700')}>{date}</span>
+                  {!loading && count > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        // Över knappens överkant, som ett notismärke: inne i hörnet täckte det dagnamnet
+                        // i en knapp som bara är ~55 px bred. Ringen skiljer det från knappens kant.
+                        'absolute -right-1 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-bold tabular-nums ring-2 ring-[#f9fbf7]',
+                        active ? 'bg-[#2f6b45] text-white' : 'bg-[#1a3f26] text-white',
+                      )}
+                    >{count}</span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className={cn('text-[13px]', active ? 'font-bold' : 'font-semibold')}>{isToday ? `${label} · idag` : label}</span>
+                  <span className={daySubClass(active)}>{loading ? date : `${date} · ${count ? `${count} jobb` : '–'}`}</span>
+                </>
+              )}
+            </button>
+          );
+        })}
         <button
           type="button"
           onClick={() => setDayIdx(null)}
           aria-pressed={dayIdx == null}
+          aria-label={`Hela veckan${loading ? '' : `, ${items.length} jobb`}`}
           className={dayButtonClass(dayIdx == null)}
-        >Alla</button>
+        >
+          {compact ? (
+            // Två rader av sig själv i en knapp som är ~55 px bred. Antalet står redan i rubrikens
+            // räknare när hela veckan är vald, och ett märke i hörnet hade krockat med texten.
+            <span className="text-xs font-semibold leading-tight">Hela veckan</span>
+          ) : (
+            <>
+              <span className={cn('text-[13px]', dayIdx == null ? 'font-bold' : 'font-semibold')}>Hela veckan</span>
+              {!loading && <span className={daySubClass(dayIdx == null)}>{items.length ? `${items.length} jobb` : '–'}</span>}
+            </>
+          )}
+        </button>
       </div>
 
       {loading && <div className="px-0.5 pt-0 text-xs text-slate-500">Laddar…</div>}
-      {!loading && grouped.length === 0 && (
+      {!loading && days.length === 0 && (
         <div className={cn('inline-flex w-fit items-center gap-2 rounded-full border border-[#e0e8dc] bg-[#f9fbf7] text-slate-500 shadow-[0_6px_14px_rgba(20,44,27,0.04)]', compact ? 'px-[11px] py-[9px] text-xs' : 'px-3 py-2.5 text-xs')}>
           Inga jobb planerade för vald period.
         </div>
       )}
 
-      {!loading && grouped.length > 0 && (
-        <div ref={listRef} style={{ display:'grid', gap: compact ? 8 : 10 }}>
-          {grouped.map(({ day, arr }) => (
-            <div key={day} style={{ display:'grid', gap: compact ? 4 : 6 }}>
-              <div style={{ fontWeight:600, fontSize: compact ? 11 : 12, color:'#0f172a' }}>{day}</div>
-              <div style={{ display:'grid', gap: compact ? 6 : 8 }}>
-                {(() => {
-                  const getSortIndex = (x: any): number | null => {
-                    const v = (x.sort_index ?? x.sortIndex);
-                    if (typeof v === 'number' && Number.isFinite(v)) return v;
-                    const sid = (x.segment_id || x.segmentId || '') as string;
-                    if (sid && sid in segmentSortIndexMap) return segmentSortIndexMap[sid];
-                    return null;
-                  };
-                  // Bil, källa, sedan CRM-jobben i planeringstavlans ordning ("Ordning på dagen")
-                  // och de gamla Blikk-raderna i sin. Se compareScheduleRows.
-                  const arrSorted = [...arr].sort((a, b) => compareScheduleRows(a, b, getSortIndex));
-                  return arrSorted.map((it: any) => {
-                  const title = [it.order_number ? String(it.order_number) : null, it.project_name].filter(Boolean).join(' - ');
-                  const theme = getMaterialTheme(it.job_type);
-                  const bagLabel = typeof it.bag_count === 'number' ? `${it.bag_count} säckar${theme.label ? ' ' + theme.label : ''}` : null;
-                  const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
-                  const positionLabel = (() => {
-                    const hasTruck = !!it.truck;
-                    if (!hasTruck) return null;
-                    const sameTruckSorted = arrSorted.filter((x: any) => x.truck === it.truck);
-                    const pos = Math.max(0, sameTruckSorted.findIndex((x: any) => (x.segment_id || '') === (it.segment_id || '')));
-                    const total = sameTruckSorted.length;
-                    if (total <= 0) return null;
-                    return `${pos + 1}/${total}`;
-                  })();
-                  const crewNames = (() => {
-                    const arr = segmentCrewMap[it.segment_id] || [];
-                    const uniq = Array.from(new Set(arr.map(m => (m.name || '').trim()).filter(Boolean)));
-                    return uniq;
-                  })();
-                  // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy —
-                  // alltså ingenting att öppna. Den fälls i stället ut på plats, men bara när
-                  // något är kapat (se clippedKeys): annars ska kortet inte SE ut som en knapp,
-                  // för pekaren och pilen lovar en handling som inte finns.
-                  //
-                  // Utfällningen bärs av pilen, en riktig <button aria-expanded>, inte av kortet.
-                  // Ett kort med role="button" gör Tid-knappen inuti osynlig för skärmläsare.
-                  // Kortet tar ändå emot trycket var som helst, för fingrarnas skull.
-                  const cardKey = `${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`;
-                  const opens = !isCrmItem(it) || !!it.work_order_id;
-                  const isPlaceholder = !opens;
-                  const expanded = isPlaceholder && expandedKeys.has(cardKey);
-                  const expandable = isPlaceholder && (expanded || clippedKeys.has(cardKey));
-                  return (
-                    <div
-                      key={cardKey}
-                      onClick={opens ? () => openDetail(it) : expandable ? () => {
-                        // Slutet på en textmarkering är också ett klick. Den som markerar en
-                        // rad för att kopiera den ska inte få kortet ihopfällt under sig.
-                        if (window.getSelection()?.toString()) return;
-                        toggleExpanded(cardKey);
-                      } : undefined}
-                      // Bara när fokus står på själva kortet. Enter på Tid-knappen inuti bubblar
-                      // hit, och preventDefault hade då stoppat knappen och öppnat ordern i stället.
-                      onKeyDown={opens ? (e) => { if (e.target !== e.currentTarget) return; if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDetail(it); } } : undefined}
-                      role={opens ? 'button' : undefined}
-                      tabIndex={opens ? 0 : undefined}
-                      className={cn(
-                        'relative grid rounded-[14px] border border-[#e0e8dc] bg-[linear-gradient(180deg,#ffffff_0%,#f9fbf7_100%)] shadow-[0_8px_18px_rgba(20,44,27,0.05)]',
-                        (opens || expandable) && 'cursor-pointer',
-                        compact ? 'gap-2 p-2.5' : 'gap-2.5 p-3'
-                      )}
-                      style={{ borderLeft: `3px solid ${theme.accent}` }}
-                    >
-                      <div className="grid items-start gap-2.5 [grid-template-columns:minmax(0,1fr)_auto]">
-                        <div className="grid min-w-0 gap-1.5">
-                          <div className={cn('flex min-w-0 gap-2', expanded ? 'items-start' : 'items-center')}>
-                            <div className={cn('h-2.5 w-2.5 shrink-0 rounded-full opacity-90', expanded && 'mt-1')} style={{ background: theme.accent, boxShadow:`0 0 0 4px ${theme.accent}14` }} />
-                            <span
-                              data-clip-key={isPlaceholder ? cardKey : undefined}
-                              className={cn(
-                                'min-w-0 flex-1 font-extrabold leading-[1.3] tracking-[-0.1px] text-slate-900',
-                                expanded ? 'whitespace-normal break-words' : 'overflow-hidden text-ellipsis whitespace-nowrap',
-                                compact ? 'text-[12.5px]' : 'text-[13.5px]'
-                              )}
-                            >{title}</span>
-                          </div>
-                          {it.truck && (
-                            <div className={cn('inline-flex w-fit items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-slate-500', compact ? 'text-[10.5px]' : 'text-[11px]')}>
-                              <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path fill="currentColor" d="M3 4h11v8h-1.5a2.5 2.5 0 0 0-2.45 2H8A3 3 0 0 0 5 17H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zm13 5h2.586A2 2 0 0 1 20 9.586L21.414 11A2 2 0 0 1 22 12.414V16a1 1 0 0 1-1 1h-1a3 3 0 0 0-3-3h-1V9zM7 18a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm10 0a2 2 0 1 0 0-4 2 2 0 0 0 0 4z" />
-                              </svg>
-                              {it.truck}
-                            </div>
-                          )}
-                          {/* Planerarens arbetsbeskrivning. Finns bara på publicerade platshållare
-                              (service av maskiner, interna dagar) — där är den det enda som säger
-                              vad dagen går ut på, och kortet leder inte till någon arbetsorder där
-                              den annars hade stått. Klippt till två rader tills kortet fälls ut;
-                              utfällt behåller den raderna den skrevs med, som på /mina-jobb. */}
-                          {it.work_description && (
-                            <div
-                              data-clip-key={isPlaceholder ? cardKey : undefined}
-                              title={expanded ? undefined : it.work_description}
-                              className={cn(
-                                'leading-snug text-slate-600',
-                                expanded ? 'whitespace-pre-wrap break-words' : 'line-clamp-2',
-                                compact ? 'text-[11px]' : 'text-[11.5px]'
-                              )}
-                            >
-                              {it.work_description}
-                            </div>
-                          )}
-                        </div>
-                        <div className="grid justify-items-end gap-2">
-                          {/* ⚠️ Knappen satt tidigare BARA på äldre rader (`!isCrmItem`), för att
-                              den då förifyllde ett Blikk-projekt som ett CRM-jobb inte har. Sedan
-                              cutovern 2026-09-01 leder den till vår egen /tid, och då är regeln
-                              precis omvänd: /tid väljer arbetsorder ur personens schemalagda
-                              CRM-jobb, alltså är det just CRM-raderna knappen fungerar bäst för.
-                              Den visas på båda sorterna — på en äldre rad finns ingen order att
-                              välja, men dagen stämmer och tiden förs in som intern.
-
-                              `stopPropagation` är bärande: kortets eget klick navigerar till
-                              arbetsordern för en CRM-rad, och utan det hade knappen gjort båda. */}
-                          {onReportTime && (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }); }}
-                              className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-green-600 bg-green-600 text-white shadow-[0_8px_16px_rgba(22,163,74,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
-                              aria-label="Rapportera tid för detta jobb"
-                            >
-                              <svg width={12} height={12} viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" fill="none"><path d="M12 5v14M5 12h14" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                              Tid
-                            </button>
-                          )}
-                          {/* ⚠️ Grindad på ORDER-ID:t, inte på källan. En CRM-rad kan sakna
-                              arbetsorder sedan platshållare kan publiceras till entreprenaden
-                              (supabase/archive/sql/20260908_ops_segments_field_visible.sql), och kortets
-                              klick (`isCrmItem(it) && it.work_order_id` längre upp) gör då
-                              ingenting — knappen hade lovat något den inte kan hålla. */}
-                          {isCrmItem(it) && it.work_order_id && (
-                            <span
-                              className={cn('inline-flex items-center gap-[5px] rounded-[10px] border border-[#1a3f26] bg-[#1a3f26] text-white shadow-[0_8px_16px_rgba(26,63,38,0.16)]', compact ? 'px-2.5 py-1.5 text-[10.5px]' : 'px-[11px] py-[7px] text-[11px]')}
-                            >
-                              Öppna order
-                            </span>
-                          )}
-                          <div className="inline-flex items-center gap-2">
-                            {opens && (
-                              <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className="text-slate-500">
-                                <path fill="currentColor" d="M9 18l6-6-6-6" />
-                              </svg>
-                            )}
-                            {expandable && (
-                              // `p-0`: annars ärver ikonknappen globals.css `padding: 10px 14px`.
-                              // stopPropagation: kortets eget klick hade annars fällt tillbaka.
-                              <button
-                                type="button"
-                                onClick={(e) => { e.stopPropagation(); toggleExpanded(cardKey); }}
-                                aria-expanded={expanded}
-                                aria-label={expanded ? 'Visa mindre' : 'Visa hela texten'}
-                                className="inline-flex rounded-md border-0 bg-transparent p-0 text-slate-500"
-                              >
-                                <svg width={16} height={16} viewBox="0 0 24 24" aria-hidden="true" focusable="false" className={cn('transition-transform', expanded && 'rotate-180')}>
-                                  <path fill="currentColor" d="M6 9l6 6 6-6" />
-                                </svg>
-                              </button>
-                            )}
-                            {positionLabel && (
-                              <span title="Placering i dag/lastbil" className="min-w-[34px] rounded-full border border-slate-700 bg-slate-900 px-[7px] py-1 text-center text-[10px] font-bold text-white">
-                                {positionLabel}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className={cn('flex flex-wrap gap-1.5', compact ? 'mt-1.5' : 'mt-2')}>
-                        {bagLabel && (
-                          <span className={cn('inline-flex items-center gap-1.5 rounded-full bg-white px-[9px] py-[5px] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.5)]', compact ? 'text-[10.5px]' : 'text-[11px]')} style={{ color: theme.badgeFg, border:`1px solid ${theme.accent}26` }}>
-                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path fill="currentColor" d="M7 6h10l1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L7 6zm1-2a4 4 0 0 1 8 0v2H8V4zm2 0a2 2 0 1 1 4 0v2h-4V4z" />
-                            </svg>
-                            {bagLabel}
-                          </span>
-                        )}
-                          {reported > 0 && (
-                            <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-[9px] py-[5px] text-slate-900', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Rapporterat: ${reported} säckar`}>
-                              <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                                <path fill="currentColor" d="M9 16.2l-3.5-3.5L4 14.2 9 19l12-12-1.5-1.5z" />
-                              </svg>
-                              Rapporterat: {reported}
-                            </span>
-                          )}
-                        {crewNames.length > 0 && (
-                          <span className={cn('inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-[#fafafa] px-[9px] py-[5px] text-slate-700', compact ? 'text-[10.5px]' : 'text-[11px]')} title={`Team: ${crewNames.join(', ')}`}>
-                            <svg width={14} height={14} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                              <path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h10v-2.5C11 14.17 6.33 13 4 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h8v-2.5c0-2.33-4.67-3.5-7-3.5z"/>
-                            </svg>
-                            Team: {crewNames.join(', ')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                }); })()}
-              </div>
+      {/* Dag → lastbil → stopp. Hela veckan får en dagrubrik per dag; en vald dag har sin dag i
+          dagväljaren och i bilens rubrik. */}
+      {!loading && days.length > 0 && (
+        <div ref={listRef} className={cn('grid', compact ? 'gap-6' : 'gap-7')}>
+          {days.map(({ day, trucks }) => (
+            <div key={day} className={cn('grid', compact ? 'gap-4' : 'gap-5')}>
+              {weekView && <h3 className="m-0 text-base font-bold text-slate-900">{scheduleDayLabel(day)}</h3>}
+              {trucks.map((group) => (
+                <ScheduleTruckGroup
+                  key={group.truck ?? ''}
+                  truck={group.truck}
+                  subtitle={truckSubtitle(group, day)}
+                  compact={compact}
+                  headingLevel={weekView ? 4 : 3}
+                >
+                  {group.stops.map(({ row: it, stop, of }, i) => {
+                    const cardKey = `${it.segment_id || `${it.project_id}|${it.start_day}`}|${it.job_day || ''}`;
+                    const isPlaceholder = isSchedulePlaceholder(it);
+                    const expanded = isPlaceholder && expandedKeys.has(cardKey);
+                    const expandable = isPlaceholder && (expanded || clippedKeys.has(cardKey));
+                    const reported = it.segment_id ? (reportedBySegment.get(it.segment_id) || 0) : 0;
+                    const crewNames = Array.from(new Set((segmentCrewMap[it.segment_id] || []).map(m => (m.name || '').trim()).filter(Boolean)));
+                    return (
+                      <ScheduleStopCard
+                        key={cardKey}
+                        row={it}
+                        stop={stop}
+                        of={of}
+                        last={i === group.stops.length - 1}
+                        compact={compact}
+                        headingLevel={weekView ? 5 : 4}
+                        reported={reported}
+                        crewNames={crewNames}
+                        clipKey={cardKey}
+                        expanded={expanded}
+                        expandable={expandable}
+                        onToggleExpanded={() => toggleExpanded(cardKey)}
+                        onOpen={() => openDetail(it)}
+                        onReportTime={onReportTime ? () => onReportTime({ projectId: String(it.project_id || ''), projectName: it.project_name, orderNumber: it.order_number ? String(it.order_number) : undefined, day: (it.job_day || it.start_day) ? String(it.job_day || it.start_day) : undefined }) : undefined}
+                      />
+                    );
+                  })}
+                </ScheduleTruckGroup>
+              ))}
             </div>
           ))}
         </div>
@@ -944,7 +842,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
         const postalCode = location?.postalCode || raw?.postalCode || raw?.zip || null;
         const city = location?.city || raw?.city || null;
         const address = [street, postalCode, city].filter(Boolean).join(', ');
-        const mapsHref = address ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}` : null;
+        const mapsHref = address ? mapsSearchHref(address) : null;
         const description = raw?.description || raw?.notes || raw?.note || null;
         // Extract potential phone numbers from description
         const phoneList: Array<{ display: string; tel: string }> = (() => {
@@ -1300,5 +1198,13 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
         );
       })()}
     </div>
+  );
+}
+
+function ChevronIcon({ direction }: { direction: 'left' | 'right' }) {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="mx-auto">
+      <path d={direction === 'left' ? 'M15 18l-6-6 6-6' : 'M9 18l6-6-6-6'} />
+    </svg>
   );
 }

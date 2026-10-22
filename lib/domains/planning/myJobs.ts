@@ -167,8 +167,8 @@ function fromCrm(row: CrmJobRow): MyJob | null {
 }
 
 // The dashboard's week schedule (components/dashboard/DashboardSchedule.tsx) is built around the
-// legacy get_my_jobs row shape and renders it in ~500 lines of card markup. Rather than rework
-// that, a CRM job is adapted INTO that shape so it renders through the same path — with a `source`
+// legacy get_my_jobs row shape, and its stop card (components/dashboard/schedule/ScheduleStopCard.tsx)
+// renders both kinds. A CRM job is adapted INTO that shape so it renders through the same path — with a `source`
 // marker so the three places that must behave differently can branch:
 //   • the enrichment queries hit legacy tables by segment_id (a CRM uuid matches nothing)
 //   • opening the card looks a Blikk project up BY ORDER NUMBER — which, given Fortnox numbers are
@@ -179,6 +179,9 @@ export type ScheduleItem = {
   project_id: string | null;
   project_name: string | null;
   customer: string | null;
+  // Arbetsplatsen — kortets rubrik när den finns. Samma upplösning som /mina-jobb (resolveJobAddress),
+  // så en order visar samma adress på båda ytorna. null på en platshållare: den har ingen kund.
+  address: string | null;
   order_number: string | null;
   start_day: string | null;
   end_day: string | null;
@@ -188,10 +191,10 @@ export type ScheduleItem = {
   bag_count: number | null;
   source: 'crm';
   // ⚠️ null på en platshållare. Kortet i veckoschemat navigerar till /arbetsorder/<id> och visar
-  // en "Öppna order"-knapp — båda MÅSTE grindas på det här fältet, annars får besättningen en
+  // en "Öppna arbetsorder"-länk — båda MÅSTE grindas på det här fältet, annars får besättningen en
   // knapp som inte gör något.
   work_order_id: string | null;
-  // Vad som ska göras. Bara platshållare bär den; ett riktigt jobb har sin arbetsorder.
+  // Vad som ska göras. En platshållare bär sin egen; en etapps placering ärver etappens (placeSegment).
   work_description: string | null;
   // Planerarens ordning på dagen. null = feeden saknade den (en databas före migreringen).
   sort_index: number | null;
@@ -204,6 +207,7 @@ export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
     project_id: null,
     project_name: str(row.project_name) ?? str(row.placeholder_title),
     customer: str(row.customer),
+    address: resolveJobAddress(row.work_address, row.customer_address),
     order_number: ref,
     start_day: str(row.start_day),
     end_day: str(row.end_day),
@@ -259,8 +263,11 @@ export function compareScheduleRows(
   b: ScheduleRow,
   legacySortIndex: (row: LegacyScheduleRow) => number | null,
 ): number {
-  const ta = (a.truck || '').toString();
-  const tb = (b.truck || '').toString();
+  // Trimmad, som grupperingen i scheduleStops: den gamla feeden ger bilnamnet som det står i databasen,
+  // CRM-raden kommer trimmad. Otrimmat sorterades 'Bil 1' före 'Bil 1 ' och de gamla raderna hamnade
+  // efter CRM-jobben på samma bil.
+  const ta = (a.truck || '').toString().trim();
+  const tb = (b.truck || '').toString().trim();
   if (ta !== tb) return ta.localeCompare(tb, 'sv');
   if (a.source === 'crm' || b.source === 'crm') {
     if (a.source !== 'crm') return -1;
