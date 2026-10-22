@@ -655,6 +655,74 @@ export function buildFortnoxCustomerPayload(customer: FortnoxCustomerSource) {
   };
 }
 
+/**
+ * Det ett fält töms med i Fortnox kund-PUT, uppmätt mot testbolaget 2026-10-22: ett utelämnat fält rör ingenting och
+ * `""` ignoreras för VARJE fält — bara ett uttryckligt värde tömmer. `null` tömmer textfälten; PriceList blir då
+ * Fortnox standardlista (A), eftersom en kund inte kan sakna prislista (formuläret kallar valet "Standard (Fortnox)").
+ * InvoiceDiscount ignorerar `null` — där tömmer `0`.
+ *
+ * Namn, typ och org.nr/personnummer står inte här: identitetslåset i PATCH-routen hindrar att de töms, och VATType
+ * skickas alltid.
+ */
+const FORTNOX_CUSTOMER_CLEAR_VALUES = {
+  Email: null,
+  Phone1: null,
+  Phone2: null,
+  Address1: null,
+  ZipCode: null,
+  City: null,
+  VisitingAddress: null,
+  VisitingZipCode: null,
+  VisitingCity: null,
+  DeliveryAddress1: null,
+  DeliveryZipCode: null,
+  DeliveryCity: null,
+  EmailInvoice: null,
+  TermsOfPayment: null,
+  PriceList: null,
+  InvoiceDiscount: 0,
+  VATNumber: null,
+} as const;
+type FortnoxClearableField = keyof typeof FORTNOX_CUSTOMER_CLEAR_VALUES;
+export type FortnoxCustomerClears = Partial<Record<FortnoxClearableField, null | 0>>;
+
+// Tomt i payloaden: utelämnat, null, blanksteg — och rabatten 0, som är Fortnox egen tomhet.
+function isBlankFortnoxValue(value: unknown): boolean {
+  if (value === undefined || value === null || value === 0) return true;
+  return typeof value === 'string' && value.trim() === '';
+}
+
+/**
+ * Fälten en redigering TÖMDE: ifyllda i `before`, tomma i `after`. Jämförs i Fortnox-payloaden, så att en delvis tömd
+ * adress räknas per Fortnox-fält.
+ *
+ * 🧨 Bara redigeringens egen tömning skickas, aldrig "tomt hos oss". En kund vars kort inte hämtats än saknar villkor,
+ * prislista och fakturamejl i CRM fast Fortnox har dem, och en ändring i Fortnox sedan senaste synken har inte nått
+ * oss. Att skicka varje tomhet hade raderat båda i Fortnox vid nästa redigering av något annat fält.
+ */
+export function fortnoxCustomerClears(before: FortnoxCustomerSource, after: FortnoxCustomerSource): FortnoxCustomerClears {
+  const was = buildFortnoxCustomerPayload(before);
+  const now = buildFortnoxCustomerPayload(after);
+  const clears: FortnoxCustomerClears = {};
+  for (const field of Object.keys(FORTNOX_CUSTOMER_CLEAR_VALUES) as FortnoxClearableField[]) {
+    if (!isBlankFortnoxValue(was[field]) && isBlankFortnoxValue(now[field])) {
+      clears[field] = FORTNOX_CUSTOMER_CLEAR_VALUES[field];
+    }
+  }
+  return clears;
+}
+
+/**
+ * PUT-payloaden för en redigerad kund: hela kortet som det står hos oss, plus tömningarna redigeringen gjorde. Utan
+ * `before` (en ny push av en kund vars senaste misslyckades) skickas inga tömningar — det finns inget att jämföra med.
+ */
+export function buildFortnoxCustomerPutPayload(customer: FortnoxCustomerSource, before?: FortnoxCustomerSource | null) {
+  return {
+    ...buildFortnoxCustomerPayload(customer),
+    ...(before ? fortnoxCustomerClears(before, customer) : {}),
+  };
+}
+
 async function loadCustomerRow(customerId: string): Promise<FortnoxCustomerSource> {
   const supabase = getSupabaseAdmin();
   const { data: customer, error } = await supabase
@@ -700,7 +768,12 @@ export async function createFortnoxCustomer(customerId: string): Promise<{ fortn
 // Requires fortnox_customer_id to be set – otherwise there is nothing to update.
 // Marks sync_status as 'failed' and re-throws if Fortnox rejects the update, so
 // the customer is flagged for re-sync rather than silently diverging.
-export async function updateFortnoxCustomer(customerId: string): Promise<{ fortnoxCustomerNumber: string }> {
+// `before` är raden före redigeringen: fält den tömde töms i Fortnox också (fortnoxCustomerClears). Jämförelsen görs
+// mot raden som läses här, så ett fält som hunnit fyllas i igen skickas med sitt värde.
+export async function updateFortnoxCustomer(
+  customerId: string,
+  options: { before?: FortnoxCustomerSource | null } = {},
+): Promise<{ fortnoxCustomerNumber: string }> {
   const supabase = getSupabaseAdmin();
   const customer = await loadCustomerRow(customerId);
 
@@ -712,7 +785,7 @@ export async function updateFortnoxCustomer(customerId: string): Promise<{ fortn
   const now = new Date().toISOString();
   try {
     await fortnoxPut<FortnoxCustomerWriteResponse>(`/customers/${fortnoxCustomerNumber}`, {
-      Customer: buildFortnoxCustomerPayload(customer),
+      Customer: buildFortnoxCustomerPutPayload(customer, options.before),
     });
   } catch (err) {
     await supabase

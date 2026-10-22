@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildFortnoxCustomerPayload,
+  buildFortnoxCustomerPutPayload,
+  fortnoxCustomerClears,
   fortnoxCustomerFieldsChanged,
   buildFortnoxCustomerUpdateRow,
   buildFortnoxListCustomerRow,
@@ -169,6 +171,119 @@ describe('fortnoxCustomerFieldsChanged', () => {
   it('behandlar null/undefined som ändrat (säker default → pusha)', () => {
     expect(fortnoxCustomerFieldsChanged(null, source())).toBe(true);
     expect(fortnoxCustomerFieldsChanged(source(), undefined)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fortnoxCustomerClears / buildFortnoxCustomerPutPayload — ett fält som töms i CRM
+// ska tömmas i Fortnox, annars kommer det tillbaka vid nästa kundsynk. Värdena är
+// uppmätta mot testbolaget 2026-10-22: "" ignoreras, null tömmer, rabatten kräver 0.
+// ---------------------------------------------------------------------------
+
+describe('fortnoxCustomerClears', () => {
+  it('tömmer kontaktfälten med null', () => {
+    const after = source({ email: null, phone: null, mobile: null, invoice_email: null });
+    expect(fortnoxCustomerClears(source(), after)).toEqual({
+      Email: null, Phone1: null, Phone2: null, EmailInvoice: null,
+    });
+  });
+
+  it('tömmer villkor, prislista och momsnummer med null', () => {
+    const after = source({ payment_terms: null, price_list: null, vat_number: null });
+    expect(fortnoxCustomerClears(source(), after)).toEqual({
+      TermsOfPayment: null, PriceList: null, VATNumber: null,
+    });
+  });
+
+  // Fortnox ignorerar InvoiceDiscount: null — rabatten står kvar. Bara 0 tömmer.
+  it('tömmer rabatten med 0, inte null', () => {
+    expect(fortnoxCustomerClears(source({ discount: 10 }), source({ discount: null }))).toEqual({ InvoiceDiscount: 0 });
+  });
+
+  it('tömmer alla tre delarna när hela fakturaadressen tas bort', () => {
+    expect(fortnoxCustomerClears(source(), source({ invoice_address: null }))).toEqual({
+      Address1: null, ZipCode: null, City: null,
+    });
+  });
+
+  it('tömmer bara den del av adressen som togs bort', () => {
+    const after = source({ visit_address: { street: null, postal_code: '33344', city: 'Uppsala' } });
+    expect(fortnoxCustomerClears(source(), after)).toEqual({ VisitingAddress: null });
+  });
+
+  it('tömmer leveransadressen till Delivery*', () => {
+    expect(fortnoxCustomerClears(source(), source({ delivery_address: null }))).toEqual({
+      DeliveryAddress1: null, DeliveryZipCode: null, DeliveryCity: null,
+    });
+  });
+
+  // Kärnan i skyddet: en kund vars kort inte hämtats saknar villkor, prislista m.m. hos oss fast Fortnox har dem.
+  // Tomt på båda sidor är "vi vet inte", inte "ta bort".
+  it('tömmer aldrig ett fält som redan var tomt före redigeringen', () => {
+    const unfetched = source({
+      payment_terms: null, price_list: null, discount: null, invoice_email: null, mobile: null,
+      visit_address: null, delivery_address: null, vat_number: null,
+    });
+    expect(fortnoxCustomerClears(unfetched, { ...unfetched, phone: '08-999' })).toEqual({});
+  });
+
+  it('tömmer ingenting när fältet bara ändras', () => {
+    expect(fortnoxCustomerClears(source(), source({ phone: '08-999', payment_terms: '10' }))).toEqual({});
+  });
+
+  it('räknar en tom sträng som tömd — Fortnox ignorerar ""', () => {
+    expect(fortnoxCustomerClears(source(), source({ phone: '' }))).toEqual({ Phone1: null });
+    expect(fortnoxCustomerClears(source(), source({ phone: '   ' }))).toEqual({ Phone1: null });
+  });
+
+  it('räknar rabatten 0 som tom — inget att tömma', () => {
+    expect(fortnoxCustomerClears(source({ discount: 0 }), source({ discount: null }))).toEqual({});
+  });
+
+  it('tömmer aldrig namn, typ, org.nr/personnummer eller momstyp', () => {
+    // Företag → privat utan personnummer: OrganisationNumber blir tomt i payloaden men får inte tömmas.
+    const after = source({
+      customer_type: 'private', company_name: null, first_name: 'Anna', last_name: 'Svensson',
+      organization_number: null, personal_number: null,
+    });
+    const clears = fortnoxCustomerClears(source(), after);
+    expect(clears).not.toHaveProperty('Name');
+    expect(clears).not.toHaveProperty('Type');
+    expect(clears).not.toHaveProperty('OrganisationNumber');
+    expect(clears).not.toHaveProperty('VATType');
+  });
+
+  it('använder aldrig "" som tömningsvärde', () => {
+    const empty = source({
+      email: null, phone: null, mobile: null, invoice_email: null, payment_terms: null, price_list: null,
+      discount: null, vat_number: null, visit_address: null, invoice_address: null, delivery_address: null,
+    });
+    const clears = fortnoxCustomerClears(source(), empty);
+    expect(Object.keys(clears)).toHaveLength(17);
+    for (const value of Object.values(clears)) expect(value).not.toBe('');
+  });
+});
+
+describe('buildFortnoxCustomerPutPayload', () => {
+  it('skickar null för det tömda fältet och resten av kortet som vanligt', () => {
+    const payload = buildFortnoxCustomerPutPayload(source({ phone: null }), source());
+    expect(payload.Phone1).toBeNull();
+    expect(payload.Email).toBe('info@acme.se');
+    expect(payload.VATType).toBe('SEVAT');
+    // Utelämnat och null är olika saker för Fortnox — null måste överleva serialiseringen.
+    expect(JSON.stringify({ Customer: payload })).toContain('"Phone1":null');
+  });
+
+  it('serialiserar rabattens 0 och prislistans null', () => {
+    const json = JSON.stringify(buildFortnoxCustomerPutPayload(source({ discount: null, price_list: null }), source()));
+    expect(json).toContain('"InvoiceDiscount":0');
+    expect(json).toContain('"PriceList":null');
+  });
+
+  it('skickar inga tömningar utan före-rad (ny push efter ett misslyckande)', () => {
+    const customer = source({ phone: null, discount: null });
+    expect(buildFortnoxCustomerPutPayload(customer)).toEqual(buildFortnoxCustomerPayload(customer));
+    expect(buildFortnoxCustomerPutPayload(customer, null)).toEqual(buildFortnoxCustomerPayload(customer));
   });
 });
 
