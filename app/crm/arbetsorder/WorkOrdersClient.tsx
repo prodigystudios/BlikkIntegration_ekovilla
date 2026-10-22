@@ -23,6 +23,7 @@ import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/component
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
+import { customerDisplayName } from '@/app/crm/lib/customerDisplay';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
 import { useWorkOrderMargins, type WorkOrderMargin } from './useWorkOrderMargins';
@@ -305,6 +306,7 @@ export default function WorkOrdersClient({
   const [newOrderPersonalNumber, setNewOrderPersonalNumber] = useState('');
 
   function resetNewOrder() {
+    newOrderPresetCancelledRef.current = true;
     setNewOrderOpen(false);
     setNewOrderCustomerId('');
     setNewOrderCustomerLabel('');
@@ -374,6 +376,45 @@ export default function WorkOrdersClient({
       .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
       .catch(() => { if (active) setAssignees([]); });
     return () => { active = false; };
+  }, []);
+
+  // "Ny arbetsorder" från kundkortet (`?ny_order=<kund-id>`): samma modal som "+ Ny order", med kunden
+  // förvald. Bara med skrivrätt — knappen finns inte utan den, och routen hade svarat 403. Parametern
+  // tas bort direkt, så att en omladdning eller ett steg tillbaka inte öppnar modalen igen. Övriga
+  // parametrar står kvar.
+  //
+  // 🧨 Läses EN gång, vid montering. Bands effekten till parametern avbröt rensningen av adressen
+  // (som ändrar searchParams) sin egen hämtning, och modalen öppnades aldrig. Ingen avbrottsflagga
+  // av samma skäl: i StrictMode körs effekten två gånger, och den andra körningen ser en tom ref.
+  // En setState efter avmontering gör ingenting i React 18.
+  //
+  // Hinner användaren själv öppna eller stänga modalen innan kunden kommit (långsam uppkoppling)
+  // gäller deras val — ett sent svar får varken byta kund eller öppna modalen igen.
+  const newOrderPresetRef = useRef(searchParams.get('ny_order') || '');
+  const newOrderPresetCancelledRef = useRef(false);
+  useEffect(() => {
+    const presetId = newOrderPresetRef.current;
+    if (!presetId) return;
+    newOrderPresetRef.current = '';
+    const url = new URL(window.location.href);
+    url.searchParams.delete('ny_order');
+    router.replace(`${url.pathname}${url.search}`);
+    // Bara ett uuid: värdet går in i en API-sökväg och kommer från adressen.
+    if (!canEdit || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(presetId)) return;
+    fetch(`/api/crm/customers/${presetId}`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (newOrderPresetCancelledRef.current) return;
+        const customer = json?.ok ? json.data?.item : null;
+        // Utan kund (borttagen, ingen läsrätt) öppnas modalen ändå, med tom kundruta att välja i.
+        if (customer?.id) {
+          setNewOrderCustomerId(customer.id);
+          setNewOrderCustomerLabel(customerDisplayName(customer));
+        }
+        setNewOrderOpen(true);
+      })
+      .catch(() => { if (!newOrderPresetCancelledRef.current) setNewOrderOpen(true); });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Legacy deep-link: /crm/arbetsorder?work_order_id=X now lives at its own page.
@@ -536,7 +577,7 @@ export default function WorkOrdersClient({
         {canEdit ? (
           <button
             type="button"
-            onClick={() => setNewOrderOpen(true)}
+            onClick={() => { newOrderPresetCancelledRef.current = true; setNewOrderOpen(true); }}
             className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >

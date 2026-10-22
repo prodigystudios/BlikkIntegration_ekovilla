@@ -3,9 +3,16 @@ import {
   addressLines,
   contactInitials,
   deliveryAddressDisplay,
+  filterQuotes,
+  filterWorkOrders,
   invoiceAddressDisplay,
+  quotePlace,
+  quoteSums,
   resolveCustomerTab,
   tabCountLabel,
+  workOrderPlace,
+  type RelatedQuote,
+  type RelatedWorkOrder,
 } from '@/app/crm/kunder/customerCard';
 
 const visit = { street: 'Industrivägen 12', postal_code: '903 61', city: 'Umeå' };
@@ -87,5 +94,94 @@ describe('tabCountLabel', () => {
   it('når listan taket står det "+"', () => {
     expect(tabCountLabel(200, 200)).toBe('200+');
     expect(tabCountLabel(37, 200)).toBe('37');
+  });
+});
+
+function quote(overrides: Partial<RelatedQuote> = {}): RelatedQuote {
+  return {
+    id: 'q1', quote_number: 'OFF-1', fortnox_offer_number: null, project_name: 'Vindsisolering',
+    amount: 1250, currency_code: 'SEK', vat_percent: 25, pricing_summary: { subtotal: 1000, vat: 250, total: 1250 },
+    status: 'sent', quote_date: '2026-10-01', assigned_to: null,
+    customer_snapshot: { street_address: 'Industrivägen 12', city: 'Umeå' },
+    ...overrides,
+  };
+}
+
+function order(overrides: Partial<RelatedWorkOrder> = {}): RelatedWorkOrder {
+  return {
+    id: 'w1', order_number: 'AO-1', fortnox_order_number: null, project_name: 'Lösull hus A',
+    status: 'scheduled', desired_installation_date: null, planned_start_day: null, planned_end_day: null,
+    work_address: { street_address: 'Tallvägen 3', city: 'Holmsund' }, quote_id: null, assigned_to: null, assignee: null,
+    ...overrides,
+  };
+}
+
+describe('quotePlace', () => {
+  it('arbetsadressen när offerten har en egen', () => {
+    expect(quotePlace(quote({ customer_snapshot: { street_address: 'Kontoret 1', city: 'Umeå', delivery_address: 'Bygget 9', delivery_city: 'Holmsund' } })))
+      .toBe('Bygget 9, Holmsund');
+  });
+
+  it('annars kundens adress, och null utan någon', () => {
+    expect(quotePlace(quote())).toBe('Industrivägen 12, Umeå');
+    expect(quotePlace(quote({ customer_snapshot: null }))).toBeNull();
+  });
+});
+
+describe('workOrderPlace', () => {
+  it('gata och ort, eller null', () => {
+    expect(workOrderPlace(order())).toBe('Tallvägen 3, Holmsund');
+    expect(workOrderPlace(order({ work_address: {} }))).toBeNull();
+  });
+});
+
+describe('filterQuotes', () => {
+  const list = [
+    quote({ id: 'a', status: 'draft', project_name: 'Takisolering' }),
+    quote({ id: 'b', status: 'won', quote_number: 'OFF-77' }),
+    quote({ id: 'c', status: 'follow_up' }),
+  ];
+
+  it('filtrerar på status', () => {
+    expect(filterQuotes(list, '', 'vunna').map((q) => q.id)).toEqual(['b']);
+    expect(filterQuotes(list, '', 'folj-upp').map((q) => q.id)).toEqual(['c']);
+    expect(filterQuotes(list, '', 'alla')).toHaveLength(3);
+  });
+
+  it('söker på nummer, benämning och plats, oberoende av skiftläge', () => {
+    expect(filterQuotes(list, 'off-77', 'alla').map((q) => q.id)).toEqual(['b']);
+    expect(filterQuotes(list, 'TAK', 'alla').map((q) => q.id)).toEqual(['a']);
+    expect(filterQuotes(list, 'umeå', 'utkast').map((q) => q.id)).toEqual(['a']);
+  });
+});
+
+describe('filterWorkOrders', () => {
+  it('söker på nummer, benämning och adress', () => {
+    const list = [order({ id: 'a' }), order({ id: 'b', fortnox_order_number: '5531', work_address: { city: 'Umeå' } })];
+    expect(filterWorkOrders(list, 'holmsund').map((w) => w.id)).toEqual(['a']);
+    expect(filterWorkOrders(list, '5531').map((w) => w.id)).toEqual(['b']);
+    expect(filterWorkOrders(list, '  ')).toHaveLength(2);
+  });
+});
+
+describe('quoteSums', () => {
+  it('räknar netto, inte brutto — byggmoms och privatkund i samma summa', () => {
+    const sums = quoteSums([
+      quote({ status: 'won' }), // 1 250 brutto, 25 % → 1 000 netto
+      quote({ status: 'won', amount: 2000, vat_percent: 0, pricing_summary: { subtotal: 2000, vat: 0, total: 2000 } }),
+      quote({ status: 'sent' }),
+      quote({ status: 'lost' }),
+    ]);
+    expect(sums).toEqual({ won: 3000, open: 1000, otherCurrency: false });
+  });
+
+  it('lägger aldrig ihop euro med kronor', () => {
+    const sums = quoteSums([quote({ status: 'won' }), quote({ status: 'won', currency_code: 'EUR' })]);
+    expect(sums).toEqual({ won: 1000, open: 0, otherCurrency: true });
+  });
+
+  it('en tom pricing_summary ger inte en tyst nolla', () => {
+    const sums = quoteSums([quote({ status: 'draft', pricing_summary: { subtotal: 0, vat: 0, total: 0 } })]);
+    expect(sums.open).toBeCloseTo(1000);
   });
 });

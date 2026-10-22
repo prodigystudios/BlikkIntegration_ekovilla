@@ -16,6 +16,7 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, syncStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatDateTime } from '@/app/crm/lib/format';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import {
   changedCustomerEditFields,
@@ -134,9 +135,15 @@ export default function CustomerDetailClient({
   fortnoxConnected,
   portalPartnerEnabled = false,
   canDeleteCustomer = false,
+  canCreateQuote = false,
+  canCreateWorkOrder = false,
 }: {
   customerId: string;
   fortnoxConnected: boolean;
+  /** "Ny offert": crm.offer.write, som POST /api/crm/quotes kräver. Avgjort på servern. */
+  canCreateQuote?: boolean;
+  /** "Ny arbetsorder": crm.workorder.write, som POST /api/crm/work-orders kräver. Avgjort på servern. */
+  canCreateWorkOrder?: boolean;
   /** Partnerrutan: crm.portal.manage och påslagen integration, avgjort på servern (kunder/[id]/page.tsx). */
   portalPartnerEnabled?: boolean;
   /** "Ta bort kund": crm.admin, avgjort på servern. DELETE-routen prövar samma nyckel själv. */
@@ -588,6 +595,13 @@ export default function CustomerDetailClient({
   const deleteBlocked = Boolean(customer.fortnox_customer_id) && !fortnoxConnected;
   const creator = customer.created_by ? sellers.find((s) => s.id === customer.created_by) : null;
   const openTasks = tasks.filter((t) => t.status === 'open').length;
+  // Ny offert med kunden förvald; spara eller avbryt leder tillbaka till kortets offertflik.
+  const newQuoteHref = canCreateQuote
+    ? withReturnTo(`/crm/offerter/ny?customer_id=${customer.id}`, `/crm/kunder/${customer.id}?tab=offerter`)
+    : null;
+  // Orderlistans "+ Ny order"-modal, öppnad med kunden förvald (WorkOrdersClient, `?ny_order=`).
+  const newWorkOrderHref = canCreateWorkOrder ? `/crm/arbetsorder?ny_order=${customer.id}` : null;
+  const sellerName = (id: string | null) => (id ? sellers.find((s) => s.id === id)?.full_name ?? null : null);
 
   // ─── Sidebar cards ─────────────────────────────────────────────────────────
 
@@ -887,16 +901,27 @@ export default function CustomerDetailClient({
               </div>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => startEditing()}
-            className="inline-flex h-[42px] items-center gap-2 rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3] hover:text-slate-900"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-            </svg>
-            Redigera
-          </button>
+          <div className="flex flex-wrap gap-2.5">
+            <button
+              type="button"
+              onClick={() => startEditing()}
+              className="inline-flex h-[42px] items-center gap-2 rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3] hover:text-slate-900"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+              </svg>
+              Redigera
+            </button>
+            {newQuoteHref ? (
+              <a
+                href={newQuoteHref}
+                className="inline-flex h-[42px] items-center gap-2 rounded-xl bg-[color:var(--ek-green)] px-[18px] text-sm font-semibold text-white no-underline transition hover:bg-[color:var(--ek-green-strong)]"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+                Ny offert
+              </a>
+            ) : null}
+          </div>
         </header>
       </div>
 
@@ -927,14 +952,25 @@ export default function CustomerDetailClient({
               customer={customer}
               quotes={quotes}
               quotesLoading={relatedLoading}
+              newQuoteHref={newQuoteHref}
               onEdit={startEditing}
               onShowQuotes={() => setTab('offerter')}
               enriching={enriching}
               onFetchCompanyData={fetchCompanyData}
             />
           ) : null}
-          {tab === 'offerter' ? <QuotesTab quotes={quotes} total={quotesTotal} loading={relatedLoading} /> : null}
-          {tab === 'arbetsorder' ? <WorkOrdersTab workOrders={workOrders} total={workOrdersTotal} loading={relatedLoading} /> : null}
+          {tab === 'offerter' ? (
+            <QuotesTab quotes={quotes} total={quotesTotal} loading={relatedLoading} sellerName={sellerName} newQuoteHref={newQuoteHref} />
+          ) : null}
+          {tab === 'arbetsorder' ? (
+            <WorkOrdersTab
+              workOrders={workOrders}
+              quotes={quotes}
+              total={workOrdersTotal}
+              loading={relatedLoading}
+              newWorkOrderHref={newWorkOrderHref}
+            />
+          ) : null}
           {tab === 'samtal' ? <CallsTab calls={calls} loading={relatedLoading} /> : null}
           {tab === 'uppgifter' ? <TasksTab tasks={tasks} loading={relatedLoading} /> : null}
           {tab === 'kontakter' ? (

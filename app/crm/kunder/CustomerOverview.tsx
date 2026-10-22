@@ -2,7 +2,9 @@
 
 import { crm, quoteStatusMeta, type QuoteStatus } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
-import { formatCurrency } from '@/app/crm/lib/format';
+import { documentRef, formatCurrency } from '@/app/crm/lib/format';
+import { netAmount } from '@/lib/domains/crm/pricing';
+import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
 import { PhoneLink, EmailLink } from '@/app/crm/components/ContactLinks';
 import {
@@ -13,6 +15,7 @@ import {
   hasCompanyInfo,
   invoiceAddressDisplay,
   addressLines,
+  quotePlace,
   type Customer,
   type CustomerEditSection,
   type RelatedQuote,
@@ -27,11 +30,13 @@ function EditLink({ onClick }: { onClick: () => void }) {
 }
 
 export default function CustomerOverview({
-  customer, quotes, quotesLoading, onEdit, onShowQuotes, enriching, onFetchCompanyData,
+  customer, quotes, quotesLoading, newQuoteHref, onEdit, onShowQuotes, enriching, onFetchCompanyData,
 }: {
   customer: Customer;
   quotes: RelatedQuote[];
   quotesLoading: boolean;
+  /** null = ingen rätt att skapa offerter. */
+  newQuoteHref: string | null;
   onEdit: (section: CustomerEditSection) => void;
   onShowQuotes: () => void;
   enriching: boolean;
@@ -48,7 +53,22 @@ export default function CustomerOverview({
     { label: 'Rörelsemarginal', value: formatPercent(customer.operating_margin) },
     { label: 'Soliditet', value: formatPercent(customer.equity_ratio) },
   ].filter((f): f is { label: string; value: string } => f.value != null);
+  // Listan kommer sorterad nyast först (created_desc, se CustomerDetailClient).
   const recentQuotes = quotes.slice(0, 2);
+  const quoteHref = (q: RelatedQuote) => `/crm/offerter?quote_id=${q.id}`;
+  const recentQuoteColumns: Array<CrmTableColumn<RelatedQuote>> = [
+    { header: 'Nr', className: 'hidden w-[7rem] tabular-nums text-slate-500 sm:table-cell', cell: (q) => documentRef(q.fortnox_offer_number, q.quote_number) },
+    { header: 'Benämning', cell: (q) => <CustomerCell href={quoteHref(q)} customer={q.project_name || 'Offert utan namn'} project={quotePlace(q)} /> },
+    {
+      header: 'Status',
+      className: 'w-[6.75rem] pr-0 text-right sm:w-[7.5rem] sm:pr-4 sm:text-left',
+      cell: (q) => {
+        const meta = quoteStatusMeta[q.status as QuoteStatus];
+        return <span className={cn(crm.badge, meta?.className ?? 'border-slate-200 bg-slate-50 text-slate-700')}>{meta?.label ?? q.status}</span>;
+      },
+    },
+    { header: 'Ex moms', className: 'hidden w-[7.5rem] text-right tabular-nums sm:table-cell', cell: (q) => formatCurrency(netAmount(q), q.currency_code) },
+  ];
   // `min(320px,100%)`: på en telefon är kolumnen smalare än 320 px, och utan min() hade griden
   // tvingat fram vågrät scroll.
   const pairGrid = 'grid gap-5 grid-cols-[repeat(auto-fit,minmax(min(320px,100%),1fr))]';
@@ -201,41 +221,16 @@ export default function CustomerOverview({
         {quotesLoading ? (
           <div className="h-16 animate-pulse rounded-xl bg-[#e6ede3]" />
         ) : recentQuotes.length === 0 ? (
-          <EmptyState title="Inga offerter ännu">När du skapar en offert för kunden visas den här.</EmptyState>
+          <EmptyState
+            title="Inga offerter ännu"
+            action={newQuoteHref ? (
+              <a href={newQuoteHref} className={cn(crm.ghostButton, 'h-10 px-4 no-underline')}>Skapa första offerten</a>
+            ) : null}
+          >
+            När du skapar en offert för kunden visas den här.
+          </EmptyState>
         ) : (
-          <div className="overflow-x-auto rounded-xl border border-[#e0e8dc]">
-            <table className="w-full min-w-[520px] border-collapse text-sm">
-              <thead>
-                <tr className="text-left">
-                  <th className="whitespace-nowrap border-b border-[#e3e9e1] px-4 py-3 text-xs font-semibold text-slate-600">Nr</th>
-                  <th className="border-b border-[#e3e9e1] px-4 py-3 text-xs font-semibold text-slate-600">Benämning</th>
-                  <th className="border-b border-[#e3e9e1] px-4 py-3 text-xs font-semibold text-slate-600">Status</th>
-                  <th className="border-b border-[#e3e9e1] px-4 py-3 text-right text-xs font-semibold text-slate-600">Belopp</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentQuotes.map((q) => {
-                  const meta = quoteStatusMeta[q.status as QuoteStatus];
-                  return (
-                    <tr key={q.id} className="border-b border-[#edf1ec] last:border-b-0">
-                      <td className="whitespace-nowrap px-4 py-3.5 text-slate-600">{q.quote_number || '–'}</td>
-                      <td className="px-4 py-3.5">
-                        <a href={`/crm/offerter?quote_id=${q.id}`} className="font-medium text-slate-900 no-underline hover:underline">
-                          {q.project_name || 'Offert utan namn'}
-                        </a>
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <span className={cn(crm.badge, meta?.className ?? 'border-slate-200 bg-slate-50 text-slate-700')}>
-                          {meta?.label ?? q.status}
-                        </span>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3.5 text-right font-medium tabular-nums">{formatCurrency(q.amount, q.currency_code)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <CrmTable label="Senaste offerter" size="regular" columns={recentQuoteColumns} rows={recentQuotes} rowHref={quoteHref} />
         )}
       </InfoCard>
     </div>
