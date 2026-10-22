@@ -1,6 +1,7 @@
-// Shared presentation of a tic.io credit report (kreditupplysning). Used by both the
-// customer detail card and the new-customer form preview so the score/risk/remarks layout
-// lives in one place. Pure presentational — the fetch/persist logic stays in each caller.
+// Shared presentation of a tic.io credit report (kreditupplysning). `CreditReportSummary` is the
+// customer detail card's full view; the new-customer form builds a compact preview from the
+// helpers below, so the score/risk/remarks wording lives in one place. Pure presentational — the
+// fetch/persist logic stays in each caller.
 
 import { cn } from '@/lib/shared/cn';
 import { formatDate } from '@/app/crm/lib/format';
@@ -51,10 +52,34 @@ function debtorLine(rec: { number_of_cases: number; total_amount_sek: number; la
   return rec.last_case_date ? `${base} · senast ${formatDate(rec.last_case_date)}` : base;
 }
 
+/** Riskklassens text: tic.io:s egen formulering när den finns, annars vår etikett för klassen. */
+export function creditRiskLabel(report: TicCreditReport): string {
+  return report.risk_description || riskClassMeta(report.risk_class).label;
+}
+
+/** "Riskprognos (sannolikhet): 12,5 %", eller null när tic.io inte skickat någon prognos. */
+export function creditForecastText(report: TicCreditReport): string | null {
+  return report.risk_forecast != null ? `Riskprognos (sannolikhet): ${formatPercent(report.risk_forecast)}` : null;
+}
+
+/**
+ * Betalningsförelägganden, -anmärkningar och skuldsaldo som rader. Tom lista = inget registrerat.
+ * Anmärkningar och skuldsaldo kommer bara med en högre tic.io-licens (Max) — raderna dyker upp av
+ * sig själva om den höjs.
+ */
+export function creditRemarkLines(report: TicCreditReport): { label: string; value: string }[] {
+  const lines: { label: string; value: string }[] = [];
+  if (report.payment_applications) lines.push({ label: 'Betalningsförelägganden', value: debtorLine(report.payment_applications) });
+  if (report.non_payment) lines.push({ label: 'Betalningsanmärkningar', value: debtorLine(report.non_payment) });
+  if (report.debt_balance_sek != null) lines.push({ label: 'Skuldsaldo (Kronofogden)', value: formatSek(report.debt_balance_sek) });
+  return lines;
+}
+
 export function CreditReportSummary({ report }: { report: TicCreditReport }) {
   const scoreMeta = creditScoreMeta(report.credit_score);
   const riskMeta = riskClassMeta(report.risk_class);
-  const hasRemarks = report.payment_applications || report.non_payment || report.debt_balance_sek != null;
+  const remarks = creditRemarkLines(report);
+  const forecast = creditForecastText(report);
 
   return (
     <div className="grid gap-5">
@@ -69,26 +94,16 @@ export function CreditReportSummary({ report }: { report: TicCreditReport }) {
         </div>
         <div className="flex flex-col justify-center gap-1.5">
           <span className={cn('inline-flex w-fit items-center rounded-full border px-2.5 py-1 text-xs font-semibold', riskMeta.badge)}>
-            {report.risk_description || riskMeta.label}
+            {creditRiskLabel(report)}
           </span>
-          {report.risk_forecast != null ? (
-            <p className="text-xs text-slate-500">Riskprognos (sannolikhet): {formatPercent(report.risk_forecast)}</p>
-          ) : null}
+          {forecast ? <p className="text-xs text-slate-500">{forecast}</p> : null}
         </div>
       </div>
 
       {/* Betalningsförelägganden / -anmärkningar / skuldsaldo */}
-      {hasRemarks ? (
+      {remarks.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {report.payment_applications ? (
-            <InfoField label="Betalningsförelägganden" value={debtorLine(report.payment_applications)} />
-          ) : null}
-          {report.non_payment ? (
-            <InfoField label="Betalningsanmärkningar" value={debtorLine(report.non_payment)} />
-          ) : null}
-          {report.debt_balance_sek != null ? (
-            <InfoField label="Skuldsaldo (Kronofogden)" value={formatSek(report.debt_balance_sek)} />
-          ) : null}
+          {remarks.map((line) => <InfoField key={line.label} label={line.label} value={line.value} />)}
         </div>
       ) : (
         <p className="text-xs text-slate-500">Inga betalningsanmärkningar eller skulder registrerade.</p>

@@ -14,98 +14,29 @@ import { cn } from '@/lib/shared/cn';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
 import type { AccountManagerOption } from './accountManagerDefault';
 import {
+  applyTicLookup,
+  clearTicLookup,
+  EMPTY_TIC_FILL,
+  INITIAL_NEW_CUSTOMER_DRAFT,
+  isTicFilled,
+  newCustomerChecklist,
+  resolveInvoiceEmail,
+  type CustomerType,
+  type NewCustomerDraft,
+  type TicFill,
+  type TicFillableField,
+} from './newCustomerDraft';
+import {
   formatPersonalNumber,
   isValidPersonalNumber,
   PERSONAL_NUMBER_ERROR,
   PERSONAL_NUMBER_OPTIONAL_HINT,
 } from '@/lib/domains/crm/personalNumber';
 import { riskTypeLabel } from '@/lib/domains/tic/mappers';
-import { CreditReportSummary } from '@/app/crm/components/CreditReport';
-import type { TicLookupResult, TicRiskIndicator, TicCreditReport } from '@/lib/domains/tic/types';
-
-type CustomerType = 'business' | 'private';
-
-type Draft = {
-  customer_type: CustomerType;
-  company_name: string;
-  organization_number: string;
-  first_name: string;
-  last_name: string;
-  personal_number: string;
-  email: string;
-  phone: string;
-  mobile: string;
-  visit_street: string;
-  visit_postal_code: string;
-  visit_city: string;
-  delivery_street: string;
-  delivery_postal_code: string;
-  delivery_city: string;
-  invoice_street: string;
-  invoice_postal_code: string;
-  invoice_city: string;
-  invoice_email: string;
-  payment_terms: string;
-  price_list: string;
-  discount: string;
-  vat_number: string;
-  reverse_vat: boolean;
-  annual_revenue: string;
-  number_of_employees: string;
-  legal_entity_type: string;
-  sni_code: string;
-  sni_name: string;
-  operating_profit: string;
-  profit_after_financial_items: string;
-  total_assets: string;
-  operating_margin: string;
-  equity_ratio: string;
-  financial_year: string;
-  risk_indicators: TicRiskIndicator[];
-  account_manager_id: string;
-};
+import { creditForecastText, creditRemarkLines, creditRiskLabel, creditScoreMeta } from '@/app/crm/components/CreditReport';
+import type { TicLookupResult, TicCreditReport } from '@/lib/domains/tic/types';
 
 type Seller = { id: string; full_name: string | null; role: string };
-
-const initial: Draft = {
-  customer_type: 'business',
-  company_name: '',
-  organization_number: '',
-  first_name: '',
-  last_name: '',
-  personal_number: '',
-  email: '',
-  phone: '',
-  mobile: '',
-  visit_street: '',
-  visit_postal_code: '',
-  visit_city: '',
-  delivery_street: '',
-  delivery_postal_code: '',
-  delivery_city: '',
-  invoice_street: '',
-  invoice_postal_code: '',
-  invoice_city: '',
-  invoice_email: '',
-  payment_terms: '',
-  price_list: '',
-  discount: '',
-  vat_number: '',
-  reverse_vat: false,
-  annual_revenue: '',
-  number_of_employees: '',
-  legal_entity_type: '',
-  sni_code: '',
-  sni_name: '',
-  operating_profit: '',
-  profit_after_financial_items: '',
-  total_assets: '',
-  operating_margin: '',
-  equity_ratio: '',
-  financial_year: '',
-  risk_indicators: [],
-  account_manager_id: '',
-};
 
 function buildAddress(street: string, postalCode: string, city: string) {
   if (!street && !postalCode && !city) return null;
@@ -119,72 +50,155 @@ function safeOfferFormReturnTo(returnTo: string | null): string | null {
   return returnTo && returnTo.startsWith('/crm/offerter/') ? returnTo : null;
 }
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <p className={crm.label}>{children}</p>;
+// Kortens rubrik är en vanlig rubrik (sentence case), inte CRM-kickern: formuläret har få och stora
+// sektioner, och skissen bär dem som rubriker. Kickern står kvar där den hör hemma — i sidokolumnen.
+const sectionHeading = 'm-0 mb-4 text-base font-semibold text-slate-900';
+const cardPadding = 'p-5 sm:p-6';
+// Textlänk som är en knapp ("Byt företag", "Fyll i manuellt istället" …). `min-h-8` för touch,
+// `px-0 py-0` mot den globala knapp-paddingen.
+const linkButton = 'min-h-8 px-0 py-0 text-[13px] font-semibold text-[color:var(--ek-accent)] underline underline-offset-2 hover:text-[color:var(--ek-green)]';
+
+function Card({ title, children, className }: { title?: string; children: React.ReactNode; className?: string }) {
+  return (
+    <section className={cn(crm.cardInner, cardPadding, className)}>
+      {title ? <h2 className={sectionHeading}>{title}</h2> : null}
+      {children}
+    </section>
+  );
 }
 
-// `action` hamnar till höger i kortets rubrikrad. Kontroller som gäller HELA kortet hör hemma
-// där — inte i en enskild kolumns rubrik, se noten i AddressColumn.
-function CardSection({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
+function TicTag() {
   return (
-    <div className={crm.cardInner}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
-        <p className={crm.sectionTitle}>{title}</p>
-        {action}
-      </div>
+    <span className="inline-flex h-[18px] items-center rounded-full bg-[color:var(--ek-accent-soft)] px-1.5 text-[11px] font-semibold text-[color:var(--ek-accent)]">
+      tic.io
+    </span>
+  );
+}
+
+// 🧨 `flex` + `w-full` medvetet: `:where(label){display:block;width:100%}` i globals.css — `flex`
+// slår display, och bredden får stå kvar eftersom etiketten ska vara full rad över sitt fält.
+function FieldLabel({ htmlFor, children, tic, hint }: { htmlFor?: string; children: React.ReactNode; tic?: boolean; hint?: string }) {
+  return (
+    <label htmlFor={htmlFor} className={cn(crm.label, 'flex items-center gap-2')}>
+      <span>{children}</span>
+      {hint ? <span className="font-normal text-slate-500">{hint}</span> : null}
+      {tic ? <TicTag /> : null}
+    </label>
+  );
+}
+
+// 🧨 `w-auto` — `:where(label){width:100%}` gör annars varje kryssruta fullbred, och två rutor som
+// ska stå på en rad staplas.
+function CheckRow({ checked, onChange, children, className }: {
+  checked: boolean; onChange: (checked: boolean) => void; children: React.ReactNode; className?: string;
+}) {
+  return (
+    <label className={cn('flex min-h-11 w-auto cursor-pointer select-none items-center gap-2.5 text-sm text-slate-700', className)}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="h-[18px] w-[18px] shrink-0 rounded border-slate-300 accent-[color:var(--ek-green)]"
+      />
       {children}
+    </label>
+  );
+}
+
+// Fortnox tar bara siffror i ZipCode och avvisar kunden med ett 400 som inte pekar ut fältet —
+// felet dyker upp först flera steg senare, som "Ingen Fortnox-kundkoppling" på en orderpush.
+// Uppmätt i drift 2026-09-17. VARNAR, spärrar inte: fältet bär utländska adresser också, och en hård
+// spärr på ett fritextfält lär man sig bara att kringgå. Se lib/domains/crm/postalCode.ts.
+function ZipWarning({ postalCode, city }: { postalCode: string; city: string }) {
+  const warning = postalCodeWarning(postalCode, city);
+  return warning ? <p className="m-0 text-[11px] leading-snug text-amber-700">{warning}</p> : null;
+}
+
+// En avvikande adress (leverans eller faktura) i en nedsänkt ruta under kryssrutorna.
+function ExtraAddress({ title, idPrefix, street, postalCode, city, onStreet, onPostal, onCity }: {
+  title: string; idPrefix: string;
+  street: string; postalCode: string; city: string;
+  onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
+}) {
+  return (
+    <div className={cn(crm.sunken, 'grid gap-3 rounded-xl p-4')}>
+      <p className={cn(crm.groupTitle, 'm-0')}>{title}</p>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.5fr)]">
+        <Input id={`${idPrefix}-street`} aria-label={`${title}, gatuadress`} value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" />
+        <Input id={`${idPrefix}-zip`} aria-label={`${title}, postnummer`} value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" />
+        <Input id={`${idPrefix}-city`} aria-label={`${title}, ort`} value={city} onChange={(e) => onCity(e.target.value)} placeholder="Ort" />
+      </div>
+      <ZipWarning postalCode={postalCode} city={city} />
     </div>
   );
 }
 
-function AddressColumn({
-  label, street, postalCode, city, email,
-  onStreet, onPostal, onCity, onEmail,
-  disabled,
-}: {
-  label: string;
-  street: string; postalCode: string; city: string; email?: string;
-  onStreet: (v: string) => void; onPostal: (v: string) => void; onCity: (v: string) => void;
-  onEmail?: (v: string) => void;
-  disabled?: boolean;
-}) {
-  // Kolumnrubriken bär BARA namnet. Den tog förut emot en kontroll också ("Samma som
-  // besöksadress"), och då blev rubrikraden olika hög i olika kolumner: under ~1200 px fick
-  // fakturakolumnens rubrik två rader och sköt hela dess fältstapel ~22 px under de andra
-  // tvås. En kontroll som gäller kortet ligger nu i KORTETS rubrik (`CardSection action`),
-  // där den inte kan förskjuta någon kolumn. `w-auto` räckte inte: den botade bara
-  // `:where(label){width:100%}`, inte att raden faktiskt tar slut på smala skärmar.
-  //
-  // 🧨 `content-start` är inte kosmetik. Kolumnerna är griditems i en `lg:grid-cols-3` och
-  // sträcks till radens höjd; med `align-content: stretch` (default) fördelas den extra höjden
-  // ut på de auto-höga raderna. Fakturakolumnen har EN rad mer än de andra (faktura-eposten),
-  // så besöks- och leveransadressens fält växte ~50 % över sin `min-h-11` och ingen fältkant
-  // låg i linje mellan kolumnerna. `content-start` låter raderna behålla sin naturliga höjd.
-  // Ett anrop, två användningar — annars kan villkoret och texten glida isär vid en framtida ändring.
-  const zipWarning = postalCodeWarning(postalCode, city);
-
+function CheckIcon({ size = 12 }: { size?: number }) {
   return (
-    <div className="grid content-start gap-2">
-      <p className={crm.groupTitle}>{label}</p>
-      <Input value={street} onChange={(e) => onStreet(e.target.value)} placeholder="Gatuadress" disabled={disabled} />
-      <div className="grid grid-cols-2 gap-2">
-        <Input value={postalCode} onChange={(e) => onPostal(e.target.value)} placeholder="Postnr" disabled={disabled} />
-        <Input value={city} onChange={(e) => onCity(e.target.value)} placeholder="Stad" disabled={disabled} />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M5 12l5 5 9-10" />
+    </svg>
+  );
+}
+
+// Kreditupplysningen innan kunden finns. Hämtas med knapp, aldrig av sig själv: tic.io-kvoten är
+// begränsad (Williams beslut 2026-10-22). Rapporten sparas med kunden vid Skapa, så ingen ny hämtning.
+function CreditPreview({ report, fetching, canFetch, onFetch }: {
+  report: TicCreditReport | null; fetching: boolean; canFetch: boolean; onFetch: () => void;
+}) {
+  if (!report) {
+    return (
+      <div className={cn(crm.sunken, 'flex flex-wrap items-center justify-between gap-3 rounded-xl px-4 py-3')}>
+        <div className="min-w-0">
+          <p className={cn(crm.sectionTitle, 'm-0')}>Kreditupplysning</p>
+          <p className="m-0 mt-0.5 text-xs text-slate-600">
+            {canFetch ? 'Kreditbetyg och betalningsanmärkningar från tic.io.' : 'Kräver organisationsnummer.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onFetch}
+          disabled={fetching || !canFetch}
+          className={cn(crm.ghostButton, 'h-10 shrink-0 px-3.5')}
+        >
+          {fetching ? 'Hämtar…' : 'Hämta kreditupplysning'}
+        </button>
       </div>
-      {/* 🧨 ORTEN I POSTNUMMERFÄLTET. Fortnox tar bara siffror i ZipCode, och avvisar kunden med ett
-          400 som inte pekar ut fältet — felet dyker upp först flera steg senare, som "Ingen
-          Fortnox-kundkoppling" på en orderpush. Uppmätt i drift 2026-09-17.
-          VARNAR, spärrar inte: fältet bär utländska adresser också, och en hård spärr på ett
-          fritextfält lär man sig bara att kringgå. Se lib/domains/crm/postalCode.ts. */}
-      {/* ⚠️ INTE under låsta fält. Med "Fakturaadress samma som besöksadress" (default) speglar
-          fakturakolumnen besöksadressen i disabled inputs — varningen hade då stått två gånger, och
-          den ena bett säljaren rätta ett fält som inte går att skriva i. */}
-      {!disabled && zipWarning ? (
-        <p className="text-[11px] leading-snug text-amber-700">{zipWarning}</p>
-      ) : null}
-      {onEmail !== undefined && email !== undefined ? (
-        <Input value={email} onChange={(e) => onEmail(e.target.value)} placeholder="Faktura-epost" type="email" disabled={disabled} />
-      ) : null}
+    );
+  }
+  const score = creditScoreMeta(report.credit_score);
+  const remarks = creditRemarkLines(report);
+  const forecast = creditForecastText(report);
+  return (
+    <div className={cn(crm.sunken, 'grid gap-2 rounded-xl px-4 py-3')}>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <p className={cn(crm.sectionTitle, 'm-0')}>Kreditbetyg</p>
+          <p className="m-0 mt-0.5 text-[15px] font-bold tabular-nums">
+            <span className={score.text}>{report.credit_score != null ? `${report.credit_score}/100` : '–'}</span>
+            <span className="font-medium text-slate-600"> · {creditRiskLabel(report)}</span>
+          </p>
+          {forecast ? <p className="m-0 text-xs text-slate-600">{forecast}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={onFetch}
+          disabled={fetching || !canFetch}
+          className={linkButton}
+        >
+          {fetching ? 'Hämtar…' : 'Uppdatera'}
+        </button>
+      </div>
+      {remarks.length > 0 ? (
+        <ul className="m-0 grid list-none gap-0.5 p-0 text-xs text-slate-700">
+          {remarks.map((line) => (
+            <li key={line.label}><span className="font-semibold">{line.label}:</span> {line.value}</li>
+          ))}
+        </ul>
+      ) : (
+        <p className="m-0 text-xs text-slate-600">Inga betalningsanmärkningar eller skulder registrerade.</p>
+      )}
+      <p className="m-0 text-[11px] text-slate-500">Källa: tic.io · kan skilja från andra kreditbyråer</p>
     </div>
   );
 }
@@ -207,12 +221,16 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
     ? `${returnTo}${returnTo.includes('?') ? '&' : '?'}restore_quote=1`
     : '/crm/kunder';
   // Kundansvarig förvald till säljaren som skapar kunden (se accountManagerDefault.ts).
-  const [draft, setDraft] = useState<Draft>(() => ({ ...initial, account_manager_id: defaultAccountManager?.id ?? '' }));
+  const [draft, setDraft] = useState<NewCustomerDraft>(() => ({ ...INITIAL_NEW_CUSTOMER_DRAFT, account_manager_id: defaultAccountManager?.id ?? '' }));
+  // Urkryssad med flit (Williams beslut 2026-10-22): offertpushen skapar kunden i Fortnox när den
+  // behövs (lib/domains/fortnox/offers.ts). Förvald hade varje prospekt hamnat i Fortnox, och Fortnox
+  // återanvänder kundnummer när en kund tas bort.
   const [createInFortnox, setCreateInFortnox] = useState(false);
   const [saving, setSaving] = useState(false);
-  // The invoice address defaults to the visit address + contact email so the common
-  // "same address" case needs no typing. While this is on, the invoice fields mirror
-  // the visit address and stay locked; unchecking seeds + unlocks them for editing.
+  // Leverans: "samma adress" = ingen egen leveransadress (null), som förut när fälten lämnades tomma —
+  // ordern faller då tillbaka på besöksadressen. Faktura: "samma adress" = besöksadressen KOPIERAS in
+  // vid sparning, låst under tiden; avkryssning fyller fälten ur besöksadressen så man börjar ifyllt.
+  const [deliverySameAsVisit, setDeliverySameAsVisit] = useState(true);
   const [invoiceSameAsVisit, setInvoiceSameAsVisit] = useState(true);
   // Credit report previewed before the customer exists; persisted with the row on save so
   // we don't bill tic.io a second time.
@@ -221,6 +239,11 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
   const [creditFetchedAt, setCreditFetchedAt] = useState<string | null>(null);
   const [fetchingCredit, setFetchingCredit] = useState(false);
   const [sellers, setSellers] = useState<Seller[]>([]);
+  // Uppslaget: vald träff (bekräftelsekortet), vad den fyllde i (taggar + "Byt företag") och om
+  // säljaren valt bort sökningen.
+  const [picked, setPicked] = useState<TicLookupResult | null>(null);
+  const [ticFill, setTicFill] = useState<TicFill>(EMPTY_TIC_FILL);
+  const [manual, setManual] = useState(false);
 
   // Säljare för kundansvarig-väljaren (profiles sales/admin, läs-katalog).
   useEffect(() => {
@@ -235,7 +258,7 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
     return () => { active = false; };
   }, []);
 
-  function set<K extends keyof Draft>(key: K, value: Draft[K]) {
+  function set<K extends keyof NewCustomerDraft>(key: K, value: NewCustomerDraft[K]) {
     setDraft((c) => ({ ...c, [key]: value }));
   }
 
@@ -268,15 +291,14 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
   }
 
   function toggleInvoiceSame(same: boolean) {
-    // When unchecking, seed the now-editable invoice fields from the visit address +
-    // contact email so the user starts from populated fields, not blank ones.
+    // When unchecking, seed the now-editable invoice fields from the visit address so the user
+    // starts from populated fields, not blank ones.
     if (!same) {
       setDraft((c) => ({
         ...c,
         invoice_street: c.visit_street,
         invoice_postal_code: c.visit_postal_code,
         invoice_city: c.visit_city,
-        invoice_email: c.email,
       }));
     }
     setInvoiceSameAsVisit(same);
@@ -285,13 +307,20 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
   // Switching customer type clears the fields that belong to the other type, so a
   // private customer never carries an org number / VAT / reverse VAT (all
   // business-only concepts) and a business customer never carries a personal number.
+  // Uppslaget backas också, som med "Byt företag": det var ett företag, och dess bolagsdata
+  // (omsättning, bransch, nyckeltal …) hade annars följt med en privatkund in i sparningen utan att
+  // synas i formuläret. Bekräftelsekortet hade dessutom pekat på ett org.nr som just tömts.
   function setCustomerType(type: CustomerType) {
+    if (type === draft.customer_type) return;
     if (type === 'private' && creditReport) clearCreditReport();
-    setDraft((c) =>
-      type === 'private'
-        ? { ...c, customer_type: type, organization_number: '', vat_number: '', reverse_vat: false }
-        : { ...c, customer_type: type, personal_number: '' },
-    );
+    setPicked(null);
+    setTicFill(EMPTY_TIC_FILL);
+    setDraft((c) => {
+      const base = clearTicLookup(c, ticFill);
+      return type === 'private'
+        ? { ...base, customer_type: type, organization_number: '', vat_number: '', reverse_vat: false }
+        : { ...base, customer_type: type, personal_number: '' };
+    });
   }
 
   // Auto-derive the VAT number from the org number for business customers,
@@ -309,55 +338,24 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
     });
   }
 
-  // Pre-fill the form from a tic.io lookup hit. Only writes into empty fields so a
-  // lookup never clobbers something the user already typed (same principle as the
-  // VAT derivation above). Org/personal numbers are run through the same formatter.
+  // Pre-fill the form from a tic.io lookup hit — only into empty fields (see applyTicLookup).
   function applyLookup(r: TicLookupResult) {
-    setDraft((c) => {
-      const next = { ...c };
-      if (r.kind === 'company') {
-        if (r.company_name && !c.company_name.trim()) next.company_name = r.company_name;
-        if (r.organization_number && !c.organization_number.trim()) {
-          const formatted = formatSwedishIdNumber(r.organization_number);
-          next.organization_number = formatted;
-          if (!c.vat_number.trim()) {
-            const derived = vatFromOrgNumber(formatted);
-            if (derived) next.vat_number = derived;
-          }
-        }
-        if (r.annual_revenue != null && !c.annual_revenue.trim()) next.annual_revenue = String(r.annual_revenue);
-        if (r.number_of_employees != null && !c.number_of_employees.trim()) next.number_of_employees = String(r.number_of_employees);
-        // Extra company info → "Övrig information" section. Fill only empty fields.
-        if (r.legal_entity_type && !c.legal_entity_type.trim()) next.legal_entity_type = r.legal_entity_type;
-        if (r.sni_code && !c.sni_code.trim()) next.sni_code = r.sni_code;
-        if (r.sni_name && !c.sni_name.trim()) next.sni_name = r.sni_name;
-        if (r.operating_profit != null && !c.operating_profit.trim()) next.operating_profit = String(r.operating_profit);
-        if (r.profit_after_financial_items != null && !c.profit_after_financial_items.trim()) next.profit_after_financial_items = String(r.profit_after_financial_items);
-        if (r.total_assets != null && !c.total_assets.trim()) next.total_assets = String(r.total_assets);
-        if (r.operating_margin != null && !c.operating_margin.trim()) next.operating_margin = String(r.operating_margin);
-        if (r.equity_ratio != null && !c.equity_ratio.trim()) next.equity_ratio = String(r.equity_ratio);
-        if (r.financial_year != null && !c.financial_year.trim()) next.financial_year = String(r.financial_year);
-        if (r.risk_indicators && r.risk_indicators.length > 0 && c.risk_indicators.length === 0) {
-          next.risk_indicators = r.risk_indicators;
-        }
-      } else {
-        if (r.first_name && !c.first_name.trim()) next.first_name = r.first_name;
-        if (r.last_name && !c.last_name.trim()) next.last_name = r.last_name;
-        // Personnummer har EGEN maskning: formatSwedishIdNumber kapar vid tio siffror (rätt för
-        // org.nr) och hade klippt bort århundradet.
-        if (r.personal_number && !c.personal_number.trim()) next.personal_number = formatPersonalNumber(r.personal_number);
-      }
-      if (r.email && !c.email.trim()) next.email = r.email;
-      if (r.phone && !c.phone.trim()) next.phone = r.phone;
-      if (r.address) {
-        if (r.address.street && !c.visit_street.trim()) next.visit_street = r.address.street;
-        if (r.address.postal_code && !c.visit_postal_code.trim()) next.visit_postal_code = r.address.postal_code;
-        if (r.address.city && !c.visit_city.trim()) next.visit_city = r.address.city;
-      }
-      return next;
-    });
-    toast.success('Uppgifter hämtade från uppslaget');
+    const result = applyTicLookup(draft, r);
+    setDraft(result.draft);
+    setTicFill(result.fill);
+    if (r.kind === 'company') setPicked(r);
   }
+
+  // "Byt företag": tillbaka till sökningen, och det uppslaget fyllde töms — det säljaren skrivit om
+  // står kvar. Rapporten hör till det förra företagets org.nr.
+  function clearPick() {
+    setDraft((c) => clearTicLookup(c, ticFill));
+    setTicFill(EMPTY_TIC_FILL);
+    setPicked(null);
+    clearCreditReport();
+  }
+
+  const tic = (key: TicFillableField) => isTicFilled(draft, ticFill, key);
 
   async function handleSubmit() {
     const isB2B = draft.customer_type === 'business';
@@ -366,12 +364,11 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
     // Personnummer is optional at create — sales sometimes only get it once the job is booked.
     // It is required later, when a work order is created for the customer.
 
-    // When "same as visit address" is on, the invoice address + email follow the visit
-    // address / contact email rather than the (locked, possibly stale) invoice fields.
+    // When "same as visit address" is on, the invoice address follows the visit address rather
+    // than the (locked, possibly stale) invoice fields.
     const invoiceStreet = invoiceSameAsVisit ? draft.visit_street : draft.invoice_street;
     const invoicePostal = invoiceSameAsVisit ? draft.visit_postal_code : draft.invoice_postal_code;
     const invoiceCity = invoiceSameAsVisit ? draft.visit_city : draft.invoice_city;
-    const invoiceEmail = invoiceSameAsVisit ? draft.email : draft.invoice_email;
 
     setSaving(true);
     try {
@@ -382,9 +379,11 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
         phone: draft.phone.trim() || null,
         mobile: draft.mobile.trim() || null,
         visit_address: buildAddress(draft.visit_street, draft.visit_postal_code, draft.visit_city),
-        delivery_address: buildAddress(draft.delivery_street, draft.delivery_postal_code, draft.delivery_city),
+        delivery_address: deliverySameAsVisit
+          ? null
+          : buildAddress(draft.delivery_street, draft.delivery_postal_code, draft.delivery_city),
         invoice_address: buildAddress(invoiceStreet, invoicePostal, invoiceCity),
-        invoice_email: invoiceEmail.trim() || null,
+        invoice_email: resolveInvoiceEmail(draft),
         payment_terms: draft.payment_terms.trim() || null,
         price_list: draft.price_list.trim() || null,
         discount: draft.discount.trim() ? Number(draft.discount) : null,
@@ -460,13 +459,27 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
   }
 
   const isB2B = draft.customer_type === 'business';
+  const showLookup = isB2B && !picked && !manual;
+  const showManualNote = isB2B && !picked && manual;
 
-  // While "same as visit address" is on, the invoice column shows the visit address +
-  // contact email live (locked); otherwise it shows the customer's own invoice fields.
+  // While "same as visit address" is on, the invoice fields mirror the visit address (see submit).
   const invoiceStreet = invoiceSameAsVisit ? draft.visit_street : draft.invoice_street;
   const invoicePostal = invoiceSameAsVisit ? draft.visit_postal_code : draft.invoice_postal_code;
   const invoiceCity = invoiceSameAsVisit ? draft.visit_city : draft.invoice_city;
-  const invoiceEmail = invoiceSameAsVisit ? draft.email : draft.invoice_email;
+
+  const checklist = newCustomerChecklist(draft);
+  const pickedOrg = picked?.organization_number ? formatSwedishIdNumber(picked.organization_number) : null;
+  const pickedAddress = [picked?.address?.street, picked?.address?.city].filter(Boolean).join(', ');
+  const pickedMeta = [pickedOrg, pickedAddress, picked?.sni_name].filter(Boolean).join(' · ');
+  // Uppslaget skriver aldrig över ett ifyllt org.nr. Stod ett annat där redan är det formulärets som
+  // sparas och som kreditupplysningen hämtas på — kortet måste säga det, inte bara visa träffens.
+  const draftOrgDigits = draft.organization_number.replace(/\D/g, '');
+  const pickedOrgDiffers = Boolean(pickedOrg && draftOrgDigits && draftOrgDigits !== pickedOrg.replace(/\D/g, ''));
+
+  const segment = (active: boolean) => cn(
+    'h-9 rounded-lg px-4 py-0 text-sm font-semibold transition',
+    active ? 'bg-white text-slate-900 shadow-[0_1px_2px_rgba(20,44,27,0.14)]' : 'text-slate-600 hover:text-slate-900',
+  );
 
   return (
     <div className="grid grid-cols-1 gap-6">
@@ -476,297 +489,356 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
         <button
           type="button"
           onClick={() => router.push(cancelTo)}
-          className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-slate-800"
+          className="mb-1.5 inline-flex items-center gap-1.5 px-0 py-1 text-[13px] text-slate-600 transition hover:text-slate-900"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
             <path d="M9 2L4 7l5 5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           {returnTo ? 'Tillbaka till offert' : 'Kundregister'}
         </button>
-        <h1 className="m-0 text-2xl font-bold tracking-tight text-slate-900">Registrera kund</h1>
-        <p className="m-0 mt-0.5 text-sm text-slate-500">Fyll i uppgifterna nedan för att skapa en ny kundpost</p>
+        <h1 className="m-0 text-[28px] font-bold leading-tight tracking-tight text-slate-900">Registrera kund</h1>
       </div>
 
       {/* ── Body: form + sidebar ── */}
-      <div className="grid gap-5 lg:grid-cols-[1fr_300px] lg:items-start">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-start">
 
         {/* Left: form sections */}
-        <div className="grid gap-5">
+        <div className="grid min-w-0 gap-5">
 
-          {/* Row 1: Grundinfo + Kontakt side by side on desktop */}
-          <div className="grid gap-5 lg:grid-cols-2">
+          {/* Vem är kunden? — sökningen är startpunkten för företag */}
+          <section className={cn(crm.cardInner, 'p-5 sm:p-7')}>
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="m-0 text-xl font-semibold text-slate-900">Vem är kunden?</h2>
+                <p className="m-0 mt-1 text-sm text-slate-600">
+                  {isB2B
+                    ? 'Börja med att söka upp företaget – resten fylls i automatiskt.'
+                    : 'Fyll i kundens namn och kontaktuppgifter.'}
+                </p>
+              </div>
+              <div role="group" aria-label="Kundtyp" className={cn(crm.sunken, 'inline-flex gap-1 rounded-xl p-1')}>
+                <button type="button" aria-pressed={isB2B} onClick={() => setCustomerType('business')} className={segment(isB2B)}>
+                  Företag
+                </button>
+                <button type="button" aria-pressed={!isB2B} onClick={() => setCustomerType('private')} className={segment(!isB2B)}>
+                  Privatperson
+                </button>
+              </div>
+            </div>
 
-            {/* Grundinfo */}
-            <CardSection title="Grundinfo">
-              <div className="grid gap-3">
-                <div>
-                  <FieldLabel>Kundtyp</FieldLabel>
-                  <Select
-                    value={draft.customer_type}
-                    onChange={(e) => setCustomerType(e.target.value as CustomerType)}
+            {/* Lookup is company-only: tic.io person search requires the Enterprise+
+                tier, which we don't have, so it's hidden for private customers. */}
+            {showLookup ? (
+              <div>
+                <TicLookupInput mode="company" onSelect={applyLookup} placeholder="Sök på företagsnamn eller org.nr" />
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-600">
+                  <span>Namn, org.nr, momsnummer, adress och telefon fylls i åt dig.</span>
+                  <button
+                    type="button"
+                    onClick={() => setManual(true)}
+                    className={linkButton}
                   >
-                    <option value="business">Företag</option>
-                    <option value="private">Privat</option>
-                  </Select>
+                    Fyll i manuellt istället
+                  </button>
                 </div>
-
-                {/* Lookup is company-only: tic.io person search requires the Enterprise+
-                    tier, which we don't have, so it's hidden for private customers. */}
-                {isB2B ? (
-                  <div>
-                    <FieldLabel>Slå upp företag</FieldLabel>
-                    <TicLookupInput mode="company" onSelect={applyLookup} />
-                    <p className="mt-1 text-xs text-slate-400">Sök via tic.io för att fylla i uppgifterna automatiskt.</p>
-                  </div>
-                ) : null}
-
-                {isB2B ? (
-                  <>
-                    <div>
-                      <FieldLabel>Företagsnamn *</FieldLabel>
-                      <Input value={draft.company_name} onChange={(e) => set('company_name', e.target.value)} placeholder="AB Exempelbolaget" />
-                    </div>
-                    <div>
-                      <FieldLabel>Organisationsnummer</FieldLabel>
-                      <Input value={draft.organization_number} onChange={(e) => setOrganizationNumber(e.target.value)} placeholder="556000-0000" />
-                      {draft.organization_number.replace(/\D/g, '').length === 10 && !isValidSwedishOrgNumber(draft.organization_number) ? (
-                        <p className="mt-1 text-xs text-amber-600">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
-                      ) : null}
-                    </div>
-
-                    {/* Kreditupplysning — hämtas (och sparas med kunden) innan kunden finns */}
-                    <div className="rounded-xl border border-[#e0e8dc] bg-[#f3f6f1] p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">Kreditupplysning</p>
-                          <p className="mt-0.5 text-xs text-slate-400">Hämta kreditbetyg & risk från tic.io innan du sparar.</p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={fetchCreditPreview}
-                          disabled={fetchingCredit || !draft.organization_number.trim()}
-                          className={cn(crm.ghostButton, 'shrink-0 disabled:opacity-50')}
-                        >
-                          {fetchingCredit ? 'Hämtar…' : creditReport ? 'Uppdatera' : 'Hämta'}
-                        </button>
-                      </div>
-                      {creditReport ? (
-                        <div className="mt-3 border-t border-[#e0e8dc] pt-3">
-                          <CreditReportSummary report={creditReport} />
-                        </div>
-                      ) : null}
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <FieldLabel>Omsättning (SEK)</FieldLabel>
-                        <Input value={draft.annual_revenue} onChange={(e) => set('annual_revenue', e.target.value)} placeholder="0" type="number" min="0" step="1" />
-                      </div>
-                      <div>
-                        <FieldLabel>Antal anställda</FieldLabel>
-                        <Input value={draft.number_of_employees} onChange={(e) => set('number_of_employees', e.target.value)} placeholder="0" type="number" min="0" step="1" />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <FieldLabel>Förnamn *</FieldLabel>
-                        <Input value={draft.first_name} onChange={(e) => set('first_name', e.target.value)} placeholder="Anna" />
-                      </div>
-                      <div>
-                        <FieldLabel>Efternamn *</FieldLabel>
-                        <Input value={draft.last_name} onChange={(e) => set('last_name', e.target.value)} placeholder="Svensson" />
-                      </div>
-                    </div>
-                    <div>
-                      <FieldLabel>Personnummer</FieldLabel>
-                      <Input
-                        value={draft.personal_number}
-                        onChange={(e) => set('personal_number', formatPersonalNumber(e.target.value))}
-                        placeholder="ÅÅÅÅMMDD-XXXX"
-                        inputMode="numeric"
-                        aria-invalid={!!draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number)}
-                      />
-                      {draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number) ? (
-                        <p className="mt-1 text-[11px] leading-snug text-rose-600">{PERSONAL_NUMBER_ERROR}</p>
-                      ) : (
-                        <p className="mt-1 text-[11px] leading-snug text-slate-400">
-                          {PERSONAL_NUMBER_OPTIONAL_HINT}
-                        </p>
-                      )}
-                    </div>
-                  </>
-                )}
               </div>
-            </CardSection>
+            ) : null}
 
-            {/* Kontakt */}
-            <CardSection title="Kontakt">
+            {isB2B && picked ? (
               <div className="grid gap-3">
+                <div className="flex flex-wrap items-center gap-4 rounded-xl border border-[#d3e1d6] bg-[color:var(--ek-accent-soft)] px-5 py-4">
+                  <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ek-green)] text-white">
+                    <CheckIcon size={22} />
+                  </span>
+                  <div className="min-w-0 flex-[1_1_240px]">
+                    <p className="m-0 flex flex-wrap items-center gap-2 text-[17px] font-semibold text-slate-900">
+                      {picked.company_name || picked.label}
+                      {picked.inactive ? (
+                        <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">Avregistrerad</span>
+                      ) : null}
+                    </p>
+                    {pickedMeta ? <p className="m-0 text-[13px] text-slate-600">{pickedMeta}</p> : null}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={clearPick}
+                    className={linkButton}
+                  >
+                    Byt företag
+                  </button>
+                </div>
+                {pickedOrgDiffers ? (
+                  <p role="alert" className="m-0 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-800">
+                    Organisationsnumret nedan ({draft.organization_number}) är ett annat än det valda företagets. Det
+                    är numret nedan som sparas — rätta det om det är fel.
+                  </p>
+                ) : null}
+                <CreditPreview
+                  report={creditReport}
+                  fetching={fetchingCredit}
+                  canFetch={Boolean(draft.organization_number.trim())}
+                  onFetch={fetchCreditPreview}
+                />
+              </div>
+            ) : null}
+
+            {showManualNote ? (
+              <div className={cn(crm.sunken, 'flex flex-wrap items-center justify-between gap-3 rounded-xl border-dashed border-[#c4cec2] px-4 py-3.5')}>
+                <span className="text-sm text-slate-700">Manuell registrering – fyll i uppgifterna nedan.</span>
+                <button
+                  type="button"
+                  onClick={() => setManual(false)}
+                  className={linkButton}
+                >
+                  Sök företag istället
+                </button>
+              </div>
+            ) : null}
+
+            {!isB2B ? (
+              <p className={cn(crm.sunken, 'm-0 rounded-xl px-4 py-3.5 text-sm text-slate-700')}>
+                Privatkunder registreras manuellt. Personnummer krävs för ROT-avdrag.
+              </p>
+            ) : null}
+          </section>
+
+          {/* Företags-/personuppgifter + kontakt, sida vid sida */}
+          <div className="grid gap-5 md:grid-cols-2">
+            {isB2B ? (
+              <Card title="Företagsuppgifter">
+                <div className="grid gap-4">
+                  <div>
+                    <FieldLabel htmlFor="nc-company" tic={tic('company_name')}>Företagsnamn *</FieldLabel>
+                    <Input id="nc-company" value={draft.company_name} onChange={(e) => set('company_name', e.target.value)} placeholder="AB Exempelbolaget" />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="nc-org" tic={tic('organization_number')}>Organisationsnummer</FieldLabel>
+                    <Input id="nc-org" value={draft.organization_number} onChange={(e) => setOrganizationNumber(e.target.value)} placeholder="556000-0000" />
+                    {draft.organization_number.replace(/\D/g, '').length === 10 && !isValidSwedishOrgNumber(draft.organization_number) ? (
+                      <p className="m-0 mt-1 text-xs text-amber-700">Ogiltigt organisationsnummer – kontrollsiffran stämmer inte.</p>
+                    ) : null}
+                  </div>
+                  {/* Förifyllt ur org.numret men SKRIVBART med flit: alla bolag är inte momsregistrerade
+                      (tomt ska gå att spara), och en koncernregistrering kan sluta på 02, 03 … Se
+                      deriveVatNumberForWrite i lib/domains/crm/orgNumber.ts. */}
+                  <div>
+                    <FieldLabel htmlFor="nc-vat" hint="fylls i från org.nr" tic={tic('vat_number')}>Momsreg.nummer</FieldLabel>
+                    <Input id="nc-vat" value={draft.vat_number} onChange={(e) => set('vat_number', e.target.value)} placeholder="SE556000000001" />
+                  </div>
+                  {/* Utan vald träff bor kreditupplysningen här, intill org.numret den hämtas på. Med
+                      träff står den i bekräftelsekortet ovan. */}
+                  {!picked ? (
+                    <CreditPreview
+                      report={creditReport}
+                      fetching={fetchingCredit}
+                      canFetch={Boolean(draft.organization_number.trim())}
+                      onFetch={fetchCreditPreview}
+                    />
+                  ) : null}
+                </div>
+              </Card>
+            ) : (
+              <Card title="Personuppgifter">
+                <div className="grid gap-4">
+                  <div>
+                    <FieldLabel htmlFor="nc-first">Förnamn *</FieldLabel>
+                    <Input id="nc-first" value={draft.first_name} onChange={(e) => set('first_name', e.target.value)} placeholder="Anna" />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="nc-last">Efternamn *</FieldLabel>
+                    <Input id="nc-last" value={draft.last_name} onChange={(e) => set('last_name', e.target.value)} placeholder="Andersson" />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="nc-pnr">Personnummer</FieldLabel>
+                    <Input
+                      id="nc-pnr"
+                      value={draft.personal_number}
+                      onChange={(e) => set('personal_number', formatPersonalNumber(e.target.value))}
+                      placeholder="ÅÅÅÅMMDD-XXXX"
+                      inputMode="numeric"
+                      aria-invalid={!!draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number)}
+                    />
+                    {draft.personal_number.trim() && !isValidPersonalNumber(draft.personal_number) ? (
+                      <p className="m-0 mt-1 text-[11px] leading-snug text-rose-600">{PERSONAL_NUMBER_ERROR}</p>
+                    ) : (
+                      <p className="m-0 mt-1 text-[11px] leading-snug text-slate-500">{PERSONAL_NUMBER_OPTIONAL_HINT}</p>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            <Card title="Kontaktuppgifter">
+              <div className="grid gap-4">
                 <div>
-                  <FieldLabel>E-post</FieldLabel>
-                  <Input value={draft.email} onChange={(e) => set('email', e.target.value)} placeholder="info@foretaget.se" type="email" />
+                  <FieldLabel htmlFor="nc-email" tic={tic('email')}>E-post</FieldLabel>
+                  <Input id="nc-email" value={draft.email} onChange={(e) => set('email', e.target.value)} placeholder="info@foretaget.se" type="email" />
                 </div>
                 <div>
-                  <FieldLabel>Telefon</FieldLabel>
-                  <Input value={draft.phone} onChange={(e) => set('phone', e.target.value)} placeholder="08-123 456 78" />
+                  <FieldLabel htmlFor="nc-phone" tic={tic('phone')}>Telefon</FieldLabel>
+                  <Input id="nc-phone" value={draft.phone} onChange={(e) => set('phone', e.target.value)} placeholder="08-123 456 78" />
                 </div>
                 <div>
-                  <FieldLabel>Mobil</FieldLabel>
-                  <Input value={draft.mobile} onChange={(e) => set('mobile', e.target.value)} placeholder="070-123 456 78" />
+                  <FieldLabel htmlFor="nc-mobile">Mobil</FieldLabel>
+                  <Input id="nc-mobile" value={draft.mobile} onChange={(e) => set('mobile', e.target.value)} placeholder="070-123 456 78" />
                 </div>
               </div>
-            </CardSection>
+            </Card>
           </div>
 
-          {/* Row 2: Adresser – 3 columns on desktop */}
-          <CardSection
-            title="Adresser"
-            action={
-              // 🧨 `w-auto` — `:where(label){display:block;width:100%}` i globals.css gör annars
-              // etiketten 100 % bred, och då knuffar den sig själv till en egen rad. `flex` slår
-              // display, men bredden står kvar tills en klass tar över den.
-              <label className="flex w-auto cursor-pointer select-none items-center gap-1.5 text-xs text-slate-500">
-                <input
-                  type="checkbox"
-                  checked={invoiceSameAsVisit}
-                  onChange={(e) => toggleInvoiceSame(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                />
-                Fakturaadress samma som besöksadress
-              </label>
-            }
-          >
-            <div className="grid gap-5 lg:grid-cols-3">
-              <AddressColumn
-                label="Besöksadress"
-                street={draft.visit_street} postalCode={draft.visit_postal_code} city={draft.visit_city}
-                onStreet={(v) => set('visit_street', v)} onPostal={(v) => set('visit_postal_code', v)} onCity={(v) => set('visit_city', v)}
-              />
-              <AddressColumn
-                label="Leveransadress"
-                street={draft.delivery_street} postalCode={draft.delivery_postal_code} city={draft.delivery_city}
-                onStreet={(v) => set('delivery_street', v)} onPostal={(v) => set('delivery_postal_code', v)} onCity={(v) => set('delivery_city', v)}
-              />
-              <AddressColumn
-                label="Fakturaadress"
-                street={invoiceStreet} postalCode={invoicePostal} city={invoiceCity}
-                email={invoiceEmail}
-                onStreet={(v) => set('invoice_street', v)} onPostal={(v) => set('invoice_postal_code', v)} onCity={(v) => set('invoice_city', v)}
-                onEmail={(v) => set('invoice_email', v)}
-                disabled={invoiceSameAsVisit}
-              />
-            </div>
-          </CardSection>
-
-          {/* Row 3: Fakturainställningar */}
-          <CardSection title="Fakturainställningar">
+          {/* Adress */}
+          <Card title="Adress">
             <div className="grid gap-4">
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div>
-                  <FieldLabel>Betalningsvillkor</FieldLabel>
-                  <FortnoxCodeSelect
-                    value={draft.payment_terms}
-                    onChange={(v) => set('payment_terms', v)}
-                    endpoint="/api/fortnox/terms-of-payment"
-                    emptyLabel="Standard (Fortnox)"
-                    placeholder="30 dagar"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Prislista</FieldLabel>
-                  <FortnoxCodeSelect
-                    value={draft.price_list}
-                    onChange={(v) => set('price_list', v)}
-                    endpoint="/api/fortnox/price-lists"
-                    emptyLabel="Standard (Fortnox)"
-                    placeholder="A"
-                  />
-                </div>
-                <div>
-                  <FieldLabel>Rabatt (%)</FieldLabel>
-                  <Input value={draft.discount} onChange={(e) => set('discount', e.target.value)} placeholder="0" type="number" min="0" max="100" step="0.01" />
-                </div>
-                {isB2B ? (
-                  <div>
-                    <FieldLabel>Momsreg-nummer</FieldLabel>
-                    <Input value={draft.vat_number} onChange={(e) => set('vat_number', e.target.value)} placeholder="SE556000000001" />
-                  </div>
-                ) : null}
+              <div>
+                <FieldLabel htmlFor="nc-street" tic={tic('visit_street')}>Besöksadress</FieldLabel>
+                <Input id="nc-street" value={draft.visit_street} onChange={(e) => set('visit_street', e.target.value)} placeholder="Gatuadress" />
               </div>
-              {isB2B ? (
-                <label className="flex items-center gap-2.5 text-sm text-slate-700 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={draft.reverse_vat}
-                    onChange={(e) => set('reverse_vat', e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 accent-[color:var(--ek-accent)]"
-                  />
-                  Omvänd skattskyldighet
-                </label>
+              <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4">
+                <div>
+                  <FieldLabel htmlFor="nc-zip" tic={tic('visit_postal_code')}>Postnr</FieldLabel>
+                  <Input id="nc-zip" value={draft.visit_postal_code} onChange={(e) => set('visit_postal_code', e.target.value)} placeholder="123 45" />
+                </div>
+                <div>
+                  <FieldLabel htmlFor="nc-city" tic={tic('visit_city')}>Ort</FieldLabel>
+                  <Input id="nc-city" value={draft.visit_city} onChange={(e) => set('visit_city', e.target.value)} placeholder="Ort" />
+                </div>
+              </div>
+              <ZipWarning postalCode={draft.visit_postal_code} city={draft.visit_city} />
+              <div className="flex flex-wrap gap-x-8 border-t border-[#edf1ec] pt-1">
+                <CheckRow checked={deliverySameAsVisit} onChange={setDeliverySameAsVisit}>Leverans till samma adress</CheckRow>
+                <CheckRow checked={invoiceSameAsVisit} onChange={toggleInvoiceSame}>Faktura till samma adress</CheckRow>
+              </div>
+              {!deliverySameAsVisit ? (
+                <ExtraAddress
+                  title="Leveransadress" idPrefix="nc-delivery"
+                  street={draft.delivery_street} postalCode={draft.delivery_postal_code} city={draft.delivery_city}
+                  onStreet={(v) => set('delivery_street', v)} onPostal={(v) => set('delivery_postal_code', v)} onCity={(v) => set('delivery_city', v)}
+                />
+              ) : null}
+              {!invoiceSameAsVisit ? (
+                <ExtraAddress
+                  title="Fakturaadress" idPrefix="nc-invoice"
+                  street={invoiceStreet} postalCode={invoicePostal} city={invoiceCity}
+                  onStreet={(v) => set('invoice_street', v)} onPostal={(v) => set('invoice_postal_code', v)} onCity={(v) => set('invoice_city', v)}
+                />
               ) : null}
             </div>
-          </CardSection>
+          </Card>
 
-          {/* Row 4: Övrig information (företag) – collapsible, mostly filled by the lookup */}
+          {/* Fakturering */}
+          <Card title="Fakturering">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <FieldLabel htmlFor="nc-terms">Betalningsvillkor</FieldLabel>
+                <FortnoxCodeSelect
+                  id="nc-terms"
+                  value={draft.payment_terms}
+                  onChange={(v) => set('payment_terms', v)}
+                  endpoint="/api/fortnox/terms-of-payment"
+                  emptyLabel="Standard (Fortnox)"
+                  placeholder="30 dagar"
+                />
+              </div>
+              <div>
+                <FieldLabel htmlFor="nc-pricelist">Prislista</FieldLabel>
+                <FortnoxCodeSelect
+                  id="nc-pricelist"
+                  value={draft.price_list}
+                  onChange={(v) => set('price_list', v)}
+                  endpoint="/api/fortnox/price-lists"
+                  emptyLabel="Standard (Fortnox)"
+                  placeholder="A"
+                />
+              </div>
+              <div>
+                <FieldLabel htmlFor="nc-discount">Rabatt (%)</FieldLabel>
+                <Input id="nc-discount" value={draft.discount} onChange={(e) => set('discount', e.target.value)} placeholder="Ingen rabatt" type="number" min="0" max="100" step="0.01" />
+              </div>
+              <div>
+                <FieldLabel htmlFor="nc-invoice-email">Faktura-e-post</FieldLabel>
+                <Input
+                  id="nc-invoice-email"
+                  value={draft.invoice_email}
+                  onChange={(e) => set('invoice_email', e.target.value)}
+                  placeholder={draft.email.trim() || 'Samma som e-post ovan'}
+                  type="email"
+                />
+              </div>
+            </div>
+            {isB2B ? (
+              <CheckRow className="mt-2" checked={draft.reverse_vat} onChange={(v) => set('reverse_vat', v)}>
+                Omvänd skattskyldighet (bygg)
+              </CheckRow>
+            ) : null}
+          </Card>
+
+          {/* Övrig information (företag) – hopfälld, fylls mest av uppslaget */}
           {isB2B ? (
-            <CollapsibleCardSection title="Övrig information" hint="ekonomi, bransch & risk">
+            <CollapsibleCardSection
+              title="Övrig information"
+              hint="ekonomi, bransch & risk – valfritt"
+              className={cardPadding}
+              titleClassName="text-base font-semibold text-slate-900"
+            >
               <div className="grid gap-5">
-
-                {/* Bransch & bolagsform */}
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-3">
                   <div>
-                    <FieldLabel>Bolagsform</FieldLabel>
-                    <Input value={draft.legal_entity_type} onChange={(e) => set('legal_entity_type', e.target.value)} placeholder="Aktiebolag" />
+                    <FieldLabel htmlFor="nc-revenue" tic={tic('annual_revenue')}>Omsättning (SEK)</FieldLabel>
+                    <Input id="nc-revenue" value={draft.annual_revenue} onChange={(e) => set('annual_revenue', e.target.value)} placeholder="–" type="number" min="0" step="1" />
                   </div>
                   <div>
-                    <FieldLabel>SNI-kod</FieldLabel>
-                    <Input value={draft.sni_code} onChange={(e) => set('sni_code', e.target.value)} placeholder="43990" />
+                    <FieldLabel htmlFor="nc-employees" tic={tic('number_of_employees')}>Antal anställda</FieldLabel>
+                    <Input id="nc-employees" value={draft.number_of_employees} onChange={(e) => set('number_of_employees', e.target.value)} placeholder="–" type="number" min="0" step="1" />
                   </div>
                   <div>
-                    <FieldLabel>Bransch</FieldLabel>
-                    <Input value={draft.sni_name} onChange={(e) => set('sni_name', e.target.value)} placeholder="Specialiserad bygg- och anläggningsverksamhet" />
+                    <FieldLabel htmlFor="nc-sni-name" tic={tic('sni_name')}>Bransch</FieldLabel>
+                    <Input id="nc-sni-name" value={draft.sni_name} onChange={(e) => set('sni_name', e.target.value)} placeholder="–" />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="nc-legal" tic={tic('legal_entity_type')}>Bolagsform</FieldLabel>
+                    <Input id="nc-legal" value={draft.legal_entity_type} onChange={(e) => set('legal_entity_type', e.target.value)} placeholder="–" />
+                  </div>
+                  <div>
+                    <FieldLabel htmlFor="nc-sni-code" tic={tic('sni_code')}>SNI-kod</FieldLabel>
+                    <Input id="nc-sni-code" value={draft.sni_code} onChange={(e) => set('sni_code', e.target.value)} placeholder="–" />
                   </div>
                 </div>
 
-                {/* Ekonomi & nyckeltal */}
                 <div>
-                  <p className={cn('mb-2', crm.label)}>Ekonomi & nyckeltal</p>
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <p className={cn(crm.groupTitle, 'm-0 mb-3')}>Ekonomi &amp; nyckeltal</p>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                     <div>
-                      <FieldLabel>Rörelseresultat (SEK)</FieldLabel>
-                      <Input value={draft.operating_profit} onChange={(e) => set('operating_profit', e.target.value)} placeholder="0" type="number" step="1" />
+                      <FieldLabel htmlFor="nc-op-profit" tic={tic('operating_profit')}>Rörelseresultat (SEK)</FieldLabel>
+                      <Input id="nc-op-profit" value={draft.operating_profit} onChange={(e) => set('operating_profit', e.target.value)} placeholder="–" type="number" step="1" />
                     </div>
                     <div>
-                      <FieldLabel>Resultat e. fin. poster (SEK)</FieldLabel>
-                      <Input value={draft.profit_after_financial_items} onChange={(e) => set('profit_after_financial_items', e.target.value)} placeholder="0" type="number" step="1" />
+                      <FieldLabel htmlFor="nc-fin-profit" tic={tic('profit_after_financial_items')}>Resultat e. fin. poster (SEK)</FieldLabel>
+                      <Input id="nc-fin-profit" value={draft.profit_after_financial_items} onChange={(e) => set('profit_after_financial_items', e.target.value)} placeholder="–" type="number" step="1" />
                     </div>
                     <div>
-                      <FieldLabel>Totala tillgångar (SEK)</FieldLabel>
-                      <Input value={draft.total_assets} onChange={(e) => set('total_assets', e.target.value)} placeholder="0" type="number" step="1" />
+                      <FieldLabel htmlFor="nc-assets" tic={tic('total_assets')}>Totala tillgångar (SEK)</FieldLabel>
+                      <Input id="nc-assets" value={draft.total_assets} onChange={(e) => set('total_assets', e.target.value)} placeholder="–" type="number" step="1" />
                     </div>
                     <div>
-                      <FieldLabel>Rörelsemarginal (%)</FieldLabel>
-                      <Input value={draft.operating_margin} onChange={(e) => set('operating_margin', e.target.value)} placeholder="0" type="number" step="0.1" />
+                      <FieldLabel htmlFor="nc-margin" tic={tic('operating_margin')}>Rörelsemarginal (%)</FieldLabel>
+                      <Input id="nc-margin" value={draft.operating_margin} onChange={(e) => set('operating_margin', e.target.value)} placeholder="–" type="number" step="0.1" />
                     </div>
                     <div>
-                      <FieldLabel>Soliditet (%)</FieldLabel>
-                      <Input value={draft.equity_ratio} onChange={(e) => set('equity_ratio', e.target.value)} placeholder="0" type="number" step="0.1" />
+                      <FieldLabel htmlFor="nc-equity" tic={tic('equity_ratio')}>Soliditet (%)</FieldLabel>
+                      <Input id="nc-equity" value={draft.equity_ratio} onChange={(e) => set('equity_ratio', e.target.value)} placeholder="–" type="number" step="0.1" />
                     </div>
                     <div>
-                      <FieldLabel>Räkenskapsår</FieldLabel>
-                      <Input value={draft.financial_year} onChange={(e) => set('financial_year', e.target.value)} placeholder="2024" type="number" step="1" />
+                      <FieldLabel htmlFor="nc-fin-year" tic={tic('financial_year')}>Räkenskapsår</FieldLabel>
+                      <Input id="nc-fin-year" value={draft.financial_year} onChange={(e) => set('financial_year', e.target.value)} placeholder="–" type="number" step="1" />
                     </div>
                   </div>
                 </div>
 
                 {/* Riskindikatorer (read-only, från uppslaget) */}
                 <div>
-                  <p className={cn('mb-2', crm.label)}>Riskindikatorer</p>
+                  <p className={cn(crm.groupTitle, 'm-0 mb-2')}>Riskindikatorer</p>
                   {draft.risk_indicators.length > 0 ? (
-                    <ul className="grid gap-1.5">
+                    <ul className="m-0 grid list-none gap-1.5 p-0">
                       {draft.risk_indicators.map((r, i) => (
                         <li key={`${r.type}-${i}`} className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                           <span className="mt-0.5 shrink-0">⚠</span>
@@ -778,23 +850,40 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
                       ))}
                     </ul>
                   ) : (
-                    <p className="text-xs text-slate-400">Inga riskindikatorer hämtade.</p>
+                    <p className="m-0 text-xs text-slate-500">Inga riskindikatorer hämtade.</p>
                   )}
                 </div>
-
               </div>
             </CollapsibleCardSection>
           ) : null}
 
         </div>
 
-        {/* Right: sidebar */}
-        <div className="grid gap-4 lg:sticky lg:top-6">
+        {/* Right: sidebar — kort nog att följa med vid scroll (se lg:sticky-fällan i
+            CustomerDetailClient: en sticky kolumn som är högre än fönstret fastnar aldrig). */}
+        <aside className="grid gap-4 lg:sticky lg:top-6">
+          <div className={cn(crm.cardInner, 'p-5')}>
+            <p className={cn(crm.sectionTitle, 'm-0 mb-3.5')}>Innan du sparar</p>
+            <ul className="m-0 mb-5 grid list-none gap-3 p-0">
+              {checklist.map((item) => (
+                <li key={item.label} className="flex items-center gap-2.5 text-sm">
+                  {item.done ? (
+                    <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[color:var(--ek-green)] text-white">
+                      <CheckIcon />
+                    </span>
+                  ) : (
+                    <span className="inline-block h-5 w-5 shrink-0 rounded-full border-2 border-[#aab5ac]" aria-hidden />
+                  )}
+                  <span className={item.done ? 'text-slate-900' : 'text-slate-600'}>
+                    {item.label}
+                    <span className="sr-only">{item.done ? ' – klart' : ' – saknas'}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
 
-          {/* Kundansvarig */}
-          <div className={crm.cardInner}>
-            <p className={cn('mb-3', crm.sectionTitle)}>Kundansvarig</p>
-            <Select value={draft.account_manager_id} onChange={(e) => set('account_manager_id', e.target.value)}>
+            <FieldLabel htmlFor="nc-owner">Kundansvarig</FieldLabel>
+            <Select id="nc-owner" value={draft.account_manager_id} onChange={(e) => set('account_manager_id', e.target.value)}>
               <option value="">— Ingen —</option>
               {/* Förvalet finns från första renderingen, katalogen kommer efter. Utan ett eget
                   alternativ hade rullistan visat "Ingen" medan formuläret bar ett id. */}
@@ -807,65 +896,44 @@ export default function CustomerFormClient({ fortnoxConnected, defaultAccountMan
                 <option key={s.id} value={s.id}>{s.full_name || s.id}</option>
               ))}
             </Select>
-            <p className="mt-1.5 text-xs text-slate-400">Säljaren som äger kundrelationen. Kan sättas senare.</p>
-          </div>
+            <p className="m-0 mt-1.5 text-xs text-slate-500">Säljaren som äger kundrelationen. Kan sättas senare.</p>
 
-          {/* Fortnox */}
-          {fortnoxConnected ? (
-            <div className="rounded-2xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white p-5">
-              <p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-violet-500">Fortnox</p>
-              <label className="flex cursor-pointer select-none items-start gap-3 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={createInFortnox}
-                  onChange={(e) => setCreateInFortnox(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-violet-600"
-                />
-                <span>
-                  <strong className="block font-semibold text-slate-800">Skapa även i Fortnox</strong>
-                  <span className="text-xs text-slate-500 leading-relaxed">Kunden skapas direkt i Fortnox och tilldelas ett kundnummer.</span>
-                </span>
-              </label>
+            {fortnoxConnected ? (
+              <div className="mt-4 border-t border-[#edf1ec] pt-4">
+                <label className="flex w-auto cursor-pointer select-none items-start gap-2.5 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={createInFortnox}
+                    onChange={(e) => setCreateInFortnox(e.target.checked)}
+                    className="mt-0.5 h-[18px] w-[18px] shrink-0 rounded border-slate-300 accent-[color:var(--ek-green)]"
+                  />
+                  <span>
+                    <span className="block font-semibold text-slate-900">Skapa även i Fortnox</span>
+                    <span className="mt-0.5 block text-xs text-slate-500">Får ett kundnummer direkt.</span>
+                  </span>
+                </label>
+              </div>
+            ) : null}
+
+            <div className="mt-5 grid gap-2.5">
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={saving}
+                className={cn(crm.saveButton, 'h-12 text-[15px] active:scale-[0.98]')}
+              >
+                {saving ? 'Sparar…' : 'Skapa kund'}
+              </button>
+              <button
+                type="button"
+                onClick={() => router.push(cancelTo)}
+                className="inline-flex h-11 w-full items-center justify-center rounded-xl border border-[#dce4d8] bg-white px-4 py-0 text-sm font-semibold text-slate-700 transition hover:border-[#c8d4c3] hover:text-slate-900"
+              >
+                Avbryt
+              </button>
             </div>
-          ) : null}
-
-          {/* Actions */}
-          <div className="rounded-2xl border border-[#e0e8dc] bg-[#f9fbf7] p-4 grid gap-2 shadow-[0_1px_3px_rgba(20,44,27,0.06),0_18px_36px_-18px_rgba(20,44,27,0.24)]">
-            <button
-              type="button"
-              onClick={handleSubmit}
-              disabled={saving}
-              className={cn(crm.saveButton, 'h-11 active:scale-[0.98]')}
-            >
-              {saving ? 'Sparar…' : 'Skapa kund'}
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push(cancelTo)}
-              className="inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-600 transition hover:border-slate-300"
-            >
-              Avbryt
-            </button>
           </div>
-
-          {/* Tips */}
-          <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-            <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 mb-2">Tips</p>
-            <ul className="grid gap-1.5">
-              {[
-                'Fält med * krävs.',
-                'Leveransadressen används vid ordrar om den avviker från besöksadressen.',
-                'Fakturaadressen följer besöksadressen som standard – avmarkera rutan för att ange en annan.',
-              ].map((tip) => (
-                <li key={tip} className="flex items-start gap-2 text-xs text-slate-500 leading-relaxed">
-                  <span className="mt-0.5 shrink-0 text-slate-300">–</span>
-                  {tip}
-                </li>
-              ))}
-            </ul>
-          </div>
-
-        </div>
+        </aside>
       </div>
     </div>
   );

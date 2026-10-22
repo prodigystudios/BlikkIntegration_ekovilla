@@ -8,17 +8,21 @@ import { cn } from '@/lib/shared/cn';
 // i stället för i components/ui: den finns för fältgrupper som är MASKINÄGDA (tic.io-uppslaget
 // fyller dem) och därför inte ska konkurrera med de fält säljaren faktiskt skriver i.
 export default function CollapsibleCardSection({
-  title, hint, children,
+  title, hint, children, className, titleClassName,
 }: {
   title: string;
   hint?: string;
   children: React.ReactNode;
+  /** Läggs på kortet (t.ex. större padding). */
+  className?: string;
+  /** Ersätter kickern som rubrikstil — registreringsformuläret bär sina kortrubriker i gemener. */
+  titleClassName?: string;
 }) {
   return (
-    <details className={cn(crm.cardInner, 'group')}>
+    <details className={cn(crm.cardInner, 'group', className)}>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent-ring)]">
         <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className={crm.sectionTitle}>{title}</span>
+          <span className={titleClassName ?? crm.sectionTitle}>{title}</span>
           {hint ? <span className="text-xs text-slate-500">{hint}</span> : null}
         </span>
         <svg
