@@ -481,8 +481,8 @@ describe('PATCH /api/crm/customers/[id]', () => {
     );
   });
 
-  // 🧨 …men aldrig när klienten själv skickat med fältet tomt. Editorn gör det i varje PATCH,
-  // och alla bolag är inte momsregistrerade.
+  // 🧨 …men aldrig när klienten själv skickat med fältet tomt. Editorn gör det när org.numret
+  // ändrats och momsfältet står tomt (changedCustomerEditFields), och alla bolag är inte momsregistrerade.
   it('härleder INTE när klienten skickat momsfältet tomt', async () => {
     mockGetCurrentUser.mockResolvedValue(salesUser);
     mockGet.mockResolvedValue({

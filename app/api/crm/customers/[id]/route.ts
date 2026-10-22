@@ -97,8 +97,9 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     // Momsnumret härleds ur org.numret när ett sådant SÄTTS eller ÄNDRAS (SE + tio siffror +
     // 01). Aldrig ovanpå ett ifyllt momsnummer, och aldrig när org.numret står stilla — annars
-    // gick det inte att tömma fältet på en kund som inte är momsregistrerad, eftersom editorn
-    // skickar med org.numret i varje PATCH. Se noten i deriveVatNumberForWrite.
+    // gick det inte att tömma fältet på en kund som inte är momsregistrerad, eftersom en klient
+    // kan skicka med ett oförändrat org.nr (editorn gjorde det i varje PATCH fram till 2026-10-22).
+    // Se noten i deriveVatNumberForWrite.
     const { data, error } = await updateCrmCustomer(
       supabase,
       context.params.id,

@@ -664,8 +664,8 @@ export function buildFortnoxCustomerPayload(customer: FortnoxCustomerSource) {
  *
  * Fyra fält står med flit utanför: Name (Fortnox kräver ett namn), Type och VATType (skickas alltid) och
  * OrganisationNumber (identitetslåset i PATCH-routen hindrar att numret töms på en synkad kund). `satisfies` håller
- * listan komplett — ett nytt fält i buildFortnoxCustomerPayload måste få ett tömningsvärde här, annars kommer en
- * tömning av det tillbaka vid nästa kundsynk.
+ * listan komplett — ett nytt fält i buildFortnoxCustomerPayload måste få en rad här, annars kommer en tömning av det
+ * tillbaka vid nästa kundsynk. Värdet kan typen inte pröva: mät det mot testbolaget, som rabattens 0.
  */
 const FORTNOX_CUSTOMER_CLEAR_VALUES = {
   Email: null,
@@ -690,7 +690,7 @@ const FORTNOX_CUSTOMER_CLEAR_VALUES = {
   null | 0
 >;
 type FortnoxClearableField = keyof typeof FORTNOX_CUSTOMER_CLEAR_VALUES;
-export type FortnoxCustomerClears = { -readonly [F in FortnoxClearableField]?: (typeof FORTNOX_CUSTOMER_CLEAR_VALUES)[F] };
+export type FortnoxCustomerClears = Partial<Record<FortnoxClearableField, null | 0>>;
 
 // Tomt i payloaden: utelämnat, null, blanksteg (samma regel som blankToNull) — och rabatten 0, Fortnox egen tomhet.
 function isBlankFortnoxValue(value: unknown): boolean {
@@ -709,9 +709,13 @@ function isBlankFortnoxValue(value: unknown): boolean {
 export function fortnoxCustomerClears(before: FortnoxCustomerSource, after: FortnoxCustomerSource): FortnoxCustomerClears {
   const was = buildFortnoxCustomerPayload(before);
   const now = buildFortnoxCustomerPayload(after);
-  const cleared = (Object.keys(FORTNOX_CUSTOMER_CLEAR_VALUES) as FortnoxClearableField[])
-    .filter((field) => !isBlankFortnoxValue(was[field]) && isBlankFortnoxValue(now[field]));
-  return Object.fromEntries(cleared.map((field) => [field, FORTNOX_CUSTOMER_CLEAR_VALUES[field]])) as FortnoxCustomerClears;
+  const clears: FortnoxCustomerClears = {};
+  for (const field of Object.keys(FORTNOX_CUSTOMER_CLEAR_VALUES) as FortnoxClearableField[]) {
+    if (!isBlankFortnoxValue(was[field]) && isBlankFortnoxValue(now[field])) {
+      clears[field] = FORTNOX_CUSTOMER_CLEAR_VALUES[field];
+    }
+  }
+  return clears;
 }
 
 /**
