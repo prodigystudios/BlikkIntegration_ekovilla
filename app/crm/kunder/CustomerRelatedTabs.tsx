@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Input from '../../../components/ui/Input';
 import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/components/CrmTable';
 import { netAmount } from '@/lib/domains/crm/pricing';
+import { CALL_OUTCOME_META } from '@/app/crm/lib/callDisplay';
 import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type QuoteStatus, type WorkOrderStatus } from '@/app/crm/lib/crmTokens';
 import { cn } from '@/lib/shared/cn';
 import { documentRef, formatCurrency, formatDate, formatDateTime, formatDayRange, isWorkOrderOverdue } from '@/app/crm/lib/format';
@@ -12,9 +13,11 @@ import {
   contactInitials,
   filterQuotes,
   filterWorkOrders,
+  isTaskOverdue,
   QUOTE_STATUS_FILTERS,
   quotePlace,
   quoteSums,
+  splitTasks,
   workOrderPlace,
   type CustomerContact,
   type QuoteStatusFilter,
@@ -28,13 +31,6 @@ import { cardLinkButton, EmptyState, InfoCard } from './CustomerCardUi';
 // Kundkortets flikar utöver Översikt. Ren visning — hämtning, sparning och modaler bor i
 // CustomerDetailClient.
 
-const callOutcomeLabel: Record<string, string> = {
-  no_answer: 'Inget svar', follow_up: 'Följ upp', positive: 'Positiv', negative: 'Negativ',
-};
-
-const taskStatusLabel: Record<string, string> = {
-  open: 'Öppen', done: 'Klar', cancelled: 'Avbruten',
-};
 
 // Länken till hela listan, som kortets gamla sidokolumn hade ("Offerter →" …). Det är där man skapar
 // och filtrerar tills flikarna får egna verktyg.
@@ -96,16 +92,20 @@ const orderWidth = {
   quote: 'hidden w-[7rem] xl:table-cell',
 } as const;
 
+// Flikarnas gröna "Ny …"-knapp — samma utseende som länk (till ett annat formulär) och som knapp
+// (öppnar en modal här). `py-0` mot den globala knapp-paddingen, `no-underline` för länken.
+const newActionClass = 'inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--ek-green)] px-4 py-0 text-sm font-semibold text-white no-underline transition hover:bg-[color:var(--ek-green-strong)]';
+
+function PlusIcon() {
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>;
+}
+
+function NewActionButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" onClick={onClick} className={newActionClass}><PlusIcon />{children}</button>;
+}
+
 function NewButton({ href, children }: { href: string; children: React.ReactNode }) {
-  return (
-    <a
-      href={href}
-      className="inline-flex h-10 items-center gap-2 rounded-xl bg-[color:var(--ek-green)] px-4 text-sm font-semibold text-white no-underline transition hover:bg-[color:var(--ek-green-strong)]"
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-      {children}
-    </a>
-  );
+  return <a href={href} className={newActionClass}><PlusIcon />{children}</a>;
 }
 
 function SearchField({ value, onChange, label, placeholder }: { value: string; onChange: (v: string) => void; label: string; placeholder: string }) {
@@ -303,47 +303,172 @@ export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrder
   );
 }
 
-export function CallsTab({ calls, loading }: { calls: RelatedCall[]; loading: boolean }) {
+export function CallsTab({ calls, loading, sellerName, onLogCall, seesAllCalls }: {
+  calls: RelatedCall[];
+  loading: boolean;
+  sellerName: (id: string | null) => string | null;
+  /** null = ingen rätt att logga samtal (crm.call.write), eller listan laddar. */
+  onLogCall: (() => void) | null;
+  /** crm.admin. Läspolicyn visar annars bara egna samtal — det ska stå, inte gissas. */
+  seesAllCalls: boolean;
+}) {
+  const logButton = onLogCall ? <NewActionButton onClick={onLogCall}>Logga samtal</NewActionButton> : null;
   return (
     <InfoCard title="Samtalslogg" action={<ListLink href="/crm/samtal">Alla samtal →</ListLink>}>
       {loading ? <Loading /> : calls.length === 0 ? (
-        <EmptyState title="Inga samtal loggade">Logga samtal så att kollegorna ser vad som sagts.</EmptyState>
+        <EmptyState title="Inga samtal loggade" action={logButton}>Logga samtal för att hålla ordning på vad som sagts med kunden.</EmptyState>
       ) : (
-        <RowList>
-          {calls.map((call) => (
-            <RowLink
-              key={call.id}
-              href={`/crm/samtal?call_id=${call.id}`}
-              title={call.summary || call.contact_name || 'Samtal'}
-              meta={[call.contact_name, formatDateTime(call.call_at)].filter(Boolean).join(' · ')}
-              badge={<span className={cn(crm.badge, 'border-sky-200 bg-sky-50 text-sky-700')}>{callOutcomeLabel[call.outcome] || call.outcome}</span>}
-            />
-          ))}
-        </RowList>
+        <>
+          {logButton ? <div className="mb-2 flex justify-end">{logButton}</div> : null}
+          <ol className="m-0 list-none p-0">
+            {calls.map((call) => {
+              const meta = CALL_OUTCOME_META[call.outcome];
+              const who = [call.contact_name, sellerName(call.user_id)].filter(Boolean).join(' · ');
+              return (
+                <li key={call.id} className="flex gap-3.5 border-t border-[#e3e9e1] py-4 first:border-t-0">
+                  {/* Riktning och längd finns inte i samtalsloggen — ikonen bär utfallets färg i stället. */}
+                  <span className={cn('inline-flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-full border', meta?.className ?? 'border-slate-200 bg-slate-100 text-slate-700')} aria-hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
+                    </svg>
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+                      <span className={cn(crm.badge, meta?.className)}>{meta?.label ?? call.outcome}</span>
+                      {who ? <span className="text-xs text-slate-600">{who}</span> : null}
+                    </div>
+                    <p className="m-0 mt-1.5 text-sm leading-relaxed text-slate-800">
+                      <a href={`/crm/samtal?call_id=${call.id}`} className="text-inherit no-underline hover:underline">{call.summary}</a>
+                    </p>
+                    {call.next_step ? <p className="m-0 mt-1 text-[13px] text-slate-600">Nästa steg: {call.next_step}</p> : null}
+                  </div>
+                  <span className="shrink-0 whitespace-nowrap text-xs text-slate-600">{formatDateTime(call.call_at)}</span>
+                </li>
+              );
+            })}
+          </ol>
+        </>
       )}
+      {/* crm_calls_select_visible släpper bara fram egna samtal (och prospekt man äger) för den som inte
+          är admin. Utan raden hade en tom logg sett ut som att ingen pratat med kunden. */}
+      {!loading && !seesAllCalls ? <p className="m-0 mt-3 text-xs text-slate-500">Visar samtal du har loggat själv.</p> : null}
     </InfoCard>
   );
 }
 
-export function TasksTab({ tasks, loading }: { tasks: RelatedTask[]; loading: boolean }) {
+function TaskRow({ task, currentUserId, canWrite, busy, todayIso, onToggle, onEdit }: {
+  task: RelatedTask;
+  currentUserId: string | null;
+  canWrite: boolean;
+  busy: boolean;
+  todayIso: string;
+  onToggle: (task: RelatedTask) => void;
+  onEdit: (task: RelatedTask) => void;
+}) {
+  // Samma regler som offertpanelens uppgiftskort (QuoteTasksCard):
+  // 🧨 bara EGNA rader går att skriva — PATCH kör på sessionsklienten mot en tabell med egen-bara
+  // RLS — och det kräver crm.write. En avbruten uppgift bockas inte: toggeln skriver 'done', och
+  // en avbruten hade då blivit klar. Redigering går däremot, draftFromTask öppnar den igen.
+  const isMine = Boolean(currentUserId) && task.user_id === currentUserId;
+  const canToggle = isMine && canWrite && task.status !== 'cancelled';
+  const canEdit = isMine && canWrite;
+  const closedRow = task.status !== 'open';
+  const overdue = isTaskOverdue(task, todayIso);
+  return (
+    <li className="flex min-h-14 items-center gap-3 border-t border-[#edf1ec] px-4 py-2.5 first:border-t-0">
+      {canToggle ? (
+        <input
+          type="checkbox"
+          checked={closedRow}
+          disabled={busy}
+          onChange={() => onToggle(task)}
+          aria-label={closedRow ? `Återöppna ${task.title}` : `Markera ${task.title} som klar`}
+          className="h-[18px] w-[18px] shrink-0 accent-[color:var(--ek-green)]"
+        />
+      ) : (
+        <span
+          className={cn('h-[18px] w-[18px] shrink-0 rounded border', closedRow ? 'border-slate-400 bg-slate-300' : 'border-slate-300')}
+          aria-hidden
+        />
+      )}
+      <span className="min-w-0 flex-1">
+        {canEdit ? (
+          <button
+            type="button"
+            onClick={() => onEdit(task)}
+            className={cn('min-h-0 w-full justify-start px-0 py-0 text-left text-sm font-medium hover:underline', closedRow ? 'text-slate-500 line-through' : 'text-slate-900')}
+          >
+            {task.title}
+          </button>
+        ) : (
+          // Rader man inte får skriva i öppnas på uppgiftssidan, som innan kortet fick egna formulär.
+          <a
+            href={`/crm/uppgifter?task_id=${task.id}`}
+            className={cn('text-sm font-medium no-underline hover:underline', closedRow ? 'text-slate-500 line-through' : 'text-slate-900')}
+          >
+            {task.title}
+          </a>
+        )}
+        {task.status === 'cancelled' ? <span className="ml-2 text-xs text-slate-500">Avbruten</span> : null}
+        {/* Listan har inga namn (bara offertens läsrutt sätter dem) — samma ord som offertpanelen när namnet saknas. */}
+        {task.delegated ? <span className="block text-xs text-slate-500">Från en kollega</span> : null}
+      </span>
+      {task.due_date ? (
+        <span className={cn('shrink-0 whitespace-nowrap text-xs font-semibold', overdue ? 'text-[#a3212b]' : 'text-slate-600')}>
+          {overdue ? 'Försenad · ' : ''}{formatDate(task.due_date)}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+export function TasksTab({ tasks, loading, currentUserId, canWrite, updatingIds, todayIso, onCreate, onToggle, onEdit }: {
+  tasks: RelatedTask[];
+  loading: boolean;
+  currentUserId: string | null;
+  /** crm.write — PATCH- och POST-rutten gatar på den. */
+  canWrite: boolean;
+  updatingIds: string[];
+  /** Svensk dag (stockholmTodayISO) — förseningen räknas mot den, inte mot UTC. */
+  todayIso: string;
+  onCreate: (() => void) | null;
+  onToggle: (task: RelatedTask) => void;
+  onEdit: (task: RelatedTask) => void;
+}) {
+  const { open, closed } = splitTasks(tasks);
+  const createButton = onCreate ? <NewActionButton onClick={onCreate}>Ny uppgift</NewActionButton> : null;
+
   return (
     <InfoCard title="Uppgifter" action={<ListLink href="/crm/uppgifter">Alla uppgifter →</ListLink>}>
       {loading ? <Loading /> : tasks.length === 0 ? (
-        <EmptyState title="Inga uppgifter">Skapa en uppgift, till exempel att följa upp en offert.</EmptyState>
+        <EmptyState title="Inga uppgifter" action={createButton}>Skapa en uppgift, till exempel att följa upp en offert.</EmptyState>
       ) : (
-        <RowList>
-          {tasks.map((task) => (
-            <RowLink
-              key={task.id}
-              href={`/crm/uppgifter?task_id=${task.id}`}
-              title={task.title}
-              muted={task.status === 'done'}
-              meta={task.due_date ? `Förfaller ${formatDate(task.due_date)}` : null}
-              badge={<span className={cn(crm.badge, 'border-slate-200 bg-slate-50 text-slate-600')}>{taskStatusLabel[task.status] || task.status}</span>}
-            />
-          ))}
-        </RowList>
+        <>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h3 className="m-0 flex items-center gap-2 text-sm font-semibold text-slate-900">
+              Att göra <span className="text-slate-500">({open.length})</span>
+            </h3>
+            {createButton}
+          </div>
+          {open.length === 0 ? (
+            <p className="m-0 text-sm text-slate-600">Inget att göra just nu.</p>
+          ) : (
+            <ul className="m-0 list-none overflow-hidden rounded-xl border border-[#e0e8dc] p-0">
+              {open.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} />)}
+            </ul>
+          )}
+          {closed.length > 0 ? (
+            <>
+              <h3 className="m-0 mb-2.5 mt-6 text-[13px] font-semibold text-slate-600">Klara</h3>
+              <ul className={cn(crm.sunken, 'm-0 list-none overflow-hidden rounded-xl p-0')}>
+                {closed.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} />)}
+              </ul>
+            </>
+          ) : null}
+        </>
       )}
+      {/* Uppgifterna har egen-bara RLS — en kollegas uppgift på kunden syns inte här. */}
+      {!loading ? <p className="m-0 mt-3 text-xs text-slate-500">Visar dina egna uppgifter för kunden.</p> : null}
     </InfoCard>
   );
 }

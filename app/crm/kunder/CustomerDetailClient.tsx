@@ -26,7 +26,9 @@ import {
 } from './customerEditPatch';
 import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
 import {
+  buildCustomerCallPayload,
   formatSek,
+  sortCallsNewestFirst,
   resolveCustomerTab,
   tabCountLabel,
   type Customer,
@@ -46,6 +48,10 @@ import {
 } from '@/lib/domains/crm/personalNumber';
 import { creditForecastPercent, creditRemarkLines, creditRiskLabel, creditScoreMeta, riskClassMeta } from '@/app/crm/components/CreditReport';
 import ContactFormModal from '@/app/crm/components/ContactFormModal';
+import CallLogModal, { type CallLogDraft } from '@/app/crm/components/CallLogModal';
+import TaskFormModal from '@/app/crm/components/TaskFormModal';
+import { buildTaskStatusTogglePayload } from '@/app/crm/lib/taskForm';
+import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 import CrmConfirmDialog from '@/app/crm/components/CrmConfirmDialog';
 import { applyContactToList } from '@/app/crm/lib/contactForm';
 
@@ -137,6 +143,11 @@ export default function CustomerDetailClient({
   canDeleteCustomer = false,
   canCreateQuote = false,
   canCreateWorkOrder = false,
+  canLogCall = false,
+  canWriteTasks = false,
+  canDelegateTasks = false,
+  canSeeAllCalls = false,
+  currentUserId = null,
 }: {
   customerId: string;
   fortnoxConnected: boolean;
@@ -144,6 +155,16 @@ export default function CustomerDetailClient({
   canCreateQuote?: boolean;
   /** "Ny arbetsorder": crm.workorder.write, som POST /api/crm/work-orders kräver. Avgjort på servern. */
   canCreateWorkOrder?: boolean;
+  /** "Logga samtal": crm.call.write, som POST /api/crm/calls (och insert-policyn) kräver. */
+  canLogCall?: boolean;
+  /** Skapa och bocka av uppgifter: crm.write, som uppgiftsrutterna gatar på. */
+  canWriteTasks?: boolean;
+  /** Lägga en uppgift på någon annan (notisvägen): crm.admin. */
+  canDelegateTasks?: boolean;
+  /** crm.admin — samtalsloggens läspolicy visar annars bara egna samtal. Styr bara texten. */
+  canSeeAllCalls?: boolean;
+  /** Bara egna uppgifter går att skriva (egen-bara RLS) — se TasksTab. */
+  currentUserId?: string | null;
   /** Partnerrutan: crm.portal.manage och påslagen integration, avgjort på servern (kunder/[id]/page.tsx). */
   portalPartnerEnabled?: boolean;
   /** "Ta bort kund": crm.admin, avgjort på servern. DELETE-routen prövar samma nyckel själv. */
@@ -218,6 +239,12 @@ export default function CustomerDetailClient({
 
   const [sellers, setSellers] = useState<Seller[]>([]);
   const [savingManager, setSavingManager] = useState(false);
+
+  const [callModalOpen, setCallModalOpen] = useState(false);
+  const [savingCall, setSavingCall] = useState(false);
+  // null = stängt. `{ task: null }` = ny, `{ task }` = redigera — samma mönster som kontaktformuläret.
+  const [taskFormTarget, setTaskFormTarget] = useState<{ task: RelatedTask | null } | null>(null);
+  const [updatingTaskIds, setUpdatingTaskIds] = useState<string[]>([]);
 
   const [quotes, setQuotes] = useState<RelatedQuote[]>([]);
   const [quotesTotal, setQuotesTotal] = useState<number | null>(null);
@@ -549,6 +576,71 @@ export default function CustomerDetailClient({
     } catch { toast.error('Fel vid borttagning'); }
   }
 
+  // Ett samtal loggat på kunden (POST /api/crm/calls, sessionsklienten). Sorteras in, inte överst:
+  // ett bakåtdaterat samtal hör hemma på sin plats.
+  async function saveCall(draft: CallLogDraft) {
+    if (!customer) return;
+    setSavingCall(true);
+    try {
+      const res = await fetch('/api/crm/calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildCustomerCallPayload(customer.id, draft)),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) { toast.error(json?.error || 'Kunde inte logga samtalet'); return; }
+      const item = json.data?.item as RelatedCall | undefined;
+      if (item) setCalls((current) => sortCallsNewestFirst([item, ...current]));
+      setCallModalOpen(false);
+      toast.success('Samtal loggat');
+    } catch { toast.error('Kunde inte logga samtalet'); }
+    finally { setSavingCall(false); }
+  }
+
+  // Bocka av / återöppna. Optimistiskt, och tillbaka till det databasen faktiskt säger om det går
+  // fel — en kvarlämnad bock är värre än ingen. Nyttolasten är uppgiftssidans och offertpanelens
+  // (buildTaskStatusTogglePayload bär normaliseringen av remind_at). Listan sorteras inte om, men en
+  // avbockad rad flyttar till "Klara" — så vill överlämningen ha det, till skillnad från
+  // offertpanelen och uppgiftssidan där raden står kvar.
+  async function toggleTask(task: RelatedTask) {
+    const nextStatus = task.status === 'done' ? 'open' : 'done';
+    setUpdatingTaskIds((ids) => [...ids, task.id]);
+    setTasks((current) => current.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t)));
+    try {
+      const res = await fetch(`/api/crm/tasks/${task.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildTaskStatusTogglePayload(task, nextStatus)),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.ok) throw new Error(json?.error || 'Kunde inte uppdatera uppgiften');
+    } catch (e) {
+      setTasks((current) => current.map((t) => (t.id === task.id ? { ...t, status: task.status } : t)));
+      toast.error((e as Error)?.message || 'Kunde inte uppdatera uppgiften');
+    } finally {
+      setUpdatingTaskIds((ids) => ids.filter((id) => id !== task.id));
+    }
+  }
+
+  // Den sparade uppgiften från formuläret. Listan visar bara EGNA uppgifter (egen-bara RLS), så en
+  // uppgift som lagts på en kollega läggs inte in — den syns hos mottagaren. Raden spreds över den
+  // befintliga i stället för att ersätta den, så att fält rutten inte skickar tillbaka står kvar.
+  function applySavedTask(item: RelatedTask, { isEditing }: { isEditing: boolean }) {
+    setTaskFormTarget(null);
+    const isMine = Boolean(currentUserId) && item.user_id === currentUserId;
+    if (isEditing) {
+      setTasks((current) => (isMine
+        ? current.map((t) => (t.id === item.id ? { ...t, ...item } : t))
+        : current.filter((t) => t.id !== item.id)));
+      toast.success('Uppgiften är uppdaterad');
+    } else if (isMine) {
+      setTasks((current) => [...current, item]);
+      toast.success('Uppgift skapad');
+    } else {
+      toast.success('Uppgiften är skapad och ligger hos mottagaren');
+    }
+  }
+
   // ─── Loading ───────────────────────────────────────────────────────────────
 
   if (loading) {
@@ -602,6 +694,12 @@ export default function CustomerDetailClient({
   // Orderlistans "+ Ny order"-modal, öppnad med kunden förvald (WorkOrdersClient, `?ny_order=`).
   const newWorkOrderHref = canCreateWorkOrder ? `/crm/arbetsorder?ny_order=${customer.id}` : null;
   const sellerName = (id: string | null) => (id ? sellers.find((s) => s.id === id)?.full_name ?? null : null);
+  // Nästa steg öppnar formulären direkt när man får skriva, annars fliken (där länken går vidare).
+  // ⚠️ Inte medan listorna laddar: hämtningen gick ut före sparningen och hade skrivit över den nya
+  // raden när den kom tillbaka. Uppgifter kräver också ett känt användar-id — utan det kan kortet
+  // inte avgöra att den nya uppgiften är ens egen, och hade påstått att den ligger hos någon annan.
+  const openCallLog = canLogCall && !relatedLoading ? () => setCallModalOpen(true) : null;
+  const openNewTask = canWriteTasks && currentUserId && !relatedLoading ? () => setTaskFormTarget({ task: null }) : null;
 
   // ─── Sidebar cards ─────────────────────────────────────────────────────────
 
@@ -971,8 +1069,22 @@ export default function CustomerDetailClient({
               newWorkOrderHref={newWorkOrderHref}
             />
           ) : null}
-          {tab === 'samtal' ? <CallsTab calls={calls} loading={relatedLoading} /> : null}
-          {tab === 'uppgifter' ? <TasksTab tasks={tasks} loading={relatedLoading} /> : null}
+          {tab === 'samtal' ? (
+            <CallsTab calls={calls} loading={relatedLoading} sellerName={sellerName} onLogCall={openCallLog} seesAllCalls={canSeeAllCalls} />
+          ) : null}
+          {tab === 'uppgifter' ? (
+            <TasksTab
+              tasks={tasks}
+              loading={relatedLoading}
+              currentUserId={currentUserId}
+              canWrite={canWriteTasks}
+              updatingIds={updatingTaskIds}
+              todayIso={stockholmTodayISO()}
+              onCreate={openNewTask}
+              onToggle={(task) => void toggleTask(task)}
+              onEdit={(task) => setTaskFormTarget({ task })}
+            />
+          ) : null}
           {tab === 'kontakter' ? (
             <ContactsTab
               contacts={contacts}
@@ -1006,13 +1118,13 @@ export default function CustomerDetailClient({
                 </svg>
                 Lägg till kontaktperson
               </button>
-              <button type="button" className={nextStepClass} onClick={() => setTab('uppgifter')}>
+              <button type="button" className={nextStepClass} onClick={() => (openNewTask ? openNewTask() : setTab('uppgifter'))}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-[color:var(--ek-green)]">
                   <path d="M9 11l3 3 8-8" /><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" />
                 </svg>
                 Skapa uppgift
               </button>
-              <button type="button" className={nextStepClass} onClick={() => setTab('samtal')}>
+              <button type="button" className={nextStepClass} onClick={() => (openCallLog ? openCallLog() : setTab('samtal'))}>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden className="shrink-0 text-[color:var(--ek-green)]">
                   <path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
                 </svg>
@@ -1129,6 +1241,29 @@ export default function CustomerDetailClient({
           // CrmModal stänger på Escape och klick utanför oavsett `busy`. Under borttagningen hade det sett ut som
           // ett avbrott fast anropet fortsätter.
           onCancel={() => { if (!deleting) setConfirmDelete(false); }}
+        />
+      ) : null}
+
+      {/* Samma samtalsformulär som offertpanelen: vem samtalet gällde är redan givet (kunden), så
+          kontaktväljaren som samtalssidan har behövs inte här. */}
+      {callModalOpen ? (
+        <CallLogModal
+          contextLabel={`Loggas på ${displayName}`}
+          saving={savingCall}
+          onClose={() => { if (!savingCall) setCallModalOpen(false); }}
+          onSubmit={(draft) => void saveCall(draft)}
+        />
+      ) : null}
+
+      {/* Uppgiftssidans och offertpanelens formulär. Kopplingen till kunden är låst — att peka om en
+          uppgift till en annan kund inifrån kundkortet vore ett sätt att tappa bort den. */}
+      {taskFormTarget ? (
+        <TaskFormModal
+          task={taskFormTarget.task}
+          lockedRelation={{ type: 'crm_customer', id: customer.id, label: displayName }}
+          canDelegate={canDelegateTasks}
+          onClose={() => setTaskFormTarget(null)}
+          onSaved={applySavedTask}
         />
       ) : null}
 
