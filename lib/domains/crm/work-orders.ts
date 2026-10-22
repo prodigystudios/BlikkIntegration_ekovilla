@@ -1234,6 +1234,72 @@ export async function getWorkOrderCustomerContact(supabase: SupabaseClient, work
   return { data: contact, error: null };
 }
 
+// Mängdvarianten av isWorkOrderReadable: vilka av ordrarna läsaren får se under sin EGEN RLS. Ska
+// köras med SESSIONSKLIENTEN — med admin-klienten hade svaret varit "alla", och grinden ett ja.
+export async function readableWorkOrderIds(supabase: SupabaseClient, ids: string[]) {
+  const { data, error } = await supabase.from('crm_work_orders').select('id').in('id', ids);
+  if (error) return { data: null, error };
+  return { data: new Set((data ?? []).map((row: { id: string }) => String(row.id))), error: null };
+}
+
+/** Vem besättningen ringer om ett jobb: namn och nummer, inget mer. */
+export type WorkOrderCallContact = {
+  contactName: string | null;
+  phone: string;
+  isOnSiteContact: boolean;
+  phoneFromCustomer: boolean;
+};
+
+// Kontakten att RINGA för flera arbetsordrar på en gång — startsidans arbetsschema, där varje kort
+// annars hade gjort ett eget anrop. Pass an ADMIN client, och bara för ordrar läsaren redan prövats
+// mot (readableWorkOrderIds): besättningen har ingen läsrätt på crm_customers.
+//
+// ⚠️ SAMMA REGEL SOM FÄLTVYN, inte en egen: resolveDocumentContact avgör ordningen (slutkunden på
+// plats → orderns egen kontakt → kundkortet) och vad som får lånas mellan stegen. Kortet och
+// fältvyn ska aldrig visa olika personer för samma order. Läsningarna är getWorkOrderCustomerContact:s
+// två, med `.in()` i stället för en order i taget.
+//
+// Bara namn och telefon följer med ut — e-posten behövs inte för att ringa, och det som inte ska
+// visas ska inte heller skickas. Ordrar utan nummer saknas i svaret: kortet har inget att erbjuda.
+//
+// ⚠️ Slutkunden på plats besvaras även när kundkortet inte gick att läsa, som i fältvyn. Övriga
+// ordrar uteblir då, och felet följer med i `error` så att anroparen kan logga det.
+export async function getWorkOrderCallContacts(supabase: SupabaseClient, ids: string[]) {
+  const { data: orders, error: ordersError } = await supabase
+    .from('crm_work_orders').select('id, customer_id, customer_snapshot').in('id', ids);
+  if (ordersError) return { data: null, error: ordersError };
+  const rows = (orders ?? []) as Array<{ id: string; customer_id: string | null; customer_snapshot: DocumentContactSnapshot | null }>;
+
+  const customerIds = Array.from(new Set(rows.map((row) => row.customer_id).filter((id): id is string => !!id)));
+  const cards = new Map<string, CrmContactSource>();
+  let cardError: { message: string } | null = null;
+  if (customerIds.length > 0) {
+    const { data: customers, error } = await supabase
+      .from('crm_customers')
+      // Samma urval som getWorkOrderCustomerContact — customer_type avgör vad som får lånas ut.
+      .select('id, customer_type, phone, mobile, email, contacts:crm_customer_contacts(name, phone, email, is_primary)')
+      .in('id', customerIds);
+    if (error) cardError = error;
+    else for (const customer of (customers ?? []) as Array<CrmContactSource & { id: string }>) cards.set(String(customer.id), customer);
+  }
+
+  const contacts: Record<string, WorkOrderCallContact> = {};
+  for (const row of rows) {
+    const card = row.customer_id ? cards.get(String(row.customer_id)) ?? null : null;
+    const contact = resolveDocumentContact(row.customer_snapshot, card);
+    if (!contact?.phone) continue;
+    // Utan kundkortet vet vi inte vem kundens kontakt är — bara slutkunden på plats står på egna ben.
+    if (cardError && row.customer_id && !contact.isOnSiteContact) continue;
+    contacts[String(row.id)] = {
+      contactName: contact.contactName,
+      phone: contact.phone,
+      isOnSiteContact: contact.isOnSiteContact,
+      phoneFromCustomer: contact.phoneFromCustomer,
+    };
+  }
+  return { data: contacts, error: cardError };
+}
+
 // Replace the work order's article rows + recomputed totals. Pricing is computed by the
 // caller (shared computePricing) so DB, UI and the Fortnox order stay consistent.
 export async function updateCrmWorkOrderLineItems(
