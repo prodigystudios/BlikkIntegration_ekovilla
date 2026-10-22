@@ -23,6 +23,9 @@ import { CrmTable, CustomerCell, type CrmTableColumn } from '@/app/crm/component
 import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
+import { customerDisplayName } from '@/app/crm/lib/customerDisplay';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
+import { useDeepLinkReturn } from '@/app/crm/lib/useDeepLinkReturn';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
 import { useWorkOrderMargins, type WorkOrderMargin } from './useWorkOrderMargins';
@@ -305,6 +308,7 @@ export default function WorkOrdersClient({
   const [newOrderPersonalNumber, setNewOrderPersonalNumber] = useState('');
 
   function resetNewOrder() {
+    newOrderPresetCancelledRef.current = true;
     setNewOrderOpen(false);
     setNewOrderCustomerId('');
     setNewOrderCustomerLabel('');
@@ -358,8 +362,11 @@ export default function WorkOrdersClient({
       }
       const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
       toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
+      // Öppnad från kundkortet: den nya ordern får kortet som returväg, så "Tillbaka" leder dit.
+      const backToCard = newOrderDeepLink.current();
+      newOrderDeepLink.disarm();
       resetNewOrder();
-      if (item?.id) router.push(`${basePath}/${item.id}`);
+      if (item?.id) router.push(backToCard ? withReturnTo(`${basePath}/${item.id}`, backToCard) : `${basePath}/${item.id}`);
     } catch {
       toast.error('Kunde inte skapa order');
     } finally {
@@ -374,6 +381,61 @@ export default function WorkOrdersClient({
       .then((json) => { if (active) setAssignees(json?.ok ? json.data?.items || [] : []); })
       .catch(() => { if (active) setAssignees([]); });
     return () => { active = false; };
+  }, []);
+
+  // "Ny arbetsorder" från kundkortet (`?ny_order=<kund-id>`): samma modal som "+ Ny order", med kunden
+  // förvald. Bara med skrivrätt — knappen finns inte utan den, och routen hade svarat 403. Parametern
+  // tas bort direkt, så att en omladdning eller ett steg tillbaka inte öppnar modalen igen. Övriga
+  // parametrar står kvar.
+  //
+  // 🧨 Läses EN gång, vid montering. Bands effekten till parametern avbröt rensningen av adressen
+  // (som ändrar searchParams) sin egen hämtning, och modalen öppnades aldrig. Ingen avbrottsflagga
+  // av samma skäl: i StrictMode körs effekten två gånger, och den andra körningen ser en tom ref.
+  // En setState efter avmontering gör ingenting i React 18.
+  //
+  // Hinner användaren själv öppna eller stänga modalen innan kunden kommit (långsam uppkoppling)
+  // gäller deras val — ett sent svar får varken byta kund eller öppna modalen igen.
+  const newOrderPresetRef = useRef(searchParams.get('ny_order') || '');
+  const newOrderPresetCancelledRef = useRef(false);
+  // Kortets adress när modalen öppnades därifrån: Avbryt leder tillbaka dit, och den skapade ordern
+  // får den som returväg. Aktiveras bara när förvalet faktiskt öppnar modalen — "+ Ny order" i
+  // listan stannar i listan.
+  const newOrderDeepLink = useDeepLinkReturn();
+  function closeNewOrder() {
+    resetNewOrder();
+    newOrderDeepLink.leave();
+  }
+  useEffect(() => {
+    const presetId = newOrderPresetRef.current;
+    if (!presetId) return;
+    newOrderPresetRef.current = '';
+    // Läses innan adressen rensas nedan; aktiveras först när modalen öppnas.
+    const presetReturnTo = searchParams.get('returnTo');
+    const url = new URL(window.location.href);
+    url.searchParams.delete('ny_order');
+    url.searchParams.delete('returnTo');
+    router.replace(`${url.pathname}${url.search}`);
+    // Bara ett uuid: värdet går in i en API-sökväg och kommer från adressen.
+    if (!canEdit || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(presetId)) return;
+    fetch(`/api/crm/customers/${presetId}`, { cache: 'no-store' })
+      .then((r) => r.json().catch(() => ({})))
+      .then((json) => {
+        if (newOrderPresetCancelledRef.current) return;
+        const customer = json?.ok ? json.data?.item : null;
+        // Utan kund (borttagen, ingen läsrätt) öppnas modalen ändå, med tom kundruta att välja i.
+        if (customer?.id) {
+          setNewOrderCustomerId(customer.id);
+          setNewOrderCustomerLabel(customerDisplayName(customer));
+        }
+        newOrderDeepLink.arm(presetReturnTo);
+        setNewOrderOpen(true);
+      })
+      .catch(() => {
+        if (newOrderPresetCancelledRef.current) return;
+        newOrderDeepLink.arm(presetReturnTo);
+        setNewOrderOpen(true);
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Legacy deep-link: /crm/arbetsorder?work_order_id=X now lives at its own page.
@@ -536,7 +598,7 @@ export default function WorkOrdersClient({
         {canEdit ? (
           <button
             type="button"
-            onClick={() => setNewOrderOpen(true)}
+            onClick={() => { newOrderPresetCancelledRef.current = true; newOrderDeepLink.disarm(); setNewOrderOpen(true); }}
             className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
@@ -671,7 +733,7 @@ export default function WorkOrdersClient({
       {/* ── Ny order (standalone) ── */}
       {newOrderOpen ? (
         <CrmModal
-          onClose={resetNewOrder}
+          onClose={closeNewOrder}
           ariaLabel="Ny order"
           maxWidth="sm:max-w-[520px]"
           header={
@@ -684,7 +746,7 @@ export default function WorkOrdersClient({
             <>
               <button
                 type="button"
-                onClick={resetNewOrder}
+                onClick={closeNewOrder}
                 className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
               >
                 Avbryt
