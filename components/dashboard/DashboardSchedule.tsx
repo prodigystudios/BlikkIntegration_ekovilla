@@ -7,7 +7,7 @@ import Input from '../ui/Input';
 import Textarea from '../ui/Textarea';
 import Badge from '../ui/Badge';
 import DashboardCardHeader from './DashboardCardHeader';
-import { compareScheduleItems, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { compareScheduleRows, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
 import { defaultScheduleDayIndex, scheduleWeekOffsetFor, scheduleWeekRange } from '@/lib/domains/planning/scheduleWeek';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
 
@@ -743,26 +743,9 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     if (sid && sid in segmentSortIndexMap) return segmentSortIndexMap[sid];
                     return null;
                   };
-                  const orderCmp = (a: any, b: any) => {
-                    const ta = (a.truck || '').toString();
-                    const tb = (b.truck || '').toString();
-                    if (ta !== tb) return ta.localeCompare(tb, 'sv');
-                    // CRM-jobb i planeringstavlans ordning — planerarens "Ordning på dagen". Resten
-                    // nedan är de gamla Blikk-radernas ordning och gäller bara dem.
-                    if (isCrmItem(a) && isCrmItem(b)) return compareScheduleItems(a, b);
-                    const sa = getSortIndex(a);
-                    const sb = getSortIndex(b);
-                    if (sa != null && sb != null && sa !== sb) return sa - sb;
-                    if (sa != null && sb == null) return -1;
-                    if (sb != null && sa == null) return 1;
-                    const ao = (a.order_number || '').toString();
-                    const bo = (b.order_number || '').toString();
-                    if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
-                    const an = (a.project_name || '').toString();
-                    const bn = (b.project_name || '').toString();
-                    return an.localeCompare(bn, 'sv');
-                  };
-                  const arrSorted = [...arr].sort(orderCmp);
+                  // Bil, källa, sedan CRM-jobben i planeringstavlans ordning ("Ordning på dagen")
+                  // och de gamla Blikk-raderna i sin. Se compareScheduleRows.
+                  const arrSorted = [...arr].sort((a, b) => compareScheduleRows(a, b, getSortIndex));
                   return arrSorted.map((it: any) => {
                   const title = [it.order_number ? String(it.order_number) : null, it.project_name].filter(Boolean).join(' - ');
                   const theme = getMaterialTheme(it.job_type);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { compareScheduleItems, crmJobToScheduleItem, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { compareScheduleItems, compareScheduleRows, crmJobToScheduleItem, type CrmJobRow, type ScheduleRow } from '@/lib/domains/planning/myJobs';
 
 // The dashboard week schedule renders the legacy get_my_jobs row shape. A CRM job is adapted into
 // that shape so it goes through the same card markup — these tests pin the field names the card
@@ -138,5 +138,58 @@ describe('compareScheduleItems', () => {
   it('bär talet från feeden och lämnar null när det saknas', () => {
     expect(crmJobToScheduleItem(crm({ sort_index: 3 })).sort_index).toBe(3);
     expect(crmJobToScheduleItem(crm({ sort_index: null })).sort_index).toBeNull();
+  });
+});
+
+// Startsidans hela jämförelse: bil, källa, sedan källans egen ordning.
+describe('compareScheduleRows', () => {
+  type Legacy = { truck: string; order_number: string; project_name: string; sort_index: number | null };
+  const legacy = (over: Partial<Legacy>): Legacy => ({ truck: 'Bil 1', order_number: '150', project_name: 'Gammalt', sort_index: null, ...over });
+  // Som startsidans getSortIndex: radens eget `sort_index` först. Det är så ett CRM-jobbs tal hade
+  // läckt in i en jämförelse med en Blikk-rad om källan inte avgjorde först.
+  const legacySort = (row: object) => {
+    const v = (row as { sort_index?: number | null }).sort_index;
+    return typeof v === 'number' ? v : null;
+  };
+  const item = (over: Partial<CrmJobRow>) =>
+    crmJobToScheduleItem(crm({ job_day: '2026-10-22', start_day: '2026-10-22', end_day: '2026-10-22', truck: 'Bil 1', ...over }));
+  const label = (r: ScheduleRow) => ('segment_id' in r ? r.segment_id : `legacy:${r.order_number}`);
+  const sorted = (rows: ScheduleRow[]) => [...rows].sort((a, b) => compareScheduleRows(a, b, legacySort)).map(label);
+
+  it('ställer CRM-jobben i planerarens ordning', () => {
+    const a = item({ segment_id: 'seg-a', fortnox_order_number: '100', sort_index: 1 });
+    const b = item({ segment_id: 'seg-b', fortnox_order_number: '200', sort_index: 0 });
+    expect(sorted([a, b])).toEqual(['seg-b', 'seg-a']);
+  });
+
+  it('jämför aldrig CRM-jobbens tal med de gamla radernas — de gamla står först', () => {
+    // CRM-jobbets 0 är mindre än Blikk-radens 3, men talserierna har inget med varandra att göra.
+    const crmJob = item({ segment_id: 'seg-a', sort_index: 0 });
+    const old = legacy({ sort_index: 3 });
+    expect(sorted([crmJob, old])).toEqual(['legacy:150', 'seg-a']);
+    expect(sorted([old, crmJob])).toEqual(['legacy:150', 'seg-a']);
+  });
+
+  it('ger samma ordning hur raderna än kommer in (granskningens cykel)', () => {
+    // CRM-par på id och blandade par på ordernummer gav B < A, A < L, L < B — en cykel, och
+    // resultatet berodde på i vilken ordning de två anropen svarade.
+    const a = item({ segment_id: 'z', fortnox_order_number: '100', sort_index: 5 });
+    const b = item({ segment_id: 'a', fortnox_order_number: '200', sort_index: 5 });
+    const l = legacy({ sort_index: 5 });
+    const perms = [[a, b, l], [a, l, b], [b, a, l], [b, l, a], [l, a, b], [l, b, a]];
+    for (const p of perms) expect(sorted(p)).toEqual(['legacy:150', 'a', 'z']);
+  });
+
+  it('sorterar de gamla raderna som förut: deras ordning, sedan ordernummer', () => {
+    const x = legacy({ order_number: '300', sort_index: 0 });
+    const y = legacy({ order_number: '100', sort_index: 1 });
+    const z = legacy({ order_number: '050', sort_index: null });
+    expect(sorted([z, y, x])).toEqual(['legacy:300', 'legacy:100', 'legacy:050']);
+  });
+
+  it('grupperar på bil först', () => {
+    const bil2 = item({ segment_id: 'seg-2', truck: 'Bil 2', sort_index: 0 });
+    const bil1 = item({ segment_id: 'seg-1', truck: 'Bil 1', sort_index: 9 });
+    expect(sorted([bil2, bil1])).toEqual(['seg-1', 'seg-2']);
   });
 });
