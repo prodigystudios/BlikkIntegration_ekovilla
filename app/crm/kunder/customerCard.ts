@@ -3,6 +3,7 @@
 
 import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { netAmount } from '@/lib/domains/crm/pricing';
+import { withoutNestedReturnTo } from '@/app/crm/lib/returnTo';
 import { callAtToIso, type CrmCallOutcome } from '@/app/crm/lib/callDisplay';
 import type { TaskItem } from '@/app/crm/lib/taskForm';
 import type { CallLogDraft } from '@/app/crm/components/CallLogModal';
@@ -163,6 +164,21 @@ export function invoiceAddressDisplay(c: Pick<Customer, 'visit_address' | 'invoi
 
 export const CUSTOMER_TABS = ['oversikt', 'offerter', 'arbetsorder', 'samtal', 'uppgifter', 'kontakter'] as const;
 export type CustomerTab = (typeof CUSTOMER_TABS)[number];
+
+/**
+ * Kortets egen adress: vald flik och kortets egen returväg (när kortet öppnades från en offert eller
+ * order). Det är returadressen för allt kortet öppnar — en order, offertpanelen, ett samtal — så att
+ * "Tillbaka" där landar på samma flik här, och kortets egen väg tillbaka står kvar.
+ */
+export function customerCardUrl(id: string, tab: CustomerTab, returnTo: string | null): string {
+  const params = new URLSearchParams();
+  if (tab !== 'oversikt') params.set('tab', tab);
+  // Kortets egen returväg utan SIN returväg: annars kodas hela kedjan in en nivå djupare för varje
+  // varv kort → panel → kort, och adressen växer utan gräns (withoutNestedReturnTo).
+  if (returnTo) params.set('returnTo', withoutNestedReturnTo(returnTo));
+  const query = params.toString();
+  return `/crm/kunder/${id}${query ? `?${query}` : ''}`;
+}
 
 /** `?tab=` → flik. Okänt eller saknat värde = Översikt. */
 export function resolveCustomerTab(value: string | null | undefined): CustomerTab {

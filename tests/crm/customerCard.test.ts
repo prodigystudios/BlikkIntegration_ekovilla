@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addressLines,
+  customerCardUrl,
   buildCustomerCallPayload,
   isTaskOverdue,
   sortCallsNewestFirst,
@@ -238,5 +239,22 @@ describe('sortCallsNewestFirst', () => {
       { id: 'mitten', call_at: '2026-10-10T10:00:00Z' },
     ];
     expect(sortCallsNewestFirst(calls as never).map((c: { id: string }) => c.id)).toEqual(['ny', 'mitten', 'gammal']);
+  });
+});
+
+describe('customerCardUrl', () => {
+  it('Översikt utan parametrar, annars fliken', () => {
+    expect(customerCardUrl('c1', 'oversikt', null)).toBe('/crm/kunder/c1');
+    expect(customerCardUrl('c1', 'arbetsorder', null)).toBe('/crm/kunder/c1?tab=arbetsorder');
+  });
+
+  it('kortets egen returväg följer med, kodad', () => {
+    expect(customerCardUrl('c1', 'offerter', '/crm/offerter?quote_id=q1'))
+      .toBe('/crm/kunder/c1?tab=offerter&returnTo=%2Fcrm%2Fofferter%3Fquote_id%3Dq1');
+  });
+
+  it('men utan SIN returväg — kedjan blir högst en nivå', () => {
+    expect(customerCardUrl('c1', 'oversikt', '/crm/offerter?quote_id=q1&returnTo=%2Fcrm%2Fkunder%2Fc1'))
+      .toBe('/crm/kunder/c1?returnTo=%2Fcrm%2Fofferter%3Fquote_id%3Dq1');
   });
 });

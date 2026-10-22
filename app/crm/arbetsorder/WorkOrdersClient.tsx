@@ -24,6 +24,8 @@ import CrmModal from '@/app/crm/components/CrmModal';
 import EntityCombobox from '@/app/crm/components/EntityCombobox';
 import { searchCustomerOptions } from '@/app/crm/lib/customerSearch';
 import { customerDisplayName } from '@/app/crm/lib/customerDisplay';
+import { withReturnTo } from '@/app/crm/lib/returnTo';
+import { useDeepLinkReturn } from '@/app/crm/lib/useDeepLinkReturn';
 import { formatPersonalNumber, isValidPersonalNumber, PERSONAL_NUMBER_ERROR } from '@/lib/domains/crm/personalNumber';
 import { useToast } from '@/lib/Toast';
 import { useWorkOrderMargins, type WorkOrderMargin } from './useWorkOrderMargins';
@@ -360,8 +362,11 @@ export default function WorkOrdersClient({
       }
       const item = json?.data?.item as { id?: string; order_number?: string } | undefined;
       toast.success(item?.order_number ? `Order skapad: ${item.order_number}` : 'Order skapad');
+      // Öppnad från kundkortet: den nya ordern får kortet som returväg, så "Tillbaka" leder dit.
+      const backToCard = newOrderDeepLink.current();
+      newOrderDeepLink.disarm();
       resetNewOrder();
-      if (item?.id) router.push(`${basePath}/${item.id}`);
+      if (item?.id) router.push(backToCard ? withReturnTo(`${basePath}/${item.id}`, backToCard) : `${basePath}/${item.id}`);
     } catch {
       toast.error('Kunde inte skapa order');
     } finally {
@@ -392,12 +397,23 @@ export default function WorkOrdersClient({
   // gäller deras val — ett sent svar får varken byta kund eller öppna modalen igen.
   const newOrderPresetRef = useRef(searchParams.get('ny_order') || '');
   const newOrderPresetCancelledRef = useRef(false);
+  // Kortets adress när modalen öppnades därifrån: Avbryt leder tillbaka dit, och den skapade ordern
+  // får den som returväg. Aktiveras bara när förvalet faktiskt öppnar modalen — "+ Ny order" i
+  // listan stannar i listan.
+  const newOrderDeepLink = useDeepLinkReturn();
+  function closeNewOrder() {
+    resetNewOrder();
+    newOrderDeepLink.leave();
+  }
   useEffect(() => {
     const presetId = newOrderPresetRef.current;
     if (!presetId) return;
     newOrderPresetRef.current = '';
+    // Läses innan adressen rensas nedan; aktiveras först när modalen öppnas.
+    const presetReturnTo = searchParams.get('returnTo');
     const url = new URL(window.location.href);
     url.searchParams.delete('ny_order');
+    url.searchParams.delete('returnTo');
     router.replace(`${url.pathname}${url.search}`);
     // Bara ett uuid: värdet går in i en API-sökväg och kommer från adressen.
     if (!canEdit || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(presetId)) return;
@@ -411,9 +427,14 @@ export default function WorkOrdersClient({
           setNewOrderCustomerId(customer.id);
           setNewOrderCustomerLabel(customerDisplayName(customer));
         }
+        newOrderDeepLink.arm(presetReturnTo);
         setNewOrderOpen(true);
       })
-      .catch(() => { if (!newOrderPresetCancelledRef.current) setNewOrderOpen(true); });
+      .catch(() => {
+        if (newOrderPresetCancelledRef.current) return;
+        newOrderDeepLink.arm(presetReturnTo);
+        setNewOrderOpen(true);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -577,7 +598,7 @@ export default function WorkOrdersClient({
         {canEdit ? (
           <button
             type="button"
-            onClick={() => { newOrderPresetCancelledRef.current = true; setNewOrderOpen(true); }}
+            onClick={() => { newOrderPresetCancelledRef.current = true; newOrderDeepLink.disarm(); setNewOrderOpen(true); }}
             className="inline-flex items-center rounded-xl px-3 py-1.5 text-sm font-semibold text-white transition hover:opacity-90"
             style={{ backgroundColor: 'var(--crm-primary)' }}
           >
@@ -712,7 +733,7 @@ export default function WorkOrdersClient({
       {/* ── Ny order (standalone) ── */}
       {newOrderOpen ? (
         <CrmModal
-          onClose={resetNewOrder}
+          onClose={closeNewOrder}
           ariaLabel="Ny order"
           maxWidth="sm:max-w-[520px]"
           header={
@@ -725,7 +746,7 @@ export default function WorkOrdersClient({
             <>
               <button
                 type="button"
-                onClick={resetNewOrder}
+                onClick={closeNewOrder}
                 className="flex-1 rounded-xl border border-slate-200 bg-white py-2.5 text-sm font-semibold text-slate-600 transition hover:border-slate-300 sm:flex-none sm:px-5"
               >
                 Avbryt

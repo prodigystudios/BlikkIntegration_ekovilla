@@ -27,6 +27,7 @@ import {
 import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
 import {
   buildCustomerCallPayload,
+  customerCardUrl,
   formatSek,
   sortCallsNewestFirst,
   resolveCustomerTab,
@@ -687,12 +688,16 @@ export default function CustomerDetailClient({
   const deleteBlocked = Boolean(customer.fortnox_customer_id) && !fortnoxConnected;
   const creator = customer.created_by ? sellers.find((s) => s.id === customer.created_by) : null;
   const openTasks = tasks.filter((t) => t.status === 'open').length;
+  // Allt kortet öppnar får kortets adress som returväg (flik + kortets egen returväg), så att
+  // "Tillbaka" i ordern, offertpanelen, samtalet eller uppgiften landar här och inte i listan.
+  const cardUrl = customerCardUrl(customer.id, tab, returnTo);
+  const linkBack = (href: string) => withReturnTo(href, cardUrl);
   // Ny offert med kunden förvald; spara eller avbryt leder tillbaka till kortets offertflik.
   const newQuoteHref = canCreateQuote
-    ? withReturnTo(`/crm/offerter/ny?customer_id=${customer.id}`, `/crm/kunder/${customer.id}?tab=offerter`)
+    ? withReturnTo(`/crm/offerter/ny?customer_id=${customer.id}`, customerCardUrl(customer.id, 'offerter', returnTo))
     : null;
   // Orderlistans "+ Ny order"-modal, öppnad med kunden förvald (WorkOrdersClient, `?ny_order=`).
-  const newWorkOrderHref = canCreateWorkOrder ? `/crm/arbetsorder?ny_order=${customer.id}` : null;
+  const newWorkOrderHref = canCreateWorkOrder ? linkBack(`/crm/arbetsorder?ny_order=${customer.id}`) : null;
   const sellerName = (id: string | null) => (id ? sellers.find((s) => s.id === id)?.full_name ?? null : null);
   // Nästa steg öppnar formulären direkt när man får skriva, annars fliken (där länken går vidare).
   // ⚠️ Inte medan listorna laddar: hämtningen gick ut före sparningen och hade skrivit över den nya
@@ -1051,6 +1056,7 @@ export default function CustomerDetailClient({
               quotes={quotes}
               quotesLoading={relatedLoading}
               newQuoteHref={newQuoteHref}
+              linkBack={linkBack}
               onEdit={startEditing}
               onShowQuotes={() => setTab('offerter')}
               enriching={enriching}
@@ -1058,7 +1064,7 @@ export default function CustomerDetailClient({
             />
           ) : null}
           {tab === 'offerter' ? (
-            <QuotesTab quotes={quotes} total={quotesTotal} loading={relatedLoading} sellerName={sellerName} newQuoteHref={newQuoteHref} />
+            <QuotesTab quotes={quotes} total={quotesTotal} loading={relatedLoading} sellerName={sellerName} newQuoteHref={newQuoteHref} linkBack={linkBack} />
           ) : null}
           {tab === 'arbetsorder' ? (
             <WorkOrdersTab
@@ -1067,10 +1073,11 @@ export default function CustomerDetailClient({
               total={workOrdersTotal}
               loading={relatedLoading}
               newWorkOrderHref={newWorkOrderHref}
+              linkBack={linkBack}
             />
           ) : null}
           {tab === 'samtal' ? (
-            <CallsTab calls={calls} loading={relatedLoading} sellerName={sellerName} onLogCall={openCallLog} seesAllCalls={canSeeAllCalls} />
+            <CallsTab calls={calls} loading={relatedLoading} sellerName={sellerName} onLogCall={openCallLog} seesAllCalls={canSeeAllCalls} linkBack={linkBack} />
           ) : null}
           {tab === 'uppgifter' ? (
             <TasksTab
@@ -1083,6 +1090,7 @@ export default function CustomerDetailClient({
               onCreate={openNewTask}
               onToggle={(task) => void toggleTask(task)}
               onEdit={(task) => setTaskFormTarget({ task })}
+              linkBack={linkBack}
             />
           ) : null}
           {tab === 'kontakter' ? (
