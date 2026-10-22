@@ -83,8 +83,8 @@ describe('deriveVatNumberForWrite — vid uppdatering', () => {
     expect(out.vat_number).toBe(VALID_VAT);
   });
 
-  // 🧨 Spärren som gör det möjligt att TÖMMA momsnumret. Editorn skickar med både org.numret
-  // och momsfältet i varje PATCH, så utan den här regeln hade ett tömt fält fyllts i igen
+  // 🧨 Spärren som gör det möjligt att TÖMMA momsnumret. Editorn skickar ett tömt momsfält
+  // tillsammans med ett ändrat org.nr (changedCustomerEditFields), så utan den här regeln hade ett tömt fält fyllts i igen
   // direkt och en kund som inte är momsregistrerad aldrig kunnat sparas utan momsnummer.
   it('rör inte fältet när editorn skickar det tomt — även om org.numret ändras', () => {
     const out = derive(

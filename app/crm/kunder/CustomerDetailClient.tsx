@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { postalCodeWarning } from '@/lib/domains/crm/postalCode';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Input from '../../../components/ui/Input';
@@ -12,6 +12,12 @@ import { useToast } from '@/lib/Toast';
 import { cn } from '@/lib/shared/cn';
 import { crm, customerStageLabel, customerStageClass, syncStatusLabel, syncStatusClass, workOrderStatusLabel } from '@/app/crm/lib/crmTokens';
 import { formatSwedishIdNumber, isValidSwedishOrgNumber, vatFromOrgNumber } from './customerNumbers';
+import {
+  changedCustomerEditFields,
+  customerEditBody,
+  customerEditDiscountIssue,
+  type CustomerEditDraft,
+} from './customerEditPatch';
 import {
   formatPersonalNumber,
   isValidPersonalNumber,
@@ -91,22 +97,6 @@ type RelatedWorkOrder = { id: string; order_number: string; project_name: string
 type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
 type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
 
-type EditDraft = {
-  customer_type: CustomerType;
-  company_name: string; organization_number: string;
-  first_name: string; last_name: string; personal_number: string;
-  email: string; phone: string; mobile: string;
-  visit_street: string; visit_postal_code: string; visit_city: string;
-  delivery_street: string; delivery_postal_code: string; delivery_city: string;
-  invoice_street: string; invoice_postal_code: string; invoice_city: string;
-  invoice_email: string; payment_terms: string; price_list: string;
-  discount: string; vat_number: string; reverse_vat: boolean;
-  annual_revenue: string; number_of_employees: string;
-  legal_entity_type: string; sni_code: string; sni_name: string;
-  operating_profit: string; profit_after_financial_items: string; total_assets: string;
-  operating_margin: string; equity_ratio: string; financial_year: string;
-};
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const quoteStatusLabel: Record<string, string> = {
@@ -156,11 +146,6 @@ function formatSek(value: number | null | undefined): string | null {
 function formatPercent(value: number | null | undefined): string | null {
   if (value == null) return null;
   return `${new Intl.NumberFormat('sv-SE', { maximumFractionDigits: 1 }).format(value)} %`;
-}
-
-function buildAddress(street: string, postalCode: string, city: string) {
-  if (!street && !postalCode && !city) return null;
-  return { street: street || null, postal_code: postalCode || null, city: city || null };
 }
 
 // ─── Small UI helpers ─────────────────────────────────────────────────────────
@@ -299,7 +284,9 @@ export default function CustomerDetailClient({
 
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [editDraft, setEditDraft] = useState<CustomerEditDraft | null>(null);
+  // Utkastet som editorn öppnades med, serialiserat — sparningen skickar bara det som ändrats sedan dess.
+  const editBaseRef = useRef<Record<string, unknown> | null>(null);
   const [pushingFortnox, setPushingFortnox] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -384,7 +371,7 @@ export default function CustomerDetailClient({
 
   function startEditing() {
     if (!customer) return;
-    setEditDraft({
+    const draft: CustomerEditDraft = {
       customer_type: customer.customer_type,
       company_name: customer.company_name || '',
       organization_number: customer.organization_number || '',
@@ -420,11 +407,13 @@ export default function CustomerDetailClient({
       operating_margin: customer.operating_margin != null ? String(customer.operating_margin) : '',
       equity_ratio: customer.equity_ratio != null ? String(customer.equity_ratio) : '',
       financial_year: customer.financial_year != null ? String(customer.financial_year) : '',
-    });
+    };
+    setEditDraft(draft);
+    editBaseRef.current = customerEditBody(draft);
     setEditing(true);
   }
 
-  function setField<K extends keyof EditDraft>(key: K, value: EditDraft[K]) {
+  function setField<K extends keyof CustomerEditDraft>(key: K, value: CustomerEditDraft[K]) {
     setEditDraft((c) => c ? { ...c, [key]: value } : c);
   }
 
@@ -444,7 +433,7 @@ export default function CustomerDetailClient({
   }
 
   async function saveEdits() {
-    if (!customer || !editDraft) return;
+    if (!customer || !editDraft || !editBaseRef.current) return;
     // Tomt personnummer är tillåtet — samma regel som när kunden skapas: säljaren får det ofta
     // först när jobbet bokas, och kravet sitter i stället på ARBETSORDERN. Står det något ska det
     // däremot hålla: tio siffror räcker för att spara men gör att ROT- och husarbetesuppgifterna
@@ -452,39 +441,16 @@ export default function CustomerDetailClient({
     if (editDraft.personal_number.trim() && !isValidPersonalNumber(editDraft.personal_number)) {
       toast.error(PERSONAL_NUMBER_ERROR); return;
     }
+    const discountIssue = customerEditDiscountIssue(editDraft);
+    if (discountIssue) { toast.error(discountIssue); return; }
+    const body = changedCustomerEditFields(customerEditBody(editDraft), editBaseRef.current);
+    if (Object.keys(body).length === 0) {
+      setEditing(false);
+      toast.success('Kund uppdaterad');
+      return;
+    }
     setSaving(true);
     try {
-      const body: Record<string, unknown> = {
-        customer_type: editDraft.customer_type,
-        company_name: editDraft.company_name.trim() || null,
-        organization_number: editDraft.organization_number.trim() || null,
-        first_name: editDraft.first_name.trim() || null,
-        last_name: editDraft.last_name.trim() || null,
-        personal_number: editDraft.personal_number.trim() || null,
-        email: editDraft.email.trim() || null,
-        phone: editDraft.phone.trim() || null,
-        mobile: editDraft.mobile.trim() || null,
-        visit_address: buildAddress(editDraft.visit_street, editDraft.visit_postal_code, editDraft.visit_city),
-        delivery_address: buildAddress(editDraft.delivery_street, editDraft.delivery_postal_code, editDraft.delivery_city),
-        invoice_address: buildAddress(editDraft.invoice_street, editDraft.invoice_postal_code, editDraft.invoice_city),
-        invoice_email: editDraft.invoice_email.trim() || null,
-        payment_terms: editDraft.payment_terms.trim() || null,
-        price_list: editDraft.price_list.trim() || null,
-        discount: editDraft.discount.trim() ? Number(editDraft.discount) : null,
-        vat_number: editDraft.vat_number.trim() || null,
-        reverse_vat: editDraft.reverse_vat,
-        annual_revenue: editDraft.annual_revenue.trim() ? Number(editDraft.annual_revenue) : null,
-        number_of_employees: editDraft.number_of_employees.trim() ? Number(editDraft.number_of_employees) : null,
-        legal_entity_type: editDraft.legal_entity_type.trim() || null,
-        sni_code: editDraft.sni_code.trim() || null,
-        sni_name: editDraft.sni_name.trim() || null,
-        operating_profit: editDraft.operating_profit.trim() ? Number(editDraft.operating_profit) : null,
-        profit_after_financial_items: editDraft.profit_after_financial_items.trim() ? Number(editDraft.profit_after_financial_items) : null,
-        total_assets: editDraft.total_assets.trim() ? Number(editDraft.total_assets) : null,
-        operating_margin: editDraft.operating_margin.trim() ? Number(editDraft.operating_margin) : null,
-        equity_ratio: editDraft.equity_ratio.trim() ? Number(editDraft.equity_ratio) : null,
-        financial_year: editDraft.financial_year.trim() ? Number(editDraft.financial_year) : null,
-      };
       const res = await fetch(`/api/crm/customers/${customer.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
@@ -937,7 +903,7 @@ export default function CustomerDetailClient({
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div><FieldLabel>Betalningsvillkor</FieldLabel><FortnoxCodeSelect value={editDraft.payment_terms} onChange={(v) => setField('payment_terms', v)} endpoint="/api/fortnox/terms-of-payment" emptyLabel="Standard (Fortnox)" placeholder="30 dagar" /></div>
                   <div><FieldLabel>Prislista</FieldLabel><FortnoxCodeSelect value={editDraft.price_list} onChange={(v) => setField('price_list', v)} endpoint="/api/fortnox/price-lists" emptyLabel="Standard (Fortnox)" placeholder="A" /></div>
-                  <div><FieldLabel>Rabatt (%)</FieldLabel><Input value={editDraft.discount} onChange={(e) => setField('discount', e.target.value)} placeholder="0" type="number" min="0" max="100" step="0.01" /></div>
+                  <div><FieldLabel>Rabatt (%)</FieldLabel><Input value={editDraft.discount} onChange={(e) => setField('discount', e.target.value)} placeholder="0" inputMode="decimal" /></div>
                   {isB2B ? (
                     <div><FieldLabel>Momsreg-nummer</FieldLabel><Input value={editDraft.vat_number} onChange={(e) => setField('vat_number', e.target.value)} placeholder="SE556…" /></div>
                   ) : null}

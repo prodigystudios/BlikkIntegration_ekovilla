@@ -97,8 +97,9 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     // Momsnumret härleds ur org.numret när ett sådant SÄTTS eller ÄNDRAS (SE + tio siffror +
     // 01). Aldrig ovanpå ett ifyllt momsnummer, och aldrig när org.numret står stilla — annars
-    // gick det inte att tömma fältet på en kund som inte är momsregistrerad, eftersom editorn
-    // skickar med org.numret i varje PATCH. Se noten i deriveVatNumberForWrite.
+    // gick det inte att tömma fältet på en kund som inte är momsregistrerad, eftersom en klient
+    // kan skicka med ett oförändrat org.nr (editorn gjorde det i varje PATCH fram till 2026-10-22).
+    // Se noten i deriveVatNumberForWrite.
     const { data, error } = await updateCrmCustomer(
       supabase,
       context.params.id,
@@ -111,10 +112,11 @@ export async function PATCH(req: Request, context: RouteContext) {
 
     // Keep Fortnox in sync for already-linked customers so invoicing data stays
     // correct. Only push when a synced field changed. Failures are surfaced as a
-    // warning – the DB update already succeeded.
+    // warning – the DB update already succeeded. `before` gör att ett fält som töms
+    // här töms i Fortnox också — annars kom det tillbaka vid nästa kundsynk.
     if (data?.fortnox_customer_id && fortnoxCustomerFieldsChanged(before, data)) {
       try {
-        await updateFortnoxCustomer(context.params.id);
+        await updateFortnoxCustomer(context.params.id, { before });
         const { data: synced } = await getCrmCustomer(supabase, context.params.id);
         return ok({ item: synced ?? data });
       } catch (fortnoxErr: any) {

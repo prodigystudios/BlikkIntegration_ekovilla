@@ -35,8 +35,15 @@ vi.mock('@/lib/auth/permissions', async (importOriginal) => {
   return { ...actual, getEffectivePermissions: vi.fn() };
 });
 
+// Bara pushen byts ut — jämförelsen som avgör OM det pushas är den riktiga.
+vi.mock('@/lib/domains/fortnox/customers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/domains/fortnox/customers')>();
+  return { ...actual, updateFortnoxCustomer: vi.fn() };
+});
+
 import { getCurrentUser } from '@/lib/auth/route';
 import { getEffectivePermissions } from '@/lib/auth/permissions';
+import { updateFortnoxCustomer } from '@/lib/domains/fortnox/customers';
 import {
   listCrmCustomers,
   getCrmCustomerStageCounts,
@@ -55,6 +62,7 @@ const mockStageCounts = vi.mocked(getCrmCustomerStageCounts);
 const mockCreate = vi.mocked(createCrmCustomer);
 const mockGet = vi.mocked(getCrmCustomer);
 const mockUpdate = vi.mocked(updateCrmCustomer);
+const mockUpdateFortnox = vi.mocked(updateFortnoxCustomer);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -473,8 +481,8 @@ describe('PATCH /api/crm/customers/[id]', () => {
     );
   });
 
-  // 🧨 …men aldrig när klienten själv skickat med fältet tomt. Editorn gör det i varje PATCH,
-  // och alla bolag är inte momsregistrerade.
+  // 🧨 …men aldrig när klienten själv skickat med fältet tomt. Editorn gör det när org.numret
+  // ändrats och momsfältet står tomt (changedCustomerEditFields), och alla bolag är inte momsregistrerade.
   it('härleder INTE när klienten skickat momsfältet tomt', async () => {
     mockGetCurrentUser.mockResolvedValue(salesUser);
     mockGet.mockResolvedValue({
@@ -548,5 +556,23 @@ describe('PATCH /api/crm/customers/[id]', () => {
 
     expect(res.status).toBe(200);
     expect(mockUpdate).toHaveBeenCalled();
+  });
+
+  // Pushen räknar fram tömningarna ur raden FÖRE redigeringen (fortnoxCustomerClears). Utan den
+  // utelämnas ett tömt fält, Fortnox behåller värdet och nästa kundsynk lägger tillbaka det.
+  it('skickar raden före redigeringen till Fortnox-pushen, så att en tömning når Fortnox', async () => {
+    mockGetCurrentUser.mockResolvedValue(salesUser);
+    const before = { id: CUSTOMER_ID, customer_type: 'business', company_name: 'Acme AB', phone: '08-123', fortnox_customer_id: '42' };
+    mockGet.mockResolvedValue({ data: before, error: null } as any);
+    mockUpdate.mockResolvedValue({ data: { ...before, phone: null }, error: null } as any);
+    mockUpdateFortnox.mockResolvedValue({ fortnoxCustomerNumber: '42' });
+
+    const res = await PATCH(
+      makeRequest('/api/crm/customers/c1', { method: 'PATCH', body: JSON.stringify({ phone: null }) }),
+      ctx
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockUpdateFortnox).toHaveBeenCalledWith(CUSTOMER_ID, { before: expect.objectContaining({ phone: '08-123' }) });
   });
 });
