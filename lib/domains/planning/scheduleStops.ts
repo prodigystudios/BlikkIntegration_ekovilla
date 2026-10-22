@@ -184,6 +184,61 @@ export function scheduleStopMeta(
 export type StopCallContact = WorkOrderCallContact;
 
 /**
+ * Nyckeln en rad ur feeden slås upp på i facts-svaret. Samma placering har en rad per dag. Bor här och
+ * inte i scheduleFacts.ts, som drar in serverns läsningar: klienten behöver bara nyckeln.
+ */
+export const scheduleFactKey = (segmentId: string, day: string) => `${segmentId}|${day}`;
+
+/**
+ * Kortets fakta i EN form, oavsett källa. CRM-jobben får dem ur /api/crm/planering/my-jobs/facts
+ * (scheduleFacts.ts), de gamla Blikk-raderna ur planning_*-tabellerna som förut.
+ */
+export type StopFacts = {
+  /** Placeringens säckar (etappens på en uppdelad order). */
+  plannedSacks: number | null;
+  /** Hela orderns säckar, bara på en uppdelad order. */
+  orderSacks: number | null;
+  /** Ordern är uppdelad i etapper: rapporterat gäller hela ordern. */
+  staged: boolean;
+  reported: number;
+  crew: string[];
+  /** Orderns material ur raderna — reserv när planeraren inte satt någon jobbtyp. */
+  material: string | null;
+  done: boolean;
+};
+
+export const NO_STOP_FACTS: StopFacts = { plannedSacks: null, orderSacks: null, staged: false, reported: 0, crew: [], material: null, done: false };
+
+/**
+ * Bilens nästa stopp: det första som inte är klart. -1 när alla är klara.
+ *
+ * Williams beslut 2026-10-22: den fyllda siffran visar vart bilen ska HÄRNÄST, inte bara vilket stopp
+ * som är först. Klara stopp får en bock och hoppas över.
+ */
+export function nextOpenStopIndex<T>(stops: T[], isDone: (stop: T) => boolean): number {
+  return stops.findIndex((stop) => !isDone(stop));
+}
+
+/**
+ * Rapporterat-raden: etikett, nämnare och mätarens andel. null när inget är rapporterat — en nolla
+ * är inte ett faktum värt en rad.
+ *
+ * ⚠️ SÄCKBOKEN ÄR PER ARBETSORDER, inte per etapp. På en uppdelad order är det rapporterade alltså
+ * hela orderns, och det får bara jämföras med hela orderns säckar — "45 av 120" där 45 gäller ordern
+ * och 120 bara etappen hade fått mätaren att ljuga. Därav "hela ordern" och orderSacks som nämnare.
+ * Ett flerdagarsjobb utan etapper är en placering: där gäller det rapporterade hela jobbet.
+ */
+export function reportedProgress(
+  facts: Pick<StopFacts, 'plannedSacks' | 'orderSacks' | 'staged' | 'reported'>,
+  multiDay: boolean,
+): { label: string; of: number | null; percent: number | null } | null {
+  if (!(facts.reported > 0)) return null;
+  const label = facts.staged ? 'Rapporterat hela ordern' : multiDay ? 'Rapporterat hela jobbet' : 'Rapporterat';
+  const of = facts.staged ? facts.orderSacks : facts.plannedSacks;
+  return { label, of, percent: of ? Math.min(100, (facts.reported / of) * 100) : null };
+}
+
+/**
  * Kortets "Ring"-rad för orderns kontakt (getWorkOrderCallContacts — samma person som fältvyn visar).
  *
  * ⚠️ VEM SOM NÅS MÅSTE STÅ PÅ RADEN. Kontakten på plats är en ANNAN person än kundens kontakt — en

@@ -2,7 +2,7 @@
 import type { MouseEvent, ReactNode } from 'react';
 import { cn } from '@/lib/shared/cn';
 import { telHref } from '@/app/crm/components/ContactLinks';
-import { isSchedulePlaceholder, mapsSearchHref, projectRepeatsAddress, scheduleStopMeta, stopCallLine, workdayPosition, workOrderHref, type StopCallContact } from '@/lib/domains/planning/scheduleStops';
+import { isSchedulePlaceholder, mapsSearchHref, projectRepeatsAddress, reportedProgress, scheduleStopMeta, stopCallLine, workdayPosition, workOrderHref, type StopCallContact, type StopFacts } from '@/lib/domains/planning/scheduleStops';
 import { materialPill } from './materialTheme';
 
 // Ett stopp på bilens dag i startsidans arbetsschema.
@@ -18,8 +18,12 @@ import { materialPill } from './materialTheme';
 // länken och knapparna, som är riktiga element. Den gamla `onKeyDown`-spärren (`e.target !==
 // e.currentTarget`, så Enter på Tid-knappen inte öppnade ordern) behövs därför inte längre.
 //
-// Fakta som saknas döljs: inga nollor, streck eller platshållare. Säckar, rapporterat och team finns
-// i dag bara på de äldre raderna; för CRM-jobben kommer de med fas 3 (ARBETSSCHEMA_KORT_REDESIGN_PLAN).
+// Fakta som saknas döljs: inga nollor, streck eller platshållare. De kommer i en form (StopFacts) från
+// två källor — CRM-jobben ur /api/crm/planering/my-jobs/facts, de äldre raderna ur planning_*.
+//
+// KLART (Williams beslut 2026-10-22): jobbet är klart när arbetsordern har status Klar/Fakturerad eller
+// slutrapporten är inskickad (isScheduleJobDone). Kortet blir ljusare, siffran en bock, och knapparna
+// blir textknappar — det finns inget kvar att göra, men ordern och tiden ska fortfarande gå att nå.
 
 export type ScheduleStopRow = {
   source?: string;
@@ -33,7 +37,6 @@ export type ScheduleStopRow = {
   job_day?: string | null;
   start_day?: string | null;
   end_day?: string | null;
-  bag_count?: number | null;
   work_description?: string | null;
 };
 
@@ -47,8 +50,9 @@ type Props = {
   compact: boolean;
   /** Rubriknivån under bilens rubrik: h4 i dagsvyn, h5 under hela veckans dagrubriker. */
   headingLevel: 4 | 5;
-  reported: number;
-  crewNames: string[];
+  facts: StopFacts;
+  /** Bilens nästa stopp — det första som inte är klart. Det enda med fylld siffra. */
+  next: boolean;
   /** Orderns kontakt att ringa, eller null — se getWorkOrderCallContacts. Bara CRM-jobb med order. */
   callContact: StopCallContact | null;
   /** Mätnyckeln för platshållarens kapade beskrivning, se clippedKeys i DashboardSchedule. */
@@ -62,7 +66,7 @@ type Props = {
 };
 
 export default function ScheduleStopCard({
-  row, stop, of, last, compact, headingLevel, reported, crewNames, callContact, clipKey, expanded, expandable, onToggleExpanded, onOpen, onReportTime,
+  row, stop, of, last, compact, headingLevel, facts, next, callContact, clipKey, expanded, expandable, onToggleExpanded, onOpen, onReportTime,
 }: Props) {
   const isCrm = row.source === 'crm';
   // En publicerad platshållare har ingen arbetsorder och ingen Blikk-detaljvy — alltså ingenting att
@@ -77,7 +81,11 @@ export default function ScheduleStopCard({
   const heading = address || row.project_name || row.customer || 'Jobb utan namn';
   const workday = workdayPosition(row.job_day, row.start_day, row.end_day);
   const multiDay = !!row.start_day && !!row.end_day && row.start_day !== row.end_day;
-  const material = isPlaceholder ? null : materialPill(row.job_type);
+  const done = facts.done;
+  // Planerarens jobbtyp först, annars orderns material ur raderna — samma ordning som tavlan
+  // (resolveJobTypeFrom: "Empty → null, the caller falls back to the material inferred from the work
+  // order"). Utan reserven stod "Material ej angivet" på varje CRM-kort utan jobbtyp.
+  const material = isPlaceholder ? null : materialPill(row.job_type || facts.material || null);
 
   const meta = scheduleStopMeta(row, stop, of);
 
@@ -103,10 +111,13 @@ export default function ScheduleStopCard({
 
   const call = callContact ? stopCallLine(callContact, row.customer) : null;
 
-  const bags = typeof row.bag_count === 'number' && row.bag_count > 0 ? row.bag_count : null;
-  const reportedLabel = multiDay ? 'Rapporterat hela jobbet' : 'Rapporterat';
-  const progress = bags && reported > 0 ? Math.min(100, (reported / bags) * 100) : null;
-  const hasFacts = bags != null || reported > 0 || crewNames.length > 0;
+  const bags = facts.plannedSacks != null && facts.plannedSacks > 0 ? facts.plannedSacks : null;
+  const reported = reportedProgress(facts, multiDay);
+  const crewNames = facts.crew;
+  // Säckarna står för sig själva utom när mätaren redan säger dem ("45 av 120 säckar"). På en uppdelad
+  // order är mätarens nämnare HELA ordern, så etappens säckar står kvar bredvid.
+  const showBags = bags != null && !(reported?.percent != null && !facts.staged);
+  const hasFacts = bags != null || reported != null || crewNames.length > 0;
 
   const handleClick = (e: MouseEvent<HTMLElement>) => {
     // Länkarna och knapparna i kortet sköter sig själva. Utan spärren hade "Vägbeskrivning" öppnat
@@ -139,9 +150,11 @@ export default function ScheduleStopCard({
     compact ? 'h-[52px] gap-1.5 rounded-none px-2 focus-visible:ring-inset max-[359px]:text-[13px]' : 'h-11 gap-2 rounded-xl border border-transparent px-4 focus-visible:ring-offset-2',
   );
   const arrow = <span className={cn('inline-flex', compact && 'max-[359px]:hidden')}><ArrowIcon /></span>;
+  // Klart: ingen fylld knapp — det finns inget kvar att göra, bara något att titta på.
+  const mainFill = done ? 'bg-transparent text-[#1a3f26] hover:bg-[#eef3ec]' : 'bg-[#1a3f26] hover:bg-[#122c1b]';
   const main = href ? (
-    <a href={href} className={cn(mainClass, 'bg-[#1a3f26] hover:bg-[#122c1b]')}>
-      Öppna arbetsorder
+    <a href={href} className={cn(mainClass, mainFill)}>
+      {done ? 'Visa arbetsorder' : 'Öppna arbetsorder'}
       {arrow}
     </a>
   ) : !isCrm ? (
@@ -164,10 +177,11 @@ export default function ScheduleStopCard({
       type="button"
       onClick={(e) => { e.stopPropagation(); onReportTime(); }}
       className={cn(
-        'inline-flex items-center justify-center whitespace-nowrap bg-white py-0 text-sm font-semibold text-[#1a3f26] hover:bg-[#f4f7f2]',
+        'inline-flex items-center justify-center whitespace-nowrap py-0 text-sm font-semibold text-[#1a3f26]',
+        done ? 'bg-transparent hover:bg-[#eef3ec]' : 'bg-white hover:bg-[#f4f7f2]',
         compact
           ? cn('h-[52px] gap-1.5 rounded-none border-0 px-2 focus-visible:outline-offset-[-3px] max-[359px]:text-[13px]', main && 'border-r border-[#e0e8dc]')
-          : 'h-11 gap-2 rounded-xl border border-[#c6dccd] px-4',
+          : cn('h-11 gap-2 rounded-xl border px-4', done ? 'border-transparent' : 'border-[#c6dccd]'),
       )}
     >
       <ClockIcon />
@@ -190,12 +204,18 @@ export default function ScheduleStopCard({
           ))}
         </span>
       )}
-      {workday && (
+      {done && (
+        <span className="inline-flex shrink-0 items-center rounded-full border border-[#c6dccd] bg-[#e9f1eb] px-[9px] py-[2px] text-xs font-semibold text-[#1a3f26]">
+          Klart
+        </span>
+      )}
+      {/* Klart: dagnumret och materialet spelar ingen roll längre, och etiketten "Klart" ska stå ensam. */}
+      {!done && workday && (
         <span className="inline-flex shrink-0 items-center rounded-full bg-[#ffedd5] px-[9px] py-[3px] text-xs font-semibold text-[#7c2d12]">
           Dag {workday.day} av {workday.of}
         </span>
       )}
-      {material && (
+      {!done && material && (
         <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold', material.className)}>
           <span aria-hidden="true" className={cn('h-[7px] w-[7px] rounded-full', material.dotClassName)} />
           {material.label}
@@ -208,7 +228,7 @@ export default function ScheduleStopCard({
   const body = (
     <>
       <div>
-        <Heading className={cn('m-0 break-words font-bold leading-tight tracking-[-0.01em] text-slate-900', compact ? 'text-lg' : 'text-[19px]')}>
+        <Heading className={cn('m-0 break-words font-bold leading-tight tracking-[-0.01em]', done ? 'text-slate-700' : 'text-slate-900', compact ? 'text-lg' : 'text-[19px]')}>
           {heading}
         </Heading>
         {subParts.length > 0 && (
@@ -283,9 +303,20 @@ export default function ScheduleStopCard({
         </div>
       )}
 
-      {hasFacts && (compact ? (
+      {/* Klart: en rad med bocken och det som rapporterades — teamet och planen är historia. */}
+      {done ? (
+        reported != null && (
+          <p className="m-0 inline-flex items-center gap-2 text-[13px] text-slate-700">
+            <CheckIcon className="text-[#2f6b45]" />
+            <span className="tabular-nums">
+              {reported.of ? `${facts.reported} av ${reported.of} säckar rapporterade` : `${facts.reported} säckar rapporterade`}
+              {facts.staged ? ' på hela ordern' : ''}
+            </span>
+          </p>
+        )
+      ) : hasFacts && (compact ? (
         <>
-          {(bags != null || reported > 0) && (
+          {(bags != null || reported != null) && (
             <div className="grid grid-cols-2 gap-2">
               {bags != null && (
                 <div className="rounded-xl bg-[#f4f7f2] px-3 py-2.5">
@@ -293,11 +324,14 @@ export default function ScheduleStopCard({
                   <div className="mt-0.5 text-base font-bold tabular-nums text-slate-900">{bags}</div>
                 </div>
               )}
-              {reported > 0 && (
+              {reported != null && (
                 <div className="rounded-xl bg-[#f4f7f2] px-3 py-2.5">
-                  <div className="text-xs text-slate-600">{reportedLabel}</div>
-                  <div className="mt-0.5 text-base font-bold tabular-nums text-slate-900">{reported}</div>
-                  {progress != null && <Meter percent={progress} className="mt-1.5 h-1 w-full" />}
+                  <div className="text-xs text-slate-600">{reported.label}</div>
+                  <div className="mt-0.5 text-base font-bold tabular-nums text-slate-900">
+                    {/* Mot hela ordern på en uppdelad order — rutan bredvid är bara etappens. */}
+                    {facts.staged && reported.of ? `${facts.reported} av ${reported.of}` : facts.reported}
+                  </div>
+                  {reported.percent != null && <Meter percent={reported.percent} className="mt-1.5 h-1 w-full" />}
                 </div>
               )}
             </div>
@@ -306,18 +340,17 @@ export default function ScheduleStopCard({
         </>
       ) : (
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-[13px] text-slate-700">
-          {/* Med mätaren säger "45 av 120 säckar" redan planen — då står säckarna inte två gånger. */}
-          {bags != null && progress == null && (
+          {showBags && (
             <span className="inline-flex items-center gap-1.5">
               <BagIcon />
               <b className="font-semibold tabular-nums">{bags}</b> säckar
             </span>
           )}
-          {reported > 0 && (
+          {reported != null && (
             <span className="inline-flex items-center gap-2">
-              {progress != null && <Meter percent={progress} className="h-1.5 w-[120px]" />}
-              <span className="text-slate-600">{reportedLabel}</span>
-              <b className="font-semibold tabular-nums">{bags ? `${reported} av ${bags} säckar` : `${reported} säckar`}</b>
+              {reported.percent != null && <Meter percent={reported.percent} className="h-1.5 w-[120px]" />}
+              <span className="text-slate-600">{reported.label}</span>
+              <b className="font-semibold tabular-nums">{reported.of ? `${facts.reported} av ${reported.of} säckar` : `${facts.reported} säckar`}</b>
             </span>
           )}
           {crewNames.length > 0 && <Team names={crewNames} />}
@@ -327,7 +360,8 @@ export default function ScheduleStopCard({
   );
 
   const surface = cn(
-    'rounded-[18px] border bg-white',
+    'rounded-[18px] border',
+    done ? 'bg-[#f8faf7]' : 'bg-white',
     isPlaceholder ? 'border-dashed border-[#b9c8b4]' : 'border-[#e0e8dc]',
     (opens || expandable) && 'cursor-pointer',
     opens && 'transition-colors hover:border-[#c6dccd]',
@@ -339,7 +373,7 @@ export default function ScheduleStopCard({
         <div onClick={handleClick} className={cn(surface, 'overflow-hidden')}>
           <div className="flex flex-col gap-3 p-4">
             <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-              <StopMarker stop={stop} sharesDay={sharesDay} placeholder={isPlaceholder} compact />
+              <StopMarker stop={stop} sharesDay={sharesDay} placeholder={isPlaceholder} done={done} filled={next} compact />
               {metaRow}
             </div>
             {body}
@@ -360,7 +394,7 @@ export default function ScheduleStopCard({
       {/* Ruttlinjen binder ihop bilens stopp. Bara mellan numrerade stopp: jobben utan lastbil har
           ingen ordning att visa. */}
       <div aria-hidden="true" className="flex w-11 shrink-0 flex-col items-center pt-5">
-        <StopMarker stop={stop} sharesDay={sharesDay} placeholder={isPlaceholder} compact={false} />
+        <StopMarker stop={stop} sharesDay={sharesDay} placeholder={isPlaceholder} done={done} filled={next} compact={false} />
         {stop != null && !last && <span className="mt-1.5 w-0.5 flex-1 bg-[#c6dccd]" />}
       </div>
       <div className={cn('min-w-0 flex-1', !last && 'pb-3.5')}>
@@ -382,16 +416,25 @@ export default function ScheduleStopCard({
 }
 
 /**
- * Stoppsiffran. Det första stoppet är fyllt för att det är FÖRST — inte för att det är nästa, det
- * kräver en status kortet inte har än (öppen fråga 1 i planen).
+ * Stoppsiffran. Fylld = bilens NÄSTA stopp, det första som inte är klart (Williams beslut
+ * 2026-10-22). Ett klart stopp får en bock i stället för sin siffra; platsen står kvar på metaraden.
  *
  * Platshållaren bär sin siffra när den delar dag med andra jobb (samma numrering som tavlan) och en
  * verktygsikon när den är ensam. Ett jobb utan lastbil har ingen plats i någon rutt: en neutral prick
  * på datorn så korten linjerar med de numrerade, ingenting på mobilen.
  */
-function StopMarker({ stop, sharesDay, placeholder, compact }: { stop: number | null; sharesDay: boolean; placeholder: boolean; compact: boolean }) {
+function StopMarker({ stop, sharesDay, placeholder, done, filled, compact }: {
+  stop: number | null; sharesDay: boolean; placeholder: boolean; done: boolean; filled: boolean; compact: boolean;
+}) {
   const size = compact ? 'h-8 w-8 text-sm' : 'h-9 w-9 text-[15px]';
   const round = 'flex shrink-0 items-center justify-center rounded-full';
+  if (done) {
+    return (
+      <span aria-hidden="true" className={cn(round, size, 'bg-[#e9f1eb] text-[#2f6b45]')}>
+        <CheckIcon />
+      </span>
+    );
+  }
   if (placeholder && !sharesDay) {
     return (
       <span aria-hidden="true" className={cn(round, size, 'bg-[#f1f5f9] text-slate-600')}>
@@ -414,7 +457,7 @@ function StopMarker({ stop, sharesDay, placeholder, compact }: { stop: number | 
       aria-hidden="true"
       className={cn(
         round, size, 'font-bold tabular-nums',
-        stop === 1 ? 'bg-[#1a3f26] text-white' : 'border-2 border-[#1a3f26] bg-white text-[#1a3f26]',
+        filled ? 'bg-[#1a3f26] text-white' : 'border-2 border-[#1a3f26] bg-white text-[#1a3f26]',
       )}
     >
       {stop}
@@ -460,6 +503,14 @@ function ArrowIcon() {
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
       <path d="M5 12h14" />
       <path d="M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+function CheckIcon({ className }: { className?: string }) {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className={cn('shrink-0', className)}>
+      <path d="M5 12.5l4.5 4.5L19 7.5" />
     </svg>
   );
 }

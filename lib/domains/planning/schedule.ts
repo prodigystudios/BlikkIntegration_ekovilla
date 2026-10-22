@@ -132,6 +132,40 @@ export async function listSegments(
 }
 
 /**
+ * Bestämda placeringar, i SAMMA läsmodell som tavlan: mapSegment (jobbet beskuret till placeringens
+ * etapp — säckar och material ur etappens rader) och säckbokens summa per arbetsorder. Bara det, inte
+ * bekräftelser eller veckofördelningens spann; startsidans arbetsschema (scheduleFacts.ts) behöver
+ * säckarna, materialet och om jobbet är klart.
+ *
+ * ⚠️ Kräver en klient som får läsa ops_segments (RLS: planning.schedule.read). Montörerna har inte
+ * den nyckeln, så startsidan kör med admin-klienten — och då bara för placeringar som deras EGEN feed
+ * (get_my_crm_jobs, med sessionen) redan gett dem. Id:na kommer aldrig från klienten.
+ */
+export async function listSegmentsByIds(
+  supabase: SupabaseClient,
+  ids: string[],
+): Promise<{ data: OpsSegment[]; error: { message: string } | null }> {
+  if (ids.length === 0) return { data: [], error: null };
+  const { data, error } = await supabase
+    .from('ops_segments')
+    .select(SEGMENT_SELECT)
+    .in('id', ids)
+    .order('id', { ascending: true });
+  if (error) return { data: [], error };
+
+  const segs = ((data ?? []) as unknown as RawSegment[]).map(mapSegment);
+  const workOrderIds = [...new Set(segs.map((s) => s.work_order_id))].filter((id): id is string => id != null);
+  // Samma summa som tavlan: egenkontrollen är jobbets sanning, annars delrapporterna (sackLedger).
+  const reported = await sackTotalsForWorkOrders(supabase, workOrderIds);
+  for (const s of segs) {
+    const total = s.work_order_id ? reported.get(s.work_order_id) : undefined;
+    s.sacks_reported = total?.sacks ?? 0;
+    s.sacks_final = total?.hasFinal ?? false;
+  }
+  return { data: segs, error: null };
+}
+
+/**
  * Alla placeringar för en uppsättning arbetsordrar — nämnaren i veckofördelningen.
  *
  * 🧨 SEPARAT LÄSNING, OCH DET ÄR HELA SKÄLET ATT DEN FINNS. listSegments och getPlanningInsights
