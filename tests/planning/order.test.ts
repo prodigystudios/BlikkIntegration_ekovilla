@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   compareBoardOrder,
   dayGroup,
+  dayOrderLookup,
   nextSortIndexOnDay,
-  orderInfo,
   reorderOnDay,
   sharedDayOrders,
 } from '@/lib/domains/planning/order';
@@ -51,13 +51,13 @@ describe('dayGroup', () => {
   });
 });
 
-describe('orderInfo', () => {
-  const segs = [s('a', 't1', WED, 0), s('b', 't1', WED, 1)];
-  it('reports index + total within the day', () => {
-    expect(orderInfo(segs, segs[1], WED)).toEqual({ day: WED, index: 1, total: 2 });
-  });
-  it('total 1 for a lone job', () => {
-    expect(orderInfo([segs[0]], segs[0], WED)).toEqual({ day: WED, index: 0, total: 1 });
+describe('dayOrderLookup', () => {
+  it('answers dayGroup per truck + day', () => {
+    const segs = [s('b', 't1', WED, 1), s('a', 't1', WED, 0), s('x', 't2', WED, 0)];
+    const order = dayOrderLookup(segs);
+    expect(order('t1', WED)).toEqual(['a', 'b']);
+    expect(order('t2', WED)).toEqual(['x']);
+    expect(order('t1', THU)).toEqual([]);
   });
 });
 
@@ -65,19 +65,28 @@ describe('sharedDayOrders', () => {
   const long = s('long', 't1', WED, 0, FRI);
   const thu = s('thu', 't1', THU, 1);
   const other = s('other', 't2', WED, 0); // another truck never shares a day with `long`
-  const segs = [long, thu, other];
+  const order = dayOrderLookup([long, thu, other]);
 
   it('lists only the days the job shares its truck with another job', () => {
-    expect(sharedDayOrders(segs, long, [WED, THU, FRI])).toEqual([{ day: THU, index: 0, total: 2 }]);
-    expect(sharedDayOrders(segs, thu, [WED, THU, FRI])).toEqual([{ day: THU, index: 1, total: 2 }]);
+    expect(sharedDayOrders(order, long, [WED, THU, FRI])).toEqual([{ day: THU, index: 0, total: 2 }]);
+    expect(sharedDayOrders(order, thu, [WED, THU, FRI])).toEqual([{ day: THU, index: 1, total: 2 }]);
   });
 
   it('is empty for a job alone on every day — no badge, no picker', () => {
-    expect(sharedDayOrders(segs, other, [WED, THU, FRI])).toEqual([]);
+    expect(sharedDayOrders(order, other, [WED, THU, FRI])).toEqual([]);
   });
 
   it('ignores days the job does not cover, and days outside the ones asked about', () => {
-    expect(sharedDayOrders(segs, thu, [WED, FRI])).toEqual([]);
+    expect(sharedDayOrders(order, thu, [WED, FRI])).toEqual([]);
+  });
+
+  it('counts a job the search hides, because the crew still drives to it', () => {
+    // The board renders the visible cards but asks the lookup built on ALL segments. Built on the
+    // visible ones, C read "2 of 2" next to a hidden B — and the arrows, which reorder against the
+    // full list, swapped C with B, so pressing up moved nothing on screen.
+    const all = [s('a', 't1', WED, 0), s('b-hidden', 't1', WED, 1), s('c', 't1', WED, 2)];
+    expect(sharedDayOrders(dayOrderLookup(all), all[2], [WED])).toEqual([{ day: WED, index: 2, total: 3 }]);
+    expect(reorderOnDay(all, 'c', WED, 'up').map((c) => c.id).sort()).toEqual(['b-hidden', 'c']);
   });
 });
 

@@ -99,7 +99,8 @@ export async function listSegments(
     .order('sort_index', { ascending: true })
     // Final tiebreak. sort_index defaults to 0 on every row, so without this the rows that share a
     // day come back in whatever order the executor produced — and it produces a different one after
-    // any UPDATE to the table. Matches compareBoardOrder, which the boards render with.
+    // any UPDATE to the table. A stable response, NOT the board order: the boards sort with
+    // compareBoardOrder (sort_index first), which differs for a job continuing across days.
     .order('id', { ascending: true });
 
   if (error) return { data: [], scopeSpans: [], error };

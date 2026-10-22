@@ -40,20 +40,45 @@ export function dayGroup<T extends Orderable>(segments: T[], truckId: string, da
 
 export type OrderInfo = { day: string; index: number; total: number };
 
-// A segment's position (0-based index) among the jobs on its truck that day.
-export function orderInfo<T extends Orderable>(segments: T[], seg: T, day: string): OrderInfo {
-  const group = dayGroup(segments, seg.truck_id, day);
-  return { day, index: group.findIndex((s) => s.id === seg.id), total: group.length };
+/** The ids on a truck that day, in board order. */
+export type DayOrderLookup = (truckId: string, day: string) => string[];
+
+/**
+ * dayGroup for every truck+day the boards ask about, each computed once per `segments`.
+ *
+ * ⚠️ BUILD IT ON ALL SEGMENTS, not the ones the search box or truck filter leaves visible. The order
+ * is the crew's real sequence: a job hidden by a search is still driven to, and the arrows reorder
+ * against the full list. Counting only visible cards made the badge say "2 of 2" next to a hidden
+ * job — and pressing up swapped with that hidden job, so nothing visible moved.
+ */
+export function dayOrderLookup<T extends Orderable>(segments: T[]): DayOrderLookup {
+  const cache = new Map<string, string[]>();
+  return (truckId, day) => {
+    const key = `${truckId}|${day}`;
+    let ids = cache.get(key);
+    if (!ids) {
+      ids = dayGroup(segments, truckId, day).map((s) => s.id);
+      cache.set(key, ids);
+    }
+    return ids;
+  };
 }
 
 /**
  * The segment's position on each of `days` it covers and shares with another job — the days an
  * order means anything. A day it has to itself is left out, so an empty list means "no badge".
  */
-export function sharedDayOrders<T extends Orderable>(segments: T[], seg: T, days: string[]): OrderInfo[] {
+export function sharedDayOrders(
+  order: DayOrderLookup,
+  seg: Pick<Orderable, 'id' | 'truck_id' | 'start_day' | 'end_day'>,
+  days: string[],
+): OrderInfo[] {
   return days
     .filter((day) => coversDay(seg, day))
-    .map((day) => orderInfo(segments, seg, day))
+    .map((day) => {
+      const ids = order(seg.truck_id, day);
+      return { day, index: ids.indexOf(seg.id), total: ids.length };
+    })
     .filter((o) => o.total > 1);
 }
 
@@ -61,7 +86,12 @@ export function sharedDayOrders<T extends Orderable>(segments: T[], seg: T, days
  * The sort_index a job placed on `day` should get: one past every job already on the truck that
  * day, so the order jobs are placed in IS the order they're run in — and a job continuing from
  * yesterday stays ahead of the newcomer. Pure so the rule is testable; placeSegment feeds it the
- * covering rows. Re-filters on truck + day, so a broader read can't put the job in the wrong queue.
+ * covering rows and the board feeds it its own when a card is dropped on a new day. Re-filters on
+ * truck + day, so a broader read can't put the job in the wrong queue.
+ *
+ * Only the START day counts, on purpose. On its later days a multi-day job is the one continuing,
+ * and continuing jobs go first on a tie — so it may well land ahead of jobs already booked there.
+ * That is the default rule, not a newcomer cutting in line.
  */
 export function nextSortIndexOnDay(segments: Orderable[], truckId: string, day: string): number {
   let highest = -1;

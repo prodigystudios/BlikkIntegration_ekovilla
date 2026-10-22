@@ -31,8 +31,14 @@ export function addDaysISO(iso: string, n: number): string {
   return fmtISO(addDays(parseISO(iso), n));
 }
 
+// '2026-09-24' -> 'tor 24/9'. För banderoller och kort som ska säga NÄR något händer.
+export function shortDayISO(iso: string): string {
+  const [, m, d] = iso.split('-').map(Number);
+  return `${weekdayShortISO(iso)} ${d}/${m}`;
+}
+
 /**
- * '2026-09-24' -> 'tor 24/9'. För banderoller och kort som ska säga NÄR något händer.
+ * '2026-09-24' -> 'tor'. Veckodagen i shortDayISO och i ordningsmärket på flerdagarskort.
  *
  * ⚠️ Veckodagsnamnen kommer ur WEEKDAYS_SHORT, inte ur en egen lista. En andra uppsättning namn
  * bredvid den här hade sett identisk ut tills någon rättade stavningen i den ena.
@@ -43,12 +49,6 @@ export function addDaysISO(iso: string, n: number): string {
  *
  * WEEKDAYS_SHORT är måndagsindexerad (0 = mån) medan getUTCDay är söndagsindexerad (0 = sön).
  */
-export function shortDayISO(iso: string): string {
-  const [, m, d] = iso.split('-').map(Number);
-  return `${weekdayShortISO(iso)} ${d}/${m}`;
-}
-
-// '2026-09-24' -> 'tor'. Samma förankring och samma namn som shortDayISO ovan.
 export function weekdayShortISO(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
   return WEEKDAYS_SHORT[(new Date(Date.UTC(y, m - 1, d)).getUTCDay() + 6) % 7];
