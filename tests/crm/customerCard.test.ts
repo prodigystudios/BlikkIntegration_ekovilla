@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   addressLines,
+  buildCustomerCallPayload,
+  isTaskOverdue,
+  sortCallsNewestFirst,
+  splitTasks,
   contactInitials,
   deliveryAddressDisplay,
   filterQuotes,
@@ -183,5 +187,56 @@ describe('quoteSums', () => {
   it('en tom pricing_summary ger inte en tyst nolla', () => {
     const sums = quoteSums([quote({ status: 'draft', pricing_summary: { subtotal: 0, vat: 0, total: 0 } })]);
     expect(sums.open).toBeCloseTo(1000);
+  });
+});
+
+const callDraft = { outcome: 'positive' as const, summary: '  Bra samtal  ', next_step: '', call_at: '' };
+
+describe('buildCustomerCallPayload', () => {
+  it('samma form som samtalssidan med vald kund: bara kopplingen och samtalet', () => {
+    const payload = buildCustomerCallPayload('c1', callDraft);
+    expect(payload).toEqual({ customer_id: 'c1', outcome: 'positive', summary: 'Bra samtal', next_step: null });
+  });
+
+  it('aldrig prospect_id, och ingen kopierad kontaktdata', () => {
+    const payload = buildCustomerCallPayload('c1', callDraft);
+    for (const key of ['prospect_id', 'company_name', 'email', 'phone', 'call_at']) expect(payload).not.toHaveProperty(key);
+  });
+
+  it('tidpunkten följer med när den är ifylld', () => {
+    expect(buildCustomerCallPayload('c1', { ...callDraft, call_at: '2026-10-20T14:30' })).toHaveProperty('call_at');
+  });
+});
+
+function task(overrides: Partial<RelatedTaskLike> = {}): RelatedTaskLike {
+  return { id: 't', status: 'open', due_date: null, ...overrides };
+}
+type RelatedTaskLike = { id: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null };
+
+describe('splitTasks', () => {
+  it('avbrutna hör till Klara, inte Att göra', () => {
+    const { open, closed } = splitTasks([task({ id: 'a' }), task({ id: 'b', status: 'done' }), task({ id: 'c', status: 'cancelled' })] as never);
+    expect(open.map((t) => t.id)).toEqual(['a']);
+    expect(closed.map((t) => t.id)).toEqual(['b', 'c']);
+  });
+});
+
+describe('isTaskOverdue', () => {
+  it('bara öppna uppgifter med passerad dag', () => {
+    expect(isTaskOverdue({ status: 'open', due_date: '2026-10-21' }, '2026-10-22')).toBe(true);
+    expect(isTaskOverdue({ status: 'open', due_date: '2026-10-22' }, '2026-10-22')).toBe(false);
+    expect(isTaskOverdue({ status: 'done', due_date: '2026-10-01' }, '2026-10-22')).toBe(false);
+    expect(isTaskOverdue({ status: 'open', due_date: null }, '2026-10-22')).toBe(false);
+  });
+});
+
+describe('sortCallsNewestFirst', () => {
+  it('ett bakåtdaterat samtal hamnar på sin plats', () => {
+    const calls = [
+      { id: 'ny', call_at: '2026-10-20T10:00:00Z' },
+      { id: 'gammal', call_at: '2026-10-01T10:00:00Z' },
+      { id: 'mitten', call_at: '2026-10-10T10:00:00Z' },
+    ];
+    expect(sortCallsNewestFirst(calls as never).map((c: { id: string }) => c.id)).toEqual(['ny', 'mitten', 'gammal']);
   });
 });

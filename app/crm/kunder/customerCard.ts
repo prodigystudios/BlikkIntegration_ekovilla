@@ -3,6 +3,9 @@
 
 import type { TicCreditReport } from '@/lib/domains/tic/types';
 import { netAmount } from '@/lib/domains/crm/pricing';
+import { callAtToIso, type CrmCallOutcome } from '@/app/crm/lib/callDisplay';
+import type { TaskItem } from '@/app/crm/lib/taskForm';
+import type { CallLogDraft } from '@/app/crm/components/CallLogModal';
 
 export type CustomerType = 'business' | 'private';
 export type CustomerStage = 'prospect' | 'customer' | 'fortnox_customer';
@@ -94,8 +97,12 @@ export type RelatedWorkOrder = {
   assignee: { id: string; full_name: string | null } | null;
   partial_invoicing_started_at?: string | null;
 };
-export type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
-export type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
+export type RelatedCall = {
+  id: string; outcome: CrmCallOutcome; summary: string; next_step: string | null; call_at: string;
+  contact_name: string | null; user_id: string | null;
+};
+/** Uppgiftslistans rad — samma form som uppgiftssidan och offertpanelen läser. */
+export type RelatedTask = TaskItem;
 
 // Kundens namn och avatar kommer ur app/crm/lib/customerDisplay.ts — samma som kundregistret, så att
 // samma kund ser likadan ut i listan och på kortet.
@@ -266,4 +273,45 @@ export function quoteSums(quotes: RelatedQuote[]): { won: number; open: number; 
     else if (q.status === 'draft' || q.status === 'sent' || q.status === 'follow_up') open += net;
   }
   return { won, open, otherCurrency };
+}
+
+/**
+ * Samtalet som loggas från kundkortet — samma form som samtalssidan skickar när en kund är vald:
+ * bara kopplingen och samtalet. Kundens namn, org.nr och kontaktuppgifter läses via kopplingen
+ * (crmCallSelect bäddar in kundraden), så de kopieras inte in i samtalet.
+ *
+ * 🧨 `customer_id`, aldrig `prospect_id` — även för en kund i prospektläget. `crm_calls_insert_visible`
+ * kräver att en satt prospect_id pekar på en kund tilldelad den som skriver, så ett samtal på en
+ * kollegas prospekt hade nekats. Priset: `crm_calls_select_visible` har ingen customer_id-gren, så
+ * samtalet syns för den som loggade det och för admin, inte för kundens ansvariga säljare. Samma
+ * avvägning som samtalen på offerten (William 2026-09-18: acceptabelt).
+ */
+export function buildCustomerCallPayload(customerId: string, draft: CallLogDraft) {
+  const callAt = callAtToIso(draft.call_at);
+  return {
+    customer_id: customerId,
+    outcome: draft.outcome,
+    summary: draft.summary.trim(),
+    next_step: draft.next_step.trim() || null,
+    // Utelämnas när fältet är tomt — då sätter databasen tidpunkten till nu.
+    ...(callAt ? { call_at: callAt } : {}),
+  };
+}
+
+/** Nyast först, som routen ger dem — ett bakåtdaterat samtal hamnar på sin plats. */
+export function sortCallsNewestFirst(calls: RelatedCall[]): RelatedCall[] {
+  return [...calls].sort((a, b) => (a.call_at < b.call_at ? 1 : a.call_at > b.call_at ? -1 : 0));
+}
+
+/** "Att göra" (öppna) och "Klara" (klara och avbrutna). Ordningen inom varje del är serverns. */
+export function splitTasks(tasks: RelatedTask[]): { open: RelatedTask[]; closed: RelatedTask[] } {
+  return {
+    open: tasks.filter((t) => t.status === 'open'),
+    closed: tasks.filter((t) => t.status !== 'open'),
+  };
+}
+
+/** En öppen uppgift vars förfallodag har passerat. `todayIso` = svensk dag (stockholmTodayISO). */
+export function isTaskOverdue(task: Pick<RelatedTask, 'status' | 'due_date'>, todayIso: string): boolean {
+  return task.status === 'open' && Boolean(task.due_date) && (task.due_date as string) < todayIso;
 }
