@@ -76,8 +76,10 @@ const KIND_STYLE: Record<SystemNoticeKind, { strip: string; rail: string; dot: s
 type StripStyle = (typeof KIND_STYLE)[SystemNoticeKind];
 
 // Ramen alla remsor delar: bakgrund, vänsterkant och stängknappen. En ändring här (fokusring, mått) når alla sorter.
+// `tone="dark"` är för en remsa på mörk bakgrund: ljus text och en stängknapp som syns mot den.
 function StripFrame({
   style,
+  tone = 'light',
   role,
   onDismiss,
   dismissLabel,
@@ -85,14 +87,16 @@ function StripFrame({
   children,
 }: {
   style: StripStyle;
+  tone?: 'light' | 'dark';
   role?: 'alert' | 'status';
   onDismiss?: () => void;
   dismissLabel: string;
   dismissTitle: string;
   children: React.ReactNode;
 }) {
+  const dark = tone === 'dark';
   return (
-    <div role={role} className={cn('relative flex items-start gap-2 border-b py-2 pl-4 pr-1 text-slate-800', style.strip)}>
+    <div role={role} className={cn('relative flex items-start gap-2 border-b py-2 pl-4 pr-1', dark ? 'text-white' : 'text-slate-800', style.strip)}>
       <span aria-hidden className={cn('absolute inset-y-0 left-0 w-1', style.rail)} />
       {children}
       {onDismiss ? (
@@ -101,7 +105,13 @@ function StripFrame({
           onClick={onDismiss}
           aria-label={dismissLabel}
           title={dismissTitle}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-lg leading-none text-slate-500 transition hover:bg-black/5 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]"
+          className={cn(
+            'grid h-11 w-11 shrink-0 place-items-center rounded-lg text-lg leading-none transition',
+            // Mörk: den globala `button:focus-visible`-ringen (--ek-accent) försvinner mot grönt — byt bara färgen.
+            dark
+              ? 'text-white/70 hover:bg-white/10 hover:text-white focus-visible:outline-white'
+              : 'text-slate-500 hover:bg-black/5 hover:text-slate-800 focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]',
+          )}
         >
           ×
         </button>
@@ -168,22 +178,33 @@ export function SystemNoticeStrip({
   );
 }
 
-// "Appen har uppdaterats": servern kör en annan version än flikens kod. Lugn som informationen — det är inget fel, bara
-// ett erbjudande. Texten ber om att spara först, med flit: bara offerten och arbetsordern har en vakt som frågar vid
-// omladdning (useLeaveGuard, beforeunload) — tidrapporten och adminformulären laddas om utan fråga.
+// Versionsremsan i appens mörkgröna: den enda remsan där användaren behöver göra något, och i sidans salviaton smälte
+// den in (William 2026-10-22). Grönt och inte en varningsfärg — det är inget fel. Ljus salvia för prick och kant, för
+// --ek-accent försvinner mot den mörka bakgrunden.
+const APP_UPDATED_STYLE: StripStyle = {
+  strip: 'border-[color:var(--ek-green-strong)] bg-[color:var(--ek-green)]',
+  rail: 'bg-[#9cc9a8]',
+  dot: 'bg-[#9cc9a8]',
+  chip: '',
+  live: false,
+};
+
+// "Appen har uppdaterats": servern kör en annan version än flikens kod. Ett erbjudande, inget fel. Texten ber om att
+// spara först, med flit: bara offerten och arbetsordern har en vakt som frågar vid omladdning (useLeaveGuard,
+// beforeunload) — tidrapporten och adminformulären laddas om utan fråga.
 export function AppUpdatedStrip({ onReload, onLater }: { onReload: () => void; onLater: () => void }) {
-  const style = { ...KIND_STYLE.info, live: false };
+  const style = APP_UPDATED_STYLE;
   return (
-    <StripFrame style={style} role="status" onDismiss={onLater} dismissLabel="Påminn mig senare" dismissTitle="Döljs tills nästa uppdatering">
-      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 py-1">
+    <StripFrame style={style} tone="dark" role="status" onDismiss={onLater} dismissLabel="Påminn mig senare" dismissTitle="Döljs tills nästa uppdatering">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 py-2">
         <p className="m-0 min-w-0 flex-1 basis-64 text-[13px] leading-snug">
           <StripLabel style={style}>Appen har uppdaterats</StripLabel>
-          <span>Spara det du håller på med och ladda om sidan för att få den senaste versionen.</span>
+          <span className="text-white/80">Spara det du håller på med och ladda om sidan för att få den senaste versionen.</span>
         </p>
         <button
           type="button"
           onClick={onReload}
-          className="inline-flex h-9 shrink-0 items-center rounded-lg bg-[color:var(--ek-green)] px-3 text-[13px] font-semibold text-white transition hover:bg-[color:var(--ek-green-strong)] focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)] focus-visible:ring-offset-2"
+          className="inline-flex h-9 shrink-0 items-center rounded-lg bg-[#f1f5ee] px-3 text-[13px] font-semibold text-[color:var(--ek-green)] transition hover:bg-white focus-visible:outline-white"
         >
           Ladda om
         </button>
