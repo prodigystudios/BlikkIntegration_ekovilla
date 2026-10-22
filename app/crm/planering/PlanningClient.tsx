@@ -33,7 +33,7 @@ import WeekBoard from './WeekBoard';
 import MonthGrid from './MonthGrid';
 import type { SegmentActions } from './jobCard';
 import { useJobMargins } from './useJobMargins';
-import { dayOrderLookup, nextSortIndexOnDay, reorderOnDay } from '@/lib/domains/planning/order';
+import { dayOrderLookup, reorderOnDay } from '@/lib/domains/planning/order';
 import { backlogWithOrderStatus, segmentsWithOrderStatus } from '@/lib/domains/planning/orderStatus';
 import { withPlacementAdded, withPlacementMoved, withPlacementRemoved } from '@/lib/domains/planning/backlogPlacements';
 import ConfirmModal from './ConfirmModal';
@@ -683,7 +683,7 @@ export default function PlanningClient({
   );
 
   const move = useCallback(
-    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; sort_index?: number; job_type?: string | null; on_hold?: boolean }) => {
+    async (id: string, patch: { truck_id?: string; start_day?: string; end_day?: string; job_type?: string | null; on_hold?: boolean }) => {
       // Optimistic: reflect the change locally at once so the card doesn't snap back to its old value
       // while the PATCH is in flight (and a full refetch lands). Re-sync from the server only on error.
       setSegments((cur) =>
@@ -694,7 +694,6 @@ export default function PlanningClient({
                 ...(patch.truck_id !== undefined ? { truck_id: patch.truck_id } : {}),
                 ...(patch.start_day !== undefined ? { start_day: patch.start_day } : {}),
                 ...(patch.end_day !== undefined ? { end_day: patch.end_day } : {}),
-                ...(patch.sort_index !== undefined ? { sort_index: patch.sort_index } : {}),
                 ...(patch.job_type !== undefined ? { job_type: patch.job_type } : {}),
                 ...(patch.on_hold !== undefined ? { on_hold: patch.on_hold } : {}),
               }
@@ -825,18 +824,6 @@ export default function PlanningClient({
     e.dataTransfer.effectAllowed = 'move';
   }, []);
 
-  // Ett kort som släpps på en ANNAN dag eller bil köar sist där, precis som en ny placering. Utan det
-  // tog det med sig sitt gamla nummer, och ett jobb som var etta på måndagen hamnade före jobbet
-  // besättningen var mitt uppe i på torsdagen. Samma dag och bil = ingen flytt i kön, numret står kvar.
-  // Räknat på `segments` (alla), inte de synliga — kön är verklig även för det sökningen döljer.
-  const queueOnNewDay = useCallback(
-    (d: { id: string; start: string; truckId: string }, truckId: string, dayISO: string): { sort_index?: number } =>
-      d.start === dayISO && d.truckId === truckId
-        ? {}
-        : { sort_index: nextSortIndexOnDay(segments.filter((s) => s.id !== d.id), truckId, dayISO) },
-    [segments],
-  );
-
   const onCellDrop = useCallback(
     (_e: React.DragEvent, truckId: string, dayISO: string) => {
       const d = dragRef.current;
@@ -848,10 +835,10 @@ export default function PlanningClient({
       }
       else {
         const span = daysBetweenInclusive(d.start, d.end);
-        void move(d.id, { truck_id: truckId, start_day: dayISO, end_day: addDaysISO(dayISO, span - 1), ...queueOnNewDay(d, truckId, dayISO) });
+        void move(d.id, { truck_id: truckId, start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
       }
     },
-    [place, move, backlog, queueOnNewDay],
+    [place, move, backlog],
   );
 
   const onMonthDayDrop = useCallback(
@@ -862,10 +849,10 @@ export default function PlanningClient({
       if (d.kind === 'backlog') setTruckPicker({ dayISO, scopeKey: d.id });
       else {
         const span = daysBetweenInclusive(d.start, d.end);
-        void move(d.id, { start_day: dayISO, end_day: addDaysISO(dayISO, span - 1), ...queueOnNewDay(d, d.truckId, dayISO) });
+        void move(d.id, { start_day: dayISO, end_day: addDaysISO(dayISO, span - 1) });
       }
     },
-    [move, queueOnNewDay],
+    [move],
   );
 
   const onBacklogDrop = useCallback(

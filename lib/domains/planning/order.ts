@@ -89,8 +89,11 @@ export function sharedDayOrders(
  * The sort_index a job placed on `day` should get: one past every job already on the truck that
  * day, so the order jobs are placed in IS the order they're run in — and a job continuing from
  * yesterday stays ahead of the newcomer. Pure so the rule is testable; placeSegment feeds it the
- * covering rows and the board feeds it its own when a card is dropped on a new day. Re-filters on
- * truck + day, so a broader read can't put the job in the wrong queue.
+ * covering rows. Re-filters on truck + day, so a broader read can't put the job in the wrong queue.
+ *
+ * ⛔ NOT FOR A MOVE. A job dragged to another day or truck keeps its sort_index — William's decision
+ * 2026-08-14: they rarely run several jobs per truck and day, and the planner checks the order after
+ * a move rather than the app inventing one. Ask before changing it.
  *
  * Only the START day counts, on purpose. On its later days a multi-day job is the one continuing,
  * and continuing jobs go first on a tie — so it may well land ahead of jobs already booked there.
