@@ -100,6 +100,7 @@ export default function ScheduleStopCard({
         className="-my-2 inline-block py-2 font-medium text-[#2f6b45] underline underline-offset-2 hover:text-[#1a3f26]"
       >
         Vägbeskrivning
+        <span className="sr-only"> (öppnas i ny flik)</span>
       </a>,
     );
   }
@@ -134,7 +135,7 @@ export default function ScheduleStopCard({
   const mainClass = cn(
     'inline-flex items-center justify-center whitespace-nowrap py-0 text-sm font-semibold text-white no-underline',
     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]',
-    compact ? 'h-[52px] gap-1.5 rounded-none px-2 focus-visible:ring-inset' : 'h-11 gap-2 rounded-xl border border-transparent px-4 focus-visible:ring-offset-2',
+    compact ? 'h-[52px] gap-1.5 rounded-none px-2 focus-visible:ring-inset max-[359px]:text-[13px]' : 'h-11 gap-2 rounded-xl border border-transparent px-4 focus-visible:ring-offset-2',
   );
   const arrow = <span className={cn('inline-flex', compact && 'max-[359px]:hidden')}><ArrowIcon /></span>;
   const main = href ? (
@@ -164,7 +165,7 @@ export default function ScheduleStopCard({
       className={cn(
         'inline-flex items-center justify-center whitespace-nowrap bg-white py-0 text-sm font-semibold text-[#1a3f26] hover:bg-[#f4f7f2]',
         compact
-          ? cn('h-[52px] gap-1.5 rounded-none border-0 px-2 focus-visible:outline-offset-[-3px]', main && 'border-r border-[#e0e8dc]')
+          ? cn('h-[52px] gap-1.5 rounded-none border-0 px-2 focus-visible:outline-offset-[-3px] max-[359px]:text-[13px]', main && 'border-r border-[#e0e8dc]')
           : 'h-11 gap-2 rounded-xl border border-[#c6dccd] px-4',
       )}
     >
@@ -194,11 +195,8 @@ export default function ScheduleStopCard({
         </span>
       )}
       {material && (
-        <span
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold"
-          style={{ background: material.bg, color: material.fg }}
-        >
-          <span aria-hidden="true" className="h-[7px] w-[7px] rounded-full" style={{ background: material.dot }} />
+        <span className={cn('inline-flex shrink-0 items-center gap-1.5 rounded-full px-[9px] py-[3px] text-xs font-semibold', material.className)}>
+          <span aria-hidden="true" className={cn('h-[7px] w-[7px] rounded-full', material.dotClassName)} />
           {material.label}
         </span>
       )}
@@ -438,7 +436,7 @@ function BagIcon() {
 
 function ArrowIcon() {
   return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
       <path d="M5 12h14" />
       <path d="M13 6l6 6-6 6" />
     </svg>
@@ -447,7 +445,7 @@ function ArrowIcon() {
 
 function ClockIcon() {
   return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false" className="shrink-0">
       <circle cx="12" cy="12" r="8" />
       <path d="M12 8v4l3 2" />
     </svg>

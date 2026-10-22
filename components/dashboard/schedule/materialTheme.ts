@@ -13,7 +13,16 @@ export function getMaterialTheme(jobType?: string | null): MaterialTheme {
   return { accent: '#64748b', badgeBg: '#f1f5f9', badgeFg: '#334155', label: null };
 }
 
-export type MaterialPill = { label: string; fg: string; bg: string; dot: string };
+// Etikettens färger som Tailwind-klasser, inte som inline-stil (FRONTEND_SYSTEM: upprepade färgval
+// hör inte hemma i `style`). Samma värden som getMaterialTheme. Klasserna står ordagrant här så att
+// Tailwind hittar dem — en sammansatt sträng (`bg-[${hex}]`) hade aldrig genererats.
+const PILL_CLASSES = {
+  ekovilla: { className: 'bg-[#dcfce7] text-[#166534]', dotClassName: 'bg-[#16a34a]' },
+  vitull: { className: 'bg-[#e0f2fe] text-[#075985]', dotClassName: 'bg-[#0284c7]' },
+  neutral: { className: 'bg-[#f1f5f9] text-[#334155]', dotClassName: 'bg-[#64748b]' },
+} as const;
+
+export type MaterialPill = { label: string; className: string; dotClassName: string };
 
 /**
  * Etiketten på stoppkortets metarad.
@@ -31,10 +40,10 @@ export type MaterialPill = { label: string; fg: string; bg: string; dot: string 
  */
 export function materialPill(jobType?: string | null): MaterialPill {
   const theme = getMaterialTheme(jobType);
-  const base = { fg: theme.badgeFg, bg: theme.badgeBg, dot: theme.accent };
-  if (theme.label) return { ...base, label: theme.label };
+  if (theme.label === 'Ekovilla') return { ...PILL_CLASSES.ekovilla, label: theme.label };
+  if (theme.label === 'Vitull') return { ...PILL_CLASSES.vitull, label: theme.label };
   // Okända nycklar (en typ som admin lagt till eller tagit bort) kommer tillbaka som sin råa nyckel.
   const type = resolveJobTypeFrom(DEFAULT_JOB_TYPES, jobType);
-  if (type) return { ...base, label: type.label.charAt(0).toUpperCase() + type.label.slice(1) };
-  return { ...base, label: 'Material ej angivet' };
+  if (type) return { ...PILL_CLASSES.neutral, label: type.label.charAt(0).toUpperCase() + type.label.slice(1) };
+  return { ...PILL_CLASSES.neutral, label: 'Material ej angivet' };
 }

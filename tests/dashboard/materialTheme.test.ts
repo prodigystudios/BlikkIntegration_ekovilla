@@ -7,7 +7,7 @@ describe('materialPill', () => {
   it('känner igen materialen i båda planeringarnas form', () => {
     expect(materialPill('ekovilla').label).toBe('Ekovilla');
     expect(materialPill('Ekovilla').label).toBe('Ekovilla');
-    expect(materialPill('vitull')).toEqual({ label: 'Vitull', fg: '#075985', bg: '#e0f2fe', dot: '#0284c7' });
+    expect(materialPill('vitull')).toEqual({ label: 'Vitull', className: 'bg-[#e0f2fe] text-[#075985]', dotClassName: 'bg-[#0284c7]' });
   });
 
   it('skriver en jobbtyp som inte är ett material med sitt namn, inte som ett saknat material', () => {
@@ -17,7 +17,7 @@ describe('materialPill', () => {
   });
 
   it('säger i klartext när materialet saknas', () => {
-    expect(materialPill(null)).toEqual({ label: 'Material ej angivet', fg: '#334155', bg: '#f1f5f9', dot: '#64748b' });
+    expect(materialPill(null)).toEqual({ label: 'Material ej angivet', className: 'bg-[#f1f5f9] text-[#334155]', dotClassName: 'bg-[#64748b]' });
     expect(materialPill('  ').label).toBe('Material ej angivet');
   });
 });
