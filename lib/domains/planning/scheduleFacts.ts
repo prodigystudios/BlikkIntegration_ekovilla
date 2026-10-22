@@ -33,6 +33,9 @@ const DONE_STATUSES = new Set(['completed', 'invoiced']);
  * Slutrapporten räknas med för att den kommer FÖRST: besättningen skickar den när de blåst klart,
  * medan kontoret sätter Klar senare. Utan den hade dagens sista stopp stått kvar som ogjort tills
  * någon på kontoret hann ikapp.
+ *
+ * 🧨 Anroparen skickar `hasFinalReport: false` för en placering på en UPPDELAD order — se
+ * buildScheduleFacts.
  */
 export function isScheduleJobDone(status: string | null | undefined, hasFinalReport: boolean): boolean {
   return hasFinalReport || DONE_STATUSES.has((status || '').trim());
@@ -68,7 +71,10 @@ export function buildScheduleFacts(rows: FeedRow[], segments: OpsSegment[], crew
       staged,
       material: job?.material ?? null,
       reported: segment.sacks_reported,
-      done: !!job && isScheduleJobDone(job.status, segment.sacks_final),
+      // 🧨 Slutrapporten gäller HELA ORDERN (säckboken är per arbetsorder). På en uppdelad order hade
+      // etapp 1:s egenkontroll annars gjort nästa veckas etapp 2 "Klart" — ett jobb besättningen
+      // har kvar, med bock och utan fylld siffra. Där räknas bara orderns status.
+      done: !!job && isScheduleJobDone(job.status, staged ? false : segment.sacks_final),
       crew,
     };
   }

@@ -110,6 +110,15 @@ describe('buildScheduleFacts', () => {
     expect(factOf(buildScheduleFacts([row()], [segment({ sacks_final: true })], noCrew)).done).toBe(true);
   });
 
+  it('en uppdelad order blir inte klar av slutrapporten — den gäller hela ordern, inte etappen', () => {
+    const stage = { id: 'st-2', number: 2, title: 'Snedtaket' };
+    const stage2 = segment({ job: job({ stage, order_total_sacks: 300 }), sacks_final: true });
+    expect(factOf(buildScheduleFacts([row()], [stage2], noCrew)).done).toBe(false);
+    // Orderns status gäller fortfarande: är hela ordern klar är etappen det också.
+    const completed = segment({ job: job({ stage, status: 'completed' }) });
+    expect(factOf(buildScheduleFacts([row()], [completed], noCrew)).done).toBe(true);
+  });
+
   it('en platshållare har inga säckar och är aldrig klar, men har sitt team', () => {
     const sources: CrewSources = { ...noCrew, segmentCrew: new Map([['seg-1', [{ id: 'c1', member_id: 'u1', member_name: 'Anna' }]]]) };
     const facts = buildScheduleFacts([row()], [segment({ work_order_id: null, job: null, sacks_final: true })], sources);

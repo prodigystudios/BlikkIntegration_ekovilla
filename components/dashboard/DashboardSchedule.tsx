@@ -700,9 +700,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
   // Kortets fakta i en form för båda källorna. CRM-jobben ur facts-rutten; de gamla Blikk-raderna ur
   // planning_*-tabellerna som förut (säckarna ur raden, rapporterat och extra team per segment).
   const stopFacts = (it: any): StopFacts => {
-    if (isCrmItem(it)) return (it.segment_id && it.job_day && crmFacts[scheduleFactKey(it.segment_id, it.job_day)]
-      ? crmFacts[scheduleFactKey(it.segment_id, it.job_day)]
-      : NO_STOP_FACTS);
+    if (isCrmItem(it)) return (it.segment_id && it.job_day && crmFacts[scheduleFactKey(it.segment_id, it.job_day)]) || NO_STOP_FACTS;
     return {
       ...NO_STOP_FACTS,
       plannedSacks: typeof it.bag_count === 'number' ? it.bag_count : null,
@@ -857,7 +855,11 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
           {days.map(({ day, trucks }) => (
             <div key={day} className={cn('grid', compact ? 'gap-4' : 'gap-5')}>
               {weekView && <h3 className="m-0 text-base font-bold text-slate-900">{scheduleDayLabel(day)}</h3>}
-              {trucks.map((group) => (
+              {trucks.map((group) => {
+                // Bilens nästa stopp, en gång per bil — det första som inte är klart. Bara på en rutt:
+                // jobben utan lastbil har ingen ordning och ingen fylld siffra.
+                const nextIndex = group.truck == null ? -1 : nextOpenStopIndex(group.stops, (s) => stopFacts(s.row).done);
+                return (
                 <ScheduleTruckGroup
                   key={group.truck ?? ''}
                   truck={group.truck}
@@ -881,7 +883,7 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                         compact={compact}
                         headingLevel={weekView ? 5 : 4}
                         facts={facts}
-                        next={stop != null && i === nextOpenStopIndex(group.stops, (s) => stopFacts(s.row).done)}
+                        next={i === nextIndex}
                         callContact={isCrmItem(it) && it.work_order_id ? callContacts[it.work_order_id] ?? null : null}
                         clipKey={cardKey}
                         expanded={expanded}
@@ -893,7 +895,8 @@ export default function DashboardSchedule({ compact = false, onReportTime }: { c
                     );
                   })}
                 </ScheduleTruckGroup>
-              ))}
+                );
+              })}
             </div>
           ))}
         </div>
