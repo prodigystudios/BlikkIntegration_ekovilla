@@ -23,9 +23,8 @@ import {
   customerEditDiscountIssue,
   type CustomerEditDraft,
 } from './customerEditPatch';
+import { customerDisplayName, customerInitials } from '@/app/crm/lib/customerDisplay';
 import {
-  customerDisplayName,
-  customerInitials,
   formatSek,
   resolveCustomerTab,
   tabCountLabel,
@@ -868,7 +867,7 @@ export default function CustomerDetailClient({
         <header className="flex flex-wrap items-start justify-between gap-5">
           <div className="flex min-w-0 items-center gap-4">
             <span className="inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-[14px] bg-[color:var(--ek-green)] text-xl font-bold text-white" aria-hidden>
-              {customerInitials(displayName)}
+              {customerInitials(customer)}
             </span>
             <div className="min-w-0">
               <h1 className="m-0 text-[28px] font-bold leading-tight tracking-tight text-slate-900 [overflow-wrap:anywhere]">{displayName}</h1>

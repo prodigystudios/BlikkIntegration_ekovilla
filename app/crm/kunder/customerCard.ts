@@ -67,20 +67,13 @@ export type RelatedWorkOrder = { id: string; order_number: string; project_name:
 export type RelatedCall = { id: string; outcome: 'no_answer' | 'follow_up' | 'positive' | 'negative'; summary: string; call_at: string; contact_name: string | null };
 export type RelatedTask = { id: string; title: string; status: 'open' | 'done' | 'cancelled'; due_date: string | null; priority: 'low' | 'normal' | 'high' };
 
-export function customerDisplayName(c: Pick<Customer, 'customer_type' | 'company_name' | 'first_name' | 'last_name'>): string {
-  if (c.customer_type === 'business') return c.company_name || 'Okänt företag';
-  return [c.first_name, c.last_name].filter(Boolean).join(' ') || 'Okänd kund';
-}
+// Kundens namn och avatar kommer ur app/crm/lib/customerDisplay.ts — samma som kundregistret, så att
+// samma kund ser likadan ut i listan och på kortet.
 
-// Bolagsformen räknas inte som ett ord i initialerna: "Norrbygg Entreprenad AB" ska bli NE, inte NA.
-const LEGAL_FORM_WORDS = new Set(['ab', 'hb', 'kb', 'ek', 'för', 'aktiebolag', 'handelsbolag', 'kommanditbolag', 'oy', 'as', 'aps', 'gmbh', 'ltd']);
-
-/** Två bokstäver till avataren. "Norrbygg Entreprenad AB" → "NE", "Anna Andersson" → "AA". */
-export function customerInitials(name: string): string {
-  const words = name
-    .split(/[\s\-–&,.()]+/)
-    .filter((w) => w && /\p{L}/u.test(w) && !LEGAL_FORM_WORDS.has(w.toLowerCase()));
-  const letters = words.slice(0, 2).map((w) => (w.match(/\p{L}/u)?.[0] ?? '').toUpperCase()).join('');
+/** En kontaktpersons initialer: första bokstaven i de två första orden. "Lars Nordin" → "LN". */
+export function contactInitials(name: string): string {
+  const words = name.trim().normalize('NFC').split(/\s+/).filter(Boolean);
+  const letters = words.slice(0, 2).map((w) => Array.from(w)[0] ?? '').join('').toUpperCase();
   return letters || '?';
 }
 

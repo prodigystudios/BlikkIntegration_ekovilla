@@ -4,7 +4,7 @@ import { crm, quoteStatusMeta, workOrderStatusClass, workOrderStatusLabel, type 
 import { cn } from '@/lib/shared/cn';
 import { formatCurrency, formatDate, formatDateTime } from '@/app/crm/lib/format';
 import { PhoneLink, EmailLink } from '@/app/crm/components/ContactLinks';
-import { customerInitials, type CustomerContact, type RelatedCall, type RelatedQuote, type RelatedTask, type RelatedWorkOrder } from './customerCard';
+import { contactInitials, type CustomerContact, type RelatedCall, type RelatedQuote, type RelatedTask, type RelatedWorkOrder } from './customerCard';
 import { cardLinkButton, EmptyState, InfoCard } from './CustomerCardUi';
 
 // Kundkortets flikar utöver Översikt. Ren visning — hämtning, sparning och modaler bor i
@@ -185,7 +185,7 @@ export function ContactsTab({ contacts, onAdd, onEdit, onDelete }: {
             <li key={contact.id} className={cn(crm.sunken, 'flex flex-col gap-3 rounded-xl p-4')}>
               <div className="flex items-center gap-3">
                 <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#dfe6dd] text-sm font-semibold text-[color:var(--ek-green)]" aria-hidden>
-                  {customerInitials(contact.name)}
+                  {contactInitials(contact.name)}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="m-0 truncate text-[15px] font-semibold text-slate-900">{contact.name}</p>

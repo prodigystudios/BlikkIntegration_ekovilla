@@ -1,8 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   addressLines,
-  customerDisplayName,
-  customerInitials,
+  contactInitials,
   deliveryAddressDisplay,
   invoiceAddressDisplay,
   resolveCustomerTab,
@@ -11,30 +10,18 @@ import {
 
 const visit = { street: 'Industrivägen 12', postal_code: '903 61', city: 'Umeå' };
 
-describe('customerInitials', () => {
-  it('hoppar över bolagsformen', () => {
-    expect(customerInitials('Norrbygg Entreprenad AB')).toBe('NE');
-    expect(customerInitials('AB Exempelbolaget')).toBe('E');
+describe('contactInitials', () => {
+  it('de två första orden', () => {
+    expect(contactInitials('Lars Nordin')).toBe('LN');
+    expect(contactInitials('Anna-Karin von Platen')).toBe('AV');
   });
 
-  it('person: för- och efternamn', () => {
-    expect(customerInitials('Anna Andersson')).toBe('AA');
-  });
-
-  it('svenska tecken och siffror', () => {
-    expect(customerInitials('Ökentorps Åkeri')).toBe('ÖÅ');
-    expect(customerInitials('3M Svenska AB')).toBe('MS');
+  it('svenska tecken', () => {
+    expect(contactInitials('Örjan Åberg')).toBe('ÖÅ');
   });
 
   it('tomt namn ger ett frågetecken, aldrig en tom avatar', () => {
-    expect(customerInitials('')).toBe('?');
-  });
-});
-
-describe('customerDisplayName', () => {
-  it('faller tillbaka när namnet saknas', () => {
-    expect(customerDisplayName({ customer_type: 'business', company_name: null, first_name: null, last_name: null })).toBe('Okänt företag');
-    expect(customerDisplayName({ customer_type: 'private', company_name: null, first_name: 'Anna', last_name: null })).toBe('Anna');
+    expect(contactInitials('  ')).toBe('?');
   });
 });
 
