@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mergeMyJobs, type BlikkJobRow, type CrmJobRow } from '@/lib/domains/planning/myJobs';
+import { compareMyJobs, mergeMyJobs, type BlikkJobRow, type CrmJobRow } from '@/lib/domains/planning/myJobs';
 
 const blikk = (over: Partial<BlikkJobRow> = {}): BlikkJobRow => ({
   segment_id: 'seg-b1',
@@ -33,6 +33,7 @@ const crm = (over: Partial<CrmJobRow> = {}): CrmJobRow => ({
   customer_address: { street_address: 'Kontoret 9', postal_code: '111 22', city: 'Stockholm' },
   placeholder_title: null,
   work_description: null,
+  sort_index: 0,
   ...over,
 });
 
@@ -206,5 +207,38 @@ describe('mergeMyJobs', () => {
       );
       expect(merged.map((j) => j.day)).toEqual(['2026-08-10', '2026-08-11']);
     });
+  });
+});
+
+// ── Ordningen på dagen ───────────────────────────────────────────────────────
+// /mina-jobb sorterade dagen på ordernumret medan startsidan och tavlan följer planerarens ordning —
+// samma montörs dag i två olika ordningar (2026-10-22).
+describe('mergeMyJobs — planerarens ordning på dagen', () => {
+  const day = '2026-10-22';
+  const job = (over: Partial<CrmJobRow>) => crm({ job_day: day, start_day: day, end_day: day, truck: 'Bil 1', ...over });
+
+  it('följer planerarens ordning, inte ordernumret', () => {
+    const first = job({ segment_id: 'seg-b', fortnox_order_number: '2000', sort_index: 0 });
+    const second = job({ segment_id: 'seg-a', fortnox_order_number: '1000', sort_index: 1 });
+    expect(mergeMyJobs([], [second, first]).map((j) => j.ref)).toEqual(['#2000', '#1000']);
+  });
+
+  it('ställer jobbet som fortsätter från igår först när ordningen är lika', () => {
+    const continuing = job({ segment_id: 'seg-z', fortnox_order_number: '9000', start_day: '2026-10-21', sort_index: 2 });
+    const starting = job({ segment_id: 'seg-a', fortnox_order_number: '1000', sort_index: 2 });
+    expect(mergeMyJobs([], [starting, continuing]).map((j) => j.ref)).toEqual(['#9000', '#1000']);
+  });
+
+  it('jämför aldrig en Blikk-rads ordning med ett CRM-jobbs — de gamla raderna först', () => {
+    const oldRow = blikk({ job_day: day, start_day: day, order_number: '9999' });
+    const crmRow = job({ segment_id: 'seg-a', fortnox_order_number: '1000', sort_index: 0 });
+    expect(mergeMyJobs([oldRow], [crmRow]).map((j) => j.source)).toEqual(['blikk', 'crm']);
+    const [old] = mergeMyJobs([oldRow], []);
+    const [crmJob] = mergeMyJobs([], [crmRow]);
+    // Åt båda hållen. Utan källan först svarade jämförelsen olika beroende på vilken rad som kom
+    // först i paret (CRM-sidan på tavlans ordning, Blikk-sidan på ordernumret) — och sorteringen
+    // berodde då på vilka par den råkade jämföra.
+    expect(compareMyJobs(old, crmJob)).toBeLessThan(0);
+    expect(compareMyJobs(crmJob, old)).toBeGreaterThan(0);
   });
 });

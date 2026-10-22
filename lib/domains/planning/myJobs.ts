@@ -1,4 +1,5 @@
 import { workOrderRef, resolveJobAddress } from './display';
+import { compareBoardOrder } from './order';
 
 // Field cutover fas 1c — one feed, two worlds.
 //
@@ -47,6 +48,9 @@ export type CrmJobRow = {
   // Platshållarens egen rubrik + vad som ska göras. Bara satta när work_order_id är null.
   placeholder_title: string | null;
   work_description: string | null;
+  // Planerarens ordning på dagen (ops_segments.sort_index). Bara jämförbar med andra placeringar på
+  // samma bil samma dag — se compareScheduleItems.
+  sort_index: number | null;
 };
 
 export type MyJob = {
@@ -85,6 +89,10 @@ export type MyJob = {
    * `key` bär det redan, men inbakat i en sträng ingen får plocka isär.
    */
   segmentId: string | null;
+  // Placeringens startdag och planerarens ordning på dagen — det dagens CRM-jobb sorteras på, i samma
+  // ordning som planeringstavlan (se compareMyJobs). null på Blikk-rader.
+  startDay: string | null;
+  sortIndex: number | null;
 };
 
 const str = (v: unknown): string | null => {
@@ -106,6 +114,8 @@ function fromBlikk(row: BlikkJobRow): MyJob | null {
     key: `blikk:${str(row.segment_id) ?? projectId ?? 'x'}:${day}`,
     // Blikk-rader har ingen CRM-placering att scopa på; länken går via projectId.
     segmentId: null,
+    startDay: null,
+    sortIndex: null,
     source: 'blikk',
     day,
     // Legacy rows only ever carry the Blikk order number, and the old card rendered it as '#nnn'.
@@ -134,6 +144,8 @@ function fromCrm(row: CrmJobRow): MyJob | null {
   return {
     key: `crm:${row.segment_id}:${day}`,
     segmentId: row.segment_id,
+    startDay: str(row.start_day),
+    sortIndex: typeof row.sort_index === 'number' ? row.sort_index : null,
     source: 'crm',
     day,
     ref,
@@ -181,6 +193,8 @@ export type ScheduleItem = {
   work_order_id: string | null;
   // Vad som ska göras. Bara platshållare bär den; ett riktigt jobb har sin arbetsorder.
   work_description: string | null;
+  // Planerarens ordning på dagen. null = feeden saknade den (en databas före migreringen).
+  sort_index: number | null;
 };
 
 export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
@@ -201,7 +215,68 @@ export function crmJobToScheduleItem(row: CrmJobRow): ScheduleItem {
     source: 'crm',
     work_order_id: str(row.work_order_id),
     work_description: str(row.work_description),
+    sort_index: typeof row.sort_index === 'number' ? row.sort_index : null,
   };
+}
+
+/**
+ * Två CRM-jobb på samma bil samma dag, i den ordning planeringstavlan visar dem.
+ *
+ * ⚠️ SAMMA JÄMFÖRELSE SOM TAVLAN, inte en egen. Startsidan sorterade CRM-jobben på ordernumret, så
+ * planerarens "Ordning på dagen" nådde aldrig dem som kör jobben — kortets "1/2" var ordernumrets
+ * ordning. compareBoardOrder är sort_index → startdag → id: ett jobb som fortsätter från igår står
+ * först tills planeraren säger annat. Bilen jämförs av anroparen.
+ */
+export function compareScheduleItems(a: ScheduleItem, b: ScheduleItem): number {
+  return compareBoardOrder(boardOrderable(a), boardOrderable(b));
+}
+
+// Saknas talet (en feed före migreringen) blir alla lika, och startdagen avgör.
+const boardOrderable = (it: ScheduleItem) => ({ id: it.segment_id, start_day: it.start_day ?? '', sort_index: it.sort_index ?? 0 });
+
+// En rad ur den gamla feeden (get_my_jobs). Bara fälten ordningen läser.
+type LegacyScheduleRow = {
+  source?: undefined;
+  truck?: string | null;
+  order_number?: string | number | null;
+  project_name?: string | null;
+};
+export type ScheduleRow = ScheduleItem | LegacyScheduleRow;
+
+/**
+ * Startsidans ordning inom en dag: bil, sedan källan, sedan källans egen ordning.
+ *
+ * ⚠️ KÄLLAN FÖRE TALET. CRM-jobbens sort_index (ops_segments) och de gamla radernas
+ * (planning_segments) är två orelaterade talserier. Jämförda med varandra hade ett CRM-jobb hamnat
+ * före eller efter ett Blikk-jobb på samma bil av en slump, och jämförelsen blev icke-transitiv
+ * (CRM-par på id, blandade par på ordernummer) — sorteringen kunde då bero på i vilken ordning de två
+ * anropen svarade. De gamla raderna står först, som de i praktiken gjorde förut.
+ *
+ * `legacySortIndex` är de gamla radernas ordning, som startsidan hämtar separat ur planning_segments.
+ */
+export function compareScheduleRows(
+  a: ScheduleRow,
+  b: ScheduleRow,
+  legacySortIndex: (row: LegacyScheduleRow) => number | null,
+): number {
+  const ta = (a.truck || '').toString();
+  const tb = (b.truck || '').toString();
+  if (ta !== tb) return ta.localeCompare(tb, 'sv');
+  if (a.source === 'crm' || b.source === 'crm') {
+    if (a.source !== 'crm') return -1;
+    if (b.source !== 'crm') return 1;
+    return compareScheduleItems(a, b);
+  }
+  // De gamla Blikk-radernas ordning, oförändrad.
+  const sa = legacySortIndex(a);
+  const sb = legacySortIndex(b);
+  if (sa != null && sb != null && sa !== sb) return sa - sb;
+  if (sa != null && sb == null) return -1;
+  if (sb != null && sa == null) return 1;
+  const ao = (a.order_number || '').toString();
+  const bo = (b.order_number || '').toString();
+  if (ao && bo && ao !== bo) return ao.localeCompare(bo, 'sv');
+  return (a.project_name || '').toString().localeCompare((b.project_name || '').toString(), 'sv');
 }
 
 // Merge both feeds into one chronological list.
@@ -221,12 +296,28 @@ export function mergeMyJobs(
   const seen = new Set<string>();
   const deduped = rows.filter((j) => (seen.has(j.key) ? false : (seen.add(j.key), true)));
 
-  // Day first. Within a day, order is fully determined (day → ref → key) rather than left to the
-  // arrival order of two independent RPCs, so the list doesn't reshuffle between loads.
-  return deduped.sort(
-    (a, b) =>
-      a.day.localeCompare(b.day) ||
-      (a.ref ?? '').localeCompare(b.ref ?? '') ||
-      a.key.localeCompare(b.key),
-  );
+  return deduped.sort(compareMyJobs);
+}
+
+/**
+ * /mina-jobb: dag, bil, källa, och för CRM-jobben planerarens ordning — samma som startsidan och
+ * planeringstavlan (compareBoardOrder). Förut sorterades dagen på ordernumret, så två vyer över samma
+ * montörs dag visade jobben i olika ordning.
+ *
+ * Helt bestämd (till sist `key`) i stället för att lämnas åt i vilken ordning de två anropen svarade,
+ * så listan inte kastas om mellan laddningar. Källan före ordningen av samma skäl som i
+ * compareScheduleRows: två talserier som inte går att jämföra.
+ */
+export function compareMyJobs(a: MyJob, b: MyJob): number {
+  const byDay = a.day.localeCompare(b.day) || (a.truck ?? '').localeCompare(b.truck ?? '', 'sv');
+  if (byDay) return byDay;
+  if (a.source !== b.source) return a.source === 'blikk' ? -1 : 1;
+  if (a.source === 'crm') {
+    const byBoard = compareBoardOrder(
+      { id: a.segmentId ?? a.key, start_day: a.startDay ?? '', sort_index: a.sortIndex ?? 0 },
+      { id: b.segmentId ?? b.key, start_day: b.startDay ?? '', sort_index: b.sortIndex ?? 0 },
+    );
+    if (byBoard) return byBoard;
+  }
+  return (a.ref ?? '').localeCompare(b.ref ?? '') || a.key.localeCompare(b.key);
 }

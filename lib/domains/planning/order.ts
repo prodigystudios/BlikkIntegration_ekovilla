@@ -9,6 +9,9 @@
 // planning counted covering jobs (app/plannering/page.tsx, `startDay <= refDay && endDay >= refDay`).
 
 type Orderable = { id: string; truck_id: string; start_day: string; end_day: string; sort_index: number };
+// What the comparison reads. Narrower than Orderable so a caller outside the board (the dashboard feed)
+// passes only real fields, not a truck name dressed up as a truck id.
+type Ranked = Pick<Orderable, 'id' | 'start_day' | 'sort_index'>;
 
 /**
  * THE order jobs on the same truck and day are shown in: sort_index, then start day, then id.
@@ -25,7 +28,7 @@ type Orderable = { id: string; truck_id: string; start_day: string; end_day: str
  * yesterday is done before one starting today unless the planner says otherwise (decided
  * 2026-10-22). Within one start day it changes nothing — that order was sort_index, then id.
  */
-export function compareBoardOrder(a: Orderable, b: Orderable): number {
+export function compareBoardOrder(a: Ranked, b: Ranked): number {
   return a.sort_index - b.sort_index || a.start_day.localeCompare(b.start_day) || a.id.localeCompare(b.id);
 }
 
