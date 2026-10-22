@@ -17,3 +17,18 @@ export function safeReturnTo(raw: string | null | undefined): string | null {
 export function withReturnTo(href: string, returnTo: string): string {
   return `${href}${href.includes('?') ? '&' : '?'}returnTo=${encodeURIComponent(returnTo)}`;
 }
+
+/**
+ * Adressen utan sin EGEN returväg. Används där en returväg bäddas in i en annan (kortet → panelen →
+ * kortet …): utan den kodades hela kedjan in en nivå djupare vid varje varv (%2F → %252F → …) och
+ * adressen växte utan gräns. Kedjan blir högst en nivå djup — sista steget tillbaka kan landa i en
+ * lista i stället för längst bak, vilket är priset för en adress som håller.
+ */
+export function withoutNestedReturnTo(href: string): string {
+  const [path, query = ''] = href.split('?');
+  const params = new URLSearchParams(query);
+  if (!params.has('returnTo')) return href;
+  params.delete('returnTo');
+  const rest = params.toString();
+  return rest ? `${path}?${rest}` : path;
+}

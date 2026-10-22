@@ -30,13 +30,15 @@ function EditLink({ onClick }: { onClick: () => void }) {
 }
 
 export default function CustomerOverview({
-  customer, quotes, quotesLoading, newQuoteHref, onEdit, onShowQuotes, enriching, onFetchCompanyData,
+  customer, quotes, quotesLoading, newQuoteHref, linkBack, onEdit, onShowQuotes, enriching, onFetchCompanyData,
 }: {
   customer: Customer;
   quotes: RelatedQuote[];
   quotesLoading: boolean;
   /** null = ingen rätt att skapa offerter. */
   newQuoteHref: string | null;
+  /** Lägger på kortets adress som returväg, så att "Tillbaka" i offerten leder hit. */
+  linkBack: (href: string) => string;
   onEdit: (section: CustomerEditSection) => void;
   onShowQuotes: () => void;
   enriching: boolean;
@@ -55,7 +57,7 @@ export default function CustomerOverview({
   ].filter((f): f is { label: string; value: string } => f.value != null);
   // Listan kommer sorterad nyast först (created_desc, se CustomerDetailClient).
   const recentQuotes = quotes.slice(0, 2);
-  const quoteHref = (q: RelatedQuote) => `/crm/offerter?quote_id=${q.id}`;
+  const quoteHref = (q: RelatedQuote) => linkBack(`/crm/offerter?quote_id=${q.id}`);
   const recentQuoteColumns: Array<CrmTableColumn<RelatedQuote>> = [
     { header: 'Nr', className: 'hidden w-[7rem] tabular-nums text-slate-500 sm:table-cell', cell: (q) => documentRef(q.fortnox_offer_number, q.quote_number) },
     { header: 'Benämning', cell: (q) => <CustomerCell href={quoteHref(q)} customer={q.project_name || 'Offert utan namn'} project={quotePlace(q)} /> },

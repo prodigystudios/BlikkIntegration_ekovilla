@@ -121,8 +121,10 @@ function SearchField({ value, onChange, label, placeholder }: { value: string; o
   );
 }
 
-export function QuotesTab({ quotes, total, loading, sellerName, newQuoteHref }: {
+export function QuotesTab({ quotes, total, loading, sellerName, newQuoteHref, linkBack }: {
   quotes: RelatedQuote[];
+  /** Lägger på kortets adress som returväg. */
+  linkBack: (href: string) => string;
   total: number | null;
   loading: boolean;
   /** Ansvarig säljare per id, ur säljarkatalogen. */
@@ -134,7 +136,7 @@ export function QuotesTab({ quotes, total, loading, sellerName, newQuoteHref }: 
   const [filter, setFilter] = useState<QuoteStatusFilter>('alla');
   const shown = filterQuotes(quotes, search, filter);
   const sums = quoteSums(quotes);
-  const quoteHref = (q: RelatedQuote) => `/crm/offerter?quote_id=${q.id}`;
+  const quoteHref = (q: RelatedQuote) => linkBack(`/crm/offerter?quote_id=${q.id}`);
 
   const columns: Array<CrmTableColumn<RelatedQuote>> = [
     { header: 'Nr', className: quoteWidth.number, cell: (q) => documentRef(q.fortnox_offer_number, q.quote_number) },
@@ -214,8 +216,10 @@ export function QuotesTab({ quotes, total, loading, sellerName, newQuoteHref }: 
   );
 }
 
-export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrderHref }: {
+export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrderHref, linkBack }: {
   workOrders: RelatedWorkOrder[];
+  /** Lägger på kortets adress som returväg. */
+  linkBack: (href: string) => string;
   /** Kundens offerter — "Från offert" visar offertens nummer när den finns bland dem. */
   quotes: RelatedQuote[];
   total: number | null;
@@ -226,7 +230,7 @@ export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrder
   const [search, setSearch] = useState('');
   const shown = filterWorkOrders(workOrders, search);
   const quoteById = new Map(quotes.map((q) => [q.id, q]));
-  const orderHref = (wo: RelatedWorkOrder) => `/crm/arbetsorder/${wo.id}`;
+  const orderHref = (wo: RelatedWorkOrder) => linkBack(`/crm/arbetsorder/${wo.id}`);
 
   const columns: Array<CrmTableColumn<RelatedWorkOrder>> = [
     { header: 'Nr', className: orderWidth.number, cell: (wo) => documentRef(wo.fortnox_order_number, wo.order_number) },
@@ -268,7 +272,7 @@ export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrder
         if (!wo.quote_id) return '–';
         const q = quoteById.get(wo.quote_id);
         return (
-          <a href={`/crm/offerter?quote_id=${wo.quote_id}`} className={crm.link}>
+          <a href={linkBack(`/crm/offerter?quote_id=${wo.quote_id}`)} className={crm.link}>
             {q ? documentRef(q.fortnox_offer_number, q.quote_number) : 'Offert'}
           </a>
         );
@@ -303,8 +307,10 @@ export function WorkOrdersTab({ workOrders, quotes, total, loading, newWorkOrder
   );
 }
 
-export function CallsTab({ calls, loading, sellerName, onLogCall, seesAllCalls }: {
+export function CallsTab({ calls, loading, sellerName, onLogCall, seesAllCalls, linkBack }: {
   calls: RelatedCall[];
+  /** Lägger på kortets adress som returväg. */
+  linkBack: (href: string) => string;
   loading: boolean;
   sellerName: (id: string | null) => string | null;
   /** null = ingen rätt att logga samtal (crm.call.write), eller listan laddar. */
@@ -338,7 +344,7 @@ export function CallsTab({ calls, loading, sellerName, onLogCall, seesAllCalls }
                       {who ? <span className="text-xs text-slate-600">{who}</span> : null}
                     </div>
                     <p className="m-0 mt-1.5 text-sm leading-relaxed text-slate-800">
-                      <a href={`/crm/samtal?call_id=${call.id}`} className="text-inherit no-underline hover:underline">{call.summary}</a>
+                      <a href={linkBack(`/crm/samtal?call_id=${call.id}`)} className="text-inherit no-underline hover:underline">{call.summary}</a>
                     </p>
                     {call.next_step ? <p className="m-0 mt-1 text-[13px] text-slate-600">Nästa steg: {call.next_step}</p> : null}
                   </div>
@@ -356,8 +362,9 @@ export function CallsTab({ calls, loading, sellerName, onLogCall, seesAllCalls }
   );
 }
 
-function TaskRow({ task, currentUserId, canWrite, busy, todayIso, onToggle, onEdit }: {
+function TaskRow({ task, currentUserId, canWrite, busy, todayIso, onToggle, onEdit, linkBack }: {
   task: RelatedTask;
+  linkBack: (href: string) => string;
   currentUserId: string | null;
   canWrite: boolean;
   busy: boolean;
@@ -403,7 +410,7 @@ function TaskRow({ task, currentUserId, canWrite, busy, todayIso, onToggle, onEd
         ) : (
           // Rader man inte får skriva i öppnas på uppgiftssidan, som innan kortet fick egna formulär.
           <a
-            href={`/crm/uppgifter?task_id=${task.id}`}
+            href={linkBack(`/crm/uppgifter?task_id=${task.id}`)}
             className={cn('text-sm font-medium no-underline hover:underline', closedRow ? 'text-slate-500 line-through' : 'text-slate-900')}
           >
             {task.title}
@@ -422,8 +429,10 @@ function TaskRow({ task, currentUserId, canWrite, busy, todayIso, onToggle, onEd
   );
 }
 
-export function TasksTab({ tasks, loading, currentUserId, canWrite, updatingIds, todayIso, onCreate, onToggle, onEdit }: {
+export function TasksTab({ tasks, loading, currentUserId, canWrite, updatingIds, todayIso, onCreate, onToggle, onEdit, linkBack }: {
   tasks: RelatedTask[];
+  /** Lägger på kortets adress som returväg. */
+  linkBack: (href: string) => string;
   loading: boolean;
   currentUserId: string | null;
   /** crm.write — PATCH- och POST-rutten gatar på den. */
@@ -454,14 +463,14 @@ export function TasksTab({ tasks, loading, currentUserId, canWrite, updatingIds,
             <p className="m-0 text-sm text-slate-600">Inget att göra just nu.</p>
           ) : (
             <ul className="m-0 list-none overflow-hidden rounded-xl border border-[#e0e8dc] p-0">
-              {open.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} />)}
+              {open.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} linkBack={linkBack} />)}
             </ul>
           )}
           {closed.length > 0 ? (
             <>
               <h3 className="m-0 mb-2.5 mt-6 text-[13px] font-semibold text-slate-600">Klara</h3>
               <ul className={cn(crm.sunken, 'm-0 list-none overflow-hidden rounded-xl p-0')}>
-                {closed.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} />)}
+                {closed.map((task) => <TaskRow key={task.id} task={task} currentUserId={currentUserId} canWrite={canWrite} busy={updatingIds.includes(task.id)} todayIso={todayIso} onToggle={onToggle} onEdit={onEdit} linkBack={linkBack} />)}
               </ul>
             </>
           ) : null}
