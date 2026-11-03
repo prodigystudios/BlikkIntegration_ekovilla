@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { crm } from '@/app/crm/lib/crmTokens';
 
 // Fältvyns bildspråk — samma som startsidans stoppkort (INSTALLATOR_UX_UPPGRADERING_PLAN.md):
 // vita kort utan skugga på den mjuka sidbakgrunden, rubriker i versaler, allt tryckbart minst 44 px.
@@ -9,8 +10,8 @@ import type { ReactNode } from 'react';
 
 export const FIELD_CARD = 'rounded-[18px] border border-solid border-[color:var(--ui-border-subtle)] bg-white p-4';
 
-/** Rubriken på ett kort. 13 px, versaler — designens sektionsrubrik. */
-export const FIELD_SECTION_TITLE = 'm-0 text-[13px] font-semibold uppercase tracking-[0.02em] text-slate-600';
+/** Rubriken på ett kort. 13 px, versaler — designens sektionsrubrik. Samma token som säck- och momentkorten. */
+export const FIELD_SECTION_TITLE = crm.fieldSectionTitle;
 
 /** Klassen de delade korten (säckar, framdrift, kommentarer) får via `className`, så Info-fliken bär ett kortspråk. */
 export const FIELD_SHARED_CARD = 'rounded-[18px] border-[color:var(--ui-border-subtle)] bg-white p-4 shadow-none';
@@ -57,5 +58,17 @@ export const ChecklistIcon = () => (
     <rect x="5" y="4" width="14" height="17" rx="2" />
     <path d="M9 4h6v3H9z" />
     <path d="M9 13l2 2 4-4" />
+  </Icon>
+);
+export const ClockIcon = () => (
+  <Icon>
+    <circle cx="12" cy="12" r="8" />
+    <path d="M12 8v4l3 2" />
+  </Icon>
+);
+export const SackIcon = () => (
+  <Icon>
+    <path d="M6 7h12l1 13H5z" />
+    <path d="M9 7a3 3 0 0 1 6 0" />
   </Icon>
 );

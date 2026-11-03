@@ -3,6 +3,7 @@ import {
   groupProgressReports,
   normalizeLocationKey,
   progressLocationSuggestions,
+  progressGroupPercent,
   progressWorkItemsFromLineItems,
   resolveProgressEntry,
   UNSPECIFIED_LOCATION_LABEL,
@@ -326,5 +327,36 @@ describe('platsnormalisering och förslag', () => {
         { location: ' Hus A ' },
       ]),
     ).toEqual(['Hus B', 'Hus A']);
+  });
+});
+
+describe('progressGroupPercent', () => {
+  const workItems: ProgressWorkItem[] = [
+    { lineItemId: 'a', label: 'Landgång', unit: 'm', planned: 120, writtenOff: false },
+    { lineItemId: 'b', label: 'Brandmatta', unit: 'st', planned: 4, writtenOff: false },
+    { lineItemId: 'c', label: 'Sarg', unit: 'm', planned: null, writtenOff: false },
+    { lineItemId: 'av', label: 'Avskriven landgång', unit: 'm', planned: 30, writtenOff: true },
+  ];
+  const percentOf = (lineItemId: string | null, quantity: number, work_item = 'Landgång') => {
+    const [group] = groupProgressReports([ROW({ line_item_id: lineItemId, work_item, quantity })], workItems);
+    return progressGroupPercent(group);
+  };
+
+  it('räknar andelen av det sålda', () => {
+    expect(percentOf('a', 30)).toBe(25);
+  });
+
+  it('kapar överdrag vid 100 — "Över planerat" säger resten', () => {
+    expect(percentOf('b', 6)).toBe(100);
+  });
+
+  it('ger ingen mätare utan sålt antal (rad utan plan, fritext)', () => {
+    expect(percentOf('c', 5)).toBeNull();
+    expect(percentOf(null, 2, 'Extra sarg')).toBeNull();
+  });
+
+  // En tredjedels mätare på en avskriven rad läses som 20 m kvar att bygga — och den ska aldrig byggas.
+  it('ger ingen mätare på en avskriven rad', () => {
+    expect(percentOf('av', 10)).toBeNull();
   });
 });

@@ -39,6 +39,17 @@ function isHiddenPath(pathname: string) {
   return HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
+// Ytor med en egen fast knapprad i nederkanten (z-30). Där står knappen OVANFÖR raden i stället för
+// att täckas av den — fältvyn är just den yta där installatörerna ska kunna rapportera en bugg.
+// Höjden är radens: 52 px knapp + 12 px luft på var sida, plus 12 px mellanrum = 5,5 rem.
+// (Döljer fältvyn raden — inlämnad egenkontroll och Tid-flik, eller ett textfält i fokus — står
+// knappen kvar uppe. Hellre det än att den hoppar.)
+const LIFTED_PREFIXES = ['/arbetsorder'];
+
+function isLiftedPath(pathname: string) {
+  return LIFTED_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
 type Panel = 'form' | 'mine';
 
 export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean }) {
@@ -72,7 +83,7 @@ export default function ReportIssueLauncher({ loggedIn }: { loggedIn: boolean })
           'fixed right-3 z-[25] inline-flex items-center gap-2 rounded-full border border-[#cfdcc9] bg-white/95',
           'px-3 py-2 text-[13px] font-semibold text-slate-700 shadow-[0_6px_20px_rgba(20,44,27,0.18)] backdrop-blur',
           'transition hover:border-emerald-300 hover:text-emerald-800 active:scale-[0.98]',
-          'bottom-[calc(0.75rem+env(safe-area-inset-bottom))]',
+          isLiftedPath(pathname) ? 'bottom-[calc(5.5rem+env(safe-area-inset-bottom))]' : 'bottom-[calc(0.75rem+env(safe-area-inset-bottom))]',
         )}
       >
         <span

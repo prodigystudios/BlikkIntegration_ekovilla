@@ -5,8 +5,10 @@ import { cn } from '@/lib/shared/cn';
 import { crm } from '@/app/crm/lib/crmTokens';
 import { formatDate, formatQuantity, parseQuantityInput } from '@/app/crm/lib/format';
 import { stockholmTodayISO } from '@/lib/domains/planning/timezone';
+import Meter from '@/components/ui/Meter';
 import {
   groupProgressReports,
+  progressGroupPercent,
   progressLocationSuggestions,
   PROGRESS_UNIT_FALLBACKS,
   type ProgressReportView,
@@ -123,6 +125,10 @@ export default function WorkOrderProgressCard({
   // markerad aldrig utförd) ska inte gå att rapportera NY framdrift på, men måste fortfarande gå
   // att slå upp: rapporterades 45 m innan raden skrevs av ska kortet visa "45 av 120 m · Avskriven"
   // och inte "Ej på ordern" — den märkningen är till för arbete som aldrig såldes.
+  // ⚠️ BARA DET RAPPORTERADE, även i fältet. William 2026-11-03: varje `pricing_mode: 'item'`-rad är ett
+  // moment, också avgifterna ("Etableringskostnad 1 st", "Arbetskostnad per man") — att visa alla sålda
+  // moment gav "0 av 1 st" på nästan varje order. Ett moment syns när någon börjat på det; vilka
+  // artiklar som är moment kan märkas senare om det behövs.
   const groups = groupProgressReports(reports, workItems);
   const reportable = workItems.filter((item) => !item.writtenOff);
   const locationSuggestions = progressLocationSuggestions(reports).slice(0, 6);
@@ -192,7 +198,9 @@ export default function WorkOrderProgressCard({
 
   return (
     <div className={cn(crm.cardInner, 'grid gap-3', className)}>
-      <p className={canReport ? crm.sectionTitle : crm.cardTitle}>Framdrift</p>
+      {/* ⚠️ "Arbetsmoment" i fältet, "Framdrift" på kontoret. Framdrift är inget ord som används mot
+          de anställda (William 2026-11-03); kontoret känner kortet under sitt gamla namn. */}
+      <p className={canReport ? crm.fieldSectionTitle : crm.cardTitle}>{canReport ? 'Arbetsmoment' : 'Framdrift'}</p>
 
       {/* ⚠️ AVVIKELSEN MÅSTE SYNAS UTAN ATT MAN SCROLLAR. William 2026-09-16: arbete utanför
           ordern ska vara synligt på ordern — ingen notis, ingen egen livscykel. Då räcker inte en
@@ -225,10 +233,13 @@ export default function WorkOrderProgressCard({
       ) : (
         <div className="grid gap-3">
           {groups.map((group) => {
-            const remaining = group.planned != null ? Math.max(0, group.planned - group.reported) : null;
+            const percent = canReport ? progressGroupPercent(group) : null;
+            // ⚠️ Inget "Kvar" på en avskriven rad i fältet: den ska aldrig byggas, och "Kvar 20 m" hade
+            // sagt motsatsen. Kontoret ser talet som förut — där är det en avstämning, inte en uppgift.
+            const remaining = group.planned != null && !(canReport && group.writtenOff) ? Math.max(0, group.planned - group.reported) : null;
             return (
               <div key={group.key} className="grid gap-1">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 border-b border-[#e8eee5] pb-1">
+                <div className={cn('flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5', !canReport && 'border-b border-[#e8eee5] pb-1')}>
                   <span className="text-sm font-semibold text-slate-800">{group.label}</span>
                   <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-900">
                     {formatQuantity(group.reported)}
@@ -240,6 +251,8 @@ export default function WorkOrderProgressCard({
                     {group.unit ? <span className="font-medium text-slate-500"> {group.unit}</span> : null}
                   </span>
                 </div>
+                {/* Fältets mätare. Kontoret har den inte — där är raden ett tal i en läsvy. */}
+                {percent != null ? <Meter percent={percent} className="h-1.5 w-full" /> : null}
 
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                   {remaining != null && remaining > 0 ? (
@@ -326,12 +339,14 @@ export default function WorkOrderProgressCard({
       {/* Kontoret rapporterar inte — det är fältets yta. Rättningen (Ta bort per rad) finns
           däremot i båda vyerna, och den styrs av `can_delete` från servern. */}
       {!canReport ? null : !open ? (
+        // Vit med kant, inte fylld: fältvyns fyllda knapp är knappraden längst ner (säckarna). Två
+        // fyllda gröna knappar i rad på samma flik hade inte sagt vilken som är dagens huvudsak.
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="inline-flex h-11 w-full items-center justify-center rounded-xl text-sm font-semibold text-white transition active:scale-[0.99]"
-          style={{ backgroundColor: 'var(--ek-green)' }}
+          className="inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-solid border-[color:var(--ek-accent-soft-border)] bg-white px-4 py-0 text-[15px] font-semibold text-[color:var(--ek-green)] transition active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ek-accent)]"
         >
+          <PlusIcon />
           Rapportera dagens arbete
         </button>
       ) : (
@@ -526,5 +541,13 @@ export default function WorkOrderProgressCard({
         </div>
       )}
     </div>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" aria-hidden="true" focusable="false">
+      <path d="M12 5v14M5 12h14" />
+    </svg>
   );
 }

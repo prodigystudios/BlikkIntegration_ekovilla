@@ -360,6 +360,18 @@ export function groupProgressReports<T extends ProgressReportView>(
 }
 
 /**
+ * Fältvyns mätare för ett moment: andelen av det sålda, 0–100.
+ *
+ * null = ingen mätare: momentet saknar ett sålt antal att mäta mot (fritext, en rad som lämnat
+ * ordern), eller raden är AVSKRIVEN — en mätare på den läses som jobb kvar att bygga, och den ska
+ * aldrig byggas. Överdrag kapas vid 100; "Över planerat" säger resten.
+ */
+export function progressGroupPercent(group: Pick<ProgressGroup<unknown>, 'planned' | 'reported' | 'writtenOff'>): number | null {
+  if (group.writtenOff || group.planned == null || group.planned <= 0) return null;
+  return Math.min(100, (group.reported / group.planned) * 100);
+}
+
+/**
  * Platser som redan använts på ordern, nyaste först.
  *
  * Finns för chipsen i fältkortet: utan förslag skriver dag två "hus A" där dag ett skrev "Hus A",

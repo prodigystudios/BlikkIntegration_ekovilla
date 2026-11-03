@@ -4,6 +4,7 @@ import { cn } from '@/lib/shared/cn';
 import { telHref } from '@/app/crm/components/ContactLinks';
 import { isSchedulePlaceholder, mapsSearchHref, projectRepeatsAddress, reportedProgress, scheduleStopMeta, stopCallLine, workdayPosition, workOrderHref, type StopCallContact, type StopFacts } from '@/lib/domains/planning/scheduleStops';
 import { materialPill } from './materialTheme';
+import Meter from '@/components/ui/Meter';
 
 // Ett stopp på bilens dag i startsidans arbetsschema.
 //
@@ -466,14 +467,6 @@ function StopMarker({ stop, sharesDay, placeholder, done, filled, compact }: {
 }
 
 // Dekorativ: siffrorna bredvid säger samma sak i text.
-function Meter({ percent, className }: { percent: number; className?: string }) {
-  return (
-    <span aria-hidden="true" className={cn('inline-block overflow-hidden rounded-full bg-[#dfe7dc]', className)}>
-      <span className="block h-full bg-[#2f6b45]" style={{ width: `${percent}%` }} />
-    </span>
-  );
-}
-
 function Team({ names }: { names: string[] }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[13px] text-slate-700">
